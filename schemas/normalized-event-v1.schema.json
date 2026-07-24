@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proxy-sentinel.local/schemas/normalized-event-v1.schema.json",
+  "title": "Proxy Sentinel Normalized Event v1",
+  "type": "object",
+  "required": ["schema_version", "event_id", "source", "type", "timestamp", "subject", "flow", "confidence"],
+  "properties": {
+    "schema_version": {
+      "const": "v1"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "source_event_type": {
+      "type": "string"
+    },
+    "type": {
+      "enum": ["flow", "dns", "tls", "http", "quic", "device", "alert"]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "observer": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "subject": {
+      "type": "object",
+      "required": ["ip"],
+      "properties": {
+        "ip": { "type": "string" },
+        "user_id": { "type": "string" },
+        "mac": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "flow": {
+      "type": "object",
+      "required": ["src_ip", "dst_ip", "proto", "direction"],
+      "properties": {
+        "src_ip": { "type": "string" },
+        "dst_ip": { "type": "string" },
+        "src_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "dst_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "proto": { "enum": ["tcp", "udp", "icmp", "other"] },
+        "direction": { "enum": ["outbound", "inbound", "unknown"] },
+        "bytes_toserver": { "type": "integer", "minimum": 0 },
+        "bytes_toclient": { "type": "integer", "minimum": 0 },
+        "pkts_toserver": { "type": "integer", "minimum": 0 },
+        "pkts_toclient": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "raw_ref": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
+
