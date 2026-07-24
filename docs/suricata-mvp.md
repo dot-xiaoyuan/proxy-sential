@@ -38,17 +38,26 @@ proxy-sentinel replay --input events.jsonl
 proxy-sentinel risk inspect --ip 10.1.2.3
 ```
 
-当前已实现第一条命令：
+当前已实现前两条命令：
 
 ```bash
 go run ./cmd/proxy-sentinel adapter suricata \
   --input examples/suricata/eve-mirror-20260724-131645-redacted.jsonl \
   --output /tmp/proxy-sentinel-normalized.jsonl \
   --sensor-id lab-30
+
+go run ./cmd/proxy-sentinel replay \
+  --input /tmp/proxy-sentinel-normalized.jsonl \
+  --output /tmp/proxy-sentinel-replay-summary.json
 ```
 
 `adapter suricata` 支持 `flow`、`dns`、`tls`、`http`，会跳过无法解析的 JSONL
 行和暂不支持的 Suricata 事件类型，并在 stderr 输出转换统计。
+
+`replay` 只读取标准事件，不依赖 Suricata 原始字段。它会按 `subject.ip`
+聚合 1m、5m、10m、1h 窗口，并输出事件数、事件类型分布、域名基数、UA
+基数、JA3/JA4 基数和目的端口基数。窗口结束时间取输入中的最新事件时间，
+保证固定 fixture 多次回放结果一致。
 
 ## 最小事件覆盖
 

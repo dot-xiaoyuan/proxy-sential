@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"proxy-sentinel/internal/adapter/suricata"
+	"proxy-sentinel/internal/replay"
 )
 
 func main() {
@@ -23,6 +24,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "adapter":
 		return runAdapter(args[1:])
+	case "replay":
+		return runReplay(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
@@ -67,6 +70,33 @@ func runSuricataAdapter(args []string) error {
 	return nil
 }
 
+func runReplay(args []string) error {
+	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	input := fs.String("input", "", "normalized JSONL input path, or - for stdin")
+	output := fs.String("output", "-", "replay summary JSON output path, or - for stdout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" {
+		return fmt.Errorf("--input is required")
+	}
+
+	summary, err := replay.AnalyzeFiles(*input, *output, replay.Options{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "replay: read=%d accepted=%d duplicate=%d skipped=%d malformed=%d ips=%d\n",
+		summary.Stats.Read,
+		summary.Stats.Accepted,
+		summary.Stats.Duplicate,
+		summary.Stats.Skipped,
+		summary.Stats.Malformed,
+		len(summary.Windows),
+	)
+	return nil
+}
+
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl")
+	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]")
 }

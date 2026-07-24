@@ -23,6 +23,12 @@
 
 目标：建立可回放的证据计算基础。
 
+当前进展：
+
+- 已实现 `replay --input [--output]`。
+- 已支持按 `subject.ip` 聚合 1m、5m、10m、1h 窗口。
+- 已支持事件去重、malformed line 容错和基础统计输出。
+
 任务：
 
 - 实现 `replay --input`。
@@ -136,4 +142,3 @@
 验收：
 
 - 输出继续 Suricata、混合 sensor、全自研 sensor 三选一建议。
-
