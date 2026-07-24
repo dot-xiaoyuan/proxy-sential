@@ -56,6 +56,16 @@
 
 ## 第一批证据规则
 
+当前 CLI：
+
+```bash
+proxy-sentinel evidence --input events.jsonl --output evidence.json --window 10m
+```
+
+证据层只读取标准事件，不读取 Suricata 原始字段。所有证据输出都必须包含
+`evidence_id`、`ip`、`type`、`window`、`score`、`confidence`、`severity`、
+`reason`、`samples`、`created_at`。
+
 ### multi_user_agent
 
 同一 IP 在窗口内出现多个差异明显的 User-Agent。
@@ -146,4 +156,3 @@ DHCP、mDNS、NBNS、LLMNR、UA parser、MAC OUI 等来源指向多个设备。
 - 单个强证据可以高风险，但建议先影子模式。
 - 多个中强证据互相印证才进入 confirmed。
 - 所有处罚必须可回放、可解释、可撤销。
-

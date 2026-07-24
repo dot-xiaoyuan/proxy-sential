@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"proxy-sentinel/internal/adapter/suricata"
+	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/replay"
 )
 
@@ -26,6 +28,8 @@ func run(args []string) error {
 		return runAdapter(args[1:])
 	case "replay":
 		return runReplay(args[1:])
+	case "evidence":
+		return runEvidence(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
@@ -97,6 +101,34 @@ func runReplay(args []string) error {
 	return nil
 }
 
+func runEvidence(args []string) error {
+	fs := flag.NewFlagSet("evidence", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	input := fs.String("input", "", "normalized JSONL input path, or - for stdin")
+	output := fs.String("output", "-", "evidence JSON output path, or - for stdout")
+	window := fs.Duration("window", 10*time.Minute, "evidence window, for example 10m or 1h")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" {
+		return fmt.Errorf("--input is required")
+	}
+
+	result, err := evidence.AnalyzeFiles(*input, *output, evidence.Options{Window: *window})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "evidence: read=%d accepted=%d duplicate=%d skipped=%d malformed=%d evidence=%d\n",
+		result.Stats.Read,
+		result.Stats.Accepted,
+		result.Stats.Duplicate,
+		result.Stats.Skipped,
+		result.Stats.Malformed,
+		len(result.Evidence),
+	)
+	return nil
+}
+
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]")
+	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]")
 }

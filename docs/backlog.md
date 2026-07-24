@@ -46,6 +46,12 @@
 
 目标：实现第一批有效证据。
 
+当前进展：
+
+- 已实现 `evidence --input [--output] [--window]`。
+- 已实现 `multi_user_agent`、`multi_ja3_ja4`、`domain_diversity`、`port_distribution`。
+- `ttl_clusters` 暂缓：当前标准事件和 Suricata adapter 还没有 TTL 字段，不能在证据层伪造该信号。
+
 任务：
 
 - `multi_user_agent`
