@@ -67,7 +67,7 @@ if [[ "${1:-}" == "-u" ]]; then
 fi
 EOF
 
-for command_name in dnf mkdir chmod; do
+for command_name in dnf mkdir chmod tee; do
   cat > "$test_dir/bin/$command_name" <<'EOF'
 #!/usr/bin/env bash
 printf '%s' "$(basename "$0")" >> "$command_log"
@@ -91,6 +91,9 @@ chmod +x "$test_dir/bin/"*
 for expected_command in \
   "dnf makecache" \
   "dnf install -y jq tcpdump iproute coreutils python3" \
+  "mkdir -p /var/lib/suricata/rules" \
+  "tee /var/lib/suricata/rules/suricata.rules" \
+  "chmod 0644 /var/lib/suricata/rules/suricata.rules" \
   "mkdir -p /tmp/proxy-sentinel" \
   "chmod 1777 /tmp/proxy-sentinel"; do
   if ! grep -Fqx "$expected_command" "$command_log"; then

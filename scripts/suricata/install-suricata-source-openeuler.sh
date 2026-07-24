@@ -131,6 +131,17 @@ cd "suricata-${version}"
 make -j "$jobs"
 make install-full
 
+if [[ -e /usr/lib/libhtp.so ]]; then
+  printf '%s\n' /usr/lib > /etc/ld.so.conf.d/proxy-sentinel-suricata.conf
+  ldconfig
+fi
+
+mkdir -p /var/lib/suricata/rules
+if [[ ! -e /var/lib/suricata/rules/suricata.rules ]]; then
+  : > /var/lib/suricata/rules/suricata.rules
+fi
+chmod 0644 /var/lib/suricata/rules/suricata.rules
+
 suricata --build-info | sed -n '1,12p'
 echo
 echo "Suricata installed. Config: /etc/suricata/suricata.yaml"

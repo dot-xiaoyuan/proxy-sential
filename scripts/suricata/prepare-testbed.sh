@@ -73,6 +73,17 @@ install_packages() {
       fi
       "${privilege[@]}" dnf makecache
       "${privilege[@]}" dnf install -y jq tcpdump iproute coreutils python3
+      if command -v suricata >/dev/null 2>&1; then
+        if ! suricata --build-info >/dev/null 2>&1 && [[ -e /usr/lib/libhtp.so ]]; then
+          printf '%s\n' /usr/lib | "${privilege[@]}" tee /etc/ld.so.conf.d/proxy-sentinel-suricata.conf >/dev/null
+          "${privilege[@]}" ldconfig
+        fi
+        "${privilege[@]}" mkdir -p /var/lib/suricata/rules
+        if [[ ! -e /var/lib/suricata/rules/suricata.rules ]]; then
+          : | "${privilege[@]}" tee /var/lib/suricata/rules/suricata.rules >/dev/null
+        fi
+        "${privilege[@]}" chmod 0644 /var/lib/suricata/rules/suricata.rules
+      fi
       if ! command -v suricata >/dev/null 2>&1 \
         && ! "${privilege[@]}" dnf install -y suricata; then
         cat >&2 <<'EOF'
