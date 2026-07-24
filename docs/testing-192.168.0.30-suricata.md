@@ -14,6 +14,12 @@
 sudo scripts/suricata/prepare-testbed.sh
 ```
 
+脚本支持 Debian/Ubuntu 和 openEuler。openEuler 使用 DNF，`iproute2`
+对应的包名为 `iproute`。openEuler 22.03 官方仓库不提供 Suricata；如果当前
+配置的软件源也不包含该包，脚本会安装其余基础工具并提示先从可信软件源或
+[Suricata 官方源码安装文档](https://docs.suricata.io/en/latest/install.html)
+完成 Suricata 安装，再重新运行准备脚本。
+
 确认镜像口：
 
 ```bash
