@@ -20,6 +20,16 @@ sudo scripts/suricata/prepare-testbed.sh
 [Suricata 官方源码安装文档](https://docs.suricata.io/en/latest/install.html)
 完成 Suricata 安装，再重新运行准备脚本。
 
+openEuler 22.03 测试机可以直接使用仓库内的源码安装辅助脚本：
+
+```bash
+sudo scripts/suricata/install-suricata-source-openeuler.sh
+sudo scripts/suricata/prepare-testbed.sh
+```
+
+该脚本默认从 Suricata 官方源码包安装 `6.0.20`，安装到 `/usr`，配置文件放在
+`/etc/suricata/suricata.yaml`，与采样脚本默认路径一致。
+
 确认镜像口：
 
 ```bash

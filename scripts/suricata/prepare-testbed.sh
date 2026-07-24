@@ -78,7 +78,10 @@ install_packages() {
         cat >&2 <<'EOF'
 Suricata is not available from the configured openEuler DNF repositories.
 Install Suricata from a trusted repository or from source, then rerun this
-script. Official source installation instructions:
+script. For openEuler 22.03, this repository provides a source install helper:
+  sudo scripts/suricata/install-suricata-source-openeuler.sh
+
+Official source installation instructions:
   https://docs.suricata.io/en/latest/install.html
 EOF
         return 1

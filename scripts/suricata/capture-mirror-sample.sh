@@ -11,7 +11,7 @@ Options:
   --interface IFACE      Mirror interface. Use "auto" to detect. Default: auto
   --duration SECONDS     Suricata capture duration. Default: 1800
   --out-dir DIR          Sample output parent directory. Default: /tmp/proxy-sentinel
-  --config FILE          Suricata config. Default: /etc/suricata/suricata.yaml
+  --config FILE          Suricata config. Default: auto-detect
   --tcpdump-count N      Packets for mirror-port smoke test. Default: 100
   --tcpdump-timeout N    Seconds before tcpdump smoke test fails. Default: 60
 
@@ -24,7 +24,7 @@ EOF
 iface="auto"
 duration="1800"
 out_dir="/tmp/proxy-sentinel"
-config="/etc/suricata/suricata.yaml"
+config=""
 tcpdump_count="100"
 tcpdump_timeout="60"
 
@@ -84,8 +84,19 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
+if [[ -z "$config" ]]; then
+  for candidate_config in \
+    /etc/suricata/suricata.yaml \
+    /usr/local/etc/suricata/suricata.yaml; do
+    if [[ -r "$candidate_config" ]]; then
+      config="$candidate_config"
+      break
+    fi
+  done
+fi
+
 if [[ ! -r "$config" ]]; then
-  echo "suricata config not readable: $config" >&2
+  echo "suricata config not readable: ${config:-not found}" >&2
   exit 1
 fi
 
