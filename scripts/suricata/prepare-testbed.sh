@@ -33,7 +33,7 @@ detect_distribution() {
   PRETTY_NAME=
   # shellcheck disable=SC1090
   . "$os_release_file"
-  distribution=" ${ID:-} ${ID_LIKE:-} "
+  distribution="$(printf ' %s %s ' "${ID:-}" "${ID_LIKE:-}" | tr '[:upper:]' '[:lower:]')"
 
   case "$distribution" in
     *" debian "*|*" ubuntu "*)

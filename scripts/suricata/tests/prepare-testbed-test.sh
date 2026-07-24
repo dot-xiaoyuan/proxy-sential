@@ -32,7 +32,7 @@ PRETTY_NAME="Ubuntu-compatible Linux"
 EOF
 
 cat > "$test_dir/openeuler" <<'EOF'
-ID=openeuler
+ID=openEuler
 VERSION_ID="22.03"
 PRETTY_NAME="openEuler 22.03 LTS"
 EOF
