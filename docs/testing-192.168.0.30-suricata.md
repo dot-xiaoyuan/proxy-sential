@@ -87,7 +87,9 @@ scripts/suricata/anonymize-eve-sample.py \
   --input /tmp/proxy-sentinel/eve-mirror-YYYYMMDD-HHMMSS.jsonl \
   --output /tmp/proxy-sentinel/eve-mirror-redacted.jsonl \
   --limit 1000 \
-  --min-lines 200
+  --min-lines 200 \
+  --event-types flow,dns,tls,http \
+  --per-type-limit 250
 ```
 
 脱敏样本用于后续 adapter fixture。原始大文件保留在测试机或 `.gitignore` 覆盖的目录下，不进入版本管理。

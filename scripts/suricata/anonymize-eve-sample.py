@@ -119,6 +119,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="Redacted JSONL output path")
     parser.add_argument("--limit", type=int, default=1000, help="Maximum output lines")
     parser.add_argument("--min-lines", type=int, default=200, help="Warn if fewer lines are produced")
+    parser.add_argument(
+        "--event-types",
+        default=",".join(sorted(CORE_TYPES)),
+        help="Comma-separated Suricata event types to include",
+    )
+    parser.add_argument(
+        "--per-type-limit",
+        type=int,
+        default=0,
+        help="Maximum output lines per event type. Default: disabled",
+    )
     return parser.parse_args()
 
 
@@ -129,6 +140,12 @@ def main() -> int:
     redactor = Redactor()
     emitted = 0
     malformed = 0
+    selected_types = {item.strip() for item in args.event_types.split(",") if item.strip()}
+    emitted_by_type: dict[str, int] = {}
+
+    if not selected_types:
+        print("at least one --event-types value is required", file=sys.stderr)
+        return 2
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     with src.open("r", encoding="utf-8") as infile, dst.open("w", encoding="utf-8") as outfile:
@@ -145,10 +162,14 @@ def main() -> int:
                 continue
             if not isinstance(event, dict):
                 continue
-            if event.get("event_type") not in CORE_TYPES:
+            event_type = event.get("event_type")
+            if event_type not in selected_types:
+                continue
+            if args.per_type_limit > 0 and emitted_by_type.get(event_type, 0) >= args.per_type_limit:
                 continue
             outfile.write(json.dumps(redactor.redact(event), ensure_ascii=False, separators=(",", ":")) + "\n")
             emitted += 1
+            emitted_by_type[event_type] = emitted_by_type.get(event_type, 0) + 1
 
     print(f"wrote {emitted} redacted lines to {dst}", file=sys.stderr)
     if malformed:

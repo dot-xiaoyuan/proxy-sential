@@ -38,6 +38,18 @@ proxy-sentinel replay --input events.jsonl
 proxy-sentinel risk inspect --ip 10.1.2.3
 ```
 
+当前已实现第一条命令：
+
+```bash
+go run ./cmd/proxy-sentinel adapter suricata \
+  --input examples/suricata/eve-mirror-20260724-131645-redacted.jsonl \
+  --output /tmp/proxy-sentinel-normalized.jsonl \
+  --sensor-id lab-30
+```
+
+`adapter suricata` 支持 `flow`、`dns`、`tls`、`http`，会跳过无法解析的 JSONL
+行和暂不支持的 Suricata 事件类型，并在 stderr 输出转换统计。
+
 ## 最小事件覆盖
 
 | Suricata 事件 | 标准事件 | 必要字段 |
