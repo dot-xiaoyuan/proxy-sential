@@ -36,7 +36,7 @@ Suricata EVE JSON，优先关注以下事件类型：
 proxy-sentinel adapter suricata --input eve.json --output events.jsonl
 proxy-sentinel replay --input events.jsonl
 proxy-sentinel evidence --input events.jsonl --output evidence.json
-proxy-sentinel risk inspect --ip 10.1.2.3
+proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3
 ```
 
 当前已实现前两条命令：
@@ -55,6 +55,10 @@ go run ./cmd/proxy-sentinel evidence \
   --input /tmp/proxy-sentinel-normalized.jsonl \
   --output /tmp/proxy-sentinel-evidence.json \
   --window 10m
+
+go run ./cmd/proxy-sentinel risk inspect \
+  --input /tmp/proxy-sentinel-evidence.json \
+  --ip 10.255.0.3
 ```
 
 `adapter suricata` 支持 `flow`、`dns`、`tls`、`http`，会跳过无法解析的 JSONL
@@ -68,6 +72,9 @@ go run ./cmd/proxy-sentinel evidence \
 `evidence` 在标准事件上生成可解释证据。当前支持 `multi_user_agent`、
 `multi_ja3_ja4`、`domain_diversity` 和 `port_distribution`。`ttl_clusters`
 需要标准事件先提供 TTL 信号，暂不在证据层伪造。
+
+`risk inspect` 只读取证据输出，生成单个 IP 的风险快照。当前推荐动作全部为
+影子动作，不触发降速、踢线或封禁。
 
 ## 最小事件覆盖
 

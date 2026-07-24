@@ -45,6 +45,16 @@
 }
 ```
 
+当前 CLI：
+
+```bash
+proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3
+```
+
+风险层只读取 evidence 输出，不读取标准事件或采集后端原始字段。当前
+`recommended_action` 只输出影子建议：`record`、`shadow_watch`、
+`shadow_manual_review`、`shadow_confirm_review`，不触发处罚动作。
+
 ## 风险等级
 
 | 分数 | 等级 | 含义 | 默认动作 |
@@ -156,3 +166,9 @@ DHCP、mDNS、NBNS、LLMNR、UA parser、MAC OUI 等来源指向多个设备。
 - 单个强证据可以高风险，但建议先影子模式。
 - 多个中强证据互相印证才进入 confirmed。
 - 所有处罚必须可回放、可解释、可撤销。
+
+当前实现约束：
+
+- `domain_diversity` 和 `port_distribution` 被视为弱证据。
+- 只有弱证据时，风险最多进入 `suspicious`。
+- `confirmed` 需要总分达到阈值，并且至少包含两类非弱证据。

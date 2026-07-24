@@ -69,6 +69,12 @@
 
 目标：能输出 IP 风险结果。
 
+当前进展：
+
+- 已实现 `risk inspect --input evidence.json --ip <ip>`。
+- 已实现风险分、等级、置信度、证据 ID、summary 和影子 recommended_action。
+- 弱证据 `domain_diversity`、`port_distribution` 单独或组合不会进入 confirmed。
+
 任务：
 
 - 实现风险评分器。

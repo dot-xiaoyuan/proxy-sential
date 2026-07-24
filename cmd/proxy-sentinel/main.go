@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"proxy-sentinel/internal/adapter/suricata"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/replay"
+	"proxy-sentinel/internal/risk"
 )
 
 func main() {
@@ -30,6 +32,8 @@ func run(args []string) error {
 		return runReplay(args[1:])
 	case "evidence":
 		return runEvidence(args[1:])
+	case "risk":
+		return runRisk(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
@@ -129,6 +133,48 @@ func runEvidence(args []string) error {
 	return nil
 }
 
+func runRisk(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("missing risk command")
+	}
+	switch args[0] {
+	case "inspect":
+		return runRiskInspect(args[1:])
+	default:
+		return fmt.Errorf("unknown risk command: %s", args[0])
+	}
+}
+
+func runRiskInspect(args []string) error {
+	fs := flag.NewFlagSet("risk inspect", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	input := fs.String("input", "", "evidence JSON input path, or - for stdin")
+	ip := fs.String("ip", "", "IP address to inspect")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" {
+		return fmt.Errorf("--input is required")
+	}
+	if *ip == "" {
+		return fmt.Errorf("--ip is required")
+	}
+
+	snapshot, err := risk.InspectFile(*input, risk.InspectOptions{IP: *ip})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "risk inspect: ip=%s score=%d level=%s evidence=%d\n", snapshot.IP, snapshot.Score, snapshot.Level, len(snapshot.EvidenceIDs))
+	return writeJSON(os.Stdout, snapshot)
+}
+
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]")
+	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3")
+}
+
+func writeJSON(output *os.File, value any) error {
+	encoder := json.NewEncoder(output)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
 }
