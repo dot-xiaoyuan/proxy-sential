@@ -293,7 +293,7 @@ func decodeEventRows(data []byte) ([]normalized.Event, error) {
 			return nil, err
 		}
 		event := normalized.Event{
-			Timestamp:       row.Timestamp,
+			Timestamp:       normalizeClickHouseTimestamp(row.Timestamp),
 			EventID:         row.EventID,
 			SchemaVersion:   row.SchemaVersion,
 			Source:          row.Source,
@@ -345,7 +345,7 @@ func decodeDiagnosticRows(data []byte) ([]ingest.Diagnostic, error) {
 		item := ingest.Diagnostic{
 			SchemaVersion: row.SchemaVersion,
 			DiagnosticID:  row.DiagnosticID,
-			Timestamp:     row.Timestamp,
+			Timestamp:     normalizeClickHouseTimestamp(row.Timestamp),
 			SensorID:      row.SensorID,
 			Collector:     ingest.Collector{Kind: row.CollectorKind, Version: row.CollectorVersion, Interface: row.InterfaceName},
 			Stage:         row.Stage,
@@ -388,6 +388,16 @@ func clickHouseTimestamp(raw string) string {
 		return raw
 	}
 	return timestamp.Format("2006-01-02 15:04:05.000000")
+}
+
+func normalizeClickHouseTimestamp(raw string) string {
+	for _, layout := range []string{"2006-01-02 15:04:05.999999", "2006-01-02 15:04:05"} {
+		timestamp, err := time.ParseInLocation(layout, raw, time.FixedZone("Asia/Shanghai", 8*60*60))
+		if err == nil {
+			return timestamp.Format(time.RFC3339Nano)
+		}
+	}
+	return raw
 }
 
 func jsonString(value any) string {
