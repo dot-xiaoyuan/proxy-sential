@@ -148,14 +148,14 @@ EOF
 cat > /etc/systemd/system/proxy-sentinel-shadow.service <<EOF
 [Unit]
 Description=Proxy Sentinel shadow risk analysis
-After=proxy-sentinel-suricata.service$storage_after_suffix
-$storage_shadow_wants_line
+After=proxy-sentinel-suricata.service\$storage_after_suffix
+\$storage_shadow_wants_line
 
 [Service]
 Type=oneshot
 WorkingDirectory=$remote_root
-$storage_env_line
-ExecStart=$remote_root/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $remote_root/data/shadow/state.json --out-dir $remote_root/data/shadow --sensor-id $sensor_id --window $window --min-level suspicious --limit 50 --retention $retention --storage-mode dual $storage_dsn_args
+\$storage_env_line
+ExecStart=$remote_root/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $remote_root/data/shadow/state.json --out-dir $remote_root/data/shadow --sensor-id $sensor_id --window $window --min-level suspicious --limit 50 --retention $retention --storage-mode dual \$storage_dsn_args
 EOF
 
 cat > /etc/systemd/system/proxy-sentinel-shadow.timer <<EOF
@@ -175,14 +175,14 @@ EOF
 cat > /etc/systemd/system/proxy-sentinel-control-plane.service <<EOF
 [Unit]
 Description=Proxy Sentinel read-only control plane
-After=network-online.target proxy-sentinel-shadow.timer$storage_after_suffix
-Wants=network-online.target$storage_control_wants_suffix
+After=network-online.target proxy-sentinel-shadow.timer\$storage_after_suffix
+Wants=network-online.target\$storage_control_wants_suffix
 
 [Service]
 Type=simple
 WorkingDirectory=$remote_root
-$storage_env_line
-ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual $storage_dsn_args --read-only
+\$storage_env_line
+ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual \$storage_dsn_args --read-only
 Restart=always
 RestartSec=5
 
