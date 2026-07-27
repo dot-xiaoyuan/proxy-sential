@@ -1,0 +1,50 @@
+name: proxy-sentinel-storage
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-srun-docker.pkg.coding.net/dpi/image/postgres:latest}
+    container_name: proxy-sentinel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-proxy_sentinel}
+      POSTGRES_USER: ${POSTGRES_USER:-proxy_sentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-25432}:5432"
+    volumes:
+      - ${PROXY_SENTINEL_DATA_DIR:-/opt/proxy-sentinel/data/db}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE:-srun-docker.pkg.coding.net/dpi/image/clickhouse:latest}
+    container_name: proxy-sentinel-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-proxy_sentinel}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-proxy_sentinel}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD is required}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "127.0.0.1:${CLICKHOUSE_HTTP_HOST_PORT:-28123}:8123"
+      - "127.0.0.1:${CLICKHOUSE_NATIVE_HOST_PORT:-29000}:9000"
+    volumes:
+      - ${PROXY_SENTINEL_DATA_DIR:-/opt/proxy-sentinel/data/db}/clickhouse/data:/var/lib/clickhouse
+      - ${PROXY_SENTINEL_DATA_DIR:-/opt/proxy-sentinel/data/db}/clickhouse/logs:/var/log/clickhouse-server
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
