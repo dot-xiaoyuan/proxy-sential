@@ -60,6 +60,24 @@ sudo scripts/suricata/capture-mirror-sample.sh --interface auto --duration 1800
 
 脚本默认使用隔离日志目录，不覆盖系统已有的 `/var/log/suricata/eve.json`。
 
+## 影子模式部署
+
+30 机器进入全办公室镜像流量观测时，使用常驻 Suricata 和周期性 shadow
+分析，不再依赖临时 30 分钟采样：
+
+```bash
+scripts/deploy/deploy-shadow-30.sh
+```
+
+部署后：
+
+- `proxy-sentinel-suricata.service` 持续读取 `ens1f1` 并写
+  `/var/log/suricata/eve.json`。
+- `proxy-sentinel-shadow.timer` 每 10 分钟运行一次 shadow 分析。
+- 输出目录为 `/opt/proxy-sentinel/data/shadow/runs/YYYYMMDD-HHMMSS/`。
+- 每轮输出标准事件、证据、风险快照、可疑 IP 列表和运行摘要。
+- 所有推荐动作都是影子动作，不触发降速、踢线或封禁。
+
 ## 验收
 
 检查事件覆盖：

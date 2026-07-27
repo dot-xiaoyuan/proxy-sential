@@ -20,11 +20,11 @@ type Options struct {
 }
 
 type Stats struct {
-	Read      int
-	Emitted   int
-	Skipped   int
-	Malformed int
-	ByType    map[string]int
+	Read      int            `json:"read"`
+	Emitted   int            `json:"emitted"`
+	Skipped   int            `json:"skipped"`
+	Malformed int            `json:"malformed"`
+	ByType    map[string]int `json:"by_type"`
 }
 
 type eveEvent struct {

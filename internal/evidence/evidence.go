@@ -110,7 +110,7 @@ func Analyze(r io.Reader, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("read normalized input: %w", err)
 	}
 
-	result := Result{Stats: stats}
+	result := Result{Stats: stats, Evidence: []Evidence{}}
 	if !maxTime.IsZero() {
 		result.MaxTime = maxTime.Format(time.RFC3339Nano)
 	}

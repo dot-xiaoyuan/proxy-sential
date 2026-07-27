@@ -11,6 +11,7 @@ import (
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/replay"
 	"proxy-sentinel/internal/risk"
+	"proxy-sentinel/internal/shadow"
 )
 
 func main() {
@@ -34,6 +35,8 @@ func run(args []string) error {
 		return runEvidence(args[1:])
 	case "risk":
 		return runRisk(args[1:])
+	case "shadow":
+		return runShadow(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
@@ -140,6 +143,10 @@ func runRisk(args []string) error {
 	switch args[0] {
 	case "inspect":
 		return runRiskInspect(args[1:])
+	case "batch":
+		return runRiskBatch(args[1:])
+	case "list":
+		return runRiskList(args[1:])
 	default:
 		return fmt.Errorf("unknown risk command: %s", args[0])
 	}
@@ -168,8 +175,103 @@ func runRiskInspect(args []string) error {
 	return writeJSON(os.Stdout, snapshot)
 }
 
+func runRiskBatch(args []string) error {
+	fs := flag.NewFlagSet("risk batch", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	input := fs.String("input", "", "evidence JSON input path, or - for stdin")
+	output := fs.String("output", "", "risk snapshots JSON output path, or - for stdout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" {
+		return fmt.Errorf("--input is required")
+	}
+	if *output == "" {
+		return fmt.Errorf("--output is required")
+	}
+
+	result, err := risk.BatchFile(*input, *output)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "risk batch: snapshots=%d\n", len(result.Snapshots))
+	return nil
+}
+
+func runRiskList(args []string) error {
+	fs := flag.NewFlagSet("risk list", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	input := fs.String("input", "", "risk snapshots JSON input path, or - for stdin")
+	output := fs.String("output", "-", "risk list JSON output path, or - for stdout")
+	minLevel := fs.String("min-level", "suspicious", "minimum risk level: normal, suspicious, high, confirmed")
+	limit := fs.Int("limit", 50, "maximum snapshots to output; 0 means unlimited")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" {
+		return fmt.Errorf("--input is required")
+	}
+
+	result, err := risk.ListFile(*input, *output, risk.ListOptions{MinLevel: *minLevel, Limit: *limit})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "risk list: min_level=%s snapshots=%d\n", result.MinLevel, len(result.Snapshots))
+	return nil
+}
+
+func runShadow(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("missing shadow command")
+	}
+	switch args[0] {
+	case "run":
+		return runShadowRun(args[1:])
+	default:
+		return fmt.Errorf("unknown shadow command: %s", args[0])
+	}
+}
+
+func runShadowRun(args []string) error {
+	fs := flag.NewFlagSet("shadow run", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	eve := fs.String("eve", "/var/log/suricata/eve.json", "Suricata EVE JSONL path")
+	state := fs.String("state", "data/shadow/state.json", "shadow offset state path")
+	outDir := fs.String("out-dir", "data/shadow", "shadow output directory")
+	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
+	window := fs.Duration("window", 10*time.Minute, "evidence window, for example 10m or 1h")
+	minLevel := fs.String("min-level", "suspicious", "risk list minimum level")
+	limit := fs.Int("limit", 50, "risk list maximum snapshots")
+	retention := fs.Duration("retention", 7*24*time.Hour, "run directory retention, for example 168h")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	summary, err := shadow.Run(shadow.Options{
+		EVEPath:      *eve,
+		StatePath:    *state,
+		OutDir:       *outDir,
+		SensorID:     *sensorID,
+		Window:       *window,
+		ListMinLevel: *minLevel,
+		ListLimit:    *limit,
+		Retention:    *retention,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "shadow run: normalized=%d evidence=%d risks=%d list=%d run_dir=%s\n",
+		summary.Normalized.Emitted,
+		summary.EvidenceCount,
+		summary.RiskCount,
+		summary.RiskListCount,
+		summary.RunDir,
+	)
+	return writeJSON(os.Stdout, summary)
+}
+
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3")
+	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state data/shadow/state.json --out-dir data/shadow")
 }
 
 func writeJSON(output *os.File, value any) error {

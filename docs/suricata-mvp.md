@@ -36,7 +36,10 @@ Suricata EVE JSON，优先关注以下事件类型：
 proxy-sentinel adapter suricata --input eve.json --output events.jsonl
 proxy-sentinel replay --input events.jsonl
 proxy-sentinel evidence --input events.jsonl --output evidence.json
+proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json
+proxy-sentinel risk list --input risk-snapshots.json --min-level suspicious
 proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3
+proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state data/shadow/state.json --out-dir data/shadow
 ```
 
 当前已实现前两条命令：
@@ -59,6 +62,13 @@ go run ./cmd/proxy-sentinel evidence \
 go run ./cmd/proxy-sentinel risk inspect \
   --input /tmp/proxy-sentinel-evidence.json \
   --ip 10.255.0.3
+
+go run ./cmd/proxy-sentinel shadow run \
+  --eve /var/log/suricata/eve.json \
+  --state data/shadow/state.json \
+  --out-dir data/shadow \
+  --sensor-id office-30 \
+  --window 10m
 ```
 
 `adapter suricata` 支持 `flow`、`dns`、`tls`、`http`，会跳过无法解析的 JSONL
@@ -75,6 +85,11 @@ go run ./cmd/proxy-sentinel risk inspect \
 
 `risk inspect` 只读取证据输出，生成单个 IP 的风险快照。当前推荐动作全部为
 影子动作，不触发降速、踢线或封禁。
+
+`shadow run` 读取 Suricata EVE 的增量内容，每轮输出 `normalized.jsonl`、
+`evidence.json`、`risk-snapshots.json`、`risk-list-suspicious.json` 和
+`run-summary.json`，并用 state 文件记录上次 byte offset。默认保留最近 7 天
+run 目录。
 
 ## 最小事件覆盖
 

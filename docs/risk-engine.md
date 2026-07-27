@@ -49,6 +49,8 @@
 
 ```bash
 proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3
+proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json
+proxy-sentinel risk list --input risk-snapshots.json --min-level suspicious --limit 50
 ```
 
 风险层只读取 evidence 输出，不读取标准事件或采集后端原始字段。当前

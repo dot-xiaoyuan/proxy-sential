@@ -28,6 +28,21 @@ type InspectOptions struct {
 	IP string
 }
 
+type BatchResult struct {
+	Snapshots []Snapshot `json:"snapshots"`
+}
+
+type ListOptions struct {
+	MinLevel string
+	Limit    int
+}
+
+type ListResult struct {
+	MinLevel  string     `json:"min_level"`
+	Limit     int        `json:"limit"`
+	Snapshots []Snapshot `json:"snapshots"`
+}
+
 func InspectFile(inputPath string, opts InspectOptions) (Snapshot, error) {
 	input, closeInput, err := openInput(inputPath)
 	if err != nil {
@@ -36,6 +51,119 @@ func InspectFile(inputPath string, opts InspectOptions) (Snapshot, error) {
 	defer closeInput()
 
 	return Inspect(input, opts)
+}
+
+func BatchFile(inputPath, outputPath string) (BatchResult, error) {
+	input, closeInput, err := openInput(inputPath)
+	if err != nil {
+		return BatchResult{}, err
+	}
+	defer closeInput()
+
+	output, closeOutput, err := openOutput(outputPath)
+	if err != nil {
+		return BatchResult{}, err
+	}
+	defer closeOutput()
+
+	result, err := Batch(input)
+	if err != nil {
+		return BatchResult{}, err
+	}
+	if err := writeJSON(output, result); err != nil {
+		return BatchResult{}, fmt.Errorf("write risk batch: %w", err)
+	}
+	return result, nil
+}
+
+func Batch(r io.Reader) (BatchResult, error) {
+	allEvidence, err := readEvidence(r)
+	if err != nil {
+		return BatchResult{}, err
+	}
+
+	evidenceByIP := map[string][]evidence.Evidence{}
+	for _, item := range allEvidence {
+		if item.IP == "" {
+			continue
+		}
+		evidenceByIP[item.IP] = append(evidenceByIP[item.IP], item)
+	}
+
+	ips := make([]string, 0, len(evidenceByIP))
+	for ip := range evidenceByIP {
+		ips = append(ips, ip)
+	}
+	sort.Strings(ips)
+
+	result := BatchResult{Snapshots: []Snapshot{}}
+	for _, ip := range ips {
+		result.Snapshots = append(result.Snapshots, snapshotFor(ip, evidenceByIP[ip]))
+	}
+	return result, nil
+}
+
+func ListFile(inputPath, outputPath string, opts ListOptions) (ListResult, error) {
+	input, closeInput, err := openInput(inputPath)
+	if err != nil {
+		return ListResult{}, err
+	}
+	defer closeInput()
+
+	output, closeOutput, err := openOutput(outputPath)
+	if err != nil {
+		return ListResult{}, err
+	}
+	defer closeOutput()
+
+	result, err := List(input, opts)
+	if err != nil {
+		return ListResult{}, err
+	}
+	if err := writeJSON(output, result); err != nil {
+		return ListResult{}, fmt.Errorf("write risk list: %w", err)
+	}
+	return result, nil
+}
+
+func List(r io.Reader, opts ListOptions) (ListResult, error) {
+	minLevel := opts.MinLevel
+	if minLevel == "" {
+		minLevel = "suspicious"
+	}
+	minRank, ok := levelRank(minLevel)
+	if !ok {
+		return ListResult{}, fmt.Errorf("unknown min level: %s", minLevel)
+	}
+
+	batch, err := readBatch(r)
+	if err != nil {
+		return ListResult{}, err
+	}
+	snapshots := make([]Snapshot, 0, len(batch.Snapshots))
+	for _, snapshot := range batch.Snapshots {
+		rank, ok := levelRank(snapshot.Level)
+		if !ok || rank < minRank {
+			continue
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		leftRank, _ := levelRank(snapshots[i].Level)
+		rightRank, _ := levelRank(snapshots[j].Level)
+		if leftRank != rightRank {
+			return leftRank > rightRank
+		}
+		if snapshots[i].Score != snapshots[j].Score {
+			return snapshots[i].Score > snapshots[j].Score
+		}
+		return snapshots[i].IP < snapshots[j].IP
+	})
+	if opts.Limit > 0 && len(snapshots) > opts.Limit {
+		snapshots = snapshots[:opts.Limit]
+	}
+
+	return ListResult{MinLevel: minLevel, Limit: opts.Limit, Snapshots: snapshots}, nil
 }
 
 func Inspect(r io.Reader, opts InspectOptions) (Snapshot, error) {
@@ -75,6 +203,17 @@ func Inspect(r io.Reader, opts InspectOptions) (Snapshot, error) {
 		}, nil
 	}
 
+	return snapshotFor(opts.IP, selected), nil
+}
+
+func snapshotFor(ip string, selected []evidence.Evidence) Snapshot {
+	sort.Slice(selected, func(i, j int) bool {
+		if selected[i].Score == selected[j].Score {
+			return selected[i].EvidenceID < selected[j].EvidenceID
+		}
+		return selected[i].Score > selected[j].Score
+	})
+
 	score := combinedScore(selected)
 	level := levelFor(score, selected)
 	updatedAt := latestCreatedAt(selected)
@@ -84,7 +223,7 @@ func Inspect(r io.Reader, opts InspectOptions) (Snapshot, error) {
 	}
 
 	return Snapshot{
-		IP:                opts.IP,
+		IP:                ip,
 		Score:             score,
 		Level:             level,
 		Confidence:        combinedConfidence(selected),
@@ -93,7 +232,7 @@ func Inspect(r io.Reader, opts InspectOptions) (Snapshot, error) {
 		Summary:           summaryFor(selected, level),
 		RecommendedAction: actionFor(level),
 		UpdatedAt:         updatedAt,
-	}, nil
+	}
 }
 
 func readEvidence(r io.Reader) ([]evidence.Evidence, error) {
@@ -102,10 +241,22 @@ func readEvidence(r io.Reader) ([]evidence.Evidence, error) {
 	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("read evidence input: %w", err)
 	}
-	if result.Evidence != nil {
-		return result.Evidence, nil
+	if result.Evidence == nil {
+		return []evidence.Evidence{}, nil
 	}
-	return nil, fmt.Errorf("evidence input does not contain evidence array")
+	return result.Evidence, nil
+}
+
+func readBatch(r io.Reader) (BatchResult, error) {
+	var result BatchResult
+	decoder := json.NewDecoder(r)
+	if err := decoder.Decode(&result); err != nil {
+		return BatchResult{}, fmt.Errorf("read risk batch input: %w", err)
+	}
+	if result.Snapshots == nil {
+		return BatchResult{Snapshots: []Snapshot{}}, nil
+	}
+	return result, nil
 }
 
 func combinedScore(items []evidence.Evidence) int {
@@ -236,6 +387,21 @@ func strongEvidenceTypeCount(items []evidence.Evidence) int {
 	return len(types)
 }
 
+func levelRank(level string) (int, bool) {
+	switch level {
+	case "normal":
+		return 0, true
+	case "suspicious":
+		return 1, true
+	case "high":
+		return 2, true
+	case "confirmed":
+		return 3, true
+	default:
+		return 0, false
+	}
+}
+
 func openInput(path string) (io.Reader, func() error, error) {
 	if path == "-" {
 		return os.Stdin, func() error { return nil }, nil
@@ -245,4 +411,22 @@ func openInput(path string) (io.Reader, func() error, error) {
 		return nil, nil, fmt.Errorf("open input: %w", err)
 	}
 	return file, file.Close, nil
+}
+
+func openOutput(path string) (io.Writer, func() error, error) {
+	if path == "-" || path == "" {
+		return os.Stdout, func() error { return nil }, nil
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open output: %w", err)
+	}
+	return file, file.Close, nil
+}
+
+func writeJSON(w io.Writer, value any) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
 }
