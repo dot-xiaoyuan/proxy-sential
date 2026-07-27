@@ -57,7 +57,7 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 	body.WriteByte('\n')
 	for _, event := range events {
 		row := map[string]any{
-			"timestamp":         event.Timestamp,
+			"timestamp":         clickHouseTimestamp(event.Timestamp),
 			"event_id":          event.EventID,
 			"schema_version":    event.SchemaVersion,
 			"source":            event.Source,
@@ -93,7 +93,7 @@ func (s *ClickHouseStore) WriteIngestDiagnostics(ctx context.Context, diagnostic
 	body.WriteByte('\n')
 	for _, diagnostic := range diagnostics {
 		row := map[string]any{
-			"timestamp":         diagnostic.Timestamp,
+			"timestamp":         clickHouseTimestamp(diagnostic.Timestamp),
 			"diagnostic_id":     diagnostic.DiagnosticID,
 			"schema_version":    diagnostic.SchemaVersion,
 			"sensor_id":         diagnostic.SensorID,
@@ -372,6 +372,14 @@ func writeJSONLine(w io.Writer, value any) error {
 
 func chQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "\\'") + "'"
+}
+
+func clickHouseTimestamp(raw string) string {
+	timestamp, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return raw
+	}
+	return timestamp.Format("2006-01-02 15:04:05.000000")
 }
 
 func jsonString(value any) string {
