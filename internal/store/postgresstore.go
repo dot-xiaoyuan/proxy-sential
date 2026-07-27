@@ -139,7 +139,7 @@ func (s *PostgresStore) ListRisks(ctx context.Context, query Query) (RiskPage, e
 	}
 	args = append(args, limit, query.Cursor)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT ip::text, score, level, confidence, window, evidence_ids, summary, recommended_action, updated_at
+SELECT ip::text, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
 FROM risk_snapshots`+where+`
 ORDER BY
   CASE level WHEN 'confirmed' THEN 3 WHEN 'high' THEN 2 WHEN 'suspicious' THEN 1 ELSE 0 END DESC,
@@ -164,7 +164,7 @@ LIMIT $`+strconvArg(len(args)-1)+` OFFSET $`+strconvArg(len(args)), args...)
 
 func (s *PostgresStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT ip::text, score, level, confidence, window, evidence_ids, summary, recommended_action, updated_at
+SELECT ip::text, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
 FROM risk_snapshots WHERE ip = $1::inet`, ip)
 	if err != nil {
 		return risk.Snapshot{}, err
@@ -182,7 +182,7 @@ FROM risk_snapshots WHERE ip = $1::inet`, ip)
 
 func (s *PostgresStore) GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT evidence_id, ip::text, type, window, score, confidence, severity, reason, samples, created_at
+SELECT evidence_id, ip::text, type, "window", score, confidence, severity, reason, samples, created_at
 FROM evidence WHERE ip = $1::inet ORDER BY created_at DESC, evidence_id ASC`, ip)
 	if err != nil {
 		return nil, err
@@ -315,7 +315,7 @@ func (s *PostgresStore) WriteEvidence(ctx context.Context, items []evidence.Evid
 	for _, item := range items {
 		samples, _ := json.Marshal(item.Samples)
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO evidence(evidence_id, ip, type, window, score, confidence, severity, reason, samples, created_at)
+INSERT INTO evidence(evidence_id, ip, type, "window", score, confidence, severity, reason, samples, created_at)
 VALUES($1,$2::inet,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT(evidence_id) DO UPDATE SET score = EXCLUDED.score, confidence = EXCLUDED.confidence, severity = EXCLUDED.severity, reason = EXCLUDED.reason, samples = EXCLUDED.samples`,
 			item.EvidenceID, item.IP, item.Type, item.Window, item.Score, item.Confidence, item.Severity, item.Reason, samples, item.CreatedAt); err != nil {
@@ -338,9 +338,9 @@ func (s *PostgresStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk
 		evidenceIDs, _ := json.Marshal(snapshot.EvidenceIDs)
 		payload, _ := json.Marshal(snapshot)
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO risk_snapshots(ip, score, level, confidence, window, evidence_ids, summary, recommended_action, updated_at)
+INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at)
 VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9)
-ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, window = EXCLUDED.window, evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at`,
+ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at`,
 			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt); err != nil {
 			return err
 		}
