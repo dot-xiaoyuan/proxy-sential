@@ -2,6 +2,7 @@ import { delay, http, HttpResponse } from 'msw'
 
 import type { CreateLabelRequest } from '../shared/api/types'
 import {
+  activityByIp,
   auditLogs,
   eventsByIp,
   evidenceByIp,
@@ -50,6 +51,26 @@ export const handlers = [
   http.get('/api/v1/ips/:ip/evidence', ({ params }) => {
     const ip = normalizeIp(String(params.ip))
     return HttpResponse.json({ evidence: evidenceByIp[ip] ?? [] })
+  }),
+  http.get('/api/v1/ips/:ip/activity', ({ params }) => {
+    const ip = normalizeIp(String(params.ip))
+    return HttpResponse.json(
+      activityByIp[ip] ?? {
+        ip,
+        window: 'latest-run',
+        event_count: 0,
+        event_type_counts: [],
+        protocol_counts: [],
+        top_domains: [],
+        top_http_hosts: [],
+        top_tls_sni: [],
+        top_user_agents: [],
+        top_tls_fingerprints: [],
+        top_dst_ports: [],
+        top_dst_ips: [],
+        recent_accesses: [],
+      },
+    )
   }),
   http.get('/api/v1/ips/:ip/events', ({ params }) => {
     const ip = normalizeIp(String(params.ip))

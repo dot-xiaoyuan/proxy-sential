@@ -84,6 +84,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ips/{ip}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIpActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ips/{ip}/events": {
         parameters: {
             query?: never;
@@ -355,6 +371,44 @@ export interface components {
             raw_ref?: {
                 [key: string]: unknown;
             };
+        };
+        ActivityCount: {
+            value: string;
+            count: number;
+            /** Format: date-time */
+            last_seen?: string;
+        };
+        ActivityAccess: {
+            /** Format: date-time */
+            timestamp: string;
+            event_id: string;
+            type: string;
+            target_kind: string;
+            target: string;
+            method?: string;
+            user_agent?: string;
+            dst_ip?: string;
+            dst_port?: number;
+            proto?: string;
+        };
+        IpActivityProfile: {
+            ip: string;
+            window: string;
+            event_count: number;
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+            event_type_counts: components["schemas"]["ActivityCount"][];
+            protocol_counts: components["schemas"]["ActivityCount"][];
+            top_domains: components["schemas"]["ActivityCount"][];
+            top_http_hosts: components["schemas"]["ActivityCount"][];
+            top_tls_sni: components["schemas"]["ActivityCount"][];
+            top_user_agents: components["schemas"]["ActivityCount"][];
+            top_tls_fingerprints: components["schemas"]["ActivityCount"][];
+            top_dst_ports: components["schemas"]["ActivityCount"][];
+            top_dst_ips: components["schemas"]["ActivityCount"][];
+            recent_accesses: components["schemas"]["ActivityAccess"][];
         };
         Collector: {
             /** @enum {string} */
@@ -654,6 +708,32 @@ export interface operations {
                     "application/json": {
                         evidence: components["schemas"]["Evidence"][];
                     };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getIpActivity: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                ip: components["parameters"]["IpPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Aggregated access and client feature profile for an IP. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IpActivityProfile"];
                 };
             };
             400: components["responses"]["BadRequest"];

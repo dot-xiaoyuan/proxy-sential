@@ -71,6 +71,10 @@ func (s *DBStore) GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evid
 	return s.pg.GetIPEvidence(ctx, ip)
 }
 
+func (s *DBStore) GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error) {
+	return s.ch.GetIPActivity(ctx, ip, limit)
+}
+
 func (s *DBStore) ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error) {
 	return s.ch.ListEventSamples(ctx, query)
 }

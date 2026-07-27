@@ -327,6 +327,13 @@ func (s *Server) handleIP(w http.ResponseWriter, r *http.Request, rest string) {
 			return
 		}
 		s.handleIPEvidence(w, r, ip)
+	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/activity"):
+		ip, err := pathIP(strings.TrimSuffix(rest, "/activity"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_ip", err.Error())
+			return
+		}
+		s.handleIPActivity(w, r, ip)
 	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/events"):
 		ip, err := pathIP(strings.TrimSuffix(rest, "/events"))
 		if err != nil {
@@ -359,6 +366,22 @@ func (s *Server) handleIPEvidence(w http.ResponseWriter, r *http.Request, ip str
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"evidence": items})
+}
+
+func (s *Server) handleIPActivity(w http.ResponseWriter, r *http.Request, ip string) {
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	profile, err := s.reader.GetIPActivity(ctx, ip, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_activity_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
 }
 
 func (s *Server) handleIPEvents(w http.ResponseWriter, r *http.Request, ip string) {

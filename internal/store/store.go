@@ -80,11 +80,49 @@ type AuditLog struct {
 	CreatedAt string
 }
 
+type ActivityProfile struct {
+	IP                 string           `json:"ip"`
+	Window             string           `json:"window"`
+	EventCount         int              `json:"event_count"`
+	FirstSeen          string           `json:"first_seen,omitempty"`
+	LastSeen           string           `json:"last_seen,omitempty"`
+	EventTypeCounts    []ActivityCount  `json:"event_type_counts"`
+	ProtocolCounts     []ActivityCount  `json:"protocol_counts"`
+	TopDomains         []ActivityCount  `json:"top_domains"`
+	TopHTTPHosts       []ActivityCount  `json:"top_http_hosts"`
+	TopTLSSNI          []ActivityCount  `json:"top_tls_sni"`
+	TopUserAgents      []ActivityCount  `json:"top_user_agents"`
+	TopTLSFingerprints []ActivityCount  `json:"top_tls_fingerprints"`
+	TopDstPorts        []ActivityCount  `json:"top_dst_ports"`
+	TopDstIPs          []ActivityCount  `json:"top_dst_ips"`
+	RecentAccesses     []ActivityAccess `json:"recent_accesses"`
+}
+
+type ActivityCount struct {
+	Value    string `json:"value"`
+	Count    int    `json:"count"`
+	LastSeen string `json:"last_seen,omitempty"`
+}
+
+type ActivityAccess struct {
+	Timestamp  string `json:"timestamp"`
+	EventID    string `json:"event_id"`
+	Type       string `json:"type"`
+	TargetKind string `json:"target_kind"`
+	Target     string `json:"target"`
+	Method     string `json:"method,omitempty"`
+	UserAgent  string `json:"user_agent,omitempty"`
+	DstIP      string `json:"dst_ip,omitempty"`
+	DstPort    int    `json:"dst_port,omitempty"`
+	Proto      string `json:"proto,omitempty"`
+}
+
 type Reader interface {
 	Overview(ctx context.Context) (Overview, error)
 	ListRisks(ctx context.Context, query Query) (RiskPage, error)
 	GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error)
 	GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error)
+	GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error)
 	ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error)
 	GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error)
 	ListRuns(ctx context.Context, limit int) ([]Run, error)

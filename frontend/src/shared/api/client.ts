@@ -6,6 +6,7 @@ import type {
   EventTypeCount,
   IngestDiagnostic,
   IngestStatus,
+  IpActivityProfile,
   Label,
   NormalizedEventSummary,
   Overview,
@@ -54,6 +55,8 @@ export const api = {
   ipRisk: (ip: string) => request<RiskSnapshot>(`/ips/${encodeURIComponent(ip)}/risk`),
   ipEvidence: (ip: string) =>
     request<{ evidence: Evidence[] }>(`/ips/${encodeURIComponent(ip)}/evidence`),
+  ipActivity: (ip: string, limit = 50) =>
+    request<IpActivityProfile>(`/ips/${encodeURIComponent(ip)}/activity${search({ limit })}`),
   ipEvents: (ip: string, limit = 50) =>
     request<{ events: NormalizedEventSummary[] }>(
       `/ips/${encodeURIComponent(ip)}/events${search({ limit })}`,

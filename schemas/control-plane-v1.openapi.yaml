@@ -113,6 +113,29 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /ips/{ip}/activity:
+    get:
+      operationId: getIpActivity
+      parameters:
+        - $ref: "#/components/parameters/IpPath"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Aggregated access and client feature profile for an IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IpActivityProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /ips/{ip}/events:
     get:
       operationId: getIpEvents
@@ -576,6 +599,111 @@ components:
         raw_ref:
           type: object
           additionalProperties: true
+    ActivityCount:
+      type: object
+      required: [value, count]
+      properties:
+        value:
+          type: string
+        count:
+          type: integer
+        last_seen:
+          type: string
+          format: date-time
+    ActivityAccess:
+      type: object
+      required: [timestamp, event_id, type, target_kind, target]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        event_id:
+          type: string
+        type:
+          type: string
+        target_kind:
+          type: string
+        target:
+          type: string
+        method:
+          type: string
+        user_agent:
+          type: string
+        dst_ip:
+          type: string
+        dst_port:
+          type: integer
+        proto:
+          type: string
+    IpActivityProfile:
+      type: object
+      required:
+        - ip
+        - window
+        - event_count
+        - event_type_counts
+        - protocol_counts
+        - top_domains
+        - top_http_hosts
+        - top_tls_sni
+        - top_user_agents
+        - top_tls_fingerprints
+        - top_dst_ports
+        - top_dst_ips
+        - recent_accesses
+      properties:
+        ip:
+          type: string
+        window:
+          type: string
+        event_count:
+          type: integer
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        event_type_counts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        protocol_counts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_http_hosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_tls_sni:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_user_agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_tls_fingerprints:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_dst_ports:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_dst_ips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        recent_accesses:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityAccess"
     Collector:
       type: object
       required: [kind]

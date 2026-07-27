@@ -12,6 +12,10 @@ test('filters risks and opens an IP detail page', async ({ page }) => {
 
 test('submits a review label on IP detail', async ({ page }) => {
   await page.goto('/ips/10.255.0.59')
+  await expect(page.getByRole('heading', { name: '访问画像' })).toBeVisible()
+  await expect(page.getByText('portal.example.test').first()).toBeVisible()
+  await expect(page.getByText('api.example.test').first()).toBeVisible()
+  await expect(page.getByText('Mozilla/5.0 (Windows NT 10.0; Win64; x64)').first()).toBeVisible()
   await page.getByLabel('复核结论').click()
   await page.getByTitle('确认代理').click()
   await page.getByLabel('复核原因').fill('证据链完整，确认共享上网')

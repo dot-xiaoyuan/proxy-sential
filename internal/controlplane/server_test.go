@@ -177,6 +177,50 @@ func TestIPDetailEndpointsSupportIPv6AndNormalFallback(t *testing.T) {
 		t.Fatalf("unexpected event limit result: %#v", eventsResponse.Events)
 	}
 
+	var activity struct {
+		IP         string `json:"ip"`
+		EventCount int    `json:"event_count"`
+		TopDomains []struct {
+			Value string `json:"value"`
+			Count int    `json:"count"`
+		} `json:"top_domains"`
+		TopHTTPHosts []struct {
+			Value string `json:"value"`
+			Count int    `json:"count"`
+		} `json:"top_http_hosts"`
+		TopUserAgents []struct {
+			Value string `json:"value"`
+			Count int    `json:"count"`
+		} `json:"top_user_agents"`
+		TopDstPorts []struct {
+			Value string `json:"value"`
+			Count int    `json:"count"`
+		} `json:"top_dst_ports"`
+		RecentAccesses []struct {
+			TargetKind string `json:"target_kind"`
+			Target     string `json:"target"`
+		} `json:"recent_accesses"`
+	}
+	getJSON(t, server, "/api/v1/ips/"+escaped+"/activity?limit=2", http.StatusOK, &activity)
+	if activity.IP != ipv6 || activity.EventCount != 2 {
+		t.Fatalf("unexpected activity summary: %#v", activity)
+	}
+	if len(activity.TopDomains) == 0 || activity.TopDomains[0].Value != "example.test" {
+		t.Fatalf("expected top domain example.test, got %#v", activity.TopDomains)
+	}
+	if len(activity.TopHTTPHosts) == 0 || activity.TopHTTPHosts[0].Value != "example.test" {
+		t.Fatalf("expected http host example.test, got %#v", activity.TopHTTPHosts)
+	}
+	if len(activity.TopUserAgents) == 0 || activity.TopUserAgents[0].Value != "test-agent" {
+		t.Fatalf("expected user agent, got %#v", activity.TopUserAgents)
+	}
+	if len(activity.TopDstPorts) == 0 || activity.TopDstPorts[0].Value != "80" {
+		t.Fatalf("expected dst port 80, got %#v", activity.TopDstPorts)
+	}
+	if len(activity.RecentAccesses) != 2 || activity.RecentAccesses[0].Target == "" {
+		t.Fatalf("unexpected recent accesses: %#v", activity.RecentAccesses)
+	}
+
 	getJSON(t, server, "/api/v1/ips/192.168.0.250/risk", http.StatusOK, &snapshot)
 	if snapshot.IP != "192.168.0.250" || snapshot.Level != "normal" || len(snapshot.EvidenceIDs) != 0 {
 		t.Fatalf("unexpected normal fallback: %#v", snapshot)
@@ -343,7 +387,7 @@ func normalizedEvent(id, ip, timestamp string) normalized.Event {
 		Observer:      map[string]any{"sensor_id": "office-30"},
 		Subject:       map[string]any{"ip": ip},
 		Flow:          map[string]any{"src_ip": ip, "dst_ip": "198.51.100.1", "dst_port": 80},
-		Payload:       map[string]any{"host": "example.test"},
+		Payload:       map[string]any{"host": "example.test", "url": "/index.html", "user_agent": "test-agent"},
 		Confidence:    1,
 		RawRef:        map[string]any{"backend": "suricata", "line_offset": 1},
 	}

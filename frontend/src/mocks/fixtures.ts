@@ -4,6 +4,7 @@ import type {
   EventTypeCount,
   IngestDiagnostic,
   IngestStatus,
+  IpActivityProfile,
   NormalizedEventSummary,
   Overview,
   RiskSnapshot,
@@ -203,6 +204,83 @@ export const eventsByIp: Record<string, NormalizedEventSummary[]> = {
   '10.255.0.98': [],
   '2001:db8::37': [],
   '10.255.0.15': [],
+}
+
+export const activityByIp: Record<string, IpActivityProfile> = {
+  '10.255.0.59': {
+    ip: '10.255.0.59',
+    window: 'latest-run',
+    event_count: 128,
+    first_seen: '2026-07-24T05:10:00Z',
+    last_seen: '2026-07-24T05:19:02Z',
+    event_type_counts: [
+      { value: 'dns', count: 48 },
+      { value: 'tls', count: 45 },
+      { value: 'http', count: 22 },
+      { value: 'flow', count: 13 },
+    ],
+    protocol_counts: [
+      { value: 'tcp', count: 80 },
+      { value: 'udp', count: 48 },
+    ],
+    top_domains: [
+      { value: 'api.example.test', count: 18, last_seen: '2026-07-24T05:19:02Z' },
+      { value: 'portal.example.test', count: 11, last_seen: '2026-07-24T05:18:52Z' },
+      { value: 'updates.example.test', count: 9, last_seen: '2026-07-24T05:17:41Z' },
+      { value: 'push.example.test', count: 7, last_seen: '2026-07-24T05:16:12Z' },
+    ],
+    top_http_hosts: [
+      { value: 'portal.example.test', count: 11, last_seen: '2026-07-24T05:18:52Z' },
+      { value: 'cdn.example.test', count: 6, last_seen: '2026-07-24T05:15:33Z' },
+    ],
+    top_tls_sni: [
+      { value: 'api.example.test', count: 18, last_seen: '2026-07-24T05:19:02Z' },
+      { value: 'push.example.test', count: 7, last_seen: '2026-07-24T05:16:12Z' },
+    ],
+    top_user_agents: [
+      { value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', count: 8, last_seen: '2026-07-24T05:18:52Z' },
+      { value: 'okhttp/4.12.0', count: 5, last_seen: '2026-07-24T05:17:12Z' },
+      { value: 'Dalvik/2.1.0 (Linux; U; Android 14)', count: 4, last_seen: '2026-07-24T05:16:01Z' },
+    ],
+    top_tls_fingerprints: [
+      { value: 'ja3:android-okhttp', count: 12, last_seen: '2026-07-24T05:19:02Z' },
+      { value: 'ja4:android-okhttp', count: 12, last_seen: '2026-07-24T05:19:02Z' },
+      { value: 'ja3:chrome-desktop', count: 10, last_seen: '2026-07-24T05:18:20Z' },
+    ],
+    top_dst_ports: [
+      { value: '443', count: 62, last_seen: '2026-07-24T05:19:02Z' },
+      { value: '53', count: 48, last_seen: '2026-07-24T05:18:58Z' },
+      { value: '80', count: 18, last_seen: '2026-07-24T05:18:52Z' },
+    ],
+    top_dst_ips: [
+      { value: '198.51.100.44', count: 18, last_seen: '2026-07-24T05:19:02Z' },
+      { value: '198.51.100.43', count: 11, last_seen: '2026-07-24T05:18:52Z' },
+    ],
+    recent_accesses: [
+      {
+        timestamp: '2026-07-24T05:19:02Z',
+        event_id: 'event-tls-59-b',
+        type: 'tls',
+        target_kind: 'tls_sni',
+        target: 'api.example.test',
+        dst_ip: '198.51.100.44',
+        dst_port: 443,
+        proto: 'tcp',
+      },
+      {
+        timestamp: '2026-07-24T05:18:52Z',
+        event_id: 'event-http-59-a',
+        type: 'http',
+        target_kind: 'http_host',
+        target: 'portal.example.test',
+        method: 'GET',
+        user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        dst_ip: '198.51.100.43',
+        dst_port: 80,
+        proto: 'tcp',
+      },
+    ],
+  },
 }
 
 export const shadowRuns: ShadowRun[] = [

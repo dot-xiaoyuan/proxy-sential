@@ -16,7 +16,7 @@ Proxy Sentinel 前端第一阶段是检测运营台，不是采集调试器或�
 
 - `/overview`：风险等级分布、待复核数量、最近影子运行、Top evidence。
 - `/risks`：风险 IP 列表，筛选条件进入 URL query。
-- `/ips/:ip`：IP 详情，展示 RiskSnapshot、Evidence、标准事件样本和标注表单。
+- `/ips/:ip`：IP 详情，展示 RiskSnapshot、访问画像、Evidence、标准事件样本和标注表单。
 - `/review`：人工复核队列，面向 reviewer/operator。
 - `/shadow-runs`：影子模式运行历史。
 - `/settings/rules`：规则 reload 占位，第一阶段只允许影子模式。
@@ -37,6 +37,7 @@ Proxy Sentinel 前端第一阶段是检测运营台，不是采集调试器或�
 - `GET /api/v1/risks`
 - `GET /api/v1/ips/{ip}/risk`
 - `GET /api/v1/ips/{ip}/evidence`
+- `GET /api/v1/ips/{ip}/activity`
 - `GET /api/v1/ips/{ip}/events`
 - `GET /api/v1/ingest/status`
 - `GET /api/v1/ingest/diagnostics`
@@ -81,6 +82,8 @@ proxy-sentinel control-plane serve \
 ## 设计约束
 
 - 风险分必须始终和证据 ID、解释文本一起展示。
+- IP 详情页必须优先展示标准事件聚合后的访问画像，包括 DNS query、HTTP Host、
+  TLS SNI、User-Agent、JA3/JA4、目的 IP 和目的端口；不得直接展示 Suricata 原始结构。
 - `domain_diversity`、`port_distribution` 这类弱证据不能在 UI 上被包装成确认代理。
 - 表格、详情、复核表单要优先支持中文运营人员扫描。
 - IPv6、长 User-Agent、长 evidence reason 必须换行，不能撑破布局。

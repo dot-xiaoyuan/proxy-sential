@@ -135,6 +135,14 @@ FORMAT JSONEachRow`, where, limit)
 	return decodeEventRows(data)
 }
 
+func (s *ClickHouseStore) GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error) {
+	events, err := s.ListEventSamples(ctx, Query{Q: ip, Limit: defaultActivityEventLimit})
+	if err != nil {
+		return ActivityProfile{}, err
+	}
+	return BuildActivityProfile(ip, events, limit), nil
+}
+
 func (s *ClickHouseStore) GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error) {
 	sql := fmt.Sprintf(`
 SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence

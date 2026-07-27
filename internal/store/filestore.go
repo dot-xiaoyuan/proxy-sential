@@ -211,6 +211,14 @@ func (s *FileStore) GetIPEvidence(ctx context.Context, ip string) ([]evidence.Ev
 	return items, nil
 }
 
+func (s *FileStore) GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error) {
+	events, err := s.ListEventSamples(ctx, Query{Q: ip, Limit: defaultActivityEventLimit})
+	if err != nil {
+		return ActivityProfile{}, err
+	}
+	return BuildActivityProfile(ip, events, limit), nil
+}
+
 func (s *FileStore) ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error) {
 	latest, ok, err := s.latestRun(ctx)
 	if err != nil {

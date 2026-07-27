@@ -9,6 +9,7 @@ export const queryKeys = {
   risks: (query: RiskQuery) => ['risks', query] as const,
   ipRisk: (ip: string) => ['ip-risk', ip] as const,
   ipEvidence: (ip: string) => ['ip-evidence', ip] as const,
+  ipActivity: (ip: string) => ['ip-activity', ip] as const,
   ipEvents: (ip: string) => ['ip-events', ip] as const,
   events: (query: EventQuery) => ['events', query] as const,
   ingestStatus: ['ingest-status'] as const,
@@ -40,6 +41,14 @@ export function useIpEvidence(ip: string) {
   return useQuery({
     queryKey: queryKeys.ipEvidence(ip),
     queryFn: () => api.ipEvidence(ip),
+    enabled: !!ip,
+  })
+}
+
+export function useIpActivity(ip: string) {
+  return useQuery({
+    queryKey: queryKeys.ipActivity(ip),
+    queryFn: () => api.ipActivity(ip),
     enabled: !!ip,
   })
 }
