@@ -194,6 +194,7 @@ systemctl daemon-reload
 systemctl enable --now proxy-sentinel-suricata.service
 systemctl enable --now proxy-sentinel-shadow.timer
 systemctl enable --now proxy-sentinel-control-plane.service
+systemctl restart proxy-sentinel-control-plane.service
 systemctl start proxy-sentinel-shadow.service
 systemctl --no-pager status proxy-sentinel-suricata.service | sed -n '1,80p'
 systemctl --no-pager status proxy-sentinel-shadow.timer | sed -n '1,80p'
