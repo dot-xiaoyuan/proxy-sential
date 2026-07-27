@@ -139,7 +139,7 @@ func (s *PostgresStore) ListRisks(ctx context.Context, query Query) (RiskPage, e
 	}
 	args = append(args, limit, query.Cursor)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT ip::text, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
+SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
 FROM risk_snapshots`+where+`
 ORDER BY
   CASE level WHEN 'confirmed' THEN 3 WHEN 'high' THEN 2 WHEN 'suspicious' THEN 1 ELSE 0 END DESC,
@@ -164,7 +164,7 @@ LIMIT $`+strconvArg(len(args)-1)+` OFFSET $`+strconvArg(len(args)), args...)
 
 func (s *PostgresStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT ip::text, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
+SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
 FROM risk_snapshots WHERE ip = $1::inet`, ip)
 	if err != nil {
 		return risk.Snapshot{}, err
@@ -182,7 +182,7 @@ FROM risk_snapshots WHERE ip = $1::inet`, ip)
 
 func (s *PostgresStore) GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT evidence_id, ip::text, type, "window", score, confidence, severity, reason, samples, created_at
+SELECT evidence_id, host(ip), type, "window", score, confidence, severity, reason, samples, created_at
 FROM evidence WHERE ip = $1::inet ORDER BY created_at DESC, evidence_id ASC`, ip)
 	if err != nil {
 		return nil, err
@@ -380,7 +380,7 @@ func riskWhere(query Query) (string, []any, error) {
 	}
 	if query.Q != "" {
 		args = append(args, "%"+strings.ToLower(query.Q)+"%")
-		clauses = append(clauses, "(lower(ip::text) LIKE $"+strconvArg(len(args))+" OR lower(summary) LIKE $"+strconvArg(len(args))+")")
+		clauses = append(clauses, "(lower(host(ip)) LIKE $"+strconvArg(len(args))+" OR lower(summary) LIKE $"+strconvArg(len(args))+")")
 	}
 	if query.From != "" {
 		if _, err := optionalTime(query.From); err != nil {
