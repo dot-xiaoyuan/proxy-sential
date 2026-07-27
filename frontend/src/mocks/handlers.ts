@@ -3,6 +3,7 @@ import { delay, http, HttpResponse } from 'msw'
 import type { CreateLabelRequest } from '../shared/api/types'
 import {
   activityByIp,
+  activityOverview,
   auditLogs,
   eventsByIp,
   evidenceByIp,
@@ -27,6 +28,11 @@ export const handlers = [
   http.get('/api/v1/overview', async () => {
     await delay(160)
     return HttpResponse.json(overview)
+  }),
+  http.get('/api/v1/activity/overview', ({ request }) => {
+    const url = new URL(request.url)
+    const windowValue = url.searchParams.get('window') ?? '1h'
+    return HttpResponse.json({ ...activityOverview, window: windowValue })
   }),
   http.get('/api/v1/risks', ({ request }) => {
     const url = new URL(request.url)

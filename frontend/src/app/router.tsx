@@ -2,6 +2,7 @@ import { Navigate, createBrowserRouter } from 'react-router-dom'
 
 import { AppShell } from './AppShell'
 import {
+  ActivityRoute,
   AuditRoute,
   IngestRoute,
   IpDetailsRoute,
@@ -19,6 +20,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate replace to="/overview" /> },
       { path: 'overview', element: <OverviewRoute /> },
+      { path: 'activity', element: <ActivityRoute /> },
       { path: 'ingest', element: <IngestRoute /> },
       { path: 'risks', element: <RisksRoute /> },
       { path: 'ips/:ip', element: <IpDetailsRoute /> },

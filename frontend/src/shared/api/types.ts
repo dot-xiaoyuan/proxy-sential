@@ -12,6 +12,8 @@ export type NormalizedEventSummary = components['schemas']['NormalizedEventSumma
 export type ActivityCount = components['schemas']['ActivityCount']
 export type ActivityAccess = components['schemas']['ActivityAccess']
 export type IpActivityProfile = components['schemas']['IpActivityProfile']
+export type ActivityIpSummary = components['schemas']['ActivityIpSummary']
+export type ActivityOverview = components['schemas']['ActivityOverview']
 export type Collector = components['schemas']['Collector']
 export type IngestDiagnostic = components['schemas']['IngestDiagnostic']
 export type IngestStatus = components['schemas']['IngestStatus']
@@ -38,5 +40,11 @@ export type EventQuery = {
   q?: string
   type?: string
   sensor_id?: string
+  limit?: number
+}
+
+export type ActivityOverviewQuery = {
+  sensor_id?: string
+  window?: '10m' | '1h' | '24h'
   limit?: number
 }

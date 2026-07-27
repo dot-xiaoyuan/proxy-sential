@@ -98,6 +98,43 @@ type ActivityProfile struct {
 	RecentAccesses     []ActivityAccess `json:"recent_accesses"`
 }
 
+type ActivityQuery struct {
+	SensorID string
+	Window   string
+	Limit    int
+}
+
+type ActivityOverview struct {
+	SensorID           string              `json:"sensor_id"`
+	Window             string              `json:"window"`
+	EventCount         int                 `json:"event_count"`
+	ActiveIPCount      int                 `json:"active_ip_count"`
+	AccessObjectCount  int                 `json:"access_object_count"`
+	ActiveRiskIPCount  int                 `json:"active_risk_ip_count"`
+	FirstSeen          string              `json:"first_seen,omitempty"`
+	LastSeen           string              `json:"last_seen,omitempty"`
+	EventTypeCounts    []ActivityCount     `json:"event_type_counts"`
+	ProtocolCounts     []ActivityCount     `json:"protocol_counts"`
+	TopDomains         []ActivityCount     `json:"top_domains"`
+	TopHTTPHosts       []ActivityCount     `json:"top_http_hosts"`
+	TopTLSSNI          []ActivityCount     `json:"top_tls_sni"`
+	TopUserAgents      []ActivityCount     `json:"top_user_agents"`
+	TopTLSFingerprints []ActivityCount     `json:"top_tls_fingerprints"`
+	TopDstPorts        []ActivityCount     `json:"top_dst_ports"`
+	TopDstIPs          []ActivityCount     `json:"top_dst_ips"`
+	TopSourceIPs       []ActivityCount     `json:"top_source_ips"`
+	TopActiveRiskIPs   []ActivityIPSummary `json:"top_active_risk_ips"`
+}
+
+type ActivityIPSummary struct {
+	IP         string          `json:"ip"`
+	EventCount int             `json:"event_count"`
+	RiskLevel  string          `json:"risk_level"`
+	Score      int             `json:"score"`
+	TopDomains []ActivityCount `json:"top_domains"`
+	LastSeen   string          `json:"last_seen,omitempty"`
+}
+
 type ActivityCount struct {
 	Value    string `json:"value"`
 	Count    int    `json:"count"`
@@ -123,6 +160,7 @@ type Reader interface {
 	GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error)
 	GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error)
 	GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error)
+	GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error)
 	ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error)
 	GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error)
 	ListRuns(ctx context.Context, limit int) ([]Run, error)

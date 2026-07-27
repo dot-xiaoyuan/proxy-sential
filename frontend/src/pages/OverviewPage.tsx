@@ -1,14 +1,16 @@
+import { Link } from 'react-router-dom'
 import { Alert, Card, Col, Row, Skeleton, Space, Statistic, Typography } from 'antd'
 
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { riskLevelLabel } from '../entities/risk/riskMeta'
-import { useOverview } from '../shared/api/queries'
+import { useActivityOverview, useOverview } from '../shared/api/queries'
 import type { RiskLevel } from '../shared/api/types'
 
 const levelOrder: RiskLevel[] = ['confirmed', 'high', 'suspicious', 'normal']
 
 export function OverviewPage() {
   const overview = useOverview()
+  const activity = useActivityOverview({ window: '1h' })
 
   if (overview.isLoading) {
     return <Skeleton active />
@@ -83,6 +85,25 @@ export function OverviewPage() {
             ))}
           </Space>
         </div>
+      </section>
+
+      <section className="surface">
+        <Row align="middle" justify="space-between" gutter={[16, 16]}>
+          <Col>
+            <Typography.Title level={4}>访问态势</Typography.Title>
+            <Typography.Text type="secondary">
+              当前 sensor 最近 1 小时观测到 {activity.data?.active_ip_count ?? 0} 个活跃 IP、
+              {activity.data?.access_object_count ?? 0} 个访问对象。
+            </Typography.Text>
+          </Col>
+          <Col>
+            <Space wrap>
+              <Statistic title="标准事件" value={activity.data?.event_count ?? 0} />
+              <Statistic title="活跃风险 IP" value={activity.data?.active_risk_ip_count ?? 0} />
+              <Link to="/activity">查看访问态势</Link>
+            </Space>
+          </Col>
+        </Row>
       </section>
 
       <section className="surface">

@@ -2,6 +2,9 @@ import { lazy, Suspense, type ReactNode } from 'react'
 import { Spin } from 'antd'
 
 const AuditPage = lazy(() => import('../pages/AuditPage').then((module) => ({ default: module.AuditPage })))
+const ActivityPage = lazy(() =>
+  import('../pages/ActivityPage').then((module) => ({ default: module.ActivityPage })),
+)
 const IpDetailsPage = lazy(() =>
   import('../pages/IpDetailsPage').then((module) => ({ default: module.IpDetailsPage })),
 )
@@ -34,6 +37,14 @@ export function AuditRoute() {
   return (
     <RouteSuspense>
       <AuditPage />
+    </RouteSuspense>
+  )
+}
+
+export function ActivityRoute() {
+  return (
+    <RouteSuspense>
+      <ActivityPage />
     </RouteSuspense>
   )
 }

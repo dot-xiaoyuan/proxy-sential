@@ -30,6 +30,38 @@ paths:
                 $ref: "#/components/schemas/Overview"
         "500":
           $ref: "#/components/responses/InternalError"
+  /activity/overview:
+    get:
+      operationId: getActivityOverview
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100000
+            default: 100000
+      responses:
+        "200":
+          description: Aggregated access posture and client feature overview for the observed domain.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityOverview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /risks:
     get:
       operationId: listRisks
@@ -610,6 +642,109 @@ components:
         last_seen:
           type: string
           format: date-time
+    ActivityIpSummary:
+      type: object
+      required: [ip, event_count, risk_level, score, top_domains]
+      properties:
+        ip:
+          type: string
+        event_count:
+          type: integer
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        score:
+          type: integer
+        top_domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        last_seen:
+          type: string
+          format: date-time
+    ActivityOverview:
+      type: object
+      required:
+        - sensor_id
+        - window
+        - event_count
+        - active_ip_count
+        - access_object_count
+        - active_risk_ip_count
+        - event_type_counts
+        - protocol_counts
+        - top_domains
+        - top_http_hosts
+        - top_tls_sni
+        - top_user_agents
+        - top_tls_fingerprints
+        - top_dst_ports
+        - top_dst_ips
+        - top_source_ips
+        - top_active_risk_ips
+      properties:
+        sensor_id:
+          type: string
+        window:
+          type: string
+          enum: [10m, 1h, 24h, latest-run]
+        event_count:
+          type: integer
+        active_ip_count:
+          type: integer
+        access_object_count:
+          type: integer
+        active_risk_ip_count:
+          type: integer
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        event_type_counts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        protocol_counts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_http_hosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_tls_sni:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_user_agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_tls_fingerprints:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_dst_ports:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_dst_ips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_source_ips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        top_active_risk_ips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityIpSummary"
     ActivityAccess:
       type: object
       required: [timestamp, event_id, type, target_kind, target]

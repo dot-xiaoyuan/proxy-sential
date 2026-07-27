@@ -4,6 +4,7 @@ import type {
   EventTypeCount,
   IngestDiagnostic,
   IngestStatus,
+  ActivityOverview,
   IpActivityProfile,
   NormalizedEventSummary,
   Overview,
@@ -281,6 +282,95 @@ export const activityByIp: Record<string, IpActivityProfile> = {
       },
     ],
   },
+}
+
+export const activityOverview: ActivityOverview = {
+  sensor_id: 'office-30',
+  window: '1h',
+  event_count: 3820,
+  active_ip_count: 146,
+  access_object_count: 287,
+  active_risk_ip_count: 3,
+  first_seen: '2026-07-24T04:20:00Z',
+  last_seen: '2026-07-24T05:19:15Z',
+  event_type_counts: [
+    { value: 'dns', count: 1580, last_seen: '2026-07-24T05:19:10Z' },
+    { value: 'flow', count: 1140, last_seen: '2026-07-24T05:19:15Z' },
+    { value: 'tls', count: 830, last_seen: '2026-07-24T05:19:02Z' },
+    { value: 'http', count: 270, last_seen: '2026-07-24T05:18:52Z' },
+  ],
+  protocol_counts: [
+    { value: 'tcp', count: 2240, last_seen: '2026-07-24T05:19:15Z' },
+    { value: 'udp', count: 1580, last_seen: '2026-07-24T05:19:10Z' },
+  ],
+  top_domains: [
+    { value: 'api.example.test', count: 182, last_seen: '2026-07-24T05:19:02Z' },
+    { value: 'updates.example.test', count: 143, last_seen: '2026-07-24T05:18:41Z' },
+    { value: 'cdn.example.test', count: 118, last_seen: '2026-07-24T05:18:12Z' },
+    { value: 'push.example.test', count: 91, last_seen: '2026-07-24T05:16:12Z' },
+  ],
+  top_http_hosts: [
+    { value: 'portal.example.test', count: 64, last_seen: '2026-07-24T05:18:52Z' },
+    { value: 'cdn.example.test', count: 48, last_seen: '2026-07-24T05:15:33Z' },
+  ],
+  top_tls_sni: [
+    { value: 'api.example.test', count: 132, last_seen: '2026-07-24T05:19:02Z' },
+    { value: 'push.example.test', count: 91, last_seen: '2026-07-24T05:16:12Z' },
+  ],
+  top_user_agents: [
+    { value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', count: 58, last_seen: '2026-07-24T05:18:52Z' },
+    { value: 'okhttp/4.12.0', count: 44, last_seen: '2026-07-24T05:17:12Z' },
+    { value: 'Dalvik/2.1.0 (Linux; U; Android 14)', count: 31, last_seen: '2026-07-24T05:16:01Z' },
+  ],
+  top_tls_fingerprints: [
+    { value: 'ja3:chrome-desktop', count: 106, last_seen: '2026-07-24T05:18:20Z' },
+    { value: 'ja3:android-okhttp', count: 82, last_seen: '2026-07-24T05:19:02Z' },
+    { value: 'ja4:android-okhttp', count: 82, last_seen: '2026-07-24T05:19:02Z' },
+  ],
+  top_dst_ports: [
+    { value: '443', count: 1720, last_seen: '2026-07-24T05:19:15Z' },
+    { value: '53', count: 1580, last_seen: '2026-07-24T05:19:10Z' },
+    { value: '80', count: 270, last_seen: '2026-07-24T05:18:52Z' },
+    { value: '5228', count: 92, last_seen: '2026-07-24T05:16:12Z' },
+  ],
+  top_dst_ips: [
+    { value: '198.51.100.44', count: 182, last_seen: '2026-07-24T05:19:02Z' },
+    { value: '198.51.100.43', count: 111, last_seen: '2026-07-24T05:18:52Z' },
+  ],
+  top_source_ips: [
+    { value: '10.255.0.59', count: 128, last_seen: '2026-07-24T05:19:02Z' },
+    { value: '10.255.0.98', count: 94, last_seen: '2026-07-24T05:18:44Z' },
+    { value: '2001:db8::37', count: 76, last_seen: '2026-07-24T05:17:31Z' },
+  ],
+  top_active_risk_ips: [
+    {
+      ip: '10.255.0.59',
+      risk_level: 'confirmed',
+      score: 88,
+      event_count: 128,
+      top_domains: [
+        { value: 'api.example.test', count: 18, last_seen: '2026-07-24T05:19:02Z' },
+        { value: 'portal.example.test', count: 11, last_seen: '2026-07-24T05:18:52Z' },
+      ],
+      last_seen: '2026-07-24T05:19:02Z',
+    },
+    {
+      ip: '10.255.0.98',
+      risk_level: 'high',
+      score: 71,
+      event_count: 94,
+      top_domains: [{ value: 'updates.example.test', count: 14, last_seen: '2026-07-24T05:18:44Z' }],
+      last_seen: '2026-07-24T05:18:44Z',
+    },
+    {
+      ip: '2001:db8::37',
+      risk_level: 'suspicious',
+      score: 45,
+      event_count: 76,
+      top_domains: [{ value: 'game.example.test', count: 9, last_seen: '2026-07-24T05:17:31Z' }],
+      last_seen: '2026-07-24T05:17:31Z',
+    },
+  ],
 }
 
 export const shadowRuns: ShadowRun[] = [

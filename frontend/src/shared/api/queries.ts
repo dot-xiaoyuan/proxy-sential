@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from './client'
-import type { CreateLabelRequest, EventQuery, RiskQuery } from './types'
+import type { ActivityOverviewQuery, CreateLabelRequest, EventQuery, RiskQuery } from './types'
 
 export const queryKeys = {
   session: ['session'] as const,
   overview: ['overview'] as const,
+  activityOverview: (query: ActivityOverviewQuery) => ['activity-overview', query] as const,
   risks: (query: RiskQuery) => ['risks', query] as const,
   ipRisk: (ip: string) => ['ip-risk', ip] as const,
   ipEvidence: (ip: string) => ['ip-evidence', ip] as const,
@@ -27,6 +28,13 @@ export function useSession() {
 
 export function useOverview() {
   return useQuery({ queryKey: queryKeys.overview, queryFn: api.overview })
+}
+
+export function useActivityOverview(query: ActivityOverviewQuery) {
+  return useQuery({
+    queryKey: queryKeys.activityOverview(query),
+    queryFn: () => api.activityOverview(query),
+  })
 }
 
 export function useRisks(query: RiskQuery) {

@@ -75,6 +75,25 @@ func (s *DBStore) GetIPActivity(ctx context.Context, ip string, limit int) (Acti
 	return s.ch.GetIPActivity(ctx, ip, limit)
 }
 
+func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error) {
+	window, duration, err := NormalizeActivityWindow(query.Window)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.pg.sensorID
+	}
+	events, err := s.ch.ListEventsForActivityOverview(ctx, query.SensorID, duration, query.Limit)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	risks, err := s.pg.RiskSnapshotMap(ctx)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	return BuildActivityOverview(query.SensorID, window, events, risks), nil
+}
+
 func (s *DBStore) ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error) {
 	return s.ch.ListEventSamples(ctx, query)
 }

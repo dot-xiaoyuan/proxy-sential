@@ -180,6 +180,21 @@ FROM risk_snapshots WHERE ip = $1::inet`, ip)
 	return items[0], nil
 }
 
+func (s *PostgresStore) RiskSnapshotMap(ctx context.Context) (map[string]risk.Snapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
+FROM risk_snapshots`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, err := scanRiskRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return riskSnapshotMap(items), nil
+}
+
 func (s *PostgresStore) GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT evidence_id, host(ip), type, "window", score, confidence, severity, reason, samples, created_at

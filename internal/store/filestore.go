@@ -219,6 +219,40 @@ func (s *FileStore) GetIPActivity(ctx context.Context, ip string, limit int) (Ac
 	return BuildActivityProfile(ip, events, limit), nil
 }
 
+func (s *FileStore) GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error) {
+	window, _, err := NormalizeActivityWindow(query.Window)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	sensorID := query.SensorID
+	if sensorID == "" {
+		sensorID = s.sensorID
+	}
+	if sensorID != s.sensorID {
+		return BuildActivityOverview(sensorID, window, []normalized.Event{}, map[string]risk.Snapshot{}), nil
+	}
+	latest, ok, err := s.latestRun(ctx)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	if !ok {
+		return BuildActivityOverview(sensorID, window, []normalized.Event{}, map[string]risk.Snapshot{}), nil
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = defaultActivityOverviewEventLimit
+	}
+	events, err := readNormalizedEvents(ctx, filepath.Join(latest.Dir, "normalized.jsonl"), Query{SensorID: sensorID, Limit: limit})
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	batch, err := readRiskBatch(filepath.Join(latest.Dir, "risk-snapshots.json"))
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	return BuildActivityOverview(sensorID, window, events, riskSnapshotMap(batch.Snapshots)), nil
+}
+
 func (s *FileStore) ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error) {
 	latest, ok, err := s.latestRun(ctx)
 	if err != nil {

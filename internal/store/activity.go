@@ -4,15 +4,24 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/risk"
 )
 
 const defaultActivityEventLimit = 5000
+const defaultActivityOverviewEventLimit = 100000
 
 type activityBucket struct {
 	count    int
 	lastSeen string
+}
+
+type activityIPBucket struct {
+	count    int
+	lastSeen string
+	domains  map[string]activityBucket
 }
 
 func BuildActivityProfile(ip string, events []normalized.Event, accessLimit int) ActivityProfile {
@@ -97,6 +106,122 @@ func BuildActivityProfile(ip string, events []normalized.Event, accessLimit int)
 	return profile
 }
 
+func BuildActivityOverview(sensorID string, window string, events []normalized.Event, risks map[string]risk.Snapshot) ActivityOverview {
+	if window == "" {
+		window = "1h"
+	}
+	overview := ActivityOverview{
+		SensorID:           sensorID,
+		Window:             window,
+		EventTypeCounts:    []ActivityCount{},
+		ProtocolCounts:     []ActivityCount{},
+		TopDomains:         []ActivityCount{},
+		TopHTTPHosts:       []ActivityCount{},
+		TopTLSSNI:          []ActivityCount{},
+		TopUserAgents:      []ActivityCount{},
+		TopTLSFingerprints: []ActivityCount{},
+		TopDstPorts:        []ActivityCount{},
+		TopDstIPs:          []ActivityCount{},
+		TopSourceIPs:       []ActivityCount{},
+		TopActiveRiskIPs:   []ActivityIPSummary{},
+	}
+
+	eventTypes := map[string]activityBucket{}
+	protocols := map[string]activityBucket{}
+	domains := map[string]activityBucket{}
+	httpHosts := map[string]activityBucket{}
+	tlsSNI := map[string]activityBucket{}
+	userAgents := map[string]activityBucket{}
+	tlsFingerprints := map[string]activityBucket{}
+	dstPorts := map[string]activityBucket{}
+	dstIPs := map[string]activityBucket{}
+	sourceIPs := map[string]activityBucket{}
+	perIP := map[string]*activityIPBucket{}
+
+	for _, event := range events {
+		eventSensorID := stringFromMap(event.Observer, "sensor_id")
+		if sensorID != "" && eventSensorID != "" && eventSensorID != sensorID {
+			continue
+		}
+		overview.EventCount++
+		trackOverviewBounds(&overview, event.Timestamp)
+		increment(eventTypes, event.Type, event.Timestamp)
+		increment(protocols, stringFromMap(event.Flow, "proto"), event.Timestamp)
+		increment(dstIPs, stringFromMap(event.Flow, "dst_ip"), event.Timestamp)
+		if port := intFromMap(event.Flow, "dst_port"); port > 0 {
+			increment(dstPorts, fmt.Sprintf("%d", port), event.Timestamp)
+		}
+
+		srcIP := subjectIP(event)
+		if srcIP != "" {
+			increment(sourceIPs, srcIP, event.Timestamp)
+			bucket := perIP[srcIP]
+			if bucket == nil {
+				bucket = &activityIPBucket{domains: map[string]activityBucket{}}
+				perIP[srcIP] = bucket
+			}
+			bucket.count++
+			if event.Timestamp > bucket.lastSeen {
+				bucket.lastSeen = event.Timestamp
+			}
+		}
+
+		switch event.Type {
+		case "dns":
+			domain := stringFromMap(event.Payload, "query")
+			increment(domains, domain, event.Timestamp)
+			if srcIP != "" {
+				increment(perIP[srcIP].domains, domain, event.Timestamp)
+			}
+		case "http":
+			host := stringFromMap(event.Payload, "host")
+			increment(domains, host, event.Timestamp)
+			increment(httpHosts, host, event.Timestamp)
+			increment(userAgents, stringFromMap(event.Payload, "user_agent"), event.Timestamp)
+			if srcIP != "" {
+				increment(perIP[srcIP].domains, host, event.Timestamp)
+			}
+		case "tls":
+			sni := stringFromMap(event.Payload, "sni")
+			increment(domains, sni, event.Timestamp)
+			increment(tlsSNI, sni, event.Timestamp)
+			increment(tlsFingerprints, "ja3:"+stringFromMap(event.Payload, "ja3"), event.Timestamp)
+			increment(tlsFingerprints, "ja4:"+stringFromMap(event.Payload, "ja4"), event.Timestamp)
+			if srcIP != "" {
+				increment(perIP[srcIP].domains, sni, event.Timestamp)
+			}
+		}
+	}
+
+	overview.ActiveIPCount = len(perIP)
+	overview.AccessObjectCount = len(domains)
+	overview.EventTypeCounts = topActivityCounts(eventTypes, 20)
+	overview.ProtocolCounts = topActivityCounts(protocols, 20)
+	overview.TopDomains = topActivityCounts(domains, 20)
+	overview.TopHTTPHosts = topActivityCounts(httpHosts, 20)
+	overview.TopTLSSNI = topActivityCounts(tlsSNI, 20)
+	overview.TopUserAgents = topActivityCounts(userAgents, 20)
+	overview.TopTLSFingerprints = topActivityCounts(tlsFingerprints, 20)
+	overview.TopDstPorts = topActivityCounts(dstPorts, 20)
+	overview.TopDstIPs = topActivityCounts(dstIPs, 20)
+	overview.TopSourceIPs = topActivityCounts(sourceIPs, 20)
+	overview.TopActiveRiskIPs, overview.ActiveRiskIPCount = topActivityIPSummaries(perIP, risks, 50)
+	return overview
+}
+
+func NormalizeActivityWindow(raw string) (string, time.Duration, error) {
+	switch strings.TrimSpace(raw) {
+	case "", "1h":
+		return "1h", time.Hour, nil
+	case "10m":
+		return "10m", 10 * time.Minute, nil
+	case "24h":
+		return "24h", 24 * time.Hour, nil
+	default:
+		return "", 0, fmt.Errorf("window must be one of 10m, 1h, 24h")
+	}
+}
+
 func trackBounds(profile *ActivityProfile, timestamp string) {
 	if timestamp == "" {
 		return
@@ -106,6 +231,18 @@ func trackBounds(profile *ActivityProfile, timestamp string) {
 	}
 	if profile.LastSeen == "" || timestamp > profile.LastSeen {
 		profile.LastSeen = timestamp
+	}
+}
+
+func trackOverviewBounds(overview *ActivityOverview, timestamp string) {
+	if timestamp == "" {
+		return
+	}
+	if overview.FirstSeen == "" || timestamp < overview.FirstSeen {
+		overview.FirstSeen = timestamp
+	}
+	if overview.LastSeen == "" || timestamp > overview.LastSeen {
+		overview.LastSeen = timestamp
 	}
 }
 
@@ -143,6 +280,56 @@ func topActivityCounts(buckets map[string]activityBucket, limit int) []ActivityC
 		return []ActivityCount{}
 	}
 	return items
+}
+
+func topActivityIPSummaries(perIP map[string]*activityIPBucket, risks map[string]risk.Snapshot, limit int) ([]ActivityIPSummary, int) {
+	items := make([]ActivityIPSummary, 0)
+	for ip, bucket := range perIP {
+		snapshot, ok := risks[ip]
+		if !ok || snapshot.Level == "" || snapshot.Level == "normal" {
+			continue
+		}
+		items = append(items, ActivityIPSummary{
+			IP:         ip,
+			EventCount: bucket.count,
+			RiskLevel:  snapshot.Level,
+			Score:      snapshot.Score,
+			TopDomains: topActivityCounts(bucket.domains, 5),
+			LastSeen:   bucket.lastSeen,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		leftRank, _ := levelRank(items[i].RiskLevel)
+		rightRank, _ := levelRank(items[j].RiskLevel)
+		if leftRank != rightRank {
+			return leftRank > rightRank
+		}
+		if items[i].Score != items[j].Score {
+			return items[i].Score > items[j].Score
+		}
+		if items[i].EventCount != items[j].EventCount {
+			return items[i].EventCount > items[j].EventCount
+		}
+		return items[i].IP < items[j].IP
+	})
+	total := len(items)
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	if items == nil {
+		return []ActivityIPSummary{}, total
+	}
+	return items, total
+}
+
+func riskSnapshotMap(snapshots []risk.Snapshot) map[string]risk.Snapshot {
+	result := make(map[string]risk.Snapshot, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot.IP != "" {
+			result[snapshot.IP] = snapshot
+		}
+	}
+	return result
 }
 
 func accessForEvent(event normalized.Event) ActivityAccess {

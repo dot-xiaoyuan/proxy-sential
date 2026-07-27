@@ -197,6 +197,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.session())
 	case r.Method == http.MethodGet && path == "/overview":
 		s.handleOverview(w, r)
+	case r.Method == http.MethodGet && path == "/activity/overview":
+		s.handleActivityOverview(w, r)
 	case r.Method == http.MethodGet && path == "/risks":
 		s.handleRisks(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/ips/"):
@@ -384,6 +386,35 @@ func (s *Server) handleIPActivity(w http.ResponseWriter, r *http.Request, ip str
 	writeJSON(w, http.StatusOK, profile)
 }
 
+func (s *Server) handleActivityOverview(w http.ResponseWriter, r *http.Request) {
+	sensorID := r.URL.Query().Get("sensor_id")
+	if sensorID == "" {
+		sensorID = s.sensorID
+	}
+	window := r.URL.Query().Get("window")
+	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_activity_window", err.Error())
+		return
+	}
+	limit, err := boundedInt(r.URL.Query().Get("limit"), defaultActivityOverviewLimit(), 1, 100000)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	overview, err := s.reader.GetActivityOverview(ctx, store.ActivityQuery{
+		SensorID: sensorID,
+		Window:   window,
+		Limit:    limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_activity_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
 func (s *Server) handleIPEvents(w http.ResponseWriter, r *http.Request, ip string) {
 	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
 	if err != nil {
@@ -521,6 +552,10 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request, rawEventID 
 		return
 	}
 	writeJSON(w, http.StatusOK, event)
+}
+
+func defaultActivityOverviewLimit() int {
+	return 100000
 }
 
 func contextWithRequestTimeout(parent context.Context) (context.Context, context.CancelFunc) {

@@ -14,6 +14,7 @@ import (
 
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/risk"
 )
 
 const ClickHouseDDLPath = "migrations/clickhouse/001_production_schema.sql"
@@ -141,6 +142,41 @@ func (s *ClickHouseStore) GetIPActivity(ctx context.Context, ip string, limit in
 		return ActivityProfile{}, err
 	}
 	return BuildActivityProfile(ip, events, limit), nil
+}
+
+func (s *ClickHouseStore) GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error) {
+	window, duration, err := NormalizeActivityWindow(query.Window)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	events, err := s.ListEventsForActivityOverview(ctx, query.SensorID, duration, query.Limit)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	return BuildActivityOverview(query.SensorID, window, events, map[string]risk.Snapshot{}), nil
+}
+
+func (s *ClickHouseStore) ListEventsForActivityOverview(ctx context.Context, sensorID string, window time.Duration, limit int) ([]normalized.Event, error) {
+	if limit <= 0 {
+		limit = defaultActivityOverviewEventLimit
+	}
+	intervalValue, intervalUnit := clickHouseInterval(window)
+	clauses := []string{fmt.Sprintf("timestamp >= now() - INTERVAL %d %s", intervalValue, intervalUnit)}
+	if sensorID != "" {
+		clauses = append(clauses, "sensor_id = "+chQuote(sensorID))
+	}
+	sql := fmt.Sprintf(`
+SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
+FROM normalized_events
+WHERE %s
+ORDER BY timestamp DESC, event_id DESC
+LIMIT %d
+FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit)
+	data, err := s.query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	return decodeEventRows(data)
 }
 
 func (s *ClickHouseStore) GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error) {
@@ -398,6 +434,13 @@ func normalizeClickHouseTimestamp(raw string) string {
 		}
 	}
 	return raw
+}
+
+func clickHouseInterval(duration time.Duration) (int, string) {
+	if duration%time.Hour == 0 {
+		return int(duration / time.Hour), "HOUR"
+	}
+	return int(duration / time.Minute), "MINUTE"
 }
 
 func jsonString(value any) string {

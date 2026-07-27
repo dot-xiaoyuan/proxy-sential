@@ -16,6 +16,7 @@ import (
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
 	"proxy-sentinel/internal/shadow"
+	"proxy-sentinel/internal/store"
 )
 
 func TestShadowRunsEmptyDirectoryReturnsEmptyArrays(t *testing.T) {
@@ -227,6 +228,72 @@ func TestIPDetailEndpointsSupportIPv6AndNormalFallback(t *testing.T) {
 	}
 }
 
+func TestActivityOverviewAggregatesObservedDomainAndRiskIPs(t *testing.T) {
+	shadowDir := t.TempDir()
+	writeRun(t, shadowDir, "20260727-101000", testRun{
+		startedAt: "2026-07-27T10:10:00+08:00",
+		risks: []risk.Snapshot{
+			riskSnapshot("192.168.0.10", "high", 72, "2026-07-27T10:10:04+08:00"),
+			riskSnapshot("192.168.0.20", "normal", 12, "2026-07-27T10:10:04+08:00"),
+		},
+		events: []normalized.Event{
+			dnsEvent("event-dns", "192.168.0.10", "2026-07-27T10:10:01+08:00", "api.example.test"),
+			httpEvent("event-http", "192.168.0.10", "2026-07-27T10:10:02+08:00", "api.example.test", "agent-a"),
+			tlsEvent("event-tls", "192.168.0.20", "2026-07-27T10:10:03+08:00", "login.example.test", "chrome", "chrome-ja4"),
+			flowEvent("event-flow", "192.168.0.30", "2026-07-27T10:10:04+08:00", "198.51.100.44", 8080),
+		},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "test-sensor", ReadOnly: true})
+
+	var activity store.ActivityOverview
+	getJSON(t, server, "/api/v1/activity/overview?window=10m", http.StatusOK, &activity)
+	if activity.SensorID != "test-sensor" || activity.Window != "10m" {
+		t.Fatalf("unexpected sensor/window: %#v", activity)
+	}
+	if activity.EventCount != 4 || activity.ActiveIPCount != 3 || activity.AccessObjectCount != 2 {
+		t.Fatalf("unexpected overview counts: %#v", activity)
+	}
+	if len(activity.TopDomains) == 0 || activity.TopDomains[0].Value != "api.example.test" || activity.TopDomains[0].Count != 2 {
+		t.Fatalf("expected merged DNS/HTTP top domain, got %#v", activity.TopDomains)
+	}
+	if len(activity.TopHTTPHosts) == 0 || activity.TopHTTPHosts[0].Value != "api.example.test" {
+		t.Fatalf("expected top http host, got %#v", activity.TopHTTPHosts)
+	}
+	if len(activity.TopTLSSNI) == 0 || activity.TopTLSSNI[0].Value != "login.example.test" {
+		t.Fatalf("expected top tls sni, got %#v", activity.TopTLSSNI)
+	}
+	if len(activity.TopUserAgents) == 0 || activity.TopUserAgents[0].Value != "agent-a" {
+		t.Fatalf("expected user agent, got %#v", activity.TopUserAgents)
+	}
+	if len(activity.TopTLSFingerprints) != 2 {
+		t.Fatalf("expected ja3/ja4 fingerprints, got %#v", activity.TopTLSFingerprints)
+	}
+	if !hasActivityValue(activity.TopDstPorts, "443") {
+		t.Fatalf("expected dst port ranking, got %#v", activity.TopDstPorts)
+	}
+	if len(activity.TopSourceIPs) == 0 || activity.TopSourceIPs[0].Value != "192.168.0.10" {
+		t.Fatalf("expected top source ip, got %#v", activity.TopSourceIPs)
+	}
+	if activity.ActiveRiskIPCount != 1 || len(activity.TopActiveRiskIPs) != 1 || activity.TopActiveRiskIPs[0].IP != "192.168.0.10" {
+		t.Fatalf("unexpected active risk ips: %#v", activity.TopActiveRiskIPs)
+	}
+	if strings.Contains(activity.TopActiveRiskIPs[0].IP, "/") {
+		t.Fatalf("risk ip should not contain CIDR suffix: %s", activity.TopActiveRiskIPs[0].IP)
+	}
+
+	var empty store.ActivityOverview
+	getJSON(t, server, "/api/v1/activity/overview?sensor_id=other&window=1h", http.StatusOK, &empty)
+	if empty.EventTypeCounts == nil || empty.TopDomains == nil || empty.TopActiveRiskIPs == nil || empty.EventCount != 0 {
+		t.Fatalf("expected empty arrays for mismatched sensor, got %#v", empty)
+	}
+
+	var errResponse ErrorResponse
+	getJSON(t, server, "/api/v1/activity/overview?window=30m", http.StatusBadRequest, &errResponse)
+	if errResponse.Code != "bad_activity_window" {
+		t.Fatalf("unexpected error response: %#v", errResponse)
+	}
+}
+
 func TestReadOnlySessionLabelsAndRulesReload(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
 
@@ -378,19 +445,68 @@ func evidenceItem(id, ip, evidenceType, createdAt string) evidence.Evidence {
 }
 
 func normalizedEvent(id, ip, timestamp string) normalized.Event {
+	return httpEvent(id, ip, timestamp, "example.test", "test-agent")
+}
+
+func dnsEvent(id, ip, timestamp, query string) normalized.Event {
+	event := baseEvent(id, ip, timestamp, "dns")
+	event.Flow["dst_ip"] = "198.51.100.53"
+	event.Flow["dst_port"] = 53
+	event.Flow["proto"] = "udp"
+	event.Payload = map[string]any{"query": query}
+	return event
+}
+
+func httpEvent(id, ip, timestamp, host, userAgent string) normalized.Event {
+	event := baseEvent(id, ip, timestamp, "http")
+	event.Flow["dst_ip"] = "198.51.100.80"
+	event.Flow["dst_port"] = 80
+	event.Flow["proto"] = "tcp"
+	event.Payload = map[string]any{"host": host, "url": "/index.html", "user_agent": userAgent, "method": "GET"}
+	return event
+}
+
+func tlsEvent(id, ip, timestamp, sni, ja3, ja4 string) normalized.Event {
+	event := baseEvent(id, ip, timestamp, "tls")
+	event.Flow["dst_ip"] = "198.51.100.443"
+	event.Flow["dst_port"] = 443
+	event.Flow["proto"] = "tcp"
+	event.Payload = map[string]any{"sni": sni, "ja3": ja3, "ja4": ja4}
+	return event
+}
+
+func flowEvent(id, ip, timestamp, dstIP string, dstPort int) normalized.Event {
+	event := baseEvent(id, ip, timestamp, "flow")
+	event.Flow["dst_ip"] = dstIP
+	event.Flow["dst_port"] = dstPort
+	event.Flow["proto"] = "tcp"
+	event.Payload = map[string]any{}
+	return event
+}
+
+func baseEvent(id, ip, timestamp, eventType string) normalized.Event {
 	return normalized.Event{
 		SchemaVersion: "v1",
 		EventID:       id,
 		Source:        "suricata",
-		Type:          "http",
+		Type:          eventType,
 		Timestamp:     timestamp,
-		Observer:      map[string]any{"sensor_id": "office-30"},
+		Observer:      map[string]any{"sensor_id": "test-sensor"},
 		Subject:       map[string]any{"ip": ip},
 		Flow:          map[string]any{"src_ip": ip, "dst_ip": "198.51.100.1", "dst_port": 80},
-		Payload:       map[string]any{"host": "example.test", "url": "/index.html", "user_agent": "test-agent"},
+		Payload:       map[string]any{},
 		Confidence:    1,
 		RawRef:        map[string]any{"backend": "suricata", "line_offset": 1},
 	}
+}
+
+func hasActivityValue(items []store.ActivityCount, value string) bool {
+	for _, item := range items {
+		if item.Value == value {
+			return true
+		}
+	}
+	return false
 }
 
 func mustWriteJSON(t *testing.T, path string, value any) {

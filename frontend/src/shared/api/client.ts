@@ -1,4 +1,6 @@
 import type {
+  ActivityOverview,
+  ActivityOverviewQuery,
   AuditLog,
   CreateLabelRequest,
   Evidence,
@@ -51,6 +53,8 @@ function search(params: Record<string, string | number | undefined>) {
 export const api = {
   session: () => request<Session>('/session'),
   overview: () => request<Overview>('/overview'),
+  activityOverview: (query: ActivityOverviewQuery) =>
+    request<ActivityOverview>(`/activity/overview${search(query)}`),
   risks: (query: RiskQuery) => request<RiskListResponse>(`/risks${search(query)}`),
   ipRisk: (ip: string) => request<RiskSnapshot>(`/ips/${encodeURIComponent(ip)}/risk`),
   ipEvidence: (ip: string) =>

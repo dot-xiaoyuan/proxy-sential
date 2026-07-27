@@ -36,6 +36,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/activity/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getActivityOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/risks": {
         parameters: {
             query?: never;
@@ -378,6 +394,39 @@ export interface components {
             /** Format: date-time */
             last_seen?: string;
         };
+        ActivityIpSummary: {
+            ip: string;
+            event_count: number;
+            risk_level: components["schemas"]["RiskLevel"];
+            score: number;
+            top_domains: components["schemas"]["ActivityCount"][];
+            /** Format: date-time */
+            last_seen?: string;
+        };
+        ActivityOverview: {
+            sensor_id: string;
+            /** @enum {string} */
+            window: "10m" | "1h" | "24h" | "latest-run";
+            event_count: number;
+            active_ip_count: number;
+            access_object_count: number;
+            active_risk_ip_count: number;
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+            event_type_counts: components["schemas"]["ActivityCount"][];
+            protocol_counts: components["schemas"]["ActivityCount"][];
+            top_domains: components["schemas"]["ActivityCount"][];
+            top_http_hosts: components["schemas"]["ActivityCount"][];
+            top_tls_sni: components["schemas"]["ActivityCount"][];
+            top_user_agents: components["schemas"]["ActivityCount"][];
+            top_tls_fingerprints: components["schemas"]["ActivityCount"][];
+            top_dst_ports: components["schemas"]["ActivityCount"][];
+            top_dst_ips: components["schemas"]["ActivityCount"][];
+            top_source_ips: components["schemas"]["ActivityCount"][];
+            top_active_risk_ips: components["schemas"]["ActivityIpSummary"][];
+        };
         ActivityAccess: {
             /** Format: date-time */
             timestamp: string;
@@ -631,6 +680,32 @@ export interface operations {
                     "application/json": components["schemas"]["Overview"];
                 };
             };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getActivityOverview: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Aggregated access posture and client feature overview for the observed domain. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityOverview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
         };
     };

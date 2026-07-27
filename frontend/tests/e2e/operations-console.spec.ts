@@ -38,3 +38,14 @@ test('shows ingest diagnostics and normalized event samples', async ({ page }) =
   await expect(page.getByText('collector run completed with skipped or malformed input records')).toBeVisible()
   await expect(page.getByText('event-http-59-a')).toBeVisible()
 })
+
+test('shows observed activity posture and opens active risk IP detail', async ({ page }) => {
+  await page.goto('/activity')
+  await expect(page.getByRole('heading', { name: '访问态势' })).toBeVisible()
+  await expect(page.getByText('当前 sensor 在指定窗口内的访问对象')).toBeVisible()
+  await expect(page.getByText('api.example.test').first()).toBeVisible()
+  await expect(page.getByText('Mozilla/5.0 (Windows NT 10.0; Win64; x64)').first()).toBeVisible()
+  await expect(page.getByText('10.255.0.59').first()).toBeVisible()
+  await page.getByRole('link', { name: '10.255.0.59' }).click()
+  await expect(page.getByRole('heading', { name: '10.255.0.59' })).toBeVisible()
+})
