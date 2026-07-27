@@ -116,6 +116,19 @@ tar -C '$remote_root/frontend' -xzf '$remote_frontend_tmp'
 rm '$remote_frontend_tmp'
 chown -R root:root '$remote_root/frontend/dist'
 
+storage_env_line=''
+storage_after_suffix=''
+storage_shadow_wants_line=''
+storage_control_wants_suffix=''
+storage_dsn_args=''
+if [[ -f '$remote_root/deploy/compose/storage.env' ]]; then
+  storage_env_line='EnvironmentFile=$remote_root/deploy/compose/storage.env'
+  storage_after_suffix=' docker.service'
+  storage_shadow_wants_line='Wants=docker.service'
+  storage_control_wants_suffix=' docker.service'
+  storage_dsn_args='--postgres-dsn \${PROXY_SENTINEL_POSTGRES_DSN} --clickhouse-dsn \${PROXY_SENTINEL_CLICKHOUSE_DSN}'
+fi
+
 cat > /etc/systemd/system/proxy-sentinel-suricata.service <<EOF
 [Unit]
 Description=Proxy Sentinel Suricata mirror capture
@@ -135,12 +148,14 @@ EOF
 cat > /etc/systemd/system/proxy-sentinel-shadow.service <<EOF
 [Unit]
 Description=Proxy Sentinel shadow risk analysis
-After=proxy-sentinel-suricata.service
+After=proxy-sentinel-suricata.service$storage_after_suffix
+$storage_shadow_wants_line
 
 [Service]
 Type=oneshot
 WorkingDirectory=$remote_root
-ExecStart=$remote_root/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $remote_root/data/shadow/state.json --out-dir $remote_root/data/shadow --sensor-id $sensor_id --window $window --min-level suspicious --limit 50 --retention $retention --storage-mode dual
+$storage_env_line
+ExecStart=$remote_root/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $remote_root/data/shadow/state.json --out-dir $remote_root/data/shadow --sensor-id $sensor_id --window $window --min-level suspicious --limit 50 --retention $retention --storage-mode dual $storage_dsn_args
 EOF
 
 cat > /etc/systemd/system/proxy-sentinel-shadow.timer <<EOF
@@ -160,13 +175,14 @@ EOF
 cat > /etc/systemd/system/proxy-sentinel-control-plane.service <<EOF
 [Unit]
 Description=Proxy Sentinel read-only control plane
-After=network-online.target proxy-sentinel-shadow.timer
-Wants=network-online.target
+After=network-online.target proxy-sentinel-shadow.timer$storage_after_suffix
+Wants=network-online.target$storage_control_wants_suffix
 
 [Service]
 Type=simple
 WorkingDirectory=$remote_root
-ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual --read-only
+$storage_env_line
+ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual $storage_dsn_args --read-only
 Restart=always
 RestartSec=5
 
