@@ -140,7 +140,7 @@ After=proxy-sentinel-suricata.service
 [Service]
 Type=oneshot
 WorkingDirectory=$remote_root
-ExecStart=$remote_root/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $remote_root/data/shadow/state.json --out-dir $remote_root/data/shadow --sensor-id $sensor_id --window $window --min-level suspicious --limit 50 --retention $retention
+ExecStart=$remote_root/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $remote_root/data/shadow/state.json --out-dir $remote_root/data/shadow --sensor-id $sensor_id --window $window --min-level suspicious --limit 50 --retention $retention --storage-mode dual
 EOF
 
 cat > /etc/systemd/system/proxy-sentinel-shadow.timer <<EOF
@@ -166,7 +166,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$remote_root
-ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --read-only
+ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual --read-only
 Restart=always
 RestartSec=5
 

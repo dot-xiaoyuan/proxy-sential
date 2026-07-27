@@ -9,6 +9,10 @@ export type RiskSnapshot = components['schemas']['RiskSnapshot']
 export type RiskListResponse = components['schemas']['RiskListResponse']
 export type Evidence = components['schemas']['Evidence']
 export type NormalizedEventSummary = components['schemas']['NormalizedEventSummary']
+export type Collector = components['schemas']['Collector']
+export type IngestDiagnostic = components['schemas']['IngestDiagnostic']
+export type IngestStatus = components['schemas']['IngestStatus']
+export type EventTypeCount = components['schemas']['EventTypeCount']
 export type LabelKind = components['schemas']['LabelKind']
 export type CreateLabelRequest = components['schemas']['CreateLabelRequest']
 export type Label = components['schemas']['Label']
@@ -25,4 +29,11 @@ export type RiskQuery = {
   to?: string
   limit?: number
   cursor?: string
+}
+
+export type EventQuery = {
+  q?: string
+  type?: string
+  sensor_id?: string
+  limit?: number
 }

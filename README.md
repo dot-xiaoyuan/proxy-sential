@@ -47,6 +47,7 @@ Notify / Slowdown / Offline
 - [Suricata MVP 方案](docs/suricata-mvp.md)
 - [前端架构设计](docs/frontend-architecture.md)
 - [前端任务拆分](docs/frontend-tasks.md)
+- [生产数据架构](docs/production-data-architecture.md)
 - [192.168.0.30 Suricata 镜像流量测试](docs/testing-192.168.0.30-suricata.md)
 - [项目协作 Skill](skills/anti-proxy-v2/SKILL.md)
 - [前端协作 Skill](skills/proxy-sentinel-frontend/SKILL.md)

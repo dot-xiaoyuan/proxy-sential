@@ -1,7 +1,18 @@
 import { delay, http, HttpResponse } from 'msw'
 
 import type { CreateLabelRequest } from '../shared/api/types'
-import { auditLogs, eventsByIp, evidenceByIp, mockSession, overview, riskSnapshots, shadowRuns } from './fixtures'
+import {
+  auditLogs,
+  eventsByIp,
+  evidenceByIp,
+  ingestDiagnostics,
+  ingestEventTypes,
+  ingestStatus,
+  mockSession,
+  overview,
+  riskSnapshots,
+  shadowRuns,
+} from './fixtures'
 
 function normalizeIp(value: string) {
   return decodeURIComponent(value)
@@ -44,6 +55,25 @@ export const handlers = [
     const ip = normalizeIp(String(params.ip))
     return HttpResponse.json({ events: eventsByIp[ip] ?? [] })
   }),
+  http.get('/api/v1/events', ({ request }) => {
+    const url = new URL(request.url)
+    const q = url.searchParams.get('q')?.toLowerCase()
+    const eventType = url.searchParams.get('type')
+    const limit = Number(url.searchParams.get('limit') ?? 50)
+    const allEvents = Object.values(eventsByIp).flat()
+    const filtered = allEvents
+      .filter((event) => !eventType || event.type === eventType)
+      .filter((event) => !q || event.event_id.toLowerCase().includes(q) || JSON.stringify(event.subject).toLowerCase().includes(q))
+      .slice(0, limit)
+    return HttpResponse.json({ events: filtered })
+  }),
+  http.get('/api/v1/ingest/status', () => HttpResponse.json(ingestStatus)),
+  http.get('/api/v1/ingest/runs', () => HttpResponse.json({ runs: shadowRuns })),
+  http.get('/api/v1/ingest/diagnostics', () => HttpResponse.json({ diagnostics: ingestDiagnostics })),
+  http.get('/api/v1/ingest/event-types', () => HttpResponse.json({ event_types: ingestEventTypes })),
+  http.get('/api/v1/ingest/errors', () =>
+    HttpResponse.json({ diagnostics: ingestDiagnostics.filter((item) => item.severity !== 'info') }),
+  ),
   http.post('/api/v1/labels', async ({ request }) => {
     const payload = (await request.json()) as CreateLabelRequest
     const created = {

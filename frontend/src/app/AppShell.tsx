@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   AuditOutlined,
   DashboardOutlined,
+  DatabaseOutlined,
   FieldTimeOutlined,
   FileSearchOutlined,
   MenuFoldOutlined,
@@ -17,6 +18,7 @@ import { useSession } from '../shared/api/queries'
 
 const navItems: MenuProps['items'] = [
   { key: '/overview', icon: <DashboardOutlined />, label: <NavLink to="/overview">总览</NavLink> },
+  { key: '/ingest', icon: <DatabaseOutlined />, label: <NavLink to="/ingest">采集诊断</NavLink> },
   { key: '/risks', icon: <SafetyOutlined />, label: <NavLink to="/risks">风险 IP</NavLink> },
   { key: '/review', icon: <FileSearchOutlined />, label: <NavLink to="/review">人工复核</NavLink> },
   { key: '/shadow-runs', icon: <FieldTimeOutlined />, label: <NavLink to="/shadow-runs">影子运行</NavLink> },

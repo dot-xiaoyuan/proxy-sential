@@ -24,3 +24,13 @@ test('shows shadow run summaries', async ({ page }) => {
   await expect(page.getByText('20260724-131645')).toBeVisible()
   await expect(page.getByText('truncated')).toBeVisible()
 })
+
+test('shows ingest diagnostics and normalized event samples', async ({ page }) => {
+  await page.goto('/ingest')
+  await expect(page.getByRole('heading', { name: '采集诊断' })).toBeVisible()
+  await expect(page.getByText('suricata', { exact: true })).toBeVisible()
+  await expect(page.getByText('ens1f1', { exact: true })).toBeVisible()
+  await expect(page.getByText('flow', { exact: true })).toBeVisible()
+  await expect(page.getByText('collector run completed with skipped or malformed input records')).toBeVisible()
+  await expect(page.getByText('event-http-59-a')).toBeVisible()
+})

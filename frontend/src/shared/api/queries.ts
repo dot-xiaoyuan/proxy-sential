@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from './client'
-import type { CreateLabelRequest, RiskQuery } from './types'
+import type { CreateLabelRequest, EventQuery, RiskQuery } from './types'
 
 export const queryKeys = {
   session: ['session'] as const,
@@ -10,6 +10,12 @@ export const queryKeys = {
   ipRisk: (ip: string) => ['ip-risk', ip] as const,
   ipEvidence: (ip: string) => ['ip-evidence', ip] as const,
   ipEvents: (ip: string) => ['ip-events', ip] as const,
+  events: (query: EventQuery) => ['events', query] as const,
+  ingestStatus: ['ingest-status'] as const,
+  ingestRuns: ['ingest-runs'] as const,
+  ingestDiagnostics: ['ingest-diagnostics'] as const,
+  ingestEventTypes: ['ingest-event-types'] as const,
+  ingestErrors: ['ingest-errors'] as const,
   shadowRuns: ['shadow-runs'] as const,
   auditLogs: ['audit-logs'] as const,
 }
@@ -44,6 +50,30 @@ export function useIpEvents(ip: string) {
     queryFn: () => api.ipEvents(ip),
     enabled: !!ip,
   })
+}
+
+export function useEvents(query: EventQuery) {
+  return useQuery({ queryKey: queryKeys.events(query), queryFn: () => api.events(query) })
+}
+
+export function useIngestStatus() {
+  return useQuery({ queryKey: queryKeys.ingestStatus, queryFn: api.ingestStatus })
+}
+
+export function useIngestRuns() {
+  return useQuery({ queryKey: queryKeys.ingestRuns, queryFn: api.ingestRuns })
+}
+
+export function useIngestDiagnostics(limit = 50) {
+  return useQuery({ queryKey: queryKeys.ingestDiagnostics, queryFn: () => api.ingestDiagnostics(limit) })
+}
+
+export function useIngestEventTypes() {
+  return useQuery({ queryKey: queryKeys.ingestEventTypes, queryFn: api.ingestEventTypes })
+}
+
+export function useIngestErrors(limit = 50) {
+  return useQuery({ queryKey: queryKeys.ingestErrors, queryFn: () => api.ingestErrors(limit) })
 }
 
 export function useCreateLabel() {

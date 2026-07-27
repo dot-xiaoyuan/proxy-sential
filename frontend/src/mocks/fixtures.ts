@@ -1,6 +1,9 @@
 import type {
   AuditLog,
   Evidence,
+  EventTypeCount,
+  IngestDiagnostic,
+  IngestStatus,
   NormalizedEventSummary,
   Overview,
   RiskSnapshot,
@@ -19,6 +22,7 @@ export const mockSession: Session = {
     'shadow:read',
     'audit:read',
     'rules:reload',
+    'ingest:read',
   ],
 }
 
@@ -261,3 +265,56 @@ export const overview: Overview = {
     { type: 'domain_diversity', count: 1 },
   ],
 }
+
+export const ingestStatus: IngestStatus = {
+  sensor_id: 'office-30',
+  collector: { kind: 'suricata', version: '6.0.20', interface: 'ens1f1' },
+  storage_mode: 'dual',
+  latest_run_id: shadowRuns[0].run_id,
+  latest_run_at: shadowRuns[0].finished_at,
+  healthy: true,
+  severity: 'info',
+  summary: 'collector and normalization pipeline are producing standard events',
+  last_counters: { read: 1000, emitted: 862, skipped: 119, malformed: 19 },
+  last_event_type_dist: { flow: 250, dns: 250, tls: 250, http: 112 },
+}
+
+export const ingestEventTypes: EventTypeCount[] = [
+  { type: 'flow', count: 250 },
+  { type: 'dns', count: 250 },
+  { type: 'tls', count: 250 },
+  { type: 'http', count: 112 },
+]
+
+export const ingestDiagnostics: IngestDiagnostic[] = [
+  {
+    schema_version: 'v1',
+    diagnostic_id: 'diag-20260724-131645',
+    timestamp: shadowRuns[0].finished_at,
+    sensor_id: 'office-30',
+    collector: { kind: 'suricata', version: '6.0.20', interface: 'ens1f1' },
+    stage: 'normalize',
+    type: 'stats',
+    severity: 'warning',
+    summary: 'collector run completed with skipped or malformed input records',
+    counters: { read: 1000, emitted: 862, skipped: 119, malformed: 19 },
+    by_type: { flow: 250, dns: 250, tls: 250, http: 112 },
+    raw_ref: { backend: 'suricata', source: '/var/log/suricata/eve.json', offset: 218770 },
+    details: { run_id: shadowRuns[0].run_id, truncated: false },
+  },
+  {
+    schema_version: 'v1',
+    diagnostic_id: 'diag-20260724-130000',
+    timestamp: shadowRuns[1].finished_at,
+    sensor_id: 'office-30',
+    collector: { kind: 'suricata', version: '6.0.20', interface: 'ens1f1' },
+    stage: 'normalize',
+    type: 'stats',
+    severity: 'warning',
+    summary: 'collector run completed with skipped or rotated input',
+    counters: { read: 520, emitted: 481, skipped: 33, malformed: 6 },
+    by_type: { flow: 160, dns: 151, tls: 100, http: 70 },
+    raw_ref: { backend: 'suricata', source: '/var/log/suricata/eve.json', offset: 102400 },
+    details: { run_id: shadowRuns[1].run_id, truncated: true },
+  },
+]

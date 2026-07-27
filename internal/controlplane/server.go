@@ -1,32 +1,33 @@
 package controlplane
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"proxy-sentinel/internal/evidence"
-	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/risk"
-	"proxy-sentinel/internal/shadow"
+	"proxy-sentinel/internal/store"
 )
 
 type Options struct {
-	Addr        string
-	ShadowDir   string
-	SensorID    string
-	FrontendDir string
-	ReadOnly    bool
+	Addr          string
+	ShadowDir     string
+	SensorID      string
+	FrontendDir   string
+	ReadOnly      bool
+	StorageMode   string
+	PostgresDSN   string
+	ClickHouseDSN string
+	CollectorKind string
+	CollectorVer  string
+	InterfaceName string
 }
 
 type Server struct {
@@ -34,6 +35,7 @@ type Server struct {
 	sensorID    string
 	frontendDir string
 	readOnly    bool
+	reader      store.Reader
 }
 
 type Session struct {
@@ -118,23 +120,30 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-type runRecord struct {
-	ID      string
-	Dir     string
-	Summary shadow.RunSummary
-	Started time.Time
-}
-
 func Serve(opts Options) error {
 	addr := opts.Addr
 	if addr == "" {
 		addr = ":8080"
 	}
-	server := NewServer(opts)
+	server, err := NewServerWithError(opts)
+	if err != nil {
+		return err
+	}
 	return http.ListenAndServe(addr, server.Handler())
 }
 
 func NewServer(opts Options) *Server {
+	server, err := NewServerWithError(opts)
+	if err == nil {
+		return server
+	}
+	fallback := opts
+	fallback.StorageMode = string(store.ModeFile)
+	server, _ = NewServerWithError(fallback)
+	return server
+}
+
+func NewServerWithError(opts Options) (*Server, error) {
 	shadowDir := opts.ShadowDir
 	if shadowDir == "" {
 		shadowDir = "data/shadow"
@@ -143,12 +152,30 @@ func NewServer(opts Options) *Server {
 	if sensorID == "" {
 		sensorID = "office-30"
 	}
+	mode := store.Mode(opts.StorageMode)
+	if mode == "" {
+		mode = store.ModeFile
+	}
+	reader, err := store.NewReader(store.Options{
+		Mode:          mode,
+		ShadowDir:     shadowDir,
+		SensorID:      sensorID,
+		CollectorKind: opts.CollectorKind,
+		CollectorVer:  opts.CollectorVer,
+		InterfaceName: opts.InterfaceName,
+		PostgresDSN:   opts.PostgresDSN,
+		ClickHouseDSN: opts.ClickHouseDSN,
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &Server{
 		shadowDir:   shadowDir,
 		sensorID:    sensorID,
 		frontendDir: opts.FrontendDir,
 		readOnly:    opts.ReadOnly,
-	}
+		reader:      reader,
+	}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -169,13 +196,27 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && path == "/session":
 		writeJSON(w, http.StatusOK, s.session())
 	case r.Method == http.MethodGet && path == "/overview":
-		s.handleOverview(w)
+		s.handleOverview(w, r)
 	case r.Method == http.MethodGet && path == "/risks":
 		s.handleRisks(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/ips/"):
 		s.handleIP(w, r, strings.TrimPrefix(path, "/ips/"))
+	case r.Method == http.MethodGet && path == "/events":
+		s.handleEvents(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/events/"):
+		s.handleEvent(w, r, strings.TrimPrefix(path, "/events/"))
+	case r.Method == http.MethodGet && path == "/ingest/status":
+		s.handleIngestStatus(w, r)
+	case r.Method == http.MethodGet && path == "/ingest/runs":
+		s.handleShadowRuns(w, r)
+	case r.Method == http.MethodGet && path == "/ingest/diagnostics":
+		s.handleIngestDiagnostics(w, r)
+	case r.Method == http.MethodGet && path == "/ingest/event-types":
+		s.handleIngestEventTypes(w, r)
+	case r.Method == http.MethodGet && path == "/ingest/errors":
+		s.handleIngestErrors(w, r)
 	case r.Method == http.MethodGet && path == "/shadow/runs":
-		s.handleShadowRuns(w)
+		s.handleShadowRuns(w, r)
 	case r.Method == http.MethodGet && path == "/audit-logs":
 		s.handleAuditLogs(w, r)
 	case r.Method == http.MethodPost && path == "/rules/reload":
@@ -209,7 +250,7 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) session() Session {
-	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read"}
+	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read"}
 	return Session{
 		User:        User{ID: "shadow-viewer", Name: "影子观测只读用户"},
 		Role:        "viewer",
@@ -217,54 +258,33 @@ func (s *Server) session() Session {
 	}
 }
 
-func (s *Server) handleOverview(w http.ResponseWriter) {
-	latest, ok, err := s.latestRun()
+func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	overview, err := s.reader.Overview(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
+		writeError(w, http.StatusInternalServerError, "read_overview_failed", err.Error())
 		return
 	}
-	if !ok {
-		writeJSON(w, http.StatusOK, Overview{
-			LevelCounts:     LevelCounts{},
-			PendingReviews:  0,
-			LatestShadowRun: ShadowRun{SensorID: s.sensorID, Normalized: normalizedCounts{}},
-			Throughput:      Throughput{},
-			TopEvidence:     []EvidenceTypeStat{},
-		})
-		return
-	}
-
-	batch, err := readRiskBatch(filepath.Join(latest.Dir, "risk-snapshots.json"))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_risks_failed", err.Error())
-		return
-	}
-	evidenceResult, err := readEvidence(filepath.Join(latest.Dir, "evidence.json"))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_evidence_failed", err.Error())
-		return
-	}
-
-	counts := levelCounts(batch.Snapshots)
 	writeJSON(w, http.StatusOK, Overview{
-		LevelCounts:     counts,
-		PendingReviews:  counts.High + counts.Confirmed,
-		LatestShadowRun: s.toShadowRun(latest),
-		Throughput: Throughput{
-			Events:   latest.Summary.Normalized.Emitted,
-			Evidence: latest.Summary.EvidenceCount,
-			Risks:    latest.Summary.RiskCount,
+		LevelCounts: LevelCounts{
+			Normal:     overview.LevelCounts["normal"],
+			Suspicious: overview.LevelCounts["suspicious"],
+			High:       overview.LevelCounts["high"],
+			Confirmed:  overview.LevelCounts["confirmed"],
 		},
-		TopEvidence: topEvidence(evidenceResult.Evidence),
+		PendingReviews:  overview.PendingReviews,
+		LatestShadowRun: toShadowRun(overview.LatestRun),
+		Throughput: Throughput{
+			Events:   overview.Throughput["events"],
+			Evidence: overview.Throughput["evidence"],
+			Risks:    overview.Throughput["risks"],
+		},
+		TopEvidence: toEvidenceTypeStats(overview.TopEvidence),
 	})
 }
 
 func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
-	latest, ok, err := s.latestRun()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
-		return
-	}
 	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
@@ -275,34 +295,20 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
 		return
 	}
-	if !ok || sensorMismatch(r.URL.Query().Get("sensor_id"), s.sensorID) {
-		writeJSON(w, http.StatusOK, RiskListResponse{Items: []risk.Snapshot{}, Page: Page{Limit: limit, Total: 0}})
-		return
-	}
-	batch, err := readRiskBatch(filepath.Join(latest.Dir, "risk-snapshots.json"))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_risks_failed", err.Error())
-		return
-	}
-	items, err := filterRisks(batch.Snapshots, r.URL.Query())
+	page, err := s.reader.ListRisks(r.Context(), store.Query{
+		Level:    r.URL.Query().Get("level"),
+		Q:        r.URL.Query().Get("q"),
+		SensorID: r.URL.Query().Get("sensor_id"),
+		From:     r.URL.Query().Get("from"),
+		To:       r.URL.Query().Get("to"),
+		Limit:    limit,
+		Cursor:   cursor,
+	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_risk_query", err.Error())
 		return
 	}
-	total := len(items)
-	if cursor > total {
-		cursor = total
-	}
-	end := cursor + limit
-	if end > total {
-		end = total
-	}
-	var next *string
-	if end < total {
-		value := strconv.Itoa(end)
-		next = &value
-	}
-	writeJSON(w, http.StatusOK, RiskListResponse{Items: items[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}})
+	writeJSON(w, http.StatusOK, RiskListResponse{Items: page.Items, Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total}})
 }
 
 func (s *Server) handleIP(w http.ResponseWriter, r *http.Request, rest string) {
@@ -313,14 +319,14 @@ func (s *Server) handleIP(w http.ResponseWriter, r *http.Request, rest string) {
 			writeError(w, http.StatusBadRequest, "bad_ip", err.Error())
 			return
 		}
-		s.handleIPRisk(w, ip)
+		s.handleIPRisk(w, r, ip)
 	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/evidence"):
 		ip, err := pathIP(strings.TrimSuffix(rest, "/evidence"))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "bad_ip", err.Error())
 			return
 		}
-		s.handleIPEvidence(w, ip)
+		s.handleIPEvidence(w, r, ip)
 	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/events"):
 		ip, err := pathIP(strings.TrimSuffix(rest, "/events"))
 		if err != nil {
@@ -333,57 +339,25 @@ func (s *Server) handleIP(w http.ResponseWriter, r *http.Request, rest string) {
 	}
 }
 
-func (s *Server) handleIPRisk(w http.ResponseWriter, ip string) {
-	latest, ok, err := s.latestRun()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
-		return
-	}
-	if !ok {
-		writeJSON(w, http.StatusOK, normalRisk(ip))
-		return
-	}
-	batch, err := readRiskBatch(filepath.Join(latest.Dir, "risk-snapshots.json"))
+func (s *Server) handleIPRisk(w http.ResponseWriter, r *http.Request, ip string) {
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	snapshot, err := s.reader.GetIPRisk(ctx, ip)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_risks_failed", err.Error())
 		return
 	}
-	for _, snapshot := range batch.Snapshots {
-		if snapshot.IP == ip {
-			writeJSON(w, http.StatusOK, snapshot)
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, normalRisk(ip))
+	writeJSON(w, http.StatusOK, snapshot)
 }
 
-func (s *Server) handleIPEvidence(w http.ResponseWriter, ip string) {
-	latest, ok, err := s.latestRun()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
-		return
-	}
-	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"evidence": []evidence.Evidence{}})
-		return
-	}
-	result, err := readEvidence(filepath.Join(latest.Dir, "evidence.json"))
+func (s *Server) handleIPEvidence(w http.ResponseWriter, r *http.Request, ip string) {
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	items, err := s.reader.GetIPEvidence(ctx, ip)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_evidence_failed", err.Error())
 		return
 	}
-	items := make([]evidence.Evidence, 0)
-	for _, item := range result.Evidence {
-		if item.IP == ip {
-			items = append(items, item)
-		}
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].CreatedAt == items[j].CreatedAt {
-			return items[i].EvidenceID < items[j].EvidenceID
-		}
-		return items[i].CreatedAt > items[j].CreatedAt
-	})
 	writeJSON(w, http.StatusOK, map[string]any{"evidence": items})
 }
 
@@ -393,16 +367,7 @@ func (s *Server) handleIPEvents(w http.ResponseWriter, r *http.Request, ip strin
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
 		return
 	}
-	latest, ok, err := s.latestRun()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
-		return
-	}
-	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"events": []normalized.Event{}})
-		return
-	}
-	events, err := readNormalizedEvents(filepath.Join(latest.Dir, "normalized.jsonl"), ip, limit)
+	events, err := s.reader.ListEventSamples(r.Context(), store.Query{Q: ip, Limit: limit})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_events_failed", err.Error())
 		return
@@ -410,15 +375,17 @@ func (s *Server) handleIPEvents(w http.ResponseWriter, r *http.Request, ip strin
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
-func (s *Server) handleShadowRuns(w http.ResponseWriter) {
-	runs, err := s.runs()
+func (s *Server) handleShadowRuns(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	runs, err := s.reader.ListRuns(ctx, 200)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
 		return
 	}
 	items := make([]ShadowRun, 0, len(runs))
 	for _, run := range runs {
-		items = append(items, s.toShadowRun(run))
+		items = append(items, toShadowRun(run))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runs": items})
 }
@@ -429,84 +396,127 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
 		return
 	}
-	runs, err := s.runs()
+	logs, err := s.reader.ListAuditLogs(r.Context(), limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
+		writeError(w, http.StatusInternalServerError, "read_audit_logs_failed", err.Error())
 		return
 	}
-	if len(runs) > limit {
-		runs = runs[:limit]
-	}
-	logs := make([]AuditLog, 0, len(runs))
-	for _, run := range runs {
-		logs = append(logs, AuditLog{
-			AuditID:   "audit-shadow-" + run.ID,
-			Actor:     "system",
-			Action:    "shadow.run",
-			Target:    run.ID,
-			Outcome:   fmt.Sprintf("risk_list_count=%d", run.Summary.RiskListCount),
-			CreatedAt: run.Summary.FinishedAt,
+	items := make([]AuditLog, 0, len(logs))
+	for _, log := range logs {
+		items = append(items, AuditLog{
+			AuditID:   log.AuditID,
+			Actor:     log.Actor,
+			Action:    log.Action,
+			Target:    log.Target,
+			Outcome:   log.Outcome,
+			CreatedAt: log.CreatedAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"logs": logs})
+	writeJSON(w, http.StatusOK, map[string]any{"logs": items})
 }
 
-func (s *Server) latestRun() (runRecord, bool, error) {
-	runs, err := s.runs()
+func (s *Server) handleIngestStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.reader.IngestStatus(r.Context())
 	if err != nil {
-		return runRecord{}, false, err
+		writeError(w, http.StatusInternalServerError, "read_ingest_status_failed", err.Error())
+		return
 	}
-	if len(runs) == 0 {
-		return runRecord{}, false, nil
-	}
-	return runs[0], true, nil
+	writeJSON(w, http.StatusOK, status)
 }
 
-func (s *Server) runs() ([]runRecord, error) {
-	runsDir := filepath.Join(s.shadowDir, "runs")
-	entries, err := os.ReadDir(runsDir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return []runRecord{}, nil
-	}
+func (s *Server) handleIngestDiagnostics(w http.ResponseWriter, r *http.Request) {
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
 	if err != nil {
-		return nil, fmt.Errorf("read runs directory: %w", err)
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
 	}
+	items, err := s.reader.ListIngestDiagnostics(r.Context(), store.Query{Limit: limit})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_ingest_diagnostics_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"diagnostics": items})
+}
 
-	runs := make([]runRecord, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		runDir := filepath.Join(runsDir, entry.Name())
-		summary, err := readRunSummary(filepath.Join(runDir, "run-summary.json"))
-		if err != nil {
-			continue
-		}
-		started, _ := time.Parse(time.RFC3339Nano, summary.StartedAt)
-		runs = append(runs, runRecord{ID: entry.Name(), Dir: runDir, Summary: summary, Started: started})
+func (s *Server) handleIngestEventTypes(w http.ResponseWriter, r *http.Request) {
+	items, err := s.reader.ListIngestEventTypes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_ingest_event_types_failed", err.Error())
+		return
 	}
-	sort.Slice(runs, func(i, j int) bool {
-		if !runs[i].Started.Equal(runs[j].Started) {
-			return runs[i].Started.After(runs[j].Started)
-		}
-		return runs[i].ID > runs[j].ID
+	writeJSON(w, http.StatusOK, map[string]any{"event_types": items})
+}
+
+func (s *Server) handleIngestErrors(w http.ResponseWriter, r *http.Request) {
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
+	items, err := s.reader.ListIngestErrors(r.Context(), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_ingest_errors_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"diagnostics": items})
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
+	events, err := s.reader.ListEventSamples(r.Context(), store.Query{
+		Q:        r.URL.Query().Get("q"),
+		Level:    r.URL.Query().Get("type"),
+		SensorID: r.URL.Query().Get("sensor_id"),
+		Limit:    limit,
 	})
-	return runs, nil
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_events_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
-func (s *Server) toShadowRun(run runRecord) ShadowRun {
+func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request, rawEventID string) {
+	eventID, err := store.DecodePathIP(rawEventID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_event_id", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	event, ok, err := s.reader.GetEvent(ctx, eventID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_event_failed", err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "event not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, event)
+}
+
+func contextWithRequestTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, 10*time.Second)
+}
+
+func toShadowRun(run store.Run) ShadowRun {
 	return ShadowRun{
-		RunID:          run.ID,
-		StartedAt:      run.Summary.StartedAt,
-		FinishedAt:     run.Summary.FinishedAt,
-		SensorID:       s.sensorID,
-		PreviousOffset: run.Summary.PreviousOffset,
-		NewOffset:      run.Summary.NewOffset,
-		Truncated:      run.Summary.Truncated,
-		Normalized:     normalizedCounts{Read: run.Summary.Normalized.Read, Emitted: run.Summary.Normalized.Emitted, Skipped: run.Summary.Normalized.Skipped, Malformed: run.Summary.Normalized.Malformed},
-		EvidenceCount:  run.Summary.EvidenceCount,
-		RiskCount:      run.Summary.RiskCount,
-		RiskListCount:  run.Summary.RiskListCount,
+		RunID:          run.RunID,
+		StartedAt:      run.StartedAt,
+		FinishedAt:     run.FinishedAt,
+		SensorID:       run.SensorID,
+		PreviousOffset: run.PreviousOffset,
+		NewOffset:      run.NewOffset,
+		Truncated:      run.Truncated,
+		Normalized:     normalizedCounts{Read: run.Normalized.Read, Emitted: run.Normalized.Emitted, Skipped: run.Normalized.Skipped, Malformed: run.Normalized.Malformed},
+		EvidenceCount:  run.EvidenceCount,
+		RiskCount:      run.RiskCount,
+		RiskListCount:  run.RiskListCount,
 	}
 }
 
@@ -517,187 +527,12 @@ type normalizedCounts struct {
 	Malformed int `json:"malformed"`
 }
 
-func readRunSummary(path string) (shadow.RunSummary, error) {
-	var summary shadow.RunSummary
-	if err := readJSONFile(path, &summary); err != nil {
-		return shadow.RunSummary{}, err
-	}
-	return summary, nil
-}
-
-func readRiskBatch(path string) (risk.BatchResult, error) {
-	var batch risk.BatchResult
-	if err := readJSONFile(path, &batch); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return risk.BatchResult{Snapshots: []risk.Snapshot{}}, nil
-		}
-		return risk.BatchResult{}, err
-	}
-	if batch.Snapshots == nil {
-		batch.Snapshots = []risk.Snapshot{}
-	}
-	return batch, nil
-}
-
-func readEvidence(path string) (evidence.Result, error) {
-	var result evidence.Result
-	if err := readJSONFile(path, &result); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return evidence.Result{Evidence: []evidence.Evidence{}}, nil
-		}
-		return evidence.Result{}, err
-	}
-	if result.Evidence == nil {
-		result.Evidence = []evidence.Evidence{}
-	}
-	return result, nil
-}
-
-func readJSONFile(path string, target any) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if err := json.NewDecoder(file).Decode(target); err != nil {
-		return fmt.Errorf("decode %s: %w", path, err)
-	}
-	return nil
-}
-
-func filterRisks(snapshots []risk.Snapshot, query url.Values) ([]risk.Snapshot, error) {
-	level := query.Get("level")
-	if level != "" {
-		if _, ok := levelRank(level); !ok {
-			return nil, fmt.Errorf("unknown level: %s", level)
-		}
-	}
-	q := strings.ToLower(query.Get("q"))
-	from, err := optionalTime(query.Get("from"))
-	if err != nil {
-		return nil, fmt.Errorf("bad from: %w", err)
-	}
-	to, err := optionalTime(query.Get("to"))
-	if err != nil {
-		return nil, fmt.Errorf("bad to: %w", err)
-	}
-
-	items := make([]risk.Snapshot, 0, len(snapshots))
-	for _, item := range snapshots {
-		if level != "" && item.Level != level {
-			continue
-		}
-		if q != "" && !strings.Contains(strings.ToLower(item.IP), q) && !strings.Contains(strings.ToLower(item.Summary), q) {
-			continue
-		}
-		updatedAt, ok := parseTime(item.UpdatedAt)
-		if !from.IsZero() && (!ok || updatedAt.Before(from)) {
-			continue
-		}
-		if !to.IsZero() && (!ok || updatedAt.After(to)) {
-			continue
-		}
-		items = append(items, item)
-	}
-	sortRisks(items)
-	return items, nil
-}
-
-func sortRisks(items []risk.Snapshot) {
-	sort.Slice(items, func(i, j int) bool {
-		leftRank, _ := levelRank(items[i].Level)
-		rightRank, _ := levelRank(items[j].Level)
-		if leftRank != rightRank {
-			return leftRank > rightRank
-		}
-		if items[i].Score != items[j].Score {
-			return items[i].Score > items[j].Score
-		}
-		return items[i].IP < items[j].IP
-	})
-}
-
-func readNormalizedEvents(path string, ip string, limit int) ([]normalized.Event, error) {
-	file, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return []normalized.Event{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	events := make([]normalized.Event, 0)
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	for scanner.Scan() {
-		var event normalized.Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
-		if subjectIP, ok := event.Subject["ip"].(string); !ok || subjectIP != ip {
-			continue
-		}
-		events = append(events, event)
-		if len(events) > limit {
-			events = events[len(events)-limit:]
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return events, nil
-}
-
-func topEvidence(items []evidence.Evidence) []EvidenceTypeStat {
-	counts := map[string]int{}
+func toEvidenceTypeStats(items []ingest.EventTypeCount) []EvidenceTypeStat {
+	result := make([]EvidenceTypeStat, 0, len(items))
 	for _, item := range items {
-		if item.Type != "" {
-			counts[item.Type]++
-		}
+		result = append(result, EvidenceTypeStat{Type: item.Type, Count: item.Count})
 	}
-	result := make([]EvidenceTypeStat, 0, len(counts))
-	for evidenceType, count := range counts {
-		result = append(result, EvidenceTypeStat{Type: evidenceType, Count: count})
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Count != result[j].Count {
-			return result[i].Count > result[j].Count
-		}
-		return result[i].Type < result[j].Type
-	})
 	return result
-}
-
-func levelCounts(items []risk.Snapshot) LevelCounts {
-	var counts LevelCounts
-	for _, item := range items {
-		switch item.Level {
-		case "normal":
-			counts.Normal++
-		case "suspicious":
-			counts.Suspicious++
-		case "high":
-			counts.High++
-		case "confirmed":
-			counts.Confirmed++
-		}
-	}
-	return counts
-}
-
-func normalRisk(ip string) risk.Snapshot {
-	return risk.Snapshot{
-		IP:                ip,
-		Score:             0,
-		Level:             "normal",
-		Confidence:        0,
-		Window:            "none",
-		EvidenceIDs:       []string{},
-		Summary:           "未发现该 IP 的有效风险证据",
-		RecommendedAction: "record",
-		UpdatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
-	}
 }
 
 func boundedInt(raw string, defaultValue, minValue, maxValue int) (int, error) {
@@ -725,53 +560,8 @@ func cursorOffset(raw string) (int, error) {
 	return value, nil
 }
 
-func sensorMismatch(querySensorID string, sensorID string) bool {
-	return querySensorID != "" && querySensorID != sensorID
-}
-
 func pathIP(raw string) (string, error) {
-	ip, err := url.PathUnescape(raw)
-	if err != nil {
-		return "", err
-	}
-	if ip == "" {
-		return "", fmt.Errorf("ip is required")
-	}
-	return ip, nil
-}
-
-func optionalTime(raw string) (time.Time, error) {
-	if raw == "" {
-		return time.Time{}, nil
-	}
-	value, ok := parseTime(raw)
-	if !ok {
-		return time.Time{}, fmt.Errorf("must be RFC3339")
-	}
-	return value, nil
-}
-
-func parseTime(raw string) (time.Time, bool) {
-	value, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return value, true
-}
-
-func levelRank(level string) (int, bool) {
-	switch level {
-	case "normal":
-		return 0, true
-	case "suspicious":
-		return 1, true
-	case "high":
-		return 2, true
-	case "confirmed":
-		return 3, true
-	default:
-		return 0, false
-	}
+	return store.DecodePathIP(raw)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

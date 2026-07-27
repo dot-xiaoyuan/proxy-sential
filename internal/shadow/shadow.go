@@ -1,6 +1,8 @@
 package shadow
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,18 +12,24 @@ import (
 
 	"proxy-sentinel/internal/adapter/suricata"
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/ingest"
+	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
+	"proxy-sentinel/internal/store"
 )
 
 type Options struct {
-	EVEPath      string
-	StatePath    string
-	OutDir       string
-	SensorID     string
-	Window       time.Duration
-	ListMinLevel string
-	ListLimit    int
-	Retention    time.Duration
+	EVEPath       string
+	StatePath     string
+	OutDir        string
+	SensorID      string
+	Window        time.Duration
+	ListMinLevel  string
+	ListLimit     int
+	Retention     time.Duration
+	StorageMode   string
+	PostgresDSN   string
+	ClickHouseDSN string
 }
 
 type State struct {
@@ -44,6 +52,7 @@ type RunSummary struct {
 	EvidenceCount  int            `json:"evidence_count"`
 	RiskCount      int            `json:"risk_count"`
 	RiskListCount  int            `json:"risk_list_count"`
+	StorageMode    string         `json:"storage_mode"`
 }
 
 func Run(opts Options) (RunSummary, error) {
@@ -133,8 +142,12 @@ func Run(opts Options) (RunSummary, error) {
 		EvidenceCount: len(evidenceResult.Evidence),
 		RiskCount:     len(riskResult.Snapshots),
 		RiskListCount: len(riskListResult.Snapshots),
+		StorageMode:   opts.StorageMode,
 	}
 	if err := writeJSONFile(summaryPath, summary); err != nil {
+		return RunSummary{}, err
+	}
+	if err := writeStoreOutputs(opts, summary, evidenceResult, riskResult, normalizedPath); err != nil {
 		return RunSummary{}, err
 	}
 
@@ -162,7 +175,137 @@ func withDefaults(opts Options) Options {
 	if opts.Retention == 0 {
 		opts.Retention = 7 * 24 * time.Hour
 	}
+	if opts.StorageMode == "" {
+		opts.StorageMode = "file"
+	}
 	return opts
+}
+
+func writeStoreOutputs(opts Options, summary RunSummary, evidenceResult evidence.Result, riskResult risk.BatchResult, normalizedPath string) error {
+	mode := store.Mode(opts.StorageMode)
+	if mode == "" || mode == store.ModeFile {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	writer, err := store.NewWriter(store.Options{
+		Mode:          mode,
+		SensorID:      opts.SensorID,
+		CollectorKind: "suricata",
+		PostgresDSN:   opts.PostgresDSN,
+		ClickHouseDSN: opts.ClickHouseDSN,
+	})
+	if err != nil {
+		return err
+	}
+	run := store.Run{
+		RunID:          filepath.Base(summary.RunDir),
+		StartedAt:      summary.StartedAt,
+		FinishedAt:     summary.FinishedAt,
+		SensorID:       opts.SensorID,
+		PreviousOffset: summary.PreviousOffset,
+		NewOffset:      summary.NewOffset,
+		Truncated:      summary.Truncated,
+		Normalized: store.NormalizedCounts{
+			Read:      summary.Normalized.Read,
+			Emitted:   summary.Normalized.Emitted,
+			Skipped:   summary.Normalized.Skipped,
+			Malformed: summary.Normalized.Malformed,
+			ByType:    summary.Normalized.ByType,
+		},
+		EvidenceCount: summary.EvidenceCount,
+		RiskCount:     summary.RiskCount,
+		RiskListCount: summary.RiskListCount,
+		RawRef: map[string]any{
+			"backend": "suricata",
+			"source":  summary.EVEPath,
+			"offset":  summary.NewOffset,
+		},
+	}
+	diagnostic := ingest.Diagnostic{
+		SchemaVersion: "v1",
+		DiagnosticID:  "diag-" + run.RunID,
+		Timestamp:     summary.FinishedAt,
+		SensorID:      opts.SensorID,
+		Collector:     ingest.Collector{Kind: "suricata"},
+		Stage:         "normalize",
+		Type:          "stats",
+		Severity:      diagnosticSeverity(summary),
+		Summary:       diagnosticSummary(summary),
+		Counters: map[string]int{
+			"read":      summary.Normalized.Read,
+			"emitted":   summary.Normalized.Emitted,
+			"skipped":   summary.Normalized.Skipped,
+			"malformed": summary.Normalized.Malformed,
+		},
+		ByType: summary.Normalized.ByType,
+		RawRef: run.RawRef,
+		Details: map[string]any{
+			"run_id":          run.RunID,
+			"previous_offset": summary.PreviousOffset,
+			"new_offset":      summary.NewOffset,
+			"truncated":       summary.Truncated,
+		},
+	}
+	events, err := readNormalizedEventsFile(normalizedPath)
+	if err != nil {
+		return err
+	}
+	if err := writer.WriteCollectorRun(ctx, run); err != nil {
+		return err
+	}
+	if err := writer.WriteNormalizedEvents(ctx, events); err != nil {
+		return err
+	}
+	if err := writer.WriteIngestDiagnostics(ctx, []ingest.Diagnostic{diagnostic}); err != nil {
+		return err
+	}
+	if err := writer.WriteEvidence(ctx, evidenceResult.Evidence); err != nil {
+		return err
+	}
+	if err := writer.WriteRiskSnapshots(ctx, riskResult.Snapshots); err != nil {
+		return err
+	}
+	return nil
+}
+
+func diagnosticSeverity(summary RunSummary) string {
+	if summary.Truncated || summary.Normalized.Malformed > 0 || summary.Normalized.Skipped > 0 {
+		return "warning"
+	}
+	return "info"
+}
+
+func diagnosticSummary(summary RunSummary) string {
+	if summary.Truncated {
+		return "input log was truncated or rotated during the latest run"
+	}
+	if summary.Normalized.Malformed > 0 {
+		return "latest run contains malformed input records"
+	}
+	if summary.Normalized.Skipped > 0 {
+		return "latest run contains skipped input records"
+	}
+	return "collector and normalization pipeline are producing standard events"
+}
+
+func readNormalizedEventsFile(path string) ([]normalized.Event, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	events := []normalized.Event{}
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	for scanner.Scan() {
+		var event normalized.Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events, scanner.Err()
 }
 
 func writeNormalized(file *os.File, offset int64, size int64, outputPath string, sensorID string) (suricata.Stats, error) {

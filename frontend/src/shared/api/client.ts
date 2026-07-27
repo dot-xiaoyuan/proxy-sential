@@ -2,6 +2,10 @@ import type {
   AuditLog,
   CreateLabelRequest,
   Evidence,
+  EventQuery,
+  EventTypeCount,
+  IngestDiagnostic,
+  IngestStatus,
   Label,
   NormalizedEventSummary,
   Overview,
@@ -54,6 +58,14 @@ export const api = {
     request<{ events: NormalizedEventSummary[] }>(
       `/ips/${encodeURIComponent(ip)}/events${search({ limit })}`,
     ),
+  events: (query: EventQuery) => request<{ events: NormalizedEventSummary[] }>(`/events${search(query)}`),
+  ingestStatus: () => request<IngestStatus>('/ingest/status'),
+  ingestRuns: () => request<{ runs: ShadowRun[] }>('/ingest/runs'),
+  ingestDiagnostics: (limit = 50) =>
+    request<{ diagnostics: IngestDiagnostic[] }>(`/ingest/diagnostics${search({ limit })}`),
+  ingestEventTypes: () => request<{ event_types: EventTypeCount[] }>('/ingest/event-types'),
+  ingestErrors: (limit = 50) =>
+    request<{ diagnostics: IngestDiagnostic[] }>(`/ingest/errors${search({ limit })}`),
   createLabel: (payload: CreateLabelRequest) =>
     request<Label>('/labels', { method: 'POST', body: JSON.stringify(payload) }),
   shadowRuns: () => request<{ runs: ShadowRun[] }>('/shadow/runs'),

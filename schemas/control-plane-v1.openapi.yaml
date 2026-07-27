@@ -142,6 +142,170 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /events:
+    get:
+      operationId: listEvents
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Normalized event samples.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/NormalizedEventSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /events/{event_id}:
+    get:
+      operationId: getEvent
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One normalized event.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NormalizedEventSummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ingest/status:
+    get:
+      operationId: getIngestStatus
+      responses:
+        "200":
+          description: Current collector and normalization status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestStatus"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ingest/runs:
+    get:
+      operationId: listIngestRuns
+      responses:
+        "200":
+          description: Collector and risk analysis runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs]
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ShadowRun"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ingest/diagnostics:
+    get:
+      operationId: listIngestDiagnostics
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Collector diagnostics and normalization statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [diagnostics]
+                properties:
+                  diagnostics:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IngestDiagnostic"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ingest/event-types:
+    get:
+      operationId: listIngestEventTypes
+      responses:
+        "200":
+          description: Latest event type distribution.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [event_types]
+                properties:
+                  event_types:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EventTypeCount"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ingest/errors:
+    get:
+      operationId: listIngestErrors
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Warning or error diagnostics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [diagnostics]
+                properties:
+                  diagnostics:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/IngestDiagnostic"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /labels:
     post:
       operationId: createLabel
@@ -269,6 +433,7 @@ components:
         - shadow:read
         - audit:read
         - rules:reload
+        - ingest:read
     Role:
       type: string
       enum: [viewer, reviewer, operator, admin]
@@ -411,6 +576,97 @@ components:
         raw_ref:
           type: object
           additionalProperties: true
+    Collector:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [suricata, zeek, af_xdp, dpdk, pcap, unknown]
+        version:
+          type: string
+        interface:
+          type: string
+    IngestDiagnostic:
+      type: object
+      required: [schema_version, diagnostic_id, timestamp, sensor_id, collector, stage, type, severity, summary]
+      properties:
+        schema_version:
+          type: string
+          enum: [v1]
+        diagnostic_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        sensor_id:
+          type: string
+        collector:
+          $ref: "#/components/schemas/Collector"
+        stage:
+          type: string
+          enum: [capture, decode, normalize, evidence, risk]
+        type:
+          type: string
+          enum: [stats, skip, parse_error, service_status, event_type_count]
+        severity:
+          type: string
+          enum: [info, warning, error]
+        summary:
+          type: string
+        counters:
+          type: object
+          additionalProperties:
+            type: integer
+        by_type:
+          type: object
+          additionalProperties:
+            type: integer
+        raw_ref:
+          type: object
+          additionalProperties: true
+        details:
+          type: object
+          additionalProperties: true
+    IngestStatus:
+      type: object
+      required: [sensor_id, collector, storage_mode, healthy, severity, summary, last_counters, last_event_type_dist]
+      properties:
+        sensor_id:
+          type: string
+        collector:
+          $ref: "#/components/schemas/Collector"
+        storage_mode:
+          type: string
+          enum: [file, db, dual]
+        latest_run_id:
+          type: string
+        latest_run_at:
+          type: string
+          format: date-time
+        healthy:
+          type: boolean
+        severity:
+          type: string
+          enum: [info, warning, error]
+        summary:
+          type: string
+        last_counters:
+          type: object
+          additionalProperties:
+            type: integer
+        last_event_type_dist:
+          type: object
+          additionalProperties:
+            type: integer
+    EventTypeCount:
+      type: object
+      required: [type, count]
+      properties:
+        type:
+          type: string
+        count:
+          type: integer
     LabelKind:
       type: string
       enum: [confirmed_proxy, false_positive, benign, needs_more_data]

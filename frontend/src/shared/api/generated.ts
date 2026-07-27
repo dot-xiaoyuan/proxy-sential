@@ -100,6 +100,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getEvent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ingest/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIngestStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ingest/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listIngestRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ingest/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listIngestDiagnostics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ingest/event-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listIngestEventTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ingest/errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listIngestErrors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/labels": {
         parameters: {
             query?: never;
@@ -169,7 +281,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** @enum {string} */
-        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "shadow:read" | "audit:read" | "rules:reload";
+        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read";
         /** @enum {string} */
         Role: "viewer" | "reviewer" | "operator" | "admin";
         Session: {
@@ -243,6 +355,63 @@ export interface components {
             raw_ref?: {
                 [key: string]: unknown;
             };
+        };
+        Collector: {
+            /** @enum {string} */
+            kind: "suricata" | "zeek" | "af_xdp" | "dpdk" | "pcap" | "unknown";
+            version?: string;
+            interface?: string;
+        };
+        IngestDiagnostic: {
+            /** @enum {string} */
+            schema_version: "v1";
+            diagnostic_id: string;
+            /** Format: date-time */
+            timestamp: string;
+            sensor_id: string;
+            collector: components["schemas"]["Collector"];
+            /** @enum {string} */
+            stage: "capture" | "decode" | "normalize" | "evidence" | "risk";
+            /** @enum {string} */
+            type: "stats" | "skip" | "parse_error" | "service_status" | "event_type_count";
+            /** @enum {string} */
+            severity: "info" | "warning" | "error";
+            summary: string;
+            counters?: {
+                [key: string]: number;
+            };
+            by_type?: {
+                [key: string]: number;
+            };
+            raw_ref?: {
+                [key: string]: unknown;
+            };
+            details?: {
+                [key: string]: unknown;
+            };
+        };
+        IngestStatus: {
+            sensor_id: string;
+            collector: components["schemas"]["Collector"];
+            /** @enum {string} */
+            storage_mode: "file" | "db" | "dual";
+            latest_run_id?: string;
+            /** Format: date-time */
+            latest_run_at?: string;
+            healthy: boolean;
+            /** @enum {string} */
+            severity: "info" | "warning" | "error";
+            summary: string;
+            last_counters: {
+                [key: string]: number;
+            };
+            last_event_type_dist: {
+                [key: string]: number;
+            };
+        };
+        EventTypeCount: {
+            type: string;
+            count: number;
         };
         /** @enum {string} */
         LabelKind: "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
@@ -512,6 +681,178 @@ export interface operations {
                 content: {
                     "application/json": {
                         events: components["schemas"]["NormalizedEventSummary"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listEvents: {
+        parameters: {
+            query?: {
+                q?: string;
+                type?: string;
+                sensor_id?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Normalized event samples. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        events: components["schemas"]["NormalizedEventSummary"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One normalized event. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NormalizedEventSummary"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getIngestStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current collector and normalization status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestStatus"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listIngestRuns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Collector and risk analysis runs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        runs: components["schemas"]["ShadowRun"][];
+                    };
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listIngestDiagnostics: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Collector diagnostics and normalization statistics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        diagnostics: components["schemas"]["IngestDiagnostic"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listIngestEventTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest event type distribution. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        event_types: components["schemas"]["EventTypeCount"][];
+                    };
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listIngestErrors: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Warning or error diagnostics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        diagnostics: components["schemas"]["IngestDiagnostic"][];
                     };
                 };
             };

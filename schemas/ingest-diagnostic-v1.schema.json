@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proxy-sentinel.local/schemas/ingest-diagnostic-v1.schema.json",
+  "title": "Proxy Sentinel Ingest Diagnostic v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "diagnostic_id",
+    "timestamp",
+    "sensor_id",
+    "collector",
+    "stage",
+    "type",
+    "severity",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "v1"
+    },
+    "diagnostic_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sensor_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["suricata", "zeek", "af_xdp", "dpdk", "pcap", "unknown"]
+        },
+        "version": {
+          "type": "string"
+        },
+        "interface": {
+          "type": "string"
+        }
+      }
+    },
+    "stage": {
+      "type": "string",
+      "enum": ["capture", "decode", "normalize", "evidence", "risk"]
+    },
+    "type": {
+      "type": "string",
+      "enum": ["stats", "skip", "parse_error", "service_status", "event_type_count"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warning", "error"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "by_type": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "raw_ref": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

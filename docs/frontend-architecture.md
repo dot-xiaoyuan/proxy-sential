@@ -26,9 +26,9 @@ Proxy Sentinel 前端第一阶段是检测运营台，不是采集调试器或�
 
 `schemas/control-plane-v1.openapi.yaml` 是前后端共同契约源。前端通过 `openapi-typescript` 生成 `frontend/src/shared/api/generated.ts`，页面和 mock 都使用生成类型。
 
-第一阶段真实接口由 `proxy-sentinel control-plane serve` 提供。服务直接读取
-`data/shadow/runs/*` 下的 shadow 文件产物，不引入数据库，不暴露 Suricata 原始
-EVE 字段。
+第一阶段真实接口由 `proxy-sentinel control-plane serve` 提供。控制面通过
+`internal/store` 读取数据；30 机器过渡期使用 `dual` 模式兼容文件产物，生产目标
+是 PostgreSQL + ClickHouse，不再依赖 `data/shadow/runs/*` 作为主存储。
 
 接口：
 
@@ -38,6 +38,11 @@ EVE 字段。
 - `GET /api/v1/ips/{ip}/risk`
 - `GET /api/v1/ips/{ip}/evidence`
 - `GET /api/v1/ips/{ip}/events`
+- `GET /api/v1/ingest/status`
+- `GET /api/v1/ingest/diagnostics`
+- `GET /api/v1/ingest/event-types`
+- `GET /api/v1/ingest/errors`
+- `GET /api/v1/events`
 - `POST /api/v1/labels`
 - `GET /api/v1/shadow/runs`
 - `GET /api/v1/audit-logs`
@@ -51,6 +56,7 @@ proxy-sentinel control-plane serve \
   --shadow-dir /opt/proxy-sentinel/data/shadow \
   --sensor-id office-30 \
   --frontend-dir /opt/proxy-sentinel/frontend/dist \
+  --storage-mode dual \
   --read-only
 ```
 

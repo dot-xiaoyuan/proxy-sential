@@ -246,19 +246,25 @@ func runShadowRun(args []string) error {
 	minLevel := fs.String("min-level", "suspicious", "risk list minimum level")
 	limit := fs.Int("limit", 50, "risk list maximum snapshots")
 	retention := fs.Duration("retention", 7*24*time.Hour, "run directory retention, for example 168h")
+	storageMode := fs.String("storage-mode", "file", "storage mode: file, db, or dual")
+	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN for production evidence/risk/audit storage")
+	clickHouseDSN := fs.String("clickhouse-dsn", "", "ClickHouse HTTP URL for production event/diagnostic storage")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	summary, err := shadow.Run(shadow.Options{
-		EVEPath:      *eve,
-		StatePath:    *state,
-		OutDir:       *outDir,
-		SensorID:     *sensorID,
-		Window:       *window,
-		ListMinLevel: *minLevel,
-		ListLimit:    *limit,
-		Retention:    *retention,
+		EVEPath:       *eve,
+		StatePath:     *state,
+		OutDir:        *outDir,
+		SensorID:      *sensorID,
+		Window:        *window,
+		ListMinLevel:  *minLevel,
+		ListLimit:     *limit,
+		Retention:     *retention,
+		StorageMode:   *storageMode,
+		PostgresDSN:   *postgresDSN,
+		ClickHouseDSN: *clickHouseDSN,
 	})
 	if err != nil {
 		return err
@@ -293,17 +299,27 @@ func runControlPlaneServe(args []string) error {
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
 	frontendDir := fs.String("frontend-dir", "", "optional frontend dist directory to serve")
 	readOnly := fs.Bool("read-only", true, "disable mutating review and reload endpoints")
+	storageMode := fs.String("storage-mode", "file", "storage mode: file, db, or dual")
+	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN for production business storage")
+	clickHouseDSN := fs.String("clickhouse-dsn", "", "ClickHouse HTTP URL for production event and diagnostic storage")
+	eventRetention := fs.Duration("event-retention", 7*24*time.Hour, "normalized event retention target, documented for DB deployments")
+	diagnosticRetention := fs.Duration("diagnostic-retention", 30*24*time.Hour, "diagnostic retention target, documented for DB deployments")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "control-plane: addr=%s shadow_dir=%s sensor_id=%s read_only=%t\n", *addr, *shadowDir, *sensorID, *readOnly)
+	fmt.Fprintf(os.Stderr, "control-plane: addr=%s shadow_dir=%s sensor_id=%s storage_mode=%s read_only=%t event_retention=%s diagnostic_retention=%s\n", *addr, *shadowDir, *sensorID, *storageMode, *readOnly, eventRetention.String(), diagnosticRetention.String())
 	return controlplane.Serve(controlplane.Options{
-		Addr:        *addr,
-		ShadowDir:   *shadowDir,
-		SensorID:    *sensorID,
-		FrontendDir: *frontendDir,
-		ReadOnly:    *readOnly,
+		Addr:          *addr,
+		ShadowDir:     *shadowDir,
+		SensorID:      *sensorID,
+		FrontendDir:   *frontendDir,
+		ReadOnly:      *readOnly,
+		StorageMode:   *storageMode,
+		PostgresDSN:   *postgresDSN,
+		ClickHouseDSN: *clickHouseDSN,
+		CollectorKind: "suricata",
+		InterfaceName: "ens1f1",
 	})
 }
 

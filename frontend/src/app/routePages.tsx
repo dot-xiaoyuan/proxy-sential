@@ -5,6 +5,7 @@ const AuditPage = lazy(() => import('../pages/AuditPage').then((module) => ({ de
 const IpDetailsPage = lazy(() =>
   import('../pages/IpDetailsPage').then((module) => ({ default: module.IpDetailsPage })),
 )
+const IngestPage = lazy(() => import('../pages/IngestPage').then((module) => ({ default: module.IngestPage })))
 const OverviewPage = lazy(() =>
   import('../pages/OverviewPage').then((module) => ({ default: module.OverviewPage })),
 )
@@ -41,6 +42,14 @@ export function IpDetailsRoute() {
   return (
     <RouteSuspense>
       <IpDetailsPage />
+    </RouteSuspense>
+  )
+}
+
+export function IngestRoute() {
+  return (
+    <RouteSuspense>
+      <IngestPage />
     </RouteSuspense>
   )
 }

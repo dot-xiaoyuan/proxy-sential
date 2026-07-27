@@ -208,6 +208,63 @@ func TestReadOnlySessionLabelsAndRulesReload(t *testing.T) {
 	}
 }
 
+func TestIngestAndEventEndpoints(t *testing.T) {
+	shadowDir := t.TempDir()
+	writeRun(t, shadowDir, "20260727-101000", testRun{
+		startedAt: "2026-07-27T10:10:00+08:00",
+		normalized: suricata.Stats{
+			Read: 4, Emitted: 3, Skipped: 1, Malformed: 0, ByType: map[string]int{"dns": 2, "http": 1},
+		},
+		events: []normalized.Event{
+			normalizedEvent("event-dns-1", "192.168.0.8", "2026-07-27T10:10:01+08:00"),
+			normalizedEvent("event-http-1", "192.168.0.9", "2026-07-27T10:10:02+08:00"),
+			normalizedEvent("event-dns-2", "192.168.0.8", "2026-07-27T10:10:03+08:00"),
+		},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "office-30", ReadOnly: true})
+
+	var status struct {
+		SensorID          string         `json:"sensor_id"`
+		Healthy           bool           `json:"healthy"`
+		LastCounters      map[string]int `json:"last_counters"`
+		LastEventTypeDist map[string]int `json:"last_event_type_dist"`
+	}
+	getJSON(t, server, "/api/v1/ingest/status", http.StatusOK, &status)
+	if status.SensorID != "office-30" || !status.Healthy || status.LastCounters["emitted"] != 3 || status.LastEventTypeDist["dns"] != 2 {
+		t.Fatalf("unexpected ingest status: %#v", status)
+	}
+
+	var diagnostics struct {
+		Diagnostics []map[string]any `json:"diagnostics"`
+	}
+	getJSON(t, server, "/api/v1/ingest/diagnostics", http.StatusOK, &diagnostics)
+	if len(diagnostics.Diagnostics) != 1 || diagnostics.Diagnostics[0]["raw_ref"] == nil {
+		t.Fatalf("unexpected diagnostics: %#v", diagnostics.Diagnostics)
+	}
+
+	var eventTypes struct {
+		EventTypes []map[string]any `json:"event_types"`
+	}
+	getJSON(t, server, "/api/v1/ingest/event-types", http.StatusOK, &eventTypes)
+	if len(eventTypes.EventTypes) != 2 || eventTypes.EventTypes[0]["type"] != "dns" {
+		t.Fatalf("unexpected event type distribution: %#v", eventTypes.EventTypes)
+	}
+
+	var eventsResponse struct {
+		Events []normalized.Event `json:"events"`
+	}
+	getJSON(t, server, "/api/v1/events?q=192.168.0.8&limit=2", http.StatusOK, &eventsResponse)
+	if len(eventsResponse.Events) != 2 {
+		t.Fatalf("expected two event samples for ip, got %#v", eventsResponse.Events)
+	}
+
+	var event normalized.Event
+	getJSON(t, server, "/api/v1/events/event-http-1", http.StatusOK, &event)
+	if event.EventID != "event-http-1" {
+		t.Fatalf("unexpected event lookup: %#v", event)
+	}
+}
+
 type testRun struct {
 	startedAt  string
 	normalized suricata.Stats
