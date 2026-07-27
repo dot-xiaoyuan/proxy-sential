@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -149,11 +150,7 @@ func (s *ClickHouseStore) GetActivityOverview(ctx context.Context, query Activit
 	if err != nil {
 		return ActivityOverview{}, err
 	}
-	events, err := s.ListEventsForActivityOverview(ctx, query.SensorID, duration, query.Limit)
-	if err != nil {
-		return ActivityOverview{}, err
-	}
-	return BuildActivityOverview(query.SensorID, window, events, map[string]risk.Snapshot{}), nil
+	return s.GetActivityOverviewWithRisks(ctx, ActivityQuery{SensorID: query.SensorID, Window: window, Limit: query.Limit}, duration, map[string]risk.Snapshot{})
 }
 
 func (s *ClickHouseStore) ListEventsForActivityOverview(ctx context.Context, sensorID string, window time.Duration, limit int) ([]normalized.Event, error) {
@@ -177,6 +174,112 @@ FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit)
 		return nil, err
 	}
 	return decodeEventRows(data)
+}
+
+func (s *ClickHouseStore) GetActivityOverviewWithRisks(ctx context.Context, query ActivityQuery, window time.Duration, risks map[string]risk.Snapshot) (ActivityOverview, error) {
+	windowLabel := query.Window
+	if windowLabel == "" {
+		windowLabel = "1h"
+	}
+	where := activityWhereSQL(query.SensorID, window)
+	overview := ActivityOverview{
+		SensorID:           query.SensorID,
+		Window:             windowLabel,
+		EventTypeCounts:    []ActivityCount{},
+		ProtocolCounts:     []ActivityCount{},
+		TopDomains:         []ActivityCount{},
+		TopHTTPHosts:       []ActivityCount{},
+		TopTLSSNI:          []ActivityCount{},
+		TopUserAgents:      []ActivityCount{},
+		TopTLSFingerprints: []ActivityCount{},
+		TopDstPorts:        []ActivityCount{},
+		TopDstIPs:          []ActivityCount{},
+		TopSourceIPs:       []ActivityCount{},
+		TopActiveRiskIPs:   []ActivityIPSummary{},
+	}
+
+	summary, err := s.activitySummary(ctx, where)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+	overview.EventCount = summary.EventCount
+	overview.ActiveIPCount = summary.ActiveIPCount
+	overview.FirstSeen = summary.FirstSeen
+	overview.LastSeen = summary.LastSeen
+	overview.AccessObjectCount, err = s.activityAccessObjectCount(ctx, where)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
+
+	if overview.EventTypeCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
+SELECT type AS value, count() AS count, max(timestamp) AS last_seen
+FROM normalized_events
+WHERE %s
+GROUP BY type
+ORDER BY count DESC, last_seen DESC, value ASC
+LIMIT 20
+FORMAT JSONEachRow`, where)); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.ProtocolCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
+SELECT proto AS value, count() AS count, max(timestamp) AS last_seen
+FROM normalized_events
+WHERE %s AND proto != ''
+GROUP BY proto
+ORDER BY count DESC, last_seen DESC, value ASC
+LIMIT 20
+FORMAT JSONEachRow`, where)); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopDstPorts, err = s.activityCounts(ctx, fmt.Sprintf(`
+SELECT toString(dst_port) AS value, count() AS count, max(timestamp) AS last_seen
+FROM normalized_events
+WHERE %s AND dst_port > 0
+GROUP BY dst_port
+ORDER BY count DESC, last_seen DESC, value ASC
+LIMIT 20
+FORMAT JSONEachRow`, where)); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopDstIPs, err = s.activityCounts(ctx, fmt.Sprintf(`
+SELECT dst_ip AS value, count() AS count, max(timestamp) AS last_seen
+FROM normalized_events
+WHERE %s AND dst_ip != ''
+GROUP BY dst_ip
+ORDER BY count DESC, last_seen DESC, value ASC
+LIMIT 20
+FORMAT JSONEachRow`, where)); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopSourceIPs, err = s.activityCounts(ctx, fmt.Sprintf(`
+SELECT subject_ip AS value, count() AS count, max(timestamp) AS last_seen
+FROM normalized_events
+WHERE %s AND subject_ip != ''
+GROUP BY subject_ip
+ORDER BY count DESC, last_seen DESC, value ASC
+LIMIT 20
+FORMAT JSONEachRow`, where)); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopDomains, err = s.activityDomainCounts(ctx, where, "", 20); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopHTTPHosts, err = s.activityPayloadCounts(ctx, where, "http", "host", "", 20); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopTLSSNI, err = s.activityPayloadCounts(ctx, where, "tls", "sni", "", 20); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopUserAgents, err = s.activityPayloadCounts(ctx, where, "http", "user_agent", "", 20); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopTLSFingerprints, err = s.activityTLSFingerprintCounts(ctx, where); err != nil {
+		return ActivityOverview{}, err
+	}
+	if overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, err = s.activityRiskIPCounts(ctx, where, risks); err != nil {
+		return ActivityOverview{}, err
+	}
+	return overview, nil
 }
 
 func (s *ClickHouseStore) GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error) {
@@ -264,6 +367,183 @@ FORMAT JSONEachRow`)
 	return items, scanner.Err()
 }
 
+type activitySummaryRow struct {
+	EventCount    int
+	ActiveIPCount int
+	FirstSeen     string
+	LastSeen      string
+}
+
+func (s *ClickHouseStore) activitySummary(ctx context.Context, where string) (activitySummaryRow, error) {
+	data, err := s.query(ctx, fmt.Sprintf(`
+SELECT count() AS event_count, uniqExact(subject_ip) AS active_ip_count, minOrNull(timestamp) AS first_seen, maxOrNull(timestamp) AS last_seen
+FROM normalized_events
+WHERE %s
+FORMAT JSONEachRow`, where))
+	if err != nil {
+		return activitySummaryRow{}, err
+	}
+	var row struct {
+		EventCount    int     `json:"event_count"`
+		ActiveIPCount int     `json:"active_ip_count"`
+		FirstSeen     *string `json:"first_seen"`
+		LastSeen      *string `json:"last_seen"`
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	if scanner.Scan() {
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			return activitySummaryRow{}, err
+		}
+	}
+	result := activitySummaryRow{EventCount: row.EventCount, ActiveIPCount: row.ActiveIPCount}
+	if row.FirstSeen != nil {
+		result.FirstSeen = normalizeClickHouseTimestamp(*row.FirstSeen)
+	}
+	if row.LastSeen != nil {
+		result.LastSeen = normalizeClickHouseTimestamp(*row.LastSeen)
+	}
+	return result, scanner.Err()
+}
+
+func (s *ClickHouseStore) activityAccessObjectCount(ctx context.Context, where string) (int, error) {
+	data, err := s.query(ctx, fmt.Sprintf(`
+SELECT uniqExact(value) AS count
+FROM (
+  SELECT multiIf(type = 'dns', JSONExtractString(payload_json, 'query'), type = 'http', JSONExtractString(payload_json, 'host'), type = 'tls', JSONExtractString(payload_json, 'sni'), '') AS value
+  FROM normalized_events
+  WHERE %s
+)
+WHERE value != ''
+FORMAT JSONEachRow`, where))
+	if err != nil {
+		return 0, err
+	}
+	return decodeSingleCount(data)
+}
+
+func (s *ClickHouseStore) activityCounts(ctx context.Context, sql string) ([]ActivityCount, error) {
+	data, err := s.query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	return decodeActivityCountRows(data)
+}
+
+func (s *ClickHouseStore) activityDomainCounts(ctx context.Context, where string, subjectIP string, limit int) ([]ActivityCount, error) {
+	subjectClause := ""
+	if subjectIP != "" {
+		subjectClause = " AND subject_ip = " + chQuote(subjectIP)
+	}
+	return s.activityCounts(ctx, fmt.Sprintf(`
+SELECT value, count() AS count, max(timestamp) AS last_seen
+FROM (
+  SELECT timestamp, multiIf(type = 'dns', JSONExtractString(payload_json, 'query'), type = 'http', JSONExtractString(payload_json, 'host'), type = 'tls', JSONExtractString(payload_json, 'sni'), '') AS value
+  FROM normalized_events
+  WHERE %s%s
+)
+WHERE value != ''
+GROUP BY value
+ORDER BY count DESC, last_seen DESC, value ASC
+LIMIT %d
+FORMAT JSONEachRow`, where, subjectClause, limit))
+}
+
+func (s *ClickHouseStore) activityPayloadCounts(ctx context.Context, where string, eventType string, field string, prefix string, limit int) ([]ActivityCount, error) {
+	return s.activityCounts(ctx, fmt.Sprintf(`
+SELECT concat(%s, JSONExtractString(payload_json, %s)) AS value, count() AS count, max(timestamp) AS last_seen
+FROM normalized_events
+WHERE %s AND type = %s AND JSONExtractString(payload_json, %s) != ''
+GROUP BY value
+ORDER BY count DESC, last_seen DESC, value ASC
+LIMIT %d
+FORMAT JSONEachRow`, chQuote(prefix), chQuote(field), where, chQuote(eventType), chQuote(field), limit))
+}
+
+func (s *ClickHouseStore) activityTLSFingerprintCounts(ctx context.Context, where string) ([]ActivityCount, error) {
+	return s.activityCounts(ctx, fmt.Sprintf(`
+SELECT concat(kind, ':', value) AS value, count() AS count, max(timestamp) AS last_seen
+FROM (
+  SELECT timestamp, 'ja3' AS kind, JSONExtractString(payload_json, 'ja3') AS value
+  FROM normalized_events
+  WHERE %s AND type = 'tls'
+  UNION ALL
+  SELECT timestamp, 'ja4' AS kind, JSONExtractString(payload_json, 'ja4') AS value
+  FROM normalized_events
+  WHERE %s AND type = 'tls'
+)
+WHERE value != ''
+GROUP BY kind, value
+ORDER BY count DESC, last_seen DESC, value ASC
+LIMIT 20
+FORMAT JSONEachRow`, where, where))
+}
+
+func (s *ClickHouseStore) activityRiskIPCounts(ctx context.Context, where string, risks map[string]risk.Snapshot) ([]ActivityIPSummary, int, error) {
+	riskIPs := make([]string, 0, len(risks))
+	for ip, snapshot := range risks {
+		if snapshot.Level != "" && snapshot.Level != "normal" {
+			riskIPs = append(riskIPs, ip)
+		}
+	}
+	sort.Strings(riskIPs)
+	if len(riskIPs) == 0 {
+		return []ActivityIPSummary{}, 0, nil
+	}
+	quotedIPs := make([]string, 0, len(riskIPs))
+	for _, ip := range riskIPs {
+		quotedIPs = append(quotedIPs, chQuote(ip))
+	}
+	data, err := s.query(ctx, fmt.Sprintf(`
+SELECT subject_ip AS value, count() AS count, max(timestamp) AS last_seen
+FROM normalized_events
+WHERE %s AND subject_ip IN (%s)
+GROUP BY subject_ip
+ORDER BY count DESC, last_seen DESC, value ASC
+FORMAT JSONEachRow`, where, strings.Join(quotedIPs, ",")))
+	if err != nil {
+		return nil, 0, err
+	}
+	counts, err := decodeActivityCountRows(data)
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]ActivityIPSummary, 0, len(counts))
+	for _, count := range counts {
+		snapshot := risks[count.Value]
+		domains, err := s.activityDomainCounts(ctx, where, count.Value, 5)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, ActivityIPSummary{
+			IP:         count.Value,
+			EventCount: count.Count,
+			RiskLevel:  snapshot.Level,
+			Score:      snapshot.Score,
+			TopDomains: domains,
+			LastSeen:   count.LastSeen,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		leftRank, _ := levelRank(items[i].RiskLevel)
+		rightRank, _ := levelRank(items[j].RiskLevel)
+		if leftRank != rightRank {
+			return leftRank > rightRank
+		}
+		if items[i].Score != items[j].Score {
+			return items[i].Score > items[j].Score
+		}
+		if items[i].EventCount != items[j].EventCount {
+			return items[i].EventCount > items[j].EventCount
+		}
+		return items[i].IP < items[j].IP
+	})
+	total := len(items)
+	if len(items) > 50 {
+		items = items[:50]
+	}
+	return items, total, nil
+}
+
 func (s *ClickHouseStore) exec(ctx context.Context, sql string) error {
 	_, err := s.query(ctx, sql)
 	return err
@@ -305,6 +585,51 @@ func eventWhereSQL(query Query) string {
 		return ""
 	}
 	return " WHERE " + strings.Join(clauses, " AND ")
+}
+
+func activityWhereSQL(sensorID string, duration time.Duration) string {
+	intervalValue, intervalUnit := clickHouseInterval(duration)
+	clauses := []string{fmt.Sprintf("timestamp >= now() - INTERVAL %d %s", intervalValue, intervalUnit)}
+	if sensorID != "" {
+		clauses = append(clauses, "sensor_id = "+chQuote(sensorID))
+	}
+	return strings.Join(clauses, " AND ")
+}
+
+func decodeSingleCount(data []byte) (int, error) {
+	var row struct {
+		Count int `json:"count"`
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	if scanner.Scan() {
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			return 0, err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	return row.Count, nil
+}
+
+func decodeActivityCountRows(data []byte) ([]ActivityCount, error) {
+	items := []ActivityCount{}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		var row struct {
+			Value    string `json:"value"`
+			Count    int    `json:"count"`
+			LastSeen string `json:"last_seen"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			return nil, err
+		}
+		if row.Value == "" {
+			continue
+		}
+		items = append(items, ActivityCount{Value: row.Value, Count: row.Count, LastSeen: normalizeClickHouseTimestamp(row.LastSeen)})
+	}
+	return items, scanner.Err()
 }
 
 func decodeEventRows(data []byte) ([]normalized.Event, error) {

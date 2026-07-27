@@ -396,17 +396,11 @@ func (s *Server) handleActivityOverview(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_activity_window", err.Error())
 		return
 	}
-	limit, err := boundedInt(r.URL.Query().Get("limit"), defaultActivityOverviewLimit(), 1, 100000)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
-		return
-	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
 	overview, err := s.reader.GetActivityOverview(ctx, store.ActivityQuery{
 		SensorID: sensorID,
 		Window:   window,
-		Limit:    limit,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_activity_failed", err.Error())
@@ -552,10 +546,6 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request, rawEventID 
 		return
 	}
 	writeJSON(w, http.StatusOK, event)
-}
-
-func defaultActivityOverviewLimit() int {
-	return 100000
 }
 
 func contextWithRequestTimeout(parent context.Context) (context.Context, context.CancelFunc) {

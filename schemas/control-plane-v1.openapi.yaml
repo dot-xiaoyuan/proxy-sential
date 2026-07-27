@@ -44,13 +44,6 @@ paths:
             type: string
             enum: [10m, 1h, 24h]
             default: 1h
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100000
-            default: 100000
       responses:
         "200":
           description: Aggregated access posture and client feature overview for the observed domain.

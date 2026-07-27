@@ -46,5 +46,4 @@ export type EventQuery = {
 export type ActivityOverviewQuery = {
   sensor_id?: string
   window?: '10m' | '1h' | '24h'
-  limit?: number
 }

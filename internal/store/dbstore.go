@@ -83,15 +83,11 @@ func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) 
 	if query.SensorID == "" {
 		query.SensorID = s.pg.sensorID
 	}
-	events, err := s.ch.ListEventsForActivityOverview(ctx, query.SensorID, duration, query.Limit)
-	if err != nil {
-		return ActivityOverview{}, err
-	}
 	risks, err := s.pg.RiskSnapshotMap(ctx)
 	if err != nil {
 		return ActivityOverview{}, err
 	}
-	return BuildActivityOverview(query.SensorID, window, events, risks), nil
+	return s.ch.GetActivityOverviewWithRisks(ctx, ActivityQuery{SensorID: query.SensorID, Window: window, Limit: query.Limit}, duration, risks)
 }
 
 func (s *DBStore) ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error) {

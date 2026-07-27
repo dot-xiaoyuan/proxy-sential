@@ -688,7 +688,6 @@ export interface operations {
             query?: {
                 sensor_id?: string;
                 window?: "10m" | "1h" | "24h";
-                limit?: number;
             };
             header?: never;
             path?: never;
