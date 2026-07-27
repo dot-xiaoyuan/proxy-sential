@@ -40,6 +40,7 @@ proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json
 proxy-sentinel risk list --input risk-snapshots.json --min-level suspicious
 proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3
 proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state data/shadow/state.json --out-dir data/shadow
+proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only
 ```
 
 当前已实现前两条命令：
@@ -90,6 +91,10 @@ go run ./cmd/proxy-sentinel shadow run \
 `evidence.json`、`risk-snapshots.json`、`risk-list-suspicious.json` 和
 `run-summary.json`，并用 state 文件记录上次 byte offset。默认保留最近 7 天
 run 目录。
+
+`control-plane serve` 读取 shadow run 产物，提供只读 `/api/v1` 接口和可选
+前端静态文件服务。第一版不保存标注，不执行规则热加载，只返回 shadow/read-only
+状态。
 
 ## 最小事件覆盖
 

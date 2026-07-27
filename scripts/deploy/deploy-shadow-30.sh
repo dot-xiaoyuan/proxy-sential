@@ -13,10 +13,12 @@ Options:
   --cadence DURATION     Shadow timer cadence. Default: 10min
   --window DURATION      Evidence window. Default: 10m
   --retention DURATION   Shadow run retention. Default: 168h
+  --control-addr ADDR    Control-plane listen address. Default: 0.0.0.0:8080
 
-Builds a Linux amd64 proxy-sentinel binary, deploys it to the remote host,
-installs systemd units, and enables Suricata capture plus periodic shadow
-analysis. All risk actions remain shadow-only.
+Builds a Linux amd64 proxy-sentinel binary and frontend/dist, deploys them to
+the remote host, installs systemd units, and enables Suricata capture, periodic
+shadow analysis, and the read-only control-plane UI. All risk actions remain
+shadow-only.
 EOF
 }
 
@@ -27,6 +29,7 @@ sensor_id="office-30"
 cadence="10min"
 window="10m"
 retention="168h"
+control_addr="0.0.0.0:8080"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -58,6 +61,10 @@ while [[ $# -gt 0 ]]; do
       retention="${2:-}"
       shift 2
       ;;
+    --control-addr)
+      control_addr="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -75,15 +82,21 @@ build_dir="$(mktemp -d)"
 trap 'rm -rf "$build_dir"' EXIT
 
 binary="$build_dir/proxy-sentinel"
+frontend_archive="$build_dir/frontend-dist.tar.gz"
 (
   cd "$repo_root"
   GOOS=linux GOARCH=amd64 go build -o "$binary" ./cmd/proxy-sentinel
+  (
+    cd frontend
+    pnpm build
+  )
+  tar -C frontend -czf "$frontend_archive" dist
 )
 
 ssh "$remote_host" "set -euo pipefail
 cd '$remote_root'
 git pull origin main
-mkdir -p '$remote_root/bin' '$remote_root/data/shadow' /var/log/suricata /var/lib/suricata/rules
+mkdir -p '$remote_root/bin' '$remote_root/data/shadow' '$remote_root/frontend' /var/log/suricata /var/lib/suricata/rules
 if [[ ! -e /var/lib/suricata/rules/suricata.rules ]]; then
   : > /var/lib/suricata/rules/suricata.rules
 fi
@@ -91,10 +104,16 @@ chmod 0644 /var/lib/suricata/rules/suricata.rules
 "
 
 remote_tmp="/tmp/proxy-sentinel-bin-$$"
+remote_frontend_tmp="/tmp/proxy-sentinel-frontend-$$.tar.gz"
 scp "$binary" "$remote_host:$remote_tmp"
+scp "$frontend_archive" "$remote_host:$remote_frontend_tmp"
 ssh "$remote_host" "set -euo pipefail
 install -m 0755 '$remote_tmp' '$remote_root/bin/proxy-sentinel'
 rm '$remote_tmp'
+rm -rf '$remote_root/frontend/dist'
+mkdir -p '$remote_root/frontend'
+tar -C '$remote_root/frontend' -xzf '$remote_frontend_tmp'
+rm '$remote_frontend_tmp'
 
 cat > /etc/systemd/system/proxy-sentinel-suricata.service <<EOF
 [Unit]
@@ -137,13 +156,32 @@ Unit=proxy-sentinel-shadow.service
 WantedBy=timers.target
 EOF
 
+cat > /etc/systemd/system/proxy-sentinel-control-plane.service <<EOF
+[Unit]
+Description=Proxy Sentinel read-only control plane
+After=network-online.target proxy-sentinel-shadow.timer
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$remote_root
+ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --read-only
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
 systemctl enable --now proxy-sentinel-suricata.service
 systemctl enable --now proxy-sentinel-shadow.timer
+systemctl enable --now proxy-sentinel-control-plane.service
 systemctl start proxy-sentinel-shadow.service
 systemctl --no-pager status proxy-sentinel-suricata.service | sed -n '1,80p'
 systemctl --no-pager status proxy-sentinel-shadow.timer | sed -n '1,80p'
+systemctl --no-pager status proxy-sentinel-control-plane.service | sed -n '1,80p'
 journalctl -u proxy-sentinel-shadow.service -n 80 --no-pager
 "
 
-echo "deployed proxy-sentinel shadow mode to $remote_host:$remote_root"
+echo "deployed proxy-sentinel shadow mode and control plane to $remote_host:$remote_root"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Proxy Sentinel Frontend"
+  short_description: "Proxy Sentinel frontend PM review workflow guide"
+  default_prompt: "Use $proxy-sentinel-frontend to plan or review Proxy Sentinel frontend work."

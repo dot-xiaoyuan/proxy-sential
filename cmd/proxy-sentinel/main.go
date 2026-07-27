@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/adapter/suricata"
+	"proxy-sentinel/internal/controlplane"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/replay"
 	"proxy-sentinel/internal/risk"
@@ -37,6 +38,8 @@ func run(args []string) error {
 		return runRisk(args[1:])
 	case "shadow":
 		return runShadow(args[1:])
+	case "control-plane":
+		return runControlPlane(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
@@ -270,8 +273,42 @@ func runShadowRun(args []string) error {
 	return writeJSON(os.Stdout, summary)
 }
 
+func runControlPlane(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("missing control-plane command")
+	}
+	switch args[0] {
+	case "serve":
+		return runControlPlaneServe(args[1:])
+	default:
+		return fmt.Errorf("unknown control-plane command: %s", args[0])
+	}
+}
+
+func runControlPlaneServe(args []string) error {
+	fs := flag.NewFlagSet("control-plane serve", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	addr := fs.String("addr", ":8080", "HTTP listen address")
+	shadowDir := fs.String("shadow-dir", "/opt/proxy-sentinel/data/shadow", "shadow output directory")
+	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
+	frontendDir := fs.String("frontend-dir", "", "optional frontend dist directory to serve")
+	readOnly := fs.Bool("read-only", true, "disable mutating review and reload endpoints")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "control-plane: addr=%s shadow_dir=%s sensor_id=%s read_only=%t\n", *addr, *shadowDir, *sensorID, *readOnly)
+	return controlplane.Serve(controlplane.Options{
+		Addr:        *addr,
+		ShadowDir:   *shadowDir,
+		SensorID:    *sensorID,
+		FrontendDir: *frontendDir,
+		ReadOnly:    *readOnly,
+	})
+}
+
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state data/shadow/state.json --out-dir data/shadow")
+	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only")
 }
 
 func writeJSON(output *os.File, value any) error {

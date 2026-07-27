@@ -1,0 +1,563 @@
+openapi: 3.1.0
+info:
+  title: Proxy Sentinel Control Plane API
+  version: 1.0.0
+  description: Control-plane contract for the Proxy Sentinel frontend. The API exposes normalized events, evidence, risk snapshots, labels, shadow runs, audit logs, and session state.
+servers:
+  - url: /api/v1
+paths:
+  /session:
+    get:
+      operationId: getSession
+      responses:
+        "200":
+          description: Current mock or authenticated session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /overview:
+    get:
+      operationId: getOverview
+      responses:
+        "200":
+          description: Operations overview.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /risks:
+    get:
+      operationId: listRisks
+      parameters:
+        - $ref: "#/components/parameters/LevelQuery"
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Filtered risk snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ips/{ip}/risk:
+    get:
+      operationId: getIpRisk
+      parameters:
+        - $ref: "#/components/parameters/IpPath"
+      responses:
+        "200":
+          description: Current risk snapshot for an IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskSnapshot"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ips/{ip}/evidence:
+    get:
+      operationId: getIpEvidence
+      parameters:
+        - $ref: "#/components/parameters/IpPath"
+      responses:
+        "200":
+          description: Evidence timeline for an IP.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [evidence]
+                properties:
+                  evidence:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Evidence"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ips/{ip}/events:
+    get:
+      operationId: getIpEvents
+      parameters:
+        - $ref: "#/components/parameters/IpPath"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Normalized event summaries for an IP.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/NormalizedEventSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /labels:
+    post:
+      operationId: createLabel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLabelRequest"
+      responses:
+        "201":
+          description: Created label.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Label"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /shadow/runs:
+    get:
+      operationId: listShadowRuns
+      responses:
+        "200":
+          description: Shadow mode run summaries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs]
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ShadowRun"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /audit-logs:
+    get:
+      operationId: listAuditLogs
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Audit log entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logs]
+                properties:
+                  logs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLog"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /rules/reload:
+    post:
+      operationId: reloadRules
+      responses:
+        "202":
+          description: Rule reload accepted in shadow mode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuleReloadResult"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+components:
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Operation is disabled or not allowed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  parameters:
+    IpPath:
+      name: ip
+      in: path
+      required: true
+      schema:
+        type: string
+    LevelQuery:
+      name: level
+      in: query
+      schema:
+        $ref: "#/components/schemas/RiskLevel"
+  schemas:
+    Permission:
+      type: string
+      enum:
+        - risks:read
+        - evidence:read
+        - events:read
+        - labels:create
+        - shadow:read
+        - audit:read
+        - rules:reload
+    Role:
+      type: string
+      enum: [viewer, reviewer, operator, admin]
+    Session:
+      type: object
+      required: [user, role, permissions]
+      properties:
+        user:
+          type: object
+          required: [id, name]
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+    RiskLevel:
+      type: string
+      enum: [normal, suspicious, high, confirmed]
+    RecommendedAction:
+      type: string
+      enum: [record, shadow_watch, shadow_manual_review, shadow_confirm_review]
+    EvidenceSeverity:
+      type: string
+      enum: [low, medium, high]
+    RiskSnapshot:
+      type: object
+      required: [ip, score, level, confidence, window, evidence_ids, summary, recommended_action, updated_at]
+      properties:
+        ip:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        level:
+          $ref: "#/components/schemas/RiskLevel"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        window:
+          type: string
+        evidence_ids:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+        recommended_action:
+          $ref: "#/components/schemas/RecommendedAction"
+        updated_at:
+          type: string
+          format: date-time
+    RiskListResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskSnapshot"
+        page:
+          type: object
+          required: [limit, next_cursor, total]
+          properties:
+            limit:
+              type: integer
+            next_cursor:
+              type:
+                - string
+                - "null"
+            total:
+              type: integer
+    Evidence:
+      type: object
+      required: [evidence_id, ip, type, window, score, confidence, severity, reason, samples, created_at]
+      properties:
+        evidence_id:
+          type: string
+        ip:
+          type: string
+        type:
+          type: string
+          enum: [multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint]
+        window:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        severity:
+          $ref: "#/components/schemas/EvidenceSeverity"
+        reason:
+          type: string
+        samples:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+    NormalizedEventSummary:
+      type: object
+      required: [event_id, type, timestamp, subject, flow, confidence]
+      properties:
+        event_id:
+          type: string
+        source:
+          type: string
+        type:
+          type: string
+          enum: [flow, dns, tls, http, quic, device, alert]
+        timestamp:
+          type: string
+          format: date-time
+        observer:
+          type: object
+          additionalProperties: true
+        subject:
+          type: object
+          additionalProperties: true
+        flow:
+          type: object
+          additionalProperties: true
+        payload:
+          type: object
+          additionalProperties: true
+        confidence:
+          type: number
+        raw_ref:
+          type: object
+          additionalProperties: true
+    LabelKind:
+      type: string
+      enum: [confirmed_proxy, false_positive, benign, needs_more_data]
+    CreateLabelRequest:
+      type: object
+      required: [target_type, target_id, label, reason, evidence_ids]
+      properties:
+        target_type:
+          type: string
+          enum: [ip, risk_snapshot, evidence]
+        target_id:
+          type: string
+        label:
+          $ref: "#/components/schemas/LabelKind"
+        reason:
+          type: string
+          minLength: 2
+        evidence_ids:
+          type: array
+          items:
+            type: string
+    Label:
+      allOf:
+        - $ref: "#/components/schemas/CreateLabelRequest"
+        - type: object
+          required: [label_id, created_by, created_at]
+          properties:
+            label_id:
+              type: string
+            created_by:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+    ShadowRun:
+      type: object
+      required: [run_id, started_at, finished_at, sensor_id, previous_offset, new_offset, truncated, normalized, evidence_count, risk_count, risk_list_count]
+      properties:
+        run_id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        sensor_id:
+          type: string
+        previous_offset:
+          type: integer
+        new_offset:
+          type: integer
+        truncated:
+          type: boolean
+        normalized:
+          type: object
+          required: [read, emitted, skipped, malformed]
+          properties:
+            read:
+              type: integer
+            emitted:
+              type: integer
+            skipped:
+              type: integer
+            malformed:
+              type: integer
+        evidence_count:
+          type: integer
+        risk_count:
+          type: integer
+        risk_list_count:
+          type: integer
+    AuditLog:
+      type: object
+      required: [audit_id, actor, action, target, outcome, created_at]
+      properties:
+        audit_id:
+          type: string
+        actor:
+          type: string
+        action:
+          type: string
+        target:
+          type: string
+        outcome:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Overview:
+      type: object
+      required: [level_counts, pending_reviews, latest_shadow_run, throughput, top_evidence]
+      properties:
+        level_counts:
+          type: object
+          required: [normal, suspicious, high, confirmed]
+          properties:
+            normal:
+              type: integer
+            suspicious:
+              type: integer
+            high:
+              type: integer
+            confirmed:
+              type: integer
+        pending_reviews:
+          type: integer
+        latest_shadow_run:
+          $ref: "#/components/schemas/ShadowRun"
+        throughput:
+          type: object
+          required: [events, evidence, risks]
+          properties:
+            events:
+              type: integer
+            evidence:
+              type: integer
+            risks:
+              type: integer
+        top_evidence:
+          type: array
+          items:
+            type: object
+            required: [type, count]
+            properties:
+              type:
+                type: string
+              count:
+                type: integer
+    RuleReloadResult:
+      type: object
+      required: [status, mode, requested_at]
+      properties:
+        status:
+          type: string
+          enum: [accepted, disabled]
+        mode:
+          type: string
+          enum: [shadow]
+        requested_at:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
