@@ -13,7 +13,7 @@ Options:
   --cadence DURATION     Shadow timer cadence. Default: 10min
   --window DURATION      Evidence window. Default: 10m
   --retention DURATION   Shadow run retention. Default: 168h
-  --control-addr ADDR    Control-plane listen address. Default: 0.0.0.0:8080
+  --control-addr ADDR    Control-plane listen address. Default: 0.0.0.0:18080
 
 Builds a Linux amd64 proxy-sentinel binary and frontend/dist, deploys them to
 the remote host, installs systemd units, and enables Suricata capture, periodic
@@ -29,7 +29,7 @@ sensor_id="office-30"
 cadence="10min"
 window="10m"
 retention="168h"
-control_addr="0.0.0.0:8080"
+control_addr="0.0.0.0:18080"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -90,7 +90,7 @@ frontend_archive="$build_dir/frontend-dist.tar.gz"
     cd frontend
     pnpm build
   )
-  tar -C frontend -czf "$frontend_archive" dist
+  COPYFILE_DISABLE=1 tar --no-xattrs -C frontend -czf "$frontend_archive" dist
 )
 
 ssh "$remote_host" "set -euo pipefail
@@ -114,6 +114,7 @@ rm -rf '$remote_root/frontend/dist'
 mkdir -p '$remote_root/frontend'
 tar -C '$remote_root/frontend' -xzf '$remote_frontend_tmp'
 rm '$remote_frontend_tmp'
+chown -R root:root '$remote_root/frontend/dist'
 
 cat > /etc/systemd/system/proxy-sentinel-suricata.service <<EOF
 [Unit]

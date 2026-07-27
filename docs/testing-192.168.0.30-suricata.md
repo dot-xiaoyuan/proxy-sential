@@ -74,7 +74,7 @@ scripts/deploy/deploy-shadow-30.sh
 - `proxy-sentinel-suricata.service` 持续读取 `ens1f1` 并写
   `/var/log/suricata/eve.json`。
 - `proxy-sentinel-shadow.timer` 每 10 分钟运行一次 shadow 分析。
-- `proxy-sentinel-control-plane.service` 在 `0.0.0.0:8080` 提供只读 API 和
+- `proxy-sentinel-control-plane.service` 在 `0.0.0.0:18080` 提供只读 API 和
   `frontend/dist` 静态页面。
 - 输出目录为 `/opt/proxy-sentinel/data/shadow/runs/YYYYMMDD-HHMMSS/`。
 - 每轮输出标准事件、证据、风险快照、可疑 IP 列表和运行摘要。
@@ -83,9 +83,9 @@ scripts/deploy/deploy-shadow-30.sh
 控制面验收：
 
 ```bash
-curl -s http://192.168.0.30:8080/api/v1/overview | jq .
-curl -s 'http://192.168.0.30:8080/api/v1/risks?limit=10' | jq .
-curl -s http://192.168.0.30:8080/api/v1/shadow/runs | jq '.runs[:3]'
+curl -s http://192.168.0.30:18080/api/v1/overview | jq .
+curl -s 'http://192.168.0.30:18080/api/v1/risks?limit=10' | jq .
+curl -s http://192.168.0.30:18080/api/v1/shadow/runs | jq '.runs[:3]'
 ```
 
 前端本地开发直连真实 API 时，关闭 MSW：
