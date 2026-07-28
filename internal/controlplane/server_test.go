@@ -319,6 +319,52 @@ func TestReadOnlySessionLabelsAndRulesReload(t *testing.T) {
 	}
 }
 
+func TestAPICORSAllowsLocalDevOrigins(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
+
+	preflight := httptest.NewRequest(http.MethodOptions, "/api/v1/activity/overview", nil)
+	preflight.Header.Set("Origin", "http://localhost:5173")
+	preflight.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, preflight)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected CORS preflight 204, got %d with body %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Fatalf("unexpected allow origin: %q", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "OPTIONS") || !strings.Contains(got, "GET") {
+		t.Fatalf("unexpected allow methods: %q", got)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	request.Header.Set("Origin", "http://127.0.0.1:5173")
+	recorder = httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected session 200, got %d", recorder.Code)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:5173" {
+		t.Fatalf("unexpected allow origin on GET: %q", got)
+	}
+}
+
+func TestAPICORSRejectsUnknownPreflightOrigin(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
+
+	request := httptest.NewRequest(http.MethodOptions, "/api/v1/activity/overview", nil)
+	request.Header.Set("Origin", "https://example.invalid")
+	request.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden preflight, got %d", recorder.Code)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("unexpected allow origin for forbidden origin: %q", got)
+	}
+}
+
 func TestIngestAndEventEndpoints(t *testing.T) {
 	shadowDir := t.TempDir()
 	writeRun(t, shadowDir, "20260727-101000", testRun{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -183,11 +184,40 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.handleCORS(w, r) {
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/") || r.URL.Path == "/api/v1" {
 		s.serveAPI(w, r)
 		return
 	}
 	s.serveFrontend(w, r)
+}
+
+func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/") && r.URL.Path != "/api/v1" {
+		return false
+	}
+	addVary(w.Header(), "Origin")
+	addVary(w.Header(), "Access-Control-Request-Method")
+	addVary(w.Header(), "Access-Control-Request-Headers")
+	origin := r.Header.Get("Origin")
+	allowed := origin != "" && corsOriginAllowed(origin)
+	if allowed {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Max-Age", "600")
+	}
+	if r.Method != http.MethodOptions {
+		return false
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "cors_forbidden", "cors origin is not allowed")
+		return true
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return true
 }
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
@@ -610,6 +640,47 @@ func cursorOffset(raw string) (int, error) {
 
 func pathIP(raw string) (string, error) {
 	return store.DecodePathIP(raw)
+}
+
+func corsOriginAllowed(origin string) bool {
+	if configuredCORSOriginAllowed(origin) {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	switch parsed.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return parsed.Scheme == "http" || parsed.Scheme == "https"
+	default:
+		return false
+	}
+}
+
+func configuredCORSOriginAllowed(origin string) bool {
+	for _, item := range strings.Split(os.Getenv("PROXY_SENTINEL_CORS_ORIGINS"), ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if item == "*" || strings.TrimRight(item, "/") == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func addVary(header http.Header, value string) {
+	existing := header.Values("Vary")
+	for _, line := range existing {
+		for _, item := range strings.Split(line, ",") {
+			if strings.EqualFold(strings.TrimSpace(item), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
