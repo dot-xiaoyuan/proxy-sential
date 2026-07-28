@@ -409,16 +409,63 @@ func TestIngestAndEventEndpoints(t *testing.T) {
 
 	var eventsResponse struct {
 		Events []normalized.Event `json:"events"`
+		Page   Page               `json:"page"`
 	}
 	getJSON(t, server, "/api/v1/events?q=192.168.0.8&limit=2", http.StatusOK, &eventsResponse)
 	if len(eventsResponse.Events) != 2 {
 		t.Fatalf("expected two event samples for ip, got %#v", eventsResponse.Events)
+	}
+	if eventsResponse.Page.Total != 2 || eventsResponse.Page.Limit != 2 {
+		t.Fatalf("unexpected events page: %#v", eventsResponse.Page)
 	}
 
 	var event normalized.Event
 	getJSON(t, server, "/api/v1/events/event-http-1", http.StatusOK, &event)
 	if event.EventID != "event-http-1" {
 		t.Fatalf("unexpected event lookup: %#v", event)
+	}
+}
+
+func TestEventSearchFiltersAndPagination(t *testing.T) {
+	shadowDir := t.TempDir()
+	writeRun(t, shadowDir, "20260727-101000", testRun{
+		startedAt: "2026-07-27T10:10:00+08:00",
+		events: []normalized.Event{
+			dnsEvent("event-dns-api", "192.168.0.8", "2026-07-27T10:10:01+08:00", "api.example.test"),
+			httpEvent("event-http-ua", "192.168.0.8", "2026-07-27T10:10:02+08:00", "portal.example.test", "desktop-agent"),
+			tlsEvent("event-tls-sni", "192.168.0.9", "2026-07-27T10:10:03+08:00", "api.example.test", "chrome", "chrome-ja4"),
+			flowEvent("event-flow", "192.168.0.10", "2026-07-27T10:10:04+08:00", "198.51.100.44", 8080),
+		},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "test-sensor", ReadOnly: true})
+
+	var response EventListResponse
+	getJSON(t, server, "/api/v1/events?domain=api.example.test&limit=1", http.StatusOK, &response)
+	if len(response.Events) != 1 || response.Page.Total != 2 || response.Page.NextCursor == nil {
+		t.Fatalf("expected first domain page with next cursor, got %#v", response)
+	}
+	getJSON(t, server, "/api/v1/events?domain=api.example.test&limit=1&cursor="+*response.Page.NextCursor, http.StatusOK, &response)
+	if len(response.Events) != 1 || response.Page.NextCursor != nil {
+		t.Fatalf("expected second domain page without next cursor, got %#v", response)
+	}
+
+	getJSON(t, server, "/api/v1/events?user_agent=desktop-agent", http.StatusOK, &response)
+	if len(response.Events) != 1 || response.Events[0].EventID != "event-http-ua" {
+		t.Fatalf("unexpected user agent filter: %#v", response.Events)
+	}
+	getJSON(t, server, "/api/v1/events?dst_ip=198.51.100.44&port=8080&proto=tcp", http.StatusOK, &response)
+	if len(response.Events) != 1 || response.Events[0].EventID != "event-flow" {
+		t.Fatalf("unexpected dst/port/proto filter: %#v", response.Events)
+	}
+	getJSON(t, server, "/api/v1/events?from=2026-07-27T10:10:03%2B08:00", http.StatusOK, &response)
+	if response.Page.Total != 2 {
+		t.Fatalf("unexpected time filter result: %#v", response)
+	}
+
+	var errResponse ErrorResponse
+	getJSON(t, server, "/api/v1/events?port=99999", http.StatusBadRequest, &errResponse)
+	if errResponse.Code != "bad_port" {
+		t.Fatalf("unexpected bad port response: %#v", errResponse)
 	}
 }
 

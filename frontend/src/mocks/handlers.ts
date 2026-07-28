@@ -86,13 +86,27 @@ export const handlers = [
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()
     const eventType = url.searchParams.get('type')
+    const domain = url.searchParams.get('domain')?.toLowerCase()
+    const srcIp = url.searchParams.get('src_ip')
+    const dstIp = url.searchParams.get('dst_ip')
+    const userAgent = url.searchParams.get('user_agent')?.toLowerCase()
+    const proto = url.searchParams.get('proto')?.toLowerCase()
+    const port = url.searchParams.get('port')
     const limit = Number(url.searchParams.get('limit') ?? 50)
+    const cursor = Number(url.searchParams.get('cursor') ?? 0)
     const allEvents = Object.values(eventsByIp).flat()
     const filtered = allEvents
       .filter((event) => !eventType || event.type === eventType)
       .filter((event) => !q || event.event_id.toLowerCase().includes(q) || JSON.stringify(event.subject).toLowerCase().includes(q))
-      .slice(0, limit)
-    return HttpResponse.json({ events: filtered })
+      .filter((event) => !domain || JSON.stringify(event.payload).toLowerCase().includes(domain))
+      .filter((event) => !srcIp || event.flow?.src_ip === srcIp || event.subject?.ip === srcIp)
+      .filter((event) => !dstIp || event.flow?.dst_ip === dstIp)
+      .filter((event) => !userAgent || String(event.payload?.user_agent ?? '').toLowerCase().includes(userAgent))
+      .filter((event) => !proto || String(event.flow?.proto ?? '').toLowerCase() === proto)
+      .filter((event) => !port || String(event.flow?.dst_port ?? '') === port)
+    const pageItems = filtered.slice(cursor, cursor + limit)
+    const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
+    return HttpResponse.json({ events: pageItems, page: { limit, next_cursor: nextCursor, total: filtered.length } })
   }),
   http.get('/api/v1/ingest/status', () => HttpResponse.json(ingestStatus)),
   http.get('/api/v1/ingest/runs', () => HttpResponse.json({ runs: shadowRuns })),

@@ -350,6 +350,14 @@ export interface components {
                 total: number;
             };
         };
+        EventListResponse: {
+            events: components["schemas"]["NormalizedEventSummary"][];
+            page: {
+                limit: number;
+                next_cursor: string | null;
+                total: number;
+            };
+        };
         Evidence: {
             evidence_id: string;
             ip: string;
@@ -848,7 +856,17 @@ export interface operations {
                 q?: string;
                 type?: string;
                 sensor_id?: string;
+                from?: string;
+                to?: string;
+                window?: "10m" | "1h" | "24h";
+                src_ip?: string;
+                dst_ip?: string;
+                domain?: string;
+                user_agent?: string;
+                port?: number;
+                proto?: string;
                 limit?: number;
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -856,15 +874,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Normalized event samples. */
+            /** @description Filtered normalized event samples. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        events: components["schemas"]["NormalizedEventSummary"][];
-                    };
+                    "application/json": components["schemas"]["EventListResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

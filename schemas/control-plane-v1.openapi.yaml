@@ -206,6 +206,47 @@ paths:
           in: query
           schema:
             type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+        - name: src_ip
+          in: query
+          schema:
+            type: string
+        - name: dst_ip
+          in: query
+          schema:
+            type: string
+        - name: domain
+          in: query
+          schema:
+            type: string
+        - name: user_agent
+          in: query
+          schema:
+            type: string
+        - name: port
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 65535
+        - name: proto
+          in: query
+          schema:
+            type: string
         - name: limit
           in: query
           schema:
@@ -213,19 +254,17 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
       responses:
         "200":
-          description: Normalized event samples.
+          description: Filtered normalized event samples.
           content:
             application/json:
               schema:
-                type: object
-                required: [events]
-                properties:
-                  events:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/NormalizedEventSummary"
+                $ref: "#/components/schemas/EventListResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
@@ -549,6 +588,26 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RiskSnapshot"
+        page:
+          type: object
+          required: [limit, next_cursor, total]
+          properties:
+            limit:
+              type: integer
+            next_cursor:
+              type:
+                - string
+                - "null"
+            total:
+              type: integer
+    EventListResponse:
+      type: object
+      required: [events, page]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/NormalizedEventSummary"
         page:
           type: object
           required: [limit, next_cursor, total]

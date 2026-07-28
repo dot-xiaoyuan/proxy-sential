@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/ingest"
+	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
 	"proxy-sentinel/internal/store"
 )
@@ -53,6 +54,11 @@ type User struct {
 type RiskListResponse struct {
 	Items []risk.Snapshot `json:"items"`
 	Page  Page            `json:"page"`
+}
+
+type EventListResponse struct {
+	Events []normalized.Event `json:"events"`
+	Page   Page               `json:"page"`
 }
 
 type Page struct {
@@ -545,17 +551,40 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
 		return
 	}
-	events, err := s.reader.ListEventSamples(r.Context(), store.Query{
-		Q:        r.URL.Query().Get("q"),
-		Level:    r.URL.Query().Get("type"),
-		SensorID: r.URL.Query().Get("sensor_id"),
-		Limit:    limit,
-	})
+	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_events_failed", err.Error())
+		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+	port, err := optionalBoundedInt(r.URL.Query().Get("port"), 1, 65535)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_port", err.Error())
+		return
+	}
+	page, err := s.reader.ListEvents(r.Context(), store.Query{
+		Q:         r.URL.Query().Get("q"),
+		Level:     r.URL.Query().Get("type"),
+		SensorID:  r.URL.Query().Get("sensor_id"),
+		From:      r.URL.Query().Get("from"),
+		To:        r.URL.Query().Get("to"),
+		Window:    r.URL.Query().Get("window"),
+		SrcIP:     r.URL.Query().Get("src_ip"),
+		DstIP:     r.URL.Query().Get("dst_ip"),
+		Domain:    r.URL.Query().Get("domain"),
+		UserAgent: r.URL.Query().Get("user_agent"),
+		Port:      port,
+		Proto:     r.URL.Query().Get("proto"),
+		Limit:     limit,
+		Cursor:    cursor,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_event_query", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, EventListResponse{
+		Events: page.Items,
+		Page:   Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total},
+	})
 }
 
 func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request, rawEventID string) {
@@ -625,6 +654,13 @@ func boundedInt(raw string, defaultValue, minValue, maxValue int) (int, error) {
 		return 0, fmt.Errorf("must be between %d and %d", minValue, maxValue)
 	}
 	return value, nil
+}
+
+func optionalBoundedInt(raw string, minValue, maxValue int) (int, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	return boundedInt(raw, 0, minValue, maxValue)
 }
 
 func cursorOffset(raw string) (int, error) {

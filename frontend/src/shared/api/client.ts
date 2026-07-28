@@ -4,6 +4,7 @@ import type {
   AuditLog,
   CreateLabelRequest,
   Evidence,
+  EventListResponse,
   EventQuery,
   EventTypeCount,
   IngestDiagnostic,
@@ -65,7 +66,7 @@ export const api = {
     request<{ events: NormalizedEventSummary[] }>(
       `/ips/${encodeURIComponent(ip)}/events${search({ limit })}`,
     ),
-  events: (query: EventQuery) => request<{ events: NormalizedEventSummary[] }>(`/events${search(query)}`),
+  events: (query: EventQuery) => request<EventListResponse>(`/events${search(query)}`),
   ingestStatus: () => request<IngestStatus>('/ingest/status'),
   ingestRuns: () => request<{ runs: ShadowRun[] }>('/ingest/runs'),
   ingestDiagnostics: (limit = 50) =>

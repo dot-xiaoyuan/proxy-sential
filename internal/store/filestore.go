@@ -264,6 +264,52 @@ func (s *FileStore) ListEventSamples(ctx context.Context, query Query) ([]normal
 	return readNormalizedEvents(ctx, filepath.Join(latest.Dir, "normalized.jsonl"), query)
 }
 
+func (s *FileStore) ListEvents(ctx context.Context, query Query) (EventPage, error) {
+	limit := query.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	events, err := s.ListEventSamples(ctx, Query{
+		Level:     query.Level,
+		Q:         query.Q,
+		SensorID:  query.SensorID,
+		From:      query.From,
+		To:        query.To,
+		Window:    query.Window,
+		SrcIP:     query.SrcIP,
+		DstIP:     query.DstIP,
+		Domain:    query.Domain,
+		UserAgent: query.UserAgent,
+		Port:      query.Port,
+		Proto:     query.Proto,
+		Limit:     -1,
+	})
+	if err != nil {
+		return EventPage{}, err
+	}
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].Timestamp != events[j].Timestamp {
+			return events[i].Timestamp > events[j].Timestamp
+		}
+		return events[i].EventID > events[j].EventID
+	})
+	total := len(events)
+	cursor := query.Cursor
+	if cursor > total {
+		cursor = total
+	}
+	end := cursor + limit
+	if end > total {
+		end = total
+	}
+	var next *string
+	if end < total {
+		value := strconv.Itoa(end)
+		next = &value
+	}
+	return EventPage{Items: events[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+}
+
 func (s *FileStore) GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error) {
 	latest, ok, err := s.latestRun(ctx)
 	if err != nil || !ok {
@@ -654,6 +700,22 @@ func readNormalizedEvents(ctx context.Context, path string, query Query) ([]norm
 	if limit == 0 {
 		limit = 50
 	}
+	from, err := optionalTime(query.From)
+	if err != nil {
+		return nil, fmt.Errorf("bad from: %w", err)
+	}
+	to, err := optionalTime(query.To)
+	if err != nil {
+		return nil, fmt.Errorf("bad to: %w", err)
+	}
+	if query.Window != "" && query.From == "" && query.To == "" {
+		_, duration, err := NormalizeActivityWindow(query.Window)
+		if err != nil {
+			return nil, err
+		}
+		to = time.Now()
+		from = to.Add(-duration)
+	}
 	events := make([]normalized.Event, 0)
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -665,23 +727,11 @@ func readNormalizedEvents(ctx context.Context, path string, query Query) ([]norm
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			continue
 		}
-		if query.Q != "" && event.EventID != query.Q {
-			subjectIP, _ := event.Subject["ip"].(string)
-			if !strings.Contains(strings.ToLower(event.EventID), strings.ToLower(query.Q)) && !strings.Contains(strings.ToLower(subjectIP), strings.ToLower(query.Q)) {
-				continue
-			}
-		}
-		if query.Level != "" && event.Type != query.Level {
+		if !eventMatchesQuery(event, query, from, to) {
 			continue
 		}
-		if query.SensorID != "" {
-			sensorID, _ := event.Observer["sensor_id"].(string)
-			if sensorID != query.SensorID {
-				continue
-			}
-		}
 		events = append(events, event)
-		if len(events) > limit {
+		if limit > 0 && len(events) > limit {
 			events = events[len(events)-limit:]
 		}
 	}
@@ -689,6 +739,63 @@ func readNormalizedEvents(ctx context.Context, path string, query Query) ([]norm
 		return nil, err
 	}
 	return events, nil
+}
+
+func eventMatchesQuery(event normalized.Event, query Query, from time.Time, to time.Time) bool {
+	if query.Q != "" {
+		q := strings.ToLower(query.Q)
+		if !strings.Contains(strings.ToLower(event.EventID), q) &&
+			!strings.Contains(strings.ToLower(subjectIP(event)), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Flow, "dst_ip")), q) &&
+			!strings.Contains(strings.ToLower(eventDomain(event)), q) {
+			return false
+		}
+	}
+	if query.Level != "" && event.Type != query.Level {
+		return false
+	}
+	if query.SensorID != "" && stringFromMap(event.Observer, "sensor_id") != query.SensorID {
+		return false
+	}
+	timestamp, ok := parseTime(event.Timestamp)
+	if !from.IsZero() && (!ok || timestamp.Before(from)) {
+		return false
+	}
+	if !to.IsZero() && (!ok || timestamp.After(to)) {
+		return false
+	}
+	if query.SrcIP != "" && subjectIP(event) != query.SrcIP && stringFromMap(event.Flow, "src_ip") != query.SrcIP {
+		return false
+	}
+	if query.DstIP != "" && stringFromMap(event.Flow, "dst_ip") != query.DstIP {
+		return false
+	}
+	if query.Domain != "" && !strings.Contains(strings.ToLower(eventDomain(event)), strings.ToLower(query.Domain)) {
+		return false
+	}
+	if query.UserAgent != "" && !strings.Contains(strings.ToLower(stringFromMap(event.Payload, "user_agent")), strings.ToLower(query.UserAgent)) {
+		return false
+	}
+	if query.Port > 0 && intFromMap(event.Flow, "dst_port") != query.Port {
+		return false
+	}
+	if query.Proto != "" && !strings.EqualFold(stringFromMap(event.Flow, "proto"), query.Proto) {
+		return false
+	}
+	return true
+}
+
+func eventDomain(event normalized.Event) string {
+	switch event.Type {
+	case "dns":
+		return stringFromMap(event.Payload, "query")
+	case "http":
+		return stringFromMap(event.Payload, "host")
+	case "tls":
+		return stringFromMap(event.Payload, "sni")
+	default:
+		return ""
+	}
 }
 
 func topEvidence(items []evidence.Evidence) []ingest.EventTypeCount {

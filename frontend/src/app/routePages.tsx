@@ -5,6 +5,7 @@ const AuditPage = lazy(() => import('../pages/AuditPage').then((module) => ({ de
 const ActivityPage = lazy(() =>
   import('../pages/ActivityPage').then((module) => ({ default: module.ActivityPage })),
 )
+const EventsPage = lazy(() => import('../pages/EventsPage').then((module) => ({ default: module.EventsPage })))
 const IpDetailsPage = lazy(() =>
   import('../pages/IpDetailsPage').then((module) => ({ default: module.IpDetailsPage })),
 )
@@ -45,6 +46,14 @@ export function ActivityRoute() {
   return (
     <RouteSuspense>
       <ActivityPage />
+    </RouteSuspense>
+  )
+}
+
+export function EventsRoute() {
+  return (
+    <RouteSuspense>
+      <EventsPage />
     </RouteSuspense>
   )
 }

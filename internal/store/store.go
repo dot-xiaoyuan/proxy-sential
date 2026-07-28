@@ -20,13 +20,20 @@ const (
 )
 
 type Query struct {
-	Level    string
-	Q        string
-	SensorID string
-	From     string
-	To       string
-	Limit    int
-	Cursor   int
+	Level     string
+	Q         string
+	SensorID  string
+	From      string
+	To        string
+	Window    string
+	SrcIP     string
+	DstIP     string
+	Domain    string
+	UserAgent string
+	Port      int
+	Proto     string
+	Limit     int
+	Cursor    int
 }
 
 type Page struct {
@@ -37,6 +44,11 @@ type Page struct {
 
 type RiskPage struct {
 	Items []risk.Snapshot
+	Page  Page
+}
+
+type EventPage struct {
+	Items []normalized.Event
 	Page  Page
 }
 
@@ -161,6 +173,7 @@ type Reader interface {
 	GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error)
 	GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error)
 	GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error)
+	ListEvents(ctx context.Context, query Query) (EventPage, error)
 	ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error)
 	GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error)
 	ListRuns(ctx context.Context, limit int) ([]Run, error)

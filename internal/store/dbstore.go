@@ -94,6 +94,10 @@ func (s *DBStore) ListEventSamples(ctx context.Context, query Query) ([]normaliz
 	return s.ch.ListEventSamples(ctx, query)
 }
 
+func (s *DBStore) ListEvents(ctx context.Context, query Query) (EventPage, error) {
+	return s.ch.ListEvents(ctx, query)
+}
+
 func (s *DBStore) GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error) {
 	return s.ch.GetEvent(ctx, eventID)
 }

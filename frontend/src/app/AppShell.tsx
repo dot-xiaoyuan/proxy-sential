@@ -10,6 +10,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   SafetyOutlined,
+  SearchOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
 import { Button, Drawer, Layout, Menu, Space, Tag, Typography } from 'antd'
@@ -20,6 +21,7 @@ import { useSession } from '../shared/api/queries'
 const navItems: MenuProps['items'] = [
   { key: '/overview', icon: <DashboardOutlined />, label: <NavLink to="/overview">总览</NavLink> },
   { key: '/activity', icon: <GlobalOutlined />, label: <NavLink to="/activity">访问态势</NavLink> },
+  { key: '/events', icon: <SearchOutlined />, label: <NavLink to="/events">事件检索</NavLink> },
   { key: '/ingest', icon: <DatabaseOutlined />, label: <NavLink to="/ingest">采集诊断</NavLink> },
   { key: '/risks', icon: <SafetyOutlined />, label: <NavLink to="/risks">风险 IP</NavLink> },
   { key: '/review', icon: <FileSearchOutlined />, label: <NavLink to="/review">人工复核</NavLink> },

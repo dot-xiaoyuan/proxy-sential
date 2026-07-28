@@ -7,6 +7,7 @@ export type RiskLevel = components['schemas']['RiskLevel']
 export type RecommendedAction = components['schemas']['RecommendedAction']
 export type RiskSnapshot = components['schemas']['RiskSnapshot']
 export type RiskListResponse = components['schemas']['RiskListResponse']
+export type EventListResponse = components['schemas']['EventListResponse']
 export type Evidence = components['schemas']['Evidence']
 export type NormalizedEventSummary = components['schemas']['NormalizedEventSummary']
 export type ActivityCount = components['schemas']['ActivityCount']
@@ -40,7 +41,17 @@ export type EventQuery = {
   q?: string
   type?: string
   sensor_id?: string
+  from?: string
+  to?: string
+  window?: '10m' | '1h' | '24h'
+  src_ip?: string
+  dst_ip?: string
+  domain?: string
+  user_agent?: string
+  port?: number
+  proto?: string
   limit?: number
+  cursor?: string
 }
 
 export type ActivityOverviewQuery = {

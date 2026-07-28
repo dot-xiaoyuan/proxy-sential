@@ -119,22 +119,46 @@ func (s *ClickHouseStore) WriteIngestDiagnostics(ctx context.Context, diagnostic
 }
 
 func (s *ClickHouseStore) ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error) {
+	page, err := s.ListEvents(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return page.Items, nil
+}
+
+func (s *ClickHouseStore) ListEvents(ctx context.Context, query Query) (EventPage, error) {
 	limit := query.Limit
 	if limit == 0 {
 		limit = 50
 	}
-	where := eventWhereSQL(query)
+	where, err := eventWhereSQL(query)
+	if err != nil {
+		return EventPage{}, err
+	}
+	total, err := s.eventCount(ctx, where)
+	if err != nil {
+		return EventPage{}, err
+	}
 	sql := fmt.Sprintf(`
 SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
 FROM normalized_events%s
 ORDER BY timestamp DESC, event_id DESC
-LIMIT %d
-FORMAT JSONEachRow`, where, limit)
+LIMIT %d OFFSET %d
+FORMAT JSONEachRow`, where, limit, query.Cursor)
 	data, err := s.query(ctx, sql)
 	if err != nil {
-		return nil, err
+		return EventPage{}, err
 	}
-	return decodeEventRows(data)
+	events, err := decodeEventRows(data)
+	if err != nil {
+		return EventPage{}, err
+	}
+	var next *string
+	if query.Cursor+len(events) < total {
+		value := fmt.Sprintf("%d", query.Cursor+len(events))
+		next = &value
+	}
+	return EventPage{Items: events, Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
 }
 
 func (s *ClickHouseStore) GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error) {
@@ -569,11 +593,22 @@ func (s *ClickHouseStore) query(ctx context.Context, sql string) ([]byte, error)
 	return data, nil
 }
 
-func eventWhereSQL(query Query) string {
+func (s *ClickHouseStore) eventCount(ctx context.Context, where string) (int, error) {
+	data, err := s.query(ctx, fmt.Sprintf(`
+SELECT count() AS count
+FROM normalized_events%s
+FORMAT JSONEachRow`, where))
+	if err != nil {
+		return 0, err
+	}
+	return decodeSingleCount(data)
+}
+
+func eventWhereSQL(query Query) (string, error) {
 	clauses := []string{}
 	if query.Q != "" {
 		like := chQuote("%" + strings.ToLower(query.Q) + "%")
-		clauses = append(clauses, "(lower(event_id) LIKE "+like+" OR lower(subject_ip) LIKE "+like+")")
+		clauses = append(clauses, "(lower(event_id) LIKE "+like+" OR lower(subject_ip) LIKE "+like+" OR lower(dst_ip) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'query')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'host')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'sni')) LIKE "+like+")")
 	}
 	if query.Level != "" {
 		clauses = append(clauses, "type = "+chQuote(query.Level))
@@ -581,10 +616,50 @@ func eventWhereSQL(query Query) string {
 	if query.SensorID != "" {
 		clauses = append(clauses, "sensor_id = "+chQuote(query.SensorID))
 	}
-	if len(clauses) == 0 {
-		return ""
+	if query.From != "" {
+		if _, err := optionalTime(query.From); err != nil {
+			return "", fmt.Errorf("bad from: %w", err)
+		}
+		clauses = append(clauses, "timestamp >= parseDateTime64BestEffort("+chQuote(query.From)+")")
 	}
-	return " WHERE " + strings.Join(clauses, " AND ")
+	if query.To != "" {
+		if _, err := optionalTime(query.To); err != nil {
+			return "", fmt.Errorf("bad to: %w", err)
+		}
+		clauses = append(clauses, "timestamp <= parseDateTime64BestEffort("+chQuote(query.To)+")")
+	}
+	if query.Window != "" && query.From == "" && query.To == "" {
+		_, duration, err := NormalizeActivityWindow(query.Window)
+		if err != nil {
+			return "", err
+		}
+		intervalValue, intervalUnit := clickHouseInterval(duration)
+		clauses = append(clauses, fmt.Sprintf("timestamp >= now() - INTERVAL %d %s", intervalValue, intervalUnit))
+	}
+	if query.SrcIP != "" {
+		clauses = append(clauses, "(subject_ip = "+chQuote(query.SrcIP)+" OR src_ip = "+chQuote(query.SrcIP)+")")
+	}
+	if query.DstIP != "" {
+		clauses = append(clauses, "dst_ip = "+chQuote(query.DstIP))
+	}
+	if query.Domain != "" {
+		like := chQuote("%" + strings.ToLower(query.Domain) + "%")
+		clauses = append(clauses, "(lower(JSONExtractString(payload_json, 'query')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'host')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'sni')) LIKE "+like+")")
+	}
+	if query.UserAgent != "" {
+		like := chQuote("%" + strings.ToLower(query.UserAgent) + "%")
+		clauses = append(clauses, "lower(JSONExtractString(payload_json, 'user_agent')) LIKE "+like)
+	}
+	if query.Port > 0 {
+		clauses = append(clauses, fmt.Sprintf("dst_port = %d", query.Port))
+	}
+	if query.Proto != "" {
+		clauses = append(clauses, "proto = "+chQuote(strings.ToLower(query.Proto)))
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), nil
 }
 
 func activityWhereSQL(sensorID string, duration time.Duration) string {
