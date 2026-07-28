@@ -485,18 +485,18 @@ FORMAT JSONEachRow`, chQuote(prefix), chQuote(field), where, chQuote(eventType),
 
 func (s *ClickHouseStore) activityTLSFingerprintCounts(ctx context.Context, where string) ([]ActivityCount, error) {
 	return s.activityCounts(ctx, fmt.Sprintf(`
-SELECT concat(kind, ':', value) AS value, count() AS count, max(timestamp) AS last_seen
+SELECT concat(kind, ':', fingerprint_value) AS value, count() AS count, max(timestamp) AS last_seen
 FROM (
-  SELECT timestamp, 'ja3' AS kind, JSONExtractString(payload_json, 'ja3') AS value
+  SELECT timestamp, 'ja3' AS kind, JSONExtractString(payload_json, 'ja3') AS fingerprint_value
   FROM normalized_events
   WHERE %s AND type = 'tls'
   UNION ALL
-  SELECT timestamp, 'ja4' AS kind, JSONExtractString(payload_json, 'ja4') AS value
+  SELECT timestamp, 'ja4' AS kind, JSONExtractString(payload_json, 'ja4') AS fingerprint_value
   FROM normalized_events
   WHERE %s AND type = 'tls'
 )
-WHERE value != ''
-GROUP BY kind, value
+WHERE fingerprint_value != ''
+GROUP BY kind, fingerprint_value
 ORDER BY count DESC, last_seen DESC, value ASC
 LIMIT 20
 FORMAT JSONEachRow`, where, where))
@@ -651,8 +651,13 @@ func eventWhereSQL(query Query) (string, error) {
 		clauses = append(clauses, "lower(JSONExtractString(payload_json, 'user_agent')) LIKE "+like)
 	}
 	if query.Fingerprint != "" {
-		like := chQuote("%" + strings.ToLower(query.Fingerprint) + "%")
-		clauses = append(clauses, "(lower(JSONExtractString(payload_json, 'ja3')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'ja4')) LIKE "+like+")")
+		fingerprint, ok := normalizeFingerprintFilter(query.Fingerprint)
+		if !ok {
+			clauses = append(clauses, "0")
+		} else {
+			like := chQuote("%" + strings.ToLower(fingerprint) + "%")
+			clauses = append(clauses, "(lower(JSONExtractString(payload_json, 'ja3')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'ja4')) LIKE "+like+")")
+		}
 	}
 	if query.Port > 0 {
 		clauses = append(clauses, fmt.Sprintf("dst_port = %d", query.Port))

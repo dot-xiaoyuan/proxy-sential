@@ -462,6 +462,11 @@ func TestEventSearchFiltersAndPagination(t *testing.T) {
 		t.Fatalf("unexpected fingerprint filter: %#v", response.Events)
 	}
 	response = EventListResponse{}
+	getJSON(t, server, "/api/v1/events?fingerprint=ja4:chrome-ja4", http.StatusOK, &response)
+	if len(response.Events) != 1 || response.Events[0].EventID != "event-tls-sni" {
+		t.Fatalf("unexpected prefixed fingerprint filter: %#v", response.Events)
+	}
+	response = EventListResponse{}
 	getJSON(t, server, "/api/v1/events?dst_ip=198.51.100.44&port=8080&proto=tcp", http.StatusOK, &response)
 	if len(response.Events) != 1 || response.Events[0].EventID != "event-flow" {
 		t.Fatalf("unexpected dst/port/proto filter: %#v", response.Events)

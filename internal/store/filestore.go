@@ -777,8 +777,11 @@ func eventMatchesQuery(event normalized.Event, query Query, from time.Time, to t
 	if query.UserAgent != "" && !strings.Contains(strings.ToLower(stringFromMap(event.Payload, "user_agent")), strings.ToLower(query.UserAgent)) {
 		return false
 	}
-	if query.Fingerprint != "" && !strings.Contains(strings.ToLower(eventFingerprint(event)), strings.ToLower(query.Fingerprint)) {
-		return false
+	if query.Fingerprint != "" {
+		fingerprint, ok := normalizeFingerprintFilter(query.Fingerprint)
+		if !ok || !strings.Contains(strings.ToLower(eventFingerprint(event)), strings.ToLower(fingerprint)) {
+			return false
+		}
 	}
 	if query.Port > 0 && intFromMap(event.Flow, "dst_port") != query.Port {
 		return false
@@ -804,6 +807,15 @@ func eventDomain(event normalized.Event) string {
 
 func eventFingerprint(event normalized.Event) string {
 	return stringFromMap(event.Payload, "ja3") + " " + stringFromMap(event.Payload, "ja4")
+}
+
+func normalizeFingerprintFilter(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "ja3:") || strings.HasPrefix(lower, "ja4:") {
+		trimmed = strings.TrimSpace(trimmed[4:])
+	}
+	return trimmed, trimmed != ""
 }
 
 func topEvidence(items []evidence.Evidence) []ingest.EventTypeCount {
