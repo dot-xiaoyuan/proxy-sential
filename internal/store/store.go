@@ -38,9 +38,9 @@ type Query struct {
 }
 
 type Page struct {
-	Limit      int
-	NextCursor *string
-	Total      int
+	Limit      int     `json:"limit"`
+	NextCursor *string `json:"next_cursor"`
+	Total      int     `json:"total"`
 }
 
 type RiskPage struct {
@@ -196,7 +196,7 @@ type DPIProtocolFlow struct {
 	Category     string   `json:"category"`
 	SharePercent float64  `json:"share_percent"`
 	EventCount   int      `json:"event_count"`
-	BPSMbps      *float64 `json:"bps_mbps,omitempty"`
+	BPSMbps      *float64 `json:"bps_mbps"`
 	TopApps      []string `json:"top_apps"`
 }
 
