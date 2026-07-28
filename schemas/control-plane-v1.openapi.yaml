@@ -237,6 +237,11 @@ paths:
           in: query
           schema:
             type: string
+        - name: fingerprint
+          in: query
+          description: JA3/JA4 fingerprint value from normalized event payload.
+          schema:
+            type: string
         - name: port
           in: query
           schema:

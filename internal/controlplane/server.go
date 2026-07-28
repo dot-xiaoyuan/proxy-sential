@@ -562,20 +562,21 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page, err := s.reader.ListEvents(r.Context(), store.Query{
-		Q:         r.URL.Query().Get("q"),
-		Level:     r.URL.Query().Get("type"),
-		SensorID:  r.URL.Query().Get("sensor_id"),
-		From:      r.URL.Query().Get("from"),
-		To:        r.URL.Query().Get("to"),
-		Window:    r.URL.Query().Get("window"),
-		SrcIP:     r.URL.Query().Get("src_ip"),
-		DstIP:     r.URL.Query().Get("dst_ip"),
-		Domain:    r.URL.Query().Get("domain"),
-		UserAgent: r.URL.Query().Get("user_agent"),
-		Port:      port,
-		Proto:     r.URL.Query().Get("proto"),
-		Limit:     limit,
-		Cursor:    cursor,
+		Q:           r.URL.Query().Get("q"),
+		Level:       r.URL.Query().Get("type"),
+		SensorID:    r.URL.Query().Get("sensor_id"),
+		From:        r.URL.Query().Get("from"),
+		To:          r.URL.Query().Get("to"),
+		Window:      r.URL.Query().Get("window"),
+		SrcIP:       r.URL.Query().Get("src_ip"),
+		DstIP:       r.URL.Query().Get("dst_ip"),
+		Domain:      r.URL.Query().Get("domain"),
+		UserAgent:   r.URL.Query().Get("user_agent"),
+		Fingerprint: r.URL.Query().Get("fingerprint"),
+		Port:        port,
+		Proto:       r.URL.Query().Get("proto"),
+		Limit:       limit,
+		Cursor:      cursor,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_event_query", err.Error())

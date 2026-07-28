@@ -20,20 +20,21 @@ const (
 )
 
 type Query struct {
-	Level     string
-	Q         string
-	SensorID  string
-	From      string
-	To        string
-	Window    string
-	SrcIP     string
-	DstIP     string
-	Domain    string
-	UserAgent string
-	Port      int
-	Proto     string
-	Limit     int
-	Cursor    int
+	Level       string
+	Q           string
+	SensorID    string
+	From        string
+	To          string
+	Window      string
+	SrcIP       string
+	DstIP       string
+	Domain      string
+	UserAgent   string
+	Fingerprint string
+	Port        int
+	Proto       string
+	Limit       int
+	Cursor      int
 }
 
 type Page struct {

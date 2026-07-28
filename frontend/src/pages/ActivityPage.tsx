@@ -106,16 +106,16 @@ export function ActivityPage() {
       <section className="content-grid">
         <div className="surface">
           <Typography.Title level={4}>访问对象排行</Typography.Title>
-          <RankBlock items={data.top_domains} title="Top domains（DNS/HTTP Host/TLS SNI 合并）" />
+          <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, domain: value })} items={data.top_domains} title="Top domains（DNS/HTTP Host/TLS SNI 合并）" />
           <section className="details-grid">
-            <RankBlock items={data.top_http_hosts} title="HTTP Host" />
-            <RankBlock items={data.top_tls_sni} title="TLS SNI" />
+            <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, type: 'http', domain: value })} items={data.top_http_hosts} title="HTTP Host" />
+            <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, type: 'tls', domain: value })} items={data.top_tls_sni} title="TLS SNI" />
           </section>
         </div>
         <div className="surface">
           <Typography.Title level={4}>客户端特征排行</Typography.Title>
-          <RankBlock empty="暂无 User-Agent" items={data.top_user_agents} title="User-Agent" />
-          <RankBlock empty="暂无 JA3/JA4" items={data.top_tls_fingerprints} title="JA3 / JA4" />
+          <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, type: 'http', user_agent: value })} empty="暂无 User-Agent" items={data.top_user_agents} title="User-Agent" />
+          <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, type: 'tls', fingerprint: value })} empty="暂无 JA3/JA4" items={data.top_tls_fingerprints} title="JA3 / JA4" />
         </div>
       </section>
 
@@ -123,17 +123,17 @@ export function ActivityPage() {
         <div className="surface">
           <Typography.Title level={4}>网络分布</Typography.Title>
           <section className="details-grid">
-            <RankBlock items={data.top_dst_ports} title="目的端口" />
-            <RankBlock items={data.protocol_counts} title="协议分布" />
+            <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, port: value })} items={data.top_dst_ports} title="目的端口" />
+            <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, proto: value })} items={data.protocol_counts} title="协议分布" />
           </section>
           <section className="details-grid">
-            <RankBlock items={data.top_dst_ips} title="目的 IP" />
-            <RankBlock items={data.top_source_ips} title="活跃源 IP" />
+            <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, dst_ip: value })} items={data.top_dst_ips} title="目的 IP" />
+            <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, src_ip: value })} items={data.top_source_ips} title="活跃源 IP" />
           </section>
         </div>
         <div className="surface">
           <Typography.Title level={4}>事件类型分布</Typography.Title>
-          <RankBlock items={data.event_type_counts} title="标准事件类型" />
+          <RankBlock drilldown={(value) => eventSearchPath({ window: windowValue, type: value })} items={data.event_type_counts} title="标准事件类型" />
         </div>
       </section>
 
@@ -151,28 +151,41 @@ export function ActivityPage() {
   )
 }
 
-function RankBlock({ title, items, empty = '暂无数据' }: { title: string; items: ActivityCount[]; empty?: string }) {
+function RankBlock({ title, items, empty = '暂无数据', drilldown }: { title: string; items: ActivityCount[]; empty?: string; drilldown?: (value: string) => string }) {
   return (
-    <div style={{ marginBottom: 18 }}>
+    <div className="rank-block">
       <Typography.Title level={5}>{title}</Typography.Title>
       {items.length === 0 ? (
         <Typography.Text type="secondary">{empty}</Typography.Text>
       ) : (
-        <Space direction="vertical" size={8} style={{ width: '100%' }}>
-          {items.slice(0, 10).map((item) => (
-            <Row align="middle" gutter={12} key={`${title}-${item.value}`}>
-              <Col flex="auto">
-                <Typography.Text className="mono wrap-text">{item.value}</Typography.Text>
-              </Col>
-              <Col>
-                <Tag>{item.count}</Tag>
-              </Col>
-            </Row>
-          ))}
+        <Space className="rank-block-list" direction="vertical" size={8}>
+          {items.slice(0, 10).map((item) => {
+            const valueNode = <Typography.Text className="mono wrap-text">{item.value}</Typography.Text>
+            return (
+              <Row align="middle" gutter={12} key={`${title}-${item.value}`}>
+                <Col flex="auto">
+                  {drilldown ? <Link to={drilldown(item.value)}>{valueNode}</Link> : valueNode}
+                </Col>
+                <Col>
+                  <Tag>{item.count}</Tag>
+                </Col>
+              </Row>
+            )
+          })}
         </Space>
       )}
     </div>
   )
+}
+
+function eventSearchPath(params: Record<string, string | number | undefined>) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      query.set(key, String(value))
+    }
+  }
+  return `/events?${query.toString()}`
 }
 
 function renderCountTokens(items: ActivityCount[], empty: string) {

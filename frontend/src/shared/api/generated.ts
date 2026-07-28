@@ -863,6 +863,8 @@ export interface operations {
                 dst_ip?: string;
                 domain?: string;
                 user_agent?: string;
+                /** @description JA3/JA4 fingerprint value from normalized event payload. */
+                fingerprint?: string;
                 port?: number;
                 proto?: string;
                 limit?: number;

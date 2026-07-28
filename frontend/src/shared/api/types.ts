@@ -48,6 +48,7 @@ export type EventQuery = {
   dst_ip?: string
   domain?: string
   user_agent?: string
+  fingerprint?: string
   port?: number
   proto?: string
   limit?: number

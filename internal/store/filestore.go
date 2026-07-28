@@ -270,19 +270,20 @@ func (s *FileStore) ListEvents(ctx context.Context, query Query) (EventPage, err
 		limit = 50
 	}
 	events, err := s.ListEventSamples(ctx, Query{
-		Level:     query.Level,
-		Q:         query.Q,
-		SensorID:  query.SensorID,
-		From:      query.From,
-		To:        query.To,
-		Window:    query.Window,
-		SrcIP:     query.SrcIP,
-		DstIP:     query.DstIP,
-		Domain:    query.Domain,
-		UserAgent: query.UserAgent,
-		Port:      query.Port,
-		Proto:     query.Proto,
-		Limit:     -1,
+		Level:       query.Level,
+		Q:           query.Q,
+		SensorID:    query.SensorID,
+		From:        query.From,
+		To:          query.To,
+		Window:      query.Window,
+		SrcIP:       query.SrcIP,
+		DstIP:       query.DstIP,
+		Domain:      query.Domain,
+		UserAgent:   query.UserAgent,
+		Fingerprint: query.Fingerprint,
+		Port:        query.Port,
+		Proto:       query.Proto,
+		Limit:       -1,
 	})
 	if err != nil {
 		return EventPage{}, err
@@ -776,6 +777,9 @@ func eventMatchesQuery(event normalized.Event, query Query, from time.Time, to t
 	if query.UserAgent != "" && !strings.Contains(strings.ToLower(stringFromMap(event.Payload, "user_agent")), strings.ToLower(query.UserAgent)) {
 		return false
 	}
+	if query.Fingerprint != "" && !strings.Contains(strings.ToLower(eventFingerprint(event)), strings.ToLower(query.Fingerprint)) {
+		return false
+	}
 	if query.Port > 0 && intFromMap(event.Flow, "dst_port") != query.Port {
 		return false
 	}
@@ -796,6 +800,10 @@ func eventDomain(event normalized.Event) string {
 	default:
 		return ""
 	}
+}
+
+func eventFingerprint(event normalized.Event) string {
+	return stringFromMap(event.Payload, "ja3") + " " + stringFromMap(event.Payload, "ja4")
 }
 
 func topEvidence(items []evidence.Evidence) []ingest.EventTypeCount {

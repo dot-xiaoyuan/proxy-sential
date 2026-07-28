@@ -276,6 +276,20 @@ a {
   gap: 12px;
 }
 
+.rank-block {
+  margin-bottom: 18px;
+}
+
+.rank-block-list {
+  width: 100%;
+}
+
+.rank-block a {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .review-row {
   display: flex;
   gap: 16px;

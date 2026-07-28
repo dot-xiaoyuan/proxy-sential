@@ -444,19 +444,29 @@ func TestEventSearchFiltersAndPagination(t *testing.T) {
 	if len(response.Events) != 1 || response.Page.Total != 2 || response.Page.NextCursor == nil {
 		t.Fatalf("expected first domain page with next cursor, got %#v", response)
 	}
-	getJSON(t, server, "/api/v1/events?domain=api.example.test&limit=1&cursor="+*response.Page.NextCursor, http.StatusOK, &response)
+	nextCursor := *response.Page.NextCursor
+	response = EventListResponse{}
+	getJSON(t, server, "/api/v1/events?domain=api.example.test&limit=1&cursor="+nextCursor, http.StatusOK, &response)
 	if len(response.Events) != 1 || response.Page.NextCursor != nil {
 		t.Fatalf("expected second domain page without next cursor, got %#v", response)
 	}
 
+	response = EventListResponse{}
 	getJSON(t, server, "/api/v1/events?user_agent=desktop-agent", http.StatusOK, &response)
 	if len(response.Events) != 1 || response.Events[0].EventID != "event-http-ua" {
 		t.Fatalf("unexpected user agent filter: %#v", response.Events)
 	}
+	response = EventListResponse{}
+	getJSON(t, server, "/api/v1/events?fingerprint=chrome-ja4", http.StatusOK, &response)
+	if len(response.Events) != 1 || response.Events[0].EventID != "event-tls-sni" {
+		t.Fatalf("unexpected fingerprint filter: %#v", response.Events)
+	}
+	response = EventListResponse{}
 	getJSON(t, server, "/api/v1/events?dst_ip=198.51.100.44&port=8080&proto=tcp", http.StatusOK, &response)
 	if len(response.Events) != 1 || response.Events[0].EventID != "event-flow" {
 		t.Fatalf("unexpected dst/port/proto filter: %#v", response.Events)
 	}
+	response = EventListResponse{}
 	getJSON(t, server, "/api/v1/events?from=2026-07-27T10:10:03%2B08:00", http.StatusOK, &response)
 	if response.Page.Total != 2 {
 		t.Fatalf("unexpected time filter result: %#v", response)

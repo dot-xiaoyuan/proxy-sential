@@ -150,6 +150,7 @@ function EventFilters({ query, onChange }: { query: EventQuery; onChange: (nextI
       <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, dst_ip: event.target.value, cursor: undefined })} placeholder="目的 IP" value={query.dst_ip ?? ''} />
       <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, domain: event.target.value, cursor: undefined })} placeholder="域名 / Host / SNI" value={query.domain ?? ''} />
       <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, user_agent: event.target.value, cursor: undefined })} placeholder="User-Agent" value={query.user_agent ?? ''} />
+      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, fingerprint: event.target.value, cursor: undefined })} placeholder="JA3 / JA4 指纹" value={query.fingerprint ?? ''} />
       <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, port: parseOptionalPort(event.target.value), cursor: undefined })} placeholder="目的端口" value={query.port ? String(query.port) : ''} />
       <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, proto: event.target.value, cursor: undefined })} placeholder="协议 tcp/udp/icmp" value={query.proto ?? ''} />
     </div>
@@ -168,6 +169,7 @@ function queryFromSearchParams(params: URLSearchParams): EventQuery {
     dst_ip: optionalString(params.get('dst_ip')),
     domain: optionalString(params.get('domain')),
     user_agent: optionalString(params.get('user_agent')),
+    fingerprint: optionalString(params.get('fingerprint')),
     port: parseOptionalPort(params.get('port') ?? ''),
     proto: optionalString(params.get('proto')),
     limit: 50,

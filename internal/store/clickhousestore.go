@@ -650,6 +650,10 @@ func eventWhereSQL(query Query) (string, error) {
 		like := chQuote("%" + strings.ToLower(query.UserAgent) + "%")
 		clauses = append(clauses, "lower(JSONExtractString(payload_json, 'user_agent')) LIKE "+like)
 	}
+	if query.Fingerprint != "" {
+		like := chQuote("%" + strings.ToLower(query.Fingerprint) + "%")
+		clauses = append(clauses, "(lower(JSONExtractString(payload_json, 'ja3')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'ja4')) LIKE "+like+")")
+	}
 	if query.Port > 0 {
 		clauses = append(clauses, fmt.Sprintf("dst_port = %d", query.Port))
 	}
