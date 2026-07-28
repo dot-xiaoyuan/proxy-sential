@@ -75,6 +75,105 @@ func (s *DBStore) GetIPActivity(ctx context.Context, ip string, limit int) (Acti
 	return s.ch.GetIPActivity(ctx, ip, limit)
 }
 
+func (s *DBStore) GetIPDeviceInventory(ctx context.Context, ip string, query ActivityQuery) (IPDeviceInventory, error) {
+	window := query.Window
+	if window == "" {
+		window = "1h"
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.pg.sensorID
+	}
+	events, err := s.ch.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: window, SrcIP: ip, Limit: defaultDPIEventLimit})
+	if err != nil {
+		return IPDeviceInventory{}, err
+	}
+	snapshot, err := s.pg.GetIPRisk(ctx, ip)
+	if err != nil {
+		return IPDeviceInventory{}, err
+	}
+	return BuildDeviceInventory(ip, window, events, snapshot), nil
+}
+
+func (s *DBStore) ListDeviceInventories(ctx context.Context, query Query) (DevicePage, error) {
+	limit := query.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	window := query.Window
+	if window == "" {
+		window = "1h"
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.pg.sensorID
+	}
+	events, err := s.ch.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: window, Limit: defaultDPIEventLimit})
+	if err != nil {
+		return DevicePage{}, err
+	}
+	risks, err := s.pg.RiskSnapshotMap(ctx)
+	if err != nil {
+		return DevicePage{}, err
+	}
+	items := filterDeviceInventories(BuildDeviceInventories(window, events, risks), query)
+	total := len(items)
+	if limit < 0 {
+		return DevicePage{Items: items, Page: Page{Limit: limit, Total: total}}, nil
+	}
+	cursor := query.Cursor
+	if cursor > total {
+		cursor = total
+	}
+	end := cursor + limit
+	if end > total {
+		end = total
+	}
+	var next *string
+	if end < total {
+		value := fmt.Sprintf("%d", end)
+		next = &value
+	}
+	return DevicePage{Items: items[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+}
+
+func (s *DBStore) GetDevice(ctx context.Context, deviceID string, query Query) (ObservedDevice, bool, error) {
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, Limit: -1})
+	if err != nil {
+		return ObservedDevice{}, false, err
+	}
+	for _, inventory := range page.Items {
+		for _, device := range inventory.Devices {
+			if device.DeviceID == deviceID {
+				return device, true, nil
+			}
+		}
+	}
+	return ObservedDevice{}, false, nil
+}
+
+func (s *DBStore) ListDeviceSignals(ctx context.Context, query Query) ([]DeviceSignal, error) {
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Limit: -1})
+	if err != nil {
+		return nil, err
+	}
+	signals := []DeviceSignal{}
+	for _, inventory := range page.Items {
+		signals = append(signals, inventory.Signals...)
+	}
+	return signals, nil
+}
+
+func (s *DBStore) ListDeviceFingerprintConflicts(ctx context.Context, query Query) ([]DeviceConflict, error) {
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Limit: -1})
+	if err != nil {
+		return nil, err
+	}
+	conflicts := []DeviceConflict{}
+	for _, inventory := range page.Items {
+		conflicts = append(conflicts, inventory.Conflicts...)
+	}
+	return conflicts, nil
+}
+
 func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error) {
 	window, duration, err := NormalizeActivityWindow(query.Window)
 	if err != nil {

@@ -1130,6 +1130,133 @@ pre.wrap-code {
   font-size: 12px;
 }
 
+.full-width {
+  width: 100%;
+}
+
+.table-tag {
+  margin: 0;
+  border-radius: 4px;
+}
+
+.table-time {
+  font-size: 12px;
+}
+
+.risk-table-summary {
+  margin: 0 !important;
+  color: var(--ps-text-primary);
+  font-size: 13px;
+}
+
+.risk-table-device {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.risk-table-device-summary {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.device-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.device-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--ps-border-color);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.device-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.device-card-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.device-card-id {
+  font-size: 11px;
+}
+
+.device-confidence {
+  flex: 0 0 96px;
+}
+
+.device-attribute-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.device-attribute {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.device-summary {
+  margin-bottom: 10px !important;
+  overflow-wrap: anywhere;
+}
+
+.device-signal-stats,
+.device-signal-list,
+.device-conflict-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.device-signal-stats {
+  margin-bottom: 10px;
+}
+
+.device-signal-token {
+  display: inline-flex;
+  align-items: flex-start;
+  max-width: 100%;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.device-conflict-card {
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+}
+
 .rank-card-full-height {
   height: 100%;
 }

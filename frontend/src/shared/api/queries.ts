@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from './client'
-import type { ActivityOverviewQuery, CreateLabelRequest, EventQuery, RiskQuery } from './types'
+import type { ActivityOverviewQuery, CreateLabelRequest, DeviceQuery, EventQuery, RiskQuery } from './types'
 
 export const queryKeys = {
   session: ['session'] as const,
@@ -15,10 +15,15 @@ export const queryKeys = {
   dpiFlows: (query: EventQuery) => ['dpi-flows', query] as const,
   dpiIpFlows: (ip: string, query: EventQuery) => ['dpi-ip-flows', ip, query] as const,
   dpiFlow: (flowId: string) => ['dpi-flow', flowId] as const,
+  devices: (query: DeviceQuery) => ['devices', query] as const,
+  device: (deviceId: string, query: DeviceQuery) => ['device', deviceId, query] as const,
+  deviceSignals: (query: DeviceQuery) => ['device-signals', query] as const,
+  deviceFingerprintConflicts: (query: DeviceQuery) => ['device-fingerprint-conflicts', query] as const,
   risks: (query: RiskQuery) => ['risks', query] as const,
   ipRisk: (ip: string) => ['ip-risk', ip] as const,
   ipEvidence: (ip: string) => ['ip-evidence', ip] as const,
   ipActivity: (ip: string) => ['ip-activity', ip] as const,
+  ipDevices: (ip: string, query: DeviceQuery) => ['ip-devices', ip, query] as const,
   ipEvents: (ip: string) => ['ip-events', ip] as const,
   events: (query: EventQuery) => ['events', query] as const,
   ingestStatus: ['ingest-status'] as const,
@@ -87,6 +92,32 @@ export function useDpiFlow(flowId: string) {
   })
 }
 
+export function useDevices(query: DeviceQuery) {
+  return useQuery({ queryKey: queryKeys.devices(query), queryFn: () => api.devices(query) })
+}
+
+export function useDevice(deviceId: string, query: DeviceQuery) {
+  return useQuery({
+    queryKey: queryKeys.device(deviceId, query),
+    queryFn: () => api.device(deviceId, query),
+    enabled: !!deviceId,
+  })
+}
+
+export function useDeviceSignals(query: DeviceQuery) {
+  return useQuery({
+    queryKey: queryKeys.deviceSignals(query),
+    queryFn: () => api.deviceSignals(query),
+  })
+}
+
+export function useDeviceFingerprintConflicts(query: DeviceQuery) {
+  return useQuery({
+    queryKey: queryKeys.deviceFingerprintConflicts(query),
+    queryFn: () => api.deviceFingerprintConflicts(query),
+  })
+}
+
 export function useRisks(query: RiskQuery) {
   return useQuery({ queryKey: queryKeys.risks(query), queryFn: () => api.risks(query) })
 }
@@ -107,6 +138,14 @@ export function useIpActivity(ip: string) {
   return useQuery({
     queryKey: queryKeys.ipActivity(ip),
     queryFn: () => api.ipActivity(ip),
+    enabled: !!ip,
+  })
+}
+
+export function useIpDevices(ip: string, query: DeviceQuery = { window: '1h' }) {
+  return useQuery({
+    queryKey: queryKeys.ipDevices(ip, query),
+    queryFn: () => api.ipDevices(ip, query),
     enabled: !!ip,
   })
 }

@@ -219,6 +219,99 @@ func (s *FileStore) GetIPActivity(ctx context.Context, ip string, limit int) (Ac
 	return BuildActivityProfile(ip, events, limit), nil
 }
 
+func (s *FileStore) GetIPDeviceInventory(ctx context.Context, ip string, query ActivityQuery) (IPDeviceInventory, error) {
+	window := query.Window
+	if window == "" {
+		window = "latest-run"
+	}
+	events, err := s.ListEventSamples(ctx, Query{SrcIP: ip, Window: query.Window, Limit: defaultDPIEventLimit})
+	if err != nil {
+		return IPDeviceInventory{}, err
+	}
+	snapshot, err := s.GetIPRisk(ctx, ip)
+	if err != nil {
+		return IPDeviceInventory{}, err
+	}
+	return BuildDeviceInventory(ip, window, events, snapshot), nil
+}
+
+func (s *FileStore) ListDeviceInventories(ctx context.Context, query Query) (DevicePage, error) {
+	limit := query.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	events, err := s.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: query.Window, Limit: defaultDPIEventLimit})
+	if err != nil {
+		return DevicePage{}, err
+	}
+	batch, err := s.latestRiskMap(ctx)
+	if err != nil {
+		return DevicePage{}, err
+	}
+	window := query.Window
+	if window == "" {
+		window = "latest-run"
+	}
+	items := filterDeviceInventories(BuildDeviceInventories(window, events, batch), query)
+	total := len(items)
+	if limit < 0 {
+		return DevicePage{Items: items, Page: Page{Limit: limit, Total: total}}, nil
+	}
+	cursor := query.Cursor
+	if cursor > total {
+		cursor = total
+	}
+	end := cursor + limit
+	if end > total {
+		end = total
+	}
+	var next *string
+	if end < total {
+		value := strconv.Itoa(end)
+		next = &value
+	}
+	return DevicePage{Items: items[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+}
+
+func (s *FileStore) GetDevice(ctx context.Context, deviceID string, query Query) (ObservedDevice, bool, error) {
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, Limit: -1})
+	if err != nil {
+		return ObservedDevice{}, false, err
+	}
+	for _, inventory := range page.Items {
+		for _, device := range inventory.Devices {
+			if device.DeviceID == deviceID {
+				return device, true, nil
+			}
+		}
+	}
+	return ObservedDevice{}, false, nil
+}
+
+func (s *FileStore) ListDeviceSignals(ctx context.Context, query Query) ([]DeviceSignal, error) {
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Limit: -1})
+	if err != nil {
+		return nil, err
+	}
+	signals := []DeviceSignal{}
+	for _, inventory := range page.Items {
+		signals = append(signals, inventory.Signals...)
+	}
+	return signals, nil
+}
+
+func (s *FileStore) ListDeviceFingerprintConflicts(ctx context.Context, query Query) ([]DeviceConflict, error) {
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Limit: -1})
+	if err != nil {
+		return nil, err
+	}
+	conflicts := []DeviceConflict{}
+	for _, inventory := range page.Items {
+		conflicts = append(conflicts, inventory.Conflicts...)
+	}
+	return conflicts, nil
+}
+
 func (s *FileStore) GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error) {
 	window, _, err := NormalizeActivityWindow(query.Window)
 	if err != nil {
@@ -251,6 +344,18 @@ func (s *FileStore) GetActivityOverview(ctx context.Context, query ActivityQuery
 		return ActivityOverview{}, err
 	}
 	return BuildActivityOverview(sensorID, window, events, riskSnapshotMap(batch.Snapshots)), nil
+}
+
+func (s *FileStore) latestRiskMap(ctx context.Context) (map[string]risk.Snapshot, error) {
+	latest, ok, err := s.latestRun(ctx)
+	if err != nil || !ok {
+		return map[string]risk.Snapshot{}, err
+	}
+	batch, err := readRiskBatch(filepath.Join(latest.Dir, "risk-snapshots.json"))
+	if err != nil {
+		return nil, err
+	}
+	return riskSnapshotMap(batch.Snapshots), nil
 }
 
 func (s *FileStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {

@@ -104,7 +104,7 @@ func TestRisksFilteringSortingPaginationAndSensor(t *testing.T) {
 			riskSnapshot("192.168.0.40", "normal", 20, "2026-07-27T10:10:04+08:00"),
 		},
 	})
-	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "office-30", ReadOnly: true})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "test-sensor", ReadOnly: true})
 
 	var page RiskListResponse
 	getJSON(t, server, "/api/v1/risks?limit=2", http.StatusOK, &page)
@@ -226,6 +226,54 @@ func TestIPDetailEndpointsSupportIPv6AndNormalFallback(t *testing.T) {
 	getJSON(t, server, "/api/v1/ips/192.168.0.250/risk", http.StatusOK, &snapshot)
 	if snapshot.IP != "192.168.0.250" || snapshot.Level != "normal" || len(snapshot.EvidenceIDs) != 0 {
 		t.Fatalf("unexpected normal fallback: %#v", snapshot)
+	}
+}
+
+func TestDeviceInventoryEndpointsExposeConservativeSignals(t *testing.T) {
+	shadowDir := t.TempDir()
+	ip := "192.168.10.55"
+	now := time.Now().Add(-10 * time.Minute).Format(time.RFC3339Nano)
+	later := time.Now().Add(-5 * time.Minute).Format(time.RFC3339Nano)
+	writeRun(t, shadowDir, "20260727-101000", testRun{
+		startedAt: now,
+		events: []normalized.Event{
+			httpEvent("event-device-http-a", ip, now, "portal.example.test", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"),
+			httpEvent("event-device-http-b", ip, later, "m.example.test", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"),
+			tlsEvent("event-device-tls-a", ip, later, "api.example.test", "chrome-ja3", "chrome-ja4"),
+			tlsEvent("event-device-tls-b", ip, later, "api.example.test", "ios-ja3", "ios-ja4"),
+		},
+		risks: []risk.Snapshot{
+			riskSnapshot(ip, "high", 75, later),
+		},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "test-sensor", ReadOnly: true})
+
+	var inventory store.IPDeviceInventory
+	getJSON(t, server, "/api/v1/ips/"+url.PathEscape(ip)+"/devices?window=1h", http.StatusOK, &inventory)
+	if inventory.IP != ip || inventory.SuspectedDeviceCount < 2 || len(inventory.Devices) < 2 {
+		t.Fatalf("expected multiple device candidates, got %#v", inventory)
+	}
+	if len(inventory.Conflicts) == 0 {
+		t.Fatalf("expected signal conflicts, got %#v", inventory)
+	}
+	for _, signal := range inventory.Signals {
+		if signal.Kind == "user_agent" && signal.Strength != "weak" {
+			t.Fatalf("UA signal must remain weak: %#v", signal)
+		}
+	}
+
+	var risks RiskListResponse
+	getJSON(t, server, "/api/v1/risks", http.StatusOK, &risks)
+	if len(risks.Items) != 1 || risks.Items[0].SuspectedDeviceCount < 2 || risks.Items[0].DeviceSummary == "" {
+		t.Fatalf("expected enriched risk device summary, got %#v", risks.Items)
+	}
+
+	var signals struct {
+		Items []store.DeviceSignal `json:"items"`
+	}
+	getJSON(t, server, "/api/v1/device-signals?ip="+url.QueryEscape(ip), http.StatusOK, &signals)
+	if len(signals.Items) == 0 {
+		t.Fatalf("expected device signals")
 	}
 }
 

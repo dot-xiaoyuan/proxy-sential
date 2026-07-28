@@ -13,15 +13,18 @@ import (
 )
 
 type Snapshot struct {
-	IP                string   `json:"ip"`
-	Score             int      `json:"score"`
-	Level             string   `json:"level"`
-	Confidence        float64  `json:"confidence"`
-	Window            string   `json:"window"`
-	EvidenceIDs       []string `json:"evidence_ids"`
-	Summary           string   `json:"summary"`
-	RecommendedAction string   `json:"recommended_action"`
-	UpdatedAt         string   `json:"updated_at"`
+	IP                   string   `json:"ip"`
+	Score                int      `json:"score"`
+	Level                string   `json:"level"`
+	Confidence           float64  `json:"confidence"`
+	Window               string   `json:"window"`
+	EvidenceIDs          []string `json:"evidence_ids"`
+	Summary              string   `json:"summary"`
+	RecommendedAction    string   `json:"recommended_action"`
+	UpdatedAt            string   `json:"updated_at"`
+	SuspectedDeviceCount int      `json:"suspected_device_count"`
+	DeviceSummary        string   `json:"device_summary,omitempty"`
+	DeviceConfidence     float64  `json:"device_confidence"`
 }
 
 type InspectOptions struct {
@@ -373,7 +376,7 @@ func summaryFor(items []evidence.Evidence, level string) string {
 }
 
 func isWeakEvidence(evidenceType string) bool {
-	return evidenceType == "domain_diversity" || evidenceType == "port_distribution"
+	return evidenceType == "multi_user_agent" || evidenceType == "domain_diversity" || evidenceType == "port_distribution"
 }
 
 func strongEvidenceTypeCount(items []evidence.Evidence) int {

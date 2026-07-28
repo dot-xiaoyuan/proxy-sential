@@ -33,6 +33,11 @@ export type FingerprintConflictItem = components['schemas']['DpiFingerprintConfl
 export type DpiFlowSample = components['schemas']['DpiFlowSample']
 export type DpiFlowListResponse = components['schemas']['DpiFlowListResponse']
 export type DpiFlowDetail = components['schemas']['DpiFlowDetail']
+export type DeviceSignal = components['schemas']['DeviceSignal']
+export type ObservedDevice = components['schemas']['ObservedDevice']
+export type DeviceConflict = components['schemas']['DeviceConflict']
+export type IpDeviceInventory = components['schemas']['IpDeviceInventory']
+export type DeviceListResponse = components['schemas']['DeviceListResponse']
 
 export type RiskQuery = {
   level?: RiskLevel
@@ -65,4 +70,13 @@ export type EventQuery = {
 export type ActivityOverviewQuery = {
   sensor_id?: string
   window?: '10m' | '1h' | '24h'
+}
+
+export type DeviceQuery = {
+  sensor_id?: string
+  window?: '10m' | '1h' | '24h'
+  ip?: string
+  q?: string
+  limit?: number
+  cursor?: string
 }

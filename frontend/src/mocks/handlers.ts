@@ -5,6 +5,7 @@ import {
   activityByIp,
   getActivityOverviewByWindow,
   auditLogs,
+  deviceInventoriesByIp,
   eventsByIp,
   evidenceByIp,
   ingestDiagnostics,
@@ -122,6 +123,34 @@ export const handlers = [
       },
     )
   }),
+  http.get('/api/v1/ips/:ip/devices', ({ params }) => {
+    const ip = normalizeIp(String(params.ip))
+    return HttpResponse.json(
+      deviceInventoriesByIp[ip] ?? {
+        ip,
+        window: '1h',
+        suspected_device_count: 0,
+        confidence: 0,
+        status: 'insufficient_signal',
+        summary: '当前标准事件中没有足够设备识别信号，无法判断该 IP 背后设备数量或品牌',
+        devices: [],
+        signals: [],
+        conflicts: [],
+      },
+    )
+  }),
+  http.get('/api/v1/devices', () =>
+    HttpResponse.json({
+      items: Object.values(deviceInventoriesByIp),
+      page: { limit: 50, next_cursor: null, total: Object.values(deviceInventoriesByIp).length },
+    }),
+  ),
+  http.get('/api/v1/device-signals', () =>
+    HttpResponse.json({ items: Object.values(deviceInventoriesByIp).flatMap((item) => item.signals) }),
+  ),
+  http.get('/api/v1/device-fingerprint-conflicts', () =>
+    HttpResponse.json({ items: Object.values(deviceInventoriesByIp).flatMap((item) => item.conflicts) }),
+  ),
   http.get('/api/v1/ips/:ip/events', ({ params }) => {
     const ip = normalizeIp(String(params.ip))
     return HttpResponse.json({ events: eventsByIp[ip] ?? [] })

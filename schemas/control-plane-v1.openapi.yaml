@@ -359,6 +359,32 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /ips/{ip}/devices:
+    get:
+      operationId: getIpDevices
+      parameters:
+        - $ref: "#/components/parameters/IpPath"
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+      responses:
+        "200":
+          description: Conservative device inventory derived from normalized signals for an IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IpDeviceInventory"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /ips/{ip}/events:
     get:
       operationId: getIpEvents
@@ -386,6 +412,154 @@ paths:
                       $ref: "#/components/schemas/NormalizedEventSummary"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /devices:
+    get:
+      operationId: listDevices
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: IP-scoped device inventories.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /devices/{device_id}:
+    get:
+      operationId: getDevice
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+      responses:
+        "200":
+          description: A single observed device candidate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObservedDevice"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /device-signals:
+    get:
+      operationId: listDeviceSignals
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Device identification signals without raw collector payload.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DeviceSignal"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /device-fingerprint-conflicts:
+    get:
+      operationId: listDeviceFingerprintConflicts
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Device signal conflicts for anti-proxy review.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DeviceConflict"
         "500":
           $ref: "#/components/responses/InternalError"
   /events:
@@ -841,7 +1015,7 @@ components:
       enum: [low, medium, high]
     RiskSnapshot:
       type: object
-      required: [ip, score, level, confidence, window, evidence_ids, summary, recommended_action, updated_at]
+      required: [ip, score, level, confidence, window, evidence_ids, summary, recommended_action, updated_at, suspected_device_count, device_confidence]
       properties:
         ip:
           type: string
@@ -868,6 +1042,15 @@ components:
         updated_at:
           type: string
           format: date-time
+        suspected_device_count:
+          type: integer
+          minimum: 0
+        device_summary:
+          type: string
+        device_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
     RiskListResponse:
       type: object
       required: [items, page]
@@ -918,7 +1101,7 @@ components:
           type: string
         type:
           type: string
-          enum: [multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint]
+          enum: [multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint, multi_observed_device, device_signal_conflict, brand_os_conflict, tcp_tls_stack_conflict]
         window:
           type: string
         score:
@@ -940,6 +1123,178 @@ components:
         created_at:
           type: string
           format: date-time
+    DeviceSignal:
+      type: object
+      required: [signal_id, ip, source, kind, value, normalized_value, strength, confidence, weight, event_ids]
+      properties:
+        signal_id:
+          type: string
+        ip:
+          type: string
+        source:
+          type: string
+        kind:
+          type: string
+        value:
+          type: string
+        normalized_value:
+          type: string
+        strength:
+          type: string
+          enum: [strong, medium, weak]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        weight:
+          type: integer
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        event_ids:
+          type: array
+          items:
+            type: string
+    ObservedDevice:
+      type: object
+      required: [device_id, ip, label, brand, vendor, os_family, device_type, model, confidence, signal_count, strong_signal_count, medium_signal_count, weak_signal_count, signals, fingerprints, summary]
+      properties:
+        device_id:
+          type: string
+        ip:
+          type: string
+        label:
+          type: string
+        brand:
+          type: string
+        vendor:
+          type: string
+        os_family:
+          type: string
+        os_version:
+          type: string
+        device_type:
+          type: string
+        model:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        signal_count:
+          type: integer
+        strong_signal_count:
+          type: integer
+        medium_signal_count:
+          type: integer
+        weak_signal_count:
+          type: integer
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeviceSignal"
+        fingerprints:
+          type: array
+          items:
+            type: string
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        summary:
+          type: string
+    DeviceConflict:
+      type: object
+      required: [conflict_id, ip, type, strength, confidence, summary, samples, related_device_ids]
+      properties:
+        conflict_id:
+          type: string
+        ip:
+          type: string
+        type:
+          type: string
+        strength:
+          type: string
+          enum: [strong, medium, weak]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        summary:
+          type: string
+        samples:
+          type: array
+          items:
+            type: string
+        last_seen:
+          type: string
+          format: date-time
+        related_device_ids:
+          type: array
+          items:
+            type: string
+    IpDeviceInventory:
+      type: object
+      required: [ip, window, suspected_device_count, confidence, status, summary, devices, signals, conflicts]
+      properties:
+        ip:
+          type: string
+        window:
+          type: string
+        suspected_device_count:
+          type: integer
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        status:
+          type: string
+          enum: [insufficient_signal, weak_signals_only, single_candidate, multi_candidate]
+        summary:
+          type: string
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObservedDevice"
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeviceSignal"
+        conflicts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeviceConflict"
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+    DeviceListResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IpDeviceInventory"
+        page:
+          type: object
+          required: [limit, next_cursor, total]
+          properties:
+            limit:
+              type: integer
+            next_cursor:
+              type:
+                - string
+                - "null"
+            total:
+              type: integer
     NormalizedEventSummary:
       type: object
       required: [event_id, type, timestamp, subject, flow, confidence]

@@ -25,9 +25,9 @@ func TestInspectWeakEvidenceDoesNotEscalateBeyondSuspicious(t *testing.T) {
 
 func TestInspectMultipleStrongEvidenceCanConfirm(t *testing.T) {
 	input := evidenceInput(
-		ev("strong-1", "10.0.0.1", "multi_user_agent", 35, 0.85),
+		ev("weak-ua", "10.0.0.1", "multi_user_agent", 22, 0.35),
 		ev("strong-2", "10.0.0.1", "multi_ja3_ja4", 30, 0.75),
-		ev("weak-1", "10.0.0.1", "port_distribution", 20, 0.65),
+		ev("strong-3", "10.0.0.1", "device_signal_conflict", 33, 0.68),
 	)
 
 	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
@@ -39,6 +39,21 @@ func TestInspectMultipleStrongEvidenceCanConfirm(t *testing.T) {
 	}
 	if len(snapshot.EvidenceIDs) != 3 {
 		t.Fatalf("expected 3 evidence ids, got %+v", snapshot.EvidenceIDs)
+	}
+}
+
+func TestInspectMultiUserAgentIsWeakEvidence(t *testing.T) {
+	input := evidenceInput(
+		ev("weak-ua", "10.0.0.1", "multi_user_agent", 35, 0.35),
+		ev("weak-port", "10.0.0.1", "port_distribution", 20, 0.65),
+	)
+
+	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Score != 45 || snapshot.Level != "suspicious" {
+		t.Fatalf("UA weak evidence should not confirm risk: %+v", snapshot)
 	}
 }
 

@@ -8,6 +8,10 @@ import type {
   DpiOverview,
   DpiProtocolFlowItem,
   DpiTrendPoint,
+  DeviceConflict,
+  DeviceListResponse,
+  DeviceQuery,
+  DeviceSignal,
   Evidence,
   EventListResponse,
   EventQuery,
@@ -15,9 +19,11 @@ import type {
   FingerprintConflictItem,
   IngestDiagnostic,
   IngestStatus,
+  IpDeviceInventory,
   IpActivityProfile,
   Label,
   NormalizedEventSummary,
+  ObservedDevice,
   Overview,
   RiskListResponse,
   RiskQuery,
@@ -83,12 +89,21 @@ export const api = {
     request<DpiFlowListResponse>(`/dpi/ips/${encodeURIComponent(ip)}/flows${search(query)}`),
   dpiFlow: (flowId: string) =>
     request<DpiFlowDetail>(`/dpi/flows/${encodeURIComponent(flowId)}`),
+  devices: (query: DeviceQuery) => request<DeviceListResponse>(`/devices${search(query)}`),
+  device: (deviceId: string, query: DeviceQuery) =>
+    request<ObservedDevice>(`/devices/${encodeURIComponent(deviceId)}${search(query)}`),
+  deviceSignals: (query: DeviceQuery) =>
+    request<{ items: DeviceSignal[] }>(`/device-signals${search(query)}`),
+  deviceFingerprintConflicts: (query: DeviceQuery) =>
+    request<{ items: DeviceConflict[] }>(`/device-fingerprint-conflicts${search(query)}`),
   risks: (query: RiskQuery) => request<RiskListResponse>(`/risks${search(query)}`),
   ipRisk: (ip: string) => request<RiskSnapshot>(`/ips/${encodeURIComponent(ip)}/risk`),
   ipEvidence: (ip: string) =>
     request<{ evidence: Evidence[] }>(`/ips/${encodeURIComponent(ip)}/evidence`),
   ipActivity: (ip: string, limit = 50) =>
     request<IpActivityProfile>(`/ips/${encodeURIComponent(ip)}/activity${search({ limit })}`),
+  ipDevices: (ip: string, query: DeviceQuery = {}) =>
+    request<IpDeviceInventory>(`/ips/${encodeURIComponent(ip)}/devices${search(query)}`),
   ipEvents: (ip: string, limit = 50) =>
     request<{ events: NormalizedEventSummary[] }>(
       `/ips/${encodeURIComponent(ip)}/events${search({ limit })}`,

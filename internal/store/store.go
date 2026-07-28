@@ -48,6 +48,11 @@ type RiskPage struct {
 	Page  Page
 }
 
+type DevicePage struct {
+	Items []IPDeviceInventory `json:"items"`
+	Page  Page                `json:"page"`
+}
+
 type EventPage struct {
 	Items []normalized.Event
 	Page  Page
@@ -247,12 +252,80 @@ type DPIFlowPage struct {
 	Page  Page            `json:"page"`
 }
 
+type DeviceSignal struct {
+	SignalID        string   `json:"signal_id"`
+	IP              string   `json:"ip"`
+	Source          string   `json:"source"`
+	Kind            string   `json:"kind"`
+	Value           string   `json:"value"`
+	NormalizedValue string   `json:"normalized_value"`
+	Strength        string   `json:"strength"`
+	Confidence      float64  `json:"confidence"`
+	Weight          int      `json:"weight"`
+	FirstSeen       string   `json:"first_seen,omitempty"`
+	LastSeen        string   `json:"last_seen,omitempty"`
+	EventIDs        []string `json:"event_ids"`
+}
+
+type ObservedDevice struct {
+	DeviceID          string         `json:"device_id"`
+	IP                string         `json:"ip"`
+	Label             string         `json:"label"`
+	Brand             string         `json:"brand"`
+	Vendor            string         `json:"vendor"`
+	OSFamily          string         `json:"os_family"`
+	OSVersion         string         `json:"os_version"`
+	DeviceType        string         `json:"device_type"`
+	Model             string         `json:"model"`
+	Confidence        float64        `json:"confidence"`
+	SignalCount       int            `json:"signal_count"`
+	StrongSignalCount int            `json:"strong_signal_count"`
+	MediumSignalCount int            `json:"medium_signal_count"`
+	WeakSignalCount   int            `json:"weak_signal_count"`
+	Signals           []DeviceSignal `json:"signals"`
+	Fingerprints      []string       `json:"fingerprints"`
+	FirstSeen         string         `json:"first_seen,omitempty"`
+	LastSeen          string         `json:"last_seen,omitempty"`
+	Summary           string         `json:"summary"`
+}
+
+type DeviceConflict struct {
+	ConflictID       string   `json:"conflict_id"`
+	IP               string   `json:"ip"`
+	Type             string   `json:"type"`
+	Strength         string   `json:"strength"`
+	Confidence       float64  `json:"confidence"`
+	Summary          string   `json:"summary"`
+	Samples          []string `json:"samples"`
+	LastSeen         string   `json:"last_seen,omitempty"`
+	RelatedDeviceIDs []string `json:"related_device_ids"`
+}
+
+type IPDeviceInventory struct {
+	IP                   string           `json:"ip"`
+	Window               string           `json:"window"`
+	SuspectedDeviceCount int              `json:"suspected_device_count"`
+	Confidence           float64          `json:"confidence"`
+	Status               string           `json:"status"`
+	Summary              string           `json:"summary"`
+	Devices              []ObservedDevice `json:"devices"`
+	Signals              []DeviceSignal   `json:"signals"`
+	Conflicts            []DeviceConflict `json:"conflicts"`
+	FirstSeen            string           `json:"first_seen,omitempty"`
+	LastSeen             string           `json:"last_seen,omitempty"`
+}
+
 type Reader interface {
 	Overview(ctx context.Context) (Overview, error)
 	ListRisks(ctx context.Context, query Query) (RiskPage, error)
 	GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error)
 	GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error)
 	GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error)
+	GetIPDeviceInventory(ctx context.Context, ip string, query ActivityQuery) (IPDeviceInventory, error)
+	ListDeviceInventories(ctx context.Context, query Query) (DevicePage, error)
+	GetDevice(ctx context.Context, deviceID string, query Query) (ObservedDevice, bool, error)
+	ListDeviceSignals(ctx context.Context, query Query) ([]DeviceSignal, error)
+	ListDeviceFingerprintConflicts(ctx context.Context, query Query) ([]DeviceConflict, error)
 	GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error)
 	GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error)
 	ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error)

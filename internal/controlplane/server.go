@@ -61,6 +61,11 @@ type RiskListResponse struct {
 	Page  Page            `json:"page"`
 }
 
+type DeviceListResponse struct {
+	Items []store.IPDeviceInventory `json:"items"`
+	Page  Page                      `json:"page"`
+}
+
 type EventListResponse struct {
 	Events []normalized.Event `json:"events"`
 	Page   Page               `json:"page"`
@@ -254,6 +259,14 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDPIFlow(w, r, strings.TrimPrefix(path, "/dpi/flows/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/dpi/ips/"):
 		s.handleDPIIP(w, r, strings.TrimPrefix(path, "/dpi/ips/"))
+	case r.Method == http.MethodGet && path == "/devices":
+		s.handleDevices(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/devices/"):
+		s.handleDevice(w, r, strings.TrimPrefix(path, "/devices/"))
+	case r.Method == http.MethodGet && path == "/device-signals":
+		s.handleDeviceSignals(w, r)
+	case r.Method == http.MethodGet && path == "/device-fingerprint-conflicts":
+		s.handleDeviceFingerprintConflicts(w, r)
 	case r.Method == http.MethodGet && path == "/risks":
 		s.handleRisks(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/ips/"):
@@ -365,6 +378,7 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_risk_query", err.Error())
 		return
 	}
+	s.enrichRiskDevices(r.Context(), page.Items)
 	writeJSON(w, http.StatusOK, RiskListResponse{Items: page.Items, Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total}})
 }
 
@@ -391,6 +405,13 @@ func (s *Server) handleIP(w http.ResponseWriter, r *http.Request, rest string) {
 			return
 		}
 		s.handleIPActivity(w, r, ip)
+	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/devices"):
+		ip, err := pathIP(strings.TrimSuffix(rest, "/devices"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_ip", err.Error())
+			return
+		}
+		s.handleIPDevices(w, r, ip)
 	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/events"):
 		ip, err := pathIP(strings.TrimSuffix(rest, "/events"))
 		if err != nil {
@@ -411,6 +432,7 @@ func (s *Server) handleIPRisk(w http.ResponseWriter, r *http.Request, ip string)
 		writeError(w, http.StatusInternalServerError, "read_risks_failed", err.Error())
 		return
 	}
+	s.enrichRiskDevice(ctx, &snapshot)
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
@@ -439,6 +461,107 @@ func (s *Server) handleIPActivity(w http.ResponseWriter, r *http.Request, ip str
 		return
 	}
 	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) handleIPDevices(w http.ResponseWriter, r *http.Request, ip string) {
+	query, err := s.deviceActivityQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_device_query", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	inventory, err := s.reader.GetIPDeviceInventory(ctx, ip, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_ip_devices_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
+	query, err := deviceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_device_query", err.Error())
+		return
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.sensorID
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	page, err := s.reader.ListDeviceInventories(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_devices_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, DeviceListResponse{Items: page.Items, Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total}})
+}
+
+func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request, rawDeviceID string) {
+	deviceID, err := store.DecodePathIP(rawDeviceID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_device_id", err.Error())
+		return
+	}
+	query, err := deviceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_device_query", err.Error())
+		return
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.sensorID
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	device, ok, err := s.reader.GetDevice(ctx, deviceID, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_device_failed", err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "device_not_found", "device candidate not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, device)
+}
+
+func (s *Server) handleDeviceSignals(w http.ResponseWriter, r *http.Request) {
+	query, err := deviceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_device_query", err.Error())
+		return
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.sensorID
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	items, err := s.reader.ListDeviceSignals(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_device_signals_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleDeviceFingerprintConflicts(w http.ResponseWriter, r *http.Request) {
+	query, err := deviceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_device_query", err.Error())
+		return
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.sensorID
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	items, err := s.reader.ListDeviceFingerprintConflicts(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_device_conflicts_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (s *Server) handleActivityOverview(w http.ResponseWriter, r *http.Request) {
@@ -746,6 +869,66 @@ func (s *Server) activityQuery(values url.Values) (store.ActivityQuery, error) {
 		return store.ActivityQuery{}, err
 	}
 	return store.ActivityQuery{SensorID: sensorID, Window: window, Limit: limit}, nil
+}
+
+func (s *Server) deviceActivityQuery(values url.Values) (store.ActivityQuery, error) {
+	sensorID := values.Get("sensor_id")
+	if sensorID == "" {
+		sensorID = s.sensorID
+	}
+	window := values.Get("window")
+	if window == "" {
+		window = "1h"
+	}
+	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
+		return store.ActivityQuery{}, err
+	}
+	return store.ActivityQuery{SensorID: sensorID, Window: window, Limit: defaultDPIQueryLimit}, nil
+}
+
+func deviceQuery(values url.Values) (store.Query, error) {
+	limit, err := boundedInt(values.Get("limit"), 50, 1, 200)
+	if err != nil {
+		return store.Query{}, fmt.Errorf("bad limit: %w", err)
+	}
+	cursor, err := cursorOffset(values.Get("cursor"))
+	if err != nil {
+		return store.Query{}, fmt.Errorf("bad cursor: %w", err)
+	}
+	window := values.Get("window")
+	if window == "" {
+		window = "1h"
+	}
+	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
+		return store.Query{}, fmt.Errorf("bad window: %w", err)
+	}
+	return store.Query{
+		Q:        values.Get("q"),
+		SensorID: values.Get("sensor_id"),
+		Window:   window,
+		SrcIP:    values.Get("ip"),
+		Limit:    limit,
+		Cursor:   cursor,
+	}, nil
+}
+
+func (s *Server) enrichRiskDevices(ctx context.Context, items []risk.Snapshot) {
+	for index := range items {
+		s.enrichRiskDevice(ctx, &items[index])
+	}
+}
+
+func (s *Server) enrichRiskDevice(ctx context.Context, snapshot *risk.Snapshot) {
+	if snapshot == nil || snapshot.IP == "" {
+		return
+	}
+	inventory, err := s.reader.GetIPDeviceInventory(ctx, snapshot.IP, store.ActivityQuery{SensorID: s.sensorID, Window: "1h", Limit: defaultDPIQueryLimit})
+	if err != nil {
+		return
+	}
+	snapshot.SuspectedDeviceCount = inventory.SuspectedDeviceCount
+	snapshot.DeviceSummary = inventory.Summary
+	snapshot.DeviceConfidence = inventory.Confidence
 }
 
 func eventQuery(values url.Values) (store.Query, error) {

@@ -36,24 +36,36 @@ const columns: ColumnsType<RiskSnapshot> = [
     render: (summary: string) => (
       <Typography.Paragraph
         ellipsis={{ rows: 2, tooltip: summary }}
-        style={{ margin: 0, fontSize: 13, color: 'var(--ps-text-primary)' }}
+        className="risk-table-summary"
       >
         {summary}
       </Typography.Paragraph>
     ),
   },
   {
+    title: '疑似设备',
+    width: 180,
+    render: (_, row) => (
+      <div className="risk-table-device">
+        <Tag color={row.suspected_device_count > 1 ? 'orange' : 'blue'}>{row.suspected_device_count}</Tag>
+        <Typography.Text className="risk-table-device-summary" type="secondary">
+          {row.device_summary || '暂无设备信号'}
+        </Typography.Text>
+      </div>
+    ),
+  },
+  {
     title: '证据',
     dataIndex: 'evidence_ids',
     width: 80,
-    render: (ids: string[]) => <Tag style={{ margin: 0 }}>{ids.length}</Tag>,
+    render: (ids: string[]) => <Tag className="table-tag">{ids.length}</Tag>,
   },
   {
     title: '建议动作',
     dataIndex: 'recommended_action',
     width: 150,
     render: (action: string) => (
-      <Tag color="blue" style={{ borderRadius: 4, margin: 0 }}>
+      <Tag className="table-tag" color="blue">
         {action}
       </Tag>
     ),
@@ -63,7 +75,7 @@ const columns: ColumnsType<RiskSnapshot> = [
     dataIndex: 'updated_at',
     width: 170,
     render: (value: string) => (
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+      <Typography.Text className="table-time" type="secondary">
         {new Date(value).toLocaleString()}
       </Typography.Text>
     ),
@@ -87,7 +99,7 @@ export function RiskTable({
       locale={{ emptyText }}
       pagination={{ pageSize: 10, showSizeChanger: false }}
       rowKey="ip"
-      scroll={{ x: 960 }}
+      scroll={{ x: 1120 }}
       size="middle"
     />
   )

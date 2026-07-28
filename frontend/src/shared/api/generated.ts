@@ -228,6 +228,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ips/{ip}/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIpDevices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ips/{ip}/events": {
         parameters: {
             query?: never;
@@ -236,6 +252,70 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getIpEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDevices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/devices/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDevice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDeviceSignals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDeviceFingerprintConflicts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -453,6 +533,9 @@ export interface components {
             recommended_action: components["schemas"]["RecommendedAction"];
             /** Format: date-time */
             updated_at: string;
+            suspected_device_count: number;
+            device_summary?: string;
+            device_confidence: number;
         };
         RiskListResponse: {
             items: components["schemas"]["RiskSnapshot"][];
@@ -474,7 +557,7 @@ export interface components {
             evidence_id: string;
             ip: string;
             /** @enum {string} */
-            type: "multi_user_agent" | "multi_ja3_ja4" | "ttl_clusters" | "domain_diversity" | "port_distribution" | "multi_device_fingerprint";
+            type: "multi_user_agent" | "multi_ja3_ja4" | "ttl_clusters" | "domain_diversity" | "port_distribution" | "multi_device_fingerprint" | "multi_observed_device" | "device_signal_conflict" | "brand_os_conflict" | "tcp_tls_stack_conflict";
             window: string;
             score: number;
             confidence: number;
@@ -483,6 +566,83 @@ export interface components {
             samples: string[];
             /** Format: date-time */
             created_at: string;
+        };
+        DeviceSignal: {
+            signal_id: string;
+            ip: string;
+            source: string;
+            kind: string;
+            value: string;
+            normalized_value: string;
+            /** @enum {string} */
+            strength: "strong" | "medium" | "weak";
+            confidence: number;
+            weight: number;
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+            event_ids: string[];
+        };
+        ObservedDevice: {
+            device_id: string;
+            ip: string;
+            label: string;
+            brand: string;
+            vendor: string;
+            os_family: string;
+            os_version?: string;
+            device_type: string;
+            model: string;
+            confidence: number;
+            signal_count: number;
+            strong_signal_count: number;
+            medium_signal_count: number;
+            weak_signal_count: number;
+            signals: components["schemas"]["DeviceSignal"][];
+            fingerprints: string[];
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+            summary: string;
+        };
+        DeviceConflict: {
+            conflict_id: string;
+            ip: string;
+            type: string;
+            /** @enum {string} */
+            strength: "strong" | "medium" | "weak";
+            confidence: number;
+            summary: string;
+            samples: string[];
+            /** Format: date-time */
+            last_seen?: string;
+            related_device_ids: string[];
+        };
+        IpDeviceInventory: {
+            ip: string;
+            window: string;
+            suspected_device_count: number;
+            confidence: number;
+            /** @enum {string} */
+            status: "insufficient_signal" | "weak_signals_only" | "single_candidate" | "multi_candidate";
+            summary: string;
+            devices: components["schemas"]["ObservedDevice"][];
+            signals: components["schemas"]["DeviceSignal"][];
+            conflicts: components["schemas"]["DeviceConflict"][];
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+        };
+        DeviceListResponse: {
+            items: components["schemas"]["IpDeviceInventory"][];
+            page: {
+                limit: number;
+                next_cursor: string | null;
+                total: number;
+            };
         };
         NormalizedEventSummary: {
             event_id: string;
@@ -1242,6 +1402,33 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getIpDevices: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+            };
+            header?: never;
+            path: {
+                ip: components["parameters"]["IpPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conservative device inventory derived from normalized signals for an IP. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IpDeviceInventory"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     getIpEvents: {
         parameters: {
             query?: {
@@ -1267,6 +1454,118 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDevices: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+                ip?: string;
+                q?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description IP-scoped device inventories. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDevice: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+            };
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A single observed device candidate. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObservedDevice"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDeviceSignals: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+                ip?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Device identification signals without raw collector payload. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DeviceSignal"][];
+                    };
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDeviceFingerprintConflicts: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+                ip?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Device signal conflicts for anti-proxy review. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DeviceConflict"][];
+                    };
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };
