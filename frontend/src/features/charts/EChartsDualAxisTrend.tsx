@@ -5,10 +5,12 @@ import type { DpiTrendPoint } from '../../shared/api/types'
 
 interface EChartsDualAxisTrendProps {
   points: DpiTrendPoint[]
+  loading?: boolean
   title?: string
 }
 
 export function EChartsDualAxisTrend({
+  loading = false,
   points,
   title = '24h 设备并发与 PPS/BPS 吞吐双轴趋势 (Concurrency & Throughput)',
 }: EChartsDualAxisTrendProps) {
@@ -127,7 +129,11 @@ export function EChartsDualAxisTrend({
         </Typography.Text>
       </div>
 
-      {points.length === 0 ? (
+      {loading ? (
+        <Typography.Text className="chart-empty-state" type="secondary">
+          DPI 趋势聚合查询中…
+        </Typography.Text>
+      ) : points.length === 0 ? (
         <Typography.Text className="chart-empty-state" type="secondary">
           当前窗口暂无 DPI 趋势点，缺少实时事件入库或聚合接口暂不可用。
         </Typography.Text>

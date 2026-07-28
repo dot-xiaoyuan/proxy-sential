@@ -5,11 +5,13 @@ import type { DpiProtocolFlowItem } from '../../shared/api/types'
 
 interface EChartsSankeyFlowProps {
   items: DpiProtocolFlowItem[]
+  loading?: boolean
   title?: string
 }
 
 export function EChartsSankeyFlow({
   items,
+  loading = false,
   title = 'DPI L7 协议与应用流量流向桑基拓扑 (Sankey Flow Topology)',
 }: EChartsSankeyFlowProps) {
   const nodes = new Map<string, { name: string; value?: number }>()
@@ -74,7 +76,11 @@ export function EChartsSankeyFlow({
         </Typography.Text>
       </div>
 
-      {items.length === 0 ? (
+      {loading ? (
+        <Typography.Text className="chart-empty-state" type="secondary">
+          DPI 协议流聚合查询中…
+        </Typography.Text>
+      ) : items.length === 0 ? (
         <Typography.Text className="chart-empty-state" type="secondary">
           当前窗口暂无可聚合的协议流数据，或 DPI 聚合接口暂不可用。
         </Typography.Text>

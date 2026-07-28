@@ -105,7 +105,7 @@ export function ActivityPage() {
       case 'sankey':
         return (
           <div className="activity-tab-panel">
-            <EChartsSankeyFlow items={dpiProtocolFlows.data?.items ?? []} />
+            <EChartsSankeyFlow items={dpiProtocolFlows.data?.items ?? []} loading={dpiProtocolFlows.isLoading} />
           </div>
         )
       case 'matrix':
@@ -214,7 +214,7 @@ export function ActivityPage() {
       </section>
 
       <section className="activity-trend-section">
-        <EChartsDualAxisTrend points={dpiTrends.data?.points ?? []} />
+        <EChartsDualAxisTrend loading={dpiTrends.isLoading} points={dpiTrends.data?.points ?? []} />
       </section>
 
       <section className="surface">
