@@ -18,6 +18,11 @@ import (
 	"proxy-sentinel/internal/store"
 )
 
+const (
+	defaultDPIQueryLimit = 50000
+	maxDPIQueryLimit     = 100000
+)
+
 type Options struct {
 	Addr          string
 	ShadowDir     string
@@ -235,6 +240,20 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleOverview(w, r)
 	case r.Method == http.MethodGet && path == "/activity/overview":
 		s.handleActivityOverview(w, r)
+	case r.Method == http.MethodGet && path == "/dpi/overview":
+		s.handleDPIOverview(w, r)
+	case r.Method == http.MethodGet && path == "/dpi/trends":
+		s.handleDPITrends(w, r)
+	case r.Method == http.MethodGet && path == "/dpi/protocol-flows":
+		s.handleDPIProtocolFlows(w, r)
+	case r.Method == http.MethodGet && path == "/dpi/fingerprint-conflicts":
+		s.handleDPIFingerprintConflicts(w, r)
+	case r.Method == http.MethodGet && path == "/dpi/flows":
+		s.handleDPIFlows(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/dpi/flows/"):
+		s.handleDPIFlow(w, r, strings.TrimPrefix(path, "/dpi/flows/"))
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/dpi/ips/"):
+		s.handleDPIIP(w, r, strings.TrimPrefix(path, "/dpi/ips/"))
 	case r.Method == http.MethodGet && path == "/risks":
 		s.handleRisks(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/ips/"):
@@ -288,7 +307,7 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) session() Session {
-	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read"}
+	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read"}
 	return Session{
 		User:        User{ID: "shadow-viewer", Name: "影子观测只读用户"},
 		Role:        "viewer",
@@ -445,6 +464,137 @@ func (s *Server) handleActivityOverview(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, overview)
 }
 
+func (s *Server) handleDPIOverview(w http.ResponseWriter, r *http.Request) {
+	query, err := s.activityQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dpi_query", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	overview, err := s.reader.GetDPIOverview(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_dpi_overview_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
+func (s *Server) handleDPITrends(w http.ResponseWriter, r *http.Request) {
+	query, err := s.activityQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dpi_query", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	items, err := s.reader.ListDPITrends(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_dpi_trends_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"points": items})
+}
+
+func (s *Server) handleDPIProtocolFlows(w http.ResponseWriter, r *http.Request) {
+	query, err := s.activityQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dpi_query", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	items, err := s.reader.ListDPIProtocolFlows(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_dpi_protocol_flows_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleDPIFingerprintConflicts(w http.ResponseWriter, r *http.Request) {
+	query, err := s.activityQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dpi_query", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	items, err := s.reader.ListDPIFingerprintConflicts(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_dpi_fingerprint_conflicts_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleDPIFlows(w http.ResponseWriter, r *http.Request) {
+	query, err := eventQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dpi_flow_query", err.Error())
+		return
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.sensorID
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	page, err := s.reader.ListDPIFlows(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dpi_flow_query", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (s *Server) handleDPIFlow(w http.ResponseWriter, r *http.Request, rawFlowID string) {
+	flowID, err := store.DecodePathIP(rawFlowID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_flow_id", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	detail, ok, err := s.reader.GetDPIFlow(ctx, flowID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_dpi_flow_failed", err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "dpi flow not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleDPIIP(w http.ResponseWriter, r *http.Request, rest string) {
+	if !strings.HasSuffix(rest, "/flows") {
+		writeError(w, http.StatusNotFound, "not_found", "dpi ip endpoint not found")
+		return
+	}
+	ip, err := pathIP(strings.TrimSuffix(rest, "/flows"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_ip", err.Error())
+		return
+	}
+	query, err := eventQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dpi_flow_query", err.Error())
+		return
+	}
+	if query.SensorID == "" {
+		query.SensorID = s.sensorID
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	page, err := s.reader.ListIPDPIFlows(ctx, ip, query)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dpi_flow_query", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
 func (s *Server) handleIPEvents(w http.ResponseWriter, r *http.Request, ip string) {
 	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
 	if err != nil {
@@ -546,38 +696,12 @@ func (s *Server) handleIngestErrors(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
+	query, err := eventQuery(r.URL.Query())
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		writeEventQueryError(w, err)
 		return
 	}
-	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
-		return
-	}
-	port, err := optionalBoundedInt(r.URL.Query().Get("port"), 1, 65535)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_port", err.Error())
-		return
-	}
-	page, err := s.reader.ListEvents(r.Context(), store.Query{
-		Q:           r.URL.Query().Get("q"),
-		Level:       r.URL.Query().Get("type"),
-		SensorID:    r.URL.Query().Get("sensor_id"),
-		From:        r.URL.Query().Get("from"),
-		To:          r.URL.Query().Get("to"),
-		Window:      r.URL.Query().Get("window"),
-		SrcIP:       r.URL.Query().Get("src_ip"),
-		DstIP:       r.URL.Query().Get("dst_ip"),
-		Domain:      r.URL.Query().Get("domain"),
-		UserAgent:   r.URL.Query().Get("user_agent"),
-		Fingerprint: r.URL.Query().Get("fingerprint"),
-		Port:        port,
-		Proto:       r.URL.Query().Get("proto"),
-		Limit:       limit,
-		Cursor:      cursor,
-	})
+	page, err := s.reader.ListEvents(r.Context(), query)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_event_query", err.Error())
 		return
@@ -606,6 +730,54 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request, rawEventID 
 		return
 	}
 	writeJSON(w, http.StatusOK, event)
+}
+
+func (s *Server) activityQuery(values url.Values) (store.ActivityQuery, error) {
+	sensorID := values.Get("sensor_id")
+	if sensorID == "" {
+		sensorID = s.sensorID
+	}
+	window := values.Get("window")
+	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
+		return store.ActivityQuery{}, err
+	}
+	limit, err := boundedInt(values.Get("limit"), defaultDPIQueryLimit, 1, maxDPIQueryLimit)
+	if err != nil {
+		return store.ActivityQuery{}, err
+	}
+	return store.ActivityQuery{SensorID: sensorID, Window: window, Limit: limit}, nil
+}
+
+func eventQuery(values url.Values) (store.Query, error) {
+	limit, err := boundedInt(values.Get("limit"), 50, 1, 200)
+	if err != nil {
+		return store.Query{}, fmt.Errorf("bad limit: %w", err)
+	}
+	cursor, err := cursorOffset(values.Get("cursor"))
+	if err != nil {
+		return store.Query{}, fmt.Errorf("bad cursor: %w", err)
+	}
+	port, err := optionalBoundedInt(values.Get("port"), 1, 65535)
+	if err != nil {
+		return store.Query{}, fmt.Errorf("bad port: %w", err)
+	}
+	return store.Query{
+		Q:           values.Get("q"),
+		Level:       values.Get("type"),
+		SensorID:    values.Get("sensor_id"),
+		From:        values.Get("from"),
+		To:          values.Get("to"),
+		Window:      values.Get("window"),
+		SrcIP:       values.Get("src_ip"),
+		DstIP:       values.Get("dst_ip"),
+		Domain:      values.Get("domain"),
+		UserAgent:   values.Get("user_agent"),
+		Fingerprint: values.Get("fingerprint"),
+		Port:        port,
+		Proto:       values.Get("proto"),
+		Limit:       limit,
+		Cursor:      cursor,
+	}, nil
 }
 
 func contextWithRequestTimeout(parent context.Context) (context.Context, context.CancelFunc) {
@@ -730,4 +902,18 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, code string, message string) {
 	writeJSON(w, status, ErrorResponse{Code: code, Message: message})
+}
+
+func writeEventQueryError(w http.ResponseWriter, err error) {
+	message := err.Error()
+	switch {
+	case strings.HasPrefix(message, "bad limit:"):
+		writeError(w, http.StatusBadRequest, "bad_limit", strings.TrimSpace(strings.TrimPrefix(message, "bad limit:")))
+	case strings.HasPrefix(message, "bad cursor:"):
+		writeError(w, http.StatusBadRequest, "bad_cursor", strings.TrimSpace(strings.TrimPrefix(message, "bad cursor:")))
+	case strings.HasPrefix(message, "bad port:"):
+		writeError(w, http.StatusBadRequest, "bad_port", strings.TrimSpace(strings.TrimPrefix(message, "bad port:")))
+	default:
+		writeError(w, http.StatusBadRequest, "bad_event_query", message)
+	}
 }

@@ -3,10 +3,16 @@ import type {
   ActivityOverviewQuery,
   AuditLog,
   CreateLabelRequest,
+  DpiFlowDetail,
+  DpiFlowListResponse,
+  DpiOverview,
+  DpiProtocolFlowItem,
+  DpiTrendPoint,
   Evidence,
   EventListResponse,
   EventQuery,
   EventTypeCount,
+  FingerprintConflictItem,
   IngestDiagnostic,
   IngestStatus,
   IpActivityProfile,
@@ -21,10 +27,18 @@ import type {
   ShadowRun,
 } from './types'
 
-const API_BASE = '/api/v1'
+export function getApiBase(): string {
+  const envBase = import.meta.env.VITE_API_BASE
+  if (envBase) {
+    return envBase.replace(/\/+$/, '')
+  }
+  return '/api/v1'
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const baseUrl = getApiBase()
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  const response = await fetch(`${baseUrl}${cleanPath}`, {
     headers: {
       'content-type': 'application/json',
       ...init?.headers,
@@ -56,6 +70,19 @@ export const api = {
   overview: () => request<Overview>('/overview'),
   activityOverview: (query: ActivityOverviewQuery) =>
     request<ActivityOverview>(`/activity/overview${search(query)}`),
+  dpiOverview: (query: ActivityOverviewQuery) =>
+    request<DpiOverview>(`/dpi/overview${search(query)}`),
+  dpiTrends: (query: ActivityOverviewQuery) =>
+    request<{ points: DpiTrendPoint[] }>(`/dpi/trends${search(query)}`),
+  dpiProtocolFlows: (query: ActivityOverviewQuery) =>
+    request<{ items: DpiProtocolFlowItem[] }>(`/dpi/protocol-flows${search(query)}`),
+  dpiFingerprintConflicts: (query: ActivityOverviewQuery) =>
+    request<{ items: FingerprintConflictItem[] }>(`/dpi/fingerprint-conflicts${search(query)}`),
+  dpiFlows: (query: EventQuery) => request<DpiFlowListResponse>(`/dpi/flows${search(query)}`),
+  dpiIpFlows: (ip: string, query: EventQuery) =>
+    request<DpiFlowListResponse>(`/dpi/ips/${encodeURIComponent(ip)}/flows${search(query)}`),
+  dpiFlow: (flowId: string) =>
+    request<DpiFlowDetail>(`/dpi/flows/${encodeURIComponent(flowId)}`),
   risks: (query: RiskQuery) => request<RiskListResponse>(`/risks${search(query)}`),
   ipRisk: (ip: string) => request<RiskSnapshot>(`/ips/${encodeURIComponent(ip)}/risk`),
   ipEvidence: (ip: string) =>

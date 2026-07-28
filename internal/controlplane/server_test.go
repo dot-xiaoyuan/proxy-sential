@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"proxy-sentinel/internal/adapter/suricata"
 	"proxy-sentinel/internal/evidence"
@@ -481,6 +482,81 @@ func TestEventSearchFiltersAndPagination(t *testing.T) {
 	getJSON(t, server, "/api/v1/events?port=99999", http.StatusBadRequest, &errResponse)
 	if errResponse.Code != "bad_port" {
 		t.Fatalf("unexpected bad port response: %#v", errResponse)
+	}
+}
+
+func TestDPIEndpointsFromFileStore(t *testing.T) {
+	shadowDir := t.TempDir()
+	now := time.Now().Add(-5 * time.Minute).Format(time.RFC3339)
+	later := time.Now().Add(-4 * time.Minute).Format(time.RFC3339)
+	writeRun(t, shadowDir, "20260728-101000", testRun{
+		startedAt: now,
+		evidence: []evidence.Evidence{
+			evidenceItem("evidence-dpi", "192.168.10.8", "multi_user_agent", later),
+		},
+		risks: []risk.Snapshot{
+			riskSnapshot("192.168.10.8", "high", 70, later),
+		},
+		events: []normalized.Event{
+			httpEvent("event-http-dpi-a", "192.168.10.8", now, "portal.example.test", "desktop-agent"),
+			httpEvent("event-http-dpi-b", "192.168.10.8", later, "portal.example.test", "mobile-agent"),
+			tlsEvent("event-tls-dpi", "192.168.10.8", later, "api.example.test", "chrome-ja3", "chrome-ja4"),
+			dnsEvent("event-dns-dpi", "192.168.10.9", later, "api.example.test"),
+			flowEvent("event-flow-dpi", "192.168.10.10", later, "198.51.100.44", 8080),
+		},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "test-sensor", ReadOnly: true})
+
+	var overview store.DPIOverview
+	getJSON(t, server, "/api/v1/dpi/overview?sensor_id=test-sensor&window=1h", http.StatusOK, &overview)
+	if overview.EventCount != 5 || overview.ActiveIPCount != 3 || overview.ProtocolFlowCount == 0 {
+		t.Fatalf("unexpected dpi overview: %#v", overview)
+	}
+
+	var trends struct {
+		Points []store.DPITrendPoint `json:"points"`
+	}
+	getJSON(t, server, "/api/v1/dpi/trends?sensor_id=test-sensor&window=1h", http.StatusOK, &trends)
+	if len(trends.Points) == 0 || !trends.Points[0].Estimated {
+		t.Fatalf("expected estimated trend points, got %#v", trends.Points)
+	}
+
+	var protocols struct {
+		Items []store.DPIProtocolFlow `json:"items"`
+	}
+	getJSON(t, server, "/api/v1/dpi/protocol-flows?sensor_id=test-sensor&window=1h", http.StatusOK, &protocols)
+	if len(protocols.Items) == 0 || protocols.Items[0].EventCount == 0 {
+		t.Fatalf("unexpected protocol flows: %#v", protocols.Items)
+	}
+
+	var conflicts struct {
+		Items []store.DPIFingerprintConflict `json:"items"`
+	}
+	getJSON(t, server, "/api/v1/dpi/fingerprint-conflicts?sensor_id=test-sensor&window=1h", http.StatusOK, &conflicts)
+	if len(conflicts.Items) == 0 || conflicts.Items[0].IP != "192.168.10.8" {
+		t.Fatalf("expected UA conflict for 192.168.10.8, got %#v", conflicts.Items)
+	}
+
+	var flows store.DPIFlowPage
+	getJSON(t, server, "/api/v1/dpi/flows?sensor_id=test-sensor&domain=api.example.test&window=1h", http.StatusOK, &flows)
+	if flows.Page.Total != 2 || len(flows.Items) == 0 {
+		t.Fatalf("unexpected dpi flow page: %#v", flows)
+	}
+	if flows.Items[0].PayloadSummary == "" || flows.Items[0].FlowID == "" {
+		t.Fatalf("expected standardized flow summary and id, got %#v", flows.Items[0])
+	}
+
+	var detail store.DPIFlowDetail
+	getJSON(t, server, "/api/v1/dpi/flows/event-tls-dpi", http.StatusOK, &detail)
+	if detail.Flow.EventID != "event-tls-dpi" || detail.Risk.IP != "192.168.10.8" || len(detail.Evidence) != 1 {
+		t.Fatalf("unexpected dpi flow detail: %#v", detail)
+	}
+
+	escaped := url.PathEscape("192.168.10.8")
+	flows = store.DPIFlowPage{}
+	getJSON(t, server, "/api/v1/dpi/ips/"+escaped+"/flows?window=1h", http.StatusOK, &flows)
+	if flows.Page.Total != 3 {
+		t.Fatalf("expected ip-scoped dpi flows, got %#v", flows)
 	}
 }
 

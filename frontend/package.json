@@ -11,12 +11,15 @@
     "lint": "oxlint .",
     "test": "vitest run",
     "e2e": "playwright test",
+    "ui:audit": "playwright test tests/e2e/ui-audit.spec.ts",
     "preview": "vite preview"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
     "@tanstack/react-query": "^5.101.4",
     "antd": "^6.5.2",
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.0.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",

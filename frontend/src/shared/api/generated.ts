@@ -52,6 +52,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dpi/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDpiOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dpi/trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDpiTrends"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dpi/protocol-flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDpiProtocolFlows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dpi/fingerprint-conflicts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDpiFingerprintConflicts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dpi/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDpiFlows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dpi/flows/{flow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDpiFlow"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dpi/ips/{ip}/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listIpDpiFlows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/risks": {
         parameters: {
             query?: never;
@@ -313,7 +425,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** @enum {string} */
-        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read";
+        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read";
         /** @enum {string} */
         Role: "viewer" | "reviewer" | "operator" | "admin";
         Session: {
@@ -434,6 +546,89 @@ export interface components {
             top_dst_ips: components["schemas"]["ActivityCount"][];
             top_source_ips: components["schemas"]["ActivityCount"][];
             top_active_risk_ips: components["schemas"]["ActivityIpSummary"][];
+        };
+        DpiOverview: {
+            sensor_id: string;
+            /** @enum {string} */
+            window: "10m" | "1h" | "24h" | "latest-run";
+            event_count: number;
+            active_ip_count: number;
+            protocol_flow_count: number;
+            fingerprint_conflict_count: number;
+            flow_sample_count: number;
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+        };
+        DpiTrendPoint: {
+            /** Format: date-time */
+            time: string;
+            active_devices: number;
+            risk_ips: number;
+            event_count: number;
+            pps: number | null;
+            bps_mbps: number | null;
+            cps: number;
+            estimated: boolean;
+        };
+        DpiProtocolFlow: {
+            protocol: string;
+            app_protocol: string;
+            category: string;
+            share_percent: number;
+            event_count: number;
+            bps_mbps?: number | null;
+            top_apps: string[];
+        };
+        DpiFingerprintConflict: {
+            id: string;
+            ip: string;
+            conflict_type: string;
+            type_label: string;
+            risk_level: components["schemas"]["RiskLevel"];
+            confidence: number;
+            device_count: number;
+            detected_samples: string[];
+            reason: string;
+            /** Format: date-time */
+            last_seen: string;
+        };
+        DpiFlowSample: {
+            flow_id: string;
+            event_id: string;
+            /** Format: date-time */
+            timestamp: string;
+            sensor_id?: string;
+            interface_name?: string;
+            src_ip?: string;
+            src_port?: number;
+            dst_ip?: string;
+            dst_port?: number;
+            protocol?: string;
+            app_protocol: string;
+            user_agent?: string;
+            tls_sni?: string;
+            domain?: string;
+            ja3?: string;
+            ja4?: string;
+            ttl?: number | null;
+            ipid?: number | null;
+            payload_summary: string;
+        };
+        DpiFlowListResponse: {
+            items: components["schemas"]["DpiFlowSample"][];
+            page: {
+                limit: number;
+                next_cursor: string | null;
+                total: number;
+            };
+        };
+        DpiFlowDetail: {
+            flow: components["schemas"]["DpiFlowSample"];
+            event: components["schemas"]["NormalizedEventSummary"];
+            risk: components["schemas"]["RiskSnapshot"];
+            evidence: components["schemas"]["Evidence"][];
         };
         ActivityAccess: {
             /** Format: date-time */
@@ -642,6 +837,22 @@ export interface components {
     parameters: {
         IpPath: string;
         LevelQuery: components["schemas"]["RiskLevel"];
+        EventFilterQuery: string;
+        EventTypeQuery: string;
+        SensorIdQuery: string;
+        FromQuery: string;
+        ToQuery: string;
+        WindowQuery: "10m" | "1h" | "24h";
+        SrcIpQuery: string;
+        DstIpQuery: string;
+        DomainQuery: string;
+        UserAgentQuery: string;
+        /** @description JA3/JA4 fingerprint value from normalized event payload. */
+        FingerprintQuery: string;
+        PortQuery: number;
+        ProtoQuery: string;
+        LimitQuery: number;
+        CursorQuery: string;
     };
     requestBodies: never;
     headers: never;
@@ -710,6 +921,215 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActivityOverview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDpiOverview: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DPI metadata overview derived from normalized events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DpiOverview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDpiTrends: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "1h" | "24h";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DPI event and device trend points. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        points: components["schemas"]["DpiTrendPoint"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDpiProtocolFlows: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Protocol flow distribution based on normalized event metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DpiProtocolFlow"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDpiFingerprintConflicts: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Standardized fingerprint conflicts observed in a window. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DpiFingerprintConflict"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDpiFlows: {
+        parameters: {
+            query?: {
+                q?: components["parameters"]["EventFilterQuery"];
+                type?: components["parameters"]["EventTypeQuery"];
+                sensor_id?: components["parameters"]["SensorIdQuery"];
+                from?: components["parameters"]["FromQuery"];
+                to?: components["parameters"]["ToQuery"];
+                window?: components["parameters"]["WindowQuery"];
+                src_ip?: components["parameters"]["SrcIpQuery"];
+                dst_ip?: components["parameters"]["DstIpQuery"];
+                domain?: components["parameters"]["DomainQuery"];
+                user_agent?: components["parameters"]["UserAgentQuery"];
+                /** @description JA3/JA4 fingerprint value from normalized event payload. */
+                fingerprint?: components["parameters"]["FingerprintQuery"];
+                port?: components["parameters"]["PortQuery"];
+                proto?: components["parameters"]["ProtoQuery"];
+                limit?: components["parameters"]["LimitQuery"];
+                cursor?: components["parameters"]["CursorQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Filtered DPI flow samples built from normalized events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DpiFlowListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDpiFlow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                flow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DPI flow detail with normalized event, evidence and risk context. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DpiFlowDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listIpDpiFlows: {
+        parameters: {
+            query?: {
+                q?: components["parameters"]["EventFilterQuery"];
+                type?: components["parameters"]["EventTypeQuery"];
+                sensor_id?: components["parameters"]["SensorIdQuery"];
+                from?: components["parameters"]["FromQuery"];
+                to?: components["parameters"]["ToQuery"];
+                window?: components["parameters"]["WindowQuery"];
+                dst_ip?: components["parameters"]["DstIpQuery"];
+                domain?: components["parameters"]["DomainQuery"];
+                user_agent?: components["parameters"]["UserAgentQuery"];
+                /** @description JA3/JA4 fingerprint value from normalized event payload. */
+                fingerprint?: components["parameters"]["FingerprintQuery"];
+                port?: components["parameters"]["PortQuery"];
+                proto?: components["parameters"]["ProtoQuery"];
+                limit?: components["parameters"]["LimitQuery"];
+                cursor?: components["parameters"]["CursorQuery"];
+            };
+            header?: never;
+            path: {
+                ip: components["parameters"]["IpPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DPI flow samples for one source IP. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DpiFlowListResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

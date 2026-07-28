@@ -11,6 +11,10 @@ import type {
   RiskSnapshot,
   Session,
   ShadowRun,
+  FingerprintConflictItem,
+  DpiProtocolFlowItem,
+  DpiTrendPoint,
+  DpiFlowSample,
 } from '../shared/api/types'
 
 export const mockSession: Session = {
@@ -25,6 +29,7 @@ export const mockSession: Session = {
     'audit:read',
     'rules:reload',
     'ingest:read',
+    'dpi:read',
   ],
 }
 
@@ -58,9 +63,31 @@ export const riskSnapshots: RiskSnapshot[] = [
     confidence: 0.65,
     window: '10m0s',
     evidence_ids: ['evidence-domain-v6', 'evidence-port-v6'],
-    summary: 'suspicious 级别风险由 domain_diversity、port_distribution 弱证据共同贡献；不能单独确认代理',
+    summary: 'suspicious 级别风险由 domain_diversity、port_distribution 证据共同贡献；弱证据不作为确认依据',
     recommended_action: 'shadow_watch',
-    updated_at: '2026-07-24T05:17:31Z',
+    updated_at: '2026-07-24T05:16:10Z',
+  },
+  {
+    ip: '10.255.0.25',
+    score: 12,
+    level: 'normal',
+    confidence: 0.95,
+    window: '1h0m0s',
+    evidence_ids: ['evidence-normal-25'],
+    summary: '已识别设备，行为表现与单用户终端匹配，无共享/代理指纹',
+    recommended_action: 'record',
+    updated_at: '2026-07-24T05:15:00Z',
+  },
+  {
+    ip: '10.255.0.88',
+    score: 8,
+    level: 'normal',
+    confidence: 0.98,
+    window: '1h0m0s',
+    evidence_ids: [],
+    summary: '已识别设备，研发测试部门固化终端，流量状态良好',
+    recommended_action: 'record',
+    updated_at: '2026-07-24T05:12:00Z',
   },
   {
     ip: '10.255.0.15',
@@ -486,3 +513,227 @@ export const ingestDiagnostics: IngestDiagnostic[] = [
     details: { run_id: shadowRuns[1].run_id, truncated: true },
   },
 ]
+
+export function getActivityOverviewByWindow(window: string): ActivityOverview {
+  let scale = 1.0
+  let eventCount = 3820
+  let activeIpCount = 146
+  let accessObjectCount = 287
+  let activeRiskIpCount = 3
+  let topRiskIps = activityOverview.top_active_risk_ips
+
+  if (window === '10m') {
+    scale = 0.16
+    eventCount = 640
+    activeIpCount = 38
+    accessObjectCount = 52
+    activeRiskIpCount = 2
+    topRiskIps = activityOverview.top_active_risk_ips.slice(0, 2)
+  } else if (window === '24h') {
+    scale = 24.0
+    eventCount = 91600
+    activeIpCount = 820
+    accessObjectCount = 1450
+    activeRiskIpCount = 7
+    topRiskIps = [
+      ...activityOverview.top_active_risk_ips,
+      {
+        ip: '10.255.1.102',
+        risk_level: 'suspicious',
+        score: 55,
+        event_count: 840,
+        top_domains: [{ value: 'cloud.example.test', count: 120 }],
+        last_seen: '2026-07-24T05:14:00Z',
+      },
+    ]
+  }
+
+  const scaleCounts = (items: Array<{ value: string; count: number; last_seen?: string }>) =>
+    items.map((item) => ({
+      ...item,
+      count: Math.max(1, Math.round(item.count * scale)),
+    }))
+
+  const targetWindow: ActivityOverview['window'] =
+    window === '10m' || window === '24h' || window === '1h' || window === 'latest-run'
+      ? window
+      : '1h'
+
+  return {
+    ...activityOverview,
+    window: targetWindow,
+    event_count: eventCount,
+    active_ip_count: activeIpCount,
+    access_object_count: accessObjectCount,
+    active_risk_ip_count: activeRiskIpCount,
+    event_type_counts: scaleCounts(activityOverview.event_type_counts),
+    protocol_counts: scaleCounts(activityOverview.protocol_counts),
+    top_domains: scaleCounts(activityOverview.top_domains),
+    top_http_hosts: scaleCounts(activityOverview.top_http_hosts),
+    top_tls_sni: scaleCounts(activityOverview.top_tls_sni),
+    top_user_agents: scaleCounts(activityOverview.top_user_agents),
+    top_tls_fingerprints: scaleCounts(activityOverview.top_tls_fingerprints),
+    top_dst_ports: scaleCounts(activityOverview.top_dst_ports),
+    top_dst_ips: scaleCounts(activityOverview.top_dst_ips),
+    top_source_ips: scaleCounts(activityOverview.top_source_ips),
+    top_active_risk_ips: topRiskIps.map((item) => ({
+      ...item,
+      event_count: Math.max(1, Math.round(item.event_count * scale)),
+    })),
+  }
+}
+
+export const mockFingerprintConflicts: FingerprintConflictItem[] = [
+  {
+    id: 'conflict-01',
+    ip: '10.255.0.59',
+    conflict_type: 'ua_conflict',
+    type_label: 'UA 客户端碰撞',
+    risk_level: 'confirmed',
+    confidence: 0.92,
+    device_count: 3,
+    detected_samples: [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4)',
+      'Dalvik/2.1.0 (Linux; U; Android 14)',
+    ],
+    reason: '同 1 分钟窗口内交错出现 Windows PC、iPhone 以及 Android 架构的 HTTP Header',
+    last_seen: '2026-07-28T05:19:02Z',
+  },
+  {
+    id: 'conflict-02',
+    ip: '10.255.0.98',
+    conflict_type: 'ja3_mismatch',
+    type_label: 'JA3 / JA4 栈错配',
+    risk_level: 'high',
+    confidence: 0.84,
+    device_count: 2,
+    detected_samples: [
+      'ja3:771,4865-4866-4867... (Chrome Desktop)',
+      'ja3:771,49195-49199... (Android Webview)',
+    ],
+    reason: 'TLS Client Hello 指纹与 User-Agent 声明的浏览器内核参数不匹配，疑似代理中转',
+    last_seen: '2026-07-28T05:18:44Z',
+  },
+  {
+    id: 'conflict-03',
+    ip: '2001:db8::37',
+    conflict_type: 'ttl_step',
+    type_label: 'TTL 阶梯步进',
+    risk_level: 'suspicious',
+    confidence: 0.68,
+    device_count: 2,
+    detected_samples: ['TTL: 64 (Linux/Android 游程)', 'TTL: 128 (Windows 游程)'],
+    reason: 'IP 报头 TTL 在 64 与 128 之间交替出现，匹配二级路由器/NAT 共享拓扑',
+    last_seen: '2026-07-28T05:17:31Z',
+  },
+]
+
+export const mockDpiProtocolFlows: DpiProtocolFlowItem[] = [
+  {
+    protocol: 'TLS',
+    app_protocol: 'TLS',
+    share_percent: 48.5,
+    event_count: 1850,
+    bps_mbps: 24.5,
+    top_apps: ['api.example.test', 'push.example.test', 'cloud.example.test'],
+    category: 'Encrypted Security',
+  },
+  {
+    protocol: 'HTTP',
+    app_protocol: 'HTTP',
+    share_percent: 24.2,
+    event_count: 924,
+    bps_mbps: 12.1,
+    top_apps: ['portal.example.test', 'cdn.example.test'],
+    category: 'Web/API',
+  },
+  {
+    protocol: 'DNS',
+    app_protocol: 'DNS',
+    share_percent: 18.3,
+    event_count: 698,
+    bps_mbps: 0.85,
+    top_apps: ['Core DNS Resolver', 'DoH Endpoint'],
+    category: 'Core Infrastructure',
+  },
+  {
+    protocol: 'P2P/Proxy',
+    app_protocol: 'P2P/Proxy',
+    share_percent: 9.0,
+    event_count: 348,
+    bps_mbps: 6.8,
+    top_apps: ['V2Ray/Shadowsocks Tunnel', 'WireGuard Portal'],
+    category: 'Proxy/Tethering',
+  },
+]
+
+export const mockDpiTrendPoints: DpiTrendPoint[] = [
+  { time: '2026-07-28T00:00:00Z', active_devices: 42, risk_ips: 2, event_count: 7200, pps: 3400, bps_mbps: 28.5, cps: 120, estimated: false },
+  { time: '2026-07-28T04:00:00Z', active_devices: 18, risk_ips: 1, event_count: 2700, pps: 1200, bps_mbps: 8.2, cps: 45, estimated: false },
+  { time: '2026-07-28T08:00:00Z', active_devices: 95, risk_ips: 4, event_count: 22800, pps: 8900, bps_mbps: 76.4, cps: 380, estimated: false },
+  { time: '2026-07-28T12:00:00Z', active_devices: 146, risk_ips: 7, event_count: 37200, pps: 15400, bps_mbps: 142.0, cps: 620, estimated: false },
+  { time: '2026-07-28T16:00:00Z', active_devices: 168, risk_ips: 8, event_count: 44400, pps: 18200, bps_mbps: 168.5, cps: 740, estimated: false },
+  { time: '2026-07-28T20:00:00Z', active_devices: 120, risk_ips: 5, event_count: 29400, pps: 11200, bps_mbps: 98.2, cps: 490, estimated: false },
+]
+
+export const mockFlowSamples: Record<string, DpiFlowSample[]> = {
+  '10.255.0.59': [
+    {
+      flow_id: 'flow-59-001',
+      event_id: 'event-tls-59-b',
+      timestamp: '2026-07-28T05:19:02Z',
+      sensor_id: 'office-30',
+      interface_name: 'ens1f1',
+      src_ip: '10.255.0.59',
+      src_port: 54102,
+      dst_ip: '198.51.100.44',
+      dst_port: 443,
+      protocol: 'TCP',
+      app_protocol: 'TLS 1.3',
+      tls_sni: 'api.example.test',
+      ja3: '771,4865-4866-4867,0-23-65281-10-11-35-16-5-13-18-51-45-43-21',
+      ja4: 't13d1516h2_8daaf6152771_026778401344',
+      ttl: 64,
+      ipid: 12840,
+      payload_summary: 'TLS Client Hello (extension sni=api.example.test, alpn=h2,http/1.1)',
+    },
+    {
+      flow_id: 'flow-59-002',
+      event_id: 'event-http-59-a',
+      timestamp: '2026-07-28T05:18:52Z',
+      sensor_id: 'office-30',
+      interface_name: 'ens1f1',
+      src_ip: '10.255.0.59',
+      src_port: 52190,
+      dst_ip: '198.51.100.43',
+      dst_port: 80,
+      protocol: 'TCP',
+      app_protocol: 'HTTP/1.1',
+      user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      ttl: 128,
+      ipid: 44102,
+      payload_summary: 'GET /portal/dashboard HTTP/1.1 (Host: portal.example.test)',
+    },
+  ],
+  '10.255.0.98': [
+    {
+      flow_id: 'flow-98-001',
+      event_id: 'event-tls-98-a',
+      timestamp: '2026-07-28T05:18:44Z',
+      sensor_id: 'office-30',
+      interface_name: 'ens1f1',
+      src_ip: '10.255.0.98',
+      src_port: 49812,
+      dst_ip: '198.51.100.88',
+      dst_port: 443,
+      protocol: 'TCP',
+      app_protocol: 'TLS 1.2',
+      tls_sni: 'auth.example.test',
+      ja3: '771,49195-49199-49196-49200,0-10-11-23-65281-16-5-13-18',
+      ttl: 64,
+      ipid: 8910,
+      payload_summary: 'TLS Client Hello (JA3 mismatch with Chrome UA)',
+    },
+  ],
+}

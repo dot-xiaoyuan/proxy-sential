@@ -46,15 +46,17 @@ export function ReviewPage() {
           <div className="review-list">
             {items.map((item) => (
               <article className="review-row" key={item.ip}>
-                <div>
+                <div className="review-info-main">
                   <Space wrap>
                     <Typography.Text className="mono" strong>
                       {item.ip}
                     </Typography.Text>
                     <RiskLevelTag level={item.level} />
-                    <Typography.Text>score {item.score}</Typography.Text>
+                    <Typography.Text type="secondary">score {item.score}</Typography.Text>
                   </Space>
-                  <Typography.Paragraph className="wrap-text">{item.summary}</Typography.Paragraph>
+                  <Typography.Paragraph className="wrap-text review-summary-text">
+                    {item.summary}
+                  </Typography.Paragraph>
                 </div>
                 <Space wrap>
                   {actions.map((action) => (

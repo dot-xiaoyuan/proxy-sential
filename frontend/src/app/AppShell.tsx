@@ -12,8 +12,9 @@ import {
   SafetyOutlined,
   SearchOutlined,
   SettingOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
-import { Button, Drawer, Layout, Menu, Space, Tag, Typography } from 'antd'
+import { Button, Drawer, Layout, Menu, Space, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 
 import { useSession } from '../shared/api/queries'
@@ -26,13 +27,23 @@ const navItems: MenuProps['items'] = [
   { key: '/risks', icon: <SafetyOutlined />, label: <NavLink to="/risks">风险 IP</NavLink> },
   { key: '/review', icon: <FileSearchOutlined />, label: <NavLink to="/review">人工复核</NavLink> },
   { key: '/shadow-runs', icon: <FieldTimeOutlined />, label: <NavLink to="/shadow-runs">影子运行</NavLink> },
-  { key: '/audit', icon: <AuditOutlined />, label: <NavLink to="/audit">审计</NavLink> },
+  { key: '/audit', icon: <AuditOutlined />, label: <NavLink to="/audit">审计日志</NavLink> },
   {
     key: '/settings/rules',
     icon: <SettingOutlined />,
-    label: <NavLink to="/settings/rules">规则</NavLink>,
+    label: <NavLink to="/settings/rules">规则配置</NavLink>,
   },
 ]
+
+function SentinelLogo() {
+  return (
+    <svg className="brand-logo-svg" fill="none" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+      <path d="M16 3L5 7V14C5 20.5 9.7 26.5 16 29C22.3 26.5 27 20.5 27 14V7L16 3Z" stroke="#0284c7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
+      <circle cx="16" cy="15" r="5" stroke="#0ea5e9" strokeWidth="2" />
+      <circle cx="16" cy="15" fill="#0284c7" r="2" />
+    </svg>
+  )
+}
 
 export function AppShell() {
   const [collapsed, setCollapsed] = useState(false)
@@ -41,12 +52,14 @@ export function AppShell() {
   const session = useSession()
   const selected = `/${location.pathname.split('/')[1] || 'overview'}`
   const selectedKey = location.pathname.startsWith('/settings') ? '/settings/rules' : selected
+  const isMockEnabled = !import.meta.env.PROD && import.meta.env.VITE_ENABLE_MOCKS !== 'false'
 
   const menu = (
     <Menu
       items={navItems}
       mode="inline"
       selectedKeys={[selectedKey]}
+      theme="light"
       onClick={() => setDrawerOpen(false)}
     />
   )
@@ -59,21 +72,22 @@ export function AppShell() {
         collapsed={collapsed}
         collapsible
         onCollapse={setCollapsed}
+        theme="light"
         trigger={null}
         width={232}
       >
         <div className="brand">
-          <div className="brand-mark">PS</div>
+          <SentinelLogo />
           {!collapsed && (
             <div>
-              <Typography.Text strong>Proxy Sentinel</Typography.Text>
-              <Typography.Text type="secondary">检测运营台</Typography.Text>
+              <div className="brand-title">Proxy Sentinel</div>
+              <div className="brand-subtitle">防代理/共享上网检测</div>
             </div>
           )}
         </div>
         {menu}
       </Layout.Sider>
-      <Layout>
+      <Layout style={{ background: 'var(--ps-bg-body)' }}>
         <Layout.Header className="app-header">
           <Space>
             <Button
@@ -89,12 +103,18 @@ export function AppShell() {
               onClick={() => setDrawerOpen(true)}
               type="text"
             />
-            <Tag color="processing">Mock API</Tag>
+            {isMockEnabled && <span className="mock-badge">Mock API Active</span>}
           </Space>
-          <Space>
-            <Typography.Text type="secondary">
-              {session.data?.user.name ?? '加载会话'} · {session.data?.role ?? 'unknown'}
-            </Typography.Text>
+          <Space size="middle">
+            <div className="user-session-badge">
+              <UserOutlined style={{ color: 'var(--ps-primary-color)' }} />
+              <Typography.Text strong style={{ fontSize: 13 }}>
+                {session.data?.user.name ?? '加载中...'}
+              </Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                ({session.data?.role ?? 'guest'})
+              </Typography.Text>
+            </div>
           </Space>
         </Layout.Header>
         <Layout.Content className="app-content">
@@ -107,7 +127,7 @@ export function AppShell() {
         open={drawerOpen}
         placement="left"
         size="default"
-        title="Proxy Sentinel"
+        title="Proxy Sentinel - 防代理检测系统"
       >
         {menu}
       </Drawer>

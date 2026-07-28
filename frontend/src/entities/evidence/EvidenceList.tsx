@@ -11,17 +11,17 @@ export function EvidenceList({ evidence }: { evidence: Evidence[] }) {
     <Timeline
       className="evidence-timeline"
       items={evidence.map((item) => ({
-        color: item.severity === 'high' ? 'red' : item.severity === 'medium' ? 'orange' : 'blue',
+        color: item.severity === 'high' ? '#dc2626' : item.severity === 'medium' ? '#ea580c' : '#0284c7',
         content: (
-          <article className="evidence-item">
+          <article className="evidence-item-card">
             <div className="evidence-item__head">
-              <Typography.Text strong>{item.type}</Typography.Text>
-              <Typography.Text type="secondary">
-                score {item.score} · confidence {Math.round(item.confidence * 100)}% · {item.window}
+              <Typography.Text className="evidence-type-title">{item.type}</Typography.Text>
+              <Typography.Text className="evidence-meta-text">
+                score {item.score} · confidence {Math.round(item.confidence * 100)}% · window {item.window}
               </Typography.Text>
             </div>
-            <Typography.Paragraph className="wrap-text">{item.reason}</Typography.Paragraph>
-            <Typography.Text className="mono wrap-text" type="secondary">
+            <Typography.Paragraph className="evidence-reason-text wrap-text">{item.reason}</Typography.Paragraph>
+            <Typography.Text className="mono wrap-text evidence-meta-text">
               {item.evidence_id}
             </Typography.Text>
             <div className="sample-list">

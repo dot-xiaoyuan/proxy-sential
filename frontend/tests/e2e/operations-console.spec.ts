@@ -2,8 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('filters risks and opens an IP detail page', async ({ page }) => {
   await page.goto('/risks')
-  await page.getByLabel('风险等级').click()
-  await page.getByTitle('高风险').click()
+  await page.getByTitle('高风险 (High)').click()
   await expect(page.getByText('10.255.0.98')).toBeVisible()
   await page.getByText('10.255.0.98').click()
   await expect(page.getByRole('heading', { name: '10.255.0.98' })).toBeVisible()
@@ -44,6 +43,7 @@ test('shows observed activity posture and opens active risk IP detail', async ({
   await expect(page.getByRole('heading', { name: '访问态势' })).toBeVisible()
   await expect(page.getByText('当前 sensor 在指定窗口内的访问对象')).toBeVisible()
   await expect(page.getByText('api.example.test').first()).toBeVisible()
+  await page.getByRole('tab', { name: '客户端指纹' }).click()
   await expect(page.getByText('Mozilla/5.0 (Windows NT 10.0; Win64; x64)').first()).toBeVisible()
   await expect(page.getByText('10.255.0.59').first()).toBeVisible()
   await page.getByRole('link', { name: '10.255.0.59' }).click()

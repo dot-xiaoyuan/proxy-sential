@@ -1,82 +1,100 @@
-import { useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { Alert, Input, Select, Typography } from 'antd'
+import { useState } from 'react'
 
 import { useRisks } from '../shared/api/queries'
-import type { RiskLevel, RiskQuery } from '../shared/api/types'
+import type { RiskLevel } from '../shared/api/types'
+import {
+  AppErrorAlert,
+  AppLoadingState,
+  AppMetricCard,
+  AppPageHeader,
+  AppTableBar,
+  type QuickWindow,
+} from '../shared/ui'
 import { RiskTable } from '../widgets/RiskTable'
 
-const levelOptions: Array<{ label: string; value: RiskLevel | '' }> = [
-  { label: '全部等级', value: '' },
-  { label: '正常', value: 'normal' },
-  { label: '可疑', value: 'suspicious' },
-  { label: '高风险', value: 'high' },
-  { label: '基本确认', value: 'confirmed' },
-]
-
 export function RisksPage() {
-  const [params, setParams] = useSearchParams()
-  const query = useMemo<RiskQuery>(
-    () => ({
-      level: (params.get('level') || undefined) as RiskLevel | undefined,
-      q: params.get('q') || undefined,
-      sensor_id: params.get('sensor_id') || undefined,
-      limit: 50,
-    }),
-    [params],
-  )
-  const risks = useRisks(query)
+  const [quickWindow, setQuickWindow] = useState<QuickWindow>('1h')
+  const [level, setLevel] = useState<RiskLevel | 'all'>('all')
+  const [ipQuery, setIpQuery] = useState('')
 
-  function updateParam(name: string, value?: string) {
-    const next = new URLSearchParams(params)
-    if (value) {
-      next.set(name, value)
-    } else {
-      next.delete(name)
-    }
-    setParams(next)
+  const risks = useRisks({
+    level: level === 'all' ? undefined : level,
+    limit: 100,
+  })
+
+  if (risks.isLoading) {
+    return <AppLoadingState rows={6} />
   }
+
+  const rawItems = risks.data?.items ?? []
+  const items = rawItems.filter((i) => (!ipQuery ? true : i.ip.includes(ipQuery) || i.summary.includes(ipQuery)))
+
+  const confirmedCount = rawItems.filter((i) => i.level === 'confirmed').length
+  const highCount = rawItems.filter((i) => i.level === 'high').length
+  const normalCount = rawItems.filter((i) => i.level === 'normal').length
+
+  const filterOptions = [
+    { key: 'confirmed', label: '确认代理 (Confirmed)', active: level === 'confirmed' },
+    { key: 'high', label: '高风险 (High)', active: level === 'high' },
+    { key: 'suspicious', label: '疑点 (Suspicious)', active: level === 'suspicious' },
+    { key: 'normal', label: '正常终端 (Normal)', active: level === 'normal' },
+  ]
 
   return (
     <main className="page">
-      <div className="page-header">
-        <div>
-          <Typography.Title className="page-title" level={3}>
-            风险 IP
-          </Typography.Title>
-          <Typography.Text type="secondary">按等级、sensor 和关键词筛选风险快照。</Typography.Text>
-        </div>
-      </div>
+      <AppPageHeader
+        loading={risks.isFetching}
+        onQuickWindowChange={setQuickWindow}
+        onRefresh={() => void risks.refetch()}
+        quickWindow={quickWindow}
+        subtitle="展示网络环境中 Sensor 实时识别的所有设备 IP 风险快照、综合评分与处置建议"
+        title="全网络识别设备与风险 IP 监控"
+      />
 
-      <section className="surface">
-        <div className="toolbar">
-          <Select
-            aria-label="风险等级"
-            options={levelOptions}
-            style={{ width: 160 }}
-            value={query.level ?? ''}
-            onChange={(value) => updateParam('level', value)}
-          />
-          <Input.Search
-            allowClear
-            defaultValue={query.q}
-            placeholder="搜索 IP 或解释"
-            style={{ width: 260 }}
-            onSearch={(value) => updateParam('q', value.trim())}
-          />
-          <Input.Search
-            allowClear
-            defaultValue={query.sensor_id}
-            placeholder="sensor_id"
-            style={{ width: 220 }}
-            onSearch={(value) => updateParam('sensor_id', value.trim())}
-          />
-        </div>
+      <section className="metric-grid">
+        <AppMetricCard
+          statusColor="blue"
+          statusText="观测快照"
+          title="识别终端 IP 总数"
+          value={rawItems.length}
+        />
+        <AppMetricCard
+          statusColor="red"
+          statusText="需要判定"
+          title="确认代理终端 (Confirmed)"
+          value={confirmedCount}
+        />
+        <AppMetricCard
+          statusColor="orange"
+          statusText="疑似共享"
+          title="高风险设备 (High)"
+          value={highCount}
+        />
+        <AppMetricCard
+          statusColor="green"
+          statusText="极低风险"
+          title="正常终端 (Normal)"
+          value={normalCount}
+        />
       </section>
 
-      {risks.isError && <Alert showIcon title="风险列表加载失败" type="error" />}
+      {risks.isError && <AppErrorAlert title="加载设备风险快照失败" />}
+
+      <AppTableBar
+        filterOptions={filterOptions}
+        onClearFilters={() => {
+          setLevel('all')
+          setIpQuery('')
+        }}
+        onFilterToggle={(key) => setLevel(level === key ? 'all' : (key as RiskLevel))}
+        onSearchChange={setIpQuery}
+        searchPlaceholder="搜索 IP 或摘要 (如 10.255.0.59 / multi_ja3)..."
+        searchValue={ipQuery}
+        totalCount={items.length}
+      />
+
       <section className="surface">
-        <RiskTable data={risks.data?.items ?? []} loading={risks.isLoading} />
+        <RiskTable data={items} loading={risks.isFetching} />
       </section>
     </main>
   )

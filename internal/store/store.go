@@ -167,6 +167,86 @@ type ActivityAccess struct {
 	Proto      string `json:"proto,omitempty"`
 }
 
+type DPIOverview struct {
+	SensorID                 string `json:"sensor_id"`
+	Window                   string `json:"window"`
+	EventCount               int    `json:"event_count"`
+	ActiveIPCount            int    `json:"active_ip_count"`
+	ProtocolFlowCount        int    `json:"protocol_flow_count"`
+	FingerprintConflictCount int    `json:"fingerprint_conflict_count"`
+	FlowSampleCount          int    `json:"flow_sample_count"`
+	FirstSeen                string `json:"first_seen,omitempty"`
+	LastSeen                 string `json:"last_seen,omitempty"`
+}
+
+type DPITrendPoint struct {
+	Time          string   `json:"time"`
+	ActiveDevices int      `json:"active_devices"`
+	RiskIPs       int      `json:"risk_ips"`
+	EventCount    int      `json:"event_count"`
+	PPS           *float64 `json:"pps"`
+	BPSMbps       *float64 `json:"bps_mbps"`
+	CPS           float64  `json:"cps"`
+	Estimated     bool     `json:"estimated"`
+}
+
+type DPIProtocolFlow struct {
+	Protocol     string   `json:"protocol"`
+	AppProtocol  string   `json:"app_protocol"`
+	Category     string   `json:"category"`
+	SharePercent float64  `json:"share_percent"`
+	EventCount   int      `json:"event_count"`
+	BPSMbps      *float64 `json:"bps_mbps,omitempty"`
+	TopApps      []string `json:"top_apps"`
+}
+
+type DPIFingerprintConflict struct {
+	ID              string   `json:"id"`
+	IP              string   `json:"ip"`
+	ConflictType    string   `json:"conflict_type"`
+	TypeLabel       string   `json:"type_label"`
+	RiskLevel       string   `json:"risk_level"`
+	Confidence      float64  `json:"confidence"`
+	DeviceCount     int      `json:"device_count"`
+	DetectedSamples []string `json:"detected_samples"`
+	Reason          string   `json:"reason"`
+	LastSeen        string   `json:"last_seen"`
+}
+
+type DPIFlowSample struct {
+	FlowID         string `json:"flow_id"`
+	EventID        string `json:"event_id"`
+	Timestamp      string `json:"timestamp"`
+	SensorID       string `json:"sensor_id,omitempty"`
+	InterfaceName  string `json:"interface_name,omitempty"`
+	SrcIP          string `json:"src_ip,omitempty"`
+	SrcPort        int    `json:"src_port,omitempty"`
+	DstIP          string `json:"dst_ip,omitempty"`
+	DstPort        int    `json:"dst_port,omitempty"`
+	Protocol       string `json:"protocol,omitempty"`
+	AppProtocol    string `json:"app_protocol"`
+	UserAgent      string `json:"user_agent,omitempty"`
+	TLSSNI         string `json:"tls_sni,omitempty"`
+	Domain         string `json:"domain,omitempty"`
+	JA3            string `json:"ja3,omitempty"`
+	JA4            string `json:"ja4,omitempty"`
+	TTL            *int   `json:"ttl,omitempty"`
+	IPID           *int   `json:"ipid,omitempty"`
+	PayloadSummary string `json:"payload_summary"`
+}
+
+type DPIFlowDetail struct {
+	Flow     DPIFlowSample       `json:"flow"`
+	Event    normalized.Event    `json:"event"`
+	Risk     risk.Snapshot       `json:"risk"`
+	Evidence []evidence.Evidence `json:"evidence"`
+}
+
+type DPIFlowPage struct {
+	Items []DPIFlowSample `json:"items"`
+	Page  Page            `json:"page"`
+}
+
 type Reader interface {
 	Overview(ctx context.Context) (Overview, error)
 	ListRisks(ctx context.Context, query Query) (RiskPage, error)
@@ -174,6 +254,13 @@ type Reader interface {
 	GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error)
 	GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error)
 	GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error)
+	GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error)
+	ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error)
+	ListDPIProtocolFlows(ctx context.Context, query ActivityQuery) ([]DPIProtocolFlow, error)
+	ListDPIFingerprintConflicts(ctx context.Context, query ActivityQuery) ([]DPIFingerprintConflict, error)
+	ListDPIFlows(ctx context.Context, query Query) (DPIFlowPage, error)
+	GetDPIFlow(ctx context.Context, flowID string) (DPIFlowDetail, bool, error)
+	ListIPDPIFlows(ctx context.Context, ip string, query Query) (DPIFlowPage, error)
 	ListEvents(ctx context.Context, query Query) (EventPage, error)
 	ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error)
 	GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error)

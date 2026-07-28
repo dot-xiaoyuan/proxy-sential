@@ -1,48 +1,52 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Alert, Button, Drawer, Input, Select, Skeleton, Space, Table, Tag, Typography } from 'antd'
+import { Button, Drawer, Input, Select, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { useEvents } from '../shared/api/queries'
 import type { EventQuery, NormalizedEventSummary } from '../shared/api/types'
-
-type WindowValue = '10m' | '1h' | '24h'
-
-const windowOptions = [
-  { label: '10 分钟', value: '10m' },
-  { label: '1 小时', value: '1h' },
-  { label: '24 小时', value: '24h' },
-]
-
-const typeOptions = ['flow', 'dns', 'tls', 'http', 'quic', 'device', 'alert'].map((value) => ({ label: value, value }))
+import {
+  AppErrorAlert,
+  AppLoadingState,
+  AppPageHeader,
+  AppTableBar,
+  type QuickWindow,
+} from '../shared/ui'
 
 export function EventsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedEvent, setSelectedEvent] = useState<NormalizedEventSummary | null>(null)
+
   const query = useMemo(() => queryFromSearchParams(searchParams), [searchParams])
-  const events = useEvents(query)
+  const quickWindow: QuickWindow = query.window ?? '1h'
+  const activeType = query.type ?? ''
+  const events = useEvents({ ...query, window: quickWindow })
 
   const columns: ColumnsType<NormalizedEventSummary> = [
     {
-      title: '时间',
+      title: '时间戳',
       dataIndex: 'timestamp',
-      width: 190,
+      width: 180,
       render: (value: string) => new Date(value).toLocaleString(),
     },
     {
-      title: '类型',
+      title: '协议/类型',
       dataIndex: 'type',
-      width: 90,
-      render: (value: string) => <Tag>{value}</Tag>,
+      width: 100,
+      render: (value: string) => <Tag className="dpi-badge-tag" color="blue">{value}</Tag>,
     },
     {
       title: '源 IP',
-      width: 180,
-      render: (_, event) => <Typography.Text className="mono wrap-text">{stringField(event.subject, 'ip') || stringField(event.flow, 'src_ip') || '-'}</Typography.Text>,
+      width: 170,
+      render: (_, event) => (
+        <Typography.Text className="mono wrap-text">
+          {stringField(event.subject, 'ip') || stringField(event.flow, 'src_ip') || '-'}
+        </Typography.Text>
+      ),
     },
     {
-      title: '目的',
-      width: 210,
+      title: '目的地址',
+      width: 190,
       render: (_, event) => (
         <Typography.Text className="mono wrap-text">
           {stringField(event.flow, 'dst_ip') || '-'}
@@ -51,7 +55,7 @@ export function EventsPage() {
       ),
     },
     {
-      title: '访问对象',
+      title: 'L7 访问对象',
       render: (_, event) => <Typography.Text className="mono wrap-text">{eventTarget(event) || '-'}</Typography.Text>,
     },
     {
@@ -62,158 +66,252 @@ export function EventsPage() {
     },
   ]
 
+  const filterOptions = [
+    { key: 'flow', label: 'Flow 会话', active: activeType === 'flow' },
+    { key: 'dns', label: 'DNS 查询', active: activeType === 'dns' },
+    { key: 'tls', label: 'TLS 握手', active: activeType === 'tls' },
+    { key: 'http', label: 'HTTP 请求', active: activeType === 'http' },
+    { key: 'quic', label: 'QUIC', active: activeType === 'quic' },
+  ]
+
   if (events.isLoading) {
-    return <Skeleton active />
+    return <AppLoadingState rows={8} />
   }
 
   return (
     <main className="page">
-      <div className="page-header">
-        <div>
-          <Typography.Title className="page-title" level={3}>
-            标准事件检索
-          </Typography.Title>
-          <Typography.Text type="secondary">按时间、IP、访问对象和协议检索标准事件，不展示采集器原始日志。</Typography.Text>
+      <AppPageHeader
+        loading={events.isFetching}
+        onQuickWindowChange={(value) => updateQuery(setSearchParams, { ...query, window: value, cursor: undefined })}
+        onRefresh={() => {
+          void events.refetch()
+        }}
+        quickWindow={quickWindow}
+        subtitle="按时间、源/目的 IP、L7 访问对象与协议快速检索解耦后的标准事件流"
+        title="DPI 标准事件检索"
+      />
+
+      {events.isError && <AppErrorAlert title="标准事件列表加载失败" />}
+
+      <AppTableBar
+        filterOptions={filterOptions}
+        onClearFilters={() => {
+          setSearchParams({})
+        }}
+        onFilterToggle={(key) =>
+          updateQuery(setSearchParams, {
+            ...query,
+            type: activeType === key ? undefined : key,
+            cursor: undefined,
+          })
+        }
+        onSearchChange={(val) => {
+          updateQuery(setSearchParams, { ...query, q: val || undefined, cursor: undefined })
+        }}
+        searchPlaceholder="快速检索 (Event ID / IP / 域名 / SNI / UA)..."
+        searchValue={searchParams.get('q') || ''}
+        totalCount={events.data?.page.total ?? 0}
+      />
+
+      <section className="surface event-filter-panel">
+        <div className="event-filter-grid">
+          <Input
+            allowClear
+            onChange={(event) =>
+              updateQuery(setSearchParams, { ...query, src_ip: event.target.value || undefined, cursor: undefined })
+            }
+            placeholder="源 IP"
+            value={query.src_ip ?? ''}
+          />
+          <Input
+            allowClear
+            onChange={(event) =>
+              updateQuery(setSearchParams, { ...query, dst_ip: event.target.value || undefined, cursor: undefined })
+            }
+            placeholder="目的 IP"
+            value={query.dst_ip ?? ''}
+          />
+          <Input
+            allowClear
+            onChange={(event) =>
+              updateQuery(setSearchParams, { ...query, domain: event.target.value || undefined, cursor: undefined })
+            }
+            placeholder="域名 / Host / SNI"
+            value={query.domain ?? ''}
+          />
+          <Input
+            allowClear
+            onChange={(event) =>
+              updateQuery(setSearchParams, {
+                ...query,
+                user_agent: event.target.value || undefined,
+                cursor: undefined,
+              })
+            }
+            placeholder="User-Agent"
+            value={query.user_agent ?? ''}
+          />
+          <Input
+            allowClear
+            onChange={(event) =>
+              updateQuery(setSearchParams, {
+                ...query,
+                fingerprint: event.target.value || undefined,
+                cursor: undefined,
+              })
+            }
+            placeholder="JA3 / JA4 指纹"
+            value={query.fingerprint ?? ''}
+          />
+          <Input
+            allowClear
+            onChange={(event) =>
+              updateQuery(setSearchParams, {
+                ...query,
+                port: event.target.value ? Number(event.target.value) : undefined,
+                cursor: undefined,
+              })
+            }
+            placeholder="目的端口"
+            type="number"
+            value={query.port ?? ''}
+          />
+          <Input
+            allowClear
+            onChange={(event) =>
+              updateQuery(setSearchParams, { ...query, proto: event.target.value || undefined, cursor: undefined })
+            }
+            placeholder="传输协议 TCP / UDP"
+            value={query.proto ?? ''}
+          />
+          <Select
+            className="filter-select"
+            onChange={(value) => updateQuery(setSearchParams, { ...query, limit: value, cursor: undefined })}
+            options={[
+              { label: '50 条 / 页', value: 50 },
+              { label: '100 条 / 页', value: 100 },
+              { label: '200 条 / 页', value: 200 },
+            ]}
+            value={query.limit ?? 50}
+          />
         </div>
-      </div>
-
-      {events.isError && <Alert showIcon title="标准事件加载失败" type="error" />}
-
-      <section className="surface">
-        <EventFilters query={query} onChange={setSearchParams} />
       </section>
 
       <section className="surface">
-        <div className="section-toolbar">
-          <Typography.Text type="secondary">共 {events.data?.page.total ?? 0} 条标准事件</Typography.Text>
-          <Space wrap>
-            <Button disabled={!events.data?.page.next_cursor} onClick={() => updateQuery(setSearchParams, { ...query, cursor: events.data?.page.next_cursor ?? undefined })}>
-              下一页
-            </Button>
-            <Button disabled={!query.cursor} onClick={() => updateQuery(setSearchParams, { ...query, cursor: undefined })}>
-              回到第一页
-            </Button>
-          </Space>
-        </div>
         <Table<NormalizedEventSummary>
           columns={columns}
           dataSource={events.data?.events ?? []}
-          loading={events.isFetching}
-          onRow={(event) => ({ onClick: () => setSelectedEvent(event) })}
+          onRow={(record) => ({ onClick: () => setSelectedEvent(record) })}
           pagination={false}
           rowKey="event_id"
-          scroll={{ x: 1050 }}
-          size="small"
+          scroll={{ x: 960 }}
+          size="middle"
         />
+
+        <div className="section-toolbar section-toolbar-spaced">
+          <Typography.Text type="secondary">
+            第 {query.cursor ? 'N' : '1'} 页
+          </Typography.Text>
+          <Space wrap>
+            <Button
+              className="dpi-badge-tag"
+              disabled={!query.cursor}
+              onClick={() => updateQuery(setSearchParams, { ...query, cursor: undefined })}
+            >
+              回到第一页
+            </Button>
+            <Button
+              className="dpi-badge-tag"
+              disabled={!events.data?.page.next_cursor}
+              onClick={() =>
+                updateQuery(setSearchParams, { ...query, cursor: events.data?.page.next_cursor ?? undefined })
+              }
+              type="primary"
+            >
+              下一页 ➔
+            </Button>
+          </Space>
+        </div>
       </section>
 
       <Drawer
-        className="event-detail-drawer"
         onClose={() => setSelectedEvent(null)}
-        open={!!selectedEvent}
-        title="标准事件详情"
-        width={720}
+        open={Boolean(selectedEvent)}
+        size="large"
+        title={`标准事件明细 - ${selectedEvent?.event_id ?? ''}`}
       >
-        {selectedEvent && (
-          <pre className="json-block">
-            {JSON.stringify(
-              {
-                event_id: selectedEvent.event_id,
-                source: selectedEvent.source,
-                type: selectedEvent.type,
-                timestamp: selectedEvent.timestamp,
-                observer: selectedEvent.observer,
-                subject: selectedEvent.subject,
-                flow: selectedEvent.flow,
-                payload: selectedEvent.payload,
-                confidence: selectedEvent.confidence,
-                raw_ref: selectedEvent.raw_ref,
-              },
-              null,
-              2,
-            )}
-          </pre>
-        )}
+        {selectedEvent && <pre className="dpi-drawer-json">{JSON.stringify(selectedEvent, null, 2)}</pre>}
       </Drawer>
     </main>
   )
 }
 
-function EventFilters({ query, onChange }: { query: EventQuery; onChange: (nextInit: URLSearchParams) => void }) {
-  return (
-    <div className="event-filter-grid">
-      <Select allowClear className="event-filter-control" onChange={(value) => updateQuery(onChange, { ...query, window: value as WindowValue | undefined, cursor: undefined })} options={windowOptions} placeholder="时间窗口" value={query.window} />
-      <Select allowClear className="event-filter-control" onChange={(value) => updateQuery(onChange, { ...query, type: value, cursor: undefined })} options={typeOptions} placeholder="事件类型" value={query.type} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, from: event.target.value, window: undefined, cursor: undefined })} placeholder="开始时间 RFC3339" value={query.from ?? ''} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, to: event.target.value, window: undefined, cursor: undefined })} placeholder="结束时间 RFC3339" value={query.to ?? ''} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, src_ip: event.target.value, cursor: undefined })} placeholder="源 IP" value={query.src_ip ?? ''} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, dst_ip: event.target.value, cursor: undefined })} placeholder="目的 IP" value={query.dst_ip ?? ''} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, domain: event.target.value, cursor: undefined })} placeholder="域名 / Host / SNI" value={query.domain ?? ''} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, user_agent: event.target.value, cursor: undefined })} placeholder="User-Agent" value={query.user_agent ?? ''} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, fingerprint: event.target.value, cursor: undefined })} placeholder="JA3 / JA4 指纹" value={query.fingerprint ?? ''} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, port: parseOptionalPort(event.target.value), cursor: undefined })} placeholder="目的端口" value={query.port ? String(query.port) : ''} />
-      <Input allowClear className="event-filter-control" onChange={(event) => updateQuery(onChange, { ...query, proto: event.target.value, cursor: undefined })} placeholder="协议 tcp/udp/icmp" value={query.proto ?? ''} />
-    </div>
-  )
-}
-
 function queryFromSearchParams(params: URLSearchParams): EventQuery {
+  const port = params.get('port')
+  const limit = params.get('limit')
   return {
-    q: optionalString(params.get('q')),
-    type: optionalString(params.get('type')),
-    sensor_id: optionalString(params.get('sensor_id')),
-    from: optionalString(params.get('from')),
-    to: optionalString(params.get('to')),
-    window: optionalWindow(params.get('window')),
-    src_ip: optionalString(params.get('src_ip')),
-    dst_ip: optionalString(params.get('dst_ip')),
-    domain: optionalString(params.get('domain')),
-    user_agent: optionalString(params.get('user_agent')),
-    fingerprint: optionalString(params.get('fingerprint')),
-    port: parseOptionalPort(params.get('port') ?? ''),
-    proto: optionalString(params.get('proto')),
-    limit: 50,
-    cursor: optionalString(params.get('cursor')),
+    q: params.get('q') || undefined,
+    type: params.get('type') || undefined,
+    sensor_id: params.get('sensor_id') || undefined,
+    from: params.get('from') || undefined,
+    to: params.get('to') || undefined,
+    window: parseQuickWindow(params.get('window')),
+    src_ip: params.get('src_ip') || undefined,
+    dst_ip: params.get('dst_ip') || undefined,
+    domain: params.get('domain') || undefined,
+    user_agent: params.get('user_agent') || undefined,
+    fingerprint: params.get('fingerprint') || undefined,
+    port: port ? Number(port) : undefined,
+    proto: params.get('proto') || undefined,
+    limit: limit ? Number(limit) : 50,
+    cursor: params.get('cursor') || undefined,
   }
 }
 
-function updateQuery(onChange: (nextInit: URLSearchParams) => void, query: EventQuery) {
-  const next = new URLSearchParams()
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== '') {
-      next.set(key, String(value))
-    }
+function updateQuery(setSearchParams: (params: URLSearchParams) => void, query: EventQuery) {
+  const params = new URLSearchParams()
+  if (query.q) params.set('q', query.q)
+  if (query.type) params.set('type', query.type)
+  if (query.sensor_id) params.set('sensor_id', query.sensor_id)
+  if (query.from) params.set('from', query.from)
+  if (query.to) params.set('to', query.to)
+  if (query.window) params.set('window', query.window)
+  if (query.src_ip) params.set('src_ip', query.src_ip)
+  if (query.dst_ip) params.set('dst_ip', query.dst_ip)
+  if (query.domain) params.set('domain', query.domain)
+  if (query.user_agent) params.set('user_agent', query.user_agent)
+  if (query.fingerprint) params.set('fingerprint', query.fingerprint)
+  if (query.port) params.set('port', String(query.port))
+  if (query.proto) params.set('proto', query.proto)
+  if (query.limit) params.set('limit', String(query.limit))
+  if (query.cursor) params.set('cursor', query.cursor)
+  setSearchParams(params)
+}
+
+function parseQuickWindow(value: string | null): QuickWindow | undefined {
+  if (value === '10m' || value === '1h' || value === '24h') {
+    return value
   }
-  onChange(next)
+  return undefined
 }
 
-function optionalString(value: string | null) {
-  return value && value.trim() ? value.trim() : undefined
+function stringField(source: unknown, key: string): string | undefined {
+  if (!source || typeof source !== 'object') return undefined
+  const value = (source as Record<string, unknown>)[key]
+  return typeof value === 'string' ? value : undefined
 }
 
-function optionalWindow(value: string | null): WindowValue | undefined {
-  return value === '10m' || value === '1h' || value === '24h' ? value : undefined
+function numberField(source: unknown, key: string): number | undefined {
+  if (!source || typeof source !== 'object') return undefined
+  const value = (source as Record<string, unknown>)[key]
+  return typeof value === 'number' ? value : undefined
 }
 
-function parseOptionalPort(value: string) {
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return undefined
-  }
-  const parsed = Number(trimmed)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
-}
-
-function stringField(values: Record<string, unknown> | undefined, key: string) {
-  const value = values?.[key]
-  return typeof value === 'string' ? value : ''
-}
-
-function numberField(values: Record<string, unknown> | undefined, key: string) {
-  const value = values?.[key]
-  return typeof value === 'number' ? value : 0
-}
-
-function eventTarget(event: NormalizedEventSummary) {
-  return stringField(event.payload, 'query') || stringField(event.payload, 'host') || stringField(event.payload, 'sni')
+function eventTarget(event: NormalizedEventSummary): string | undefined {
+  return (
+    stringField(event.payload, 'host') ||
+    stringField(event.payload, 'sni') ||
+    stringField(event.payload, 'query') ||
+    stringField(event.payload, 'user_agent')
+  )
 }

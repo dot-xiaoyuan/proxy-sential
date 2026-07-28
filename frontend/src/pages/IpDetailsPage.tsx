@@ -24,7 +24,7 @@ export function IpDetailsPage() {
   }
 
   if (risk.isError || evidence.isError || activity.isError || events.isError || !risk.data) {
-    return <Alert message="IP 详情加载失败" showIcon type="error" />
+    return <Alert showIcon title="IP 详情加载失败" type="error" />
   }
 
   const evidenceItems = evidence.data?.evidence ?? []
@@ -39,7 +39,7 @@ export function IpDetailsPage() {
           </Typography.Title>
           <Typography.Text type="secondary">风险解释、访问画像、客户端特征、证据时间线和人工标注。</Typography.Text>
         </div>
-        <Space>
+        <Space wrap>
           <RiskLevelTag level={risk.data.level} />
           <RiskScore score={risk.data.score} />
         </Space>
@@ -47,22 +47,30 @@ export function IpDetailsPage() {
 
       <section className="details-grid">
         <div className="surface">
-          <Typography.Title level={4}>风险摘要</Typography.Title>
+          <Typography.Title level={4}>风险摘要与置信度</Typography.Title>
           <Descriptions column={1} size="small">
-            <Descriptions.Item label="置信度">{Math.round(risk.data.confidence * 100)}%</Descriptions.Item>
+            <Descriptions.Item label="置信度">
+              <Typography.Text strong style={{ color: '#38bdf8' }}>
+                {Math.round(risk.data.confidence * 100)}%
+              </Typography.Text>
+            </Descriptions.Item>
             <Descriptions.Item label="窗口">{risk.data.window}</Descriptions.Item>
-            <Descriptions.Item label="建议动作">{risk.data.recommended_action}</Descriptions.Item>
+            <Descriptions.Item label="建议动作">
+              <Tag color="cyan">{risk.data.recommended_action}</Tag>
+            </Descriptions.Item>
             <Descriptions.Item label="更新时间">
               {new Date(risk.data.updated_at).toLocaleString()}
             </Descriptions.Item>
-            <Descriptions.Item label="解释">
-              <Typography.Text className="wrap-text">{risk.data.summary}</Typography.Text>
+            <Descriptions.Item label="证据解释">
+              <Typography.Text className="wrap-text" style={{ color: '#f8fafc' }}>
+                {risk.data.summary}
+              </Typography.Text>
             </Descriptions.Item>
           </Descriptions>
         </div>
         <div className="surface">
-          <Typography.Title level={4}>人工标注</Typography.Title>
-          {!canLabel && <Alert showIcon title="当前会话没有 labels:create 权限" type="warning" />}
+          <Typography.Title level={4}>人工标注控制台</Typography.Title>
+          {!canLabel && <Alert showIcon style={{ marginBottom: 16 }} title="当前会话没有 labels:create 权限" type="warning" />}
           <LabelPanel
             disabled={!canLabel}
             evidenceIds={risk.data.evidence_ids}
@@ -122,54 +130,83 @@ export function IpDetailsPage() {
 
             <div>
               <Typography.Title level={5}>最近访问明细</Typography.Title>
-              <Table<ActivityAccess>
-                columns={[
-                  {
-                    title: '时间',
-                    dataIndex: 'timestamp',
-                    width: 180,
-                    render: (value: string) => new Date(value).toLocaleString(),
-                  },
-                  {
-                    title: '类型',
-                    dataIndex: 'type',
-                    width: 90,
-                    render: (value: string) => <Tag>{value}</Tag>,
-                  },
-                  {
-                    title: '访问对象',
-                    dataIndex: 'target',
-                    render: (value: string, row) => (
-                      <Space orientation="vertical" size={0}>
-                        <Typography.Text className="mono wrap-text">{value}</Typography.Text>
-                        <Typography.Text type="secondary">{row.target_kind}</Typography.Text>
-                      </Space>
-                    ),
-                  },
-                  {
-                    title: '目的',
-                    width: 180,
-                    render: (_, row) => (
-                      <Typography.Text className="mono">
-                        {row.dst_ip ?? '-'}
-                        {row.dst_port ? `:${row.dst_port}` : ''}
+              <div className="desktop-only">
+                <Table<ActivityAccess>
+                  columns={[
+                    {
+                      title: '时间',
+                      dataIndex: 'timestamp',
+                      width: 170,
+                      render: (value: string) => new Date(value).toLocaleString(),
+                    },
+                    {
+                      title: '类型',
+                      dataIndex: 'type',
+                      width: 80,
+                      render: (value: string) => <Tag style={{ margin: 0 }}>{value}</Tag>,
+                    },
+                    {
+                      title: '访问对象',
+                      dataIndex: 'target',
+                      render: (value: string, row) => (
+                        <Space orientation="vertical" size={0}>
+                          <Typography.Text className="mono wrap-text">{value}</Typography.Text>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{row.target_kind}</Typography.Text>
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: '目的',
+                      width: 160,
+                      render: (_, row) => (
+                        <Typography.Text className="mono">
+                          {row.dst_ip ?? '-'}
+                          {row.dst_port ? `:${row.dst_port}` : ''}
+                        </Typography.Text>
+                      ),
+                    },
+                    {
+                      title: 'UA / 方法',
+                      render: (_, row) => (
+                        <Typography.Text className="wrap-text">
+                          {[row.method, row.user_agent].filter(Boolean).join(' / ') || '-'}
+                        </Typography.Text>
+                      ),
+                    },
+                  ]}
+                  dataSource={profile.recent_accesses}
+                  pagination={false}
+                  rowKey="event_id"
+                  scroll={{ x: 720 }}
+                  size="small"
+                />
+              </div>
+
+              <div className="mobile-only">
+                <div className="mobile-access-list">
+                  {profile.recent_accesses.map((acc) => (
+                    <div className="mobile-access-card" key={acc.event_id}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <Tag color="blue" style={{ margin: 0 }}>{acc.type}</Tag>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {new Date(acc.timestamp).toLocaleString()}
+                        </Typography.Text>
+                      </div>
+                      <Typography.Text className="mono wrap-text" strong style={{ fontSize: 13 }}>
+                        {acc.target}
                       </Typography.Text>
-                    ),
-                  },
-                  {
-                    title: 'UA / 方法',
-                    render: (_, row) => (
-                      <Typography.Text className="wrap-text">
-                        {[row.method, row.user_agent].filter(Boolean).join(' / ') || '-'}
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {acc.target_kind} · {acc.dst_ip ?? '-'}:{acc.dst_port ?? ''}
                       </Typography.Text>
-                    ),
-                  },
-                ]}
-                dataSource={profile.recent_accesses}
-                pagination={false}
-                rowKey="event_id"
-                size="small"
-              />
+                      {acc.user_agent && (
+                        <Typography.Text className="wrap-text" type="secondary" style={{ fontSize: 11 }}>
+                          {acc.user_agent}
+                        </Typography.Text>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </Space>
         )}
@@ -188,13 +225,19 @@ export function IpDetailsPage() {
           (events.data?.events ?? []).map((event) => (
             <div className="event-row" key={event.event_id}>
               <Space wrap>
-                <Typography.Text className="mono">{event.type}</Typography.Text>
-                <Typography.Text>{new Date(event.timestamp).toLocaleString()}</Typography.Text>
-                <Typography.Text>confidence {Math.round(event.confidence * 100)}%</Typography.Text>
+                <Tag color="blue" style={{ margin: 0 }}>{event.type}</Tag>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {new Date(event.timestamp).toLocaleString()}
+                </Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  confidence {Math.round(event.confidence * 100)}%
+                </Typography.Text>
               </Space>
-              <Typography.Text className="mono wrap-text">
-                {JSON.stringify({ subject: event.subject, flow: event.flow, payload: event.payload })}
-              </Typography.Text>
+              <div style={{ marginTop: 6, minWidth: 0 }}>
+                <pre className="wrap-code mono" style={{ margin: 0 }}>
+                  {JSON.stringify({ subject: event.subject, flow: event.flow, payload: event.payload }, null, 2)}
+                </pre>
+              </div>
             </div>
           ))
         )}

@@ -7,6 +7,14 @@ export const queryKeys = {
   session: ['session'] as const,
   overview: ['overview'] as const,
   activityOverview: (query: ActivityOverviewQuery) => ['activity-overview', query] as const,
+  dpiOverview: (query: ActivityOverviewQuery) => ['dpi-overview', query] as const,
+  dpiTrends: (query: ActivityOverviewQuery) => ['dpi-trends', query] as const,
+  dpiProtocolFlows: (query: ActivityOverviewQuery) => ['dpi-protocol-flows', query] as const,
+  dpiFingerprintConflicts: (query: ActivityOverviewQuery) =>
+    ['dpi-fingerprint-conflicts', query] as const,
+  dpiFlows: (query: EventQuery) => ['dpi-flows', query] as const,
+  dpiIpFlows: (ip: string, query: EventQuery) => ['dpi-ip-flows', ip, query] as const,
+  dpiFlow: (flowId: string) => ['dpi-flow', flowId] as const,
   risks: (query: RiskQuery) => ['risks', query] as const,
   ipRisk: (ip: string) => ['ip-risk', ip] as const,
   ipEvidence: (ip: string) => ['ip-evidence', ip] as const,
@@ -34,6 +42,48 @@ export function useActivityOverview(query: ActivityOverviewQuery) {
   return useQuery({
     queryKey: queryKeys.activityOverview(query),
     queryFn: () => api.activityOverview(query),
+  })
+}
+
+export function useDpiOverview(query: ActivityOverviewQuery) {
+  return useQuery({ queryKey: queryKeys.dpiOverview(query), queryFn: () => api.dpiOverview(query) })
+}
+
+export function useDpiTrends(query: ActivityOverviewQuery) {
+  return useQuery({ queryKey: queryKeys.dpiTrends(query), queryFn: () => api.dpiTrends(query) })
+}
+
+export function useDpiProtocolFlows(query: ActivityOverviewQuery) {
+  return useQuery({
+    queryKey: queryKeys.dpiProtocolFlows(query),
+    queryFn: () => api.dpiProtocolFlows(query),
+  })
+}
+
+export function useDpiFingerprintConflicts(query: ActivityOverviewQuery) {
+  return useQuery({
+    queryKey: queryKeys.dpiFingerprintConflicts(query),
+    queryFn: () => api.dpiFingerprintConflicts(query),
+  })
+}
+
+export function useDpiFlows(query: EventQuery) {
+  return useQuery({ queryKey: queryKeys.dpiFlows(query), queryFn: () => api.dpiFlows(query) })
+}
+
+export function useDpiIpFlows(ip: string, query: EventQuery) {
+  return useQuery({
+    queryKey: queryKeys.dpiIpFlows(ip, query),
+    queryFn: () => api.dpiIpFlows(ip, query),
+    enabled: !!ip,
+  })
+}
+
+export function useDpiFlow(flowId: string) {
+  return useQuery({
+    queryKey: queryKeys.dpiFlow(flowId),
+    queryFn: () => api.dpiFlow(flowId),
+    enabled: !!flowId,
   })
 }
 

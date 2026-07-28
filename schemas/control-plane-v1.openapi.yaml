@@ -55,6 +55,204 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /dpi/overview:
+    get:
+      operationId: getDpiOverview
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+      responses:
+        "200":
+          description: DPI metadata overview derived from normalized events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DpiOverview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /dpi/trends:
+    get:
+      operationId: listDpiTrends
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [1h, 24h]
+            default: 1h
+      responses:
+        "200":
+          description: DPI event and device trend points.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [points]
+                properties:
+                  points:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DpiTrendPoint"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /dpi/protocol-flows:
+    get:
+      operationId: listDpiProtocolFlows
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+      responses:
+        "200":
+          description: Protocol flow distribution based on normalized event metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DpiProtocolFlow"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /dpi/fingerprint-conflicts:
+    get:
+      operationId: listDpiFingerprintConflicts
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [10m, 1h, 24h]
+            default: 1h
+      responses:
+        "200":
+          description: Standardized fingerprint conflicts observed in a window.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DpiFingerprintConflict"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /dpi/flows:
+    get:
+      operationId: listDpiFlows
+      parameters:
+        - $ref: "#/components/parameters/EventFilterQuery"
+        - $ref: "#/components/parameters/EventTypeQuery"
+        - $ref: "#/components/parameters/SensorIdQuery"
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/WindowQuery"
+        - $ref: "#/components/parameters/SrcIpQuery"
+        - $ref: "#/components/parameters/DstIpQuery"
+        - $ref: "#/components/parameters/DomainQuery"
+        - $ref: "#/components/parameters/UserAgentQuery"
+        - $ref: "#/components/parameters/FingerprintQuery"
+        - $ref: "#/components/parameters/PortQuery"
+        - $ref: "#/components/parameters/ProtoQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200":
+          description: Filtered DPI flow samples built from normalized events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DpiFlowListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /dpi/flows/{flow_id}:
+    get:
+      operationId: getDpiFlow
+      parameters:
+        - name: flow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: DPI flow detail with normalized event, evidence and risk context.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DpiFlowDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /dpi/ips/{ip}/flows:
+    get:
+      operationId: listIpDpiFlows
+      parameters:
+        - $ref: "#/components/parameters/IpPath"
+        - $ref: "#/components/parameters/EventFilterQuery"
+        - $ref: "#/components/parameters/EventTypeQuery"
+        - $ref: "#/components/parameters/SensorIdQuery"
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/WindowQuery"
+        - $ref: "#/components/parameters/DstIpQuery"
+        - $ref: "#/components/parameters/DomainQuery"
+        - $ref: "#/components/parameters/UserAgentQuery"
+        - $ref: "#/components/parameters/FingerprintQuery"
+        - $ref: "#/components/parameters/PortQuery"
+        - $ref: "#/components/parameters/ProtoQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200":
+          description: DPI flow samples for one source IP.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DpiFlowListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /risks:
     get:
       operationId: listRisks
@@ -514,6 +712,90 @@ components:
       in: query
       schema:
         $ref: "#/components/schemas/RiskLevel"
+    EventFilterQuery:
+      name: q
+      in: query
+      schema:
+        type: string
+    EventTypeQuery:
+      name: type
+      in: query
+      schema:
+        type: string
+    SensorIdQuery:
+      name: sensor_id
+      in: query
+      schema:
+        type: string
+    FromQuery:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date-time
+    ToQuery:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date-time
+    WindowQuery:
+      name: window
+      in: query
+      schema:
+        type: string
+        enum: [10m, 1h, 24h]
+    SrcIpQuery:
+      name: src_ip
+      in: query
+      schema:
+        type: string
+    DstIpQuery:
+      name: dst_ip
+      in: query
+      schema:
+        type: string
+    DomainQuery:
+      name: domain
+      in: query
+      schema:
+        type: string
+    UserAgentQuery:
+      name: user_agent
+      in: query
+      schema:
+        type: string
+    FingerprintQuery:
+      name: fingerprint
+      in: query
+      description: JA3/JA4 fingerprint value from normalized event payload.
+      schema:
+        type: string
+    PortQuery:
+      name: port
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 65535
+    ProtoQuery:
+      name: proto
+      in: query
+      schema:
+        type: string
+    LimitQuery:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    CursorQuery:
+      name: cursor
+      in: query
+      schema:
+        type: string
   schemas:
     Permission:
       type: string
@@ -526,6 +808,7 @@ components:
         - audit:read
         - rules:reload
         - ingest:read
+        - dpi:read
     Role:
       type: string
       enum: [viewer, reviewer, operator, admin]
@@ -802,6 +1085,195 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ActivityIpSummary"
+    DpiOverview:
+      type: object
+      required:
+        - sensor_id
+        - window
+        - event_count
+        - active_ip_count
+        - protocol_flow_count
+        - fingerprint_conflict_count
+        - flow_sample_count
+      properties:
+        sensor_id:
+          type: string
+        window:
+          type: string
+          enum: [10m, 1h, 24h, latest-run]
+        event_count:
+          type: integer
+        active_ip_count:
+          type: integer
+        protocol_flow_count:
+          type: integer
+        fingerprint_conflict_count:
+          type: integer
+        flow_sample_count:
+          type: integer
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+    DpiTrendPoint:
+      type: object
+      required: [time, active_devices, risk_ips, event_count, pps, bps_mbps, cps, estimated]
+      properties:
+        time:
+          type: string
+          format: date-time
+        active_devices:
+          type: integer
+        risk_ips:
+          type: integer
+        event_count:
+          type: integer
+        pps:
+          type:
+            - number
+            - "null"
+        bps_mbps:
+          type:
+            - number
+            - "null"
+        cps:
+          type: number
+        estimated:
+          type: boolean
+    DpiProtocolFlow:
+      type: object
+      required: [protocol, app_protocol, category, share_percent, event_count, top_apps]
+      properties:
+        protocol:
+          type: string
+        app_protocol:
+          type: string
+        category:
+          type: string
+        share_percent:
+          type: number
+        event_count:
+          type: integer
+        bps_mbps:
+          type:
+            - number
+            - "null"
+        top_apps:
+          type: array
+          items:
+            type: string
+    DpiFingerprintConflict:
+      type: object
+      required: [id, ip, conflict_type, type_label, risk_level, confidence, device_count, detected_samples, reason, last_seen]
+      properties:
+        id:
+          type: string
+        ip:
+          type: string
+        conflict_type:
+          type: string
+        type_label:
+          type: string
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        device_count:
+          type: integer
+        detected_samples:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+        last_seen:
+          type: string
+          format: date-time
+    DpiFlowSample:
+      type: object
+      required: [flow_id, event_id, timestamp, app_protocol, payload_summary]
+      properties:
+        flow_id:
+          type: string
+        event_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        sensor_id:
+          type: string
+        interface_name:
+          type: string
+        src_ip:
+          type: string
+        src_port:
+          type: integer
+        dst_ip:
+          type: string
+        dst_port:
+          type: integer
+        protocol:
+          type: string
+        app_protocol:
+          type: string
+        user_agent:
+          type: string
+        tls_sni:
+          type: string
+        domain:
+          type: string
+        ja3:
+          type: string
+        ja4:
+          type: string
+        ttl:
+          type:
+            - integer
+            - "null"
+        ipid:
+          type:
+            - integer
+            - "null"
+        payload_summary:
+          type: string
+    DpiFlowListResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DpiFlowSample"
+        page:
+          type: object
+          required: [limit, next_cursor, total]
+          properties:
+            limit:
+              type: integer
+            next_cursor:
+              type:
+                - string
+                - "null"
+            total:
+              type: integer
+    DpiFlowDetail:
+      type: object
+      required: [flow, event, risk, evidence]
+      properties:
+        flow:
+          $ref: "#/components/schemas/DpiFlowSample"
+        event:
+          $ref: "#/components/schemas/NormalizedEventSummary"
+        risk:
+          $ref: "#/components/schemas/RiskSnapshot"
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/Evidence"
     ActivityAccess:
       type: object
       required: [timestamp, event_id, type, target_kind, target]

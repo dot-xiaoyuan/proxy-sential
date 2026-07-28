@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Table, Typography } from 'antd'
+import { Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
@@ -10,7 +10,7 @@ const columns: ColumnsType<RiskSnapshot> = [
   {
     title: 'IP',
     dataIndex: 'ip',
-    width: 180,
+    width: 150,
     render: (ip: string) => (
       <Link className="mono wrap-text" to={`/ips/${encodeURIComponent(ip)}`}>
         {ip}
@@ -20,36 +20,53 @@ const columns: ColumnsType<RiskSnapshot> = [
   {
     title: '等级',
     dataIndex: 'level',
-    width: 110,
+    width: 100,
     render: (level: RiskSnapshot['level']) => <RiskLevelTag level={level} />,
   },
   {
     title: '分数',
     dataIndex: 'score',
-    width: 110,
+    width: 90,
     render: (score: number) => <RiskScore score={score} />,
   },
   {
     title: '解释',
     dataIndex: 'summary',
-    render: (summary: string) => <Typography.Text className="wrap-text">{summary}</Typography.Text>,
+    minWidth: 360,
+    render: (summary: string) => (
+      <Typography.Paragraph
+        ellipsis={{ rows: 2, tooltip: summary }}
+        style={{ margin: 0, fontSize: 13, color: 'var(--ps-text-primary)' }}
+      >
+        {summary}
+      </Typography.Paragraph>
+    ),
   },
   {
     title: '证据',
     dataIndex: 'evidence_ids',
-    width: 90,
-    render: (ids: string[]) => ids.length,
+    width: 80,
+    render: (ids: string[]) => <Tag style={{ margin: 0 }}>{ids.length}</Tag>,
   },
   {
     title: '建议动作',
     dataIndex: 'recommended_action',
-    width: 170,
+    width: 150,
+    render: (action: string) => (
+      <Tag color="blue" style={{ borderRadius: 4, margin: 0 }}>
+        {action}
+      </Tag>
+    ),
   },
   {
     title: '更新时间',
     dataIndex: 'updated_at',
-    width: 190,
-    render: (value: string) => new Date(value).toLocaleString(),
+    width: 170,
+    render: (value: string) => (
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {new Date(value).toLocaleString()}
+      </Typography.Text>
+    ),
   },
 ]
 
@@ -70,7 +87,7 @@ export function RiskTable({
       locale={{ emptyText }}
       pagination={{ pageSize: 10, showSizeChanger: false }}
       rowKey="ip"
-      scroll={{ x: 980 }}
+      scroll={{ x: 960 }}
       size="middle"
     />
   )

@@ -26,6 +26,13 @@ export type ShadowRun = components['schemas']['ShadowRun']
 export type AuditLog = components['schemas']['AuditLog']
 export type Overview = components['schemas']['Overview']
 export type RuleReloadResult = components['schemas']['RuleReloadResult']
+export type DpiOverview = components['schemas']['DpiOverview']
+export type DpiTrendPoint = components['schemas']['DpiTrendPoint']
+export type DpiProtocolFlowItem = components['schemas']['DpiProtocolFlow']
+export type FingerprintConflictItem = components['schemas']['DpiFingerprintConflict']
+export type DpiFlowSample = components['schemas']['DpiFlowSample']
+export type DpiFlowListResponse = components['schemas']['DpiFlowListResponse']
+export type DpiFlowDetail = components['schemas']['DpiFlowDetail']
 
 export type RiskQuery = {
   level?: RiskLevel

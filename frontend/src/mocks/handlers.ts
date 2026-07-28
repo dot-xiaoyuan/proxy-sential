@@ -3,13 +3,17 @@ import { delay, http, HttpResponse } from 'msw'
 import type { CreateLabelRequest } from '../shared/api/types'
 import {
   activityByIp,
-  activityOverview,
+  getActivityOverviewByWindow,
   auditLogs,
   eventsByIp,
   evidenceByIp,
   ingestDiagnostics,
   ingestEventTypes,
   ingestStatus,
+  mockDpiProtocolFlows,
+  mockDpiTrendPoints,
+  mockFingerprintConflicts,
+  mockFlowSamples,
   mockSession,
   overview,
   riskSnapshots,
@@ -32,7 +36,47 @@ export const handlers = [
   http.get('/api/v1/activity/overview', ({ request }) => {
     const url = new URL(request.url)
     const windowValue = url.searchParams.get('window') ?? '1h'
-    return HttpResponse.json({ ...activityOverview, window: windowValue })
+    return HttpResponse.json(getActivityOverviewByWindow(windowValue))
+  }),
+  http.get('/api/v1/dpi/overview', ({ request }) => {
+    const url = new URL(request.url)
+    const windowValue = url.searchParams.get('window') ?? '1h'
+    const activity = getActivityOverviewByWindow(windowValue)
+    return HttpResponse.json({
+      sensor_id: activity.sensor_id,
+      window: activity.window,
+      event_count: activity.event_count,
+      active_ip_count: activity.active_ip_count,
+      protocol_flow_count: mockDpiProtocolFlows.length,
+      fingerprint_conflict_count: mockFingerprintConflicts.length,
+      flow_sample_count: Object.values(mockFlowSamples).flat().length,
+      first_seen: activity.first_seen,
+      last_seen: activity.last_seen,
+    })
+  }),
+  http.get('/api/v1/dpi/trends', () => HttpResponse.json({ points: mockDpiTrendPoints })),
+  http.get('/api/v1/dpi/protocol-flows', () => HttpResponse.json({ items: mockDpiProtocolFlows })),
+  http.get('/api/v1/dpi/fingerprint-conflicts', () => HttpResponse.json({ items: mockFingerprintConflicts })),
+  http.get('/api/v1/dpi/flows', ({ request }) => {
+    const url = new URL(request.url)
+    return HttpResponse.json(filterMockFlows(url))
+  }),
+  http.get('/api/v1/dpi/flows/:flowId', ({ params }) => {
+    const flowId = normalizeIp(String(params.flowId))
+    const flow = Object.values(mockFlowSamples).flat().find((item) => item.flow_id === flowId || item.event_id === flowId)
+    return flow
+      ? HttpResponse.json({
+          flow,
+          event: Object.values(eventsByIp).flat().find((item) => item.event_id === flow.event_id) ?? eventsByIp['10.255.0.59'][0],
+          risk: riskSnapshots.find((item) => item.ip === flow.src_ip) ?? riskSnapshots[3],
+          evidence: evidenceByIp[flow.src_ip ?? ''] ?? [],
+        })
+      : HttpResponse.json({ code: 'not_found', message: 'dpi flow not found' }, { status: 404 })
+  }),
+  http.get('/api/v1/dpi/ips/:ip/flows', ({ params, request }) => {
+    const url = new URL(request.url)
+    url.searchParams.set('src_ip', normalizeIp(String(params.ip)))
+    return HttpResponse.json(filterMockFlows(url))
   }),
   http.get('/api/v1/risks', ({ request }) => {
     const url = new URL(request.url)
@@ -144,3 +188,29 @@ export const handlers = [
     ),
   ),
 ]
+
+function filterMockFlows(url: URL) {
+  const q = url.searchParams.get('q')?.toLowerCase()
+  const domain = url.searchParams.get('domain')?.toLowerCase()
+  const srcIp = url.searchParams.get('src_ip')
+  const dstIp = url.searchParams.get('dst_ip')
+  const userAgent = url.searchParams.get('user_agent')?.toLowerCase()
+  const fingerprint = url.searchParams.get('fingerprint')?.toLowerCase()
+  const proto = url.searchParams.get('proto')?.toLowerCase()
+  const port = url.searchParams.get('port')
+  const limit = Number(url.searchParams.get('limit') ?? 50)
+  const cursor = Number(url.searchParams.get('cursor') ?? 0)
+  const filtered = Object.values(mockFlowSamples)
+    .flat()
+    .filter((flow) => !q || JSON.stringify(flow).toLowerCase().includes(q))
+    .filter((flow) => !domain || String(flow.domain ?? flow.tls_sni ?? '').toLowerCase().includes(domain))
+    .filter((flow) => !srcIp || flow.src_ip === srcIp)
+    .filter((flow) => !dstIp || flow.dst_ip === dstIp)
+    .filter((flow) => !userAgent || String(flow.user_agent ?? '').toLowerCase().includes(userAgent))
+    .filter((flow) => !fingerprint || String(`${flow.ja3 ?? ''} ${flow.ja4 ?? ''}`).toLowerCase().includes(fingerprint))
+    .filter((flow) => !proto || String(flow.protocol ?? '').toLowerCase() === proto)
+    .filter((flow) => !port || String(flow.dst_port ?? '') === port)
+  const items = filtered.slice(cursor, cursor + limit)
+  const nextCursor = cursor + items.length < filtered.length ? String(cursor + items.length) : null
+  return { items, page: { limit, next_cursor: nextCursor, total: filtered.length } }
+}

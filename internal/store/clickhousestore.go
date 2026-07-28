@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
@@ -175,6 +176,72 @@ func (s *ClickHouseStore) GetActivityOverview(ctx context.Context, query Activit
 		return ActivityOverview{}, err
 	}
 	return s.GetActivityOverviewWithRisks(ctx, ActivityQuery{SensorID: query.SensorID, Window: window, Limit: query.Limit}, duration, map[string]risk.Snapshot{})
+}
+
+func (s *ClickHouseStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {
+	window, events, err := s.dpiEventSet(ctx, query)
+	if err != nil {
+		return DPIOverview{}, err
+	}
+	return BuildDPIOverview(query.SensorID, window, events, map[string]risk.Snapshot{}), nil
+}
+
+func (s *ClickHouseStore) ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error) {
+	window, events, err := s.dpiEventSet(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return BuildDPITrends(window, events, map[string]risk.Snapshot{}), nil
+}
+
+func (s *ClickHouseStore) ListDPIProtocolFlows(ctx context.Context, query ActivityQuery) ([]DPIProtocolFlow, error) {
+	_, events, err := s.dpiEventSet(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return BuildDPIProtocolFlows(events), nil
+}
+
+func (s *ClickHouseStore) ListDPIFingerprintConflicts(ctx context.Context, query ActivityQuery) ([]DPIFingerprintConflict, error) {
+	_, events, err := s.dpiEventSet(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return BuildDPIFingerprintConflicts(events, map[string]risk.Snapshot{}), nil
+}
+
+func (s *ClickHouseStore) ListDPIFlows(ctx context.Context, query Query) (DPIFlowPage, error) {
+	page, err := s.ListEvents(ctx, query)
+	if err != nil {
+		return DPIFlowPage{}, err
+	}
+	return DPIFlowPage{Items: BuildDPIFlowSamples(page.Items), Page: page.Page}, nil
+}
+
+func (s *ClickHouseStore) GetDPIFlow(ctx context.Context, flowID string) (DPIFlowDetail, bool, error) {
+	event, ok, err := s.GetEvent(ctx, flowID)
+	if err != nil || !ok {
+		return DPIFlowDetail{}, ok, err
+	}
+	return BuildDPIFlowDetail(event, normalRisk(subjectIP(event)), []evidence.Evidence{}), true, nil
+}
+
+func (s *ClickHouseStore) ListIPDPIFlows(ctx context.Context, ip string, query Query) (DPIFlowPage, error) {
+	query.SrcIP = ip
+	return s.ListDPIFlows(ctx, query)
+}
+
+func (s *ClickHouseStore) dpiEventSet(ctx context.Context, query ActivityQuery) (string, []normalized.Event, error) {
+	window, _, err := NormalizeActivityWindow(query.Window)
+	if err != nil {
+		return "", nil, err
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = defaultDPIEventLimit
+	}
+	events, err := s.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: window, Limit: limit})
+	return window, events, err
 }
 
 func (s *ClickHouseStore) ListEventsForActivityOverview(ctx context.Context, sensorID string, window time.Duration, limit int) ([]normalized.Event, error) {

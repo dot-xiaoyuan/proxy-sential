@@ -253,6 +253,68 @@ func (s *FileStore) GetActivityOverview(ctx context.Context, query ActivityQuery
 	return BuildActivityOverview(sensorID, window, events, riskSnapshotMap(batch.Snapshots)), nil
 }
 
+func (s *FileStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {
+	window, events, risks, sensorID, err := s.dpiEventSet(ctx, query)
+	if err != nil {
+		return DPIOverview{}, err
+	}
+	return BuildDPIOverview(sensorID, window, events, risks), nil
+}
+
+func (s *FileStore) ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error) {
+	window, events, risks, _, err := s.dpiEventSet(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return BuildDPITrends(window, events, risks), nil
+}
+
+func (s *FileStore) ListDPIProtocolFlows(ctx context.Context, query ActivityQuery) ([]DPIProtocolFlow, error) {
+	_, events, _, _, err := s.dpiEventSet(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return BuildDPIProtocolFlows(events), nil
+}
+
+func (s *FileStore) ListDPIFingerprintConflicts(ctx context.Context, query ActivityQuery) ([]DPIFingerprintConflict, error) {
+	_, events, risks, _, err := s.dpiEventSet(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return BuildDPIFingerprintConflicts(events, risks), nil
+}
+
+func (s *FileStore) ListDPIFlows(ctx context.Context, query Query) (DPIFlowPage, error) {
+	page, err := s.ListEvents(ctx, query)
+	if err != nil {
+		return DPIFlowPage{}, err
+	}
+	return DPIFlowPage{Items: BuildDPIFlowSamples(page.Items), Page: page.Page}, nil
+}
+
+func (s *FileStore) GetDPIFlow(ctx context.Context, flowID string) (DPIFlowDetail, bool, error) {
+	event, ok, err := s.GetEvent(ctx, flowID)
+	if err != nil || !ok {
+		return DPIFlowDetail{}, ok, err
+	}
+	ip := subjectIP(event)
+	snapshot, err := s.GetIPRisk(ctx, ip)
+	if err != nil {
+		return DPIFlowDetail{}, false, err
+	}
+	items, err := s.GetIPEvidence(ctx, ip)
+	if err != nil {
+		return DPIFlowDetail{}, false, err
+	}
+	return BuildDPIFlowDetail(event, snapshot, items), true, nil
+}
+
+func (s *FileStore) ListIPDPIFlows(ctx context.Context, ip string, query Query) (DPIFlowPage, error) {
+	query.SrcIP = ip
+	return s.ListDPIFlows(ctx, query)
+}
+
 func (s *FileStore) ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error) {
 	latest, ok, err := s.latestRun(ctx)
 	if err != nil {
@@ -262,6 +324,40 @@ func (s *FileStore) ListEventSamples(ctx context.Context, query Query) ([]normal
 		return []normalized.Event{}, nil
 	}
 	return readNormalizedEvents(ctx, filepath.Join(latest.Dir, "normalized.jsonl"), query)
+}
+
+func (s *FileStore) dpiEventSet(ctx context.Context, query ActivityQuery) (string, []normalized.Event, map[string]risk.Snapshot, string, error) {
+	window, _, err := NormalizeActivityWindow(query.Window)
+	if err != nil {
+		return "", nil, nil, "", err
+	}
+	sensorID := query.SensorID
+	if sensorID == "" {
+		sensorID = s.sensorID
+	}
+	if sensorID != s.sensorID {
+		return window, []normalized.Event{}, map[string]risk.Snapshot{}, sensorID, nil
+	}
+	latest, ok, err := s.latestRun(ctx)
+	if err != nil {
+		return "", nil, nil, "", err
+	}
+	if !ok {
+		return window, []normalized.Event{}, map[string]risk.Snapshot{}, sensorID, nil
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = defaultDPIEventLimit
+	}
+	events, err := readNormalizedEvents(ctx, filepath.Join(latest.Dir, "normalized.jsonl"), Query{SensorID: sensorID, Window: window, Limit: limit})
+	if err != nil {
+		return "", nil, nil, "", err
+	}
+	batch, err := readRiskBatch(filepath.Join(latest.Dir, "risk-snapshots.json"))
+	if err != nil {
+		return "", nil, nil, "", err
+	}
+	return window, events, riskSnapshotMap(batch.Snapshots), sensorID, nil
 }
 
 func (s *FileStore) ListEvents(ctx context.Context, query Query) (EventPage, error) {
