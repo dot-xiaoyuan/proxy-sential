@@ -14,6 +14,10 @@ import (
 
 type Snapshot struct {
 	IP                   string   `json:"ip"`
+	SubjectType          string   `json:"subject_type,omitempty"`
+	SubjectID            string   `json:"subject_id,omitempty"`
+	AccountID            string   `json:"account_id,omitempty"`
+	EndpointID           string   `json:"endpoint_id,omitempty"`
 	Score                int      `json:"score"`
 	Level                string   `json:"level"`
 	Confidence           float64  `json:"confidence"`
@@ -85,23 +89,24 @@ func Batch(r io.Reader) (BatchResult, error) {
 		return BatchResult{}, err
 	}
 
-	evidenceByIP := map[string][]evidence.Evidence{}
+	evidenceBySubject := map[string][]evidence.Evidence{}
 	for _, item := range allEvidence {
-		if item.IP == "" {
+		subjectType, subjectID := evidenceSubject(item)
+		if subjectID == "" {
 			continue
 		}
-		evidenceByIP[item.IP] = append(evidenceByIP[item.IP], item)
+		evidenceBySubject[subjectType+":"+subjectID] = append(evidenceBySubject[subjectType+":"+subjectID], item)
 	}
 
-	ips := make([]string, 0, len(evidenceByIP))
-	for ip := range evidenceByIP {
-		ips = append(ips, ip)
+	keys := make([]string, 0, len(evidenceBySubject))
+	for key := range evidenceBySubject {
+		keys = append(keys, key)
 	}
-	sort.Strings(ips)
+	sort.Strings(keys)
 
 	result := BatchResult{Snapshots: []Snapshot{}}
-	for _, ip := range ips {
-		result.Snapshots = append(result.Snapshots, snapshotFor(ip, evidenceByIP[ip]))
+	for _, key := range keys {
+		result.Snapshots = append(result.Snapshots, snapshotFor(subjectIDFromKey(key), evidenceBySubject[key]))
 	}
 	return result, nil
 }
@@ -224,9 +229,20 @@ func snapshotFor(ip string, selected []evidence.Evidence) Snapshot {
 	if window == "" {
 		window = "unknown"
 	}
+	subjectType, subjectID := evidenceSubject(selected[0])
+	if subjectType == "" {
+		subjectType = "ip"
+	}
+	if subjectID == "" {
+		subjectID = ip
+	}
 
 	return Snapshot{
-		IP:                ip,
+		IP:                snapshotIP(ip, selected),
+		SubjectType:       subjectType,
+		SubjectID:         subjectID,
+		AccountID:         accountIDFor(selected),
+		EndpointID:        endpointIDFor(selected),
 		Score:             score,
 		Level:             level,
 		Confidence:        combinedConfidence(selected),
@@ -236,6 +252,66 @@ func snapshotFor(ip string, selected []evidence.Evidence) Snapshot {
 		RecommendedAction: actionFor(level),
 		UpdatedAt:         updatedAt,
 	}
+}
+
+func snapshotIP(fallback string, items []evidence.Evidence) string {
+	for _, item := range items {
+		if item.IP != "" {
+			return item.IP
+		}
+	}
+	if len(items) > 0 && items[0].SubjectType != "" && items[0].SubjectType != "ip" {
+		return ""
+	}
+	return fallback
+}
+
+func evidenceSubject(item evidence.Evidence) (string, string) {
+	if item.SubjectType != "" && item.SubjectID != "" {
+		return item.SubjectType, item.SubjectID
+	}
+	if item.AccountID != "" {
+		return "account", item.AccountID
+	}
+	if item.EndpointID != "" {
+		return "endpoint", item.EndpointID
+	}
+	if item.IP != "" {
+		return "ip", item.IP
+	}
+	return "", ""
+}
+
+func subjectIDFromKey(key string) string {
+	parts := strings.SplitN(key, ":", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return key
+}
+
+func accountIDFor(items []evidence.Evidence) string {
+	for _, item := range items {
+		if item.AccountID != "" {
+			return item.AccountID
+		}
+		if item.SubjectType == "account" {
+			return item.SubjectID
+		}
+	}
+	return ""
+}
+
+func endpointIDFor(items []evidence.Evidence) string {
+	for _, item := range items {
+		if item.EndpointID != "" {
+			return item.EndpointID
+		}
+		if item.SubjectType == "endpoint" {
+			return item.SubjectID
+		}
+	}
+	return ""
 }
 
 func readEvidence(r io.Reader) ([]evidence.Evidence, error) {

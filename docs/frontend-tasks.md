@@ -121,3 +121,29 @@
 - IP 详情页可提交确认代理、误报、良性、需要更多数据。
 - read-only 模式按钮禁用并解释原因；可写模式提交成功后刷新风险和审计。
 - 标注原因必填，提交结果可追溯。
+
+## Task 11：设备识别与 Zeek 采集联动
+
+目标：让设备识别从“IP 详情可看”升级为“全局可运营、采集状态可诊断”。
+
+当前进展：
+
+- 已新增 `/devices` 全局设备识别页和导航入口。
+- 已在 `/devices`、`/ips/:ip` 展示 DHCP MAC、vendor_class、hostname、device_hint 等强信号。
+- 已在 `/ingest`、`/shadow-runs` 展示 Zeek DHCP 状态、offset、是否轮转和设备事件数。
+- 已修复全局列表被弱信号淹没的问题，强设备信号会优先出现在 `/devices` 第一屏。
+- 已补充 Software Framework 来源标签，`/devices` 可搜索并展示 `software_name/software_version`。
+- 已修复本地联调无设备数据的问题：`frontend/.env` 指向 30 机器 `18080`，`/devices` 默认窗口调整为 `24h`，避免 DHCP/Software 低频强信号在 `1h` 窗口被误判为空。
+- 已定位并缓解设备识别查询慢的问题：IP 详情 activity 改为精确 IP 过滤，风险列表批量补设备摘要，`/devices` 增加短 TTL 缓存；30 机器实测 `/devices` 冷查询约 1.39s，缓存命中约 5ms。
+
+进行中：
+
+- 评估并准备展示 mDNS、NBNS、LLMNR 设备名称与局域网服务来源。
+- 前端继续等待后端设备库存快照接口，减少对动态聚合 `/devices` 的依赖。
+
+验收：
+
+- `/devices` 第一屏能看到 DHCP 与 software 来源的强设备信号。
+- 搜索框能按 IP、MAC、hostname、vendor_class、software_name 过滤。
+- `/ingest` 能区分 Zeek DHCP 正常、software 正常、无数据、日志不可用和轮转。
+- 390x844、1280x800、1440x900 三视口 UI audit 不溢出。

@@ -260,6 +260,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{account_id}/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAccountIdentity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/{endpoint_id}/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getEndpointIdentity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/{endpoint_id}/registration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["updateEndpointRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/devices": {
         parameters: {
             query?: never;
@@ -505,7 +553,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** @enum {string} */
-        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read";
+        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "endpoints:write" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read";
         /** @enum {string} */
         Role: "viewer" | "reviewer" | "operator" | "admin";
         Session: {
@@ -524,6 +572,11 @@ export interface components {
         EvidenceSeverity: "low" | "medium" | "high";
         RiskSnapshot: {
             ip: string;
+            /** @enum {string} */
+            subject_type?: "ip" | "account" | "endpoint";
+            subject_id?: string;
+            account_id?: string;
+            endpoint_id?: string;
             score: number;
             level: components["schemas"]["RiskLevel"];
             confidence: number;
@@ -557,7 +610,12 @@ export interface components {
             evidence_id: string;
             ip: string;
             /** @enum {string} */
-            type: "multi_user_agent" | "multi_ja3_ja4" | "ttl_clusters" | "domain_diversity" | "port_distribution" | "multi_device_fingerprint" | "multi_observed_device" | "device_signal_conflict" | "brand_os_conflict" | "tcp_tls_stack_conflict";
+            subject_type?: "ip" | "account" | "endpoint";
+            subject_id?: string;
+            account_id?: string;
+            endpoint_id?: string;
+            /** @enum {string} */
+            type: "multi_user_agent" | "multi_ja3_ja4" | "ttl_clusters" | "domain_diversity" | "port_distribution" | "multi_device_fingerprint" | "multi_observed_device" | "device_signal_conflict" | "brand_os_conflict" | "tcp_tls_stack_conflict" | "dhcp_device_fingerprint" | "device_fingerprint_conflict" | "account_concurrent_macs" | "account_concurrent_endpoints" | "account_concurrent_access" | "auth_observed_mac_mismatch";
             window: string;
             score: number;
             confidence: number;
@@ -578,11 +636,20 @@ export interface components {
             strength: "strong" | "medium" | "weak";
             confidence: number;
             weight: number;
+            /** @enum {string} */
+            entity_role?: "endpoint" | "infrastructure" | "gateway" | "nat" | "server" | "network_device" | "unknown";
+            account_id?: string;
+            endpoint_id?: string;
+            access_id?: string;
             /** Format: date-time */
             first_seen?: string;
             /** Format: date-time */
             last_seen?: string;
             event_ids: string[];
+            /** @description Number of deduplicated source events observed for this signal fact. */
+            seen_count?: number;
+            /** @description Bounded sample of source event IDs for audit drill-down. */
+            event_ids_sample?: string[];
         };
         ObservedDevice: {
             device_id: string;
@@ -593,6 +660,11 @@ export interface components {
             os_family: string;
             os_version?: string;
             device_type: string;
+            /** @enum {string} */
+            entity_role?: "endpoint" | "infrastructure" | "gateway" | "nat" | "server" | "network_device" | "unknown";
+            account_id?: string;
+            endpoint_id?: string;
+            access_id?: string;
             model: string;
             confidence: number;
             signal_count: number;
@@ -637,18 +709,156 @@ export interface components {
             last_seen?: string;
         };
         DeviceListResponse: {
-            items: components["schemas"]["IpDeviceInventory"][];
+            items: components["schemas"]["EndpointDeviceInventory"][];
             page: {
                 limit: number;
                 next_cursor: string | null;
                 total: number;
             };
         };
+        EndpointDeviceInventory: {
+            endpoint_id: string;
+            primary_mac?: string;
+            /** @enum {string} */
+            entity_role: "endpoint" | "infrastructure" | "gateway" | "nat" | "server" | "network_device" | "unknown";
+            /** @enum {string} */
+            registration_status: "unregistered" | "registered" | "ignored" | "retired";
+            owner_account?: string;
+            owner_name?: string;
+            owner_department?: string;
+            asset_tag?: string;
+            /** @enum {string} */
+            merge_status: "active" | "merged" | "split";
+            current_account?: string;
+            current_ip?: string;
+            current_access_id?: string;
+            accounts: string[];
+            ips: string[];
+            access_ids: string[];
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+            identity_confidence: number;
+            summary: string;
+        };
+        EndpointEntity: {
+            endpoint_id: string;
+            primary_mac?: string;
+            /** @enum {string} */
+            entity_role: "endpoint" | "infrastructure" | "gateway" | "nat" | "server" | "network_device" | "unknown";
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            identity_confidence: number;
+            attributes?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            registration_status?: "unregistered" | "registered" | "ignored" | "retired";
+            owner_account?: string;
+            owner_name?: string;
+            owner_department?: string;
+            asset_tag?: string;
+            registered_by?: string;
+            /** Format: date-time */
+            registered_at?: string;
+            registration_note?: string;
+            /** @enum {string} */
+            merge_status?: "active" | "merged" | "split";
+            merged_into_endpoint_id?: string;
+            split_from_endpoint_id?: string;
+            /** Format: date-time */
+            registration_updated_at?: string;
+            registration_update_by_id?: string;
+        };
+        UpdateEndpointRegistrationRequest: {
+            /** @enum {string} */
+            registration_status: "unregistered" | "registered" | "ignored" | "retired";
+            owner_account?: string;
+            owner_name?: string;
+            owner_department?: string;
+            asset_tag?: string;
+            registration_note?: string;
+            /**
+             * @default active
+             * @enum {string}
+             */
+            merge_status: "active" | "merged" | "split";
+            merged_into_endpoint_id?: string;
+            split_from_endpoint_id?: string;
+        };
+        AccountSession: {
+            session_id: string;
+            account_id: string;
+            endpoint_id: string;
+            /** @enum {string} */
+            entity_role: "endpoint" | "infrastructure" | "gateway" | "nat" | "server" | "network_device" | "unknown";
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            ended_at: string;
+            identity_confidence: number;
+            source: string;
+        };
+        IdentityIPMACHistory: {
+            event_id: string;
+            endpoint_id: string;
+            account_id: string;
+            ip?: string;
+            mac?: string;
+            /** @enum {string} */
+            entity_role: "endpoint" | "infrastructure" | "gateway" | "nat" | "server" | "network_device" | "unknown";
+            /** Format: date-time */
+            seen_at: string;
+            source: string;
+        };
+        IdentityAccessHistory: {
+            event_id: string;
+            endpoint_id: string;
+            account_id: string;
+            access_id: string;
+            vlan_id?: string;
+            switch_id?: string;
+            port_id?: string;
+            ap_id?: string;
+            ssid?: string;
+            /** Format: date-time */
+            seen_at: string;
+            source: string;
+        };
+        AccountIdentityProfile: {
+            account_id: string;
+            summary: string;
+            endpoints: components["schemas"]["EndpointEntity"][];
+            sessions: components["schemas"]["AccountSession"][];
+            ip_history: components["schemas"]["IdentityIPMACHistory"][];
+            access_history: components["schemas"]["IdentityAccessHistory"][];
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+        };
+        EndpointIdentityProfile: {
+            endpoint_id: string;
+            summary: string;
+            endpoint: components["schemas"]["EndpointEntity"];
+            accounts: string[];
+            sessions: components["schemas"]["AccountSession"][];
+            ip_history: components["schemas"]["IdentityIPMACHistory"][];
+            access_history: components["schemas"]["IdentityAccessHistory"][];
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+        };
         NormalizedEventSummary: {
             event_id: string;
             source?: string;
+            source_event_type?: string;
             /** @enum {string} */
-            type: "flow" | "dns" | "tls" | "http" | "quic" | "device" | "alert";
+            type: "flow" | "dns" | "tls" | "http" | "quic" | "device" | "identity" | "alert";
             /** Format: date-time */
             timestamp: string;
             observer?: {
@@ -910,7 +1120,25 @@ export interface components {
                 emitted: number;
                 skipped: number;
                 malformed: number;
+                by_type?: {
+                    [key: string]: number;
+                };
             };
+            zeek_normalized?: {
+                read: number;
+                emitted: number;
+                skipped: number;
+                malformed: number;
+                by_type?: {
+                    [key: string]: number;
+                };
+            };
+            /** @enum {string} */
+            zeek_status?: "not_configured" | "unavailable" | "no_dhcp_events" | "log_truncated" | "ok";
+            zeek_reason?: string;
+            zeek_previous_offset?: number;
+            zeek_new_offset?: number;
+            zeek_truncated?: boolean;
             evidence_count: number;
             risk_count: number;
             risk_list_count: number;
@@ -1306,6 +1534,8 @@ export interface operations {
                 to?: string;
                 limit?: number;
                 cursor?: string;
+                /** @description Include weak-signal-only device inventories. Defaults to false so the device list focuses on high-confidence IP/device profiles. */
+                include_weak?: boolean;
             };
             header?: never;
             path?: never;
@@ -1352,7 +1582,10 @@ export interface operations {
     };
     getIpEvidence: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Maximum number of recent evidence items to return for the IP timeline. */
+                limit?: number;
+            };
             header?: never;
             path: {
                 ip: components["parameters"]["IpPath"];
@@ -1457,6 +1690,97 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getAccountIdentity: {
+        parameters: {
+            query?: {
+                sensor_id?: components["parameters"]["SensorIdQuery"];
+                window?: components["parameters"]["WindowQuery"];
+                from?: components["parameters"]["FromQuery"];
+                to?: components["parameters"]["ToQuery"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current account identity profile with linked endpoints, IPs and access locations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountIdentityProfile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getEndpointIdentity: {
+        parameters: {
+            query?: {
+                sensor_id?: components["parameters"]["SensorIdQuery"];
+                window?: components["parameters"]["WindowQuery"];
+                from?: components["parameters"]["FromQuery"];
+                to?: components["parameters"]["ToQuery"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current endpoint identity profile with linked accounts, IPs and access locations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointIdentityProfile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateEndpointRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateEndpointRegistrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated endpoint registration metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointEntity"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listDevices: {
         parameters: {
             query?: {
@@ -1473,7 +1797,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description IP-scoped device inventories. */
+            /** @description Endpoint-scoped device registration and identity inventories. */
             200: {
                 headers: {
                     [name: string]: unknown;

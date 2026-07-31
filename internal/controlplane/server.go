@@ -62,8 +62,8 @@ type RiskListResponse struct {
 }
 
 type DeviceListResponse struct {
-	Items []store.IPDeviceInventory `json:"items"`
-	Page  Page                      `json:"page"`
+	Items []store.EndpointDeviceInventory `json:"items"`
+	Page  Page                            `json:"page"`
 }
 
 type EventListResponse struct {
@@ -86,6 +86,12 @@ type ShadowRun struct {
 	NewOffset      int64  `json:"new_offset"`
 	Truncated      bool   `json:"truncated"`
 	Normalized     any    `json:"normalized"`
+	ZeekNormalized any    `json:"zeek_normalized,omitempty"`
+	ZeekStatus     string `json:"zeek_status,omitempty"`
+	ZeekReason     string `json:"zeek_reason,omitempty"`
+	ZeekPrevOffset int64  `json:"zeek_previous_offset,omitempty"`
+	ZeekNewOffset  int64  `json:"zeek_new_offset,omitempty"`
+	ZeekTruncated  bool   `json:"zeek_truncated,omitempty"`
 	EvidenceCount  int    `json:"evidence_count"`
 	RiskCount      int    `json:"risk_count"`
 	RiskListCount  int    `json:"risk_list_count"`
@@ -130,6 +136,26 @@ type RuleReloadResult struct {
 	Status      string `json:"status"`
 	Mode        string `json:"mode"`
 	RequestedAt string `json:"requested_at"`
+}
+
+type CreateLabelRequest struct {
+	TargetType  string   `json:"target_type"`
+	TargetID    string   `json:"target_id"`
+	Label       string   `json:"label"`
+	Reason      string   `json:"reason"`
+	EvidenceIDs []string `json:"evidence_ids"`
+}
+
+type UpdateEndpointRegistrationRequest struct {
+	RegistrationStatus   string `json:"registration_status"`
+	OwnerAccount         string `json:"owner_account"`
+	OwnerName            string `json:"owner_name"`
+	OwnerDepartment      string `json:"owner_department"`
+	AssetTag             string `json:"asset_tag"`
+	RegistrationNote     string `json:"registration_note"`
+	MergeStatus          string `json:"merge_status"`
+	MergedIntoEndpointID string `json:"merged_into_endpoint_id"`
+	SplitFromEndpointID  string `json:"split_from_endpoint_id"`
 }
 
 type ErrorResponse struct {
@@ -259,6 +285,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDPIFlow(w, r, strings.TrimPrefix(path, "/dpi/flows/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/dpi/ips/"):
 		s.handleDPIIP(w, r, strings.TrimPrefix(path, "/dpi/ips/"))
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/accounts/"):
+		s.handleAccount(w, r, strings.TrimPrefix(path, "/accounts/"))
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/endpoints/"):
+		s.handleEndpoint(w, r, strings.TrimPrefix(path, "/endpoints/"))
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/endpoints/"):
+		s.handleEndpointRegistration(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case r.Method == http.MethodGet && path == "/devices":
 		s.handleDevices(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/devices/"):
@@ -296,7 +328,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 			RequestedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		})
 	case r.Method == http.MethodPost && path == "/labels":
-		writeError(w, http.StatusForbidden, "read_only", "labels are disabled in read-only control plane mode")
+		s.handleCreateLabel(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "api endpoint not found")
 	}
@@ -321,11 +353,203 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) session() Session {
 	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read"}
+	if !s.readOnly {
+		permissions = append(permissions, "labels:create", "endpoints:write", "rules:reload")
+	}
 	return Session{
 		User:        User{ID: "shadow-viewer", Name: "影子观测只读用户"},
 		Role:        "viewer",
 		Permissions: permissions,
 	}
+}
+
+func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
+	if s.readOnly {
+		writeError(w, http.StatusForbidden, "read_only", "labels are disabled in read-only control plane mode")
+		return
+	}
+	var request CreateLabelRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_label_request", err.Error())
+		return
+	}
+	if err := validateLabelRequest(request); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_label_request", err.Error())
+		return
+	}
+	label := store.Label{
+		TargetType:  request.TargetType,
+		TargetID:    request.TargetID,
+		Label:       request.Label,
+		Reason:      strings.TrimSpace(request.Reason),
+		EvidenceIDs: request.EvidenceIDs,
+		CreatedBy:   s.session().User.ID,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	created, err := s.reader.CreateLabel(ctx, label)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "create_label_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest string) {
+	if !strings.HasSuffix(rest, "/identity") {
+		writeError(w, http.StatusNotFound, "not_found", "account endpoint not found")
+		return
+	}
+	rawAccountID := strings.TrimSuffix(rest, "/identity")
+	accountID, err := store.DecodePathIP(rawAccountID)
+	if err != nil || strings.TrimSpace(accountID) == "" {
+		writeError(w, http.StatusBadRequest, "bad_account_id", "account id is required")
+		return
+	}
+	query, err := identityQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_identity_query", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	profile, ok, err := s.reader.GetAccountIdentity(ctx, accountID, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_account_identity_failed", err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "account_identity_not_found", "account identity profile not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest string) {
+	if !strings.HasSuffix(rest, "/identity") {
+		writeError(w, http.StatusNotFound, "not_found", "endpoint endpoint not found")
+		return
+	}
+	rawEndpointID := strings.TrimSuffix(rest, "/identity")
+	endpointID, err := store.DecodePathIP(rawEndpointID)
+	if err != nil || strings.TrimSpace(endpointID) == "" {
+		writeError(w, http.StatusBadRequest, "bad_endpoint_id", "endpoint id is required")
+		return
+	}
+	query, err := identityQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_identity_query", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	profile, ok, err := s.reader.GetEndpointIdentity(ctx, endpointID, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_endpoint_identity_failed", err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "endpoint_identity_not_found", "endpoint identity profile not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
+}
+
+func (s *Server) handleEndpointRegistration(w http.ResponseWriter, r *http.Request, rest string) {
+	if s.readOnly {
+		writeError(w, http.StatusForbidden, "read_only", "endpoint registration is disabled in read-only control plane mode")
+		return
+	}
+	if !strings.HasSuffix(rest, "/registration") {
+		writeError(w, http.StatusNotFound, "not_found", "endpoint endpoint not found")
+		return
+	}
+	endpointID, err := store.DecodePathIP(strings.TrimSuffix(rest, "/registration"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_endpoint_id", err.Error())
+		return
+	}
+	var request UpdateEndpointRegistrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_endpoint_registration_request", err.Error())
+		return
+	}
+	if err := validateEndpointRegistrationRequest(endpointID, request); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_endpoint_registration_request", err.Error())
+		return
+	}
+	update := store.EndpointRegistrationUpdate{
+		EndpointID:            endpointID,
+		RegistrationStatus:    strings.TrimSpace(request.RegistrationStatus),
+		OwnerAccount:          strings.TrimSpace(request.OwnerAccount),
+		OwnerName:             strings.TrimSpace(request.OwnerName),
+		OwnerDepartment:       strings.TrimSpace(request.OwnerDepartment),
+		AssetTag:              strings.TrimSpace(request.AssetTag),
+		RegistrationNote:      strings.TrimSpace(request.RegistrationNote),
+		MergeStatus:           strings.TrimSpace(request.MergeStatus),
+		MergedIntoEndpointID:  strings.TrimSpace(request.MergedIntoEndpointID),
+		SplitFromEndpointID:   strings.TrimSpace(request.SplitFromEndpointID),
+		RegistrationUpdatedBy: s.session().User.ID,
+		RegistrationUpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	endpoint, err := s.reader.UpdateEndpointRegistration(ctx, update)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update_endpoint_registration_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, endpoint)
+}
+
+func validateLabelRequest(request CreateLabelRequest) error {
+	switch request.TargetType {
+	case "ip", "risk_snapshot", "evidence", "account", "endpoint":
+	default:
+		return fmt.Errorf("unsupported target_type: %s", request.TargetType)
+	}
+	if strings.TrimSpace(request.TargetID) == "" {
+		return fmt.Errorf("target_id is required")
+	}
+	switch request.Label {
+	case "confirmed_proxy", "false_positive", "benign", "needs_more_data":
+	default:
+		return fmt.Errorf("unsupported label: %s", request.Label)
+	}
+	if len(strings.TrimSpace(request.Reason)) < 2 {
+		return fmt.Errorf("reason must contain at least 2 characters")
+	}
+	if request.EvidenceIDs == nil {
+		request.EvidenceIDs = []string{}
+	}
+	return nil
+}
+
+func validateEndpointRegistrationRequest(endpointID string, request UpdateEndpointRegistrationRequest) error {
+	if strings.TrimSpace(endpointID) == "" {
+		return fmt.Errorf("endpoint_id is required")
+	}
+	switch request.RegistrationStatus {
+	case "unregistered", "registered", "ignored", "retired":
+	default:
+		return fmt.Errorf("unsupported registration_status: %s", request.RegistrationStatus)
+	}
+	switch request.MergeStatus {
+	case "", "active", "merged", "split":
+	default:
+		return fmt.Errorf("unsupported merge_status: %s", request.MergeStatus)
+	}
+	if request.RegistrationStatus == "registered" && strings.TrimSpace(request.OwnerAccount) == "" && strings.TrimSpace(request.OwnerName) == "" && strings.TrimSpace(request.AssetTag) == "" {
+		return fmt.Errorf("registered endpoint requires owner_account, owner_name or asset_tag")
+	}
+	if request.MergeStatus == "merged" && strings.TrimSpace(request.MergedIntoEndpointID) == "" {
+		return fmt.Errorf("merged endpoint requires merged_into_endpoint_id")
+	}
+	if strings.TrimSpace(request.MergedIntoEndpointID) == strings.TrimSpace(endpointID) {
+		return fmt.Errorf("merged_into_endpoint_id cannot equal endpoint_id")
+	}
+	return nil
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -437,9 +661,14 @@ func (s *Server) handleIPRisk(w http.ResponseWriter, r *http.Request, ip string)
 }
 
 func (s *Server) handleIPEvidence(w http.ResponseWriter, r *http.Request, ip string) {
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 100)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	items, err := s.reader.GetIPEvidence(ctx, ip)
+	items, err := s.reader.GetIPEvidence(ctx, ip, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_evidence_failed", err.Error())
 		return
@@ -490,7 +719,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	page, err := s.reader.ListDeviceInventories(ctx, query)
+	page, err := s.reader.ListEndpointDevices(ctx, query)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_devices_failed", err.Error())
 		return
@@ -724,7 +953,7 @@ func (s *Server) handleIPEvents(w http.ResponseWriter, r *http.Request, ip strin
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
 		return
 	}
-	events, err := s.reader.ListEventSamples(r.Context(), store.Query{Q: ip, Limit: limit})
+	events, err := s.reader.ListEventSamples(r.Context(), store.Query{SrcIP: ip, Limit: limit})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_events_failed", err.Error())
 		return
@@ -903,16 +1132,53 @@ func deviceQuery(values url.Values) (store.Query, error) {
 		return store.Query{}, fmt.Errorf("bad window: %w", err)
 	}
 	return store.Query{
-		Q:        values.Get("q"),
+		Q:           values.Get("q"),
+		SensorID:    values.Get("sensor_id"),
+		Window:      window,
+		SrcIP:       values.Get("ip"),
+		Limit:       limit,
+		Cursor:      cursor,
+		IncludeWeak: values.Get("include_weak") == "true" || values.Get("include_weak") == "1",
+	}, nil
+}
+
+func identityQuery(values url.Values) (store.Query, error) {
+	limit, err := boundedInt(values.Get("limit"), 200, 1, 1000)
+	if err != nil {
+		return store.Query{}, fmt.Errorf("bad limit: %w", err)
+	}
+	window := values.Get("window")
+	if window != "" {
+		if _, _, err := store.NormalizeActivityWindow(window); err != nil {
+			return store.Query{}, fmt.Errorf("bad window: %w", err)
+		}
+	}
+	return store.Query{
 		SensorID: values.Get("sensor_id"),
+		From:     values.Get("from"),
+		To:       values.Get("to"),
 		Window:   window,
-		SrcIP:    values.Get("ip"),
 		Limit:    limit,
-		Cursor:   cursor,
 	}, nil
 }
 
 func (s *Server) enrichRiskDevices(ctx context.Context, items []risk.Snapshot) {
+	if len(items) == 0 {
+		return
+	}
+	page, err := s.reader.ListDeviceInventories(ctx, store.Query{SensorID: s.sensorID, Window: "1h", Limit: -1, IncludeWeak: true})
+	if err == nil {
+		byIP := make(map[string]store.IPDeviceInventory, len(page.Items))
+		for _, inventory := range page.Items {
+			byIP[inventory.IP] = inventory
+		}
+		for index := range items {
+			if inventory, ok := byIP[items[index].IP]; ok {
+				applyRiskDeviceInventory(&items[index], inventory)
+			}
+		}
+		return
+	}
 	for index := range items {
 		s.enrichRiskDevice(ctx, &items[index])
 	}
@@ -926,6 +1192,10 @@ func (s *Server) enrichRiskDevice(ctx context.Context, snapshot *risk.Snapshot) 
 	if err != nil {
 		return
 	}
+	applyRiskDeviceInventory(snapshot, inventory)
+}
+
+func applyRiskDeviceInventory(snapshot *risk.Snapshot, inventory store.IPDeviceInventory) {
 	snapshot.SuspectedDeviceCount = inventory.SuspectedDeviceCount
 	snapshot.DeviceSummary = inventory.Summary
 	snapshot.DeviceConfidence = inventory.Confidence
@@ -976,7 +1246,13 @@ func toShadowRun(run store.Run) ShadowRun {
 		PreviousOffset: run.PreviousOffset,
 		NewOffset:      run.NewOffset,
 		Truncated:      run.Truncated,
-		Normalized:     normalizedCounts{Read: run.Normalized.Read, Emitted: run.Normalized.Emitted, Skipped: run.Normalized.Skipped, Malformed: run.Normalized.Malformed},
+		Normalized:     normalizedCounts{Read: run.Normalized.Read, Emitted: run.Normalized.Emitted, Skipped: run.Normalized.Skipped, Malformed: run.Normalized.Malformed, ByType: run.Normalized.ByType},
+		ZeekNormalized: optionalNormalizedCounts(run.ZeekNormalized),
+		ZeekStatus:     run.ZeekStatus,
+		ZeekReason:     run.ZeekReason,
+		ZeekPrevOffset: run.ZeekPrevOffset,
+		ZeekNewOffset:  run.ZeekNewOffset,
+		ZeekTruncated:  run.ZeekTruncated,
 		EvidenceCount:  run.EvidenceCount,
 		RiskCount:      run.RiskCount,
 		RiskListCount:  run.RiskListCount,
@@ -984,10 +1260,18 @@ func toShadowRun(run store.Run) ShadowRun {
 }
 
 type normalizedCounts struct {
-	Read      int `json:"read"`
-	Emitted   int `json:"emitted"`
-	Skipped   int `json:"skipped"`
-	Malformed int `json:"malformed"`
+	Read      int            `json:"read"`
+	Emitted   int            `json:"emitted"`
+	Skipped   int            `json:"skipped"`
+	Malformed int            `json:"malformed"`
+	ByType    map[string]int `json:"by_type,omitempty"`
+}
+
+func optionalNormalizedCounts(counts store.NormalizedCounts) any {
+	if counts.Read == 0 && counts.Emitted == 0 && counts.Skipped == 0 && counts.Malformed == 0 && len(counts.ByType) == 0 {
+		return nil
+	}
+	return normalizedCounts{Read: counts.Read, Emitted: counts.Emitted, Skipped: counts.Skipped, Malformed: counts.Malformed, ByType: counts.ByType}
 }
 
 func toEvidenceTypeStats(items []ingest.EventTypeCount) []EvidenceTypeStat {

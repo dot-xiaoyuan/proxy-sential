@@ -29,7 +29,12 @@
   "subject": {
     "ip": "10.1.2.3",
     "user_id": "20260001",
-    "mac": "aa:bb:cc:dd:ee:ff"
+    "account_id": "20260001",
+    "endpoint_id": "mac:aa:bb:cc:dd:ee:ff",
+    "mac": "aa:bb:cc:dd:ee:ff",
+    "access_id": "Dorm-3F-AP08",
+    "entity_role": "endpoint",
+    "identity_confidence": 0.9
   },
   "flow": {
     "src_ip": "10.1.2.3",
@@ -144,9 +149,55 @@ payload：
   "vendor": "Apple",
   "os": "iOS",
   "model": "iPhone",
-  "ttl": 64
+  "ttl": 64,
+  "hostname": "yuan-iphone",
+  "vendor_class": "Apple iOS DHCP",
+  "requested_options": "1,3,6,15,119,252",
+  "client_mac": "aa:bb:cc:dd:ee:ff",
+  "device_hint": "apple"
 }
 ```
+
+第一阶段 Zeek 设备指纹 PoC 只接入 `dhcp.log`，将 `host_name`、
+`client_software`、`requested_options`、`mac`、`requested_addr` 和
+`assigned_addr` 映射到 `device` 标准事件。`device_hint` 是本地轻量归类，
+不依赖 Fingerbank 在线查询。
+
+第二阶段开始接入 Zeek `software.log`，仍映射为 `device` 标准事件：
+
+- `payload.origin = "software"`
+- `source_event_type = "software"`
+- `payload.software_type/software_name/software_version`
+- 当 `software_type = DHCP::CLIENT` 时，将 `unparsed_version` 同步为
+  `payload.vendor_class`，用于和 DHCP 设备画像合并。
+
+`software.log` 只作为标准设备信号来源，不让风险层直接读取 Zeek 原始日志结构。
+
+### identity
+
+账号、终端、IP 和接入位置的身份关联事件，来自 RADIUS、Portal、802.1X、
+DHCP、交换机 MAC 表、无线 AC、网关会话日志等控制面数据。
+
+payload：
+
+```json
+{
+  "origin": "radius",
+  "action": "login",
+  "auth_method": "802.1x",
+  "vlan": "108",
+  "ap": "Dorm-3F-AP08",
+  "switch_id": "sw-dorm-03",
+  "switch_port": "Gi1/0/8",
+  "session_id": "radius-session-xxx",
+  "auth_mac": "aa:bb:cc:dd:ee:ff",
+  "observed_mac": "aa:bb:cc:dd:ee:ff"
+}
+```
+
+`identity` 事件必须先进入标准事件层，风险层不得直接读取 RADIUS、
+Portal 或交换机原始字段。缺少 MAC 或明确终端标识时，`entity_role`
+默认只能是 `unknown`，不得直接计入普通终端并发。
 
 ## subject 归属
 
@@ -162,4 +213,3 @@ payload：
 - v1 字段只新增，不删除。
 - 破坏性调整必须升级 schema_version。
 - Adapter 必须保留未知字段到 raw_ref 或 raw_summary。
-

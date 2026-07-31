@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/adapter/suricata"
+	"proxy-sentinel/internal/adapter/zeek"
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
 	"proxy-sentinel/internal/shadow"
@@ -49,8 +51,15 @@ func TestOverviewAndShadowRunsUseLatestRun(t *testing.T) {
 	writeRun(t, shadowDir, "20260727-101000", testRun{
 		startedAt: "2026-07-27T10:10:00+08:00",
 		normalized: suricata.Stats{
-			Read: 11, Emitted: 10, Skipped: 1, Malformed: 0,
+			Read: 11, Emitted: 10, Skipped: 1, Malformed: 0, ByType: map[string]int{"device": 2, "http": 8},
 		},
+		zeekNormalized: zeek.Stats{
+			Read: 4, Emitted: 2, Skipped: 2, ByType: map[string]int{"device": 2},
+		},
+		zeekStatus:     "ok",
+		zeekReason:     "zeek dhcp log produced device events",
+		zeekPrevOffset: 1000,
+		zeekNewOffset:  2000,
 		evidence: []evidence.Evidence{
 			evidenceItem("evidence-a", "192.168.0.2", "multi_user_agent", "2026-07-27T10:10:01+08:00"),
 			evidenceItem("evidence-b", "192.168.0.3", "port_distribution", "2026-07-27T10:10:02+08:00"),
@@ -90,6 +99,25 @@ func TestOverviewAndShadowRunsUseLatestRun(t *testing.T) {
 	getJSON(t, server, "/api/v1/shadow/runs", http.StatusOK, &runs)
 	if len(runs.Runs) != 2 || runs.Runs[0].RunID != "20260727-101000" || runs.Runs[0].SensorID != "office-30" {
 		t.Fatalf("unexpected runs: %#v", runs.Runs)
+	}
+	normalized := runs.Runs[0].Normalized.(map[string]any)
+	if normalized["by_type"].(map[string]any)["device"].(float64) != 2 {
+		t.Fatalf("expected merged device by_type in shadow run, got %#v", runs.Runs[0].Normalized)
+	}
+	zeekNormalized := runs.Runs[0].ZeekNormalized.(map[string]any)
+	if zeekNormalized["by_type"].(map[string]any)["device"].(float64) != 2 {
+		t.Fatalf("expected zeek device stats in shadow run, got %#v", runs.Runs[0].ZeekNormalized)
+	}
+	if runs.Runs[0].ZeekStatus != "ok" || runs.Runs[0].ZeekPrevOffset != 1000 || runs.Runs[0].ZeekNewOffset != 2000 {
+		t.Fatalf("expected zeek status and offsets in shadow run, got %#v", runs.Runs[0])
+	}
+
+	var diagnostics struct {
+		Diagnostics []ingest.Diagnostic `json:"diagnostics"`
+	}
+	getJSON(t, server, "/api/v1/ingest/diagnostics", http.StatusOK, &diagnostics)
+	if len(diagnostics.Diagnostics) == 0 || diagnostics.Diagnostics[0].Details["zeek_status"] != "ok" {
+		t.Fatalf("expected zeek status in ingest diagnostics, got %#v", diagnostics.Diagnostics)
 	}
 }
 
@@ -277,6 +305,48 @@ func TestDeviceInventoryEndpointsExposeConservativeSignals(t *testing.T) {
 	}
 }
 
+func TestIdentityProfileEndpointsExposeAccountAndEndpointContext(t *testing.T) {
+	shadowDir := t.TempDir()
+	writeRun(t, shadowDir, "20260730-101000", testRun{
+		startedAt: "2026-07-30T10:10:00+08:00",
+		normalized: suricata.Stats{
+			Read: 2, Emitted: 2, ByType: map[string]int{"identity": 2},
+		},
+		events: []normalized.Event{
+			identityEvent("identity-a", "2026000123", "10.20.15.83", "aa:bb:cc:dd:ee:01", "Dorm-A-AP01", "sess-1", "2026-07-30T10:00:00+08:00"),
+			identityEvent("identity-b", "2026000123", "10.20.16.44", "aa:bb:cc:dd:ee:01", "Dorm-A-AP01", "sess-1", "2026-07-30T10:05:00+08:00"),
+		},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "test-sensor", ReadOnly: true})
+
+	var account store.AccountIdentityProfile
+	getJSON(t, server, "/api/v1/accounts/2026000123/identity?limit=20", http.StatusOK, &account)
+	if account.AccountID != "2026000123" || len(account.Endpoints) != 1 || len(account.IPHistory) != 2 || len(account.AccessHistory) != 2 {
+		t.Fatalf("unexpected account identity profile: %#v", account)
+	}
+	if account.Endpoints[0].EndpointID != "mac:aa:bb:cc:dd:ee:01" || account.LastSeen == "" {
+		t.Fatalf("expected endpoint and last seen in account profile: %#v", account)
+	}
+
+	var endpoint store.EndpointIdentityProfile
+	getJSON(t, server, "/api/v1/endpoints/"+url.PathEscape("mac:aa:bb:cc:dd:ee:01")+"/identity?limit=20", http.StatusOK, &endpoint)
+	if endpoint.EndpointID != "mac:aa:bb:cc:dd:ee:01" || len(endpoint.Accounts) != 1 || endpoint.Accounts[0] != "2026000123" || len(endpoint.IPHistory) != 2 {
+		t.Fatalf("unexpected endpoint identity profile: %#v", endpoint)
+	}
+
+	var devices DeviceListResponse
+	getJSON(t, server, "/api/v1/devices?limit=20", http.StatusOK, &devices)
+	if len(devices.Items) != 1 || devices.Items[0].EndpointID != "mac:aa:bb:cc:dd:ee:01" || devices.Items[0].CurrentIP == "" || devices.Items[0].CurrentAccessID != "Dorm-A-AP01" {
+		t.Fatalf("unexpected endpoint device list: %#v", devices)
+	}
+
+	var errResponse ErrorResponse
+	getJSON(t, server, "/api/v1/accounts/missing/identity", http.StatusNotFound, &errResponse)
+	if errResponse.Code != "account_identity_not_found" {
+		t.Fatalf("unexpected missing account response: %#v", errResponse)
+	}
+}
+
 func TestActivityOverviewAggregatesObservedDomainAndRiskIPs(t *testing.T) {
 	shadowDir := t.TempDir()
 	writeRun(t, shadowDir, "20260727-101000", testRun{
@@ -360,11 +430,85 @@ func TestReadOnlySessionLabelsAndRulesReload(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("expected labels 403, got %d", recorder.Code)
 	}
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/endpoints/mac%3Aaa%3Abb%3Acc%3Add%3Aee%3A01/registration", strings.NewReader(`{}`))
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected endpoint registration 403, got %d", recorder.Code)
+	}
 
 	var reload RuleReloadResult
 	postJSON(t, server, "/api/v1/rules/reload", http.StatusAccepted, &reload)
 	if reload.Status != "disabled" || reload.Mode != "shadow" {
 		t.Fatalf("unexpected reload result: %#v", reload)
+	}
+}
+
+func TestCreateLabelWritesAuditInNonReadOnlyMode(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: false})
+
+	var session Session
+	getJSON(t, server, "/api/v1/session", http.StatusOK, &session)
+	if !hasPermission(session.Permissions, "labels:create") {
+		t.Fatalf("expected labels:create permission, got %#v", session.Permissions)
+	}
+
+	var label store.Label
+	postJSONBody(t, server, "/api/v1/labels", http.StatusCreated, &label, `{
+		"target_type":"ip",
+		"target_id":"10.0.0.8",
+		"label":"false_positive",
+		"reason":"人工复核确认是测试设备",
+		"evidence_ids":["evidence-1"]
+	}`)
+	if label.LabelID == "" || label.CreatedBy == "" || label.TargetID != "10.0.0.8" {
+		t.Fatalf("unexpected created label: %#v", label)
+	}
+
+	var audit struct {
+		Logs []AuditLog `json:"logs"`
+	}
+	getJSON(t, server, "/api/v1/audit-logs", http.StatusOK, &audit)
+	if len(audit.Logs) == 0 || audit.Logs[0].Action != "labels.create" {
+		t.Fatalf("expected labels.create audit log, got %#v", audit.Logs)
+	}
+}
+
+func TestUpdateEndpointRegistrationWritesAuditAndProfile(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: false})
+
+	var session Session
+	getJSON(t, server, "/api/v1/session", http.StatusOK, &session)
+	if !hasPermission(session.Permissions, "endpoints:write") {
+		t.Fatalf("expected endpoints:write permission, got %#v", session.Permissions)
+	}
+
+	endpointID := "mac:aa:bb:cc:dd:ee:01"
+	var endpoint store.EndpointEntity
+	postJSONBody(t, server, "/api/v1/endpoints/"+url.PathEscape(endpointID)+"/registration", http.StatusOK, &endpoint, `{
+		"registration_status":"registered",
+		"owner_account":"2026000123",
+		"owner_name":"张三",
+		"owner_department":"计算机学院",
+		"asset_tag":"LAPTOP-001",
+		"registration_note":"人工登记样本"
+	}`)
+	if endpoint.EndpointID != endpointID || endpoint.RegistrationStatus != "registered" || endpoint.OwnerAccount != "2026000123" || endpoint.MergeStatus != "active" {
+		t.Fatalf("unexpected endpoint registration response: %#v", endpoint)
+	}
+
+	var profile store.EndpointIdentityProfile
+	getJSON(t, server, "/api/v1/endpoints/"+url.PathEscape(endpointID)+"/identity", http.StatusOK, &profile)
+	if profile.Endpoint.RegistrationStatus != "registered" || profile.Endpoint.OwnerName != "张三" || profile.Endpoint.AssetTag != "LAPTOP-001" {
+		t.Fatalf("expected endpoint identity to include registration metadata, got %#v", profile.Endpoint)
+	}
+
+	var audit struct {
+		Logs []AuditLog `json:"logs"`
+	}
+	getJSON(t, server, "/api/v1/audit-logs", http.StatusOK, &audit)
+	if len(audit.Logs) == 0 || audit.Logs[0].Action != "endpoints.registration.update" {
+		t.Fatalf("expected endpoints.registration.update audit log, got %#v", audit.Logs)
 	}
 }
 
@@ -396,6 +540,15 @@ func TestAPICORSAllowsLocalDevOrigins(t *testing.T) {
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:5173" {
 		t.Fatalf("unexpected allow origin on GET: %q", got)
 	}
+}
+
+func hasPermission(permissions []string, expected string) bool {
+	for _, permission := range permissions {
+		if permission == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAPICORSRejectsUnknownPreflightOrigin(t *testing.T) {
@@ -609,11 +762,17 @@ func TestDPIEndpointsFromFileStore(t *testing.T) {
 }
 
 type testRun struct {
-	startedAt  string
-	normalized suricata.Stats
-	evidence   []evidence.Evidence
-	risks      []risk.Snapshot
-	events     []normalized.Event
+	startedAt      string
+	normalized     suricata.Stats
+	zeekNormalized zeek.Stats
+	zeekStatus     string
+	zeekReason     string
+	zeekPrevOffset int64
+	zeekNewOffset  int64
+	zeekTruncated  bool
+	evidence       []evidence.Evidence
+	risks          []risk.Snapshot
+	events         []normalized.Event
 }
 
 func writeRun(t *testing.T, shadowDir string, runID string, run testRun) {
@@ -637,6 +796,12 @@ func writeRun(t *testing.T, shadowDir string, runID string, run testRun) {
 		NewOffset:      200,
 		Truncated:      false,
 		Normalized:     run.normalized,
+		ZeekNormalized: run.zeekNormalized,
+		ZeekStatus:     run.zeekStatus,
+		ZeekReason:     run.zeekReason,
+		ZeekPrevOffset: run.zeekPrevOffset,
+		ZeekNewOffset:  run.zeekNewOffset,
+		ZeekTruncated:  run.zeekTruncated,
 		EvidenceCount:  len(run.evidence),
 		RiskCount:      len(run.risks),
 		RiskListCount:  len(run.risks),
@@ -732,6 +897,37 @@ func baseEvent(id, ip, timestamp, eventType string) normalized.Event {
 	}
 }
 
+func identityEvent(id, accountID, ip, mac, accessID, sessionID, timestamp string) normalized.Event {
+	return normalized.Event{
+		SchemaVersion:   "v1",
+		EventID:         id,
+		Source:          "radius",
+		SourceEventType: "identity",
+		Type:            "identity",
+		Timestamp:       timestamp,
+		Observer:        map[string]any{"sensor_id": "test-sensor"},
+		Subject: map[string]any{
+			"ip":                  ip,
+			"account_id":          accountID,
+			"user_id":             accountID,
+			"endpoint_id":         "mac:" + mac,
+			"mac":                 mac,
+			"access_id":           accessID,
+			"entity_role":         "endpoint",
+			"identity_confidence": 0.92,
+		},
+		Flow: map[string]any{"src_ip": ip, "dst_ip": "0.0.0.0", "proto": "other", "direction": "unknown"},
+		Payload: map[string]any{
+			"origin":     "radius",
+			"session_id": sessionID,
+			"ap":         accessID,
+			"vlan":       "108",
+		},
+		Confidence: 0.92,
+		RawRef:     map[string]any{"backend": "radius"},
+	}
+}
+
 func hasActivityValue(items []store.ActivityCount, value string) bool {
 	for _, item := range items {
 		if item.Value == value {
@@ -777,7 +973,12 @@ func getJSON(t *testing.T, server *Server, path string, status int, target any) 
 
 func postJSON(t *testing.T, server *Server, path string, status int, target any) {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+	postJSONBody(t, server, path, status, target, `{}`)
+}
+
+func postJSONBody(t *testing.T, server *Server, path string, status int, target any, body string) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	recorder := httptest.NewRecorder()
 	server.Handler().ServeHTTP(recorder, request)
 	decodeResponse(t, recorder, status, target)

@@ -72,7 +72,7 @@ export function OverviewPage() {
 
       <section className="metric-grid">
         <AppMetricCard
-          icon={<AlertOutlined style={{ color: '#ef4444' }} />}
+          icon={<AlertOutlined className="text-danger-color" />}
           statusColor="red"
           statusText="需复核"
           title="待复核压力"
@@ -80,7 +80,7 @@ export function OverviewPage() {
           value={overview.data.pending_reviews}
         />
         <AppMetricCard
-          icon={<DatabaseOutlined style={{ color: '#0284c7' }} />}
+          icon={<DatabaseOutlined className="text-primary-color" />}
           statusColor="blue"
           statusText="AF_XDP 吞吐"
           title="DPI 标准事件"
@@ -88,14 +88,14 @@ export function OverviewPage() {
           value={overview.data.throughput.events}
         />
         <AppMetricCard
-          icon={<SafetyCertificateOutlined style={{ color: '#8b5cf6' }} />}
+          icon={<SafetyCertificateOutlined className="text-purple-color" />}
           statusColor="purple"
           statusText="多重指纹"
           title="聚合证据数"
           value={overview.data.throughput.evidence}
         />
         <AppMetricCard
-          icon={<CheckCircleOutlined style={{ color: '#059669' }} />}
+          icon={<CheckCircleOutlined className="text-success-color" />}
           statusColor="green"
           statusText="影子评估"
           title="全网风险快照"
@@ -110,16 +110,16 @@ export function OverviewPage() {
           title="全网风险等级分布 (Risk Level Distribution)"
         />
 
-        <Card className="surface-card" size="small" style={{ height: '100%' }}>
+        <Card className="surface-card h-full" size="small">
           <div className="dpi-card-header">
             <div className="dpi-card-title">
               <span>Top Evidence (热点证据贡献排行)</span>
             </div>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <Typography.Text type="secondary" className="font-size-sm">
               多重 UA、JA3/JA4 错配与 TTL 步进占比
             </Typography.Text>
           </div>
-          <Space orientation="vertical" size={10} style={{ width: '100%', marginTop: 8 }}>
+          <Space orientation="vertical" size={10} className="w-full margin-top-sm">
             {overview.data.top_evidence.map((item) => (
               <Row align="middle" className="overview-top-item" justify="space-between" key={item.type}>
                 <Col>
@@ -138,10 +138,10 @@ export function OverviewPage() {
         <section className="surface">
           <Row align="middle" justify="space-between" gutter={[16, 16]}>
             <Col>
-              <Typography.Title level={4} style={{ margin: 0 }}>
+              <Typography.Title level={4} className="margin-zero">
                 DPI 访问态势实时联动
               </Typography.Title>
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+              <Typography.Text type="secondary" className="font-size-md">
                 Sensor 在指定窗口 ({quickWindow}) 内抓取到 {activity.data?.active_ip_count ?? 0} 个识别终端、
                 {activity.data?.access_object_count ?? 0} 个访问目标。
               </Typography.Text>
@@ -149,18 +149,18 @@ export function OverviewPage() {
             <Col>
               <Space wrap size="large">
                 <div>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>标准事件数</Typography.Text>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: '#0284c7' }}>
+                  <Typography.Text type="secondary" className="font-size-sm">标准事件数</Typography.Text>
+                  <div className="stat-value-primary">
                     {activity.data?.event_count ?? 0}
                   </div>
                 </div>
                 <div>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>活跃共享 IP</Typography.Text>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: '#ef4444' }}>
+                  <Typography.Text type="secondary" className="font-size-sm">活跃共享 IP</Typography.Text>
+                  <div className="stat-value-danger">
                     {activity.data?.active_risk_ip_count ?? 0}
                   </div>
                 </div>
-                <Link to="/activity" style={{ fontWeight: 600, color: '#0284c7' }}>
+                <Link to="/activity" className="text-primary-color font-weight-600">
                   进入深度 DPI 态势矩阵 ➔
                 </Link>
               </Space>
@@ -170,13 +170,13 @@ export function OverviewPage() {
 
         <section className="surface">
           <div className="dpi-card-header">
-            <Typography.Title level={4} style={{ margin: 0 }}>
+            <Typography.Title level={4} className="margin-zero">
               最近影子运行 (Latest Shadow Execution)
             </Typography.Title>
           </div>
           <Space wrap size="middle">
-            <Typography.Text className="mono" style={{ color: '#0284c7', fontWeight: 600 }}>
-              <ClockCircleOutlined style={{ marginRight: 6 }} />
+            <Typography.Text className="mono text-primary-color font-weight-600">
+              <ClockCircleOutlined className="icon-margin-right-sm" />
               {overview.data.latest_shadow_run.run_id}
             </Typography.Text>
             <Typography.Text type="secondary">Sensor: {overview.data.latest_shadow_run.sensor_id}</Typography.Text>

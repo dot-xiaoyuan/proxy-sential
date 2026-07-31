@@ -44,6 +44,106 @@ func TestAnalyzeEmitsExplainableEvidence(t *testing.T) {
 	}
 }
 
+func TestAnalyzeEmitsDHCPDeviceFingerprintEvidence(t *testing.T) {
+	input := bytes.NewBufferString(
+		normalizedLine("device-apple", "device", map[string]any{
+			"origin":            "dhcp",
+			"hostname":          "Yuan-iPhone",
+			"vendor_class":      "Apple iOS DHCP",
+			"requested_options": "1,3,6,15,119,252",
+			"client_mac":        "aa:bb:cc:dd:ee:01",
+			"device_hint":       "apple",
+		}, map[string]any{"dst_port": 67}) + "\n" +
+			normalizedLine("device-windows", "device", map[string]any{
+				"origin":            "dhcp",
+				"hostname":          "DESKTOP-9NQ1",
+				"vendor_class":      "MSFT 5.0",
+				"requested_options": "1,3,6,15,31,33,43,44,46,47,119,121,249,252",
+				"client_mac":        "aa:bb:cc:dd:ee:02",
+				"device_hint":       "windows",
+			}, map[string]any{"dst_port": 67}) + "\n")
+
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byType := map[string]Evidence{}
+	for _, ev := range result.Evidence {
+		byType[ev.Type] = ev
+	}
+	for _, expected := range []string{"dhcp_device_fingerprint", "device_fingerprint_conflict"} {
+		ev, ok := byType[expected]
+		if !ok {
+			t.Fatalf("missing evidence type %s in %+v", expected, byType)
+		}
+		if ev.Score == 0 || ev.Confidence < 0.8 || len(ev.Samples) == 0 || ev.Reason == "" {
+			t.Fatalf("unexpected device evidence: %+v", ev)
+		}
+	}
+}
+
+func TestAnalyzeEmitsAccountSharingEvidence(t *testing.T) {
+	input := bytes.NewBufferString(
+		identityLine("id-1", "2026000123", "10.0.0.8", "aa:bb:cc:dd:ee:01", "Dorm-A-AP01", "endpoint", map[string]any{}) + "\n" +
+			identityLine("id-2", "2026000123", "10.0.0.9", "aa:bb:cc:dd:ee:02", "Dorm-B-AP09", "endpoint", map[string]any{}) + "\n")
+
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byType := map[string]Evidence{}
+	for _, ev := range result.Evidence {
+		byType[ev.Type] = ev
+	}
+	ev, ok := byType["account_concurrent_macs"]
+	if !ok {
+		t.Fatalf("missing account_concurrent_macs in %+v", byType)
+	}
+	if ev.SubjectType != "account" || ev.SubjectID != "2026000123" || ev.AccountID != "2026000123" || ev.Score < 60 {
+		t.Fatalf("unexpected account evidence: %+v", ev)
+	}
+	if _, ok := byType["account_concurrent_access"]; !ok {
+		t.Fatalf("missing account_concurrent_access in %+v", byType)
+	}
+}
+
+func TestAnalyzeDoesNotCountInfrastructureAsAccountEndpoint(t *testing.T) {
+	input := bytes.NewBufferString(
+		identityLine("infra-1", "2026000123", "10.0.0.1", "aa:bb:cc:dd:ee:01", "gw", "gateway", map[string]any{}) + "\n" +
+			identityLine("infra-2", "2026000123", "10.0.0.2", "aa:bb:cc:dd:ee:02", "dns", "server", map[string]any{}) + "\n")
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range result.Evidence {
+		if ev.SubjectType == "account" {
+			t.Fatalf("infrastructure events should not produce account endpoint evidence: %+v", ev)
+		}
+	}
+}
+
+func TestAnalyzeEmitsAuthObservedMACMismatchEvidence(t *testing.T) {
+	input := bytes.NewBufferString(
+		identityLine("id-mismatch", "2026000123", "10.0.0.8", "aa:bb:cc:dd:ee:01", "Dorm-A-AP01", "endpoint", map[string]any{
+			"auth_mac":     "aa:bb:cc:dd:ee:01",
+			"observed_mac": "aa:bb:cc:dd:ee:02",
+		}) + "\n")
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range result.Evidence {
+		if ev.Type == "auth_observed_mac_mismatch" {
+			if ev.SubjectType != "account" || ev.SubjectID != "2026000123" || ev.Score < 60 {
+				t.Fatalf("unexpected mismatch evidence: %+v", ev)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing auth_observed_mac_mismatch evidence: %+v", result.Evidence)
+}
+
 func TestAnalyzeConvertedFixtureIsDeterministic(t *testing.T) {
 	inputPath := filepath.Join("..", "..", "examples", "suricata", "eve-mirror-20260724-131645-redacted.jsonl")
 	input, err := os.Open(inputPath)
@@ -75,6 +175,38 @@ func TestAnalyzeConvertedFixtureIsDeterministic(t *testing.T) {
 	if !bytes.Equal(mustJSON(t, first), mustJSON(t, second)) {
 		t.Fatal("expected deterministic evidence output")
 	}
+}
+
+func identityLine(id, accountID, ip, mac, accessID, entityRole string, payload map[string]any) string {
+	event := map[string]any{
+		"schema_version": "v1",
+		"event_id":       id,
+		"source":         "radius",
+		"type":           "identity",
+		"timestamp":      "2026-07-24T13:20:00Z",
+		"subject": map[string]any{
+			"ip":                  ip,
+			"account_id":          accountID,
+			"endpoint_id":         "mac:" + mac,
+			"mac":                 mac,
+			"access_id":           accessID,
+			"entity_role":         entityRole,
+			"identity_confidence": 0.92,
+		},
+		"flow": map[string]any{
+			"src_ip":    ip,
+			"dst_ip":    "0.0.0.0",
+			"proto":     "other",
+			"direction": "unknown",
+		},
+		"payload":    payload,
+		"confidence": 0.92,
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
 }
 
 func normalizedLine(id string, eventType string, payload map[string]any, flow map[string]any) string {

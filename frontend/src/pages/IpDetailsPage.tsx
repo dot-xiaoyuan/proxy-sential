@@ -1,12 +1,12 @@
 import { useParams } from 'react-router-dom'
-import { Alert, Descriptions, Progress, Skeleton, Space, Statistic, Table, Tag, Typography } from 'antd'
+import { Alert, Descriptions, Progress, Skeleton, Space, Statistic, Table, Tabs, Tag, Typography } from 'antd'
 
 import { EvidenceList } from '../entities/evidence/EvidenceList'
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { RiskScore } from '../entities/risk/RiskScore'
 import { LabelPanel } from '../features/labels/LabelPanel'
 import { useIpActivity, useIpDevices, useIpEvidence, useIpEvents, useIpRisk, useSession } from '../shared/api/queries'
-import type { ActivityAccess, ActivityCount, DeviceConflict, DeviceSignal, IpDeviceInventory, ObservedDevice } from '../shared/api/types'
+import type { ActivityAccess, ActivityCount, DeviceConflict, DeviceSignal, IpDeviceInventory, NormalizedEventSummary, ObservedDevice } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
 
 export function IpDetailsPage() {
@@ -14,23 +14,25 @@ export function IpDetailsPage() {
   const ip = decodeURIComponent(rawIp)
   const session = useSession()
   const risk = useIpRisk(ip)
-  const evidence = useIpEvidence(ip)
+  const evidence = useIpEvidence(ip, { limit: 20 })
   const activity = useIpActivity(ip)
-  const devices = useIpDevices(ip, { window: '1h' })
+  const devices = useIpDevices(ip, { window: '24h' })
   const events = useIpEvents(ip)
   const canLabel = can(session.data, 'labels:create')
 
-  if (risk.isLoading || evidence.isLoading || activity.isLoading || devices.isLoading || events.isLoading) {
+  if (risk.isLoading) {
     return <Skeleton active />
   }
 
-  if (risk.isError || evidence.isError || activity.isError || devices.isError || events.isError || !risk.data) {
+  if (risk.isError || !risk.data) {
     return <Alert showIcon title="IP 详情加载失败" type="error" />
   }
 
   const evidenceItems = evidence.data?.evidence ?? []
+  const eventItems = events.data?.events ?? []
   const profile = activity.data
   const deviceInventory = devices.data
+  const recentAccesses = profile?.recent_accesses.slice(0, 8) ?? []
 
   return (
     <main className="page">
@@ -52,7 +54,7 @@ export function IpDetailsPage() {
           <Typography.Title level={4}>风险摘要与置信度</Typography.Title>
           <Descriptions column={1} size="small">
             <Descriptions.Item label="置信度">
-              <Typography.Text strong style={{ color: '#38bdf8' }}>
+              <Typography.Text strong className="text-light-blue">
                 {Math.round(risk.data.confidence * 100)}%
               </Typography.Text>
             </Descriptions.Item>
@@ -64,7 +66,7 @@ export function IpDetailsPage() {
               {new Date(risk.data.updated_at).toLocaleString()}
             </Descriptions.Item>
             <Descriptions.Item label="证据解释">
-              <Typography.Text className="wrap-text" style={{ color: '#f8fafc' }}>
+              <Typography.Text className="wrap-text text-white-bg">
                 {risk.data.summary}
               </Typography.Text>
             </Descriptions.Item>
@@ -72,7 +74,7 @@ export function IpDetailsPage() {
         </div>
         <div className="surface">
           <Typography.Title level={4}>人工标注控制台</Typography.Title>
-          {!canLabel && <Alert showIcon style={{ marginBottom: 16 }} title="当前会话没有 labels:create 权限" type="warning" />}
+          {!canLabel && <Alert showIcon className="margin-bottom-md" title="当前会话没有 labels:create 权限" type="warning" />}
           <LabelPanel
             disabled={!canLabel}
             evidenceIds={risk.data.evidence_ids}
@@ -83,20 +85,28 @@ export function IpDetailsPage() {
 
       <section className="surface">
         <Typography.Title level={4}>IP 维度设备识别</Typography.Title>
-        {deviceInventory ? renderDeviceInventory(deviceInventory) : (
+        {devices.isLoading ? (
+          <Skeleton active paragraph={{ rows: 4 }} />
+        ) : devices.isError ? (
+          <Alert showIcon title="设备识别加载失败" type="warning" />
+        ) : deviceInventory ? renderDeviceInventory(deviceInventory) : (
           <Typography.Text type="secondary">暂无设备识别结果</Typography.Text>
         )}
       </section>
 
       <section className="surface">
         <Typography.Title level={4}>访问画像</Typography.Title>
-        {!profile || profile.event_count === 0 ? (
+        {activity.isLoading ? (
+          <Skeleton active paragraph={{ rows: 4 }} />
+        ) : activity.isError ? (
+          <Alert showIcon title="访问画像加载失败" type="warning" />
+        ) : !profile || profile.event_count === 0 ? (
           <Typography.Text type="secondary">暂无该 IP 的标准事件画像</Typography.Text>
         ) : (
-          <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+          <Space className="full-width" orientation="vertical" size="middle">
             <div className="metric-grid">
               <div className="surface metric-card">
-                <Statistic title="样本事件" value={profile.event_count} />
+                <Statistic title="分析样本" value={profile.event_count} />
               </div>
               <div className="surface metric-card">
                 <Statistic title="访问域名" value={profile.top_domains.length} />
@@ -109,36 +119,48 @@ export function IpDetailsPage() {
               </div>
             </div>
 
-            <section className="details-grid">
-              <div>
-                <Typography.Title level={5}>访问了什么</Typography.Title>
-                {renderCountList(profile.top_domains, '暂无 DNS/HTTP Host/SNI')}
+            <section className="activity-insight-grid">
+              <div className="activity-insight-panel">
+                <div className="section-title-row">
+                  <Typography.Title level={5}>主要访问对象</Typography.Title>
+                  <Typography.Text type="secondary">Top {Math.min(profile.top_domains.length, 8)}</Typography.Text>
+                </div>
+                {renderRankList(profile.top_domains, '暂无 DNS/HTTP Host/SNI')}
               </div>
-              <div>
-                <Typography.Title level={5}>目的端口 / 协议</Typography.Title>
-                {renderCountList([...profile.top_dst_ports, ...profile.protocol_counts], '暂无端口或协议分布')}
+              <div className="activity-insight-panel">
+                <div className="section-title-row">
+                  <Typography.Title level={5}>目的分布</Typography.Title>
+                  <Typography.Text type="secondary">端口 / 协议</Typography.Text>
+                </div>
+                {renderRankList([...profile.top_dst_ports, ...profile.protocol_counts], '暂无端口或协议分布', 6)}
               </div>
-            </section>
-
-            <section className="details-grid">
-              <div>
-                <Typography.Title level={5}>客户端特征</Typography.Title>
-                <Typography.Text type="secondary">User-Agent 弱信号</Typography.Text>
-                {renderCountList(profile.top_user_agents, '暂无 User-Agent 弱信号')}
-                <Typography.Text type="secondary">TLS 指纹</Typography.Text>
-                {renderCountList(profile.top_tls_fingerprints, '暂无 JA3/JA4')}
+              <div className="activity-insight-panel">
+                <div className="section-title-row">
+                  <Typography.Title level={5}>客户端特征</Typography.Title>
+                  <Typography.Text type="secondary">UA / TLS</Typography.Text>
+                </div>
+                <Typography.Text className="activity-subtitle" type="secondary">User-Agent 弱信号</Typography.Text>
+                {renderRankList(profile.top_user_agents, '暂无 User-Agent 弱信号', 4)}
+                <Typography.Text className="activity-subtitle" type="secondary">TLS 指纹</Typography.Text>
+                {renderRankList(profile.top_tls_fingerprints, '暂无 JA3/JA4', 4)}
               </div>
-              <div>
-                <Typography.Title level={5}>分协议访问对象</Typography.Title>
-                <Typography.Text type="secondary">HTTP Host</Typography.Text>
-                {renderCountList(profile.top_http_hosts, '暂无 HTTP Host')}
-                <Typography.Text type="secondary">TLS SNI</Typography.Text>
-                {renderCountList(profile.top_tls_sni, '暂无 TLS SNI')}
+              <div className="activity-insight-panel">
+                <div className="section-title-row">
+                  <Typography.Title level={5}>分协议对象</Typography.Title>
+                  <Typography.Text type="secondary">HTTP / TLS</Typography.Text>
+                </div>
+                <Typography.Text className="activity-subtitle" type="secondary">HTTP Host</Typography.Text>
+                {renderRankList(profile.top_http_hosts, '暂无 HTTP Host', 4)}
+                <Typography.Text className="activity-subtitle" type="secondary">TLS SNI</Typography.Text>
+                {renderRankList(profile.top_tls_sni, '暂无 TLS SNI', 4)}
               </div>
             </section>
 
             <div>
-              <Typography.Title level={5}>最近访问明细</Typography.Title>
+              <div className="section-title-row">
+                <Typography.Title level={5}>最近访问样本</Typography.Title>
+                <Typography.Text type="secondary">仅展示最近 {recentAccesses.length} 条，完整明细见标准事件样本</Typography.Text>
+              </div>
               <div className="desktop-only">
                 <Table<ActivityAccess>
                   columns={[
@@ -152,7 +174,7 @@ export function IpDetailsPage() {
                       title: '类型',
                       dataIndex: 'type',
                       width: 80,
-                      render: (value: string) => <Tag style={{ margin: 0 }}>{value}</Tag>,
+                      render: (value: string) => <Tag className="compact-tag">{value}</Tag>,
                     },
                     {
                       title: '访问对象',
@@ -160,7 +182,7 @@ export function IpDetailsPage() {
                       render: (value: string, row) => (
                         <Space orientation="vertical" size={0}>
                           <Typography.Text className="mono wrap-text">{value}</Typography.Text>
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{row.target_kind}</Typography.Text>
+                          <Typography.Text type="secondary" className="font-size-sm">{row.target_kind}</Typography.Text>
                         </Space>
                       ),
                     },
@@ -183,7 +205,7 @@ export function IpDetailsPage() {
                       ),
                     },
                   ]}
-                  dataSource={profile.recent_accesses}
+                  dataSource={recentAccesses}
                   pagination={false}
                   rowKey="event_id"
                   scroll={{ x: 720 }}
@@ -193,22 +215,22 @@ export function IpDetailsPage() {
 
               <div className="mobile-only">
                 <div className="mobile-access-list">
-                  {profile.recent_accesses.map((acc) => (
+                  {recentAccesses.map((acc) => (
                     <div className="mobile-access-card" key={acc.event_id}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-                        <Tag color="blue" style={{ margin: 0 }}>{acc.type}</Tag>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      <div className="flex-between-center">
+                        <Tag color="blue" className="tag-margin-zero">{acc.type}</Tag>
+                        <Typography.Text type="secondary" className="font-size-sm">
                           {new Date(acc.timestamp).toLocaleString()}
                         </Typography.Text>
                       </div>
-                      <Typography.Text className="mono wrap-text" strong style={{ fontSize: 13 }}>
+                      <Typography.Text className="mono wrap-text font-size-md" strong>
                         {acc.target}
                       </Typography.Text>
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      <Typography.Text type="secondary" className="font-size-sm">
                         {acc.target_kind} · {acc.dst_ip ?? '-'}:{acc.dst_port ?? ''}
                       </Typography.Text>
                       {acc.user_agent && (
-                        <Typography.Text className="wrap-text" type="secondary" style={{ fontSize: 11 }}>
+                        <Typography.Text className="wrap-text font-size-xs" type="secondary">
                           {acc.user_agent}
                         </Typography.Text>
                       )}
@@ -222,34 +244,35 @@ export function IpDetailsPage() {
       </section>
 
       <section className="surface">
-        <Typography.Title level={4}>证据时间线</Typography.Title>
-        <EvidenceList evidence={evidenceItems} />
-      </section>
-
-      <section className="surface">
-        <Typography.Title level={4}>标准事件样本</Typography.Title>
-        {(events.data?.events ?? []).length === 0 ? (
-          <Typography.Text type="secondary">暂无标准事件样本</Typography.Text>
-        ) : (
-          (events.data?.events ?? []).map((event) => (
-            <div className="event-row" key={event.event_id}>
-              <Space wrap>
-                <Tag color="blue" style={{ margin: 0 }}>{event.type}</Tag>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {new Date(event.timestamp).toLocaleString()}
-                </Typography.Text>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  confidence {Math.round(event.confidence * 100)}%
-                </Typography.Text>
-              </Space>
-              <div style={{ marginTop: 6, minWidth: 0 }}>
-                <pre className="wrap-code mono" style={{ margin: 0 }}>
-                  {JSON.stringify({ subject: event.subject, flow: event.flow, payload: event.payload }, null, 2)}
-                </pre>
-              </div>
-            </div>
-          ))
-        )}
+        <Typography.Title level={4}>审计样本</Typography.Title>
+        <Typography.Text type="secondary">默认展示摘要，完整原始字段请进入事件检索按 event_id 下钻。</Typography.Text>
+        <Tabs
+          className="audit-sample-tabs"
+          items={[
+            {
+              key: 'evidence',
+              label: `证据摘要 ${evidenceItems.length}`,
+              children: evidence.isLoading ? (
+                <Skeleton active paragraph={{ rows: 4 }} />
+              ) : evidence.isError ? (
+                <Alert showIcon title="证据摘要加载失败" type="warning" />
+              ) : (
+                <EvidenceList evidence={evidenceItems} />
+              ),
+            },
+            {
+              key: 'events',
+              label: `标准事件 ${eventItems.length}`,
+              children: events.isLoading ? (
+                <Skeleton active paragraph={{ rows: 4 }} />
+              ) : events.isError ? (
+                <Alert showIcon title="标准事件样本加载失败" type="warning" />
+              ) : (
+                renderEventSamples(eventItems)
+              ),
+            },
+          ]}
+        />
       </section>
     </main>
   )
@@ -257,6 +280,9 @@ export function IpDetailsPage() {
 
 function renderDeviceInventory(inventory: IpDeviceInventory) {
   const confidencePercent = Math.round(inventory.confidence * 100)
+  const hasDHCPStrongSignal = inventory.signals.some(
+    (signal) => signal.strength === 'strong' && signal.source === 'dhcp',
+  )
   return (
     <Space className="full-width" direction="vertical" size="middle">
       <Alert
@@ -279,6 +305,16 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
           <Statistic title="冲突信号" value={inventory.conflicts.length} />
         </div>
       </div>
+
+      {!hasDHCPStrongSignal && (
+        <Alert
+          className="zeek-status-alert"
+          description="当前设备候选主要来自 UA、TLS 或 TCP 栈推断，UA 可伪造，建议等待 Zeek DHCP、mDNS、NBNS 等局域网强信号后再确认。"
+          showIcon
+          title="缺少 DHCP 强设备信号"
+          type="info"
+        />
+      )}
 
       {inventory.devices.length === 0 ? (
         <Typography.Text type="secondary">当前 IP 没有足够信号生成设备候选。</Typography.Text>
@@ -344,9 +380,11 @@ function DeviceAttribute({ label, value }: { label: string; value: string }) {
 function renderDeviceSignal(signal: DeviceSignal) {
   return (
     <span className="device-signal-token" key={signal.signal_id}>
-      <Tag color={signalStrengthColor(signal.strength)}>{signal.strength}</Tag>
+      <Tag color={signalStrengthColor(signal.strength)}>{signalStrengthText(signal.strength)}</Tag>
+      <Tag>{signalSourceText(signal.source)}</Tag>
+      {signal.seen_count ? <Tag>出现 {signal.seen_count} 次</Tag> : null}
       <Typography.Text className="mono wrap-text">
-        {signal.source}/{signal.kind}: {signal.value}
+        {signal.kind}: {signal.value}
       </Typography.Text>
     </span>
   )
@@ -374,10 +412,103 @@ function renderDeviceConflict(conflict: DeviceConflict) {
   )
 }
 
+function renderEventSamples(events: NormalizedEventSummary[]) {
+  if (events.length === 0) {
+    return <Typography.Text type="secondary">暂无标准事件样本。</Typography.Text>
+  }
+  const visibleEvents = events.slice(0, 6)
+  const hiddenCount = events.length - visibleEvents.length
+  return (
+    <div className="event-compact-list">
+      {visibleEvents.map((event) => (
+        <article className="event-compact-card" key={event.event_id}>
+          <div className="event-compact-head">
+            <Tag className="compact-tag" color="blue">{event.type}</Tag>
+            <Typography.Text type="secondary">{new Date(event.timestamp).toLocaleString()}</Typography.Text>
+            <Typography.Text type="secondary">confidence {Math.round(event.confidence * 100)}%</Typography.Text>
+          </div>
+          <div className="event-compact-grid">
+            <EventField label="访问对象" value={eventTarget(event)} />
+            <EventField label="目的" value={eventDestination(event)} />
+            <EventField label="来源" value={eventSource(event)} />
+          </div>
+          <Typography.Text className="mono wrap-text evidence-meta-text">{event.event_id}</Typography.Text>
+        </article>
+      ))}
+      {hiddenCount > 0 && (
+        <Typography.Text className="compact-muted-row" type="secondary">
+          已收起 {hiddenCount} 条标准事件样本，完整字段请在事件检索中查看。
+        </Typography.Text>
+      )}
+    </div>
+  )
+}
+
+function EventField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="event-compact-field">
+      <Typography.Text type="secondary">{label}</Typography.Text>
+      <Typography.Text className="mono wrap-text">{value || '-'}</Typography.Text>
+    </div>
+  )
+}
+
+function eventTarget(event: NormalizedEventSummary) {
+  return firstString(event.payload, ['query', 'host', 'sni', 'url', 'device_hint']) || firstString(event.flow, ['dst_ip'])
+}
+
+function eventDestination(event: NormalizedEventSummary) {
+  const ip = firstString(event.flow, ['dst_ip'])
+  const port = firstString(event.flow, ['dst_port'])
+  if (!ip) {
+    return '-'
+  }
+  return port ? `${ip}:${port}` : ip
+}
+
+function eventSource(event: NormalizedEventSummary) {
+  const ip = firstString(event.flow, ['src_ip']) || firstString(event.subject, ['ip'])
+  const port = firstString(event.flow, ['src_port'])
+  if (!ip) {
+    return '-'
+  }
+  return port ? `${ip}:${port}` : ip
+}
+
+function firstString(values: Record<string, unknown> | undefined, keys: string[]) {
+  if (!values) {
+    return ''
+  }
+  for (const key of keys) {
+    const value = values[key]
+    if (typeof value === 'string' && value !== '') {
+      return value
+    }
+    if (typeof value === 'number') {
+      return String(value)
+    }
+  }
+  return ''
+}
+
 function signalStrengthColor(strength: string) {
   if (strength === 'strong') return 'green'
   if (strength === 'medium') return 'blue'
   return 'default'
+}
+
+function signalStrengthText(strength: string) {
+  if (strength === 'strong') return '强'
+  if (strength === 'medium') return '中'
+  return '弱'
+}
+
+function signalSourceText(source: string) {
+  if (source === 'dhcp' || source === 'device') return 'DHCP'
+  if (source === 'http_ua') return 'UA'
+  if (source === 'tls_fingerprint') return 'TLS'
+  if (source === 'tcp_stack') return 'TCP'
+  return source.toUpperCase()
 }
 
 function deviceStatusText(status: string) {
@@ -393,18 +524,24 @@ function deviceStatusText(status: string) {
   }
 }
 
-function renderCountList(items: ActivityCount[], empty: string) {
+function renderRankList(items: ActivityCount[], empty: string, limit = 8) {
   if (items.length === 0) {
     return <Typography.Paragraph type="secondary">{empty}</Typography.Paragraph>
   }
+  const visibleItems = items.slice(0, limit)
+  const hiddenCount = items.length - visibleItems.length
   return (
-    <div className="sample-list">
-      {items.map((item) => (
-        <span className="sample-token" key={`${item.value}-${item.count}`}>
-          <Typography.Text className="mono wrap-text">{item.value}</Typography.Text>
-          <Typography.Text type="secondary"> ×{item.count}</Typography.Text>
-        </span>
+    <div className="rank-compact-list">
+      {visibleItems.map((item, index) => (
+        <div className="rank-compact-row" key={`${item.value}-${item.count}`}>
+          <span className="rank-compact-index">{index + 1}</span>
+          <Typography.Text className="mono rank-compact-value" ellipsis={{ tooltip: item.value }}>{item.value}</Typography.Text>
+          <Typography.Text className="rank-compact-count">×{item.count}</Typography.Text>
+        </div>
       ))}
+      {hiddenCount > 0 && (
+        <Typography.Text className="compact-muted-row" type="secondary">已收起 {hiddenCount} 项长尾对象</Typography.Text>
+      )}
     </div>
   )
 }

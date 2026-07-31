@@ -51,6 +51,11 @@ go run ./cmd/proxy-sentinel adapter suricata \
   --output /tmp/proxy-sentinel-normalized.jsonl \
   --sensor-id lab-30
 
+go run ./cmd/proxy-sentinel adapter zeek \
+  --input examples/zeek/dhcp-sample.log \
+  --output /tmp/proxy-sentinel-zeek-device.jsonl \
+  --sensor-id lab-30
+
 go run ./cmd/proxy-sentinel replay \
   --input /tmp/proxy-sentinel-normalized.jsonl \
   --output /tmp/proxy-sentinel-replay-summary.json
@@ -66,6 +71,7 @@ go run ./cmd/proxy-sentinel risk inspect \
 
 go run ./cmd/proxy-sentinel shadow run \
   --eve /var/log/suricata/eve.json \
+  --zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log \
   --state data/shadow/state.json \
   --out-dir data/shadow \
   --sensor-id office-30 \
@@ -74,6 +80,10 @@ go run ./cmd/proxy-sentinel shadow run \
 
 `adapter suricata` 支持 `flow`、`dns`、`tls`、`http`，会跳过无法解析的 JSONL
 行和暂不支持的 Suricata 事件类型，并在 stderr 输出转换统计。
+
+`adapter zeek` 第一阶段只支持 Zeek `dhcp.log`，兼容默认 TSV 日志和 JSON 行
+日志，输出 `device` 标准事件。该适配器只做设备侧信号标准化，不取代
+Suricata 的流量主链路。
 
 `replay` 只读取标准事件，不依赖 Suricata 原始字段。它会按 `subject.ip`
 聚合 1m、5m、10m、1h 窗口，并输出事件数、事件类型分布、域名基数、UA
@@ -113,6 +123,7 @@ run 目录。
 - 同一 IP 的 DNS/SNI 基数异常高。
 - 同一 IP 的目的端口分布异常。
 - 同一 IP 出现多设备指纹。
+- 同一 IP 出现互斥 DHCP 设备画像。
 
 ## 影子模式
 

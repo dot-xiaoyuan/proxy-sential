@@ -113,6 +113,48 @@ scripts/suricata/validate-eve-sample.sh /tmp/proxy-sentinel/mirror-YYYYMMDD-HHMM
 
 如果 10 分钟内无法看到 DNS/TLS/HTTP 关键字段，先调整镜像口、交换机镜像策略或测试流量源，不进入 adapter 开发。
 
+## Zeek 设备指纹增强采样
+
+Suricata 继续作为主采集链路。为了验证 UA 以外的设备识别信号，在同一镜像口
+并行运行 Zeek，第一阶段只采集 `dhcp.log`：
+
+```bash
+sudo scripts/zeek/capture-device-sample.sh --interface auto --duration 1800
+scripts/zeek/validate-dhcp-sample.sh /tmp/proxy-sentinel/zeek-device-YYYYMMDD-HHMMSS/dhcp.log
+```
+
+Zeek 采样脚本会加载 `policy/protocols/dhcp/software.zeek`，尽量补充
+`client_software`，用于映射标准事件中的 `vendor_class`。如果没有生成
+`dhcp.log`，说明镜像口未看到 DHCP 广播或 Zeek 未正确安装，应先调整测试流量
+或镜像策略。
+
+把 Zeek DHCP 日志转换为标准设备事件：
+
+```bash
+go run ./cmd/proxy-sentinel adapter zeek \
+  --input /tmp/proxy-sentinel/zeek-device-YYYYMMDD-HHMMSS/dhcp.log \
+  --output /tmp/proxy-sentinel-zeek-device.jsonl \
+  --sensor-id office-30
+```
+
+shadow 模式合并 Suricata 和 Zeek 时使用：
+
+```bash
+go run ./cmd/proxy-sentinel shadow run \
+  --eve /var/log/suricata/eve.json \
+  --zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log \
+  --zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log \
+  --state data/shadow/state.json \
+  --out-dir data/shadow \
+  --sensor-id office-30 \
+  --window 10m
+```
+
+部署脚本会在远端存在 `zeek` 命令时自动启用
+`proxy-sentinel-zeek.service`，并把
+`/opt/proxy-sentinel/data/zeek/logs/current/dhcp.log` 合并进 shadow 分析；
+如果未安装 Zeek，则保持现有 Suricata-only shadow 行为。
+
 ## 脱敏 fixture
 
 从原始 EVE 样本生成 200-1000 行脱敏样本：

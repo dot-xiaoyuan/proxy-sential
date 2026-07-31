@@ -1,18 +1,24 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
+	"proxy-sentinel/internal/adapter/identity"
 	"proxy-sentinel/internal/adapter/suricata"
+	"proxy-sentinel/internal/adapter/zeek"
 	"proxy-sentinel/internal/controlplane"
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/replay"
 	"proxy-sentinel/internal/risk"
 	"proxy-sentinel/internal/shadow"
+	"proxy-sentinel/internal/store"
+	"proxy-sentinel/internal/validation"
 )
 
 func main() {
@@ -40,6 +46,8 @@ func run(args []string) error {
 		return runShadow(args[1:])
 	case "control-plane":
 		return runControlPlane(args[1:])
+	case "validate":
+		return runValidate(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
@@ -55,6 +63,10 @@ func runAdapter(args []string) error {
 	switch args[0] {
 	case "suricata":
 		return runSuricataAdapter(args[1:])
+	case "zeek":
+		return runZeekAdapter(args[1:])
+	case "identity":
+		return runIdentityAdapter(args[1:])
 	default:
 		return fmt.Errorf("unknown adapter: %s", args[0])
 	}
@@ -81,6 +93,65 @@ func runSuricataAdapter(args []string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "suricata adapter: read=%d emitted=%d skipped=%d malformed=%d\n", stats.Read, stats.Emitted, stats.Skipped, stats.Malformed)
+	return nil
+}
+
+func runZeekAdapter(args []string) error {
+	fs := flag.NewFlagSet("adapter zeek", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	input := fs.String("input", "", "Zeek dhcp.log or software.log input path, or - for stdin")
+	output := fs.String("output", "", "normalized JSONL output path, or - for stdout")
+	sensorID := fs.String("sensor-id", "", "optional sensor identifier")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" {
+		return fmt.Errorf("--input is required")
+	}
+	if *output == "" {
+		return fmt.Errorf("--output is required")
+	}
+
+	stats, err := zeek.ConvertFiles(*input, *output, zeek.Options{SensorID: *sensorID})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "zeek adapter: read=%d emitted=%d skipped=%d malformed=%d\n", stats.Read, stats.Emitted, stats.Skipped, stats.Malformed)
+	return nil
+}
+
+func runIdentityAdapter(args []string) error {
+	fs := flag.NewFlagSet("adapter identity", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	input := fs.String("input", "", "identity JSONL/CSV input path, or - for stdin")
+	output := fs.String("output", "", "normalized JSONL output path, or - for stdout")
+	sensorID := fs.String("sensor-id", "", "optional sensor identifier")
+	source := fs.String("source", "", "identity source name, for example radius, portal, dot1x, dhcp, switch, ac")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" {
+		return fmt.Errorf("--input is required")
+	}
+	if *output == "" {
+		return fmt.Errorf("--output is required")
+	}
+
+	in, closeInput, err := openInput(*input)
+	if err != nil {
+		return err
+	}
+	defer closeInput()
+	out, closeOutput, err := openOutput(*output)
+	if err != nil {
+		return err
+	}
+	defer closeOutput()
+	stats, err := identity.Convert(in, out, identity.Options{SensorID: *sensorID, Source: *source})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "identity adapter: read=%d emitted=%d skipped=%d malformed=%d\n", stats.Read, stats.Emitted, stats.Skipped, stats.Malformed)
 	return nil
 }
 
@@ -239,6 +310,8 @@ func runShadowRun(args []string) error {
 	fs := flag.NewFlagSet("shadow run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	eve := fs.String("eve", "/var/log/suricata/eve.json", "Suricata EVE JSONL path")
+	zeekDHCP := fs.String("zeek-dhcp", "", "optional Zeek dhcp.log path to append as device events")
+	zeekSoftware := fs.String("zeek-software", "", "optional Zeek software.log path to append as device events")
 	state := fs.String("state", "data/shadow/state.json", "shadow offset state path")
 	outDir := fs.String("out-dir", "data/shadow", "shadow output directory")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
@@ -254,17 +327,19 @@ func runShadowRun(args []string) error {
 	}
 
 	summary, err := shadow.Run(shadow.Options{
-		EVEPath:       *eve,
-		StatePath:     *state,
-		OutDir:        *outDir,
-		SensorID:      *sensorID,
-		Window:        *window,
-		ListMinLevel:  *minLevel,
-		ListLimit:     *limit,
-		Retention:     *retention,
-		StorageMode:   *storageMode,
-		PostgresDSN:   *postgresDSN,
-		ClickHouseDSN: *clickHouseDSN,
+		EVEPath:          *eve,
+		ZeekDHCPPath:     *zeekDHCP,
+		ZeekSoftwarePath: *zeekSoftware,
+		StatePath:        *state,
+		OutDir:           *outDir,
+		SensorID:         *sensorID,
+		Window:           *window,
+		ListMinLevel:     *minLevel,
+		ListLimit:        *limit,
+		Retention:        *retention,
+		StorageMode:      *storageMode,
+		PostgresDSN:      *postgresDSN,
+		ClickHouseDSN:    *clickHouseDSN,
 	})
 	if err != nil {
 		return err
@@ -289,6 +364,106 @@ func runControlPlane(args []string) error {
 	default:
 		return fmt.Errorf("unknown control-plane command: %s", args[0])
 	}
+}
+
+func runValidate(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("missing validate command")
+	}
+	switch args[0] {
+	case "known-devices":
+		return runValidateKnownDevices(args[1:])
+	default:
+		return fmt.Errorf("unknown validate command: %s", args[0])
+	}
+}
+
+func runValidateKnownDevices(args []string) error {
+	fs := flag.NewFlagSet("validate known-devices", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	input := fs.String("input", "", "known devices CSV path, or - for stdin")
+	events := fs.String("events", "", "optional normalized identity JSONL path to compare against")
+	output := fs.String("output", "-", "validation report JSON path, or - for stdout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" {
+		return fmt.Errorf("--input is required")
+	}
+
+	in, closeInput, err := openInput(*input)
+	if err != nil {
+		return err
+	}
+	defer closeInput()
+	out, closeOutput, err := openOutput(*output)
+	if err != nil {
+		return err
+	}
+	defer closeOutput()
+
+	var report validation.KnownDeviceValidationReport
+	if *events != "" {
+		normalizedEvents, err := readNormalizedEventsFile(*events)
+		if err != nil {
+			return err
+		}
+		report, err = validation.AnalyzeKnownDeviceCSVWithIdentityState(in, store.BuildIdentityState(normalizedEvents))
+		if err != nil {
+			return err
+		}
+	} else {
+		report, err = validation.AnalyzeKnownDeviceCSV(in)
+		if err != nil {
+			return err
+		}
+	}
+	if err := writeJSON(out, report); err != nil {
+		return err
+	}
+	comparisonFailed := 0
+	if report.Comparison != nil {
+		comparisonFailed = report.Comparison.Failed
+	}
+	fmt.Fprintf(os.Stderr, "validate known-devices: valid=%t samples=%d errors=%d warnings=%d comparison_failed=%d\n",
+		report.Valid,
+		report.Coverage.Total,
+		len(report.Errors),
+		len(report.Warnings),
+		comparisonFailed,
+	)
+	if !report.Valid {
+		return fmt.Errorf("known devices validation failed with %d structural error(s), %d comparison failure(s)", len(report.Errors), comparisonFailed)
+	}
+	return nil
+}
+
+func readNormalizedEventsFile(path string) ([]normalized.Event, error) {
+	input, closeInput, err := openInput(path)
+	if err != nil {
+		return nil, err
+	}
+	defer closeInput()
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	events := []normalized.Event{}
+	line := 0
+	for scanner.Scan() {
+		line++
+		raw := scanner.Bytes()
+		if len(raw) == 0 {
+			continue
+		}
+		var event normalized.Event
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return nil, fmt.Errorf("decode normalized events line %d: %w", line, err)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read normalized events: %w", err)
+	}
+	return events, nil
 }
 
 func runControlPlaneServe(args []string) error {
@@ -324,7 +499,29 @@ func runControlPlaneServe(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only")
+	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] --output -")
+}
+
+func openInput(path string) (*os.File, func() error, error) {
+	if path == "-" {
+		return os.Stdin, func() error { return nil }, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open input: %w", err)
+	}
+	return file, file.Close, nil
+}
+
+func openOutput(path string) (*os.File, func() error, error) {
+	if path == "-" {
+		return os.Stdout, func() error { return nil }, nil
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open output: %w", err)
+	}
+	return file, file.Close, nil
 }
 
 func writeJSON(output *os.File, value any) error {

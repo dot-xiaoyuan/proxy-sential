@@ -80,6 +80,37 @@ func TestConvertSkipsMalformedAndUnsupportedLines(t *testing.T) {
 	}
 }
 
+func TestConvertAlertAndQUICEvents(t *testing.T) {
+	input := bytes.NewBufferString(
+		"{\"timestamp\":\"2026-07-24T13:16:46.672238+0800\",\"event_type\":\"alert\",\"src_ip\":\"10.0.0.1\",\"dest_ip\":\"198.51.100.2\",\"src_port\":12345,\"dest_port\":443,\"proto\":\"TCP\",\"alert\":{\"signature_id\":1001,\"signature\":\"Known proxy tunnel\",\"category\":\"Policy\",\"severity\":2,\"action\":\"allowed\"}}\n" +
+			"{\"timestamp\":\"2026-07-24T13:16:47.672238+0800\",\"event_type\":\"quic\",\"src_ip\":\"10.0.0.1\",\"dest_ip\":\"198.51.100.3\",\"src_port\":12346,\"dest_port\":443,\"proto\":\"UDP\",\"quic\":{\"sni\":\"vpn.example.test\",\"version\":\"1\",\"ja4\":\"q_ja4\",\"alpn\":\"h3\"}}\n")
+	var output bytes.Buffer
+	stats, err := Convert(input, &output, Options{SensorID: "lab-30"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Read != 2 || stats.Emitted != 2 || stats.ByType["alert"] != 1 || stats.ByType["quic"] != 1 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(output.Bytes()))
+	events := []map[string]any{}
+	for scanner.Scan() {
+		var event map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected two events, got %+v", events)
+	}
+	requireString(t, events[0], "type", "alert")
+	requireNestedString(t, events[0], "payload", "signature")
+	requireString(t, events[1], "type", "quic")
+	requireNestedString(t, events[1], "payload", "sni")
+	requireNestedString(t, events[1], "payload", "ja4")
+}
+
 func requireString(t *testing.T, event map[string]any, key string, expected string) {
 	t.Helper()
 	value, ok := event[key].(string)

@@ -23,6 +23,7 @@ events.jsonl
 .env.*
 config.local.*
 deploy/compose/storage.env
+.gocache/
 
 # IDE
 .idea/

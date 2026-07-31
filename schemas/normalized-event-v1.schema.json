@@ -18,7 +18,7 @@
       "type": "string"
     },
     "type": {
-      "enum": ["flow", "dns", "tls", "http", "quic", "device", "alert"]
+      "enum": ["flow", "dns", "tls", "http", "quic", "device", "identity", "alert"]
     },
     "timestamp": {
       "type": "string",
@@ -34,7 +34,18 @@
       "properties": {
         "ip": { "type": "string" },
         "user_id": { "type": "string" },
-        "mac": { "type": "string" }
+        "account_id": { "type": "string" },
+        "endpoint_id": { "type": "string" },
+        "mac": { "type": "string" },
+        "access_id": { "type": "string" },
+        "entity_role": {
+          "enum": ["endpoint", "infrastructure", "gateway", "nat", "server", "network_device", "unknown"]
+        },
+        "identity_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       },
       "additionalProperties": true
     },
@@ -71,4 +82,3 @@
   },
   "additionalProperties": true
 }
-

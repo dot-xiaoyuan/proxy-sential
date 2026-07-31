@@ -13,6 +13,20 @@ import (
 const defaultActivityEventLimit = 5000
 const defaultActivityOverviewEventLimit = 100000
 
+func activitySampleLimit(accessLimit int) int {
+	if accessLimit <= 0 {
+		accessLimit = 50
+	}
+	limit := accessLimit * 20
+	if limit < 200 {
+		return 200
+	}
+	if limit > defaultActivityEventLimit {
+		return defaultActivityEventLimit
+	}
+	return limit
+}
+
 type activityBucket struct {
 	count    int
 	lastSeen string

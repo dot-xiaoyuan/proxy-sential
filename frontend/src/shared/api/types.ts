@@ -38,6 +38,15 @@ export type ObservedDevice = components['schemas']['ObservedDevice']
 export type DeviceConflict = components['schemas']['DeviceConflict']
 export type IpDeviceInventory = components['schemas']['IpDeviceInventory']
 export type DeviceListResponse = components['schemas']['DeviceListResponse']
+export type EndpointDeviceInventory = components['schemas']['EndpointDeviceInventory']
+export type EndpointEntity = components['schemas']['EndpointEntity']
+export type UpdateEndpointRegistrationRequest =
+  components['schemas']['UpdateEndpointRegistrationRequest']
+export type AccountSession = components['schemas']['AccountSession']
+export type IdentityIPMACHistory = components['schemas']['IdentityIPMACHistory']
+export type IdentityAccessHistory = components['schemas']['IdentityAccessHistory']
+export type AccountIdentityProfile = components['schemas']['AccountIdentityProfile']
+export type EndpointIdentityProfile = components['schemas']['EndpointIdentityProfile']
 
 export type RiskQuery = {
   level?: RiskLevel
@@ -47,6 +56,10 @@ export type RiskQuery = {
   to?: string
   limit?: number
   cursor?: string
+}
+
+export type EvidenceQuery = {
+  limit?: number
 }
 
 export type EventQuery = {
@@ -79,4 +92,13 @@ export type DeviceQuery = {
   q?: string
   limit?: number
   cursor?: string
+  include_weak?: boolean
+}
+
+export type IdentityQuery = {
+  sensor_id?: string
+  window?: '10m' | '1h' | '24h'
+  from?: string
+  to?: string
+  limit?: number
 }

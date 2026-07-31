@@ -67,111 +67,44 @@ func (s *DBStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, erro
 	return s.pg.GetIPRisk(ctx, ip)
 }
 
-func (s *DBStore) GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error) {
-	return s.pg.GetIPEvidence(ctx, ip)
+func (s *DBStore) GetIPEvidence(ctx context.Context, ip string, limit int) ([]evidence.Evidence, error) {
+	return s.pg.GetIPEvidence(ctx, ip, limit)
 }
 
 func (s *DBStore) GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error) {
 	return s.ch.GetIPActivity(ctx, ip, limit)
 }
 
+func (s *DBStore) GetAccountIdentity(ctx context.Context, accountID string, query Query) (AccountIdentityProfile, bool, error) {
+	return s.pg.GetAccountIdentity(ctx, accountID, query)
+}
+
+func (s *DBStore) GetEndpointIdentity(ctx context.Context, endpointID string, query Query) (EndpointIdentityProfile, bool, error) {
+	return s.pg.GetEndpointIdentity(ctx, endpointID, query)
+}
+
+func (s *DBStore) ListEndpointDevices(ctx context.Context, query Query) (EndpointDevicePage, error) {
+	return s.pg.ListEndpointDevices(ctx, query)
+}
+
 func (s *DBStore) GetIPDeviceInventory(ctx context.Context, ip string, query ActivityQuery) (IPDeviceInventory, error) {
-	window := query.Window
-	if window == "" {
-		window = "1h"
-	}
-	if query.SensorID == "" {
-		query.SensorID = s.pg.sensorID
-	}
-	events, err := s.ch.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: window, SrcIP: ip, Limit: defaultDPIEventLimit})
-	if err != nil {
-		return IPDeviceInventory{}, err
-	}
-	snapshot, err := s.pg.GetIPRisk(ctx, ip)
-	if err != nil {
-		return IPDeviceInventory{}, err
-	}
-	return BuildDeviceInventory(ip, window, events, snapshot), nil
+	return s.pg.GetIPDeviceInventory(ctx, ip, query)
 }
 
 func (s *DBStore) ListDeviceInventories(ctx context.Context, query Query) (DevicePage, error) {
-	limit := query.Limit
-	if limit == 0 {
-		limit = 50
-	}
-	window := query.Window
-	if window == "" {
-		window = "1h"
-	}
-	if query.SensorID == "" {
-		query.SensorID = s.pg.sensorID
-	}
-	events, err := s.ch.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: window, Limit: defaultDPIEventLimit})
-	if err != nil {
-		return DevicePage{}, err
-	}
-	risks, err := s.pg.RiskSnapshotMap(ctx)
-	if err != nil {
-		return DevicePage{}, err
-	}
-	items := filterDeviceInventories(BuildDeviceInventories(window, events, risks), query)
-	total := len(items)
-	if limit < 0 {
-		return DevicePage{Items: items, Page: Page{Limit: limit, Total: total}}, nil
-	}
-	cursor := query.Cursor
-	if cursor > total {
-		cursor = total
-	}
-	end := cursor + limit
-	if end > total {
-		end = total
-	}
-	var next *string
-	if end < total {
-		value := fmt.Sprintf("%d", end)
-		next = &value
-	}
-	return DevicePage{Items: items[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+	return s.pg.ListDeviceInventories(ctx, query)
 }
 
 func (s *DBStore) GetDevice(ctx context.Context, deviceID string, query Query) (ObservedDevice, bool, error) {
-	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, Limit: -1})
-	if err != nil {
-		return ObservedDevice{}, false, err
-	}
-	for _, inventory := range page.Items {
-		for _, device := range inventory.Devices {
-			if device.DeviceID == deviceID {
-				return device, true, nil
-			}
-		}
-	}
-	return ObservedDevice{}, false, nil
+	return s.pg.GetDevice(ctx, deviceID, query)
 }
 
 func (s *DBStore) ListDeviceSignals(ctx context.Context, query Query) ([]DeviceSignal, error) {
-	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Limit: -1})
-	if err != nil {
-		return nil, err
-	}
-	signals := []DeviceSignal{}
-	for _, inventory := range page.Items {
-		signals = append(signals, inventory.Signals...)
-	}
-	return signals, nil
+	return s.pg.ListDeviceSignals(ctx, query)
 }
 
 func (s *DBStore) ListDeviceFingerprintConflicts(ctx context.Context, query Query) ([]DeviceConflict, error) {
-	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Limit: -1})
-	if err != nil {
-		return nil, err
-	}
-	conflicts := []DeviceConflict{}
-	for _, inventory := range page.Items {
-		conflicts = append(conflicts, inventory.Conflicts...)
-	}
-	return conflicts, nil
+	return s.pg.ListDeviceFingerprintConflicts(ctx, query)
 }
 
 func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error) {
@@ -235,7 +168,7 @@ func (s *DBStore) GetDPIFlow(ctx context.Context, flowID string) (DPIFlowDetail,
 	if err != nil {
 		return DPIFlowDetail{}, false, err
 	}
-	items, err := s.pg.GetIPEvidence(ctx, ip)
+	items, err := s.pg.GetIPEvidence(ctx, ip, 20)
 	if err != nil {
 		return DPIFlowDetail{}, false, err
 	}
@@ -287,6 +220,14 @@ func (s *DBStore) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 
 func (s *DBStore) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, error) {
 	return s.pg.ListAuditLogs(ctx, limit)
+}
+
+func (s *DBStore) CreateLabel(ctx context.Context, label Label) (Label, error) {
+	return s.pg.CreateLabel(ctx, label)
+}
+
+func (s *DBStore) UpdateEndpointRegistration(ctx context.Context, update EndpointRegistrationUpdate) (EndpointEntity, error) {
+	return s.pg.UpdateEndpointRegistration(ctx, update)
 }
 
 func (s *DBStore) IngestStatus(ctx context.Context) (ingest.Status, error) {
@@ -364,6 +305,10 @@ func (s *DBStore) WriteEvidence(ctx context.Context, items []evidence.Evidence) 
 
 func (s *DBStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk.Snapshot) error {
 	return s.pg.WriteRiskSnapshots(ctx, snapshots)
+}
+
+func (s *DBStore) WriteDeviceState(ctx context.Context, run Run, events []normalized.Event, snapshots []risk.Snapshot) error {
+	return s.pg.WriteDeviceState(ctx, run, events, snapshots)
 }
 
 func dbRequired(name string, value string) error {

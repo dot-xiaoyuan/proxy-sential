@@ -6,6 +6,10 @@ const ActivityPage = lazy(() =>
   import('../pages/ActivityPage').then((module) => ({ default: module.ActivityPage })),
 )
 const EventsPage = lazy(() => import('../pages/EventsPage').then((module) => ({ default: module.EventsPage })))
+const DevicesPage = lazy(() => import('../pages/DevicesPage').then((module) => ({ default: module.DevicesPage })))
+const EndpointDetailsPage = lazy(() =>
+  import('../pages/EndpointDetailsPage').then((module) => ({ default: module.EndpointDetailsPage })),
+)
 const IpDetailsPage = lazy(() =>
   import('../pages/IpDetailsPage').then((module) => ({ default: module.IpDetailsPage })),
 )
@@ -54,6 +58,22 @@ export function EventsRoute() {
   return (
     <RouteSuspense>
       <EventsPage />
+    </RouteSuspense>
+  )
+}
+
+export function DevicesRoute() {
+  return (
+    <RouteSuspense>
+      <DevicesPage />
+    </RouteSuspense>
+  )
+}
+
+export function EndpointDetailsRoute() {
+  return (
+    <RouteSuspense>
+      <EndpointDetailsPage />
     </RouteSuspense>
   )
 }

@@ -42,13 +42,17 @@ type eveEvent struct {
 	DNS       map[string]any `json:"dns"`
 	TLS       map[string]any `json:"tls"`
 	HTTP      map[string]any `json:"http"`
+	QUIC      map[string]any `json:"quic"`
+	Alert     map[string]any `json:"alert"`
 }
 
 var supportedTypes = map[string]bool{
-	"flow": true,
-	"dns":  true,
-	"tls":  true,
-	"http": true,
+	"flow":  true,
+	"dns":   true,
+	"tls":   true,
+	"http":  true,
+	"quic":  true,
+	"alert": true,
 }
 
 func Convert(r io.Reader, w io.Writer, opts Options) (Stats, error) {
@@ -157,7 +161,8 @@ func convertLine(raw []byte, lineOffset int, opts Options) (normalized.Event, er
 		Timestamp:       normalizeTimestamp(eve.Timestamp),
 		Observer:        observer,
 		Subject: map[string]any{
-			"ip": subjectIP(eve.SrcIP, eve.DestIP),
+			"ip":          subjectIP(eve.SrcIP, eve.DestIP),
+			"entity_role": "unknown",
 		},
 		Flow:       flow,
 		Payload:    payload,
@@ -174,6 +179,10 @@ func payloadFor(e eveEvent) map[string]any {
 		return tlsPayload(e.TLS)
 	case "http":
 		return httpPayload(e.HTTP)
+	case "quic":
+		return quicPayload(e.QUIC)
+	case "alert":
+		return alertPayload(e.Alert)
 	case "flow":
 		payload := map[string]any{}
 		copyString(payload, e.Flow, "state")
@@ -183,6 +192,37 @@ func payloadFor(e eveEvent) map[string]any {
 	default:
 		return map[string]any{}
 	}
+}
+
+func quicPayload(quic map[string]any) map[string]any {
+	payload := map[string]any{}
+	copyString(payload, quic, "sni")
+	copyString(payload, quic, "version")
+	copyString(payload, quic, "ja3")
+	copyString(payload, quic, "ja4")
+	copyString(payload, quic, "alpn")
+	copyString(payload, quic, "cyu")
+	copyString(payload, quic, "cyb")
+	copyString(payload, quic, "server_name")
+	if payload["sni"] == nil {
+		copyStringAs(payload, quic, "server_name", "sni")
+	}
+	return payload
+}
+
+func alertPayload(alert map[string]any) map[string]any {
+	payload := map[string]any{}
+	copyNumeric(payload, alert, "signature_id")
+	copyNumeric(payload, alert, "gid")
+	copyNumeric(payload, alert, "rev")
+	copyNumeric(payload, alert, "severity")
+	copyString(payload, alert, "signature")
+	copyString(payload, alert, "category")
+	copyString(payload, alert, "action")
+	if metadata, ok := alert["metadata"]; ok {
+		payload["metadata"] = metadata
+	}
+	return payload
 }
 
 func dnsPayload(dns map[string]any) map[string]any {

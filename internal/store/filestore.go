@@ -48,17 +48,28 @@ type fileRun struct {
 }
 
 type runSummary struct {
-	StartedAt      string         `json:"started_at"`
-	FinishedAt     string         `json:"finished_at"`
-	EVEPath        string         `json:"eve_path"`
-	PreviousOffset int64          `json:"previous_offset"`
-	NewOffset      int64          `json:"new_offset"`
-	Truncated      bool           `json:"truncated"`
-	Files          map[string]any `json:"files"`
-	Normalized     NormalizedCounts
-	EvidenceCount  int `json:"evidence_count"`
-	RiskCount      int `json:"risk_count"`
-	RiskListCount  int `json:"risk_list_count"`
+	StartedAt              string           `json:"started_at"`
+	FinishedAt             string           `json:"finished_at"`
+	EVEPath                string           `json:"eve_path"`
+	ZeekDHCPPath           string           `json:"zeek_dhcp_path,omitempty"`
+	ZeekSoftwarePath       string           `json:"zeek_software_path,omitempty"`
+	ZeekStatus             string           `json:"zeek_status,omitempty"`
+	ZeekReason             string           `json:"zeek_reason,omitempty"`
+	PreviousOffset         int64            `json:"previous_offset"`
+	NewOffset              int64            `json:"new_offset"`
+	ZeekPrevOffset         int64            `json:"zeek_previous_offset,omitempty"`
+	ZeekNewOffset          int64            `json:"zeek_new_offset,omitempty"`
+	ZeekSoftwarePrevOffset int64            `json:"zeek_software_previous_offset,omitempty"`
+	ZeekSoftwareNewOffset  int64            `json:"zeek_software_new_offset,omitempty"`
+	Truncated              bool             `json:"truncated"`
+	ZeekTruncated          bool             `json:"zeek_truncated,omitempty"`
+	ZeekSoftwareTruncated  bool             `json:"zeek_software_truncated,omitempty"`
+	Files                  map[string]any   `json:"files"`
+	Normalized             NormalizedCounts `json:"normalized"`
+	ZeekNormalized         NormalizedCounts `json:"zeek_normalized,omitempty"`
+	EvidenceCount          int              `json:"evidence_count"`
+	RiskCount              int              `json:"risk_count"`
+	RiskListCount          int              `json:"risk_list_count"`
 }
 
 func NewFileStore(opts FileOptions) *FileStore {
@@ -184,7 +195,7 @@ func (s *FileStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, er
 	return normalRisk(ip), nil
 }
 
-func (s *FileStore) GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error) {
+func (s *FileStore) GetIPEvidence(ctx context.Context, ip string, limit int) ([]evidence.Evidence, error) {
 	latest, ok, err := s.latestRun(ctx)
 	if err != nil {
 		return nil, err
@@ -208,15 +219,237 @@ func (s *FileStore) GetIPEvidence(ctx context.Context, ip string) ([]evidence.Ev
 		}
 		return items[i].CreatedAt > items[j].CreatedAt
 	})
+	if limit <= 0 {
+		limit = 20
+	}
+	if len(items) > limit {
+		items = items[:limit]
+	}
 	return items, nil
 }
 
 func (s *FileStore) GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error) {
-	events, err := s.ListEventSamples(ctx, Query{Q: ip, Limit: defaultActivityEventLimit})
+	events, err := s.ListEventSamples(ctx, Query{SrcIP: ip, Limit: activitySampleLimit(limit)})
 	if err != nil {
 		return ActivityProfile{}, err
 	}
 	return BuildActivityProfile(ip, events, limit), nil
+}
+
+func (s *FileStore) GetAccountIdentity(ctx context.Context, accountID string, query Query) (AccountIdentityProfile, bool, error) {
+	state, err := s.identityState(ctx, query)
+	if err != nil {
+		return AccountIdentityProfile{}, false, err
+	}
+	profile, ok := BuildAccountIdentityProfile(state, accountID)
+	return profile, ok, nil
+}
+
+func (s *FileStore) GetEndpointIdentity(ctx context.Context, endpointID string, query Query) (EndpointIdentityProfile, bool, error) {
+	state, err := s.identityState(ctx, query)
+	if err != nil {
+		return EndpointIdentityProfile{}, false, err
+	}
+	profile, ok := BuildEndpointIdentityProfile(state, endpointID)
+	return profile, ok, nil
+}
+
+func (s *FileStore) ListEndpointDevices(ctx context.Context, query Query) (EndpointDevicePage, error) {
+	state, err := s.identityState(ctx, query)
+	if err != nil {
+		return EndpointDevicePage{}, err
+	}
+	items := BuildEndpointDeviceInventories(state, query)
+	total := len(items)
+	limit := query.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	if limit < 0 {
+		return EndpointDevicePage{Items: items, Page: Page{Limit: limit, Total: total}}, nil
+	}
+	cursor := query.Cursor
+	if cursor > total {
+		cursor = total
+	}
+	end := cursor + limit
+	if end > total {
+		end = total
+	}
+	var next *string
+	if end < total {
+		value := strconv.Itoa(end)
+		next = &value
+	}
+	return EndpointDevicePage{Items: items[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+}
+
+func (s *FileStore) identityState(ctx context.Context, query Query) (IdentityState, error) {
+	latest, ok, err := s.latestRun(ctx)
+	if err != nil {
+		return IdentityState{}, err
+	}
+	if !ok {
+		state := BuildIdentityState([]normalized.Event{})
+		s.applyEndpointRegistrations(&state)
+		return state, nil
+	}
+	limit := query.Limit
+	if limit == 0 {
+		limit = -1
+	}
+	events, err := readNormalizedEvents(ctx, filepath.Join(latest.Dir, "normalized.jsonl"), Query{
+		SensorID: query.SensorID,
+		Window:   query.Window,
+		From:     query.From,
+		To:       query.To,
+		Level:    "identity",
+		Limit:    limit,
+	})
+	if err != nil {
+		return IdentityState{}, err
+	}
+	state := BuildIdentityState(events)
+	s.applyEndpointRegistrations(&state)
+	return state, nil
+}
+
+func (s *FileStore) UpdateEndpointRegistration(ctx context.Context, update EndpointRegistrationUpdate) (EndpointEntity, error) {
+	if update.RegistrationUpdatedAt == "" {
+		update.RegistrationUpdatedAt = NowRFC3339()
+	}
+	if update.RegistrationUpdatedBy == "" {
+		update.RegistrationUpdatedBy = "shadow-operator"
+	}
+	if update.RegistrationStatus == "" {
+		update.RegistrationStatus = "unregistered"
+	}
+	if update.MergeStatus == "" {
+		update.MergeStatus = "active"
+	}
+	path := filepath.Join(s.shadowDir, "endpoint_registrations.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return EndpointEntity{}, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return EndpointEntity{}, err
+	}
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(update); err != nil {
+		_ = file.Close()
+		return EndpointEntity{}, err
+	}
+	if err := file.Close(); err != nil {
+		return EndpointEntity{}, err
+	}
+	if err := s.appendAuditLog(AuditLog{
+		AuditID:   "audit-endpoint-registration-" + shortHash(update.EndpointID+"|"+update.RegistrationUpdatedAt),
+		Actor:     update.RegistrationUpdatedBy,
+		Action:    "endpoints.registration.update",
+		Target:    "endpoint:" + update.EndpointID,
+		Outcome:   update.RegistrationStatus,
+		CreatedAt: update.RegistrationUpdatedAt,
+	}); err != nil {
+		return EndpointEntity{}, err
+	}
+	state, err := s.identityState(ctx, Query{Limit: -1})
+	if err != nil {
+		return EndpointEntity{}, err
+	}
+	for _, endpoint := range state.Endpoints {
+		if endpoint.EndpointID == update.EndpointID {
+			return endpoint, nil
+		}
+	}
+	endpoint := EndpointEntity{EndpointID: update.EndpointID, EntityRole: "endpoint", Attributes: map[string]any{}}
+	applyEndpointRegistrationUpdate(&endpoint, update)
+	return endpoint, nil
+}
+
+func (s *FileStore) applyEndpointRegistrations(state *IdentityState) {
+	updates := s.endpointRegistrationUpdates()
+	if len(updates) == 0 {
+		for index := range state.Endpoints {
+			ensureEndpointRegistrationDefaults(&state.Endpoints[index])
+		}
+		return
+	}
+	byID := map[string]int{}
+	for index := range state.Endpoints {
+		ensureEndpointRegistrationDefaults(&state.Endpoints[index])
+		byID[state.Endpoints[index].EndpointID] = index
+	}
+	for _, update := range updates {
+		index, ok := byID[update.EndpointID]
+		if !ok {
+			state.Endpoints = append(state.Endpoints, EndpointEntity{
+				EndpointID:         update.EndpointID,
+				EntityRole:         "endpoint",
+				Attributes:         map[string]any{},
+				RegistrationStatus: "unregistered",
+				MergeStatus:        "active",
+			})
+			index = len(state.Endpoints) - 1
+			byID[update.EndpointID] = index
+		}
+		applyEndpointRegistrationUpdate(&state.Endpoints[index], update)
+	}
+}
+
+func (s *FileStore) endpointRegistrationUpdates() []EndpointRegistrationUpdate {
+	path := filepath.Join(s.shadowDir, "endpoint_registrations.jsonl")
+	file, err := os.Open(path)
+	if err != nil {
+		return []EndpointRegistrationUpdate{}
+	}
+	defer file.Close()
+	updates := []EndpointRegistrationUpdate{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var update EndpointRegistrationUpdate
+		if err := json.Unmarshal(scanner.Bytes(), &update); err == nil && update.EndpointID != "" {
+			updates = append(updates, update)
+		}
+	}
+	return updates
+}
+
+func applyEndpointRegistrationUpdate(endpoint *EndpointEntity, update EndpointRegistrationUpdate) {
+	if endpoint.EntityRole == "" {
+		endpoint.EntityRole = "endpoint"
+	}
+	ensureEndpointRegistrationDefaults(endpoint)
+	if update.RegistrationStatus != "" {
+		endpoint.RegistrationStatus = update.RegistrationStatus
+	}
+	if update.OwnerAccount != "" {
+		endpoint.OwnerAccount = update.OwnerAccount
+	}
+	if update.OwnerName != "" {
+		endpoint.OwnerName = update.OwnerName
+	}
+	if update.OwnerDepartment != "" {
+		endpoint.OwnerDepartment = update.OwnerDepartment
+	}
+	if update.AssetTag != "" {
+		endpoint.AssetTag = update.AssetTag
+	}
+	if update.RegistrationNote != "" {
+		endpoint.RegistrationNote = update.RegistrationNote
+	}
+	if update.MergeStatus != "" {
+		endpoint.MergeStatus = update.MergeStatus
+	}
+	endpoint.MergedIntoEndpointID = update.MergedIntoEndpointID
+	endpoint.SplitFromEndpointID = update.SplitFromEndpointID
+	endpoint.RegistrationUpdateByID = update.RegistrationUpdatedBy
+	endpoint.RegistrationUpdatedAt = update.RegistrationUpdatedAt
+	if update.RegistrationStatus == "registered" && endpoint.RegisteredAt == "" {
+		endpoint.RegisteredAt = update.RegistrationUpdatedAt
+		endpoint.RegisteredBy = update.RegistrationUpdatedBy
+	}
 }
 
 func (s *FileStore) GetIPDeviceInventory(ctx context.Context, ip string, query ActivityQuery) (IPDeviceInventory, error) {
@@ -240,10 +473,15 @@ func (s *FileStore) ListDeviceInventories(ctx context.Context, query Query) (Dev
 	if limit == 0 {
 		limit = 50
 	}
-	events, err := s.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: query.Window, Limit: defaultDPIEventLimit})
+	events, err := s.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: query.Window, Limit: defaultDeviceInventoryWeakEventLimit})
 	if err != nil {
 		return DevicePage{}, err
 	}
+	deviceEvents, err := s.ListEventSamples(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Level: "device", Limit: defaultDeviceInventoryStrongEventLimit})
+	if err != nil {
+		return DevicePage{}, err
+	}
+	events = mergeEventSamples(events, deviceEvents)
 	batch, err := s.latestRiskMap(ctx)
 	if err != nil {
 		return DevicePage{}, err
@@ -274,7 +512,7 @@ func (s *FileStore) ListDeviceInventories(ctx context.Context, query Query) (Dev
 }
 
 func (s *FileStore) GetDevice(ctx context.Context, deviceID string, query Query) (ObservedDevice, bool, error) {
-	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, Limit: -1})
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, IncludeWeak: true, Limit: -1})
 	if err != nil {
 		return ObservedDevice{}, false, err
 	}
@@ -289,7 +527,7 @@ func (s *FileStore) GetDevice(ctx context.Context, deviceID string, query Query)
 }
 
 func (s *FileStore) ListDeviceSignals(ctx context.Context, query Query) ([]DeviceSignal, error) {
-	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Limit: -1})
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, IncludeWeak: true, Limit: -1})
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +539,7 @@ func (s *FileStore) ListDeviceSignals(ctx context.Context, query Query) ([]Devic
 }
 
 func (s *FileStore) ListDeviceFingerprintConflicts(ctx context.Context, query Query) ([]DeviceConflict, error) {
-	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, Limit: -1})
+	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, SrcIP: query.SrcIP, Q: query.Q, IncludeWeak: true, Limit: -1})
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +646,7 @@ func (s *FileStore) GetDPIFlow(ctx context.Context, flowID string) (DPIFlowDetai
 	if err != nil {
 		return DPIFlowDetail{}, false, err
 	}
-	items, err := s.GetIPEvidence(ctx, ip)
+	items, err := s.GetIPEvidence(ctx, ip, 20)
 	if err != nil {
 		return DPIFlowDetail{}, false, err
 	}
@@ -553,6 +791,8 @@ func (s *FileStore) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, e
 		runs = runs[:limit]
 	}
 	logs := make([]AuditLog, 0, len(runs))
+	fileLogs := s.fileAuditLogs(limit)
+	logs = append(logs, fileLogs...)
 	for _, run := range runs {
 		logs = append(logs, AuditLog{
 			AuditID:   "audit-shadow-" + run.RunID,
@@ -563,7 +803,86 @@ func (s *FileStore) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, e
 			CreatedAt: run.FinishedAt,
 		})
 	}
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].CreatedAt > logs[j].CreatedAt
+	})
+	if limit > 0 && len(logs) > limit {
+		logs = logs[:limit]
+	}
 	return logs, nil
+}
+
+func (s *FileStore) fileAuditLogs(limit int) []AuditLog {
+	path := filepath.Join(s.shadowDir, "audit_logs.jsonl")
+	file, err := os.Open(path)
+	if err != nil {
+		return []AuditLog{}
+	}
+	defer file.Close()
+	logs := []AuditLog{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var log AuditLog
+		if err := json.Unmarshal(scanner.Bytes(), &log); err == nil && log.AuditID != "" {
+			logs = append(logs, log)
+		}
+	}
+	if limit > 0 && len(logs) > limit {
+		logs = logs[len(logs)-limit:]
+	}
+	return logs
+}
+
+func (s *FileStore) CreateLabel(ctx context.Context, label Label) (Label, error) {
+	if label.CreatedAt == "" {
+		label.CreatedAt = NowRFC3339()
+	}
+	if label.CreatedBy == "" {
+		label.CreatedBy = "shadow-operator"
+	}
+	if label.LabelID == "" {
+		label.LabelID = "label-" + shortHash(label.TargetType+"|"+label.TargetID+"|"+label.Label+"|"+label.CreatedAt)
+	}
+	path := filepath.Join(s.shadowDir, "labels.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return Label{}, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return Label{}, err
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(label); err != nil {
+		return Label{}, err
+	}
+	if err := s.appendAuditLog(AuditLog{
+		AuditID:   "audit-" + label.LabelID,
+		Actor:     label.CreatedBy,
+		Action:    "labels.create",
+		Target:    label.TargetType + ":" + label.TargetID,
+		Outcome:   label.Label,
+		CreatedAt: label.CreatedAt,
+	}); err != nil {
+		return Label{}, err
+	}
+	return label, nil
+}
+
+func (s *FileStore) appendAuditLog(log AuditLog) error {
+	path := filepath.Join(s.shadowDir, "audit_logs.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	encoder.SetEscapeHTML(false)
+	return encoder.Encode(log)
 }
 
 func (s *FileStore) IngestStatus(ctx context.Context) (ingest.Status, error) {
@@ -722,13 +1041,30 @@ func (s *FileStore) runs(ctx context.Context) ([]fileRun, error) {
 					Malformed: summary.Normalized.Malformed,
 					ByType:    byType,
 				},
-				EvidenceCount: summary.EvidenceCount,
-				RiskCount:     summary.RiskCount,
-				RiskListCount: summary.RiskListCount,
+				ZeekNormalized: NormalizedCounts{
+					Read:      summary.ZeekNormalized.Read,
+					Emitted:   summary.ZeekNormalized.Emitted,
+					Skipped:   summary.ZeekNormalized.Skipped,
+					Malformed: summary.ZeekNormalized.Malformed,
+					ByType:    copyIntMap(summary.ZeekNormalized.ByType),
+				},
+				ZeekStatus:             summary.ZeekStatus,
+				ZeekReason:             summary.ZeekReason,
+				ZeekPrevOffset:         summary.ZeekPrevOffset,
+				ZeekNewOffset:          summary.ZeekNewOffset,
+				ZeekTruncated:          summary.ZeekTruncated,
+				ZeekSoftwarePrevOffset: summary.ZeekSoftwarePrevOffset,
+				ZeekSoftwareNewOffset:  summary.ZeekSoftwareNewOffset,
+				ZeekSoftwareTruncated:  summary.ZeekSoftwareTruncated,
+				EvidenceCount:          summary.EvidenceCount,
+				RiskCount:              summary.RiskCount,
+				RiskListCount:          summary.RiskListCount,
 				RawRef: map[string]any{
-					"backend": "suricata",
-					"source":  summary.EVEPath,
-					"offset":  summary.NewOffset,
+					"backend":            "suricata",
+					"source":             summary.EVEPath,
+					"offset":             summary.NewOffset,
+					"zeek_dhcp_path":     summary.ZeekDHCPPath,
+					"zeek_software_path": summary.ZeekSoftwarePath,
 				},
 			},
 			Dir:     runDir,
@@ -759,6 +1095,16 @@ func (s *FileStore) diagnosticForRun(run fileRun) ingest.Diagnostic {
 		severity = "warning"
 		summary = "collector run completed with malformed input records"
 	}
+	switch run.ZeekStatus {
+	case "unavailable":
+		severity = "warning"
+		summary = "collector run completed while zeek dhcp log was unavailable"
+	case "log_truncated":
+		severity = "warning"
+		summary = "collector run completed after zeek dhcp log rotation"
+	case "no_dhcp_events":
+		summary = "collector run completed with no zeek dhcp device events"
+	}
 	return ingest.Diagnostic{
 		SchemaVersion: "v1",
 		DiagnosticID:  diagnosticID(run.RunID),
@@ -778,10 +1124,21 @@ func (s *FileStore) diagnosticForRun(run fileRun) ingest.Diagnostic {
 		ByType: run.Normalized.ByType,
 		RawRef: run.RawRef,
 		Details: map[string]any{
-			"run_id":          run.RunID,
-			"previous_offset": run.PreviousOffset,
-			"new_offset":      run.NewOffset,
-			"truncated":       run.Truncated,
+			"run_id":                        run.RunID,
+			"previous_offset":               run.PreviousOffset,
+			"new_offset":                    run.NewOffset,
+			"truncated":                     run.Truncated,
+			"zeek_dhcp_path":                run.RawRef["zeek_dhcp_path"],
+			"zeek_previous_offset":          run.ZeekPrevOffset,
+			"zeek_new_offset":               run.ZeekNewOffset,
+			"zeek_truncated":                run.ZeekTruncated,
+			"zeek_status":                   run.ZeekStatus,
+			"zeek_reason":                   run.ZeekReason,
+			"zeek_normalized":               run.ZeekNormalized,
+			"zeek_software_path":            run.RawRef["zeek_software_path"],
+			"zeek_software_previous_offset": run.ZeekSoftwarePrevOffset,
+			"zeek_software_new_offset":      run.ZeekSoftwareNewOffset,
+			"zeek_software_truncated":       run.ZeekSoftwareTruncated,
 		},
 	}
 }
@@ -949,7 +1306,18 @@ func eventMatchesQuery(event normalized.Event, query Query, from time.Time, to t
 		if !strings.Contains(strings.ToLower(event.EventID), q) &&
 			!strings.Contains(strings.ToLower(subjectIP(event)), q) &&
 			!strings.Contains(strings.ToLower(stringFromMap(event.Flow, "dst_ip")), q) &&
-			!strings.Contains(strings.ToLower(eventDomain(event)), q) {
+			!strings.Contains(strings.ToLower(event.Source), q) &&
+			!strings.Contains(strings.ToLower(event.SourceEventType), q) &&
+			!strings.Contains(strings.ToLower(event.Type), q) &&
+			!strings.Contains(strings.ToLower(eventDomain(event)), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Payload, "hostname")), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Payload, "client_fqdn")), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Payload, "vendor_class")), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Payload, "mac")), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Payload, "client_mac")), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Payload, "device_hint")), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Payload, "software_name")), q) &&
+			!strings.Contains(strings.ToLower(stringFromMap(event.Payload, "software_version")), q) {
 			return false
 		}
 	}
@@ -1047,6 +1415,17 @@ func levelCounts(items []risk.Snapshot) map[string]int {
 		}
 	}
 	return counts
+}
+
+func copyIntMap(input map[string]int) map[string]int {
+	if input == nil {
+		return map[string]int{}
+	}
+	output := make(map[string]int, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
 }
 
 func normalRisk(ip string) risk.Snapshot {

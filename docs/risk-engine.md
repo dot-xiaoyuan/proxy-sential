@@ -150,6 +150,55 @@ DHCP、mDNS、NBNS、LLMNR、UA parser、MAC OUI 等来源指向多个设备。
 
 这是强证据，但必须保留来源和样本。
 
+### dhcp_device_fingerprint
+
+同一 IP 在窗口内出现 Zeek DHCP 设备画像。
+
+基础分：28-40。
+
+样本由 hostname、vendor_class、requested_options、client_mac 等字段组成。该信号
+来自局域网协议栈，可信度高于 User-Agent。第一阶段不调用 Fingerbank 在线查询，
+只做本地轻量归类。
+
+### device_fingerprint_conflict
+
+同一 IP 在窗口内出现互斥 DHCP 设备画像，或 DHCP 画像与多个 TLS 客户端指纹
+同时出现。
+
+基础分：34-58。
+
+Apple/iOS、Windows、Android、ChromeOS、Linux 等设备族混杂时，疑似共享上网
+或代理出口。该规则可以参与 `confirmed`，但仍只输出影子复核动作。
+
+## 账号级强证据
+
+身份关联事件进入标准事件后，证据层可以输出 `subject_type=account` 的账号级
+证据。该类证据不再依赖单个 IP 是否稳定，主要服务于校园账号共享上网复核。
+
+### account_concurrent_macs
+
+同一账号在窗口内关联两个及以上 endpoint MAC。该证据来自 RADIUS、Portal、
+802.1X、DHCP、交换机或无线 AC 等身份数据，属于高置信复核证据。
+
+### account_concurrent_endpoints
+
+同一账号在窗口内关联两个及以上终端实体。仅当 MAC 不足以判定时作为补充，
+需要结合换机、重认证和漫游情况复核。
+
+### account_concurrent_access
+
+同一账号短时间内出现在多个接入位置，例如不同 AP 或交换机端口。需要排除
+无线漫游切换和认证日志延迟。
+
+### auth_observed_mac_mismatch
+
+认证 MAC 与实际观测 MAC 不一致。该证据属于强复核信号，应保留认证来源、
+观测来源、窗口和样本。
+
+基础设施、网关、NAT、服务器和网络设备角色不得进入普通终端并发和账号共享
+设备数统计。缺少明确终端身份时，`entity_role=unknown` 只能作为保留事件，
+不能直接升级为 endpoint。
+
 ## 负证据
 
 以下情况不能直接放过，但要降权或进入特殊分类：

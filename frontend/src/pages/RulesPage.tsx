@@ -25,10 +25,10 @@ export function RulesPage() {
           <Typography.Text type="secondary">第一阶段只保留影子 reload 入口，不触发处罚动作。</Typography.Text>
         </div>
       </div>
-      {!allowed && <Alert showIcon style={{ marginBottom: 16 }} title="当前会话没有 rules:reload 权限" type="warning" />}
+      {!allowed && <Alert showIcon className="margin-bottom-md" title="当前会话没有 rules:reload 权限" type="warning" />}
       <section className="surface">
         <Typography.Title level={4}>影子模式规则矩阵</Typography.Title>
-        <Descriptions bordered column={1} size="small" style={{ marginBottom: 20 }}>
+        <Descriptions bordered column={1} size="small" className="margin-bottom-lg">
           <Descriptions.Item label="配置版本">
             <Typography.Text className="mono">mock-rules-20260727</Typography.Text>
           </Descriptions.Item>
@@ -38,7 +38,7 @@ export function RulesPage() {
           <Descriptions.Item label="动作边界">
             <Space wrap size={[6, 6]}>
               {shadowActions.map((action) => (
-                <Tag color="blue" key={action} style={{ margin: 0 }}>
+                <Tag color="blue" key={action} className="tag-margin-zero">
                   {action}
                 </Tag>
               ))}
@@ -58,7 +58,7 @@ export function RulesPage() {
           >
             影子 reload 重新加载
           </Button>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text type="secondary" className="font-size-sm">
             此操作仅热重载风控规则与权重系数，不会写回防火墙或阻塞流量。
           </Typography.Text>
         </Space>

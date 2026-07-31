@@ -139,12 +139,147 @@ export const handlers = [
       },
     )
   }),
-  http.get('/api/v1/devices', () =>
-    HttpResponse.json({
-      items: Object.values(deviceInventoriesByIp),
-      page: { limit: 50, next_cursor: null, total: Object.values(deviceInventoriesByIp).length },
-    }),
-  ),
+  http.get('/api/v1/devices', ({ request }) => {
+    const url = new URL(request.url)
+    const q = url.searchParams.get('q')?.toLowerCase()
+    const ip = url.searchParams.get('ip')
+    const limit = Number(url.searchParams.get('limit') ?? 50)
+    const cursor = Number(url.searchParams.get('cursor') ?? 0)
+    const endpointItems = Object.values(deviceInventoriesByIp).flatMap((inventory) =>
+      inventory.devices.map((device) => ({
+        endpoint_id: device.endpoint_id || device.device_id,
+        primary_mac: device.signals.find((signal) => signal.kind === 'mac')?.normalized_value,
+        entity_role: device.entity_role || 'endpoint',
+        registration_status: device.endpoint_id ? 'registered' : 'unregistered',
+        owner_account: device.account_id || '',
+        owner_name: device.account_id ? '样本用户' : '',
+        owner_department: device.account_id ? '网络中心' : '',
+        asset_tag: device.endpoint_id ? `ASSET-${device.device_id.slice(-4)}` : '',
+        merge_status: 'active',
+        current_account: device.account_id || '',
+        current_ip: inventory.ip,
+        current_access_id: device.access_id || '',
+        accounts: device.account_id ? [device.account_id] : [],
+        ips: [inventory.ip],
+        access_ids: device.access_id ? [device.access_id] : [],
+        brand: device.brand || device.vendor || '',
+        vendor: device.vendor || '',
+        model: device.model || '',
+        first_seen: device.first_seen || inventory.first_seen,
+        last_seen: device.last_seen || inventory.last_seen,
+        identity_confidence: device.confidence,
+        summary: `${device.brand && device.brand !== 'unknown' ? device.brand + ' ' : ''}${device.model && device.model !== 'unknown' ? device.model + ' ' : ''}终端 ${device.endpoint_id || device.device_id}，观察到 1 个 IP`,
+      })),
+    )
+    const filtered = endpointItems
+      .filter((item) => !ip || item.current_ip === ip)
+      .filter((item) => !q || JSON.stringify(item).toLowerCase().includes(q))
+    const pageItems = filtered.slice(cursor, cursor + limit)
+    const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
+
+    return HttpResponse.json({
+      items: pageItems,
+      page: { limit, next_cursor: nextCursor, total: filtered.length },
+    })
+  }),
+  http.get('/api/v1/endpoints/:endpointId/identity', ({ params }) => {
+    const endpointId = decodeURIComponent(String(params.endpointId))
+    for (const inventory of Object.values(deviceInventoriesByIp)) {
+      const device = inventory.devices.find((item) => item.endpoint_id === endpointId || item.device_id === endpointId)
+      if (!device) {
+        continue
+      }
+      const accountId = device.account_id || '2026000123'
+      return HttpResponse.json({
+        endpoint_id: endpointId,
+        summary: `终端 ${endpointId} 关联 1 个账号、1 个 IP 和 1 个接入位置`,
+        endpoint: {
+          endpoint_id: endpointId,
+          primary_mac: device.signals.find((signal) => signal.kind === 'mac')?.normalized_value,
+          entity_role: 'endpoint',
+          first_seen: device.first_seen || inventory.first_seen,
+          last_seen: device.last_seen || inventory.last_seen,
+          identity_confidence: device.confidence,
+          attributes: {},
+          registration_status: device.endpoint_id ? 'registered' : 'unregistered',
+          owner_account: accountId,
+          owner_name: '样本用户',
+          owner_department: '网络中心',
+          asset_tag: `ASSET-${device.device_id.slice(-4)}`,
+          registration_note: 'Mock endpoint 登记样本',
+          merge_status: 'active',
+        },
+        accounts: [accountId],
+        sessions: [
+          {
+            session_id: `session-${device.device_id}`,
+            account_id: accountId,
+            endpoint_id: endpointId,
+            ip: inventory.ip,
+            mac: device.signals.find((signal) => signal.kind === 'mac')?.normalized_value,
+            access_id: device.access_id || 'Dorm-A-AP01',
+            source: 'mock',
+            started_at: device.first_seen || inventory.first_seen,
+            ended_at: device.last_seen || inventory.last_seen,
+            identity_confidence: device.confidence,
+          },
+        ],
+        ip_history: [
+          {
+            event_id: `ip-${device.device_id}`,
+            endpoint_id: endpointId,
+            account_id: accountId,
+            entity_role: 'endpoint',
+            ip: inventory.ip,
+            mac: device.signals.find((signal) => signal.kind === 'mac')?.normalized_value,
+            source: 'mock',
+            first_seen: inventory.first_seen,
+            last_seen: inventory.last_seen,
+            identity_confidence: device.confidence,
+            event_ids_sample: [`event-device-${device.device_id}`],
+          },
+        ],
+        access_history: [
+          {
+            event_id: `access-${device.device_id}`,
+            endpoint_id: endpointId,
+            account_id: accountId,
+            entity_role: 'endpoint',
+            access_id: device.access_id || 'Dorm-A-AP01',
+            access_type: 'wireless',
+            ap: device.access_id || 'Dorm-A-AP01',
+            source: 'mock',
+            first_seen: inventory.first_seen,
+            last_seen: inventory.last_seen,
+            identity_confidence: device.confidence,
+            event_ids_sample: [`event-access-${device.device_id}`],
+          },
+        ],
+        first_seen: device.first_seen || inventory.first_seen,
+        last_seen: device.last_seen || inventory.last_seen,
+      })
+    }
+    return HttpResponse.json({
+      endpoint_id: endpointId,
+      summary: `终端 ${endpointId} 暂无完整身份历史`,
+      endpoint: {
+        endpoint_id: endpointId,
+        entity_role: 'endpoint',
+        first_seen: new Date().toISOString(),
+        last_seen: new Date().toISOString(),
+        identity_confidence: 0,
+        attributes: {},
+        registration_status: 'unregistered',
+        merge_status: 'active',
+      },
+      accounts: [],
+      sessions: [],
+      ip_history: [],
+      access_history: [],
+      first_seen: new Date().toISOString(),
+      last_seen: new Date().toISOString(),
+    })
+  }),
   http.get('/api/v1/device-signals', () =>
     HttpResponse.json({ items: Object.values(deviceInventoriesByIp).flatMap((item) => item.signals) }),
   ),

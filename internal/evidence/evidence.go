@@ -34,16 +34,20 @@ type Result struct {
 }
 
 type Evidence struct {
-	EvidenceID string   `json:"evidence_id"`
-	IP         string   `json:"ip"`
-	Type       string   `json:"type"`
-	Window     string   `json:"window"`
-	Score      int      `json:"score"`
-	Confidence float64  `json:"confidence"`
-	Severity   string   `json:"severity"`
-	Reason     string   `json:"reason"`
-	Samples    []string `json:"samples"`
-	CreatedAt  string   `json:"created_at"`
+	EvidenceID  string   `json:"evidence_id"`
+	IP          string   `json:"ip"`
+	SubjectType string   `json:"subject_type,omitempty"`
+	SubjectID   string   `json:"subject_id,omitempty"`
+	AccountID   string   `json:"account_id,omitempty"`
+	EndpointID  string   `json:"endpoint_id,omitempty"`
+	Type        string   `json:"type"`
+	Window      string   `json:"window"`
+	Score       int      `json:"score"`
+	Confidence  float64  `json:"confidence"`
+	Severity    string   `json:"severity"`
+	Reason      string   `json:"reason"`
+	Samples     []string `json:"samples"`
+	CreatedAt   string   `json:"created_at"`
 }
 
 type parsedEvent struct {
@@ -52,11 +56,21 @@ type parsedEvent struct {
 }
 
 type ipSignals struct {
-	userAgents map[string]struct{}
-	ja3        map[string]struct{}
-	ja4        map[string]struct{}
-	domains    map[string]struct{}
-	dstPorts   map[string]struct{}
+	userAgents     map[string]struct{}
+	ja3            map[string]struct{}
+	ja4            map[string]struct{}
+	domains        map[string]struct{}
+	dstPorts       map[string]struct{}
+	deviceProfiles map[string]struct{}
+	deviceFamilies map[string]struct{}
+}
+
+type accountSignals struct {
+	ips          map[string]struct{}
+	macs         map[string]struct{}
+	endpoints    map[string]struct{}
+	accessIDs    map[string]struct{}
+	authMismatch map[string]struct{}
 }
 
 func Analyze(r io.Reader, opts Options) (Result, error) {
@@ -68,6 +82,7 @@ func Analyze(r io.Reader, opts Options) (Result, error) {
 	stats := Stats{}
 	seen := map[string]struct{}{}
 	eventsByIP := map[string][]parsedEvent{}
+	eventsByAccount := map[string][]parsedEvent{}
 	var maxTime time.Time
 
 	scanner := bufio.NewScanner(r)
@@ -105,6 +120,9 @@ func Analyze(r io.Reader, opts Options) (Result, error) {
 			maxTime = timestamp
 		}
 		eventsByIP[ip] = append(eventsByIP[ip], parsedEvent{Event: event, Time: timestamp})
+		if accountID := subjectString(event, "account_id"); accountID != "" {
+			eventsByAccount[accountID] = append(eventsByAccount[accountID], parsedEvent{Event: event, Time: timestamp})
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return Result{}, fmt.Errorf("read normalized input: %w", err)
@@ -126,6 +144,17 @@ func Analyze(r io.Reader, opts Options) (Result, error) {
 			signals.add(parsed.Event)
 		}
 		result.Evidence = append(result.Evidence, buildEvidence(ip, window, maxTime, signals)...)
+	}
+	accounts := sortedKeys(eventsByAccount)
+	for _, accountID := range accounts {
+		signals := newAccountSignals()
+		for _, parsed := range eventsByAccount[accountID] {
+			if parsed.Time.Before(cutoff) {
+				continue
+			}
+			signals.add(parsed.Event)
+		}
+		result.Evidence = append(result.Evidence, buildAccountEvidence(accountID, window, maxTime, signals)...)
 	}
 
 	return result, nil
@@ -159,15 +188,30 @@ func AnalyzeFiles(inputPath, outputPath string, opts Options) (Result, error) {
 
 func newIPSignals() ipSignals {
 	return ipSignals{
-		userAgents: map[string]struct{}{},
-		ja3:        map[string]struct{}{},
-		ja4:        map[string]struct{}{},
-		domains:    map[string]struct{}{},
-		dstPorts:   map[string]struct{}{},
+		userAgents:     map[string]struct{}{},
+		ja3:            map[string]struct{}{},
+		ja4:            map[string]struct{}{},
+		domains:        map[string]struct{}{},
+		dstPorts:       map[string]struct{}{},
+		deviceProfiles: map[string]struct{}{},
+		deviceFamilies: map[string]struct{}{},
+	}
+}
+
+func newAccountSignals() accountSignals {
+	return accountSignals{
+		ips:          map[string]struct{}{},
+		macs:         map[string]struct{}{},
+		endpoints:    map[string]struct{}{},
+		accessIDs:    map[string]struct{}{},
+		authMismatch: map[string]struct{}{},
 	}
 }
 
 func (s ipSignals) add(event normalized.Event) {
+	if isInfrastructureRole(subjectString(event, "entity_role")) {
+		return
+	}
 	addString(s.userAgents, event.Payload, "user_agent")
 	addString(s.ja3, event.Payload, "ja3")
 	addString(s.ja4, event.Payload, "ja4")
@@ -175,6 +219,50 @@ func (s ipSignals) add(event normalized.Event) {
 	addString(s.domains, event.Payload, "sni")
 	addString(s.domains, event.Payload, "host")
 	addNumberString(s.dstPorts, event.Flow, "dst_port")
+	if event.Type == "device" {
+		s.addDevice(event.Payload)
+	}
+}
+
+func (s ipSignals) addDevice(payload map[string]any) {
+	if stringValue(payload, "origin") != "dhcp" {
+		return
+	}
+	hostname := stringValue(payload, "hostname")
+	vendorClass := stringValue(payload, "vendor_class")
+	requestedOptions := stringValue(payload, "requested_options")
+	clientMAC := stringValue(payload, "client_mac")
+	hint := deviceFamily(payload)
+	if hostname == "" && vendorClass == "" && requestedOptions == "" && clientMAC == "" && hint == "unknown" {
+		return
+	}
+	profile := fmt.Sprintf("dhcp:%s:host=%s:vendor=%s:opts=%s:mac=%s",
+		hint,
+		normalizeSample(hostname),
+		normalizeSample(vendorClass),
+		normalizeSample(requestedOptions),
+		normalizeSample(clientMAC),
+	)
+	s.deviceProfiles[profile] = struct{}{}
+	if hint != "unknown" {
+		s.deviceFamilies[hint] = struct{}{}
+	}
+}
+
+func (s accountSignals) add(event normalized.Event) {
+	role := subjectString(event, "entity_role")
+	if isInfrastructureRole(role) || role == "unknown" {
+		return
+	}
+	addSet(s.ips, subjectString(event, "ip"))
+	addSet(s.macs, normalizeMAC(subjectString(event, "mac")))
+	addSet(s.endpoints, subjectString(event, "endpoint_id"))
+	addSet(s.accessIDs, subjectString(event, "access_id"))
+	authMAC := normalizeMAC(stringValue(event.Payload, "auth_mac"))
+	observedMAC := normalizeMAC(stringValue(event.Payload, "observed_mac"))
+	if authMAC != "" && observedMAC != "" && authMAC != observedMAC {
+		s.authMismatch[authMAC+" != "+observedMAC] = struct{}{}
+	}
 }
 
 func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals ipSignals) []Evidence {
@@ -207,6 +295,29 @@ func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals
 			samples, createdAtText))
 	}
 
+	deviceProfiles := sortedSet(signals.deviceProfiles)
+	if len(deviceProfiles) >= 1 {
+		score := cappedScore(28+len(deviceProfiles)*3, 40)
+		output = append(output, newEvidence(ip, "dhcp_device_fingerprint", windowText, score, 0.82, severity(score),
+			fmt.Sprintf("%s 内从 DHCP 观察到设备画像；该信号来自局域网协议栈，可信度高于 User-Agent", windowText),
+			limitSamples(deviceProfiles, 5), createdAtText))
+	}
+
+	deviceFamilies := sortedSet(signals.deviceFamilies)
+	if len(deviceFamilies) >= 2 {
+		samples := append(prefixSamples("family:", deviceFamilies), limitSamples(deviceProfiles, 5)...)
+		score := cappedScore(42+len(deviceFamilies)*6, 58)
+		output = append(output, newEvidence(ip, "device_fingerprint_conflict", windowText, score, 0.88, severity(score),
+			fmt.Sprintf("%s 内同一 IP 出现 %d 类互斥 DHCP 设备画像，疑似共享上网或代理出口", windowText, len(deviceFamilies)),
+			limitSamples(samples, 8), createdAtText))
+	} else if len(deviceProfiles) >= 1 && len(fingerprints) >= 2 {
+		samples := append(limitSamples(deviceProfiles, 4), limitSamples(fingerprints, 4)...)
+		score := cappedScore(34+len(fingerprints)*3, 48)
+		output = append(output, newEvidence(ip, "device_fingerprint_conflict", windowText, score, 0.78, severity(score),
+			fmt.Sprintf("%s 内 DHCP 设备画像与多个 TLS 客户端指纹同时出现，需要按多设备出口复核", windowText),
+			limitSamples(samples, 8), createdAtText))
+	}
+
 	domains := sortedSet(signals.domains)
 	if len(domains) >= 20 {
 		score := cappedScore(10+len(domains)/4, 25)
@@ -226,19 +337,81 @@ func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals
 	return output
 }
 
-func newEvidence(ip, evidenceType, window string, score int, conf float64, severityText, reason string, samples []string, createdAt string) Evidence {
-	return Evidence{
-		EvidenceID: evidenceID(ip, evidenceType, window, createdAt, samples),
-		IP:         ip,
-		Type:       evidenceType,
-		Window:     window,
-		Score:      score,
-		Confidence: conf,
-		Severity:   severityText,
-		Reason:     reason,
-		Samples:    samples,
-		CreatedAt:  createdAt,
+func buildAccountEvidence(accountID string, window time.Duration, createdAt time.Time, signals accountSignals) []Evidence {
+	var output []Evidence
+	windowText := window.String()
+	createdAtText := createdAt.Format(time.RFC3339Nano)
+	macs := sortedSet(signals.macs)
+	endpoints := sortedSet(signals.endpoints)
+	accessIDs := sortedSet(signals.accessIDs)
+	if len(macs) >= 2 {
+		score := cappedScore(58+len(macs)*6, 76)
+		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_macs", windowText, score, 0.92, severity(score),
+			fmt.Sprintf("%s 内同一账号关联 %d 个 endpoint MAC，属于防共享高置信证据", windowText, len(macs)),
+			limitSamples(macs, 8), createdAtText))
 	}
+	if len(endpoints) >= 2 && len(macs) < 2 {
+		score := cappedScore(52+len(endpoints)*5, 68)
+		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_endpoints", windowText, score, 0.86, severity(score),
+			fmt.Sprintf("%s 内同一账号关联 %d 个终端实体，需要复核是否账号共享或换机重认证", windowText, len(endpoints)),
+			limitSamples(endpoints, 8), createdAtText))
+	}
+	if len(accessIDs) >= 2 {
+		score := cappedScore(44+len(accessIDs)*6, 64)
+		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_access", windowText, score, 0.82, severity(score),
+			fmt.Sprintf("%s 内同一账号出现在 %d 个接入位置，需要排除漫游切换和日志延迟", windowText, len(accessIDs)),
+			limitSamples(accessIDs, 8), createdAtText))
+	}
+	mismatches := sortedSet(signals.authMismatch)
+	if len(mismatches) > 0 {
+		score := cappedScore(62+len(mismatches)*4, 78)
+		output = append(output, newSubjectEvidence("account", accountID, "", "auth_observed_mac_mismatch", windowText, score, 0.9, severity(score),
+			fmt.Sprintf("%s 内认证 MAC 与实际观测 MAC 不一致，属于强复核证据", windowText),
+			limitSamples(mismatches, 8), createdAtText))
+	}
+	return output
+}
+
+func newEvidence(ip, evidenceType, window string, score int, conf float64, severityText, reason string, samples []string, createdAt string) Evidence {
+	item := Evidence{
+		EvidenceID:  evidenceID(ip, evidenceType, window, createdAt, samples),
+		IP:          ip,
+		SubjectType: "ip",
+		SubjectID:   ip,
+		Type:        evidenceType,
+		Window:      window,
+		Score:       score,
+		Confidence:  conf,
+		Severity:    severityText,
+		Reason:      reason,
+		Samples:     samples,
+		CreatedAt:   createdAt,
+	}
+	return item
+}
+
+func newSubjectEvidence(subjectType, subjectID, ip, evidenceType, window string, score int, conf float64, severityText, reason string, samples []string, createdAt string) Evidence {
+	item := Evidence{
+		EvidenceID:  evidenceID(subjectType+":"+subjectID, evidenceType, window, createdAt, samples),
+		IP:          ip,
+		SubjectType: subjectType,
+		SubjectID:   subjectID,
+		Type:        evidenceType,
+		Window:      window,
+		Score:       score,
+		Confidence:  conf,
+		Severity:    severityText,
+		Reason:      reason,
+		Samples:     samples,
+		CreatedAt:   createdAt,
+	}
+	if subjectType == "account" {
+		item.AccountID = subjectID
+	}
+	if subjectType == "endpoint" {
+		item.EndpointID = subjectID
+	}
+	return item
 }
 
 func evidenceID(ip, evidenceType, window, createdAt string, samples []string) string {
@@ -279,6 +452,78 @@ func addString(set map[string]struct{}, fields map[string]any, key string) {
 	if value, ok := fields[key].(string); ok && value != "" {
 		set[value] = struct{}{}
 	}
+}
+
+func addSet(set map[string]struct{}, value string) {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		set[value] = struct{}{}
+	}
+}
+
+func stringValue(fields map[string]any, key string) string {
+	if value, ok := fields[key].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func subjectString(event normalized.Event, key string) string {
+	return stringValue(event.Subject, key)
+}
+
+func normalizeMAC(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.ReplaceAll(value, "-", ":")
+	value = strings.ReplaceAll(value, ".", "")
+	if len(value) == 12 && !strings.Contains(value, ":") {
+		parts := []string{}
+		for i := 0; i < 12; i += 2 {
+			parts = append(parts, value[i:i+2])
+		}
+		value = strings.Join(parts, ":")
+	}
+	return value
+}
+
+func isInfrastructureRole(role string) bool {
+	switch role {
+	case "infrastructure", "gateway", "nat", "server", "network_device":
+		return true
+	default:
+		return false
+	}
+}
+
+func deviceFamily(fields map[string]any) string {
+	text := strings.ToLower(strings.Join([]string{
+		stringValue(fields, "device_hint"),
+		stringValue(fields, "hostname"),
+		stringValue(fields, "vendor_class"),
+		stringValue(fields, "client_fqdn"),
+	}, " "))
+	switch {
+	case strings.Contains(text, "iphone"), strings.Contains(text, "ipad"), strings.Contains(text, "ios"), strings.Contains(text, "apple"), strings.Contains(text, "macbook"), strings.Contains(text, "imac"):
+		return "apple"
+	case strings.Contains(text, "android"):
+		return "android"
+	case strings.Contains(text, "windows"), strings.Contains(text, "microsoft"), strings.Contains(text, "msft"):
+		return "windows"
+	case strings.Contains(text, "chromebook"), strings.Contains(text, "chromeos"):
+		return "chromeos"
+	case strings.Contains(text, "linux"), strings.Contains(text, "dhcpcd"), strings.Contains(text, "ubuntu"), strings.Contains(text, "debian"):
+		return "linux"
+	default:
+		return "unknown"
+	}
+}
+
+func normalizeSample(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if len(value) > 80 {
+		return value[:80]
+	}
+	return value
 }
 
 func addNumberString(set map[string]struct{}, fields map[string]any, key string) {

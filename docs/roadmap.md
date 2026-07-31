@@ -184,18 +184,21 @@
 已完成主链路：
 
 - 30 机器 Suricata 常驻采集镜像口，EVE 持续写入。
+- 30 机器 Zeek 常驻并行监听镜像口，`dhcp.log` 已进入 shadow 增量消费。
 - `proxy-sentinel-shadow.timer` 每 10 分钟读取 EVE 增量，生成标准事件、证据、风险快照和风险列表。
 - PostgreSQL 保存业务状态，ClickHouse 保存标准事件和采集诊断，30 机器使用 `dual` 模式。
-- 控制面 API 和前端已支持总览、风险列表、IP 详情、采集诊断、访问态势、shadow runs 和审计展示。
+- 控制面 API 和前端已支持总览、风险列表、IP 详情、设备识别、采集诊断、访问态势、shadow runs 和审计展示。
+- 设备识别已能从 Zeek DHCP 生成 `device` 标准事件，并在 `/devices` 和 `/ips/{ip}` 展示 DHCP MAC、hostname、vendor_class、device_hint 等强信号。
 - 本地前端可关闭 mock 后通过 CORS 直连 30 的真实 API。
 
 ## 下一阶段推进顺序
 
-1. 事件检索与访问对象钻取：补齐按时间、IP、域名、UA、端口、协议的标准事件检索和详情页。
-2. 人工复核闭环：labels 写入 PostgreSQL，审计落库，风险 IP 展示复核状态。
-3. 前端运营体验：自动刷新、数据更新时间、空态/异常态、移动端卡片化和真实 API / mock 状态区分。
-4. 实时 ingest：新增常驻 worker，让标准事件入库接近实时，风险评分继续窗口批处理。
-5. 规则治理和生产硬化：负证据、规则版本、多 sensor、认证、备份、TTL、监控告警。
+1. Zeek 设备识别增强：在 DHCP 之外接入 `software.log`，再评估 mDNS、NBNS、LLMNR 是否能在 30 机器稳定产生日志。
+2. 事件检索与访问对象钻取：补齐按时间、IP、域名、UA、端口、协议的标准事件检索和详情页。
+3. 人工复核闭环：labels 写入 PostgreSQL，审计落库，风险 IP 展示复核状态。
+4. 前端运营体验：自动刷新、数据更新时间、空态/异常态、移动端卡片化和真实 API / mock 状态区分。
+5. 实时 ingest：新增常驻 worker，让标准事件入库接近实时，风险评分继续窗口批处理。
+6. 规则治理和生产硬化：负证据、规则版本、多 sensor、认证、备份、TTL、监控告警。
 
 验收：
 

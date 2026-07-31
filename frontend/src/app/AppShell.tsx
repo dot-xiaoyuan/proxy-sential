@@ -4,6 +4,7 @@ import {
   AuditOutlined,
   DashboardOutlined,
   DatabaseOutlined,
+  DesktopOutlined,
   FieldTimeOutlined,
   FileSearchOutlined,
   GlobalOutlined,
@@ -22,6 +23,7 @@ import { useSession } from '../shared/api/queries'
 const navItems: MenuProps['items'] = [
   { key: '/overview', icon: <DashboardOutlined />, label: <NavLink to="/overview">总览</NavLink> },
   { key: '/activity', icon: <GlobalOutlined />, label: <NavLink to="/activity">访问态势</NavLink> },
+  { key: '/devices', icon: <DesktopOutlined />, label: <NavLink to="/devices">设备识别</NavLink> },
   { key: '/events', icon: <SearchOutlined />, label: <NavLink to="/events">事件检索</NavLink> },
   { key: '/ingest', icon: <DatabaseOutlined />, label: <NavLink to="/ingest">采集诊断</NavLink> },
   { key: '/risks', icon: <SafetyOutlined />, label: <NavLink to="/risks">风险 IP</NavLink> },
@@ -87,7 +89,7 @@ export function AppShell() {
         </div>
         {menu}
       </Layout.Sider>
-      <Layout style={{ background: 'var(--ps-bg-body)' }}>
+      <Layout className="app-main-layout">
         <Layout.Header className="app-header">
           <Space>
             <Button
@@ -107,11 +109,11 @@ export function AppShell() {
           </Space>
           <Space size="middle">
             <div className="user-session-badge">
-              <UserOutlined style={{ color: 'var(--ps-primary-color)' }} />
-              <Typography.Text strong style={{ fontSize: 13 }}>
+              <UserOutlined className="text-primary-color" />
+              <Typography.Text strong className="font-size-md">
                 {session.data?.user.name ?? '加载中...'}
               </Typography.Text>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              <Typography.Text type="secondary" className="font-size-sm">
                 ({session.data?.role ?? 'guest'})
               </Typography.Text>
             </div>

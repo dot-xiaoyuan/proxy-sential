@@ -287,6 +287,12 @@ paths:
           in: query
           schema:
             type: string
+        - name: include_weak
+          in: query
+          description: Include weak-signal-only device inventories. Defaults to false so the device list focuses on high-confidence IP/device profiles.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Filtered risk snapshots.
@@ -319,6 +325,14 @@ paths:
       operationId: getIpEvidence
       parameters:
         - $ref: "#/components/parameters/IpPath"
+        - name: limit
+          in: query
+          description: Maximum number of recent evidence items to return for the IP timeline.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
       responses:
         "200":
           description: Evidence timeline for an IP.
@@ -414,6 +428,100 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /accounts/{account_id}/identity:
+    get:
+      operationId: getAccountIdentity
+      parameters:
+        - name: account_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/SensorIdQuery"
+        - $ref: "#/components/parameters/WindowQuery"
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+      responses:
+        "200":
+          description: Current account identity profile with linked endpoints, IPs and access locations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountIdentityProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /endpoints/{endpoint_id}/identity:
+    get:
+      operationId: getEndpointIdentity
+      parameters:
+        - name: endpoint_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/SensorIdQuery"
+        - $ref: "#/components/parameters/WindowQuery"
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+      responses:
+        "200":
+          description: Current endpoint identity profile with linked accounts, IPs and access locations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EndpointIdentityProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /endpoints/{endpoint_id}/registration:
+    post:
+      operationId: updateEndpointRegistration
+      parameters:
+        - name: endpoint_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateEndpointRegistrationRequest"
+      responses:
+        "200":
+          description: Updated endpoint registration metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EndpointEntity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /devices:
     get:
       operationId: listDevices
@@ -449,7 +557,7 @@ paths:
             type: string
       responses:
         "200":
-          description: IP-scoped device inventories.
+          description: Endpoint-scoped device registration and identity inventories.
           content:
             application/json:
               schema:
@@ -978,6 +1086,7 @@ components:
         - evidence:read
         - events:read
         - labels:create
+        - endpoints:write
         - shadow:read
         - audit:read
         - rules:reload
@@ -1018,6 +1127,15 @@ components:
       required: [ip, score, level, confidence, window, evidence_ids, summary, recommended_action, updated_at, suspected_device_count, device_confidence]
       properties:
         ip:
+          type: string
+        subject_type:
+          type: string
+          enum: [ip, account, endpoint]
+        subject_id:
+          type: string
+        account_id:
+          type: string
+        endpoint_id:
           type: string
         score:
           type: integer
@@ -1099,9 +1217,18 @@ components:
           type: string
         ip:
           type: string
+        subject_type:
+          type: string
+          enum: [ip, account, endpoint]
+        subject_id:
+          type: string
+        account_id:
+          type: string
+        endpoint_id:
+          type: string
         type:
           type: string
-          enum: [multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint, multi_observed_device, device_signal_conflict, brand_os_conflict, tcp_tls_stack_conflict]
+          enum: [multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint, multi_observed_device, device_signal_conflict, brand_os_conflict, tcp_tls_stack_conflict, dhcp_device_fingerprint, device_fingerprint_conflict, account_concurrent_macs, account_concurrent_endpoints, account_concurrent_access, auth_observed_mac_mismatch]
         window:
           type: string
         score:
@@ -1148,6 +1275,15 @@ components:
           maximum: 1
         weight:
           type: integer
+        entity_role:
+          type: string
+          enum: [endpoint, infrastructure, gateway, nat, server, network_device, unknown]
+        account_id:
+          type: string
+        endpoint_id:
+          type: string
+        access_id:
+          type: string
         first_seen:
           type: string
           format: date-time
@@ -1156,6 +1292,15 @@ components:
           format: date-time
         event_ids:
           type: array
+          items:
+            type: string
+        seen_count:
+          type: integer
+          minimum: 0
+          description: Number of deduplicated source events observed for this signal fact.
+        event_ids_sample:
+          type: array
+          description: Bounded sample of source event IDs for audit drill-down.
           items:
             type: string
     ObservedDevice:
@@ -1177,6 +1322,15 @@ components:
         os_version:
           type: string
         device_type:
+          type: string
+        entity_role:
+          type: string
+          enum: [endpoint, infrastructure, gateway, nat, server, network_device, unknown]
+        account_id:
+          type: string
+        endpoint_id:
+          type: string
+        access_id:
           type: string
         model:
           type: string
@@ -1282,7 +1436,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/IpDeviceInventory"
+            $ref: "#/components/schemas/EndpointDeviceInventory"
         page:
           type: object
           required: [limit, next_cursor, total]
@@ -1295,6 +1449,276 @@ components:
                 - "null"
             total:
               type: integer
+    EndpointDeviceInventory:
+      type: object
+      required: [endpoint_id, entity_role, registration_status, merge_status, accounts, ips, access_ids, identity_confidence, summary]
+      properties:
+        endpoint_id:
+          type: string
+        primary_mac:
+          type: string
+        entity_role:
+          type: string
+          enum: [endpoint, infrastructure, gateway, nat, server, network_device, unknown]
+        registration_status:
+          type: string
+          enum: [unregistered, registered, ignored, retired]
+        owner_account:
+          type: string
+        owner_name:
+          type: string
+        owner_department:
+          type: string
+        asset_tag:
+          type: string
+        merge_status:
+          type: string
+          enum: [active, merged, split]
+        current_account:
+          type: string
+        current_ip:
+          type: string
+        current_access_id:
+          type: string
+        accounts:
+          type: array
+          items:
+            type: string
+        ips:
+          type: array
+          items:
+            type: string
+        access_ids:
+          type: array
+          items:
+            type: string
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        identity_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        summary:
+          type: string
+    EndpointEntity:
+      type: object
+      required: [endpoint_id, entity_role, first_seen, last_seen, identity_confidence]
+      properties:
+        endpoint_id:
+          type: string
+        primary_mac:
+          type: string
+        entity_role:
+          type: string
+          enum: [endpoint, infrastructure, gateway, nat, server, network_device, unknown]
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        identity_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        attributes:
+          type: object
+          additionalProperties: true
+        registration_status:
+          type: string
+          enum: [unregistered, registered, ignored, retired]
+        owner_account:
+          type: string
+        owner_name:
+          type: string
+        owner_department:
+          type: string
+        asset_tag:
+          type: string
+        registered_by:
+          type: string
+        registered_at:
+          type: string
+          format: date-time
+        registration_note:
+          type: string
+        merge_status:
+          type: string
+          enum: [active, merged, split]
+        merged_into_endpoint_id:
+          type: string
+        split_from_endpoint_id:
+          type: string
+        registration_updated_at:
+          type: string
+          format: date-time
+        registration_update_by_id:
+          type: string
+    UpdateEndpointRegistrationRequest:
+      type: object
+      required: [registration_status]
+      properties:
+        registration_status:
+          type: string
+          enum: [unregistered, registered, ignored, retired]
+        owner_account:
+          type: string
+        owner_name:
+          type: string
+        owner_department:
+          type: string
+        asset_tag:
+          type: string
+        registration_note:
+          type: string
+        merge_status:
+          type: string
+          enum: [active, merged, split]
+          default: active
+        merged_into_endpoint_id:
+          type: string
+        split_from_endpoint_id:
+          type: string
+    AccountSession:
+      type: object
+      required: [session_id, account_id, endpoint_id, entity_role, started_at, ended_at, identity_confidence, source]
+      properties:
+        session_id:
+          type: string
+        account_id:
+          type: string
+        endpoint_id:
+          type: string
+        entity_role:
+          type: string
+          enum: [endpoint, infrastructure, gateway, nat, server, network_device, unknown]
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        identity_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        source:
+          type: string
+    IdentityIPMACHistory:
+      type: object
+      required: [event_id, endpoint_id, account_id, entity_role, seen_at, source]
+      properties:
+        event_id:
+          type: string
+        endpoint_id:
+          type: string
+        account_id:
+          type: string
+        ip:
+          type: string
+        mac:
+          type: string
+        entity_role:
+          type: string
+          enum: [endpoint, infrastructure, gateway, nat, server, network_device, unknown]
+        seen_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+    IdentityAccessHistory:
+      type: object
+      required: [event_id, endpoint_id, account_id, access_id, seen_at, source]
+      properties:
+        event_id:
+          type: string
+        endpoint_id:
+          type: string
+        account_id:
+          type: string
+        access_id:
+          type: string
+        vlan_id:
+          type: string
+        switch_id:
+          type: string
+        port_id:
+          type: string
+        ap_id:
+          type: string
+        ssid:
+          type: string
+        seen_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+    AccountIdentityProfile:
+      type: object
+      required: [account_id, summary, endpoints, sessions, ip_history, access_history]
+      properties:
+        account_id:
+          type: string
+        summary:
+          type: string
+        endpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/EndpointEntity"
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountSession"
+        ip_history:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdentityIPMACHistory"
+        access_history:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdentityAccessHistory"
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+    EndpointIdentityProfile:
+      type: object
+      required: [endpoint_id, summary, endpoint, accounts, sessions, ip_history, access_history]
+      properties:
+        endpoint_id:
+          type: string
+        summary:
+          type: string
+        endpoint:
+          $ref: "#/components/schemas/EndpointEntity"
+        accounts:
+          type: array
+          items:
+            type: string
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccountSession"
+        ip_history:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdentityIPMACHistory"
+        access_history:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdentityAccessHistory"
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
     NormalizedEventSummary:
       type: object
       required: [event_id, type, timestamp, subject, flow, confidence]
@@ -1303,9 +1727,11 @@ components:
           type: string
         source:
           type: string
+        source_event_type:
+          type: string
         type:
           type: string
-          enum: [flow, dns, tls, http, quic, device, alert]
+          enum: [flow, dns, tls, http, quic, device, identity, alert]
         timestamp:
           type: string
           format: date-time
@@ -1880,6 +2306,37 @@ components:
               type: integer
             malformed:
               type: integer
+            by_type:
+              type: object
+              additionalProperties:
+                type: integer
+        zeek_normalized:
+          type: object
+          required: [read, emitted, skipped, malformed]
+          properties:
+            read:
+              type: integer
+            emitted:
+              type: integer
+            skipped:
+              type: integer
+            malformed:
+              type: integer
+            by_type:
+              type: object
+              additionalProperties:
+                type: integer
+        zeek_status:
+          type: string
+          enum: [not_configured, unavailable, no_dhcp_events, log_truncated, ok]
+        zeek_reason:
+          type: string
+        zeek_previous_offset:
+          type: integer
+        zeek_new_offset:
+          type: integer
+        zeek_truncated:
+          type: boolean
         evidence_count:
           type: integer
         risk_count:

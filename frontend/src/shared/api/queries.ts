@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from './client'
-import type { ActivityOverviewQuery, CreateLabelRequest, DeviceQuery, EventQuery, RiskQuery } from './types'
+import type {
+  ActivityOverviewQuery,
+  CreateLabelRequest,
+  DeviceQuery,
+  EventQuery,
+  EvidenceQuery,
+  IdentityQuery,
+  RiskQuery,
+  UpdateEndpointRegistrationRequest,
+} from './types'
 
 export const queryKeys = {
   session: ['session'] as const,
@@ -21,10 +30,14 @@ export const queryKeys = {
   deviceFingerprintConflicts: (query: DeviceQuery) => ['device-fingerprint-conflicts', query] as const,
   risks: (query: RiskQuery) => ['risks', query] as const,
   ipRisk: (ip: string) => ['ip-risk', ip] as const,
-  ipEvidence: (ip: string) => ['ip-evidence', ip] as const,
+  ipEvidence: (ip: string, query: EvidenceQuery) => ['ip-evidence', ip, query] as const,
   ipActivity: (ip: string) => ['ip-activity', ip] as const,
   ipDevices: (ip: string, query: DeviceQuery) => ['ip-devices', ip, query] as const,
-  ipEvents: (ip: string) => ['ip-events', ip] as const,
+  ipEvents: (ip: string, limit: number) => ['ip-events', ip, limit] as const,
+  accountIdentity: (accountId: string, query: IdentityQuery) =>
+    ['account-identity', accountId, query] as const,
+  endpointIdentity: (endpointId: string, query: IdentityQuery) =>
+    ['endpoint-identity', endpointId, query] as const,
   events: (query: EventQuery) => ['events', query] as const,
   ingestStatus: ['ingest-status'] as const,
   ingestRuns: ['ingest-runs'] as const,
@@ -126,10 +139,10 @@ export function useIpRisk(ip: string) {
   return useQuery({ queryKey: queryKeys.ipRisk(ip), queryFn: () => api.ipRisk(ip), enabled: !!ip })
 }
 
-export function useIpEvidence(ip: string) {
+export function useIpEvidence(ip: string, query: EvidenceQuery = { limit: 20 }) {
   return useQuery({
-    queryKey: queryKeys.ipEvidence(ip),
-    queryFn: () => api.ipEvidence(ip),
+    queryKey: queryKeys.ipEvidence(ip, query),
+    queryFn: () => api.ipEvidence(ip, query),
     enabled: !!ip,
   })
 }
@@ -142,6 +155,38 @@ export function useIpActivity(ip: string) {
   })
 }
 
+export function useAccountIdentity(accountId: string, query: IdentityQuery = {}) {
+  return useQuery({
+    queryKey: queryKeys.accountIdentity(accountId, query),
+    queryFn: () => api.accountIdentity(accountId, query),
+    enabled: !!accountId,
+  })
+}
+
+export function useEndpointIdentity(endpointId: string, query: IdentityQuery = {}) {
+  return useQuery({
+    queryKey: queryKeys.endpointIdentity(endpointId, query),
+    queryFn: () => api.endpointIdentity(endpointId, query),
+    enabled: !!endpointId,
+  })
+}
+
+export function useUpdateEndpointRegistration() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      endpointId,
+      payload,
+    }: {
+      endpointId: string
+      payload: UpdateEndpointRegistrationRequest
+    }) => api.updateEndpointRegistration(endpointId, payload),
+    onSuccess: (_, variables) => {
+      void client.invalidateQueries({ queryKey: ['endpoint-identity', variables.endpointId] })
+    },
+  })
+}
+
 export function useIpDevices(ip: string, query: DeviceQuery = { window: '1h' }) {
   return useQuery({
     queryKey: queryKeys.ipDevices(ip, query),
@@ -150,10 +195,10 @@ export function useIpDevices(ip: string, query: DeviceQuery = { window: '1h' }) 
   })
 }
 
-export function useIpEvents(ip: string) {
+export function useIpEvents(ip: string, limit = 20) {
   return useQuery({
-    queryKey: queryKeys.ipEvents(ip),
-    queryFn: () => api.ipEvents(ip),
+    queryKey: queryKeys.ipEvents(ip, limit),
+    queryFn: () => api.ipEvents(ip, limit),
     enabled: !!ip,
   })
 }

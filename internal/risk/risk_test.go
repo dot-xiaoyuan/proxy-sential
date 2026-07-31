@@ -93,6 +93,28 @@ func TestBatchBuildsSnapshotsForEveryEvidenceIP(t *testing.T) {
 	}
 }
 
+func TestBatchBuildsAccountSubjectSnapshot(t *testing.T) {
+	input := evidenceInput(
+		accountEv("acct-mac", "2026000123", "account_concurrent_macs", 70, 0.92),
+		accountEv("acct-access", "2026000123", "account_concurrent_access", 58, 0.82),
+	)
+
+	result, err := Batch(bytes.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Snapshots) != 1 {
+		t.Fatalf("expected 1 account snapshot, got %+v", result.Snapshots)
+	}
+	snapshot := result.Snapshots[0]
+	if snapshot.SubjectType != "account" || snapshot.SubjectID != "2026000123" || snapshot.AccountID != "2026000123" || snapshot.IP != "" {
+		t.Fatalf("unexpected account subject snapshot: %+v", snapshot)
+	}
+	if snapshot.Score != 100 || snapshot.Level != "confirmed" || snapshot.RecommendedAction != "shadow_confirm_review" {
+		t.Fatalf("unexpected account risk level: %+v", snapshot)
+	}
+}
+
 func TestListFiltersSortsAndLimitsSnapshots(t *testing.T) {
 	batch := BatchResult{Snapshots: []Snapshot{
 		{IP: "10.0.0.1", Score: 20, Level: "normal"},
@@ -139,15 +161,34 @@ func evidenceInput(items ...evidence.Evidence) []byte {
 
 func ev(id, ip, evidenceType string, score int, confidence float64) evidence.Evidence {
 	return evidence.Evidence{
-		EvidenceID: id,
-		IP:         ip,
-		Type:       evidenceType,
-		Window:     "10m0s",
-		Score:      score,
-		Confidence: confidence,
-		Severity:   "medium",
-		Reason:     "test evidence",
-		Samples:    []string{"sample"},
-		CreatedAt:  "2026-07-24T13:20:00Z",
+		EvidenceID:  id,
+		IP:          ip,
+		SubjectType: "ip",
+		SubjectID:   ip,
+		Type:        evidenceType,
+		Window:      "10m0s",
+		Score:       score,
+		Confidence:  confidence,
+		Severity:    "medium",
+		Reason:      "test evidence",
+		Samples:     []string{"sample"},
+		CreatedAt:   "2026-07-24T13:20:00Z",
+	}
+}
+
+func accountEv(id, accountID, evidenceType string, score int, confidence float64) evidence.Evidence {
+	return evidence.Evidence{
+		EvidenceID:  id,
+		SubjectType: "account",
+		SubjectID:   accountID,
+		AccountID:   accountID,
+		Type:        evidenceType,
+		Window:      "10m0s",
+		Score:       score,
+		Confidence:  confidence,
+		Severity:    "high",
+		Reason:      "test account evidence",
+		Samples:     []string{"sample"},
+		CreatedAt:   "2026-07-24T13:20:00Z",
 	}
 }

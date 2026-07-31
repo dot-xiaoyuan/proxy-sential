@@ -35,6 +35,7 @@ type Query struct {
 	Proto       string
 	Limit       int
 	Cursor      int
+	IncludeWeak bool
 }
 
 type Page struct {
@@ -53,24 +54,38 @@ type DevicePage struct {
 	Page  Page                `json:"page"`
 }
 
+type EndpointDevicePage struct {
+	Items []EndpointDeviceInventory `json:"items"`
+	Page  Page                      `json:"page"`
+}
+
 type EventPage struct {
 	Items []normalized.Event
 	Page  Page
 }
 
 type Run struct {
-	RunID          string
-	StartedAt      string
-	FinishedAt     string
-	SensorID       string
-	PreviousOffset int64
-	NewOffset      int64
-	Truncated      bool
-	Normalized     NormalizedCounts
-	EvidenceCount  int
-	RiskCount      int
-	RiskListCount  int
-	RawRef         map[string]any
+	RunID                  string           `json:"run_id"`
+	StartedAt              string           `json:"started_at"`
+	FinishedAt             string           `json:"finished_at"`
+	SensorID               string           `json:"sensor_id"`
+	PreviousOffset         int64            `json:"previous_offset"`
+	NewOffset              int64            `json:"new_offset"`
+	Truncated              bool             `json:"truncated"`
+	Normalized             NormalizedCounts `json:"normalized"`
+	ZeekNormalized         NormalizedCounts `json:"zeek_normalized"`
+	ZeekStatus             string           `json:"zeek_status"`
+	ZeekReason             string           `json:"zeek_reason"`
+	ZeekPrevOffset         int64            `json:"zeek_previous_offset"`
+	ZeekNewOffset          int64            `json:"zeek_new_offset"`
+	ZeekTruncated          bool             `json:"zeek_truncated"`
+	ZeekSoftwarePrevOffset int64            `json:"zeek_software_previous_offset"`
+	ZeekSoftwareNewOffset  int64            `json:"zeek_software_new_offset"`
+	ZeekSoftwareTruncated  bool             `json:"zeek_software_truncated"`
+	EvidenceCount          int              `json:"evidence_count"`
+	RiskCount              int              `json:"risk_count"`
+	RiskListCount          int              `json:"risk_list_count"`
+	RawRef                 map[string]any   `json:"raw_ref"`
 }
 
 type NormalizedCounts struct {
@@ -96,6 +111,32 @@ type AuditLog struct {
 	Target    string
 	Outcome   string
 	CreatedAt string
+}
+
+type Label struct {
+	LabelID     string   `json:"label_id"`
+	TargetType  string   `json:"target_type"`
+	TargetID    string   `json:"target_id"`
+	Label       string   `json:"label"`
+	Reason      string   `json:"reason"`
+	EvidenceIDs []string `json:"evidence_ids"`
+	CreatedBy   string   `json:"created_by"`
+	CreatedAt   string   `json:"created_at"`
+}
+
+type EndpointRegistrationUpdate struct {
+	EndpointID            string `json:"endpoint_id"`
+	RegistrationStatus    string `json:"registration_status"`
+	OwnerAccount          string `json:"owner_account,omitempty"`
+	OwnerName             string `json:"owner_name,omitempty"`
+	OwnerDepartment       string `json:"owner_department,omitempty"`
+	AssetTag              string `json:"asset_tag,omitempty"`
+	RegistrationNote      string `json:"registration_note,omitempty"`
+	MergeStatus           string `json:"merge_status"`
+	MergedIntoEndpointID  string `json:"merged_into_endpoint_id,omitempty"`
+	SplitFromEndpointID   string `json:"split_from_endpoint_id,omitempty"`
+	RegistrationUpdatedBy string `json:"registration_updated_by"`
+	RegistrationUpdatedAt string `json:"registration_updated_at"`
 }
 
 type ActivityProfile struct {
@@ -262,9 +303,15 @@ type DeviceSignal struct {
 	Strength        string   `json:"strength"`
 	Confidence      float64  `json:"confidence"`
 	Weight          int      `json:"weight"`
+	EntityRole      string   `json:"entity_role,omitempty"`
+	AccountID       string   `json:"account_id,omitempty"`
+	EndpointID      string   `json:"endpoint_id,omitempty"`
+	AccessID        string   `json:"access_id,omitempty"`
 	FirstSeen       string   `json:"first_seen,omitempty"`
 	LastSeen        string   `json:"last_seen,omitempty"`
 	EventIDs        []string `json:"event_ids"`
+	SeenCount       int      `json:"seen_count,omitempty"`
+	EventIDsSample  []string `json:"event_ids_sample,omitempty"`
 }
 
 type ObservedDevice struct {
@@ -276,6 +323,10 @@ type ObservedDevice struct {
 	OSFamily          string         `json:"os_family"`
 	OSVersion         string         `json:"os_version"`
 	DeviceType        string         `json:"device_type"`
+	EntityRole        string         `json:"entity_role,omitempty"`
+	AccountID         string         `json:"account_id,omitempty"`
+	EndpointID        string         `json:"endpoint_id,omitempty"`
+	AccessID          string         `json:"access_id,omitempty"`
 	Model             string         `json:"model"`
 	Confidence        float64        `json:"confidence"`
 	SignalCount       int            `json:"signal_count"`
@@ -315,12 +366,37 @@ type IPDeviceInventory struct {
 	LastSeen             string           `json:"last_seen,omitempty"`
 }
 
+type EndpointDeviceInventory struct {
+	EndpointID         string   `json:"endpoint_id"`
+	PrimaryMAC         string   `json:"primary_mac,omitempty"`
+	EntityRole         string   `json:"entity_role"`
+	RegistrationStatus string   `json:"registration_status"`
+	OwnerAccount       string   `json:"owner_account,omitempty"`
+	OwnerName          string   `json:"owner_name,omitempty"`
+	OwnerDepartment    string   `json:"owner_department,omitempty"`
+	AssetTag           string   `json:"asset_tag,omitempty"`
+	MergeStatus        string   `json:"merge_status"`
+	CurrentAccount     string   `json:"current_account,omitempty"`
+	CurrentIP          string   `json:"current_ip,omitempty"`
+	CurrentAccessID    string   `json:"current_access_id,omitempty"`
+	Accounts           []string `json:"accounts"`
+	IPs                []string `json:"ips"`
+	AccessIDs          []string `json:"access_ids"`
+	FirstSeen          string   `json:"first_seen,omitempty"`
+	LastSeen           string   `json:"last_seen,omitempty"`
+	IdentityConfidence float64  `json:"identity_confidence"`
+	Summary            string   `json:"summary"`
+}
+
 type Reader interface {
 	Overview(ctx context.Context) (Overview, error)
 	ListRisks(ctx context.Context, query Query) (RiskPage, error)
 	GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error)
-	GetIPEvidence(ctx context.Context, ip string) ([]evidence.Evidence, error)
+	GetIPEvidence(ctx context.Context, ip string, limit int) ([]evidence.Evidence, error)
 	GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error)
+	GetAccountIdentity(ctx context.Context, accountID string, query Query) (AccountIdentityProfile, bool, error)
+	GetEndpointIdentity(ctx context.Context, endpointID string, query Query) (EndpointIdentityProfile, bool, error)
+	ListEndpointDevices(ctx context.Context, query Query) (EndpointDevicePage, error)
 	GetIPDeviceInventory(ctx context.Context, ip string, query ActivityQuery) (IPDeviceInventory, error)
 	ListDeviceInventories(ctx context.Context, query Query) (DevicePage, error)
 	GetDevice(ctx context.Context, deviceID string, query Query) (ObservedDevice, bool, error)
@@ -339,6 +415,8 @@ type Reader interface {
 	GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error)
 	ListRuns(ctx context.Context, limit int) ([]Run, error)
 	ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, error)
+	CreateLabel(ctx context.Context, label Label) (Label, error)
+	UpdateEndpointRegistration(ctx context.Context, update EndpointRegistrationUpdate) (EndpointEntity, error)
 	IngestStatus(ctx context.Context) (ingest.Status, error)
 	ListIngestDiagnostics(ctx context.Context, query Query) ([]ingest.Diagnostic, error)
 	ListIngestEventTypes(ctx context.Context) ([]ingest.EventTypeCount, error)
@@ -351,6 +429,7 @@ type Writer interface {
 	WriteIngestDiagnostics(ctx context.Context, diagnostics []ingest.Diagnostic) error
 	WriteEvidence(ctx context.Context, evidence []evidence.Evidence) error
 	WriteRiskSnapshots(ctx context.Context, snapshots []risk.Snapshot) error
+	WriteDeviceState(ctx context.Context, run Run, events []normalized.Event, snapshots []risk.Snapshot) error
 }
 
 type ReadWriter interface {
@@ -446,5 +525,9 @@ func (NoopWriter) WriteEvidence(context.Context, []evidence.Evidence) error {
 }
 
 func (NoopWriter) WriteRiskSnapshots(context.Context, []risk.Snapshot) error {
+	return nil
+}
+
+func (NoopWriter) WriteDeviceState(context.Context, Run, []normalized.Event, []risk.Snapshot) error {
 	return nil
 }

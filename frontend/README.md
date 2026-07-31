@@ -19,4 +19,5 @@ pnpm build
 
 - API types are generated from `../schemas/control-plane-v1.openapi.yaml`.
 - MSW is enabled by default in development and tests. Set `VITE_ENABLE_MOCKS=false` to call a real backend.
+- For the 30-machine shadow environment, set `VITE_API_BASE=http://192.168.0.30:18080/api/v1`; `localhost:8080` may point to an old local shadow directory without Zeek device events.
 - UI must not depend on Suricata raw fields; use Normalized Event, Evidence, RiskSnapshot, Label, ShadowRun, AuditLog, and Session.

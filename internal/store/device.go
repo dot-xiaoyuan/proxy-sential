@@ -17,6 +17,10 @@ type deviceSignalDraft struct {
 	strength   string
 	confidence float64
 	weight     int
+	entityRole string
+	accountID  string
+	endpointID string
+	accessID   string
 	eventID    string
 	timestamp  string
 }
@@ -35,6 +39,11 @@ type deviceInference struct {
 	model      string
 	label      string
 }
+
+const (
+	defaultDeviceInventoryWeakEventLimit   = 20000
+	defaultDeviceInventoryStrongEventLimit = 50000
+)
 
 func BuildDeviceInventory(ip string, window string, events []normalized.Event, snapshot risk.Snapshot) IPDeviceInventory {
 	if window == "" {
@@ -93,6 +102,11 @@ func BuildDeviceInventories(window string, events []normalized.Event, risks map[
 	for _, ip := range ips {
 		items = append(items, BuildDeviceInventory(ip, window, byIP[ip], risks[ip]))
 	}
+	sortDeviceInventories(items)
+	return items
+}
+
+func sortDeviceInventories(items []IPDeviceInventory) {
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].SuspectedDeviceCount != items[j].SuspectedDeviceCount {
 			return items[i].SuspectedDeviceCount > items[j].SuspectedDeviceCount
@@ -100,12 +114,17 @@ func BuildDeviceInventories(window string, events []normalized.Event, risks map[
 		if len(items[i].Conflicts) != len(items[j].Conflicts) {
 			return len(items[i].Conflicts) > len(items[j].Conflicts)
 		}
+		if inventoryStrongSignalCount(items[i]) != inventoryStrongSignalCount(items[j]) {
+			return inventoryStrongSignalCount(items[i]) > inventoryStrongSignalCount(items[j])
+		}
+		if items[i].Confidence != items[j].Confidence {
+			return items[i].Confidence > items[j].Confidence
+		}
 		if items[i].LastSeen != items[j].LastSeen {
 			return items[i].LastSeen > items[j].LastSeen
 		}
 		return items[i].IP < items[j].IP
 	})
-	return items
 }
 
 func filterDeviceInventories(items []IPDeviceInventory, query Query) []IPDeviceInventory {
@@ -113,6 +132,9 @@ func filterDeviceInventories(items []IPDeviceInventory, query Query) []IPDeviceI
 	filtered := make([]IPDeviceInventory, 0, len(items))
 	for _, item := range items {
 		if query.SrcIP != "" && item.IP != query.SrcIP {
+			continue
+		}
+		if !query.IncludeWeak && (item.Confidence < 0.80 || item.Status == "weak_signals_only") {
 			continue
 		}
 		if q != "" && !inventoryMatchesQuery(item, q) {
@@ -145,6 +167,32 @@ func inventoryMatchesQuery(item IPDeviceInventory, q string) bool {
 	return false
 }
 
+func mergeEventSamples(primary []normalized.Event, extra []normalized.Event) []normalized.Event {
+	if len(extra) == 0 {
+		return primary
+	}
+	seen := map[string]struct{}{}
+	merged := make([]normalized.Event, 0, len(primary)+len(extra))
+	add := func(event normalized.Event) {
+		key := event.EventID
+		if key == "" {
+			key = shortHash(event.Source + "|" + event.SourceEventType + "|" + event.Type + "|" + event.Timestamp + "|" + subjectIP(event))
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, event)
+	}
+	for _, event := range primary {
+		add(event)
+	}
+	for _, event := range extra {
+		add(event)
+	}
+	return merged
+}
+
 func buildDeviceSignals(ip string, events []normalized.Event) []DeviceSignal {
 	buckets := map[string]*deviceSignalBucket{}
 	for _, event := range events {
@@ -166,9 +214,14 @@ func buildDeviceSignals(ip string, events []normalized.Event) []DeviceSignal {
 						Strength:        draft.strength,
 						Confidence:      draft.confidence,
 						Weight:          draft.weight,
+						EntityRole:      draft.entityRole,
+						AccountID:       draft.accountID,
+						EndpointID:      draft.endpointID,
+						AccessID:        draft.accessID,
 						FirstSeen:       draft.timestamp,
 						LastSeen:        draft.timestamp,
 						EventIDs:        []string{},
+						EventIDsSample:  []string{},
 					},
 					eventSet: map[string]struct{}{},
 				}
@@ -194,6 +247,11 @@ func buildDeviceSignals(ip string, events []normalized.Event) []DeviceSignal {
 		if len(bucket.EventIDs) > 20 {
 			bucket.EventIDs = bucket.EventIDs[:20]
 		}
+		bucket.EventIDsSample = append([]string{}, bucket.EventIDs...)
+		bucket.SeenCount = len(bucket.eventSet)
+		if bucket.SeenCount == 0 {
+			bucket.SeenCount = 1
+		}
 		signals = append(signals, bucket.DeviceSignal)
 	}
 	sort.Slice(signals, func(i, j int) bool {
@@ -208,21 +266,69 @@ func buildDeviceSignals(ip string, events []normalized.Event) []DeviceSignal {
 	return limitDeviceSignals(signals)
 }
 
+func BuildDeviceInventoryFromSignals(ip string, window string, signals []DeviceSignal, snapshot risk.Snapshot) IPDeviceInventory {
+	if window == "" {
+		window = "latest-run"
+	}
+	sort.Slice(signals, func(i, j int) bool {
+		if signals[i].Strength != signals[j].Strength {
+			return signalRank(signals[i].Strength) > signalRank(signals[j].Strength)
+		}
+		if signals[i].LastSeen != signals[j].LastSeen {
+			return signals[i].LastSeen > signals[j].LastSeen
+		}
+		return signals[i].SignalID < signals[j].SignalID
+	})
+	signals = limitDeviceSignals(signals)
+	devices := buildObservedDevices(ip, signals)
+	conflicts := buildDeviceConflicts(ip, signals, devices)
+	firstSeen, lastSeen := signalTimeRange(signals)
+	inventory := IPDeviceInventory{
+		IP:        ip,
+		Window:    window,
+		Signals:   signals,
+		Devices:   devices,
+		Conflicts: conflicts,
+		FirstSeen: firstSeen,
+		LastSeen:  lastSeen,
+	}
+	inventory.SuspectedDeviceCount = suspectedDeviceCount(devices, signals)
+	inventory.Confidence = inventoryConfidence(devices, signals, conflicts, snapshot)
+	inventory.Status = inventoryStatus(inventory)
+	inventory.Summary = inventorySummary(inventory)
+	return inventory
+}
+
 func signalDrafts(event normalized.Event) []deviceSignalDraft {
 	drafts := []deviceSignalDraft{}
+	entityRole := stringFromMap(event.Subject, "entity_role")
+	if isInfrastructureEntityRole(entityRole) {
+		return drafts
+	}
+	accountID := stringFromMap(event.Subject, "account_id")
+	endpointID := stringFromMap(event.Subject, "endpoint_id")
+	accessID := stringFromMap(event.Subject, "access_id")
 	add := func(source, kind, value, strength string, confidence float64, weight int) {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			return
 		}
+		normalized := normalizeSignalValue(kind, value)
+		if kind == "mac" {
+			value = normalized
+		}
 		drafts = append(drafts, deviceSignalDraft{
 			source:     source,
 			kind:       kind,
 			value:      value,
-			normalized: normalizeSignalValue(kind, value),
+			normalized: normalized,
 			strength:   strength,
 			confidence: confidence,
 			weight:     weight,
+			entityRole: entityRole,
+			accountID:  accountID,
+			endpointID: endpointID,
+			accessID:   accessID,
 			eventID:    event.EventID,
 			timestamp:  event.Timestamp,
 		})
@@ -233,11 +339,25 @@ func signalDrafts(event normalized.Event) []deviceSignalDraft {
 		if source == "" {
 			source = "device"
 		}
-		add(source, "mac", firstMapString(event.Payload, "mac", "mac_address"), "strong", 0.92, 90)
+		mac := firstMapString(event.Payload, "mac", "client_mac", "mac_address")
+		if mac == "" {
+			mac = firstMapString(event.Subject, "mac")
+		}
+		add(source, "mac", mac, "strong", 0.92, 90)
 		add(source, "oui_vendor", firstMapString(event.Payload, "oui_vendor", "vendor", "brand"), "strong", 0.88, 80)
 		add(source, "device_name", firstMapString(event.Payload, "device_name", "hostname", "name"), "strong", 0.82, 70)
 		add(source, "os_family", firstMapString(event.Payload, "os", "os_family"), "strong", 0.82, 70)
 		add(source, "model", stringFromMap(event.Payload, "model"), "strong", 0.84, 75)
+		add(source, "dhcp_vendor_class", stringFromMap(event.Payload, "vendor_class"), "strong", 0.8, 68)
+		add(source, "device_hint", stringFromMap(event.Payload, "device_hint"), "strong", 0.84, 72)
+		add(source, "dhcp_requested_options", stringFromMap(event.Payload, "requested_options"), "medium", 0.7, 56)
+		add(source, "software_name", stringFromMap(event.Payload, "software_name"), "strong", 0.74, 62)
+		add(source, "software_version", stringFromMap(event.Payload, "software_version"), "medium", 0.68, 52)
+		inferred := inferDeviceFromDHCP(event.Payload)
+		add(source, "os_family", inferred.osFamily, "strong", 0.82, 70)
+		add(source, "ua_brand", inferred.brand, "strong", 0.78, 62)
+		add(source, "ua_device_type", inferred.deviceType, "strong", 0.76, 60)
+		add(source, "model", inferred.model, "strong", 0.76, 60)
 	}
 
 	ua := stringFromMap(event.Payload, "user_agent")
@@ -320,7 +440,7 @@ func buildObservedDevices(ip string, signals []DeviceSignal) []ObservedDevice {
 	}
 	if len(groups) == 0 {
 		for _, signal := range signals {
-			if signal.Strength == "strong" && (signal.Kind == "device_name" || signal.Kind == "model") {
+			if signal.Strength == "strong" && (signal.Kind == "device_name" || signal.Kind == "model" || signal.Kind == "software_name") {
 				groups["strong:"+signal.Kind+":"+signal.NormalizedValue] = append(groups["strong:"+signal.Kind+":"+signal.NormalizedValue], signal)
 			}
 		}
@@ -342,7 +462,7 @@ func buildObservedDevices(ip string, signals []DeviceSignal) []ObservedDevice {
 	sort.Strings(keys)
 	devices := make([]ObservedDevice, 0, len(keys))
 	for _, key := range keys {
-		groupSignals := attachWeakContext(groups[key], signals)
+		groupSignals := attachDeviceContext(groups[key], signals)
 		devices = append(devices, observedDevice(ip, key, groupSignals))
 	}
 	sort.Slice(devices, func(i, j int) bool {
@@ -365,6 +485,7 @@ func observedDevice(ip string, groupKey string, signals []DeviceSignal) Observed
 		Vendor:       "unknown",
 		OSFamily:     "unknown",
 		DeviceType:   "unknown",
+		EntityRole:   "unknown",
 		Model:        "unknown",
 		Signals:      signals,
 		Fingerprints: []string{},
@@ -386,12 +507,40 @@ func observedDevice(ip string, groupKey string, signals []DeviceSignal) Observed
 			device.LastSeen = signal.LastSeen
 		}
 		applyDeviceSignal(&device, signal)
+		applyDeviceIdentity(&device, signal)
+	}
+	if device.EntityRole == "unknown" && (device.StrongSignalCount > 0 || device.MediumSignalCount > 0) && !hasExplicitUnknownRole(signals) {
+		device.EntityRole = "endpoint"
 	}
 	sort.Strings(device.Fingerprints)
 	device.Confidence = deviceConfidence(device)
 	device.Label = deviceLabel(device)
 	device.Summary = deviceSummary(device)
 	return device
+}
+
+func hasExplicitUnknownRole(signals []DeviceSignal) bool {
+	for _, signal := range signals {
+		if signal.EntityRole == "unknown" {
+			return true
+		}
+	}
+	return false
+}
+
+func applyDeviceIdentity(device *ObservedDevice, signal DeviceSignal) {
+	if device.EntityRole == "unknown" && signal.EntityRole != "" {
+		device.EntityRole = signal.EntityRole
+	}
+	if device.AccountID == "" {
+		device.AccountID = signal.AccountID
+	}
+	if device.EndpointID == "" {
+		device.EndpointID = signal.EndpointID
+	}
+	if device.AccessID == "" {
+		device.AccessID = signal.AccessID
+	}
 }
 
 func applyDeviceSignal(device *ObservedDevice, signal DeviceSignal) {
@@ -417,6 +566,14 @@ func applyDeviceSignal(device *ObservedDevice, signal DeviceSignal) {
 		if device.Model == "unknown" || signal.Strength == "strong" {
 			device.Model = signal.Value
 		}
+	case "dhcp_vendor_class":
+		device.Fingerprints = append(device.Fingerprints, "dhcp_vendor:"+signal.Value)
+	case "dhcp_requested_options":
+		device.Fingerprints = append(device.Fingerprints, "dhcp_options:"+signal.Value)
+	case "software_name":
+		device.Fingerprints = append(device.Fingerprints, "software:"+signal.Value)
+	case "software_version":
+		device.Fingerprints = append(device.Fingerprints, "software_version:"+signal.Value)
 	case "ja3", "ja4":
 		device.Fingerprints = append(device.Fingerprints, signal.Kind+":"+signal.Value)
 	}
@@ -444,6 +601,7 @@ func buildDeviceConflicts(ip string, signals []DeviceSignal, devices []ObservedD
 	lastSeen := latestSignalTime(signals)
 	addConflict("ua_conflict", "weak", "同一 IP 出现多个 UA，只作为弱信号；需要结合 JA3/JA4、DHCP/OUI 或 TCP 指纹确认", signalValues(byKind["user_agent"]), 0.35, lastSeen)
 	addConflict("brand_os_conflict", "weak", "同一 IP 的 UA 推断品牌/系统存在差异，UA 可伪造，不能单独确认多设备", append(signalValues(byKind["ua_brand"]), signalValues(byKind["ua_os_family"])...), 0.38, lastSeen)
+	addConflict("dhcp_stack_conflict", "strong", "同一 IP 的 DHCP 设备画像出现互斥系统或客户端栈，疑似共享上网或代理出口", append(signalValues(byKind["device_hint"]), signalValues(byKind["dhcp_vendor_class"])...), 0.84, lastSeen)
 	addConflict("tls_stack_conflict", "medium", "同一 IP 出现多个 TLS JA3/JA4 指纹，提示可能存在多客户端栈", append(signalValues(byKind["ja3"]), signalValues(byKind["ja4"])...), 0.62, lastSeen)
 	addConflict("tcp_stack_conflict", "medium", "同一 IP 出现多个 TCP 栈侧信号，需结合采集完整性复核", append(signalValues(byKind["ttl"]), signalValues(byKind["ipid"])...), 0.58, lastSeen)
 	if strongCount(devices) >= 2 {
@@ -478,6 +636,38 @@ func inferDeviceFromUA(ua string) deviceInference {
 		out.osFamily, out.deviceType = "Linux", "desktop"
 	case strings.Contains(lower, "curl") || strings.Contains(lower, "python") || strings.Contains(lower, "okhttp") || strings.Contains(lower, "java/") || strings.Contains(lower, "go-http-client"):
 		out.deviceType = "client_library"
+	}
+	if out.brand != "" && out.vendor == "" {
+		out.vendor = out.brand
+	}
+	return out
+}
+
+func inferDeviceFromDHCP(payload map[string]any) deviceInference {
+	text := strings.ToLower(strings.Join([]string{
+		stringFromMap(payload, "device_hint"),
+		stringFromMap(payload, "vendor_class"),
+		stringFromMap(payload, "hostname"),
+		stringFromMap(payload, "client_fqdn"),
+		stringFromMap(payload, "software_name"),
+		stringFromMap(payload, "software_version"),
+	}, " "))
+	out := deviceInference{brand: "", vendor: "", osFamily: "", deviceType: "", model: ""}
+	switch {
+	case strings.Contains(text, "iphone"):
+		out.brand, out.vendor, out.osFamily, out.deviceType, out.model = "Apple", "Apple", "iOS", "mobile", "iPhone"
+	case strings.Contains(text, "ipad"):
+		out.brand, out.vendor, out.osFamily, out.deviceType, out.model = "Apple", "Apple", "iPadOS", "tablet", "iPad"
+	case strings.Contains(text, "apple"), strings.Contains(text, "macbook"), strings.Contains(text, "imac"):
+		out.brand, out.vendor, out.osFamily, out.deviceType = "Apple", "Apple", "macOS", "desktop"
+	case strings.Contains(text, "android"):
+		out.osFamily, out.deviceType = "Android", "mobile"
+	case strings.Contains(text, "msft"), strings.Contains(text, "microsoft"), strings.Contains(text, "windows"), strings.Contains(text, "desktop-"):
+		out.osFamily, out.deviceType = "Windows", "desktop"
+	case strings.Contains(text, "chromeos"), strings.Contains(text, "chromebook"):
+		out.osFamily, out.deviceType, out.brand = "ChromeOS", "laptop", "Google"
+	case strings.Contains(text, "linux"), strings.Contains(text, "dhcpcd"), strings.Contains(text, "ubuntu"), strings.Contains(text, "debian"):
+		out.osFamily, out.deviceType = "Linux", "desktop"
 	}
 	if out.brand != "" && out.vendor == "" {
 		out.vendor = out.brand
@@ -546,12 +736,23 @@ func weakSignals(signals []DeviceSignal) []DeviceSignal {
 	return items
 }
 
-func attachWeakContext(primary []DeviceSignal, all []DeviceSignal) []DeviceSignal {
+func attachDeviceContext(primary []DeviceSignal, all []DeviceSignal) []DeviceSignal {
 	seen := map[string]struct{}{}
 	items := make([]DeviceSignal, 0, len(primary)+6)
+	primaryEvents := eventIDSet(primary)
 	for _, signal := range primary {
 		seen[signal.SignalID] = struct{}{}
 		items = append(items, signal)
+	}
+	for _, signal := range all {
+		if signal.Strength == "weak" || !sharesEventID(signal, primaryEvents) {
+			continue
+		}
+		if _, ok := seen[signal.SignalID]; ok {
+			continue
+		}
+		items = append(items, signal)
+		seen[signal.SignalID] = struct{}{}
 	}
 	for _, signal := range all {
 		if signal.Strength != "weak" {
@@ -567,6 +768,28 @@ func attachWeakContext(primary []DeviceSignal, all []DeviceSignal) []DeviceSigna
 		}
 	}
 	return items
+}
+
+func eventIDSet(signals []DeviceSignal) map[string]struct{} {
+	events := map[string]struct{}{}
+	for _, signal := range signals {
+		for _, eventID := range signal.EventIDs {
+			events[eventID] = struct{}{}
+		}
+	}
+	return events
+}
+
+func sharesEventID(signal DeviceSignal, events map[string]struct{}) bool {
+	if len(events) == 0 {
+		return false
+	}
+	for _, eventID := range signal.EventIDs {
+		if _, ok := events[eventID]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func deviceConfidence(device ObservedDevice) float64 {
@@ -586,12 +809,13 @@ func suspectedDeviceCount(devices []ObservedDevice, signals []DeviceSignal) int 
 	if len(devices) == 0 {
 		return 0
 	}
+	endpoints := 0
 	for _, device := range devices {
-		if device.StrongSignalCount > 0 || device.MediumSignalCount > 0 {
-			return len(devices)
+		if device.EntityRole == "endpoint" && (device.StrongSignalCount > 0 || device.MediumSignalCount > 0) {
+			endpoints++
 		}
 	}
-	return 1
+	return endpoints
 }
 
 func inventoryConfidence(devices []ObservedDevice, signals []DeviceSignal, conflicts []DeviceConflict, snapshot risk.Snapshot) float64 {
@@ -616,6 +840,9 @@ func inventoryStatus(inventory IPDeviceInventory) string {
 	if len(inventory.Signals) == 0 {
 		return "insufficient_signal"
 	}
+	if inventory.SuspectedDeviceCount == 0 {
+		return "non_endpoint_or_weak"
+	}
 	if inventory.SuspectedDeviceCount >= 2 {
 		return "multi_candidate"
 	}
@@ -633,11 +860,41 @@ func inventorySummary(inventory IPDeviceInventory) string {
 		return "当前标准事件中没有足够设备识别信号，无法判断该 IP 背后设备数量或品牌"
 	case "weak_signals_only":
 		return "当前仅有 UA/访问行为等弱信号；UA 可伪造，不能据此确认品牌或多设备"
+	case "non_endpoint_or_weak":
+		return "当前没有高置信 endpoint 终端；基础设施、未知角色或弱信号不计入普通设备并发"
 	case "multi_candidate":
 		return fmt.Sprintf("当前观测到 %d 个设备候选；需优先查看强/中信号来源确认是否共享上网", inventory.SuspectedDeviceCount)
 	default:
+		if inventoryStrongSignalCount(inventory) > 0 {
+			return "当前观测到单个设备候选；已有 DHCP/MAC/设备名等强信号支撑，可作为人工复核的主要依据"
+		}
 		return "当前观测到单个设备候选；仍需结合 DHCP/OUI/TCP 指纹等强信号提升准确性"
 	}
+}
+
+func isInfrastructureEntityRole(role string) bool {
+	switch role {
+	case "infrastructure", "gateway", "nat", "server", "network_device":
+		return true
+	default:
+		return false
+	}
+}
+
+func inventoryStrongSignalCount(inventory IPDeviceInventory) int {
+	count := 0
+	for _, device := range inventory.Devices {
+		count += device.StrongSignalCount
+	}
+	if count > 0 {
+		return count
+	}
+	for _, signal := range inventory.Signals {
+		if signal.Strength == "strong" {
+			count++
+		}
+	}
+	return count
 }
 
 func deviceLabel(device ObservedDevice) string {
@@ -681,6 +938,19 @@ func eventTimeRange(events []normalized.Event) (string, string) {
 		}
 		if event.Timestamp > last {
 			last = event.Timestamp
+		}
+	}
+	return first, last
+}
+
+func signalTimeRange(signals []DeviceSignal) (string, string) {
+	first, last := "", ""
+	for _, signal := range signals {
+		if signal.FirstSeen != "" && (first == "" || signal.FirstSeen < first) {
+			first = signal.FirstSeen
+		}
+		if signal.LastSeen > last {
+			last = signal.LastSeen
 		}
 	}
 	return first, last

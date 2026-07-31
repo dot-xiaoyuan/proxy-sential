@@ -16,6 +16,11 @@ Proxy Sentinel 是下一代防代理/共享上网检测系统，目标是替代�
 
 第一阶段使用 Suricata 作为采集和协议解析后端，输出 EVE JSON，再由 Proxy Sentinel 适配为标准事件。
 
+设备识别增强阶段在 Suricata 旁边并行运行 Zeek，优先消费 `dhcp.log` 和
+`software.log` 生成 `device` 标准事件，用 DHCP hostname、vendor class、
+requested options、MAC 和 Zeek Software Framework 等局域网侧信号修正
+User-Agent 不可信的问题。
+
 后续如果 Suricata 的性能、延迟或定制化能力不足，再并行开发 Rust + AF_XDP sensor。风险引擎只依赖标准事件，因此采集后端可以替换。
 
 ```text
@@ -66,6 +71,7 @@ Notify / Slowdown / Offline
 
 - 能消费 Suricata EVE JSON。
 - 能统一输出 flow、dns、tls、http、quic 等标准事件。
+- 能用 Zeek DHCP 和 software 日志补充 device 标准事件。
 - 能按 IP 聚合证据。
 - 能输出风险等级、分数、证据列表。
 - 能以影子模式接入真实镜像流量。

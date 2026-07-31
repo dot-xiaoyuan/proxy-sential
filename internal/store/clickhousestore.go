@@ -55,6 +55,7 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 	if len(events) == 0 {
 		return nil
 	}
+	events = uniqueEventsByID(events)
 	var body bytes.Buffer
 	body.WriteString(`INSERT INTO normalized_events FORMAT JSONEachRow`)
 	body.WriteByte('\n')
@@ -120,11 +121,32 @@ func (s *ClickHouseStore) WriteIngestDiagnostics(ctx context.Context, diagnostic
 }
 
 func (s *ClickHouseStore) ListEventSamples(ctx context.Context, query Query) ([]normalized.Event, error) {
-	page, err := s.ListEvents(ctx, query)
+	limit := query.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	if limit < 0 {
+		limit = defaultDPIEventLimit
+	}
+	cursor := query.Cursor
+	if cursor < 0 {
+		cursor = 0
+	}
+	where, err := eventWhereSQL(query)
 	if err != nil {
 		return nil, err
 	}
-	return page.Items, nil
+	sql := fmt.Sprintf(`
+SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
+FROM normalized_events%s
+ORDER BY timestamp DESC, event_id DESC
+LIMIT %d OFFSET %d
+FORMAT JSONEachRow`, where, limit, cursor)
+	data, err := s.query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	return decodeEventRows(data)
 }
 
 func (s *ClickHouseStore) ListEvents(ctx context.Context, query Query) (EventPage, error) {
@@ -163,7 +185,8 @@ FORMAT JSONEachRow`, where, limit, query.Cursor)
 }
 
 func (s *ClickHouseStore) GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error) {
-	events, err := s.ListEventSamples(ctx, Query{Q: ip, Limit: defaultActivityEventLimit})
+	sampleLimit := activitySampleLimit(limit)
+	events, err := s.ListEventSamples(ctx, Query{SrcIP: ip, Limit: sampleLimit})
 	if err != nil {
 		return ActivityProfile{}, err
 	}
@@ -675,7 +698,7 @@ func eventWhereSQL(query Query) (string, error) {
 	clauses := []string{}
 	if query.Q != "" {
 		like := chQuote("%" + strings.ToLower(query.Q) + "%")
-		clauses = append(clauses, "(lower(event_id) LIKE "+like+" OR lower(subject_ip) LIKE "+like+" OR lower(dst_ip) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'query')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'host')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'sni')) LIKE "+like+")")
+		clauses = append(clauses, "(lower(event_id) LIKE "+like+" OR lower(subject_ip) LIKE "+like+" OR lower(dst_ip) LIKE "+like+" OR lower(source) LIKE "+like+" OR lower(source_event_type) LIKE "+like+" OR lower(type) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'query')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'host')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'sni')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'hostname')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'client_fqdn')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'vendor_class')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'mac')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'client_mac')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'device_hint')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'software_name')) LIKE "+like+" OR lower(JSONExtractString(payload_json, 'software_version')) LIKE "+like+")")
 	}
 	if query.Level != "" {
 		clauses = append(clauses, "type = "+chQuote(query.Level))
@@ -785,6 +808,7 @@ func decodeActivityCountRows(data []byte) ([]ActivityCount, error) {
 
 func decodeEventRows(data []byte) ([]normalized.Event, error) {
 	events := []normalized.Event{}
+	seen := map[string]struct{}{}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		var row struct {
@@ -825,9 +849,33 @@ func decodeEventRows(data []byte) ([]normalized.Event, error) {
 		_ = json.Unmarshal([]byte(row.PayloadJSON), &event.Payload)
 		_ = json.Unmarshal([]byte(row.FlowJSON), &event.Flow)
 		_ = json.Unmarshal([]byte(row.RawRefJSON), &event.RawRef)
+		if event.EventID != "" {
+			if _, ok := seen[event.EventID]; ok {
+				continue
+			}
+			seen[event.EventID] = struct{}{}
+		}
 		events = append(events, event)
 	}
 	return events, scanner.Err()
+}
+
+func uniqueEventsByID(events []normalized.Event) []normalized.Event {
+	if len(events) < 2 {
+		return events
+	}
+	seen := map[string]struct{}{}
+	unique := make([]normalized.Event, 0, len(events))
+	for _, event := range events {
+		if event.EventID != "" {
+			if _, ok := seen[event.EventID]; ok {
+				continue
+			}
+			seen[event.EventID] = struct{}{}
+		}
+		unique = append(unique, event)
+	}
+	return unique
 }
 
 func decodeDiagnosticRows(data []byte) ([]ingest.Diagnostic, error) {

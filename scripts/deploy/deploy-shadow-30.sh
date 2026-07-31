@@ -83,6 +83,7 @@ trap 'rm -rf "$build_dir"' EXIT
 
 binary="$build_dir/proxy-sentinel"
 frontend_archive="$build_dir/frontend-dist.tar.gz"
+migrations_archive="$build_dir/migrations.tar.gz"
 (
   cd "$repo_root"
   GOOS=linux GOARCH=amd64 go build -o "$binary" ./cmd/proxy-sentinel
@@ -91,6 +92,7 @@ frontend_archive="$build_dir/frontend-dist.tar.gz"
     pnpm build
   )
   COPYFILE_DISABLE=1 tar --no-xattrs -C frontend -czf "$frontend_archive" dist
+  COPYFILE_DISABLE=1 tar --no-xattrs -czf "$migrations_archive" migrations
 )
 
 ssh "$remote_host" "set -euo pipefail
@@ -105,8 +107,10 @@ chmod 0644 /var/lib/suricata/rules/suricata.rules
 
 remote_tmp="/tmp/proxy-sentinel-bin-$$"
 remote_frontend_tmp="/tmp/proxy-sentinel-frontend-$$.tar.gz"
+remote_migrations_tmp="/tmp/proxy-sentinel-migrations-$$.tar.gz"
 scp "$binary" "$remote_host:$remote_tmp"
 scp "$frontend_archive" "$remote_host:$remote_frontend_tmp"
+scp "$migrations_archive" "$remote_host:$remote_migrations_tmp"
 ssh "$remote_host" "set -euo pipefail
 install -m 0755 '$remote_tmp' '$remote_root/bin/proxy-sentinel'
 rm '$remote_tmp'
@@ -115,18 +119,55 @@ mkdir -p '$remote_root/frontend'
 tar -C '$remote_root/frontend' -xzf '$remote_frontend_tmp'
 rm '$remote_frontend_tmp'
 chown -R root:root '$remote_root/frontend/dist'
+tar -C '$remote_root' -xzf '$remote_migrations_tmp'
+rm '$remote_migrations_tmp'
 
 storage_env_line=''
 storage_after_suffix=''
 storage_shadow_wants_line=''
 storage_control_wants_suffix=''
 storage_dsn_args=''
+zeek_shadow_arg=''
+zeek_after_suffix=''
+zeek_wants_line=''
+zeek_bin=''
+if command -v zeek >/dev/null 2>&1; then
+  zeek_bin=\"\$(command -v zeek)\"
+  zeek_version=\"\$(zeek --version 2>&1 | head -1 || true)\"
+  if ! ip link show '$mirror_iface' >/dev/null 2>&1; then
+    echo 'mirror interface $mirror_iface is not present; Zeek service will not be installed.' >&2
+  else
+    mkdir -p '$remote_root/data/zeek/logs/current'
+    touch '$remote_root/data/zeek/logs/current/.write-test'
+    rm -f '$remote_root/data/zeek/logs/current/.write-test'
+    echo \"Zeek detected: \$zeek_version\"
+    echo 'Zeek DHCP log directory is writable: $remote_root/data/zeek/logs/current'
+  fi
+fi
+if [[ -n \"\$zeek_bin\" ]] && ip link show '$mirror_iface' >/dev/null 2>&1; then
+  zeek_shadow_arg='--zeek-dhcp $remote_root/data/zeek/logs/current/dhcp.log --zeek-software $remote_root/data/zeek/logs/current/software.log'
+  zeek_after_suffix=' proxy-sentinel-zeek.service'
+  zeek_wants_line='Wants=proxy-sentinel-zeek.service'
+fi
 if [[ -f '$remote_root/deploy/compose/storage.env' ]]; then
   storage_env_line='EnvironmentFile=$remote_root/deploy/compose/storage.env'
   storage_after_suffix=' docker.service'
   storage_shadow_wants_line='Wants=docker.service'
   storage_control_wants_suffix=' docker.service'
   storage_dsn_args='--postgres-dsn \${PROXY_SENTINEL_POSTGRES_DSN} --clickhouse-dsn \${PROXY_SENTINEL_CLICKHOUSE_DSN}'
+  (
+    cd '$remote_root'
+    set -a
+    source deploy/compose/storage.env
+    set +a
+    docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml up -d
+    docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml exec -T postgres \
+      psql -v ON_ERROR_STOP=1 -U \"\${POSTGRES_USER:-proxy_sentinel}\" -d \"\${POSTGRES_DB:-proxy_sentinel}\" \
+      < migrations/postgres/001_production_schema.sql
+    docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml exec -T clickhouse \
+      clickhouse-client --user \"\${CLICKHOUSE_USER:-proxy_sentinel}\" --password \"\${CLICKHOUSE_PASSWORD}\" --multiquery \
+      < migrations/clickhouse/001_production_schema.sql
+  )
 fi
 
 cat > /etc/systemd/system/proxy-sentinel-suricata.service <<EOF
@@ -145,17 +186,42 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+if [[ -n \"\$zeek_bin\" ]] && ip link show '$mirror_iface' >/dev/null 2>&1; then
+cat > /etc/systemd/system/proxy-sentinel-zeek.service <<EOF
+[Unit]
+Description=Proxy Sentinel Zeek DHCP device fingerprint capture
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$remote_root/data/zeek/logs/current
+ExecStartPre=/usr/bin/test -w $remote_root/data/zeek/logs/current
+ExecStartPre=/bin/sh -c 'ip link show $mirror_iface >/dev/null'
+ExecStart=\$zeek_bin -i $mirror_iface policy/protocols/dhcp/software.zeek
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+else
+  rm -f /etc/systemd/system/proxy-sentinel-zeek.service
+  echo 'Zeek is not installed on the remote host; skipping Zeek DHCP capture service.'
+fi
+
 cat > /etc/systemd/system/proxy-sentinel-shadow.service <<EOF
 [Unit]
 Description=Proxy Sentinel shadow risk analysis
-After=proxy-sentinel-suricata.service\$storage_after_suffix
+After=proxy-sentinel-suricata.service\$zeek_after_suffix\$storage_after_suffix
+\$zeek_wants_line
 \$storage_shadow_wants_line
 
 [Service]
 Type=oneshot
 WorkingDirectory=$remote_root
 \$storage_env_line
-ExecStart=$remote_root/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $remote_root/data/shadow/state.json --out-dir $remote_root/data/shadow --sensor-id $sensor_id --window $window --min-level suspicious --limit 50 --retention $retention --storage-mode dual \$storage_dsn_args
+ExecStart=$remote_root/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json \$zeek_shadow_arg --state $remote_root/data/shadow/state.json --out-dir $remote_root/data/shadow --sensor-id $sensor_id --window $window --min-level suspicious --limit 50 --retention $retention --storage-mode dual \$storage_dsn_args
 EOF
 
 cat > /etc/systemd/system/proxy-sentinel-shadow.timer <<EOF
@@ -192,11 +258,17 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now proxy-sentinel-suricata.service
+if [[ -n \"\$zeek_bin\" ]] && ip link show '$mirror_iface' >/dev/null 2>&1; then
+  systemctl enable --now proxy-sentinel-zeek.service
+fi
 systemctl enable --now proxy-sentinel-shadow.timer
 systemctl enable --now proxy-sentinel-control-plane.service
 systemctl restart proxy-sentinel-control-plane.service
 systemctl start proxy-sentinel-shadow.service
 systemctl --no-pager status proxy-sentinel-suricata.service | sed -n '1,80p'
+if [[ -n \"\$zeek_bin\" ]] && ip link show '$mirror_iface' >/dev/null 2>&1; then
+  systemctl --no-pager status proxy-sentinel-zeek.service | sed -n '1,80p'
+fi
 systemctl --no-pager status proxy-sentinel-shadow.timer | sed -n '1,80p'
 systemctl --no-pager status proxy-sentinel-control-plane.service | sed -n '1,80p'
 journalctl -u proxy-sentinel-shadow.service -n 80 --no-pager

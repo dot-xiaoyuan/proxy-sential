@@ -72,6 +72,7 @@ export function EventsPage() {
     { key: 'tls', label: 'TLS 握手', active: activeType === 'tls' },
     { key: 'http', label: 'HTTP 请求', active: activeType === 'http' },
     { key: 'quic', label: 'QUIC', active: activeType === 'quic' },
+    { key: 'device', label: '设备事件', active: activeType === 'device' },
   ]
 
   if (events.isLoading) {

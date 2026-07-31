@@ -1,6 +1,7 @@
 import type {
   ActivityOverview,
   ActivityOverviewQuery,
+  AccountIdentityProfile,
   AuditLog,
   CreateLabelRequest,
   DpiFlowDetail,
@@ -12,15 +13,19 @@ import type {
   DeviceListResponse,
   DeviceQuery,
   DeviceSignal,
+  EndpointEntity,
   Evidence,
   EventListResponse,
   EventQuery,
+  EvidenceQuery,
   EventTypeCount,
   FingerprintConflictItem,
   IngestDiagnostic,
   IngestStatus,
   IpDeviceInventory,
   IpActivityProfile,
+  EndpointIdentityProfile,
+  IdentityQuery,
   Label,
   NormalizedEventSummary,
   ObservedDevice,
@@ -31,6 +36,7 @@ import type {
   RuleReloadResult,
   Session,
   ShadowRun,
+  UpdateEndpointRegistrationRequest,
 } from './types'
 
 export function getApiBase(): string {
@@ -60,7 +66,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-function search(params: Record<string, string | number | undefined>) {
+function search(params: Record<string, string | number | boolean | undefined>) {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== '') {
@@ -98,8 +104,8 @@ export const api = {
     request<{ items: DeviceConflict[] }>(`/device-fingerprint-conflicts${search(query)}`),
   risks: (query: RiskQuery) => request<RiskListResponse>(`/risks${search(query)}`),
   ipRisk: (ip: string) => request<RiskSnapshot>(`/ips/${encodeURIComponent(ip)}/risk`),
-  ipEvidence: (ip: string) =>
-    request<{ evidence: Evidence[] }>(`/ips/${encodeURIComponent(ip)}/evidence`),
+  ipEvidence: (ip: string, query: EvidenceQuery = {}) =>
+    request<{ evidence: Evidence[] }>(`/ips/${encodeURIComponent(ip)}/evidence${search(query)}`),
   ipActivity: (ip: string, limit = 50) =>
     request<IpActivityProfile>(`/ips/${encodeURIComponent(ip)}/activity${search({ limit })}`),
   ipDevices: (ip: string, query: DeviceQuery = {}) =>
@@ -108,6 +114,19 @@ export const api = {
     request<{ events: NormalizedEventSummary[] }>(
       `/ips/${encodeURIComponent(ip)}/events${search({ limit })}`,
     ),
+  accountIdentity: (accountId: string, query: IdentityQuery = {}) =>
+    request<AccountIdentityProfile>(
+      `/accounts/${encodeURIComponent(accountId)}/identity${search(query)}`,
+    ),
+  endpointIdentity: (endpointId: string, query: IdentityQuery = {}) =>
+    request<EndpointIdentityProfile>(
+      `/endpoints/${encodeURIComponent(endpointId)}/identity${search(query)}`,
+    ),
+  updateEndpointRegistration: (endpointId: string, payload: UpdateEndpointRegistrationRequest) =>
+    request<EndpointEntity>(`/endpoints/${encodeURIComponent(endpointId)}/registration`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   events: (query: EventQuery) => request<EventListResponse>(`/events${search(query)}`),
   ingestStatus: () => request<IngestStatus>('/ingest/status'),
   ingestRuns: () => request<{ runs: ShadowRun[] }>('/ingest/runs'),

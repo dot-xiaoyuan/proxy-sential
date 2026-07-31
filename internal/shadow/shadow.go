@@ -2,15 +2,18 @@ package shadow
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/adapter/suricata"
+	"proxy-sentinel/internal/adapter/zeek"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
@@ -19,40 +22,66 @@ import (
 )
 
 type Options struct {
-	EVEPath       string
-	StatePath     string
-	OutDir        string
-	SensorID      string
-	Window        time.Duration
-	ListMinLevel  string
-	ListLimit     int
-	Retention     time.Duration
-	StorageMode   string
-	PostgresDSN   string
-	ClickHouseDSN string
+	EVEPath          string
+	ZeekDHCPPath     string
+	ZeekSoftwarePath string
+	StatePath        string
+	OutDir           string
+	SensorID         string
+	Window           time.Duration
+	ListMinLevel     string
+	ListLimit        int
+	Retention        time.Duration
+	StorageMode      string
+	PostgresDSN      string
+	ClickHouseDSN    string
 }
 
 type State struct {
-	EVEPath   string `json:"eve_path"`
-	Offset    int64  `json:"offset"`
-	UpdatedAt string `json:"updated_at"`
+	EVEPath            string `json:"eve_path"`
+	Offset             int64  `json:"offset"`
+	ZeekDHCPPath       string `json:"zeek_dhcp_path,omitempty"`
+	ZeekDHCPOffset     int64  `json:"zeek_dhcp_offset,omitempty"`
+	ZeekSoftwarePath   string `json:"zeek_software_path,omitempty"`
+	ZeekSoftwareOffset int64  `json:"zeek_software_offset,omitempty"`
+	UpdatedAt          string `json:"updated_at"`
 }
 
 type RunSummary struct {
-	StartedAt      string         `json:"started_at"`
-	FinishedAt     string         `json:"finished_at"`
-	EVEPath        string         `json:"eve_path"`
-	RunDir         string         `json:"run_dir"`
-	PreviousOffset int64          `json:"previous_offset"`
-	NewOffset      int64          `json:"new_offset"`
-	Truncated      bool           `json:"truncated"`
-	Files          map[string]any `json:"files"`
-	Normalized     suricata.Stats `json:"normalized"`
-	EvidenceStats  evidence.Stats `json:"evidence_stats"`
-	EvidenceCount  int            `json:"evidence_count"`
-	RiskCount      int            `json:"risk_count"`
-	RiskListCount  int            `json:"risk_list_count"`
-	StorageMode    string         `json:"storage_mode"`
+	StartedAt              string         `json:"started_at"`
+	FinishedAt             string         `json:"finished_at"`
+	EVEPath                string         `json:"eve_path"`
+	ZeekDHCPPath           string         `json:"zeek_dhcp_path,omitempty"`
+	ZeekSoftwarePath       string         `json:"zeek_software_path,omitempty"`
+	ZeekStatus             string         `json:"zeek_status,omitempty"`
+	ZeekReason             string         `json:"zeek_reason,omitempty"`
+	RunDir                 string         `json:"run_dir"`
+	PreviousOffset         int64          `json:"previous_offset"`
+	NewOffset              int64          `json:"new_offset"`
+	ZeekPrevOffset         int64          `json:"zeek_previous_offset,omitempty"`
+	ZeekNewOffset          int64          `json:"zeek_new_offset,omitempty"`
+	ZeekSoftwarePrevOffset int64          `json:"zeek_software_previous_offset,omitempty"`
+	ZeekSoftwareNewOffset  int64          `json:"zeek_software_new_offset,omitempty"`
+	Truncated              bool           `json:"truncated"`
+	ZeekTruncated          bool           `json:"zeek_truncated,omitempty"`
+	ZeekSoftwareTruncated  bool           `json:"zeek_software_truncated,omitempty"`
+	Files                  map[string]any `json:"files"`
+	Normalized             suricata.Stats `json:"normalized"`
+	ZeekNormalized         zeek.Stats     `json:"zeek_normalized,omitempty"`
+	EvidenceStats          evidence.Stats `json:"evidence_stats"`
+	EvidenceCount          int            `json:"evidence_count"`
+	RiskCount              int            `json:"risk_count"`
+	RiskListCount          int            `json:"risk_list_count"`
+	StorageMode            string         `json:"storage_mode"`
+}
+
+type zeekAppendResult struct {
+	PreviousOffset int64
+	NewOffset      int64
+	Truncated      bool
+	Stats          zeek.Stats
+	Status         string
+	Reason         string
 }
 
 func Run(opts Options) (RunSummary, error) {
@@ -107,6 +136,17 @@ func Run(opts Options) (RunSummary, error) {
 	if err != nil {
 		return RunSummary{}, err
 	}
+	zeekDHCPResult, err := appendZeekLog(opts.ZeekDHCPPath, state.ZeekDHCPPath, state.ZeekDHCPOffset, normalizedPath, opts.SensorID, "dhcp")
+	if err != nil {
+		return RunSummary{}, err
+	}
+	zeekSoftwareResult, err := appendZeekLog(opts.ZeekSoftwarePath, state.ZeekSoftwarePath, state.ZeekSoftwareOffset, normalizedPath, opts.SensorID, "software")
+	if err != nil {
+		return RunSummary{}, err
+	}
+	zeekStats := mergeZeekStats(zeekDHCPResult.Stats, zeekSoftwareResult.Stats)
+	normalizedStats = mergeStats(normalizedStats, zeekStats)
+	zeekStatus, zeekReason := aggregateZeekStatus(zeekDHCPResult, zeekSoftwareResult)
 
 	evidenceResult, err := evidence.AnalyzeFiles(normalizedPath, evidencePath, evidence.Options{Window: opts.Window})
 	if err != nil {
@@ -123,13 +163,23 @@ func Run(opts Options) (RunSummary, error) {
 
 	finished := time.Now()
 	summary := RunSummary{
-		StartedAt:      started.Format(time.RFC3339Nano),
-		FinishedAt:     finished.Format(time.RFC3339Nano),
-		EVEPath:        opts.EVEPath,
-		RunDir:         runDir,
-		PreviousOffset: previousOffset,
-		NewOffset:      stat.Size(),
-		Truncated:      truncated,
+		StartedAt:              started.Format(time.RFC3339Nano),
+		FinishedAt:             finished.Format(time.RFC3339Nano),
+		EVEPath:                opts.EVEPath,
+		ZeekDHCPPath:           opts.ZeekDHCPPath,
+		ZeekSoftwarePath:       opts.ZeekSoftwarePath,
+		ZeekStatus:             zeekStatus,
+		ZeekReason:             zeekReason,
+		RunDir:                 runDir,
+		PreviousOffset:         previousOffset,
+		NewOffset:              stat.Size(),
+		ZeekPrevOffset:         zeekDHCPResult.PreviousOffset,
+		ZeekNewOffset:          zeekDHCPResult.NewOffset,
+		ZeekSoftwarePrevOffset: zeekSoftwareResult.PreviousOffset,
+		ZeekSoftwareNewOffset:  zeekSoftwareResult.NewOffset,
+		Truncated:              truncated,
+		ZeekTruncated:          zeekDHCPResult.Truncated,
+		ZeekSoftwareTruncated:  zeekSoftwareResult.Truncated,
 		Files: map[string]any{
 			"normalized":           normalizedPath,
 			"evidence":             evidencePath,
@@ -137,12 +187,13 @@ func Run(opts Options) (RunSummary, error) {
 			"risk_list_suspicious": riskListPath,
 			"run_summary":          summaryPath,
 		},
-		Normalized:    normalizedStats,
-		EvidenceStats: evidenceResult.Stats,
-		EvidenceCount: len(evidenceResult.Evidence),
-		RiskCount:     len(riskResult.Snapshots),
-		RiskListCount: len(riskListResult.Snapshots),
-		StorageMode:   opts.StorageMode,
+		Normalized:     normalizedStats,
+		ZeekNormalized: zeekStats,
+		EvidenceStats:  evidenceResult.Stats,
+		EvidenceCount:  len(evidenceResult.Evidence),
+		RiskCount:      len(riskResult.Snapshots),
+		RiskListCount:  len(riskListResult.Snapshots),
+		StorageMode:    opts.StorageMode,
 	}
 	if err := writeJSONFile(summaryPath, summary); err != nil {
 		return RunSummary{}, err
@@ -151,7 +202,15 @@ func Run(opts Options) (RunSummary, error) {
 		return RunSummary{}, err
 	}
 
-	state = State{EVEPath: opts.EVEPath, Offset: stat.Size(), UpdatedAt: finished.Format(time.RFC3339Nano)}
+	state = State{
+		EVEPath:            opts.EVEPath,
+		Offset:             stat.Size(),
+		ZeekDHCPPath:       opts.ZeekDHCPPath,
+		ZeekDHCPOffset:     zeekDHCPResult.NewOffset,
+		ZeekSoftwarePath:   opts.ZeekSoftwarePath,
+		ZeekSoftwareOffset: zeekSoftwareResult.NewOffset,
+		UpdatedAt:          finished.Format(time.RFC3339Nano),
+	}
 	if err := writeJSONFile(opts.StatePath, state); err != nil {
 		return RunSummary{}, err
 	}
@@ -213,13 +272,30 @@ func writeStoreOutputs(opts Options, summary RunSummary, evidenceResult evidence
 			Malformed: summary.Normalized.Malformed,
 			ByType:    summary.Normalized.ByType,
 		},
-		EvidenceCount: summary.EvidenceCount,
-		RiskCount:     summary.RiskCount,
-		RiskListCount: summary.RiskListCount,
+		ZeekNormalized: store.NormalizedCounts{
+			Read:      summary.ZeekNormalized.Read,
+			Emitted:   summary.ZeekNormalized.Emitted,
+			Skipped:   summary.ZeekNormalized.Skipped,
+			Malformed: summary.ZeekNormalized.Malformed,
+			ByType:    summary.ZeekNormalized.ByType,
+		},
+		ZeekStatus:             summary.ZeekStatus,
+		ZeekReason:             summary.ZeekReason,
+		ZeekPrevOffset:         summary.ZeekPrevOffset,
+		ZeekNewOffset:          summary.ZeekNewOffset,
+		ZeekTruncated:          summary.ZeekTruncated,
+		ZeekSoftwarePrevOffset: summary.ZeekSoftwarePrevOffset,
+		ZeekSoftwareNewOffset:  summary.ZeekSoftwareNewOffset,
+		ZeekSoftwareTruncated:  summary.ZeekSoftwareTruncated,
+		EvidenceCount:          summary.EvidenceCount,
+		RiskCount:              summary.RiskCount,
+		RiskListCount:          summary.RiskListCount,
 		RawRef: map[string]any{
-			"backend": "suricata",
-			"source":  summary.EVEPath,
-			"offset":  summary.NewOffset,
+			"backend":            "suricata",
+			"source":             summary.EVEPath,
+			"offset":             summary.NewOffset,
+			"zeek_dhcp_path":     summary.ZeekDHCPPath,
+			"zeek_software_path": summary.ZeekSoftwarePath,
 		},
 	}
 	diagnostic := ingest.Diagnostic{
@@ -241,10 +317,21 @@ func writeStoreOutputs(opts Options, summary RunSummary, evidenceResult evidence
 		ByType: summary.Normalized.ByType,
 		RawRef: run.RawRef,
 		Details: map[string]any{
-			"run_id":          run.RunID,
-			"previous_offset": summary.PreviousOffset,
-			"new_offset":      summary.NewOffset,
-			"truncated":       summary.Truncated,
+			"run_id":                        run.RunID,
+			"previous_offset":               summary.PreviousOffset,
+			"new_offset":                    summary.NewOffset,
+			"truncated":                     summary.Truncated,
+			"zeek_dhcp_path":                summary.ZeekDHCPPath,
+			"zeek_previous_offset":          summary.ZeekPrevOffset,
+			"zeek_new_offset":               summary.ZeekNewOffset,
+			"zeek_truncated":                summary.ZeekTruncated,
+			"zeek_status":                   summary.ZeekStatus,
+			"zeek_reason":                   summary.ZeekReason,
+			"zeek_normalized":               summary.ZeekNormalized,
+			"zeek_software_path":            summary.ZeekSoftwarePath,
+			"zeek_software_previous_offset": summary.ZeekSoftwarePrevOffset,
+			"zeek_software_new_offset":      summary.ZeekSoftwareNewOffset,
+			"zeek_software_truncated":       summary.ZeekSoftwareTruncated,
 		},
 	}
 	events, err := readNormalizedEventsFile(normalizedPath)
@@ -266,17 +353,28 @@ func writeStoreOutputs(opts Options, summary RunSummary, evidenceResult evidence
 	if err := writer.WriteRiskSnapshots(ctx, riskResult.Snapshots); err != nil {
 		return err
 	}
+	if err := writer.WriteDeviceState(ctx, run, events, riskResult.Snapshots); err != nil {
+		return err
+	}
 	return nil
 }
 
 func diagnosticSeverity(summary RunSummary) string {
-	if summary.Truncated || summary.Normalized.Malformed > 0 || summary.Normalized.Skipped > 0 {
+	if summary.Truncated || summary.Normalized.Malformed > 0 || summary.Normalized.Skipped > 0 || summary.ZeekStatus == "unavailable" || summary.ZeekStatus == "log_truncated" || summary.ZeekSoftwareTruncated {
 		return "warning"
 	}
 	return "info"
 }
 
 func diagnosticSummary(summary RunSummary) string {
+	switch summary.ZeekStatus {
+	case "unavailable":
+		return "collector run completed while one or more zeek logs were unavailable"
+	case "log_truncated":
+		return "collector run completed after zeek log rotation"
+	case "no_dhcp_events":
+		return "collector run completed with no zeek device events"
+	}
 	if summary.Truncated {
 		return "input log was truncated or rotated during the latest run"
 	}
@@ -325,6 +423,170 @@ func writeNormalized(file *os.File, offset int64, size int64, outputPath string,
 		return stats, err
 	}
 	return stats, nil
+}
+
+func appendZeekLog(path string, statePath string, stateOffset int64, outputPath string, sensorID string, logName string) (zeekAppendResult, error) {
+	result := zeekAppendResult{Stats: zeek.Stats{ByType: map[string]int{}}, Status: "not_configured", Reason: "zeek " + logName + " log path is not configured"}
+	if path == "" {
+		return result, nil
+	}
+	result.Status = "unavailable"
+	result.Reason = "zeek " + logName + " log is not available"
+	previousOffset := int64(0)
+	if statePath == path {
+		previousOffset = stateOffset
+	}
+	result.PreviousOffset = previousOffset
+	result.NewOffset = previousOffset
+	file, err := os.Open(path)
+	if os.IsNotExist(err) {
+		result.Reason = "zeek " + logName + " log does not exist"
+		return result, nil
+	}
+	if err != nil {
+		result.Reason = "zeek " + logName + " log cannot be opened: " + err.Error()
+		return result, nil
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		result.Reason = "zeek " + logName + " log cannot be inspected: " + err.Error()
+		return result, nil
+	}
+	truncated := false
+	if previousOffset > stat.Size() {
+		previousOffset = 0
+		truncated = true
+	}
+	result.PreviousOffset = previousOffset
+	result.NewOffset = stat.Size()
+	result.Truncated = truncated
+	output, err := os.OpenFile(outputPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return result, fmt.Errorf("open normalized output for zeek append: %w", err)
+	}
+	defer output.Close()
+
+	length := stat.Size() - previousOffset
+	if length < 0 {
+		length = 0
+	}
+	section := io.NewSectionReader(file, previousOffset, length)
+	var reader io.Reader = section
+	if previousOffset > 0 {
+		header, err := zeekHeader(file, previousOffset)
+		if err != nil {
+			return result, err
+		}
+		if len(header) > 0 {
+			reader = io.MultiReader(bytes.NewReader(header), section)
+		}
+	}
+	stats, err := zeek.Convert(reader, output, zeek.Options{SensorID: sensorID})
+	result.Stats = stats
+	if err != nil {
+		return result, err
+	}
+	switch {
+	case truncated:
+		result.Status = "log_truncated"
+		result.Reason = "zeek " + logName + " log was rotated or truncated; offset was reset"
+	case stats.Emitted > 0:
+		result.Status = "ok"
+		result.Reason = "zeek " + logName + " log produced device events"
+	case stat.Size() == 0 || stats.Read == 0:
+		result.Status = "no_dhcp_events"
+		result.Reason = "zeek " + logName + " log exists but has no new rows"
+	default:
+		result.Status = "no_dhcp_events"
+		result.Reason = "zeek " + logName + " log was read but emitted no device events"
+	}
+	return result, nil
+}
+
+func zeekHeader(file *os.File, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	if limit > 1024*1024 {
+		limit = 1024 * 1024
+	}
+	reader := io.NewSectionReader(file, 0, limit)
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	var header bytes.Buffer
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			break
+		}
+		header.WriteString(line)
+		header.WriteByte('\n')
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read zeek header: %w", err)
+	}
+	return header.Bytes(), nil
+}
+
+func mergeStats(base suricata.Stats, extra zeek.Stats) suricata.Stats {
+	base.Read += extra.Read
+	base.Emitted += extra.Emitted
+	base.Skipped += extra.Skipped
+	base.Malformed += extra.Malformed
+	if base.ByType == nil {
+		base.ByType = map[string]int{}
+	}
+	for eventType, count := range extra.ByType {
+		base.ByType[eventType] += count
+	}
+	return base
+}
+
+func mergeZeekStats(base zeek.Stats, extra zeek.Stats) zeek.Stats {
+	base.Read += extra.Read
+	base.Emitted += extra.Emitted
+	base.Skipped += extra.Skipped
+	base.Malformed += extra.Malformed
+	if base.ByType == nil {
+		base.ByType = map[string]int{}
+	}
+	for eventType, count := range extra.ByType {
+		base.ByType[eventType] += count
+	}
+	return base
+}
+
+func aggregateZeekStatus(results ...zeekAppendResult) (string, string) {
+	configured := false
+	reasons := []string{}
+	statusRank := map[string]int{
+		"not_configured": 0,
+		"no_dhcp_events": 1,
+		"unavailable":    2,
+		"log_truncated":  3,
+		"ok":             4,
+	}
+	status := "not_configured"
+	for _, result := range results {
+		if result.Status != "not_configured" {
+			configured = true
+		}
+		if result.Reason != "" && result.Status != "not_configured" {
+			reasons = append(reasons, result.Reason)
+		}
+		if statusRank[result.Status] > statusRank[status] {
+			status = result.Status
+		}
+	}
+	if !configured {
+		return "not_configured", "zeek log paths are not configured"
+	}
+	if len(reasons) == 0 {
+		return status, "zeek logs are configured"
+	}
+	return status, strings.Join(reasons, "; ")
 }
 
 func readState(path string) (State, error) {
