@@ -1055,6 +1055,21 @@ ON CONFLICT(sensor_id) DO UPDATE SET collector_kind = EXCLUDED.collector_kind, c
 	return tx.Commit()
 }
 
+// WriteIdentityEvents materializes endpoint candidates and identity history from
+// already-normalized events. It is intentionally idempotent so deployments can
+// backfill a retained ClickHouse window after identity schema migrations.
+func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normalized.Event) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := writeIdentityState(ctx, tx, BuildIdentityState(events)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func writeIdentityState(ctx context.Context, tx *sql.Tx, state IdentityState) error {
 	for _, entity := range state.Endpoints {
 		if err := upsertEndpointEntity(ctx, tx, entity); err != nil {

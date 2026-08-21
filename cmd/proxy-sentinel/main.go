@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -52,11 +53,62 @@ func run(args []string) error {
 		return runValidate(args[1:])
 	case "evaluate":
 		return runEvaluate(args[1:])
+	case "backfill":
+		return runBackfill(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
 		return fmt.Errorf("unknown command: %s", args[0])
 	}
+}
+
+func runBackfill(args []string) error {
+	if len(args) < 1 || args[0] != "identity" {
+		return fmt.Errorf("usage: proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--sensor-id office-30] [--window 7d]")
+	}
+	fs := flag.NewFlagSet("backfill identity", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN")
+	clickhouseDSN := fs.String("clickhouse-dsn", "", "ClickHouse HTTP DSN")
+	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
+	window := fs.String("window", "7d", "retained event window")
+	limit := fs.Int("limit", 50000, "maximum normalized device events to backfill")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *postgresDSN == "" || *clickhouseDSN == "" {
+		return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
+	}
+	if *limit < 1 {
+		return fmt.Errorf("--limit must be greater than zero")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	clickhouseStore, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: *clickhouseDSN})
+	if err != nil {
+		return err
+	}
+	events, err := clickhouseStore.ListEventSamples(ctx, store.Query{
+		Level:    "device",
+		SensorID: *sensorID,
+		Window:   *window,
+		Limit:    *limit,
+	})
+	if err != nil {
+		return fmt.Errorf("read retained device events: %w", err)
+	}
+	postgresStore, err := store.NewPostgresStore(store.PostgresOptions{DSN: *postgresDSN, SensorID: *sensorID})
+	if err != nil {
+		return err
+	}
+	defer postgresStore.Close()
+	if err := postgresStore.WriteIdentityEvents(ctx, events); err != nil {
+		return fmt.Errorf("materialize retained device identities: %w", err)
+	}
+	state := store.BuildIdentityState(events)
+	fmt.Fprintf(os.Stderr, "identity backfill: events=%d endpoints=%d ip_mac_history=%d\n", len(events), len(state.Endpoints), len(state.IPMACHistory))
+	return nil
 }
 
 func runAdapter(args []string) error {
@@ -584,7 +636,7 @@ func runControlPlaneServe(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate shadow --shadow-dir data/shadow [--daily-export-dir data/shadow/review-exports] --output report.json\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
+	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate shadow --shadow-dir data/shadow [--daily-export-dir data/shadow/review-exports] --output report.json\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
 }
 
 func openInput(path string) (*os.File, func() error, error) {

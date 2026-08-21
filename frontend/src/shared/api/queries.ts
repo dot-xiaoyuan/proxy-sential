@@ -190,6 +190,8 @@ export function useUpdateEndpointRegistration() {
     }) => api.updateEndpointRegistration(endpointId, payload),
     onSuccess: (_, variables) => {
       void client.invalidateQueries({ queryKey: ['endpoint-identity', variables.endpointId] })
+      void client.invalidateQueries({ queryKey: ['devices'] })
+      void client.invalidateQueries({ queryKey: ['audit-logs'] })
     },
   })
 }

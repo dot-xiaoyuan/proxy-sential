@@ -135,10 +135,13 @@ func BuildIdentityState(events []normalized.Event) IdentityState {
 	infrastructure := map[string]InfrastructureEntity{}
 	sessions := map[string]AccountSession{}
 	for _, event := range events {
-		if event.Type != "identity" {
+		if event.Type != "identity" && event.Type != "device" {
 			continue
 		}
 		fact := identityFactFromEvent(event)
+		if event.Type == "device" {
+			fact = identityFactFromDeviceEvent(event)
+		}
 		if fact.EventID == "" {
 			continue
 		}
@@ -468,6 +471,36 @@ func identityFactFromEvent(event normalized.Event) identityFact {
 	}
 }
 
+func identityFactFromDeviceEvent(event normalized.Event) identityFact {
+	mac := normalizeSignalValue("mac", firstNonEmpty(
+		stringFromMap(event.Subject, "mac"),
+		stringFromMap(event.Payload, "mac"),
+		stringFromMap(event.Payload, "client_mac"),
+		stringFromMap(event.Payload, "client_chaddr"),
+	))
+	if mac == "" {
+		return identityFact{}
+	}
+	ip := firstNonEmpty(
+		stringFromMap(event.Subject, "ip"),
+		stringFromMap(event.Payload, "assigned_addr"),
+		stringFromMap(event.Flow, "src_ip"),
+	)
+	source := firstNonEmpty(stringFromMap(event.Payload, "origin"), event.Source)
+	return identityFact{
+		EventID:    event.EventID,
+		Timestamp:  event.Timestamp,
+		Source:     source,
+		IP:         ip,
+		MAC:        mac,
+		EndpointID: "mac:" + mac,
+		EntityRole: "endpoint",
+		Confidence: event.Confidence,
+		Payload:    event.Payload,
+		RawRef:     event.RawRef,
+	}
+}
+
 func (f identityFact) SessionID() string {
 	if sessionID := stringFromMap(f.Payload, "session_id"); sessionID != "" {
 		return sessionID
@@ -563,7 +596,7 @@ func accountSessionFromFact(fact identityFact) AccountSession {
 
 func identityAttributes(fact identityFact) map[string]any {
 	attrs := map[string]any{}
-	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id"} {
+	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class"} {
 		if value := stringFromMap(fact.Payload, key); value != "" {
 			attrs[key] = value
 		}

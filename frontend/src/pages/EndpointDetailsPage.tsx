@@ -1,24 +1,32 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Alert, Descriptions, Progress, Skeleton, Space, Table, Tag, Typography } from 'antd'
+import { App as AntApp, Alert, Button, Descriptions, Form, Input, Progress, Select, Skeleton, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
-import { useDeviceSignals, useEndpointIdentity } from '../shared/api/queries'
+import { useDeviceSignals, useEndpointIdentity, useSession, useUpdateEndpointRegistration } from '../shared/api/queries'
 import type {
   AccountSession,
   DeviceSignal,
   EndpointIdentityProfile,
   IdentityAccessHistory,
   IdentityIPMACHistory,
+  UpdateEndpointRegistrationRequest,
 } from '../shared/api/types'
+import { can } from '../shared/auth/permissions'
 
 export function EndpointDetailsPage() {
   const rawEndpointId = useParams().endpointId ?? ''
   const endpointId = decodeURIComponent(rawEndpointId)
+  const { message } = AntApp.useApp()
+  const [registrationForm] = Form.useForm<UpdateEndpointRegistrationRequest>()
   const identity = useEndpointIdentity(endpointId, { limit: 500 })
   const signals = useDeviceSignals({ window: '24h', q: endpointId, include_weak: true, limit: 200 })
+  const session = useSession()
+  const updateRegistration = useUpdateEndpointRegistration()
 
   const profile = identity.data ?? fallbackEndpointProfile(endpointId)
+  const canUpdateRegistration = can(session.data, 'endpoints:write')
+  const mergeStatus = Form.useWatch('merge_status', registrationForm)
   const latestIP = profile?.ip_history?.[0]?.ip ?? ''
   const latestAccess = profile?.access_history?.[0]?.access_id ?? ''
   const signalItems = signals.data?.items ?? []
@@ -27,6 +35,24 @@ export function EndpointDetailsPage() {
     () => uniqueValues(profile?.access_history?.map((item) => item.access_id) ?? []),
     [profile],
   )
+
+  useEffect(() => {
+    if (!identity.data) {
+      return
+    }
+    const endpoint = identity.data.endpoint
+    registrationForm.setFieldsValue({
+      registration_status: endpoint.registration_status,
+      owner_account: endpoint.owner_account ?? '',
+      owner_name: endpoint.owner_name ?? '',
+      owner_department: endpoint.owner_department ?? '',
+      asset_tag: endpoint.asset_tag ?? '',
+      registration_note: endpoint.registration_note ?? '',
+      merge_status: endpoint.merge_status ?? 'active',
+      merged_into_endpoint_id: endpoint.merged_into_endpoint_id ?? '',
+      split_from_endpoint_id: endpoint.split_from_endpoint_id ?? '',
+    })
+  }, [identity.data, registrationForm])
 
   if (identity.isLoading) {
     return <Skeleton active />
@@ -109,6 +135,89 @@ export function EndpointDetailsPage() {
             <Descriptions.Item label="最近活跃">{formatTime(profile.last_seen)}</Descriptions.Item>
           </Descriptions>
         </div>
+      </section>
+
+      <section className="surface endpoint-registration-editor">
+        <div className="surface-title-row">
+          <Typography.Title className="surface-title" level={4}>更新设备登记</Typography.Title>
+          <Typography.Text className="surface-subtitle" type="secondary">保存后记录操作者、时间和审计日志</Typography.Text>
+        </div>
+        {!canUpdateRegistration && (
+          <Alert showIcon title="当前会话没有 endpoints:write 权限，登记表单只读" type="warning" />
+        )}
+        <Form<UpdateEndpointRegistrationRequest>
+          className="endpoint-registration-form"
+          disabled={!canUpdateRegistration}
+          form={registrationForm}
+          layout="vertical"
+          onFinish={(payload) => {
+            updateRegistration.mutate(
+              { endpointId, payload },
+              {
+                onError: (error) => message.error(error.message),
+                onSuccess: () => message.success('设备登记已更新'),
+              },
+            )
+          }}
+        >
+          <div className="endpoint-registration-grid">
+            <Form.Item label="登记状态" name="registration_status" rules={[{ required: true }]}>
+              <Select options={[
+                { label: '未登记', value: 'unregistered' },
+                { label: '已登记', value: 'registered' },
+                { label: '已忽略', value: 'ignored' },
+                { label: '已退役', value: 'retired' },
+              ]} />
+            </Form.Item>
+            <Form.Item label="责任账号" name="owner_account">
+              <Input placeholder="账号或工号" />
+            </Form.Item>
+            <Form.Item
+              dependencies={['registration_status', 'owner_account', 'asset_tag']}
+              label="责任人"
+              name="owner_name"
+              rules={[({ getFieldValue }) => ({
+                validator: (_, value) => {
+                  if (getFieldValue('registration_status') !== 'registered' || value || getFieldValue('owner_account') || getFieldValue('asset_tag')) {
+                    return Promise.resolve()
+                  }
+                  return Promise.reject(new Error('已登记设备至少填写责任账号、责任人或资产编号之一'))
+                },
+              })]}
+            >
+              <Input placeholder="人工确认的责任人" />
+            </Form.Item>
+            <Form.Item label="部门" name="owner_department">
+              <Input placeholder="部门或管理单位" />
+            </Form.Item>
+            <Form.Item label="资产编号" name="asset_tag">
+              <Input placeholder="资产编号" />
+            </Form.Item>
+            <Form.Item label="合并状态" name="merge_status" rules={[{ required: true }]}>
+              <Select options={[
+                { label: '正常', value: 'active' },
+                { label: '已合并', value: 'merged' },
+                { label: '拆分来源', value: 'split' },
+              ]} />
+            </Form.Item>
+            {mergeStatus === 'merged' && (
+              <Form.Item label="合并到 Endpoint" name="merged_into_endpoint_id" rules={[{ required: true, message: '请填写合并目标 Endpoint' }]}>
+                <Input className="mono" placeholder="mac:xx:xx:xx:xx:xx:xx" />
+              </Form.Item>
+            )}
+            {mergeStatus === 'split' && (
+              <Form.Item label="拆分自 Endpoint" name="split_from_endpoint_id">
+                <Input className="mono" placeholder="原 Endpoint ID" />
+              </Form.Item>
+            )}
+            <Form.Item className="endpoint-registration-note" label="登记备注" name="registration_note">
+              <Input.TextArea placeholder="记录人工确认依据、设备类型或例外原因" rows={3} />
+            </Form.Item>
+          </div>
+          <div className="endpoint-registration-actions">
+            <Button htmlType="submit" loading={updateRegistration.isPending} type="primary">保存登记</Button>
+          </div>
+        </Form>
       </section>
 
       <section className="surface">

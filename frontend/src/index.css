@@ -1925,6 +1925,42 @@ pre.wrap-code {
   grid-column: 1 / -1;
 }
 
+.endpoint-registration-editor {
+  min-width: 0;
+}
+
+.endpoint-registration-form {
+  margin-top: 16px;
+}
+
+.endpoint-registration-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+  min-width: 0;
+}
+
+.endpoint-registration-note {
+  grid-column: 1 / -1;
+}
+
+.endpoint-registration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  .endpoint-registration-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .endpoint-registration-note {
+    grid-column: auto;
+  }
+}
+
 .zeek-status-alert {
   margin-bottom: 16px;
 }

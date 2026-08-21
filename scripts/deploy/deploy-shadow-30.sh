@@ -176,9 +176,15 @@ if [[ -f '$remote_root/deploy/compose/storage.env' ]]; then
     done
     for migration in migrations/clickhouse/*.sql; do
       docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml exec -T clickhouse \
-        clickhouse-client --user \"\${CLICKHOUSE_USER:-proxy_sentinel}\" --password \"\${CLICKHOUSE_PASSWORD}\" --multiquery \
+        clickhouse-client --user \"\${CLICKHOUSE_USER:-proxy_sentinel}\" --password \"\${CLICKHOUSE_PASSWORD}\" \
+        --database \"\${CLICKHOUSE_DB:-proxy_sentinel}\" --multiquery \
         < \"\$migration\"
     done
+    '$remote_root/bin/proxy-sentinel' backfill identity \
+      --postgres-dsn \"\${PROXY_SENTINEL_POSTGRES_DSN}\" \
+      --clickhouse-dsn \"\${PROXY_SENTINEL_CLICKHOUSE_DSN}\" \
+      --sensor-id office-30 \
+      --window 7d
   )
 fi
 
