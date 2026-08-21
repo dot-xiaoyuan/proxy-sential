@@ -169,12 +169,16 @@ if [[ -f '$remote_root/deploy/compose/storage.env' ]]; then
     source deploy/compose/storage.env
     set +a
     docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml up -d
-    docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml exec -T postgres \
-      psql -v ON_ERROR_STOP=1 -U \"\${POSTGRES_USER:-proxy_sentinel}\" -d \"\${POSTGRES_DB:-proxy_sentinel}\" \
-      < migrations/postgres/001_production_schema.sql
-    docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml exec -T clickhouse \
-      clickhouse-client --user \"\${CLICKHOUSE_USER:-proxy_sentinel}\" --password \"\${CLICKHOUSE_PASSWORD}\" --multiquery \
-      < migrations/clickhouse/001_production_schema.sql
+    for migration in migrations/postgres/*.sql; do
+      docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml exec -T postgres \
+        psql -v ON_ERROR_STOP=1 -U \"\${POSTGRES_USER:-proxy_sentinel}\" -d \"\${POSTGRES_DB:-proxy_sentinel}\" \
+        < \"\$migration\"
+    done
+    for migration in migrations/clickhouse/*.sql; do
+      docker compose --env-file deploy/compose/storage.env -f deploy/compose/storage.yml exec -T clickhouse \
+        clickhouse-client --user \"\${CLICKHOUSE_USER:-proxy_sentinel}\" --password \"\${CLICKHOUSE_PASSWORD}\" --multiquery \
+        < \"\$migration\"
+    done
   )
 fi
 
