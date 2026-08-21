@@ -13,22 +13,39 @@ import (
 )
 
 type Snapshot struct {
-	IP                   string   `json:"ip"`
-	SubjectType          string   `json:"subject_type,omitempty"`
-	SubjectID            string   `json:"subject_id,omitempty"`
-	AccountID            string   `json:"account_id,omitempty"`
-	EndpointID           string   `json:"endpoint_id,omitempty"`
-	Score                int      `json:"score"`
-	Level                string   `json:"level"`
-	Confidence           float64  `json:"confidence"`
-	Window               string   `json:"window"`
-	EvidenceIDs          []string `json:"evidence_ids"`
-	Summary              string   `json:"summary"`
-	RecommendedAction    string   `json:"recommended_action"`
-	UpdatedAt            string   `json:"updated_at"`
-	SuspectedDeviceCount int      `json:"suspected_device_count"`
-	DeviceSummary        string   `json:"device_summary,omitempty"`
-	DeviceConfidence     float64  `json:"device_confidence"`
+	IP                   string             `json:"ip"`
+	SubjectType          string             `json:"subject_type,omitempty"`
+	SubjectID            string             `json:"subject_id,omitempty"`
+	AccountID            string             `json:"account_id,omitempty"`
+	EndpointID           string             `json:"endpoint_id,omitempty"`
+	Score                int                `json:"score"`
+	RawScore             int                `json:"raw_score,omitempty"`
+	Level                string             `json:"level"`
+	RawLevel             string             `json:"raw_level,omitempty"`
+	Confidence           float64            `json:"confidence"`
+	Window               string             `json:"window"`
+	EvidenceIDs          []string           `json:"evidence_ids"`
+	Summary              string             `json:"summary"`
+	RecommendedAction    string             `json:"recommended_action"`
+	UpdatedAt            string             `json:"updated_at"`
+	SuspectedDeviceCount int                `json:"suspected_device_count"`
+	DeviceSummary        string             `json:"device_summary,omitempty"`
+	DeviceConfidence     float64            `json:"device_confidence"`
+	ReviewStatus         string             `json:"review_status,omitempty"`
+	ReviewLabelID        string             `json:"review_label_id,omitempty"`
+	ReviewReason         string             `json:"review_reason,omitempty"`
+	ReviewedBy           string             `json:"reviewed_by,omitempty"`
+	ReviewedAt           string             `json:"reviewed_at,omitempty"`
+	NegativeEvidence     []NegativeEvidence `json:"negative_evidence,omitempty"`
+}
+
+type NegativeEvidence struct {
+	Type       string `json:"type"`
+	Source     string `json:"source"`
+	Reason     string `json:"reason"`
+	ScoreDelta int    `json:"score_delta"`
+	MaxScore   int    `json:"max_score,omitempty"`
+	LevelCap   string `json:"level_cap,omitempty"`
 }
 
 type InspectOptions struct {
@@ -392,6 +409,124 @@ func actionFor(level string) string {
 	}
 }
 
+func ApplyNegativeEvidence(snapshot Snapshot, negatives []NegativeEvidence) Snapshot {
+	if len(negatives) == 0 {
+		return snapshot
+	}
+	if snapshot.RawLevel == "" {
+		snapshot.RawLevel = snapshot.Level
+	}
+	if snapshot.RawScore == 0 && snapshot.Score > 0 {
+		snapshot.RawScore = snapshot.Score
+	}
+	if snapshot.RawScore == 0 && snapshot.RawLevel != "" && snapshot.RawLevel != "normal" {
+		snapshot.RawScore = snapshot.Score
+	}
+	score := snapshot.Score
+	levelCap := ""
+	applied := make([]NegativeEvidence, 0, len(negatives))
+	for _, negative := range negatives {
+		if negative.Type == "" {
+			continue
+		}
+		score += negative.ScoreDelta
+		if negative.MaxScore > 0 && score > negative.MaxScore {
+			score = negative.MaxScore
+		}
+		if negative.LevelCap != "" && strongerLevel(negative.LevelCap, levelCap) {
+			levelCap = negative.LevelCap
+		}
+		applied = append(applied, negative)
+	}
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	level := levelForScore(score)
+	if levelCap != "" && levelExceeds(level, levelCap) {
+		level = levelCap
+		if cappedScore := maxScoreForLevel(levelCap); score > cappedScore {
+			score = cappedScore
+		}
+	}
+	snapshot.Score = score
+	snapshot.Level = level
+	snapshot.RecommendedAction = actionFor(level)
+	snapshot.NegativeEvidence = append([]NegativeEvidence{}, applied...)
+	if len(applied) > 0 {
+		snapshot.Summary = snapshot.Summary + "；已应用负证据降权：" + negativeEvidenceSummary(applied)
+	}
+	return snapshot
+}
+
+func levelForScore(score int) string {
+	if score < 30 {
+		return "normal"
+	}
+	if score < 60 {
+		return "suspicious"
+	}
+	if score < 80 {
+		return "high"
+	}
+	return "confirmed"
+}
+
+func levelExceeds(level, cap string) bool {
+	left, ok := levelRank(level)
+	if !ok {
+		return false
+	}
+	right, ok := levelRank(cap)
+	if !ok {
+		return false
+	}
+	return left > right
+}
+
+func strongerLevel(candidate, current string) bool {
+	if current == "" {
+		return true
+	}
+	candidateRank, ok := levelRank(candidate)
+	if !ok {
+		return false
+	}
+	currentRank, ok := levelRank(current)
+	if !ok {
+		return true
+	}
+	return candidateRank < currentRank
+}
+
+func maxScoreForLevel(level string) int {
+	switch level {
+	case "normal":
+		return 29
+	case "suspicious":
+		return 59
+	case "high":
+		return 79
+	default:
+		return 100
+	}
+}
+
+func negativeEvidenceSummary(items []NegativeEvidence) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		reason := strings.TrimSpace(item.Reason)
+		if reason == "" {
+			reason = item.Type
+		}
+		parts = append(parts, reason)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "、")
+}
+
 func combinedConfidence(items []evidence.Evidence) float64 {
 	if len(items) == 0 {
 		return 0
@@ -452,7 +587,7 @@ func summaryFor(items []evidence.Evidence, level string) string {
 }
 
 func isWeakEvidence(evidenceType string) bool {
-	return evidenceType == "multi_user_agent" || evidenceType == "domain_diversity" || evidenceType == "port_distribution"
+	return evidenceType == "multi_user_agent" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior"
 }
 
 func strongEvidenceTypeCount(items []evidence.Evidence) int {

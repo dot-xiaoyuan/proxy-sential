@@ -149,6 +149,42 @@ func TestCompareKnownDevicesToIdentityStateDetectsMissingAccess(t *testing.T) {
 	}
 }
 
+func TestCompareKnownDevicesToIdentityStateDetectsFalseMerge(t *testing.T) {
+	samples := []KnownDeviceSample{
+		{SampleID: "device-a", ExpectedEndpointID: "endpoint-shared", PrimaryMAC: "02:00:00:00:03:01", ExpectedRole: "endpoint", RegistrationStatus: "registered"},
+		{SampleID: "device-b", ExpectedEndpointID: "endpoint-shared", PrimaryMAC: "02:00:00:00:03:02", ExpectedRole: "endpoint", RegistrationStatus: "registered"},
+	}
+	state := store.IdentityState{Endpoints: []store.EndpointEntity{
+		{EndpointID: "endpoint-shared", PrimaryMAC: "02:00:00:00:03:01", EntityRole: "endpoint"},
+	}}
+
+	report := CompareKnownDevicesToIdentityState(samples, state)
+	if report.Valid || report.FalseMergeCount != 1 || report.Failed != 2 {
+		t.Fatalf("expected one false merge affecting both samples, got %+v", report)
+	}
+	if !containsString(report.Results[0].Issues, "false merge") || !containsString(report.Results[1].Issues, "false merge") {
+		t.Fatalf("expected false merge issue on both samples, got %+v", report.Results)
+	}
+}
+
+func TestCompareKnownDevicesToIdentityStateDetectsDuplicateCreation(t *testing.T) {
+	samples := []KnownDeviceSample{
+		{SampleID: "device-a", PrimaryMAC: "02:00:00:00:04:01", ExpectedRole: "endpoint", RegistrationStatus: "registered"},
+	}
+	state := store.IdentityState{Endpoints: []store.EndpointEntity{
+		{EndpointID: "endpoint-a", PrimaryMAC: "02:00:00:00:04:01", EntityRole: "endpoint"},
+		{EndpointID: "endpoint-a-duplicate", PrimaryMAC: "02:00:00:00:04:01", EntityRole: "endpoint"},
+	}}
+
+	report := CompareKnownDevicesToIdentityState(samples, state)
+	if report.Valid || report.DuplicateCreationCount != 1 || report.Failed != 1 {
+		t.Fatalf("expected duplicate creation failure, got %+v", report)
+	}
+	if !containsString(report.Results[0].Issues, "duplicate creation") {
+		t.Fatalf("expected duplicate creation issue, got %+v", report.Results[0].Issues)
+	}
+}
+
 func containsString(values []string, needle string) bool {
 	for _, value := range values {
 		if strings.Contains(value, needle) {

@@ -271,6 +271,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleOverview(w, r)
 	case r.Method == http.MethodGet && path == "/activity/overview":
 		s.handleActivityOverview(w, r)
+	case r.Method == http.MethodGet && path == "/proxy-reviews":
+		s.handleProxyReviews(w, r)
 	case r.Method == http.MethodGet && path == "/dpi/overview":
 		s.handleDPIOverview(w, r)
 	case r.Method == http.MethodGet && path == "/dpi/trends":
@@ -334,6 +336,34 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleProxyReviews(w http.ResponseWriter, r *http.Request) {
+	window := strings.TrimSpace(r.URL.Query().Get("window"))
+	if window == "" {
+		window = "7d"
+	}
+	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_proxy_review_window", err.Error())
+		return
+	}
+	limit, err := boundedInt(r.URL.Query().Get("limit"), defaultDPIQueryLimit, 1, maxDPIQueryLimit)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	result, err := s.reader.GetProxyReviews(ctx, store.ActivityQuery{
+		SensorID: r.URL.Query().Get("sensor_id"),
+		Window:   window,
+		Limit:    limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_proxy_reviews_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 	if s.frontendDir == "" {
 		writeError(w, http.StatusNotFound, "not_found", "frontend directory is not configured")
@@ -353,11 +383,13 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) session() Session {
 	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read"}
+	user := User{ID: "shadow-viewer", Name: "影子观测只读用户"}
 	if !s.readOnly {
 		permissions = append(permissions, "labels:create", "endpoints:write", "rules:reload")
+		user = User{ID: "shadow-operator", Name: "影子运营复核员"}
 	}
 	return Session{
-		User:        User{ID: "shadow-viewer", Name: "影子观测只读用户"},
+		User:        user,
 		Role:        "viewer",
 		Permissions: permissions,
 	}
@@ -520,8 +552,8 @@ func validateLabelRequest(request CreateLabelRequest) error {
 	if len(strings.TrimSpace(request.Reason)) < 2 {
 		return fmt.Errorf("reason must contain at least 2 characters")
 	}
-	if request.EvidenceIDs == nil {
-		request.EvidenceIDs = []string{}
+	if len(request.EvidenceIDs) == 0 {
+		return fmt.Errorf("evidence_ids must contain at least one evidence id")
 	}
 	return nil
 }
@@ -716,6 +748,9 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	if query.SensorID == "" {
 		query.SensorID = s.sensorID
+	}
+	if r.URL.Query().Get("window") == "" {
+		query.Window = ""
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()

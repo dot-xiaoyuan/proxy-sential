@@ -1,4 +1,4 @@
-import { App as AntApp, Button, Form, Input, Select } from 'antd'
+import { Alert, App as AntApp, Button, Form, Input, Select } from 'antd'
 
 import { useCreateLabel } from '../../shared/api/queries'
 import type { LabelKind } from '../../shared/api/types'
@@ -27,6 +27,7 @@ export function LabelPanel({
   const [form] = Form.useForm<FormValue>()
   const { message } = AntApp.useApp()
   const createLabel = useCreateLabel()
+  const missingEvidence = evidenceIds.length === 0
 
   return (
     <Form
@@ -50,12 +51,20 @@ export function LabelPanel({
         )
       }}
     >
+      {missingEvidence && (
+        <Alert
+          className="margin-bottom-md"
+          showIcon
+          title="当前对象没有可关联证据 ID，暂不能提交复核标注"
+          type="warning"
+        />
+      )}
       <Form.Item
         label="复核结论"
         name="label"
         rules={[{ required: true, message: '请选择复核结论' }]}
       >
-        <Select disabled={disabled} options={labelOptions} placeholder="选择标注" />
+        <Select disabled={disabled || missingEvidence} options={labelOptions} placeholder="选择标注" />
       </Form.Item>
       <Form.Item
         label="复核原因"
@@ -63,12 +72,12 @@ export function LabelPanel({
         rules={[{ required: true, min: 2, message: '请填写至少 2 个字符的原因' }]}
       >
         <Input.TextArea
-          disabled={disabled}
+          disabled={disabled || missingEvidence}
           placeholder="说明确认、误报或需要补充样本的依据"
           rows={4}
         />
       </Form.Item>
-      <Button disabled={disabled} htmlType="submit" loading={createLabel.isPending} type="primary">
+      <Button disabled={disabled || missingEvidence} htmlType="submit" loading={createLabel.isPending} type="primary">
         提交标注
       </Button>
     </Form>

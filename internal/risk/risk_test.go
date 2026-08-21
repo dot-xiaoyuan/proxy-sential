@@ -3,6 +3,7 @@ package risk
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"proxy-sentinel/internal/evidence"
@@ -54,6 +55,21 @@ func TestInspectMultiUserAgentIsWeakEvidence(t *testing.T) {
 	}
 	if snapshot.Score != 45 || snapshot.Level != "suspicious" {
 		t.Fatalf("UA weak evidence should not confirm risk: %+v", snapshot)
+	}
+}
+
+func TestInspectEncryptedTunnelBehaviorIsWeakEvidence(t *testing.T) {
+	input := evidenceInput(
+		ev("quic-1", "10.0.0.1", "encrypted_tunnel_behavior", 25, 0.45),
+		ev("quic-2", "10.0.0.1", "encrypted_tunnel_behavior", 25, 0.45),
+	)
+
+	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Score != 29 || snapshot.Level != "normal" || snapshot.RecommendedAction != "record" {
+		t.Fatalf("encrypted transport behavior must not confirm risk alone: %+v", snapshot)
 	}
 }
 
@@ -147,6 +163,51 @@ func TestListRejectsUnknownMinimumLevel(t *testing.T) {
 	_, err := List(bytes.NewReader([]byte(`{"snapshots":[]}`)), ListOptions{MinLevel: "critical"})
 	if err == nil {
 		t.Fatal("expected unknown min level to fail")
+	}
+}
+
+func TestApplyNegativeEvidenceDowngradesAndPreservesRawRisk(t *testing.T) {
+	snapshot := Snapshot{
+		IP:                "10.0.0.8",
+		Score:             85,
+		Level:             "confirmed",
+		Summary:           "confirmed 级别风险由 strong evidence 贡献",
+		RecommendedAction: "shadow_confirm_review",
+	}
+
+	adjusted := ApplyNegativeEvidence(snapshot, []NegativeEvidence{
+		{Type: "manual_false_positive", Source: "label", Reason: "人工复核误报", ScoreDelta: -80, MaxScore: 20, LevelCap: "normal"},
+	})
+
+	if adjusted.Score != 5 || adjusted.Level != "normal" || adjusted.RecommendedAction != "record" {
+		t.Fatalf("expected false positive label to downgrade risk, got %+v", adjusted)
+	}
+	if adjusted.RawScore != 85 || adjusted.RawLevel != "confirmed" {
+		t.Fatalf("expected raw risk to be preserved, got %+v", adjusted)
+	}
+	if len(adjusted.NegativeEvidence) != 1 || adjusted.NegativeEvidence[0].Type != "manual_false_positive" {
+		t.Fatalf("expected negative evidence metadata, got %+v", adjusted.NegativeEvidence)
+	}
+	if !strings.Contains(adjusted.Summary, "已应用负证据降权") {
+		t.Fatalf("expected summary to explain downgrade, got %q", adjusted.Summary)
+	}
+}
+
+func TestApplyNegativeEvidenceNeedsMoreDataCapsConfirmedAtHigh(t *testing.T) {
+	snapshot := Snapshot{
+		IP:                "10.0.0.8",
+		Score:             90,
+		Level:             "confirmed",
+		Summary:           "confirmed risk",
+		RecommendedAction: "shadow_confirm_review",
+	}
+
+	adjusted := ApplyNegativeEvidence(snapshot, []NegativeEvidence{
+		{Type: "needs_more_data", Source: "label", Reason: "样本不足", ScoreDelta: -5, LevelCap: "high"},
+	})
+
+	if adjusted.Level != "high" || adjusted.Score != 79 || adjusted.RecommendedAction != "shadow_manual_review" {
+		t.Fatalf("expected needs_more_data to cap confirmed at high, got %+v", adjusted)
 	}
 }
 

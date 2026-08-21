@@ -69,16 +69,25 @@ sudo scripts/suricata/capture-mirror-sample.sh --interface auto --duration 1800
 scripts/deploy/deploy-shadow-30.sh
 ```
 
+需要进行人工复核和 endpoint 登记时使用：
+
+```bash
+scripts/deploy/deploy-shadow-30.sh --enable-review-writes
+```
+
 部署后：
 
 - `proxy-sentinel-suricata.service` 持续读取 `ens1f1` 并写
   `/var/log/suricata/eve.json`。
 - `proxy-sentinel-shadow.timer` 每 10 分钟运行一次 shadow 分析。
-- `proxy-sentinel-control-plane.service` 在 `0.0.0.0:18080` 提供只读 API 和
-  `frontend/dist` 静态页面。
+- `proxy-sentinel-control-plane.service` 在 `0.0.0.0:18080` 提供 API 和
+  `frontend/dist` 静态页面；默认只读，只有显式传入 `--enable-review-writes` 才开放标注与登记。
+- `proxy-sentinel-shadow-evaluation.timer` 每天生成 7 天评估报告和分级复核样本。
 - 输出目录为 `/opt/proxy-sentinel/data/shadow/runs/YYYYMMDD-HHMMSS/`。
 - 每轮输出标准事件、证据、风险快照、可疑 IP 列表和运行摘要。
 - 所有推荐动作都是影子动作，不触发降速、踢线或封禁。
+
+影子评估流程见 [影子评估与每日人工复核](shadow-evaluation.md)。
 
 控制面验收：
 

@@ -56,13 +56,16 @@ type parsedEvent struct {
 }
 
 type ipSignals struct {
-	userAgents     map[string]struct{}
-	ja3            map[string]struct{}
-	ja4            map[string]struct{}
-	domains        map[string]struct{}
-	dstPorts       map[string]struct{}
-	deviceProfiles map[string]struct{}
-	deviceFamilies map[string]struct{}
+	userAgents          map[string]struct{}
+	ja3                 map[string]struct{}
+	ja4                 map[string]struct{}
+	domains             map[string]struct{}
+	dstPorts            map[string]struct{}
+	deviceProfiles      map[string]struct{}
+	deviceFamilies      map[string]struct{}
+	vpnRuleMatches      map[string]struct{}
+	vpnDomainHints      map[string]struct{}
+	encryptedTransports map[string]struct{}
 }
 
 type accountSignals struct {
@@ -188,13 +191,16 @@ func AnalyzeFiles(inputPath, outputPath string, opts Options) (Result, error) {
 
 func newIPSignals() ipSignals {
 	return ipSignals{
-		userAgents:     map[string]struct{}{},
-		ja3:            map[string]struct{}{},
-		ja4:            map[string]struct{}{},
-		domains:        map[string]struct{}{},
-		dstPorts:       map[string]struct{}{},
-		deviceProfiles: map[string]struct{}{},
-		deviceFamilies: map[string]struct{}{},
+		userAgents:          map[string]struct{}{},
+		ja3:                 map[string]struct{}{},
+		ja4:                 map[string]struct{}{},
+		domains:             map[string]struct{}{},
+		dstPorts:            map[string]struct{}{},
+		deviceProfiles:      map[string]struct{}{},
+		deviceFamilies:      map[string]struct{}{},
+		vpnRuleMatches:      map[string]struct{}{},
+		vpnDomainHints:      map[string]struct{}{},
+		encryptedTransports: map[string]struct{}{},
 	}
 }
 
@@ -219,8 +225,27 @@ func (s ipSignals) add(event normalized.Event) {
 	addString(s.domains, event.Payload, "sni")
 	addString(s.domains, event.Payload, "host")
 	addNumberString(s.dstPorts, event.Flow, "dst_port")
+	s.addVPNSignals(event)
 	if event.Type == "device" {
 		s.addDevice(event.Payload)
+	}
+}
+
+func (s ipSignals) addVPNSignals(event normalized.Event) {
+	if event.Type == "alert" {
+		if sample, ok := vpnAlertSample(event.Payload); ok {
+			s.vpnRuleMatches[sample] = struct{}{}
+		}
+	}
+	for _, key := range []string{"query", "sni", "host", "server_name"} {
+		value := stringValue(event.Payload, key)
+		if value == "" || !hasVPNHint(value) {
+			continue
+		}
+		s.vpnDomainHints[key+":"+normalizeSample(value)] = struct{}{}
+	}
+	if event.Type == "quic" || isUDP443(event.Flow) {
+		s.encryptedTransports[encryptedTransportSample(event)] = struct{}{}
 	}
 }
 
@@ -269,6 +294,30 @@ func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals
 	var output []Evidence
 	windowText := window.String()
 	createdAtText := createdAt.Format(time.RFC3339Nano)
+
+	vpnRuleMatches := sortedSet(signals.vpnRuleMatches)
+	if len(vpnRuleMatches) > 0 {
+		score := cappedScore(68+len(vpnRuleMatches)*4, 78)
+		output = append(output, newEvidence(ip, "vpn_proxy_rule_match", windowText, score, 0.92, "high",
+			fmt.Sprintf("%s 内 Suricata 命中明确代理/VPN/隧道规则，属于翻墙监测高置信证据；仍以影子复核为准", windowText),
+			limitSamples(vpnRuleMatches, 8), createdAtText))
+	}
+
+	vpnDomainHints := sortedSet(signals.vpnDomainHints)
+	if len(vpnDomainHints) > 0 {
+		score := cappedScore(30+len(vpnDomainHints)*4, 48)
+		output = append(output, newEvidence(ip, "vpn_proxy_domain_hint", windowText, score, 0.68, "medium",
+			fmt.Sprintf("%s 内域名/SNI/Host 出现代理、VPN 或隧道关键词，属于中置信线索，需要结合规则命中和账号行为复核", windowText),
+			limitSamples(vpnDomainHints, 8), createdAtText))
+	}
+
+	encryptedTransports := sortedSet(signals.encryptedTransports)
+	if len(encryptedTransports) > 0 {
+		score := cappedScore(14+len(encryptedTransports)*2, 25)
+		output = append(output, newEvidence(ip, "encrypted_tunnel_behavior", windowText, score, 0.45, "low",
+			fmt.Sprintf("%s 内出现 QUIC 或 UDP/443 加密传输行为；这是低置信评分特征，不能单独定性为翻墙或代理", windowText),
+			limitSamples(encryptedTransports, 8), createdAtText))
+	}
 
 	userAgents := sortedSet(signals.userAgents)
 	if len(userAgents) >= 2 {
@@ -541,6 +590,127 @@ func addNumberString(set map[string]struct{}, fields map[string]any, key string)
 	case json.Number:
 		set[typed.String()] = struct{}{}
 	}
+}
+
+func numberString(fields map[string]any, key string) string {
+	value, ok := fields[key]
+	if !ok {
+		return ""
+	}
+	switch typed := value.(type) {
+	case float64:
+		return fmt.Sprintf("%.0f", typed)
+	case int:
+		return fmt.Sprintf("%d", typed)
+	case int64:
+		return fmt.Sprintf("%d", typed)
+	case json.Number:
+		return typed.String()
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return ""
+	}
+}
+
+func vpnAlertSample(payload map[string]any) (string, bool) {
+	signature := stringValue(payload, "signature")
+	category := stringValue(payload, "category")
+	action := stringValue(payload, "action")
+	text := strings.Join([]string{signature, category, action, metadataText(payload["metadata"])}, " ")
+	if !HasVPNHint(text) {
+		return "", false
+	}
+	parts := []string{}
+	if sid := numberString(payload, "signature_id"); sid != "" {
+		parts = append(parts, "sid:"+sid)
+	}
+	if signature != "" {
+		parts = append(parts, "signature:"+normalizeSample(signature))
+	}
+	if category != "" {
+		parts = append(parts, "category:"+normalizeSample(category))
+	}
+	if severity := numberString(payload, "severity"); severity != "" {
+		parts = append(parts, "severity:"+severity)
+	}
+	if len(parts) == 0 {
+		return "suricata-alert:vpn-proxy-tunnel", true
+	}
+	return strings.Join(parts, " "), true
+}
+
+// IsVPNAlert reports whether a normalized alert payload is an explicit
+// proxy/VPN/tunnel rule match.
+func IsVPNAlert(payload map[string]any) bool {
+	_, ok := vpnAlertSample(payload)
+	return ok
+}
+
+func metadataText(value any) string {
+	if value == nil {
+		return ""
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(data)
+}
+
+func hasVPNHint(value string) bool {
+	return HasVPNHint(value)
+}
+
+// HasVPNHint reports whether normalized text contains an explicit proxy, VPN,
+// tunnel, or circumvention marker. Store and presentation aggregations reuse
+// this classifier so review views cannot silently drift from evidence rules.
+func HasVPNHint(value string) bool {
+	text := strings.ToLower(value)
+	for _, keyword := range []string{
+		"proxy", "vpn", "tunnel", "tunneling", "circumvention", "tor",
+		"openvpn", "wireguard", "ipsec", "l2tp", "pptp", "gre", "teredo",
+		"socks", "shadowsocks", "v2ray", "vmess", "trojan", "clash",
+		"hysteria", "sing-box", "xray", "naiveproxy",
+	} {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func isUDP443(flow map[string]any) bool {
+	if strings.ToLower(stringValue(flow, "proto")) != "udp" {
+		return false
+	}
+	return numberString(flow, "dst_port") == "443"
+}
+
+func encryptedTransportSample(event normalized.Event) string {
+	parts := []string{}
+	if event.Type == "quic" {
+		parts = append(parts, "type:quic")
+	}
+	if proto := stringValue(event.Flow, "proto"); proto != "" {
+		parts = append(parts, "proto:"+strings.ToLower(proto))
+	}
+	if dst := stringValue(event.Flow, "dst_ip"); dst != "" {
+		parts = append(parts, "dst:"+dst)
+	}
+	if port := numberString(event.Flow, "dst_port"); port != "" {
+		parts = append(parts, "port:"+port)
+	}
+	if sni := stringValue(event.Payload, "sni"); sni != "" {
+		parts = append(parts, "sni:"+normalizeSample(sni))
+	}
+	if alpn := stringValue(event.Payload, "alpn"); alpn != "" {
+		parts = append(parts, "alpn:"+normalizeSample(alpn))
+	}
+	if len(parts) == 0 {
+		return "encrypted-transport"
+	}
+	return strings.Join(parts, " ")
 }
 
 func sortedSet(set map[string]struct{}) []string {

@@ -71,6 +71,10 @@ func (s *PostgresStore) DSN() string {
 	return s.dsn
 }
 
+func (s *PostgresStore) Close() error {
+	return s.db.Close()
+}
+
 func (s *PostgresStore) collector() ingest.Collector {
 	return ingest.Collector{Kind: s.collectorKind, Version: s.collectorVer, Interface: s.interfaceName}
 }
@@ -100,13 +104,22 @@ func (s *PostgresStore) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
+	risks, err := s.RiskSnapshotMap(ctx)
+	if err != nil {
+		return Overview{}, err
+	}
+	riskItems := make([]risk.Snapshot, 0, len(risks))
+	for _, item := range risks {
+		riskItems = append(riskItems, item)
+	}
+	reviewed := applyLatestReviewLabels(riskItems, latestLabelMap(s.allLabels(ctx, 0)))
 	latest := Run{SensorID: s.sensorID, Normalized: NormalizedCounts{ByType: map[string]int{}}}
 	if len(runs) > 0 {
 		latest = runs[0]
 	}
 	return Overview{
 		LevelCounts:    counts,
-		PendingReviews: counts["high"] + counts["confirmed"],
+		PendingReviews: pendingReviewCount(reviewed),
 		LatestRun:      latest,
 		Throughput: map[string]int{
 			"events":   latest.Normalized.Emitted,
@@ -130,24 +143,21 @@ func (s *PostgresStore) ListRisks(ctx context.Context, query Query) (RiskPage, e
 			return RiskPage{}, fmt.Errorf("unknown level: %s", query.Level)
 		}
 	}
-	where, args, err := riskWhere(query)
+	baseQuery := query
+	baseQuery.Level = ""
+	baseQuery.Limit = 0
+	baseQuery.Cursor = 0
+	where, args, err := riskWhere(baseQuery)
 	if err != nil {
 		return RiskPage{}, err
 	}
-	countQuery := "SELECT count(*) FROM risk_snapshots" + where
-	var total int
-	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return RiskPage{}, err
-	}
-	args = append(args, limit, query.Cursor)
 	rows, err := s.db.QueryContext(ctx, `
 SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
 FROM risk_snapshots`+where+`
 ORDER BY
   CASE level WHEN 'confirmed' THEN 3 WHEN 'high' THEN 2 WHEN 'suspicious' THEN 1 ELSE 0 END DESC,
   score DESC,
-  ip ASC
-LIMIT $`+strconvArg(len(args)-1)+` OFFSET $`+strconvArg(len(args)), args...)
+  ip ASC`, args...)
 	if err != nil {
 		return RiskPage{}, err
 	}
@@ -156,12 +166,26 @@ LIMIT $`+strconvArg(len(args)-1)+` OFFSET $`+strconvArg(len(args)), args...)
 	if err != nil {
 		return RiskPage{}, err
 	}
+	items = applyLatestReviewLabels(items, latestLabelMap(s.allLabels(ctx, 0)))
+	items, err = filterRisks(items, query)
+	if err != nil {
+		return RiskPage{}, err
+	}
+	total := len(items)
+	cursor := query.Cursor
+	if cursor > total {
+		cursor = total
+	}
+	end := cursor + limit
+	if end > total {
+		end = total
+	}
 	var next *string
-	if query.Cursor+len(items) < total {
-		value := fmt.Sprintf("%d", query.Cursor+len(items))
+	if end < total {
+		value := fmt.Sprintf("%d", end)
 		next = &value
 	}
-	return RiskPage{Items: items, Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+	return RiskPage{Items: items[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
 }
 
 func (s *PostgresStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error) {
@@ -177,9 +201,9 @@ FROM risk_snapshots WHERE ip = $1::inet`, ip)
 		return risk.Snapshot{}, err
 	}
 	if len(items) == 0 {
-		return normalRisk(ip), nil
+		return applyLatestReviewLabel(normalRisk(ip), latestLabelMap(s.allLabels(ctx, 0))), nil
 	}
-	return items[0], nil
+	return applyLatestReviewLabel(items[0], latestLabelMap(s.allLabels(ctx, 0))), nil
 }
 
 func (s *PostgresStore) RiskSnapshotMap(ctx context.Context) (map[string]risk.Snapshot, error) {
@@ -745,6 +769,44 @@ ON CONFLICT(audit_id) DO UPDATE SET outcome = EXCLUDED.outcome`,
 		return Label{}, err
 	}
 	return label, nil
+}
+
+func (s *PostgresStore) ListLabels(ctx context.Context, limit int) ([]Label, error) {
+	query := `
+SELECT label_id, target_type, target_id, label, reason, evidence_ids, created_by, created_at
+FROM labels
+ORDER BY created_at DESC, label_id DESC`
+	args := []any{}
+	if limit > 0 {
+		query += " LIMIT $1"
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	labels := []Label{}
+	for rows.Next() {
+		var label Label
+		var evidenceIDs []byte
+		var created time.Time
+		if err := rows.Scan(&label.LabelID, &label.TargetType, &label.TargetID, &label.Label, &label.Reason, &evidenceIDs, &label.CreatedBy, &created); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(evidenceIDs, &label.EvidenceIDs)
+		label.CreatedAt = created.Format(time.RFC3339Nano)
+		labels = append(labels, label)
+	}
+	return labels, rows.Err()
+}
+
+func (s *PostgresStore) allLabels(ctx context.Context, limit int) []Label {
+	labels, err := s.ListLabels(ctx, limit)
+	if err != nil {
+		return []Label{}
+	}
+	return labels
 }
 
 func (s *PostgresStore) UpdateEndpointRegistration(ctx context.Context, update EndpointRegistrationUpdate) (EndpointEntity, error) {

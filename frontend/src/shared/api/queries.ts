@@ -8,6 +8,7 @@ import type {
   EventQuery,
   EvidenceQuery,
   IdentityQuery,
+  ProxyReviewQuery,
   RiskQuery,
   UpdateEndpointRegistrationRequest,
 } from './types'
@@ -16,6 +17,7 @@ export const queryKeys = {
   session: ['session'] as const,
   overview: ['overview'] as const,
   activityOverview: (query: ActivityOverviewQuery) => ['activity-overview', query] as const,
+  proxyReviews: (query: ProxyReviewQuery) => ['proxy-reviews', query] as const,
   dpiOverview: (query: ActivityOverviewQuery) => ['dpi-overview', query] as const,
   dpiTrends: (query: ActivityOverviewQuery) => ['dpi-trends', query] as const,
   dpiProtocolFlows: (query: ActivityOverviewQuery) => ['dpi-protocol-flows', query] as const,
@@ -61,6 +63,10 @@ export function useActivityOverview(query: ActivityOverviewQuery) {
     queryKey: queryKeys.activityOverview(query),
     queryFn: () => api.activityOverview(query),
   })
+}
+
+export function useProxyReviews(query: ProxyReviewQuery) {
+  return useQuery({ queryKey: queryKeys.proxyReviews(query), queryFn: () => api.proxyReviews(query) })
 }
 
 export function useDpiOverview(query: ActivityOverviewQuery) {
@@ -231,9 +237,14 @@ export function useCreateLabel() {
   const client = useQueryClient()
   return useMutation({
     mutationFn: (payload: CreateLabelRequest) => api.createLabel(payload),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       void client.invalidateQueries({ queryKey: queryKeys.auditLogs })
       void client.invalidateQueries({ queryKey: queryKeys.overview })
+      void client.invalidateQueries({ queryKey: ['risks'] })
+      void client.invalidateQueries({ queryKey: ['proxy-reviews'] })
+      if (variables.target_type === 'ip') {
+        void client.invalidateQueries({ queryKey: queryKeys.ipRisk(variables.target_id) })
+      }
     },
   })
 }

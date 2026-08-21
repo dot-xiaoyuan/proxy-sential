@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/adapter/identity"
 	"proxy-sentinel/internal/adapter/suricata"
 	"proxy-sentinel/internal/adapter/zeek"
 	"proxy-sentinel/internal/controlplane"
+	"proxy-sentinel/internal/evaluation"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/replay"
@@ -48,6 +50,8 @@ func run(args []string) error {
 		return runControlPlane(args[1:])
 	case "validate":
 		return runValidate(args[1:])
+	case "evaluate":
+		return runEvaluate(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
@@ -378,12 +382,90 @@ func runValidate(args []string) error {
 	}
 }
 
+func runEvaluate(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("missing evaluate command")
+	}
+	switch args[0] {
+	case "shadow":
+		return runEvaluateShadow(args[1:])
+	default:
+		return fmt.Errorf("unknown evaluate command: %s", args[0])
+	}
+}
+
+func runEvaluateShadow(args []string) error {
+	fs := flag.NewFlagSet("evaluate shadow", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	shadowDir := fs.String("shadow-dir", "data/shadow", "shadow run and label directory")
+	fromRaw := fs.String("from", "", "optional RFC3339 or YYYY-MM-DD window start")
+	toRaw := fs.String("to", "", "optional RFC3339 or YYYY-MM-DD window end")
+	requiredDays := fs.Int("required-days", 7, "minimum continuous run and reviewed days")
+	samplesPerDay := fs.Int("samples-per-level", 10, "daily exported samples per risk level")
+	exportDir := fs.String("daily-export-dir", "", "optional directory for stratified daily review samples")
+	postgresDSN := fs.String("postgres-dsn", "", "optional PostgreSQL DSN for labels written by DB/dual control planes")
+	output := fs.String("output", "-", "evaluation report JSON path, or - for stdout")
+	strict := fs.Bool("strict", false, "return an error unless the shadow evaluation is ready")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	from, err := parseEvaluationTime(*fromRaw, false)
+	if err != nil {
+		return fmt.Errorf("parse --from: %w", err)
+	}
+	to, err := parseEvaluationTime(*toRaw, true)
+	if err != nil {
+		return fmt.Errorf("parse --to: %w", err)
+	}
+	report, err := evaluation.EvaluateShadow(evaluation.ShadowOptions{
+		ShadowDir: *shadowDir, From: from, To: to, RequiredDays: *requiredDays,
+		SamplesPerDay: *samplesPerDay, ExportDir: *exportDir, PostgresDSN: *postgresDSN,
+	})
+	if err != nil {
+		return err
+	}
+	out, closeOutput, err := openOutput(*output)
+	if err != nil {
+		return err
+	}
+	defer closeOutput()
+	if err := writeJSON(out, report); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "evaluate shadow: ready=%t runs=%d days=%d continuous=%d reviewed_days=%d snapshots=%d reviewed=%d blockers=%d\n",
+		report.Ready, report.RunCount, report.ObservedDays, report.LongestContinuousDays, report.DaysWithReviews,
+		report.RiskSnapshotCount, report.ReviewedSnapshotCount, len(report.Blockers))
+	if *strict && !report.Ready {
+		return fmt.Errorf("shadow evaluation is not ready: %s", strings.Join(report.Blockers, "; "))
+	}
+	return nil
+}
+
+func parseEvaluationTime(raw string, endOfDay bool) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return parsed, nil
+	}
+	parsed, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("expected RFC3339 or YYYY-MM-DD")
+	}
+	if endOfDay {
+		return parsed.Add(24*time.Hour - time.Nanosecond), nil
+	}
+	return parsed, nil
+}
+
 func runValidateKnownDevices(args []string) error {
 	fs := flag.NewFlagSet("validate known-devices", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	input := fs.String("input", "", "known devices CSV path, or - for stdin")
 	events := fs.String("events", "", "optional normalized identity JSONL path to compare against")
 	output := fs.String("output", "-", "validation report JSON path, or - for stdout")
+	strict := fs.Bool("strict", false, "require 30-50 sample acceptance coverage and a passing identity comparison")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -434,6 +516,9 @@ func runValidateKnownDevices(args []string) error {
 	)
 	if !report.Valid {
 		return fmt.Errorf("known devices validation failed with %d structural error(s), %d comparison failure(s)", len(report.Errors), comparisonFailed)
+	}
+	if *strict && !report.AcceptanceReady {
+		return fmt.Errorf("known devices acceptance is not ready: warnings=%d comparison_present=%t", len(report.Warnings), report.Comparison != nil)
 	}
 	return nil
 }
@@ -499,7 +584,7 @@ func runControlPlaneServe(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] --output -")
+	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate shadow --shadow-dir data/shadow [--daily-export-dir data/shadow/review-exports] --output report.json\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
 }
 
 func openInput(path string) (*os.File, func() error, error) {

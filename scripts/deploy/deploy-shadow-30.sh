@@ -14,6 +14,7 @@ Options:
   --window DURATION      Evidence window. Default: 10m
   --retention DURATION   Shadow run retention. Default: 168h
   --control-addr ADDR    Control-plane listen address. Default: 0.0.0.0:18080
+  --enable-review-writes Allow label and endpoint registration writes; enforcement remains shadow-only
 
 Builds a Linux amd64 proxy-sentinel binary and frontend/dist, deploys them to
 the remote host, installs systemd units, and enables Suricata capture, periodic
@@ -30,6 +31,7 @@ cadence="10min"
 window="10m"
 retention="168h"
 control_addr="0.0.0.0:18080"
+control_read_only_arg="--read-only"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +66,10 @@ while [[ $# -gt 0 ]]; do
     --control-addr)
       control_addr="${2:-}"
       shift 2
+      ;;
+    --enable-review-writes)
+      control_read_only_arg="--read-only=false"
+      shift
       ;;
     -h|--help)
       usage
@@ -127,6 +133,7 @@ storage_after_suffix=''
 storage_shadow_wants_line=''
 storage_control_wants_suffix=''
 storage_dsn_args=''
+evaluation_postgres_arg=''
 zeek_shadow_arg=''
 zeek_after_suffix=''
 zeek_wants_line=''
@@ -155,6 +162,7 @@ if [[ -f '$remote_root/deploy/compose/storage.env' ]]; then
   storage_shadow_wants_line='Wants=docker.service'
   storage_control_wants_suffix=' docker.service'
   storage_dsn_args='--postgres-dsn \${PROXY_SENTINEL_POSTGRES_DSN} --clickhouse-dsn \${PROXY_SENTINEL_CLICKHOUSE_DSN}'
+  evaluation_postgres_arg='--postgres-dsn \${PROXY_SENTINEL_POSTGRES_DSN}'
   (
     cd '$remote_root'
     set -a
@@ -238,9 +246,35 @@ Unit=proxy-sentinel-shadow.service
 WantedBy=timers.target
 EOF
 
+mkdir -p '$remote_root/data/shadow/evaluation' '$remote_root/data/shadow/review-exports'
+cat > /etc/systemd/system/proxy-sentinel-shadow-evaluation.service <<EOF
+[Unit]
+Description=Proxy Sentinel daily shadow evaluation and review sample export
+After=proxy-sentinel-shadow.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=$remote_root
+\$storage_env_line
+ExecStart=$remote_root/bin/proxy-sentinel evaluate shadow --shadow-dir $remote_root/data/shadow --required-days 7 --samples-per-level 10 --daily-export-dir $remote_root/data/shadow/review-exports --output $remote_root/data/shadow/evaluation/latest.json \$evaluation_postgres_arg
+EOF
+
+cat > /etc/systemd/system/proxy-sentinel-shadow-evaluation.timer <<EOF
+[Unit]
+Description=Generate Proxy Sentinel shadow evaluation every day
+
+[Timer]
+OnCalendar=*-*-* 23:50:00
+Persistent=true
+Unit=proxy-sentinel-shadow-evaluation.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
 cat > /etc/systemd/system/proxy-sentinel-control-plane.service <<EOF
 [Unit]
-Description=Proxy Sentinel read-only control plane
+Description=Proxy Sentinel shadow control plane
 After=network-online.target proxy-sentinel-shadow.timer\$storage_after_suffix
 Wants=network-online.target\$storage_control_wants_suffix
 
@@ -248,7 +282,7 @@ Wants=network-online.target\$storage_control_wants_suffix
 Type=simple
 WorkingDirectory=$remote_root
 \$storage_env_line
-ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual \$storage_dsn_args --read-only
+ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual \$storage_dsn_args $control_read_only_arg
 Restart=always
 RestartSec=5
 
@@ -262,14 +296,17 @@ if [[ -n \"\$zeek_bin\" ]] && ip link show '$mirror_iface' >/dev/null 2>&1; then
   systemctl enable --now proxy-sentinel-zeek.service
 fi
 systemctl enable --now proxy-sentinel-shadow.timer
+systemctl enable --now proxy-sentinel-shadow-evaluation.timer
 systemctl enable --now proxy-sentinel-control-plane.service
 systemctl restart proxy-sentinel-control-plane.service
 systemctl start proxy-sentinel-shadow.service
+systemctl start proxy-sentinel-shadow-evaluation.service
 systemctl --no-pager status proxy-sentinel-suricata.service | sed -n '1,80p'
 if [[ -n \"\$zeek_bin\" ]] && ip link show '$mirror_iface' >/dev/null 2>&1; then
   systemctl --no-pager status proxy-sentinel-zeek.service | sed -n '1,80p'
 fi
 systemctl --no-pager status proxy-sentinel-shadow.timer | sed -n '1,80p'
+systemctl --no-pager status proxy-sentinel-shadow-evaluation.timer | sed -n '1,80p'
 systemctl --no-pager status proxy-sentinel-control-plane.service | sed -n '1,80p'
 journalctl -u proxy-sentinel-shadow.service -n 80 --no-pager
 "

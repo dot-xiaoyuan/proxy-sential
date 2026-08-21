@@ -413,11 +413,54 @@ func TestActivityOverviewAggregatesObservedDomainAndRiskIPs(t *testing.T) {
 	}
 }
 
+func TestProxyReviewsExposeSevenDayAccountEndpointAggregation(t *testing.T) {
+	shadowDir := t.TempDir()
+	ip := "10.20.15.83"
+	identity := identityEvent("identity-proxy", "2026000123", ip, "aa:bb:cc:dd:ee:01", "Dorm-A-AP01", "sess-proxy", "2026-08-20T10:00:00Z")
+	tls := tlsEvent("tls-proxy", ip, "2026-08-20T10:05:00Z", "student-vpn.example.test", "vpn-ja3", "vpn-ja4")
+	tls.Flow["start"] = "2026-08-20T10:01:00Z"
+	tls.Flow["end"] = "2026-08-20T10:06:00Z"
+	alert := baseEvent("alert-proxy", ip, "2026-08-20T10:07:00Z", "alert")
+	alert.Flow["dst_port"] = 1194
+	alert.Flow["proto"] = "udp"
+	alert.Payload = map[string]any{
+		"signature": "ET POLICY OpenVPN Client Connection",
+		"category":  "Potential Corporate Privacy Violation",
+		"action":    "allowed",
+		"severity":  2,
+	}
+	writeRun(t, shadowDir, "20260820-101000", testRun{
+		startedAt: "2026-08-20T10:10:00Z",
+		events:    []normalized.Event{identity, tls, alert},
+		risks:     []risk.Snapshot{riskSnapshot(ip, "confirmed", 88, "2026-08-20T10:07:00Z")},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "test-sensor", ReadOnly: true})
+
+	var response store.ProxyReviewResponse
+	getJSON(t, server, "/api/v1/proxy-reviews?window=7d", http.StatusOK, &response)
+	if response.Window != "7d" || response.CaseCount != 1 || response.HighConfidenceCount != 1 {
+		t.Fatalf("unexpected proxy review overview: %#v", response)
+	}
+	item := response.Items[0]
+	if item.AccountID != "2026000123" || item.EndpointID != "mac:aa:bb:cc:dd:ee:01" || len(item.RuleMatches) != 1 || item.DurationSeconds != 360 {
+		t.Fatalf("unexpected proxy review item: %#v", item)
+	}
+
+	var errResponse ErrorResponse
+	getJSON(t, server, "/api/v1/proxy-reviews?window=30d", http.StatusBadRequest, &errResponse)
+	if errResponse.Code != "bad_proxy_review_window" {
+		t.Fatalf("unexpected bad window response: %#v", errResponse)
+	}
+}
+
 func TestReadOnlySessionLabelsAndRulesReload(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
 
 	var session Session
 	getJSON(t, server, "/api/v1/session", http.StatusOK, &session)
+	if session.User.ID != "shadow-viewer" || session.User.Name != "影子观测只读用户" {
+		t.Fatalf("unexpected read-only user: %#v", session.User)
+	}
 	for _, permission := range session.Permissions {
 		if permission == "labels:create" || permission == "rules:reload" {
 			t.Fatalf("read-only session leaked mutating permission: %#v", session.Permissions)
@@ -445,10 +488,21 @@ func TestReadOnlySessionLabelsAndRulesReload(t *testing.T) {
 }
 
 func TestCreateLabelWritesAuditInNonReadOnlyMode(t *testing.T) {
-	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: false})
+	shadowDir := t.TempDir()
+	writeRun(t, shadowDir, "20260727-101000", testRun{
+		startedAt: "2026-07-27T10:10:00+08:00",
+		risks: []risk.Snapshot{
+			riskSnapshot("10.0.0.8", "high", 72, "2026-07-27T10:10:00+08:00"),
+			riskSnapshot("10.0.0.9", "confirmed", 88, "2026-07-27T10:10:01+08:00"),
+		},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "office-30", ReadOnly: false})
 
 	var session Session
 	getJSON(t, server, "/api/v1/session", http.StatusOK, &session)
+	if session.User.ID != "shadow-operator" || session.User.Name != "影子运营复核员" {
+		t.Fatalf("unexpected review operator: %#v", session.User)
+	}
 	if !hasPermission(session.Permissions, "labels:create") {
 		t.Fatalf("expected labels:create permission, got %#v", session.Permissions)
 	}
@@ -471,6 +525,59 @@ func TestCreateLabelWritesAuditInNonReadOnlyMode(t *testing.T) {
 	getJSON(t, server, "/api/v1/audit-logs", http.StatusOK, &audit)
 	if len(audit.Logs) == 0 || audit.Logs[0].Action != "labels.create" {
 		t.Fatalf("expected labels.create audit log, got %#v", audit.Logs)
+	}
+
+	var snapshot risk.Snapshot
+	getJSON(t, server, "/api/v1/ips/10.0.0.8/risk", http.StatusOK, &snapshot)
+	if snapshot.ReviewStatus != "false_positive" || snapshot.ReviewReason != "人工复核确认是测试设备" || snapshot.ReviewedBy == "" || snapshot.ReviewedAt == "" {
+		t.Fatalf("expected risk detail to include latest review label, got %#v", snapshot)
+	}
+	if snapshot.Level != "normal" || snapshot.Score > 20 || snapshot.RawLevel != "high" || snapshot.RawScore != 72 || len(snapshot.NegativeEvidence) != 1 || snapshot.NegativeEvidence[0].Type != "test_device" {
+		t.Fatalf("expected false_positive review to apply negative evidence while preserving raw risk, got %#v", snapshot)
+	}
+
+	var page RiskListResponse
+	getJSON(t, server, "/api/v1/risks", http.StatusOK, &page)
+	if len(page.Items) < 2 || page.Items[0].ReviewStatus == "" {
+		t.Fatalf("expected risk list items to include review status, got %#v", page.Items)
+	}
+	getJSON(t, server, "/api/v1/risks?level=high", http.StatusOK, &page)
+	for _, item := range page.Items {
+		if item.IP == "10.0.0.8" {
+			t.Fatalf("expected downgraded false-positive risk to be excluded from high list, got %#v", page.Items)
+		}
+	}
+
+	var overview Overview
+	getJSON(t, server, "/api/v1/overview", http.StatusOK, &overview)
+	if overview.PendingReviews != 1 {
+		t.Fatalf("expected reviewed high risk to be excluded from pending reviews, got %d", overview.PendingReviews)
+	}
+}
+
+func TestCreateLabelRequiresEvidenceIDs(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: false})
+
+	var errResponse ErrorResponse
+	postJSONBody(t, server, "/api/v1/labels", http.StatusBadRequest, &errResponse, `{
+		"target_type":"ip",
+		"target_id":"10.0.0.8",
+		"label":"needs_more_data",
+		"reason":"缺少证据 ID",
+		"evidence_ids":[]
+	}`)
+	if errResponse.Code != "bad_label_request" || !strings.Contains(errResponse.Message, "evidence_ids") {
+		t.Fatalf("expected evidence_ids validation error, got %#v", errResponse)
+	}
+
+	var audit struct {
+		Logs []AuditLog `json:"logs"`
+	}
+	getJSON(t, server, "/api/v1/audit-logs", http.StatusOK, &audit)
+	for _, log := range audit.Logs {
+		if log.Action == "labels.create" {
+			t.Fatalf("invalid label should not create audit log, got %#v", audit.Logs)
+		}
 	}
 }
 

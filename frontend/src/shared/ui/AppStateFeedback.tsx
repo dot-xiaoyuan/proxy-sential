@@ -27,8 +27,8 @@ export function AppErrorAlert({
   return (
     <Alert
       description={message}
-      message={title}
       showIcon
+      title={title}
       type="error"
     />
   )

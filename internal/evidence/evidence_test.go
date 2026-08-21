@@ -144,6 +144,74 @@ func TestAnalyzeEmitsAuthObservedMACMismatchEvidence(t *testing.T) {
 	t.Fatalf("missing auth_observed_mac_mismatch evidence: %+v", result.Evidence)
 }
 
+func TestAnalyzeEmitsVPNProxyEvidenceConfidenceLevels(t *testing.T) {
+	input := bytes.NewBufferString(
+		normalizedLine("alert-vpn", "alert", map[string]any{
+			"signature_id": float64(2026001),
+			"signature":    "ET POLICY OpenVPN Client Connection",
+			"category":     "Potential Corporate Privacy Violation",
+			"severity":     float64(2),
+			"action":       "allowed",
+		}, map[string]any{"dst_port": 1194}) + "\n" +
+			normalizedLine("quic-vpn", "quic", map[string]any{
+				"sni":     "student-vpn.example.test",
+				"version": "1",
+				"alpn":    "h3",
+			}, map[string]any{"proto": "udp", "dst_port": 443}) + "\n")
+
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byType := map[string]Evidence{}
+	for _, ev := range result.Evidence {
+		byType[ev.Type] = ev
+	}
+	ruleMatch, ok := byType["vpn_proxy_rule_match"]
+	if !ok {
+		t.Fatalf("missing vpn_proxy_rule_match in %+v", byType)
+	}
+	if ruleMatch.Score < 70 || ruleMatch.Confidence < 0.9 || ruleMatch.Severity != "high" || len(ruleMatch.Samples) == 0 {
+		t.Fatalf("unexpected high confidence rule match evidence: %+v", ruleMatch)
+	}
+	domainHint, ok := byType["vpn_proxy_domain_hint"]
+	if !ok {
+		t.Fatalf("missing vpn_proxy_domain_hint in %+v", byType)
+	}
+	if domainHint.Confidence >= ruleMatch.Confidence || domainHint.Severity != "medium" || len(domainHint.Samples) == 0 {
+		t.Fatalf("unexpected medium confidence domain hint evidence: %+v", domainHint)
+	}
+	encryptedBehavior, ok := byType["encrypted_tunnel_behavior"]
+	if !ok {
+		t.Fatalf("missing encrypted_tunnel_behavior in %+v", byType)
+	}
+	if encryptedBehavior.Score >= 30 || encryptedBehavior.Confidence >= 0.5 || encryptedBehavior.Severity != "low" {
+		t.Fatalf("ordinary encrypted transport should stay low confidence: %+v", encryptedBehavior)
+	}
+}
+
+func TestAnalyzeOrdinaryQUICOnlyEmitsLowConfidenceEvidence(t *testing.T) {
+	input := bytes.NewBufferString(
+		normalizedLine("quic-normal", "quic", map[string]any{
+			"sni":     "video.example.test",
+			"version": "1",
+			"alpn":    "h3",
+		}, map[string]any{"proto": "udp", "dst_port": 443}) + "\n")
+
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Evidence) != 1 {
+		t.Fatalf("expected only low confidence encrypted behavior evidence, got %+v", result.Evidence)
+	}
+	ev := result.Evidence[0]
+	if ev.Type != "encrypted_tunnel_behavior" || ev.Score >= 30 || ev.Severity != "low" {
+		t.Fatalf("ordinary QUIC should not produce stronger evidence: %+v", ev)
+	}
+}
+
 func TestAnalyzeConvertedFixtureIsDeterministic(t *testing.T) {
 	inputPath := filepath.Join("..", "..", "examples", "suricata", "eve-mirror-20260724-131645-redacted.jsonl")
 	input, err := os.Open(inputPath)

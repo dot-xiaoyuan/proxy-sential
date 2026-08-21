@@ -122,6 +122,27 @@ func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) 
 	return s.ch.GetActivityOverviewWithRisks(ctx, ActivityQuery{SensorID: query.SensorID, Window: window, Limit: query.Limit}, duration, risks)
 }
 
+func (s *DBStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (ProxyReviewResponse, error) {
+	window, duration, err := NormalizeActivityWindow(firstNonEmpty(query.Window, defaultProxyReviewWindow))
+	if err != nil {
+		return ProxyReviewResponse{}, err
+	}
+	sensorID := firstNonEmpty(query.SensorID, s.pg.sensorID)
+	limit := query.Limit
+	if limit <= 0 {
+		limit = defaultProxyReviewLimit
+	}
+	events, err := s.ch.ListProxyReviewEvents(ctx, sensorID, duration, limit)
+	if err != nil {
+		return ProxyReviewResponse{}, err
+	}
+	riskPage, err := s.pg.ListRisks(ctx, Query{SensorID: sensorID, Limit: defaultProxyReviewLimit})
+	if err != nil {
+		return ProxyReviewResponse{}, err
+	}
+	return BuildProxyReviewResponse(sensorID, window, events, ProxyReviewRiskMap(riskPage.Items)), nil
+}
+
 func (s *DBStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {
 	window, events, risks, sensorID, err := s.dpiEventSet(ctx, query)
 	if err != nil {

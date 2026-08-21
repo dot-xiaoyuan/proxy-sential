@@ -1,6 +1,6 @@
 # 近期任务计划与每日进度
 
-更新时间：2026-07-30
+更新时间：2026-08-21
 
 ## 状态说明
 
@@ -17,10 +17,10 @@
 | 阶段 | 时间 | 目标 | 当前状态 | 验收标准 |
 | --- | --- | --- | --- | --- |
 | P0 身份关联底座 | 2026-07-29 至 2026-07-31 | 打通账号、终端、IP、接入位置标准事件与账号级证据 | 已完成 | identity 事件可回放；账号级风险可生成；基础设施不计入终端并发；控制面可查账号/终端身份 profile |
-| P1 设备发现闭环 | 2026-08-01 至 2026-08-05 | 从 IP 设备画像推进到 endpoint 设备登记视图 | 进行中 | 管理员能按 endpoint 查看 MAC、账号、IP、接入位置、信号和登记状态 |
-| P2 人工复核闭环 | 2026-08-06 至 2026-08-08 | labels 落库、审计、风险展示回流 | 进行中 | 非只读模式可写标注；审计可查；后续风险展示可读取复核状态 |
-| P3 翻墙监测 MVP | 2026-08-09 至 2026-08-13 | 接入 Suricata alert/quic 与账号/设备关联 | 待开始 | 账号、设备、目的 IP/域名、规则命中、近 7 天统计可形成复核视图 |
-| P4 影子评估 | 2026-08-14 至 2026-08-20 | 连续影子运行并人工抽样复核 | 阻塞 | 需要真实流量、人工已知设备集和每日复核记录 |
+| P1 设备发现闭环 | 2026-08-01 至 2026-08-05 | 从 IP 设备画像推进到 endpoint 设备登记视图 | 部分完成 | 代码、严格验收报告和现场候选集已具备；仍需人工确认 30-50 台真实设备标准答案 |
+| P2 人工复核闭环 | 2026-08-06 至 2026-08-08 | labels 落库、审计、风险展示回流 | 已完成 | 非只读模式可写标注；审计可查；后续风险展示可读取复核状态 |
+| P3 翻墙监测 MVP | 2026-08-09 至 2026-08-13 | 接入 Suricata alert/quic 与账号/设备关联 | 已完成 | 账号、设备、目的 IP/域名、规则命中、近 7 天统计可形成复核视图 |
+| P4 影子评估 | 2026-08-14 至 2026-08-20 | 连续影子运行并人工抽样复核 | 部分完成 | 现场已连续运行 8 天且采集质量通过；评估/抽样工具已完成，尚缺每日人工复核标签 |
 
 ## 每日任务表
 
@@ -37,17 +37,17 @@
 | 2026-08-01 | 设备登记模型设计落地 | 定义 endpoint 主表、登记状态、责任人、合并/拆分字段 | 已完成 | `endpoint_entities` 增加登记/责任人/合并拆分字段，新增 `POST /endpoints/{endpoint_id}/registration` 并写审计 |
 | 2026-08-02 | 设备列表改造 | `/devices` 从 IP inventory 逐步迁移到 endpoint inventory | 已完成 | `/devices` 返回 endpoint 登记视图，保留 `/ips/{ip}/devices` 兼容 IP inventory |
 | 2026-08-03 | 设备详情页改造 | 展示 endpoint 的 IP 历史、账号历史、接入历史、设备信号 | 已完成 | 新增 `/devices/{endpoint_id}` 详情页，页面围绕 endpoint 展示登记、账号会话、IP 历史、接入历史和设备信号 |
-| 2026-08-04 | 人工已知设备样本 | 建立 30-50 台人工验证清单模板 | 部分完成 | 已新增样本模板、字段说明和 `validate known-devices` 结构校验；真实 30-50 台现场标准答案仍阻塞 |
-| 2026-08-05 | 设备发现验收 | 用人工样本验证漏发现、误合并、重复创建、基础设施排除 | 阻塞 | 已提供 `--events` 身份回放比对入口；正式验收依赖真实 30-50 台人工样本 |
-| 2026-08-06 | 复核状态回流 | 风险列表/IP/账号详情展示 confirmed/false_positive/benign/needs_more_data | 待开始 | labels 可影响展示，不触发处罚 |
-| 2026-08-07 | 负证据第一版 | 白名单、测试设备、基础设施、下载器/系统服务降权 | 待开始 | 弱证据不能进入 confirmed |
-| 2026-08-08 | 复核审计验收 | 标注必须包含操作者、时间、原因、目标、证据 ID | 待开始 | 审计日志可查询 |
-| 2026-08-09 | 翻墙证据模型 | 定义高/中/低置信翻墙证据类型和输出字段 | 待开始 | Suricata alert 为高置信，普通长连接只作低置信 |
-| 2026-08-10 | Suricata alert 规则接入 | 解析 signature、category、severity、action、metadata | 部分完成 | adapter 已支持，证据规则待实现 |
-| 2026-08-11 | QUIC/TLS 行为聚合 | 账号/设备维度聚合 SNI、JA3/JA4、QUIC、目的 IP | 待开始 | 支持近 7 天统计 |
-| 2026-08-12 | 翻墙复核视图 | 展示账号、设备、接入位置、目的对象、规则命中、持续时间 | 待开始 | 只做影子复核 |
-| 2026-08-13 | 翻墙 MVP 回放测试 | 构造明确代理命中、普通视频会议、低置信长连接 fixture | 待开始 | 低置信不能单独定性 |
-| 2026-08-14 至 2026-08-20 | 影子评估 | 每天抽样复核 high/confirmed/suspicious/normal | 阻塞 | 需要真实流量与人工运营记录 |
+| 2026-08-04 | 人工已知设备样本 | 建立 30-50 台人工验证清单模板 | 部分完成 | 已新增模板、字段说明、严格覆盖校验；现场当前有 45 个设备候选，责任人和真实类型仍需人工确认 |
+| 2026-08-05 | 设备发现验收 | 用人工样本验证漏发现、误合并、重复创建、基础设施排除 | 部分完成 | `--strict` 报告已覆盖发现率、误合并、重复创建和基础设施污染；正式结论依赖人工标准答案 |
+| 2026-08-06 | 复核状态回流 | 风险列表/IP/账号详情展示 confirmed/false_positive/benign/needs_more_data | 已完成 | risk snapshot 已附加 `review_status`、复核原因、人员和时间；风险列表、复核队列、IP 详情已展示；后端支持 subject/account/endpoint label 合并；不改变评分和处罚 |
+| 2026-08-07 | 负证据第一版 | 白名单、测试设备、基础设施、下载器/系统服务降权 | 已完成 | labels 可转为 `negative_evidence`，保留 raw score/level；误报、良性、样本不足会降权或封顶；低置信加密行为不能进入 confirmed |
+| 2026-08-08 | 复核审计验收 | 标注必须包含操作者、时间、原因、目标、证据 ID | 已完成 | `POST /labels` 强制携带 `evidence_ids`，空证据标注返回 400 且不写审计；前端无证据时禁用复核表单 |
+| 2026-08-09 | 翻墙证据模型 | 定义高/中/低置信翻墙证据类型和输出字段 | 已完成 | 新增 `vpn_proxy_rule_match`、`vpn_proxy_domain_hint`、`encrypted_tunnel_behavior`；Suricata alert 为高置信，QUIC/UDP 443 只作低置信弱证据 |
+| 2026-08-10 | Suricata alert 规则接入 | 解析 signature、category、severity、action、metadata | 已完成 | adapter 已支持 `alert/quic`；证据层已从 `signature/category/metadata` 生成翻墙规则命中证据 |
+| 2026-08-11 | QUIC/TLS 行为聚合 | 账号/设备维度聚合 SNI、JA3/JA4、QUIC、目的 IP | 已完成 | 新增 `GET /proxy-reviews`，文件模式跨 7 天 run 去重聚合，数据库模式按标准事件 7 天窗口查询；输出账号、endpoint、接入位置、目的对象、协议、持续时间和风险复核状态 |
+| 2026-08-12 | 翻墙复核视图 | 展示账号、设备、接入位置、目的对象、规则命中、持续时间 | 已完成 | 人工复核页已接入 `/proxy-reviews`；高/中/低置信分层展示，无标准证据时禁用复核；仍只写 labels 和审计，不触发处罚 |
+| 2026-08-13 | 翻墙 MVP 回放测试 | 构造明确代理命中、普通视频会议、低置信长连接 fixture | 已完成 | `examples/replay/` 已覆盖明确 OpenVPN 命中、视频会议 QUIC、6 小时 UDP/443 长连接；后两类保持 normal/record |
+| 2026-08-14 至 2026-08-20 | 影子评估 | 每天抽样复核 high/confirmed/suspicious/normal | 部分完成 | 现场已连续运行 8 天；自动评估和每日分级抽样已落地，当前 0 条人工标签，需运营复核后形成准确率与误报 Top 10 |
 
 ## 当前已完成验证
 
@@ -66,13 +66,24 @@
 | endpoint 详情页 UI 审查 | 390x844、1280x800、1440x900 Playwright 探针 | 已通过 |
 | 人工已知设备模板校验 | `go run ./cmd/proxy-sentinel validate known-devices --input examples/known-devices-template.csv --output /tmp/proxy-sentinel-known-devices-report.json` | 已通过，示例模板提示需扩展到 30-50 台 |
 | 人工样本与身份回放比对 | `go run ./cmd/proxy-sentinel validate known-devices --input examples/known-devices-template.csv --events examples/identity-account-sharing.jsonl --output /tmp/proxy-sentinel-known-devices-compare.json` | 已验证失败路径，不匹配样本返回 comparison failure |
+| 复核状态回流 | `POST /labels` -> `GET /ips/{ip}/risk` / `GET /risks` / `GET /overview` | 已通过，已复核 high/confirmed 不再计入 pending reviews |
+| 负证据降权 | `go test ./internal/risk` | 已通过，false_positive/benign/needs_more_data 可保留 raw risk 并调整最终等级 |
+| 复核证据 ID 校验 | `go test ./internal/controlplane` | 已通过，空 `evidence_ids` 标注返回 400 且不写审计 |
+| 翻墙证据模型 | `go test ./internal/evidence ./internal/risk` | 已通过，Suricata alert 生成高置信证据，普通 QUIC 仅生成低置信弱证据 |
+| 前端静态类型检查 | `npx tsc --noEmit` | 已通过 |
+| 前端生产构建 | `pnpm build` | 已通过 |
+| 翻墙聚合接口 | `go test ./internal/store ./internal/controlplane` | 已通过，覆盖账号/终端关联、目的对象、规则命中、持续时间、风险与复核状态回流 |
+| 翻墙 MVP 三类回放 | `go test ./internal/replay -run TestProxyMVPReplayFixtures -v` | 已通过，明确规则命中进入 confirmed，视频会议与低置信长连接保持 normal/record |
+| 翻墙复核页 UI 审查 | 390x844、1280x800、1440x900 浏览器截图 + DOM 样式探针 | 已通过；无横向溢出，按钮/标签不折行，移动端卡片单列，菜单选中态对比度 6.95:1 |
+| 前端静态 UI 规范探针 | `rg 'style=\\{' frontend/src` + 菜单选中态对比度计算 | 已通过 |
+| 设备发现正式验收报告 | `validate known-devices --strict` | 已通过单元测试；报告覆盖发现率、误合并、重复创建和基础设施污染，真实结论等待人工真值 |
+| 现场 8 天影子运行审计 | `evaluate shadow` 只读分析 192.168.0.30 的 1007 次运行 | 采集通过：41,728,439 条标准事件、0 截断、0 畸形；715 个去重评估样本尚未人工复核 |
+| 每日分级抽样与误报汇总 | `evaluate shadow --daily-export-dir ...` | 已通过单元测试并对现场 8 天数据生成 8 份抽样文件；待人工提交 labels 后自动计算确认率、Top 10 误报和调整建议 |
 
 ## 本周优先级
 
 | 优先级 | 任务 | 原因 |
 | --- | --- | --- |
-| P0 | endpoint 维度设备登记 API | 当前 `/devices` 仍偏 IP inventory，不足以支撑资产管理 |
-| P0 | 账号/终端维度查询接口 | 0730 已完成落库，下一步需要让控制面能查身份历史 |
-| P1 | labels 回流风险展示 | 没有复核回流，就无法知道误报是否被持续修正 |
-| P1 | Suricata alert 证据规则 | 翻墙监测需要明确规则命中作为高置信证据 |
-| P2 | 30-50 台人工验证集 | 这是设备发现和防共享准确率验收的标准答案 |
+| P0 | P4 每日人工复核 | 真实流量和 8 天连续运行已满足，当前唯一验收缺口是运营人员提交复核标签 |
+| P1 | 30-50 台人工验证集 | 这是设备发现和防共享准确率验收的标准答案 |
+| P1 | 代理规则与已知应用负证据维护 | 需要用真实误报样本持续完善白名单、企业 VPN、视频会议和系统服务分类 |

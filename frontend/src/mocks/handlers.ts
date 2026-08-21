@@ -17,6 +17,7 @@ import {
   mockFlowSamples,
   mockSession,
   overview,
+  proxyReviewResponse,
   riskSnapshots,
   shadowRuns,
 } from './fixtures'
@@ -38,6 +39,11 @@ export const handlers = [
     const url = new URL(request.url)
     const windowValue = url.searchParams.get('window') ?? '1h'
     return HttpResponse.json(getActivityOverviewByWindow(windowValue))
+  }),
+  http.get('/api/v1/proxy-reviews', ({ request }) => {
+    const url = new URL(request.url)
+    const window = url.searchParams.get('window') === '24h' ? '24h' : '7d'
+    return HttpResponse.json({ ...proxyReviewResponse, window })
   }),
   http.get('/api/v1/dpi/overview', ({ request }) => {
     const url = new URL(request.url)

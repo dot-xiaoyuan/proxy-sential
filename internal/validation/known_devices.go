@@ -107,21 +107,28 @@ type KnownDeviceCoverage struct {
 }
 
 type KnownDeviceValidationReport struct {
-	Valid      bool                         `json:"valid"`
-	Errors     []string                     `json:"errors"`
-	Warnings   []string                     `json:"warnings"`
-	Coverage   KnownDeviceCoverage          `json:"coverage"`
-	Comparison *KnownDeviceComparisonReport `json:"comparison,omitempty"`
-	Samples    []KnownDeviceSample          `json:"samples,omitempty"`
+	Valid           bool                         `json:"valid"`
+	AcceptanceReady bool                         `json:"acceptance_ready"`
+	Errors          []string                     `json:"errors"`
+	Warnings        []string                     `json:"warnings"`
+	Coverage        KnownDeviceCoverage          `json:"coverage"`
+	Comparison      *KnownDeviceComparisonReport `json:"comparison,omitempty"`
+	Samples         []KnownDeviceSample          `json:"samples,omitempty"`
 }
 
 type KnownDeviceComparisonReport struct {
-	Valid         bool                     `json:"valid"`
-	Passed        int                      `json:"passed"`
-	Failed        int                      `json:"failed"`
-	EndpointTotal int                      `json:"endpoint_total"`
-	InfraTotal    int                      `json:"infrastructure_total"`
-	Results       []KnownDeviceMatchResult `json:"results"`
+	Valid                         bool                     `json:"valid"`
+	Passed                        int                      `json:"passed"`
+	Failed                        int                      `json:"failed"`
+	EndpointTotal                 int                      `json:"endpoint_total"`
+	InfraTotal                    int                      `json:"infrastructure_total"`
+	DiscoveredEndpointCount       int                      `json:"discovered_endpoint_count"`
+	DiscoveredInfrastructureCount int                      `json:"discovered_infrastructure_count"`
+	FalseMergeCount               int                      `json:"false_merge_count"`
+	DuplicateCreationCount        int                      `json:"duplicate_creation_count"`
+	InfrastructurePollutionCount  int                      `json:"infrastructure_pollution_count"`
+	DiscoveryRate                 float64                  `json:"discovery_rate"`
+	Results                       []KnownDeviceMatchResult `json:"results"`
 }
 
 type KnownDeviceMatchResult struct {
@@ -149,6 +156,9 @@ func AnalyzeKnownDeviceCSV(input io.Reader) (KnownDeviceValidationReport, error)
 		Samples:  samples,
 	}
 	report.Warnings = KnownDeviceCoverageWarnings(report.Coverage)
+	// Structural coverage alone cannot prove discovery quality. A formal
+	// acceptance report also requires comparison with normalized identity events.
+	report.AcceptanceReady = false
 	return report, nil
 }
 
@@ -160,22 +170,54 @@ func AnalyzeKnownDeviceCSVWithIdentityState(input io.Reader, state store.Identit
 	comparison := CompareKnownDevicesToIdentityState(report.Samples, state)
 	report.Comparison = &comparison
 	report.Valid = report.Valid && comparison.Valid
+	report.AcceptanceReady = report.Valid && len(report.Warnings) == 0
 	return report, nil
 }
 
 func CompareKnownDevicesToIdentityState(samples []KnownDeviceSample, state store.IdentityState) KnownDeviceComparisonReport {
 	report := KnownDeviceComparisonReport{
-		Valid:   true,
-		Results: []KnownDeviceMatchResult{},
+		Valid:                         true,
+		DiscoveredEndpointCount:       len(state.Endpoints),
+		DiscoveredInfrastructureCount: len(state.Infrastructure),
+		Results:                       []KnownDeviceMatchResult{},
 	}
+	matchedEndpointSamples := map[string][]int{}
 	for _, sample := range samples {
 		var result KnownDeviceMatchResult
 		if sample.IsInfrastructure {
 			report.InfraTotal++
 			result = compareInfrastructureSample(sample, state)
+			if containsIssue(result.Issues, "also appears as endpoint") {
+				report.InfrastructurePollutionCount++
+			}
 		} else {
 			report.EndpointTotal++
 			result = compareEndpointSample(sample, state)
+			matches := matchingEndpointsForSample(sample, state)
+			if len(matches) > 1 {
+				report.DuplicateCreationCount += len(matches) - 1
+				result.Issues = append(result.Issues, fmt.Sprintf("sample matched %d endpoints, indicating duplicate creation", len(matches)))
+			}
+		}
+		report.Results = append(report.Results, result)
+		if result.MatchedEndpoint != "" {
+			matchedEndpointSamples[result.MatchedEndpoint] = append(matchedEndpointSamples[result.MatchedEndpoint], len(report.Results)-1)
+		}
+	}
+	for endpointID, indexes := range matchedEndpointSamples {
+		if len(indexes) < 2 {
+			continue
+		}
+		report.FalseMergeCount += len(indexes) - 1
+		for _, index := range indexes {
+			report.Results[index].Issues = append(report.Results[index].Issues, fmt.Sprintf("endpoint %q matched multiple known-device samples, indicating a false merge", endpointID))
+		}
+	}
+	matchedEndpoints := 0
+	for index := range report.Results {
+		result := &report.Results[index]
+		if result.MatchedEndpoint != "" {
+			matchedEndpoints++
 		}
 		if len(result.Issues) > 0 {
 			result.Status = "failed"
@@ -185,9 +227,37 @@ func CompareKnownDevicesToIdentityState(samples []KnownDeviceSample, state store
 			result.Status = "passed"
 			report.Passed++
 		}
-		report.Results = append(report.Results, result)
+	}
+	if report.EndpointTotal > 0 {
+		report.DiscoveryRate = float64(matchedEndpoints) / float64(report.EndpointTotal)
 	}
 	return report
+}
+
+func matchingEndpointsForSample(sample KnownDeviceSample, state store.IdentityState) []store.EndpointEntity {
+	matched := []store.EndpointEntity{}
+	seen := map[string]bool{}
+	for _, endpoint := range state.Endpoints {
+		matchesID := sample.ExpectedEndpointID != "" && endpoint.EndpointID == sample.ExpectedEndpointID
+		matchesMAC := sample.PrimaryMAC != "" && normalizeMAC(endpoint.PrimaryMAC) == sample.PrimaryMAC
+		if !matchesID && !matchesMAC {
+			continue
+		}
+		if !seen[endpoint.EndpointID] {
+			seen[endpoint.EndpointID] = true
+			matched = append(matched, endpoint)
+		}
+	}
+	return matched
+}
+
+func containsIssue(issues []string, needle string) bool {
+	for _, issue := range issues {
+		if strings.Contains(issue, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func ParseKnownDeviceCSV(input io.Reader) ([]KnownDeviceSample, []string, error) {

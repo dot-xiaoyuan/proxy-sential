@@ -43,7 +43,7 @@ proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state data/shadow/s
 proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only
 ```
 
-当前已实现前两条命令：
+当前已实现上述适配、回放、证据、风险、影子运行和控制面链路：
 
 ```bash
 go run ./cmd/proxy-sentinel adapter suricata \
@@ -78,7 +78,7 @@ go run ./cmd/proxy-sentinel shadow run \
   --window 10m
 ```
 
-`adapter suricata` 支持 `flow`、`dns`、`tls`、`http`，会跳过无法解析的 JSONL
+`adapter suricata` 支持 `flow`、`dns`、`tls`、`http`、`quic`、`alert`，会跳过无法解析的 JSONL
 行和暂不支持的 Suricata 事件类型，并在 stderr 输出转换统计。
 
 `adapter zeek` 第一阶段只支持 Zeek `dhcp.log`，兼容默认 TSV 日志和 JSON 行
@@ -91,8 +91,9 @@ Suricata 的流量主链路。
 保证固定 fixture 多次回放结果一致。
 
 `evidence` 在标准事件上生成可解释证据。当前支持 `multi_user_agent`、
-`multi_ja3_ja4`、`domain_diversity` 和 `port_distribution`。`ttl_clusters`
-需要标准事件先提供 TTL 信号，暂不在证据层伪造。
+`multi_ja3_ja4`、`domain_diversity`、`port_distribution`、
+`vpn_proxy_rule_match`、`vpn_proxy_domain_hint` 和 `encrypted_tunnel_behavior`。
+`ttl_clusters` 需要标准事件先提供 TTL 信号，暂不在证据层伪造。
 
 `risk inspect` 只读取证据输出，生成单个 IP 的风险快照。当前推荐动作全部为
 影子动作，不触发降速、踢线或封禁。
@@ -102,9 +103,12 @@ Suricata 的流量主链路。
 `run-summary.json`，并用 state 文件记录上次 byte offset。默认保留最近 7 天
 run 目录。
 
-`control-plane serve` 读取 shadow run 产物，提供只读 `/api/v1` 接口和可选
-前端静态文件服务。第一版不保存标注，不执行规则热加载，只返回 shadow/read-only
-状态。
+`control-plane serve` 读取 shadow run 产物，提供 `/api/v1` 接口和可选前端静态
+文件服务。只读模式禁止标注；非只读模式可写人工 labels 与审计。`/proxy-reviews`
+按账号、endpoint、接入位置聚合最近 7 天 TLS/QUIC/规则命中，只用于影子复核。
+
+翻墙 MVP 回放样本位于 `examples/replay/`：明确 OpenVPN 规则命中应进入
+confirmed；普通视频会议 QUIC 和低置信 UDP/443 长连接必须保持 normal/record。
 
 ## 最小事件覆盖
 

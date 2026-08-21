@@ -231,8 +231,10 @@ func NormalizeActivityWindow(raw string) (string, time.Duration, error) {
 		return "10m", 10 * time.Minute, nil
 	case "24h":
 		return "24h", 24 * time.Hour, nil
+	case "7d":
+		return "7d", 7 * 24 * time.Hour, nil
 	default:
-		return "", 0, fmt.Errorf("window must be one of 10m, 1h, 24h")
+		return "", 0, fmt.Errorf("window must be one of 10m, 1h, 24h, 7d")
 	}
 }
 
@@ -261,12 +263,19 @@ func trackOverviewBounds(overview *ActivityOverview, timestamp string) {
 }
 
 func increment(buckets map[string]activityBucket, value string, timestamp string) {
+	incrementBy(buckets, value, timestamp, 1)
+}
+
+func incrementBy(buckets map[string]activityBucket, value string, timestamp string, count int) {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.HasSuffix(value, ":") {
 		return
 	}
+	if count <= 0 {
+		count = 1
+	}
 	bucket := buckets[value]
-	bucket.count++
+	bucket.count += count
 	if timestamp > bucket.lastSeen {
 		bucket.lastSeen = timestamp
 	}

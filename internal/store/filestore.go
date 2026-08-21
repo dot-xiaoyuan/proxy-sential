@@ -125,9 +125,10 @@ func (s *FileStore) Overview(ctx context.Context) (Overview, error) {
 		return Overview{}, err
 	}
 	counts := levelCounts(batch.Snapshots)
+	reviewed := applyLatestReviewLabels(batch.Snapshots, latestLabelMap(s.fileLabels(0)))
 	return Overview{
 		LevelCounts:    counts,
-		PendingReviews: counts["high"] + counts["confirmed"],
+		PendingReviews: pendingReviewCount(reviewed),
 		LatestRun:      latest.Run,
 		Throughput: map[string]int{
 			"events":   latest.Normalized.Emitted,
@@ -154,7 +155,8 @@ func (s *FileStore) ListRisks(ctx context.Context, query Query) (RiskPage, error
 	if err != nil {
 		return RiskPage{}, err
 	}
-	items, err := filterRisks(batch.Snapshots, query)
+	reviewed := applyLatestReviewLabels(batch.Snapshots, latestLabelMap(s.fileLabels(0)))
+	items, err := filterRisks(reviewed, query)
 	if err != nil {
 		return RiskPage{}, err
 	}
@@ -189,10 +191,10 @@ func (s *FileStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, er
 	}
 	for _, snapshot := range batch.Snapshots {
 		if snapshot.IP == ip {
-			return snapshot, nil
+			return applyLatestReviewLabel(snapshot, latestLabelMap(s.fileLabels(0))), nil
 		}
 	}
-	return normalRisk(ip), nil
+	return applyLatestReviewLabel(normalRisk(ip), latestLabelMap(s.fileLabels(0))), nil
 }
 
 func (s *FileStore) GetIPEvidence(ctx context.Context, ip string, limit int) ([]evidence.Evidence, error) {
@@ -584,6 +586,66 @@ func (s *FileStore) GetActivityOverview(ctx context.Context, query ActivityQuery
 	return BuildActivityOverview(sensorID, window, events, riskSnapshotMap(batch.Snapshots)), nil
 }
 
+func (s *FileStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (ProxyReviewResponse, error) {
+	window, duration, err := NormalizeActivityWindow(firstNonEmpty(query.Window, defaultProxyReviewWindow))
+	if err != nil {
+		return ProxyReviewResponse{}, err
+	}
+	sensorID := firstNonEmpty(query.SensorID, s.sensorID)
+	if sensorID != s.sensorID {
+		return BuildProxyReviewResponse(sensorID, window, []normalized.Event{}, map[string]risk.Snapshot{}), nil
+	}
+	runs, err := s.runs(ctx)
+	if err != nil {
+		return ProxyReviewResponse{}, err
+	}
+	if len(runs) == 0 {
+		return BuildProxyReviewResponse(sensorID, window, []normalized.Event{}, map[string]risk.Snapshot{}), nil
+	}
+	anchor, err := time.Parse(time.RFC3339Nano, runs[0].FinishedAt)
+	if err != nil {
+		anchor = runs[0].Started
+	}
+	from := anchor.Add(-duration).Format(time.RFC3339Nano)
+	seen := map[string]struct{}{}
+	events := make([]normalized.Event, 0)
+	limit := query.Limit
+	if limit <= 0 {
+		limit = defaultProxyReviewLimit
+	}
+	for _, run := range runs {
+		if err := ctx.Err(); err != nil {
+			return ProxyReviewResponse{}, err
+		}
+		if !run.Started.IsZero() && run.Started.Before(anchor.Add(-duration)) {
+			continue
+		}
+		items, err := readNormalizedEvents(ctx, filepath.Join(run.Dir, "normalized.jsonl"), Query{SensorID: sensorID, From: from, Limit: -1})
+		if err != nil {
+			return ProxyReviewResponse{}, err
+		}
+		for _, event := range items {
+			if _, ok := seen[event.EventID]; ok {
+				continue
+			}
+			seen[event.EventID] = struct{}{}
+			events = append(events, event)
+			if len(events) >= limit {
+				break
+			}
+		}
+		if len(events) >= limit {
+			break
+		}
+	}
+	batch, err := readRiskBatch(filepath.Join(runs[0].Dir, "risk-snapshots.json"))
+	if err != nil {
+		return ProxyReviewResponse{}, err
+	}
+	reviewed := applyLatestReviewLabels(batch.Snapshots, latestLabelMap(s.fileLabels(0)))
+	return BuildProxyReviewResponse(sensorID, window, events, ProxyReviewRiskMap(reviewed)), nil
+}
+
 func (s *FileStore) latestRiskMap(ctx context.Context) (map[string]risk.Snapshot, error) {
 	latest, ok, err := s.latestRun(ctx)
 	if err != nil || !ok {
@@ -831,6 +893,27 @@ func (s *FileStore) fileAuditLogs(limit int) []AuditLog {
 		logs = logs[len(logs)-limit:]
 	}
 	return logs
+}
+
+func (s *FileStore) fileLabels(limit int) []Label {
+	path := filepath.Join(s.shadowDir, "labels.jsonl")
+	file, err := os.Open(path)
+	if err != nil {
+		return []Label{}
+	}
+	defer file.Close()
+	labels := []Label{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var label Label
+		if err := json.Unmarshal(scanner.Bytes(), &label); err == nil && label.LabelID != "" {
+			labels = append(labels, label)
+		}
+	}
+	if limit > 0 && len(labels) > limit {
+		labels = labels[len(labels)-limit:]
+	}
+	return labels
 }
 
 func (s *FileStore) CreateLabel(ctx context.Context, label Label) (Label, error) {

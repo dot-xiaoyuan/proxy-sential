@@ -142,6 +142,34 @@ DNS/SNI/HTTP Host 多样性异常。
 
 注意：下载器、游戏、加速器可能误报，需要负证据修正。
 
+### vpn_proxy_rule_match
+
+Suricata `alert` 标准事件命中代理、VPN、隧道或翻墙规避相关规则。
+
+基础分：68-78。
+
+这是翻墙监测高置信证据，样本必须保留 `signature_id`、`signature`、
+`category`、`severity` 等可复核字段。单条命中只进入 high 影子复核；
+需要多个非弱证据互相印证才进入 confirmed。
+
+### vpn_proxy_domain_hint
+
+DNS、TLS、HTTP 或 QUIC 的可见域名/SNI/Host 中出现代理、VPN 或隧道关键词。
+
+基础分：30-48。
+
+这是中置信线索，不能替代规则命中。常见远程办公、企业 VPN、测试域名和
+安全服务需要通过 labels 与负证据降权。
+
+### encrypted_tunnel_behavior
+
+窗口内出现 QUIC 或 UDP/443 加密传输行为。
+
+基础分：14-25。
+
+这是低置信评分特征，不能单独定性为翻墙、代理或共享上网。视频会议、网盘、
+游戏、浏览器 QUIC 和 CDN 流量都可能产生该信号。
+
 ### multi_device_fingerprint
 
 DHCP、mDNS、NBNS、LLMNR、UA parser、MAC OUI 等来源指向多个设备。
@@ -220,6 +248,16 @@ Apple/iOS、Windows、Android、ChromeOS、Linux 等设备族混杂时，疑似�
 
 当前实现约束：
 
-- `domain_diversity` 和 `port_distribution` 被视为弱证据。
+- `domain_diversity`、`port_distribution` 和 `encrypted_tunnel_behavior` 被视为弱证据。
 - 只有弱证据时，风险最多进入 `suspicious`。
 - `confirmed` 需要总分达到阈值，并且至少包含两类非弱证据。
+
+## 翻墙复核聚合
+
+`GET /api/v1/proxy-reviews?window=7d` 在标准事件层之上聚合 TLS、QUIC 和明确
+代理规则 alert。聚合维度为账号、endpoint 与 IP，输出接入位置、目的 IP/SNI、
+协议分布、规则命中、首次/末次时间、持续时长以及关联风险与人工复核状态。
+
+该聚合只服务于影子复核展示：高置信来自明确规则命中，中置信来自代理/VPN
+域名线索，普通 QUIC、视频会议和 UDP/443 长连接保持低置信。页面复核动作仍须
+携带标准 `evidence_ids`，没有证据时禁止写 label，聚合结果本身不直接触发处罚。

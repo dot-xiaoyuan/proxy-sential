@@ -52,6 +52,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proxy-reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listProxyReviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dpi/overview": {
         parameters: {
             query?: never;
@@ -578,7 +594,9 @@ export interface components {
             account_id?: string;
             endpoint_id?: string;
             score: number;
+            raw_score?: number;
             level: components["schemas"]["RiskLevel"];
+            raw_level?: components["schemas"]["RiskLevel"];
             confidence: number;
             window: string;
             evidence_ids: string[];
@@ -589,6 +607,23 @@ export interface components {
             suspected_device_count: number;
             device_summary?: string;
             device_confidence: number;
+            /** @enum {string} */
+            review_status?: "unreviewed" | "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
+            review_label_id?: string;
+            review_reason?: string;
+            reviewed_by?: string;
+            /** Format: date-time */
+            reviewed_at?: string;
+            negative_evidence?: components["schemas"]["NegativeEvidence"][];
+        };
+        NegativeEvidence: {
+            /** @enum {string} */
+            type: "manual_false_positive" | "manual_benign" | "needs_more_data" | "whitelist" | "test_device" | "infrastructure" | "known_application";
+            source: string;
+            reason: string;
+            score_delta: number;
+            max_score?: number;
+            level_cap?: components["schemas"]["RiskLevel"];
         };
         RiskListResponse: {
             items: components["schemas"]["RiskSnapshot"][];
@@ -615,7 +650,7 @@ export interface components {
             account_id?: string;
             endpoint_id?: string;
             /** @enum {string} */
-            type: "multi_user_agent" | "multi_ja3_ja4" | "ttl_clusters" | "domain_diversity" | "port_distribution" | "multi_device_fingerprint" | "multi_observed_device" | "device_signal_conflict" | "brand_os_conflict" | "tcp_tls_stack_conflict" | "dhcp_device_fingerprint" | "device_fingerprint_conflict" | "account_concurrent_macs" | "account_concurrent_endpoints" | "account_concurrent_access" | "auth_observed_mac_mismatch";
+            type: "multi_user_agent" | "multi_ja3_ja4" | "ttl_clusters" | "domain_diversity" | "port_distribution" | "multi_device_fingerprint" | "multi_observed_device" | "device_signal_conflict" | "brand_os_conflict" | "tcp_tls_stack_conflict" | "dhcp_device_fingerprint" | "device_fingerprint_conflict" | "account_concurrent_macs" | "account_concurrent_endpoints" | "account_concurrent_access" | "auth_observed_mac_mismatch" | "vpn_proxy_rule_match" | "vpn_proxy_domain_hint" | "encrypted_tunnel_behavior";
             window: string;
             score: number;
             confidence: number;
@@ -917,6 +952,57 @@ export interface components {
             top_source_ips: components["schemas"]["ActivityCount"][];
             top_active_risk_ips: components["schemas"]["ActivityIpSummary"][];
         };
+        ProxyReviewResponse: {
+            sensor_id: string;
+            /** @enum {string} */
+            window: "24h" | "7d";
+            event_count: number;
+            case_count: number;
+            account_count: number;
+            endpoint_count: number;
+            destination_count: number;
+            high_confidence_count: number;
+            items: components["schemas"]["ProxyReviewCase"][];
+        };
+        ProxyReviewCase: {
+            case_id: string;
+            ip: string;
+            account_id?: string;
+            endpoint_id?: string;
+            access_ids: string[];
+            destinations: components["schemas"]["ActivityCount"][];
+            destination_ips: components["schemas"]["ActivityCount"][];
+            destination_domains: components["schemas"]["ActivityCount"][];
+            tls_fingerprints: components["schemas"]["ActivityCount"][];
+            protocols: components["schemas"]["ActivityCount"][];
+            rule_matches: components["schemas"]["ProxyRuleMatch"][];
+            event_count: number;
+            tls_count: number;
+            quic_count: number;
+            alert_count: number;
+            /** @enum {string} */
+            confidence_level: "high" | "medium" | "low";
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            duration_seconds: number;
+            evidence_ids: string[];
+            risk_score: number;
+            risk_level: components["schemas"]["RiskLevel"];
+            /** @enum {string} */
+            review_status: "unreviewed" | "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
+            review_reason?: string;
+        };
+        ProxyRuleMatch: {
+            event_id: string;
+            signature: string;
+            category?: string;
+            action?: string;
+            severity?: number;
+            /** Format: date-time */
+            timestamp: string;
+        };
         DpiOverview: {
             sensor_id: string;
             /** @enum {string} */
@@ -1093,7 +1179,7 @@ export interface components {
         LabelKind: "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
         CreateLabelRequest: {
             /** @enum {string} */
-            target_type: "ip" | "risk_snapshot" | "evidence";
+            target_type: "ip" | "risk_snapshot" | "evidence" | "account" | "endpoint";
             target_id: string;
             label: components["schemas"]["LabelKind"];
             reason: string;
@@ -1309,6 +1395,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActivityOverview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listProxyReviews: {
+        parameters: {
+            query?: {
+                sensor_id?: string;
+                window?: "24h" | "7d";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account and endpoint scoped proxy/VPN review cases aggregated from normalized TLS, QUIC, and alert events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyReviewResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

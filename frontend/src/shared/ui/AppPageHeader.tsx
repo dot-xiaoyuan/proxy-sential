@@ -29,7 +29,7 @@ export function AppPageHeader({
 }: AppPageHeaderProps) {
   return (
     <div className="page-header page-header-spaced">
-      <div>
+      <div className="page-header-main">
         <Typography.Title className="page-title" level={3}>
           {title}
         </Typography.Title>
@@ -40,7 +40,7 @@ export function AppPageHeader({
         )}
       </div>
 
-      <Space size="middle" wrap>
+      <Space className="page-header-actions" size="middle" wrap>
         {onSensorChange && (
           <Select
             className="sensor-select"

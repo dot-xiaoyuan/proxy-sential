@@ -213,6 +213,54 @@ type ActivityAccess struct {
 	Proto      string `json:"proto,omitempty"`
 }
 
+type ProxyReviewResponse struct {
+	SensorID            string            `json:"sensor_id"`
+	Window              string            `json:"window"`
+	EventCount          int               `json:"event_count"`
+	CaseCount           int               `json:"case_count"`
+	AccountCount        int               `json:"account_count"`
+	EndpointCount       int               `json:"endpoint_count"`
+	DestinationCount    int               `json:"destination_count"`
+	HighConfidenceCount int               `json:"high_confidence_count"`
+	Items               []ProxyReviewCase `json:"items"`
+}
+
+type ProxyReviewCase struct {
+	CaseID             string           `json:"case_id"`
+	IP                 string           `json:"ip"`
+	AccountID          string           `json:"account_id,omitempty"`
+	EndpointID         string           `json:"endpoint_id,omitempty"`
+	AccessIDs          []string         `json:"access_ids"`
+	Destinations       []ActivityCount  `json:"destinations"`
+	DestinationIPs     []ActivityCount  `json:"destination_ips"`
+	DestinationDomains []ActivityCount  `json:"destination_domains"`
+	TLSFingerprints    []ActivityCount  `json:"tls_fingerprints"`
+	Protocols          []ActivityCount  `json:"protocols"`
+	RuleMatches        []ProxyRuleMatch `json:"rule_matches"`
+	EventCount         int              `json:"event_count"`
+	TLSCount           int              `json:"tls_count"`
+	QUICCount          int              `json:"quic_count"`
+	AlertCount         int              `json:"alert_count"`
+	ConfidenceLevel    string           `json:"confidence_level"`
+	FirstSeen          string           `json:"first_seen"`
+	LastSeen           string           `json:"last_seen"`
+	DurationSeconds    int64            `json:"duration_seconds"`
+	EvidenceIDs        []string         `json:"evidence_ids"`
+	RiskScore          int              `json:"risk_score"`
+	RiskLevel          string           `json:"risk_level"`
+	ReviewStatus       string           `json:"review_status"`
+	ReviewReason       string           `json:"review_reason,omitempty"`
+}
+
+type ProxyRuleMatch struct {
+	EventID   string `json:"event_id"`
+	Signature string `json:"signature"`
+	Category  string `json:"category,omitempty"`
+	Action    string `json:"action,omitempty"`
+	Severity  int    `json:"severity,omitempty"`
+	Timestamp string `json:"timestamp"`
+}
+
 type DPIOverview struct {
 	SensorID                 string `json:"sensor_id"`
 	Window                   string `json:"window"`
@@ -403,6 +451,7 @@ type Reader interface {
 	ListDeviceSignals(ctx context.Context, query Query) ([]DeviceSignal, error)
 	ListDeviceFingerprintConflicts(ctx context.Context, query Query) ([]DeviceConflict, error)
 	GetActivityOverview(ctx context.Context, query ActivityQuery) (ActivityOverview, error)
+	GetProxyReviews(ctx context.Context, query ActivityQuery) (ProxyReviewResponse, error)
 	GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error)
 	ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error)
 	ListDPIProtocolFlows(ctx context.Context, query ActivityQuery) ([]DPIProtocolFlow, error)

@@ -149,6 +149,58 @@ FORMAT JSONEachRow`, where, limit, cursor)
 	return decodeEventRows(data)
 }
 
+// ListProxyReviewEvents reduces the seven-day TLS/QUIC/alert data set inside
+// ClickHouse before returning it to the control plane. Returning raw rows can
+// exceed the request deadline once the sensor has accumulated tens of millions
+// of events.
+func (s *ClickHouseStore) ListProxyReviewEvents(ctx context.Context, sensorID string, window time.Duration, limit int) ([]normalized.Event, error) {
+	if limit <= 0 {
+		limit = defaultProxyReviewLimit
+	}
+	intervalValue, intervalUnit := clickHouseInterval(window)
+	clauses := []string{
+		fmt.Sprintf("timestamp >= now() - INTERVAL %d %s", intervalValue, intervalUnit),
+		"type IN ('tls', 'quic', 'alert')",
+		"subject_ip != ''",
+	}
+	if sensorID != "" {
+		clauses = append(clauses, "sensor_id = "+chQuote(sensorID))
+	}
+	sql := fmt.Sprintf(`
+SELECT
+  min(timestamp) AS first_seen,
+  max(timestamp) AS last_seen,
+  any(event_id) AS event_id,
+  type,
+  subject_ip,
+  dst_ip,
+  dst_port,
+  proto,
+  JSONExtractString(payload_json, 'sni') AS sni,
+  JSONExtractString(payload_json, 'server_name') AS server_name,
+  JSONExtractString(payload_json, 'host') AS host,
+  JSONExtractString(payload_json, 'query') AS query,
+  JSONExtractString(payload_json, 'ja3') AS ja3,
+  JSONExtractString(payload_json, 'ja4') AS ja4,
+  JSONExtractString(payload_json, 'signature') AS signature,
+  JSONExtractString(payload_json, 'category') AS category,
+  JSONExtractString(payload_json, 'action') AS action,
+  JSONExtractInt(payload_json, 'severity') AS severity,
+  JSONExtractRaw(payload_json, 'metadata') AS metadata_json,
+  count() AS aggregate_count
+FROM normalized_events
+PREWHERE %s
+GROUP BY type, subject_ip, dst_ip, dst_port, proto, sni, server_name, host, query, ja3, ja4, signature, category, action, severity, metadata_json
+ORDER BY last_seen DESC
+LIMIT %d
+FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit)
+	data, err := s.query(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	return decodeProxyReviewEventRows(data, sensorID)
+}
+
 func (s *ClickHouseStore) ListEvents(ctx context.Context, query Query) (EventPage, error) {
 	limit := query.Limit
 	if limit == 0 {
@@ -858,6 +910,76 @@ func decodeEventRows(data []byte) ([]normalized.Event, error) {
 		events = append(events, event)
 	}
 	return events, scanner.Err()
+}
+
+func decodeProxyReviewEventRows(data []byte, sensorID string) ([]normalized.Event, error) {
+	events := []normalized.Event{}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var row struct {
+			FirstSeen      string `json:"first_seen"`
+			LastSeen       string `json:"last_seen"`
+			EventID        string `json:"event_id"`
+			Type           string `json:"type"`
+			SubjectIP      string `json:"subject_ip"`
+			DstIP          string `json:"dst_ip"`
+			DstPort        int    `json:"dst_port"`
+			Proto          string `json:"proto"`
+			SNI            string `json:"sni"`
+			ServerName     string `json:"server_name"`
+			Host           string `json:"host"`
+			Query          string `json:"query"`
+			JA3            string `json:"ja3"`
+			JA4            string `json:"ja4"`
+			Signature      string `json:"signature"`
+			Category       string `json:"category"`
+			Action         string `json:"action"`
+			Severity       int    `json:"severity"`
+			MetadataJSON   string `json:"metadata_json"`
+			AggregateCount int    `json:"aggregate_count"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			return nil, err
+		}
+		payload := map[string]any{"_aggregate_count": row.AggregateCount}
+		setMapString(payload, "sni", row.SNI)
+		setMapString(payload, "server_name", row.ServerName)
+		setMapString(payload, "host", row.Host)
+		setMapString(payload, "query", row.Query)
+		setMapString(payload, "ja3", row.JA3)
+		setMapString(payload, "ja4", row.JA4)
+		setMapString(payload, "signature", row.Signature)
+		setMapString(payload, "category", row.Category)
+		setMapString(payload, "action", row.Action)
+		if row.Severity > 0 {
+			payload["severity"] = row.Severity
+		}
+		if row.MetadataJSON != "" {
+			var metadata any
+			if json.Unmarshal([]byte(row.MetadataJSON), &metadata) == nil {
+				payload["metadata"] = metadata
+			}
+		}
+		flow := map[string]any{"start": normalizeClickHouseTimestamp(row.FirstSeen), "end": normalizeClickHouseTimestamp(row.LastSeen)}
+		setMapString(flow, "dst_ip", row.DstIP)
+		setMapString(flow, "proto", row.Proto)
+		if row.DstPort > 0 {
+			flow["dst_port"] = row.DstPort
+		}
+		events = append(events, normalized.Event{
+			SchemaVersion: "v1", EventID: row.EventID, Timestamp: normalizeClickHouseTimestamp(row.LastSeen), Type: row.Type,
+			Source: "clickhouse-aggregate", Subject: map[string]any{"ip": row.SubjectIP}, Observer: map[string]any{"sensor_id": sensorID},
+			Payload: payload, Flow: flow, RawRef: map[string]any{"aggregate": true}, Confidence: 1,
+		})
+	}
+	return events, scanner.Err()
+}
+
+func setMapString(target map[string]any, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		target[key] = value
+	}
 }
 
 func uniqueEventsByID(events []normalized.Event) []normalized.Event {

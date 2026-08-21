@@ -6,6 +6,7 @@ export type Session = components['schemas']['Session']
 export type RiskLevel = components['schemas']['RiskLevel']
 export type RecommendedAction = components['schemas']['RecommendedAction']
 export type RiskSnapshot = components['schemas']['RiskSnapshot']
+export type NegativeEvidence = components['schemas']['NegativeEvidence']
 export type RiskListResponse = components['schemas']['RiskListResponse']
 export type EventListResponse = components['schemas']['EventListResponse']
 export type Evidence = components['schemas']['Evidence']
@@ -15,6 +16,9 @@ export type ActivityAccess = components['schemas']['ActivityAccess']
 export type IpActivityProfile = components['schemas']['IpActivityProfile']
 export type ActivityIpSummary = components['schemas']['ActivityIpSummary']
 export type ActivityOverview = components['schemas']['ActivityOverview']
+export type ProxyReviewResponse = components['schemas']['ProxyReviewResponse']
+export type ProxyReviewCase = components['schemas']['ProxyReviewCase']
+export type ProxyRuleMatch = components['schemas']['ProxyRuleMatch']
 export type Collector = components['schemas']['Collector']
 export type IngestDiagnostic = components['schemas']['IngestDiagnostic']
 export type IngestStatus = components['schemas']['IngestStatus']
@@ -82,7 +86,13 @@ export type EventQuery = {
 
 export type ActivityOverviewQuery = {
   sensor_id?: string
-  window?: '10m' | '1h' | '24h'
+  window?: '10m' | '1h' | '24h' | '7d'
+}
+
+export type ProxyReviewQuery = {
+  sensor_id?: string
+  window?: '24h' | '7d'
+  limit?: number
 }
 
 export type DeviceQuery = {

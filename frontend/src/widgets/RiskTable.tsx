@@ -4,13 +4,14 @@ import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { RiskScore } from '../entities/risk/RiskScore'
+import { ReviewStatusTag } from '../entities/risk/ReviewStatusTag'
 import type { RiskSnapshot } from '../shared/api/types'
 
 const columns: ColumnsType<RiskSnapshot> = [
   {
     title: 'IP',
     dataIndex: 'ip',
-    width: 150,
+    width: 116,
     render: (ip: string) => (
       <Link className="mono wrap-text" to={`/ips/${encodeURIComponent(ip)}`}>
         {ip}
@@ -20,19 +21,25 @@ const columns: ColumnsType<RiskSnapshot> = [
   {
     title: '等级',
     dataIndex: 'level',
-    width: 100,
+    width: 80,
     render: (level: RiskSnapshot['level']) => <RiskLevelTag level={level} />,
   },
   {
     title: '分数',
     dataIndex: 'score',
-    width: 90,
+    width: 72,
     render: (score: number) => <RiskScore score={score} />,
+  },
+  {
+    title: '复核',
+    dataIndex: 'review_status',
+    width: 88,
+    render: (_, row) => <ReviewStatusTag reason={row.review_reason} status={row.review_status} />,
   },
   {
     title: '解释',
     dataIndex: 'summary',
-    minWidth: 360,
+    width: 250,
     render: (summary: string) => (
       <Typography.Paragraph
         ellipsis={{ rows: 2, tooltip: summary }}
@@ -44,7 +51,7 @@ const columns: ColumnsType<RiskSnapshot> = [
   },
   {
     title: '疑似设备',
-    width: 180,
+    width: 120,
     render: (_, row) => (
       <div className="risk-table-device">
         <Tag color={row.suspected_device_count > 1 ? 'orange' : 'blue'}>{row.suspected_device_count}</Tag>
@@ -57,13 +64,13 @@ const columns: ColumnsType<RiskSnapshot> = [
   {
     title: '证据',
     dataIndex: 'evidence_ids',
-    width: 80,
+    width: 64,
     render: (ids: string[]) => <Tag className="table-tag">{ids.length}</Tag>,
   },
   {
     title: '建议动作',
     dataIndex: 'recommended_action',
-    width: 150,
+    width: 100,
     render: (action: string) => (
       <Tag className="table-tag" color="blue">
         {action}
@@ -73,7 +80,7 @@ const columns: ColumnsType<RiskSnapshot> = [
   {
     title: '更新时间',
     dataIndex: 'updated_at',
-    width: 170,
+    width: 110,
     render: (value: string) => (
       <Typography.Text className="table-time" type="secondary">
         {new Date(value).toLocaleString()}
@@ -99,7 +106,7 @@ export function RiskTable({
       locale={{ emptyText }}
       pagination={{ pageSize: 10, showSizeChanger: false }}
       rowKey="ip"
-      scroll={{ x: 1120 }}
+      scroll={{ x: 1000 }}
       size="middle"
     />
   )

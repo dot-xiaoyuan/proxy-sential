@@ -30,6 +30,8 @@ import type {
   NormalizedEventSummary,
   ObservedDevice,
   Overview,
+  ProxyReviewQuery,
+  ProxyReviewResponse,
   RiskListResponse,
   RiskQuery,
   RiskSnapshot,
@@ -82,6 +84,8 @@ export const api = {
   overview: () => request<Overview>('/overview'),
   activityOverview: (query: ActivityOverviewQuery) =>
     request<ActivityOverview>(`/activity/overview${search(query)}`),
+  proxyReviews: (query: ProxyReviewQuery) =>
+    request<ProxyReviewResponse>(`/proxy-reviews${search(query)}`),
   dpiOverview: (query: ActivityOverviewQuery) =>
     request<DpiOverview>(`/dpi/overview${search(query)}`),
   dpiTrends: (query: ActivityOverviewQuery) =>

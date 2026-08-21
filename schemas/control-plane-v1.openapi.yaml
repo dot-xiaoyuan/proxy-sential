@@ -55,6 +55,38 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /proxy-reviews:
+    get:
+      operationId: listProxyReviews
+      parameters:
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d]
+            default: 7d
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100000
+            default: 50000
+      responses:
+        "200":
+          description: Account and endpoint scoped proxy/VPN review cases aggregated from normalized TLS, QUIC, and alert events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyReviewResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /dpi/overview:
     get:
       operationId: getDpiOverview
@@ -1141,7 +1173,13 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+        raw_score:
+          type: integer
+          minimum: 0
+          maximum: 100
         level:
+          $ref: "#/components/schemas/RiskLevel"
+        raw_level:
           $ref: "#/components/schemas/RiskLevel"
         confidence:
           type: number
@@ -1169,6 +1207,39 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        review_status:
+          type: string
+          enum: [unreviewed, confirmed_proxy, false_positive, benign, needs_more_data]
+        review_label_id:
+          type: string
+        review_reason:
+          type: string
+        reviewed_by:
+          type: string
+        reviewed_at:
+          type: string
+          format: date-time
+        negative_evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/NegativeEvidence"
+    NegativeEvidence:
+      type: object
+      required: [type, source, reason, score_delta]
+      properties:
+        type:
+          type: string
+          enum: [manual_false_positive, manual_benign, needs_more_data, whitelist, test_device, infrastructure, known_application]
+        source:
+          type: string
+        reason:
+          type: string
+        score_delta:
+          type: integer
+        max_score:
+          type: integer
+        level_cap:
+          $ref: "#/components/schemas/RiskLevel"
     RiskListResponse:
       type: object
       required: [items, page]
@@ -1228,7 +1299,7 @@ components:
           type: string
         type:
           type: string
-          enum: [multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint, multi_observed_device, device_signal_conflict, brand_os_conflict, tcp_tls_stack_conflict, dhcp_device_fingerprint, device_fingerprint_conflict, account_concurrent_macs, account_concurrent_endpoints, account_concurrent_access, auth_observed_mac_mismatch]
+          enum: [multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint, multi_observed_device, device_signal_conflict, brand_os_conflict, tcp_tls_stack_conflict, dhcp_device_fingerprint, device_fingerprint_conflict, account_concurrent_macs, account_concurrent_endpoints, account_concurrent_access, auth_observed_mac_mismatch, vpn_proxy_rule_match, vpn_proxy_domain_hint, encrypted_tunnel_behavior]
         window:
           type: string
         score:
@@ -1866,6 +1937,123 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ActivityIpSummary"
+    ProxyReviewResponse:
+      type: object
+      required: [sensor_id, window, event_count, case_count, account_count, endpoint_count, destination_count, high_confidence_count, items]
+      properties:
+        sensor_id:
+          type: string
+        window:
+          type: string
+          enum: [24h, 7d]
+        event_count:
+          type: integer
+        case_count:
+          type: integer
+        account_count:
+          type: integer
+        endpoint_count:
+          type: integer
+        destination_count:
+          type: integer
+        high_confidence_count:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProxyReviewCase"
+    ProxyReviewCase:
+      type: object
+      required: [case_id, ip, access_ids, destinations, destination_ips, destination_domains, tls_fingerprints, protocols, rule_matches, event_count, tls_count, quic_count, alert_count, confidence_level, first_seen, last_seen, duration_seconds, evidence_ids, risk_score, risk_level, review_status]
+      properties:
+        case_id:
+          type: string
+        ip:
+          type: string
+        account_id:
+          type: string
+        endpoint_id:
+          type: string
+        access_ids:
+          type: array
+          items:
+            type: string
+        destinations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        destination_ips:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        destination_domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        tls_fingerprints:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        protocols:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityCount"
+        rule_matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProxyRuleMatch"
+        event_count:
+          type: integer
+        tls_count:
+          type: integer
+        quic_count:
+          type: integer
+        alert_count:
+          type: integer
+        confidence_level:
+          type: string
+          enum: [high, medium, low]
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        duration_seconds:
+          type: integer
+          minimum: 0
+        evidence_ids:
+          type: array
+          items:
+            type: string
+        risk_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        review_status:
+          type: string
+          enum: [unreviewed, confirmed_proxy, false_positive, benign, needs_more_data]
+        review_reason:
+          type: string
+    ProxyRuleMatch:
+      type: object
+      required: [event_id, signature, timestamp]
+      properties:
+        event_id:
+          type: string
+        signature:
+          type: string
+        category:
+          type: string
+        action:
+          type: string
+        severity:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
     DpiOverview:
       type: object
       required:
@@ -2249,7 +2437,7 @@ components:
       properties:
         target_type:
           type: string
-          enum: [ip, risk_snapshot, evidence]
+          enum: [ip, risk_snapshot, evidence, account, endpoint]
         target_id:
           type: string
         label:
@@ -2259,6 +2447,7 @@ components:
           minLength: 2
         evidence_ids:
           type: array
+          minItems: 1
           items:
             type: string
     Label:

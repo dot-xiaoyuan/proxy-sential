@@ -33,6 +33,18 @@ go run ./cmd/proxy-sentinel validate known-devices \
   --output -
 ```
 
+正式验收使用严格模式：
+
+```bash
+go run ./cmd/proxy-sentinel validate known-devices \
+  --input known-devices.csv \
+  --events normalized-identity.jsonl \
+  --strict \
+  --output known-devices-acceptance.json
+```
+
+`acceptance_ready=true` 需要 30-50 台样本覆盖告警全部消失，并且身份事件比对通过。报告会额外统计发现率、误合并、重复创建和基础设施污染；只有结构合法而没有身份事件对照时，不会进入正式验收通过状态。
+
 模板自带少量示例行，目的是说明填法。正式验收前需要扩展到 30-50 台现场设备。
 
 ## 字段说明
@@ -76,4 +88,4 @@ go run ./cmd/proxy-sentinel validate known-devices \
 
 ## 状态边界
 
-当前项目已经完成模板和结构校验；真实 30-50 台现场样本仍是外部依赖。拿到样本后，先通过 `validate known-devices` 清理字段，再进入 08-05 的设备发现验收。
+当前项目已经完成模板、严格覆盖校验和发现质量报告；现场 API 已发现 45 个 endpoint，可直接从中挑选 30-50 台建立人工标准答案。样本的责任人、真实设备类型和基础设施属性必须由现场人员确认，不能用系统自身推断替代人工真值。

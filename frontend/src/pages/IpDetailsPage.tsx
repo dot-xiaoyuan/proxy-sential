@@ -4,9 +4,10 @@ import { Alert, Descriptions, Progress, Skeleton, Space, Statistic, Table, Tabs,
 import { EvidenceList } from '../entities/evidence/EvidenceList'
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { RiskScore } from '../entities/risk/RiskScore'
+import { ReviewStatusTag } from '../entities/risk/ReviewStatusTag'
 import { LabelPanel } from '../features/labels/LabelPanel'
 import { useIpActivity, useIpDevices, useIpEvidence, useIpEvents, useIpRisk, useSession } from '../shared/api/queries'
-import type { ActivityAccess, ActivityCount, DeviceConflict, DeviceSignal, IpDeviceInventory, NormalizedEventSummary, ObservedDevice } from '../shared/api/types'
+import type { ActivityAccess, ActivityCount, DeviceConflict, DeviceSignal, IpDeviceInventory, NegativeEvidence, NormalizedEventSummary, ObservedDevice } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
 
 export function IpDetailsPage() {
@@ -59,8 +60,27 @@ export function IpDetailsPage() {
               </Typography.Text>
             </Descriptions.Item>
             <Descriptions.Item label="窗口">{risk.data.window}</Descriptions.Item>
+            {(risk.data.raw_score || risk.data.raw_level) && (
+              <Descriptions.Item label="原始风险">
+                <Space wrap>
+                  {risk.data.raw_level && <RiskLevelTag level={risk.data.raw_level} />}
+                  {typeof risk.data.raw_score === 'number' && <RiskScore score={risk.data.raw_score} />}
+                </Space>
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="建议动作">
               <Tag color="cyan">{risk.data.recommended_action}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="复核状态">
+              <Space wrap>
+                <ReviewStatusTag reason={risk.data.review_reason} status={risk.data.review_status} />
+                {risk.data.reviewed_by && (
+                  <Typography.Text type="secondary">
+                    {risk.data.reviewed_by}
+                    {risk.data.reviewed_at ? ` / ${new Date(risk.data.reviewed_at).toLocaleString()}` : ''}
+                  </Typography.Text>
+                )}
+              </Space>
             </Descriptions.Item>
             <Descriptions.Item label="更新时间">
               {new Date(risk.data.updated_at).toLocaleString()}
@@ -71,6 +91,7 @@ export function IpDetailsPage() {
               </Typography.Text>
             </Descriptions.Item>
           </Descriptions>
+          {renderNegativeEvidence(risk.data.negative_evidence ?? [])}
         </div>
         <div className="surface">
           <Typography.Title level={4}>人工标注控制台</Typography.Title>
@@ -278,17 +299,63 @@ export function IpDetailsPage() {
   )
 }
 
+function renderNegativeEvidence(items: NegativeEvidence[]) {
+  if (items.length === 0) {
+    return null
+  }
+  return (
+    <div className="negative-evidence-list">
+      <Typography.Text className="negative-evidence-title" strong>
+        负证据命中
+      </Typography.Text>
+      {items.map((item) => (
+        <div className="negative-evidence-item" key={`${item.source}-${item.type}`}>
+          <Space wrap>
+            <Tag className="table-tag" color="green">
+              {negativeEvidenceLabel(item.type)}
+            </Tag>
+            <Typography.Text className="mono" type="secondary">
+              {item.score_delta}
+            </Typography.Text>
+            {item.level_cap && (
+              <Typography.Text type="secondary">
+                上限 {item.level_cap}
+              </Typography.Text>
+            )}
+          </Space>
+          <Typography.Text className="wrap-text" type="secondary">
+            {item.reason}
+          </Typography.Text>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function negativeEvidenceLabel(type: NegativeEvidence['type']) {
+  const labels: Record<NegativeEvidence['type'], string> = {
+    manual_false_positive: '人工误报',
+    manual_benign: '人工良性',
+    needs_more_data: '需补数据',
+    whitelist: '白名单',
+    test_device: '测试设备',
+    infrastructure: '基础设施',
+    known_application: '已知应用',
+  }
+  return labels[type] ?? type
+}
+
 function renderDeviceInventory(inventory: IpDeviceInventory) {
   const confidencePercent = Math.round(inventory.confidence * 100)
   const hasDHCPStrongSignal = inventory.signals.some(
     (signal) => signal.strength === 'strong' && signal.source === 'dhcp',
   )
   return (
-    <Space className="full-width" direction="vertical" size="middle">
+    <Space className="full-width" orientation="vertical" size="middle">
       <Alert
         showIcon
         description={inventory.summary}
-        message={deviceStatusText(inventory.status)}
+        title={deviceStatusText(inventory.status)}
         type={inventory.status === 'multi_candidate' ? 'warning' : inventory.status === 'weak_signals_only' ? 'info' : 'success'}
       />
       <div className="metric-grid">
