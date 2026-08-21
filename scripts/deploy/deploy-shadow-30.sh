@@ -261,10 +261,10 @@ EOF
 
 cat > /etc/systemd/system/proxy-sentinel-shadow-evaluation.timer <<EOF
 [Unit]
-Description=Generate Proxy Sentinel shadow evaluation every day
+Description=Refresh Proxy Sentinel shadow evaluation every hour
 
 [Timer]
-OnCalendar=*-*-* 23:50:00
+OnCalendar=*-*-* *:05:00
 Persistent=true
 Unit=proxy-sentinel-shadow-evaluation.service
 

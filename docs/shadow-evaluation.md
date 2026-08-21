@@ -4,7 +4,7 @@
 
 ## 每日自动产物
 
-部署脚本会安装 `proxy-sentinel-shadow-evaluation.timer`，每天 23:50 生成：
+部署脚本会安装 `proxy-sentinel-shadow-evaluation.timer`，每小时第 5 分钟刷新；每日抽样文件按日期覆盖更新：
 
 - `data/shadow/evaluation/latest.json`：当前窗口评估报告。
 - `data/shadow/review-exports/YYYY-MM-DD-review-samples.json`：按风险等级分层抽样的复核清单。

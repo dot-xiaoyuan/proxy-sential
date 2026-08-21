@@ -532,6 +532,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shadow/evaluation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShadowEvaluation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-logs": {
         parameters: {
             query?: never;
@@ -1237,6 +1253,28 @@ export interface components {
             outcome: string;
             /** Format: date-time */
             created_at: string;
+        };
+        ShadowEvaluation: {
+            /** Format: date-time */
+            generated_at: string;
+            /** Format: date-time */
+            window_from?: string;
+            /** Format: date-time */
+            window_to?: string;
+            required_days: number;
+            observed_days: number;
+            longest_continuous_days: number;
+            days_with_reviews: number;
+            run_count: number;
+            risk_snapshot_count: number;
+            evaluated_sample_count: number;
+            reviewed_snapshot_count: number;
+            /** Format: double */
+            review_coverage: number;
+            missing_review_buckets: string[];
+            recommended_adjustments: string[];
+            ready: boolean;
+            blockers: string[];
         };
         Overview: {
             level_counts: {
@@ -2233,6 +2271,28 @@ export interface operations {
                     };
                 };
             };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getShadowEvaluation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest seven-day shadow evaluation and review readiness report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShadowEvaluation"];
+                };
+            };
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };

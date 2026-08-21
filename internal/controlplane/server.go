@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"proxy-sentinel/internal/evaluation"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
@@ -321,6 +322,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleIngestErrors(w, r)
 	case r.Method == http.MethodGet && path == "/shadow/runs":
 		s.handleShadowRuns(w, r)
+	case r.Method == http.MethodGet && path == "/shadow/evaluation":
+		s.handleShadowEvaluation(w, r)
 	case r.Method == http.MethodGet && path == "/audit-logs":
 		s.handleAuditLogs(w, r)
 	case r.Method == http.MethodPost && path == "/rules/reload":
@@ -1009,6 +1012,26 @@ func (s *Server) handleShadowRuns(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toShadowRun(run))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runs": items})
+}
+
+func (s *Server) handleShadowEvaluation(w http.ResponseWriter, r *http.Request) {
+	path := filepath.Join(s.shadowDir, "evaluation", "latest.json")
+	file, err := os.Open(path)
+	if os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "shadow_evaluation_not_found", "shadow evaluation has not been generated yet")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_shadow_evaluation_failed", err.Error())
+		return
+	}
+	defer file.Close()
+	var report evaluation.ShadowEvaluationReport
+	if err := json.NewDecoder(file).Decode(&report); err != nil {
+		writeError(w, http.StatusInternalServerError, "decode_shadow_evaluation_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {

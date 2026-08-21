@@ -948,6 +948,20 @@ paths:
                       $ref: "#/components/schemas/ShadowRun"
         "500":
           $ref: "#/components/responses/InternalError"
+  /shadow/evaluation:
+    get:
+      operationId: getShadowEvaluation
+      responses:
+        "200":
+          description: Latest seven-day shadow evaluation and review readiness report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShadowEvaluation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /audit-logs:
     get:
       operationId: listAuditLogs
@@ -2549,6 +2563,66 @@ components:
         created_at:
           type: string
           format: date-time
+    ShadowEvaluation:
+      type: object
+      required:
+        - generated_at
+        - required_days
+        - observed_days
+        - longest_continuous_days
+        - days_with_reviews
+        - run_count
+        - risk_snapshot_count
+        - evaluated_sample_count
+        - reviewed_snapshot_count
+        - review_coverage
+        - missing_review_buckets
+        - recommended_adjustments
+        - ready
+        - blockers
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        window_from:
+          type: string
+          format: date-time
+        window_to:
+          type: string
+          format: date-time
+        required_days:
+          type: integer
+        observed_days:
+          type: integer
+        longest_continuous_days:
+          type: integer
+        days_with_reviews:
+          type: integer
+        run_count:
+          type: integer
+        risk_snapshot_count:
+          type: integer
+        evaluated_sample_count:
+          type: integer
+        reviewed_snapshot_count:
+          type: integer
+        review_coverage:
+          type: number
+          format: double
+        missing_review_buckets:
+          type: array
+          items:
+            type: string
+        recommended_adjustments:
+          type: array
+          items:
+            type: string
+        ready:
+          type: boolean
+        blockers:
+          type: array
+          items:
+            type: string
     Overview:
       type: object
       required: [level_counts, pending_reviews, latest_shadow_run, throughput, top_evidence]

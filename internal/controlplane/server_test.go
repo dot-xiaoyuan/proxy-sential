@@ -14,6 +14,7 @@ import (
 
 	"proxy-sentinel/internal/adapter/suricata"
 	"proxy-sentinel/internal/adapter/zeek"
+	"proxy-sentinel/internal/evaluation"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
@@ -37,6 +38,37 @@ func TestShadowRunsEmptyDirectoryReturnsEmptyArrays(t *testing.T) {
 	getJSON(t, server, "/api/v1/risks", http.StatusOK, &risks)
 	if risks.Items == nil || len(risks.Items) != 0 || risks.Page.Total != 0 {
 		t.Fatalf("expected empty risk page, got %#v", risks)
+	}
+}
+
+func TestShadowEvaluationReturnsLatestReport(t *testing.T) {
+	shadowDir := t.TempDir()
+	evaluationDir := filepath.Join(shadowDir, "evaluation")
+	if err := os.MkdirAll(evaluationDir, 0o755); err != nil {
+		t.Fatalf("create evaluation dir: %v", err)
+	}
+	expected := evaluation.ShadowEvaluationReport{
+		GeneratedAt: "2026-08-21T15:00:00Z", RequiredDays: 7, ObservedDays: 8,
+		LongestContinuousDays: 8, DaysWithReviews: 0, RunCount: 1010,
+		RiskSnapshotCount: 24663, EvaluatedSampleCount: 716, ReviewedSnapshotCount: 0,
+		Ready: false, Blockers: []string{"仅 0 天包含人工复核，要求至少 7 天"},
+	}
+	mustWriteJSON(t, filepath.Join(evaluationDir, "latest.json"), expected)
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "office-30", ReadOnly: true})
+
+	var actual evaluation.ShadowEvaluationReport
+	getJSON(t, server, "/api/v1/shadow/evaluation", http.StatusOK, &actual)
+	if actual.RunCount != expected.RunCount || actual.ObservedDays != expected.ObservedDays || actual.Ready {
+		t.Fatalf("unexpected shadow evaluation: %#v", actual)
+	}
+}
+
+func TestShadowEvaluationReturnsNotFoundBeforeFirstReport(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
+	var response ErrorResponse
+	getJSON(t, server, "/api/v1/shadow/evaluation", http.StatusNotFound, &response)
+	if response.Code != "shadow_evaluation_not_found" {
+		t.Fatalf("unexpected response: %#v", response)
 	}
 }
 

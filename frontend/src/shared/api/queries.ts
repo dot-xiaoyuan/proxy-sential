@@ -47,6 +47,7 @@ export const queryKeys = {
   ingestEventTypes: ['ingest-event-types'] as const,
   ingestErrors: ['ingest-errors'] as const,
   shadowRuns: ['shadow-runs'] as const,
+  shadowEvaluation: ['shadow-evaluation'] as const,
   auditLogs: ['audit-logs'] as const,
 }
 
@@ -242,6 +243,7 @@ export function useCreateLabel() {
       void client.invalidateQueries({ queryKey: queryKeys.overview })
       void client.invalidateQueries({ queryKey: ['risks'] })
       void client.invalidateQueries({ queryKey: ['proxy-reviews'] })
+      void client.invalidateQueries({ queryKey: queryKeys.shadowEvaluation })
       if (variables.target_type === 'ip') {
         void client.invalidateQueries({ queryKey: queryKeys.ipRisk(variables.target_id) })
       }
@@ -251,6 +253,10 @@ export function useCreateLabel() {
 
 export function useShadowRuns() {
   return useQuery({ queryKey: queryKeys.shadowRuns, queryFn: api.shadowRuns })
+}
+
+export function useShadowEvaluation() {
+  return useQuery({ queryKey: queryKeys.shadowEvaluation, queryFn: api.shadowEvaluation })
 }
 
 export function useAuditLogs() {

@@ -38,6 +38,7 @@ import type {
   RuleReloadResult,
   Session,
   ShadowRun,
+  ShadowEvaluation,
   UpdateEndpointRegistrationRequest,
 } from './types'
 
@@ -142,6 +143,7 @@ export const api = {
   createLabel: (payload: CreateLabelRequest) =>
     request<Label>('/labels', { method: 'POST', body: JSON.stringify(payload) }),
   shadowRuns: () => request<{ runs: ShadowRun[] }>('/shadow/runs'),
+  shadowEvaluation: () => request<ShadowEvaluation>('/shadow/evaluation'),
   auditLogs: (limit = 50) => request<{ logs: AuditLog[] }>(`/audit-logs${search({ limit })}`),
   reloadRules: () => request<RuleReloadResult>('/rules/reload', { method: 'POST' }),
 }

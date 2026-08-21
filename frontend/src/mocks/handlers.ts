@@ -20,6 +20,7 @@ import {
   proxyReviewResponse,
   riskSnapshots,
   shadowRuns,
+  shadowEvaluation,
 } from './fixtures'
 
 function normalizeIp(value: string) {
@@ -350,6 +351,7 @@ export const handlers = [
     return HttpResponse.json(created, { status: 201 })
   }),
   http.get('/api/v1/shadow/runs', () => HttpResponse.json({ runs: shadowRuns })),
+  http.get('/api/v1/shadow/evaluation', () => HttpResponse.json(shadowEvaluation)),
   http.get('/api/v1/audit-logs', () => HttpResponse.json({ logs: auditLogs })),
   http.post('/api/v1/rules/reload', () =>
     HttpResponse.json(
