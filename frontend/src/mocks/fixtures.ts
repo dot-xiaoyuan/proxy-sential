@@ -44,6 +44,7 @@ export const mockSession: Session = {
     'actions:execute',
     'actions:revoke',
     'integrations:write',
+    'users:manage',
   ],
 }
 

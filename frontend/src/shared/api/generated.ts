@@ -68,6 +68,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listUsers"];
+        put?: never;
+        post: operations["createUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{user_id}/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["updateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/campus-exceptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCampusExceptions"];
+        put?: never;
+        post: operations["createCampusException"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/campus-exceptions/{exception_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["disableCampusException"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases": {
         parameters: {
             query?: never;
@@ -920,6 +984,39 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        LocalUser: {
+            user_id: string;
+            username: string;
+            display_name: string;
+            /** @enum {string} */
+            role: "viewer" | "reviewer" | "operator" | "admin";
+            disabled: boolean;
+        };
+        UserMutation: {
+            username?: string;
+            display_name?: string;
+            /** @enum {string} */
+            role?: "viewer" | "reviewer" | "operator" | "admin";
+            password?: string;
+            disabled?: boolean;
+        };
+        CampusException: {
+            exception_id?: string;
+            /** @enum {string} */
+            scope_type: "ip" | "account" | "endpoint" | "campus" | "domain" | "cidr";
+            scope_value: string;
+            campus_id?: string;
+            reason: string;
+            ruleset_version?: string;
+            /** Format: date-time */
+            valid_from?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            enabled?: boolean;
+            created_by?: string;
+            /** Format: date-time */
+            created_at?: string;
+        };
         /** @enum {string} */
         Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "endpoints:write" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read" | "device-fingerprint-library:update" | "cases:read" | "cases:write" | "identity:read" | "organization:read" | "organization:write" | "actions:read" | "actions:execute" | "actions:revoke" | "integrations:write" | "users:manage";
         Page: {
@@ -1971,6 +2068,163 @@ export interface operations {
             };
         };
     };
+    listUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Local RBAC users. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["LocalUser"][];
+                        page?: components["schemas"]["Page"];
+                    };
+                };
+            };
+            /** @description Administrator permission required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserMutation"];
+            };
+        };
+        responses: {
+            /** @description User created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalUser"];
+                };
+            };
+            /** @description Administrator permission required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+                operation: "profile" | "password" | "disable" | "enable";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserMutation"];
+            };
+        };
+        responses: {
+            /** @description User updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalUser"];
+                };
+            };
+        };
+    };
+    listCampusExceptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Versioned campus exception rules. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["CampusException"][];
+                        page?: components["schemas"]["Page"];
+                    };
+                };
+            };
+        };
+    };
+    createCampusException: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CampusException"];
+            };
+        };
+        responses: {
+            /** @description Exception created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampusException"];
+                };
+            };
+        };
+    };
+    disableCampusException: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exception_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exception disabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampusException"];
+                };
+            };
+        };
+    };
     listCases: {
         parameters: {
             query?: {
@@ -2243,7 +2497,12 @@ export interface operations {
     };
     getOverview: {
         parameters: {
-            query?: never;
+            query?: {
+                sensor_id?: string;
+                campus_id?: string;
+                window?: "10m" | "1h" | "24h" | "7d";
+                as_of?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2266,7 +2525,9 @@ export interface operations {
         parameters: {
             query?: {
                 sensor_id?: string;
-                window?: "10m" | "1h" | "24h";
+                window?: "10m" | "1h" | "24h" | "7d";
+                campus_id?: string;
+                as_of?: string;
             };
             header?: never;
             path?: never;

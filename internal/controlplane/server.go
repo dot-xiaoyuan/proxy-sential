@@ -62,6 +62,7 @@ type Server struct {
 	identityIngest     *identityIngestState
 	operations         *operationsState
 	actionMasterKey    []byte
+	exceptions         *exceptionManager
 }
 
 type Session struct {
@@ -293,6 +294,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 		identityIngest:     identityIngest,
 		operations:         operations,
 		actionMasterKey:    []byte(opts.ActionMasterKey),
+		exceptions:         newExceptionManager(operations.db),
 	}
 	if opts.FingerprintAutoUpdate {
 		fingerprints.Start(context.Background(), 7*24*time.Hour)
@@ -394,6 +396,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, session)
 	case r.Method == http.MethodGet && path == "/system/status":
 		s.handleSystemStatus(w, r)
+	case strings.HasPrefix(path, "/users"):
+		s.handleUsers(w, r)
+	case strings.HasPrefix(path, "/campus-exceptions"):
+		s.handleCampusExceptions(w, r)
 	case r.Method == http.MethodGet && path == "/integrations/identity/status":
 		s.handleIdentityIngestStatus(w, r)
 	case strings.HasPrefix(path, "/cases"):
@@ -685,6 +691,12 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func requiredPermission(method, path string) string {
+	if strings.HasPrefix(path, "/users") {
+		return "users:manage"
+	}
+	if method == http.MethodPost && strings.HasPrefix(path, "/campus-exceptions") {
+		return "rules:reload"
+	}
 	if method == http.MethodPost {
 		switch {
 		case path == "/labels":
@@ -1050,12 +1062,20 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sensorID := firstNonEmptyString(strings.TrimSpace(r.URL.Query().Get("sensor_id")), s.sensorID)
+	campusID := strings.TrimSpace(r.URL.Query().Get("campus_id"))
+	asOfParam := strings.TrimSpace(r.URL.Query().Get("as_of"))
+	if asOfParam != "" {
+		if _, err := time.Parse(time.RFC3339, asOfParam); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_overview_as_of", "as_of must be an RFC3339 timestamp")
+			return
+		}
+	}
 	overview, err := s.reader.Overview(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_overview_failed", err.Error())
 		return
 	}
-	activity, err := s.reader.GetActivityOverview(ctx, store.ActivityQuery{SensorID: sensorID, Window: window, Limit: 50})
+	activity, err := s.reader.GetActivityOverview(ctx, store.ActivityQuery{SensorID: sensorID, CampusID: campusID, AsOf: asOfParam, Window: window, Limit: 50})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_overview_activity_failed", err.Error())
 		return
@@ -1078,7 +1098,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		eventCount = overview.Throughput["events"]
 		activeRiskCount = overview.Throughput["risks"]
 	}
-	asOf := time.Now().UTC().Format(time.RFC3339Nano)
+	asOf := firstNonEmptyString(asOfParam, time.Now().UTC().Format(time.RFC3339Nano))
 	caseSummary := s.operationsSummary()
 	writeJSON(w, http.StatusOK, Overview{
 		LevelCounts: LevelCounts{
@@ -1108,7 +1128,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
-	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
 		return
@@ -1120,6 +1140,9 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 	}
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
+	if to == "" {
+		to = r.URL.Query().Get("as_of")
+	}
 	if from == "" && to == "" && strings.TrimSpace(r.URL.Query().Get("window")) != "" {
 		_, duration, windowErr := store.NormalizeActivityWindow(r.URL.Query().Get("window"))
 		if windowErr != nil {
@@ -1134,6 +1157,7 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 		Level:    r.URL.Query().Get("level"),
 		Q:        r.URL.Query().Get("q"),
 		SensorID: r.URL.Query().Get("sensor_id"),
+		CampusID: r.URL.Query().Get("campus_id"),
 		From:     from,
 		To:       to,
 		Limit:    limit,
@@ -1144,6 +1168,12 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.enrichRiskDevices(r.Context(), page.Items)
+	for index := range page.Items {
+		if _, err := s.exceptions.apply(r.Context(), &page.Items[index], r.URL.Query().Get("campus_id")); err != nil {
+			writeError(w, http.StatusInternalServerError, "apply_risk_exceptions_failed", err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, RiskListResponse{Items: page.Items, Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total}})
 }
 
@@ -1198,6 +1228,10 @@ func (s *Server) handleIPRisk(w http.ResponseWriter, r *http.Request, ip string)
 		return
 	}
 	s.enrichRiskDevice(ctx, &snapshot)
+	if _, err := s.exceptions.apply(ctx, &snapshot, r.URL.Query().Get("campus_id")); err != nil {
+		writeError(w, http.StatusInternalServerError, "apply_risk_exceptions_failed", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
@@ -1347,10 +1381,18 @@ func (s *Server) handleActivityOverview(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_activity_window", err.Error())
 		return
 	}
+	if asOf := r.URL.Query().Get("as_of"); asOf != "" {
+		if _, err := time.Parse(time.RFC3339, asOf); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_activity_as_of", "as_of must be an RFC3339 timestamp")
+			return
+		}
+	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
 	overview, err := s.reader.GetActivityOverview(ctx, store.ActivityQuery{
 		SensorID: sensorID,
+		CampusID: r.URL.Query().Get("campus_id"),
+		AsOf:     r.URL.Query().Get("as_of"),
 		Window:   window,
 	})
 	if err != nil {
@@ -1760,7 +1802,12 @@ func (s *Server) activityQuery(values url.Values) (store.ActivityQuery, error) {
 	if err != nil {
 		return store.ActivityQuery{}, err
 	}
-	return store.ActivityQuery{SensorID: sensorID, Window: window, Limit: limit}, nil
+	if asOf := values.Get("as_of"); asOf != "" {
+		if _, err := time.Parse(time.RFC3339, asOf); err != nil {
+			return store.ActivityQuery{}, fmt.Errorf("as_of must be an RFC3339 timestamp")
+		}
+	}
+	return store.ActivityQuery{SensorID: sensorID, CampusID: values.Get("campus_id"), AsOf: values.Get("as_of"), Window: window, Limit: limit}, nil
 }
 
 func (s *Server) deviceActivityQuery(values url.Values) (store.ActivityQuery, error) {

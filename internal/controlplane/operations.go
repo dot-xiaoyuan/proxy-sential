@@ -275,10 +275,28 @@ func (s *Server) syncCases(r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	exceptions, err := s.exceptions.list(r.Context(), true)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
 	for _, item := range result.Items {
+		matchedException := matchException(exceptions, item.IP, item.AccountID, item.EndpointID, "")
+		if matchedException == nil {
+			for _, destination := range item.DestinationDomains {
+				for index := range exceptions {
+					if exceptions[index].ScopeType == "domain" && strings.EqualFold(exceptions[index].ScopeValue, destination.Value) {
+						matchedException = &exceptions[index]
+						break
+					}
+				}
+			}
+		}
+		if matchedException != nil {
+			continue
+		}
 		existing, ok := s.operations.doc.Cases[item.CaseID]
 		if ok && existing.Status == "closed" {
 			continue

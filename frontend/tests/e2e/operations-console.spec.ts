@@ -82,3 +82,12 @@ test('shows observed activity posture and opens active risk IP detail', async ({
   await page.getByRole('link', { name: '10.255.0.59' }).click()
   await expect(page.getByRole('heading', { name: '10.255.0.59' })).toBeVisible()
 })
+
+test('shows local users and versioned campus exceptions', async ({ page }) => {
+  await page.goto('/settings/security')
+  await expect(page.getByRole('heading', { name: '权限与校园例外' })).toBeVisible()
+  await expect(page.getByText('系统管理员').first()).toBeVisible()
+  await expect(page.getByText('vpn.henu.edu.cn')).toBeVisible()
+  await expect(page.getByRole('button', { name: '新建用户' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '新增例外' })).toBeVisible()
+})

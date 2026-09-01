@@ -61,6 +61,8 @@ export const queryKeys = {
 	organization: ['organization'] as const,
 	actionConnectors: ['action-connectors'] as const,
 	actions: (query:object) => ['actions',query] as const,
+	users: ['users'] as const,
+	campusExceptions: ['campus-exceptions'] as const,
 }
 
 export function useSession() {
@@ -334,3 +336,7 @@ export function useOrganization() { return useQuery({queryKey:queryKeys.organiza
 export function useActionConnectors() { return useQuery({queryKey:queryKeys.actionConnectors,queryFn:api.actionConnectors}) }
 export function useActions(query:ListQuery={}) { return useQuery({queryKey:queryKeys.actions(query),queryFn:()=>api.actions(query)}) }
 export function useActionMutation() { const client=useQueryClient(); return useMutation({mutationFn:(request:{payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number};idempotencyKey:string})=>api.executeAction(request.payload,request.idempotencyKey),onSuccess:()=>void client.invalidateQueries({queryKey:['actions']})}) }
+export function useUsers() { return useQuery({queryKey:queryKeys.users,queryFn:api.users}) }
+export function useUserMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{userId?:string;operation?:'profile'|'password'|'disable'|'enable';payload:import('./types').UserMutation})=>request.userId&&request.operation?api.updateUser(request.userId,request.operation,request.payload):api.createUser(request.payload),onSuccess:()=>void client.invalidateQueries({queryKey:queryKeys.users})}) }
+export function useCampusExceptions() { return useQuery({queryKey:queryKeys.campusExceptions,queryFn:api.campusExceptions}) }
+export function useCampusExceptionMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{exceptionId?:string;payload?:import('./types').CampusException})=>request.exceptionId?api.disableCampusException(request.exceptionId):api.createCampusException(request.payload!),onSuccess:()=>{void client.invalidateQueries({queryKey:queryKeys.campusExceptions});void client.invalidateQueries({queryKey:['risks']});void client.invalidateQueries({queryKey:['cases']})}}) }

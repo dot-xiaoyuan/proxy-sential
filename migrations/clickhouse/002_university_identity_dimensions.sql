@@ -1,0 +1,12 @@
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS account_id String AFTER subject_ip;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS endpoint_id String AFTER account_id;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS campus_id LowCardinality(String) AFTER endpoint_id;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS department String AFTER campus_id;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS person_type LowCardinality(String) AFTER department;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS building_id String AFTER person_type;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS network_zone_id String AFTER building_id;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS ssid String AFTER network_zone_id;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS vlan String AFTER ssid;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS ap String AFTER vlan;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS nas_ip String AFTER ap;
+ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS auth_session_id String AFTER nas_ip;

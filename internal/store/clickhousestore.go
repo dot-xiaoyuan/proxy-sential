@@ -73,6 +73,18 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 			"type":              event.Type,
 			"sensor_id":         stringFromMap(event.Observer, "sensor_id"),
 			"subject_ip":        stringFromMap(event.Subject, "ip"),
+			"account_id":        stringFromMap(event.Subject, "account_id"),
+			"endpoint_id":       stringFromMap(event.Subject, "endpoint_id"),
+			"campus_id":         firstNonEmpty(stringFromMap(event.Subject, "campus_id"), stringFromMap(event.Payload, "campus_id")),
+			"department":        firstNonEmpty(stringFromMap(event.Subject, "department"), stringFromMap(event.Payload, "department")),
+			"person_type":       firstNonEmpty(stringFromMap(event.Subject, "person_type"), stringFromMap(event.Payload, "person_type")),
+			"building_id":       stringFromMap(event.Payload, "building_id"),
+			"network_zone_id":   stringFromMap(event.Payload, "network_zone_id"),
+			"ssid":              stringFromMap(event.Payload, "ssid"),
+			"vlan":              stringFromMap(event.Payload, "vlan"),
+			"ap":                stringFromMap(event.Payload, "ap"),
+			"nas_ip":            stringFromMap(event.Payload, "nas_ip"),
+			"auth_session_id":   stringFromMap(event.Payload, "session_id"),
 			"src_ip":            stringFromMap(event.Flow, "src_ip"),
 			"dst_ip":            stringFromMap(event.Flow, "dst_ip"),
 			"src_port":          uintFromMap(event.Flow, "src_port"),
@@ -254,7 +266,8 @@ func (s *ClickHouseStore) GetActivityOverview(ctx context.Context, query Activit
 	if err != nil {
 		return ActivityOverview{}, err
 	}
-	return s.GetActivityOverviewWithRisks(ctx, ActivityQuery{SensorID: query.SensorID, Window: window, Limit: query.Limit}, duration, map[string]risk.Snapshot{})
+	query.Window = window
+	return s.GetActivityOverviewWithRisks(ctx, query, duration, map[string]risk.Snapshot{})
 }
 
 func (s *ClickHouseStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {
@@ -339,7 +352,10 @@ func (s *ClickHouseStore) GetActivityOverviewWithRisks(ctx context.Context, quer
 	if windowLabel == "" {
 		windowLabel = "1h"
 	}
-	where := activityWhereSQL(query.SensorID, window)
+	where, err := activityWhereSQL(query.SensorID, query.CampusID, query.AsOf, window)
+	if err != nil {
+		return ActivityOverview{}, err
+	}
 	overview := ActivityOverview{
 		SensorID:           query.SensorID,
 		Window:             windowLabel,
@@ -808,13 +824,24 @@ func eventWhereSQL(query Query) (string, error) {
 	return " WHERE " + strings.Join(clauses, " AND "), nil
 }
 
-func activityWhereSQL(sensorID string, duration time.Duration) string {
+func activityWhereSQL(sensorID, campusID, asOf string, duration time.Duration) (string, error) {
 	intervalValue, intervalUnit := clickHouseInterval(duration)
-	clauses := []string{fmt.Sprintf("timestamp >= now() - INTERVAL %d %s", intervalValue, intervalUnit)}
+	anchor := "now()"
+	if strings.TrimSpace(asOf) != "" {
+		parsed, err := time.Parse(time.RFC3339, asOf)
+		if err != nil {
+			return "", fmt.Errorf("invalid as_of: %w", err)
+		}
+		anchor = "parseDateTime64BestEffort(" + chQuote(parsed.UTC().Format(time.RFC3339Nano)) + ")"
+	}
+	clauses := []string{fmt.Sprintf("timestamp >= %s - INTERVAL %d %s", anchor, intervalValue, intervalUnit), "timestamp <= " + anchor}
 	if sensorID != "" {
 		clauses = append(clauses, "sensor_id = "+chQuote(sensorID))
 	}
-	return strings.Join(clauses, " AND ")
+	if campusID != "" {
+		clauses = append(clauses, "campus_id = "+chQuote(campusID))
+	}
+	return strings.Join(clauses, " AND "), nil
 }
 
 func decodeSingleCount(data []byte) (int, error) {

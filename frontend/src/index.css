@@ -2264,6 +2264,10 @@ pre.wrap-code {
   white-space: nowrap;
 }
 
+.campus-filter {
+  min-width: 160px;
+}
+
 .case-subject-cell {
   display: flex;
   align-items: center;

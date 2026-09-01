@@ -7,11 +7,11 @@ import {
   DatabaseOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
-import { Card, Col, Row, Space, Typography } from 'antd'
+import { Card, Col, Row, Select, Space, Typography } from 'antd'
 
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { EChartsDistributionPie } from '../features/charts/EChartsDistributionPie'
-import { useActivityOverview, useOverview } from '../shared/api/queries'
+import { useActivityOverview, useOrganization, useOverview } from '../shared/api/queries'
 import type { RiskLevel } from '../shared/api/types'
 import {
   AppErrorAlert,
@@ -39,8 +39,10 @@ const levelNames: Record<RiskLevel, string> = {
 
 export function OverviewPage() {
   const [quickWindow, setQuickWindow] = useState<QuickWindow>('1h')
-  const overview = useOverview({ window: quickWindow })
-  const activity = useActivityOverview({ window: quickWindow })
+  const [campusId,setCampusId]=useState('')
+  const organization=useOrganization()
+  const overview = useOverview({ window: quickWindow, campus_id:campusId||undefined })
+  const activity = useActivityOverview({ window: quickWindow, campus_id:campusId||undefined })
 
   if (overview.isLoading) {
     return <AppLoadingState rows={6} />
@@ -66,6 +68,7 @@ export function OverviewPage() {
           void activity.refetch()
         }}
         quickWindow={quickWindow}
+        extra={<Select className="campus-filter" value={campusId} onChange={setCampusId} options={[{value:'',label:'全部校区'},...(organization.data?.campuses??[]).map(item=>({value:item.campus_id,label:item.name}))]} />}
         subtitle="统一窗口内的风险待办、终端活动、数据健康与处置情况"
         title="高校网络风险运营工作台"
       />

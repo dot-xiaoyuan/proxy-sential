@@ -218,6 +218,18 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blockers := []string{}
+	if exception, exceptionErr := s.exceptions.apply(r.Context(), &snapshot, request.CampusID); exceptionErr != nil {
+		writeError(w, 500, "check_campus_exception_failed", exceptionErr.Error())
+		return
+	} else if exception != nil {
+		blockers = append(blockers, "campus_exception_applied")
+	}
+	if activeExceptions, exceptionErr := s.exceptions.list(r.Context(), true); exceptionErr != nil {
+		writeError(w, 500, "check_campus_exception_failed", exceptionErr.Error())
+		return
+	} else if matchEvidenceException(activeExceptions, evidenceItems, request.CampusID) != nil {
+		blockers = appendUnique(blockers, "campus_exception_applied")
+	}
 	if snapshot.Score < 90 {
 		blockers = append(blockers, "risk_score_below_90")
 	}

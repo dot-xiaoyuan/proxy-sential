@@ -55,6 +55,7 @@ type authManager struct {
 	secure   bool
 	now      func() time.Time
 	db       *sql.DB
+	path     string
 }
 
 type loginRequest struct {
@@ -63,7 +64,7 @@ type loginRequest struct {
 }
 
 func newAuthManager(path string, secure bool, postgresDSN string) (*authManager, error) {
-	manager := &authManager{enabled: strings.TrimSpace(path) != "" || strings.TrimSpace(postgresDSN) != "", users: map[string]localUser{}, sessions: map[string]authSession{}, attempts: map[string]loginAttempt{}, secure: secure, now: time.Now}
+	manager := &authManager{enabled: strings.TrimSpace(path) != "" || strings.TrimSpace(postgresDSN) != "", users: map[string]localUser{}, sessions: map[string]authSession{}, attempts: map[string]loginAttempt{}, secure: secure, now: time.Now, path: path}
 	if !manager.enabled {
 		return manager, nil
 	}

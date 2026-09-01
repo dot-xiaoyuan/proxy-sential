@@ -33,6 +33,7 @@ function buildNavItems(session: Session): MenuProps['items'] {
     can(session,'rules:reload') || can(session,'device-fingerprint-library:update') ? {key:'/settings/rules',icon:<SettingOutlined />,label:<NavLink to="/settings/rules">规则与特征库</NavLink>} : null,
     can(session,'organization:read') ? {key:'/settings/organization',icon:<ApartmentOutlined />,label:<NavLink to="/settings/organization">校区与网络区域</NavLink>} : null,
     can(session,'actions:read') ? {key:'/settings/actions',icon:<ControlOutlined />,label:<NavLink to="/settings/actions">处置网关</NavLink>} : null,
+    can(session,'users:manage') ? {key:'/settings/security',icon:<UserOutlined />,label:<NavLink to="/settings/security">权限与校园例外</NavLink>} : null,
   ].filter(Boolean) as MenuProps['items']
   return [
     {key:'/overview',icon:<DashboardOutlined />,label:<NavLink to="/overview">运营工作台</NavLink>},

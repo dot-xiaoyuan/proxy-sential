@@ -66,6 +66,46 @@ paths:
                   fingerprint_offline_mode: { type: boolean }
                   global_read_only: { type: boolean }
                   checked_at: { type: string, format: date-time }
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        "200":
+          description: Local RBAC users.
+          content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/LocalUser" } }, page: { $ref: "#/components/schemas/Page" } } } } }
+        "403": { description: Administrator permission required. }
+    post:
+      operationId: createUser
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UserMutation" } } } }
+      responses:
+        "201": { description: User created., content: { application/json: { schema: { $ref: "#/components/schemas/LocalUser" } } } }
+        "403": { description: Administrator permission required. }
+  /users/{user_id}/{operation}:
+    post:
+      operationId: updateUser
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+        - { name: operation, in: path, required: true, schema: { type: string, enum: [profile, password, disable, enable] } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UserMutation" } } } }
+      responses:
+        "200": { description: User updated., content: { application/json: { schema: { $ref: "#/components/schemas/LocalUser" } } } }
+  /campus-exceptions:
+    get:
+      operationId: listCampusExceptions
+      responses:
+        "200": { description: Versioned campus exception rules., content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/CampusException" } }, page: { $ref: "#/components/schemas/Page" } } } } } }
+    post:
+      operationId: createCampusException
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/CampusException" } } } }
+      responses:
+        "201": { description: Exception created., content: { application/json: { schema: { $ref: "#/components/schemas/CampusException" } } } }
+  /campus-exceptions/{exception_id}/disable:
+    post:
+      operationId: disableCampusException
+      parameters:
+        - { name: exception_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Exception disabled., content: { application/json: { schema: { $ref: "#/components/schemas/CampusException" } } } }
   /cases:
     get:
       operationId: listCases
@@ -223,6 +263,11 @@ paths:
   /overview:
     get:
       operationId: getOverview
+      parameters:
+        - { name: sensor_id, in: query, schema: { type: string } }
+        - { name: campus_id, in: query, schema: { type: string } }
+        - { name: window, in: query, schema: { type: string, enum: [10m, 1h, 24h, 7d], default: 1h } }
+        - { name: as_of, in: query, schema: { type: string, format: date-time } }
       responses:
         "200":
           description: Operations overview.
@@ -244,8 +289,10 @@ paths:
           in: query
           schema:
             type: string
-            enum: [10m, 1h, 24h]
+            enum: [10m, 1h, 24h, 7d]
             default: 1h
+        - { name: campus_id, in: query, schema: { type: string } }
+        - { name: as_of, in: query, schema: { type: string, format: date-time } }
       responses:
         "200":
           description: Aggregated access posture and client feature overview for the observed domain.
@@ -553,8 +600,8 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 200
-            default: 50
+            maximum: 50
+            default: 20
         - name: cursor
           in: query
           schema:
@@ -1535,6 +1582,38 @@ components:
       schema:
         type: string
   schemas:
+    LocalUser:
+      type: object
+      required: [user_id, username, display_name, role, disabled]
+      properties:
+        user_id: { type: string }
+        username: { type: string }
+        display_name: { type: string }
+        role: { type: string, enum: [viewer, reviewer, operator, admin] }
+        disabled: { type: boolean }
+    UserMutation:
+      type: object
+      properties:
+        username: { type: string }
+        display_name: { type: string }
+        role: { type: string, enum: [viewer, reviewer, operator, admin] }
+        password: { type: string, minLength: 12 }
+        disabled: { type: boolean }
+    CampusException:
+      type: object
+      required: [scope_type, scope_value, reason]
+      properties:
+        exception_id: { type: string }
+        scope_type: { type: string, enum: [ip, account, endpoint, campus, domain, cidr] }
+        scope_value: { type: string }
+        campus_id: { type: string }
+        reason: { type: string }
+        ruleset_version: { type: string }
+        valid_from: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        enabled: { type: boolean }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
     Permission:
       type: string
       enum:

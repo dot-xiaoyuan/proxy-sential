@@ -1007,7 +1007,7 @@ func (s *PostgresStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk
 			if _, err := tx.ExecContext(ctx, `
 INSERT INTO subject_risk_snapshots(subject_type, subject_id, account_id, endpoint_id, ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers)
 VALUES($1,$2,$3,$4,NULLIF($5, '')::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULLIF($15, ''),$16,$17)
-ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = EXCLUDED.review_disposition, automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers`,
+ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(subject_risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers`,
 				snapshot.SubjectType, snapshot.SubjectID, snapshot.AccountID, snapshot.EndpointID, snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers); err != nil {
 				return err
 			}
@@ -1024,7 +1024,7 @@ VALUES($1, $2, $3)`, snapshot.SubjectType, snapshot.SubjectID, payload); err != 
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers)
 VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11, ''),$12,$13)
-ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = EXCLUDED.review_disposition, automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers`,
+ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers`,
 			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers); err != nil {
 			return err
 		}
@@ -1751,6 +1751,11 @@ func riskWhere(query Query) (string, []any, error) {
 		}
 		args = append(args, query.To)
 		clauses = append(clauses, "updated_at <= $"+strconvArg(len(args))+"::timestamptz")
+	}
+	if query.CampusID != "" {
+		args = append(args, query.CampusID)
+		position := strconvArg(len(args))
+		clauses = append(clauses, "EXISTS (SELECT 1 FROM account_sessions campus_session WHERE campus_session.ip = risk_snapshots.ip AND campus_session.campus_id = $"+position+" AND campus_session.started_at <= risk_snapshots.updated_at AND (campus_session.ended_at IS NULL OR campus_session.ended_at >= risk_snapshots.updated_at))")
 	}
 	if len(clauses) == 0 {
 		return "", args, nil

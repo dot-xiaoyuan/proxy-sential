@@ -2,19 +2,29 @@
 
 ## 首次启用本地 RBAC
 
-先在服务器本地创建仅 root 可读的管理员文件，密码通过环境变量传入，命令不会覆盖已有用户文件：
+生产模式将用户和会话保存在 PostgreSQL。密码通过环境变量传入，命令不会覆盖已有账号：
 
 ```bash
-install -d -m 0700 /opt/proxy-sentinel/data/auth
 export PROXY_SENTINEL_ADMIN_PASSWORD='请替换为至少 12 位的独立密码'
 /opt/proxy-sentinel/bin/proxy-sentinel control-plane bootstrap-admin \
-  --auth-file /opt/proxy-sentinel/data/auth/users.json \
+  --postgres-dsn "$PROXY_SENTINEL_POSTGRES_DSN" \
   --username admin \
   --name 系统管理员
 unset PROXY_SENTINEL_ADMIN_PASSWORD
 ```
 
-控制面增加 `--auth-file /opt/proxy-sentinel/data/auth/users.json` 后启用登录。生产 HTTPS 入口必须同时启用 `--auth-cookie-secure=true`。全局 `--read-only` 仍是紧急只读熔断，优先级高于角色权限。
+文件用户库仅供显式 `storage-mode=file` 的开发环境使用。生产 HTTPS 入口必须启用 `--auth-cookie-secure=true`。全局 `--read-only` 仍是紧急只读熔断，优先级高于角色权限。
+
+## 风险规则重算
+
+先生成最近七天的新旧规则对比报告，人工确认后再加 `--apply`。应用前会把当前快照归档到历史表，人工结论不会被重算覆盖。
+
+```bash
+proxy-sentinel risk recalculate --postgres-dsn "$PROXY_SENTINEL_POSTGRES_DSN" \
+  --window 168h --ruleset-version university-v2 --output risk-comparison.json
+proxy-sentinel risk recalculate --postgres-dsn "$PROXY_SENTINEL_POSTGRES_DSN" \
+  --window 168h --ruleset-version university-v2 --apply --output risk-applied.json
+```
 
 ## 身份接入凭据与处置主密钥
 

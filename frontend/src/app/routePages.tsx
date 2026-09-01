@@ -32,6 +32,7 @@ const CasesPage = lazy(() => import('../pages/CasesPage').then(module=>({default
 const CaseDetailsPage = lazy(() => import('../pages/CaseDetailsPage').then(module=>({default:module.CaseDetailsPage})))
 const OrganizationPage = lazy(() => import('../pages/OrganizationPage').then(module=>({default:module.OrganizationPage})))
 const ActionsPage = lazy(() => import('../pages/ActionsPage').then(module=>({default:module.ActionsPage})))
+const SecuritySettingsPage = lazy(() => import('../pages/SecuritySettingsPage').then(module=>({default:module.SecuritySettingsPage})))
 
 function RouteSuspense({ children }: { children: ReactNode }) {
   return (
@@ -152,3 +153,4 @@ export function CasesRoute(){return <RouteSuspense><CasesPage/></RouteSuspense>}
 export function CaseDetailsRoute(){return <RouteSuspense><CaseDetailsPage/></RouteSuspense>}
 export function OrganizationRoute(){return <RouteSuspense><OrganizationPage/></RouteSuspense>}
 export function ActionsRoute(){return <RouteSuspense><ActionsPage/></RouteSuspense>}
+export function SecuritySettingsRoute(){return <RouteSuspense><SecuritySettingsPage/></RouteSuspense>}

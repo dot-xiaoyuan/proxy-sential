@@ -23,6 +23,7 @@ type Query struct {
 	Level       string
 	Q           string
 	SensorID    string
+	CampusID    string
 	From        string
 	To          string
 	Window      string
@@ -171,6 +172,8 @@ type ActivityProfile struct {
 
 type ActivityQuery struct {
 	SensorID    string
+	CampusID    string
+	AsOf        string
 	Window      string
 	Limit       int
 	Cursor      int

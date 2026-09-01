@@ -59,6 +59,8 @@ const mockOrganization = {
 
 const mockConnectors = [{ connector_id: 'portal-gateway', name: 'Portal 北向网关', endpoint_url: 'https://portal.example.edu/api/actions', action_mapping: { disconnect: 'kick' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, updated_at: new Date().toISOString() }]
 const mockActions: Array<Record<string, unknown>> = []
+const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管理员',role:'admin',disabled:false},{user_id:'reviewer-1',username:'reviewer',display_name:'风险复核员',role:'reviewer',disabled:false}]
+const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
 
 export const handlers = [
   http.get('/api/v1/session', async () => {
@@ -67,6 +69,12 @@ export const handlers = [
   }),
   http.post('/api/v1/auth/login', () => HttpResponse.json(mockSession)),
   http.post('/api/v1/auth/logout', () => new HttpResponse(null, { status: 204 })),
+  http.get('/api/v1/users', () => HttpResponse.json({items:mockUsers,page:{limit:20,next_cursor:null,total:mockUsers.length}})),
+  http.post('/api/v1/users', async ({request}) => {const payload=await request.json() as Record<string,unknown>;const item={user_id:`user-${Date.now()}`,username:String(payload.username),display_name:String(payload.display_name),role:String(payload.role),disabled:false};mockUsers.push(item);return HttpResponse.json(item,{status:201})}),
+  http.post('/api/v1/users/:userId/:operation', ({params}) => {const item=mockUsers.find(entry=>entry.user_id===params.userId);if(!item)return new HttpResponse(null,{status:404});if(params.operation==='disable')item.disabled=true;if(params.operation==='enable')item.disabled=false;return HttpResponse.json(item)}),
+  http.get('/api/v1/campus-exceptions', () => HttpResponse.json({items:mockCampusExceptions,page:{limit:20,next_cursor:null,total:mockCampusExceptions.length}})),
+  http.post('/api/v1/campus-exceptions', async ({request}) => {const payload=await request.json() as Record<string,unknown>;const item={...payload,exception_id:`exception-${Date.now()}`,enabled:true,created_by:'admin-1',created_at:new Date().toISOString()};mockCampusExceptions.push(item as typeof mockCampusExceptions[number]);return HttpResponse.json(item,{status:201})}),
+  http.post('/api/v1/campus-exceptions/:exceptionId/disable', ({params}) => {const item=mockCampusExceptions.find(entry=>entry.exception_id===params.exceptionId);if(!item)return new HttpResponse(null,{status:404});item.enabled=false;return HttpResponse.json(item)}),
   http.get('/api/v1/cases', ({ request }) => {
     const url = new URL(request.url)
     const result = mockPage(mockCases.filter((item) => !url.searchParams.get('status') || item.status === url.searchParams.get('status')), url)

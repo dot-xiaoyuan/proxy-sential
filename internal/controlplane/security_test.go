@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
@@ -9,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"proxy-sentinel/internal/risk"
 )
 
 func TestBootstrapAdminDoesNotOverwriteExistingCredentials(t *testing.T) {
@@ -18,6 +22,58 @@ func TestBootstrapAdminDoesNotOverwriteExistingCredentials(t *testing.T) {
 	}
 	if err := BootstrapAdmin(path, "other", "其他管理员", "other-password-123"); err == nil {
 		t.Fatal("expected existing auth file to be protected")
+	}
+}
+
+func TestFileUserLifecyclePersistsAndInvalidatesSessions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "users.json")
+	if err := BootstrapAdmin(path, "admin", "管理员", "long-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := newAuthManager(path, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.createUser(context.Background(), userMutation{Username: "reviewer", Name: "复核员", Role: "reviewer", Password: "reviewer-password-123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.login("192.0.2.2:1", "reviewer", "reviewer-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := manager.updateUser(context.Background(), created.ID, "disable", userMutation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Disabled {
+		t.Fatalf("expected disabled user: %#v", updated)
+	}
+	reloaded, err := newAuthManager(path, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := reloaded.listUsers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || !items[1].Disabled {
+		t.Fatalf("user lifecycle was not persisted: %#v", items)
+	}
+}
+
+func TestCampusExceptionDowngradesAssessmentAndBlocksAutomation(t *testing.T) {
+	manager := newExceptionManager(nil)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := manager.save(context.Background(), CampusException{ExceptionID: "exception-1", ScopeType: "ip", ScopeValue: "10.0.0.8", Reason: "校园 WebVPN", RulesetVersion: "v1", ValidFrom: now, Enabled: true, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := risk.Snapshot{IP: "10.0.0.8", AssessmentLevel: "high", AutomationEligible: true}
+	matched, err := manager.apply(context.Background(), &snapshot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched == nil || snapshot.AssessmentLevel != "benign" || snapshot.AutomationEligible {
+		t.Fatalf("exception was not applied: %#v", snapshot)
 	}
 }
 

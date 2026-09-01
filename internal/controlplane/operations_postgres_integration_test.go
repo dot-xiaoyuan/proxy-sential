@@ -85,3 +85,44 @@ func TestPostgresAuthenticationSessionWorksAcrossInstances(t *testing.T) {
 		t.Fatalf("session was not restored across instances: %#v", restored)
 	}
 }
+
+func TestPostgresUserLifecyclePersists(t *testing.T) {
+	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("PROXY_SENTINEL_TEST_POSTGRES_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := store.ApplyPostgresMigrations(ctx, dsn, "../../migrations/postgres"); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := newAuthManager("", false, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	username := "reviewer-" + shortToken(5)
+	created, err := manager.createUser(ctx, userMutation{Username: username, Name: "数据库复核员", Role: "reviewer", Password: "reviewer-password-123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.updateUser(ctx, created.ID, "disable", userMutation{}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := newAuthManager("", false, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := second.listUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range items {
+		if item.ID == created.ID {
+			found = item.Disabled
+		}
+	}
+	if !found {
+		t.Fatalf("disabled PostgreSQL user was not persisted: %#v", items)
+	}
+}

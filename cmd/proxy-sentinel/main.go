@@ -343,9 +343,48 @@ func runRisk(args []string) error {
 		return runRiskBatch(args[1:])
 	case "list":
 		return runRiskList(args[1:])
+	case "recalculate":
+		return runRiskRecalculate(args[1:])
 	default:
 		return fmt.Errorf("unknown risk command: %s", args[0])
 	}
+}
+
+func runRiskRecalculate(args []string) error {
+	fs := flag.NewFlagSet("risk recalculate", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN")
+	window := fs.Duration("window", 7*24*time.Hour, "evidence window to recalculate")
+	rulesetVersion := fs.String("ruleset-version", "university-v2", "new risk ruleset version")
+	apply := fs.Bool("apply", false, "persist recalculated snapshots after archiving the current snapshots")
+	output := fs.String("output", "-", "comparison report path or - for stdout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *postgresDSN == "" {
+		return fmt.Errorf("--postgres-dsn is required")
+	}
+	postgres, err := store.NewPostgresStore(store.PostgresOptions{DSN: *postgresDSN})
+	if err != nil {
+		return err
+	}
+	defer postgres.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	report, err := postgres.RecalculateRisks(ctx, *window, *rulesetVersion, *apply)
+	if err != nil {
+		return err
+	}
+	file, closeOutput, err := openOutput(*output)
+	if err != nil {
+		return err
+	}
+	defer closeOutput()
+	if err := writeJSON(file, report); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "risk recalculate: evidence=%d snapshots=%d changed=%d applied=%t\n", report.EvidenceCount, report.RecalculatedCount, report.ChangedCount, report.Applied)
+	return nil
 }
 
 func runRiskInspect(args []string) error {

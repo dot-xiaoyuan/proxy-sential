@@ -54,6 +54,9 @@ import type {
 	ActionConnector,
 	EnforcementAction,
 	Page,
+	LocalUser,
+	UserMutation,
+	CampusException,
 } from './types'
 
 export class ApiError extends Error {
@@ -197,4 +200,10 @@ export const api = {
   executeAction: (payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number},idempotencyKey:string) => request<EnforcementAction>('/actions/execute',{method:'POST',headers:{'Idempotency-Key':idempotencyKey},body:JSON.stringify(payload)}),
   revokeAction: (actionId:string) => request<EnforcementAction>(`/actions/${encodeURIComponent(actionId)}/revoke`,{method:'POST'}),
   emergencyStop: (enabled:boolean) => request<{global_stop:boolean}>('/actions/emergency-stop',{method:'POST',body:JSON.stringify({enabled})}),
+  users: () => request<{items:LocalUser[];page:Page}>('/users'),
+  createUser: (payload:UserMutation) => request<LocalUser>('/users',{method:'POST',body:JSON.stringify(payload)}),
+  updateUser: (userId:string,operation:'profile'|'password'|'disable'|'enable',payload:UserMutation={}) => request<LocalUser>(`/users/${encodeURIComponent(userId)}/${operation}`,{method:'POST',body:JSON.stringify(payload)}),
+  campusExceptions: () => request<{items:CampusException[];page:Page}>('/campus-exceptions'),
+  createCampusException: (payload:CampusException) => request<CampusException>('/campus-exceptions',{method:'POST',body:JSON.stringify(payload)}),
+  disableCampusException: (exceptionId:string) => request<CampusException>(`/campus-exceptions/${encodeURIComponent(exceptionId)}/disable`,{method:'POST',body:'{}'}),
 }

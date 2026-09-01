@@ -39,6 +39,9 @@ export type Organization = {
 }
 export type ActionConnector = { connector_id: string; name: string; endpoint_url: string; action_mapping: Record<string,string>; mode: 'shadow'|'active'; enabled: boolean; shadow_ready: boolean; updated_at: string }
 export type EnforcementAction = { action_id:string; idempotency_key:string; case_id?:string; connector_id:string; action_type:string; subject_id:string; ip?:string; account_id?:string; endpoint_id?:string; campus_id?:string; status:string; mode:string; blockers?:string[]; last_error?:string; created_at:string; updated_at:string }
+export type LocalUser = components['schemas']['LocalUser']
+export type UserMutation = components['schemas']['UserMutation']
+export type CampusException = components['schemas']['CampusException']
 export type RiskLevel = components['schemas']['RiskLevel']
 export type RecommendedAction = components['schemas']['RecommendedAction']
 export type RiskSnapshot = components['schemas']['RiskSnapshot'] & { assessment_level?: RiskLevel; review_disposition?: string; automation_eligible?: boolean; automation_blockers?: string[] }
@@ -105,6 +108,8 @@ export type RiskQuery = {
   level?: RiskLevel
   q?: string
   sensor_id?: string
+  campus_id?: string
+  as_of?: string
   from?: string
   to?: string
   limit?: number
@@ -135,6 +140,8 @@ export type EventQuery = {
 
 export type ActivityOverviewQuery = {
   sensor_id?: string
+  campus_id?: string
+  as_of?: string
   window?: '10m' | '1h' | '24h' | '7d'
 }
 

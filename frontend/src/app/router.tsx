@@ -21,6 +21,7 @@ import {
 	CaseDetailsRoute,
 	OrganizationRoute,
 	ActionsRoute,
+	SecuritySettingsRoute,
 } from './routePages'
 
 export const router = createBrowserRouter([
@@ -50,6 +51,7 @@ export const router = createBrowserRouter([
       { path: 'settings/rules', element: <RulesRoute /> },
 	  { path: 'settings/organization', element: <OrganizationRoute /> },
 	  { path: 'settings/actions', element: <ActionsRoute /> },
+	  { path: 'settings/security', element: <SecuritySettingsRoute /> },
     ],
   },
 ])

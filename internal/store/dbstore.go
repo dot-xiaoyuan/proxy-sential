@@ -129,7 +129,8 @@ func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) 
 	if err != nil {
 		return ActivityOverview{}, err
 	}
-	return s.ch.GetActivityOverviewWithRisks(ctx, ActivityQuery{SensorID: query.SensorID, Window: window, Limit: query.Limit}, duration, risks)
+	query.Window = window
+	return s.ch.GetActivityOverviewWithRisks(ctx, query, duration, risks)
 }
 
 func (s *DBStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (ProxyReviewResponse, error) {
