@@ -16,6 +16,7 @@ import (
 	"proxy-sentinel/internal/controlplane"
 	"proxy-sentinel/internal/evaluation"
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/replay"
 	"proxy-sentinel/internal/risk"
@@ -55,10 +56,75 @@ func run(args []string) error {
 		return runEvaluate(args[1:])
 	case "backfill":
 		return runBackfill(args[1:])
+	case "device-fingerprint":
+		return runDeviceFingerprint(args[1:])
 	case "-h", "--help", "help":
 		return usageError()
 	default:
 		return fmt.Errorf("unknown command: %s", args[0])
+	}
+}
+
+func runDeviceFingerprint(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: proxy-sentinel device-fingerprint <build|verify|install>")
+	}
+	switch args[0] {
+	case "build":
+		fs := flag.NewFlagSet("device-fingerprint build", flag.ContinueOnError)
+		output := fs.String("output", "", "output .tar.gz bundle")
+		uapSHA := fs.String("uap-sha", "", "optional pinned uap-core commit SHA")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *output == "" {
+			return fmt.Errorf("--output is required")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		manifest, err := fingerprint.BuildOfflineBundle(ctx, *output, fingerprint.BuildOptions{UAPSHA: *uapSHA})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "device fingerprint bundle built: version=%s output=%s\n", manifest.Version, *output)
+		return nil
+	case "verify":
+		fs := flag.NewFlagSet("device-fingerprint verify", flag.ContinueOnError)
+		bundlePath := fs.String("bundle", "", "bundle path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *bundlePath == "" {
+			return fmt.Errorf("--bundle is required")
+		}
+		bundle, err := fingerprint.VerifyBundleFile(*bundlePath)
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, bundle.Manifest)
+	case "install":
+		fs := flag.NewFlagSet("device-fingerprint install", flag.ContinueOnError)
+		bundlePath := fs.String("bundle", "", "bundle path")
+		dir := fs.String("dir", "", "target fingerprint directory")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *bundlePath == "" || *dir == "" {
+			return fmt.Errorf("--bundle and --dir are required")
+		}
+		data, err := os.ReadFile(*bundlePath)
+		if err != nil {
+			return err
+		}
+		manager := fingerprint.NewManager(*dir)
+		manager.SetOffline(true)
+		status, err := manager.Import(data)
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, status)
+	default:
+		return fmt.Errorf("unknown device-fingerprint command: %s", args[0])
 	}
 }
 
@@ -417,9 +483,35 @@ func runControlPlane(args []string) error {
 	switch args[0] {
 	case "serve":
 		return runControlPlaneServe(args[1:])
+	case "bootstrap-admin":
+		return runBootstrapAdmin(args[1:])
 	default:
 		return fmt.Errorf("unknown control-plane command: %s", args[0])
 	}
+}
+
+func runBootstrapAdmin(args []string) error {
+	fs := flag.NewFlagSet("control-plane bootstrap-admin", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	authFile := fs.String("auth-file", "", "local authentication file")
+	username := fs.String("username", "admin", "administrator username")
+	name := fs.String("name", "系统管理员", "administrator display name")
+	passwordEnv := fs.String("password-env", "PROXY_SENTINEL_ADMIN_PASSWORD", "environment variable containing the initial password")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *authFile == "" {
+		return fmt.Errorf("--auth-file is required")
+	}
+	password := os.Getenv(*passwordEnv)
+	if password == "" {
+		return fmt.Errorf("%s must contain the initial password", *passwordEnv)
+	}
+	if err := controlplane.BootstrapAdmin(*authFile, *username, *name, password); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "local administrator created: username=%s auth_file=%s\n", *username, *authFile)
+	return nil
 }
 
 func runValidate(args []string) error {
@@ -616,22 +708,36 @@ func runControlPlaneServe(args []string) error {
 	clickHouseDSN := fs.String("clickhouse-dsn", "", "ClickHouse HTTP URL for production event and diagnostic storage")
 	eventRetention := fs.Duration("event-retention", 7*24*time.Hour, "normalized event retention target, documented for DB deployments")
 	diagnosticRetention := fs.Duration("diagnostic-retention", 30*24*time.Hour, "diagnostic retention target, documented for DB deployments")
+	fingerprintDir := fs.String("device-fingerprint-dir", "/opt/proxy-sentinel/data/device-fingerprints", "device fingerprint library directory")
+	fingerprintAutoUpdate := fs.Bool("device-fingerprint-auto-update", false, "check device fingerprint sources weekly (disabled for offline deployments)")
+	authFile := fs.String("auth-file", "", "local RBAC user file; empty preserves legacy fixed session")
+	authCookieSecure := fs.Bool("auth-cookie-secure", false, "send the session cookie only over HTTPS")
+	identityIngestKey := fs.String("identity-ingest-key", os.Getenv("PROXY_SENTINEL_IDENTITY_INGEST_KEY"), "bearer token for RADIUS/Portal identity event batches (defaults to PROXY_SENTINEL_IDENTITY_INGEST_KEY)")
+	operationsFile := fs.String("operations-file", "", "persistent cases, organization and action state file")
+	actionMasterKey := fs.String("action-master-key", os.Getenv("PROXY_SENTINEL_ACTION_MASTER_KEY"), "base secret used to encrypt northbound connector credentials (defaults to PROXY_SENTINEL_ACTION_MASTER_KEY)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "control-plane: addr=%s shadow_dir=%s sensor_id=%s storage_mode=%s read_only=%t event_retention=%s diagnostic_retention=%s\n", *addr, *shadowDir, *sensorID, *storageMode, *readOnly, eventRetention.String(), diagnosticRetention.String())
 	return controlplane.Serve(controlplane.Options{
-		Addr:          *addr,
-		ShadowDir:     *shadowDir,
-		SensorID:      *sensorID,
-		FrontendDir:   *frontendDir,
-		ReadOnly:      *readOnly,
-		StorageMode:   *storageMode,
-		PostgresDSN:   *postgresDSN,
-		ClickHouseDSN: *clickHouseDSN,
-		CollectorKind: "suricata",
-		InterfaceName: "ens1f1",
+		Addr:                  *addr,
+		ShadowDir:             *shadowDir,
+		SensorID:              *sensorID,
+		FrontendDir:           *frontendDir,
+		ReadOnly:              *readOnly,
+		StorageMode:           *storageMode,
+		PostgresDSN:           *postgresDSN,
+		ClickHouseDSN:         *clickHouseDSN,
+		CollectorKind:         "suricata",
+		InterfaceName:         "ens1f1",
+		FingerprintDir:        *fingerprintDir,
+		FingerprintAutoUpdate: *fingerprintAutoUpdate,
+		AuthFile:              *authFile,
+		AuthCookieSecure:      *authCookieSecure,
+		IdentityIngestKey:     *identityIngestKey,
+		OperationsFile:        *operationsFile,
+		ActionMasterKey:       *actionMasterKey,
 	})
 }
 

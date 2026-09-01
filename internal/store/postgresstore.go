@@ -152,7 +152,8 @@ func (s *PostgresStore) ListRisks(ctx context.Context, query Query) (RiskPage, e
 		return RiskPage{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
+SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers
 FROM risk_snapshots`+where+`
 ORDER BY
   CASE level WHEN 'confirmed' THEN 3 WHEN 'high' THEN 2 WHEN 'suspicious' THEN 1 ELSE 0 END DESC,
@@ -190,7 +191,8 @@ ORDER BY
 
 func (s *PostgresStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
+SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers
 FROM risk_snapshots WHERE ip = $1::inet`, ip)
 	if err != nil {
 		return risk.Snapshot{}, err
@@ -208,7 +210,8 @@ FROM risk_snapshots WHERE ip = $1::inet`, ip)
 
 func (s *PostgresStore) RiskSnapshotMap(ctx context.Context) (map[string]risk.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at
+SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers
 FROM risk_snapshots`)
 	if err != nil {
 		return nil, err
@@ -734,6 +737,15 @@ FROM audit_logs ORDER BY created_at DESC LIMIT $1`, limit)
 	return logs, rows.Err()
 }
 
+func (s *PostgresStore) AppendAuditLog(ctx context.Context, item AuditLog) error {
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO audit_logs(audit_id, actor, action, target, outcome, created_at)
+VALUES($1,$2,$3,$4,$5,$6)
+ON CONFLICT(audit_id) DO UPDATE SET outcome=EXCLUDED.outcome`,
+		item.AuditID, item.Actor, item.Action, item.Target, item.Outcome, item.CreatedAt)
+	return err
+}
+
 func (s *PostgresStore) CreateLabel(ctx context.Context, label Label) (Label, error) {
 	if label.CreatedAt == "" {
 		label.CreatedAt = NowRFC3339()
@@ -981,13 +993,14 @@ func (s *PostgresStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk
 	defer tx.Rollback()
 	for _, snapshot := range snapshots {
 		evidenceIDs, _ := json.Marshal(snapshot.EvidenceIDs)
+		automationBlockers, _ := json.Marshal(snapshot.AutomationBlockers)
 		payload, _ := json.Marshal(snapshot)
 		if snapshot.SubjectType != "" && snapshot.SubjectType != "ip" {
 			if _, err := tx.ExecContext(ctx, `
-INSERT INTO subject_risk_snapshots(subject_type, subject_id, account_id, endpoint_id, ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at)
-VALUES($1,$2,$3,$4,NULLIF($5, '')::inet,$6,$7,$8,$9,$10,$11,$12,$13)
-ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at`,
-				snapshot.SubjectType, snapshot.SubjectID, snapshot.AccountID, snapshot.EndpointID, snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt); err != nil {
+INSERT INTO subject_risk_snapshots(subject_type, subject_id, account_id, endpoint_id, ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers)
+VALUES($1,$2,$3,$4,NULLIF($5, '')::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULLIF($15, ''),$16,$17)
+ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = EXCLUDED.review_disposition, automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers`,
+				snapshot.SubjectType, snapshot.SubjectID, snapshot.AccountID, snapshot.EndpointID, snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `
@@ -1001,10 +1014,10 @@ VALUES($1, $2, $3)`, snapshot.SubjectType, snapshot.SubjectID, payload); err != 
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at)
-VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9)
-ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at`,
-			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt); err != nil {
+INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers)
+VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11, ''),$12,$13)
+ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = EXCLUDED.review_disposition, automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers`,
+			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO risk_snapshot_history(ip, snapshot) VALUES($1::inet, $2)`, snapshot.IP, payload); err != nil {
@@ -1030,7 +1043,11 @@ ON CONFLICT(sensor_id) DO UPDATE SET collector_kind = EXCLUDED.collector_kind, c
 		run.SensorID, s.collectorKind, s.collectorVer, s.interfaceName); err != nil {
 		return err
 	}
-	if err := writeIdentityState(ctx, tx, BuildIdentityState(events)); err != nil {
+	identityState := BuildIdentityState(events)
+	if err := writeIdentityState(ctx, tx, identityState); err != nil {
+		return err
+	}
+	if err := writeEndpointDeviceProfiles(ctx, tx, identityState); err != nil {
 		return err
 	}
 	riskMap := riskSnapshotMap(snapshots)
@@ -1064,10 +1081,83 @@ func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normal
 		return err
 	}
 	defer tx.Rollback()
-	if err := writeIdentityState(ctx, tx, BuildIdentityState(events)); err != nil {
+	identityState := BuildIdentityState(events)
+	if err := writeIdentityState(ctx, tx, identityState); err != nil {
+		return err
+	}
+	if err := writeEndpointDeviceProfiles(ctx, tx, identityState); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func writeEndpointDeviceProfiles(ctx context.Context, tx *sql.Tx, state IdentityState) error {
+	for _, item := range BuildEndpointDeviceInventories(state, Query{}) {
+		if err := upsertEndpointDeviceProfile(ctx, tx, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func upsertEndpointDeviceProfile(ctx context.Context, tx *sql.Tx, item EndpointDeviceInventory) error {
+	evidence, _ := json.Marshal(map[string]any{
+		"summary":        item.Summary,
+		"source":         item.RecognitionSource,
+		"randomized_mac": item.RandomizedMAC,
+	})
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO endpoint_device_profiles(endpoint_id, vendor, brand, model, device_type, os_family, recognition_confidence, recognition_source, fingerprint_version, randomized_mac, recognition_conflict, evidence_summary)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ON CONFLICT(endpoint_id) DO UPDATE SET
+  vendor = EXCLUDED.vendor,
+  brand = EXCLUDED.brand,
+  model = EXCLUDED.model,
+  device_type = EXCLUDED.device_type,
+  os_family = EXCLUDED.os_family,
+  recognition_confidence = EXCLUDED.recognition_confidence,
+  recognition_source = EXCLUDED.recognition_source,
+  fingerprint_version = EXCLUDED.fingerprint_version,
+  randomized_mac = EXCLUDED.randomized_mac,
+  recognition_conflict = EXCLUDED.recognition_conflict,
+  evidence_summary = EXCLUDED.evidence_summary,
+  updated_at = now()`,
+		item.EndpointID, item.Vendor, item.Brand, item.Model, item.DeviceType, item.OSFamily,
+		item.RecognitionConfidence, item.RecognitionSource, item.FingerprintVersion, item.RandomizedMAC, item.RecognitionConflict, evidence)
+	return err
+}
+
+func (s *PostgresStore) RebuildDeviceProfiles(ctx context.Context, batchSize int) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	processed := 0
+	for cursor := 0; ; cursor += batchSize {
+		page, err := s.ListEndpointDevices(ctx, Query{Limit: batchSize, Cursor: cursor})
+		if err != nil {
+			return processed, err
+		}
+		if len(page.Items) == 0 {
+			return processed, nil
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return processed, err
+		}
+		for _, item := range page.Items {
+			if err := upsertEndpointDeviceProfile(ctx, tx, item); err != nil {
+				tx.Rollback()
+				return processed, err
+			}
+			processed++
+		}
+		if err := tx.Commit(); err != nil {
+			return processed, err
+		}
+		if page.Page.NextCursor == nil {
+			return processed, nil
+		}
+	}
 }
 
 func writeIdentityState(ctx context.Context, tx *sql.Tx, state IdentityState) error {
@@ -1665,11 +1755,13 @@ func scanRiskRows(rows *sql.Rows) ([]risk.Snapshot, error) {
 	for rows.Next() {
 		var item risk.Snapshot
 		var evidenceIDs []byte
+		var automationBlockers []byte
 		var updated time.Time
-		if err := rows.Scan(&item.IP, &item.Score, &item.Level, &item.Confidence, &item.Window, &evidenceIDs, &item.Summary, &item.RecommendedAction, &updated); err != nil {
+		if err := rows.Scan(&item.IP, &item.Score, &item.Level, &item.Confidence, &item.Window, &evidenceIDs, &item.Summary, &item.RecommendedAction, &updated, &item.AssessmentLevel, &item.ReviewDisposition, &item.AutomationEligible, &automationBlockers); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(evidenceIDs, &item.EvidenceIDs)
+		_ = json.Unmarshal(automationBlockers, &item.AutomationBlockers)
 		item.UpdatedAt = updated.Format(time.RFC3339Nano)
 		items = append(items, item)
 	}

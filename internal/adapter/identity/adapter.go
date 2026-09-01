@@ -171,6 +171,11 @@ func convertRecord(fields map[string]string, lineOffset int, opts Options) (norm
 	if accessID != "" {
 		subject["access_id"] = accessID
 	}
+	for _, key := range []string{"person_type", "department", "campus_id", "building_id"} {
+		if value := first(fields, key); value != "" {
+			subject[key] = value
+		}
+	}
 
 	payload := map[string]any{
 		"origin": source,
@@ -187,6 +192,9 @@ func convertRecord(fields map[string]string, lineOffset int, opts Options) (norm
 	copyPayload(payload, fields, "session_id", "session_id")
 	copyPayload(payload, fields, "auth_mac", "auth_mac")
 	copyPayload(payload, fields, "observed_mac", "observed_mac")
+	for _, key := range []string{"person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type"} {
+		copyPayload(payload, fields, key, key)
+	}
 
 	observer := map[string]any{}
 	if opts.SensorID != "" {

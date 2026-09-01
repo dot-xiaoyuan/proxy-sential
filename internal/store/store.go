@@ -113,6 +113,18 @@ type AuditLog struct {
 	CreatedAt string
 }
 
+type AuditAppender interface {
+	AppendAuditLog(ctx context.Context, item AuditLog) error
+}
+
+type DeviceProfileBackfiller interface {
+	RebuildDeviceProfiles(ctx context.Context, batchSize int) (int, error)
+}
+
+type IdentityEventIngester interface {
+	IngestIdentityEvents(ctx context.Context, events []normalized.Event) error
+}
+
 type Label struct {
 	LabelID     string   `json:"label_id"`
 	TargetType  string   `json:"target_type"`
@@ -158,9 +170,13 @@ type ActivityProfile struct {
 }
 
 type ActivityQuery struct {
-	SensorID string
-	Window   string
-	Limit    int
+	SensorID    string
+	Window      string
+	Limit       int
+	Cursor      int
+	Q           string
+	View        string
+	SampleLimit int
 }
 
 type ActivityOverview struct {
@@ -170,6 +186,7 @@ type ActivityOverview struct {
 	ActiveIPCount      int                 `json:"active_ip_count"`
 	AccessObjectCount  int                 `json:"access_object_count"`
 	ActiveRiskIPCount  int                 `json:"active_risk_ip_count"`
+	RiskLevelCounts    map[string]int      `json:"risk_level_counts"`
 	FirstSeen          string              `json:"first_seen,omitempty"`
 	LastSeen           string              `json:"last_seen,omitempty"`
 	EventTypeCounts    []ActivityCount     `json:"event_type_counts"`
@@ -223,6 +240,7 @@ type ProxyReviewResponse struct {
 	DestinationCount    int               `json:"destination_count"`
 	HighConfidenceCount int               `json:"high_confidence_count"`
 	Items               []ProxyReviewCase `json:"items"`
+	Page                Page              `json:"page"`
 }
 
 type ProxyReviewCase struct {
@@ -415,25 +433,36 @@ type IPDeviceInventory struct {
 }
 
 type EndpointDeviceInventory struct {
-	EndpointID         string   `json:"endpoint_id"`
-	PrimaryMAC         string   `json:"primary_mac,omitempty"`
-	EntityRole         string   `json:"entity_role"`
-	RegistrationStatus string   `json:"registration_status"`
-	OwnerAccount       string   `json:"owner_account,omitempty"`
-	OwnerName          string   `json:"owner_name,omitempty"`
-	OwnerDepartment    string   `json:"owner_department,omitempty"`
-	AssetTag           string   `json:"asset_tag,omitempty"`
-	MergeStatus        string   `json:"merge_status"`
-	CurrentAccount     string   `json:"current_account,omitempty"`
-	CurrentIP          string   `json:"current_ip,omitempty"`
-	CurrentAccessID    string   `json:"current_access_id,omitempty"`
-	Accounts           []string `json:"accounts"`
-	IPs                []string `json:"ips"`
-	AccessIDs          []string `json:"access_ids"`
-	FirstSeen          string   `json:"first_seen,omitempty"`
-	LastSeen           string   `json:"last_seen,omitempty"`
-	IdentityConfidence float64  `json:"identity_confidence"`
-	Summary            string   `json:"summary"`
+	EndpointID            string   `json:"endpoint_id"`
+	PrimaryMAC            string   `json:"primary_mac,omitempty"`
+	EntityRole            string   `json:"entity_role"`
+	RegistrationStatus    string   `json:"registration_status"`
+	OwnerAccount          string   `json:"owner_account,omitempty"`
+	OwnerName             string   `json:"owner_name,omitempty"`
+	OwnerDepartment       string   `json:"owner_department,omitempty"`
+	AssetTag              string   `json:"asset_tag,omitempty"`
+	MergeStatus           string   `json:"merge_status"`
+	CurrentAccount        string   `json:"current_account,omitempty"`
+	CurrentIP             string   `json:"current_ip,omitempty"`
+	CurrentAccessID       string   `json:"current_access_id,omitempty"`
+	Accounts              []string `json:"accounts"`
+	IPs                   []string `json:"ips"`
+	AccessIDs             []string `json:"access_ids"`
+	FirstSeen             string   `json:"first_seen,omitempty"`
+	LastSeen              string   `json:"last_seen,omitempty"`
+	IdentityConfidence    float64  `json:"identity_confidence"`
+	Vendor                string   `json:"vendor,omitempty"`
+	Brand                 string   `json:"brand,omitempty"`
+	Model                 string   `json:"model,omitempty"`
+	DeviceType            string   `json:"device_type,omitempty"`
+	OSFamily              string   `json:"os_family,omitempty"`
+	RecognitionConfidence float64  `json:"recognition_confidence"`
+	RecognitionSource     string   `json:"recognition_source,omitempty"`
+	FingerprintVersion    string   `json:"fingerprint_version,omitempty"`
+	RandomizedMAC         bool     `json:"randomized_mac"`
+	RecognitionConflict   bool     `json:"recognition_conflict"`
+	RecognitionEvidence   []string `json:"recognition_evidence,omitempty"`
+	Summary               string   `json:"summary"`
 }
 
 type Reader interface {

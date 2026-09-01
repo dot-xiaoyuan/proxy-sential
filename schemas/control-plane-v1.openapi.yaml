@@ -6,6 +6,30 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated session with a CSRF token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          description: Invalid credentials or rate limit reached.
+  /auth/logout:
+    post:
+      operationId: logout
+      responses:
+        "204":
+          description: Session deleted.
   /session:
     get:
       operationId: getSession
@@ -18,6 +42,160 @@ paths:
                 $ref: "#/components/schemas/Session"
         "500":
           $ref: "#/components/responses/InternalError"
+  /cases:
+    get:
+      operationId: listCases
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: assignee_id, in: query, schema: { type: string } }
+        - { name: campus_id, in: query, schema: { type: string } }
+        - { name: window, in: query, schema: { type: string, enum: [24h, 7d] } }
+      responses:
+        "200":
+          description: Paginated operational risk cases.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskCaseListResponse"
+  /cases/{case_id}:
+    get:
+      operationId: getCase
+      parameters:
+        - { name: case_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Case with immutable evidence snapshot and timeline.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskCase"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /cases/{case_id}/{operation}:
+    post:
+      operationId: updateCase
+      parameters:
+        - { name: case_id, in: path, required: true, schema: { type: string } }
+        - { name: operation, in: path, required: true, schema: { type: string, enum: [assign, status, disposition, comments] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Updated case.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RiskCase"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /organization:
+    get:
+      operationId: getOrganization
+      responses:
+        "200":
+          description: Campus, building, network-zone and access-point mappings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+  /actions/connectors:
+    get:
+      operationId: listActionConnectors
+      responses:
+        "200":
+          description: Northbound connectors without credential material.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, global_stop]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ActionConnector" } }
+                  global_stop: { type: boolean }
+    post:
+      operationId: saveActionConnector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Connector saved; secret is never returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionConnector" }
+  /actions:
+    get:
+      operationId: listActions
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Paginated enforcement actions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/EnforcementAction" } }
+                  page: { $ref: "#/components/schemas/Page" }
+  /actions/execute:
+    post:
+      operationId: executeAction
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "202":
+          description: Action persisted before asynchronous delivery.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnforcementAction" }
+  /actions/{action_id}/revoke:
+    post:
+      operationId: revokeAction
+      parameters:
+        - { name: action_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: Revocation accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnforcementAction" }
+  /integrations/identity/events:
+    post:
+      operationId: ingestIdentityEvents
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      security:
+        - IdentityBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "202":
+          description: Identity batch normalized and accepted.
+  /integrations/identity/status:
+    get:
+      operationId: getIdentityIngestStatus
+      responses:
+        "200":
+          description: Recent identity batches and data freshness.
   /overview:
     get:
       operationId: getOverview
@@ -74,8 +252,22 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 100000
-            default: 50000
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: view
+          in: query
+          schema:
+            type: string
+            enum: [summary, full]
+            default: summary
       responses:
         "200":
           description: Account and endpoint scoped proxy/VPN review cases aggregated from normalized TLS, QUIC, and alert events.
@@ -87,6 +279,30 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /proxy-reviews/{case_id}:
+    get:
+      operationId: getProxyReview
+      parameters:
+        - name: case_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d]
+            default: 7d
+      responses:
+        "200":
+          description: Full proxy review case.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyReviewCase"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /dpi/overview:
     get:
       operationId: getDpiOverview
@@ -821,6 +1037,16 @@ paths:
   /ingest/runs:
     get:
       operationId: listIngestRuns
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
       responses:
         "200":
           description: Collector and risk analysis runs.
@@ -828,12 +1054,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [runs]
+                required: [runs, page]
                 properties:
                   runs:
                     type: array
                     items:
                       $ref: "#/components/schemas/ShadowRun"
+                  page:
+                    $ref: "#/components/schemas/Page"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
   /ingest/diagnostics:
@@ -845,8 +1075,14 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 200
-            default: 50
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
       responses:
         "200":
           description: Collector diagnostics and normalization statistics.
@@ -854,16 +1090,35 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [diagnostics]
+                required: [diagnostics, page]
                 properties:
                   diagnostics:
                     type: array
                     items:
                       $ref: "#/components/schemas/IngestDiagnostic"
+                  page:
+                    $ref: "#/components/schemas/Page"
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /ingest/diagnostics/{diagnostic_id}:
+    get:
+      operationId: getIngestDiagnostic
+      parameters:
+        - name: diagnostic_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Full ingest diagnostic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestDiagnostic"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /ingest/event-types:
     get:
       operationId: listIngestEventTypes
@@ -891,8 +1146,14 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 200
-            default: 50
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
       responses:
         "200":
           description: Warning or error diagnostics.
@@ -900,12 +1161,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [diagnostics]
+                required: [diagnostics, page]
                 properties:
                   diagnostics:
                     type: array
                     items:
                       $ref: "#/components/schemas/IngestDiagnostic"
+                  page:
+                    $ref: "#/components/schemas/Page"
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
@@ -933,6 +1196,16 @@ paths:
   /shadow/runs:
     get:
       operationId: listShadowRuns
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
       responses:
         "200":
           description: Shadow mode run summaries.
@@ -940,14 +1213,33 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [runs]
+                required: [runs, page]
                 properties:
                   runs:
                     type: array
                     items:
                       $ref: "#/components/schemas/ShadowRun"
+                  page:
+                    $ref: "#/components/schemas/Page"
         "500":
           $ref: "#/components/responses/InternalError"
+  /shadow/runs/{run_id}:
+    get:
+      operationId: getShadowRun
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Full shadow run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShadowRun"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /shadow/evaluation:
     get:
       operationId: getShadowEvaluation
@@ -971,8 +1263,14 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 200
-            default: 50
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
       responses:
         "200":
           description: Audit log entries.
@@ -980,16 +1278,99 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [logs]
+                required: [logs, page]
                 properties:
                   logs:
                     type: array
                     items:
                       $ref: "#/components/schemas/AuditLog"
+                  page:
+                    $ref: "#/components/schemas/Page"
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /audit-logs/{audit_id}:
+    get:
+      operationId: getAuditLog
+      parameters:
+        - name: audit_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Full audit log entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLog"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /device-fingerprint-library:
+    get:
+      operationId: getDeviceFingerprintLibrary
+      responses:
+        "200":
+          description: Active device fingerprint library status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceFingerprintLibraryStatus"
+  /device-fingerprint-library/update:
+    post:
+      operationId: updateDeviceFingerprintLibrary
+      responses:
+        "200":
+          description: Updated device fingerprint library status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceFingerprintLibraryStatus"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Offline deployments require bundle import.
+  /device-fingerprint-library/validate:
+    post:
+      operationId: validateDeviceFingerprintBundle
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [bundle]
+              properties:
+                bundle: { type: string, format: binary }
+      responses:
+        "200":
+          description: Validated bundle manifest.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceFingerprintBundleManifest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { description: Bundle validation failed. }
+  /device-fingerprint-library/import:
+    post:
+      operationId: importDeviceFingerprintBundle
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [bundle]
+              properties:
+                bundle: { type: string, format: binary }
+      responses:
+        "200":
+          description: Imported and activated library status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceFingerprintLibraryStatus" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { description: Bundle validation failed. }
   /rules/reload:
     post:
       operationId: reloadRules
@@ -1003,6 +1384,11 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 components:
+  securitySchemes:
+    IdentityBearer:
+      type: http
+      scheme: bearer
+      description: Dedicated RADIUS/Portal integration credential; never a user session token.
   responses:
     BadRequest:
       description: Invalid request.
@@ -1138,9 +1524,89 @@ components:
         - rules:reload
         - ingest:read
         - dpi:read
+        - device-fingerprint-library:update
+        - cases:read
+        - cases:write
+        - identity:read
+        - organization:read
+        - organization:write
+        - actions:read
+        - actions:execute
+        - actions:revoke
+        - integrations:write
+        - users:manage
+    Page:
+      type: object
+      required: [limit, next_cursor, total]
+      properties:
+        limit:
+          type: integer
+        next_cursor:
+          type:
+            - string
+            - "null"
+        total:
+          type: integer
+    DeviceFingerprintLibraryStatus:
+      type: object
+      required: [version, status, source, checksum]
+      properties:
+        version: { type: string }
+        status:
+          type: string
+          enum: [ready, checking, degraded]
+        source: { type: string }
+        checksum: { type: string }
+        updated_at: { type: string, format: date-time }
+        last_checked_at: { type: string, format: date-time }
+        last_error: { type: string }
+        offline_mode: { type: boolean }
+        rule_count: { type: integer }
+        oui_count: { type: integer }
+        dhcp_rule_count: { type: integer }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/DeviceFingerprintBundleSource" }
+        licenses:
+          type: array
+          items: { type: string }
+        backfill_status: { type: string }
+        backfill_processed: { type: integer }
+    DeviceFingerprintBundleSource:
+      type: object
+      required: [name, version, url, license]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        url: { type: string }
+        license: { type: string }
+    DeviceFingerprintBundleManifest:
+      type: object
+      required: [schema_version, version, created_at, sources, files]
+      properties:
+        schema_version: { type: string }
+        version: { type: string }
+        created_at: { type: string, format: date-time }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/DeviceFingerprintBundleSource" }
+        files:
+          type: object
+          additionalProperties:
+            type: object
+            required: [size, sha256]
+            properties:
+              size: { type: integer }
+              sha256: { type: string }
     Role:
       type: string
       enum: [viewer, reviewer, operator, admin]
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
     Session:
       type: object
       required: [user, role, permissions]
@@ -1159,6 +1625,81 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Permission"
+        csrf_token:
+          type: string
+    RiskCase:
+      type: object
+      required: [case_id, subject_type, subject_id, status, priority, risk_score, risk_confidence, assessment_level, due_at, first_seen, last_seen, created_at, updated_at]
+      properties:
+        case_id: { type: string }
+        subject_type: { type: string }
+        subject_id: { type: string }
+        ip: { type: string }
+        account_id: { type: string }
+        endpoint_id: { type: string }
+        campus_id: { type: string }
+        department: { type: string }
+        status: { type: string, enum: [new, assigned, investigating, waiting_data, resolved, closed, reopened] }
+        disposition: { type: string, enum: [confirmed_proxy, false_positive, benign, needs_more_data] }
+        priority: { type: string, enum: [high, medium, low] }
+        assignee_id: { type: string }
+        risk_score: { type: integer, minimum: 0, maximum: 100 }
+        risk_confidence: { type: number, minimum: 0, maximum: 1 }
+        assessment_level: { type: string }
+        due_at: { type: string, format: date-time }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        evidence_snapshot: { $ref: "#/components/schemas/ProxyReviewCase" }
+        comments: { type: array, items: { type: object, additionalProperties: true } }
+        timeline: { type: array, items: { type: object, additionalProperties: true } }
+    RiskCaseListResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/RiskCase" } }
+        page: { $ref: "#/components/schemas/Page" }
+    Organization:
+      type: object
+      required: [campuses, buildings, network_zones, access_points]
+      properties:
+        campuses: { type: array, items: { type: object, additionalProperties: true } }
+        buildings: { type: array, items: { type: object, additionalProperties: true } }
+        network_zones: { type: array, items: { type: object, additionalProperties: true } }
+        access_points: { type: array, items: { type: object, additionalProperties: true } }
+    ActionConnector:
+      type: object
+      required: [connector_id, name, endpoint_url, action_mapping, mode, enabled, shadow_ready, updated_at]
+      properties:
+        connector_id: { type: string }
+        name: { type: string }
+        endpoint_url: { type: string, format: uri }
+        action_mapping: { type: object, additionalProperties: { type: string } }
+        mode: { type: string, enum: [shadow, active] }
+        enabled: { type: boolean }
+        shadow_ready: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    EnforcementAction:
+      type: object
+      required: [action_id, idempotency_key, connector_id, action_type, subject_id, status, mode, created_at, updated_at]
+      properties:
+        action_id: { type: string }
+        idempotency_key: { type: string }
+        case_id: { type: string }
+        connector_id: { type: string }
+        action_type: { type: string, enum: [quarantine, throttle, disconnect, release, status] }
+        subject_id: { type: string }
+        ip: { type: string }
+        account_id: { type: string }
+        endpoint_id: { type: string }
+        campus_id: { type: string }
+        status: { type: string, enum: [shadow, pending, running, succeeded, failed, revoked, expired, blocked] }
+        mode: { type: string, enum: [shadow, active] }
+        blockers: { type: array, items: { type: string } }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     RiskLevel:
       type: string
       enum: [normal, suspicious, high, confirmed]
@@ -1536,7 +2077,7 @@ components:
               type: integer
     EndpointDeviceInventory:
       type: object
-      required: [endpoint_id, entity_role, registration_status, merge_status, accounts, ips, access_ids, identity_confidence, summary]
+      required: [endpoint_id, entity_role, registration_status, merge_status, accounts, ips, access_ids, identity_confidence, recognition_confidence, randomized_mac, summary]
       properties:
         endpoint_id:
           type: string
@@ -1587,6 +2128,31 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        vendor:
+          type: string
+        brand:
+          type: string
+        model:
+          type: string
+        device_type:
+          type: string
+        os_family:
+          type: string
+        recognition_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        recognition_source:
+          type: string
+        fingerprint_version:
+          type: string
+        randomized_mac:
+          type: boolean
+        recognition_conflict:
+          type: boolean
+        recognition_evidence:
+          type: array
+          items: { type: string }
         summary:
           type: string
     EndpointEntity:
@@ -1953,7 +2519,7 @@ components:
             $ref: "#/components/schemas/ActivityIpSummary"
     ProxyReviewResponse:
       type: object
-      required: [sensor_id, window, event_count, case_count, account_count, endpoint_count, destination_count, high_confidence_count, items]
+      required: [sensor_id, window, event_count, case_count, account_count, endpoint_count, destination_count, high_confidence_count, items, page]
       properties:
         sensor_id:
           type: string
@@ -1976,6 +2542,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProxyReviewCase"
+        page:
+          $ref: "#/components/schemas/Page"
     ProxyReviewCase:
       type: object
       required: [case_id, ip, access_ids, destinations, destination_ips, destination_domains, tls_fingerprints, protocols, rule_matches, event_count, tls_count, quic_count, alert_count, confidence_level, first_seen, last_seen, duration_seconds, evidence_ids, risk_score, risk_level, review_status]
@@ -2640,6 +3208,10 @@ components:
             confirmed:
               type: integer
         pending_reviews:
+          type: integer
+        open_case_count:
+          type: integer
+        overdue_case_count:
           type: integer
         latest_shadow_run:
           $ref: "#/components/schemas/ShadowRun"

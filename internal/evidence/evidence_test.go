@@ -191,6 +191,21 @@ func TestAnalyzeEmitsVPNProxyEvidenceConfidenceLevels(t *testing.T) {
 	}
 }
 
+func TestAnalyzeDoesNotTreatCampusVPNDomainAsProxyEvidence(t *testing.T) {
+	input := bytes.NewBufferString(normalizedLine("campus-vpn", "tls", map[string]any{
+		"sni": "vpn.henu.edu.cn",
+	}, map[string]any{"proto": "tcp", "dst_port": 443}) + "\n")
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range result.Evidence {
+		if item.Type == "vpn_proxy_domain_hint" {
+			t.Fatalf("campus VPN must not produce a proxy domain hint: %+v", item)
+		}
+	}
+}
+
 func TestAnalyzeOrdinaryQUICOnlyEmitsLowConfidenceEvidence(t *testing.T) {
 	input := bytes.NewBufferString(
 		normalizedLine("quic-normal", "quic", map[string]any{

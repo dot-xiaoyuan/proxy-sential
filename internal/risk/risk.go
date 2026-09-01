@@ -37,6 +37,10 @@ type Snapshot struct {
 	ReviewedBy           string             `json:"reviewed_by,omitempty"`
 	ReviewedAt           string             `json:"reviewed_at,omitempty"`
 	NegativeEvidence     []NegativeEvidence `json:"negative_evidence,omitempty"`
+	AssessmentLevel      string             `json:"assessment_level,omitempty"`
+	ReviewDisposition    string             `json:"review_disposition,omitempty"`
+	AutomationEligible   bool               `json:"automation_eligible"`
+	AutomationBlockers   []string           `json:"automation_blockers,omitempty"`
 }
 
 type NegativeEvidence struct {
@@ -254,21 +258,59 @@ func snapshotFor(ip string, selected []evidence.Evidence) Snapshot {
 		subjectID = ip
 	}
 
+	confidence := combinedConfidence(selected)
+	eligible, blockers := automationAssessment(selected, score, confidence)
 	return Snapshot{
-		IP:                snapshotIP(ip, selected),
-		SubjectType:       subjectType,
-		SubjectID:         subjectID,
-		AccountID:         accountIDFor(selected),
-		EndpointID:        endpointIDFor(selected),
-		Score:             score,
-		Level:             level,
-		Confidence:        combinedConfidence(selected),
-		Window:            window,
-		EvidenceIDs:       evidenceIDs(selected),
-		Summary:           summaryFor(selected, level),
-		RecommendedAction: actionFor(level),
-		UpdatedAt:         updatedAt,
+		IP:                 snapshotIP(ip, selected),
+		SubjectType:        subjectType,
+		SubjectID:          subjectID,
+		AccountID:          accountIDFor(selected),
+		EndpointID:         endpointIDFor(selected),
+		Score:              score,
+		Level:              level,
+		Confidence:         confidence,
+		Window:             window,
+		EvidenceIDs:        evidenceIDs(selected),
+		Summary:            summaryFor(selected, level),
+		RecommendedAction:  actionFor(level),
+		UpdatedAt:          updatedAt,
+		AssessmentLevel:    assessmentLevel(level),
+		ReviewDisposition:  "unreviewed",
+		AutomationEligible: eligible,
+		AutomationBlockers: blockers,
 	}
+}
+
+func assessmentLevel(level string) string {
+	if level == "confirmed" {
+		return "high"
+	}
+	return level
+}
+
+func automationAssessment(items []evidence.Evidence, score int, confidence float64) (bool, []string) {
+	blockers := []string{}
+	if score < 90 {
+		blockers = append(blockers, "risk_score_below_90")
+	}
+	if confidence < 0.90 {
+		blockers = append(blockers, "risk_confidence_below_0_90")
+	}
+	hasExplicitRule := false
+	for _, item := range items {
+		if item.Type == "vpn_proxy_rule_match" && item.Confidence >= 0.90 {
+			hasExplicitRule = true
+			break
+		}
+	}
+	if !hasExplicitRule {
+		blockers = append(blockers, "explicit_proxy_rule_required")
+	}
+	// Identity freshness, campus exceptions and connector state are evaluated by
+	// the control-plane action gate. A risk snapshot alone can never authorize a
+	// network action.
+	blockers = append(blockers, "active_identity_session_required", "campus_exception_check_required", "enabled_connector_required")
+	return false, blockers
 }
 
 func snapshotIP(fallback string, items []evidence.Evidence) string {
@@ -587,7 +629,7 @@ func summaryFor(items []evidence.Evidence, level string) string {
 }
 
 func isWeakEvidence(evidenceType string) bool {
-	return evidenceType == "multi_user_agent" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior"
+	return evidenceType == "multi_user_agent" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior" || evidenceType == "vpn_proxy_domain_hint"
 }
 
 func strongEvidenceTypeCount(items []evidence.Evidence) int {

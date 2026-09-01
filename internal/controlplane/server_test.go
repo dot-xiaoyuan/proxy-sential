@@ -1,7 +1,9 @@
 package controlplane
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -69,6 +71,63 @@ func TestShadowEvaluationReturnsNotFoundBeforeFirstReport(t *testing.T) {
 	getJSON(t, server, "/api/v1/shadow/evaluation", http.StatusNotFound, &response)
 	if response.Code != "shadow_evaluation_not_found" {
 		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestCaseStateMachinePersistsAssignmentAndDisposition(t *testing.T) {
+	dir := t.TempDir()
+	server := NewServer(Options{ShadowDir: dir, OperationsFile: filepath.Join(dir, "operations.json")})
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	server.operations.doc.Cases["case-1"] = RiskCase{CaseID: "case-1", SubjectType: "ip", SubjectID: "10.0.0.8", IP: "10.0.0.8", Status: "new", Priority: "high", RiskScore: 92, RiskConfidence: .94, AssessmentLevel: "high", DueAt: now, FirstSeen: now, LastSeen: now, CreatedAt: now, UpdatedAt: now}
+	if err := server.operations.saveLocked(); err != nil {
+		t.Fatal(err)
+	}
+	var assigned RiskCase
+	postJSONBody(t, server, "/api/v1/cases/case-1/assign", http.StatusOK, &assigned, `{"assignee_id":"reviewer-1"}`)
+	if assigned.Status != "assigned" || assigned.AssigneeID != "reviewer-1" {
+		t.Fatalf("unexpected assignment: %#v", assigned)
+	}
+	var resolved RiskCase
+	postJSONBody(t, server, "/api/v1/cases/case-1/disposition", http.StatusOK, &resolved, `{"disposition":"false_positive","reason":"校园业务"}`)
+	if resolved.Status != "resolved" || resolved.Disposition != "false_positive" || len(resolved.Timeline) < 2 {
+		t.Fatalf("unexpected disposition: %#v", resolved)
+	}
+}
+
+func TestActionHardGateRequiresCurrentIdentityAndSupportsIdempotency(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	mac := "aa:bb:cc:dd:ee:08"
+	ip := "10.0.0.8"
+	snapshot := riskSnapshot(ip, "high", 95, now.Format(time.RFC3339Nano))
+	snapshot.Confidence = .95
+	snapshot.AccountID = "student-1"
+	snapshot.EndpointID = "mac:" + mac
+	snapshot.EvidenceIDs = []string{"strong-1"}
+	strong := evidenceItem("strong-1", ip, "vpn_proxy_rule_match", now.Format(time.RFC3339Nano))
+	strong.Confidence = .95
+	writeRun(t, dir, "current-action-run", testRun{startedAt: now.Format(time.RFC3339Nano), risks: []risk.Snapshot{snapshot}, evidence: []evidence.Evidence{strong}, events: []normalized.Event{identityEvent("identity-current", "student-1", ip, mac, "ap-1", "session-1", now.Format(time.RFC3339Nano))}})
+	server := NewServer(Options{ShadowDir: dir, OperationsFile: filepath.Join(dir, "operations.json")})
+	server.operations.doc.Connectors["gateway"] = ActionConnector{ConnectorID: "gateway", Name: "测试网关", EndpointURL: "https://gateway.invalid/actions", Mode: "shadow", Enabled: true, ShadowReady: true}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/actions/execute", strings.NewReader(`{"connector_id":"gateway","action_type":"disconnect","ip":"10.0.0.8","campus_id":"main"}`))
+	request.Header.Set("Idempotency-Key", "action-key-1")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	var action EnforcementAction
+	decodeResponse(t, recorder, http.StatusAccepted, &action)
+	if action.Status != "shadow" || len(action.Blockers) != 0 {
+		t.Fatalf("expected a clean shadow candidate, got %#v", action)
+	}
+
+	repeat := httptest.NewRequest(http.MethodPost, "/api/v1/actions/execute", strings.NewReader(`{"connector_id":"gateway","action_type":"disconnect","ip":"10.0.0.8"}`))
+	repeat.Header.Set("Idempotency-Key", "action-key-1")
+	repeatRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(repeatRecorder, repeat)
+	var repeated EnforcementAction
+	decodeResponse(t, repeatRecorder, http.StatusOK, &repeated)
+	if repeated.ActionID != action.ActionID {
+		t.Fatalf("idempotency produced another action: first=%s repeat=%s", action.ActionID, repeated.ActionID)
 	}
 }
 
@@ -474,14 +533,59 @@ func TestProxyReviewsExposeSevenDayAccountEndpointAggregation(t *testing.T) {
 		t.Fatalf("unexpected proxy review overview: %#v", response)
 	}
 	item := response.Items[0]
+	if response.Page.Limit != 20 || response.Page.Total != 1 {
+		t.Fatalf("unexpected proxy review page: %#v", response.Page)
+	}
 	if item.AccountID != "2026000123" || item.EndpointID != "mac:aa:bb:cc:dd:ee:01" || len(item.RuleMatches) != 1 || item.DurationSeconds != 360 {
 		t.Fatalf("unexpected proxy review item: %#v", item)
+	}
+	var detail store.ProxyReviewCase
+	getJSON(t, server, "/api/v1/proxy-reviews/"+url.PathEscape(item.CaseID)+"?window=7d", http.StatusOK, &detail)
+	if detail.CaseID != item.CaseID || len(detail.RuleMatches) != 1 {
+		t.Fatalf("unexpected proxy review detail: %#v", detail)
 	}
 
 	var errResponse ErrorResponse
 	getJSON(t, server, "/api/v1/proxy-reviews?window=30d", http.StatusBadRequest, &errResponse)
 	if errResponse.Code != "bad_proxy_review_window" {
 		t.Fatalf("unexpected bad window response: %#v", errResponse)
+	}
+}
+
+func TestDeviceFingerprintLibraryStatusAndReadOnlyUpdate(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true, FingerprintDir: t.TempDir()})
+	var status map[string]any
+	getJSON(t, server, "/api/v1/device-fingerprint-library", http.StatusOK, &status)
+	if status["status"] != "ready" || status["version"] == "" {
+		t.Fatalf("unexpected fingerprint status: %#v", status)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/device-fingerprint-library/update", nil)
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected read-only update rejection, got %d", recorder.Code)
+	}
+}
+
+func TestOfflineFingerprintUpdateAndInvalidImport(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: false, FingerprintDir: t.TempDir(), FingerprintAutoUpdate: false})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/device-fingerprint-library/update", nil)
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected offline update conflict, got %d", recorder.Code)
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, _ := writer.CreateFormFile("bundle", "bad.tar.gz")
+	_, _ = part.Write([]byte("not a bundle"))
+	_ = writer.Close()
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/device-fingerprint-library/import", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected invalid bundle rejection, got %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -512,11 +616,8 @@ func TestReadOnlySessionLabelsAndRulesReload(t *testing.T) {
 		t.Fatalf("expected endpoint registration 403, got %d", recorder.Code)
 	}
 
-	var reload RuleReloadResult
-	postJSON(t, server, "/api/v1/rules/reload", http.StatusAccepted, &reload)
-	if reload.Status != "disabled" || reload.Mode != "shadow" {
-		t.Fatalf("unexpected reload result: %#v", reload)
-	}
+	var reloadError ErrorResponse
+	postJSON(t, server, "/api/v1/rules/reload", http.StatusForbidden, &reloadError)
 }
 
 func TestCreateLabelWritesAuditInNonReadOnlyMode(t *testing.T) {

@@ -239,7 +239,7 @@ func (s ipSignals) addVPNSignals(event normalized.Event) {
 	}
 	for _, key := range []string{"query", "sni", "host", "server_name"} {
 		value := stringValue(event.Payload, key)
-		if value == "" || !hasVPNHint(value) {
+		if value == "" || !hasVPNHint(value) || isInstitutionalVPNDomain(value) {
 			continue
 		}
 		s.vpnDomainHints[key+":"+normalizeSample(value)] = struct{}{}
@@ -247,6 +247,15 @@ func (s ipSignals) addVPNSignals(event normalized.Event) {
 	if event.Type == "quic" || isUDP443(event.Flow) {
 		s.encryptedTransports[encryptedTransportSample(event)] = struct{}{}
 	}
+}
+
+func isInstitutionalVPNDomain(value string) bool {
+	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
+	if !strings.HasSuffix(host, ".edu.cn") {
+		return false
+	}
+	first := strings.SplitN(host, ".", 2)[0]
+	return first == "vpn" || first == "webvpn" || first == "sslvpn"
 }
 
 func (s ipSignals) addDevice(payload map[string]any) {

@@ -128,7 +128,7 @@ func (s *DBStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (Pro
 		return ProxyReviewResponse{}, err
 	}
 	sensorID := firstNonEmpty(query.SensorID, s.pg.sensorID)
-	limit := query.Limit
+	limit := query.SampleLimit
 	if limit <= 0 {
 		limit = defaultProxyReviewLimit
 	}
@@ -152,27 +152,23 @@ func (s *DBStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIO
 }
 
 func (s *DBStore) ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error) {
-	window, events, risks, _, err := s.dpiEventSet(ctx, query)
+	risks, err := s.pg.RiskSnapshotMap(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return BuildDPITrends(window, events, risks), nil
+	return s.ch.QueryDPITrends(ctx, query, risks)
 }
 
 func (s *DBStore) ListDPIProtocolFlows(ctx context.Context, query ActivityQuery) ([]DPIProtocolFlow, error) {
-	_, events, _, _, err := s.dpiEventSet(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	return BuildDPIProtocolFlows(events), nil
+	return s.ch.QueryDPIProtocolFlows(ctx, query)
 }
 
 func (s *DBStore) ListDPIFingerprintConflicts(ctx context.Context, query ActivityQuery) ([]DPIFingerprintConflict, error) {
-	_, events, risks, _, err := s.dpiEventSet(ctx, query)
+	risks, err := s.pg.RiskSnapshotMap(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return BuildDPIFingerprintConflicts(events, risks), nil
+	return s.ch.QueryDPIFingerprintConflicts(ctx, query, risks)
 }
 
 func (s *DBStore) ListDPIFlows(ctx context.Context, query Query) (DPIFlowPage, error) {
@@ -241,6 +237,14 @@ func (s *DBStore) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 
 func (s *DBStore) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, error) {
 	return s.pg.ListAuditLogs(ctx, limit)
+}
+
+func (s *DBStore) AppendAuditLog(ctx context.Context, item AuditLog) error {
+	return s.pg.AppendAuditLog(ctx, item)
+}
+
+func (s *DBStore) RebuildDeviceProfiles(ctx context.Context, batchSize int) (int, error) {
+	return s.pg.RebuildDeviceProfiles(ctx, batchSize)
 }
 
 func (s *DBStore) CreateLabel(ctx context.Context, label Label) (Label, error) {
@@ -314,6 +318,13 @@ func (s *DBStore) WriteCollectorRun(ctx context.Context, run Run) error {
 
 func (s *DBStore) WriteNormalizedEvents(ctx context.Context, events []normalized.Event) error {
 	return s.ch.WriteNormalizedEvents(ctx, events)
+}
+
+func (s *DBStore) IngestIdentityEvents(ctx context.Context, events []normalized.Event) error {
+	if err := s.ch.WriteNormalizedEvents(ctx, events); err != nil {
+		return err
+	}
+	return s.pg.WriteIdentityEvents(ctx, events)
 }
 
 func (s *DBStore) WriteIngestDiagnostics(ctx context.Context, diagnostics []ingest.Diagnostic) error {

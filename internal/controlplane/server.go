@@ -2,8 +2,10 @@ package controlplane
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/evaluation"
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
@@ -20,36 +23,51 @@ import (
 )
 
 const (
-	defaultDPIQueryLimit = 50000
-	maxDPIQueryLimit     = 100000
+	defaultDPIQueryLimit        = 100
+	maxDPIQueryLimit            = 5000
+	maxProxyReviewAggregateRows = 5000
 )
 
 type Options struct {
-	Addr          string
-	ShadowDir     string
-	SensorID      string
-	FrontendDir   string
-	ReadOnly      bool
-	StorageMode   string
-	PostgresDSN   string
-	ClickHouseDSN string
-	CollectorKind string
-	CollectorVer  string
-	InterfaceName string
+	Addr                  string
+	ShadowDir             string
+	SensorID              string
+	FrontendDir           string
+	ReadOnly              bool
+	StorageMode           string
+	PostgresDSN           string
+	ClickHouseDSN         string
+	CollectorKind         string
+	CollectorVer          string
+	InterfaceName         string
+	FingerprintDir        string
+	FingerprintAutoUpdate bool
+	AuthFile              string
+	AuthCookieSecure      bool
+	IdentityIngestKey     string
+	OperationsFile        string
+	ActionMasterKey       string
 }
 
 type Server struct {
-	shadowDir   string
-	sensorID    string
-	frontendDir string
-	readOnly    bool
-	reader      store.Reader
+	shadowDir          string
+	sensorID           string
+	frontendDir        string
+	readOnly           bool
+	reader             store.Reader
+	fingerprints       *fingerprint.Manager
+	fingerprintOffline bool
+	auth               *authManager
+	identityIngest     *identityIngestState
+	operations         *operationsState
+	actionMasterKey    []byte
 }
 
 type Session struct {
 	User        User     `json:"user"`
 	Role        string   `json:"role"`
 	Permissions []string `json:"permissions"`
+	CSRFToken   string   `json:"csrf_token,omitempty"`
 }
 
 type User struct {
@@ -99,11 +117,20 @@ type ShadowRun struct {
 }
 
 type Overview struct {
-	LevelCounts     LevelCounts        `json:"level_counts"`
-	PendingReviews  int                `json:"pending_reviews"`
-	LatestShadowRun ShadowRun          `json:"latest_shadow_run"`
-	Throughput      Throughput         `json:"throughput"`
-	TopEvidence     []EvidenceTypeStat `json:"top_evidence"`
+	LevelCounts      LevelCounts        `json:"level_counts"`
+	PendingReviews   int                `json:"pending_reviews"`
+	LatestShadowRun  ShadowRun          `json:"latest_shadow_run"`
+	Throughput       Throughput         `json:"throughput"`
+	TopEvidence      []EvidenceTypeStat `json:"top_evidence"`
+	Window           string             `json:"window"`
+	SensorID         string             `json:"sensor_id"`
+	AsOf             string             `json:"as_of"`
+	FirstSeen        string             `json:"first_seen,omitempty"`
+	LastSeen         string             `json:"last_seen,omitempty"`
+	DataSource       string             `json:"data_source"`
+	ActiveIPCount    int                `json:"active_ip_count"`
+	OpenCaseCount    int                `json:"open_case_count"`
+	OverdueCaseCount int                `json:"overdue_case_count"`
 }
 
 type LevelCounts struct {
@@ -213,13 +240,37 @@ func NewServerWithError(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
-		shadowDir:   shadowDir,
-		sensorID:    sensorID,
-		frontendDir: opts.FrontendDir,
-		readOnly:    opts.ReadOnly,
-		reader:      reader,
-	}, nil
+	fingerprints := fingerprint.NewManager(opts.FingerprintDir)
+	fingerprints.SetOffline(!opts.FingerprintAutoUpdate)
+	auth, err := newAuthManager(opts.AuthFile, opts.AuthCookieSecure)
+	if err != nil {
+		return nil, err
+	}
+	operationsFile := opts.OperationsFile
+	if operationsFile == "" {
+		operationsFile = filepath.Join(shadowDir, "control-plane-operations.json")
+	}
+	operations, err := newOperationsState(operationsFile)
+	if err != nil {
+		return nil, fmt.Errorf("load operations state: %w", err)
+	}
+	server := &Server{
+		shadowDir:          shadowDir,
+		sensorID:           sensorID,
+		frontendDir:        opts.FrontendDir,
+		readOnly:           opts.ReadOnly,
+		reader:             reader,
+		fingerprints:       fingerprints,
+		fingerprintOffline: !opts.FingerprintAutoUpdate,
+		auth:               auth,
+		identityIngest:     newIdentityIngestState(opts.IdentityIngestKey),
+		operations:         operations,
+		actionMasterKey:    []byte(opts.ActionMasterKey),
+	}
+	if opts.FingerprintAutoUpdate {
+		fingerprints.Start(context.Background(), 7*24*time.Hour)
+	}
+	return server, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -248,8 +299,9 @@ func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) bool {
 	allowed := origin != "" && corsOriginAllowed(origin)
 	if allowed {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key")
 		w.Header().Set("Access-Control-Max-Age", "600")
 	}
 	if r.Method != http.MethodOptions {
@@ -265,15 +317,62 @@ func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) bool {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+	if path == "/integrations/identity/events" && r.Method == http.MethodPost {
+		if s.readOnly {
+			writeError(w, http.StatusForbidden, "read_only", "identity ingestion is disabled by the global read-only switch")
+			return
+		}
+		s.handleIdentityIngest(w, r)
+		return
+	}
+	if path == "/auth/login" && r.Method == http.MethodPost {
+		s.handleLogin(w, r)
+		return
+	}
+	if path == "/auth/logout" && r.Method == http.MethodPost {
+		s.handleLogout(w, r)
+		return
+	}
+	session, ok := s.authenticate(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "login is required")
+		return
+	}
+	if permission := requiredPermission(r.Method, path); permission != "" && !sessionHasPermission(session, permission) {
+		writeError(w, http.StatusForbidden, "permission_denied", "required permission: "+permission)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly {
+		writeError(w, http.StatusForbidden, "read_only", "mutating operations are disabled by the global read-only switch")
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.auth.enabled {
+		current, _ := s.auth.current(r)
+		if r.Header.Get("X-CSRF-Token") == "" || !hmac.Equal([]byte(r.Header.Get("X-CSRF-Token")), []byte(current.CSRFToken)) {
+			writeError(w, http.StatusForbidden, "csrf_failed", "valid CSRF token is required")
+			return
+		}
+	}
+	r = r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, session))
 	switch {
 	case r.Method == http.MethodGet && path == "/session":
-		writeJSON(w, http.StatusOK, s.session())
+		writeJSON(w, http.StatusOK, session)
+	case r.Method == http.MethodGet && path == "/integrations/identity/status":
+		s.handleIdentityIngestStatus(w, r)
+	case strings.HasPrefix(path, "/cases"):
+		s.handleCases(w, r)
+	case strings.HasPrefix(path, "/organization"):
+		s.handleOrganization(w, r)
+	case strings.HasPrefix(path, "/actions"):
+		s.handleActions(w, r)
 	case r.Method == http.MethodGet && path == "/overview":
 		s.handleOverview(w, r)
 	case r.Method == http.MethodGet && path == "/activity/overview":
 		s.handleActivityOverview(w, r)
 	case r.Method == http.MethodGet && path == "/proxy-reviews":
 		s.handleProxyReviews(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/proxy-reviews/"):
+		s.handleProxyReview(w, r, strings.TrimPrefix(path, "/proxy-reviews/"))
 	case r.Method == http.MethodGet && path == "/dpi/overview":
 		s.handleDPIOverview(w, r)
 	case r.Method == http.MethodGet && path == "/dpi/trends":
@@ -302,6 +401,14 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDeviceSignals(w, r)
 	case r.Method == http.MethodGet && path == "/device-fingerprint-conflicts":
 		s.handleDeviceFingerprintConflicts(w, r)
+	case r.Method == http.MethodGet && path == "/device-fingerprint-library":
+		writeJSON(w, http.StatusOK, s.fingerprints.Status())
+	case r.Method == http.MethodPost && path == "/device-fingerprint-library/update":
+		s.handleFingerprintLibraryUpdate(w, r)
+	case r.Method == http.MethodPost && path == "/device-fingerprint-library/import":
+		s.handleFingerprintLibraryImport(w, r)
+	case r.Method == http.MethodPost && path == "/device-fingerprint-library/validate":
+		s.handleFingerprintLibraryValidate(w, r)
 	case r.Method == http.MethodGet && path == "/risks":
 		s.handleRisks(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/ips/"):
@@ -316,16 +423,22 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleShadowRuns(w, r)
 	case r.Method == http.MethodGet && path == "/ingest/diagnostics":
 		s.handleIngestDiagnostics(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/ingest/diagnostics/"):
+		s.handleIngestDiagnostic(w, r, strings.TrimPrefix(path, "/ingest/diagnostics/"))
 	case r.Method == http.MethodGet && path == "/ingest/event-types":
 		s.handleIngestEventTypes(w, r)
 	case r.Method == http.MethodGet && path == "/ingest/errors":
 		s.handleIngestErrors(w, r)
 	case r.Method == http.MethodGet && path == "/shadow/runs":
 		s.handleShadowRuns(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shadow/runs/"):
+		s.handleShadowRun(w, r, strings.TrimPrefix(path, "/shadow/runs/"))
 	case r.Method == http.MethodGet && path == "/shadow/evaluation":
 		s.handleShadowEvaluation(w, r)
 	case r.Method == http.MethodGet && path == "/audit-logs":
 		s.handleAuditLogs(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/audit-logs/"):
+		s.handleAuditLog(w, r, strings.TrimPrefix(path, "/audit-logs/"))
 	case r.Method == http.MethodPost && path == "/rules/reload":
 		writeJSON(w, http.StatusAccepted, RuleReloadResult{
 			Status:      "disabled",
@@ -348,23 +461,92 @@ func (s *Server) handleProxyReviews(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_proxy_review_window", err.Error())
 		return
 	}
-	limit, err := boundedInt(r.URL.Query().Get("limit"), defaultDPIQueryLimit, 1, maxDPIQueryLimit)
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
+	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
 		return
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
 	result, err := s.reader.GetProxyReviews(ctx, store.ActivityQuery{
-		SensorID: r.URL.Query().Get("sensor_id"),
-		Window:   window,
-		Limit:    limit,
+		SensorID:    r.URL.Query().Get("sensor_id"),
+		Window:      window,
+		Limit:       limit,
+		Cursor:      cursor,
+		Q:           strings.TrimSpace(r.URL.Query().Get("q")),
+		View:        strings.TrimSpace(r.URL.Query().Get("view")),
+		SampleLimit: max(3000, limit*60),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_proxy_reviews_failed", err.Error())
 		return
 	}
+	result.Items = filterProxyReviews(result.Items, r.URL.Query().Get("q"))
+	result.CaseCount = len(result.Items)
+	result.Items, result.Page = paginate(result.Items, cursor, limit)
+	if r.URL.Query().Get("view") == "summary" {
+		for index := range result.Items {
+			result.Items[index] = proxyReviewSummary(result.Items[index])
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleProxyReview(w http.ResponseWriter, r *http.Request, rawCaseID string) {
+	caseID, err := store.DecodePathIP(rawCaseID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_case_id", err.Error())
+		return
+	}
+	window := firstNonEmptyString(strings.TrimSpace(r.URL.Query().Get("window")), "7d")
+	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_proxy_review_window", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	result, err := s.reader.GetProxyReviews(ctx, store.ActivityQuery{SensorID: r.URL.Query().Get("sensor_id"), Window: window, SampleLimit: maxProxyReviewAggregateRows})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_proxy_review_failed", err.Error())
+		return
+	}
+	for _, item := range result.Items {
+		if item.CaseID == caseID {
+			writeJSON(w, http.StatusOK, item)
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, "not_found", "proxy review case not found")
+}
+
+func proxyReviewSummary(item store.ProxyReviewCase) store.ProxyReviewCase {
+	item.Destinations = nil
+	item.DestinationIPs = nil
+	item.DestinationDomains = nil
+	item.TLSFingerprints = nil
+	item.Protocols = nil
+	item.RuleMatches = nil
+	item.EvidenceIDs = nil
+	return item
+}
+
+func filterProxyReviews(items []store.ProxyReviewCase, rawQuery string) []store.ProxyReviewCase {
+	query := strings.ToLower(strings.TrimSpace(rawQuery))
+	if query == "" {
+		return items
+	}
+	filtered := make([]store.ProxyReviewCase, 0, len(items))
+	for _, item := range items {
+		if strings.Contains(strings.ToLower(strings.Join([]string{item.CaseID, item.IP, item.AccountID, item.EndpointID, item.ReviewStatus, item.RiskLevel}, " ")), query) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
@@ -385,17 +567,251 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) session() Session {
-	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read"}
+	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read", "cases:read", "identity:read", "organization:read", "actions:read"}
 	user := User{ID: "shadow-viewer", Name: "影子观测只读用户"}
+	role := "viewer"
 	if !s.readOnly {
-		permissions = append(permissions, "labels:create", "endpoints:write", "rules:reload")
+		permissions = append(rolePermissions("operator"), "rules:reload", "device-fingerprint-library:update")
 		user = User{ID: "shadow-operator", Name: "影子运营复核员"}
+		role = "operator"
 	}
 	return Session{
 		User:        user,
-		Role:        "viewer",
+		Role:        role,
 		Permissions: permissions,
 	}
+}
+
+type sessionContextKey struct{}
+
+func (s *Server) authenticate(r *http.Request) (Session, bool) {
+	if s.auth == nil || !s.auth.enabled {
+		return s.session(), true
+	}
+	current, ok := s.auth.current(r)
+	if !ok {
+		return Session{}, false
+	}
+	session := sessionForUser(current.User)
+	session.CSRFToken = current.CSRFToken
+	return session, true
+}
+
+func sessionFromContext(ctx context.Context) Session {
+	if session, ok := ctx.Value(sessionContextKey{}).(Session); ok {
+		return session
+	}
+	return Session{User: User{ID: "system", Name: "系统"}, Role: "viewer"}
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil || !s.auth.enabled {
+		writeError(w, http.StatusConflict, "local_auth_disabled", "local authentication is not enabled")
+		return
+	}
+	var request loginRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_login_request", "username and password are required")
+		return
+	}
+	token, current, err := s.auth.login(r.RemoteAddr, request.Username, request.Password)
+	if err != nil {
+		s.appendAudit(r.Context(), "security.login", strings.TrimSpace(request.Username), "failed")
+		writeError(w, http.StatusUnauthorized, "login_failed", err.Error())
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/", HttpOnly: true, Secure: s.auth.secure, SameSite: http.SameSiteStrictMode, MaxAge: int((12 * time.Hour).Seconds())})
+	session := sessionForUser(current.User)
+	session.CSRFToken = current.CSRFToken
+	s.appendAudit(r.Context(), "security.login", current.User.ID, "succeeded")
+	writeJSON(w, http.StatusOK, session)
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil || !s.auth.enabled {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	current, ok := s.auth.current(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "login is required")
+		return
+	}
+	if !hmac.Equal([]byte(r.Header.Get("X-CSRF-Token")), []byte(current.CSRFToken)) {
+		writeError(w, http.StatusForbidden, "csrf_failed", "valid CSRF token is required")
+		return
+	}
+	s.auth.logout(r)
+	s.appendAudit(r.Context(), "security.logout", current.User.ID, "succeeded")
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, Secure: s.auth.secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func requiredPermission(method, path string) string {
+	if method == http.MethodPost {
+		switch {
+		case path == "/labels":
+			return "labels:create"
+		case strings.HasPrefix(path, "/endpoints/"):
+			return "endpoints:write"
+		case path == "/rules/reload":
+			return "rules:reload"
+		case strings.HasPrefix(path, "/device-fingerprint-library/"):
+			return "device-fingerprint-library:update"
+		case strings.HasPrefix(path, "/cases"):
+			return "cases:write"
+		case strings.HasPrefix(path, "/actions"):
+			if strings.HasSuffix(path, "/revoke") {
+				return "actions:revoke"
+			}
+			if strings.Contains(path, "/connectors") || strings.HasSuffix(path, "/emergency-stop") {
+				return "integrations:write"
+			}
+			return "actions:execute"
+		case strings.HasPrefix(path, "/organization"):
+			return "organization:write"
+		case strings.HasPrefix(path, "/integrations"):
+			return "integrations:write"
+		}
+	}
+	switch {
+	case strings.HasPrefix(path, "/audit"):
+		return "audit:read"
+	case strings.HasPrefix(path, "/events"):
+		return "events:read"
+	case strings.HasPrefix(path, "/ingest"):
+		return "ingest:read"
+	case strings.HasPrefix(path, "/shadow"):
+		return "shadow:read"
+	case strings.HasPrefix(path, "/dpi") || strings.HasPrefix(path, "/activity"):
+		return "dpi:read"
+	case strings.HasPrefix(path, "/cases"):
+		return "cases:read"
+	case strings.HasPrefix(path, "/organization"):
+		return "organization:read"
+	case strings.HasPrefix(path, "/actions"):
+		return "actions:read"
+	case strings.HasPrefix(path, "/integrations"):
+		return "integrations:write"
+	case strings.HasPrefix(path, "/accounts") || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/endpoints"):
+		return "identity:read"
+	default:
+		return "risks:read"
+	}
+}
+
+func (s *Server) handleFingerprintLibraryUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.readOnly {
+		writeError(w, http.StatusForbidden, "read_only", "device fingerprint updates are disabled in read-only control plane mode")
+		return
+	}
+	if s.fingerprintOffline {
+		writeError(w, http.StatusConflict, "offline_update_required", "control plane is offline; import a verified device fingerprint bundle")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	status, err := s.fingerprints.Update(ctx)
+	if err != nil {
+		s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.update", "failed")
+		writeJSON(w, http.StatusBadGateway, status)
+		return
+	}
+	s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.update", "updated:"+status.Version)
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.Request) {
+	if s.readOnly {
+		writeError(w, http.StatusForbidden, "read_only", "device fingerprint imports are disabled in read-only control plane mode")
+		return
+	}
+	data, err := readFingerprintBundle(w, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_fingerprint_bundle", err.Error())
+		return
+	}
+	status, err := s.fingerprints.Import(data)
+	if err != nil {
+		s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.import", "failed")
+		writeError(w, http.StatusUnprocessableEntity, "invalid_fingerprint_bundle", err.Error())
+		return
+	}
+	s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.import", "imported:"+status.Version)
+	if backfiller, ok := s.reader.(store.DeviceProfileBackfiller); ok {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			s.fingerprints.SetBackfill("running", 0)
+			processed, err := backfiller.RebuildDeviceProfiles(ctx, 500)
+			if err != nil {
+				s.fingerprints.SetBackfill("failed", processed)
+				return
+			}
+			s.fingerprints.SetBackfill("completed", processed)
+		}()
+	} else {
+		s.fingerprints.SetBackfill("not_required", 0)
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleFingerprintLibraryValidate(w http.ResponseWriter, r *http.Request) {
+	if s.readOnly {
+		writeError(w, http.StatusForbidden, "read_only", "device fingerprint validation is disabled in read-only control plane mode")
+		return
+	}
+	data, err := readFingerprintBundle(w, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_fingerprint_bundle", err.Error())
+		return
+	}
+	bundle, err := fingerprint.VerifyBundleBytes(data)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_fingerprint_bundle", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, bundle.Manifest)
+}
+
+func readFingerprintBundle(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, fingerprint.MaxBundleBytes)
+	if err := r.ParseMultipartForm(fingerprint.MaxBundleBytes); err != nil {
+		return nil, err
+	}
+	file, _, err := r.FormFile("bundle")
+	if err != nil {
+		return nil, fmt.Errorf("multipart field bundle is required")
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, fingerprint.MaxBundleBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > fingerprint.MaxBundleBytes {
+		return nil, fmt.Errorf("bundle exceeds size limit")
+	}
+	return data, nil
+}
+
+func (s *Server) appendAudit(ctx context.Context, action, target, outcome string) {
+	appender, ok := s.reader.(store.AuditAppender)
+	if !ok {
+		return
+	}
+	now := time.Now().UTC()
+	_ = appender.AppendAuditLog(ctx, store.AuditLog{
+		AuditID:   "audit-" + strconv.FormatInt(now.UnixNano(), 10),
+		Actor:     sessionFromContext(ctx).User.ID,
+		Action:    action,
+		Target:    target,
+		Outcome:   outcome,
+		CreatedAt: now.Format(time.RFC3339Nano),
+	})
+}
+
+func (s *Server) appendFingerprintAudit(ctx context.Context, action, outcome string) {
+	s.appendAudit(ctx, action, "device-fingerprint-library", outcome)
 }
 
 func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
@@ -418,7 +834,7 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 		Label:       request.Label,
 		Reason:      strings.TrimSpace(request.Reason),
 		EvidenceIDs: request.EvidenceIDs,
-		CreatedBy:   s.session().User.ID,
+		CreatedBy:   sessionFromContext(r.Context()).User.ID,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
@@ -428,6 +844,7 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "create_label_failed", err.Error())
 		return
 	}
+	s.applyCaseDispositionByTarget(request.TargetID, request.Label, label.CreatedBy)
 	writeJSON(w, http.StatusCreated, created)
 }
 
@@ -525,7 +942,7 @@ func (s *Server) handleEndpointRegistration(w http.ResponseWriter, r *http.Reque
 		MergeStatus:           strings.TrimSpace(request.MergeStatus),
 		MergedIntoEndpointID:  strings.TrimSpace(request.MergedIntoEndpointID),
 		SplitFromEndpointID:   strings.TrimSpace(request.SplitFromEndpointID),
-		RegistrationUpdatedBy: s.session().User.ID,
+		RegistrationUpdatedBy: sessionFromContext(r.Context()).User.ID,
 		RegistrationUpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
@@ -590,26 +1007,66 @@ func validateEndpointRegistrationRequest(endpointID string, request UpdateEndpoi
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
+	window := firstNonEmptyString(strings.TrimSpace(r.URL.Query().Get("window")), "1h")
+	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_overview_window", err.Error())
+		return
+	}
+	sensorID := firstNonEmptyString(strings.TrimSpace(r.URL.Query().Get("sensor_id")), s.sensorID)
 	overview, err := s.reader.Overview(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_overview_failed", err.Error())
 		return
 	}
+	activity, err := s.reader.GetActivityOverview(ctx, store.ActivityQuery{SensorID: sensorID, Window: window, Limit: 50})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_overview_activity_failed", err.Error())
+		return
+	}
+	counts := activity.RiskLevelCounts
+	useLegacyOverview := activity.EventCount == 0 && overview.Throughput["events"] > 0
+	if counts == nil || useLegacyOverview {
+		counts = overview.LevelCounts
+	}
+	pending := counts["high"] + counts["confirmed"]
+	if overview.PendingReviews < pending {
+		pending = overview.PendingReviews
+	}
+	if useLegacyOverview {
+		pending = overview.PendingReviews
+	}
+	eventCount := activity.EventCount
+	activeRiskCount := activity.ActiveRiskIPCount
+	if useLegacyOverview {
+		eventCount = overview.Throughput["events"]
+		activeRiskCount = overview.Throughput["risks"]
+	}
+	asOf := time.Now().UTC().Format(time.RFC3339Nano)
+	caseSummary := s.operationsSummary()
 	writeJSON(w, http.StatusOK, Overview{
 		LevelCounts: LevelCounts{
-			Normal:     overview.LevelCounts["normal"],
-			Suspicious: overview.LevelCounts["suspicious"],
-			High:       overview.LevelCounts["high"],
-			Confirmed:  overview.LevelCounts["confirmed"],
+			Normal:     counts["normal"],
+			Suspicious: counts["suspicious"],
+			High:       counts["high"],
+			Confirmed:  counts["confirmed"],
 		},
-		PendingReviews:  overview.PendingReviews,
+		PendingReviews:  pending,
 		LatestShadowRun: toShadowRun(overview.LatestRun),
 		Throughput: Throughput{
-			Events:   overview.Throughput["events"],
+			Events:   eventCount,
 			Evidence: overview.Throughput["evidence"],
-			Risks:    overview.Throughput["risks"],
+			Risks:    activeRiskCount,
 		},
-		TopEvidence: toEvidenceTypeStats(overview.TopEvidence),
+		TopEvidence:      toEvidenceTypeStats(overview.TopEvidence),
+		Window:           window,
+		SensorID:         sensorID,
+		AsOf:             asOf,
+		FirstSeen:        activity.FirstSeen,
+		LastSeen:         activity.LastSeen,
+		DataSource:       "normalized_events+risk_snapshots",
+		ActiveIPCount:    activity.ActiveIPCount,
+		OpenCaseCount:    caseSummary["open"],
+		OverdueCaseCount: caseSummary["overdue"],
 	})
 }
 
@@ -624,12 +1081,24 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
 		return
 	}
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	if from == "" && to == "" && strings.TrimSpace(r.URL.Query().Get("window")) != "" {
+		_, duration, windowErr := store.NormalizeActivityWindow(r.URL.Query().Get("window"))
+		if windowErr != nil {
+			writeError(w, http.StatusBadRequest, "bad_risk_window", windowErr.Error())
+			return
+		}
+		now := time.Now().UTC()
+		from = now.Add(-duration).Format(time.RFC3339Nano)
+		to = now.Format(time.RFC3339Nano)
+	}
 	page, err := s.reader.ListRisks(r.Context(), store.Query{
 		Level:    r.URL.Query().Get("level"),
 		Q:        r.URL.Query().Get("q"),
 		SensorID: r.URL.Query().Get("sensor_id"),
-		From:     r.URL.Query().Get("from"),
-		To:       r.URL.Query().Get("to"),
+		From:     from,
+		To:       to,
 		Limit:    limit,
 		Cursor:   cursor,
 	})
@@ -1000,18 +1469,53 @@ func (s *Server) handleIPEvents(w http.ResponseWriter, r *http.Request, ip strin
 }
 
 func (s *Server) handleShadowRuns(w http.ResponseWriter, r *http.Request) {
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
+	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
+		return
+	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	runs, err := s.reader.ListRuns(ctx, 200)
+	runs, err := s.reader.ListRuns(ctx, 10000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
 		return
 	}
 	items := make([]ShadowRun, 0, len(runs))
 	for _, run := range runs {
-		items = append(items, toShadowRun(run))
+		item := toShadowRun(run)
+		query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+		if query == "" || strings.Contains(strings.ToLower(item.RunID+" "+item.SensorID+" "+item.ZeekStatus), query) {
+			items = append(items, item)
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"runs": items})
+	items, page := paginate(items, cursor, limit)
+	writeJSON(w, http.StatusOK, map[string]any{"runs": items, "page": page})
+}
+
+func (s *Server) handleShadowRun(w http.ResponseWriter, r *http.Request, rawRunID string) {
+	runID, err := store.DecodePathIP(rawRunID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_run_id", err.Error())
+		return
+	}
+	runs, err := s.reader.ListRuns(r.Context(), 10000)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
+		return
+	}
+	for _, run := range runs {
+		if run.RunID == runID {
+			writeJSON(w, http.StatusOK, toShadowRun(run))
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, "not_found", "shadow run not found")
 }
 
 func (s *Server) handleShadowEvaluation(w http.ResponseWriter, r *http.Request) {
@@ -1035,28 +1539,58 @@ func (s *Server) handleShadowEvaluation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
-	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
 		return
 	}
-	logs, err := s.reader.ListAuditLogs(r.Context(), limit)
+	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
+		return
+	}
+	logs, err := s.reader.ListAuditLogs(r.Context(), 10000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_audit_logs_failed", err.Error())
 		return
 	}
 	items := make([]AuditLog, 0, len(logs))
 	for _, log := range logs {
-		items = append(items, AuditLog{
+		item := AuditLog{
 			AuditID:   log.AuditID,
 			Actor:     log.Actor,
 			Action:    log.Action,
 			Target:    log.Target,
 			Outcome:   log.Outcome,
 			CreatedAt: log.CreatedAt,
-		})
+		}
+		query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+		if query == "" || strings.Contains(strings.ToLower(item.Actor+" "+item.Action+" "+item.Target+" "+item.Outcome), query) {
+			items = append(items, item)
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"logs": items})
+	items, page := paginate(items, cursor, limit)
+	writeJSON(w, http.StatusOK, map[string]any{"logs": items, "page": page})
+}
+
+func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request, rawAuditID string) {
+	auditID, err := store.DecodePathIP(rawAuditID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_audit_id", err.Error())
+		return
+	}
+	logs, err := s.reader.ListAuditLogs(r.Context(), 10000)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_audit_logs_failed", err.Error())
+		return
+	}
+	for _, item := range logs {
+		if item.AuditID == auditID {
+			writeJSON(w, http.StatusOK, AuditLog{AuditID: item.AuditID, Actor: item.Actor, Action: item.Action, Target: item.Target, Outcome: item.Outcome, CreatedAt: item.CreatedAt})
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, "not_found", "audit log not found")
 }
 
 func (s *Server) handleIngestStatus(w http.ResponseWriter, r *http.Request) {
@@ -1069,17 +1603,44 @@ func (s *Server) handleIngestStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIngestDiagnostics(w http.ResponseWriter, r *http.Request) {
-	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
 		return
 	}
-	items, err := s.reader.ListIngestDiagnostics(r.Context(), store.Query{Limit: limit})
+	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
+		return
+	}
+	items, err := s.reader.ListIngestDiagnostics(r.Context(), store.Query{Limit: 10000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_ingest_diagnostics_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"diagnostics": items})
+	items = filterDiagnostics(items, r.URL.Query().Get("q"))
+	items, page := paginate(items, cursor, limit)
+	writeJSON(w, http.StatusOK, map[string]any{"diagnostics": items, "page": page})
+}
+
+func (s *Server) handleIngestDiagnostic(w http.ResponseWriter, r *http.Request, rawDiagnosticID string) {
+	diagnosticID, err := store.DecodePathIP(rawDiagnosticID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_diagnostic_id", err.Error())
+		return
+	}
+	items, err := s.reader.ListIngestDiagnostics(r.Context(), store.Query{Limit: 10000})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_ingest_diagnostics_failed", err.Error())
+		return
+	}
+	for _, item := range items {
+		if item.DiagnosticID == diagnosticID {
+			writeJSON(w, http.StatusOK, item)
+			return
+		}
+	}
+	writeError(w, http.StatusNotFound, "not_found", "ingest diagnostic not found")
 }
 
 func (s *Server) handleIngestEventTypes(w http.ResponseWriter, r *http.Request) {
@@ -1092,17 +1653,24 @@ func (s *Server) handleIngestEventTypes(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleIngestErrors(w http.ResponseWriter, r *http.Request) {
-	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
 		return
 	}
-	items, err := s.reader.ListIngestErrors(r.Context(), limit)
+	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
+		return
+	}
+	items, err := s.reader.ListIngestErrors(r.Context(), 10000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_ingest_errors_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"diagnostics": items})
+	items = filterDiagnostics(items, r.URL.Query().Get("q"))
+	items, page := paginate(items, cursor, limit)
+	writeJSON(w, http.StatusOK, map[string]any{"diagnostics": items, "page": page})
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -1370,6 +1938,47 @@ func cursorOffset(raw string) (int, error) {
 		return 0, fmt.Errorf("cursor must be a non-negative integer offset")
 	}
 	return value, nil
+}
+
+func paginate[T any](items []T, cursor, limit int) ([]T, store.Page) {
+	total := len(items)
+	if cursor > total {
+		cursor = total
+	}
+	end := cursor + limit
+	if end > total {
+		end = total
+	}
+	var next *string
+	if end < total {
+		value := strconv.Itoa(end)
+		next = &value
+	}
+	return items[cursor:end], store.Page{Limit: limit, NextCursor: next, Total: total}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func filterDiagnostics(items []ingest.Diagnostic, rawQuery string) []ingest.Diagnostic {
+	query := strings.ToLower(strings.TrimSpace(rawQuery))
+	if query == "" {
+		return items
+	}
+	filtered := make([]ingest.Diagnostic, 0, len(items))
+	for _, item := range items {
+		value := strings.Join([]string{item.DiagnosticID, item.SensorID, item.Collector.Kind, item.Stage, item.Type, item.Severity, item.Summary}, " ")
+		if strings.Contains(strings.ToLower(value), query) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func pathIP(raw string) (string, error) {

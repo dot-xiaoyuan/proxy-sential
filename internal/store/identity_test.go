@@ -88,6 +88,22 @@ func TestBuildIdentityStateIgnoresDeviceEventWithoutMAC(t *testing.T) {
 	}
 }
 
+func TestEndpointInventoryIncludesConservativeFingerprintRecognition(t *testing.T) {
+	state := BuildIdentityState([]normalized.Event{{
+		SchemaVersion: "v1", EventID: "device-mi9se", Source: "zeek", Type: "device", Timestamp: "2026-08-21T10:00:00Z",
+		Subject: map[string]any{"ip": "192.168.0.35", "mac": "e6:c4:00:00:00:01"},
+		Payload: map[string]any{"origin": "dhcp", "hostname": "MI9SE-xiaoyingderead", "vendor_class": "android-dhcp-10"}, Confidence: 0.9,
+	}})
+	items := BuildEndpointDeviceInventories(state, Query{})
+	if len(items) != 1 {
+		t.Fatalf("expected one endpoint inventory, got %+v", items)
+	}
+	item := items[0]
+	if item.Brand != "Xiaomi" || item.Model != "Mi 9 SE" || item.DeviceType != "mobile" || !item.RandomizedMAC {
+		t.Fatalf("unexpected endpoint recognition: %+v", item)
+	}
+}
+
 func identityStoreEvent(eventID, accountID, ip, mac, accessID, entityRole, sessionID, timestamp string) normalized.Event {
 	subject := map[string]any{
 		"ip":                  ip,

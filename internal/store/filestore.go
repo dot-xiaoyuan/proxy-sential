@@ -609,7 +609,7 @@ func (s *FileStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (P
 	from := anchor.Add(-duration).Format(time.RFC3339Nano)
 	seen := map[string]struct{}{}
 	events := make([]normalized.Event, 0)
-	limit := query.Limit
+	limit := query.SampleLimit
 	if limit <= 0 {
 		limit = defaultProxyReviewLimit
 	}
@@ -966,6 +966,10 @@ func (s *FileStore) appendAuditLog(log AuditLog) error {
 	encoder := json.NewEncoder(file)
 	encoder.SetEscapeHTML(false)
 	return encoder.Encode(log)
+}
+
+func (s *FileStore) AppendAuditLog(_ context.Context, item AuditLog) error {
+	return s.appendAuditLog(item)
 }
 
 func (s *FileStore) IngestStatus(ctx context.Context) (ingest.Status, error) {

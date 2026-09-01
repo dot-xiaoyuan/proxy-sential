@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultProxyReviewWindow = "7d"
-	defaultProxyReviewLimit  = 100000
+	defaultProxyReviewLimit  = 5000
 )
 
 type proxyIdentity struct {
@@ -65,7 +65,10 @@ func BuildProxyReviewResponse(sensorID, window string, events []normalized.Event
 		if value := stringFromMap(event.Subject, "access_id"); value != "" {
 			identity.accessID = value
 		}
-		key := strings.Join([]string{identity.accountID, identity.endpointID, ip}, "|")
+		// A review case represents the observed IP. Account and endpoint bindings
+		// can be completed by older identity signals, so they must not participate
+		// in the case key or pagination samples would produce unstable detail URLs.
+		key := ip
 		bucket := buckets[key]
 		if bucket == nil {
 			bucket = &proxyReviewBucket{

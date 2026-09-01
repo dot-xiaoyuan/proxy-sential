@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/normalized"
 )
 
@@ -66,6 +67,16 @@ type AccountSession struct {
 	EndedAt            string         `json:"ended_at,omitempty"`
 	IdentityConfidence float64        `json:"identity_confidence"`
 	RawRef             map[string]any `json:"raw_ref,omitempty"`
+	PersonType         string         `json:"person_type,omitempty"`
+	Department         string         `json:"department,omitempty"`
+	CampusID           string         `json:"campus_id,omitempty"`
+	BuildingID         string         `json:"building_id,omitempty"`
+	NetworkZoneID      string         `json:"network_zone_id,omitempty"`
+	SSID               string         `json:"ssid,omitempty"`
+	VLAN               string         `json:"vlan,omitempty"`
+	AP                 string         `json:"ap,omitempty"`
+	NASIP              string         `json:"nas_ip,omitempty"`
+	SessionStatus      string         `json:"session_status,omitempty"`
 }
 
 type IdentityIPMACHistory struct {
@@ -98,6 +109,11 @@ type IdentityAccessHistory struct {
 	LastSeen           string   `json:"last_seen"`
 	IdentityConfidence float64  `json:"identity_confidence"`
 	EventIDsSample     []string `json:"event_ids_sample"`
+	CampusID           string   `json:"campus_id,omitempty"`
+	BuildingID         string   `json:"building_id,omitempty"`
+	NetworkZoneID      string   `json:"network_zone_id,omitempty"`
+	SSID               string   `json:"ssid,omitempty"`
+	NASIP              string   `json:"nas_ip,omitempty"`
 }
 
 type AccountIdentityProfile struct {
@@ -188,6 +204,11 @@ func BuildIdentityState(events []normalized.Event) IdentityState {
 				SwitchID:           stringFromMap(fact.Payload, "switch_id"),
 				SwitchPort:         stringFromMap(fact.Payload, "switch_port"),
 				VLAN:               stringFromMap(fact.Payload, "vlan"),
+				CampusID:           stringFromMap(fact.Payload, "campus_id"),
+				BuildingID:         stringFromMap(fact.Payload, "building_id"),
+				NetworkZoneID:      stringFromMap(fact.Payload, "network_zone_id"),
+				SSID:               stringFromMap(fact.Payload, "ssid"),
+				NASIP:              stringFromMap(fact.Payload, "nas_ip"),
 				Source:             fact.Source,
 				FirstSeen:          fact.Timestamp,
 				LastSeen:           fact.Timestamp,
@@ -356,6 +377,22 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 		LastSeen:           profile.LastSeen,
 		IdentityConfidence: endpoint.IdentityConfidence,
 	}
+	recognition := fingerprint.Default().IdentifySignals(endpointRecognitionSignals(endpoint.PrimaryMAC, endpoint.Attributes))
+	item.Vendor = firstNonEmpty(stringFromMap(endpoint.Attributes, "vendor"), stringFromMap(endpoint.Attributes, "oui_vendor"), recognition.Vendor)
+	item.Brand = firstNonEmpty(stringFromMap(endpoint.Attributes, "brand"), recognition.Brand)
+	item.Model = firstNonEmpty(stringFromMap(endpoint.Attributes, "model"), recognition.Model)
+	item.DeviceType = firstNonEmpty(stringFromMap(endpoint.Attributes, "device_type"), recognition.DeviceType)
+	item.OSFamily = firstNonEmpty(stringFromMap(endpoint.Attributes, "os_family"), stringFromMap(endpoint.Attributes, "os"), recognition.OSFamily)
+	item.RecognitionConfidence = recognition.Confidence
+	item.RecognitionSource = recognition.Source
+	item.FingerprintVersion = recognition.Version
+	item.RandomizedMAC = recognition.RandomizedMAC
+	item.RecognitionConflict = recognition.Conflict
+	item.RecognitionEvidence = recognition.Evidence
+	if stringFromMap(endpoint.Attributes, "brand") != "" || stringFromMap(endpoint.Attributes, "model") != "" || stringFromMap(endpoint.Attributes, "device_type") != "" {
+		item.RecognitionConfidence = 1
+		item.RecognitionSource = "explicit_standard_field"
+	}
 	if item.FirstSeen == "" {
 		item.FirstSeen = endpoint.FirstSeen
 	}
@@ -409,6 +446,11 @@ func endpointDeviceMatchesQuery(item EndpointDeviceInventory, query Query) bool 
 		item.CurrentAccount,
 		item.CurrentIP,
 		item.CurrentAccessID,
+		item.Vendor,
+		item.Brand,
+		item.Model,
+		item.DeviceType,
+		item.OSFamily,
 		item.Summary,
 	}
 	values = append(values, item.Accounts...)
@@ -423,8 +465,35 @@ func endpointDeviceMatchesQuery(item EndpointDeviceInventory, query Query) bool 
 }
 
 func endpointDeviceSummary(item EndpointDeviceInventory) string {
+	device := strings.TrimSpace(strings.Join([]string{item.Brand, item.Model, item.DeviceType}, " "))
+	if device == "" {
+		device = "未知设备"
+	}
 	owner := firstNonEmpty(item.OwnerName, item.OwnerAccount, "未登记责任人")
-	return "终端 " + item.EndpointID + "，登记状态 " + item.RegistrationStatus + "，责任人 " + owner + "，观察到 " + stringInt(len(item.IPs)) + " 个 IP、" + stringInt(len(item.AccessIDs)) + " 个接入位置"
+	return device + "，登记状态 " + item.RegistrationStatus + "，责任人 " + owner + "，观察到 " + stringInt(len(item.IPs)) + " 个 IP、" + stringInt(len(item.AccessIDs)) + " 个接入位置"
+}
+
+func endpointRecognitionValues(attributes map[string]any) []string {
+	keys := []string{"user_agent", "hostname", "client_fqdn", "vendor_class", "requested_options", "software_name", "device_hint", "model", "os", "os_family"}
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if value := stringFromMap(attributes, key); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func endpointRecognitionSignals(mac string, attributes map[string]any) fingerprint.Signals {
+	return fingerprint.Signals{
+		MAC:                  mac,
+		UserAgents:           []string{stringFromMap(attributes, "user_agent")},
+		DHCPVendorClass:      stringFromMap(attributes, "vendor_class"),
+		DHCPRequestedOptions: stringFromMap(attributes, "requested_options"),
+		Hostnames:            []string{stringFromMap(attributes, "hostname"), stringFromMap(attributes, "client_fqdn")},
+		Software:             []string{stringFromMap(attributes, "software_name")},
+		Hints:                []string{stringFromMap(attributes, "device_hint"), stringFromMap(attributes, "model"), stringFromMap(attributes, "os"), stringFromMap(attributes, "os_family")},
+	}
 }
 
 type identityFact struct {
@@ -580,7 +649,7 @@ func mergeInfrastructureEntity(current InfrastructureEntity, fact identityFact) 
 }
 
 func accountSessionFromFact(fact identityFact) AccountSession {
-	return AccountSession{
+	session := AccountSession{
 		SessionID:          fact.SessionID(),
 		AccountID:          fact.AccountID,
 		EndpointID:         fact.EndpointID,
@@ -591,12 +660,27 @@ func accountSessionFromFact(fact identityFact) AccountSession {
 		StartedAt:          fact.Timestamp,
 		IdentityConfidence: fact.Confidence,
 		RawRef:             fact.RawRef,
+		PersonType:         stringFromMap(fact.Payload, "person_type"),
+		Department:         stringFromMap(fact.Payload, "department"),
+		CampusID:           stringFromMap(fact.Payload, "campus_id"),
+		BuildingID:         stringFromMap(fact.Payload, "building_id"),
+		NetworkZoneID:      stringFromMap(fact.Payload, "network_zone_id"),
+		SSID:               stringFromMap(fact.Payload, "ssid"),
+		VLAN:               stringFromMap(fact.Payload, "vlan"),
+		AP:                 stringFromMap(fact.Payload, "ap"),
+		NASIP:              stringFromMap(fact.Payload, "nas_ip"),
+		SessionStatus:      firstNonEmpty(stringFromMap(fact.Payload, "session_status"), stringFromMap(fact.Payload, "action")),
 	}
+	status := strings.ToLower(session.SessionStatus)
+	if status == "stop" || status == "logout" || status == "ended" || status == "accounting-stop" {
+		session.EndedAt = fact.Timestamp
+	}
+	return session
 }
 
 func identityAttributes(fact identityFact) map[string]any {
 	attrs := map[string]any{}
-	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class"} {
+	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class", "requested_options", "user_agent", "software_name", "device_hint", "vendor", "oui_vendor", "brand", "model", "device_type", "os", "os_family", "person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type"} {
 		if value := stringFromMap(fact.Payload, key); value != "" {
 			attrs[key] = value
 		}

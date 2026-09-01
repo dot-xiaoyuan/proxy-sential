@@ -262,27 +262,15 @@ func (s *ClickHouseStore) GetDPIOverview(ctx context.Context, query ActivityQuer
 }
 
 func (s *ClickHouseStore) ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error) {
-	window, events, err := s.dpiEventSet(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	return BuildDPITrends(window, events, map[string]risk.Snapshot{}), nil
+	return s.QueryDPITrends(ctx, query, map[string]risk.Snapshot{})
 }
 
 func (s *ClickHouseStore) ListDPIProtocolFlows(ctx context.Context, query ActivityQuery) ([]DPIProtocolFlow, error) {
-	_, events, err := s.dpiEventSet(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	return BuildDPIProtocolFlows(events), nil
+	return s.QueryDPIProtocolFlows(ctx, query)
 }
 
 func (s *ClickHouseStore) ListDPIFingerprintConflicts(ctx context.Context, query ActivityQuery) ([]DPIFingerprintConflict, error) {
-	_, events, err := s.dpiEventSet(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	return BuildDPIFingerprintConflicts(events, map[string]risk.Snapshot{}), nil
+	return s.QueryDPIFingerprintConflicts(ctx, query, map[string]risk.Snapshot{})
 }
 
 func (s *ClickHouseStore) ListDPIFlows(ctx context.Context, query Query) (DPIFlowPage, error) {
@@ -362,6 +350,7 @@ func (s *ClickHouseStore) GetActivityOverviewWithRisks(ctx context.Context, quer
 		TopDstIPs:          []ActivityCount{},
 		TopSourceIPs:       []ActivityCount{},
 		TopActiveRiskIPs:   []ActivityIPSummary{},
+		RiskLevelCounts:    map[string]int{"normal": 0, "suspicious": 0, "high": 0, "confirmed": 0},
 	}
 
 	summary, err := s.activitySummary(ctx, where)
@@ -442,7 +431,7 @@ FORMAT JSONEachRow`, where)); err != nil {
 	if overview.TopTLSFingerprints, err = s.activityTLSFingerprintCounts(ctx, where); err != nil {
 		return ActivityOverview{}, err
 	}
-	if overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, err = s.activityRiskIPCounts(ctx, where, risks); err != nil {
+	if overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, overview.RiskLevelCounts, err = s.activityRiskIPCounts(ctx, where, risks); err != nil {
 		return ActivityOverview{}, err
 	}
 	return overview, nil
@@ -644,7 +633,8 @@ LIMIT 20
 FORMAT JSONEachRow`, where, where))
 }
 
-func (s *ClickHouseStore) activityRiskIPCounts(ctx context.Context, where string, risks map[string]risk.Snapshot) ([]ActivityIPSummary, int, error) {
+func (s *ClickHouseStore) activityRiskIPCounts(ctx context.Context, where string, risks map[string]risk.Snapshot) ([]ActivityIPSummary, int, map[string]int, error) {
+	levelCounts := map[string]int{"normal": 0, "suspicious": 0, "high": 0, "confirmed": 0}
 	riskIPs := make([]string, 0, len(risks))
 	for ip, snapshot := range risks {
 		if snapshot.Level != "" && snapshot.Level != "normal" {
@@ -653,7 +643,7 @@ func (s *ClickHouseStore) activityRiskIPCounts(ctx context.Context, where string
 	}
 	sort.Strings(riskIPs)
 	if len(riskIPs) == 0 {
-		return []ActivityIPSummary{}, 0, nil
+		return []ActivityIPSummary{}, 0, levelCounts, nil
 	}
 	quotedIPs := make([]string, 0, len(riskIPs))
 	for _, ip := range riskIPs {
@@ -667,18 +657,18 @@ GROUP BY subject_ip
 ORDER BY count DESC, last_seen DESC, value ASC
 FORMAT JSONEachRow`, where, strings.Join(quotedIPs, ",")))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	counts, err := decodeActivityCountRows(data)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	items := make([]ActivityIPSummary, 0, len(counts))
 	for _, count := range counts {
 		snapshot := risks[count.Value]
 		domains, err := s.activityDomainCounts(ctx, where, count.Value, 5)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		items = append(items, ActivityIPSummary{
 			IP:         count.Value,
@@ -688,6 +678,7 @@ FORMAT JSONEachRow`, where, strings.Join(quotedIPs, ",")))
 			TopDomains: domains,
 			LastSeen:   count.LastSeen,
 		})
+		levelCounts[snapshot.Level]++
 	}
 	sort.Slice(items, func(i, j int) bool {
 		leftRank, _ := levelRank(items[i].RiskLevel)
@@ -707,7 +698,7 @@ FORMAT JSONEachRow`, where, strings.Join(quotedIPs, ",")))
 	if len(items) > 50 {
 		items = items[:50]
 	}
-	return items, total, nil
+	return items, total, levelCounts, nil
 }
 
 func (s *ClickHouseStore) exec(ctx context.Context, sql string) error {
