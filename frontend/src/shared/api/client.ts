@@ -198,6 +198,7 @@ export const api = {
   saveOrganization: <T>(kind:string,payload:T) => request<T>(`/organization/${kind}`,{method:'POST',body:JSON.stringify(payload)}),
   actionConnectors: () => request<{items:ActionConnector[];global_stop:boolean}>('/actions/connectors'),
   saveActionConnector: (payload:ActionConnector & {secret?:string}) => request<ActionConnector>('/actions/connectors',{method:'POST',body:JSON.stringify(payload)}),
+  testActionConnector: (connectorId:string) => request<{connector_id:string;reachable:boolean;checked_at:string}>(`/actions/connectors/${encodeURIComponent(connectorId)}/test`,{method:'POST'}),
   actions: (query:ListQuery={}) => request<{items:EnforcementAction[];page:Page}>(`/actions${search(query)}`),
   executeAction: (payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number},idempotencyKey:string) => request<EnforcementAction>('/actions/execute',{method:'POST',headers:{'Idempotency-Key':idempotencyKey},body:JSON.stringify(payload)}),
   revokeAction: (actionId:string) => request<EnforcementAction>(`/actions/${encodeURIComponent(actionId)}/revoke`,{method:'POST'}),

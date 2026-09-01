@@ -304,6 +304,9 @@ func NewServerWithError(opts Options) (*Server, error) {
 	if !opts.ReadOnly && fingerprintStatus.Source == "offline-bundle" && fingerprintStatus.BackfillStatus != "completed" {
 		server.startFingerprintBackfill(fingerprintStatus.Version)
 	}
+	if !opts.ReadOnly && operations.db != nil {
+		server.startActionWorker()
+	}
 	return server, nil
 }
 
@@ -365,6 +368,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleIdentityIngest(w, r)
+		return
+	}
+	if path == "/actions/callback" && r.Method == http.MethodPost {
+		s.handleActionCallback(w, r)
 		return
 	}
 	if path == "/auth/login" && r.Method == http.MethodPost {

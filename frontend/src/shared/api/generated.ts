@@ -244,6 +244,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/actions/connectors/{connector_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["testActionConnector"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/emergency-stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["updateActionEmergencyStop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/actions": {
         parameters: {
             query?: never;
@@ -276,6 +308,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/actions/{action_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAction"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/actions/{action_id}/revoke": {
         parameters: {
             query?: never;
@@ -286,6 +334,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["revokeAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["acceptActionCallback"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1229,6 +1293,17 @@ export interface components {
             enabled: boolean;
             shadow_ready: boolean;
             /** Format: date-time */
+            circuit_open_until?: string;
+            consecutive_failures?: number;
+            /** Format: date-time */
+            shadow_started_at?: string;
+            /** Format: date-time */
+            shadow_validation_since?: string;
+            shadow_candidate_count?: number;
+            shadow_reviewed_count?: number;
+            /** Format: double */
+            shadow_accuracy?: number;
+            /** Format: date-time */
             updated_at: string;
         };
         EnforcementAction: {
@@ -1243,6 +1318,17 @@ export interface components {
             account_id?: string;
             endpoint_id?: string;
             campus_id?: string;
+            session_id?: string;
+            ruleset_version?: string;
+            remote_action_id?: string;
+            parent_action_id?: string;
+            retry_count?: number;
+            /** Format: date-time */
+            next_attempt_at?: string;
+            /** Format: date-time */
+            cooldown_until?: string;
+            /** Format: date-time */
+            expires_at?: string;
             /** @enum {string} */
             status: "shadow" | "pending" | "running" | "succeeded" | "failed" | "revoked" | "expired" | "blocked";
             /** @enum {string} */
@@ -2542,6 +2628,54 @@ export interface operations {
             };
         };
     };
+    testActionConnector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed connectivity probe succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    updateActionEmergencyStop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Global enforcement stop updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listActions: {
         parameters: {
             query?: {
@@ -2596,6 +2730,29 @@ export interface operations {
             };
         };
     };
+    getAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enforcement action with retry, remote result and reversal linkage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnforcementAction"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
     revokeAction: {
         parameters: {
             query?: never;
@@ -2615,6 +2772,40 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EnforcementAction"];
                 };
+            };
+        };
+    };
+    acceptActionCallback: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Proxy-Sentinel-Timestamp": string;
+                "X-Proxy-Sentinel-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Authenticated callback accepted idempotently. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid HMAC signature or stale timestamp. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

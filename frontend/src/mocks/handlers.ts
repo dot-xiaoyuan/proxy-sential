@@ -57,7 +57,7 @@ const mockOrganization = {
   access_points: [{ access_point_id: 'ap-lib-01', campus_id: 'main', building_id: 'lib', network_zone_id: 'student-wifi', kind: 'ap', name: '图书馆一层 AP', management_ip: '10.1.1.10', enabled: true }],
 }
 
-const mockConnectors = [{ connector_id: 'portal-gateway', name: 'Portal 北向网关', endpoint_url: 'https://portal.example.edu/api/actions', action_mapping: { disconnect: 'kick' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, updated_at: new Date().toISOString() }]
+const mockConnectors = [{ connector_id: 'portal-gateway', name: 'Portal 北向网关', endpoint_url: 'https://portal.example.edu/api/actions', action_mapping: { disconnect: 'kick' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, shadow_candidate_count: 12, shadow_reviewed_count: 10, shadow_accuracy: .9, updated_at: new Date().toISOString() }]
 const mockActions: Array<Record<string, unknown>> = []
 const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管理员',role:'admin',disabled:false},{user_id:'reviewer-1',username:'reviewer',display_name:'风险复核员',role:'reviewer',disabled:false}]
 const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
@@ -113,6 +113,8 @@ export const handlers = [
     return HttpResponse.json(payload, { status: 201 })
   }),
   http.get('/api/v1/actions/connectors', () => HttpResponse.json({ items: mockConnectors, global_stop: false })),
+  http.post('/api/v1/actions/connectors', async ({request}) => {const payload=await request.json() as typeof mockConnectors[number] & {secret?:string};const existing=mockConnectors.findIndex(item=>item.connector_id===payload.connector_id);const item={...payload,shadow_ready:existing>=0?mockConnectors[existing].shadow_ready:false,updated_at:new Date().toISOString()};delete item.secret;if(existing>=0)mockConnectors[existing]=item;else mockConnectors.push(item);return HttpResponse.json(item)}),
+  http.post('/api/v1/actions/connectors/:connectorId/test', ({params}) => HttpResponse.json({connector_id:params.connectorId,reachable:true,checked_at:new Date().toISOString()})),
   http.get('/api/v1/actions', ({ request }) => { const result = mockPage(mockActions, new URL(request.url)); return HttpResponse.json(result) }),
   http.post('/api/v1/actions/execute', async ({ request }) => {
     const payload = await request.json() as Record<string, string>

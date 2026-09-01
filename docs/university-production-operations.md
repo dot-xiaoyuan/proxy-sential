@@ -43,6 +43,8 @@ PROXY_SENTINEL_ACTION_MASTER_KEY=<至少 32 字节随机主密钥>
 
 北向连接器默认保持影子模式。真实模式启用前必须满足至少 7 天影子验证、自动候选人工准确率不低于 95%、无校园 VPN/教学科研/基础设施误处置样本，并验证冷却、熔断、失败回退及人工撤销。身份数据中断时动作硬门槛自动阻断。
 
+控制面对每个北向 JSON 请求设置 `Idempotency-Key`、`X-Proxy-Sentinel-Timestamp` 和 `X-Proxy-Sentinel-Signature`。签名内容为 `HMAC-SHA256(secret, timestamp + "." + raw_body)`，接收端应拒绝超过 5 分钟的时间戳并按幂等键去重。异步结果回调 `/api/v1/actions/callback` 使用相同签名算法，只接受 `succeeded/failed/revoked` 终态。每次请求尝试、响应摘要、重试次数和下次执行时间均持久化；重启后继续执行，人工撤销与到期解除会创建独立的 `release` 动作，避免复用原处罚幂等键。
+
 30 机器继续使用 `--device-fingerprint-auto-update=false`，仅导入本地校验通过的离线特征包，不主动访问 IEEE、GitHub 或 Fingerbank。
 
 ## 本地权限矩阵

@@ -33,11 +33,14 @@ func TestPostgresOperationsRepositoryPersistsAcrossInstances(t *testing.T) {
 	first.mu.Lock()
 	first.doc.Campuses["integration-campus"] = Campus{CampusID: "integration-campus", Code: "IT", Name: "集成测试校区", Enabled: true}
 	first.doc.Cases["integration-case"] = RiskCase{CaseID: "integration-case", DedupeKey: "integration-dedupe", SubjectType: "ip", SubjectID: "192.0.2.10", IP: "192.0.2.10", Status: "new", Priority: "high", RiskScore: 95, RiskConfidence: .95, AssessmentLevel: "high", RulesetVersion: "integration-rules-v1", EvidenceSnapshot: firstSnapshot.Evidence, EvidenceHistory: []CaseEvidenceSnapshot{firstSnapshot, secondSnapshot}, FirstSeen: now, LastSeen: now, CreatedAt: now, UpdatedAt: now}
+	first.doc.Connectors["integration-connector"] = ActionConnector{ConnectorID: "integration-connector", Name: "集成连接器", EndpointURL: "https://northbound.example.test/actions", ActionMapping: map[string]string{"disconnect": "kick"}, Mode: "active", Enabled: true, ShadowReady: true, CircuitOpenUntil: time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano), ConsecutiveFailures: 2, ShadowStartedAt: time.Now().UTC().Add(-8 * 24 * time.Hour).Format(time.RFC3339Nano), ShadowValidationSince: time.Now().UTC().Add(-9 * 24 * time.Hour).Format(time.RFC3339Nano), ShadowCandidateCount: 20, ShadowReviewedCount: 20, ShadowAccuracy: 1, EncryptedSecret: "encrypted", UpdatedAt: now}
+	first.doc.Actions["integration-action"] = EnforcementAction{ActionID: "integration-action", IdempotencyKey: "integration-action-key", CaseID: "integration-case", ConnectorID: "integration-connector", ActionType: "disconnect", SubjectType: "account", SubjectID: "student-integration", AccountID: "student-integration", EndpointID: "endpoint-integration", SessionID: "session-integration", CampusID: "integration-campus", Status: "pending", Mode: "active", EvidenceIDs: []string{"evidence-integration"}, RulesetVersion: "integration-rules-v1", RetryCount: 1, NextAttemptAt: time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano), CreatedBy: "integration", CreatedAt: now, UpdatedAt: now}
 	if err := first.saveLocked(); err != nil {
 		first.mu.Unlock()
 		t.Fatal(err)
 	}
 	first.mu.Unlock()
+	(&Server{operations: first}).recordActionAttempt(first.doc.Actions["integration-action"], []byte(`{"action":"disconnect"}`), []byte(`{"accepted":true}`), http.StatusAccepted, "")
 
 	second, err := newOperationsState("", dsn)
 	if err != nil {
@@ -57,6 +60,18 @@ func TestPostgresOperationsRepositoryPersistsAcrossInstances(t *testing.T) {
 	}
 	if persisted.EvidenceSnapshot.RiskScore != firstSnapshot.Evidence.RiskScore {
 		t.Fatalf("initial evidence snapshot was not kept immutable: %#v", persisted.EvidenceSnapshot)
+	}
+	connector := second.doc.Connectors["integration-connector"]
+	if connector.ConsecutiveFailures != 2 || connector.ShadowCandidateCount != 20 || connector.ShadowAccuracy != 1 || connector.CircuitOpenUntil == "" || connector.ShadowValidationSince == "" {
+		t.Fatalf("connector safety state was not persisted: %+v", connector)
+	}
+	action := second.doc.Actions["integration-action"]
+	if action.SessionID != "session-integration" || action.RulesetVersion != "integration-rules-v1" || action.NextAttemptAt == "" || action.RetryCount != 1 {
+		t.Fatalf("durable action retry state was not persisted: %+v", action)
+	}
+	var attemptCount int
+	if err := second.db.QueryRowContext(ctx, `SELECT count(*) FROM enforcement_action_attempts WHERE action_id='integration-action'`).Scan(&attemptCount); err != nil || attemptCount == 0 {
+		t.Fatalf("action attempt was not persisted: count=%d err=%v", attemptCount, err)
 	}
 }
 

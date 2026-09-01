@@ -2512,6 +2512,12 @@ pre.wrap-code {
   width: min(240px, 100%);
 }
 
+.connector-summary {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 @media (max-width: 760px) {
   .university-filter-grid {
     grid-template-columns: 1fr;

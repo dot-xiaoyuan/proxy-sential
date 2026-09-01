@@ -231,6 +231,30 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ActionConnector" }
+  /actions/connectors/{connector_id}/test:
+    post:
+      operationId: testActionConnector
+      parameters:
+        - { name: connector_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Signed connectivity probe succeeded.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /actions/emergency-stop:
+    post:
+      operationId: updateActionEmergencyStop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties: { enabled: { type: boolean } }
+      responses:
+        "200": { description: Global enforcement stop updated. }
   /actions:
     get:
       operationId: listActions
@@ -264,6 +288,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EnforcementAction" }
+  /actions/{action_id}:
+    get:
+      operationId: getAction
+      parameters:
+        - { name: action_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Enforcement action with retry, remote result and reversal linkage.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnforcementAction" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /actions/{action_id}/revoke:
     post:
       operationId: revokeAction
@@ -275,6 +311,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EnforcementAction" }
+  /actions/callback:
+    post:
+      operationId: acceptActionCallback
+      security: []
+      parameters:
+        - { name: X-Proxy-Sentinel-Timestamp, in: header, required: true, schema: { type: string, format: date-time } }
+        - { name: X-Proxy-Sentinel-Signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Authenticated callback accepted idempotently. }
+        "401": { description: Invalid HMAC signature or stale timestamp. }
   /integrations/identity/events:
     post:
       operationId: ingestIdentityEvents
@@ -1909,6 +1960,13 @@ components:
         mode: { type: string, enum: [shadow, active] }
         enabled: { type: boolean }
         shadow_ready: { type: boolean }
+        circuit_open_until: { type: string, format: date-time }
+        consecutive_failures: { type: integer }
+        shadow_started_at: { type: string, format: date-time }
+        shadow_validation_since: { type: string, format: date-time }
+        shadow_candidate_count: { type: integer }
+        shadow_reviewed_count: { type: integer }
+        shadow_accuracy: { type: number, format: double }
         updated_at: { type: string, format: date-time }
     EnforcementAction:
       type: object
@@ -1924,6 +1982,14 @@ components:
         account_id: { type: string }
         endpoint_id: { type: string }
         campus_id: { type: string }
+        session_id: { type: string }
+        ruleset_version: { type: string }
+        remote_action_id: { type: string }
+        parent_action_id: { type: string }
+        retry_count: { type: integer }
+        next_attempt_at: { type: string, format: date-time }
+        cooldown_until: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
         status: { type: string, enum: [shadow, pending, running, succeeded, failed, revoked, expired, blocked] }
         mode: { type: string, enum: [shadow, active] }
         blockers: { type: array, items: { type: string } }

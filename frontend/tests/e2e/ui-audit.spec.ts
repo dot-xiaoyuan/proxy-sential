@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
-  const routes = ['/overview', '/cases', '/devices', '/ips/10.255.0.59', '/settings/rules', '/ingest']
+  const routes = ['/overview', '/cases', '/devices', '/ips/10.255.0.59', '/settings/rules', '/settings/actions', '/ingest']
 
   test('audit responsive 3-viewport anti-overflow and element inline-style purity', async ({ page }) => {
     for (const route of routes) {

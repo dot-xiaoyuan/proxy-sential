@@ -285,7 +285,7 @@ func loadCases(ctx context.Context, q operationsQuerier, doc *operationsDocument
 }
 
 func loadConnectors(ctx context.Context, q operationsQuerier, doc *operationsDocument) error {
-	rows, err := q.QueryContext(ctx, `SELECT connector_id, name, endpoint_url, action_mapping, encrypted_secret, mode, enabled, shadow_ready, updated_at FROM enforcement_connectors`)
+	rows, err := q.QueryContext(ctx, `SELECT connector_id, name, endpoint_url, action_mapping, encrypted_secret, mode, enabled, shadow_ready, circuit_open_until, consecutive_failures, shadow_started_at, shadow_validation_since, shadow_candidate_count, shadow_reviewed_count, shadow_accuracy, updated_at FROM enforcement_connectors`)
 	if err != nil {
 		return fmt.Errorf("load enforcement connectors: %w", err)
 	}
@@ -293,9 +293,19 @@ func loadConnectors(ctx context.Context, q operationsQuerier, doc *operationsDoc
 	for rows.Next() {
 		var item ActionConnector
 		var mapping, secret []byte
+		var circuitOpen, shadowStarted, shadowValidationSince sql.NullTime
 		var updatedAt time.Time
-		if err := rows.Scan(&item.ConnectorID, &item.Name, &item.EndpointURL, &mapping, &secret, &item.Mode, &item.Enabled, &item.ShadowReady, &updatedAt); err != nil {
+		if err := rows.Scan(&item.ConnectorID, &item.Name, &item.EndpointURL, &mapping, &secret, &item.Mode, &item.Enabled, &item.ShadowReady, &circuitOpen, &item.ConsecutiveFailures, &shadowStarted, &shadowValidationSince, &item.ShadowCandidateCount, &item.ShadowReviewedCount, &item.ShadowAccuracy, &updatedAt); err != nil {
 			return err
+		}
+		if circuitOpen.Valid {
+			item.CircuitOpenUntil = formatDBTime(circuitOpen.Time)
+		}
+		if shadowStarted.Valid {
+			item.ShadowStartedAt = formatDBTime(shadowStarted.Time)
+		}
+		if shadowValidationSince.Valid {
+			item.ShadowValidationSince = formatDBTime(shadowValidationSince.Time)
 		}
 		_ = json.Unmarshal(mapping, &item.ActionMapping)
 		item.EncryptedSecret = string(secret)
@@ -306,7 +316,7 @@ func loadConnectors(ctx context.Context, q operationsQuerier, doc *operationsDoc
 }
 
 func loadActions(ctx context.Context, q operationsQuerier, doc *operationsDocument) error {
-	rows, err := q.QueryContext(ctx, `SELECT action_id, idempotency_key, COALESCE(case_id,''), COALESCE(connector_id,''), action_type, subject_type, subject_id, COALESCE(account_id,''), COALESCE(endpoint_id,''), COALESCE(host(ip),''), COALESCE(session_id,''), COALESCE(campus_id,''), status, mode, COALESCE(duration_seconds,0), evidence_ids, COALESCE(ruleset_version,''), COALESCE(remote_action_id,''), retry_count, cooldown_until, expires_at, COALESCE(last_error,''), created_by, created_at, updated_at FROM enforcement_actions`)
+	rows, err := q.QueryContext(ctx, `SELECT action_id, idempotency_key, COALESCE(case_id,''), COALESCE(connector_id,''), action_type, subject_type, subject_id, COALESCE(account_id,''), COALESCE(endpoint_id,''), COALESCE(host(ip),''), COALESCE(session_id,''), COALESCE(campus_id,''), status, mode, COALESCE(duration_seconds,0), evidence_ids, COALESCE(ruleset_version,''), COALESCE(remote_action_id,''), retry_count, COALESCE(parent_action_id,''), next_attempt_at, cooldown_until, expires_at, COALESCE(last_error,''), created_by, created_at, updated_at FROM enforcement_actions`)
 	if err != nil {
 		return fmt.Errorf("load enforcement actions: %w", err)
 	}
@@ -314,12 +324,15 @@ func loadActions(ctx context.Context, q operationsQuerier, doc *operationsDocume
 	for rows.Next() {
 		var item EnforcementAction
 		var evidenceIDs []byte
-		var cooldown, expires sql.NullTime
+		var nextAttempt, cooldown, expires sql.NullTime
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&item.ActionID, &item.IdempotencyKey, &item.CaseID, &item.ConnectorID, &item.ActionType, &item.SubjectType, &item.SubjectID, &item.AccountID, &item.EndpointID, &item.IP, &item.SessionID, &item.CampusID, &item.Status, &item.Mode, &item.DurationSeconds, &evidenceIDs, &item.RulesetVersion, &item.RemoteActionID, &item.RetryCount, &cooldown, &expires, &item.LastError, &item.CreatedBy, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&item.ActionID, &item.IdempotencyKey, &item.CaseID, &item.ConnectorID, &item.ActionType, &item.SubjectType, &item.SubjectID, &item.AccountID, &item.EndpointID, &item.IP, &item.SessionID, &item.CampusID, &item.Status, &item.Mode, &item.DurationSeconds, &evidenceIDs, &item.RulesetVersion, &item.RemoteActionID, &item.RetryCount, &item.ParentActionID, &nextAttempt, &cooldown, &expires, &item.LastError, &item.CreatedBy, &createdAt, &updatedAt); err != nil {
 			return err
 		}
 		_ = json.Unmarshal(evidenceIDs, &item.EvidenceIDs)
+		if nextAttempt.Valid {
+			item.NextAttemptAt = formatDBTime(nextAttempt.Time)
+		}
 		if cooldown.Valid {
 			item.CooldownUntil = formatDBTime(cooldown.Time)
 		}
@@ -394,14 +407,14 @@ func (s *operationsState) savePostgres(tx *sql.Tx) error {
 	}
 	for _, item := range s.doc.Connectors {
 		mapping, _ := json.Marshal(item.ActionMapping)
-		_, err := tx.ExecContext(ctx, `INSERT INTO enforcement_connectors(connector_id,name,endpoint_url,action_mapping,encrypted_secret,mode,enabled,shadow_ready,updated_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'system',$9::timestamptz) ON CONFLICT(connector_id) DO UPDATE SET name=EXCLUDED.name,endpoint_url=EXCLUDED.endpoint_url,action_mapping=EXCLUDED.action_mapping,encrypted_secret=EXCLUDED.encrypted_secret,mode=EXCLUDED.mode,enabled=EXCLUDED.enabled,shadow_ready=EXCLUDED.shadow_ready,updated_at=EXCLUDED.updated_at`, item.ConnectorID, item.Name, item.EndpointURL, mapping, []byte(item.EncryptedSecret), item.Mode, item.Enabled, item.ShadowReady, item.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO enforcement_connectors(connector_id,name,endpoint_url,action_mapping,encrypted_secret,mode,enabled,shadow_ready,circuit_open_until,consecutive_failures,shadow_started_at,shadow_validation_since,shadow_candidate_count,shadow_reviewed_count,shadow_accuracy,updated_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::timestamptz,$10,NULLIF($11,'')::timestamptz,NULLIF($12,'')::timestamptz,$13,$14,$15,'system',$16::timestamptz) ON CONFLICT(connector_id) DO UPDATE SET name=EXCLUDED.name,endpoint_url=EXCLUDED.endpoint_url,action_mapping=EXCLUDED.action_mapping,encrypted_secret=EXCLUDED.encrypted_secret,mode=EXCLUDED.mode,enabled=EXCLUDED.enabled,shadow_ready=EXCLUDED.shadow_ready,circuit_open_until=EXCLUDED.circuit_open_until,consecutive_failures=EXCLUDED.consecutive_failures,shadow_started_at=EXCLUDED.shadow_started_at,shadow_validation_since=EXCLUDED.shadow_validation_since,shadow_candidate_count=EXCLUDED.shadow_candidate_count,shadow_reviewed_count=EXCLUDED.shadow_reviewed_count,shadow_accuracy=EXCLUDED.shadow_accuracy,updated_at=EXCLUDED.updated_at`, item.ConnectorID, item.Name, item.EndpointURL, mapping, []byte(item.EncryptedSecret), item.Mode, item.Enabled, item.ShadowReady, item.CircuitOpenUntil, item.ConsecutiveFailures, item.ShadowStartedAt, item.ShadowValidationSince, item.ShadowCandidateCount, item.ShadowReviewedCount, item.ShadowAccuracy, item.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("save connector %s: %w", item.ConnectorID, err)
 		}
 	}
 	for _, item := range s.doc.Actions {
 		evidenceIDs, _ := json.Marshal(item.EvidenceIDs)
-		_, err := tx.ExecContext(ctx, `INSERT INTO enforcement_actions(action_id,idempotency_key,case_id,connector_id,action_type,subject_type,subject_id,account_id,endpoint_id,ip,session_id,campus_id,status,mode,duration_seconds,evidence_ids,ruleset_version,remote_action_id,retry_count,cooldown_until,expires_at,last_error,created_by,created_at,updated_at) VALUES($1,$2,NULLIF($3,''),NULLIF($4,''),$5,$6,$7,NULLIF($8,''),NULLIF($9,''),NULLIF($10,'')::inet,NULLIF($11,''),NULLIF($12,''),$13,$14,$15,$16,NULLIF($17,''),NULLIF($18,''),$19,NULLIF($20,'')::timestamptz,NULLIF($21,'')::timestamptz,NULLIF($22,''),$23,$24::timestamptz,$25::timestamptz) ON CONFLICT(action_id) DO UPDATE SET status=EXCLUDED.status,remote_action_id=EXCLUDED.remote_action_id,retry_count=EXCLUDED.retry_count,cooldown_until=EXCLUDED.cooldown_until,expires_at=EXCLUDED.expires_at,last_error=EXCLUDED.last_error,updated_at=EXCLUDED.updated_at`, item.ActionID, item.IdempotencyKey, item.CaseID, item.ConnectorID, item.ActionType, item.SubjectType, item.SubjectID, item.AccountID, item.EndpointID, item.IP, item.SessionID, item.CampusID, item.Status, item.Mode, item.DurationSeconds, evidenceIDs, item.RulesetVersion, item.RemoteActionID, item.RetryCount, item.CooldownUntil, item.ExpiresAt, item.LastError, item.CreatedBy, item.CreatedAt, item.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO enforcement_actions(action_id,idempotency_key,case_id,connector_id,action_type,subject_type,subject_id,account_id,endpoint_id,ip,session_id,campus_id,status,mode,duration_seconds,evidence_ids,ruleset_version,remote_action_id,retry_count,parent_action_id,next_attempt_at,cooldown_until,expires_at,last_error,created_by,created_at,updated_at) VALUES($1,$2,NULLIF($3,''),NULLIF($4,''),$5,$6,$7,NULLIF($8,''),NULLIF($9,''),NULLIF($10,'')::inet,NULLIF($11,''),NULLIF($12,''),$13,$14,$15,$16,NULLIF($17,''),NULLIF($18,''),$19,NULLIF($20,''),NULLIF($21,'')::timestamptz,NULLIF($22,'')::timestamptz,NULLIF($23,'')::timestamptz,NULLIF($24,''),$25,$26::timestamptz,$27::timestamptz) ON CONFLICT(action_id) DO UPDATE SET status=EXCLUDED.status,remote_action_id=EXCLUDED.remote_action_id,retry_count=EXCLUDED.retry_count,parent_action_id=EXCLUDED.parent_action_id,next_attempt_at=EXCLUDED.next_attempt_at,cooldown_until=EXCLUDED.cooldown_until,expires_at=EXCLUDED.expires_at,last_error=EXCLUDED.last_error,updated_at=EXCLUDED.updated_at`, item.ActionID, item.IdempotencyKey, item.CaseID, item.ConnectorID, item.ActionType, item.SubjectType, item.SubjectID, item.AccountID, item.EndpointID, item.IP, item.SessionID, item.CampusID, item.Status, item.Mode, item.DurationSeconds, evidenceIDs, item.RulesetVersion, item.RemoteActionID, item.RetryCount, item.ParentActionID, item.NextAttemptAt, item.CooldownUntil, item.ExpiresAt, item.LastError, item.CreatedBy, item.CreatedAt, item.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("save enforcement action %s: %w", item.ActionID, err)
 		}
