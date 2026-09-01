@@ -155,11 +155,10 @@ func (s *DBStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (Pro
 }
 
 func (s *DBStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {
-	window, events, risks, sensorID, err := s.dpiEventSet(ctx, query)
-	if err != nil {
-		return DPIOverview{}, err
+	if query.SensorID == "" {
+		query.SensorID = s.pg.sensorID
 	}
-	return BuildDPIOverview(sensorID, window, events, risks), nil
+	return s.ch.QueryDPIOverview(ctx, query)
 }
 
 func (s *DBStore) ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error) {
@@ -246,8 +245,16 @@ func (s *DBStore) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.pg.ListRuns(ctx, limit)
 }
 
+func (s *DBStore) ListRunsPage(ctx context.Context, query Query) ([]Run, Page, error) {
+	return s.pg.ListRunsPage(ctx, query)
+}
+
 func (s *DBStore) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, error) {
 	return s.pg.ListAuditLogs(ctx, limit)
+}
+
+func (s *DBStore) ListAuditLogsPage(ctx context.Context, query Query) ([]AuditLog, Page, error) {
+	return s.pg.ListAuditLogsPage(ctx, query)
 }
 
 func (s *DBStore) AppendAuditLog(ctx context.Context, item AuditLog) error {
@@ -317,6 +324,10 @@ func (s *DBStore) IngestStatus(ctx context.Context) (ingest.Status, error) {
 
 func (s *DBStore) ListIngestDiagnostics(ctx context.Context, query Query) ([]ingest.Diagnostic, error) {
 	return s.ch.ListIngestDiagnostics(ctx, query)
+}
+
+func (s *DBStore) ListIngestDiagnosticsPage(ctx context.Context, query Query, errorsOnly bool) ([]ingest.Diagnostic, Page, error) {
+	return s.ch.ListIngestDiagnosticsPage(ctx, query, errorsOnly)
 }
 
 func (s *DBStore) ListIngestEventTypes(ctx context.Context) ([]ingest.EventTypeCount, error) {

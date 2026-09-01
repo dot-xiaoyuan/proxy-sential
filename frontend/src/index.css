@@ -2354,6 +2354,10 @@ pre.wrap-code {
   gap: 16px;
 }
 
+.page-contained-row {
+  margin-inline: 0 !important;
+}
+
 .case-assignee-input {
   width: 180px;
 }

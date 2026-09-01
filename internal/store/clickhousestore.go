@@ -41,8 +41,16 @@ func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("clickhouse dsn must be an http(s) URL for the HTTP interface")
 	}
+	params := parsed.Query()
+	// Aggregate counters are UInt64. Emitting them as JSON numbers keeps the
+	// HTTP contract compatible with Go's integer fields and avoids a production-
+	// only decoding failure once ClickHouse returns real count() results.
+	if params.Get("output_format_json_quote_64bit_integers") == "" {
+		params.Set("output_format_json_quote_64bit_integers", "0")
+		parsed.RawQuery = params.Encode()
+	}
 	return &ClickHouseStore{
-		dsn:    opts.DSN,
+		dsn:    parsed.String(),
 		client: &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
@@ -271,11 +279,7 @@ func (s *ClickHouseStore) GetActivityOverview(ctx context.Context, query Activit
 }
 
 func (s *ClickHouseStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {
-	window, events, err := s.dpiEventSet(ctx, query)
-	if err != nil {
-		return DPIOverview{}, err
-	}
-	return BuildDPIOverview(query.SensorID, window, events, map[string]risk.Snapshot{}), nil
+	return s.QueryDPIOverview(ctx, query)
 }
 
 func (s *ClickHouseStore) ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error) {
@@ -495,6 +499,47 @@ FORMAT JSONEachRow`, limit)
 		return nil, err
 	}
 	return decodeDiagnosticRows(data)
+}
+
+func (s *ClickHouseStore) ListIngestDiagnosticsPage(ctx context.Context, query Query, errorsOnly bool) ([]ingest.Diagnostic, Page, error) {
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	clauses := []string{}
+	if errorsOnly {
+		clauses = append(clauses, "severity IN ('warning','error')")
+	}
+	if strings.TrimSpace(query.Q) != "" {
+		like := chQuote("%" + strings.ToLower(strings.TrimSpace(query.Q)) + "%")
+		clauses = append(clauses, "(lower(diagnostic_id) LIKE "+like+" OR lower(sensor_id) LIKE "+like+" OR lower(stage) LIKE "+like+" OR lower(type) LIKE "+like+" OR lower(severity) LIKE "+like+" OR lower(summary) LIKE "+like+")")
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	total, err := s.diagnosticCount(ctx, where)
+	if err != nil {
+		return nil, Page{}, err
+	}
+	sql := fmt.Sprintf(`SELECT timestamp,diagnostic_id,schema_version,sensor_id,collector_kind,collector_version,interface_name,stage,type,severity,summary,counters_json,by_type_json,raw_ref_json,details_json FROM ingest_diagnostics%s ORDER BY timestamp DESC,diagnostic_id DESC LIMIT %d OFFSET %d FORMAT JSONEachRow`, where, limit, max(query.Cursor, 0))
+	data, err := s.query(ctx, sql)
+	if err != nil {
+		return nil, Page{}, err
+	}
+	items, err := decodeDiagnosticRows(data)
+	if err != nil {
+		return nil, Page{}, err
+	}
+	return items, offsetPage(limit, query.Cursor, len(items), total), nil
+}
+
+func (s *ClickHouseStore) diagnosticCount(ctx context.Context, where string) (int, error) {
+	data, err := s.query(ctx, "SELECT count() AS count FROM ingest_diagnostics"+where+" FORMAT JSONEachRow")
+	if err != nil {
+		return 0, err
+	}
+	return decodeSingleCount(data)
 }
 
 func (s *ClickHouseStore) ListIngestErrors(ctx context.Context, limit int) ([]ingest.Diagnostic, error) {
@@ -831,7 +876,9 @@ func eventWhereSQL(query Query) (string, error) {
 
 func activityWhereSQL(sensorID, campusID, asOf string, duration time.Duration) (string, error) {
 	intervalValue, intervalUnit := clickHouseInterval(duration)
-	anchor := "now()"
+	// normalized_events uses DateTime64(6); a second-precision now() would
+	// temporarily exclude events from the current fractional second.
+	anchor := "now64(6)"
 	if strings.TrimSpace(asOf) != "" {
 		parsed, err := time.Parse(time.RFC3339, asOf)
 		if err != nil {

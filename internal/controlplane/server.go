@@ -1605,6 +1605,21 @@ func (s *Server) handleShadowRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
+	if paged, ok := s.reader.(interface {
+		ListRunsPage(context.Context, store.Query) ([]store.Run, store.Page, error)
+	}); ok {
+		runs, page, err := paged.ListRunsPage(ctx, store.Query{Limit: limit, Cursor: cursor, Q: strings.TrimSpace(r.URL.Query().Get("q"))})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
+			return
+		}
+		items := make([]ShadowRun, 0, len(runs))
+		for _, run := range runs {
+			items = append(items, toShadowRun(run))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"runs": items, "page": page})
+		return
+	}
 	runs, err := s.reader.ListRuns(ctx, 10000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
@@ -1673,6 +1688,21 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
 		return
 	}
+	if paged, ok := s.reader.(interface {
+		ListAuditLogsPage(context.Context, store.Query) ([]store.AuditLog, store.Page, error)
+	}); ok {
+		logs, page, err := paged.ListAuditLogsPage(r.Context(), store.Query{Limit: limit, Cursor: cursor, Q: strings.TrimSpace(r.URL.Query().Get("q"))})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_audit_logs_failed", err.Error())
+			return
+		}
+		items := make([]AuditLog, 0, len(logs))
+		for _, log := range logs {
+			items = append(items, AuditLog{AuditID: log.AuditID, Actor: log.Actor, Action: log.Action, Target: log.Target, Outcome: log.Outcome, CreatedAt: log.CreatedAt})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"audit_logs": items, "page": page})
+		return
+	}
 	logs, err := s.reader.ListAuditLogs(r.Context(), 10000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_audit_logs_failed", err.Error())
@@ -1737,6 +1767,17 @@ func (s *Server) handleIngestDiagnostics(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
 		return
 	}
+	if paged, ok := s.reader.(interface {
+		ListIngestDiagnosticsPage(context.Context, store.Query, bool) ([]ingest.Diagnostic, store.Page, error)
+	}); ok {
+		items, page, err := paged.ListIngestDiagnosticsPage(r.Context(), store.Query{Limit: limit, Cursor: cursor, Q: strings.TrimSpace(r.URL.Query().Get("q"))}, false)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_ingest_diagnostics_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"diagnostics": items, "page": page})
+		return
+	}
 	items, err := s.reader.ListIngestDiagnostics(r.Context(), store.Query{Limit: 10000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_ingest_diagnostics_failed", err.Error())
@@ -1785,6 +1826,17 @@ func (s *Server) handleIngestErrors(w http.ResponseWriter, r *http.Request) {
 	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
+		return
+	}
+	if paged, ok := s.reader.(interface {
+		ListIngestDiagnosticsPage(context.Context, store.Query, bool) ([]ingest.Diagnostic, store.Page, error)
+	}); ok {
+		items, page, err := paged.ListIngestDiagnosticsPage(r.Context(), store.Query{Limit: limit, Cursor: cursor, Q: strings.TrimSpace(r.URL.Query().Get("q"))}, true)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_ingest_errors_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"diagnostics": items, "page": page})
 		return
 	}
 	items, err := s.reader.ListIngestErrors(r.Context(), 10000)

@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test'
 
+test('prefetches the next server-side event page', async ({ page }) => {
+	await page.goto('/events?limit=1')
+	await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').some((entry) => entry.name.includes('/api/v1/events') && entry.name.includes('cursor=1')))).toBe(true)
+})
+
 test('redirects the legacy risk list to cases and opens a case', async ({ page }) => {
   await page.goto('/risks')
   await expect(page).toHaveURL(/\/cases$/)

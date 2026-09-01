@@ -38,7 +38,8 @@ func TestFileUserLifecyclePersistsAndInvalidatesSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := manager.login("192.0.2.2:1", "reviewer", "reviewer-password-123"); err != nil {
+	token, _, err := manager.login("192.0.2.2:1", "reviewer", "reviewer-password-123")
+	if err != nil {
 		t.Fatal(err)
 	}
 	updated, err := manager.updateUser(context.Background(), created.ID, "disable", userMutation{})
@@ -47,6 +48,11 @@ func TestFileUserLifecyclePersistsAndInvalidatesSessions(t *testing.T) {
 	}
 	if !updated.Disabled {
 		t.Fatalf("expected disabled user: %#v", updated)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	if _, ok := manager.current(request); ok {
+		t.Fatal("disabling a user must invalidate existing sessions")
 	}
 	reloaded, err := newAuthManager(path, false, "")
 	if err != nil {
@@ -58,6 +64,25 @@ func TestFileUserLifecyclePersistsAndInvalidatesSessions(t *testing.T) {
 	}
 	if len(items) != 2 || !items[1].Disabled {
 		t.Fatalf("user lifecycle was not persisted: %#v", items)
+	}
+}
+
+func TestLoginRateLimitBlocksEleventhAttempt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "users.json")
+	if err := BootstrapAdmin(path, "admin", "管理员", "long-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := newAuthManager(path, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 10; attempt++ {
+		if _, _, err := manager.login("192.0.2.99", "missing-user", "wrong-password"); err == nil || err.Error() != "invalid credentials" {
+			t.Fatalf("attempt %d should be rejected as invalid credentials: %v", attempt+1, err)
+		}
+	}
+	if _, _, err := manager.login("192.0.2.99", "admin", "long-password-123"); err == nil || err.Error() != "too many login attempts" {
+		t.Fatalf("eleventh attempt must be rate limited: %v", err)
 	}
 }
 

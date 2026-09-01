@@ -1,11 +1,14 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
-  const routes = ['/overview', '/cases', '/devices', '/ips/10.255.0.59', '/settings/rules', '/settings/actions', '/ingest']
+	const routes = ['/overview', '/activity', '/cases', '/devices', '/events', '/shadow-runs', '/audit', '/ingest', '/settings/rules', '/settings/organization', '/settings/actions', '/settings/security']
+	const viewports = [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]
 
   test('audit responsive 3-viewport anti-overflow and element inline-style purity', async ({ page }) => {
-    for (const route of routes) {
-      await page.setViewportSize({ width: 390, height: 844 })
+		test.setTimeout(120_000)
+		for (const viewport of viewports) for (const route of routes) {
+			await test.step(`${viewport.width}x${viewport.height} ${route}`, async () => {
+			await page.setViewportSize(viewport)
       await page.goto(route)
       await page.waitForLoadState('networkidle')
 
@@ -39,7 +42,7 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
 
       // 2. 按钮与标签防竖排 nowrap 校验
       const nowrapAudit = await page.evaluate(() => {
-        const elements = document.querySelectorAll('.ant-btn, .ant-tag, .mock-badge')
+				const elements = document.querySelectorAll('.ant-btn, .ant-tag, .mock-badge, .list-cell-nowrap, .nowrap-cell, .ellipsis-cell')
         const brokenElements: string[] = []
         elements.forEach((el, idx) => {
           const style = window.getComputedStyle(el)
@@ -51,6 +54,15 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
       })
 
       expect(nowrapAudit).toEqual([])
+			})
     }
   })
+
+	test('cold overview becomes operable within 1.5 seconds', async ({ page, context }) => {
+		await context.setExtraHTTPHeaders({ 'Cache-Control': 'no-cache' })
+		const started = Date.now()
+		await page.goto('/overview')
+		await expect(page.getByRole('heading', { name: '运营工作台' })).toBeVisible()
+		expect(Date.now() - started).toBeLessThan(1500)
+	})
 })

@@ -12,6 +12,55 @@ import (
 	"proxy-sentinel/internal/risk"
 )
 
+// QueryDPIOverview keeps the overview bounded by aggregating the complete
+// window in ClickHouse. It deliberately does not use ListEventSamples: a cold
+// dashboard request must not transfer tens of thousands of event rows to Go.
+func (s *ClickHouseStore) QueryDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {
+	window, duration, err := NormalizeActivityWindow(query.Window)
+	if err != nil {
+		return DPIOverview{}, err
+	}
+	where, err := activityWhereSQL(query.SensorID, query.CampusID, query.AsOf, duration)
+	if err != nil {
+		return DPIOverview{}, err
+	}
+	protocol := `multiIf(type='dns','DNS',type='http','HTTP',type='tls','TLS',type='quic','QUIC',type='flow' AND proto!='',upper(proto),upper(type))`
+	data, err := s.query(ctx, fmt.Sprintf(`SELECT count() AS event_count, uniqExactIf(subject_ip,subject_ip!='') AS active_ip_count, uniqExactIf(%s,%s!='') AS protocol_flow_count, minOrNull(timestamp) AS first_seen, maxOrNull(timestamp) AS last_seen FROM normalized_events PREWHERE %s FORMAT JSONEachRow`, protocol, protocol, where))
+	if err != nil {
+		return DPIOverview{}, err
+	}
+	var summary []struct {
+		EventCount        int     `json:"event_count"`
+		ActiveIPCount     int     `json:"active_ip_count"`
+		ProtocolFlowCount int     `json:"protocol_flow_count"`
+		FirstSeen         *string `json:"first_seen"`
+		LastSeen          *string `json:"last_seen"`
+	}
+	if err := decodeJSONEachRow(data, &summary); err != nil {
+		return DPIOverview{}, err
+	}
+	result := DPIOverview{SensorID: query.SensorID, Window: window}
+	if len(summary) > 0 {
+		result.EventCount = summary[0].EventCount
+		result.FlowSampleCount = summary[0].EventCount
+		result.ActiveIPCount = summary[0].ActiveIPCount
+		result.ProtocolFlowCount = summary[0].ProtocolFlowCount
+		if summary[0].FirstSeen != nil {
+			result.FirstSeen = normalizeClickHouseTimestamp(*summary[0].FirstSeen)
+		}
+		if summary[0].LastSeen != nil {
+			result.LastSeen = normalizeClickHouseTimestamp(*summary[0].LastSeen)
+		}
+	}
+	conflictSQL := fmt.Sprintf(`SELECT sum(toUInt8(length(uas)>1)+toUInt8(length(ja3s)+length(ja4s)>1)+toUInt8(length(ttls)>1)) AS count FROM (SELECT groupUniqArrayIf(8)(JSONExtractString(payload_json,'user_agent'),JSONExtractString(payload_json,'user_agent')!='') AS uas, groupUniqArrayIf(8)(JSONExtractString(payload_json,'ja3'),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(JSONExtractString(payload_json,'ja4'),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls FROM normalized_events PREWHERE %s AND subject_ip!='' GROUP BY subject_ip) FORMAT JSONEachRow`, where)
+	data, err = s.query(ctx, conflictSQL)
+	if err != nil {
+		return DPIOverview{}, err
+	}
+	result.FingerprintConflictCount, err = decodeSingleCount(data)
+	return result, err
+}
+
 // QueryDPITrends performs bounded aggregation inside ClickHouse so the control
 // plane never pulls a 100k event sample into memory for a chart.
 func (s *ClickHouseStore) QueryDPITrends(ctx context.Context, query ActivityQuery, risks map[string]risk.Snapshot) ([]DPITrendPoint, error) {
@@ -19,16 +68,15 @@ func (s *ClickHouseStore) QueryDPITrends(ctx context.Context, query ActivityQuer
 	if err != nil {
 		return nil, err
 	}
-	intervalValue, intervalUnit := clickHouseInterval(duration)
+	where, err := activityWhereSQL(query.SensorID, query.CampusID, query.AsOf, duration)
+	if err != nil {
+		return nil, err
+	}
 	bucket := "toStartOfMinute(timestamp)"
 	seconds := 60.0
 	if window == "24h" || window == "7d" {
 		bucket = "toStartOfHour(timestamp)"
 		seconds = 3600
-	}
-	clauses := []string{fmt.Sprintf("timestamp >= now() - INTERVAL %d %s", intervalValue, intervalUnit)}
-	if query.SensorID != "" {
-		clauses = append(clauses, "sensor_id = "+chQuote(query.SensorID))
 	}
 	riskIPs := make([]string, 0)
 	for ip, snapshot := range risks {
@@ -40,7 +88,7 @@ func (s *ClickHouseStore) QueryDPITrends(ctx context.Context, query ActivityQuer
 	if len(riskIPs) > 0 {
 		riskExpression = "uniqExactIf(subject_ip, subject_ip IN (" + strings.Join(riskIPs, ",") + "))"
 	}
-	sql := fmt.Sprintf(`SELECT toString(%s) AS bucket, count() AS event_count, uniqExact(subject_ip) AS active_devices, %s AS risk_ips FROM normalized_events PREWHERE %s GROUP BY bucket ORDER BY bucket FORMAT JSONEachRow`, bucket, riskExpression, strings.Join(clauses, " AND "))
+	sql := fmt.Sprintf(`SELECT toString(%s) AS bucket, count() AS event_count, uniqExact(subject_ip) AS active_devices, %s AS risk_ips FROM normalized_events PREWHERE %s GROUP BY bucket ORDER BY bucket FORMAT JSONEachRow`, bucket, riskExpression, where)
 	data, err := s.query(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -66,53 +114,36 @@ func (s *ClickHouseStore) QueryDPIProtocolFlows(ctx context.Context, query Activ
 	if err != nil {
 		return nil, err
 	}
-	intervalValue, intervalUnit := clickHouseInterval(duration)
-	clauses := []string{fmt.Sprintf("timestamp >= now() - INTERVAL %d %s", intervalValue, intervalUnit)}
-	if query.SensorID != "" {
-		clauses = append(clauses, "sensor_id = "+chQuote(query.SensorID))
+	where, err := activityWhereSQL(query.SensorID, query.CampusID, query.AsOf, duration)
+	if err != nil {
+		return nil, err
 	}
 	protocol := `multiIf(type='dns','DNS',type='http','HTTP',type='tls','TLS',type='quic','QUIC',type='flow' AND proto!='',upper(proto),upper(type))`
 	target := `multiIf(type='dns',JSONExtractString(payload_json,'query'),type='http',JSONExtractString(payload_json,'host'),type='tls',JSONExtractString(payload_json,'sni'),dst_ip)`
-	sql := fmt.Sprintf(`SELECT %s AS protocol, %s AS target, count() AS event_count FROM normalized_events PREWHERE %s GROUP BY protocol,target HAVING protocol != '' ORDER BY event_count DESC LIMIT 500 FORMAT JSONEachRow`, protocol, target, strings.Join(clauses, " AND "))
+	sql := fmt.Sprintf(`SELECT protocol, sum(target_count) AS event_count, arrayMap(item -> item.1, arraySlice(arrayReverseSort(item -> item.2, groupArray((target,target_count))),1,6)) AS top_apps FROM (SELECT %s AS protocol, %s AS target, count() AS target_count FROM normalized_events PREWHERE %s GROUP BY protocol,target HAVING protocol!='') GROUP BY protocol ORDER BY event_count DESC,protocol LIMIT 50 FORMAT JSONEachRow`, protocol, target, where)
 	data, err := s.query(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
 	var rows []struct {
-		Protocol   string `json:"protocol"`
-		Target     string `json:"target"`
-		EventCount int    `json:"event_count"`
+		Protocol   string   `json:"protocol"`
+		EventCount int      `json:"event_count"`
+		TopApps    []string `json:"top_apps"`
 	}
 	if err := decodeJSONEachRow(data, &rows); err != nil {
 		return nil, err
 	}
 	total := 0
-	buckets := map[string]*struct {
-		count int
-		apps  map[string]int
-	}{}
 	for _, row := range rows {
 		total += row.EventCount
-		bucket := buckets[row.Protocol]
-		if bucket == nil {
-			bucket = &struct {
-				count int
-				apps  map[string]int
-			}{apps: map[string]int{}}
-			buckets[row.Protocol] = bucket
-		}
-		bucket.count += row.EventCount
-		if row.Target != "" {
-			bucket.apps[row.Target] += row.EventCount
-		}
 	}
-	items := make([]DPIProtocolFlow, 0, len(buckets))
-	for protocol, bucket := range buckets {
+	items := make([]DPIProtocolFlow, 0, len(rows))
+	for _, row := range rows {
 		share := 0.0
 		if total > 0 {
-			share = float64(bucket.count) * 100 / float64(total)
+			share = float64(row.EventCount) * 100 / float64(total)
 		}
-		items = append(items, DPIProtocolFlow{Protocol: protocol, AppProtocol: protocol, Category: dpiCategory(protocol), SharePercent: share, EventCount: bucket.count, TopApps: topStringCounts(bucket.apps, 6)})
+		items = append(items, DPIProtocolFlow{Protocol: row.Protocol, AppProtocol: row.Protocol, Category: dpiCategory(row.Protocol), SharePercent: share, EventCount: row.EventCount, TopApps: row.TopApps})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].EventCount > items[j].EventCount })
 	return items, nil
@@ -123,12 +154,11 @@ func (s *ClickHouseStore) QueryDPIFingerprintConflicts(ctx context.Context, quer
 	if err != nil {
 		return nil, err
 	}
-	intervalValue, intervalUnit := clickHouseInterval(duration)
-	clauses := []string{fmt.Sprintf("timestamp >= now() - INTERVAL %d %s", intervalValue, intervalUnit), "subject_ip != ''"}
-	if query.SensorID != "" {
-		clauses = append(clauses, "sensor_id = "+chQuote(query.SensorID))
+	where, err := activityWhereSQL(query.SensorID, query.CampusID, query.AsOf, duration)
+	if err != nil {
+		return nil, err
 	}
-	sql := fmt.Sprintf(`SELECT subject_ip AS ip, groupUniqArrayIf(8)(JSONExtractString(payload_json,'user_agent'),JSONExtractString(payload_json,'user_agent')!='') AS uas, groupUniqArrayIf(8)(concat('ja3:',JSONExtractString(payload_json,'ja3')),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(concat('ja4:',JSONExtractString(payload_json,'ja4')),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls, toString(max(timestamp)) AS last_seen FROM normalized_events PREWHERE %s GROUP BY ip HAVING length(uas)>1 OR length(ja3s)+length(ja4s)>1 OR length(ttls)>1 ORDER BY last_seen DESC LIMIT 200 FORMAT JSONEachRow`, strings.Join(clauses, " AND "))
+	sql := fmt.Sprintf(`SELECT subject_ip AS ip, groupUniqArrayIf(8)(JSONExtractString(payload_json,'user_agent'),JSONExtractString(payload_json,'user_agent')!='') AS uas, groupUniqArrayIf(8)(concat('ja3:',JSONExtractString(payload_json,'ja3')),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(concat('ja4:',JSONExtractString(payload_json,'ja4')),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls, toString(max(timestamp)) AS last_seen FROM normalized_events PREWHERE %s AND subject_ip != '' GROUP BY ip HAVING length(uas)>1 OR length(ja3s)+length(ja4s)>1 OR length(ttls)>1 ORDER BY last_seen DESC LIMIT 200 FORMAT JSONEachRow`, where)
 	data, err := s.query(ctx, sql)
 	if err != nil {
 		return nil, err

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from './client'
@@ -9,10 +10,31 @@ import type {
   EvidenceQuery,
   IdentityQuery,
   ListQuery,
+	Page,
   ProxyReviewQuery,
   RiskQuery,
   UpdateEndpointRegistrationRequest,
 } from './types'
+
+function usePagedQuery<TQuery extends { cursor?: string }, TData extends { page: Page }>(
+	query: TQuery,
+	keyFor: (value: TQuery) => readonly unknown[],
+	load: (value: TQuery) => Promise<TData>,
+) {
+	const client = useQueryClient()
+	const queryFingerprint = JSON.stringify(query)
+	const queryRef = useRef(query)
+	if (JSON.stringify(queryRef.current) !== queryFingerprint) queryRef.current = query
+	const stableQuery = queryRef.current
+	const result = useQuery({ queryKey: keyFor(stableQuery), queryFn: () => load(stableQuery) })
+	const nextCursor = result.data?.page.next_cursor
+	useEffect(() => {
+		if (!nextCursor) return
+		const nextQuery = { ...stableQuery, cursor: nextCursor }
+		void client.prefetchQuery({ queryKey: keyFor(nextQuery), queryFn: () => load(nextQuery) })
+	}, [client, keyFor, load, nextCursor, queryFingerprint, stableQuery])
+	return result
+}
 
 export const queryKeys = {
   session: ['session'] as const,
@@ -84,7 +106,7 @@ export function useActivityOverview(query: ActivityOverviewQuery) {
 }
 
 export function useProxyReviews(query: ProxyReviewQuery) {
-  return useQuery({ queryKey: queryKeys.proxyReviews(query), queryFn: () => api.proxyReviews(query) })
+	return usePagedQuery(query, queryKeys.proxyReviews, api.proxyReviews)
 }
 
 export function useProxyReview(caseId: string, window: '24h' | '7d') {
@@ -116,7 +138,7 @@ export function useDpiFingerprintConflicts(query: ActivityOverviewQuery, enabled
 }
 
 export function useDpiFlows(query: EventQuery) {
-  return useQuery({ queryKey: queryKeys.dpiFlows(query), queryFn: () => api.dpiFlows(query) })
+	return usePagedQuery(query, queryKeys.dpiFlows, api.dpiFlows)
 }
 
 export function useDpiIpFlows(ip: string, query: EventQuery) {
@@ -136,7 +158,7 @@ export function useDpiFlow(flowId: string) {
 }
 
 export function useDevices(query: DeviceQuery) {
-  return useQuery({ queryKey: queryKeys.devices(query), queryFn: () => api.devices(query) })
+	return usePagedQuery(query, queryKeys.devices, api.devices)
 }
 
 export function useDevice(deviceId: string, query: DeviceQuery) {
@@ -162,7 +184,7 @@ export function useDeviceFingerprintConflicts(query: DeviceQuery) {
 }
 
 export function useRisks(query: RiskQuery) {
-  return useQuery({ queryKey: queryKeys.risks(query), queryFn: () => api.risks(query) })
+	return usePagedQuery(query, queryKeys.risks, api.risks)
 }
 
 export function useIpRisk(ip: string) {
@@ -236,7 +258,7 @@ export function useIpEvents(ip: string, limit = 20) {
 }
 
 export function useEvents(query: EventQuery) {
-  return useQuery({ queryKey: queryKeys.events(query), queryFn: () => api.events(query) })
+	return usePagedQuery(query, queryKeys.events, api.events)
 }
 
 export function useEvent(eventId: string) {
@@ -248,11 +270,11 @@ export function useIngestStatus() {
 }
 
 export function useIngestRuns(query: ListQuery = { limit: 20 }) {
-  return useQuery({ queryKey: queryKeys.ingestRuns(query), queryFn: () => api.ingestRuns(query) })
+	return usePagedQuery(query, queryKeys.ingestRuns, api.ingestRuns)
 }
 
 export function useIngestDiagnostics(query: ListQuery = { limit: 20 }) {
-  return useQuery({ queryKey: queryKeys.ingestDiagnostics(query), queryFn: () => api.ingestDiagnostics(query) })
+	return usePagedQuery(query, queryKeys.ingestDiagnostics, api.ingestDiagnostics)
 }
 
 export function useIngestEventTypes() {
@@ -260,7 +282,7 @@ export function useIngestEventTypes() {
 }
 
 export function useIngestErrors(query: ListQuery = { limit: 20 }) {
-  return useQuery({ queryKey: queryKeys.ingestErrors(query), queryFn: () => api.ingestErrors(query) })
+	return usePagedQuery(query, queryKeys.ingestErrors, api.ingestErrors)
 }
 
 export function useCreateLabel() {
@@ -281,7 +303,7 @@ export function useCreateLabel() {
 }
 
 export function useShadowRuns(query: ListQuery = { limit: 20 }) {
-  return useQuery({ queryKey: queryKeys.shadowRuns(query), queryFn: () => api.shadowRuns(query) })
+	return usePagedQuery(query, queryKeys.shadowRuns, api.shadowRuns)
 }
 
 export function useShadowRun(runId: string) {
@@ -293,7 +315,7 @@ export function useShadowEvaluation() {
 }
 
 export function useAuditLogs(query: ListQuery = { limit: 20 }) {
-  return useQuery({ queryKey: queryKeys.auditLogs(query), queryFn: () => api.auditLogs(query) })
+	return usePagedQuery(query, queryKeys.auditLogs, api.auditLogs)
 }
 
 export function useAuditLog(auditId: string) {
@@ -329,14 +351,14 @@ export function useReloadRules() {
   })
 }
 
-export function useCases(query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;department?:string;person_type?:string;ssid?:string;vlan?:string;ap?:string;nas_ip?:string;window?:string} = {}) { return useQuery({queryKey:queryKeys.cases(query),queryFn:()=>api.cases(query)}) }
+export function useCases(query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;department?:string;person_type?:string;ssid?:string;vlan?:string;ap?:string;nas_ip?:string;window?:string} = {}) { return usePagedQuery(query,queryKeys.cases,api.cases) }
 export function useCase(caseId:string) { return useQuery({queryKey:queryKeys.caseDetail(caseId),queryFn:()=>api.caseDetail(caseId),enabled:!!caseId}) }
 export function useCaseMutation() { const client=useQueryClient(); return useMutation({mutationFn:async (request:{caseId:string;operation:'assign'|'status'|'priority'|'disposition'|'comment';value:string;reason?:string})=>{switch(request.operation){case'assign':return api.assignCase(request.caseId,request.value);case'status':return api.updateCaseStatus(request.caseId,request.value);case'priority':return api.updateCasePriority(request.caseId,request.value);case'disposition':return api.resolveCase(request.caseId,request.value,request.reason??'人工复核');default:return api.commentCase(request.caseId,request.value)}},onSuccess:(item)=>{client.setQueryData(queryKeys.caseDetail(item.case_id),item);void client.invalidateQueries({queryKey:['cases']});void client.invalidateQueries({queryKey:['overview']})}}) }
 export function useCasesBatchMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{caseIds:string[];operation:'assign'|'close';assigneeId?:string})=>api.mutateCasesBatch(request.caseIds,request.operation,request.assigneeId),onSuccess:()=>{void client.invalidateQueries({queryKey:['cases']});void client.invalidateQueries({queryKey:['overview']})}}) }
 export function useOrganization() { return useQuery({queryKey:queryKeys.organization,queryFn:api.organization}) }
 export function useOrganizationMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{kind:string;payload:Record<string,unknown>})=>api.saveOrganization(request.kind,request.payload),onSuccess:()=>void client.invalidateQueries({queryKey:queryKeys.organization})}) }
 export function useActionConnectors() { return useQuery({queryKey:queryKeys.actionConnectors,queryFn:api.actionConnectors}) }
-export function useActions(query:ListQuery={}) { return useQuery({queryKey:queryKeys.actions(query),queryFn:()=>api.actions(query)}) }
+export function useActions(query:ListQuery={}) { return usePagedQuery(query,queryKeys.actions,api.actions) }
 export function useActionMutation() { const client=useQueryClient(); return useMutation({mutationFn:(request:{payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number};idempotencyKey:string})=>api.executeAction(request.payload,request.idempotencyKey),onSuccess:()=>void client.invalidateQueries({queryKey:['actions']})}) }
 export function useUsers() { return useQuery({queryKey:queryKeys.users,queryFn:api.users}) }
 export function useUserMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{userId?:string;operation?:'profile'|'password'|'disable'|'enable';payload:import('./types').UserMutation})=>request.userId&&request.operation?api.updateUser(request.userId,request.operation,request.payload):api.createUser(request.payload),onSuccess:()=>void client.invalidateQueries({queryKey:queryKeys.users})}) }

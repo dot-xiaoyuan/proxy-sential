@@ -714,6 +714,34 @@ LIMIT $1`, limit)
 	return runs, rows.Err()
 }
 
+func (s *PostgresStore) ListRunsPage(ctx context.Context, query Query) ([]Run, Page, error) {
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	pattern := "%" + strings.ToLower(strings.TrimSpace(query.Q)) + "%"
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM collector_runs WHERE $1='' OR lower(run_id||' '||sensor_id||' '||COALESCE(summary::text,'')) LIKE $2`, strings.TrimSpace(query.Q), pattern).Scan(&total); err != nil {
+		return nil, Page{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT run_id, sensor_id, started_at, finished_at, previous_offset, new_offset, truncated,
+       normalized_read, normalized_emitted, normalized_skipped, normalized_malformed,
+       evidence_count, risk_count, risk_list_count, summary
+FROM collector_runs
+WHERE $1='' OR lower(run_id||' '||sensor_id||' '||COALESCE(summary::text,'')) LIKE $2
+ORDER BY started_at DESC, run_id DESC LIMIT $3 OFFSET $4`, strings.TrimSpace(query.Q), pattern, limit, max(query.Cursor, 0))
+	if err != nil {
+		return nil, Page{}, err
+	}
+	defer rows.Close()
+	runs, err := scanRunRows(rows)
+	if err != nil {
+		return nil, Page{}, err
+	}
+	return runs, offsetPage(limit, query.Cursor, len(runs), total), nil
+}
+
 type storedRunSummary struct {
 	Normalized             NormalizedCounts `json:"normalized"`
 	ZeekNormalized         NormalizedCounts `json:"zeek_normalized"`
@@ -783,6 +811,83 @@ FROM audit_logs ORDER BY created_at DESC LIMIT $1`, limit)
 		logs = append(logs, log)
 	}
 	return logs, rows.Err()
+}
+
+func (s *PostgresStore) ListAuditLogsPage(ctx context.Context, query Query) ([]AuditLog, Page, error) {
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	pattern := "%" + strings.ToLower(strings.TrimSpace(query.Q)) + "%"
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_logs WHERE $1='' OR lower(actor||' '||action||' '||target||' '||outcome) LIKE $2`, strings.TrimSpace(query.Q), pattern).Scan(&total); err != nil {
+		return nil, Page{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT audit_id,actor,action,target,outcome,created_at FROM audit_logs WHERE $1='' OR lower(actor||' '||action||' '||target||' '||outcome) LIKE $2 ORDER BY created_at DESC,audit_id DESC LIMIT $3 OFFSET $4`, strings.TrimSpace(query.Q), pattern, limit, max(query.Cursor, 0))
+	if err != nil {
+		return nil, Page{}, err
+	}
+	defer rows.Close()
+	items := []AuditLog{}
+	for rows.Next() {
+		var item AuditLog
+		var created time.Time
+		if err := rows.Scan(&item.AuditID, &item.Actor, &item.Action, &item.Target, &item.Outcome, &created); err != nil {
+			return nil, Page{}, err
+		}
+		item.CreatedAt = created.Format(time.RFC3339Nano)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, Page{}, err
+	}
+	return items, offsetPage(limit, query.Cursor, len(items), total), nil
+}
+
+func scanRunRows(rows *sql.Rows) ([]Run, error) {
+	runs := []Run{}
+	for rows.Next() {
+		var run Run
+		var started, finished time.Time
+		var summaryJSON []byte
+		if err := rows.Scan(&run.RunID, &run.SensorID, &started, &finished, &run.PreviousOffset, &run.NewOffset, &run.Truncated, &run.Normalized.Read, &run.Normalized.Emitted, &run.Normalized.Skipped, &run.Normalized.Malformed, &run.EvidenceCount, &run.RiskCount, &run.RiskListCount, &summaryJSON); err != nil {
+			return nil, err
+		}
+		run.StartedAt = started.Format(time.RFC3339Nano)
+		run.FinishedAt = finished.Format(time.RFC3339Nano)
+		run.Normalized.ByType = map[string]int{}
+		if len(summaryJSON) > 0 {
+			var stored storedRunSummary
+			if json.Unmarshal(summaryJSON, &stored) == nil {
+				if stored.ZeekStatus == "" && stored.ZeekNormalized.Emitted == 0 {
+					stored = legacyStoredRunSummary(summaryJSON, stored)
+				}
+				if stored.Normalized.ByType != nil {
+					run.Normalized.ByType = stored.Normalized.ByType
+				}
+				run.ZeekNormalized, run.ZeekStatus, run.ZeekReason = stored.ZeekNormalized, stored.ZeekStatus, stored.ZeekReason
+				run.ZeekPrevOffset, run.ZeekNewOffset, run.ZeekTruncated = stored.ZeekPrevOffset, stored.ZeekNewOffset, stored.ZeekTruncated
+				run.ZeekSoftwarePrevOffset, run.ZeekSoftwareNewOffset, run.ZeekSoftwareTruncated = stored.ZeekSoftwarePrevOffset, stored.ZeekSoftwareNewOffset, stored.ZeekSoftwareTruncated
+				if stored.RawRef != nil {
+					run.RawRef = stored.RawRef
+				}
+			}
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func offsetPage(limit, cursor, returned, total int) Page {
+	if cursor < 0 {
+		cursor = 0
+	}
+	var next *string
+	if cursor+returned < total {
+		value := fmt.Sprintf("%d", cursor+returned)
+		next = &value
+	}
+	return Page{Limit: limit, NextCursor: next, Total: total}
 }
 
 func (s *PostgresStore) AppendAuditLog(ctx context.Context, item AuditLog) error {
