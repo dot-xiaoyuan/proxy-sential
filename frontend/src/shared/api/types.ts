@@ -92,19 +92,7 @@ export type ObservedDevice = components['schemas']['ObservedDevice']
 export type DeviceConflict = components['schemas']['DeviceConflict']
 export type IpDeviceInventory = components['schemas']['IpDeviceInventory']
 export type DeviceListResponse = components['schemas']['DeviceListResponse']
-export type EndpointDeviceInventory = components['schemas']['EndpointDeviceInventory'] & {
-  vendor?: string
-  brand?: string
-  model?: string
-  device_type?: string
-  os_family?: string
-  recognition_confidence: number
-  recognition_source?: string
-  fingerprint_version?: string
-  randomized_mac: boolean
-	 recognition_conflict?: boolean
-	 recognition_evidence?: string[]
-}
+export type EndpointDeviceInventory = components['schemas']['EndpointDeviceInventory']
 export type EndpointEntity = components['schemas']['EndpointEntity']
 export type UpdateEndpointRegistrationRequest =
   components['schemas']['UpdateEndpointRegistrationRequest']

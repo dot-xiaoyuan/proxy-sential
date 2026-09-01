@@ -171,6 +171,7 @@ type EndpointRegistrationUpdate struct {
 	OwnerName             string `json:"owner_name,omitempty"`
 	OwnerDepartment       string `json:"owner_department,omitempty"`
 	AssetTag              string `json:"asset_tag,omitempty"`
+	OwnershipClass        string `json:"ownership_class"`
 	RegistrationNote      string `json:"registration_note,omitempty"`
 	MergeStatus           string `json:"merge_status"`
 	MergedIntoEndpointID  string `json:"merged_into_endpoint_id,omitempty"`
@@ -471,6 +472,7 @@ type EndpointDeviceInventory struct {
 	OwnerName             string   `json:"owner_name,omitempty"`
 	OwnerDepartment       string   `json:"owner_department,omitempty"`
 	AssetTag              string   `json:"asset_tag,omitempty"`
+	OwnershipClass        string   `json:"ownership_class"`
 	MergeStatus           string   `json:"merge_status"`
 	CurrentAccount        string   `json:"current_account,omitempty"`
 	CurrentIP             string   `json:"current_ip,omitempty"`
@@ -487,6 +489,11 @@ type EndpointDeviceInventory struct {
 	DeviceType            string   `json:"device_type,omitempty"`
 	OSFamily              string   `json:"os_family,omitempty"`
 	RecognitionConfidence float64  `json:"recognition_confidence"`
+	VendorConfidence      float64  `json:"vendor_confidence"`
+	BrandConfidence       float64  `json:"brand_confidence"`
+	ModelConfidence       float64  `json:"model_confidence"`
+	DeviceTypeConfidence  float64  `json:"device_type_confidence"`
+	OSFamilyConfidence    float64  `json:"os_family_confidence"`
 	RecognitionSource     string   `json:"recognition_source,omitempty"`
 	FingerprintVersion    string   `json:"fingerprint_version,omitempty"`
 	RandomizedMAC         bool     `json:"randomized_mac"`

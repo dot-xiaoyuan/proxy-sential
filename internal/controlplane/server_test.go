@@ -120,6 +120,50 @@ func TestCaseStateMachinePersistsAssignmentAndDisposition(t *testing.T) {
 	}
 }
 
+func TestCaseStateMachineRejectsInvalidCloseAndBatchIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	server := NewServer(Options{ShadowDir: dir, OperationsFile: filepath.Join(dir, "operations.json")})
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	server.operations.doc.Cases["case-new"] = RiskCase{CaseID: "case-new", SubjectType: "ip", SubjectID: "10.0.0.10", IP: "10.0.0.10", Status: "new", Priority: "high", RiskScore: 91, RiskConfidence: .92, AssessmentLevel: "high", DueAt: now, FirstSeen: now, LastSeen: now, CreatedAt: now, UpdatedAt: now}
+	server.operations.doc.Cases["case-resolved"] = RiskCase{CaseID: "case-resolved", SubjectType: "ip", SubjectID: "10.0.0.11", IP: "10.0.0.11", Status: "resolved", Disposition: "confirmed_proxy", Priority: "high", RiskScore: 95, RiskConfidence: .96, AssessmentLevel: "high", DueAt: now, FirstSeen: now, LastSeen: now, CreatedAt: now, UpdatedAt: now}
+	if err := server.operations.saveLocked(); err != nil {
+		t.Fatal(err)
+	}
+	postJSONBody(t, server, "/api/v1/cases/case-new/status", http.StatusConflict, &ErrorResponse{}, `{"status":"closed"}`)
+	var batchError ErrorResponse
+	postJSONBody(t, server, "/api/v1/cases/batch", http.StatusConflict, &batchError, `{"case_ids":["case-resolved","case-new"],"operation":"close"}`)
+	if server.operations.doc.Cases["case-resolved"].Status != "resolved" || server.operations.doc.Cases["case-new"].Status != "new" {
+		t.Fatalf("failed batch must not partially update cases: %+v", server.operations.doc.Cases)
+	}
+	var batch struct {
+		Items   []RiskCase `json:"items"`
+		Updated int        `json:"updated"`
+	}
+	postJSONBody(t, server, "/api/v1/cases/batch", http.StatusOK, &batch, `{"case_ids":["case-new"],"operation":"assign","assignee_id":"reviewer-2"}`)
+	if batch.Updated != 1 || server.operations.doc.Cases["case-new"].AssigneeID != "reviewer-2" || server.operations.doc.Cases["case-new"].Status != "assigned" {
+		t.Fatalf("unexpected batch assignment: %+v", batch)
+	}
+}
+
+func TestCaseEvidenceSnapshotsAreStableAndSLAUsesPolicy(t *testing.T) {
+	evidence := store.ProxyReviewCase{CaseID: "review-1", IP: "10.0.0.12", RiskScore: 92, EvidenceIDs: []string{"evidence-1"}}
+	now := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	first := newCaseEvidenceSnapshot("case-1", "rules-v1", evidence, now)
+	second := newCaseEvidenceSnapshot("case-1", "rules-v1", evidence, now.Add(time.Hour))
+	if first.SnapshotID != second.SnapshotID {
+		t.Fatalf("unchanged evidence must keep a stable snapshot id: %s != %s", first.SnapshotID, second.SnapshotID)
+	}
+	evidence.RiskScore = 98
+	third := newCaseEvidenceSnapshot("case-1", "rules-v1", evidence, now.Add(time.Hour))
+	if third.SnapshotID == first.SnapshotID {
+		t.Fatal("risk escalation must append a distinct evidence snapshot")
+	}
+	due := caseDueAt(now, "high", map[string]SLAPolicy{"high": {AssessmentLevel: "high", ResolutionMinutes: 180, Enabled: true}})
+	if !due.Equal(now.Add(3 * time.Hour)) {
+		t.Fatalf("unexpected SLA deadline: %s", due)
+	}
+}
+
 func TestActionHardGateRequiresCurrentIdentityAndSupportsIdempotency(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now().UTC()

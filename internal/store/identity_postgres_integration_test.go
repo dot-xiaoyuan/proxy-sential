@@ -39,6 +39,17 @@ func TestPostgresIdentitySessionPersistsUniversityDimensionsAndEndTime(t *testin
 	if err := postgres.WriteIdentityEvents(ctx, events); err != nil {
 		t.Fatal(err)
 	}
+	updatedEndpoint, err := postgres.UpdateEndpointRegistration(ctx, EndpointRegistrationUpdate{EndpointID: endpointID, RegistrationStatus: "registered", OwnershipClass: "school_asset", AssetTag: "ASSET-INTEGRATION-31", MergeStatus: "active", RegistrationUpdatedBy: "integration-admin", RegistrationUpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
+	if err != nil || updatedEndpoint.OwnershipClass != "school_asset" {
+		t.Fatalf("endpoint ownership class was not persisted: value=%+v err=%v", updatedEndpoint, err)
+	}
+	var vendorConfidence, brandConfidence, modelConfidence, deviceTypeConfidence, osConfidence float64
+	if err := postgres.db.QueryRowContext(ctx, `SELECT vendor_confidence,brand_confidence,model_confidence,device_type_confidence,os_family_confidence FROM endpoint_device_profiles WHERE endpoint_id=$1`, endpointID).Scan(&vendorConfidence, &brandConfidence, &modelConfidence, &deviceTypeConfidence, &osConfidence); err != nil {
+		t.Fatal(err)
+	}
+	if vendorConfidence < 0 || brandConfidence < 0 || modelConfidence < 0 || deviceTypeConfidence < 0 || osConfidence < 0 {
+		t.Fatalf("field confidence values must be persisted independently: %f %f %f %f %f", vendorConfidence, brandConfidence, modelConfidence, deviceTypeConfidence, osConfidence)
+	}
 	var started, ended time.Time
 	var personType, department, campusID, buildingID, zoneID, ssid, vlan, ap, nasIP, status string
 	err = postgres.db.QueryRowContext(ctx, `SELECT started_at,ended_at,person_type,department,campus_id,building_id,network_zone_id,ssid,vlan,ap,host(nas_ip),session_status FROM account_sessions WHERE session_id=$1`, sessionID).Scan(&started, &ended, &personType, &department, &campusID, &buildingID, &zoneID, &ssid, &vlan, &ap, &nasIP, &status)

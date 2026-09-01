@@ -460,7 +460,7 @@ func identityLimit(limit int) int {
 func (s *PostgresStore) getEndpointEntity(ctx context.Context, endpointID string) (EndpointEntity, bool, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT endpoint_id, primary_mac, entity_role, first_seen, last_seen, identity_confidence, attributes,
-       registration_status, owner_account, owner_name, owner_department, asset_tag,
+       registration_status, owner_account, owner_name, owner_department, asset_tag, ownership_class,
        registered_by, registered_at, registration_note, merge_status,
        merged_into_endpoint_id, split_from_endpoint_id, registration_updated_by, registration_updated_at
 FROM endpoint_entities WHERE endpoint_id = $1`, endpointID)
@@ -554,7 +554,7 @@ func scanEndpointEntity(rows *sql.Rows) (EndpointEntity, error) {
 	var attrs []byte
 	if err := rows.Scan(
 		&item.EndpointID, &primaryMAC, &item.EntityRole, &firstSeen, &lastSeen, &item.IdentityConfidence, &attrs,
-		&item.RegistrationStatus, &ownerAccount, &ownerName, &ownerDepartment, &assetTag,
+		&item.RegistrationStatus, &ownerAccount, &ownerName, &ownerDepartment, &assetTag, &item.OwnershipClass,
 		&registeredBy, &registeredAt, &registrationNote, &item.MergeStatus,
 		&mergedInto, &splitFrom, &updatedBy, &updatedAt,
 	); err != nil {
@@ -882,6 +882,9 @@ func (s *PostgresStore) UpdateEndpointRegistration(ctx context.Context, update E
 	if update.MergeStatus == "" {
 		update.MergeStatus = "active"
 	}
+	if update.OwnershipClass == "" {
+		update.OwnershipClass = "unknown"
+	}
 	updatedAt := nullableTime(update.RegistrationUpdatedAt)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -891,17 +894,18 @@ func (s *PostgresStore) UpdateEndpointRegistration(ctx context.Context, update E
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO endpoint_entities(
   endpoint_id, entity_role, identity_confidence, attributes,
-  registration_status, owner_account, owner_name, owner_department, asset_tag,
+  registration_status, owner_account, owner_name, owner_department, asset_tag, ownership_class,
   registered_by, registered_at, registration_note, merge_status,
   merged_into_endpoint_id, split_from_endpoint_id, registration_updated_by, registration_updated_at, updated_at
 )
-VALUES($1, 'endpoint', 0, '{}'::jsonb, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())
+VALUES($1, 'endpoint', 0, '{}'::jsonb, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
 ON CONFLICT(endpoint_id) DO UPDATE SET
   registration_status = EXCLUDED.registration_status,
   owner_account = EXCLUDED.owner_account,
   owner_name = EXCLUDED.owner_name,
   owner_department = EXCLUDED.owner_department,
   asset_tag = EXCLUDED.asset_tag,
+  ownership_class = EXCLUDED.ownership_class,
   registered_by = COALESCE(endpoint_entities.registered_by, EXCLUDED.registered_by),
   registered_at = COALESCE(endpoint_entities.registered_at, EXCLUDED.registered_at),
   registration_note = EXCLUDED.registration_note,
@@ -917,6 +921,7 @@ ON CONFLICT(endpoint_id) DO UPDATE SET
 		nullEmptyString(update.OwnerName),
 		nullEmptyString(update.OwnerDepartment),
 		nullEmptyString(update.AssetTag),
+		update.OwnershipClass,
 		nullEmptyString(update.RegistrationUpdatedBy),
 		nullTimeValue(updatedAt),
 		nullEmptyString(update.RegistrationNote),
@@ -1155,8 +1160,8 @@ func upsertEndpointDeviceProfile(ctx context.Context, tx *sql.Tx, item EndpointD
 		"randomized_mac": item.RandomizedMAC,
 	})
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO endpoint_device_profiles(endpoint_id, vendor, brand, model, device_type, os_family, recognition_confidence, recognition_source, fingerprint_version, randomized_mac, recognition_conflict, evidence_summary)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+INSERT INTO endpoint_device_profiles(endpoint_id, vendor, brand, model, device_type, os_family, recognition_confidence, vendor_confidence, brand_confidence, model_confidence, device_type_confidence, os_family_confidence, recognition_source, fingerprint_version, randomized_mac, recognition_conflict, evidence_summary)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 ON CONFLICT(endpoint_id) DO UPDATE SET
   vendor = EXCLUDED.vendor,
   brand = EXCLUDED.brand,
@@ -1164,6 +1169,11 @@ ON CONFLICT(endpoint_id) DO UPDATE SET
   device_type = EXCLUDED.device_type,
   os_family = EXCLUDED.os_family,
   recognition_confidence = EXCLUDED.recognition_confidence,
+  vendor_confidence = EXCLUDED.vendor_confidence,
+  brand_confidence = EXCLUDED.brand_confidence,
+  model_confidence = EXCLUDED.model_confidence,
+  device_type_confidence = EXCLUDED.device_type_confidence,
+  os_family_confidence = EXCLUDED.os_family_confidence,
   recognition_source = EXCLUDED.recognition_source,
   fingerprint_version = EXCLUDED.fingerprint_version,
   randomized_mac = EXCLUDED.randomized_mac,
@@ -1171,7 +1181,8 @@ ON CONFLICT(endpoint_id) DO UPDATE SET
   evidence_summary = EXCLUDED.evidence_summary,
   updated_at = now()`,
 		item.EndpointID, item.Vendor, item.Brand, item.Model, item.DeviceType, item.OSFamily,
-		item.RecognitionConfidence, item.RecognitionSource, item.FingerprintVersion, item.RandomizedMAC, item.RecognitionConflict, evidence)
+		item.RecognitionConfidence, item.VendorConfidence, item.BrandConfidence, item.ModelConfidence, item.DeviceTypeConfidence, item.OSFamilyConfidence,
+		item.RecognitionSource, item.FingerprintVersion, item.RandomizedMAC, item.RecognitionConflict, evidence)
 	return err
 }
 

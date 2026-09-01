@@ -2499,6 +2499,19 @@ pre.wrap-code {
   padding: 14px;
 }
 
+.case-batch-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+}
+
+.case-batch-toolbar .ant-input {
+  width: min(240px, 100%);
+}
+
 @media (max-width: 760px) {
   .university-filter-grid {
     grid-template-columns: 1fr;

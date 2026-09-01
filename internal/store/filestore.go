@@ -329,6 +329,9 @@ func (s *FileStore) UpdateEndpointRegistration(ctx context.Context, update Endpo
 	if update.MergeStatus == "" {
 		update.MergeStatus = "active"
 	}
+	if update.OwnershipClass == "" {
+		update.OwnershipClass = "unknown"
+	}
 	path := filepath.Join(s.shadowDir, "endpoint_registrations.jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return EndpointEntity{}, err
@@ -437,6 +440,9 @@ func applyEndpointRegistrationUpdate(endpoint *EndpointEntity, update EndpointRe
 	}
 	if update.AssetTag != "" {
 		endpoint.AssetTag = update.AssetTag
+	}
+	if update.OwnershipClass != "" {
+		endpoint.OwnershipClass = update.OwnershipClass
 	}
 	if update.RegistrationNote != "" {
 		endpoint.RegistrationNote = update.RegistrationNote

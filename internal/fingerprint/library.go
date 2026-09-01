@@ -24,17 +24,22 @@ var embeddedBrandAliases []byte
 const EmbeddedVersion = "embedded-2026-08"
 
 type Result struct {
-	Vendor        string   `json:"vendor,omitempty"`
-	Brand         string   `json:"brand,omitempty"`
-	Model         string   `json:"model,omitempty"`
-	DeviceType    string   `json:"device_type,omitempty"`
-	OSFamily      string   `json:"os_family,omitempty"`
-	Confidence    float64  `json:"recognition_confidence"`
-	Source        string   `json:"recognition_source,omitempty"`
-	Version       string   `json:"fingerprint_version,omitempty"`
-	RandomizedMAC bool     `json:"randomized_mac"`
-	Conflict      bool     `json:"recognition_conflict"`
-	Evidence      []string `json:"recognition_evidence,omitempty"`
+	Vendor               string   `json:"vendor,omitempty"`
+	Brand                string   `json:"brand,omitempty"`
+	Model                string   `json:"model,omitempty"`
+	DeviceType           string   `json:"device_type,omitempty"`
+	OSFamily             string   `json:"os_family,omitempty"`
+	Confidence           float64  `json:"recognition_confidence"`
+	VendorConfidence     float64  `json:"vendor_confidence"`
+	BrandConfidence      float64  `json:"brand_confidence"`
+	ModelConfidence      float64  `json:"model_confidence"`
+	DeviceTypeConfidence float64  `json:"device_type_confidence"`
+	OSFamilyConfidence   float64  `json:"os_family_confidence"`
+	Source               string   `json:"recognition_source,omitempty"`
+	Version              string   `json:"fingerprint_version,omitempty"`
+	RandomizedMAC        bool     `json:"randomized_mac"`
+	Conflict             bool     `json:"recognition_conflict"`
+	Evidence             []string `json:"recognition_evidence,omitempty"`
 }
 
 type Signals struct {
@@ -158,6 +163,7 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			if result.Vendor != "" {
 				result.Source = "ieee_oui"
 				result.Confidence = 0.9
+				result.VendorConfidence = 0.9
 				result.Evidence = append(result.Evidence, "IEEE OUI: "+result.Vendor)
 			}
 		}
@@ -175,15 +181,19 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 		}
 		if value := expandRule(rule.compiled, input, match, firstNonEmpty(rule.BrandReplacement, rule.Brand)); value != "" {
 			result.Brand = value
+			result.BrandConfidence = rule.Confidence
 		}
 		if value := expandRule(rule.compiled, input, match, firstNonEmpty(rule.ModelReplacement, rule.Model, rule.DeviceReplacement)); value != "" {
 			result.Model = value
+			result.ModelConfidence = rule.Confidence
 		}
 		if rule.DeviceType != "" {
 			result.DeviceType = rule.DeviceType
+			result.DeviceTypeConfidence = rule.Confidence
 		}
 		if rule.OSFamily != "" {
 			result.OSFamily = rule.OSFamily
+			result.OSFamilyConfidence = rule.Confidence
 		}
 		if rule.Confidence >= result.Confidence || result.Source == "ieee_oui" {
 			result.Confidence = rule.Confidence
@@ -200,9 +210,11 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			}
 			if result.DeviceType == "" {
 				result.DeviceType = candidate.DeviceType
+				result.DeviceTypeConfidence = candidate.Confidence
 			}
 			if result.OSFamily == "" {
 				result.OSFamily = candidate.OSFamily
+				result.OSFamilyConfidence = candidate.Confidence
 			}
 			if result.Source == "" || result.Source == "ieee_oui" {
 				result.Source = "fingerbank_dhcp"
@@ -213,6 +225,9 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 	}
 	if result.Brand == "" && result.Vendor != "" {
 		result.Brand = l.normalizedBrand(result.Vendor)
+		if result.Brand != "" {
+			result.BrandConfidence = 0.85
+		}
 	}
 	return result
 }

@@ -84,12 +84,22 @@ export const handlers = [
     const item = mockCases.find((entry) => entry.case_id === params.caseId)
     return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
   }),
+  http.post('/api/v1/cases/batch', async ({ request }) => {
+    const payload = await request.json() as {case_ids:string[];operation:'assign'|'close';assignee_id?:string}
+    const items = mockCases.filter((item) => payload.case_ids.includes(item.case_id))
+    for (const item of items) {
+      if (payload.operation === 'assign') Object.assign(item, { assignee_id: payload.assignee_id, status: 'assigned' })
+      else Object.assign(item, { status: 'closed' })
+    }
+    return HttpResponse.json({items,updated:items.length})
+  }),
   http.post('/api/v1/cases/:caseId/:operation', async ({ params, request }) => {
     const item = mockCases.find((entry) => entry.case_id === params.caseId)
     if (!item) return new HttpResponse(null, { status: 404 })
     const payload = await request.json() as Record<string, string>
     if (params.operation === 'assign') Object.assign(item, { assignee_id: payload.assignee_id, status: 'assigned' })
     if (params.operation === 'status') Object.assign(item, { status: payload.status })
+    if (params.operation === 'priority') Object.assign(item, { priority: payload.priority })
     if (params.operation === 'disposition') Object.assign(item, { disposition: payload.disposition, status: 'resolved' })
     if (params.operation === 'comments') (item.comments ??= []).push({ comment_id: `comment-${Date.now()}`, author_id: mockSession.user.id, body: payload.body, created_at: new Date().toISOString() })
     return HttpResponse.json(item)
@@ -247,6 +257,7 @@ export const handlers = [
         owner_name: device.account_id ? '样本用户' : '',
         owner_department: device.account_id ? '网络中心' : '',
         asset_tag: device.endpoint_id ? `ASSET-${device.device_id.slice(-4)}` : '',
+        ownership_class: device.endpoint_id ? 'school_asset' : 'unknown',
         merge_status: 'active',
         current_account: device.account_id || '',
         current_ip: inventory.ip,
@@ -257,6 +268,14 @@ export const handlers = [
         brand: device.brand || device.vendor || '',
         vendor: device.vendor || '',
         model: device.model || '',
+        vendor_confidence: device.vendor && device.vendor !== 'unknown' ? device.confidence : 0,
+        brand_confidence: device.brand && device.brand !== 'unknown' ? device.confidence : 0,
+        model_confidence: device.model && device.model !== 'unknown' ? device.confidence : 0,
+        device_type_confidence: 0,
+        os_family_confidence: 0,
+        recognition_confidence: device.confidence,
+        randomized_mac: false,
+        recognition_conflict: false,
         first_seen: device.first_seen || inventory.first_seen,
         last_seen: device.last_seen || inventory.last_seen,
         identity_confidence: device.confidence,
@@ -298,6 +317,7 @@ export const handlers = [
           owner_name: '样本用户',
           owner_department: '网络中心',
           asset_tag: `ASSET-${device.device_id.slice(-4)}`,
+          ownership_class: 'school_asset',
           registration_note: 'Mock endpoint 登记样本',
           merge_status: 'active',
         },

@@ -49,6 +49,7 @@ export function EndpointDetailsPage() {
       owner_name: endpoint.owner_name ?? '',
       owner_department: endpoint.owner_department ?? '',
       asset_tag: endpoint.asset_tag ?? '',
+      ownership_class: endpoint.ownership_class ?? 'unknown',
       registration_note: endpoint.registration_note ?? '',
       merge_status: endpoint.merge_status ?? 'active',
       merged_into_endpoint_id: endpoint.merged_into_endpoint_id ?? '',
@@ -119,6 +120,7 @@ export function EndpointDetailsPage() {
             <Descriptions.Item label="责任人">{profile.endpoint.owner_name || '-'}</Descriptions.Item>
             <Descriptions.Item label="部门">{profile.endpoint.owner_department || '-'}</Descriptions.Item>
             <Descriptions.Item label="资产编号">{profile.endpoint.asset_tag || '-'}</Descriptions.Item>
+            <Descriptions.Item label="终端归属">{ownershipClassText(profile.endpoint.ownership_class)}</Descriptions.Item>
             <Descriptions.Item label="合并状态">{profile.endpoint.merge_status || 'active'}</Descriptions.Item>
             <Descriptions.Item label="备注">{profile.endpoint.registration_note || '-'}</Descriptions.Item>
           </Descriptions>
@@ -140,11 +142,11 @@ export function EndpointDetailsPage() {
         <div className="surface">
           <Typography.Title level={4}>设备识别</Typography.Title>
           <Descriptions column={1} size="small">
-            <Descriptions.Item label="品牌 / 厂商">{recognition?.brand || recognition?.vendor || '未知'}</Descriptions.Item>
-            <Descriptions.Item label="型号">{recognition?.model || '未知'}</Descriptions.Item>
-            <Descriptions.Item label="类型">{recognition?.device_type || '未知'}</Descriptions.Item>
-            <Descriptions.Item label="操作系统">{recognition?.os_family || '未知'}</Descriptions.Item>
-            <Descriptions.Item label="识别可信度">{Math.round((recognition?.recognition_confidence ?? 0) * 100)}%</Descriptions.Item>
+            <Descriptions.Item label="注册厂商">{recognition?.vendor || '未知'}（{confidenceText(recognition?.vendor_confidence)}）</Descriptions.Item>
+            <Descriptions.Item label="终端品牌">{recognition?.brand || '未知'}（{confidenceText(recognition?.brand_confidence)}）</Descriptions.Item>
+            <Descriptions.Item label="型号">{recognition?.model || '未知'}（{confidenceText(recognition?.model_confidence)}）</Descriptions.Item>
+            <Descriptions.Item label="类型">{recognition?.device_type || '未知'}（{confidenceText(recognition?.device_type_confidence)}）</Descriptions.Item>
+            <Descriptions.Item label="操作系统">{recognition?.os_family || '未知'}（{confidenceText(recognition?.os_family_confidence)}）</Descriptions.Item>
             <Descriptions.Item label="规则版本"><Typography.Text className="mono list-cell-nowrap">{recognition?.fingerprint_version || '-'}</Typography.Text></Descriptions.Item>
             <Descriptions.Item label="随机 MAC">{recognition?.randomized_mac ? '是；不使用 OUI 判断厂商' : '否'}</Descriptions.Item>
             <Descriptions.Item label="识别冲突">{recognition?.recognition_conflict ? '是；列表按未知设备处理' : '否'}</Descriptions.Item>
@@ -208,6 +210,9 @@ export function EndpointDetailsPage() {
             </Form.Item>
             <Form.Item label="资产编号" name="asset_tag">
               <Input placeholder="资产编号" />
+            </Form.Item>
+            <Form.Item label="终端归属" name="ownership_class" rules={[{ required: true }]}>
+              <Select options={[{ label: '未知', value: 'unknown' }, { label: '个人终端（BYOD）', value: 'byod' }, { label: '学校资产', value: 'school_asset' }, { label: '公共终端', value: 'public_terminal' }, { label: '基础设施', value: 'infrastructure' }]} />
             </Form.Item>
             <Form.Item label="合并状态" name="merge_status" rules={[{ required: true }]}>
               <Select options={[
@@ -361,6 +366,14 @@ function registrationStatusColor(status?: string) {
   }
 }
 
+function ownershipClassText(value?: string) {
+  return ({ byod: '个人终端（BYOD）', school_asset: '学校资产', public_terminal: '公共终端', infrastructure: '基础设施', unknown: '未知' } as Record<string, string>)[value ?? 'unknown'] ?? '未知'
+}
+
+function confidenceText(value?: number) {
+  return `${Math.round((value ?? 0) * 100)}%`
+}
+
 function signalStrengthColor(value: string) {
   switch (value) {
     case 'strong':
@@ -393,6 +406,7 @@ function fallbackEndpointProfile(endpointId: string): EndpointIdentityProfile {
       identity_confidence: 0,
       attributes: {},
       registration_status: 'unregistered',
+      ownership_class: 'unknown',
       merge_status: 'active',
     },
     accounts: [],

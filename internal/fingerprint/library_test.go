@@ -8,9 +8,15 @@ func TestIdentifyOUIAndDeviceRule(t *testing.T) {
 	if vmware.Vendor != "VMware, Inc." || vmware.Brand != "VMware" {
 		t.Fatalf("unexpected VMware identification: %+v", vmware)
 	}
+	if vmware.VendorConfidence != .9 || vmware.BrandConfidence < .8 || vmware.ModelConfidence != 0 {
+		t.Fatalf("vendor, brand and model confidence must remain independent: %+v", vmware)
+	}
 	phone := library.Identify("e6:c4:00:00:00:01", "MI9SE-xiaoyingderead", "android-dhcp-10")
 	if !phone.RandomizedMAC || phone.Brand != "Xiaomi" || phone.Model != "Mi 9 SE" || phone.DeviceType != "mobile" {
 		t.Fatalf("unexpected Xiaomi identification: %+v", phone)
+	}
+	if phone.BrandConfidence < .8 || phone.ModelConfidence < .8 || phone.DeviceTypeConfidence < .8 || phone.VendorConfidence != 0 {
+		t.Fatalf("device rule confidence fields are incorrect: %+v", phone)
 	}
 }
 

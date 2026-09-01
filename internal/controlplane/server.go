@@ -182,6 +182,7 @@ type UpdateEndpointRegistrationRequest struct {
 	OwnerName            string `json:"owner_name"`
 	OwnerDepartment      string `json:"owner_department"`
 	AssetTag             string `json:"asset_tag"`
+	OwnershipClass       string `json:"ownership_class"`
 	RegistrationNote     string `json:"registration_note"`
 	MergeStatus          string `json:"merge_status"`
 	MergedIntoEndpointID string `json:"merged_into_endpoint_id"`
@@ -991,6 +992,7 @@ func (s *Server) handleEndpointRegistration(w http.ResponseWriter, r *http.Reque
 		OwnerName:             strings.TrimSpace(request.OwnerName),
 		OwnerDepartment:       strings.TrimSpace(request.OwnerDepartment),
 		AssetTag:              strings.TrimSpace(request.AssetTag),
+		OwnershipClass:        strings.TrimSpace(request.OwnershipClass),
 		RegistrationNote:      strings.TrimSpace(request.RegistrationNote),
 		MergeStatus:           strings.TrimSpace(request.MergeStatus),
 		MergedIntoEndpointID:  strings.TrimSpace(request.MergedIntoEndpointID),
@@ -1044,6 +1046,11 @@ func validateEndpointRegistrationRequest(endpointID string, request UpdateEndpoi
 	case "", "active", "merged", "split":
 	default:
 		return fmt.Errorf("unsupported merge_status: %s", request.MergeStatus)
+	}
+	switch request.OwnershipClass {
+	case "", "unknown", "byod", "school_asset", "public_terminal", "infrastructure":
+	default:
+		return fmt.Errorf("unsupported ownership_class: %s", request.OwnershipClass)
 	}
 	if request.RegistrationStatus == "registered" && strings.TrimSpace(request.OwnerAccount) == "" && strings.TrimSpace(request.OwnerName) == "" && strings.TrimSpace(request.AssetTag) == "" {
 		return fmt.Errorf("registered endpoint requires owner_account, owner_name or asset_tag")

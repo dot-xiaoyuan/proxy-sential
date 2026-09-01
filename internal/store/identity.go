@@ -33,6 +33,7 @@ type EndpointEntity struct {
 	OwnerName              string         `json:"owner_name,omitempty"`
 	OwnerDepartment        string         `json:"owner_department,omitempty"`
 	AssetTag               string         `json:"asset_tag,omitempty"`
+	OwnershipClass         string         `json:"ownership_class"`
 	RegisteredBy           string         `json:"registered_by,omitempty"`
 	RegisteredAt           string         `json:"registered_at,omitempty"`
 	RegistrationNote       string         `json:"registration_note,omitempty"`
@@ -365,6 +366,7 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 		OwnerName:          endpoint.OwnerName,
 		OwnerDepartment:    endpoint.OwnerDepartment,
 		AssetTag:           endpoint.AssetTag,
+		OwnershipClass:     firstNonEmpty(endpoint.OwnershipClass, "unknown"),
 		MergeStatus:        endpoint.MergeStatus,
 		CurrentAccount:     firstString(profile.Accounts),
 		CurrentIP:          firstString(ips),
@@ -383,6 +385,11 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	item.DeviceType = firstNonEmpty(stringFromMap(endpoint.Attributes, "device_type"), recognition.DeviceType)
 	item.OSFamily = firstNonEmpty(stringFromMap(endpoint.Attributes, "os_family"), stringFromMap(endpoint.Attributes, "os"), recognition.OSFamily)
 	item.RecognitionConfidence = recognition.Confidence
+	item.VendorConfidence = recognition.VendorConfidence
+	item.BrandConfidence = recognition.BrandConfidence
+	item.ModelConfidence = recognition.ModelConfidence
+	item.DeviceTypeConfidence = recognition.DeviceTypeConfidence
+	item.OSFamilyConfidence = recognition.OSFamilyConfidence
 	item.RecognitionSource = recognition.Source
 	item.FingerprintVersion = recognition.Version
 	item.RandomizedMAC = recognition.RandomizedMAC
@@ -391,6 +398,21 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	if stringFromMap(endpoint.Attributes, "brand") != "" || stringFromMap(endpoint.Attributes, "model") != "" || stringFromMap(endpoint.Attributes, "device_type") != "" {
 		item.RecognitionConfidence = 1
 		item.RecognitionSource = "explicit_standard_field"
+	}
+	if stringFromMap(endpoint.Attributes, "vendor") != "" || stringFromMap(endpoint.Attributes, "oui_vendor") != "" {
+		item.VendorConfidence = 1
+	}
+	if stringFromMap(endpoint.Attributes, "brand") != "" {
+		item.BrandConfidence = 1
+	}
+	if stringFromMap(endpoint.Attributes, "model") != "" {
+		item.ModelConfidence = 1
+	}
+	if stringFromMap(endpoint.Attributes, "device_type") != "" {
+		item.DeviceTypeConfidence = 1
+	}
+	if stringFromMap(endpoint.Attributes, "os_family") != "" || stringFromMap(endpoint.Attributes, "os") != "" {
+		item.OSFamilyConfidence = 1
 	}
 	if item.FirstSeen == "" {
 		item.FirstSeen = endpoint.FirstSeen
@@ -622,6 +644,9 @@ func ensureEndpointRegistrationDefaults(endpoint *EndpointEntity) {
 	}
 	if endpoint.MergeStatus == "" {
 		endpoint.MergeStatus = "active"
+	}
+	if endpoint.OwnershipClass == "" {
+		endpoint.OwnershipClass = "unknown"
 	}
 	if endpoint.Attributes == nil {
 		endpoint.Attributes = map[string]any{}

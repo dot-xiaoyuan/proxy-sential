@@ -26,9 +26,13 @@ func TestPostgresOperationsRepositoryPersistsAcrossInstances(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	evidence := store.ProxyReviewCase{CaseID: "integration-evidence", IP: "192.0.2.10", RiskScore: 95}
+	firstSnapshot := newCaseEvidenceSnapshot("integration-case", "integration-rules-v1", evidence, time.Now().UTC().Add(-time.Minute))
+	evidence.RiskScore = 97
+	secondSnapshot := newCaseEvidenceSnapshot("integration-case", "integration-rules-v1", evidence, time.Now().UTC())
 	first.mu.Lock()
 	first.doc.Campuses["integration-campus"] = Campus{CampusID: "integration-campus", Code: "IT", Name: "集成测试校区", Enabled: true}
-	first.doc.Cases["integration-case"] = RiskCase{CaseID: "integration-case", SubjectType: "ip", SubjectID: "192.0.2.10", IP: "192.0.2.10", Status: "new", Priority: "high", RiskScore: 95, RiskConfidence: .95, AssessmentLevel: "high", FirstSeen: now, LastSeen: now, CreatedAt: now, UpdatedAt: now}
+	first.doc.Cases["integration-case"] = RiskCase{CaseID: "integration-case", DedupeKey: "integration-dedupe", SubjectType: "ip", SubjectID: "192.0.2.10", IP: "192.0.2.10", Status: "new", Priority: "high", RiskScore: 95, RiskConfidence: .95, AssessmentLevel: "high", RulesetVersion: "integration-rules-v1", EvidenceSnapshot: firstSnapshot.Evidence, EvidenceHistory: []CaseEvidenceSnapshot{firstSnapshot, secondSnapshot}, FirstSeen: now, LastSeen: now, CreatedAt: now, UpdatedAt: now}
 	if err := first.saveLocked(); err != nil {
 		first.mu.Unlock()
 		t.Fatal(err)
@@ -46,6 +50,13 @@ func TestPostgresOperationsRepositoryPersistsAcrossInstances(t *testing.T) {
 	}
 	if second.doc.Cases["integration-case"].RiskScore != 95 {
 		t.Fatalf("case was not persisted: %#v", second.doc.Cases)
+	}
+	persisted := second.doc.Cases["integration-case"]
+	if len(persisted.EvidenceHistory) != 2 || persisted.EvidenceHistory[0].SnapshotID != firstSnapshot.SnapshotID || persisted.EvidenceHistory[1].SnapshotID != secondSnapshot.SnapshotID {
+		t.Fatalf("case evidence history was not persisted in order: %#v", persisted.EvidenceHistory)
+	}
+	if persisted.EvidenceSnapshot.RiskScore != firstSnapshot.Evidence.RiskScore {
+		t.Fatalf("initial evidence snapshot was not kept immutable: %#v", persisted.EvidenceSnapshot)
 	}
 }
 

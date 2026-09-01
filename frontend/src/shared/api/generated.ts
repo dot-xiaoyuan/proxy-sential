@@ -180,6 +180,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/cases/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["mutateCasesBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organization": {
         parameters: {
             query?: never;
@@ -1146,6 +1162,7 @@ export interface components {
             auth_session_id?: string;
             identity_conflict?: boolean;
             identity_blocker?: string;
+            dedupe_key?: string;
             /** @enum {string} */
             status: "new" | "assigned" | "investigating" | "waiting_data" | "resolved" | "closed" | "reopened";
             /** @enum {string} */
@@ -1167,6 +1184,13 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             evidence_snapshot?: components["schemas"]["ProxyReviewCase"];
+            evidence_history?: {
+                snapshot_id: string;
+                ruleset_version?: string;
+                evidence: components["schemas"]["ProxyReviewCase"];
+                /** Format: date-time */
+                created_at: string;
+            }[];
             comments?: {
                 [key: string]: unknown;
             }[];
@@ -1413,6 +1437,8 @@ export interface components {
             owner_department?: string;
             asset_tag?: string;
             /** @enum {string} */
+            ownership_class?: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
+            /** @enum {string} */
             merge_status: "active" | "merged" | "split";
             current_account?: string;
             current_ip?: string;
@@ -1431,6 +1457,11 @@ export interface components {
             device_type?: string;
             os_family?: string;
             recognition_confidence: number;
+            vendor_confidence?: number;
+            brand_confidence?: number;
+            model_confidence?: number;
+            device_type_confidence?: number;
+            os_family_confidence?: number;
             recognition_source?: string;
             fingerprint_version?: string;
             randomized_mac: boolean;
@@ -1457,6 +1488,8 @@ export interface components {
             owner_name?: string;
             owner_department?: string;
             asset_tag?: string;
+            /** @enum {string} */
+            ownership_class?: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
             registered_by?: string;
             /** Format: date-time */
             registered_at?: string;
@@ -1476,6 +1509,8 @@ export interface components {
             owner_name?: string;
             owner_department?: string;
             asset_tag?: string;
+            /** @enum {string} */
+            ownership_class?: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
             registration_note?: string;
             /**
              * @default active
@@ -2353,7 +2388,7 @@ export interface operations {
             header?: never;
             path: {
                 case_id: string;
-                operation: "assign" | "status" | "disposition" | "comments";
+                operation: "assign" | "status" | "priority" | "disposition" | "comments";
             };
             cookie?: never;
         };
@@ -2375,6 +2410,40 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    mutateCasesBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    case_ids: string[];
+                    /** @enum {string} */
+                    operation: "assign" | "close";
+                    assignee_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Cases updated atomically. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description At least one case cannot perform the requested transition. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getOrganization: {

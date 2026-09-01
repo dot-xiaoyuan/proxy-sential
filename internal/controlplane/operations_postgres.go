@@ -85,6 +85,9 @@ func (s *operationsState) reloadPostgres(ctx context.Context, q operationsQuerie
 	if err := loadOrganization(ctx, q, &doc); err != nil {
 		return err
 	}
+	if err := loadSLAPolicies(ctx, q, &doc); err != nil {
+		return err
+	}
 	if err := loadCases(ctx, q, &doc); err != nil {
 		return err
 	}
@@ -104,6 +107,23 @@ func (s *operationsState) reloadPostgres(ctx context.Context, q operationsQuerie
 	}
 	s.doc = doc
 	return nil
+}
+
+func loadSLAPolicies(ctx context.Context, q operationsQuerier, doc *operationsDocument) error {
+	rows, err := q.QueryContext(ctx, `SELECT policy_id,assessment_level,response_minutes,resolution_minutes,enabled FROM sla_policies`)
+	if err != nil {
+		return fmt.Errorf("load SLA policies: %w", err)
+	}
+	defer rows.Close()
+	doc.SLAPolicies = map[string]SLAPolicy{}
+	for rows.Next() {
+		var item SLAPolicy
+		if err := rows.Scan(&item.PolicyID, &item.AssessmentLevel, &item.ResponseMinutes, &item.ResolutionMinutes, &item.Enabled); err != nil {
+			return err
+		}
+		doc.SLAPolicies[item.AssessmentLevel] = item
+	}
+	return rows.Err()
 }
 
 func loadOrganization(ctx context.Context, q operationsQuerier, doc *operationsDocument) error {
@@ -172,7 +192,7 @@ func loadOrganization(ctx context.Context, q operationsQuerier, doc *operationsD
 }
 
 func loadCases(ctx context.Context, q operationsQuerier, doc *operationsDocument) error {
-	rows, err := q.QueryContext(ctx, `SELECT case_id, subject_type, subject_id, COALESCE(host(ip),''), COALESCE(account_id,''), COALESCE(endpoint_id,''), COALESCE(campus_id,''), COALESCE(department,''), COALESCE(person_type,''), COALESCE(building_id,''), COALESCE(network_zone_id,''), COALESCE(ssid,''), COALESCE(vlan,''), COALESCE(ap,''), COALESCE(host(nas_ip),''), COALESCE(auth_session_id,''), identity_conflict, COALESCE(identity_blocker,''), status, COALESCE(disposition,''), priority, COALESCE(assignee_id,''), risk_score, risk_confidence, assessment_level, COALESCE(ruleset_version,''), due_at, first_seen, last_seen, created_at, updated_at FROM risk_cases`)
+	rows, err := q.QueryContext(ctx, `SELECT case_id, subject_type, subject_id, COALESCE(host(ip),''), COALESCE(account_id,''), COALESCE(endpoint_id,''), COALESCE(campus_id,''), COALESCE(department,''), COALESCE(person_type,''), COALESCE(building_id,''), COALESCE(network_zone_id,''), COALESCE(ssid,''), COALESCE(vlan,''), COALESCE(ap,''), COALESCE(host(nas_ip),''), COALESCE(auth_session_id,''), identity_conflict, COALESCE(identity_blocker,''), dedupe_key, status, COALESCE(disposition,''), priority, COALESCE(assignee_id,''), risk_score, risk_confidence, assessment_level, COALESCE(ruleset_version,''), due_at, first_seen, last_seen, created_at, updated_at FROM risk_cases`)
 	if err != nil {
 		return fmt.Errorf("load cases: %w", err)
 	}
@@ -180,7 +200,7 @@ func loadCases(ctx context.Context, q operationsQuerier, doc *operationsDocument
 		var item RiskCase
 		var due sql.NullTime
 		var firstSeen, lastSeen, createdAt, updatedAt time.Time
-		if err := rows.Scan(&item.CaseID, &item.SubjectType, &item.SubjectID, &item.IP, &item.AccountID, &item.EndpointID, &item.CampusID, &item.Department, &item.PersonType, &item.BuildingID, &item.NetworkZoneID, &item.SSID, &item.VLAN, &item.AP, &item.NASIP, &item.AuthSessionID, &item.IdentityConflict, &item.IdentityBlocker, &item.Status, &item.Disposition, &item.Priority, &item.AssigneeID, &item.RiskScore, &item.RiskConfidence, &item.AssessmentLevel, &item.RulesetVersion, &due, &firstSeen, &lastSeen, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&item.CaseID, &item.SubjectType, &item.SubjectID, &item.IP, &item.AccountID, &item.EndpointID, &item.CampusID, &item.Department, &item.PersonType, &item.BuildingID, &item.NetworkZoneID, &item.SSID, &item.VLAN, &item.AP, &item.NASIP, &item.AuthSessionID, &item.IdentityConflict, &item.IdentityBlocker, &item.DedupeKey, &item.Status, &item.Disposition, &item.Priority, &item.AssigneeID, &item.RiskScore, &item.RiskConfidence, &item.AssessmentLevel, &item.RulesetVersion, &due, &firstSeen, &lastSeen, &createdAt, &updatedAt); err != nil {
 			rows.Close()
 			return err
 		}
@@ -239,19 +259,26 @@ func loadCases(ctx context.Context, q operationsQuerier, doc *operationsDocument
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	rows, err = q.QueryContext(ctx, `SELECT DISTINCT ON (case_id) case_id, evidence FROM risk_case_evidence_snapshots ORDER BY case_id, created_at DESC`)
+	rows, err = q.QueryContext(ctx, `SELECT snapshot_id,case_id,COALESCE(ruleset_version,''),evidence,created_at FROM risk_case_evidence_snapshots ORDER BY case_id, created_at`)
 	if err != nil {
 		return fmt.Errorf("load case evidence snapshots: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var snapshot CaseEvidenceSnapshot
 		var caseID string
 		var raw []byte
-		if err := rows.Scan(&caseID, &raw); err != nil {
+		var createdAt time.Time
+		if err := rows.Scan(&snapshot.SnapshotID, &caseID, &snapshot.RulesetVersion, &raw, &createdAt); err != nil {
 			return err
 		}
 		caseItem := doc.Cases[caseID]
-		_ = json.Unmarshal(raw, &caseItem.EvidenceSnapshot)
+		_ = json.Unmarshal(raw, &snapshot.Evidence)
+		snapshot.CreatedAt = formatDBTime(createdAt)
+		caseItem.EvidenceHistory = append(caseItem.EvidenceHistory, snapshot)
+		if caseItem.EvidenceSnapshot.CaseID == "" {
+			caseItem.EvidenceSnapshot = snapshot.Evidence
+		}
 		doc.Cases[caseID] = caseItem
 	}
 	return rows.Err()
@@ -336,7 +363,10 @@ func (s *operationsState) savePostgres(tx *sql.Tx) error {
 		}
 	}
 	for _, item := range s.doc.Cases {
-		_, err := tx.ExecContext(ctx, `INSERT INTO risk_cases(case_id,subject_type,subject_id,ip,account_id,endpoint_id,campus_id,department,person_type,building_id,network_zone_id,ssid,vlan,ap,nas_ip,auth_session_id,identity_conflict,identity_blocker,status,disposition,priority,assignee_id,risk_score,risk_confidence,assessment_level,ruleset_version,due_at,first_seen,last_seen,created_at,updated_at) VALUES($1,$2,$3,NULLIF($4,'')::inet,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,''),NULLIF($15,'')::inet,NULLIF($16,''),$17,NULLIF($18,''),$19,NULLIF($20,''),$21,NULLIF($22,''),$23,$24,$25,NULLIF($26,''),NULLIF($27,'')::timestamptz,$28::timestamptz,$29::timestamptz,$30::timestamptz,$31::timestamptz) ON CONFLICT(case_id) DO UPDATE SET ip=EXCLUDED.ip,account_id=EXCLUDED.account_id,endpoint_id=EXCLUDED.endpoint_id,campus_id=EXCLUDED.campus_id,department=EXCLUDED.department,person_type=EXCLUDED.person_type,building_id=EXCLUDED.building_id,network_zone_id=EXCLUDED.network_zone_id,ssid=EXCLUDED.ssid,vlan=EXCLUDED.vlan,ap=EXCLUDED.ap,nas_ip=EXCLUDED.nas_ip,auth_session_id=EXCLUDED.auth_session_id,identity_conflict=EXCLUDED.identity_conflict,identity_blocker=EXCLUDED.identity_blocker,status=EXCLUDED.status,disposition=EXCLUDED.disposition,priority=EXCLUDED.priority,assignee_id=EXCLUDED.assignee_id,risk_score=EXCLUDED.risk_score,risk_confidence=EXCLUDED.risk_confidence,assessment_level=EXCLUDED.assessment_level,ruleset_version=EXCLUDED.ruleset_version,due_at=EXCLUDED.due_at,last_seen=EXCLUDED.last_seen,updated_at=EXCLUDED.updated_at`, item.CaseID, item.SubjectType, item.SubjectID, item.IP, item.AccountID, item.EndpointID, item.CampusID, item.Department, item.PersonType, item.BuildingID, item.NetworkZoneID, item.SSID, item.VLAN, item.AP, item.NASIP, item.AuthSessionID, item.IdentityConflict, item.IdentityBlocker, item.Status, item.Disposition, item.Priority, item.AssigneeID, item.RiskScore, item.RiskConfidence, item.AssessmentLevel, item.RulesetVersion, item.DueAt, item.FirstSeen, item.LastSeen, item.CreatedAt, item.UpdatedAt)
+		if item.DedupeKey == "" {
+			item.DedupeKey = legacyCaseDedupeKey(item.SubjectType, item.SubjectID)
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO risk_cases(case_id,subject_type,subject_id,ip,account_id,endpoint_id,campus_id,department,person_type,building_id,network_zone_id,ssid,vlan,ap,nas_ip,auth_session_id,identity_conflict,identity_blocker,dedupe_key,status,disposition,priority,assignee_id,risk_score,risk_confidence,assessment_level,ruleset_version,due_at,first_seen,last_seen,created_at,updated_at) VALUES($1,$2,$3,NULLIF($4,'')::inet,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,''),NULLIF($15,'')::inet,NULLIF($16,''),$17,NULLIF($18,''),$19,$20,NULLIF($21,''),$22,NULLIF($23,''),$24,$25,$26,NULLIF($27,''),NULLIF($28,'')::timestamptz,$29::timestamptz,$30::timestamptz,$31::timestamptz,$32::timestamptz) ON CONFLICT(case_id) DO UPDATE SET ip=EXCLUDED.ip,account_id=EXCLUDED.account_id,endpoint_id=EXCLUDED.endpoint_id,campus_id=EXCLUDED.campus_id,department=EXCLUDED.department,person_type=EXCLUDED.person_type,building_id=EXCLUDED.building_id,network_zone_id=EXCLUDED.network_zone_id,ssid=EXCLUDED.ssid,vlan=EXCLUDED.vlan,ap=EXCLUDED.ap,nas_ip=EXCLUDED.nas_ip,auth_session_id=EXCLUDED.auth_session_id,identity_conflict=EXCLUDED.identity_conflict,identity_blocker=EXCLUDED.identity_blocker,dedupe_key=EXCLUDED.dedupe_key,status=EXCLUDED.status,disposition=EXCLUDED.disposition,priority=EXCLUDED.priority,assignee_id=EXCLUDED.assignee_id,risk_score=EXCLUDED.risk_score,risk_confidence=EXCLUDED.risk_confidence,assessment_level=EXCLUDED.assessment_level,ruleset_version=EXCLUDED.ruleset_version,due_at=EXCLUDED.due_at,last_seen=EXCLUDED.last_seen,updated_at=EXCLUDED.updated_at`, item.CaseID, item.SubjectType, item.SubjectID, item.IP, item.AccountID, item.EndpointID, item.CampusID, item.Department, item.PersonType, item.BuildingID, item.NetworkZoneID, item.SSID, item.VLAN, item.AP, item.NASIP, item.AuthSessionID, item.IdentityConflict, item.IdentityBlocker, item.DedupeKey, item.Status, item.Disposition, item.Priority, item.AssigneeID, item.RiskScore, item.RiskConfidence, item.AssessmentLevel, item.RulesetVersion, item.DueAt, item.FirstSeen, item.LastSeen, item.CreatedAt, item.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("save case %s: %w", item.CaseID, err)
 		}
@@ -354,11 +384,11 @@ func (s *operationsState) savePostgres(tx *sql.Tx) error {
 				return fmt.Errorf("save case timeline %s: %w", event.EventID, err)
 			}
 		}
-		if item.EvidenceSnapshot.CaseID != "" {
-			evidence, _ := json.Marshal(item.EvidenceSnapshot)
-			_, err = tx.ExecContext(ctx, `INSERT INTO risk_case_evidence_snapshots(snapshot_id,case_id,ruleset_version,evidence,created_at) VALUES($1,$2,NULLIF($3,''),$4,$5::timestamptz) ON CONFLICT(snapshot_id) DO NOTHING`, item.CaseID+"-initial", item.CaseID, item.RulesetVersion, evidence, item.CreatedAt)
+		for _, snapshot := range item.EvidenceHistory {
+			evidence, _ := json.Marshal(snapshot.Evidence)
+			_, err = tx.ExecContext(ctx, `INSERT INTO risk_case_evidence_snapshots(snapshot_id,case_id,ruleset_version,evidence,created_at) VALUES($1,$2,NULLIF($3,''),$4,$5::timestamptz) ON CONFLICT(snapshot_id) DO NOTHING`, snapshot.SnapshotID, item.CaseID, snapshot.RulesetVersion, evidence, snapshot.CreatedAt)
 			if err != nil {
-				return fmt.Errorf("save case evidence %s: %w", item.CaseID, err)
+				return fmt.Errorf("save case evidence %s: %w", snapshot.SnapshotID, err)
 			}
 		}
 	}
