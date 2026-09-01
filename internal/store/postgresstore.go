@@ -1219,6 +1219,118 @@ func (s *PostgresStore) RebuildDeviceProfiles(ctx context.Context, batchSize int
 	}
 }
 
+func (s *PostgresStore) RebuildDeviceProfilesVersion(ctx context.Context, version string, batchSize int, progress func(DeviceProfileBackfillProgress)) (result DeviceProfileBackfillProgress, resultErr error) {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return result, fmt.Errorf("device fingerprint version is required")
+	}
+	if batchSize <= 0 || batchSize > 500 {
+		batchSize = 500
+	}
+	result = DeviceProfileBackfillProgress{Version: version, Status: "pending"}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer conn.Close()
+	lockName := "proxy-sentinel-device-profile-backfill:" + version
+	var locked bool
+	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, lockName).Scan(&locked); err != nil {
+		return result, err
+	}
+	if !locked {
+		var lastError sql.NullString
+		if err := s.db.QueryRowContext(ctx, `SELECT status,processed,last_error FROM device_profile_backfill_jobs WHERE version=$1`, version).Scan(&result.Status, &result.Processed, &lastError); err != nil && err != sql.ErrNoRows {
+			return result, err
+		}
+		if result.Status == "pending" {
+			result.Status = "running"
+		}
+		if lastError.Valid {
+			result.LastError = lastError.String
+		}
+		return result, nil
+	}
+	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, lockName)
+	if _, err := s.db.ExecContext(ctx, `
+INSERT INTO device_profile_backfill_jobs(version,status,processed,started_at,updated_at)
+VALUES($1,'pending',0,now(),now()) ON CONFLICT(version) DO NOTHING`, version); err != nil {
+		return result, err
+	}
+	var lastError sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT status,processed,last_error FROM device_profile_backfill_jobs WHERE version=$1`, version).Scan(&result.Status, &result.Processed, &lastError); err != nil {
+		return result, err
+	}
+	if lastError.Valid {
+		result.LastError = lastError.String
+	}
+	if result.Status == "completed" {
+		if progress != nil {
+			progress(result)
+		}
+		return result, nil
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE device_profile_backfill_jobs SET status='running',last_error=NULL,started_at=COALESCE(started_at,now()),finished_at=NULL,updated_at=now() WHERE version=$1`, version); err != nil {
+		return result, err
+	}
+	result.Status, result.LastError = "running", ""
+	if progress != nil {
+		progress(result)
+	}
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		result.Status, result.LastError = "failed", resultErr.Error()
+		_, _ = s.db.ExecContext(context.Background(), `UPDATE device_profile_backfill_jobs SET status='failed',last_error=$2,updated_at=now() WHERE version=$1`, version, result.LastError)
+		if progress != nil {
+			progress(result)
+		}
+	}()
+	for {
+		page, err := s.ListEndpointDevices(ctx, Query{Limit: batchSize, Cursor: result.Processed})
+		if err != nil {
+			return result, err
+		}
+		if len(page.Items) == 0 {
+			break
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return result, err
+		}
+		for _, item := range page.Items {
+			if err := upsertEndpointDeviceProfile(ctx, tx, item); err != nil {
+				_ = tx.Rollback()
+				return result, err
+			}
+		}
+		nextProcessed := result.Processed + len(page.Items)
+		if _, err := tx.ExecContext(ctx, `UPDATE device_profile_backfill_jobs SET processed=$2,status='running',updated_at=now() WHERE version=$1`, version, nextProcessed); err != nil {
+			_ = tx.Rollback()
+			return result, err
+		}
+		if err := tx.Commit(); err != nil {
+			return result, err
+		}
+		result.Processed = nextProcessed
+		if progress != nil {
+			progress(result)
+		}
+		if page.Page.NextCursor == nil {
+			break
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE device_profile_backfill_jobs SET status='completed',last_error=NULL,finished_at=now(),updated_at=now() WHERE version=$1`, version); err != nil {
+		return result, err
+	}
+	result.Status = "completed"
+	if progress != nil {
+		progress(result)
+	}
+	return result, nil
+}
+
 func writeIdentityState(ctx context.Context, tx *sql.Tx, state IdentityState) error {
 	for _, entity := range state.Endpoints {
 		if err := upsertEndpointEntity(ctx, tx, entity); err != nil {

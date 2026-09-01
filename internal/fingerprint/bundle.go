@@ -190,8 +190,9 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 		if err != nil {
 			return Bundle{}, fmt.Errorf("read bundle: %w", err)
 		}
-		name := filepath.ToSlash(filepath.Clean(header.Name))
-		if header.Typeflag != tar.TypeReg || !allowed[name] || strings.HasPrefix(name, "../") || filepath.IsAbs(name) {
+		rawName := filepath.ToSlash(header.Name)
+		name := filepath.ToSlash(filepath.Clean(rawName))
+		if header.Typeflag != tar.TypeReg || rawName != name || strings.Contains(header.Name, `\`) || !allowed[name] || strings.HasPrefix(name, "../") || filepath.IsAbs(name) {
 			return Bundle{}, fmt.Errorf("bundle contains unsupported entry %q", header.Name)
 		}
 		if _, exists := files[name]; exists {
@@ -220,16 +221,65 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if manifest.SchemaVersion != BundleSchemaVersion || manifest.Version == "" {
 		return Bundle{}, fmt.Errorf("unsupported bundle manifest")
 	}
+	if _, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt); err != nil {
+		return Bundle{}, fmt.Errorf("bundle manifest has invalid created_at")
+	}
+	if len(manifest.Files) != len(required)-1 {
+		return Bundle{}, fmt.Errorf("bundle manifest must describe exactly the fixed payload files")
+	}
 	for _, name := range required[1:] {
 		expected, ok := manifest.Files[name]
 		if !ok || expected != bundleFile(files[name]) {
 			return Bundle{}, fmt.Errorf("bundle checksum mismatch for %q", name)
 		}
 	}
-	if _, err := LoadWithData(manifest.Version, files["oui.csv"], files["device-rules.json"], files["fingerbank-dhcp.json"], files["brand-aliases.json"]); err != nil {
+	if err := validateBundleSourcesAndLicenses(manifest, files); err != nil {
 		return Bundle{}, err
 	}
+	library, err := LoadWithData(manifest.Version, files["oui.csv"], files["device-rules.json"], files["fingerbank-dhcp.json"], files["brand-aliases.json"])
+	if err != nil {
+		return Bundle{}, err
+	}
+	if len(library.ouis) == 0 || len(library.rules) == 0 || len(library.dhcp) == 0 || len(library.aliases) == 0 {
+		return Bundle{}, fmt.Errorf("bundle must contain non-empty OUI, device, DHCP and brand alias rules")
+	}
 	return Bundle{Manifest: manifest, Files: files}, nil
+}
+
+func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string][]byte) error {
+	requiredSources := map[string]string{
+		"IEEE MA-L/MA-M/MA-S":        "IEEE",
+		"uap-core":                   "Apache-2.0",
+		"Fingerbank public snapshot": "ODbL-1.0/DbCL-1.0",
+	}
+	seen := map[string]bool{}
+	for _, source := range manifest.Sources {
+		if strings.TrimSpace(source.Version) == "" || strings.TrimSpace(source.URL) == "" {
+			return fmt.Errorf("bundle source %q is missing version or URL", source.Name)
+		}
+		if expected, ok := requiredSources[source.Name]; ok {
+			if !strings.Contains(source.License, expected) {
+				return fmt.Errorf("bundle source %q has an invalid license declaration", source.Name)
+			}
+			seen[source.Name] = true
+		}
+	}
+	for name := range requiredSources {
+		if !seen[name] {
+			return fmt.Errorf("bundle is missing required source declaration %q", name)
+		}
+	}
+	if !bytes.Contains(bytes.ToLower(files["licenses/ODbL-1.0.html"]), []byte("open database license")) && !bytes.Contains(files["licenses/ODbL-1.0.html"], []byte("ODbL")) {
+		return fmt.Errorf("bundle ODbL license declaration is invalid")
+	}
+	if !bytes.Contains(bytes.ToLower(files["licenses/DbCL-1.0.html"]), []byte("database contents license")) && !bytes.Contains(files["licenses/DbCL-1.0.html"], []byte("DbCL")) {
+		return fmt.Errorf("bundle DbCL license declaration is invalid")
+	}
+	notice := strings.ToLower(string(files["licenses/NOTICE.txt"]))
+	if !strings.Contains(notice, "fingerbank") || !strings.Contains(notice, "odbl") || !strings.Contains(notice, "dbcl") {
+		return fmt.Errorf("bundle NOTICE must preserve Fingerbank ODbL/DbCL attribution")
+	}
+	return nil
 }
 
 func VerifyBundleFile(path string) (Bundle, error) {

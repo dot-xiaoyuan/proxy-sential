@@ -32,6 +32,8 @@ func TestFingerbankLegacyConversionAndIdentification(t *testing.T) {
 }
 
 func TestBundleVerifyInstallAndChecksumFailure(t *testing.T) {
+	previous := Default()
+	defer SetDefault(previous)
 	data := testBundleBytes(t)
 	bundle, err := VerifyBundleBytes(data)
 	if err != nil {
@@ -55,6 +57,40 @@ func TestBundleVerifyInstallAndChecksumFailure(t *testing.T) {
 	if _, err := VerifyBundleBytes(corrupt); err == nil {
 		t.Fatal("expected corrupt bundle rejection")
 	}
+	lastGoodVersion := Default().Version()
+	if _, err := manager.Import(corrupt); err == nil || Default().Version() != lastGoodVersion {
+		t.Fatalf("invalid import replaced the last good library: version=%s err=%v", Default().Version(), err)
+	}
+}
+
+func TestOfflineBundleKeepsCurrentAndTwoPreviousVersionsAndSupportsRollback(t *testing.T) {
+	previous := Default()
+	defer SetDefault(previous)
+	dir := t.TempDir()
+	manager := NewManager(dir)
+	manager.SetOffline(true)
+	for _, version := range []string{"offline-retention-v1", "offline-retention-v2", "offline-retention-v3", "offline-retention-v4"} {
+		if _, err := manager.Import(testBundleBytesVersion(t, version)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "releases"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := 0
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			kept++
+		}
+	}
+	if kept != 3 {
+		t.Fatalf("expected current and two previous releases, got %d", kept)
+	}
+	status, err := manager.Import(testBundleBytesVersion(t, "offline-retention-v2"))
+	if err != nil || status.Version != "offline-retention-v2" || Default().Version() != "offline-retention-v2" {
+		t.Fatalf("rollback bundle was not activated: status=%+v err=%v", status, err)
+	}
 }
 
 func TestBundleRejectsPathTraversal(t *testing.T) {
@@ -68,6 +104,24 @@ func TestBundleRejectsPathTraversal(t *testing.T) {
 	_ = gz.Close()
 	if _, err := VerifyBundleBytes(output.Bytes()); err == nil {
 		t.Fatal("expected path traversal rejection")
+	}
+}
+
+func TestBundleRejectsNormalizedAndDuplicatePaths(t *testing.T) {
+	for _, names := range [][]string{{"licenses/../oui.csv"}, {"oui.csv", "oui.csv"}} {
+		var output bytes.Buffer
+		gz := gzip.NewWriter(&output)
+		tw := tar.NewWriter(gz)
+		for _, name := range names {
+			payload := []byte("bad")
+			_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(payload))})
+			_, _ = tw.Write(payload)
+		}
+		_ = tw.Close()
+		_ = gz.Close()
+		if _, err := VerifyBundleBytes(output.Bytes()); err == nil {
+			t.Fatalf("expected unsafe names to be rejected: %v", names)
+		}
 	}
 }
 
@@ -89,8 +143,10 @@ func TestBuildOfflineBundlePinsSources(t *testing.T) {
 				fmt.Fprintf(w, "1,3,6,15,%d\n", i)
 			}
 			fmt.Fprint(w, "EOT\n")
-		case strings.HasPrefix(r.URL.Path, "/license"):
-			fmt.Fprint(w, "Open Data Commons license text")
+		case strings.Contains(r.URL.Path, "odbl"):
+			fmt.Fprint(w, "Open Data Commons Open Database License ODbL")
+		case strings.Contains(r.URL.Path, "dbcl"):
+			fmt.Fprint(w, "Open Data Commons Database Contents License DbCL")
 		default:
 			http.NotFound(w, r)
 		}
@@ -110,9 +166,13 @@ func TestBuildOfflineBundlePinsSources(t *testing.T) {
 }
 
 func testBundleBytes(t *testing.T) []byte {
+	return testBundleBytesVersion(t, "offline-test")
+}
+
+func testBundleBytesVersion(t *testing.T, version string) []byte {
 	t.Helper()
-	files := map[string][]byte{"oui.csv": embeddedOUI, "device-rules.json": embeddedRules, "fingerbank-dhcp.json": []byte(`[{"requested_options":"1,3,6","device_type":"desktop","os_family":"Windows","description":"test","confidence":0.84}]`), "brand-aliases.json": embeddedBrandAliases, "licenses/ODbL-1.0.html": []byte("ODbL"), "licenses/DbCL-1.0.html": []byte("DbCL"), "licenses/NOTICE.txt": []byte("notice")}
-	manifest := BundleManifest{SchemaVersion: BundleSchemaVersion, Version: "offline-test", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Sources: []BundleSource{{Name: "test", Version: "1", URL: "https://example.test", License: "test"}}, Files: map[string]BundleFile{}}
+	files := map[string][]byte{"oui.csv": embeddedOUI, "device-rules.json": embeddedRules, "fingerbank-dhcp.json": []byte(`[{"requested_options":"1,3,6","device_type":"desktop","os_family":"Windows","description":"test","confidence":0.84}]`), "brand-aliases.json": embeddedBrandAliases, "licenses/ODbL-1.0.html": []byte("ODbL"), "licenses/DbCL-1.0.html": []byte("DbCL"), "licenses/NOTICE.txt": []byte("Fingerbank data: ODbL and DbCL")}
+	manifest := BundleManifest{SchemaVersion: BundleSchemaVersion, Version: version, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Sources: []BundleSource{{Name: "IEEE MA-L/MA-M/MA-S", Version: "1", URL: "https://example.test/ieee", License: "IEEE public registry"}, {Name: "uap-core", Version: "abc123", URL: "https://example.test/uap", License: "Apache-2.0"}, {Name: "Fingerbank public snapshot", Version: "1", URL: "https://example.test/fingerbank", License: "ODbL-1.0/DbCL-1.0"}}, Files: map[string]BundleFile{}}
 	for name, data := range files {
 		manifest.Files[name] = bundleFile(data)
 	}

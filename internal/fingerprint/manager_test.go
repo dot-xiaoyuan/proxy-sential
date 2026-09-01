@@ -37,6 +37,7 @@ func TestManagerUpdateActivatesValidatedLibraryAndKeepsLastGoodOnFailure(t *test
 	defer server.Close()
 	dir := t.TempDir()
 	manager := NewManager(dir)
+	manager.SetOffline(false)
 	manager.ouiURLs = []string{server.URL + "/oui-l", server.URL + "/oui-m", server.URL + "/oui-s"}
 	manager.uapCommitURL = server.URL + "/commit"
 	manager.uapRawURL = server.URL + "/raw/%s"
@@ -61,6 +62,24 @@ func TestManagerUpdateActivatesValidatedLibraryAndKeepsLastGoodOnFailure(t *test
 	}
 	if Default().Version() != lastVersion {
 		t.Fatalf("failed update replaced last good version")
+	}
+}
+
+func TestOfflineManagerNeverCallsNetworkUpdate(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	manager := NewManager(t.TempDir())
+	manager.ouiURLs = []string{server.URL}
+	manager.SetOffline(true)
+	if _, err := manager.Update(context.Background()); err == nil || !strings.Contains(err.Error(), "offline_update_required") {
+		t.Fatalf("expected explicit offline rejection, got %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("offline manager made %d network calls", calls)
 	}
 }
 

@@ -1,0 +1,11 @@
+[
+  {"pattern":"iPhone","brand":"Apple","device_type":"mobile","os_family":"iOS","confidence":0.95},
+  {"pattern":"iPad","brand":"Apple","device_type":"tablet","os_family":"iPadOS","confidence":0.95},
+  {"pattern":"Macintosh|Mac OS X","brand":"Apple","device_type":"desktop","os_family":"macOS","confidence":0.9},
+  {"pattern":"MI[ -]?9SE|MI9SE","brand":"Xiaomi","model":"Mi 9 SE","device_type":"mobile","os_family":"Android","confidence":0.9},
+  {"pattern":"Android","device_type":"mobile","os_family":"Android","confidence":0.82},
+  {"pattern":"Windows NT","brand":"Microsoft","device_type":"desktop","os_family":"Windows","confidence":0.86},
+  {"pattern":"Hewlett-Packard JetDirect|HP JetDirect|HP LaserJet","brand":"HP","device_type":"printer","confidence":0.9},
+  {"pattern":"CrOS","brand":"Google","device_type":"desktop","os_family":"ChromeOS","confidence":0.86},
+  {"pattern":"Linux","device_type":"desktop","os_family":"Linux","confidence":0.7}
+]

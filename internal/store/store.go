@@ -128,6 +128,19 @@ type DeviceProfileBackfiller interface {
 	RebuildDeviceProfiles(ctx context.Context, batchSize int) (int, error)
 }
 
+type DeviceProfileBackfillProgress struct {
+	Version   string `json:"version"`
+	Status    string `json:"status"`
+	Processed int    `json:"processed"`
+	LastError string `json:"last_error,omitempty"`
+}
+
+// DeviceProfileVersionBackfiller persists progress per library version so a
+// failed or interrupted offline-library import can safely resume by batch.
+type DeviceProfileVersionBackfiller interface {
+	RebuildDeviceProfilesVersion(ctx context.Context, version string, batchSize int, progress func(DeviceProfileBackfillProgress)) (DeviceProfileBackfillProgress, error)
+}
+
 type IdentityEventIngester interface {
 	IngestIdentityEvents(ctx context.Context, events []normalized.Event) error
 }

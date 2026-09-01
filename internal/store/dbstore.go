@@ -258,6 +258,10 @@ func (s *DBStore) RebuildDeviceProfiles(ctx context.Context, batchSize int) (int
 	return s.pg.RebuildDeviceProfiles(ctx, batchSize)
 }
 
+func (s *DBStore) RebuildDeviceProfilesVersion(ctx context.Context, version string, batchSize int, progress func(DeviceProfileBackfillProgress)) (DeviceProfileBackfillProgress, error) {
+	return s.pg.RebuildDeviceProfilesVersion(ctx, version, batchSize, progress)
+}
+
 func (s *DBStore) CreateLabel(ctx context.Context, label Label) (Label, error) {
 	return s.pg.CreateLabel(ctx, label)
 }

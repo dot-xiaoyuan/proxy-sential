@@ -212,6 +212,12 @@ func (m *Manager) SetBackfill(status string, processed int) {
 }
 
 func (m *Manager) Start(ctx context.Context, interval time.Duration) {
+	m.mu.RLock()
+	offline := m.status.OfflineMode
+	m.mu.RUnlock()
+	if offline {
+		return
+	}
 	if interval <= 0 {
 		interval = 7 * 24 * time.Hour
 	}
@@ -231,6 +237,12 @@ func (m *Manager) Start(ctx context.Context, interval time.Duration) {
 }
 
 func (m *Manager) Update(ctx context.Context) (Status, error) {
+	m.mu.RLock()
+	offline := m.status.OfflineMode
+	m.mu.RUnlock()
+	if offline {
+		return m.fail(fmt.Errorf("offline_update_required: import a verified local device fingerprint bundle"))
+	}
 	m.setChecking()
 	ouiParts := make([][]byte, 0, 3)
 	for _, rawURL := range m.ouiURLs {
@@ -409,7 +421,20 @@ func (m *Manager) persistStatus(status Status) {
 		return
 	}
 	data, _ := json.MarshalIndent(status, "", "  ")
-	_ = os.WriteFile(filepath.Join(m.dir, "status.json"), data, 0o640)
+	if err := os.MkdirAll(m.dir, 0o750); err != nil {
+		return
+	}
+	temp, err := os.CreateTemp(m.dir, ".status-*.json")
+	if err != nil {
+		return
+	}
+	name := temp.Name()
+	defer os.Remove(name)
+	if _, err := temp.Write(data); err != nil || temp.Sync() != nil || temp.Close() != nil || os.Chmod(name, 0o640) != nil {
+		_ = temp.Close()
+		return
+	}
+	_ = os.Rename(name, filepath.Join(m.dir, "status.json"))
 }
 
 func mergeOUICSV(parts [][]byte) ([]byte, error) {

@@ -85,6 +85,27 @@ func TestPostgresIdentitySessionPersistsUniversityDimensionsAndEndTime(t *testin
 	if page.Page.Total != 0 {
 		t.Fatalf("ended session must not be returned as currently attached endpoint, got %+v", page)
 	}
+	const backfillVersion = "integration-offline-library-v1"
+	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM device_profile_backfill_jobs WHERE version=$1`, backfillVersion)
+	_, err = postgres.db.ExecContext(ctx, `INSERT INTO device_profile_backfill_jobs(version,status,processed,last_error,started_at,updated_at) VALUES($1,'failed',1,'simulated interruption',now(),now())`, backfillVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	progressCalls := 0
+	backfill, err := postgres.RebuildDeviceProfilesVersion(ctx, backfillVersion, 1, func(item DeviceProfileBackfillProgress) {
+		progressCalls++
+		if item.Version != backfillVersion {
+			t.Errorf("unexpected progress version: %+v", item)
+		}
+	})
+	if err != nil || backfill.Status != "completed" || backfill.Processed <= 1 || progressCalls < 2 {
+		t.Fatalf("failed backfill did not resume to completion: progress=%+v callbacks=%d err=%v", backfill, progressCalls, err)
+	}
+	var persistedStatus string
+	var persistedProcessed int
+	if err := postgres.db.QueryRowContext(ctx, `SELECT status,processed FROM device_profile_backfill_jobs WHERE version=$1`, backfillVersion).Scan(&persistedStatus, &persistedProcessed); err != nil || persistedStatus != "completed" || persistedProcessed != backfill.Processed {
+		t.Fatalf("backfill progress was not persisted: status=%s processed=%d err=%v", persistedStatus, persistedProcessed, err)
+	}
 }
 
 func universityIdentityEvent(eventID, sessionID, status, timestamp string) normalized.Event {

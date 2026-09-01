@@ -300,6 +300,10 @@ func NewServerWithError(opts Options) (*Server, error) {
 	if opts.FingerprintAutoUpdate {
 		fingerprints.Start(context.Background(), 7*24*time.Hour)
 	}
+	fingerprintStatus := fingerprints.Status()
+	if !opts.ReadOnly && fingerprintStatus.Source == "offline-bundle" && fingerprintStatus.BackfillStatus != "completed" {
+		server.startFingerprintBackfill(fingerprintStatus.Version)
+	}
 	return server, nil
 }
 
@@ -792,6 +796,24 @@ func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.import", "imported:"+status.Version)
+	s.startFingerprintBackfill(status.Version)
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) startFingerprintBackfill(version string) {
+	if backfiller, ok := s.reader.(store.DeviceProfileVersionBackfiller); ok {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			result, err := backfiller.RebuildDeviceProfilesVersion(ctx, version, 500, func(item store.DeviceProfileBackfillProgress) {
+				s.fingerprints.SetBackfill(item.Status, item.Processed)
+			})
+			if err != nil {
+				s.fingerprints.SetBackfill("failed", result.Processed)
+			}
+		}()
+		return
+	}
 	if backfiller, ok := s.reader.(store.DeviceProfileBackfiller); ok {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -804,10 +826,9 @@ func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.R
 			}
 			s.fingerprints.SetBackfill("completed", processed)
 		}()
-	} else {
-		s.fingerprints.SetBackfill("not_required", 0)
+		return
 	}
-	writeJSON(w, http.StatusOK, status)
+	s.fingerprints.SetBackfill("not_required", 0)
 }
 
 func (s *Server) handleFingerprintLibraryValidate(w http.ResponseWriter, r *http.Request) {

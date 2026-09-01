@@ -223,10 +223,9 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			result.Evidence = append(result.Evidence, "Fingerbank DHCP: "+candidate.Description)
 		}
 	}
-	if result.Brand == "" && result.Vendor != "" {
-		result.Brand = l.normalizedBrand(result.Vendor)
-		if result.Brand != "" {
-			result.BrandConfidence = 0.85
+	if result.Brand != "" {
+		if normalized := l.normalizedBrand(result.Brand); normalized != "" {
+			result.Brand = normalized
 		}
 	}
 	return result
