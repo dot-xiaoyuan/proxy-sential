@@ -402,6 +402,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleCampusExceptions(w, r)
 	case r.Method == http.MethodGet && path == "/integrations/identity/status":
 		s.handleIdentityIngestStatus(w, r)
+	case r.Method == http.MethodGet && path == "/integrations/identity/batches":
+		s.handleIdentityBatches(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/integrations/identity/batches/") && strings.HasSuffix(path, "/replay"):
+		s.handleIdentityBatchReplay(w, r)
 	case strings.HasPrefix(path, "/cases"):
 		s.handleCases(w, r)
 	case strings.HasPrefix(path, "/organization"):
@@ -1154,14 +1158,20 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 		to = now.Format(time.RFC3339Nano)
 	}
 	page, err := s.reader.ListRisks(r.Context(), store.Query{
-		Level:    r.URL.Query().Get("level"),
-		Q:        r.URL.Query().Get("q"),
-		SensorID: r.URL.Query().Get("sensor_id"),
-		CampusID: r.URL.Query().Get("campus_id"),
-		From:     from,
-		To:       to,
-		Limit:    limit,
-		Cursor:   cursor,
+		Level:      r.URL.Query().Get("level"),
+		Q:          r.URL.Query().Get("q"),
+		SensorID:   r.URL.Query().Get("sensor_id"),
+		CampusID:   r.URL.Query().Get("campus_id"),
+		Department: r.URL.Query().Get("department"),
+		PersonType: r.URL.Query().Get("person_type"),
+		SSID:       r.URL.Query().Get("ssid"),
+		VLAN:       r.URL.Query().Get("vlan"),
+		AP:         r.URL.Query().Get("ap"),
+		NASIP:      r.URL.Query().Get("nas_ip"),
+		From:       from,
+		To:         to,
+		Limit:      limit,
+		Cursor:     cursor,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_risk_query", err.Error())
@@ -1826,7 +1836,7 @@ func (s *Server) deviceActivityQuery(values url.Values) (store.ActivityQuery, er
 }
 
 func deviceQuery(values url.Values) (store.Query, error) {
-	limit, err := boundedInt(values.Get("limit"), 50, 1, 200)
+	limit, err := boundedInt(values.Get("limit"), 20, 1, 50)
 	if err != nil {
 		return store.Query{}, fmt.Errorf("bad limit: %w", err)
 	}
@@ -1844,6 +1854,13 @@ func deviceQuery(values url.Values) (store.Query, error) {
 	return store.Query{
 		Q:           values.Get("q"),
 		SensorID:    values.Get("sensor_id"),
+		CampusID:    values.Get("campus_id"),
+		Department:  values.Get("department"),
+		PersonType:  values.Get("person_type"),
+		SSID:        values.Get("ssid"),
+		VLAN:        values.Get("vlan"),
+		AP:          values.Get("ap"),
+		NASIP:       values.Get("nas_ip"),
 		Window:      window,
 		SrcIP:       values.Get("ip"),
 		Limit:       limit,
@@ -1912,7 +1929,7 @@ func applyRiskDeviceInventory(snapshot *risk.Snapshot, inventory store.IPDeviceI
 }
 
 func eventQuery(values url.Values) (store.Query, error) {
-	limit, err := boundedInt(values.Get("limit"), 50, 1, 200)
+	limit, err := boundedInt(values.Get("limit"), 20, 1, 50)
 	if err != nil {
 		return store.Query{}, fmt.Errorf("bad limit: %w", err)
 	}
@@ -1928,6 +1945,13 @@ func eventQuery(values url.Values) (store.Query, error) {
 		Q:           values.Get("q"),
 		Level:       values.Get("type"),
 		SensorID:    values.Get("sensor_id"),
+		CampusID:    values.Get("campus_id"),
+		Department:  values.Get("department"),
+		PersonType:  values.Get("person_type"),
+		SSID:        values.Get("ssid"),
+		VLAN:        values.Get("vlan"),
+		AP:          values.Get("ap"),
+		NASIP:       values.Get("nas_ip"),
 		From:        values.Get("from"),
 		To:          values.Get("to"),
 		Window:      values.Get("window"),

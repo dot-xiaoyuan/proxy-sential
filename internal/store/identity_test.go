@@ -27,6 +27,26 @@ func TestBuildIdentityStateKeepsDynamicIPOnSameEndpoint(t *testing.T) {
 	}
 }
 
+func TestBuildIdentityStateClosesSessionWithoutChangingItsStartAndSeparatesIPReuse(t *testing.T) {
+	started := identityStoreEvent("start-a", "student-a", "10.20.15.83", "aa:bb:cc:dd:ee:01", "Dorm-A-AP01", "endpoint", "sess-a", "2026-07-29T10:00:00Z")
+	started.Payload["session_status"] = "start"
+	stopped := identityStoreEvent("stop-a", "student-a", "10.20.15.83", "aa:bb:cc:dd:ee:01", "Dorm-A-AP01", "endpoint", "sess-a", "2026-07-29T11:00:00Z")
+	stopped.Payload["session_status"] = "stop"
+	reused := identityStoreEvent("start-b", "student-b", "10.20.15.83", "aa:bb:cc:dd:ee:02", "Dorm-B-AP02", "endpoint", "sess-b", "2026-07-29T11:01:00Z")
+	reused.Payload["session_status"] = "start"
+
+	state := BuildIdentityState([]normalized.Event{started, stopped, reused})
+	if len(state.Sessions) != 2 {
+		t.Fatalf("expected two distinct authentication sessions, got %+v", state.Sessions)
+	}
+	if state.Sessions[0].SessionID != "sess-a" || state.Sessions[0].StartedAt != "2026-07-29T10:00:00Z" || state.Sessions[0].EndedAt != "2026-07-29T11:00:00Z" {
+		t.Fatalf("session stop must preserve the original start: %+v", state.Sessions[0])
+	}
+	if state.Sessions[1].AccountID != "student-b" || state.Sessions[1].EndedAt != "" {
+		t.Fatalf("reused IP must be attributed to the new active session: %+v", state.Sessions[1])
+	}
+}
+
 func TestBuildIdentityStateExcludesInfrastructureFromEndpointSessions(t *testing.T) {
 	events := []normalized.Event{
 		identityStoreEvent("infra-gw", "system", "10.20.0.1", "", "core-gateway", "gateway", "", "2026-07-29T10:00:00Z"),

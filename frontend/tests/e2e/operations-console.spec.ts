@@ -91,3 +91,19 @@ test('shows local users and versioned campus exceptions', async ({ page }) => {
   await expect(page.getByRole('button', { name: '新建用户' })).toBeVisible()
   await expect(page.getByRole('button', { name: '新增例外' })).toBeVisible()
 })
+
+test('maintains campus organization mappings and exposes university filters', async ({ page }) => {
+  await page.goto('/settings/organization')
+  await expect(page.getByRole('heading', { name: '校区与网络区域' })).toBeVisible()
+  await page.getByRole('button', { name: '新增校区' }).click()
+  await page.getByLabel('校区 ID').fill('west')
+  await page.getByLabel('校区编码').fill('WEST')
+  await page.getByLabel('校区名称').fill('西校区')
+  await page.getByRole('button', { name: '确 定' }).click()
+  await expect(page.getByText('组织与网络位置映射已保存')).toBeVisible()
+
+  await page.goto('/devices')
+  await expect(page.getByText('全部校区', { exact: true })).toBeVisible()
+  await expect(page.getByPlaceholder('院系')).toBeVisible()
+  await expect(page.getByPlaceholder('NAS IP')).toBeVisible()
+})

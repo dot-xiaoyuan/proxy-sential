@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,8 @@ type IdentityIngestBatch struct {
 	Malformed  int    `json:"malformed"`
 	ReceivedAt string `json:"received_at"`
 	Error      string `json:"error,omitempty"`
+	RetryCount int    `json:"retry_count"`
+	LastRetry  string `json:"last_retried_at,omitempty"`
 }
 
 type identityIngestRequest struct {
@@ -114,26 +117,26 @@ func (s *Server) handleIdentityIngest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var normalizedJSON bytes.Buffer
+	events := []normalized.Event{}
 	stats, err := identityadapter.Convert(&raw, &normalizedJSON, identityadapter.Options{SensorID: request.SensorID, Source: request.Source})
 	batch := IdentityIngestBatch{BatchID: batchID, Source: request.Source, SensorID: request.SensorID, Status: "accepted", Read: stats.Read, Emitted: stats.Emitted, Skipped: stats.Skipped, Malformed: stats.Malformed, ReceivedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if err != nil {
 		batch.Status = "failed"
 		batch.Error = err.Error()
-		if persistErr := s.recordIdentityBatch(batch); persistErr != nil {
+		if persistErr := s.recordIdentityBatch(batch, events); persistErr != nil {
 			writeError(w, http.StatusInternalServerError, "identity_batch_status_failed", persistErr.Error())
 			return
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, batch)
 		return
 	}
-	events := []normalized.Event{}
 	scanner := bufio.NewScanner(&normalizedJSON)
 	for scanner.Scan() {
 		var event normalized.Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			batch.Status = "failed"
 			batch.Error = err.Error()
-			if persistErr := s.recordIdentityBatch(batch); persistErr != nil {
+			if persistErr := s.recordIdentityBatch(batch, events); persistErr != nil {
 				writeError(w, http.StatusInternalServerError, "identity_batch_status_failed", persistErr.Error())
 				return
 			}
@@ -156,7 +159,7 @@ func (s *Server) handleIdentityIngest(w http.ResponseWriter, r *http.Request) {
 	if err := ingester.IngestIdentityEvents(ctx, events); err != nil {
 		batch.Status = "failed"
 		batch.Error = fmt.Sprintf("persist identity batch: %v", err)
-		if persistErr := s.recordIdentityBatch(batch); persistErr != nil {
+		if persistErr := s.recordIdentityBatch(batch, events); persistErr != nil {
 			writeError(w, http.StatusInternalServerError, "identity_batch_status_failed", persistErr.Error())
 			return
 		}
@@ -164,18 +167,19 @@ func (s *Server) handleIdentityIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	batch.Status = "completed"
-	if err := s.recordIdentityBatch(batch); err != nil {
+	if err := s.recordIdentityBatch(batch, events); err != nil {
 		writeError(w, http.StatusInternalServerError, "identity_batch_status_failed", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusAccepted, batch)
 }
 
-func (s *Server) recordIdentityBatch(batch IdentityIngestBatch) error {
+func (s *Server) recordIdentityBatch(batch IdentityIngestBatch, events []normalized.Event) error {
 	if s.identityIngest.db != nil {
 		ctx, cancel := contextWithRequestTimeout(context.Background())
 		defer cancel()
-		_, err := s.identityIngest.db.ExecContext(ctx, `INSERT INTO identity_ingest_batches(batch_id,source,sensor_id,status,records_read,records_emitted,records_skipped,records_malformed,error_message,received_at,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10::timestamptz,CASE WHEN $4 IN ('completed','failed') THEN now() ELSE NULL END) ON CONFLICT(batch_id) DO UPDATE SET status=EXCLUDED.status,records_read=EXCLUDED.records_read,records_emitted=EXCLUDED.records_emitted,records_skipped=EXCLUDED.records_skipped,records_malformed=EXCLUDED.records_malformed,error_message=EXCLUDED.error_message,completed_at=EXCLUDED.completed_at`, batch.BatchID, batch.Source, batch.SensorID, batch.Status, batch.Read, batch.Emitted, batch.Skipped, batch.Malformed, batch.Error, batch.ReceivedAt)
+		eventsJSON, _ := json.Marshal(events)
+		_, err := s.identityIngest.db.ExecContext(ctx, `INSERT INTO identity_ingest_batches(batch_id,source,sensor_id,status,records_read,records_emitted,records_skipped,records_malformed,error_message,received_at,completed_at,normalized_events) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10::timestamptz,CASE WHEN $4 IN ('completed','failed') THEN now() ELSE NULL END,$11) ON CONFLICT(batch_id) DO UPDATE SET status=EXCLUDED.status,records_read=EXCLUDED.records_read,records_emitted=EXCLUDED.records_emitted,records_skipped=EXCLUDED.records_skipped,records_malformed=EXCLUDED.records_malformed,error_message=EXCLUDED.error_message,completed_at=EXCLUDED.completed_at,normalized_events=CASE WHEN jsonb_array_length(EXCLUDED.normalized_events)>0 THEN EXCLUDED.normalized_events ELSE identity_ingest_batches.normalized_events END`, batch.BatchID, batch.Source, batch.SensorID, batch.Status, batch.Read, batch.Emitted, batch.Skipped, batch.Malformed, batch.Error, batch.ReceivedAt, eventsJSON)
 		return err
 	}
 	s.identityIngest.mu.Lock()
@@ -212,6 +216,118 @@ func (s *Server) handleIdentityIngestStatus(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.identityIngest.key != "", "last_received_at": s.identityIngest.lastSeen, "completed_batches": completed, "failed_batches": failed})
+}
+
+func (s *Server) handleIdentityBatches(w http.ResponseWriter, r *http.Request) {
+	if s.identityIngest.db == nil {
+		s.identityIngest.mu.Lock()
+		items := make([]IdentityIngestBatch, 0, len(s.identityIngest.batches))
+		for _, item := range s.identityIngest.batches {
+			items = append(items, item)
+		}
+		s.identityIngest.mu.Unlock()
+		sort.Slice(items, func(i, j int) bool { return items[i].ReceivedAt > items[j].ReceivedAt })
+		limit, _ := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
+		cursor, _ := cursorOffset(r.URL.Query().Get("cursor"))
+		pageItems, page := paginate(items, cursor, limit)
+		writeJSON(w, http.StatusOK, map[string]any{"items": pageItems, "page": page})
+		return
+	}
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
+		return
+	}
+	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_cursor", err.Error())
+		return
+	}
+	var total int
+	if err := s.identityIngest.db.QueryRowContext(r.Context(), `SELECT count(*) FROM identity_ingest_batches`).Scan(&total); err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_batches_failed", err.Error())
+		return
+	}
+	rows, err := s.identityIngest.db.QueryContext(r.Context(), `SELECT batch_id,source,sensor_id,status,records_read,records_emitted,records_skipped,records_malformed,COALESCE(error_message,''),received_at,retry_count,last_retried_at FROM identity_ingest_batches ORDER BY received_at DESC LIMIT $1 OFFSET $2`, limit, cursor)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_batches_failed", err.Error())
+		return
+	}
+	defer rows.Close()
+	items := []IdentityIngestBatch{}
+	for rows.Next() {
+		var item IdentityIngestBatch
+		var receivedAt time.Time
+		var lastRetry sql.NullTime
+		if err := rows.Scan(&item.BatchID, &item.Source, &item.SensorID, &item.Status, &item.Read, &item.Emitted, &item.Skipped, &item.Malformed, &item.Error, &receivedAt, &item.RetryCount, &lastRetry); err != nil {
+			writeError(w, http.StatusInternalServerError, "identity_batches_failed", err.Error())
+			return
+		}
+		item.ReceivedAt = receivedAt.UTC().Format(time.RFC3339Nano)
+		if lastRetry.Valid {
+			item.LastRetry = lastRetry.Time.UTC().Format(time.RFC3339Nano)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_batches_failed", err.Error())
+		return
+	}
+	var next *string
+	if cursor+len(items) < total {
+		value := fmt.Sprintf("%d", cursor+len(items))
+		next = &value
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "page": Page{Limit: limit, NextCursor: next, Total: total}})
+}
+
+func (s *Server) handleIdentityBatchReplay(w http.ResponseWriter, r *http.Request) {
+	if s.identityIngest.db == nil {
+		writeError(w, http.StatusConflict, "identity_replay_unavailable", "identity batch replay requires PostgreSQL storage")
+		return
+	}
+	batchID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/integrations/identity/batches/"), "/replay")
+	if strings.TrimSpace(batchID) == "" || strings.Contains(batchID, "/") {
+		writeError(w, http.StatusBadRequest, "bad_identity_batch_id", "identity batch id is invalid")
+		return
+	}
+	var batch IdentityIngestBatch
+	var eventsJSON []byte
+	var receivedAt time.Time
+	err := s.identityIngest.db.QueryRowContext(r.Context(), `SELECT batch_id,source,sensor_id,status,records_read,records_emitted,records_skipped,records_malformed,COALESCE(error_message,''),received_at,normalized_events FROM identity_ingest_batches WHERE batch_id=$1`, batchID).Scan(&batch.BatchID, &batch.Source, &batch.SensorID, &batch.Status, &batch.Read, &batch.Emitted, &batch.Skipped, &batch.Malformed, &batch.Error, &receivedAt, &eventsJSON)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, "identity_batch_not_found", "identity batch not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_batch_read_failed", err.Error())
+		return
+	}
+	events := []normalized.Event{}
+	if err := json.Unmarshal(eventsJSON, &events); err != nil || len(events) == 0 {
+		writeError(w, http.StatusConflict, "identity_batch_not_replayable", "identity batch has no retained normalized events")
+		return
+	}
+	ingester, ok := s.reader.(store.IdentityEventIngester)
+	if !ok {
+		writeError(w, http.StatusConflict, "identity_ingest_unavailable", "identity ingestion requires database storage")
+		return
+	}
+	if err := ingester.IngestIdentityEvents(r.Context(), events); err != nil {
+		_, _ = s.identityIngest.db.ExecContext(r.Context(), `UPDATE identity_ingest_batches SET status='failed',error_message=$2,retry_count=retry_count+1,last_retried_at=now() WHERE batch_id=$1`, batchID, err.Error())
+		writeError(w, http.StatusInternalServerError, "identity_batch_replay_failed", err.Error())
+		return
+	}
+	_, err = s.identityIngest.db.ExecContext(r.Context(), `UPDATE identity_ingest_batches SET status='completed',error_message=NULL,completed_at=now(),retry_count=retry_count+1,last_retried_at=now() WHERE batch_id=$1`, batchID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_batch_status_failed", err.Error())
+		return
+	}
+	batch.Status = "completed"
+	batch.Error = ""
+	batch.ReceivedAt = receivedAt.UTC().Format(time.RFC3339Nano)
+	s.appendAudit(r.Context(), "identity.batch_replayed", batchID, "succeeded")
+	writeJSON(w, http.StatusOK, batch)
 }
 
 func (s *identityIngestState) getBatch(ctx context.Context, batchID string) (IdentityIngestBatch, bool, error) {

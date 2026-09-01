@@ -173,8 +173,7 @@ func BuildIdentityState(events []normalized.Event) IdentityState {
 			endpoints[entity.EndpointID] = entity
 		}
 		if fact.AccountID != "" && fact.EntityRole == "endpoint" {
-			session := sessions[fact.SessionID()]
-			session = accountSessionFromFact(fact)
+			session := mergeAccountSession(sessions[fact.SessionID()], accountSessionFromFact(fact))
 			sessions[session.SessionID] = session
 		}
 		if fact.IP != "" || fact.MAC != "" {
@@ -676,6 +675,40 @@ func accountSessionFromFact(fact identityFact) AccountSession {
 		session.EndedAt = fact.Timestamp
 	}
 	return session
+}
+
+func mergeAccountSession(current, incoming AccountSession) AccountSession {
+	if current.SessionID == "" {
+		return incoming
+	}
+	current.StartedAt = minNonEmptyTime(current.StartedAt, incoming.StartedAt)
+	current.EndedAt = maxNonEmptyTime(current.EndedAt, incoming.EndedAt)
+	if incoming.IdentityConfidence > current.IdentityConfidence {
+		current.IdentityConfidence = incoming.IdentityConfidence
+	}
+	current.AccountID = firstNonEmpty(incoming.AccountID, current.AccountID)
+	current.EndpointID = firstNonEmpty(incoming.EndpointID, current.EndpointID)
+	current.IP = firstNonEmpty(incoming.IP, current.IP)
+	current.MAC = firstNonEmpty(incoming.MAC, current.MAC)
+	current.AccessID = firstNonEmpty(incoming.AccessID, current.AccessID)
+	current.Source = firstNonEmpty(incoming.Source, current.Source)
+	current.PersonType = firstNonEmpty(incoming.PersonType, current.PersonType)
+	current.Department = firstNonEmpty(incoming.Department, current.Department)
+	current.CampusID = firstNonEmpty(incoming.CampusID, current.CampusID)
+	current.BuildingID = firstNonEmpty(incoming.BuildingID, current.BuildingID)
+	current.NetworkZoneID = firstNonEmpty(incoming.NetworkZoneID, current.NetworkZoneID)
+	current.SSID = firstNonEmpty(incoming.SSID, current.SSID)
+	current.VLAN = firstNonEmpty(incoming.VLAN, current.VLAN)
+	current.AP = firstNonEmpty(incoming.AP, current.AP)
+	current.NASIP = firstNonEmpty(incoming.NASIP, current.NASIP)
+	current.SessionStatus = firstNonEmpty(incoming.SessionStatus, current.SessionStatus)
+	if current.RawRef == nil {
+		current.RawRef = map[string]any{}
+	}
+	for key, value := range incoming.RawRef {
+		current.RawRef[key] = value
+	}
+	return current
 }
 
 func identityAttributes(fact identityFact) map[string]any {

@@ -28,6 +28,16 @@ type RiskCase struct {
 	EndpointID       string                `json:"endpoint_id,omitempty"`
 	CampusID         string                `json:"campus_id,omitempty"`
 	Department       string                `json:"department,omitempty"`
+	PersonType       string                `json:"person_type,omitempty"`
+	BuildingID       string                `json:"building_id,omitempty"`
+	NetworkZoneID    string                `json:"network_zone_id,omitempty"`
+	SSID             string                `json:"ssid,omitempty"`
+	VLAN             string                `json:"vlan,omitempty"`
+	AP               string                `json:"ap,omitempty"`
+	NASIP            string                `json:"nas_ip,omitempty"`
+	AuthSessionID    string                `json:"auth_session_id,omitempty"`
+	IdentityConflict bool                  `json:"identity_conflict"`
+	IdentityBlocker  string                `json:"identity_blocker,omitempty"`
 	Status           string                `json:"status"`
 	Disposition      string                `json:"disposition,omitempty"`
 	Priority         string                `json:"priority"`
@@ -279,6 +289,18 @@ func (s *Server) syncCases(r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	attributions := map[string]store.IdentityAttribution{}
+	attributionFound := map[string]bool{}
+	resolver, canResolveIdentity := s.reader.(store.IdentityAttributionResolver)
+	if canResolveIdentity {
+		for _, item := range result.Items {
+			attribution, found, resolveErr := resolver.ResolveIdentityAt(r.Context(), item.IP, item.LastSeen)
+			if resolveErr != nil {
+				return fmt.Errorf("resolve case identity %s: %w", item.CaseID, resolveErr)
+			}
+			attributions[item.CaseID], attributionFound[item.CaseID] = attribution, found
+		}
+	}
 	now := time.Now().UTC()
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
@@ -321,6 +343,26 @@ func (s *Server) syncCases(r *http.Request) error {
 		existing.UpdatedAt = now.Format(time.RFC3339Nano)
 		existing.DueAt = due.Format(time.RFC3339Nano)
 		existing.EvidenceSnapshot = item
+		if attribution, found := attributions[item.CaseID]; found {
+			existing.AccountID = attribution.AccountID
+			existing.EndpointID = attribution.EndpointID
+			existing.PersonType = attribution.PersonType
+			existing.Department = attribution.Department
+			existing.CampusID = attribution.CampusID
+			existing.BuildingID = attribution.BuildingID
+			existing.NetworkZoneID = attribution.NetworkZoneID
+			existing.SSID = attribution.SSID
+			existing.VLAN = attribution.VLAN
+			existing.AP = attribution.AP
+			existing.NASIP = attribution.NASIP
+			existing.AuthSessionID = attribution.SessionID
+			existing.IdentityConflict = attribution.Conflict
+			existing.IdentityBlocker = attribution.ConflictReason
+		} else if canResolveIdentity {
+			existing.IdentityBlocker = "风险发生时间没有可准确定位的认证会话"
+		} else {
+			existing.IdentityBlocker = "身份关联数据源不可用"
+		}
 		s.operations.doc.Cases[item.CaseID] = existing
 	}
 	return s.operations.saveLocked()
@@ -372,10 +414,14 @@ func (s *Server) listCases(w http.ResponseWriter, r *http.Request) {
 	limit, _ := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	cursor, _ := cursorOffset(r.URL.Query().Get("cursor"))
 	q, status, assignee, campus := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q"))), r.URL.Query().Get("status"), r.URL.Query().Get("assignee_id"), r.URL.Query().Get("campus_id")
+	dimensions := map[string]string{"department": r.URL.Query().Get("department"), "person_type": r.URL.Query().Get("person_type"), "ssid": r.URL.Query().Get("ssid"), "vlan": r.URL.Query().Get("vlan"), "ap": r.URL.Query().Get("ap"), "nas_ip": r.URL.Query().Get("nas_ip")}
 	s.operations.mu.Lock()
 	items := []RiskCase{}
 	for _, item := range s.operations.doc.Cases {
 		if status != "" && item.Status != status || assignee != "" && item.AssigneeID != assignee || campus != "" && item.CampusID != campus {
+			continue
+		}
+		if dimensions["department"] != "" && item.Department != dimensions["department"] || dimensions["person_type"] != "" && item.PersonType != dimensions["person_type"] || dimensions["ssid"] != "" && item.SSID != dimensions["ssid"] || dimensions["vlan"] != "" && item.VLAN != dimensions["vlan"] || dimensions["ap"] != "" && item.AP != dimensions["ap"] || dimensions["nas_ip"] != "" && item.NASIP != dimensions["nas_ip"] {
 			continue
 		}
 		if q != "" && !strings.Contains(strings.ToLower(strings.Join([]string{item.CaseID, item.IP, item.AccountID, item.EndpointID, item.Department}, " ")), q) {

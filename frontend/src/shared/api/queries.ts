@@ -329,10 +329,11 @@ export function useReloadRules() {
   })
 }
 
-export function useCases(query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;window?:string} = {}) { return useQuery({queryKey:queryKeys.cases(query),queryFn:()=>api.cases(query)}) }
+export function useCases(query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;department?:string;person_type?:string;ssid?:string;vlan?:string;ap?:string;nas_ip?:string;window?:string} = {}) { return useQuery({queryKey:queryKeys.cases(query),queryFn:()=>api.cases(query)}) }
 export function useCase(caseId:string) { return useQuery({queryKey:queryKeys.caseDetail(caseId),queryFn:()=>api.caseDetail(caseId),enabled:!!caseId}) }
 export function useCaseMutation() { const client=useQueryClient(); return useMutation({mutationFn:async (request:{caseId:string;operation:'assign'|'status'|'disposition'|'comment';value:string;reason?:string})=>{switch(request.operation){case'assign':return api.assignCase(request.caseId,request.value);case'status':return api.updateCaseStatus(request.caseId,request.value);case'disposition':return api.resolveCase(request.caseId,request.value,request.reason??'人工复核');default:return api.commentCase(request.caseId,request.value)}},onSuccess:(item)=>{client.setQueryData(queryKeys.caseDetail(item.case_id),item);void client.invalidateQueries({queryKey:['cases']});void client.invalidateQueries({queryKey:['overview']})}}) }
 export function useOrganization() { return useQuery({queryKey:queryKeys.organization,queryFn:api.organization}) }
+export function useOrganizationMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{kind:string;payload:Record<string,unknown>})=>api.saveOrganization(request.kind,request.payload),onSuccess:()=>void client.invalidateQueries({queryKey:queryKeys.organization})}) }
 export function useActionConnectors() { return useQuery({queryKey:queryKeys.actionConnectors,queryFn:api.actionConnectors}) }
 export function useActions(query:ListQuery={}) { return useQuery({queryKey:queryKeys.actions(query),queryFn:()=>api.actions(query)}) }
 export function useActionMutation() { const client=useQueryClient(); return useMutation({mutationFn:(request:{payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number};idempotencyKey:string})=>api.executeAction(request.payload,request.idempotencyKey),onSuccess:()=>void client.invalidateQueries({queryKey:['actions']})}) }

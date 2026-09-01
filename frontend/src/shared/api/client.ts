@@ -186,7 +186,7 @@ export const api = {
   validateDeviceFingerprintBundle: (file: File) => { const body=new FormData();body.append('bundle',file);return request<DeviceFingerprintBundleManifest>('/device-fingerprint-library/validate',{method:'POST',body}) },
   importDeviceFingerprintBundle: (file: File) => { const body=new FormData();body.append('bundle',file);return request<DeviceFingerprintLibraryStatus>('/device-fingerprint-library/import',{method:'POST',body}) },
   reloadRules: () => request<RuleReloadResult>('/rules/reload', { method: 'POST' }),
-  cases: (query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;window?:string} = {}) => request<RiskCaseListResponse>(`/cases${search(query)}`),
+  cases: (query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;department?:string;person_type?:string;ssid?:string;vlan?:string;ap?:string;nas_ip?:string;window?:string} = {}) => request<RiskCaseListResponse>(`/cases${search(query)}`),
   caseDetail: (caseId:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}`),
   assignCase: (caseId:string,assignee_id:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/assign`,{method:'POST',body:JSON.stringify({assignee_id})}),
   updateCaseStatus: (caseId:string,status:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/status`,{method:'POST',body:JSON.stringify({status})}),

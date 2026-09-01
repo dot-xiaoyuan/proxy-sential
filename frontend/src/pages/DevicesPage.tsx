@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom'
 import { BrandLogo } from '../entities/device/BrandLogo'
 import { useDevices } from '../shared/api/queries'
 import type { EndpointDeviceInventory } from '../shared/api/types'
-import { AppErrorAlert, AppLoadingState, AppPageHeader, type QuickWindow } from '../shared/ui'
+import { AppErrorAlert, AppLoadingState, AppPageHeader, UniversityDimensionFilters, type QuickWindow, type UniversityDimensions } from '../shared/ui'
 
 export function DevicesPage() {
   const [quickWindow, setQuickWindow] = useState<QuickWindow>('24h')
@@ -14,8 +14,9 @@ export function DevicesPage() {
   const [pageSize, setPageSize] = useState(20)
   const [searchInput, setSearchInput] = useState('')
   const [query, setQuery] = useState('')
+  const [dimensions, setDimensions] = useState<UniversityDimensions>({})
   useEffect(() => { const timer = globalThis.setTimeout(() => { setQuery(searchInput.trim()); setPage(1) }, 300); return () => globalThis.clearTimeout(timer) }, [searchInput])
-  const devices = useDevices({ window: quickWindow, q: query, limit: pageSize, cursor: String((page - 1) * pageSize) })
+  const devices = useDevices({ window: quickWindow, q: query, ...dimensions, limit: pageSize, cursor: String((page - 1) * pageSize) })
 
   const columns: ColumnsType<EndpointDeviceInventory> = [
     { title:'终端 / MAC', key:'endpoint', width:250, render:(_,row) => <div className="list-primary-cell"><Link className="list-cell-nowrap mono" title={row.endpoint_id} to={`/devices/${encodeURIComponent(row.endpoint_id)}`}>{row.endpoint_id}</Link><Typography.Text className="list-cell-nowrap mono" title={row.primary_mac} type="secondary">{row.primary_mac || '-'}</Typography.Text></div> },
@@ -30,6 +31,7 @@ export function DevicesPage() {
 
   return <main className="page">
     <AppPageHeader title="终端画像" subtitle="按终端显示身份、网络位置与保守设备识别摘要，点击终端查看完整证据。" quickWindow={quickWindow} onQuickWindowChange={(value) => { setQuickWindow(value); setPage(1) }} loading={devices.isFetching} onRefresh={() => void devices.refetch()} extra={<div className="list-toolbar"><Input.Search allowClear placeholder="搜索终端、MAC、品牌、型号、账号或 IP" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} /><Select value={pageSize} options={[{label:'20 条/页',value:20},{label:'50 条/页',value:50}]} onChange={(value) => { setPageSize(value); setPage(1) }} /></div>} />
+    <section className="surface filter-surface"><UniversityDimensionFilters value={dimensions} onChange={(next) => { setDimensions(next); setPage(1) }} /></section>
     <section className="surface">{devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError ? <AppErrorAlert title="设备列表加载失败" message={devices.error.message} /> : <><Table className="compact-list-table" columns={columns} dataSource={devices.data?.items ?? []} locale={{emptyText:'没有匹配的终端'}} pagination={false} rowKey="endpoint_id" scroll={{x:1360}} size="small" /><Pagination className="list-pagination" current={page} pageSize={pageSize} total={devices.data?.page.total ?? 0} showSizeChanger={false} onChange={setPage} /></>}</section>
   </main>
 }

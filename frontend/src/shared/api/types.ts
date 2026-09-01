@@ -14,6 +14,16 @@ export type RiskCase = {
   endpoint_id?: string
   campus_id?: string
   department?: string
+  person_type?: string
+  building_id?: string
+  network_zone_id?: string
+  ssid?: string
+  vlan?: string
+  ap?: string
+  nas_ip?: string
+  auth_session_id?: string
+  identity_conflict?: boolean
+  identity_blocker?: string
   status: 'new' | 'assigned' | 'investigating' | 'waiting_data' | 'resolved' | 'closed' | 'reopened'
   disposition?: 'confirmed_proxy' | 'false_positive' | 'benign' | 'needs_more_data'
   priority: 'high' | 'medium' | 'low'
@@ -109,6 +119,13 @@ export type RiskQuery = {
   q?: string
   sensor_id?: string
   campus_id?: string
+  window?: '10m' | '1h' | '24h'
+  department?: string
+  person_type?: string
+  ssid?: string
+  vlan?: string
+  ap?: string
+  nas_ip?: string
   as_of?: string
   from?: string
   to?: string
@@ -124,6 +141,13 @@ export type EventQuery = {
   q?: string
   type?: string
   sensor_id?: string
+  campus_id?: string
+  department?: string
+  person_type?: string
+  ssid?: string
+  vlan?: string
+  ap?: string
+  nas_ip?: string
   from?: string
   to?: string
   window?: '10m' | '1h' | '24h'
@@ -181,6 +205,13 @@ export type DeviceFingerprintBundleManifest = { schema_version: string; version:
 
 export type DeviceQuery = {
   sensor_id?: string
+  campus_id?: string
+  department?: string
+  person_type?: string
+  ssid?: string
+  vlan?: string
+  ap?: string
+  nas_ip?: string
   window?: '10m' | '1h' | '24h'
   ip?: string
   q?: string

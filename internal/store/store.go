@@ -24,6 +24,12 @@ type Query struct {
 	Q           string
 	SensorID    string
 	CampusID    string
+	Department  string
+	PersonType  string
+	SSID        string
+	VLAN        string
+	AP          string
+	NASIP       string
 	From        string
 	To          string
 	Window      string
@@ -124,6 +130,27 @@ type DeviceProfileBackfiller interface {
 
 type IdentityEventIngester interface {
 	IngestIdentityEvents(ctx context.Context, events []normalized.Event) error
+}
+
+type IdentityAttribution struct {
+	SessionID      string `json:"session_id,omitempty"`
+	AccountID      string `json:"account_id,omitempty"`
+	EndpointID     string `json:"endpoint_id,omitempty"`
+	PersonType     string `json:"person_type,omitempty"`
+	Department     string `json:"department,omitempty"`
+	CampusID       string `json:"campus_id,omitempty"`
+	BuildingID     string `json:"building_id,omitempty"`
+	NetworkZoneID  string `json:"network_zone_id,omitempty"`
+	SSID           string `json:"ssid,omitempty"`
+	VLAN           string `json:"vlan,omitempty"`
+	AP             string `json:"ap,omitempty"`
+	NASIP          string `json:"nas_ip,omitempty"`
+	Conflict       bool   `json:"conflict"`
+	ConflictReason string `json:"conflict_reason,omitempty"`
+}
+
+type IdentityAttributionResolver interface {
+	ResolveIdentityAt(ctx context.Context, ip, at string) (IdentityAttribution, bool, error)
 }
 
 type Label struct {

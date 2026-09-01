@@ -1,0 +1,88 @@
+package store
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"proxy-sentinel/internal/normalized"
+)
+
+func TestPostgresIdentitySessionPersistsUniversityDimensionsAndEndTime(t *testing.T) {
+	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("PROXY_SENTINEL_TEST_POSTGRES_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := ApplyPostgresMigrations(ctx, dsn, "../../migrations/postgres"); err != nil {
+		t.Fatal(err)
+	}
+	postgres, err := NewPostgresStore(PostgresOptions{DSN: dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer postgres.Close()
+
+	const sessionID = "integration-university-session"
+	const endpointID = "mac:02:00:00:00:00:31"
+	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM identity_access_history WHERE event_id IN ('integration-identity-start','integration-identity-stop','integration-identity-reused')`)
+	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM identity_ip_mac_history WHERE event_id IN ('integration-identity-start','integration-identity-stop','integration-identity-reused')`)
+	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM account_sessions WHERE session_id IN ($1,'integration-university-session-b')`, sessionID)
+	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM endpoint_entities WHERE endpoint_id IN ($1,'mac:02:00:00:00:00:32')`, endpointID)
+
+	events := []normalized.Event{
+		universityIdentityEvent("integration-identity-start", sessionID, "start", "2026-08-31T10:00:00Z"),
+		universityIdentityEvent("integration-identity-stop", sessionID, "stop", "2026-08-31T11:00:00Z"),
+	}
+	if err := postgres.WriteIdentityEvents(ctx, events); err != nil {
+		t.Fatal(err)
+	}
+	var started, ended time.Time
+	var personType, department, campusID, buildingID, zoneID, ssid, vlan, ap, nasIP, status string
+	err = postgres.db.QueryRowContext(ctx, `SELECT started_at,ended_at,person_type,department,campus_id,building_id,network_zone_id,ssid,vlan,ap,host(nas_ip),session_status FROM account_sessions WHERE session_id=$1`, sessionID).Scan(&started, &ended, &personType, &department, &campusID, &buildingID, &zoneID, &ssid, &vlan, &ap, &nasIP, &status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.UTC().Format(time.RFC3339) != "2026-08-31T10:00:00Z" || ended.UTC().Format(time.RFC3339) != "2026-08-31T11:00:00Z" {
+		t.Fatalf("unexpected persisted session window: %s - %s", started, ended)
+	}
+	if personType != "student" || department != "计算机学院" || campusID != "campus-east" || buildingID != "dorm-3" || zoneID != "student-wireless" || ssid != "Campus-WiFi" || vlan != "310" || ap != "AP-D3-01" || nasIP != "10.0.0.10" || status != "stop" {
+		t.Fatalf("university dimensions were not persisted: %q %q %q %q %q %q %q %q %q %q", personType, department, campusID, buildingID, zoneID, ssid, vlan, ap, nasIP, status)
+	}
+	attribution, found, err := postgres.ResolveIdentityAt(ctx, "192.0.2.31", "2026-08-31T10:30:00Z")
+	if err != nil || !found || attribution.AccountID != "student-31" || attribution.SessionID != sessionID || attribution.CampusID != "campus-east" {
+		t.Fatalf("risk-time attribution failed: found=%v value=%+v err=%v", found, attribution, err)
+	}
+	reused := universityIdentityEvent("integration-identity-reused", "integration-university-session-b", "start", "2026-08-31T11:01:00Z")
+	reused.Subject["account_id"] = "student-32"
+	reused.Subject["endpoint_id"] = "mac:02:00:00:00:00:32"
+	reused.Subject["mac"] = "02:00:00:00:00:32"
+	reused.Payload["campus_id"] = "campus-west"
+	if err := postgres.WriteIdentityEvents(ctx, []normalized.Event{reused}); err != nil {
+		t.Fatal(err)
+	}
+	attribution, found, err = postgres.ResolveIdentityAt(ctx, "192.0.2.31", "2026-08-31T11:02:00Z")
+	if err != nil || !found || attribution.AccountID != "student-32" || attribution.EndpointID != "mac:02:00:00:00:00:32" || attribution.Conflict {
+		t.Fatalf("reused IP crossed authentication sessions: found=%v value=%+v err=%v", found, attribution, err)
+	}
+	page, err := postgres.ListEndpointDevices(ctx, Query{CampusID: "campus-east", Department: "计算机学院", PersonType: "student", SSID: "Campus-WiFi", VLAN: "310", AP: "AP-D3-01", NASIP: "10.0.0.10", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Page.Total != 0 {
+		t.Fatalf("ended session must not be returned as currently attached endpoint, got %+v", page)
+	}
+}
+
+func universityIdentityEvent(eventID, sessionID, status, timestamp string) normalized.Event {
+	return normalized.Event{
+		SchemaVersion: "v1", EventID: eventID, Source: "radius", SourceEventType: "identity", Type: "identity", Timestamp: timestamp,
+		Observer:   map[string]any{"sensor_id": "integration"},
+		Subject:    map[string]any{"ip": "192.0.2.31", "mac": "02:00:00:00:00:31", "endpoint_id": "mac:02:00:00:00:00:31", "account_id": "student-31", "access_id": "AP-D3-01", "entity_role": "endpoint", "identity_confidence": 0.98},
+		Flow:       map[string]any{"src_ip": "192.0.2.31", "dst_ip": "0.0.0.0", "proto": "other", "direction": "unknown"},
+		Payload:    map[string]any{"origin": "radius", "session_id": sessionID, "session_status": status, "person_type": "student", "department": "计算机学院", "campus_id": "campus-east", "building_id": "dorm-3", "network_zone_id": "student-wireless", "ssid": "Campus-WiFi", "vlan": "310", "ap": "AP-D3-01", "nas_ip": "10.0.0.10"},
+		Confidence: 0.98,
+	}
+}

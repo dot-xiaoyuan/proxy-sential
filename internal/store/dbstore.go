@@ -338,6 +338,10 @@ func (s *DBStore) IngestIdentityEvents(ctx context.Context, events []normalized.
 	return s.pg.WriteIdentityEvents(ctx, events)
 }
 
+func (s *DBStore) ResolveIdentityAt(ctx context.Context, ip, at string) (IdentityAttribution, bool, error) {
+	return s.pg.ResolveIdentityAt(ctx, ip, at)
+}
+
 func (s *DBStore) WriteIngestDiagnostics(ctx context.Context, diagnostics []ingest.Diagnostic) error {
 	return s.ch.WriteIngestDiagnostics(ctx, diagnostics)
 }

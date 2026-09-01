@@ -37,6 +37,8 @@ PROXY_SENTINEL_ACTION_MASTER_KEY=<至少 32 字节随机主密钥>
 
 身份批次调用 `/api/v1/integrations/identity/events`，同时携带 `Authorization: Bearer ...` 和稳定的 `Idempotency-Key`。主密钥只用于本地加密北向连接器凭据；丢失后旧凭据不可解密，需要重新录入。
 
+管理端可通过 `GET /api/v1/integrations/identity/batches` 查看每个批次的处理状态、错误明细与重试次数；修复数据源或存储故障后，管理员调用 `POST /api/v1/integrations/identity/batches/{batch_id}/replay` 重放服务端保留的标准事件。重放沿用原事件 ID，不要求上游再次发送原始厂商字段。
+
 ## 上线门槛
 
 北向连接器默认保持影子模式。真实模式启用前必须满足至少 7 天影子验证、自动候选人工准确率不低于 95%、无校园 VPN/教学科研/基础设施误处置样本，并验证冷却、熔断、失败回退及人工撤销。身份数据中断时动作硬门槛自动阻断。

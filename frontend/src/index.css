@@ -2488,3 +2488,19 @@ pre.wrap-code {
     flex: 1 1 220px;
   }
 }
+.university-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.filter-surface {
+  margin-bottom: 16px;
+  padding: 14px;
+}
+
+@media (max-width: 760px) {
+  .university-filter-grid {
+    grid-template-columns: 1fr;
+  }
+}

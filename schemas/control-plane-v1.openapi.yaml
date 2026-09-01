@@ -116,6 +116,12 @@ paths:
         - { name: status, in: query, schema: { type: string } }
         - { name: assignee_id, in: query, schema: { type: string } }
         - { name: campus_id, in: query, schema: { type: string } }
+        - { name: department, in: query, schema: { type: string } }
+        - { name: person_type, in: query, schema: { type: string } }
+        - { name: ssid, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
+        - { name: ap, in: query, schema: { type: string } }
+        - { name: nas_ip, in: query, schema: { type: string } }
         - { name: window, in: query, schema: { type: string, enum: [24h, 7d] } }
       responses:
         "200":
@@ -168,6 +174,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Organization"
+  /organization/{kind}:
+    post:
+      operationId: saveOrganizationItem
+      parameters:
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [campuses, buildings, network-zones, access-points] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "201": { description: Organization or network-location mapping saved. }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /actions/connectors:
     get:
       operationId: listActionConnectors
@@ -260,6 +279,27 @@ paths:
       responses:
         "200":
           description: Recent identity batches and data freshness.
+  /integrations/identity/batches:
+    get:
+      operationId: listIdentityBatches
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Paginated identity batches with status, error detail and retry count.
+  /integrations/identity/batches/{batch_id}/replay:
+    post:
+      operationId: replayIdentityBatch
+      parameters:
+        - { name: batch_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Retained normalized identity events were replayed idempotently.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Batch has no retained normalized events or PostgreSQL replay is unavailable.
   /overview:
     get:
       operationId: getOverview
@@ -585,6 +625,13 @@ paths:
           in: query
           schema:
             type: string
+        - $ref: "#/components/parameters/CampusIdQuery"
+        - $ref: "#/components/parameters/DepartmentQuery"
+        - $ref: "#/components/parameters/PersonTypeQuery"
+        - $ref: "#/components/parameters/SSIDQuery"
+        - $ref: "#/components/parameters/VLANQuery"
+        - $ref: "#/components/parameters/APQuery"
+        - $ref: "#/components/parameters/NASIPQuery"
         - name: from
           in: query
           schema:
@@ -863,13 +910,20 @@ paths:
           in: query
           schema:
             type: string
+        - $ref: "#/components/parameters/CampusIdQuery"
+        - $ref: "#/components/parameters/DepartmentQuery"
+        - $ref: "#/components/parameters/PersonTypeQuery"
+        - $ref: "#/components/parameters/SSIDQuery"
+        - $ref: "#/components/parameters/VLANQuery"
+        - $ref: "#/components/parameters/APQuery"
+        - $ref: "#/components/parameters/NASIPQuery"
         - name: limit
           in: query
           schema:
             type: integer
             minimum: 1
-            maximum: 200
-            default: 50
+            maximum: 50
+            default: 20
         - name: cursor
           in: query
           schema:
@@ -1005,6 +1059,13 @@ paths:
           in: query
           schema:
             type: string
+        - $ref: "#/components/parameters/CampusIdQuery"
+        - $ref: "#/components/parameters/DepartmentQuery"
+        - $ref: "#/components/parameters/PersonTypeQuery"
+        - $ref: "#/components/parameters/SSIDQuery"
+        - $ref: "#/components/parameters/VLANQuery"
+        - $ref: "#/components/parameters/APQuery"
+        - $ref: "#/components/parameters/NASIPQuery"
         - name: from
           in: query
           schema:
@@ -1056,8 +1117,8 @@ paths:
           schema:
             type: integer
             minimum: 1
-            maximum: 200
-            default: 50
+            maximum: 50
+            default: 20
         - name: cursor
           in: query
           schema:
@@ -1512,6 +1573,34 @@ components:
       in: query
       schema:
         type: string
+    CampusIdQuery:
+      name: campus_id
+      in: query
+      schema: { type: string }
+    DepartmentQuery:
+      name: department
+      in: query
+      schema: { type: string }
+    PersonTypeQuery:
+      name: person_type
+      in: query
+      schema: { type: string }
+    SSIDQuery:
+      name: ssid
+      in: query
+      schema: { type: string }
+    VLANQuery:
+      name: vlan
+      in: query
+      schema: { type: string }
+    APQuery:
+      name: ap
+      in: query
+      schema: { type: string }
+    NASIPQuery:
+      name: nas_ip
+      in: query
+      schema: { type: string }
     FromQuery:
       name: from
       in: query
@@ -1742,6 +1831,16 @@ components:
         endpoint_id: { type: string }
         campus_id: { type: string }
         department: { type: string }
+        person_type: { type: string }
+        building_id: { type: string }
+        network_zone_id: { type: string }
+        ssid: { type: string }
+        vlan: { type: string }
+        ap: { type: string }
+        nas_ip: { type: string }
+        auth_session_id: { type: string }
+        identity_conflict: { type: boolean }
+        identity_blocker: { type: string }
         status: { type: string, enum: [new, assigned, investigating, waiting_data, resolved, closed, reopened] }
         disposition: { type: string, enum: [confirmed_proxy, false_positive, benign, needs_more_data] }
         priority: { type: string, enum: [high, medium, low] }

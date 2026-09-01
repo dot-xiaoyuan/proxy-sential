@@ -10,6 +10,7 @@ import {
   AppLoadingState,
   AppPageHeader,
   AppTableBar,
+  UniversityDimensionFilters,
   type QuickWindow,
 } from '../shared/ui'
 
@@ -111,6 +112,10 @@ export function EventsPage() {
         searchValue={searchParams.get('q') || ''}
         totalCount={events.data?.page.total ?? 0}
       />
+
+      <section className="surface filter-surface">
+        <UniversityDimensionFilters value={query} onChange={(next) => updateQuery(setSearchParams, { ...query, ...next, cursor: undefined })} />
+      </section>
 
       <section className="surface event-filter-panel">
         <div className="event-filter-grid">
@@ -242,6 +247,13 @@ function queryFromSearchParams(params: URLSearchParams): EventQuery {
     q: params.get('q') || undefined,
     type: params.get('type') || undefined,
     sensor_id: params.get('sensor_id') || undefined,
+    campus_id: params.get('campus_id') || undefined,
+    department: params.get('department') || undefined,
+    person_type: params.get('person_type') || undefined,
+    ssid: params.get('ssid') || undefined,
+    vlan: params.get('vlan') || undefined,
+    ap: params.get('ap') || undefined,
+    nas_ip: params.get('nas_ip') || undefined,
     from: params.get('from') || undefined,
     to: params.get('to') || undefined,
     window: parseQuickWindow(params.get('window')),
@@ -262,6 +274,13 @@ function updateQuery(setSearchParams: (params: URLSearchParams) => void, query: 
   if (query.q) params.set('q', query.q)
   if (query.type) params.set('type', query.type)
   if (query.sensor_id) params.set('sensor_id', query.sensor_id)
+  if (query.campus_id) params.set('campus_id', query.campus_id)
+  if (query.department) params.set('department', query.department)
+  if (query.person_type) params.set('person_type', query.person_type)
+  if (query.ssid) params.set('ssid', query.ssid)
+  if (query.vlan) params.set('vlan', query.vlan)
+  if (query.ap) params.set('ap', query.ap)
+  if (query.nas_ip) params.set('nas_ip', query.nas_ip)
   if (query.from) params.set('from', query.from)
   if (query.to) params.set('to', query.to)
   if (query.window) params.set('window', query.window)

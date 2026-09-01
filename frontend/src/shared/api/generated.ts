@@ -196,6 +196,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organization/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["saveOrganizationItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/actions/connectors": {
         parameters: {
             query?: never;
@@ -286,6 +302,38 @@ export interface paths {
         get: operations["getIdentityIngestStatus"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listIdentityBatches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/batches/{batch_id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["replayIdentityBatch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1088,6 +1136,16 @@ export interface components {
             endpoint_id?: string;
             campus_id?: string;
             department?: string;
+            person_type?: string;
+            building_id?: string;
+            network_zone_id?: string;
+            ssid?: string;
+            vlan?: string;
+            ap?: string;
+            nas_ip?: string;
+            auth_session_id?: string;
+            identity_conflict?: boolean;
+            identity_blocker?: string;
             /** @enum {string} */
             status: "new" | "assigned" | "investigating" | "waiting_data" | "resolved" | "closed" | "reopened";
             /** @enum {string} */
@@ -1942,6 +2000,13 @@ export interface components {
         EventFilterQuery: string;
         EventTypeQuery: string;
         SensorIdQuery: string;
+        CampusIdQuery: string;
+        DepartmentQuery: string;
+        PersonTypeQuery: string;
+        SSIDQuery: string;
+        VLANQuery: string;
+        APQuery: string;
+        NASIPQuery: string;
         FromQuery: string;
         ToQuery: string;
         WindowQuery: "10m" | "1h" | "24h";
@@ -2234,6 +2299,12 @@ export interface operations {
                 status?: string;
                 assignee_id?: string;
                 campus_id?: string;
+                department?: string;
+                person_type?: string;
+                ssid?: string;
+                vlan?: string;
+                ap?: string;
+                nas_ip?: string;
                 window?: "24h" | "7d";
             };
             header?: never;
@@ -2324,6 +2395,33 @@ export interface operations {
                     "application/json": components["schemas"]["Organization"];
                 };
             };
+        };
+    };
+    saveOrganizationItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: "campuses" | "buildings" | "network-zones" | "access-points";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Organization or network-location mapping saved. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
         };
     };
     listActionConnectors: {
@@ -2488,6 +2586,55 @@ export interface operations {
         responses: {
             /** @description Recent identity batches and data freshness. */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listIdentityBatches: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated identity batches with status, error detail and retry count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    replayIdentityBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Retained normalized identity events were replayed idempotently. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Batch has no retained normalized events or PostgreSQL replay is unavailable. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2817,6 +2964,13 @@ export interface operations {
                 level?: components["parameters"]["LevelQuery"];
                 q?: string;
                 sensor_id?: string;
+                campus_id?: components["parameters"]["CampusIdQuery"];
+                department?: components["parameters"]["DepartmentQuery"];
+                person_type?: components["parameters"]["PersonTypeQuery"];
+                ssid?: components["parameters"]["SSIDQuery"];
+                vlan?: components["parameters"]["VLANQuery"];
+                ap?: components["parameters"]["APQuery"];
+                nas_ip?: components["parameters"]["NASIPQuery"];
                 from?: string;
                 to?: string;
                 limit?: number;
@@ -3075,6 +3229,13 @@ export interface operations {
                 window?: "10m" | "1h" | "24h";
                 ip?: string;
                 q?: string;
+                campus_id?: components["parameters"]["CampusIdQuery"];
+                department?: components["parameters"]["DepartmentQuery"];
+                person_type?: components["parameters"]["PersonTypeQuery"];
+                ssid?: components["parameters"]["SSIDQuery"];
+                vlan?: components["parameters"]["VLANQuery"];
+                ap?: components["parameters"]["APQuery"];
+                nas_ip?: components["parameters"]["NASIPQuery"];
                 limit?: number;
                 cursor?: string;
             };
@@ -3186,6 +3347,13 @@ export interface operations {
                 q?: string;
                 type?: string;
                 sensor_id?: string;
+                campus_id?: components["parameters"]["CampusIdQuery"];
+                department?: components["parameters"]["DepartmentQuery"];
+                person_type?: components["parameters"]["PersonTypeQuery"];
+                ssid?: components["parameters"]["SSIDQuery"];
+                vlan?: components["parameters"]["VLANQuery"];
+                ap?: components["parameters"]["APQuery"];
+                nas_ip?: components["parameters"]["NASIPQuery"];
                 from?: string;
                 to?: string;
                 window?: "10m" | "1h" | "24h";

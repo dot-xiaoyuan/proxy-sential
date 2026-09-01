@@ -311,6 +311,38 @@ func (s *PostgresStore) GetAccountIdentity(ctx context.Context, accountID string
 	return profile, ok, nil
 }
 
+func (s *PostgresStore) ResolveIdentityAt(ctx context.Context, ip, at string) (IdentityAttribution, bool, error) {
+	when, err := optionalTime(at)
+	if err != nil || when.IsZero() {
+		return IdentityAttribution{}, false, fmt.Errorf("invalid identity attribution time: %s", at)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT session_id,account_id,COALESCE(endpoint_id,''),COALESCE(person_type,''),COALESCE(department,''),COALESCE(campus_id,''),COALESCE(building_id,''),COALESCE(network_zone_id,''),COALESCE(ssid,''),COALESCE(vlan,''),COALESCE(ap,''),COALESCE(host(nas_ip),'') FROM account_sessions WHERE ip=$1::inet AND started_at <= $2 AND (ended_at IS NULL OR ended_at >= $2) ORDER BY identity_confidence DESC, started_at DESC LIMIT 2`, ip, when)
+	if err != nil {
+		return IdentityAttribution{}, false, err
+	}
+	defer rows.Close()
+	items := []IdentityAttribution{}
+	for rows.Next() {
+		var item IdentityAttribution
+		if err := rows.Scan(&item.SessionID, &item.AccountID, &item.EndpointID, &item.PersonType, &item.Department, &item.CampusID, &item.BuildingID, &item.NetworkZoneID, &item.SSID, &item.VLAN, &item.AP, &item.NASIP); err != nil {
+			return IdentityAttribution{}, false, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return IdentityAttribution{}, false, err
+	}
+	if len(items) == 0 {
+		return IdentityAttribution{}, false, nil
+	}
+	result := items[0]
+	if len(items) > 1 && (items[1].AccountID != result.AccountID || items[1].EndpointID != result.EndpointID) {
+		result.Conflict = true
+		result.ConflictReason = "同一时间窗口存在多个账号或终端会话"
+	}
+	return result, true, nil
+}
+
 func (s *PostgresStore) GetEndpointIdentity(ctx context.Context, endpointID string, query Query) (EndpointIdentityProfile, bool, error) {
 	limit := identityLimit(query.Limit)
 	state := IdentityState{
@@ -355,6 +387,14 @@ func (s *PostgresStore) ListEndpointDevices(ctx context.Context, query Query) (E
 		args = append(args, "%"+strings.ToLower(query.Q)+"%")
 		placeholder := "$" + strconvArg(len(args))
 		where = append(where, `(lower(endpoint_id) LIKE `+placeholder+` OR lower(coalesce(primary_mac, '')) LIKE `+placeholder+` OR lower(coalesce(registration_status, '')) LIKE `+placeholder+` OR lower(coalesce(owner_account, '')) LIKE `+placeholder+` OR lower(coalesce(owner_name, '')) LIKE `+placeholder+` OR lower(coalesce(owner_department, '')) LIKE `+placeholder+` OR lower(coalesce(asset_tag, '')) LIKE `+placeholder+`)`)
+	}
+	for column, value := range map[string]string{"campus_id": query.CampusID, "department": query.Department, "person_type": query.PersonType, "ssid": query.SSID, "vlan": query.VLAN, "ap": query.AP, "nas_ip": query.NASIP} {
+		if value == "" {
+			continue
+		}
+		args = append(args, value)
+		placeholder := "$" + strconvArg(len(args))
+		where = append(where, "EXISTS (SELECT 1 FROM account_sessions identity_filter WHERE identity_filter.endpoint_id = endpoint_entities.endpoint_id AND identity_filter."+column+"::text = "+placeholder+" AND (identity_filter.ended_at IS NULL OR identity_filter.ended_at >= now()))")
 	}
 	whereSQL := " WHERE " + strings.Join(where, " AND ")
 	var total int
@@ -1250,8 +1290,8 @@ func upsertAccountSession(ctx context.Context, tx *sql.Tx, session AccountSessio
 	startedAt := identitySQLTime(session.StartedAt)
 	endedAt := nullTimeValue(nullableTime(session.EndedAt))
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref)
-VALUES($1,$2,$3,NULLIF($4, '')::inet,$5,$6,$7,$8,$9,$10,$11)
+INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status)
+VALUES($1,$2,$3,NULLIF($4, '')::inet,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),NULLIF($13,''),NULLIF($14,''),NULLIF($15,''),NULLIF($16,''),NULLIF($17,''),NULLIF($18,''),NULLIF($19,''),NULLIF($20,'')::inet,NULLIF($21,''))
 ON CONFLICT(session_id) DO UPDATE SET
   account_id = EXCLUDED.account_id,
   endpoint_id = EXCLUDED.endpoint_id,
@@ -1263,8 +1303,18 @@ ON CONFLICT(session_id) DO UPDATE SET
   ended_at = COALESCE(EXCLUDED.ended_at, account_sessions.ended_at),
   identity_confidence = GREATEST(account_sessions.identity_confidence, EXCLUDED.identity_confidence),
   raw_ref = account_sessions.raw_ref || EXCLUDED.raw_ref,
+  person_type = COALESCE(EXCLUDED.person_type, account_sessions.person_type),
+  department = COALESCE(EXCLUDED.department, account_sessions.department),
+  campus_id = COALESCE(EXCLUDED.campus_id, account_sessions.campus_id),
+  building_id = COALESCE(EXCLUDED.building_id, account_sessions.building_id),
+  network_zone_id = COALESCE(EXCLUDED.network_zone_id, account_sessions.network_zone_id),
+  ssid = COALESCE(EXCLUDED.ssid, account_sessions.ssid),
+  vlan = COALESCE(EXCLUDED.vlan, account_sessions.vlan),
+  ap = COALESCE(EXCLUDED.ap, account_sessions.ap),
+  nas_ip = COALESCE(EXCLUDED.nas_ip, account_sessions.nas_ip),
+  session_status = COALESCE(EXCLUDED.session_status, account_sessions.session_status),
   updated_at = now()`,
-		session.SessionID, session.AccountID, session.EndpointID, session.IP, session.MAC, session.AccessID, session.Source, startedAt, endedAt, session.IdentityConfidence, rawRef)
+		session.SessionID, session.AccountID, session.EndpointID, session.IP, session.MAC, session.AccessID, session.Source, startedAt, endedAt, session.IdentityConfidence, rawRef, session.PersonType, session.Department, session.CampusID, session.BuildingID, session.NetworkZoneID, session.SSID, session.VLAN, session.AP, session.NASIP, session.SessionStatus)
 	return err
 }
 
@@ -1300,8 +1350,8 @@ func upsertIdentityAccessHistory(ctx context.Context, tx *sql.Tx, item IdentityA
 	firstSeen := identitySQLTime(item.FirstSeen)
 	lastSeen := identitySQLTime(item.LastSeen)
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO identity_access_history(event_id, endpoint_id, account_id, entity_role, access_id, access_type, ap, switch_id, switch_port, vlan, source, first_seen, last_seen, identity_confidence, event_ids_sample)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+INSERT INTO identity_access_history(event_id, endpoint_id, account_id, entity_role, access_id, access_type, ap, switch_id, switch_port, vlan, source, first_seen, last_seen, identity_confidence, event_ids_sample, campus_id, building_id, network_zone_id, ssid, nas_ip)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),NULLIF($17,''),NULLIF($18,''),NULLIF($19,''),NULLIF($20,'')::inet)
 ON CONFLICT(event_id) DO UPDATE SET
   endpoint_id = EXCLUDED.endpoint_id,
   account_id = EXCLUDED.account_id,
@@ -1315,8 +1365,13 @@ ON CONFLICT(event_id) DO UPDATE SET
   source = EXCLUDED.source,
   last_seen = GREATEST(identity_access_history.last_seen, EXCLUDED.last_seen),
   identity_confidence = GREATEST(identity_access_history.identity_confidence, EXCLUDED.identity_confidence),
-  event_ids_sample = EXCLUDED.event_ids_sample`,
-		item.EventID, item.EndpointID, item.AccountID, item.EntityRole, item.AccessID, item.AccessType, item.AP, item.SwitchID, item.SwitchPort, item.VLAN, item.Source, firstSeen, lastSeen, item.IdentityConfidence, eventIDs)
+  event_ids_sample = EXCLUDED.event_ids_sample,
+  campus_id = COALESCE(EXCLUDED.campus_id, identity_access_history.campus_id),
+  building_id = COALESCE(EXCLUDED.building_id, identity_access_history.building_id),
+  network_zone_id = COALESCE(EXCLUDED.network_zone_id, identity_access_history.network_zone_id),
+  ssid = COALESCE(EXCLUDED.ssid, identity_access_history.ssid),
+  nas_ip = COALESCE(EXCLUDED.nas_ip, identity_access_history.nas_ip)`,
+		item.EventID, item.EndpointID, item.AccountID, item.EntityRole, item.AccessID, item.AccessType, item.AP, item.SwitchID, item.SwitchPort, item.VLAN, item.Source, firstSeen, lastSeen, item.IdentityConfidence, eventIDs, item.CampusID, item.BuildingID, item.NetworkZoneID, item.SSID, item.NASIP)
 	return err
 }
 
@@ -1752,10 +1807,12 @@ func riskWhere(query Query) (string, []any, error) {
 		args = append(args, query.To)
 		clauses = append(clauses, "updated_at <= $"+strconvArg(len(args))+"::timestamptz")
 	}
-	if query.CampusID != "" {
-		args = append(args, query.CampusID)
-		position := strconvArg(len(args))
-		clauses = append(clauses, "EXISTS (SELECT 1 FROM account_sessions campus_session WHERE campus_session.ip = risk_snapshots.ip AND campus_session.campus_id = $"+position+" AND campus_session.started_at <= risk_snapshots.updated_at AND (campus_session.ended_at IS NULL OR campus_session.ended_at >= risk_snapshots.updated_at))")
+	for column, value := range map[string]string{"campus_id": query.CampusID, "department": query.Department, "person_type": query.PersonType, "ssid": query.SSID, "vlan": query.VLAN, "ap": query.AP, "nas_ip": query.NASIP} {
+		if value != "" {
+			args = append(args, value)
+			position := strconvArg(len(args))
+			clauses = append(clauses, "EXISTS (SELECT 1 FROM account_sessions identity_filter WHERE identity_filter.ip = risk_snapshots.ip AND identity_filter."+column+"::text = $"+position+" AND identity_filter.started_at <= risk_snapshots.updated_at AND (identity_filter.ended_at IS NULL OR identity_filter.ended_at >= risk_snapshots.updated_at))")
+		}
 	}
 	if len(clauses) == 0 {
 		return "", args, nil

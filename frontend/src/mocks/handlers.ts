@@ -95,6 +95,13 @@ export const handlers = [
     return HttpResponse.json(item)
   }),
   http.get('/api/v1/organization', () => HttpResponse.json(mockOrganization)),
+  http.post('/api/v1/organization/:kind', async ({ params, request }) => {
+    const payload = await request.json() as Record<string, unknown>
+    const collection = params.kind === 'campuses' ? mockOrganization.campuses : params.kind === 'buildings' ? mockOrganization.buildings : params.kind === 'network-zones' ? mockOrganization.network_zones : params.kind === 'access-points' ? mockOrganization.access_points : undefined
+    if (!collection) return new HttpResponse(null, { status: 404 })
+    collection.push(payload as never)
+    return HttpResponse.json(payload, { status: 201 })
+  }),
   http.get('/api/v1/actions/connectors', () => HttpResponse.json({ items: mockConnectors, global_stop: false })),
   http.get('/api/v1/actions', ({ request }) => { const result = mockPage(mockActions, new URL(request.url)); return HttpResponse.json(result) }),
   http.post('/api/v1/actions/execute', async ({ request }) => {

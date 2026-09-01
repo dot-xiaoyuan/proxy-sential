@@ -769,6 +769,11 @@ func eventWhereSQL(query Query) (string, error) {
 	if query.SensorID != "" {
 		clauses = append(clauses, "sensor_id = "+chQuote(query.SensorID))
 	}
+	for column, value := range map[string]string{"campus_id": query.CampusID, "department": query.Department, "person_type": query.PersonType, "ssid": query.SSID, "vlan": query.VLAN, "ap": query.AP, "nas_ip": query.NASIP} {
+		if value != "" {
+			clauses = append(clauses, column+" = "+chQuote(value))
+		}
+	}
 	if query.From != "" {
 		if _, err := optionalTime(query.From); err != nil {
 			return "", fmt.Errorf("bad from: %w", err)
