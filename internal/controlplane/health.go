@@ -7,8 +7,9 @@ import (
 )
 
 type componentHealth struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth, bool) {
@@ -40,6 +41,19 @@ func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth
 		check("identity_ingest", s.identityIngest.db.PingContext(ctx))
 	} else {
 		components["identity_ingest"] = componentHealth{Status: "memory_mode"}
+	}
+	runs, err := s.reader.ListRuns(ctx, 1)
+	if err != nil {
+		check("collector", err)
+	} else if len(runs) == 0 {
+		components["collector"] = componentHealth{Status: "no_data"}
+	} else {
+		status := "ready"
+		finished, parseErr := time.Parse(time.RFC3339Nano, runs[0].FinishedAt)
+		if parseErr == nil && time.Since(finished) > 30*time.Minute {
+			status = "stale"
+		}
+		components["collector"] = componentHealth{Status: status, UpdatedAt: runs[0].FinishedAt}
 	}
 	return components, ready
 }

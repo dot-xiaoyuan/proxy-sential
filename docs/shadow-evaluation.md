@@ -28,7 +28,7 @@ proxy-sentinel evaluate shadow \
 默认部署保持控制面只读。需要运营人员提交 `confirmed`、`false_positive`、`benign` 或 `needs_more_data` 时，显式开启复核写入：
 
 ```bash
-scripts/deploy/deploy-shadow-30.sh --enable-review-writes
+make deploy TARGET=root@192.168.0.30 VERSION=<version> ENV_FILE=deploy/compose/storage.env
 ```
 
 该选项只开放 labels 和 endpoint 登记接口；风险引擎仍仅输出 `record`、`shadow_watch`、`shadow_manual_review`、`shadow_confirm_review`，不会执行处罚。

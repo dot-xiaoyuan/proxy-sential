@@ -2227,7 +2227,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Readiness of storage, authentication, identity ingestion, and the offline fingerprint library. */
+            /** @description Readiness of storage, authentication, identity ingestion, collector freshness, and the offline fingerprint library. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2240,6 +2240,8 @@ export interface operations {
                             [key: string]: {
                                 status?: string;
                                 error?: string;
+                                /** Format: date-time */
+                                updated_at?: string;
                             };
                         };
                         fingerprint_library?: {

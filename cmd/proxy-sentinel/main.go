@@ -25,6 +25,8 @@ import (
 	"proxy-sentinel/internal/validation"
 )
 
+var version = "dev"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -58,11 +60,39 @@ func run(args []string) error {
 		return runBackfill(args[1:])
 	case "device-fingerprint":
 		return runDeviceFingerprint(args[1:])
+	case "migrate":
+		return runMigrate(args[1:])
+	case "version":
+		fmt.Println(version)
+		return nil
 	case "-h", "--help", "help":
 		return usageError()
 	default:
 		return fmt.Errorf("unknown command: %s", args[0])
 	}
+}
+
+func runMigrate(args []string) error {
+	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN (defaults to PROXY_SENTINEL_POSTGRES_DSN)")
+	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN (defaults to PROXY_SENTINEL_CLICKHOUSE_DSN)")
+	postgresDir := fs.String("postgres-dir", "migrations/postgres", "PostgreSQL migration directory")
+	clickhouseDir := fs.String("clickhouse-dir", "migrations/clickhouse", "ClickHouse migration directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	postgres, err := store.ApplyPostgresMigrations(ctx, *postgresDSN, *postgresDir)
+	if err != nil {
+		return fmt.Errorf("PostgreSQL migration failed: %w", err)
+	}
+	clickhouse, err := store.ApplyClickHouseMigrations(ctx, *clickhouseDSN, *clickhouseDir)
+	if err != nil {
+		return fmt.Errorf("ClickHouse migration failed: %w", err)
+	}
+	return writeJSON(os.Stdout, map[string]any{"postgres": postgres, "clickhouse": clickhouse})
 }
 
 func runDeviceFingerprint(args []string) error {
@@ -134,8 +164,8 @@ func runBackfill(args []string) error {
 	}
 	fs := flag.NewFlagSet("backfill identity", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN")
-	clickhouseDSN := fs.String("clickhouse-dsn", "", "ClickHouse HTTP DSN")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
 	window := fs.String("window", "7d", "retained event window")
 	limit := fs.Int("limit", 50000, "maximum normalized device events to backfill")
@@ -480,9 +510,9 @@ func runShadowRun(args []string) error {
 	minLevel := fs.String("min-level", "suspicious", "risk list minimum level")
 	limit := fs.Int("limit", 50, "risk list maximum snapshots")
 	retention := fs.Duration("retention", 7*24*time.Hour, "run directory retention, for example 168h")
-	storageMode := fs.String("storage-mode", "file", "storage mode: file, db, or dual")
-	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN for production evidence/risk/audit storage")
-	clickHouseDSN := fs.String("clickhouse-dsn", "", "ClickHouse HTTP URL for production event/diagnostic storage")
+	storageMode := fs.String("storage-mode", firstEnv("PROXY_SENTINEL_STORAGE_MODE", "file"), "storage mode: file, db, or dual")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN for production evidence/risk/audit storage")
+	clickHouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP URL for production event/diagnostic storage")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -533,7 +563,7 @@ func runBootstrapAdmin(args []string) error {
 	fs := flag.NewFlagSet("control-plane bootstrap-admin", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	authFile := fs.String("auth-file", "", "local authentication file")
-	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN for production authentication")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN for production authentication")
 	username := fs.String("username", "admin", "administrator username")
 	name := fs.String("name", "系统管理员", "administrator display name")
 	passwordEnv := fs.String("password-env", "PROXY_SENTINEL_ADMIN_PASSWORD", "environment variable containing the initial password")
@@ -594,7 +624,7 @@ func runEvaluateShadow(args []string) error {
 	requiredDays := fs.Int("required-days", 7, "minimum continuous run and reviewed days")
 	samplesPerDay := fs.Int("samples-per-level", 10, "daily exported samples per risk level")
 	exportDir := fs.String("daily-export-dir", "", "optional directory for stratified daily review samples")
-	postgresDSN := fs.String("postgres-dsn", "", "optional PostgreSQL DSN for labels written by DB/dual control planes")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "optional PostgreSQL DSN for labels written by DB/dual control planes")
 	output := fs.String("output", "-", "evaluation report JSON path, or - for stdout")
 	strict := fs.Bool("strict", false, "return an error unless the shadow evaluation is ready")
 	if err := fs.Parse(args); err != nil {
@@ -750,9 +780,9 @@ func runControlPlaneServe(args []string) error {
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
 	frontendDir := fs.String("frontend-dir", "", "optional frontend dist directory to serve")
 	readOnly := fs.Bool("read-only", true, "disable mutating review and reload endpoints")
-	storageMode := fs.String("storage-mode", "file", "storage mode: file, db, or dual")
-	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN for production business storage")
-	clickHouseDSN := fs.String("clickhouse-dsn", "", "ClickHouse HTTP URL for production event and diagnostic storage")
+	storageMode := fs.String("storage-mode", firstEnv("PROXY_SENTINEL_STORAGE_MODE", "file"), "storage mode: file, db, or dual")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN for production business storage")
+	clickHouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP URL for production event and diagnostic storage")
 	eventRetention := fs.Duration("event-retention", 7*24*time.Hour, "normalized event retention target, documented for DB deployments")
 	diagnosticRetention := fs.Duration("diagnostic-retention", 30*24*time.Hour, "diagnostic retention target, documented for DB deployments")
 	fingerprintDir := fs.String("device-fingerprint-dir", "/opt/proxy-sentinel/data/device-fingerprints", "device fingerprint library directory")
@@ -791,7 +821,14 @@ func runControlPlaneServe(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate shadow --shadow-dir data/shadow [--daily-export-dir data/shadow/review-exports] --output report.json\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
+	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate shadow --shadow-dir data/shadow [--daily-export-dir data/shadow/review-exports] --output report.json\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
+}
+
+func firstEnv(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func openInput(path string) (*os.File, func() error, error) {

@@ -2,7 +2,7 @@ name: proxy-sentinel-storage
 
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-srun-docker.pkg.coding.net/dpi/image/postgres:latest}
+    image: ${POSTGRES_IMAGE:?POSTGRES_IMAGE must be a Coding registry image pinned by sha256 digest}
     container_name: proxy-sentinel-postgres
     restart: unless-stopped
     environment:
@@ -21,7 +21,7 @@ services:
       retries: 12
 
   clickhouse:
-    image: ${CLICKHOUSE_IMAGE:-srun-docker.pkg.coding.net/dpi/image/clickhouse:latest}
+    image: ${CLICKHOUSE_IMAGE:?CLICKHOUSE_IMAGE must be a Coding registry image pinned by sha256 digest}
     container_name: proxy-sentinel-clickhouse
     restart: unless-stopped
     environment:

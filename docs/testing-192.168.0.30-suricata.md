@@ -66,13 +66,13 @@ sudo scripts/suricata/capture-mirror-sample.sh --interface auto --duration 1800
 分析，不再依赖临时 30 分钟采样：
 
 ```bash
-scripts/deploy/deploy-shadow-30.sh
+make deploy TARGET=root@192.168.0.30 VERSION=<version> ENV_FILE=deploy/compose/storage.env
 ```
 
 需要进行人工复核和 endpoint 登记时使用：
 
 ```bash
-scripts/deploy/deploy-shadow-30.sh --enable-review-writes
+make deploy TARGET=root@192.168.0.30 VERSION=<version> ENV_FILE=deploy/compose/storage.env
 ```
 
 部署后：

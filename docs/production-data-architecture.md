@@ -82,7 +82,7 @@ Suricata/Zeek logs
 
 ## 迁移策略
 
-当前 30 机器使用 `--storage-mode dual`，继续保留文件输出，同时让 API 和前端按生产数据对象组织。
+30 机器生产服务使用 `--storage-mode db`，PostgreSQL 与 ClickHouse 是唯一运行时事实源；JSON 文件模式只允许显式用于开发测试。
 
 生产目标：
 

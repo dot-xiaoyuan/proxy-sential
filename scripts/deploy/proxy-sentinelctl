@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="${PROXY_SENTINEL_ROOT:-/opt/proxy-sentinel}"
+env_file="${PROXY_SENTINEL_ENV_FILE:-$root/config/runtime.env}"
+compose_file="${PROXY_SENTINEL_COMPOSE_FILE:-$root/current/deploy/compose/storage.yml}"
+[[ "$root" == /opt/* && "$root" != /opt ]] || { echo "unsafe PROXY_SENTINEL_ROOT: $root" >&2; exit 2; }
+[[ -r "$env_file" ]] || { echo "runtime environment is missing: $env_file" >&2; exit 1; }
+set -a
+# shellcheck disable=SC1090
+source "$env_file"
+set +a
+
+compose() {
+  docker compose --env-file "$env_file" -f "$compose_file" "$@"
+}
+
+wait_ready() {
+  local health_url="${PROXY_SENTINEL_HEALTH_URL:-http://127.0.0.1:18080/readyz}"
+  for _ in $(seq 1 20); do
+    if curl -fsS --max-time 3 "$health_url" >/dev/null; then return 0; fi
+    sleep 2
+  done
+  return 1
+}
+
+backup() {
+  local stamp destination
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  destination="$root/backups/$stamp"
+  mkdir -p "$destination"
+  chmod 0700 "$root/backups" "$destination"
+  docker inspect proxy-sentinel-postgres proxy-sentinel-clickhouse >/dev/null
+  docker exec proxy-sentinel-postgres sh -c 'pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$destination/postgres.dump"
+  for table in normalized_events ingest_diagnostics; do
+    docker exec proxy-sentinel-clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" --database \"\$CLICKHOUSE_DB\" --query 'SELECT * FROM $table FORMAT Native'" | gzip -1 > "$destination/clickhouse-$table.native.gz"
+  done
+  docker exec proxy-sentinel-clickhouse sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "SHOW CREATE DATABASE $CLICKHOUSE_DB"' > "$destination/clickhouse-schema.sql"
+  local current_version="unknown"
+  if [[ -r "$root/current/release-manifest.json" ]]; then
+    current_version="$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$root/current/release-manifest.json")"
+  fi
+  cat > "$destination/backup-manifest.txt" <<EOF
+created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+release_version=$current_version
+postgres_image=${POSTGRES_IMAGE:-unknown}
+clickhouse_image=${CLICKHOUSE_IMAGE:-unknown}
+EOF
+  (cd "$destination" && sha256sum postgres.dump clickhouse-*.gz clickhouse-schema.sql > SHA256SUMS)
+  echo "$destination"
+}
+
+restore() {
+  local destination="${1:-}" confirmation="${2:-}"
+  [[ "$confirmation" == "--yes" ]] || { echo "restore is destructive; append --yes" >&2; exit 2; }
+  [[ -n "$destination" ]] || { echo "backup directory is required" >&2; exit 2; }
+  destination="$(realpath "$destination")"
+  case "$destination" in "$root"/backups/*) ;; *) echo "backup must be under $root/backups" >&2; exit 2 ;; esac
+  (cd "$destination" && sha256sum -c SHA256SUMS)
+  systemctl stop proxy-sentinel-shadow.timer proxy-sentinel-shadow.service proxy-sentinel-control-plane.service || true
+  trap 'systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true' EXIT
+  docker exec -i proxy-sentinel-postgres sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$destination/postgres.dump"
+  for table in normalized_events ingest_diagnostics; do
+    docker exec proxy-sentinel-clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" --database \"\$CLICKHOUSE_DB\" --query 'TRUNCATE TABLE $table'"
+    gzip -dc "$destination/clickhouse-$table.native.gz" | docker exec -i proxy-sentinel-clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" --database \"\$CLICKHOUSE_DB\" --query 'INSERT INTO $table FORMAT Native'"
+  done
+  systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer
+  wait_ready
+  trap - EXIT
+  echo "restore completed from $destination"
+}
+
+rollback() {
+  [[ -L "$root/current" && -L "$root/previous" ]] || { echo "no rollback release is available" >&2; exit 1; }
+  local current_target previous_target
+  current_target="$(readlink -f "$root/current")"
+  previous_target="$(readlink -f "$root/previous")"
+  case "$current_target:$previous_target" in "$root"/releases/*:"$root"/releases/*) ;; *) echo "unsafe release links" >&2; exit 1 ;; esac
+  ln -sfn "$previous_target" "$root/current.next"
+  mv -Tf "$root/current.next" "$root/current"
+  ln -sfn "$current_target" "$root/previous.next"
+  mv -Tf "$root/previous.next" "$root/previous"
+  systemctl daemon-reload
+  systemctl restart proxy-sentinel-control-plane.service
+  wait_ready || { echo "rollback health check failed" >&2; exit 1; }
+  echo "rolled back to $(basename "$previous_target")"
+}
+
+doctor() {
+  . /etc/os-release
+  [[ "$ID" == "openEuler" && "$(uname -m)" == "x86_64" ]] || { echo "unsupported platform: $ID $(uname -m)" >&2; return 1; }
+  for command in docker systemctl curl ip ss sha256sum gzip; do command -v "$command" >/dev/null || { echo "missing command: $command" >&2; return 1; }; done
+  docker info >/dev/null
+  docker compose version >/dev/null
+  ip link show "${PROXY_SENTINEL_MIRROR_INTERFACE:-ens1f1}" >/dev/null
+  [[ "${POSTGRES_IMAGE:-}" == *@sha256:* && "${CLICKHOUSE_IMAGE:-}" == *@sha256:* ]] || { echo "storage images are not digest-pinned" >&2; return 1; }
+  compose config --quiet
+  compose ps
+  systemctl is-active proxy-sentinel-control-plane.service
+  wait_ready
+  echo "doctor: all checks passed"
+}
+
+status() {
+  compose ps
+  systemctl --no-pager --full status proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer | sed -n '1,120p'
+  curl -fsS "${PROXY_SENTINEL_HEALTH_URL:-http://127.0.0.1:18080/readyz}"
+  echo
+}
+
+case "${1:-}" in
+  status) status ;;
+  doctor) doctor ;;
+  logs) shift; if [[ $# -eq 0 ]]; then journalctl -u proxy-sentinel-control-plane.service -u proxy-sentinel-shadow.service --no-pager -n 200; else journalctl -u proxy-sentinel-control-plane.service -u proxy-sentinel-shadow.service --no-pager "$@"; fi ;;
+  backup) backup ;;
+  restore) restore "${2:-}" "${3:-}" ;;
+  rollback) rollback ;;
+  upgrade) shift; exec /usr/local/lib/proxy-sentinel/install-openeuler.sh "$@" ;;
+  *) echo "usage: proxy-sentinelctl {status|doctor|logs|backup|restore BACKUP --yes|upgrade ...|rollback}" >&2; exit 2 ;;
+esac
