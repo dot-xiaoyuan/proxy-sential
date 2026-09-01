@@ -31,7 +31,7 @@ const levelColors: Record<RiskLevel, string> = {
 }
 
 const levelNames: Record<RiskLevel, string> = {
-  confirmed: '确诊代理 (Confirmed)',
+  confirmed: '极高风险（待复核）',
   high: '高风险 (High Risk)',
   suspicious: '可疑共享 (Suspicious)',
   normal: '正常终端 (Normal)',
@@ -39,7 +39,7 @@ const levelNames: Record<RiskLevel, string> = {
 
 export function OverviewPage() {
   const [quickWindow, setQuickWindow] = useState<QuickWindow>('1h')
-  const overview = useOverview()
+  const overview = useOverview({ window: quickWindow })
   const activity = useActivityOverview({ window: quickWindow })
 
   if (overview.isLoading) {
@@ -66,39 +66,38 @@ export function OverviewPage() {
           void activity.refetch()
         }}
         quickWindow={quickWindow}
-        subtitle="影子运行模式下的聚合风险分布、复核队列压力与抓包吞吐大局"
-        title="检测运营总览 (Control Tower)"
+        subtitle="统一窗口内的风险待办、终端活动、数据健康与处置情况"
+        title="高校网络风险运营工作台"
       />
 
       <section className="metric-grid">
         <AppMetricCard
           icon={<AlertOutlined className="text-danger-color" />}
           statusColor="red"
-          statusText="需复核"
-          title="待复核压力"
+          statusText={`超时 ${overview.data.overdue_case_count ?? 0}`}
+          title="待处理案件"
           trend={12.4}
-          value={overview.data.pending_reviews}
+          value={overview.data.open_case_count ?? overview.data.pending_reviews}
         />
         <AppMetricCard
           icon={<DatabaseOutlined className="text-primary-color" />}
           statusColor="blue"
-          statusText="AF_XDP 吞吐"
-          title="DPI 标准事件"
-          trend={5.8}
+          statusText={`窗口 ${overview.data.window ?? quickWindow}`}
+          title="窗口内标准事件"
           value={overview.data.throughput.events}
         />
         <AppMetricCard
           icon={<SafetyCertificateOutlined className="text-purple-color" />}
           statusColor="purple"
-          statusText="多重指纹"
-          title="聚合证据数"
+          statusText="最新批次"
+          title="风险证据"
           value={overview.data.throughput.evidence}
         />
         <AppMetricCard
           icon={<CheckCircleOutlined className="text-success-color" />}
           statusColor="green"
-          statusText="影子评估"
-          title="全网风险快照"
+          statusText="活跃对象"
+          title="窗口内风险对象"
           value={overview.data.throughput.risks}
         />
       </section>

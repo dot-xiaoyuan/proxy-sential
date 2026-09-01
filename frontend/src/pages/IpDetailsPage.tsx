@@ -265,7 +265,7 @@ export function IpDetailsPage() {
       </section>
 
       <section className="surface">
-        <Typography.Title level={4}>审计样本</Typography.Title>
+        <Typography.Title level={4}>证据时间线</Typography.Title>
         <Typography.Text type="secondary">默认展示摘要，完整原始字段请进入事件检索按 event_id 下钻。</Typography.Text>
         <Tabs
           className="audit-sample-tabs"

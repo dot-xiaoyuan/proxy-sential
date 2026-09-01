@@ -11,18 +11,18 @@ const columns: ColumnsType<RiskSnapshot> = [
   {
     title: 'IP',
     dataIndex: 'ip',
-    width: 116,
+    width: 150,
     render: (ip: string) => (
-      <Link className="mono wrap-text" to={`/ips/${encodeURIComponent(ip)}`}>
+      <Link className="mono list-cell-nowrap" title={ip} to={`/ips/${encodeURIComponent(ip)}`}>
         {ip}
       </Link>
     ),
   },
   {
     title: '等级',
-    dataIndex: 'level',
+    dataIndex: 'assessment_level',
     width: 80,
-    render: (level: RiskSnapshot['level']) => <RiskLevelTag level={level} />,
+    render: (_, row) => <RiskLevelTag level={row.assessment_level ?? (row.level === 'confirmed' ? 'high' : row.level)} />,
   },
   {
     title: '分数',
@@ -39,23 +39,20 @@ const columns: ColumnsType<RiskSnapshot> = [
   {
     title: '解释',
     dataIndex: 'summary',
-    width: 250,
+    width: 320,
     render: (summary: string) => (
-      <Typography.Paragraph
-        ellipsis={{ rows: 2, tooltip: summary }}
-        className="risk-table-summary"
-      >
+      <Typography.Text className="list-cell-nowrap" title={summary}>
         {summary}
-      </Typography.Paragraph>
+      </Typography.Text>
     ),
   },
   {
     title: '疑似设备',
     width: 120,
     render: (_, row) => (
-      <div className="risk-table-device">
+      <div className="list-inline-tags">
         <Tag color={row.suspected_device_count > 1 ? 'orange' : 'blue'}>{row.suspected_device_count}</Tag>
-        <Typography.Text className="risk-table-device-summary" type="secondary">
+        <Typography.Text className="list-cell-nowrap" title={row.device_summary} type="secondary">
           {row.device_summary || '暂无设备信号'}
         </Typography.Text>
       </div>
@@ -100,14 +97,15 @@ export function RiskTable({
 }) {
   return (
     <Table
+	  className="compact-list-table"
       columns={columns}
       dataSource={data}
       loading={loading}
       locale={{ emptyText }}
-      pagination={{ pageSize: 10, showSizeChanger: false }}
+      pagination={false}
       rowKey="ip"
       scroll={{ x: 1000 }}
-      size="middle"
+      size="small"
     />
   )
 }

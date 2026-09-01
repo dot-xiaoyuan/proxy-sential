@@ -34,6 +34,16 @@ export const mockSession: Session = {
     'rules:reload',
     'ingest:read',
     'dpi:read',
+    'device-fingerprint-library:update',
+    'cases:read',
+    'cases:write',
+    'identity:read',
+    'organization:read',
+    'organization:write',
+    'actions:read',
+    'actions:execute',
+    'actions:revoke',
+    'integrations:write',
   ],
 }
 
@@ -46,6 +56,7 @@ export const proxyReviewResponse: ProxyReviewResponse = {
   endpoint_count: 3,
   destination_count: 5,
   high_confidence_count: 1,
+  page: { limit: 20, next_cursor: null, total: 3 },
   items: [
     {
       case_id: 'proxy-review-openvpn',

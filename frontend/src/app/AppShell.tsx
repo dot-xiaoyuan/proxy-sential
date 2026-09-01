@@ -6,7 +6,6 @@ import {
   DatabaseOutlined,
   DesktopOutlined,
   FieldTimeOutlined,
-  FileSearchOutlined,
   GlobalOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -14,28 +13,36 @@ import {
   SearchOutlined,
   SettingOutlined,
   UserOutlined,
+	ApartmentOutlined,
+	ControlOutlined,
 } from '@ant-design/icons'
 import { Button, Drawer, Layout, Menu, Space, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 
-import { useSession } from '../shared/api/queries'
+import { useLogout, useSession } from '../shared/api/queries'
+import { LoginPage } from '../pages/LoginPage'
+import { AppLoadingState } from '../shared/ui'
+import { can } from '../shared/auth/permissions'
+import type { Session } from '../shared/api/types'
 
-const navItems: MenuProps['items'] = [
-  { key: '/overview', icon: <DashboardOutlined />, label: <NavLink to="/overview">总览</NavLink> },
-  { key: '/activity', icon: <GlobalOutlined />, label: <NavLink to="/activity">访问态势</NavLink> },
-  { key: '/devices', icon: <DesktopOutlined />, label: <NavLink to="/devices">设备识别</NavLink> },
-  { key: '/events', icon: <SearchOutlined />, label: <NavLink to="/events">事件检索</NavLink> },
-  { key: '/ingest', icon: <DatabaseOutlined />, label: <NavLink to="/ingest">采集诊断</NavLink> },
-  { key: '/risks', icon: <SafetyOutlined />, label: <NavLink to="/risks">风险 IP</NavLink> },
-  { key: '/review', icon: <FileSearchOutlined />, label: <NavLink to="/review">人工复核</NavLink> },
-  { key: '/shadow-runs', icon: <FieldTimeOutlined />, label: <NavLink to="/shadow-runs">影子运行</NavLink> },
-  { key: '/audit', icon: <AuditOutlined />, label: <NavLink to="/audit">审计日志</NavLink> },
-  {
-    key: '/settings/rules',
-    icon: <SettingOutlined />,
-    label: <NavLink to="/settings/rules">规则配置</NavLink>,
-  },
-]
+function buildNavItems(session: Session): MenuProps['items'] {
+  const systemChildren: MenuProps['items'] = [
+    can(session,'ingest:read') ? {key:'/ingest',icon:<DatabaseOutlined />,label:<NavLink to="/ingest">数据源与采集</NavLink>} : null,
+    can(session,'shadow:read') ? {key:'/shadow-runs',icon:<FieldTimeOutlined />,label:<NavLink to="/shadow-runs">影子评估</NavLink>} : null,
+    can(session,'audit:read') ? {key:'/audit',icon:<AuditOutlined />,label:<NavLink to="/audit">审计日志</NavLink>} : null,
+    can(session,'rules:reload') || can(session,'device-fingerprint-library:update') ? {key:'/settings/rules',icon:<SettingOutlined />,label:<NavLink to="/settings/rules">规则与特征库</NavLink>} : null,
+    can(session,'organization:read') ? {key:'/settings/organization',icon:<ApartmentOutlined />,label:<NavLink to="/settings/organization">校区与网络区域</NavLink>} : null,
+    can(session,'actions:read') ? {key:'/settings/actions',icon:<ControlOutlined />,label:<NavLink to="/settings/actions">处置网关</NavLink>} : null,
+  ].filter(Boolean) as MenuProps['items']
+  return [
+    {key:'/overview',icon:<DashboardOutlined />,label:<NavLink to="/overview">运营工作台</NavLink>},
+    can(session,'cases:read') ? {key:'/cases',icon:<SafetyOutlined />,label:<NavLink to="/cases">风险处置</NavLink>} : null,
+    can(session,'identity:read') ? {key:'/devices',icon:<DesktopOutlined />,label:<NavLink to="/devices">终端画像</NavLink>} : null,
+    can(session,'dpi:read') ? {key:'/activity',icon:<GlobalOutlined />,label:<NavLink to="/activity">网络态势</NavLink>} : null,
+    can(session,'events:read') ? {key:'/events',icon:<SearchOutlined />,label:<NavLink to="/events">调查取证</NavLink>} : null,
+    {key:'system',icon:<SettingOutlined />,label:'系统管理',children:systemChildren},
+  ].filter(Boolean) as MenuProps['items']
+}
 
 function SentinelLogo() {
   return (
@@ -52,9 +59,14 @@ export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const location = useLocation()
   const session = useSession()
+  const logout = useLogout()
   const selected = `/${location.pathname.split('/')[1] || 'overview'}`
-  const selectedKey = location.pathname.startsWith('/settings') ? '/settings/rules' : selected
+  const selectedKey = location.pathname.startsWith('/settings/') ? location.pathname : selected
   const isMockEnabled = !import.meta.env.PROD && import.meta.env.VITE_ENABLE_MOCKS !== 'false'
+
+  if (session.isLoading) return <AppLoadingState rows={6} />
+  if (session.isError || !session.data) return <LoginPage />
+	const navItems = buildNavItems(session.data)
 
   const menu = (
     <Menu
@@ -83,7 +95,7 @@ export function AppShell() {
           {!collapsed && (
             <div>
               <div className="brand-title">Proxy Sentinel</div>
-              <div className="brand-subtitle">防代理/共享上网检测</div>
+              <div className="brand-subtitle">高校网络风险运营平台</div>
             </div>
           )}
         </div>
@@ -116,6 +128,7 @@ export function AppShell() {
               <Typography.Text type="secondary" className="font-size-sm">
                 ({session.data?.role ?? 'guest'})
               </Typography.Text>
+              <Button loading={logout.isPending} onClick={() => logout.mutate()} size="small" type="text">退出</Button>
             </div>
           </Space>
         </Layout.Header>
@@ -129,7 +142,7 @@ export function AppShell() {
         open={drawerOpen}
         placement="left"
         size="default"
-        title="Proxy Sentinel - 防代理检测系统"
+        title="Proxy Sentinel - 高校网络风险运营平台"
       >
         {menu}
       </Drawer>

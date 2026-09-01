@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { App as AntApp, Alert, Button, Descriptions, Form, Input, Progress, Select, Skeleton, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
-import { useDeviceSignals, useEndpointIdentity, useSession, useUpdateEndpointRegistration } from '../shared/api/queries'
+import { useDevices, useDeviceSignals, useEndpointIdentity, useSession, useUpdateEndpointRegistration } from '../shared/api/queries'
 import type {
   AccountSession,
   DeviceSignal,
@@ -21,6 +21,7 @@ export function EndpointDetailsPage() {
   const [registrationForm] = Form.useForm<UpdateEndpointRegistrationRequest>()
   const identity = useEndpointIdentity(endpointId, { limit: 500 })
   const signals = useDeviceSignals({ window: '24h', q: endpointId, include_weak: true, limit: 200 })
+  const inventory = useDevices({ window: '24h', q: endpointId, limit: 1 })
   const session = useSession()
   const updateRegistration = useUpdateEndpointRegistration()
 
@@ -30,6 +31,7 @@ export function EndpointDetailsPage() {
   const latestIP = profile?.ip_history?.[0]?.ip ?? ''
   const latestAccess = profile?.access_history?.[0]?.access_id ?? ''
   const signalItems = signals.data?.items ?? []
+  const recognition = inventory.data?.items.find((item) => item.endpoint_id === endpointId)
   const uniqueIPs = useMemo(() => uniqueValues(profile?.ip_history?.map((item) => item.ip ?? '') ?? []), [profile])
   const uniqueAccessIDs = useMemo(
     () => uniqueValues(profile?.access_history?.map((item) => item.access_id) ?? []),
@@ -133,6 +135,20 @@ export function EndpointDetailsPage() {
             <Descriptions.Item label="当前接入">{latestAccess || '-'}</Descriptions.Item>
             <Descriptions.Item label="首次发现">{formatTime(profile.first_seen)}</Descriptions.Item>
             <Descriptions.Item label="最近活跃">{formatTime(profile.last_seen)}</Descriptions.Item>
+          </Descriptions>
+        </div>
+        <div className="surface">
+          <Typography.Title level={4}>设备识别</Typography.Title>
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label="品牌 / 厂商">{recognition?.brand || recognition?.vendor || '未知'}</Descriptions.Item>
+            <Descriptions.Item label="型号">{recognition?.model || '未知'}</Descriptions.Item>
+            <Descriptions.Item label="类型">{recognition?.device_type || '未知'}</Descriptions.Item>
+            <Descriptions.Item label="操作系统">{recognition?.os_family || '未知'}</Descriptions.Item>
+            <Descriptions.Item label="识别可信度">{Math.round((recognition?.recognition_confidence ?? 0) * 100)}%</Descriptions.Item>
+            <Descriptions.Item label="规则版本"><Typography.Text className="mono list-cell-nowrap">{recognition?.fingerprint_version || '-'}</Typography.Text></Descriptions.Item>
+            <Descriptions.Item label="随机 MAC">{recognition?.randomized_mac ? '是；不使用 OUI 判断厂商' : '否'}</Descriptions.Item>
+            <Descriptions.Item label="识别冲突">{recognition?.recognition_conflict ? '是；列表按未知设备处理' : '否'}</Descriptions.Item>
+            <Descriptions.Item label="识别证据">{recognition?.recognition_evidence?.join('；') || '暂无'}</Descriptions.Item>
           </Descriptions>
         </div>
       </section>

@@ -464,11 +464,17 @@ a:hover {
 .mono {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .wrap-text {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.mono.wrap-text {
+  min-width: 0;
+  white-space: normal;
 }
 
 .wrap-code {
@@ -1610,6 +1616,13 @@ pre.wrap-code {
   background: #f8fafc;
 }
 
+.device-signal-token .wrap-text,
+.sample-token .wrap-text {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+}
+
 .device-conflict-card {
   width: 100%;
   min-width: 0;
@@ -2232,4 +2245,242 @@ pre.wrap-code {
 .brand-name-en {
   font-size: 11px;
   opacity: 0.75;
+}
+.list-cell-nowrap {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap !important;
+}
+
+.nowrap-cell,
+.ellipsis-cell {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-subject-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.case-subject-cell > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-subject-cell > :first-child {
+  flex-shrink: 0;
+}
+
+.list-primary-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.list-inline-tags,
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.list-toolbar > * {
+  flex-shrink: 0;
+}
+
+.list-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.compact-list-table .ant-table-cell {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f1f5f9;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  padding: 28px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 24px;
+  color: var(--ps-primary);
+  font-size: 30px;
+}
+
+.login-brand h3 {
+  margin: 0 !important;
+}
+
+.case-layout,
+.organization-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.case-assignee-input {
+  width: 180px;
+}
+
+.mobile-case-list .ant-list-item {
+  padding: 6px 0;
+  border: 0;
+}
+
+.mobile-case-card {
+  width: 100%;
+}
+
+.mobile-case-head,
+.mobile-case-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mobile-case-row {
+  margin-top: 8px;
+  color: var(--ps-text-secondary);
+  font-size: 12px;
+}
+
+.mobile-case-head > *,
+.mobile-case-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .case-layout,
+  .organization-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-list-table .ant-table-thead {
+    display: none;
+  }
+
+  .compact-list-table .ant-table,
+  .compact-list-table .ant-table-container,
+  .compact-list-table .ant-table-content,
+  .compact-list-table table,
+  .compact-list-table tbody,
+  .compact-list-table tr,
+  .compact-list-table td {
+    display: block;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .compact-list-table .ant-table-tbody > tr {
+    margin-bottom: 10px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .compact-list-table .ant-table-tbody > tr > td {
+    padding: 3px 0 !important;
+    border: 0 !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .compact-list-table .ant-table-cell-scrollbar {
+    display: none !important;
+  }
+}
+
+.detail-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.fingerprint-import-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.fingerprint-import-panel .ant-upload-list-item-name,
+.fingerprint-import-panel .ant-alert-message,
+.fingerprint-import-panel .ant-btn {
+  white-space: nowrap;
+}
+
+.detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.detail-value-wrap,
+.record-json {
+  overflow-wrap: anywhere;
+}
+
+.record-json {
+  overflow: auto;
+  max-height: 520px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+@media (max-width: 560px) {
+  .compact-list-table .ant-table {
+    min-width: 760px;
+  }
+
+  .list-toolbar {
+    width: 100%;
+  }
+
+  .list-toolbar .ant-input-affix-wrapper,
+  .list-toolbar .ant-input-group-wrapper {
+    min-width: 0;
+    flex: 1 1 220px;
+  }
 }

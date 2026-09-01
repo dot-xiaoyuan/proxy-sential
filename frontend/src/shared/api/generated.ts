@@ -4,6 +4,38 @@
  */
 
 export interface paths {
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/session": {
         parameters: {
             query?: never;
@@ -12,6 +44,166 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cases/{case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCase"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cases/{case_id}/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["updateCase"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOrganization"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listActionConnectors"];
+        put?: never;
+        post: operations["saveActionConnector"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["executeAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/{action_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["revokeAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ingestIdentityEvents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIdentityIngestStatus"];
         put?: never;
         post?: never;
         delete?: never;
@@ -60,6 +252,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["listProxyReviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proxy-reviews/{case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getProxyReview"];
         put?: never;
         post?: never;
         delete?: never;
@@ -468,6 +676,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ingest/diagnostics/{diagnostic_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIngestDiagnostic"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ingest/event-types": {
         parameters: {
             query?: never;
@@ -532,6 +756,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shadow/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShadowRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/shadow/evaluation": {
         parameters: {
             query?: never;
@@ -564,6 +804,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audit-logs/{audit_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAuditLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDeviceFingerprintLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-library/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["updateDeviceFingerprintLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-library/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["validateDeviceFingerprintBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-library/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importDeviceFingerprintBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules/reload": {
         parameters: {
             query?: never;
@@ -585,9 +905,58 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** @enum {string} */
-        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "endpoints:write" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read";
+        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "endpoints:write" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read" | "device-fingerprint-library:update" | "cases:read" | "cases:write" | "identity:read" | "organization:read" | "organization:write" | "actions:read" | "actions:execute" | "actions:revoke" | "integrations:write" | "users:manage";
+        Page: {
+            limit: number;
+            next_cursor: string | null;
+            total: number;
+        };
+        DeviceFingerprintLibraryStatus: {
+            version: string;
+            /** @enum {string} */
+            status: "ready" | "checking" | "degraded";
+            source: string;
+            checksum: string;
+            /** Format: date-time */
+            updated_at?: string;
+            /** Format: date-time */
+            last_checked_at?: string;
+            last_error?: string;
+            offline_mode?: boolean;
+            rule_count?: number;
+            oui_count?: number;
+            dhcp_rule_count?: number;
+            sources?: components["schemas"]["DeviceFingerprintBundleSource"][];
+            licenses?: string[];
+            backfill_status?: string;
+            backfill_processed?: number;
+        };
+        DeviceFingerprintBundleSource: {
+            name: string;
+            version: string;
+            url: string;
+            license: string;
+        };
+        DeviceFingerprintBundleManifest: {
+            schema_version: string;
+            version: string;
+            /** Format: date-time */
+            created_at: string;
+            sources: components["schemas"]["DeviceFingerprintBundleSource"][];
+            files: {
+                [key: string]: {
+                    size: number;
+                    sha256: string;
+                };
+            };
+        };
         /** @enum {string} */
         Role: "viewer" | "reviewer" | "operator" | "admin";
+        LoginRequest: {
+            username: string;
+            /** Format: password */
+            password: string;
+        };
         Session: {
             user: {
                 id: string;
@@ -595,6 +964,100 @@ export interface components {
             };
             role: components["schemas"]["Role"];
             permissions: components["schemas"]["Permission"][];
+            csrf_token?: string;
+        };
+        RiskCase: {
+            case_id: string;
+            subject_type: string;
+            subject_id: string;
+            ip?: string;
+            account_id?: string;
+            endpoint_id?: string;
+            campus_id?: string;
+            department?: string;
+            /** @enum {string} */
+            status: "new" | "assigned" | "investigating" | "waiting_data" | "resolved" | "closed" | "reopened";
+            /** @enum {string} */
+            disposition?: "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
+            /** @enum {string} */
+            priority: "high" | "medium" | "low";
+            assignee_id?: string;
+            risk_score: number;
+            risk_confidence: number;
+            assessment_level: string;
+            /** Format: date-time */
+            due_at: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            evidence_snapshot?: components["schemas"]["ProxyReviewCase"];
+            comments?: {
+                [key: string]: unknown;
+            }[];
+            timeline?: {
+                [key: string]: unknown;
+            }[];
+        };
+        RiskCaseListResponse: {
+            items: components["schemas"]["RiskCase"][];
+            page: components["schemas"]["Page"];
+        };
+        Organization: {
+            campuses: {
+                [key: string]: unknown;
+            }[];
+            buildings: {
+                [key: string]: unknown;
+            }[];
+            network_zones: {
+                [key: string]: unknown;
+            }[];
+            access_points: {
+                [key: string]: unknown;
+            }[];
+        };
+        ActionConnector: {
+            connector_id: string;
+            name: string;
+            /** Format: uri */
+            endpoint_url: string;
+            action_mapping: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            mode: "shadow" | "active";
+            enabled: boolean;
+            shadow_ready: boolean;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        EnforcementAction: {
+            action_id: string;
+            idempotency_key: string;
+            case_id?: string;
+            connector_id: string;
+            /** @enum {string} */
+            action_type: "quarantine" | "throttle" | "disconnect" | "release" | "status";
+            subject_id: string;
+            ip?: string;
+            account_id?: string;
+            endpoint_id?: string;
+            campus_id?: string;
+            /** @enum {string} */
+            status: "shadow" | "pending" | "running" | "succeeded" | "failed" | "revoked" | "expired" | "blocked";
+            /** @enum {string} */
+            mode: "shadow" | "active";
+            blockers?: string[];
+            last_error?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
         };
         /** @enum {string} */
         RiskLevel: "normal" | "suspicious" | "high" | "confirmed";
@@ -791,6 +1254,17 @@ export interface components {
             /** Format: date-time */
             last_seen?: string;
             identity_confidence: number;
+            vendor?: string;
+            brand?: string;
+            model?: string;
+            device_type?: string;
+            os_family?: string;
+            recognition_confidence: number;
+            recognition_source?: string;
+            fingerprint_version?: string;
+            randomized_mac: boolean;
+            recognition_conflict?: boolean;
+            recognition_evidence?: string[];
             summary: string;
         };
         EndpointEntity: {
@@ -979,6 +1453,7 @@ export interface components {
             destination_count: number;
             high_confidence_count: number;
             items: components["schemas"]["ProxyReviewCase"][];
+            page: components["schemas"]["Page"];
         };
         ProxyReviewCase: {
             case_id: string;
@@ -1284,6 +1759,8 @@ export interface components {
                 confirmed: number;
             };
             pending_reviews: number;
+            open_case_count?: number;
+            overdue_case_count?: number;
             latest_shadow_run: components["schemas"]["ShadowRun"];
             throughput: {
                 events: number;
@@ -1372,6 +1849,55 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Authenticated session with a CSRF token. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Invalid credentials or rate limit reached. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getSession: {
         parameters: {
             query?: never;
@@ -1391,6 +1917,276 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
+        };
+    };
+    listCases: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                q?: string;
+                status?: string;
+                assignee_id?: string;
+                campus_id?: string;
+                window?: "24h" | "7d";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated operational risk cases. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RiskCaseListResponse"];
+                };
+            };
+        };
+    };
+    getCase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Case with immutable evidence snapshot and timeline. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RiskCase"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateCase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+                operation: "assign" | "status" | "disposition" | "comments";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated case. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RiskCase"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Campus, building, network-zone and access-point mappings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+        };
+    };
+    listActionConnectors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Northbound connectors without credential material. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ActionConnector"][];
+                        global_stop: boolean;
+                    };
+                };
+            };
+        };
+    };
+    saveActionConnector: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Connector saved; secret is never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionConnector"];
+                };
+            };
+        };
+    };
+    listActions: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated enforcement actions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["EnforcementAction"][];
+                        page: components["schemas"]["Page"];
+                    };
+                };
+            };
+        };
+    };
+    executeAction: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Action persisted before asynchronous delivery. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnforcementAction"];
+                };
+            };
+        };
+    };
+    revokeAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revocation accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnforcementAction"];
+                };
+            };
+        };
+    };
+    ingestIdentityEvents: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Identity batch normalized and accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getIdentityIngestStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent identity batches and data freshness. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getOverview: {
@@ -1445,6 +2241,9 @@ export interface operations {
                 sensor_id?: string;
                 window?: "24h" | "7d";
                 limit?: number;
+                cursor?: string;
+                q?: string;
+                view?: "summary" | "full";
             };
             header?: never;
             path?: never;
@@ -1463,6 +2262,31 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getProxyReview: {
+        parameters: {
+            query?: {
+                window?: "24h" | "7d";
+            };
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full proxy review case. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyReviewCase"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     getDpiOverview: {
@@ -2129,7 +2953,11 @@ export interface operations {
     };
     listIngestRuns: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                cursor?: string;
+                q?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2144,9 +2972,11 @@ export interface operations {
                 content: {
                     "application/json": {
                         runs: components["schemas"]["ShadowRun"][];
+                        page: components["schemas"]["Page"];
                     };
                 };
             };
+            400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -2154,6 +2984,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                cursor?: string;
+                q?: string;
             };
             header?: never;
             path?: never;
@@ -2169,11 +3001,35 @@ export interface operations {
                 content: {
                     "application/json": {
                         diagnostics: components["schemas"]["IngestDiagnostic"][];
+                        page: components["schemas"]["Page"];
                     };
                 };
             };
             400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getIngestDiagnostic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                diagnostic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full ingest diagnostic. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestDiagnostic"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     listIngestEventTypes: {
@@ -2203,6 +3059,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                cursor?: string;
+                q?: string;
             };
             header?: never;
             path?: never;
@@ -2218,6 +3076,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         diagnostics: components["schemas"]["IngestDiagnostic"][];
+                        page: components["schemas"]["Page"];
                     };
                 };
             };
@@ -2253,7 +3112,11 @@ export interface operations {
     };
     listShadowRuns: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                cursor?: string;
+                q?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2268,10 +3131,34 @@ export interface operations {
                 content: {
                     "application/json": {
                         runs: components["schemas"]["ShadowRun"][];
+                        page: components["schemas"]["Page"];
                     };
                 };
             };
             500: components["responses"]["InternalError"];
+        };
+    };
+    getShadowRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full shadow run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShadowRun"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     getShadowEvaluation: {
@@ -2300,6 +3187,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                cursor?: string;
+                q?: string;
             };
             header?: never;
             path?: never;
@@ -2315,11 +3204,153 @@ export interface operations {
                 content: {
                     "application/json": {
                         logs: components["schemas"]["AuditLog"][];
+                        page: components["schemas"]["Page"];
                     };
                 };
             };
             400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getAuditLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                audit_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full audit log entry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLog"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getDeviceFingerprintLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active device fingerprint library status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceFingerprintLibraryStatus"];
+                };
+            };
+        };
+    };
+    updateDeviceFingerprintLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated device fingerprint library status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceFingerprintLibraryStatus"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Offline deployments require bundle import. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    validateDeviceFingerprintBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    bundle: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Validated bundle manifest. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceFingerprintBundleManifest"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Bundle validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importDeviceFingerprintBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    bundle: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Imported and activated library status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceFingerprintLibraryStatus"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Bundle validation failed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     reloadRules: {

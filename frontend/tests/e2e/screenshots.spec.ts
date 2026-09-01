@@ -7,15 +7,15 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
   test('capture 1440x900 overview page', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/overview')
-    await expect(page.getByRole('heading', { name: '检测运营总览' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '高校网络风险运营工作台' })).toBeVisible()
     await page.screenshot({ path: path.join(artifactDir, 'overview-1440x900.png'), fullPage: true })
   })
 
-  test('capture 1280x800 risks page', async ({ page }) => {
+  test('capture 1280x800 cases page', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
-    await page.goto('/risks')
-    await expect(page.getByRole('heading', { name: '风险 IP' })).toBeVisible()
-    await page.screenshot({ path: path.join(artifactDir, 'risks-1280x800.png'), fullPage: true })
+    await page.goto('/cases')
+    await expect(page.getByRole('heading', { name: '风险处置' })).toBeVisible()
+    await page.screenshot({ path: path.join(artifactDir, 'cases-1280x800.png'), fullPage: true })
   })
 
   test('capture 390x844 ip detail page with strict DOM internal container overflow checks', async ({ page }) => {

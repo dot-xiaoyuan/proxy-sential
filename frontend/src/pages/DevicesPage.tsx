@@ -1,306 +1,38 @@
-import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Progress, Space, Table, Tag, Typography } from 'antd'
+import { useEffect, useState } from 'react'
+import { Input, Pagination, Select, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import { Link } from 'react-router-dom'
 
 import { BrandLogo } from '../entities/device/BrandLogo'
 import { useDevices } from '../shared/api/queries'
 import type { EndpointDeviceInventory } from '../shared/api/types'
-import {
-  AppErrorAlert,
-  AppLoadingState,
-  AppMetricCard,
-  AppPageHeader,
-  AppTableBar,
-  type QuickWindow,
-} from '../shared/ui'
-
-type RegistrationStatus = EndpointDeviceInventory['registration_status'] | 'all'
-type EndpointDeviceRow = EndpointDeviceInventory & { row_key: string }
+import { AppErrorAlert, AppLoadingState, AppPageHeader, type QuickWindow } from '../shared/ui'
 
 export function DevicesPage() {
   const [quickWindow, setQuickWindow] = useState<QuickWindow>('24h')
-  const [searchValue, setSearchValue] = useState('')
-  const [status, setStatus] = useState<RegistrationStatus>('all')
-  const devices = useDevices({ window: quickWindow, q: searchValue, limit: 200 })
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+  const [searchInput, setSearchInput] = useState('')
+  const [query, setQuery] = useState('')
+  useEffect(() => { const timer = globalThis.setTimeout(() => { setQuery(searchInput.trim()); setPage(1) }, 300); return () => globalThis.clearTimeout(timer) }, [searchInput])
+  const devices = useDevices({ window: quickWindow, q: query, limit: pageSize, cursor: String((page - 1) * pageSize) })
 
-  const rawItems = useMemo(
-    () => (devices.data?.items ?? []).map((item) => coerceEndpointDevice(item)),
-    [devices.data?.items],
-  )
-  const items = useMemo(
-    () => rawItems.filter((item) => status === 'all' || item.registration_status === status),
-    [rawItems, status],
-  )
-  const tableItems = useMemo(
-    () =>
-      items.map((item, index) => ({
-        ...item,
-        row_key: item.endpoint_id || item.primary_mac || item.current_ip || `${item.summary}-${index}`,
-      })),
-    [items],
-  )
-
-  const registeredCount = rawItems.filter((item) => item.registration_status === 'registered').length
-  const unregisteredCount = rawItems.filter((item) => item.registration_status === 'unregistered').length
-  const multiAccountCount = rawItems.filter((item) => endpointAccounts(item).length > 1).length
-  const activeAccessCount = new Set(rawItems.flatMap((item) => endpointAccessIDs(item))).size
-
-  const filterOptions = [
-    { key: 'registered', label: '已登记', active: status === 'registered' },
-    { key: 'unregistered', label: '未登记', active: status === 'unregistered' },
-    { key: 'ignored', label: '已忽略', active: status === 'ignored' },
-    { key: 'retired', label: '已退役', active: status === 'retired' },
+  const columns: ColumnsType<EndpointDeviceInventory> = [
+    { title:'终端 / MAC', key:'endpoint', width:250, render:(_,row) => <div className="list-primary-cell"><Link className="list-cell-nowrap mono" title={row.endpoint_id} to={`/devices/${encodeURIComponent(row.endpoint_id)}`}>{row.endpoint_id}</Link><Typography.Text className="list-cell-nowrap mono" title={row.primary_mac} type="secondary">{row.primary_mac || '-'}</Typography.Text></div> },
+    { title:'设备识别', key:'recognition', width:220, render:(_,row) => { const trusted=row.recognition_confidence>=0.8&&!row.recognition_conflict;const summary=trusted?[row.model,row.device_type,row.os_family].filter(Boolean).join(' · '):'';return <div className="list-primary-cell">{trusted ? <BrandLogo device={row} /> : <Typography.Text strong>未知</Typography.Text>}<Typography.Text className="list-cell-nowrap" title={summary || '识别证据不足或存在冲突'} type="secondary">{summary || '未知设备'}</Typography.Text></div> } },
+    { title:'登记', dataIndex:'registration_status', width:100, render:(value:EndpointDeviceInventory['registration_status']) => <Tag color={registrationStatusColor(value)}>{registrationStatusText(value)}</Tag> },
+    { title:'账号 / 责任人', key:'owner', width:190, render:(_,row) => <Typography.Text className="list-cell-nowrap" title={[row.current_account,row.owner_name || row.owner_account].filter(Boolean).join(' / ')}>{[row.current_account,row.owner_name || row.owner_account].filter(Boolean).join(' / ') || '-'}</Typography.Text> },
+    { title:'当前 IP', dataIndex:'current_ip', width:150, render:(value?:string) => <Typography.Text className="list-cell-nowrap mono" copyable={Boolean(value)} title={value}>{value || '-'}</Typography.Text> },
+    { title:'接入位置', dataIndex:'current_access_id', width:170, render:(value?:string) => <Typography.Text className="list-cell-nowrap" title={value}>{value || '-'}</Typography.Text> },
+    { title:'可信度', key:'confidence', width:100, render:(_,row) => `${Math.round((row.recognition_confidence || row.identity_confidence) * 100)}%` },
+    { title:'最近出现', dataIndex:'last_seen', width:180, render:(value?:string) => value ? new Date(value).toLocaleString() : '-' },
   ]
 
-  if (devices.isLoading) {
-    return <AppLoadingState rows={8} />
-  }
-
-  return (
-    <main className="page">
-      <AppPageHeader
-        loading={devices.isFetching}
-        onQuickWindowChange={setQuickWindow}
-        onRefresh={() => {
-          void devices.refetch()
-        }}
-        quickWindow={quickWindow}
-        subtitle="按 endpoint 汇总账号、IP、接入位置和登记状态，作为设备登记管理入口"
-        title="设备登记"
-      />
-
-      <section className="metric-grid">
-        <AppMetricCard statusColor="blue" statusText="endpoint inventory" title="终端实体" value={rawItems.length} />
-        <AppMetricCard statusColor="green" statusText="registered" title="已登记" value={registeredCount} />
-        <AppMetricCard statusColor="orange" statusText="unregistered" title="未登记" value={unregisteredCount} />
-        <AppMetricCard statusColor="red" statusText="needs review" title="多账号终端" value={multiAccountCount} />
-      </section>
-
-      {devices.isError && <AppErrorAlert title="设备登记列表加载失败" />}
-
-      <AppTableBar
-        filterOptions={filterOptions}
-        onClearFilters={() => {
-          setStatus('all')
-          setSearchValue('')
-        }}
-        onFilterToggle={(key) => setStatus(status === key ? 'all' : (key as RegistrationStatus))}
-        onSearchChange={setSearchValue}
-        searchPlaceholder="搜索 endpoint、MAC、账号、责任人、资产编号、IP 或接入位置..."
-        searchValue={searchValue}
-        totalCount={items.length}
-      />
-
-      <section className="surface">
-        <Table<EndpointDeviceRow>
-          columns={columns}
-          dataSource={tableItems}
-          locale={{ emptyText: '没有匹配的终端登记结果' }}
-          pagination={{ pageSize: 10, showSizeChanger: false }}
-          rowKey="row_key"
-          scroll={{ x: 1420 }}
-          size="middle"
-          summary={() => (
-            <Table.Summary fixed>
-              <Table.Summary.Row>
-                <Table.Summary.Cell index={0} colSpan={9}>
-                  <Typography.Text type="secondary">
-                    当前筛选范围覆盖 {activeAccessCount} 个接入位置；IP 维度候选详情仍保留在 IP 详情页。
-                  </Typography.Text>
-                </Table.Summary.Cell>
-              </Table.Summary.Row>
-            </Table.Summary>
-          )}
-        />
-      </section>
-    </main>
-  )
+  return <main className="page">
+    <AppPageHeader title="终端画像" subtitle="按终端显示身份、网络位置与保守设备识别摘要，点击终端查看完整证据。" quickWindow={quickWindow} onQuickWindowChange={(value) => { setQuickWindow(value); setPage(1) }} loading={devices.isFetching} onRefresh={() => void devices.refetch()} extra={<div className="list-toolbar"><Input.Search allowClear placeholder="搜索终端、MAC、品牌、型号、账号或 IP" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} /><Select value={pageSize} options={[{label:'20 条/页',value:20},{label:'50 条/页',value:50}]} onChange={(value) => { setPageSize(value); setPage(1) }} /></div>} />
+    <section className="surface">{devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError ? <AppErrorAlert title="设备列表加载失败" message={devices.error.message} /> : <><Table className="compact-list-table" columns={columns} dataSource={devices.data?.items ?? []} locale={{emptyText:'没有匹配的终端'}} pagination={false} rowKey="endpoint_id" scroll={{x:1360}} size="small" /><Pagination className="list-pagination" current={page} pageSize={pageSize} total={devices.data?.page.total ?? 0} showSizeChanger={false} onChange={setPage} /></>}</section>
+  </main>
 }
 
-const columns: ColumnsType<EndpointDeviceRow> = [
-  {
-    title: 'Endpoint',
-    dataIndex: 'endpoint_id',
-    width: 210,
-    render: (value: string) =>
-      value ? (
-        <Link className="mono wrap-text" to={`/devices/${encodeURIComponent(value)}`}>
-          {value}
-        </Link>
-      ) : (
-        <Typography.Text type="secondary">-</Typography.Text>
-      ),
-  },
-  {
-    title: '设备品牌',
-    width: 150,
-    render: (_, row) => <BrandLogo device={row} />,
-  },
-  {
-    title: '登记状态',
-    dataIndex: 'registration_status',
-    width: 110,
-    render: (value: EndpointDeviceInventory['registration_status']) => (
-      <Tag className="tag-margin-zero" color={registrationStatusColor(value)}>{registrationStatusText(value)}</Tag>
-    ),
-  },
-  {
-    title: '责任人',
-    width: 160,
-    render: (_, row) => {
-      const name = row.owner_name || row.owner_account
-      if (!name) return <Typography.Text type="secondary">-</Typography.Text>
-      return (
-        <Space orientation="vertical" size={0}>
-          <Typography.Text strong className="font-size-md">{name}</Typography.Text>
-          {row.owner_department && <Typography.Text type="secondary" className="font-size-xs">{row.owner_department}</Typography.Text>}
-        </Space>
-      )
-    },
-  },
-  {
-    title: '当前账号',
-    dataIndex: 'current_account',
-    width: 130,
-    render: (value?: string) => <Typography.Text className="mono">{value || '-'}</Typography.Text>,
-  },
-  {
-    title: '当前 IP',
-    dataIndex: 'current_ip',
-    width: 140,
-    render: (value?: string) => <Typography.Text className="mono">{value || '-'}</Typography.Text>,
-  },
-  {
-    title: '接入位置',
-    dataIndex: 'current_access_id',
-    width: 160,
-    render: (value?: string) => <Typography.Text>{value || '-'}</Typography.Text>,
-  },
-  {
-    title: '关联规模',
-    width: 180,
-    render: (_, row) => (
-      <Space size="small" wrap>
-        <Tag className="tag-margin-zero" color={endpointAccounts(row).length > 1 ? 'orange' : 'blue'}>账号 {endpointAccounts(row).length}</Tag>
-        <Tag className="tag-margin-zero">IP {endpointIPs(row).length}</Tag>
-        <Tag className="tag-margin-zero">位置 {endpointAccessIDs(row).length}</Tag>
-      </Space>
-    ),
-  },
-  {
-    title: '置信度',
-    dataIndex: 'identity_confidence',
-    width: 140,
-    render: (value: number) => {
-      const pct = Math.round(value * 100)
-      const color = pct >= 80 ? '#059669' : pct >= 60 ? '#0284c7' : '#d97706'
-      return <Progress percent={pct} size="small" strokeColor={color} />
-    },
-  },
-  {
-    title: '摘要',
-    dataIndex: 'summary',
-    minWidth: 280,
-    render: (value: string) => (
-      <Typography.Paragraph className="device-page-summary margin-zero font-size-sm" ellipsis={{ rows: 2, tooltip: value }}>
-        {value}
-      </Typography.Paragraph>
-    ),
-  },
-  {
-    title: '最近出现',
-    dataIndex: 'last_seen',
-    width: 170,
-    render: (value?: string) => (
-      <Typography.Text className="table-time font-size-sm" type="secondary">
-        {value ? new Date(value).toLocaleString() : '-'}
-      </Typography.Text>
-    ),
-  },
-]
-
-function registrationStatusText(status: EndpointDeviceInventory['registration_status']) {
-  switch (status) {
-    case 'registered':
-      return '已登记'
-    case 'ignored':
-      return '已忽略'
-    case 'retired':
-      return '已退役'
-    default:
-      return '未登记'
-  }
-}
-
-function registrationStatusColor(status: EndpointDeviceInventory['registration_status']) {
-  switch (status) {
-    case 'registered':
-      return 'green'
-    case 'ignored':
-      return 'default'
-    case 'retired':
-      return 'red'
-    default:
-      return 'orange'
-  }
-}
-
-function endpointAccounts(item: EndpointDeviceInventory) {
-  return item.accounts ?? []
-}
-
-function endpointIPs(item: EndpointDeviceInventory) {
-  return item.ips ?? []
-}
-
-function endpointAccessIDs(item: EndpointDeviceInventory) {
-  return item.access_ids ?? []
-}
-
-function coerceEndpointDevice(item: EndpointDeviceInventory): EndpointDeviceInventory {
-  if (item.endpoint_id) {
-    return {
-      ...item,
-      accounts: item.accounts ?? [],
-      ips: item.ips ?? [],
-      access_ids: item.access_ids ?? [],
-    }
-  }
-  const legacy = item as unknown as {
-    ip?: string
-    summary?: string
-    first_seen?: string
-    last_seen?: string
-    confidence?: number
-    devices?: Array<{
-      device_id?: string
-      endpoint_id?: string
-      primary_mac?: string
-      account_id?: string
-      access_id?: string
-      confidence?: number
-    }>
-  }
-  const device = legacy.devices?.[0]
-  const endpointId = device?.endpoint_id || device?.device_id || ''
-  const account = device?.account_id || ''
-  const access = device?.access_id || ''
-  return {
-    endpoint_id: endpointId,
-    primary_mac: device?.primary_mac,
-    entity_role: 'endpoint',
-    registration_status: 'unregistered',
-    merge_status: 'active',
-    current_account: account,
-    current_ip: legacy.ip,
-    current_access_id: access,
-    accounts: account ? [account] : [],
-    ips: legacy.ip ? [legacy.ip] : [],
-    access_ids: access ? [access] : [],
-    first_seen: legacy.first_seen,
-    last_seen: legacy.last_seen,
-    identity_confidence: device?.confidence ?? legacy.confidence ?? 0,
-    summary: legacy.summary || '旧版 IP inventory 兼容行，等待 endpoint 身份事件补齐',
-  }
-}
+function registrationStatusText(status:EndpointDeviceInventory['registration_status']) { return status === 'registered' ? '已登记' : status === 'ignored' ? '已忽略' : status === 'retired' ? '已退役' : '未登记' }
+function registrationStatusColor(status:EndpointDeviceInventory['registration_status']) { return status === 'registered' ? 'green' : status === 'retired' ? 'red' : status === 'ignored' ? 'default' : 'orange' }

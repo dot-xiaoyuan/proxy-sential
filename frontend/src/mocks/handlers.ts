@@ -1,6 +1,6 @@
 import { delay, http, HttpResponse } from 'msw'
 
-import type { CreateLabelRequest } from '../shared/api/types'
+import type { CreateLabelRequest, RiskCase } from '../shared/api/types'
 import {
   activityByIp,
   getActivityOverviewByWindow,
@@ -27,11 +27,76 @@ function normalizeIp(value: string) {
   return decodeURIComponent(value)
 }
 
+const mockCases: RiskCase[] = proxyReviewResponse.items.map((item, index) => ({
+  case_id: item.case_id,
+  subject_type: 'ip',
+  subject_id: item.ip,
+  ip: item.ip,
+  account_id: item.account_id,
+  endpoint_id: item.endpoint_id,
+  campus_id: index === 0 ? 'main' : 'north',
+  status: index === 0 ? 'investigating' as const : 'new' as const,
+  priority: item.risk_score >= 90 ? 'high' as const : 'medium' as const,
+  risk_score: item.risk_score,
+  risk_confidence: Math.min(0.99, Math.max(0.5, item.risk_score / 100)),
+  assessment_level: item.risk_score >= 90 ? 'high' : 'medium',
+  due_at: new Date(Date.now() + (index - 1) * 3_600_000).toISOString(),
+  first_seen: item.first_seen,
+  last_seen: item.last_seen,
+  created_at: item.first_seen,
+  updated_at: item.last_seen,
+  comments: [],
+  timeline: [{ event_id: `timeline-${index}`, actor_id: 'system', type: 'case.created', created_at: item.first_seen }],
+  evidence_snapshot: item,
+}))
+
+const mockOrganization = {
+  campuses: [{ campus_id: 'main', code: 'MAIN', name: '主校区', enabled: true }, { campus_id: 'north', code: 'NORTH', name: '北校区', enabled: true }],
+  buildings: [{ building_id: 'lib', campus_id: 'main', code: 'LIB', name: '图书馆', enabled: true }],
+  network_zones: [{ network_zone_id: 'student-wifi', campus_id: 'main', name: '学生无线网', cidrs: ['10.20.0.0/16'], ssids: ['Campus-WiFi'], vlans: ['120'], enabled: true }],
+  access_points: [{ access_point_id: 'ap-lib-01', campus_id: 'main', building_id: 'lib', network_zone_id: 'student-wifi', kind: 'ap', name: '图书馆一层 AP', management_ip: '10.1.1.10', enabled: true }],
+}
+
+const mockConnectors = [{ connector_id: 'portal-gateway', name: 'Portal 北向网关', endpoint_url: 'https://portal.example.edu/api/actions', action_mapping: { disconnect: 'kick' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, updated_at: new Date().toISOString() }]
+const mockActions: Array<Record<string, unknown>> = []
+
 export const handlers = [
   http.get('/api/v1/session', async () => {
     await delay(120)
     return HttpResponse.json(mockSession)
   }),
+  http.post('/api/v1/auth/login', () => HttpResponse.json(mockSession)),
+  http.post('/api/v1/auth/logout', () => new HttpResponse(null, { status: 204 })),
+  http.get('/api/v1/cases', ({ request }) => {
+    const url = new URL(request.url)
+    const result = mockPage(mockCases.filter((item) => !url.searchParams.get('status') || item.status === url.searchParams.get('status')), url)
+    return HttpResponse.json(result)
+  }),
+  http.get('/api/v1/cases/:caseId', ({ params }) => {
+    const item = mockCases.find((entry) => entry.case_id === params.caseId)
+    return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
+  }),
+  http.post('/api/v1/cases/:caseId/:operation', async ({ params, request }) => {
+    const item = mockCases.find((entry) => entry.case_id === params.caseId)
+    if (!item) return new HttpResponse(null, { status: 404 })
+    const payload = await request.json() as Record<string, string>
+    if (params.operation === 'assign') Object.assign(item, { assignee_id: payload.assignee_id, status: 'assigned' })
+    if (params.operation === 'status') Object.assign(item, { status: payload.status })
+    if (params.operation === 'disposition') Object.assign(item, { disposition: payload.disposition, status: 'resolved' })
+    if (params.operation === 'comments') (item.comments ??= []).push({ comment_id: `comment-${Date.now()}`, author_id: mockSession.user.id, body: payload.body, created_at: new Date().toISOString() })
+    return HttpResponse.json(item)
+  }),
+  http.get('/api/v1/organization', () => HttpResponse.json(mockOrganization)),
+  http.get('/api/v1/actions/connectors', () => HttpResponse.json({ items: mockConnectors, global_stop: false })),
+  http.get('/api/v1/actions', ({ request }) => { const result = mockPage(mockActions, new URL(request.url)); return HttpResponse.json(result) }),
+  http.post('/api/v1/actions/execute', async ({ request }) => {
+    const payload = await request.json() as Record<string, string>
+    const action = { ...payload, action_id: `action-${Date.now()}`, idempotency_key: 'mock', subject_id: payload.ip, mode: 'shadow', status: 'shadow', blockers: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+    mockActions.unshift(action)
+    return HttpResponse.json(action, { status: 202 })
+  }),
+  http.post('/api/v1/actions/:actionId/revoke', ({ params }) => HttpResponse.json({ action_id: params.actionId, status: 'revoked', updated_at: new Date().toISOString() })),
+  http.post('/api/v1/actions/emergency-stop', () => HttpResponse.json({ global_stop: true })),
   http.get('/api/v1/overview', async () => {
     await delay(160)
     return HttpResponse.json(overview)
@@ -44,7 +109,12 @@ export const handlers = [
   http.get('/api/v1/proxy-reviews', ({ request }) => {
     const url = new URL(request.url)
     const window = url.searchParams.get('window') === '24h' ? '24h' : '7d'
-    return HttpResponse.json({ ...proxyReviewResponse, window })
+    const page = mockPage(proxyReviewResponse.items, url)
+    return HttpResponse.json({ ...proxyReviewResponse, window, items: page.items, page: page.page })
+  }),
+  http.get('/api/v1/proxy-reviews/:caseId', ({ params }) => {
+    const item = proxyReviewResponse.items.find((entry) => entry.case_id === params.caseId)
+    return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
   }),
   http.get('/api/v1/dpi/overview', ({ request }) => {
     const url = new URL(request.url)
@@ -325,13 +395,16 @@ export const handlers = [
     const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
     return HttpResponse.json({ events: pageItems, page: { limit, next_cursor: nextCursor, total: filtered.length } })
   }),
+  http.get('/api/v1/events/:eventId', ({ params }) => {
+    const item = Object.values(eventsByIp).flat().find((entry) => entry.event_id === params.eventId)
+    return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
+  }),
   http.get('/api/v1/ingest/status', () => HttpResponse.json(ingestStatus)),
   http.get('/api/v1/ingest/runs', () => HttpResponse.json({ runs: shadowRuns })),
-  http.get('/api/v1/ingest/diagnostics', () => HttpResponse.json({ diagnostics: ingestDiagnostics })),
+  http.get('/api/v1/ingest/diagnostics', ({ request }) => { const result = mockPage(ingestDiagnostics, new URL(request.url)); return HttpResponse.json({ diagnostics: result.items, page: result.page }) }),
+  http.get('/api/v1/ingest/diagnostics/:diagnosticId', ({ params }) => { const item = ingestDiagnostics.find((entry) => entry.diagnostic_id === params.diagnosticId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
   http.get('/api/v1/ingest/event-types', () => HttpResponse.json({ event_types: ingestEventTypes })),
-  http.get('/api/v1/ingest/errors', () =>
-    HttpResponse.json({ diagnostics: ingestDiagnostics.filter((item) => item.severity !== 'info') }),
-  ),
+  http.get('/api/v1/ingest/errors', ({ request }) => { const result = mockPage(ingestDiagnostics.filter((item) => item.severity !== 'info'), new URL(request.url)); return HttpResponse.json({ diagnostics: result.items, page: result.page }) }),
   http.post('/api/v1/labels', async ({ request }) => {
     const payload = (await request.json()) as CreateLabelRequest
     const created = {
@@ -350,9 +423,15 @@ export const handlers = [
     })
     return HttpResponse.json(created, { status: 201 })
   }),
-  http.get('/api/v1/shadow/runs', () => HttpResponse.json({ runs: shadowRuns })),
+  http.get('/api/v1/shadow/runs', ({ request }) => { const result = mockPage(shadowRuns, new URL(request.url)); return HttpResponse.json({ runs: result.items, page: result.page }) }),
+  http.get('/api/v1/shadow/runs/:runId', ({ params }) => { const item = shadowRuns.find((entry) => entry.run_id === params.runId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
   http.get('/api/v1/shadow/evaluation', () => HttpResponse.json(shadowEvaluation)),
-  http.get('/api/v1/audit-logs', () => HttpResponse.json({ logs: auditLogs })),
+  http.get('/api/v1/audit-logs', ({ request }) => { const result = mockPage(auditLogs, new URL(request.url)); return HttpResponse.json({ logs: result.items, page: result.page }) }),
+  http.get('/api/v1/audit-logs/:auditId', ({ params }) => { const item = auditLogs.find((entry) => entry.audit_id === params.auditId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
+  http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0'],backfill_status:'completed',backfill_processed:110 })),
+  http.post('/api/v1/device-fingerprint-library/update', () => HttpResponse.json({ code:'offline_update_required',message:'import a verified bundle' },{status:409})),
+  http.post('/api/v1/device-fingerprint-library/validate', () => HttpResponse.json({schema_version:'device-fingerprint-bundle/v1',version:'offline-20260831-mock',created_at:new Date().toISOString(),sources:[{name:'IEEE MA-L/MA-M/MA-S',version:'2026-08-31',url:'https://standards-oui.ieee.org/',license:'IEEE public registry'},{name:'uap-core',version:'mocksha',url:'https://github.com/ua-parser/uap-core',license:'Apache-2.0'},{name:'Fingerbank public snapshot',version:'6.8.2-20140609',url:'https://github.com/karottc/fingerbank',license:'ODbL-1.0/DbCL-1.0'}],files:{}})),
+  http.post('/api/v1/device-fingerprint-library/import', () => HttpResponse.json({version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0'],backfill_status:'pending',backfill_processed:0})),
   http.post('/api/v1/rules/reload', () =>
     HttpResponse.json(
       { status: 'accepted', mode: 'shadow', requested_at: new Date().toISOString() },
@@ -360,6 +439,13 @@ export const handlers = [
     ),
   ),
 ]
+
+function mockPage<T>(items: T[], url: URL) {
+  const limit = Number(url.searchParams.get('limit') ?? 20)
+  const cursor = Number(url.searchParams.get('cursor') ?? 0)
+  const pageItems = items.slice(cursor, cursor + limit)
+  return { items: pageItems, page: { limit, next_cursor: cursor + pageItems.length < items.length ? String(cursor + pageItems.length) : null, total: items.length } }
+}
 
 function filterMockFlows(url: URL) {
   const q = url.searchParams.get('q')?.toLowerCase()

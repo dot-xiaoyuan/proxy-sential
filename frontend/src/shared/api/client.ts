@@ -3,6 +3,7 @@ import type {
   ActivityOverviewQuery,
   AccountIdentityProfile,
   AuditLog,
+  AuditLogListResponse,
   CreateLabelRequest,
   DpiFlowDetail,
   DpiFlowListResponse,
@@ -22,6 +23,7 @@ import type {
   FingerprintConflictItem,
   IngestDiagnostic,
   IngestStatus,
+  IngestDiagnosticListResponse,
   IpDeviceInventory,
   IpActivityProfile,
   EndpointIdentityProfile,
@@ -38,9 +40,28 @@ import type {
   RuleReloadResult,
   Session,
   ShadowRun,
+  ShadowRunListResponse,
   ShadowEvaluation,
   UpdateEndpointRegistrationRequest,
+  ListQuery,
+  DeviceFingerprintLibraryStatus,
+  DeviceFingerprintBundleManifest,
+  ProxyReviewCase,
+	LoginRequest,
+	RiskCase,
+	RiskCaseListResponse,
+	Organization,
+	ActionConnector,
+	EnforcementAction,
+	Page,
 } from './types'
+
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) { super(message); this.status=status }
+}
+
+let csrfToken = ''
 
 export function getApiBase(): string {
   const envBase = import.meta.env.VITE_API_BASE
@@ -53,18 +74,21 @@ export function getApiBase(): string {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const baseUrl = getApiBase()
   const cleanPath = path.startsWith('/') ? path : `/${path}`
+  const headers = new Headers(init?.headers)
+  if (!(init?.body instanceof FormData) && !headers.has('content-type')) headers.set('content-type','application/json')
+  if (init?.method && init.method !== 'GET' && csrfToken) headers.set('X-CSRF-Token', csrfToken)
   const response = await fetch(`${baseUrl}${cleanPath}`, {
-    headers: {
-      'content-type': 'application/json',
-      ...init?.headers,
-    },
+    headers,
+    credentials: 'include',
     ...init,
   })
 
   if (!response.ok) {
     const text = await response.text()
-    throw new Error(text || `HTTP ${response.status}`)
+    throw new ApiError(response.status, text || `HTTP ${response.status}`)
   }
+
+  if (response.status === 204) return undefined as T
 
   return response.json() as Promise<T>
 }
@@ -81,12 +105,16 @@ function search(params: Record<string, string | number | boolean | undefined>) {
 }
 
 export const api = {
-  session: () => request<Session>('/session'),
-  overview: () => request<Overview>('/overview'),
+  session: async () => { const session=await request<Session>('/session');csrfToken=session.csrf_token??'';return session },
+  login: async (payload:LoginRequest) => { const session=await request<Session>('/auth/login',{method:'POST',body:JSON.stringify(payload)});csrfToken=session.csrf_token??'';return session },
+  logout: async () => { await request<void>('/auth/logout',{method:'POST'});csrfToken='' },
+  overview: (query: ActivityOverviewQuery = {}) => request<Overview>(`/overview${search(query)}`),
   activityOverview: (query: ActivityOverviewQuery) =>
     request<ActivityOverview>(`/activity/overview${search(query)}`),
   proxyReviews: (query: ProxyReviewQuery) =>
     request<ProxyReviewResponse>(`/proxy-reviews${search(query)}`),
+  proxyReview: (caseId: string, window: '24h' | '7d') =>
+    request<ProxyReviewCase>(`/proxy-reviews/${encodeURIComponent(caseId)}${search({ window })}`),
   dpiOverview: (query: ActivityOverviewQuery) =>
     request<DpiOverview>(`/dpi/overview${search(query)}`),
   dpiTrends: (query: ActivityOverviewQuery) =>
@@ -133,17 +161,40 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   events: (query: EventQuery) => request<EventListResponse>(`/events${search(query)}`),
+  event: (eventId: string) => request<NormalizedEventSummary>(`/events/${encodeURIComponent(eventId)}`),
   ingestStatus: () => request<IngestStatus>('/ingest/status'),
-  ingestRuns: () => request<{ runs: ShadowRun[] }>('/ingest/runs'),
-  ingestDiagnostics: (limit = 50) =>
-    request<{ diagnostics: IngestDiagnostic[] }>(`/ingest/diagnostics${search({ limit })}`),
+  ingestRuns: (query: ListQuery = {}) => request<ShadowRunListResponse>(`/ingest/runs${search(query)}`),
+  ingestDiagnostics: (query: ListQuery = {}) =>
+    request<IngestDiagnosticListResponse>(`/ingest/diagnostics${search(query)}`),
+  ingestDiagnostic: (diagnosticId: string) =>
+    request<IngestDiagnostic>(`/ingest/diagnostics/${encodeURIComponent(diagnosticId)}`),
   ingestEventTypes: () => request<{ event_types: EventTypeCount[] }>('/ingest/event-types'),
-  ingestErrors: (limit = 50) =>
-    request<{ diagnostics: IngestDiagnostic[] }>(`/ingest/errors${search({ limit })}`),
+  ingestErrors: (query: ListQuery = {}) =>
+    request<IngestDiagnosticListResponse>(`/ingest/errors${search(query)}`),
   createLabel: (payload: CreateLabelRequest) =>
     request<Label>('/labels', { method: 'POST', body: JSON.stringify(payload) }),
-  shadowRuns: () => request<{ runs: ShadowRun[] }>('/shadow/runs'),
+  shadowRuns: (query: ListQuery = {}) => request<ShadowRunListResponse>(`/shadow/runs${search(query)}`),
+  shadowRun: (runId: string) => request<ShadowRun>(`/shadow/runs/${encodeURIComponent(runId)}`),
   shadowEvaluation: () => request<ShadowEvaluation>('/shadow/evaluation'),
-  auditLogs: (limit = 50) => request<{ logs: AuditLog[] }>(`/audit-logs${search({ limit })}`),
+  auditLogs: (query: ListQuery = {}) => request<AuditLogListResponse>(`/audit-logs${search(query)}`),
+  auditLog: (auditId: string) => request<AuditLog>(`/audit-logs/${encodeURIComponent(auditId)}`),
+  deviceFingerprintLibrary: () => request<DeviceFingerprintLibraryStatus>('/device-fingerprint-library'),
+  updateDeviceFingerprintLibrary: () => request<DeviceFingerprintLibraryStatus>('/device-fingerprint-library/update', { method: 'POST' }),
+  validateDeviceFingerprintBundle: (file: File) => { const body=new FormData();body.append('bundle',file);return request<DeviceFingerprintBundleManifest>('/device-fingerprint-library/validate',{method:'POST',body}) },
+  importDeviceFingerprintBundle: (file: File) => { const body=new FormData();body.append('bundle',file);return request<DeviceFingerprintLibraryStatus>('/device-fingerprint-library/import',{method:'POST',body}) },
   reloadRules: () => request<RuleReloadResult>('/rules/reload', { method: 'POST' }),
+  cases: (query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;window?:string} = {}) => request<RiskCaseListResponse>(`/cases${search(query)}`),
+  caseDetail: (caseId:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}`),
+  assignCase: (caseId:string,assignee_id:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/assign`,{method:'POST',body:JSON.stringify({assignee_id})}),
+  updateCaseStatus: (caseId:string,status:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/status`,{method:'POST',body:JSON.stringify({status})}),
+  resolveCase: (caseId:string,disposition:string,reason:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/disposition`,{method:'POST',body:JSON.stringify({disposition,reason})}),
+  commentCase: (caseId:string,comment:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/comments`,{method:'POST',body:JSON.stringify({comment})}),
+  organization: () => request<Organization>('/organization'),
+  saveOrganization: <T>(kind:string,payload:T) => request<T>(`/organization/${kind}`,{method:'POST',body:JSON.stringify(payload)}),
+  actionConnectors: () => request<{items:ActionConnector[];global_stop:boolean}>('/actions/connectors'),
+  saveActionConnector: (payload:ActionConnector & {secret?:string}) => request<ActionConnector>('/actions/connectors',{method:'POST',body:JSON.stringify(payload)}),
+  actions: (query:ListQuery={}) => request<{items:EnforcementAction[];page:Page}>(`/actions${search(query)}`),
+  executeAction: (payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number},idempotencyKey:string) => request<EnforcementAction>('/actions/execute',{method:'POST',headers:{'Idempotency-Key':idempotencyKey},body:JSON.stringify(payload)}),
+  revokeAction: (actionId:string) => request<EnforcementAction>(`/actions/${encodeURIComponent(actionId)}/revoke`,{method:'POST'}),
+  emergencyStop: (enabled:boolean) => request<{global_stop:boolean}>('/actions/emergency-stop',{method:'POST',body:JSON.stringify({enabled})}),
 }

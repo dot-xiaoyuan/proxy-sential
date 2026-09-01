@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { Button, Drawer, Input, Select, Space, Table, Tag, Typography } from 'antd'
+import { useMemo } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Button, Input, Select, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { useEvents } from '../shared/api/queries'
@@ -15,8 +15,6 @@ import {
 
 export function EventsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [selectedEvent, setSelectedEvent] = useState<NormalizedEventSummary | null>(null)
-
   const query = useMemo(() => queryFromSearchParams(searchParams), [searchParams])
   const quickWindow: QuickWindow = query.window ?? '1h'
   const activeType = query.type ?? ''
@@ -39,7 +37,7 @@ export function EventsPage() {
       title: '源 IP',
       width: 170,
       render: (_, event) => (
-        <Typography.Text className="mono wrap-text">
+        <Typography.Text className="mono list-cell-nowrap" title={stringField(event.subject, 'ip') || stringField(event.flow, 'src_ip')}>
           {stringField(event.subject, 'ip') || stringField(event.flow, 'src_ip') || '-'}
         </Typography.Text>
       ),
@@ -48,7 +46,7 @@ export function EventsPage() {
       title: '目的地址',
       width: 190,
       render: (_, event) => (
-        <Typography.Text className="mono wrap-text">
+        <Typography.Text className="mono list-cell-nowrap" title={stringField(event.flow, 'dst_ip')}>
           {stringField(event.flow, 'dst_ip') || '-'}
           {numberField(event.flow, 'dst_port') ? `:${numberField(event.flow, 'dst_port')}` : ''}
         </Typography.Text>
@@ -56,13 +54,13 @@ export function EventsPage() {
     },
     {
       title: 'L7 访问对象',
-      render: (_, event) => <Typography.Text className="mono wrap-text">{eventTarget(event) || '-'}</Typography.Text>,
+      render: (_, event) => <Typography.Text className="mono list-cell-nowrap" title={eventTarget(event)}>{eventTarget(event) || '-'}</Typography.Text>,
     },
     {
       title: 'Event ID',
       dataIndex: 'event_id',
       width: 220,
-      render: (value: string) => <Typography.Text className="mono wrap-text">{value}</Typography.Text>,
+      render: (value: string) => <Link className="mono list-cell-nowrap" title={value} to={`/events/${encodeURIComponent(value)}`}>{value}</Link>,
     },
   ]
 
@@ -189,11 +187,10 @@ export function EventsPage() {
             className="filter-select"
             onChange={(value) => updateQuery(setSearchParams, { ...query, limit: value, cursor: undefined })}
             options={[
+              { label: '20 条 / 页', value: 20 },
               { label: '50 条 / 页', value: 50 },
-              { label: '100 条 / 页', value: 100 },
-              { label: '200 条 / 页', value: 200 },
             ]}
-            value={query.limit ?? 50}
+            value={query.limit ?? 20}
           />
         </div>
       </section>
@@ -202,11 +199,10 @@ export function EventsPage() {
         <Table<NormalizedEventSummary>
           columns={columns}
           dataSource={events.data?.events ?? []}
-          onRow={(record) => ({ onClick: () => setSelectedEvent(record) })}
           pagination={false}
           rowKey="event_id"
           scroll={{ x: 960 }}
-          size="middle"
+          size="small"
         />
 
         <div className="section-toolbar section-toolbar-spaced">
@@ -235,14 +231,6 @@ export function EventsPage() {
         </div>
       </section>
 
-      <Drawer
-        onClose={() => setSelectedEvent(null)}
-        open={Boolean(selectedEvent)}
-        size="large"
-        title={`标准事件明细 - ${selectedEvent?.event_id ?? ''}`}
-      >
-        {selectedEvent && <pre className="dpi-drawer-json">{JSON.stringify(selectedEvent, null, 2)}</pre>}
-      </Drawer>
     </main>
   )
 }
@@ -264,7 +252,7 @@ function queryFromSearchParams(params: URLSearchParams): EventQuery {
     fingerprint: params.get('fingerprint') || undefined,
     port: port ? Number(port) : undefined,
     proto: params.get('proto') || undefined,
-    limit: limit ? Number(limit) : 50,
+    limit: limit ? Number(limit) : 20,
     cursor: params.get('cursor') || undefined,
   }
 }

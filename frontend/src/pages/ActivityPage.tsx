@@ -34,8 +34,8 @@ export function ActivityPage() {
 
   const activity = useActivityOverview({ window: quickWindow })
   const dpiTrends = useDpiTrends({ window: quickWindow })
-  const dpiProtocolFlows = useDpiProtocolFlows({ window: quickWindow })
-  const fingerprintConflicts = useDpiFingerprintConflicts({ window: quickWindow })
+  const dpiProtocolFlows = useDpiProtocolFlows({ window: quickWindow }, tabKey === 'sankey')
+  const fingerprintConflicts = useDpiFingerprintConflicts({ window: quickWindow }, tabKey === 'matrix')
 
   if (activity.isLoading) {
     return <AppLoadingState rows={8} />
@@ -173,13 +173,13 @@ export function ActivityPage() {
   return (
     <main className="page">
       <AppPageHeader
-        loading={activity.isFetching || dpiTrends.isFetching || dpiProtocolFlows.isFetching || fingerprintConflicts.isFetching}
+        loading={activity.isFetching || dpiTrends.isFetching || (tabKey === 'sankey' && dpiProtocolFlows.isFetching) || (tabKey === 'matrix' && fingerprintConflicts.isFetching)}
         onQuickWindowChange={setQuickWindow}
         onRefresh={() => {
           void activity.refetch()
           void dpiTrends.refetch()
-          void dpiProtocolFlows.refetch()
-          void fingerprintConflicts.refetch()
+          if (tabKey === 'sankey') void dpiProtocolFlows.refetch()
+          if (tabKey === 'matrix') void fingerprintConflicts.refetch()
         }}
         quickWindow={quickWindow}
         subtitle="基于标准事件元数据呈现 L7 协议流向、终端指纹碰撞与访问对象排行"

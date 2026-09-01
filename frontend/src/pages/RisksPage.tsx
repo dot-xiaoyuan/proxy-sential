@@ -1,101 +1,29 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Pagination } from 'antd'
 
 import { useRisks } from '../shared/api/queries'
 import type { RiskLevel } from '../shared/api/types'
-import {
-  AppErrorAlert,
-  AppLoadingState,
-  AppMetricCard,
-  AppPageHeader,
-  AppTableBar,
-  type QuickWindow,
-} from '../shared/ui'
+import { AppErrorAlert, AppLoadingState, AppPageHeader, AppTableBar, type QuickWindow } from '../shared/ui'
 import { RiskTable } from '../widgets/RiskTable'
 
 export function RisksPage() {
   const [quickWindow, setQuickWindow] = useState<QuickWindow>('1h')
   const [level, setLevel] = useState<RiskLevel | 'all'>('all')
-  const [ipQuery, setIpQuery] = useState('')
-
-  const risks = useRisks({
-    level: level === 'all' ? undefined : level,
-    limit: 100,
-  })
-
-  if (risks.isLoading) {
-    return <AppLoadingState rows={6} />
-  }
-
-  const rawItems = risks.data?.items ?? []
-  const items = rawItems.filter((i) => (!ipQuery ? true : i.ip.includes(ipQuery) || i.summary.includes(ipQuery)))
-
-  const confirmedCount = rawItems.filter((i) => i.level === 'confirmed').length
-  const highCount = rawItems.filter((i) => i.level === 'high').length
-  const normalCount = rawItems.filter((i) => i.level === 'normal').length
-
+  const [searchInput, setSearchInput] = useState('')
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+  useEffect(() => { const timer = globalThis.setTimeout(() => { setQuery(searchInput.trim()); setPage(1) }, 300); return () => globalThis.clearTimeout(timer) }, [searchInput])
+  const risks = useRisks({ level: level === 'all' ? undefined : level, q: query, limit: pageSize, cursor: String((page - 1) * pageSize) })
   const filterOptions = [
-    { key: 'confirmed', label: '确认代理 (Confirmed)', active: level === 'confirmed' },
-    { key: 'high', label: '高风险 (High)', active: level === 'high' },
-    { key: 'suspicious', label: '疑点 (Suspicious)', active: level === 'suspicious' },
-    { key: 'normal', label: '正常终端 (Normal)', active: level === 'normal' },
+    { key:'confirmed',label:'确认代理',active:level==='confirmed' }, { key:'high',label:'高风险',active:level==='high' },
+    { key:'suspicious',label:'疑点',active:level==='suspicious' }, { key:'normal',label:'正常',active:level==='normal' },
   ]
-
-  return (
-    <main className="page">
-      <AppPageHeader
-        loading={risks.isFetching}
-        onQuickWindowChange={setQuickWindow}
-        onRefresh={() => void risks.refetch()}
-        quickWindow={quickWindow}
-        subtitle="展示网络环境中 Sensor 实时识别的所有设备 IP 风险快照、综合评分与处置建议"
-        title="全网络识别设备与风险 IP 监控"
-      />
-
-      <section className="metric-grid">
-        <AppMetricCard
-          statusColor="blue"
-          statusText="观测快照"
-          title="识别终端 IP 总数"
-          value={rawItems.length}
-        />
-        <AppMetricCard
-          statusColor="red"
-          statusText="需要判定"
-          title="确认代理终端 (Confirmed)"
-          value={confirmedCount}
-        />
-        <AppMetricCard
-          statusColor="orange"
-          statusText="疑似共享"
-          title="高风险设备 (High)"
-          value={highCount}
-        />
-        <AppMetricCard
-          statusColor="green"
-          statusText="极低风险"
-          title="正常终端 (Normal)"
-          value={normalCount}
-        />
-      </section>
-
-      {risks.isError && <AppErrorAlert title="加载设备风险快照失败" />}
-
-      <AppTableBar
-        filterOptions={filterOptions}
-        onClearFilters={() => {
-          setLevel('all')
-          setIpQuery('')
-        }}
-        onFilterToggle={(key) => setLevel(level === key ? 'all' : (key as RiskLevel))}
-        onSearchChange={setIpQuery}
-        searchPlaceholder="搜索 IP 或摘要 (如 10.255.0.59 / multi_ja3)..."
-        searchValue={ipQuery}
-        totalCount={items.length}
-      />
-
-      <section className="surface">
-        <RiskTable data={items} loading={risks.isFetching} />
-      </section>
-    </main>
-  )
+  if (risks.isLoading) return <AppLoadingState rows={8} />
+  return <main className="page">
+    <AppPageHeader title="风险 IP 监控" subtitle="单行展示风险摘要，点击 IP 查看设备、证据与事件详情。" quickWindow={quickWindow} onQuickWindowChange={setQuickWindow} loading={risks.isFetching} onRefresh={() => void risks.refetch()} />
+    {risks.isError && <AppErrorAlert title="加载风险快照失败" message={risks.error.message} />}
+    <AppTableBar filterOptions={filterOptions} onClearFilters={() => {setLevel('all');setSearchInput('');setPage(1)}} onFilterToggle={(key) => {setLevel(level===key?'all':key as RiskLevel);setPage(1)}} onSearchChange={setSearchInput} searchPlaceholder="搜索 IP 或风险摘要" searchValue={searchInput} totalCount={risks.data?.page.total ?? 0} />
+    <section className="surface"><RiskTable data={risks.data?.items ?? []} loading={risks.isFetching} /><Pagination className="list-pagination" current={page} pageSize={pageSize} total={risks.data?.page.total ?? 0} showSizeChanger pageSizeOptions={[20,50]} onChange={(next,size)=>{setPageSize(size);setPage(next)}} /></section>
+  </main>
 }

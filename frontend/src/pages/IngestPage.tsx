@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { CodeOutlined } from '@ant-design/icons'
 import { Alert, Button, Descriptions, Drawer, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -25,8 +26,8 @@ export function IngestPage() {
 
   const status = useIngestStatus()
   const eventTypes = useIngestEventTypes()
-  const diagnostics = useIngestDiagnostics(50)
-  const errors = useIngestErrors(50)
+  const diagnostics = useIngestDiagnostics({ limit: 20 })
+  const errors = useIngestErrors({ limit: 20 })
   const events = useEvents({ limit: 20 })
 
   if (status.isLoading) {
@@ -65,7 +66,7 @@ export function IngestPage() {
       title: '诊断说明',
       dataIndex: 'summary',
       width: 260,
-      render: (value: string) => <Typography.Text className="wrap-text">{value}</Typography.Text>,
+      render: (value: string) => <Typography.Text className="list-cell-nowrap" title={value}>{value}</Typography.Text>,
     },
     {
       title: '计数指标',
@@ -83,20 +84,7 @@ export function IngestPage() {
       title: '操作',
       width: 90,
       render: (_, record) => (
-        <Button
-          icon={<CodeOutlined />}
-          onClick={() =>
-            setInspectJson({
-              title: `全量诊断数据 #${record.diagnostic_id}`,
-              data: record,
-            })
-          }
-          size="small"
-          type="link"
-          className="ingest-json-preview-btn"
-        >
-          JSON
-        </Button>
+        <Link className="list-cell-nowrap" to={`/ingest/diagnostics/${encodeURIComponent(record.diagnostic_id)}`}>查看详情</Link>
       ),
     },
   ]
@@ -427,4 +415,3 @@ function zeekStatusDescription(status: string) {
       return '最新 shadow run 未包含 Zeek 设备日志输入。'
   }
 }
-
