@@ -15,6 +15,7 @@ Options:
   --retention DURATION   Shadow run retention. Default: 168h
   --control-addr ADDR    Control-plane listen address. Default: 0.0.0.0:18080
   --enable-review-writes Allow label and endpoint registration writes; enforcement remains shadow-only
+  --enable-local-auth    Use the pre-created local RBAC user file on the server
 
 Builds a Linux amd64 proxy-sentinel binary and frontend/dist, deploys them to
 the remote host, installs systemd units, and enables Suricata capture, periodic
@@ -32,6 +33,7 @@ window="10m"
 retention="168h"
 control_addr="0.0.0.0:18080"
 control_read_only_arg="--read-only"
+enable_local_auth="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -71,6 +73,10 @@ while [[ $# -gt 0 ]]; do
       control_read_only_arg="--read-only=false"
       shift
       ;;
+    --enable-local-auth)
+      enable_local_auth="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -82,6 +88,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+control_auth_arg=""
+if [[ "$enable_local_auth" == "true" ]]; then
+  control_auth_arg="--auth-file $remote_root/data/auth/users.json"
+fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_dir="$(mktemp -d)"
@@ -127,6 +138,10 @@ rm '$remote_frontend_tmp'
 chown -R root:root '$remote_root/frontend/dist'
 tar -C '$remote_root' -xzf '$remote_migrations_tmp'
 rm '$remote_migrations_tmp'
+if [[ '$enable_local_auth' == 'true' && ! -s '$remote_root/data/auth/users.json' ]]; then
+  echo 'local RBAC requested but data/auth/users.json does not exist; run control-plane bootstrap-admin first' >&2
+  exit 1
+fi
 
 storage_env_line=''
 storage_after_suffix=''
@@ -292,7 +307,8 @@ Wants=network-online.target\$storage_control_wants_suffix
 Type=simple
 WorkingDirectory=$remote_root
 \$storage_env_line
-ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual \$storage_dsn_args $control_read_only_arg
+EnvironmentFile=-$remote_root/config/control-plane-secrets.env
+ExecStart=$remote_root/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $remote_root/data/shadow --sensor-id $sensor_id --frontend-dir $remote_root/frontend/dist --storage-mode dual --device-fingerprint-dir $remote_root/data/device-fingerprints --device-fingerprint-auto-update=false --operations-file $remote_root/data/control-plane-operations.json \$storage_dsn_args $control_read_only_arg $control_auth_arg
 Restart=always
 RestartSec=5
 
