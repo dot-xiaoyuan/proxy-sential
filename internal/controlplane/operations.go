@@ -1,6 +1,8 @@
 package controlplane
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -110,13 +112,82 @@ type operationsDocument struct {
 }
 
 type operationsState struct {
-	mu   sync.Mutex
-	path string
-	doc  operationsDocument
+	mu        operationsMutex
+	path      string
+	doc       operationsDocument
+	db        *sql.DB
+	tx        *sql.Tx
+	txCancel  context.CancelFunc
+	lockErr   error
+	healthMu  sync.RWMutex
+	healthErr error
 }
 
-func newOperationsState(path string) (*operationsState, error) {
-	state := &operationsState{path: path, doc: operationsDocument{Version: 1, Cases: map[string]RiskCase{}, Campuses: map[string]Campus{}, Buildings: map[string]Building{}, NetworkZones: map[string]NetworkZone{}, AccessPoints: map[string]AccessPoint{}, Connectors: map[string]ActionConnector{}, Actions: map[string]EnforcementAction{}}}
+type operationsMutex struct {
+	sync.Mutex
+	owner *operationsState
+}
+
+func (m *operationsMutex) Lock() {
+	m.Mutex.Lock()
+	if m.owner != nil {
+		m.owner.beginLocked()
+	}
+}
+
+func (m *operationsMutex) Unlock() {
+	if m.owner != nil {
+		m.owner.endLocked()
+	}
+	m.Mutex.Unlock()
+}
+
+func newOperationsState(path, postgresDSN string) (*operationsState, error) {
+	state := &operationsState{path: path, doc: emptyOperationsDocument()}
+	state.mu.owner = state
+	if strings.TrimSpace(postgresDSN) != "" {
+		db, err := sql.Open("pgx", postgresDSN)
+		if err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(20)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxIdleTime(5 * time.Minute)
+		state.db = db
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("connect PostgreSQL operations repository: %w", err)
+		}
+		if err := state.reloadPostgres(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("load PostgreSQL operations repository: %w", err)
+		}
+		if path != "" && operationsDocumentEmpty(state.doc) {
+			data, readErr := os.ReadFile(path)
+			if readErr == nil {
+				var imported operationsDocument
+				if err := json.Unmarshal(data, &imported); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("decode legacy operations state: %w", err)
+				}
+				state.mu.Lock()
+				state.doc = imported
+				state.ensureMaps()
+				err = state.saveLocked()
+				state.mu.Unlock()
+				if err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("import legacy operations state: %w", err)
+				}
+			} else if !os.IsNotExist(readErr) {
+				_ = db.Close()
+				return nil, readErr
+			}
+		}
+		return state, nil
+	}
 	if path == "" {
 		return state, nil
 	}
@@ -132,6 +203,14 @@ func newOperationsState(path string) (*operationsState, error) {
 	}
 	state.ensureMaps()
 	return state, nil
+}
+
+func operationsDocumentEmpty(doc operationsDocument) bool {
+	return len(doc.Cases) == 0 && len(doc.Campuses) == 0 && len(doc.Buildings) == 0 && len(doc.NetworkZones) == 0 && len(doc.AccessPoints) == 0 && len(doc.Connectors) == 0 && len(doc.Actions) == 0 && !doc.GlobalStop
+}
+
+func emptyOperationsDocument() operationsDocument {
+	return operationsDocument{Version: 1, Cases: map[string]RiskCase{}, Campuses: map[string]Campus{}, Buildings: map[string]Building{}, NetworkZones: map[string]NetworkZone{}, AccessPoints: map[string]AccessPoint{}, Connectors: map[string]ActionConnector{}, Actions: map[string]EnforcementAction{}}
 }
 
 func (s *operationsState) ensureMaps() {
@@ -159,6 +238,20 @@ func (s *operationsState) ensureMaps() {
 }
 
 func (s *operationsState) saveLocked() error {
+	if s.lockErr != nil {
+		return s.lockErr
+	}
+	if s.db != nil {
+		if s.tx == nil {
+			return fmt.Errorf("PostgreSQL operations transaction is not active")
+		}
+		if err := s.savePostgres(s.tx); err != nil {
+			s.lockErr = err
+			s.setHealthError(err)
+			return err
+		}
+		return nil
+	}
 	if s.path == "" {
 		return nil
 	}

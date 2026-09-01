@@ -52,6 +52,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSystemStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases": {
         parameters: {
             query?: never;
@@ -1917,6 +1933,42 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
+        };
+    };
+    getSystemStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Readiness of storage, authentication, identity ingestion, and the offline fingerprint library. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "ready" | "degraded";
+                        components: {
+                            [key: string]: {
+                                status?: string;
+                                error?: string;
+                            };
+                        };
+                        fingerprint_library?: {
+                            [key: string]: unknown;
+                        };
+                        fingerprint_offline_mode?: boolean;
+                        global_read_only?: boolean;
+                        /** Format: date-time */
+                        checked_at: string;
+                    };
+                };
+            };
         };
     };
     listCases: {

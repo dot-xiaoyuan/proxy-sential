@@ -16,6 +16,16 @@ type DBStore struct {
 	storageMode Mode
 }
 
+func (s *DBStore) Health(ctx context.Context) error {
+	if err := s.pg.Health(ctx); err != nil {
+		return fmt.Errorf("PostgreSQL: %w", err)
+	}
+	if err := s.ch.Health(ctx); err != nil {
+		return fmt.Errorf("ClickHouse: %w", err)
+	}
+	return nil
+}
+
 func NewDBStore(opts Options) (*DBStore, error) {
 	pg, err := NewPostgresStore(PostgresOptions{
 		DSN:           opts.PostgresDSN,

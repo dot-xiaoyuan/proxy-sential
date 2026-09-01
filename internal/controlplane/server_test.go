@@ -43,6 +43,32 @@ func TestShadowRunsEmptyDirectoryReturnsEmptyArrays(t *testing.T) {
 	}
 }
 
+func TestHealthAndReadinessEndpoints(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
+	var health map[string]any
+	getJSON(t, server, "/healthz", http.StatusOK, &health)
+	if health["status"] != "alive" {
+		t.Fatalf("unexpected health response: %#v", health)
+	}
+	var readiness map[string]any
+	getJSON(t, server, "/readyz", http.StatusOK, &readiness)
+	if readiness["status"] != "ready" {
+		t.Fatalf("unexpected readiness response: %#v", readiness)
+	}
+	var system map[string]any
+	getJSON(t, server, "/api/v1/system/status", http.StatusOK, &system)
+	if system["fingerprint_offline_mode"] != true {
+		t.Fatalf("unexpected system status: %#v", system)
+	}
+}
+
+func TestProductionStorageRequiresBothDatabases(t *testing.T) {
+	_, err := NewServerWithError(Options{ShadowDir: t.TempDir(), StorageMode: string(store.ModeDual), PostgresDSN: "postgres://example.invalid/db"})
+	if err == nil || !strings.Contains(err.Error(), "requires both PostgreSQL and ClickHouse DSNs") {
+		t.Fatalf("expected production storage validation error, got %v", err)
+	}
+}
+
 func TestShadowEvaluationReturnsLatestReport(t *testing.T) {
 	shadowDir := t.TempDir()
 	evaluationDir := filepath.Join(shadowDir, "evaluation")

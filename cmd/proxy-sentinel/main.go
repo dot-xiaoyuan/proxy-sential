@@ -494,18 +494,26 @@ func runBootstrapAdmin(args []string) error {
 	fs := flag.NewFlagSet("control-plane bootstrap-admin", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	authFile := fs.String("auth-file", "", "local authentication file")
+	postgresDSN := fs.String("postgres-dsn", "", "PostgreSQL DSN for production authentication")
 	username := fs.String("username", "admin", "administrator username")
 	name := fs.String("name", "系统管理员", "administrator display name")
 	passwordEnv := fs.String("password-env", "PROXY_SENTINEL_ADMIN_PASSWORD", "environment variable containing the initial password")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *authFile == "" {
-		return fmt.Errorf("--auth-file is required")
+	if (*authFile == "") == (*postgresDSN == "") {
+		return fmt.Errorf("exactly one of --auth-file or --postgres-dsn is required")
 	}
 	password := os.Getenv(*passwordEnv)
 	if password == "" {
 		return fmt.Errorf("%s must contain the initial password", *passwordEnv)
+	}
+	if *postgresDSN != "" {
+		if err := controlplane.BootstrapAdminPostgres(*postgresDSN, *username, *name, password); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "local administrator created in PostgreSQL: username=%s\n", *username)
+		return nil
 	}
 	if err := controlplane.BootstrapAdmin(*authFile, *username, *name, password); err != nil {
 		return err
@@ -715,6 +723,7 @@ func runControlPlaneServe(args []string) error {
 	identityIngestKey := fs.String("identity-ingest-key", os.Getenv("PROXY_SENTINEL_IDENTITY_INGEST_KEY"), "bearer token for RADIUS/Portal identity event batches (defaults to PROXY_SENTINEL_IDENTITY_INGEST_KEY)")
 	operationsFile := fs.String("operations-file", "", "persistent cases, organization and action state file")
 	actionMasterKey := fs.String("action-master-key", os.Getenv("PROXY_SENTINEL_ACTION_MASTER_KEY"), "base secret used to encrypt northbound connector credentials (defaults to PROXY_SENTINEL_ACTION_MASTER_KEY)")
+	postgresMigrationsDir := fs.String("postgres-migrations-dir", "migrations/postgres", "PostgreSQL migrations directory applied transactionally before startup")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -738,6 +747,7 @@ func runControlPlaneServe(args []string) error {
 		IdentityIngestKey:     *identityIngestKey,
 		OperationsFile:        *operationsFile,
 		ActionMasterKey:       *actionMasterKey,
+		PostgresMigrationsDir: *postgresMigrationsDir,
 	})
 }
 

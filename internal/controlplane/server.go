@@ -47,6 +47,7 @@ type Options struct {
 	IdentityIngestKey     string
 	OperationsFile        string
 	ActionMasterKey       string
+	PostgresMigrationsDir string
 }
 
 type Server struct {
@@ -227,6 +228,20 @@ func NewServerWithError(opts Options) (*Server, error) {
 	if mode == "" {
 		mode = store.ModeFile
 	}
+	if mode != store.ModeFile {
+		if strings.TrimSpace(opts.PostgresDSN) == "" || strings.TrimSpace(opts.ClickHouseDSN) == "" {
+			return nil, fmt.Errorf("storage mode %s requires both PostgreSQL and ClickHouse DSNs", mode)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if opts.PostgresMigrationsDir != "" {
+			if _, err := store.ApplyPostgresMigrations(ctx, opts.PostgresDSN, opts.PostgresMigrationsDir); err != nil {
+				return nil, fmt.Errorf("apply PostgreSQL migrations: %w", err)
+			}
+		} else if err := store.VerifyPostgresSchema(ctx, opts.PostgresDSN, "schema_migrations", "risk_cases", "control_plane_settings"); err != nil {
+			return nil, fmt.Errorf("verify PostgreSQL schema: %w", err)
+		}
+	}
 	reader, err := store.NewReader(store.Options{
 		Mode:          mode,
 		ShadowDir:     shadowDir,
@@ -242,17 +257,29 @@ func NewServerWithError(opts Options) (*Server, error) {
 	}
 	fingerprints := fingerprint.NewManager(opts.FingerprintDir)
 	fingerprints.SetOffline(!opts.FingerprintAutoUpdate)
-	auth, err := newAuthManager(opts.AuthFile, opts.AuthCookieSecure)
+	authDSN := ""
+	if mode != store.ModeFile {
+		authDSN = opts.PostgresDSN
+	}
+	auth, err := newAuthManager(opts.AuthFile, opts.AuthCookieSecure, authDSN)
 	if err != nil {
 		return nil, err
 	}
 	operationsFile := opts.OperationsFile
-	if operationsFile == "" {
+	operationsDSN := ""
+	if mode == store.ModeFile && operationsFile == "" {
 		operationsFile = filepath.Join(shadowDir, "control-plane-operations.json")
 	}
-	operations, err := newOperationsState(operationsFile)
+	if mode != store.ModeFile {
+		operationsDSN = opts.PostgresDSN
+	}
+	operations, err := newOperationsState(operationsFile, operationsDSN)
 	if err != nil {
 		return nil, fmt.Errorf("load operations state: %w", err)
+	}
+	identityIngest, err := newIdentityIngestState(opts.IdentityIngestKey, operationsDSN)
+	if err != nil {
+		return nil, err
 	}
 	server := &Server{
 		shadowDir:          shadowDir,
@@ -263,7 +290,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 		fingerprints:       fingerprints,
 		fingerprintOffline: !opts.FingerprintAutoUpdate,
 		auth:               auth,
-		identityIngest:     newIdentityIngestState(opts.IdentityIngestKey),
+		identityIngest:     identityIngest,
 		operations:         operations,
 		actionMasterKey:    []byte(opts.ActionMasterKey),
 	}
@@ -278,6 +305,14 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/healthz" {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "alive", "checked_at": time.Now().UTC().Format(time.RFC3339Nano)})
+		return
+	}
+	if r.URL.Path == "/readyz" {
+		s.handleReadiness(w, r)
+		return
+	}
 	if s.handleCORS(w, r) {
 		return
 	}
@@ -357,6 +392,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && path == "/session":
 		writeJSON(w, http.StatusOK, session)
+	case r.Method == http.MethodGet && path == "/system/status":
+		s.handleSystemStatus(w, r)
 	case r.Method == http.MethodGet && path == "/integrations/identity/status":
 		s.handleIdentityIngestStatus(w, r)
 	case strings.HasPrefix(path, "/cases"):

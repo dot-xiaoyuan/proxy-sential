@@ -42,6 +42,30 @@ paths:
                 $ref: "#/components/schemas/Session"
         "500":
           $ref: "#/components/responses/InternalError"
+  /system/status:
+    get:
+      operationId: getSystemStatus
+      responses:
+        "200":
+          description: Readiness of storage, authentication, identity ingestion, and the offline fingerprint library.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, components, checked_at]
+                properties:
+                  status: { type: string, enum: [ready, degraded] }
+                  components:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        status: { type: string }
+                        error: { type: string }
+                  fingerprint_library: { type: object, additionalProperties: true }
+                  fingerprint_offline_mode: { type: boolean }
+                  global_read_only: { type: boolean }
+                  checked_at: { type: string, format: date-time }
   /cases:
     get:
       operationId: listCases

@@ -45,6 +45,10 @@ func NewPostgresStore(opts PostgresOptions) (*PostgresStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(30)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetConnMaxLifetime(30 * time.Minute)
 	sensorID := opts.SensorID
 	if sensorID == "" {
 		sensorID = "office-30"
@@ -73,6 +77,10 @@ func (s *PostgresStore) DSN() string {
 
 func (s *PostgresStore) Close() error {
 	return s.db.Close()
+}
+
+func (s *PostgresStore) Health(ctx context.Context) error {
+	return s.db.PingContext(ctx)
 }
 
 func (s *PostgresStore) collector() ingest.Collector {

@@ -1,10 +1,12 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -52,6 +54,7 @@ type authManager struct {
 	attempts map[string]loginAttempt
 	secure   bool
 	now      func() time.Time
+	db       *sql.DB
 }
 
 type loginRequest struct {
@@ -59,9 +62,25 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
-func newAuthManager(path string, secure bool) (*authManager, error) {
-	manager := &authManager{enabled: strings.TrimSpace(path) != "", users: map[string]localUser{}, sessions: map[string]authSession{}, attempts: map[string]loginAttempt{}, secure: secure, now: time.Now}
+func newAuthManager(path string, secure bool, postgresDSN string) (*authManager, error) {
+	manager := &authManager{enabled: strings.TrimSpace(path) != "" || strings.TrimSpace(postgresDSN) != "", users: map[string]localUser{}, sessions: map[string]authSession{}, attempts: map[string]loginAttempt{}, secure: secure, now: time.Now}
 	if !manager.enabled {
+		return manager, nil
+	}
+	if strings.TrimSpace(postgresDSN) != "" {
+		db, err := sql.Open("pgx", postgresDSN)
+		if err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(10)
+		db.SetMaxIdleConns(2)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("connect PostgreSQL authentication repository: %w", err)
+		}
+		manager.db = db
 		return manager, nil
 	}
 	data, err := os.ReadFile(path)
@@ -108,6 +127,32 @@ func BootstrapAdmin(path, username, name, password string) error {
 		return err
 	}
 	return os.Rename(temporary, path)
+}
+
+func BootstrapAdminPostgres(dsn, username, name, password string) error {
+	username = strings.TrimSpace(username)
+	if username == "" || len(password) < 12 {
+		return errors.New("username is required and password must contain at least 12 characters")
+	}
+	hash, err := hashPassword(password)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := db.ExecContext(ctx, `INSERT INTO local_users(user_id,username,display_name,role,password_hash,disabled) VALUES($1,$2,$3,'admin',$4,false) ON CONFLICT(username) DO NOTHING`, "user-"+shortToken(8), username, firstNonEmptyString(strings.TrimSpace(name), username), hash)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return fmt.Errorf("local administrator already exists: %s", username)
+	}
+	return nil
 }
 
 func hashPassword(password string) (string, error) {
@@ -174,6 +219,9 @@ func sessionForUser(user localUser) Session {
 }
 
 func (a *authManager) login(remoteAddr, username, password string) (string, authSession, error) {
+	if a.db != nil {
+		return a.loginPostgres(remoteAddr, username, password)
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := a.now()
@@ -208,6 +256,9 @@ func (a *authManager) current(r *http.Request) (authSession, bool) {
 	if err != nil {
 		return authSession{}, false
 	}
+	if a.db != nil {
+		return a.currentPostgres(cookie.Value)
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	session, ok := a.sessions[cookie.Value]
@@ -223,9 +274,87 @@ func (a *authManager) logout(r *http.Request) {
 	if err != nil {
 		return
 	}
+	if a.db != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = a.db.ExecContext(ctx, `DELETE FROM local_auth_sessions WHERE session_hash=$1`, tokenHash(cookie.Value))
+		return
+	}
 	a.mu.Lock()
 	delete(a.sessions, cookie.Value)
 	a.mu.Unlock()
+}
+
+func (a *authManager) loginPostgres(remoteAddr, username, password string) (string, authSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	now := a.now().UTC()
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", authSession{}, err
+	}
+	defer tx.Rollback()
+	var attempts int
+	var windowStarted time.Time
+	err = tx.QueryRowContext(ctx, `SELECT attempt_count, window_started_at FROM login_rate_limits WHERE remote_key=$1 FOR UPDATE`, remoteAddr).Scan(&attempts, &windowStarted)
+	if err != nil && err != sql.ErrNoRows {
+		return "", authSession{}, err
+	}
+	if err == sql.ErrNoRows || now.Sub(windowStarted) > 15*time.Minute {
+		attempts, windowStarted = 0, now
+	}
+	if attempts >= 10 {
+		return "", authSession{}, errors.New("too many login attempts")
+	}
+	var user localUser
+	err = tx.QueryRowContext(ctx, `SELECT user_id, username, display_name, role, password_hash, disabled FROM local_users WHERE lower(username)=lower($1)`, strings.TrimSpace(username)).Scan(&user.ID, &user.Username, &user.Name, &user.Role, &user.PasswordHash, &user.Disabled)
+	if err != nil || user.Disabled || !verifyPassword(user.PasswordHash, password) {
+		attempts++
+		_, upsertErr := tx.ExecContext(ctx, `INSERT INTO login_rate_limits(remote_key,attempt_count,window_started_at,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(remote_key) DO UPDATE SET attempt_count=EXCLUDED.attempt_count,window_started_at=EXCLUDED.window_started_at,updated_at=now()`, remoteAddr, attempts, windowStarted)
+		if upsertErr != nil {
+			return "", authSession{}, upsertErr
+		}
+		if err := tx.Commit(); err != nil {
+			return "", authSession{}, err
+		}
+		return "", authSession{}, errors.New("invalid credentials")
+	}
+	token := shortToken(32)
+	csrf := csrfForToken(token)
+	expiresAt := now.Add(12 * time.Hour)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM login_rate_limits WHERE remote_key=$1`, remoteAddr); err != nil {
+		return "", authSession{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO local_auth_sessions(session_hash,user_id,csrf_hash,expires_at,last_seen_at) VALUES($1,$2,$3,$4,$5)`, tokenHash(token), user.ID, tokenHash(csrf), expiresAt, now); err != nil {
+		return "", authSession{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", authSession{}, err
+	}
+	return token, authSession{User: user, CSRFToken: csrf, ExpiresAt: expiresAt}, nil
+}
+
+func (a *authManager) currentPostgres(token string) (authSession, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var user localUser
+	var expiresAt time.Time
+	err := a.db.QueryRowContext(ctx, `SELECT u.user_id,u.username,u.display_name,u.role,u.password_hash,u.disabled,s.expires_at FROM local_auth_sessions s JOIN local_users u ON u.user_id=s.user_id WHERE s.session_hash=$1 AND s.expires_at>now() AND u.disabled=false`, tokenHash(token)).Scan(&user.ID, &user.Username, &user.Name, &user.Role, &user.PasswordHash, &user.Disabled, &expiresAt)
+	if err != nil {
+		return authSession{}, false
+	}
+	_, _ = a.db.ExecContext(ctx, `UPDATE local_auth_sessions SET last_seen_at=now() WHERE session_hash=$1`, tokenHash(token))
+	return authSession{User: user, CSRFToken: csrfForToken(token), ExpiresAt: expiresAt}, true
+}
+
+func tokenHash(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func csrfForToken(token string) string {
+	digest := sha256.Sum256([]byte("proxy-sentinel-csrf:" + token))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func sessionHasPermission(session Session, permission string) bool {

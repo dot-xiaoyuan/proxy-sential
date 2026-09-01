@@ -51,6 +51,10 @@ func (s *ClickHouseStore) DSN() string {
 	return s.dsn
 }
 
+func (s *ClickHouseStore) Health(ctx context.Context) error {
+	return s.exec(ctx, "SELECT 1")
+}
+
 func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []normalized.Event) error {
 	if len(events) == 0 {
 		return nil
