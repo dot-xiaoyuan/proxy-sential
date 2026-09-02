@@ -637,6 +637,13 @@ func TestDeviceFingerprintLibraryStatusAndReadOnlyUpdate(t *testing.T) {
 	}
 }
 
+func TestDeviceQueryAcceptsEcosystemFilter(t *testing.T) {
+	query, err := deviceQuery(url.Values{"ecosystem": {"Microsoft Windows"}, "limit": {"20"}})
+	if err != nil || query.Ecosystem != "Microsoft Windows" || query.Limit != 20 {
+		t.Fatalf("unexpected ecosystem device query: %+v err=%v", query, err)
+	}
+}
+
 func TestOfflineFingerprintUpdateAndInvalidImport(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: false, FingerprintDir: t.TempDir(), FingerprintAutoUpdate: false})
 	recorder := httptest.NewRecorder()

@@ -2255,6 +2255,9 @@ pre.wrap-code {
   white-space: nowrap !important;
 }
 
+.ecosystem-filter { min-width: 150px; }
+.ecosystem-disclaimer { margin-bottom: 14px; }
+
 .nowrap-cell,
 .ellipsis-cell {
   min-width: 0;

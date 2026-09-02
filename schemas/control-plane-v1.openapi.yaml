@@ -442,6 +442,11 @@ paths:
           in: query
           schema:
             type: string
+        - name: ecosystem
+          in: query
+          description: Filter by matched brand ecosystem hint.
+          schema:
+            type: string
         - name: view
           in: query
           schema:
@@ -1833,6 +1838,11 @@ components:
           items: { type: string }
         backfill_status: { type: string }
         backfill_processed: { type: integer }
+        domain_rule_count: { type: integer }
+        domain_ecosystem_count: { type: integer }
+        domain_source_version: { type: string }
+        domain_backfill_status: { type: string }
+        domain_backfill_processed: { type: integer }
     DeviceFingerprintBundleSource:
       type: object
       required: [name, version, url, license]
@@ -2458,6 +2468,10 @@ components:
         recognition_evidence:
           type: array
           items: { type: string }
+        ecosystem_hint: { type: string }
+        ecosystem_confidence: { type: number, minimum: 0, maximum: 1 }
+        ecosystem_conflict: { type: boolean }
+        ecosystem_evidence_count: { type: integer }
         summary:
           type: string
     EndpointEntity:
@@ -2675,12 +2689,37 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/IdentityAccessHistory"
+        ecosystem_evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EndpointDomainEvidence"
         first_seen:
           type: string
           format: date-time
         last_seen:
           type: string
           format: date-time
+    EndpointDomainEvidence:
+      type: object
+      required: [endpoint_id, domain, ecosystem, event_source, attribution_method, rule_source, rule_version, category, confidence, first_seen, last_seen, count]
+      properties:
+        endpoint_id: { type: string }
+        ip: { type: string }
+        auth_session_id: { type: string }
+        domain: { type: string }
+        ecosystem: { type: string }
+        event_source: { type: string }
+        attribution_method: { type: string }
+        rule_source: { type: string }
+        rule_version: { type: string }
+        category: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        count: { type: integer }
+        event_ids_sample:
+          type: array
+          items: { type: string }
     NormalizedEventSummary:
       type: object
       required: [event_id, type, timestamp, subject, flow, confidence]

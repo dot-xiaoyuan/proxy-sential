@@ -987,6 +987,14 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 		writeError(w, http.StatusNotFound, "endpoint_identity_not_found", "endpoint identity profile not found")
 		return
 	}
+	if evidenceReader, supported := s.reader.(store.DomainEvidenceReader); supported {
+		evidence, evidenceErr := evidenceReader.ListEndpointDomainEvidence(ctx, endpointID, 200)
+		if evidenceErr != nil {
+			writeError(w, http.StatusInternalServerError, "read_endpoint_ecosystem_evidence_failed", evidenceErr.Error())
+			return
+		}
+		profile.EcosystemEvidence = evidence
+	}
 	writeJSON(w, http.StatusOK, profile)
 }
 
@@ -1948,6 +1956,7 @@ func deviceQuery(values url.Values) (store.Query, error) {
 		VLAN:        values.Get("vlan"),
 		AP:          values.Get("ap"),
 		NASIP:       values.Get("nas_ip"),
+		Ecosystem:   values.Get("ecosystem"),
 		Window:      window,
 		SrcIP:       values.Get("ip"),
 		Limit:       limit,

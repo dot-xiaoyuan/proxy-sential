@@ -30,6 +30,7 @@ type Query struct {
 	VLAN        string
 	AP          string
 	NASIP       string
+	Ecosystem   string
 	From        string
 	To          string
 	Window      string
@@ -484,42 +485,46 @@ type IPDeviceInventory struct {
 }
 
 type EndpointDeviceInventory struct {
-	EndpointID            string   `json:"endpoint_id"`
-	PrimaryMAC            string   `json:"primary_mac,omitempty"`
-	EntityRole            string   `json:"entity_role"`
-	RegistrationStatus    string   `json:"registration_status"`
-	OwnerAccount          string   `json:"owner_account,omitempty"`
-	OwnerName             string   `json:"owner_name,omitempty"`
-	OwnerDepartment       string   `json:"owner_department,omitempty"`
-	AssetTag              string   `json:"asset_tag,omitempty"`
-	OwnershipClass        string   `json:"ownership_class"`
-	MergeStatus           string   `json:"merge_status"`
-	CurrentAccount        string   `json:"current_account,omitempty"`
-	CurrentIP             string   `json:"current_ip,omitempty"`
-	CurrentAccessID       string   `json:"current_access_id,omitempty"`
-	Accounts              []string `json:"accounts"`
-	IPs                   []string `json:"ips"`
-	AccessIDs             []string `json:"access_ids"`
-	FirstSeen             string   `json:"first_seen,omitempty"`
-	LastSeen              string   `json:"last_seen,omitempty"`
-	IdentityConfidence    float64  `json:"identity_confidence"`
-	Vendor                string   `json:"vendor,omitempty"`
-	Brand                 string   `json:"brand,omitempty"`
-	Model                 string   `json:"model,omitempty"`
-	DeviceType            string   `json:"device_type,omitempty"`
-	OSFamily              string   `json:"os_family,omitempty"`
-	RecognitionConfidence float64  `json:"recognition_confidence"`
-	VendorConfidence      float64  `json:"vendor_confidence"`
-	BrandConfidence       float64  `json:"brand_confidence"`
-	ModelConfidence       float64  `json:"model_confidence"`
-	DeviceTypeConfidence  float64  `json:"device_type_confidence"`
-	OSFamilyConfidence    float64  `json:"os_family_confidence"`
-	RecognitionSource     string   `json:"recognition_source,omitempty"`
-	FingerprintVersion    string   `json:"fingerprint_version,omitempty"`
-	RandomizedMAC         bool     `json:"randomized_mac"`
-	RecognitionConflict   bool     `json:"recognition_conflict"`
-	RecognitionEvidence   []string `json:"recognition_evidence,omitempty"`
-	Summary               string   `json:"summary"`
+	EndpointID             string   `json:"endpoint_id"`
+	PrimaryMAC             string   `json:"primary_mac,omitempty"`
+	EntityRole             string   `json:"entity_role"`
+	RegistrationStatus     string   `json:"registration_status"`
+	OwnerAccount           string   `json:"owner_account,omitempty"`
+	OwnerName              string   `json:"owner_name,omitempty"`
+	OwnerDepartment        string   `json:"owner_department,omitempty"`
+	AssetTag               string   `json:"asset_tag,omitempty"`
+	OwnershipClass         string   `json:"ownership_class"`
+	MergeStatus            string   `json:"merge_status"`
+	CurrentAccount         string   `json:"current_account,omitempty"`
+	CurrentIP              string   `json:"current_ip,omitempty"`
+	CurrentAccessID        string   `json:"current_access_id,omitempty"`
+	Accounts               []string `json:"accounts"`
+	IPs                    []string `json:"ips"`
+	AccessIDs              []string `json:"access_ids"`
+	FirstSeen              string   `json:"first_seen,omitempty"`
+	LastSeen               string   `json:"last_seen,omitempty"`
+	IdentityConfidence     float64  `json:"identity_confidence"`
+	Vendor                 string   `json:"vendor,omitempty"`
+	Brand                  string   `json:"brand,omitempty"`
+	Model                  string   `json:"model,omitempty"`
+	DeviceType             string   `json:"device_type,omitempty"`
+	OSFamily               string   `json:"os_family,omitempty"`
+	RecognitionConfidence  float64  `json:"recognition_confidence"`
+	VendorConfidence       float64  `json:"vendor_confidence"`
+	BrandConfidence        float64  `json:"brand_confidence"`
+	ModelConfidence        float64  `json:"model_confidence"`
+	DeviceTypeConfidence   float64  `json:"device_type_confidence"`
+	OSFamilyConfidence     float64  `json:"os_family_confidence"`
+	RecognitionSource      string   `json:"recognition_source,omitempty"`
+	FingerprintVersion     string   `json:"fingerprint_version,omitempty"`
+	RandomizedMAC          bool     `json:"randomized_mac"`
+	RecognitionConflict    bool     `json:"recognition_conflict"`
+	RecognitionEvidence    []string `json:"recognition_evidence,omitempty"`
+	EcosystemHint          string   `json:"ecosystem_hint,omitempty"`
+	EcosystemConfidence    float64  `json:"ecosystem_confidence"`
+	EcosystemConflict      bool     `json:"ecosystem_conflict"`
+	EcosystemEvidenceCount int      `json:"ecosystem_evidence_count"`
+	Summary                string   `json:"summary"`
 }
 
 type Reader interface {

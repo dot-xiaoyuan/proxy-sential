@@ -43,6 +43,7 @@ type DomainBackfillProgress struct {
 
 func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normalized.Event, library *fingerprint.Library) (DomainBackfillProgress, error) {
 	result := DomainBackfillProgress{Version: library.Version()}
+	touched := map[string]struct{}{}
 	for _, event := range events {
 		observation, observable := ExtractDomainObservation(event)
 		if !observable {
@@ -65,8 +66,37 @@ func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normal
 		if err := s.persistDomainEvidence(ctx, attributed, match, library.Version()); err != nil {
 			return result, err
 		}
+		touched[attributed.EndpointID] = struct{}{}
+	}
+	for endpointID := range touched {
+		if err := s.updateEndpointEcosystemProfile(ctx, endpointID); err != nil {
+			return result, err
+		}
 	}
 	return result, nil
+}
+
+func (s *PostgresStore) updateEndpointEcosystemProfile(ctx context.Context, endpointID string) error {
+	ecosystem, _, err := s.endpointEcosystem(ctx, endpointID)
+	if err != nil {
+		return err
+	}
+	var brand, source string
+	var brandConfidence float64
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(brand,''),brand_confidence,COALESCE(recognition_source,'') FROM endpoint_device_profiles WHERE endpoint_id=$1`, endpointID).Scan(&brand, &brandConfidence, &source)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	brand, brandConfidence, _ = fingerprint.FuseEcosystemBrand(brand, brandConfidence, source, ecosystem)
+	hint := ""
+	if ecosystem.Displayable && !ecosystem.Conflict {
+		hint = ecosystem.Hint
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE endpoint_device_profiles SET brand=NULLIF($2,''),brand_confidence=$3,ecosystem_hint=NULLIF($4,''),ecosystem_confidence=$5,ecosystem_conflict=$6,ecosystem_evidence_count=$7,updated_at=now() WHERE endpoint_id=$1`, endpointID, brand, brandConfidence, hint, ecosystem.Confidence, ecosystem.Conflict, ecosystem.EvidenceCount)
+	return err
 }
 
 func (s *PostgresStore) persistDomainEvidence(ctx context.Context, observation DomainObservation, match fingerprint.DomainMatch, version string) error {

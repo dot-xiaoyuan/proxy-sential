@@ -247,6 +247,7 @@ export const handlers = [
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()
     const ip = url.searchParams.get('ip')
+	const ecosystem=url.searchParams.get('ecosystem')?.toLowerCase()
     const limit = Number(url.searchParams.get('limit') ?? 50)
     const cursor = Number(url.searchParams.get('cursor') ?? 0)
     const endpointItems = Object.values(deviceInventoriesByIp).flatMap((inventory) =>
@@ -278,6 +279,10 @@ export const handlers = [
         recognition_confidence: device.confidence,
         randomized_mac: false,
         recognition_conflict: false,
+		ecosystem_hint:device.model?'Microsoft Windows':'',
+		ecosystem_confidence:device.model?0.6:0,
+		ecosystem_conflict:false,
+		ecosystem_evidence_count:device.model?4:0,
         first_seen: device.first_seen || inventory.first_seen,
         last_seen: device.last_seen || inventory.last_seen,
         identity_confidence: device.confidence,
@@ -287,6 +292,7 @@ export const handlers = [
     const filtered = endpointItems
       .filter((item) => !ip || item.current_ip === ip)
       .filter((item) => !q || JSON.stringify(item).toLowerCase().includes(q))
+	  .filter((item)=>!ecosystem||item.ecosystem_hint.toLowerCase()===ecosystem)
     const pageItems = filtered.slice(cursor, cursor + limit)
     const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
 
@@ -369,6 +375,7 @@ export const handlers = [
             event_ids_sample: [`event-access-${device.device_id}`],
           },
         ],
+		ecosystem_evidence: device.model?[{endpoint_id:endpointId,domain:'settings-win.data.microsoft.com',ecosystem:'Microsoft Windows',event_source:'tls',attribution_method:'active_auth_session',auth_session_id:`session-${device.device_id}`,rule_source:'NextDNS',rule_version:'offline-mock-v2',category:'telemetry',confidence:0.55,first_seen:inventory.first_seen,last_seen:inventory.last_seen,count:4,event_ids_sample:[`event-domain-${device.device_id}`]}]:[],
         first_seen: device.first_seen || inventory.first_seen,
         last_seen: device.last_seen || inventory.last_seen,
       })
@@ -465,7 +472,7 @@ export const handlers = [
   http.get('/api/v1/shadow/evaluation', () => HttpResponse.json(shadowEvaluation)),
   http.get('/api/v1/audit-logs', ({ request }) => { const result = mockPage(auditLogs, new URL(request.url)); return HttpResponse.json({ logs: result.items, page: result.page }) }),
   http.get('/api/v1/audit-logs/:auditId', ({ params }) => { const item = auditLogs.find((entry) => entry.audit_id === params.auditId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
-  http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0'],backfill_status:'completed',backfill_processed:110 })),
+  http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,domain_rule_count:128,domain_ecosystem_count:8,domain_source_version:'abcdef123456',domain_backfill_status:'completed',domain_backfill_processed:3200,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0','MIT (NextDNS)'],backfill_status:'completed',backfill_processed:110 })),
   http.post('/api/v1/device-fingerprint-library/update', () => HttpResponse.json({ code:'offline_update_required',message:'import a verified bundle' },{status:409})),
   http.post('/api/v1/device-fingerprint-library/validate', () => HttpResponse.json({schema_version:'device-fingerprint-bundle/v1',version:'offline-20260831-mock',created_at:new Date().toISOString(),sources:[{name:'IEEE MA-L/MA-M/MA-S',version:'2026-08-31',url:'https://standards-oui.ieee.org/',license:'IEEE public registry'},{name:'uap-core',version:'mocksha',url:'https://github.com/ua-parser/uap-core',license:'Apache-2.0'},{name:'Fingerbank public snapshot',version:'6.8.2-20140609',url:'https://github.com/karottc/fingerbank',license:'ODbL-1.0/DbCL-1.0'}],files:{}})),
   http.post('/api/v1/device-fingerprint-library/import', () => HttpResponse.json({version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0'],backfill_status:'pending',backfill_processed:0})),

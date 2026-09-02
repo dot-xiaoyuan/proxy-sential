@@ -129,15 +129,16 @@ type AccountIdentityProfile struct {
 }
 
 type EndpointIdentityProfile struct {
-	EndpointID    string                  `json:"endpoint_id"`
-	Summary       string                  `json:"summary"`
-	Endpoint      EndpointEntity          `json:"endpoint"`
-	Accounts      []string                `json:"accounts"`
-	Sessions      []AccountSession        `json:"sessions"`
-	IPHistory     []IdentityIPMACHistory  `json:"ip_history"`
-	AccessHistory []IdentityAccessHistory `json:"access_history"`
-	FirstSeen     string                  `json:"first_seen,omitempty"`
-	LastSeen      string                  `json:"last_seen,omitempty"`
+	EndpointID        string                   `json:"endpoint_id"`
+	Summary           string                   `json:"summary"`
+	Endpoint          EndpointEntity           `json:"endpoint"`
+	Accounts          []string                 `json:"accounts"`
+	Sessions          []AccountSession         `json:"sessions"`
+	IPHistory         []IdentityIPMACHistory   `json:"ip_history"`
+	AccessHistory     []IdentityAccessHistory  `json:"access_history"`
+	FirstSeen         string                   `json:"first_seen,omitempty"`
+	LastSeen          string                   `json:"last_seen,omitempty"`
+	EcosystemEvidence []EndpointDomainEvidence `json:"ecosystem_evidence,omitempty"`
 }
 
 func BuildIdentityState(events []normalized.Event) IdentityState {

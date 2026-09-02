@@ -28,21 +28,26 @@ const (
 )
 
 type Status struct {
-	Version           string         `json:"version"`
-	Status            string         `json:"status"`
-	Source            string         `json:"source"`
-	Checksum          string         `json:"checksum"`
-	UpdatedAt         string         `json:"updated_at,omitempty"`
-	LastCheckedAt     string         `json:"last_checked_at,omitempty"`
-	LastError         string         `json:"last_error,omitempty"`
-	OfflineMode       bool           `json:"offline_mode"`
-	RuleCount         int            `json:"rule_count"`
-	OUICount          int            `json:"oui_count"`
-	DHCPRuleCount     int            `json:"dhcp_rule_count"`
-	Sources           []BundleSource `json:"sources,omitempty"`
-	Licenses          []string       `json:"licenses,omitempty"`
-	BackfillStatus    string         `json:"backfill_status,omitempty"`
-	BackfillProcessed int            `json:"backfill_processed,omitempty"`
+	Version                 string         `json:"version"`
+	Status                  string         `json:"status"`
+	Source                  string         `json:"source"`
+	Checksum                string         `json:"checksum"`
+	UpdatedAt               string         `json:"updated_at,omitempty"`
+	LastCheckedAt           string         `json:"last_checked_at,omitempty"`
+	LastError               string         `json:"last_error,omitempty"`
+	OfflineMode             bool           `json:"offline_mode"`
+	RuleCount               int            `json:"rule_count"`
+	OUICount                int            `json:"oui_count"`
+	DHCPRuleCount           int            `json:"dhcp_rule_count"`
+	Sources                 []BundleSource `json:"sources,omitempty"`
+	Licenses                []string       `json:"licenses,omitempty"`
+	BackfillStatus          string         `json:"backfill_status,omitempty"`
+	BackfillProcessed       int            `json:"backfill_processed,omitempty"`
+	DomainRuleCount         int            `json:"domain_rule_count"`
+	DomainEcosystemCount    int            `json:"domain_ecosystem_count"`
+	DomainSourceVersion     string         `json:"domain_source_version,omitempty"`
+	DomainBackfillStatus    string         `json:"domain_backfill_status,omitempty"`
+	DomainBackfillProcessed int            `json:"domain_backfill_processed,omitempty"`
 }
 
 type Manager struct {
@@ -93,7 +98,7 @@ func (m *Manager) Import(data []byte) (Status, error) {
 	SetDefault(library)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	m.mu.Lock()
-	status := libraryStatus(library, Status{Version: bundle.Manifest.Version, Status: "ready", Source: "offline-bundle", Checksum: bundleChecksum(bundle), UpdatedAt: now, LastCheckedAt: now, OfflineMode: m.status.OfflineMode, Sources: bundle.Manifest.Sources, Licenses: []string{"Apache-2.0", "ODbL-1.0", "DbCL-1.0", "IEEE public registry"}, BackfillStatus: "pending"})
+	status := libraryStatus(library, Status{Version: bundle.Manifest.Version, Status: "ready", Source: "offline-bundle", Checksum: bundleChecksum(bundle), UpdatedAt: now, LastCheckedAt: now, OfflineMode: m.status.OfflineMode, Sources: bundle.Manifest.Sources, Licenses: bundleLicenses(bundle.Manifest), BackfillStatus: "pending", DomainBackfillStatus: domainBackfillInitialStatus(bundle.Manifest)})
 	m.status = status
 	m.mu.Unlock()
 	m.persistStatus(status)
@@ -189,11 +194,33 @@ func libraryStatus(library *Library, status Status) Status {
 		status.RuleCount = len(library.rules)
 		status.OUICount = len(library.ouis)
 		status.DHCPRuleCount = 0
+		status.DomainRuleCount = library.DomainRuleCount()
+		status.DomainEcosystemCount = library.DomainEcosystemCount()
 		for _, items := range library.dhcp {
 			status.DHCPRuleCount += len(items)
 		}
 	}
+	for _, source := range status.Sources {
+		if source.Name == "NextDNS native-tracking-domains" {
+			status.DomainSourceVersion = source.Version
+			break
+		}
+	}
 	return status
+}
+
+func bundleLicenses(manifest BundleManifest) []string {
+	result := []string{"Apache-2.0", "ODbL-1.0", "DbCL-1.0", "IEEE public registry"}
+	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+		result = append(result, "MIT (NextDNS)")
+	}
+	return result
+}
+func domainBackfillInitialStatus(manifest BundleManifest) string {
+	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+		return "pending"
+	}
+	return "not_required"
 }
 
 func (m *Manager) Status() Status {
@@ -206,6 +233,15 @@ func (m *Manager) SetBackfill(status string, processed int) {
 	m.mu.Lock()
 	m.status.BackfillStatus = status
 	m.status.BackfillProcessed = processed
+	current := m.status
+	m.mu.Unlock()
+	m.persistStatus(current)
+}
+
+func (m *Manager) SetDomainBackfill(status string, processed int) {
+	m.mu.Lock()
+	m.status.DomainBackfillStatus = status
+	m.status.DomainBackfillProcessed = processed
 	current := m.status
 	m.mu.Unlock()
 	m.persistStatus(current)

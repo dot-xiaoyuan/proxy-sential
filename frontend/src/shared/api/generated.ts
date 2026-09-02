@@ -1171,6 +1171,11 @@ export interface components {
             licenses?: string[];
             backfill_status?: string;
             backfill_processed?: number;
+            domain_rule_count?: number;
+            domain_ecosystem_count?: number;
+            domain_source_version?: string;
+            domain_backfill_status?: string;
+            domain_backfill_processed?: number;
         };
         DeviceFingerprintBundleSource: {
             name: string;
@@ -1553,6 +1558,10 @@ export interface components {
             randomized_mac: boolean;
             recognition_conflict?: boolean;
             recognition_evidence?: string[];
+            ecosystem_hint?: string;
+            ecosystem_confidence?: number;
+            ecosystem_conflict?: boolean;
+            ecosystem_evidence_count?: number;
             summary: string;
         };
         EndpointEntity: {
@@ -1665,10 +1674,30 @@ export interface components {
             sessions: components["schemas"]["AccountSession"][];
             ip_history: components["schemas"]["IdentityIPMACHistory"][];
             access_history: components["schemas"]["IdentityAccessHistory"][];
+            ecosystem_evidence?: components["schemas"]["EndpointDomainEvidence"][];
             /** Format: date-time */
             first_seen?: string;
             /** Format: date-time */
             last_seen?: string;
+        };
+        EndpointDomainEvidence: {
+            endpoint_id: string;
+            ip?: string;
+            auth_session_id?: string;
+            domain: string;
+            ecosystem: string;
+            event_source: string;
+            attribution_method: string;
+            rule_source: string;
+            rule_version: string;
+            category: string;
+            confidence: number;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            count: number;
+            event_ids_sample?: string[];
         };
         NormalizedEventSummary: {
             event_id: string;
@@ -2965,6 +2994,8 @@ export interface operations {
                 limit?: number;
                 cursor?: string;
                 q?: string;
+                /** @description Filter by matched brand ecosystem hint. */
+                ecosystem?: string;
                 view?: "summary" | "full";
             };
             header?: never;

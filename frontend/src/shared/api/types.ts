@@ -101,6 +101,7 @@ export type IdentityIPMACHistory = components['schemas']['IdentityIPMACHistory']
 export type IdentityAccessHistory = components['schemas']['IdentityAccessHistory']
 export type AccountIdentityProfile = components['schemas']['AccountIdentityProfile']
 export type EndpointIdentityProfile = components['schemas']['EndpointIdentityProfile']
+export type EndpointDomainEvidence = components['schemas']['EndpointDomainEvidence']
 
 export type RiskQuery = {
   level?: RiskLevel
@@ -187,6 +188,11 @@ export type DeviceFingerprintLibraryStatus = {
 	 licenses?: string[]
 	 backfill_status?: string
 	 backfill_processed?: number
+	 domain_rule_count: number
+	 domain_ecosystem_count: number
+	 domain_source_version?: string
+	 domain_backfill_status?: string
+	 domain_backfill_processed?: number
 }
 export type DeviceFingerprintBundleSource = { name: string; version: string; url: string; license: string }
 export type DeviceFingerprintBundleManifest = { schema_version: string; version: string; created_at: string; sources: DeviceFingerprintBundleSource[]; files: Record<string,{size:number;sha256:string}> }
@@ -206,6 +212,7 @@ export type DeviceQuery = {
   limit?: number
   cursor?: string
   include_weak?: boolean
+	 ecosystem?: string
 }
 
 export type IdentityQuery = {

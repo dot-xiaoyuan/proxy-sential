@@ -81,7 +81,9 @@ export function RulesPage() {
           {key:'updated',label:'最近更新',children:fingerprintLibrary.data?.updated_at ? new Date(fingerprintLibrary.data.updated_at).toLocaleString() : '内置离线版本'},
           {key:'error',label:'最近错误',children:fingerprintLibrary.data?.last_error || '无'},
           {key:'mode',label:'更新模式',children:fingerprintLibrary.data?.offline_mode ? '离线包导入（30 机器不访问外网）' : '联网更新'},
-          {key:'counts',label:'规则规模',children:`OUI ${fingerprintLibrary.data?.oui_count ?? 0} · UA/自有规则 ${fingerprintLibrary.data?.rule_count ?? 0} · DHCP ${fingerprintLibrary.data?.dhcp_rule_count ?? 0}`},
+          {key:'counts',label:'规则规模',children:`OUI ${fingerprintLibrary.data?.oui_count ?? 0} · UA/自有规则 ${fingerprintLibrary.data?.rule_count ?? 0} · DHCP ${fingerprintLibrary.data?.dhcp_rule_count ?? 0} · 域名 ${fingerprintLibrary.data?.domain_rule_count ?? 0} / ${fingerprintLibrary.data?.domain_ecosystem_count ?? 0} 个生态`},
+		  {key:'domain-source',label:'域名规则版本',children:<Typography.Text className="mono list-cell-nowrap">{fingerprintLibrary.data?.domain_source_version || 'v1 包未包含域名规则'}</Typography.Text>},
+		  {key:'domain-backfill',label:'域名证据回填',children:`${fingerprintLibrary.data?.domain_backfill_status || '未启动'} · ${fingerprintLibrary.data?.domain_backfill_processed ?? 0} 条`},
           {key:'backfill',label:'画像回填',children:`${fingerprintLibrary.data?.backfill_status || '未启动'} · ${fingerprintLibrary.data?.backfill_processed ?? 0} 条`},
           {key:'licenses',label:'数据许可',children:(fingerprintLibrary.data?.licenses || ['IEEE public registry','Apache-2.0']).join('、')},
         ]} />}

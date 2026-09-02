@@ -7,12 +7,24 @@ import { useDevices, useDeviceSignals, useEndpointIdentity, useSession, useUpdat
 import type {
   AccountSession,
   DeviceSignal,
+	EndpointDomainEvidence,
   EndpointIdentityProfile,
   IdentityAccessHistory,
   IdentityIPMACHistory,
   UpdateEndpointRegistrationRequest,
 } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
+
+const ecosystemColumns:ColumnsType<EndpointDomainEvidence>=[
+	{title:'生态',dataIndex:'ecosystem',width:130,render:(value:string)=><Tag>{value}</Tag>},
+	{title:'命中域名',dataIndex:'domain',width:250,render:(value:string)=><Typography.Text className="list-cell-nowrap mono" copyable title={value}>{value}</Typography.Text>},
+	{title:'事件 / 归属',key:'source',width:210,render:(_,row)=><Typography.Text className="list-cell-nowrap" title={`${row.event_source} / ${row.attribution_method}`}>{row.event_source} / {attributionText(row.attribution_method)}</Typography.Text>},
+	{title:'规则来源',key:'rule',width:220,render:(_,row)=><Typography.Text className="list-cell-nowrap mono" title={`${row.rule_source} / ${row.rule_version}`}>{row.rule_source} / {row.rule_version}</Typography.Text>},
+	{title:'次数',dataIndex:'count',width:80},
+	{title:'首次 / 最近',key:'seen',width:280,render:(_,row)=><Typography.Text className="list-cell-nowrap">{formatTime(row.first_seen)} / {formatTime(row.last_seen)}</Typography.Text>},
+]
+
+function attributionText(value:string){return value==='explicit_endpoint'?'事件显式终端':value==='active_auth_session'?'有效认证会话':value==='identity_history'?'唯一身份历史':value}
 
 export function EndpointDetailsPage() {
   const rawEndpointId = useParams().endpointId ?? ''
@@ -141,6 +153,7 @@ export function EndpointDetailsPage() {
         </div>
         <div className="surface">
           <Typography.Title level={4}>设备识别</Typography.Title>
+		  <Alert className="ecosystem-disclaimer" showIcon type="info" title="生态线索表示终端访问过相关厂商服务，不等于硬件品牌、型号或设备类型已经确认。" />
           <Descriptions column={1} size="small">
             <Descriptions.Item label="注册厂商">{recognition?.vendor || '未知'}（{confidenceText(recognition?.vendor_confidence)}）</Descriptions.Item>
             <Descriptions.Item label="终端品牌">{recognition?.brand || '未知'}（{confidenceText(recognition?.brand_confidence)}）</Descriptions.Item>
@@ -151,9 +164,15 @@ export function EndpointDetailsPage() {
             <Descriptions.Item label="随机 MAC">{recognition?.randomized_mac ? '是；不使用 OUI 判断厂商' : '否'}</Descriptions.Item>
             <Descriptions.Item label="识别冲突">{recognition?.recognition_conflict ? '是；列表按未知设备处理' : '否'}</Descriptions.Item>
             <Descriptions.Item label="识别证据">{recognition?.recognition_evidence?.join('；') || '暂无'}</Descriptions.Item>
+			<Descriptions.Item label="生态线索">{recognition?.ecosystem_conflict?'存在冲突':recognition?.ecosystem_hint||'未知'}（{confidenceText(recognition?.ecosystem_confidence)}）</Descriptions.Item>
           </Descriptions>
         </div>
       </section>
+
+	  <section className="surface">
+		<div className="surface-title-row"><Typography.Title className="surface-title" level={4}>生态线索证据</Typography.Title><Typography.Text className="surface-subtitle" type="secondary">仅展示可审计的标准事件命中，不作为单独定性依据</Typography.Text></div>
+		<Table<EndpointDomainEvidence> className="compact-list-table" columns={ecosystemColumns} dataSource={profile.ecosystem_evidence??[]} locale={{emptyText:'暂无可归属的生态线索'}} pagination={false} rowKey={(row)=>`${row.rule_version}:${row.domain}:${row.event_source}`} scroll={{x:1100}} size="small" />
+	  </section>
 
       <section className="surface endpoint-registration-editor">
         <div className="surface-title-row">

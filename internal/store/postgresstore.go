@@ -13,6 +13,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
@@ -414,7 +415,12 @@ func (s *PostgresStore) ListEndpointDevices(ctx context.Context, query Query) (E
 	if query.Q != "" {
 		args = append(args, "%"+strings.ToLower(query.Q)+"%")
 		placeholder := "$" + strconvArg(len(args))
-		where = append(where, `(lower(endpoint_id) LIKE `+placeholder+` OR lower(coalesce(primary_mac, '')) LIKE `+placeholder+` OR lower(coalesce(registration_status, '')) LIKE `+placeholder+` OR lower(coalesce(owner_account, '')) LIKE `+placeholder+` OR lower(coalesce(owner_name, '')) LIKE `+placeholder+` OR lower(coalesce(owner_department, '')) LIKE `+placeholder+` OR lower(coalesce(asset_tag, '')) LIKE `+placeholder+`)`)
+		where = append(where, `(lower(endpoint_id) LIKE `+placeholder+` OR lower(coalesce(primary_mac, '')) LIKE `+placeholder+` OR lower(coalesce(registration_status, '')) LIKE `+placeholder+` OR lower(coalesce(owner_account, '')) LIKE `+placeholder+` OR lower(coalesce(owner_name, '')) LIKE `+placeholder+` OR lower(coalesce(owner_department, '')) LIKE `+placeholder+` OR lower(coalesce(asset_tag, '')) LIKE `+placeholder+` OR EXISTS (SELECT 1 FROM endpoint_domain_evidence domain_search WHERE domain_search.endpoint_id=endpoint_entities.endpoint_id AND lower(domain_search.ecosystem) LIKE `+placeholder+`))`)
+	}
+	if query.Ecosystem != "" {
+		args = append(args, strings.ToLower(query.Ecosystem))
+		placeholder := "$" + strconvArg(len(args))
+		where = append(where, "EXISTS (SELECT 1 FROM endpoint_domain_evidence ecosystem_filter WHERE ecosystem_filter.endpoint_id=endpoint_entities.endpoint_id AND lower(ecosystem_filter.ecosystem)="+placeholder+")")
 	}
 	for column, value := range map[string]string{"campus_id": query.CampusID, "department": query.Department, "person_type": query.PersonType, "ssid": query.SSID, "vlan": query.VLAN, "ap": query.AP, "nas_ip": query.NASIP} {
 		if value == "" {
@@ -463,6 +469,21 @@ LIMIT $`+strconvArg(len(selectArgs)-1)+` OFFSET $`+strconvArg(len(selectArgs)), 
 			continue
 		}
 		item := BuildEndpointDeviceInventory(profile)
+		ecosystem, _, ecosystemErr := s.endpointEcosystem(ctx, endpointID)
+		if ecosystemErr != nil {
+			return EndpointDevicePage{}, ecosystemErr
+		}
+		item.EcosystemConflict = ecosystem.Conflict
+		item.EcosystemEvidenceCount = ecosystem.EvidenceCount
+		item.EcosystemConfidence = ecosystem.Confidence
+		if ecosystem.Displayable && !ecosystem.Conflict {
+			item.EcosystemHint = ecosystem.Hint
+		}
+		if brand, confidence, promoted := fingerprint.FuseEcosystemBrand(item.Brand, item.BrandConfidence, item.RecognitionSource, ecosystem); promoted {
+			item.Brand = brand
+			item.BrandConfidence = confidence
+			item.RecognitionEvidence = append(item.RecognitionEvidence, "品牌生态线索与独立设备信号一致")
+		}
 		if query.SrcIP == "" || item.CurrentIP == query.SrcIP || stringSliceContains(item.IPs, query.SrcIP) {
 			items = append(items, item)
 		}
