@@ -46,4 +46,7 @@ func TestOpenEulerDeploymentScriptsAndPinnedImages(t *testing.T) {
 	if strings.Contains(installerText, "git pull") {
 		t.Fatal("target installer must not pull source code")
 	}
+	if strings.Contains(installerText, "ExecStart=$root/current/bin/proxy-sentinel shadow run") && strings.Contains(installerText, "--store-timeout") {
+		t.Fatal("systemd units must not pass newly introduced optional flags that break application rollback")
+	}
 }

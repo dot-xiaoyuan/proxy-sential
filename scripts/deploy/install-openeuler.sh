@@ -219,7 +219,7 @@ Wants=docker.service
 Type=oneshot
 WorkingDirectory=$root/current
 EnvironmentFile=$runtime_env
-ExecStart=$root/current/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $root/data/shadow/state.json --out-dir $root/data/shadow --sensor-id $sensor_id --window 10m --min-level suspicious --limit 50 --retention 168h --storage-mode db --store-timeout 5m
+ExecStart=$root/current/bin/proxy-sentinel shadow run --eve /var/log/suricata/eve.json --state $root/data/shadow/state.json --out-dir $root/data/shadow --sensor-id $sensor_id --window 10m --min-level suspicious --limit 50 --retention 168h --storage-mode db
 EOF
 cat > /etc/systemd/system/proxy-sentinel-shadow.timer <<EOF
 [Unit]
