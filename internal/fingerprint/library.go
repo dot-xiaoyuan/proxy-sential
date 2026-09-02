@@ -21,6 +21,9 @@ var embeddedRules []byte
 //go:embed data/brand_aliases.json
 var embeddedBrandAliases []byte
 
+//go:embed data/domain_signatures.json
+var embeddedDomainSignatures []byte
+
 const EmbeddedVersion = "embedded-2026-08"
 
 type Result struct {
@@ -67,11 +70,13 @@ type Rule struct {
 }
 
 type Library struct {
-	version string
-	ouis    map[string]string
-	rules   []Rule
-	dhcp    map[string][]DHCPFingerprint
-	aliases map[string]string
+	version     string
+	ouis        map[string]string
+	rules       []Rule
+	dhcp        map[string][]DHCPFingerprint
+	aliases     map[string]string
+	domains     []DomainSignature
+	domainIndex *domainNode
 }
 
 var (
@@ -107,6 +112,10 @@ func Load(version string, ouiCSV, rulesJSON []byte) (*Library, error) {
 }
 
 func LoadWithData(version string, ouiCSV, rulesJSON, fingerbankJSON, aliasesJSON []byte) (*Library, error) {
+	return LoadWithDomainData(version, ouiCSV, rulesJSON, fingerbankJSON, aliasesJSON, nil)
+}
+
+func LoadWithDomainData(version string, ouiCSV, rulesJSON, fingerbankJSON, aliasesJSON, domainJSON []byte) (*Library, error) {
 	ouis, err := parseOUI(ouiCSV)
 	if err != nil {
 		return nil, err
@@ -139,7 +148,11 @@ func LoadWithData(version string, ouiCSV, rulesJSON, fingerbankJSON, aliasesJSON
 	if err := json.Unmarshal(aliasesJSON, &aliases); err != nil {
 		return nil, fmt.Errorf("decode brand aliases: %w", err)
 	}
-	return &Library{version: version, ouis: ouis, rules: rules, dhcp: dhcp, aliases: aliases}, nil
+	domains, domainIndex, err := parseDomainSignatures(domainJSON)
+	if err != nil {
+		return nil, err
+	}
+	return &Library{version: version, ouis: ouis, rules: rules, dhcp: dhcp, aliases: aliases, domains: domains, domainIndex: domainIndex}, nil
 }
 
 func (l *Library) Version() string { return l.version }

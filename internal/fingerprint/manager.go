@@ -83,7 +83,7 @@ func (m *Manager) Import(data []byte) (Status, error) {
 	if err != nil {
 		return m.fail(err)
 	}
-	library, err := LoadWithData(bundle.Manifest.Version, bundle.Files["oui.csv"], bundle.Files["device-rules.json"], bundle.Files["fingerbank-dhcp.json"], bundle.Files["brand-aliases.json"])
+	library, err := LoadWithDomainData(bundle.Manifest.Version, bundle.Files["oui.csv"], bundle.Files["device-rules.json"], bundle.Files["fingerbank-dhcp.json"], bundle.Files["brand-aliases.json"], bundle.Files["domain-signatures.json"])
 	if err != nil {
 		return m.fail(err)
 	}
@@ -391,7 +391,8 @@ func (m *Manager) loadCurrent() {
 	if len(aliasesData) == 0 {
 		aliasesData = embeddedBrandAliases
 	}
-	library, err := LoadWithData(status.Version, ouiData, rulesData, fingerbankData, aliasesData)
+	domainData, _ := os.ReadFile(filepath.Join(base, "domain-signatures.json"))
+	library, err := LoadWithDomainData(status.Version, ouiData, rulesData, fingerbankData, aliasesData, domainData)
 	if err != nil {
 		return
 	}

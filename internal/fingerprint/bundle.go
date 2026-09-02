@@ -19,13 +19,19 @@ import (
 )
 
 const (
-	BundleSchemaVersion = "device-fingerprint-bundle/v1"
-	MaxBundleBytes      = 32 << 20
-	MaxBundleContent    = 128 << 20
-	fingerbankURL       = "https://raw.githubusercontent.com/karottc/fingerbank/master/dhcp_fingerprints.conf"
-	odblURL             = "https://opendatacommons.org/licenses/odbl/1-0/"
-	dbclURL             = "https://opendatacommons.org/licenses/dbcl/1-0/"
+	BundleSchemaVersionV1   = "device-fingerprint-bundle/v1"
+	BundleSchemaVersionV2   = "device-fingerprint-bundle/v2"
+	BundleSchemaVersion     = BundleSchemaVersionV2
+	MaxBundleBytes          = 32 << 20
+	MaxBundleContent        = 128 << 20
+	fingerbankURL           = "https://raw.githubusercontent.com/karottc/fingerbank/master/dhcp_fingerprints.conf"
+	odblURL                 = "https://opendatacommons.org/licenses/odbl/1-0/"
+	dbclURL                 = "https://opendatacommons.org/licenses/dbcl/1-0/"
+	defaultNextDNSCommitURL = "https://api.github.com/repos/nextdns/native-tracking-domains/commits/main"
+	defaultNextDNSRawURL    = "https://raw.githubusercontent.com/nextdns/native-tracking-domains/%s/%s"
 )
+
+var nextDNSEcosystems = []string{"alexa", "apple", "huawei", "roku", "samsung", "sonos", "windows", "xiaomi"}
 
 type BundleSource struct {
 	Name    string `json:"name"`
@@ -53,15 +59,19 @@ type Bundle struct {
 }
 
 type BuildOptions struct {
-	HTTPClient    *http.Client
-	Now           func() time.Time
-	OUIURLs       []string
-	UAPCommitURL  string
-	UAPRawURL     string
-	UAPSHA        string
-	FingerbankURL string
-	ODbLURL       string
-	DbCLURL       string
+	HTTPClient         *http.Client
+	Now                func() time.Time
+	OUIURLs            []string
+	UAPCommitURL       string
+	UAPRawURL          string
+	UAPSHA             string
+	FingerbankURL      string
+	ODbLURL            string
+	DbCLURL            string
+	NextDNSCommitURL   string
+	NextDNSRawURL      string
+	NextDNSSHA         string
+	ProjectDomainRules []byte
 }
 
 func BuildOfflineBundle(ctx context.Context, output string, options BuildOptions) (BundleManifest, error) {
@@ -82,6 +92,8 @@ func BuildOfflineBundle(ctx context.Context, output string, options BuildOptions
 	fbURL := fallback(options.FingerbankURL, fingerbankURL)
 	licenseURL := fallback(options.ODbLURL, odblURL)
 	dbLicenseURL := fallback(options.DbCLURL, dbclURL)
+	nextDNSCommitURL := fallback(options.NextDNSCommitURL, defaultNextDNSCommitURL)
+	nextDNSRawURL := fallback(options.NextDNSRawURL, defaultNextDNSRawURL)
 	ouiParts := make([][]byte, 0, len(ouiURLs))
 	for _, rawURL := range ouiURLs {
 		data, err := downloadURL(ctx, client, rawURL, 32<<20)
@@ -142,16 +154,66 @@ func BuildOfflineBundle(ctx context.Context, output string, options BuildOptions
 	if err != nil {
 		return BundleManifest{}, err
 	}
+	nextDNSSHA := strings.TrimSpace(options.NextDNSSHA)
+	if nextDNSSHA == "" {
+		commitData, downloadErr := downloadURL(ctx, client, nextDNSCommitURL, 1<<20)
+		if downloadErr != nil {
+			return BundleManifest{}, downloadErr
+		}
+		var nextCommit struct {
+			SHA string `json:"sha"`
+		}
+		if json.Unmarshal(commitData, &nextCommit) != nil {
+			return BundleManifest{}, fmt.Errorf("invalid NextDNS commit response")
+		}
+		nextDNSSHA = nextCommit.SHA
+	}
+	if !validCommitSHA(nextDNSSHA) {
+		return BundleManifest{}, fmt.Errorf("invalid NextDNS commit SHA")
+	}
+	domainRules := []DomainSignature{}
+	for _, ecosystem := range nextDNSEcosystems {
+		rawURL := fmt.Sprintf(nextDNSRawURL, nextDNSSHA, "domains/"+ecosystem)
+		content, downloadErr := downloadURL(ctx, client, rawURL, 2<<20)
+		if downloadErr != nil {
+			return BundleManifest{}, downloadErr
+		}
+		for _, line := range strings.Split(string(content), "\n") {
+			domain := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
+			if domain == "" {
+				continue
+			}
+			domainRules = append(domainRules, DomainSignature{Domain: domain, MatchType: DomainMatchSubdomain, Ecosystem: ecosystemDisplayName(ecosystem), Category: "telemetry", Confidence: 0.55, Source: "NextDNS"})
+		}
+	}
+	projectData := options.ProjectDomainRules
+	if len(projectData) == 0 {
+		projectData = embeddedDomainSignatures
+	}
+	var projectRules []DomainSignature
+	if err := json.Unmarshal(projectData, &projectRules); err != nil {
+		return BundleManifest{}, fmt.Errorf("decode project domain rules: %w", err)
+	}
+	domainData, err := encodeDomainSignatures(append(domainRules, projectRules...))
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	nextDNSLicense, err := downloadURL(ctx, client, fmt.Sprintf(nextDNSRawURL, nextDNSSHA, "LICENSE"), 1<<20)
+	if err != nil {
+		return BundleManifest{}, err
+	}
 	files := map[string][]byte{
 		"oui.csv": ouiData, "device-rules.json": rulesData, "fingerbank-dhcp.json": fingerbankData,
 		"brand-aliases.json": embeddedBrandAliases, "licenses/ODbL-1.0.html": odbl, "licenses/DbCL-1.0.html": dbcl,
-		"licenses/NOTICE.txt": []byte("Fingerbank public snapshot is used under ODbL-1.0 and its individual contents under DbCL-1.0. The snapshot is historical and is used only as auxiliary DHCP evidence.\n"),
+		"domain-signatures.json": domainData, "licenses/NextDNS-MIT.txt": nextDNSLicense,
+		"licenses/NOTICE.txt": []byte("Fingerbank public snapshot is used under ODbL-1.0 and its individual contents under DbCL-1.0. The snapshot is historical and is used only as auxiliary DHCP evidence.\nNextDNS native-tracking-domains is used under the MIT License as an auxiliary ecosystem signal.\n"),
 	}
 	createdAt := now().UTC()
 	manifest := BundleManifest{SchemaVersion: BundleSchemaVersion, Version: "offline-" + createdAt.Format("20060102") + "-" + commit.SHA[:12], CreatedAt: createdAt.Format(time.RFC3339Nano), Sources: []BundleSource{
 		{Name: "IEEE MA-L/MA-M/MA-S", Version: createdAt.Format("2006-01-02"), URL: "https://standards-oui.ieee.org/", License: "IEEE public registry"},
 		{Name: "uap-core", Version: commit.SHA, URL: fmt.Sprintf(uapRawURL, commit.SHA), License: "Apache-2.0"},
 		{Name: "Fingerbank public snapshot", Version: "6.8.2-20140609", URL: fbURL, License: "ODbL-1.0/DbCL-1.0"},
+		{Name: "NextDNS native-tracking-domains", Version: nextDNSSHA, URL: fmt.Sprintf(nextDNSRawURL, nextDNSSHA, "domains/"), License: "MIT"},
 	}, Files: map[string]BundleFile{}}
 	for name, data := range files {
 		manifest.Files[name] = bundleFile(data)
@@ -181,7 +243,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	reader := tar.NewReader(gz)
 	files := map[string][]byte{}
 	total := int64(0)
-	allowed := map[string]bool{"manifest.json": true, "oui.csv": true, "device-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NOTICE.txt": true}
+	allowed := map[string]bool{"manifest.json": true, "oui.csv": true, "device-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "domain-signatures.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NextDNS-MIT.txt": true, "licenses/NOTICE.txt": true}
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -208,17 +270,23 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 		total += header.Size
 		files[name] = payload
 	}
-	required := []string{"manifest.json", "oui.csv", "device-rules.json", "fingerbank-dhcp.json", "brand-aliases.json", "licenses/ODbL-1.0.html", "licenses/DbCL-1.0.html", "licenses/NOTICE.txt"}
-	for _, name := range required {
-		if len(files[name]) == 0 {
-			return Bundle{}, fmt.Errorf("bundle is missing %q", name)
-		}
+	if len(files["manifest.json"]) == 0 {
+		return Bundle{}, fmt.Errorf("bundle is missing %q", "manifest.json")
 	}
 	var manifest BundleManifest
 	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil {
 		return Bundle{}, fmt.Errorf("decode manifest: %w", err)
 	}
-	if manifest.SchemaVersion != BundleSchemaVersion || manifest.Version == "" {
+	required := []string{"manifest.json", "oui.csv", "device-rules.json", "fingerbank-dhcp.json", "brand-aliases.json", "licenses/ODbL-1.0.html", "licenses/DbCL-1.0.html", "licenses/NOTICE.txt"}
+	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+		required = append(required, "domain-signatures.json", "licenses/NextDNS-MIT.txt")
+	}
+	for _, name := range required {
+		if len(files[name]) == 0 {
+			return Bundle{}, fmt.Errorf("bundle is missing %q", name)
+		}
+	}
+	if (manifest.SchemaVersion != BundleSchemaVersionV1 && manifest.SchemaVersion != BundleSchemaVersionV2) || manifest.Version == "" {
 		return Bundle{}, fmt.Errorf("unsupported bundle manifest")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt); err != nil {
@@ -236,7 +304,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if err := validateBundleSourcesAndLicenses(manifest, files); err != nil {
 		return Bundle{}, err
 	}
-	library, err := LoadWithData(manifest.Version, files["oui.csv"], files["device-rules.json"], files["fingerbank-dhcp.json"], files["brand-aliases.json"])
+	library, err := LoadWithDomainData(manifest.Version, files["oui.csv"], files["device-rules.json"], files["fingerbank-dhcp.json"], files["brand-aliases.json"], files["domain-signatures.json"])
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -251,6 +319,9 @@ func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string]
 		"IEEE MA-L/MA-M/MA-S":        "IEEE",
 		"uap-core":                   "Apache-2.0",
 		"Fingerbank public snapshot": "ODbL-1.0/DbCL-1.0",
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+		requiredSources["NextDNS native-tracking-domains"] = "MIT"
 	}
 	seen := map[string]bool{}
 	for _, source := range manifest.Sources {
@@ -278,6 +349,12 @@ func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string]
 	notice := strings.ToLower(string(files["licenses/NOTICE.txt"]))
 	if !strings.Contains(notice, "fingerbank") || !strings.Contains(notice, "odbl") || !strings.Contains(notice, "dbcl") {
 		return fmt.Errorf("bundle NOTICE must preserve Fingerbank ODbL/DbCL attribution")
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+		license := strings.ToLower(string(files["licenses/NextDNS-MIT.txt"]))
+		if !strings.Contains(license, "mit license") || !strings.Contains(license, "nextdns") || !strings.Contains(notice, "nextdns") || !strings.Contains(notice, "mit") {
+			return fmt.Errorf("bundle must preserve NextDNS MIT attribution")
+		}
 	}
 	return nil
 }
@@ -335,6 +412,21 @@ func fallback(value, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+func validCommitSHA(value string) bool {
+	return len(value) >= 12 && strings.IndexFunc(value, func(r rune) bool { return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') }) < 0
+}
+
+func ecosystemDisplayName(value string) string {
+	switch value {
+	case "alexa":
+		return "Amazon Alexa"
+	case "windows":
+		return "Microsoft Windows"
+	default:
+		return strings.ToUpper(value[:1]) + value[1:]
+	}
 }
 func downloadURL(ctx context.Context, client *http.Client, rawURL string, max int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)

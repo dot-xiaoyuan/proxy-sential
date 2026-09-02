@@ -130,6 +130,13 @@ func TestBuildOfflineBundlePinsSources(t *testing.T) {
 		switch {
 		case r.URL.Path == "/commit":
 			fmt.Fprint(w, `{"sha":"1234567890abcdef"}`)
+		case r.URL.Path == "/next-commit":
+			fmt.Fprint(w, `{"sha":"abcdef1234567890"}`)
+		case strings.HasPrefix(r.URL.Path, "/next-raw/") && strings.HasSuffix(r.URL.Path, "/LICENSE"):
+			fmt.Fprint(w, "MIT License\nCopyright (c) 2022 NextDNS\n")
+		case strings.HasPrefix(r.URL.Path, "/next-raw/"):
+			parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+			fmt.Fprintf(w, "telemetry.%s.example.test\n", parts[len(parts)-1])
 		case strings.HasPrefix(r.URL.Path, "/raw/"):
 			fmt.Fprint(w, "device_parsers:\n")
 			for i := 0; i < 12; i++ {
@@ -153,12 +160,19 @@ func TestBuildOfflineBundlePinsSources(t *testing.T) {
 	}))
 	defer server.Close()
 	path := filepath.Join(t.TempDir(), "bundle.tar.gz")
-	manifest, err := BuildOfflineBundle(context.Background(), path, BuildOptions{OUIURLs: []string{server.URL + "/oui-l", server.URL + "/oui-m", server.URL + "/oui-s"}, UAPCommitURL: server.URL + "/commit", UAPRawURL: server.URL + "/raw/%s", FingerbankURL: server.URL + "/fingerbank", ODbLURL: server.URL + "/license/odbl", DbCLURL: server.URL + "/license/dbcl", Now: func() time.Time { return time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC) }})
+	manifest, err := BuildOfflineBundle(context.Background(), path, BuildOptions{OUIURLs: []string{server.URL + "/oui-l", server.URL + "/oui-m", server.URL + "/oui-s"}, UAPCommitURL: server.URL + "/commit", UAPRawURL: server.URL + "/raw/%s", FingerbankURL: server.URL + "/fingerbank", ODbLURL: server.URL + "/license/odbl", DbCLURL: server.URL + "/license/dbcl", NextDNSCommitURL: server.URL + "/next-commit", NextDNSRawURL: server.URL + "/next-raw/%s/%s", Now: func() time.Time { return time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(manifest.Version, "1234567890ab") {
 		t.Fatalf("version is not pinned: %s", manifest.Version)
+	}
+	if manifest.SchemaVersion != BundleSchemaVersionV2 || manifest.Sources[len(manifest.Sources)-1].Version != "abcdef1234567890" {
+		t.Fatalf("NextDNS source is not pinned in v2 manifest: %+v", manifest)
+	}
+	bundle, err := VerifyBundleFile(path)
+	if err != nil || len(bundle.Files["domain-signatures.json"]) == 0 || len(bundle.Files["licenses/NextDNS-MIT.txt"]) == 0 {
+		t.Fatalf("v2 bundle verification failed: files=%v err=%v", bundle.Files, err)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
@@ -172,7 +186,7 @@ func testBundleBytes(t *testing.T) []byte {
 func testBundleBytesVersion(t *testing.T, version string) []byte {
 	t.Helper()
 	files := map[string][]byte{"oui.csv": embeddedOUI, "device-rules.json": embeddedRules, "fingerbank-dhcp.json": []byte(`[{"requested_options":"1,3,6","device_type":"desktop","os_family":"Windows","description":"test","confidence":0.84}]`), "brand-aliases.json": embeddedBrandAliases, "licenses/ODbL-1.0.html": []byte("ODbL"), "licenses/DbCL-1.0.html": []byte("DbCL"), "licenses/NOTICE.txt": []byte("Fingerbank data: ODbL and DbCL")}
-	manifest := BundleManifest{SchemaVersion: BundleSchemaVersion, Version: version, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Sources: []BundleSource{{Name: "IEEE MA-L/MA-M/MA-S", Version: "1", URL: "https://example.test/ieee", License: "IEEE public registry"}, {Name: "uap-core", Version: "abc123", URL: "https://example.test/uap", License: "Apache-2.0"}, {Name: "Fingerbank public snapshot", Version: "1", URL: "https://example.test/fingerbank", License: "ODbL-1.0/DbCL-1.0"}}, Files: map[string]BundleFile{}}
+	manifest := BundleManifest{SchemaVersion: BundleSchemaVersionV1, Version: version, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Sources: []BundleSource{{Name: "IEEE MA-L/MA-M/MA-S", Version: "1", URL: "https://example.test/ieee", License: "IEEE public registry"}, {Name: "uap-core", Version: "abc123", URL: "https://example.test/uap", License: "Apache-2.0"}, {Name: "Fingerbank public snapshot", Version: "1", URL: "https://example.test/fingerbank", License: "ODbL-1.0/DbCL-1.0"}}, Files: map[string]BundleFile{}}
 	for name, data := range files {
 		manifest.Files[name] = bundleFile(data)
 	}
