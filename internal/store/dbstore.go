@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
@@ -370,7 +372,117 @@ func (s *DBStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk.Snaps
 }
 
 func (s *DBStore) WriteDeviceState(ctx context.Context, run Run, events []normalized.Event, snapshots []risk.Snapshot) error {
-	return s.pg.WriteDeviceState(ctx, run, events, snapshots)
+	if err := s.pg.WriteDeviceState(ctx, run, events, snapshots); err != nil {
+		return err
+	}
+	copyEvents := append([]normalized.Event(nil), events...)
+	go func() {
+		background, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_, _ = s.pg.ProcessDomainEvents(background, copyEvents, fingerprint.Default())
+	}()
+	return nil
+}
+
+func (s *DBStore) ListEndpointDomainEvidence(ctx context.Context, endpointID string, limit int) ([]EndpointDomainEvidence, error) {
+	return s.pg.ListEndpointDomainEvidence(ctx, endpointID, limit)
+}
+
+func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version string, window time.Duration, batchSize int, progress func(DomainBackfillProgress)) (result DomainBackfillProgress, resultErr error) {
+	if version == "" {
+		return result, fmt.Errorf("domain rule version is required")
+	}
+	if window <= 0 {
+		window = 7 * 24 * time.Hour
+	}
+	if batchSize <= 0 || batchSize > 1000 {
+		batchSize = 1000
+	}
+	conn, err := s.pg.db.Conn(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer conn.Close()
+	lockName := "proxy-sentinel-domain-evidence-backfill:" + version
+	var locked bool
+	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, lockName).Scan(&locked); err != nil {
+		return result, err
+	}
+	if !locked {
+		return s.pg.loadDomainBackfillProgress(ctx, version)
+	}
+	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, lockName)
+	since := time.Now().UTC().Add(-window)
+	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO domain_evidence_backfill_jobs(version,status,cursor_timestamp,started_at,updated_at) VALUES($1,'pending',$2,now(),now()) ON CONFLICT(version) DO NOTHING`, version, since)
+	if err != nil {
+		return result, err
+	}
+	result, err = s.pg.loadDomainBackfillProgress(ctx, version)
+	if err != nil {
+		return result, err
+	}
+	if result.Status == "completed" {
+		if progress != nil {
+			progress(result)
+		}
+		return result, nil
+	}
+	_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_evidence_backfill_jobs SET status='running',last_error=NULL,started_at=COALESCE(started_at,now()),finished_at=NULL,updated_at=now() WHERE version=$1`, version)
+	if err != nil {
+		return result, err
+	}
+	result.Status = "running"
+	if progress != nil {
+		progress(result)
+	}
+	defer func() {
+		if resultErr != nil {
+			s.pg.saveDomainBackfillFailure(version, resultErr)
+			result.Status = "failed"
+			result.LastError = resultErr.Error()
+			if progress != nil {
+				progress(result)
+			}
+		}
+	}()
+	for {
+		events, queryErr := s.ch.ListDomainEventsAfter(ctx, since.Format(time.RFC3339Nano), result.CursorTimestamp, result.CursorEventID, batchSize)
+		if queryErr != nil {
+			return result, queryErr
+		}
+		if len(events) == 0 {
+			break
+		}
+		batchResult, processErr := s.pg.ProcessDomainEvents(ctx, events, fingerprint.Default())
+		if processErr != nil {
+			return result, processErr
+		}
+		last := events[len(events)-1]
+		result.Processed += batchResult.Processed
+		result.Matched += batchResult.Matched
+		result.Attributed += batchResult.Attributed
+		result.CursorTimestamp = last.Timestamp
+		result.CursorEventID = last.EventID
+		_, updateErr := s.pg.db.ExecContext(ctx, `UPDATE domain_evidence_backfill_jobs SET cursor_timestamp=$2,cursor_event_id=$3,processed=$4,attributed=$5,matched=$6,updated_at=now() WHERE version=$1`, version, last.Timestamp, last.EventID, result.Processed, result.Attributed, result.Matched)
+		if updateErr != nil {
+			return result, updateErr
+		}
+		if progress != nil {
+			progress(result)
+		}
+		if len(events) < batchSize {
+			break
+		}
+	}
+	_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_evidence_backfill_jobs SET status='completed',last_error=NULL,finished_at=now(),updated_at=now() WHERE version=$1`, version)
+	if err != nil {
+		return result, err
+	}
+	result.Status = "completed"
+	if progress != nil {
+		progress(result)
+	}
+	return result, nil
 }
 
 func dbRequired(name string, value string) error {

@@ -333,12 +333,40 @@ func (s *PostgresStore) ResolveIdentityAt(ctx context.Context, ip, at string) (I
 		return IdentityAttribution{}, false, err
 	}
 	if len(items) == 0 {
-		return IdentityAttribution{}, false, nil
+		return s.resolveIdentityHistoryAt(ctx, ip, when)
 	}
 	result := items[0]
 	if len(items) > 1 && (items[1].AccountID != result.AccountID || items[1].EndpointID != result.EndpointID) {
 		result.Conflict = true
 		result.ConflictReason = "同一时间窗口存在多个账号或终端会话"
+	}
+	return result, true, nil
+}
+
+func (s *PostgresStore) resolveIdentityHistoryAt(ctx context.Context, ip string, when time.Time) (IdentityAttribution, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT endpoint_id,COALESCE(account_id,'') FROM identity_ip_mac_history WHERE ip=$1::inet AND endpoint_id IS NOT NULL AND endpoint_id<>'' AND first_seen <= $2 AND last_seen >= $2 ORDER BY endpoint_id LIMIT 2`, ip, when)
+	if err != nil {
+		return IdentityAttribution{}, false, err
+	}
+	defer rows.Close()
+	items := []IdentityAttribution{}
+	for rows.Next() {
+		var item IdentityAttribution
+		if err := rows.Scan(&item.EndpointID, &item.AccountID); err != nil {
+			return IdentityAttribution{}, false, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return IdentityAttribution{}, false, err
+	}
+	if len(items) == 0 {
+		return IdentityAttribution{}, false, nil
+	}
+	result := items[0]
+	if len(items) > 1 {
+		result.Conflict = true
+		result.ConflictReason = "同一事件时间存在多个终端身份历史"
 	}
 	return result, true, nil
 }

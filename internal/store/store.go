@@ -141,6 +141,13 @@ type DeviceProfileVersionBackfiller interface {
 	RebuildDeviceProfilesVersion(ctx context.Context, version string, batchSize int, progress func(DeviceProfileBackfillProgress)) (DeviceProfileBackfillProgress, error)
 }
 
+type DomainEvidenceReader interface {
+	ListEndpointDomainEvidence(ctx context.Context, endpointID string, limit int) ([]EndpointDomainEvidence, error)
+}
+type DomainEvidenceVersionBackfiller interface {
+	RebuildDomainEvidenceVersion(ctx context.Context, version string, window time.Duration, batchSize int, progress func(DomainBackfillProgress)) (DomainBackfillProgress, error)
+}
+
 type IdentityEventIngester interface {
 	IngestIdentityEvents(ctx context.Context, events []normalized.Event) error
 }

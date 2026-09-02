@@ -77,7 +77,11 @@ func AttributeDomainObservation(ctx context.Context, observation DomainObservati
 	}
 	observation.EndpointID = attribution.EndpointID
 	observation.AuthSessionID = attribution.SessionID
-	observation.AttributionMethod = "active_auth_session"
+	if attribution.SessionID != "" {
+		observation.AttributionMethod = "active_auth_session"
+	} else {
+		observation.AttributionMethod = "identity_history"
+	}
 	return observation, true, nil
 }
 
