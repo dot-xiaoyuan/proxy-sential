@@ -76,23 +76,23 @@ func TestClickHouseAggregatesOneHundredThousandEventsWithoutRawReads(t *testing.
 	if len(encodedPage) > 250*1024 {
 		t.Fatalf("default event page exceeds 250KB: %d bytes", len(encodedPage))
 	}
-	domainPage, err := clickhouse.ListDomainEventsAfter(ctx, sensorID, time.Now().Add(-24*time.Hour).Format(time.RFC3339Nano), "", "", 1000)
+	domainPage, err := clickhouse.ListDomainEventsAfter(ctx, sensorID, time.Now().Add(-24*time.Hour).Format(time.RFC3339Nano), "", "", 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(domainPage) != 1000 {
-		t.Fatalf("domain backfill must read a bounded 1000-row batch, got %d", len(domainPage))
+	if len(domainPage) != 10000 {
+		t.Fatalf("domain backfill must read a bounded 10000-row batch, got %d", len(domainPage))
 	}
 	firstIDs := make(map[string]struct{}, len(domainPage))
 	for _, event := range domainPage {
 		firstIDs[event.EventID] = struct{}{}
 	}
 	lastDomainEvent := domainPage[len(domainPage)-1]
-	nextDomainPage, err := clickhouse.ListDomainEventsAfter(ctx, sensorID, time.Now().Add(-24*time.Hour).Format(time.RFC3339Nano), lastDomainEvent.Timestamp, lastDomainEvent.EventID, 1000)
+	nextDomainPage, err := clickhouse.ListDomainEventsAfter(ctx, sensorID, time.Now().Add(-24*time.Hour).Format(time.RFC3339Nano), lastDomainEvent.Timestamp, lastDomainEvent.EventID, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nextDomainPage) != 1000 {
+	if len(nextDomainPage) != 10000 {
 		t.Fatalf("domain backfill second batch must remain bounded, got %d", len(nextDomainPage))
 	}
 	for _, event := range nextDomainPage {

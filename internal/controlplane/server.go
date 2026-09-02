@@ -812,7 +812,7 @@ func (s *Server) startFingerprintBackfill(version string) {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 			defer cancel()
-			domainResult, err := domainBackfiller.RebuildDomainEvidenceVersion(ctx, version, 7*24*time.Hour, 1000, func(item store.DomainBackfillProgress) {
+			domainResult, err := domainBackfiller.RebuildDomainEvidenceVersion(ctx, version, 7*24*time.Hour, 10000, func(item store.DomainBackfillProgress) {
 				s.fingerprints.SetDomainBackfill(item.Status, item.Processed)
 			})
 			if err != nil {

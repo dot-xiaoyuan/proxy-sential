@@ -21,11 +21,11 @@ func TestClickHouseDomainEventCursorQueryIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := store.ListDomainEventsAfter(context.Background(), "sensor-campus-a", "2026-09-01T00:00:00Z", "2026-09-02T09:00:00Z", "cursor-1", 5000)
+	events, err := store.ListDomainEventsAfter(context.Background(), "sensor-campus-a", "2026-09-01T00:00:00Z", "2026-09-02T09:00:00Z", "cursor-1", 50000)
 	if err != nil || len(events) != 1 || events[0].Subject["endpoint_id"] != "endpoint-1" || events[0].Payload["session_id"] != "session-1" {
 		t.Fatalf("unexpected cursor result: %+v err=%v", events, err)
 	}
-	for _, required := range []string{"type IN ('dns','tls','quic','http')", "sensor_id='sensor-campus-a'", "(timestamp,event_id) >", "LIMIT 1000"} {
+	for _, required := range []string{"type IN ('dns','tls','quic','http')", "sensor_id='sensor-campus-a'", "(timestamp,event_id) >", "LIMIT 10000"} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("query is not bounded/cursor based; missing %q: %s", required, query)
 		}

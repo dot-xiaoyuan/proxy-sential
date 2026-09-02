@@ -13,8 +13,8 @@ import (
 )
 
 func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, since, cursorTimestamp, cursorEventID string, limit int) ([]normalized.Event, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 1000
+	if limit <= 0 || limit > 10000 {
+		limit = 10000
 	}
 	start, err := time.Parse(time.RFC3339Nano, since)
 	if err != nil {

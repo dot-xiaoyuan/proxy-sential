@@ -395,8 +395,8 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 	if window <= 0 {
 		window = 7 * 24 * time.Hour
 	}
-	if batchSize <= 0 || batchSize > 1000 {
-		batchSize = 1000
+	if batchSize <= 0 || batchSize > 10000 {
+		batchSize = 10000
 	}
 	conn, err := s.pg.db.Conn(ctx)
 	if err != nil {
