@@ -35,6 +35,7 @@ type Options struct {
 	StorageMode      string
 	PostgresDSN      string
 	ClickHouseDSN    string
+	StoreTimeout     time.Duration
 }
 
 type State struct {
@@ -237,6 +238,9 @@ func withDefaults(opts Options) Options {
 	if opts.StorageMode == "" {
 		opts.StorageMode = "file"
 	}
+	if opts.StoreTimeout <= 0 {
+		opts.StoreTimeout = 5 * time.Minute
+	}
 	return opts
 }
 
@@ -245,14 +249,15 @@ func writeStoreOutputs(opts Options, summary RunSummary, evidenceResult evidence
 	if mode == "" || mode == store.ModeFile {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), opts.StoreTimeout)
 	defer cancel()
 	writer, err := store.NewWriter(store.Options{
-		Mode:          mode,
-		SensorID:      opts.SensorID,
-		CollectorKind: "suricata",
-		PostgresDSN:   opts.PostgresDSN,
-		ClickHouseDSN: opts.ClickHouseDSN,
+		Mode:           mode,
+		SensorID:       opts.SensorID,
+		CollectorKind:  "suricata",
+		PostgresDSN:    opts.PostgresDSN,
+		ClickHouseDSN:  opts.ClickHouseDSN,
+		RequestTimeout: opts.StoreTimeout,
 	})
 	if err != nil {
 		return err

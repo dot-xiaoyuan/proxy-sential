@@ -566,14 +566,15 @@ type ReadWriter interface {
 }
 
 type Options struct {
-	Mode          Mode
-	ShadowDir     string
-	SensorID      string
-	CollectorKind string
-	CollectorVer  string
-	InterfaceName string
-	PostgresDSN   string
-	ClickHouseDSN string
+	Mode           Mode
+	ShadowDir      string
+	SensorID       string
+	CollectorKind  string
+	CollectorVer   string
+	InterfaceName  string
+	PostgresDSN    string
+	ClickHouseDSN  string
+	RequestTimeout time.Duration
 }
 
 func NewReader(opts Options) (Reader, error) {

@@ -22,7 +22,8 @@ import (
 const ClickHouseDDLPath = "migrations/clickhouse/001_production_schema.sql"
 
 type ClickHouseOptions struct {
-	DSN string
+	DSN            string
+	RequestTimeout time.Duration
 }
 
 type ClickHouseStore struct {
@@ -49,9 +50,13 @@ func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
 		params.Set("output_format_json_quote_64bit_integers", "0")
 		parsed.RawQuery = params.Encode()
 	}
+	requestTimeout := opts.RequestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = 2 * time.Minute
+	}
 	return &ClickHouseStore{
 		dsn:    parsed.String(),
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{Timeout: requestTimeout},
 	}, nil
 }
 

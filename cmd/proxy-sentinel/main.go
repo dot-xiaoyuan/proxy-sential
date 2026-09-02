@@ -513,6 +513,7 @@ func runShadowRun(args []string) error {
 	storageMode := fs.String("storage-mode", firstEnv("PROXY_SENTINEL_STORAGE_MODE", "file"), "storage mode: file, db, or dual")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN for production evidence/risk/audit storage")
 	clickHouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP URL for production event/diagnostic storage")
+	storeTimeout := fs.Duration("store-timeout", 5*time.Minute, "maximum time for persisting one shadow run")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -531,6 +532,7 @@ func runShadowRun(args []string) error {
 		StorageMode:      *storageMode,
 		PostgresDSN:      *postgresDSN,
 		ClickHouseDSN:    *clickHouseDSN,
+		StoreTimeout:     *storeTimeout,
 	})
 	if err != nil {
 		return err

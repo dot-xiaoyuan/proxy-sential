@@ -37,7 +37,7 @@ func NewDBStore(opts Options) (*DBStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: opts.ClickHouseDSN})
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: opts.ClickHouseDSN, RequestTimeout: opts.RequestTimeout})
 	if err != nil {
 		return nil, err
 	}

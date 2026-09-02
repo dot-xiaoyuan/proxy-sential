@@ -5,7 +5,19 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestWithDefaultsAllowsProductionSizedStoreWrites(t *testing.T) {
+	opts := withDefaults(Options{})
+	if opts.StoreTimeout != 5*time.Minute {
+		t.Fatalf("unexpected store timeout: %s", opts.StoreTimeout)
+	}
+	explicit := withDefaults(Options{StoreTimeout: 90 * time.Second})
+	if explicit.StoreTimeout != 90*time.Second {
+		t.Fatalf("explicit store timeout was overwritten: %s", explicit.StoreTimeout)
+	}
+}
 
 func TestRunReadsIncrementally(t *testing.T) {
 	dir := t.TempDir()
