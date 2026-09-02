@@ -124,7 +124,20 @@ func parseDomainSignatures(data []byte) ([]DomainSignature, *domainNode, error) 
 }
 
 func encodeDomainSignatures(rules []DomainSignature) ([]byte, error) {
-	data, err := json.Marshal(rules)
+	unique := make([]DomainSignature, 0, len(rules))
+	seen := map[string]string{}
+	for _, rule := range rules {
+		key := strings.ToLower(strings.TrimSpace(rule.MatchType)) + ":" + strings.ToLower(strings.TrimSuffix(strings.TrimSpace(rule.Domain), "."))
+		if ecosystem, ok := seen[key]; ok {
+			if !strings.EqualFold(ecosystem, rule.Ecosystem) {
+				return nil, fmt.Errorf("domain %q maps to conflicting ecosystems", rule.Domain)
+			}
+			continue
+		}
+		seen[key] = rule.Ecosystem
+		unique = append(unique, rule)
+	}
+	data, err := json.Marshal(unique)
 	if err != nil {
 		return nil, err
 	}

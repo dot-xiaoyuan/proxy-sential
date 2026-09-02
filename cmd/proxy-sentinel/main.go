@@ -104,6 +104,7 @@ func runDeviceFingerprint(args []string) error {
 		fs := flag.NewFlagSet("device-fingerprint build", flag.ContinueOnError)
 		output := fs.String("output", "", "output .tar.gz bundle")
 		uapSHA := fs.String("uap-sha", "", "optional pinned uap-core commit SHA")
+		nextDNSSHA := fs.String("nextdns-sha", "", "optional pinned NextDNS domain-list commit SHA")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -112,7 +113,7 @@ func runDeviceFingerprint(args []string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		manifest, err := fingerprint.BuildOfflineBundle(ctx, *output, fingerprint.BuildOptions{UAPSHA: *uapSHA})
+		manifest, err := fingerprint.BuildOfflineBundle(ctx, *output, fingerprint.BuildOptions{UAPSHA: *uapSHA, NextDNSSHA: *nextDNSSHA})
 		if err != nil {
 			return err
 		}

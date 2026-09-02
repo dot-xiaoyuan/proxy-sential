@@ -446,7 +446,7 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		}
 	}()
 	for {
-		events, queryErr := s.ch.ListDomainEventsAfter(ctx, since.Format(time.RFC3339Nano), result.CursorTimestamp, result.CursorEventID, batchSize)
+		events, queryErr := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), result.CursorTimestamp, result.CursorEventID, batchSize)
 		if queryErr != nil {
 			return result, queryErr
 		}

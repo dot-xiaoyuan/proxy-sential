@@ -12,7 +12,7 @@ import (
 	"proxy-sentinel/internal/normalized"
 )
 
-func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, since, cursorTimestamp, cursorEventID string, limit int) ([]normalized.Event, error) {
+func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, since, cursorTimestamp, cursorEventID string, limit int) ([]normalized.Event, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
@@ -20,16 +20,19 @@ func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, since, curs
 	if err != nil {
 		return nil, fmt.Errorf("invalid domain backfill start: %w", err)
 	}
-	clauses := []string{"timestamp >= parseDateTime64BestEffort(" + chQuote(start.UTC().Format(time.RFC3339Nano)) + ")", "type IN ('dns','tls','quic','http')", "multiIf(type='dns',JSONExtractString(payload_json,'query'),type='http',JSONExtractString(payload_json,'host'),JSONExtractString(payload_json,'sni')) != ''"}
+	clauses := []string{"timestamp >= parseDateTime64BestEffort(" + chQuote(start.UTC().Format(time.RFC3339Nano)) + ",6,'UTC')", "type IN ('dns','tls','quic','http')", "multiIf(type='dns',JSONExtractString(payload_json,'query'),type='http',JSONExtractString(payload_json,'host'),JSONExtractString(payload_json,'sni')) != ''"}
+	if strings.TrimSpace(sensorID) != "" {
+		clauses = append(clauses, "sensor_id="+chQuote(strings.TrimSpace(sensorID)))
+	}
 	if strings.TrimSpace(cursorTimestamp) != "" {
 		cursor, parseErr := time.Parse(time.RFC3339Nano, cursorTimestamp)
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid domain backfill cursor: %w", parseErr)
 		}
-		clauses = append(clauses, "(timestamp,event_id) > (parseDateTime64BestEffort("+chQuote(cursor.UTC().Format(time.RFC3339Nano))+"),"+chQuote(cursorEventID)+")")
+		clauses = append(clauses, "(timestamp,event_id) > (parseDateTime64BestEffort("+chQuote(cursor.UTC().Format(time.RFC3339Nano))+",6,'UTC'),"+chQuote(cursorEventID)+")")
 	}
 	data, err := s.query(ctx, fmt.Sprintf(`
-SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') timestamp,event_id,schema_version,source,source_event_type,type,subject_ip,endpoint_id,auth_session_id,payload_json,flow_json
+SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,schema_version,source,source_event_type,type,subject_ip,endpoint_id,auth_session_id,payload_json,flow_json
 FROM normalized_events
 WHERE %s
 ORDER BY timestamp,event_id
@@ -43,7 +46,7 @@ FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit))
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var row struct {
-			Timestamp       string `json:"timestamp"`
+			Timestamp       string `json:"event_timestamp"`
 			EventID         string `json:"event_id"`
 			SchemaVersion   string `json:"schema_version"`
 			Source          string `json:"source"`

@@ -20,6 +20,18 @@ func TestDomainSignatureValidationRejectsConflictsAndConfidenceEscalation(t *tes
 	}
 }
 
+func TestDomainSignatureBuildDeduplicatesSameEcosystemEntries(t *testing.T) {
+	rule := DomainSignature{Domain: "push.apple.example", MatchType: DomainMatchSubdomain, Ecosystem: "Apple", Category: "push", Confidence: 0.55, Source: "NextDNS"}
+	data, err := encodeDomainSignatures([]DomainSignature{rule, rule})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, _, err := parseDomainSignatures(data)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("same-ecosystem duplicate should be collapsed: rules=%d err=%v", len(rules), err)
+	}
+}
+
 func TestDomainMatcherUsesLabelBoundariesAndExactRules(t *testing.T) {
 	rules := []byte(`[
 {"domain":"apple.com","match_type":"subdomain","ecosystem":"Apple","category":"device_cloud","confidence":0.55,"source":"NextDNS"},
@@ -42,6 +54,39 @@ func TestDomainMatcherUsesLabelBoundariesAndExactRules(t *testing.T) {
 	}
 	if match, ok := library.MatchDomain("exact.xiaomi.com"); !ok || match.Ecosystem != "Xiaomi" {
 		t.Fatalf("exact match failed: %+v", match)
+	}
+}
+
+func TestDomainMatcherCoversInitialEightEcosystems(t *testing.T) {
+	rules := []byte(`[
+{"domain":"alexa.example","match_type":"subdomain","ecosystem":"Amazon Alexa","category":"device_cloud","confidence":0.55,"source":"NextDNS"},
+{"domain":"apple.example","match_type":"subdomain","ecosystem":"Apple","category":"push","confidence":0.55,"source":"NextDNS"},
+{"domain":"huawei.example","match_type":"subdomain","ecosystem":"Huawei","category":"telemetry","confidence":0.55,"source":"NextDNS"},
+{"domain":"roku.example","match_type":"subdomain","ecosystem":"Roku","category":"device_cloud","confidence":0.55,"source":"NextDNS"},
+{"domain":"samsung.example","match_type":"subdomain","ecosystem":"Samsung","category":"update","confidence":0.55,"source":"NextDNS"},
+{"domain":"sonos.example","match_type":"subdomain","ecosystem":"Sonos","category":"device_cloud","confidence":0.55,"source":"NextDNS"},
+{"domain":"windows.example","match_type":"subdomain","ecosystem":"Microsoft Windows","category":"update","confidence":0.55,"source":"NextDNS"},
+{"domain":"xiaomi.example","match_type":"subdomain","ecosystem":"Xiaomi","category":"telemetry","confidence":0.55,"source":"NextDNS"}
+]`)
+	library, err := LoadWithDomainData("eight-ecosystems", embeddedOUI, []byte("[]"), []byte("[]"), embeddedBrandAliases, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for domain, ecosystem := range map[string]string{
+		"device.alexa.example": "Amazon Alexa", "push.apple.example": "Apple",
+		"cloud.huawei.example": "Huawei", "api.roku.example": "Roku",
+		"update.samsung.example": "Samsung", "music.sonos.example": "Sonos",
+		"update.windows.example": "Microsoft Windows", "telemetry.xiaomi.example": "Xiaomi",
+	} {
+		match, ok := library.MatchDomain(domain)
+		if !ok || match.Ecosystem != ecosystem {
+			t.Fatalf("expected %s for %s, got %+v", ecosystem, domain, match)
+		}
+	}
+	for _, domain := range []string{"shared.cdn.example", "www.apple.com", "device.alexa.example.evil.test"} {
+		if match, ok := library.MatchDomain(domain); ok {
+			t.Fatalf("ordinary/shared/lookalike domain %s unexpectedly matched %+v", domain, match)
+		}
 	}
 }
 
