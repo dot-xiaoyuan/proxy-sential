@@ -1843,6 +1843,7 @@ components:
         domain_source_version: { type: string }
         domain_backfill_status: { type: string }
         domain_backfill_processed: { type: integer }
+        domain_backfill_last_error: { type: string }
     DeviceFingerprintBundleSource:
       type: object
       required: [name, version, url, license]

@@ -48,6 +48,7 @@ type Status struct {
 	DomainSourceVersion     string         `json:"domain_source_version,omitempty"`
 	DomainBackfillStatus    string         `json:"domain_backfill_status,omitempty"`
 	DomainBackfillProcessed int            `json:"domain_backfill_processed,omitempty"`
+	DomainBackfillLastError string         `json:"domain_backfill_last_error,omitempty"`
 }
 
 type Manager struct {
@@ -242,6 +243,21 @@ func (m *Manager) SetDomainBackfill(status string, processed int) {
 	m.mu.Lock()
 	m.status.DomainBackfillStatus = status
 	m.status.DomainBackfillProcessed = processed
+	if status != "failed" {
+		m.status.DomainBackfillLastError = ""
+	}
+	current := m.status
+	m.mu.Unlock()
+	m.persistStatus(current)
+}
+
+func (m *Manager) SetDomainBackfillFailure(processed int, err error) {
+	m.mu.Lock()
+	m.status.DomainBackfillStatus = "failed"
+	m.status.DomainBackfillProcessed = processed
+	if err != nil {
+		m.status.DomainBackfillLastError = err.Error()
+	}
 	current := m.status
 	m.mu.Unlock()
 	m.persistStatus(current)

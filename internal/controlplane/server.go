@@ -301,7 +301,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 		fingerprints.Start(context.Background(), 7*24*time.Hour)
 	}
 	fingerprintStatus := fingerprints.Status()
-	if !opts.ReadOnly && fingerprintStatus.Source == "offline-bundle" && fingerprintStatus.BackfillStatus != "completed" {
+	if !opts.ReadOnly && fingerprintStatus.Source == "offline-bundle" && (fingerprintStatus.BackfillStatus != "completed" || fingerprintStatus.DomainBackfillStatus == "pending" || fingerprintStatus.DomainBackfillStatus == "running" || fingerprintStatus.DomainBackfillStatus == "failed") {
 		server.startFingerprintBackfill(fingerprintStatus.Version)
 	}
 	if !opts.ReadOnly && operations.db != nil {
@@ -808,6 +808,28 @@ func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) startFingerprintBackfill(version string) {
+	if domainBackfiller, ok := s.reader.(store.DomainEvidenceVersionBackfiller); ok && s.fingerprints.Status().DomainRuleCount > 0 {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+			defer cancel()
+			domainResult, err := domainBackfiller.RebuildDomainEvidenceVersion(ctx, version, 7*24*time.Hour, 1000, func(item store.DomainBackfillProgress) {
+				s.fingerprints.SetDomainBackfill(item.Status, item.Processed)
+			})
+			if err != nil {
+				s.fingerprints.SetDomainBackfillFailure(domainResult.Processed, err)
+				return
+			}
+			s.startDeviceProfileBackfill(version)
+		}()
+		return
+	}
+	if s.fingerprints.Status().DomainRuleCount == 0 {
+		s.fingerprints.SetDomainBackfill("not_required", 0)
+	}
+	s.startDeviceProfileBackfill(version)
+}
+
+func (s *Server) startDeviceProfileBackfill(version string) {
 	if backfiller, ok := s.reader.(store.DeviceProfileVersionBackfiller); ok {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

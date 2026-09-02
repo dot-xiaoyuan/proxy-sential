@@ -11,6 +11,25 @@ import (
 	"testing"
 )
 
+func TestDomainBackfillStatusReportsCountsVersionAndFailure(t *testing.T) {
+	domainData := []byte(`[{"domain":"push.apple.test","match_type":"subdomain","ecosystem":"Apple","category":"push","confidence":0.55,"source":"NextDNS"},{"domain":"cloud.huawei.test","match_type":"exact","ecosystem":"Huawei","category":"device_cloud","confidence":0.55,"source":"NextDNS"}]`)
+	library, err := LoadWithDomainData("status-v2", embeddedOUI, []byte("[]"), []byte("[]"), embeddedBrandAliases, domainData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := libraryStatus(library, Status{Sources: []BundleSource{{Name: "NextDNS native-tracking-domains", Version: "abcdef123456", URL: "https://example.test", License: "MIT"}}})
+	if status.DomainRuleCount != 2 || status.DomainEcosystemCount != 2 || status.DomainSourceVersion != "abcdef123456" {
+		t.Fatalf("unexpected domain status: %+v", status)
+	}
+	manager := NewManager("")
+	manager.SetDomainBackfill("running", 120)
+	manager.SetDomainBackfillFailure(121, fmt.Errorf("cursor query failed"))
+	status = manager.Status()
+	if status.DomainBackfillStatus != "failed" || status.DomainBackfillProcessed != 121 || status.DomainBackfillLastError != "cursor query failed" {
+		t.Fatalf("failure status missing: %+v", status)
+	}
+}
+
 func TestManagerUpdateActivatesValidatedLibraryAndKeepsLastGoodOnFailure(t *testing.T) {
 	previous := Default()
 	defer SetDefault(previous)

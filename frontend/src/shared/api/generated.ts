@@ -1176,6 +1176,7 @@ export interface components {
             domain_source_version?: string;
             domain_backfill_status?: string;
             domain_backfill_processed?: number;
+            domain_backfill_last_error?: string;
         };
         DeviceFingerprintBundleSource: {
             name: string;
