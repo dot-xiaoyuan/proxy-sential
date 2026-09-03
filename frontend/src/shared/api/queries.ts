@@ -78,6 +78,7 @@ export const queryKeys = {
   event: (eventId: string) => ['event', eventId] as const,
   ingestDiagnostic: (diagnosticId: string) => ['ingest-diagnostic', diagnosticId] as const,
   deviceFingerprintLibrary: ['device-fingerprint-library'] as const,
+	deviceRecognitionSummary: ['device-recognition-summary'] as const,
 	cases: (query: object) => ['cases',query] as const,
 	caseDetail: (caseId:string) => ['case',caseId] as const,
 	organization: ['organization'] as const,
@@ -328,6 +329,10 @@ export function useIngestDiagnostic(diagnosticId: string) {
 
 export function useDeviceFingerprintLibrary() {
   return useQuery({ queryKey: queryKeys.deviceFingerprintLibrary, queryFn: api.deviceFingerprintLibrary })
+}
+
+export function useDeviceRecognitionSummary() {
+	return useQuery({ queryKey: queryKeys.deviceRecognitionSummary, queryFn: api.deviceRecognitionSummary, staleTime: 60_000 })
 }
 
 export function useUpdateDeviceFingerprintLibrary() {

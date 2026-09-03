@@ -379,7 +379,10 @@ func (s *DBStore) WriteDeviceState(ctx context.Context, run Run, events []normal
 	go func() {
 		background, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		_, _ = s.pg.ProcessDomainEvents(background, copyEvents, fingerprint.Default())
+		result, err := s.pg.ProcessDomainEvents(background, copyEvents, fingerprint.Default())
+		if err == nil {
+			_ = s.ch.WriteDomainEcosystemObservations(background, result.Observations)
+		}
 	}()
 	return nil
 }
@@ -456,6 +459,9 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		batchResult, processErr := s.pg.ProcessDomainEvents(ctx, events, fingerprint.Default())
 		if processErr != nil {
 			return result, processErr
+		}
+		if writeErr := s.ch.WriteDomainEcosystemObservations(ctx, batchResult.Observations); writeErr != nil {
+			return result, writeErr
 		}
 		last := events[len(events)-1]
 		result.Processed += batchResult.Processed

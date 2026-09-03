@@ -23,6 +23,8 @@ type DomainObservation struct {
 	EndpointID        string `json:"endpoint_id,omitempty"`
 	AuthSessionID     string `json:"auth_session_id,omitempty"`
 	AttributionMethod string `json:"attribution_method,omitempty"`
+	SensorID          string `json:"sensor_id,omitempty"`
+	CampusID          string `json:"campus_id,omitempty"`
 }
 
 // ExtractDomainObservation accepts only the four standard event shapes used by
@@ -55,6 +57,8 @@ func ExtractDomainObservation(event normalized.Event) (DomainObservation, bool) 
 		IP:          firstNonEmpty(stringFromMap(event.Subject, "ip"), stringFromMap(event.Flow, "src_ip")),
 		EndpointID:  endpointID, AuthSessionID: stringFromMap(event.Payload, "session_id"),
 		AttributionMethod: method,
+		SensorID:          stringFromMap(event.Observer, "sensor_id"),
+		CampusID:          firstNonEmpty(stringFromMap(event.Subject, "campus_id"), stringFromMap(event.Payload, "campus_id")),
 	}, true
 }
 

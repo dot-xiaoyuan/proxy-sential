@@ -637,6 +637,15 @@ func TestDeviceFingerprintLibraryStatusAndReadOnlyUpdate(t *testing.T) {
 	}
 }
 
+func TestDeviceRecognitionSummaryIsAvailableInFileMode(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true, FingerprintDir: t.TempDir()})
+	var summary store.DeviceRecognitionSummary
+	getJSON(t, server, "/api/v1/device-recognition/summary", http.StatusOK, &summary)
+	if summary.Window != "24h" || summary.AsOf == "" || summary.Coverage == nil {
+		t.Fatalf("unexpected recognition summary fallback: %#v", summary)
+	}
+}
+
 func TestDeviceQueryAcceptsEcosystemFilter(t *testing.T) {
 	query, err := deviceQuery(url.Values{"ecosystem": {"Microsoft Windows"}, "limit": {"20"}})
 	if err != nil || query.Ecosystem != "Microsoft Windows" || query.Limit != 20 {

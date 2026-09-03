@@ -197,6 +197,7 @@ export type DeviceFingerprintLibraryStatus = {
 }
 export type DeviceFingerprintBundleSource = { name: string; version: string; url: string; license: string }
 export type DeviceFingerprintBundleManifest = { schema_version: string; version: string; created_at: string; sources: DeviceFingerprintBundleSource[]; files: Record<string,{size:number;sha256:string}> }
+export type DeviceRecognitionSummary = components['schemas']['DeviceRecognitionSummary']
 
 export type DeviceQuery = {
   sensor_id?: string

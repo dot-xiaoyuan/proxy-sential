@@ -454,6 +454,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleEndpointRegistration(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case r.Method == http.MethodGet && path == "/devices":
 		s.handleDevices(w, r)
+	case r.Method == http.MethodGet && path == "/device-recognition/summary":
+		s.handleDeviceRecognitionSummary(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/devices/"):
 		s.handleDevice(w, r, strings.TrimPrefix(path, "/devices/"))
 	case r.Method == http.MethodGet && path == "/device-signals":
@@ -509,6 +511,22 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "api endpoint not found")
 	}
+}
+
+func (s *Server) handleDeviceRecognitionSummary(w http.ResponseWriter, r *http.Request) {
+	reader, ok := s.reader.(store.DeviceRecognitionSummaryReader)
+	if !ok {
+		writeJSON(w, http.StatusOK, store.DeviceRecognitionSummary{Coverage: map[string]store.RecognitionCoverage{}, DomainRuleVersion: s.fingerprints.Status().Version, Window: "24h", AsOf: time.Now().UTC().Format(time.RFC3339Nano)})
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	result, err := reader.GetDeviceRecognitionSummary(ctx, s.fingerprints.Status().Version)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_device_recognition_summary_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleProxyReviews(w http.ResponseWriter, r *http.Request) {

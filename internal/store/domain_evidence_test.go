@@ -31,3 +31,26 @@ func TestClickHouseDomainEventCursorQueryIsBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestClickHouseDomainObservationWriteIncludesUnattributedMatches(t *testing.T) {
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		body = string(data)
+		_, _ = w.Write([]byte("{}\n"))
+	}))
+	defer server.Close()
+	store, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.WriteDomainEcosystemObservations(context.Background(), []DomainEcosystemObservation{{DomainObservation: DomainObservation{EventID: "event-unattributed", Timestamp: "2026-09-02T10:00:00Z", Domain: "push.apple.example", EventSource: "tls", SensorID: "campus-a"}, Ecosystem: "Apple", Category: "push", RuleSource: "NextDNS", RuleVersion: "bundle-v2", Confidence: .55}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"INSERT INTO domain_ecosystem_observations", `"event_id":"event-unattributed"`, `"attributed":false`, `"ecosystem":"Apple"`} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("missing %q in domain observation insert: %s", expected, body)
+		}
+	}
+}

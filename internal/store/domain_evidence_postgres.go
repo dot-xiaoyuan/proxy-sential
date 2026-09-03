@@ -31,14 +31,25 @@ type EndpointDomainEvidence struct {
 }
 
 type DomainBackfillProgress struct {
-	Version         string `json:"version"`
-	Status          string `json:"status"`
-	CursorTimestamp string `json:"cursor_timestamp,omitempty"`
-	CursorEventID   string `json:"cursor_event_id,omitempty"`
-	Processed       int    `json:"processed"`
-	Attributed      int    `json:"attributed"`
-	Matched         int    `json:"matched"`
-	LastError       string `json:"last_error,omitempty"`
+	Version         string                       `json:"version"`
+	Status          string                       `json:"status"`
+	CursorTimestamp string                       `json:"cursor_timestamp,omitempty"`
+	CursorEventID   string                       `json:"cursor_event_id,omitempty"`
+	Processed       int                          `json:"processed"`
+	Attributed      int                          `json:"attributed"`
+	Matched         int                          `json:"matched"`
+	LastError       string                       `json:"last_error,omitempty"`
+	Observations    []DomainEcosystemObservation `json:"-"`
+}
+
+type DomainEcosystemObservation struct {
+	DomainObservation
+	Ecosystem   string  `json:"ecosystem"`
+	Category    string  `json:"category"`
+	RuleSource  string  `json:"rule_source"`
+	RuleVersion string  `json:"rule_version"`
+	Confidence  float64 `json:"confidence"`
+	Attributed  bool    `json:"attributed"`
 }
 
 func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normalized.Event, library *fingerprint.Library) (DomainBackfillProgress, error) {
@@ -55,14 +66,19 @@ func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normal
 			continue
 		}
 		result.Matched++
+		matchedObservation := DomainEcosystemObservation{DomainObservation: observation, Ecosystem: match.Ecosystem, Category: match.Category, RuleSource: match.Source, RuleVersion: library.Version(), Confidence: match.Confidence}
 		attributed, found, err := AttributeDomainObservation(ctx, observation, s)
 		if err != nil {
 			return result, err
 		}
 		if !found {
+			result.Observations = append(result.Observations, matchedObservation)
 			continue
 		}
 		result.Attributed++
+		matchedObservation.DomainObservation = attributed
+		matchedObservation.Attributed = true
+		result.Observations = append(result.Observations, matchedObservation)
 		if err := s.persistDomainEvidence(ctx, attributed, match, library.Version()); err != nil {
 			return result, err
 		}

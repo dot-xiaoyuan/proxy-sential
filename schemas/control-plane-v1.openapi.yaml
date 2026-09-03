@@ -1013,6 +1013,18 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /device-recognition/summary:
+    get:
+      operationId: getDeviceRecognitionSummary
+      responses:
+        "200":
+          description: Device recognition coverage, event attribution, and domain ecosystem matching summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceRecognitionSummary"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /devices/{device_id}:
     get:
       operationId: getDevice
@@ -1843,6 +1855,32 @@ components:
         domain_source_version: { type: string }
         domain_backfill_status: { type: string }
         domain_backfill_processed: { type: integer }
+    RecognitionCoverage:
+      type: object
+      required: [known, rate]
+      properties:
+        known: { type: integer }
+        rate: { type: number, minimum: 0, maximum: 1 }
+    DeviceRecognitionSummary:
+      type: object
+      required: [total_endpoints, coverage, event_count, attributed_event_count, event_attribution_rate, ecosystem_matched, ecosystem_attributed, ecosystem_unattributed, ecosystem_conflicts, backfill_processed, as_of, window]
+      properties:
+        total_endpoints: { type: integer }
+        coverage:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/RecognitionCoverage" }
+        event_count: { type: integer }
+        attributed_event_count: { type: integer }
+        event_attribution_rate: { type: number, minimum: 0, maximum: 1 }
+        ecosystem_matched: { type: integer }
+        ecosystem_attributed: { type: integer }
+        ecosystem_unattributed: { type: integer }
+        ecosystem_conflicts: { type: integer }
+        domain_rule_version: { type: string }
+        backfill_status: { type: string }
+        backfill_processed: { type: integer }
+        as_of: { type: string, format: date-time }
+        window: { type: string }
         domain_backfill_last_error: { type: string }
     DeviceFingerprintBundleSource:
       type: object

@@ -57,6 +57,7 @@ import type {
 	LocalUser,
 	UserMutation,
 	CampusException,
+	DeviceRecognitionSummary,
 } from './types'
 
 export class ApiError extends Error {
@@ -132,6 +133,7 @@ export const api = {
   dpiFlow: (flowId: string) =>
     request<DpiFlowDetail>(`/dpi/flows/${encodeURIComponent(flowId)}`),
   devices: (query: DeviceQuery) => request<DeviceListResponse>(`/devices${search(query)}`),
+  deviceRecognitionSummary: () => request<DeviceRecognitionSummary>('/device-recognition/summary'),
   device: (deviceId: string, query: DeviceQuery) =>
     request<ObservedDevice>(`/devices/${encodeURIComponent(deviceId)}${search(query)}`),
   deviceSignals: (query: DeviceQuery) =>

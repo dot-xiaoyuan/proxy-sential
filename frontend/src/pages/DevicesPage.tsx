@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Input, Pagination, Select, Table, Tag, Typography } from 'antd'
+import { Alert, Input, Pagination, Select, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { Link } from 'react-router-dom'
 
 import { BrandLogo } from '../entities/device/BrandLogo'
-import { useDevices } from '../shared/api/queries'
+import { useDeviceRecognitionSummary, useDevices } from '../shared/api/queries'
 import type { EndpointDeviceInventory } from '../shared/api/types'
 import { AppErrorAlert, AppLoadingState, AppPageHeader, UniversityDimensionFilters, type QuickWindow, type UniversityDimensions } from '../shared/ui'
 
@@ -16,6 +16,7 @@ export function DevicesPage() {
   const [query, setQuery] = useState('')
   const [dimensions, setDimensions] = useState<UniversityDimensions>({})
 	const [ecosystem,setEcosystem]=useState<string>()
+	const recognitionSummary = useDeviceRecognitionSummary()
   useEffect(() => { const timer = globalThis.setTimeout(() => { setQuery(searchInput.trim()); setPage(1) }, 300); return () => globalThis.clearTimeout(timer) }, [searchInput])
   const devices = useDevices({ window: quickWindow, q: query, ecosystem, ...dimensions, limit: pageSize, cursor: String((page - 1) * pageSize) })
 
@@ -34,8 +35,24 @@ export function DevicesPage() {
   return <main className="page">
     <AppPageHeader title="终端画像" subtitle="按终端显示身份、网络位置与保守设备识别摘要，点击终端查看完整证据。" quickWindow={quickWindow} onQuickWindowChange={(value) => { setQuickWindow(value); setPage(1) }} loading={devices.isFetching} onRefresh={() => void devices.refetch()} extra={<div className="list-toolbar"><Input.Search allowClear placeholder="搜索终端、MAC、品牌、生态、账号或 IP" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} /><Select allowClear className="ecosystem-filter" placeholder="生态线索" value={ecosystem} options={['Apple','Huawei','Samsung','Xiaomi','Microsoft Windows','Amazon Alexa','Roku','Sonos'].map(value=>({label:value,value}))} onChange={(value)=>{setEcosystem(value);setPage(1)}} /><Select value={pageSize} options={[{label:'20 条/页',value:20},{label:'50 条/页',value:50}]} onChange={(value) => { setPageSize(value); setPage(1) }} /></div>} />
     <section className="surface filter-surface"><UniversityDimensionFilters value={dimensions} onChange={(next) => { setDimensions(next); setPage(1) }} /></section>
+    {recognitionSummary.data && <section className="surface recognition-summary-surface">
+		<div className="recognition-coverage-strip">
+			<RecognitionCoverage label="厂商" value={recognitionSummary.data.coverage.vendor} total={recognitionSummary.data.total_endpoints} />
+			<RecognitionCoverage label="品牌" value={recognitionSummary.data.coverage.brand} total={recognitionSummary.data.total_endpoints} />
+			<RecognitionCoverage label="型号" value={recognitionSummary.data.coverage.model} total={recognitionSummary.data.total_endpoints} />
+			<RecognitionCoverage label="类型" value={recognitionSummary.data.coverage.device_type} total={recognitionSummary.data.total_endpoints} />
+			<RecognitionCoverage label="操作系统" value={recognitionSummary.data.coverage.os_family} total={recognitionSummary.data.total_endpoints} />
+			<RecognitionCoverage label="生态线索" value={recognitionSummary.data.coverage.ecosystem} total={recognitionSummary.data.total_endpoints} />
+		</div>
+		<div className="recognition-summary-meta">生态匹配 {recognitionSummary.data.ecosystem_matched} · 已归属 {recognitionSummary.data.ecosystem_attributed} · 未归属 {recognitionSummary.data.ecosystem_unattributed} · 规则 {recognitionSummary.data.domain_rule_version || '-'}</div>
+		{recognitionSummary.data.event_count > 0 && recognitionSummary.data.event_attribution_rate < 0.2 && <Alert showIcon type="warning" title={`最近 24 小时终端归属率 ${Math.round(recognitionSummary.data.event_attribution_rate * 100)}%，生态命中暂无法完整写入终端画像`} description={<Link to="/ingest">检查身份接入与标准事件 endpoint_id</Link>} />}
+	</section>}
     <section className="surface">{devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError ? <AppErrorAlert title="设备列表加载失败" message={devices.error.message} /> : <><Table className="compact-list-table" columns={columns} dataSource={devices.data?.items ?? []} locale={{emptyText:'没有匹配的终端'}} pagination={false} rowKey="endpoint_id" scroll={{x:1510}} size="small" /><Pagination className="list-pagination" current={page} pageSize={pageSize} total={devices.data?.page.total ?? 0} showSizeChanger={false} onChange={setPage} /></>}</section>
   </main>
+}
+
+function RecognitionCoverage({label,value,total}:{label:string;value?:{known:number;rate:number};total:number}) {
+	return <div className="recognition-coverage-item"><Typography.Text type="secondary">{label}</Typography.Text><Typography.Text strong>{value?.known ?? 0}/{total} · {Math.round((value?.rate ?? 0)*100)}%</Typography.Text></div>
 }
 
 function registrationStatusText(status:EndpointDeviceInventory['registration_status']) { return status === 'registered' ? '已登记' : status === 'ignored' ? '已忽略' : status === 'retired' ? '已退役' : '未登记' }

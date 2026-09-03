@@ -756,6 +756,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/device-recognition/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDeviceRecognitionSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/devices/{device_id}": {
         parameters: {
             query?: never;
@@ -1176,6 +1192,29 @@ export interface components {
             domain_source_version?: string;
             domain_backfill_status?: string;
             domain_backfill_processed?: number;
+        };
+        RecognitionCoverage: {
+            known: number;
+            rate: number;
+        };
+        DeviceRecognitionSummary: {
+            total_endpoints: number;
+            coverage: {
+                [key: string]: components["schemas"]["RecognitionCoverage"];
+            };
+            event_count: number;
+            attributed_event_count: number;
+            event_attribution_rate: number;
+            ecosystem_matched: number;
+            ecosystem_attributed: number;
+            ecosystem_unattributed: number;
+            ecosystem_conflicts: number;
+            domain_rule_version?: string;
+            backfill_status?: string;
+            backfill_processed: number;
+            /** Format: date-time */
+            as_of: string;
+            window: string;
             domain_backfill_last_error?: string;
         };
         DeviceFingerprintBundleSource: {
@@ -3559,6 +3598,27 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDeviceRecognitionSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Device recognition coverage, event attribution, and domain ecosystem matching summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceRecognitionSummary"];
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };

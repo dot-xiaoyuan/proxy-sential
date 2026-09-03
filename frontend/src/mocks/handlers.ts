@@ -301,6 +301,22 @@ export const handlers = [
       page: { limit, next_cursor: nextCursor, total: filtered.length },
     })
   }),
+  http.get('/api/v1/device-recognition/summary', () => HttpResponse.json({
+    total_endpoints: 121,
+    coverage: { vendor: { known: 52, rate: 52 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, device_type: { known: 15, rate: 15 / 121 }, os_family: { known: 15, rate: 15 / 121 }, ecosystem: { known: 0, rate: 0 } },
+    event_count: 3_795_418,
+    attributed_event_count: 0,
+    event_attribution_rate: 0,
+    ecosystem_matched: 27_124,
+    ecosystem_attributed: 0,
+    ecosystem_unattributed: 27_124,
+    ecosystem_conflicts: 0,
+    domain_rule_version: 'offline-20260831-mock',
+    backfill_status: 'completed',
+    backfill_processed: 10_039_092,
+    as_of: new Date().toISOString(),
+    window: '24h',
+  })),
   http.get('/api/v1/endpoints/:endpointId/identity', ({ params }) => {
     const endpointId = decodeURIComponent(String(params.endpointId))
     for (const inventory of Object.values(deviceInventoriesByIp)) {

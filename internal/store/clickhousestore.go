@@ -117,6 +117,28 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 	return s.exec(ctx, body.String())
 }
 
+func (s *ClickHouseStore) WriteDomainEcosystemObservations(ctx context.Context, observations []DomainEcosystemObservation) error {
+	if len(observations) == 0 {
+		return nil
+	}
+	var body bytes.Buffer
+	body.WriteString(`INSERT INTO domain_ecosystem_observations FORMAT JSONEachRow`)
+	body.WriteByte('\n')
+	for _, item := range observations {
+		row := map[string]any{
+			"observed_at": clickHouseTimestamp(item.Timestamp), "event_id": item.EventID,
+			"sensor_id": item.SensorID, "campus_id": item.CampusID, "endpoint_id": item.EndpointID,
+			"attributed": item.Attributed, "domain": item.Domain, "ecosystem": item.Ecosystem,
+			"event_source": item.EventSource, "category": item.Category, "rule_source": item.RuleSource,
+			"rule_version": item.RuleVersion, "confidence": item.Confidence,
+		}
+		if err := writeJSONLine(&body, row); err != nil {
+			return err
+		}
+	}
+	return s.exec(ctx, body.String())
+}
+
 func (s *ClickHouseStore) WriteIngestDiagnostics(ctx context.Context, diagnostics []ingest.Diagnostic) error {
 	if len(diagnostics) == 0 {
 		return nil
