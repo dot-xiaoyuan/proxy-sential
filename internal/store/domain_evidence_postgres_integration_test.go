@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -25,17 +26,22 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer postgres.Close()
-	endpointID := "mac:02:00:00:00:09:12"
-	sessionID := "domain-integration-session"
-	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM endpoint_domain_evidence_events WHERE endpoint_id=$1`, endpointID)
-	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM endpoint_domain_evidence WHERE endpoint_id=$1`, endpointID)
-	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM account_sessions WHERE session_id=$1`, sessionID)
-	_, _ = postgres.db.ExecContext(ctx, `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, endpointID)
+	testNamespace := fmt.Sprintf("domain-integration-%d", time.Now().UnixNano())
+	endpointID := "mac:02:00:00:00:09:12-" + testNamespace
+	sessionID := testNamespace + "-session"
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM endpoint_domain_evidence_events WHERE endpoint_id=$1`, endpointID)
+		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM endpoint_domain_evidence WHERE endpoint_id=$1`, endpointID)
+		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM account_sessions WHERE session_id=$1`, sessionID)
+		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, endpointID)
+	})
 	identity := normalized.Event{SchemaVersion: "v1", EventID: "domain-identity-start", Source: "radius", Type: "identity", Timestamp: "2026-09-02T10:00:00Z", Subject: map[string]any{"ip": "192.0.2.212", "mac": "02:00:00:00:09:12", "endpoint_id": endpointID, "account_id": "student-domain", "entity_role": "endpoint"}, Flow: map[string]any{}, Payload: map[string]any{"session_id": sessionID, "session_status": "start"}, Confidence: 0.99}
 	if err := postgres.WriteIdentityEvents(ctx, []normalized.Event{identity}); err != nil {
 		t.Fatal(err)
 	}
-	library, err := fingerprint.LoadWithDomainData("domain-integration-v1", []byte("Registry,Assignment,Organization Name\nMA-L,000C29,VMware\n"), []byte("[]"), []byte("[]"), []byte("{}"), []byte(`[{"domain":"push.apple.test","match_type":"subdomain","ecosystem":"Apple","category":"push","confidence":0.55,"source":"NextDNS"}]`))
+	library, err := fingerprint.LoadWithDomainData(testNamespace, []byte("Registry,Assignment,Organization Name\nMA-L,000C29,VMware\n"), []byte("[]"), []byte("[]"), []byte("{}"), []byte(`[{"domain":"push.apple.test","match_type":"subdomain","ecosystem":"Apple","category":"push","confidence":0.55,"source":"NextDNS"}]`))
 	if err != nil {
 		t.Fatal(err)
 	}
