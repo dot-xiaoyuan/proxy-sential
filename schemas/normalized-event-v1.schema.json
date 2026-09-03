@@ -58,6 +58,7 @@
         "src_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "dst_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
         "proto": { "enum": ["tcp", "udp", "icmp", "other"] },
+        "app_protocol": { "type": "string", "description": "传感器明确识别的应用协议；不得由 UA 或域名猜测。" },
         "direction": { "enum": ["outbound", "inbound", "unknown"] },
         "bytes_toserver": { "type": "integer", "minimum": 0 },
         "bytes_toclient": { "type": "integer", "minimum": 0 },

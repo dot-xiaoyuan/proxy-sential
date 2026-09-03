@@ -41,6 +41,7 @@ type Query struct {
 	Fingerprint string
 	Port        int
 	Proto       string
+	AppProtocol string
 	Limit       int
 	Cursor      int
 	IncludeWeak bool
@@ -362,6 +363,7 @@ type DPIProtocolFlow struct {
 	EventCount   int      `json:"event_count"`
 	BPSMbps      *float64 `json:"bps_mbps"`
 	TopApps      []string `json:"top_apps"`
+	TopTargets   []string `json:"top_targets"`
 }
 
 type DPIFingerprintConflict struct {

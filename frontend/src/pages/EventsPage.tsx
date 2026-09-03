@@ -233,6 +233,7 @@ function queryFromSearchParams(params: URLSearchParams): EventQuery {
     fingerprint: params.get('fingerprint') || undefined,
     port: port ? Number(port) : undefined,
     proto: params.get('proto') || undefined,
+		app_protocol: params.get('app_protocol') || undefined,
     limit: limit ? Number(limit) : 20,
     cursor: params.get('cursor') || undefined,
   }

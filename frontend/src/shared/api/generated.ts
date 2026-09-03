@@ -452,6 +452,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/activity/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getActivityReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/proxy-reviews": {
         parameters: {
             query?: never;
@@ -1770,6 +1786,21 @@ export interface components {
             /** Format: date-time */
             last_seen?: string;
         };
+        ActivityReportItem: {
+            key: string;
+            label: string;
+            count: number;
+            share: number;
+            /** Format: date-time */
+            last_seen?: string;
+        };
+        ActivityReport: {
+            dimension: string;
+            total: number;
+            classified_count: number;
+            unknown_count: number;
+            items: components["schemas"]["ActivityReportItem"][];
+        };
         ActivityIpSummary: {
             ip: string;
             event_count: number;
@@ -1887,7 +1918,12 @@ export interface components {
             share_percent: number;
             event_count: number;
             bps_mbps?: number | null;
+            /**
+             * @deprecated
+             * @description 兼容旧客户端，内容实际为访问目标。
+             */
             top_apps: string[];
+            top_targets: string[];
         };
         DpiFingerprintConflict: {
             id: string;
@@ -2218,6 +2254,7 @@ export interface components {
         FingerprintQuery: string;
         PortQuery: number;
         ProtoQuery: string;
+        AppProtocolQuery: string;
         LimitQuery: number;
         CursorQuery: string;
     };
@@ -3046,6 +3083,34 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getActivityReport: {
+        parameters: {
+            query: {
+                dimension: "application" | "ecosystem" | "domain" | "http_host" | "tls_sni" | "quic_sni" | "protocol" | "dst_port" | "src_ip" | "dst_ip" | "user_agent";
+                window?: components["parameters"]["WindowQuery"];
+                sensor_id?: components["parameters"]["SensorIdQuery"];
+                campus_id?: components["parameters"]["CampusIdQuery"];
+                as_of?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ClickHouse-aggregated activity TOP report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityReport"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
     listProxyReviews: {
         parameters: {
             query?: {
@@ -3225,6 +3290,7 @@ export interface operations {
                 fingerprint?: components["parameters"]["FingerprintQuery"];
                 port?: components["parameters"]["PortQuery"];
                 proto?: components["parameters"]["ProtoQuery"];
+                app_protocol?: components["parameters"]["AppProtocolQuery"];
                 limit?: components["parameters"]["LimitQuery"];
                 cursor?: components["parameters"]["CursorQuery"];
             };
@@ -3287,6 +3353,7 @@ export interface operations {
                 fingerprint?: components["parameters"]["FingerprintQuery"];
                 port?: components["parameters"]["PortQuery"];
                 proto?: components["parameters"]["ProtoQuery"];
+                app_protocol?: components["parameters"]["AppProtocolQuery"];
                 limit?: components["parameters"]["LimitQuery"];
                 cursor?: components["parameters"]["CursorQuery"];
             };

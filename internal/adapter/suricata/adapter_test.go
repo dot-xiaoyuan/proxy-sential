@@ -80,6 +80,22 @@ func TestConvertSkipsMalformedAndUnsupportedLines(t *testing.T) {
 	}
 }
 
+func TestConvertPreservesObservedApplicationProtocol(t *testing.T) {
+	input := bytes.NewBufferString("{\"timestamp\":\"2026-07-24T13:16:46.672238+0800\",\"event_type\":\"flow\",\"src_ip\":\"10.0.0.1\",\"dest_ip\":\"198.51.100.2\",\"proto\":\"TCP\",\"app_proto\":\"http2\",\"flow\":{}}\n")
+	var output bytes.Buffer
+	if _, err := Convert(input, &output, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	var event map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil {
+		t.Fatal(err)
+	}
+	requireNestedString(t, event, "flow", "app_protocol")
+	if event["flow"].(map[string]any)["app_protocol"] != "http2" {
+		t.Fatalf("unexpected app protocol: %#v", event)
+	}
+}
+
 func TestConvertAlertAndQUICEvents(t *testing.T) {
 	input := bytes.NewBufferString(
 		"{\"timestamp\":\"2026-07-24T13:16:46.672238+0800\",\"event_type\":\"alert\",\"src_ip\":\"10.0.0.1\",\"dest_ip\":\"198.51.100.2\",\"src_port\":12345,\"dest_port\":443,\"proto\":\"TCP\",\"alert\":{\"signature_id\":1001,\"signature\":\"Known proxy tunnel\",\"category\":\"Policy\",\"severity\":2,\"action\":\"allowed\"}}\n" +

@@ -428,6 +428,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleOverview(w, r)
 	case r.Method == http.MethodGet && path == "/activity/overview":
 		s.handleActivityOverview(w, r)
+	case r.Method == http.MethodGet && path == "/activity/reports":
+		s.handleActivityReport(w, r)
 	case r.Method == http.MethodGet && path == "/proxy-reviews":
 		s.handleProxyReviews(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/proxy-reviews/"):
@@ -524,6 +526,40 @@ func (s *Server) handleDeviceRecognitionSummary(w http.ResponseWriter, r *http.R
 	result, err := reader.GetDeviceRecognitionSummary(ctx, s.fingerprints.Status().Version)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_device_recognition_summary_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleActivityReport(w http.ResponseWriter, r *http.Request) {
+	dimension := strings.TrimSpace(r.URL.Query().Get("dimension"))
+	if dimension == "" {
+		dimension = "domain"
+	}
+	if !store.ValidActivityReportDimension(dimension) {
+		writeError(w, http.StatusBadRequest, "bad_activity_report", "unsupported report dimension")
+		return
+	}
+	reader, ok := s.reader.(store.ActivityReportReader)
+	if !ok {
+		writeJSON(w, http.StatusOK, store.ActivityReport{Dimension: dimension, Items: []store.ActivityReportItem{}})
+		return
+	}
+	activityQuery, err := s.activityQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_activity_report", err.Error())
+		return
+	}
+	limit, err := boundedInt(r.URL.Query().Get("limit"), 10, 1, 50)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_activity_report", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	result, err := reader.GetActivityReport(ctx, store.ActivityReportQuery{ActivityQuery: activityQuery, Dimension: dimension, Limit: limit})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_activity_report", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -2098,6 +2134,7 @@ func eventQuery(values url.Values) (store.Query, error) {
 		Fingerprint: values.Get("fingerprint"),
 		Port:        port,
 		Proto:       values.Get("proto"),
+		AppProtocol: values.Get("app_protocol"),
 		Limit:       limit,
 		Cursor:      cursor,
 	}, nil

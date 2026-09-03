@@ -143,7 +143,7 @@ func (s *ClickHouseStore) QueryDPIProtocolFlows(ctx context.Context, query Activ
 		if total > 0 {
 			share = float64(row.EventCount) * 100 / float64(total)
 		}
-		items = append(items, DPIProtocolFlow{Protocol: row.Protocol, AppProtocol: row.Protocol, Category: dpiCategory(row.Protocol), SharePercent: share, EventCount: row.EventCount, TopApps: row.TopApps})
+		items = append(items, DPIProtocolFlow{Protocol: row.Protocol, AppProtocol: row.Protocol, Category: dpiCategory(row.Protocol), SharePercent: share, EventCount: row.EventCount, TopApps: row.TopApps, TopTargets: row.TopApps})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].EventCount > items[j].EventCount })
 	return items, nil

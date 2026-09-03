@@ -646,6 +646,20 @@ func TestDeviceRecognitionSummaryIsAvailableInFileMode(t *testing.T) {
 	}
 }
 
+func TestActivityReportContractAndDimensionValidation(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true, FingerprintDir: t.TempDir()})
+	var report store.ActivityReport
+	getJSON(t, server, "/api/v1/activity/reports?dimension=domain&window=1h&limit=10", http.StatusOK, &report)
+	if report.Dimension != "domain" || report.Items == nil {
+		t.Fatalf("unexpected report fallback: %#v", report)
+	}
+	var response ErrorResponse
+	getJSON(t, server, "/api/v1/activity/reports?dimension=raw_payload", http.StatusBadRequest, &response)
+	if response.Code != "bad_activity_report" {
+		t.Fatalf("unexpected error: %#v", response)
+	}
+}
+
 func TestDeviceQueryAcceptsEcosystemFilter(t *testing.T) {
 	query, err := deviceQuery(url.Values{"ecosystem": {"Microsoft Windows"}, "limit": {"20"}})
 	if err != nil || query.Ecosystem != "Microsoft Windows" || query.Limit != 20 {

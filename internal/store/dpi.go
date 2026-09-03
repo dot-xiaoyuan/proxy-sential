@@ -133,6 +133,7 @@ func BuildDPIProtocolFlows(events []normalized.Event) []DPIProtocolFlow {
 			EventCount:   bucket.count,
 			BPSMbps:      nil,
 			TopApps:      topStringCounts(bucket.apps, 6),
+			TopTargets:   topStringCounts(bucket.apps, 6),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {

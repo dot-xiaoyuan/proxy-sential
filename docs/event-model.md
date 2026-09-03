@@ -42,6 +42,7 @@
     "src_port": 54321,
     "dst_port": 443,
     "proto": "tcp",
+    "app_protocol": "http2",
     "direction": "outbound",
     "bytes_toserver": 1024,
     "bytes_toclient": 2048,

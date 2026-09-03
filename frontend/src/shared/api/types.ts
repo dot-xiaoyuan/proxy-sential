@@ -63,6 +63,7 @@ export type EventListResponse = components['schemas']['EventListResponse']
 export type Evidence = components['schemas']['Evidence']
 export type NormalizedEventSummary = components['schemas']['NormalizedEventSummary']
 export type ActivityCount = components['schemas']['ActivityCount']
+export type ActivityReport = components['schemas']['ActivityReport']
 export type ActivityAccess = components['schemas']['ActivityAccess']
 export type IpActivityProfile = components['schemas']['IpActivityProfile']
 export type ActivityIpSummary = components['schemas']['ActivityIpSummary']
@@ -149,6 +150,7 @@ export type EventQuery = {
   fingerprint?: string
   port?: number
   proto?: string
+	app_protocol?: string
   limit?: number
   cursor?: string
 }

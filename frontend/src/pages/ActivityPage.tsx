@@ -1,19 +1,19 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { SearchOutlined } from '@ant-design/icons'
-import { Button, Card, Col, Progress, Row, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Col, Row, Table, Tabs, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { RiskScore } from '../entities/risk/RiskScore'
 import { EChartsDualAxisTrend } from '../features/charts/EChartsDualAxisTrend'
-import { EChartsSankeyFlow } from '../features/charts/EChartsSankeyFlow'
+import { EChartsTopReport } from '../features/charts/EChartsTopReport'
 import { FingerprintConflictMatrix } from '../features/dpi/FingerprintConflictMatrix'
 import { FlowInspectorDrawer } from '../features/dpi/FlowInspectorDrawer'
 import {
   useActivityOverview,
+	useActivityReport,
   useDpiFingerprintConflicts,
-  useDpiProtocolFlows,
   useDpiTrends,
 } from '../shared/api/queries'
 import type { ActivityCount, ActivityIpSummary } from '../shared/api/types'
@@ -25,17 +25,25 @@ import {
   type QuickWindow,
 } from '../shared/ui'
 
-type DrilldownKind = 'domain' | 'user_agent' | 'fingerprint' | 'port' | 'proto' | 'dst_ip' | 'src_ip'
-
 export function ActivityPage() {
+	const navigate=useNavigate()
   const [quickWindow, setQuickWindow] = useState<QuickWindow>('1h')
-  const [tabKey, setTabKey] = useState<'sankey' | 'matrix' | 'domains' | 'fingerprints' | 'network'>('sankey')
+  const [tabKey, setTabKey] = useState<'applications' | 'ecosystem' | 'matrix' | 'domains' | 'fingerprints' | 'network'>('applications')
   const [inspectIp, setInspectIp] = useState<string | null>(null)
 
   const activity = useActivityOverview({ window: quickWindow })
   const dpiTrends = useDpiTrends({ window: quickWindow })
-  const dpiProtocolFlows = useDpiProtocolFlows({ window: quickWindow }, tabKey === 'sankey')
   const fingerprintConflicts = useDpiFingerprintConflicts({ window: quickWindow }, tabKey === 'matrix')
+	const applicationReport=useActivityReport({window:quickWindow,dimension:'application',limit:10},tabKey==='applications')
+	const protocolReport=useActivityReport({window:quickWindow,dimension:'protocol',limit:10},tabKey==='applications'||tabKey==='network')
+	const ecosystemReport=useActivityReport({window:quickWindow,dimension:'ecosystem',limit:10},tabKey==='ecosystem')
+	const domainReport=useActivityReport({window:quickWindow,dimension:'domain',limit:10},tabKey==='domains')
+	const hostReport=useActivityReport({window:quickWindow,dimension:'http_host',limit:10},tabKey==='domains')
+	const sniReport=useActivityReport({window:quickWindow,dimension:'tls_sni',limit:10},tabKey==='domains')
+	const uaReport=useActivityReport({window:quickWindow,dimension:'user_agent',limit:10},tabKey==='fingerprints')
+	const portReport=useActivityReport({window:quickWindow,dimension:'dst_port',limit:10},tabKey==='network')
+  const destinationReport=useActivityReport({window:quickWindow,dimension:'dst_ip',limit:10},tabKey==='network')
+	const navigateReport=(dimension:string,key:string)=>navigate(reportSearchPath(dimension,key,quickWindow))
 
   if (activity.isLoading) {
     return <AppLoadingState rows={8} />
@@ -102,12 +110,12 @@ export function ActivityPage() {
 
   const renderActiveTabContent = () => {
     switch (tabKey) {
-      case 'sankey':
+      case 'applications':
         return (
-          <div className="activity-tab-panel">
-            <EChartsSankeyFlow items={dpiProtocolFlows.data?.items ?? []} loading={dpiProtocolFlows.isLoading} />
-          </div>
+			<Row className="activity-tab-panel" gutter={[16,16]}><Col xs={24} md={12}><EChartsTopReport title="应用协议分布" kind="donut" report={applicationReport.data} note="仅使用传感器明确输出的应用协议；无法识别时归入未知。" onSelect={(key)=>navigateReport('application',key)}/></Col><Col xs={24} md={12}><EChartsTopReport title="网络协议分布" kind="donut" report={protocolReport.data} onSelect={(key)=>navigateReport('protocol',key)}/></Col></Row>
         )
+	  case 'ecosystem':
+		return <div className="activity-tab-panel"><EChartsTopReport title="访问品牌生态" kind="donut" report={ecosystemReport.data} note="访问相关服务不等于确认终端硬件品牌，未归属命中也会计入本报表。" onSelect={(key)=>navigateReport('ecosystem',key)}/></div>
       case 'matrix':
         return (
           <div className="activity-tab-panel">
@@ -121,13 +129,13 @@ export function ActivityPage() {
         return (
           <Row className="activity-tab-panel" gutter={[16, 16]}>
             <Col span={24}>
-              <RankCard drilldown="domain" items={data.top_domains} title="Top Domains 访问域名 (DNS / HTTP Host / TLS SNI)" />
+			  <EChartsTopReport title="Top 访问域名（DNS / Host / SNI）" kind="bar" report={domainReport.data} onSelect={(key)=>navigateReport('domain',key)}/>
             </Col>
             <Col xs={24} md={12}>
-              <RankCard drilldown="domain" items={data.top_http_hosts} title="HTTP Host 明细" />
+			  <EChartsTopReport title="HTTP Host" kind="bar" report={hostReport.data} onSelect={(key)=>navigateReport('domain',key)}/>
             </Col>
             <Col xs={24} md={12}>
-              <RankCard drilldown="domain" items={data.top_tls_sni} title="TLS SNI 明细" />
+			  <EChartsTopReport title="TLS SNI" kind="bar" report={sniReport.data} onSelect={(key)=>navigateReport('domain',key)}/>
             </Col>
           </Row>
         )
@@ -135,10 +143,10 @@ export function ActivityPage() {
         return (
           <Row className="activity-tab-panel" gutter={[16, 16]}>
             <Col xs={24} md={12}>
-              <RankCard drilldown="user_agent" empty="暂无 User-Agent 采样" items={data.top_user_agents} title="User-Agent 客户端分布" />
+			  <EChartsTopReport title="客户端软件标识（UA）" kind="bar" report={uaReport.data} note="UA 可重复、可伪造，只用于技术检索，不表示设备数量或硬件品牌。" onSelect={(key)=>navigateReport('user_agent',key)}/>
             </Col>
             <Col xs={24} md={12}>
-              <RankCard drilldown="fingerprint" empty="暂无 JA3/JA4 指纹" items={data.top_tls_fingerprints} title="TLS JA3 / JA4 客户端指纹" />
+			  <EChartsTopReport title="TLS JA3 / JA4 客户端指纹" kind="bar" report={{dimension:'fingerprint',total:data.top_tls_fingerprints.reduce((sum,item)=>sum+item.count,0),classified_count:data.top_tls_fingerprints.reduce((sum,item)=>sum+item.count,0),unknown_count:0,items:data.top_tls_fingerprints.map(item=>({key:item.value,label:item.value,count:item.count,share:0,last_seen:item.last_seen}))}} onSelect={(key)=>navigateReport('fingerprint',key)}/>
             </Col>
           </Row>
         )
@@ -146,16 +154,16 @@ export function ActivityPage() {
         return (
           <Row className="activity-tab-panel" gutter={[16, 16]}>
             <Col xs={24} md={12}>
-              <RankCard drilldown="port" items={data.top_dst_ports} title="目的端口排行" />
+			  <EChartsTopReport title="目的端口排行" kind="bar" report={portReport.data} onSelect={(key)=>navigateReport('port',key)}/>
             </Col>
             <Col xs={24} md={12}>
-              <RankCard drilldown="proto" items={data.protocol_counts} title="传输协议分布" />
+			  <EChartsTopReport title="传输协议分布" kind="donut" report={protocolReport.data} onSelect={(key)=>navigateReport('protocol',key)}/>
             </Col>
             <Col xs={24} md={12}>
-              <RankCard drilldown="dst_ip" items={data.top_dst_ips} title="目的 IP 排行" />
+			  <EChartsTopReport title="目的 IP 排行" kind="bar" report={destinationReport.data} onSelect={(key)=>navigateReport('dst_ip',key)}/>
             </Col>
             <Col xs={24} md={12}>
-              <RankCard drilldown="src_ip" items={data.top_source_ips} title="活跃源 IP 排行" />
+			  <EChartsTopReport title="活跃源 IP 排行" kind="bar" report={{dimension:'src_ip',total:data.top_source_ips.reduce((sum,item)=>sum+item.count,0),classified_count:data.top_source_ips.reduce((sum,item)=>sum+item.count,0),unknown_count:0,items:data.top_source_ips.map(item=>({key:item.value,label:item.value,count:item.count,share:0,last_seen:item.last_seen}))}} onSelect={(key)=>navigateReport('src_ip',key)}/>
             </Col>
           </Row>
         )
@@ -163,8 +171,9 @@ export function ActivityPage() {
   }
 
   const tabItems = [
-    { key: 'sankey', label: 'DPI 协议与应用桑基拓扑' },
-    { key: 'matrix', label: '终端指纹冲突矩阵' },
+    { key: 'applications', label: '应用与协议报表' },
+	{ key: 'ecosystem', label: '访问生态' },
+    { key: 'matrix', label: '多源指纹一致性' },
     { key: 'domains', label: '访问对象 (Domains)' },
     { key: 'fingerprints', label: '客户端指纹 (UA/JA3)' },
     { key: 'network', label: '网络与端口分布' },
@@ -173,12 +182,11 @@ export function ActivityPage() {
   return (
     <main className="page">
       <AppPageHeader
-        loading={activity.isFetching || dpiTrends.isFetching || (tabKey === 'sankey' && dpiProtocolFlows.isFetching) || (tabKey === 'matrix' && fingerprintConflicts.isFetching)}
+        loading={activity.isFetching || dpiTrends.isFetching || (tabKey === 'matrix' && fingerprintConflicts.isFetching)}
         onQuickWindowChange={setQuickWindow}
         onRefresh={() => {
           void activity.refetch()
           void dpiTrends.refetch()
-          if (tabKey === 'sankey') void dpiProtocolFlows.refetch()
           if (tabKey === 'matrix') void fingerprintConflicts.refetch()
         }}
         quickWindow={quickWindow}
@@ -250,89 +258,15 @@ export function ActivityPage() {
   )
 }
 
-function RankCard({
-  title,
-  items,
-  empty = '暂无数据',
-  drilldown,
-}: {
-  title: string
-  items: ActivityCount[]
-  empty?: string
-  drilldown?: DrilldownKind
-}) {
-  const maxCount = items.length > 0 ? Math.max(...items.map((i) => i.count)) : 1
-  const totalCount = items.reduce((acc, curr) => acc + curr.count, 0)
-
-  return (
-    <Card className="rank-card-container rank-card-full-height" size="small">
-      <div className="rank-card-header">
-        <span className="rank-card-title">{title}</span>
-        <Tag className="rank-card-badge">{items.length} 项</Tag>
-      </div>
-      {items.length === 0 ? (
-        <Typography.Text className="rank-card-empty" type="secondary">
-          {empty}
-        </Typography.Text>
-      ) : (
-        <div className="rank-card-list">
-          {items.slice(0, 7).map((item, idx) => {
-            const percent = Math.round((item.count / maxCount) * 100)
-            const sharePercent = totalCount > 0 ? ((item.count / totalCount) * 100).toFixed(1) : '0.0'
-            const badgeClass = idx === 0 ? 'badge-rank-1' : idx === 1 ? 'badge-rank-2' : idx === 2 ? 'badge-rank-3' : 'badge-rank-other'
-            const badgeText = idx === 0 ? '1' : idx === 1 ? '2' : idx === 2 ? '3' : `${idx + 1}`
-
-            return (
-              <div className="rank-item-capsule" key={`${title}-${item.value}`}>
-                <Row align="middle" className="rank-item-row" justify="space-between">
-                  <Col className="rank-item-main" flex="auto">
-                    <div className="rank-item-value">
-                      <span className={`rank-pill-badge ${badgeClass}`}>{badgeText}</span>
-                      {drilldown ? (
-                        <Link className="mono wrap-text rank-item-link" to={eventSearchPath(drilldown, item.value)}>
-                          {item.value}
-                        </Link>
-                      ) : (
-                        <Typography.Text className="mono wrap-text rank-item-text">{item.value}</Typography.Text>
-                      )}
-                    </div>
-                  </Col>
-                  <Col className="rank-item-count">
-                    <div className="rank-item-count-inner">
-                      <span className="mono rank-item-count-value">
-                        {item.count}
-                      </span>
-                      <Typography.Text className="rank-item-count-share" type="secondary">
-                        ({sharePercent}%)
-                      </Typography.Text>
-                    </div>
-                  </Col>
-                </Row>
-                <Progress
-                  percent={percent}
-                  railColor="#f1f5f9"
-                  showInfo={false}
-                  size="small"
-                  strokeColor={{
-                    '0%': '#0284c7',
-                    '100%': '#38bdf8',
-                  }}
-                />
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </Card>
-  )
-}
-
-function eventSearchPath(kind: DrilldownKind, value: string) {
-  const params = new URLSearchParams({ window: '1h' })
+function reportSearchPath(kind: string, value: string, window:string) {
+  if(kind==='ecosystem')return `/devices?ecosystem=${encodeURIComponent(value)}`
+  const params = new URLSearchParams({ window })
   if (kind === 'port') {
     params.set('port', value)
-  } else if (kind === 'proto') {
+  } else if (kind === 'protocol') {
     params.set('proto', value)
+  } else if(kind==='application') {
+	params.set('app_protocol',value)
   } else {
     params.set(kind, value)
   }

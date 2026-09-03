@@ -23,12 +23,12 @@ export function EChartsSankeyFlow({
     nodes.set(source, { name: source })
     nodes.set(protocol, { name: protocol, value })
     links.push({ source, target: protocol, value })
-    for (const app of item.top_apps.slice(0, 4)) {
+    for (const app of (item.top_targets || item.top_apps).slice(0, 4)) {
       nodes.set(app, { name: app, value: Math.max(1, Math.round(value / Math.max(1, item.top_apps.length))) })
       links.push({
         source: protocol,
         target: app,
-        value: Math.max(1, Math.round(value / Math.max(1, item.top_apps.length))),
+        value: Math.max(1, Math.round(value / Math.max(1, (item.top_targets || item.top_apps).length))),
       })
     }
   }

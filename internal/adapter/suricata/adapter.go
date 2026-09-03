@@ -37,6 +37,7 @@ type eveEvent struct {
 	SrcPort   *int           `json:"src_port"`
 	DestPort  *int           `json:"dest_port"`
 	Proto     string         `json:"proto"`
+	AppProto  string         `json:"app_proto"`
 	TxID      any            `json:"tx_id"`
 	Flow      map[string]any `json:"flow"`
 	DNS       map[string]any `json:"dns"`
@@ -118,6 +119,9 @@ func convertLine(raw []byte, lineOffset int, opts Options) (normalized.Event, er
 		"dst_ip":    eve.DestIP,
 		"proto":     normalizeProto(eve.Proto),
 		"direction": direction(eve.SrcIP, eve.DestIP),
+	}
+	if appProtocol := strings.TrimSpace(eve.AppProto); appProtocol != "" {
+		flow["app_protocol"] = strings.ToLower(appProtocol)
 	}
 	if eve.SrcPort != nil {
 		flow["src_port"] = *eve.SrcPort

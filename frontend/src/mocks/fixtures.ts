@@ -1157,6 +1157,7 @@ export const mockDpiProtocolFlows: DpiProtocolFlowItem[] = [
     event_count: 1850,
     bps_mbps: 24.5,
     top_apps: ['api.example.test', 'push.example.test', 'cloud.example.test'],
+    top_targets: ['api.example.test', 'push.example.test', 'cloud.example.test'],
     category: 'Encrypted Security',
   },
   {
@@ -1166,6 +1167,7 @@ export const mockDpiProtocolFlows: DpiProtocolFlowItem[] = [
     event_count: 924,
     bps_mbps: 12.1,
     top_apps: ['portal.example.test', 'cdn.example.test'],
+    top_targets: ['portal.example.test', 'cdn.example.test'],
     category: 'Web/API',
   },
   {
@@ -1175,6 +1177,7 @@ export const mockDpiProtocolFlows: DpiProtocolFlowItem[] = [
     event_count: 698,
     bps_mbps: 0.85,
     top_apps: ['Core DNS Resolver', 'DoH Endpoint'],
+    top_targets: ['Core DNS Resolver', 'DoH Endpoint'],
     category: 'Core Infrastructure',
   },
   {
@@ -1184,6 +1187,7 @@ export const mockDpiProtocolFlows: DpiProtocolFlowItem[] = [
     event_count: 348,
     bps_mbps: 6.8,
     top_apps: ['V2Ray/Shadowsocks Tunnel', 'WireGuard Portal'],
+    top_targets: ['V2Ray/Shadowsocks Tunnel', 'WireGuard Portal'],
     category: 'Proxy/Tethering',
   },
 ]

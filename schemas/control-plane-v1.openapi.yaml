@@ -423,6 +423,23 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /activity/reports:
+    get:
+      operationId: getActivityReport
+      parameters:
+        - { name: dimension, in: query, required: true, schema: { type: string, enum: [application, ecosystem, domain, http_host, tls_sni, quic_sni, protocol, dst_port, src_ip, dst_ip, user_agent] } }
+        - $ref: "#/components/parameters/WindowQuery"
+        - $ref: "#/components/parameters/SensorIdQuery"
+        - $ref: "#/components/parameters/CampusIdQuery"
+        - { name: as_of, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 10 } }
+      responses:
+        "200":
+          description: ClickHouse-aggregated activity TOP report.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivityReport" }
+        "400": { $ref: "#/components/responses/BadRequest" }
   /proxy-reviews:
     get:
       operationId: listProxyReviews
@@ -633,6 +650,7 @@ paths:
         - $ref: "#/components/parameters/FingerprintQuery"
         - $ref: "#/components/parameters/PortQuery"
         - $ref: "#/components/parameters/ProtoQuery"
+        - $ref: "#/components/parameters/AppProtocolQuery"
         - $ref: "#/components/parameters/LimitQuery"
         - $ref: "#/components/parameters/CursorQuery"
       responses:
@@ -683,6 +701,7 @@ paths:
         - $ref: "#/components/parameters/FingerprintQuery"
         - $ref: "#/components/parameters/PortQuery"
         - $ref: "#/components/parameters/ProtoQuery"
+        - $ref: "#/components/parameters/AppProtocolQuery"
         - $ref: "#/components/parameters/LimitQuery"
         - $ref: "#/components/parameters/CursorQuery"
       responses:
@@ -1753,6 +1772,11 @@ components:
       in: query
       schema:
         type: string
+    AppProtocolQuery:
+      name: app_protocol
+      in: query
+      schema:
+        type: string
     LimitQuery:
       name: limit
       in: query
@@ -2813,6 +2837,24 @@ components:
         last_seen:
           type: string
           format: date-time
+    ActivityReportItem:
+      type: object
+      required: [key, label, count, share]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        count: { type: integer }
+        share: { type: number, minimum: 0, maximum: 1 }
+        last_seen: { type: string, format: date-time }
+    ActivityReport:
+      type: object
+      required: [dimension, total, classified_count, unknown_count, items]
+      properties:
+        dimension: { type: string }
+        total: { type: integer }
+        classified_count: { type: integer }
+        unknown_count: { type: integer }
+        items: { type: array, items: { $ref: "#/components/schemas/ActivityReportItem" } }
     ActivityIpSummary:
       type: object
       required: [ip, event_count, risk_level, score, top_domains]
@@ -3094,7 +3136,7 @@ components:
           type: boolean
     DpiProtocolFlow:
       type: object
-      required: [protocol, app_protocol, category, share_percent, event_count, top_apps]
+      required: [protocol, app_protocol, category, share_percent, event_count, top_apps, top_targets]
       properties:
         protocol:
           type: string
@@ -3111,6 +3153,12 @@ components:
             - number
             - "null"
         top_apps:
+          type: array
+          deprecated: true
+          description: 兼容旧客户端，内容实际为访问目标。
+          items:
+            type: string
+        top_targets:
           type: array
           items:
             type: string

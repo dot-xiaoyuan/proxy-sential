@@ -58,7 +58,7 @@ export function ProtocolAppFlow({ items }: ProtocolAppFlowProps) {
                     <CloudServerOutlined className="protocol-flow-app-icon" />
                     Top 应用/目标域:
                   </Typography.Text>
-                  {item.top_apps.map((app, idx) => (
+                  {(item.top_targets || item.top_apps).map((app, idx) => (
                     <span className="dpi-sample-pill" key={`${item.protocol}-app-${idx}`}>
                       {app}
                     </span>

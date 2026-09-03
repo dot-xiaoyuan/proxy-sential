@@ -41,6 +41,7 @@ export const queryKeys = {
   session: ['session'] as const,
   overview: (query: ActivityOverviewQuery) => ['overview', query] as const,
   activityOverview: (query: ActivityOverviewQuery) => ['activity-overview', query] as const,
+	activityReport: (query: ActivityOverviewQuery & {dimension:string;limit?:number}) => ['activity-report',query] as const,
   proxyReviews: (query: ProxyReviewQuery) => ['proxy-reviews', query] as const,
   dpiOverview: (query: ActivityOverviewQuery) => ['dpi-overview', query] as const,
   dpiTrends: (query: ActivityOverviewQuery) => ['dpi-trends', query] as const,
@@ -105,6 +106,10 @@ export function useActivityOverview(query: ActivityOverviewQuery) {
     queryKey: queryKeys.activityOverview(query),
     queryFn: () => api.activityOverview(query),
   })
+}
+
+export function useActivityReport(query:ActivityOverviewQuery & {dimension:string;limit?:number}, enabled=true) {
+	return useQuery({queryKey:queryKeys.activityReport(query),queryFn:()=>api.activityReport(query),enabled,staleTime:60_000,gcTime:30*60_000})
 }
 
 export function useProxyReviews(query: ProxyReviewQuery) {

@@ -133,6 +133,13 @@ export const handlers = [
     const windowValue = url.searchParams.get('window') ?? '1h'
     return HttpResponse.json(getActivityOverviewByWindow(windowValue))
   }),
+  http.get('/api/v1/activity/reports', ({request}) => {
+    const dimension=new URL(request.url).searchParams.get('dimension')??'domain'
+    const overview=getActivityOverviewByWindow('1h')
+    const source=dimension==='domain'?overview.top_domains:dimension==='http_host'?overview.top_http_hosts:dimension==='tls_sni'?overview.top_tls_sni:dimension==='user_agent'?overview.top_user_agents:dimension==='dst_port'?overview.top_dst_ports:dimension==='dst_ip'?overview.top_dst_ips:dimension==='src_ip'?overview.top_source_ips:dimension==='ecosystem'?[{value:'Apple',count:120,last_seen:new Date().toISOString()},{value:'Huawei',count:72,last_seen:new Date().toISOString()}]:dimension==='application'?[{value:'http2',count:220,last_seen:new Date().toISOString()},{value:'dns',count:160,last_seen:new Date().toISOString()},{value:'未知',count:40,last_seen:new Date().toISOString()}]:overview.protocol_counts
+    const total=source.reduce((sum,item)=>sum+item.count,0);const unknown=source.find(item=>item.value==='未知')?.count??0
+    return HttpResponse.json({dimension,total,classified_count:total-unknown,unknown_count:unknown,items:source.map(item=>({key:item.value,label:item.value,count:item.count,share:total?item.count/total:0,last_seen:item.last_seen}))})
+  }),
   http.get('/api/v1/proxy-reviews', ({ request }) => {
     const url = new URL(request.url)
     const window = url.searchParams.get('window') === '24h' ? '24h' : '7d'

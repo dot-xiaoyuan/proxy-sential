@@ -1,6 +1,7 @@
 import type {
   ActivityOverview,
   ActivityOverviewQuery,
+	ActivityReport,
   AccountIdentityProfile,
   AuditLog,
   AuditLogListResponse,
@@ -117,6 +118,7 @@ export const api = {
   overview: (query: ActivityOverviewQuery = {}) => request<Overview>(`/overview${search(query)}`),
   activityOverview: (query: ActivityOverviewQuery) =>
     request<ActivityOverview>(`/activity/overview${search(query)}`),
+  activityReport: (query:ActivityOverviewQuery & {dimension:string;limit?:number}) => request<ActivityReport>(`/activity/reports${search(query)}`),
   proxyReviews: (query: ProxyReviewQuery) =>
     request<ProxyReviewResponse>(`/proxy-reviews${search(query)}`),
   proxyReview: (caseId: string, window: '24h' | '7d') =>

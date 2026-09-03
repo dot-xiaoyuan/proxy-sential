@@ -50,6 +50,9 @@
   .app-server-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; overflow: hidden; }
   .app-server-pagination .ant-pagination-total-text { flex: 1; white-space: nowrap; }
 }
+.report-chart-card { height: 100%; }
+.report-chart { height: 300px; }
+.report-chart-note { display: block; margin-top: 4px; white-space: normal; }
 
 * {
   box-sizing: border-box;

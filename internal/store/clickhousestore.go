@@ -895,6 +895,9 @@ func eventWhereSQL(query Query) (string, error) {
 	if query.Proto != "" {
 		clauses = append(clauses, "proto = "+chQuote(strings.ToLower(query.Proto)))
 	}
+	if query.AppProtocol != "" {
+		clauses = append(clauses, "lower(JSONExtractString(flow_json, 'app_protocol')) = "+chQuote(strings.ToLower(query.AppProtocol)))
+	}
 	if len(clauses) == 0 {
 		return "", nil
 	}

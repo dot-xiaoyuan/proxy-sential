@@ -790,6 +790,7 @@ func (s *FileStore) ListEvents(ctx context.Context, query Query) (EventPage, err
 		Fingerprint: query.Fingerprint,
 		Port:        query.Port,
 		Proto:       query.Proto,
+		AppProtocol: query.AppProtocol,
 		Limit:       -1,
 	})
 	if err != nil {
@@ -1449,6 +1450,9 @@ func eventMatchesQuery(event normalized.Event, query Query, from time.Time, to t
 		return false
 	}
 	if query.Proto != "" && !strings.EqualFold(stringFromMap(event.Flow, "proto"), query.Proto) {
+		return false
+	}
+	if query.AppProtocol != "" && !strings.EqualFold(stringFromMap(event.Flow, "app_protocol"), query.AppProtocol) {
 		return false
 	}
 	return true
