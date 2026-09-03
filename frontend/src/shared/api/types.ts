@@ -47,6 +47,8 @@ export type Organization = {
   network_zones: Array<{ network_zone_id: string; campus_id: string; building_id?: string; name: string; cidrs: string[]; ssids: string[]; vlans: string[]; enabled: boolean }>
   access_points: Array<{ access_point_id: string; campus_id: string; building_id?: string; network_zone_id?: string; kind: string; name: string; management_ip?: string; enabled: boolean }>
 }
+export type OrganizationKind = keyof Organization
+export type OrganizationListResponse<K extends OrganizationKind = OrganizationKind> = { items: Organization[K]; page: Page }
 export type ActionConnector = { connector_id: string; name: string; endpoint_url: string; action_mapping: Record<string,string>; mode: 'shadow'|'active'; enabled: boolean; shadow_ready: boolean; circuit_open_until?:string; consecutive_failures?:number; shadow_started_at?:string; shadow_validation_since?:string; shadow_candidate_count?:number; shadow_reviewed_count?:number; shadow_accuracy?:number; updated_at: string }
 export type EnforcementAction = { action_id:string; idempotency_key:string; case_id?:string; connector_id:string; action_type:string; subject_id:string; ip?:string; account_id?:string; endpoint_id?:string; campus_id?:string; session_id?:string; ruleset_version?:string; remote_action_id?:string; parent_action_id?:string; retry_count?:number; next_attempt_at?:string; cooldown_until?:string; expires_at?:string; status:string; mode:string; blockers?:string[]; last_error?:string; created_at:string; updated_at:string }
 export type LocalUser = components['schemas']['LocalUser']

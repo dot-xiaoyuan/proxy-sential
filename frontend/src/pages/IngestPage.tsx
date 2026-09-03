@@ -17,18 +17,23 @@ import {
   AppLoadingState,
   AppMetricCard,
   AppPageHeader,
+	AppServerPagination,
+	useServerPagination,
   type QuickWindow,
 } from '../shared/ui'
 
 export function IngestPage() {
   const [quickWindow, setQuickWindow] = useState<QuickWindow>('1h')
   const [inspectJson, setInspectJson] = useState<{ title: string; data: unknown } | null>(null)
+	const errorPage = useServerPagination('errors_')
+	const eventPage = useServerPagination('events_')
+	const diagnosticPage = useServerPagination('diagnostics_')
 
   const status = useIngestStatus()
   const eventTypes = useIngestEventTypes()
-  const diagnostics = useIngestDiagnostics({ limit: 20 })
-  const errors = useIngestErrors({ limit: 20 })
-  const events = useEvents({ limit: 20 })
+  const diagnostics = useIngestDiagnostics({ limit: diagnosticPage.pageSize, cursor: diagnosticPage.cursor })
+  const errors = useIngestErrors({ limit: errorPage.pageSize, cursor: errorPage.cursor })
+  const events = useEvents({ limit: eventPage.pageSize, cursor: eventPage.cursor })
 
   if (status.isLoading) {
     return <AppLoadingState rows={6} />
@@ -239,6 +244,7 @@ export function IngestPage() {
             scroll={{ x: 'max-content' }}
             size="small"
           />
+		  <AppServerPagination page={errorPage.page} pageSize={errorPage.pageSize} total={errors.data?.page.total ?? 0} onChange={errorPage.update} />
         </div>
       </section>
 
@@ -253,6 +259,7 @@ export function IngestPage() {
             scroll={{ x: 'max-content' }}
             size="small"
           />
+		  <AppServerPagination page={eventPage.page} pageSize={eventPage.pageSize} total={events.data?.page.total ?? 0} onChange={eventPage.update} />
         </div>
       </section>
 
@@ -262,11 +269,12 @@ export function IngestPage() {
           <Table<IngestDiagnostic>
             columns={diagnosticColumns}
             dataSource={diagnostics.data?.diagnostics ?? []}
-            pagination={{ pageSize: 10 }}
+            pagination={false}
             rowKey="diagnostic_id"
             scroll={{ x: 'max-content' }}
             size="small"
           />
+		  <AppServerPagination page={diagnosticPage.page} pageSize={diagnosticPage.pageSize} total={diagnostics.data?.page.total ?? 0} onChange={diagnosticPage.update} />
         </div>
       </section>
 

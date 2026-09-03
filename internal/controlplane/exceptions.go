@@ -47,7 +47,18 @@ func (s *Server) handleCampusExceptions(w http.ResponseWriter, r *http.Request) 
 			writeError(w, 500, "list_exceptions_failed", err.Error())
 			return
 		}
-		writeJSON(w, 200, map[string]any{"items": items, "page": Page{Limit: len(items), Total: len(items)}})
+		limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_page", err.Error())
+			return
+		}
+		cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_page", err.Error())
+			return
+		}
+		paged, page := paginate(items, cursor, limit)
+		writeJSON(w, 200, map[string]any{"items": paged, "page": page})
 		return
 	}
 	if r.Method == http.MethodPost && rest == "" {

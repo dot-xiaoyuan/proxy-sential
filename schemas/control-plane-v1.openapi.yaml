@@ -70,6 +70,9 @@ paths:
   /users:
     get:
       operationId: listUsers
+      parameters:
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
       responses:
         "200":
           description: Local RBAC users.
@@ -93,6 +96,9 @@ paths:
   /campus-exceptions:
     get:
       operationId: listCampusExceptions
+      parameters:
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
       responses:
         "200": { description: Versioned campus exception rules., content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/CampusException" } }, page: { $ref: "#/components/schemas/Page" } } } } } }
     post:
@@ -185,6 +191,10 @@ paths:
   /organization:
     get:
       operationId: getOrganization
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [campuses, buildings, network_zones, access_points] } }
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
       responses:
         "200":
           description: Campus, building, network-zone and access-point mappings.

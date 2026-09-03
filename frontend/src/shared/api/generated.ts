@@ -2337,7 +2337,10 @@ export interface operations {
     };
     listUsers: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: components["parameters"]["LimitQuery"];
+                cursor?: components["parameters"]["CursorQuery"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2425,7 +2428,10 @@ export interface operations {
     };
     listCampusExceptions: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: components["parameters"]["LimitQuery"];
+                cursor?: components["parameters"]["CursorQuery"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2615,7 +2621,11 @@ export interface operations {
     };
     getOrganization: {
         parameters: {
-            query?: never;
+            query?: {
+                kind?: "campuses" | "buildings" | "network_zones" | "access_points";
+                limit?: components["parameters"]["LimitQuery"];
+                cursor?: components["parameters"]["CursorQuery"];
+            };
             header?: never;
             path?: never;
             cookie?: never;

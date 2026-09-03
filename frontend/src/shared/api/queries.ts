@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from './client'
 import type {
@@ -13,7 +13,8 @@ import type {
 	Page,
   ProxyReviewQuery,
   RiskQuery,
-  UpdateEndpointRegistrationRequest,
+	UpdateEndpointRegistrationRequest,
+	OrganizationKind,
 } from './types'
 
 function usePagedQuery<TQuery extends { cursor?: string }, TData extends { page: Page }>(
@@ -26,7 +27,7 @@ function usePagedQuery<TQuery extends { cursor?: string }, TData extends { page:
 	const queryRef = useRef(query)
 	if (JSON.stringify(queryRef.current) !== queryFingerprint) queryRef.current = query
 	const stableQuery = queryRef.current
-	const result = useQuery({ queryKey: keyFor(stableQuery), queryFn: () => load(stableQuery) })
+	const result = useQuery({ queryKey: keyFor(stableQuery), queryFn: () => load(stableQuery), placeholderData: keepPreviousData, staleTime: 60_000, gcTime: 30 * 60_000 })
 	const nextCursor = result.data?.page.next_cursor
 	useEffect(() => {
 		if (!nextCursor) return
@@ -361,11 +362,12 @@ export function useCase(caseId:string) { return useQuery({queryKey:queryKeys.cas
 export function useCaseMutation() { const client=useQueryClient(); return useMutation({mutationFn:async (request:{caseId:string;operation:'assign'|'status'|'priority'|'disposition'|'comment';value:string;reason?:string})=>{switch(request.operation){case'assign':return api.assignCase(request.caseId,request.value);case'status':return api.updateCaseStatus(request.caseId,request.value);case'priority':return api.updateCasePriority(request.caseId,request.value);case'disposition':return api.resolveCase(request.caseId,request.value,request.reason??'人工复核');default:return api.commentCase(request.caseId,request.value)}},onSuccess:(item)=>{client.setQueryData(queryKeys.caseDetail(item.case_id),item);void client.invalidateQueries({queryKey:['cases']});void client.invalidateQueries({queryKey:['overview']})}}) }
 export function useCasesBatchMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{caseIds:string[];operation:'assign'|'close';assigneeId?:string})=>api.mutateCasesBatch(request.caseIds,request.operation,request.assigneeId),onSuccess:()=>{void client.invalidateQueries({queryKey:['cases']});void client.invalidateQueries({queryKey:['overview']})}}) }
 export function useOrganization() { return useQuery({queryKey:queryKeys.organization,queryFn:api.organization}) }
+export function useOrganizationList<K extends OrganizationKind>(kind:K,query:ListQuery={}) { return usePagedQuery(query,(value)=>['organization',kind,value] as const,(value)=>api.organizationList(kind,value)) }
 export function useOrganizationMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{kind:string;payload:Record<string,unknown>})=>api.saveOrganization(request.kind,request.payload),onSuccess:()=>void client.invalidateQueries({queryKey:queryKeys.organization})}) }
 export function useActionConnectors() { return useQuery({queryKey:queryKeys.actionConnectors,queryFn:api.actionConnectors}) }
 export function useActions(query:ListQuery={}) { return usePagedQuery(query,queryKeys.actions,api.actions) }
 export function useActionMutation() { const client=useQueryClient(); return useMutation({mutationFn:(request:{payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number};idempotencyKey:string})=>api.executeAction(request.payload,request.idempotencyKey),onSuccess:()=>void client.invalidateQueries({queryKey:['actions']})}) }
-export function useUsers() { return useQuery({queryKey:queryKeys.users,queryFn:api.users}) }
+export function useUsers(query:ListQuery={}) { return usePagedQuery(query,()=>[...queryKeys.users,query] as const,api.users) }
 export function useUserMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{userId?:string;operation?:'profile'|'password'|'disable'|'enable';payload:import('./types').UserMutation})=>request.userId&&request.operation?api.updateUser(request.userId,request.operation,request.payload):api.createUser(request.payload),onSuccess:()=>void client.invalidateQueries({queryKey:queryKeys.users})}) }
-export function useCampusExceptions() { return useQuery({queryKey:queryKeys.campusExceptions,queryFn:api.campusExceptions}) }
+export function useCampusExceptions(query:ListQuery={}) { return usePagedQuery(query,()=>[...queryKeys.campusExceptions,query] as const,api.campusExceptions) }
 export function useCampusExceptionMutation() { const client=useQueryClient();return useMutation({mutationFn:(request:{exceptionId?:string;payload?:import('./types').CampusException})=>request.exceptionId?api.disableCampusException(request.exceptionId):api.createCampusException(request.payload!),onSuccess:()=>{void client.invalidateQueries({queryKey:queryKeys.campusExceptions});void client.invalidateQueries({queryKey:['risks']});void client.invalidateQueries({queryKey:['cases']})}}) }

@@ -104,7 +104,7 @@ export const handlers = [
     if (params.operation === 'comments') (item.comments ??= []).push({ comment_id: `comment-${Date.now()}`, author_id: mockSession.user.id, body: payload.body, created_at: new Date().toISOString() })
     return HttpResponse.json(item)
   }),
-  http.get('/api/v1/organization', () => HttpResponse.json(mockOrganization)),
+  http.get('/api/v1/organization', ({request}) => { const url=new URL(request.url);const kind=url.searchParams.get('kind') as keyof typeof mockOrganization|null;if(!kind)return HttpResponse.json(mockOrganization);const items=(mockOrganization[kind]??[]) as Array<Record<string,unknown>>;const result=mockPage(items,url);return HttpResponse.json(result) }),
   http.post('/api/v1/organization/:kind', async ({ params, request }) => {
     const payload = await request.json() as Record<string, unknown>
     const collection = params.kind === 'campuses' ? mockOrganization.campuses : params.kind === 'buildings' ? mockOrganization.buildings : params.kind === 'network-zones' ? mockOrganization.network_zones : params.kind === 'access-points' ? mockOrganization.access_points : undefined

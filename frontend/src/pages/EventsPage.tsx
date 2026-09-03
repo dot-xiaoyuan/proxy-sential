@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Button, Input, Select, Space, Table, Tag, Typography } from 'antd'
+import { Input, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { useEvents } from '../shared/api/queries'
@@ -9,6 +9,7 @@ import {
   AppErrorAlert,
   AppLoadingState,
   AppPageHeader,
+	AppServerPagination,
   AppTableBar,
   UniversityDimensionFilters,
   type QuickWindow,
@@ -188,15 +189,6 @@ export function EventsPage() {
             placeholder="传输协议 TCP / UDP"
             value={query.proto ?? ''}
           />
-          <Select
-            className="filter-select"
-            onChange={(value) => updateQuery(setSearchParams, { ...query, limit: value, cursor: undefined })}
-            options={[
-              { label: '20 条 / 页', value: 20 },
-              { label: '50 条 / 页', value: 50 },
-            ]}
-            value={query.limit ?? 20}
-          />
         </div>
       </section>
 
@@ -210,30 +202,7 @@ export function EventsPage() {
           size="small"
         />
 
-        <div className="section-toolbar section-toolbar-spaced">
-          <Typography.Text type="secondary">
-            第 {query.cursor ? 'N' : '1'} 页
-          </Typography.Text>
-          <Space wrap>
-            <Button
-              className="dpi-badge-tag"
-              disabled={!query.cursor}
-              onClick={() => updateQuery(setSearchParams, { ...query, cursor: undefined })}
-            >
-              回到第一页
-            </Button>
-            <Button
-              className="dpi-badge-tag"
-              disabled={!events.data?.page.next_cursor}
-              onClick={() =>
-                updateQuery(setSearchParams, { ...query, cursor: events.data?.page.next_cursor ?? undefined })
-              }
-              type="primary"
-            >
-              下一页 ➔
-            </Button>
-          </Space>
-        </div>
+		<AppServerPagination page={Math.floor(Number(query.cursor ?? 0) / (query.limit ?? 20)) + 1} pageSize={query.limit ?? 20} total={events.data?.page.total ?? 0} onChange={(page, pageSize) => updateQuery(setSearchParams, { ...query, limit: pageSize, cursor: String((page - 1) * pageSize) })} />
       </section>
 
     </main>

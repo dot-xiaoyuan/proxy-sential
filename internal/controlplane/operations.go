@@ -731,6 +731,43 @@ func (s *Server) handleOrganization(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/organization"), "/")
 	s.operations.mu.Lock()
 	if r.Method == http.MethodGet {
+		kind := r.URL.Query().Get("kind")
+		if kind != "" {
+			limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
+			if err != nil {
+				s.operations.mu.Unlock()
+				writeError(w, 400, "bad_page", err.Error())
+				return
+			}
+			cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
+			if err != nil {
+				s.operations.mu.Unlock()
+				writeError(w, 400, "bad_page", err.Error())
+				return
+			}
+			var response any
+			switch kind {
+			case "campuses":
+				items, page := paginate(mapValues(s.operations.doc.Campuses), cursor, limit)
+				response = map[string]any{"items": items, "page": page}
+			case "buildings":
+				items, page := paginate(mapValues(s.operations.doc.Buildings), cursor, limit)
+				response = map[string]any{"items": items, "page": page}
+			case "network_zones":
+				items, page := paginate(mapValues(s.operations.doc.NetworkZones), cursor, limit)
+				response = map[string]any{"items": items, "page": page}
+			case "access_points":
+				items, page := paginate(mapValues(s.operations.doc.AccessPoints), cursor, limit)
+				response = map[string]any{"items": items, "page": page}
+			default:
+				s.operations.mu.Unlock()
+				writeError(w, 400, "bad_organization_kind", "unknown organization kind")
+				return
+			}
+			s.operations.mu.Unlock()
+			writeJSON(w, 200, response)
+			return
+		}
 		result := map[string]any{"campuses": mapValues(s.operations.doc.Campuses), "buildings": mapValues(s.operations.doc.Buildings), "network_zones": mapValues(s.operations.doc.NetworkZones), "access_points": mapValues(s.operations.doc.AccessPoints)}
 		s.operations.mu.Unlock()
 		writeJSON(w, 200, result)
