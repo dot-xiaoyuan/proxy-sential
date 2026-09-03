@@ -134,6 +134,15 @@
   display: grid;
   gap: 12px;
 }
+.filter-disclosure > summary {
+  cursor: pointer;
+  color: var(--ps-text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.filter-disclosure-content {
+  margin-top: 12px;
+}
 
 * {
   box-sizing: border-box;
@@ -1453,7 +1462,12 @@ pre.wrap-code {
   }
 
   .metric-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ingest-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
 
   .proxy-review-metrics {

@@ -33,7 +33,7 @@ export function DevicesPage() {
 
   return <main className="page">
     <AppPageHeader title="终端画像" subtitle="按终端显示身份、网络位置与保守设备识别摘要，点击终端查看完整证据。" quickWindow={quickWindow} onQuickWindowChange={(value) => { setQuickWindow(value); pagination.reset() }} loading={devices.isFetching} onRefresh={() => void devices.refetch()} extra={<div className="list-toolbar"><Input.Search allowClear placeholder="搜索终端、MAC、品牌、生态、账号或 IP" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} /><Select allowClear className="ecosystem-filter" placeholder="生态线索" value={ecosystem} options={['Apple','Huawei','Samsung','Xiaomi','Microsoft Windows','Amazon Alexa','Roku','Sonos'].map(value=>({label:value,value}))} onChange={(value)=>{setEcosystem(value);pagination.reset()}} /></div>} />
-    <section className="surface filter-surface"><UniversityDimensionFilters value={dimensions} onChange={(next) => { setDimensions(next); pagination.reset() }} /></section>
+    <details className="surface filter-disclosure"><summary>高校维度筛选</summary><div className="filter-disclosure-content"><UniversityDimensionFilters value={dimensions} onChange={(next) => { setDimensions(next); pagination.reset() }} /></div></details>
     {recognitionSummary.data && <section className="surface recognition-summary-surface">
 		<div className="recognition-coverage-strip">
 			<RecognitionCoverage label="厂商" value={recognitionSummary.data.coverage.vendor} total={recognitionSummary.data.total_endpoints} />

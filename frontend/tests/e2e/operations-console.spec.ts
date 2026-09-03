@@ -26,6 +26,7 @@ test('batch assigns selected cases from the queue', async ({ page }) => {
 
 test('submits a review label on IP detail', async ({ page }) => {
   await page.goto('/ips/10.255.0.59')
+  await page.getByRole('tab', { name: '访问画像' }).click()
   await expect(page.getByRole('heading', { name: '访问画像' })).toBeVisible()
   await expect(page.getByText('portal.example.test').first()).toBeVisible()
   await expect(page.getByText('api.example.test').first()).toBeVisible()
@@ -59,6 +60,7 @@ test('shows compact endpoint inventory and opens endpoint detail', async ({ page
 
 test('validates and imports an offline device fingerprint bundle', async ({ page }) => {
   await page.goto('/settings/rules')
+  await page.getByRole('tab', { name: '设备特征库' }).click()
   await page.locator('input[type="file"]').setInputFiles({ name:'device-fingerprint-bundle.tar.gz',mimeType:'application/gzip',buffer:Buffer.from('mock bundle') })
   await expect(page.getByText(/校验通过：offline-20260831-mock/)).toBeVisible()
   await page.getByRole('button',{name:'确认导入'}).click()
@@ -79,10 +81,11 @@ test('shows ingest diagnostics and normalized event samples', async ({ page }) =
   await expect(page.getByRole('heading', { name: '采集诊断' })).toBeVisible()
   await expect(page.getByText('suricata', { exact: true })).toBeVisible()
   await expect(page.getByText('ens1f1', { exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: /按类型统计标准事件/ })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Zeek 设备指纹采集' })).toBeVisible()
-  await expect(page.getByText('2048 -> 4096')).toBeVisible()
+  await expect(page.getByRole('tab', { name: '事件类型报表' })).toBeVisible()
+  await expect(page.getByText('2048 → 4096')).toBeVisible()
+  await page.getByRole('tab', { name: '错误记录' }).click()
   await expect(page.getByText('collector run completed with skipped or malformed input records').first()).toBeVisible()
+  await page.getByRole('tab', { name: '最近事件' }).click()
   await expect(page.getByText('event-http-59-a')).toBeVisible()
 })
 
@@ -90,9 +93,11 @@ test('shows observed activity posture and opens active risk IP detail', async ({
   await page.goto('/activity')
   await expect(page.getByRole('heading', { name: 'DPI 观测与访问态势' })).toBeVisible()
   await expect(page.getByText('基于标准事件元数据呈现 L7 协议流向')).toBeVisible()
-  await expect(page.getByText('api.example.test').first()).toBeVisible()
+  await page.getByRole('tab', { name: '访问对象 (Domains)' }).click()
+  await expect(page.getByText('Top 访问域名（DNS / Host / SNI）')).toBeVisible()
   await page.getByRole('tab', { name: '客户端指纹' }).click()
-  await expect(page.getByText('Mozilla/5.0 (Windows NT 10.0; Win64; x64)').first()).toBeVisible()
+  await expect(page.getByText('UA 可重复、可伪造，只用于技术检索，不表示设备数量或硬件品牌。')).toBeVisible()
+  await page.getByRole('tab', { name: /活跃风险 IP/ }).click()
   await expect(page.getByText('10.255.0.59').first()).toBeVisible()
   await page.getByRole('link', { name: '10.255.0.59' }).click()
   await expect(page.getByRole('heading', { name: '10.255.0.59' })).toBeVisible()
@@ -102,8 +107,9 @@ test('shows local users and versioned campus exceptions', async ({ page }) => {
   await page.goto('/settings/security')
   await expect(page.getByRole('heading', { name: '权限与校园例外' })).toBeVisible()
   await expect(page.getByText('系统管理员').first()).toBeVisible()
-  await expect(page.getByText('vpn.henu.edu.cn')).toBeVisible()
   await expect(page.getByRole('button', { name: '新建用户' })).toBeVisible()
+  await page.getByRole('tab', { name: '校园例外库' }).click()
+  await expect(page.getByText('vpn.henu.edu.cn')).toBeVisible()
   await expect(page.getByRole('button', { name: '新增例外' })).toBeVisible()
 })
 
@@ -118,6 +124,7 @@ test('maintains campus organization mappings and exposes university filters', as
   await expect(page.getByText('组织与网络位置映射已保存')).toBeVisible()
 
   await page.goto('/devices')
+  await page.locator('summary').filter({ hasText: '高校维度筛选' }).click()
   await expect(page.getByText('全部校区', { exact: true })).toBeVisible()
   await expect(page.getByPlaceholder('院系')).toBeVisible()
   await expect(page.getByPlaceholder('NAS IP')).toBeVisible()

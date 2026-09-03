@@ -114,11 +114,10 @@ export function EventsPage() {
         totalCount={events.data?.page.total ?? 0}
       />
 
-      <section className="surface filter-surface">
-        <UniversityDimensionFilters value={query} onChange={(next) => updateQuery(setSearchParams, { ...query, ...next, cursor: undefined })} />
-      </section>
-
-      <section className="surface event-filter-panel">
+      <details className="surface filter-disclosure">
+        <summary>高校维度与技术字段筛选</summary>
+        <div className="filter-disclosure-content"><UniversityDimensionFilters value={query} onChange={(next) => updateQuery(setSearchParams, { ...query, ...next, cursor: undefined })} /></div>
+        <div className="event-filter-panel filter-disclosure-content">
         <div className="event-filter-grid">
           <Input
             allowClear
@@ -190,7 +189,8 @@ export function EventsPage() {
             value={query.proto ?? ''}
           />
         </div>
-      </section>
+        </div>
+      </details>
 
       <section className="surface">
         <Table<NormalizedEventSummary>

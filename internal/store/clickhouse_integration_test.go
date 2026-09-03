@@ -45,8 +45,8 @@ func TestClickHouseAggregatesOneHundredThousandEventsWithoutRawReads(t *testing.
 	if overview.EventCount != 100000 || overview.FlowSampleCount != 100000 || overview.ActiveIPCount != 1000 || overview.ProtocolFlowCount != 4 {
 		t.Fatalf("unexpected aggregate overview: %+v", overview)
 	}
-	if overview.FingerprintConflictCount != 2000 {
-		t.Fatalf("expected two conflict kinds for 1000 IPs, got %d", overview.FingerprintConflictCount)
+	if overview.FingerprintConflictCount != 1000 {
+		t.Fatalf("expected only the high-confidence TLS conflict for 1000 IPs; UA diversity is not a device conflict: got %d", overview.FingerprintConflictCount)
 	}
 	flows, err := clickhouse.QueryDPIProtocolFlows(ctx, ActivityQuery{SensorID: sensorID, CampusID: "campus-t7", Window: "24h"})
 	if err != nil {
@@ -61,6 +61,17 @@ func TestClickHouseAggregatesOneHundredThousandEventsWithoutRawReads(t *testing.
 	}
 	if total != 100000 {
 		t.Fatalf("protocol aggregation dropped rows: %d", total)
+	}
+	reportStarted := time.Now()
+	report, err := clickhouse.QueryActivityReport(ctx, ActivityReportQuery{ActivityQuery: ActivityQuery{SensorID: sensorID, CampusID: "campus-t7", Window: "24h"}, Dimension: "domain", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(reportStarted); elapsed >= time.Second {
+		t.Fatalf("activity TOP report TTFB target exceeded: %s", elapsed)
+	}
+	if report.Total != 100000 || report.ClassifiedCount != 100000 || len(report.Items) != 1 || report.Items[0].Key != "service.example" {
+		t.Fatalf("activity TOP report must aggregate all events in ClickHouse: %+v", report)
 	}
 	page, err := clickhouse.ListEvents(ctx, Query{SensorID: sensorID, CampusID: "campus-t7", Limit: 20})
 	if err != nil {

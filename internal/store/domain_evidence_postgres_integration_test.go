@@ -27,6 +27,7 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 	}
 	defer postgres.Close()
 	testNamespace := fmt.Sprintf("domain-integration-%d", time.Now().UnixNano())
+	uniqueIP := fmt.Sprintf("198.18.%d.%d", time.Now().UnixNano()%200+1, time.Now().UnixNano()/200%200+1)
 	endpointID := "mac:02:00:00:00:09:12-" + testNamespace
 	sessionID := testNamespace + "-session"
 	t.Cleanup(func() {
@@ -34,10 +35,12 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 		defer cleanupCancel()
 		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM endpoint_domain_evidence_events WHERE endpoint_id=$1`, endpointID)
 		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM endpoint_domain_evidence WHERE endpoint_id=$1`, endpointID)
+		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM identity_access_history WHERE event_id LIKE $1`, testNamespace+"%")
+		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM identity_ip_mac_history WHERE event_id LIKE $1`, testNamespace+"%")
 		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM account_sessions WHERE session_id=$1`, sessionID)
 		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, endpointID)
 	})
-	identity := normalized.Event{SchemaVersion: "v1", EventID: "domain-identity-start", Source: "radius", Type: "identity", Timestamp: "2026-09-02T10:00:00Z", Subject: map[string]any{"ip": "192.0.2.212", "mac": "02:00:00:00:09:12", "endpoint_id": endpointID, "account_id": "student-domain", "entity_role": "endpoint"}, Flow: map[string]any{}, Payload: map[string]any{"session_id": sessionID, "session_status": "start"}, Confidence: 0.99}
+	identity := normalized.Event{SchemaVersion: "v1", EventID: testNamespace + "-identity-start", Source: "radius", Type: "identity", Timestamp: "2026-09-02T10:00:00Z", Subject: map[string]any{"ip": uniqueIP, "mac": "02:00:00:00:09:12", "endpoint_id": endpointID, "account_id": "student-domain", "entity_role": "endpoint"}, Flow: map[string]any{}, Payload: map[string]any{"session_id": sessionID, "session_status": "start"}, Confidence: 0.99}
 	if err := postgres.WriteIdentityEvents(ctx, []normalized.Event{identity}); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +48,7 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	event := normalized.Event{SchemaVersion: "v1", EventID: "domain-evidence-1", Source: "suricata", Type: "tls", Timestamp: "2026-09-02T10:05:00Z", Subject: map[string]any{"ip": "192.0.2.212"}, Flow: map[string]any{}, Payload: map[string]any{"sni": "push.apple.test"}, Confidence: 1}
+	event := normalized.Event{SchemaVersion: "v1", EventID: testNamespace + "-evidence-1", Source: "suricata", Type: "tls", Timestamp: "2026-09-02T10:05:00Z", Subject: map[string]any{"ip": uniqueIP}, Flow: map[string]any{}, Payload: map[string]any{"sni": "push.apple.test"}, Confidence: 1}
 	for range 2 {
 		if _, err := postgres.ProcessDomainEvents(ctx, []normalized.Event{event}, library); err != nil {
 			t.Fatal(err)
@@ -56,13 +59,13 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 		t.Fatalf("idempotent evidence failed: %+v err=%v", items, err)
 	}
 	ended := identity
-	ended.EventID = "domain-identity-stop"
+	ended.EventID = testNamespace + "-identity-stop"
 	ended.Timestamp = "2026-09-02T10:10:00Z"
 	ended.Payload = map[string]any{"session_id": sessionID, "session_status": "stop"}
 	if err := postgres.WriteIdentityEvents(ctx, []normalized.Event{ended}); err != nil {
 		t.Fatal(err)
 	}
-	event.EventID = "domain-evidence-after-session"
+	event.EventID = testNamespace + "-evidence-after-session"
 	event.Timestamp = "2026-09-02T10:11:00Z"
 	result, err := postgres.ProcessDomainEvents(ctx, []normalized.Event{event}, library)
 	if err != nil || result.Attributed != 0 {

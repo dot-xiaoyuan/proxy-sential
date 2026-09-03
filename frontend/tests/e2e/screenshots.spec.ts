@@ -22,6 +22,7 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/ips/10.255.0.59')
     await expect(page.getByRole('heading', { name: '10.255.0.59' })).toBeVisible()
+    await page.getByRole('tab', { name: '证据与技术信息' }).click()
     await expect(page.getByRole('heading', { name: '证据时间线' })).toBeVisible()
 
     // 1. 全局 Document 根层级防溢出
