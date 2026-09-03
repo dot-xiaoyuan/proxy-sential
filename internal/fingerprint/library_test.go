@@ -30,9 +30,9 @@ func TestStandardDeviceRecognitionReplay(t *testing.T) {
 		deviceType string
 		osFamily   string
 	}{
-		{name: "Windows", signals: Signals{UserAgents: []string{"Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}}, brand: "Microsoft", deviceType: "desktop", osFamily: "Windows"},
+		{name: "Windows", signals: Signals{Hints: []string{"Windows NT explicit device field"}}, brand: "Microsoft", deviceType: "desktop", osFamily: "Windows"},
 		{name: "Android exact model", signals: Signals{Hostnames: []string{"MI9SE-campus"}}, brand: "Xiaomi", model: "Mi 9 SE", deviceType: "mobile", osFamily: "Android"},
-		{name: "iOS", signals: Signals{UserAgents: []string{"Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)"}}, brand: "Apple", deviceType: "mobile", osFamily: "iOS"},
+		{name: "iOS", signals: Signals{Hostnames: []string{"iPhone-campus"}}, brand: "Apple", deviceType: "mobile", osFamily: "iOS"},
 		{name: "printer", signals: Signals{DHCPVendorClass: "Hewlett-Packard JetDirect", Hints: []string{"Hewlett-Packard JetDirect"}}, brand: "HP", deviceType: "printer"},
 		{name: "unknown", signals: Signals{MAC: "12:34:56:78:9a:bc", Hostnames: []string{"campus-device"}}},
 	}
@@ -62,9 +62,18 @@ func TestIEEEPrefixLengthsAndSignalConflict(t *testing.T) {
 	if result := library.Identify("10:34:56:78:9a:bc"); result.Vendor != "" {
 		t.Fatalf("unregistered prefix must remain unknown: %+v", result)
 	}
-	conflict := library.IdentifySignals(Signals{UserAgents: []string{"iPhone"}, DHCPRequestedOptions: "1,3,6"})
-	if !conflict.Conflict || conflict.OSFamily != "iOS" {
-		t.Fatalf("conflicting DHCP evidence must not override high confidence UA: %+v", conflict)
+	result := library.IdentifySignals(Signals{UserAgents: []string{"iPhone"}, DHCPRequestedOptions: "1,3,6"})
+	if result.Conflict || result.OSFamily != "Windows" || result.Brand != "" || result.Model != "" {
+		t.Fatalf("UA must not override independent DHCP evidence: %+v", result)
+	}
+}
+
+func TestUserAgentCannotPopulatePhysicalDeviceProfile(t *testing.T) {
+	for _, ua := range []string{"MicroMessenger Client", "Mozilla/5.0 (iPhone)", "Mozilla/5.0 (Windows NT 10.0)", "Go-http-client/1.1"} {
+		result := Default().IdentifySignals(Signals{UserAgents: []string{ua}})
+		if result.Brand != "" || result.Model != "" || result.DeviceType != "" || result.OSFamily != "" || result.Confidence != 0 {
+			t.Fatalf("UA %q must remain client metadata only: %+v", ua, result)
+		}
 	}
 }
 

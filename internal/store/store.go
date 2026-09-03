@@ -371,7 +371,11 @@ type DPIFingerprintConflict struct {
 	TypeLabel       string   `json:"type_label"`
 	RiskLevel       string   `json:"risk_level"`
 	Confidence      float64  `json:"confidence"`
-	DeviceCount     int      `json:"device_count"`
+	DeviceCount     int      `json:"device_count,omitempty"` // Deprecated: retained for response compatibility.
+	SampleCount     int      `json:"sample_count"`
+	Scope           string   `json:"scope"`
+	SignalTypes     []string `json:"supporting_signal_types"`
+	Assessment      string   `json:"assessment"`
 	DetectedSamples []string `json:"detected_samples"`
 	Reason          string   `json:"reason"`
 	LastSeen        string   `json:"last_seen"`

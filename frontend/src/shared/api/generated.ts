@@ -1857,7 +1857,17 @@ export interface components {
             type_label: string;
             risk_level: components["schemas"]["RiskLevel"];
             confidence: number;
-            device_count: number;
+            /**
+             * @deprecated
+             * @description 兼容旧客户端的废弃字段，不再表示设备数量。
+             */
+            device_count?: number;
+            sample_count: number;
+            /** @enum {string} */
+            scope: "ip_window" | "endpoint" | "auth_session";
+            supporting_signal_types: string[];
+            /** @enum {string} */
+            assessment: "needs_corroboration" | "conflict" | "consistent";
             detected_samples: string[];
             reason: string;
             /** Format: date-time */

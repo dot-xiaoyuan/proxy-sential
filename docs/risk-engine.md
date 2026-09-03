@@ -78,7 +78,9 @@ proxy-sentinel evidence --input events.jsonl --output evidence.json --window 10m
 `evidence_id`、`ip`、`type`、`window`、`score`、`confidence`、`severity`、
 `reason`、`samples`、`created_at`。
 
-### multi_user_agent
+### multi_user_agent（历史兼容，停止生成）
+
+原始 UA 多样性只表示客户端软件、浏览器或运行时变化，不能推导物理设备数量。新版本不再生成该证据；历史快照仍可读取，以保持审计可追溯。
 
 同一 IP 在窗口内出现多个差异明显的 User-Agent。
 

@@ -3,6 +3,7 @@ package evidence
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,9 +38,29 @@ func TestAnalyzeEmitsExplainableEvidence(t *testing.T) {
 		}
 	}
 
-	for _, expected := range []string{"multi_user_agent", "multi_ja3_ja4", "port_distribution"} {
+	for _, expected := range []string{"multi_ja3_ja4", "port_distribution"} {
 		if _, ok := byType[expected]; !ok {
 			t.Fatalf("missing evidence type %s in %+v", expected, byType)
+		}
+	}
+	if _, exists := byType["multi_user_agent"]; exists {
+		t.Fatalf("raw UA diversity must not produce device evidence: %+v", byType)
+	}
+}
+
+func TestAnalyzeTreatsCommonUserAgentsAsClientMetadataOnly(t *testing.T) {
+	userAgents := []string{"MicroMessenger Client", "Mozilla/5.0", "Microsoft NCSI", "Microsoft BITS/7.8", "OfficeClickToRun", "Go-http-client/1.1", "IntelliJ-GitHub-Plugin GoLand/261"}
+	var input bytes.Buffer
+	for index, ua := range userAgents {
+		input.WriteString(normalizedLine(fmt.Sprintf("ua-client-%d", index), "http", map[string]any{"user_agent": ua}, map[string]any{"dst_port": 443}) + "\n")
+	}
+	result, err := Analyze(&input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range result.Evidence {
+		if item.Type == "multi_user_agent" || item.Type == "device_signal_conflict" {
+			t.Fatalf("client UA metadata must not produce physical-device evidence: %+v", item)
 		}
 	}
 }

@@ -355,19 +355,14 @@ func signalDrafts(event normalized.Event) []deviceSignalDraft {
 		add(source, "software_version", stringFromMap(event.Payload, "software_version"), "medium", 0.68, 52)
 		inferred := inferDeviceFromDHCP(event.Payload)
 		add(source, "os_family", inferred.osFamily, "strong", 0.82, 70)
-		add(source, "ua_brand", inferred.brand, "strong", 0.78, 62)
-		add(source, "ua_device_type", inferred.deviceType, "strong", 0.76, 60)
+		add(source, "brand", inferred.brand, "strong", 0.78, 62)
+		add(source, "device_type", inferred.deviceType, "strong", 0.76, 60)
 		add(source, "model", inferred.model, "strong", 0.76, 60)
 	}
 
 	ua := stringFromMap(event.Payload, "user_agent")
 	if ua != "" {
 		add("http_ua", "user_agent", ua, "weak", 0.35, 20)
-		inferred := inferDeviceFromUA(ua)
-		add("http_ua", "ua_os_family", inferred.osFamily, "weak", 0.38, 22)
-		add("http_ua", "ua_brand", inferred.brand, "weak", 0.32, 18)
-		add("http_ua", "ua_device_type", inferred.deviceType, "weak", 0.34, 18)
-		add("http_ua", "ua_model", inferred.model, "weak", 0.32, 18)
 	}
 	add("tls_fingerprint", "ja3", stringFromMap(event.Payload, "ja3"), "medium", 0.62, 48)
 	add("tls_fingerprint", "ja4", stringFromMap(event.Payload, "ja4"), "medium", 0.64, 50)
@@ -548,21 +543,20 @@ func applyDeviceSignal(device *ObservedDevice, signal DeviceSignal) {
 	case "oui_vendor":
 		if signal.Strength == "strong" {
 			device.Vendor = signal.Value
-			device.Brand = signal.Value
 		}
-	case "os_family", "ua_os_family":
+	case "os_family":
 		if device.OSFamily == "unknown" || signal.Strength == "strong" {
 			device.OSFamily = signal.Value
 		}
-	case "ua_brand":
+	case "brand":
 		if device.Brand == "unknown" {
 			device.Brand = signal.Value
 		}
-	case "ua_device_type":
+	case "device_type":
 		if device.DeviceType == "unknown" {
 			device.DeviceType = signal.Value
 		}
-	case "model", "ua_model":
+	case "model":
 		if device.Model == "unknown" || signal.Strength == "strong" {
 			device.Model = signal.Value
 		}
@@ -599,8 +593,6 @@ func buildDeviceConflicts(ip string, signals []DeviceSignal, devices []ObservedD
 	}
 	byKind := signalsByKind(signals)
 	lastSeen := latestSignalTime(signals)
-	addConflict("ua_conflict", "weak", "同一 IP 出现多个 UA，只作为弱信号；需要结合 JA3/JA4、DHCP/OUI 或 TCP 指纹确认", signalValues(byKind["user_agent"]), 0.35, lastSeen)
-	addConflict("brand_os_conflict", "weak", "同一 IP 的 UA 推断品牌/系统存在差异，UA 可伪造，不能单独确认多设备", append(signalValues(byKind["ua_brand"]), signalValues(byKind["ua_os_family"])...), 0.38, lastSeen)
 	addConflict("dhcp_stack_conflict", "strong", "同一 IP 的 DHCP 设备画像出现互斥系统或客户端栈，疑似共享上网或代理出口", append(signalValues(byKind["device_hint"]), signalValues(byKind["dhcp_vendor_class"])...), 0.84, lastSeen)
 	addConflict("tls_stack_conflict", "medium", "同一 IP 出现多个 TLS JA3/JA4 指纹，提示可能存在多客户端栈", append(signalValues(byKind["ja3"]), signalValues(byKind["ja4"])...), 0.62, lastSeen)
 	addConflict("tcp_stack_conflict", "medium", "同一 IP 出现多个 TCP 栈侧信号，需结合采集完整性复核", append(signalValues(byKind["ttl"]), signalValues(byKind["ipid"])...), 0.58, lastSeen)

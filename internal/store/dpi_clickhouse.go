@@ -52,7 +52,7 @@ func (s *ClickHouseStore) QueryDPIOverview(ctx context.Context, query ActivityQu
 			result.LastSeen = normalizeClickHouseTimestamp(*summary[0].LastSeen)
 		}
 	}
-	conflictSQL := fmt.Sprintf(`SELECT sum(toUInt8(length(uas)>1)+toUInt8(length(ja3s)+length(ja4s)>1)+toUInt8(length(ttls)>1)) AS count FROM (SELECT groupUniqArrayIf(8)(JSONExtractString(payload_json,'user_agent'),JSONExtractString(payload_json,'user_agent')!='') AS uas, groupUniqArrayIf(8)(JSONExtractString(payload_json,'ja3'),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(JSONExtractString(payload_json,'ja4'),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls FROM normalized_events PREWHERE %s AND subject_ip!='' GROUP BY subject_ip) FORMAT JSONEachRow`, where)
+	conflictSQL := fmt.Sprintf(`SELECT sum(toUInt8(length(ja3s)+length(ja4s)>1)+toUInt8(length(ttls)>1)) AS count FROM (SELECT groupUniqArrayIf(8)(JSONExtractString(payload_json,'ja3'),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(JSONExtractString(payload_json,'ja4'),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls FROM normalized_events PREWHERE %s AND subject_ip!='' GROUP BY subject_ip) FORMAT JSONEachRow`, where)
 	data, err = s.query(ctx, conflictSQL)
 	if err != nil {
 		return DPIOverview{}, err
@@ -158,14 +158,13 @@ func (s *ClickHouseStore) QueryDPIFingerprintConflicts(ctx context.Context, quer
 	if err != nil {
 		return nil, err
 	}
-	sql := fmt.Sprintf(`SELECT subject_ip AS ip, groupUniqArrayIf(8)(JSONExtractString(payload_json,'user_agent'),JSONExtractString(payload_json,'user_agent')!='') AS uas, groupUniqArrayIf(8)(concat('ja3:',JSONExtractString(payload_json,'ja3')),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(concat('ja4:',JSONExtractString(payload_json,'ja4')),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls, toString(max(timestamp)) AS last_seen FROM normalized_events PREWHERE %s AND subject_ip != '' GROUP BY ip HAVING length(uas)>1 OR length(ja3s)+length(ja4s)>1 OR length(ttls)>1 ORDER BY last_seen DESC LIMIT 200 FORMAT JSONEachRow`, where)
+	sql := fmt.Sprintf(`SELECT subject_ip AS ip, groupUniqArrayIf(8)(concat('ja3:',JSONExtractString(payload_json,'ja3')),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(concat('ja4:',JSONExtractString(payload_json,'ja4')),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls, toString(max(timestamp)) AS last_seen FROM normalized_events PREWHERE %s AND subject_ip != '' GROUP BY ip HAVING length(ja3s)+length(ja4s)>1 OR length(ttls)>1 ORDER BY last_seen DESC LIMIT 200 FORMAT JSONEachRow`, where)
 	data, err := s.query(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
 	var rows []struct {
 		IP       string   `json:"ip"`
-		UAs      []string `json:"uas"`
 		JA3s     []string `json:"ja3s"`
 		JA4s     []string `json:"ja4s"`
 		TTLs     []string `json:"ttls"`
@@ -179,7 +178,7 @@ func (s *ClickHouseStore) QueryDPIFingerprintConflicts(ctx context.Context, quer
 		sets := []struct {
 			kind, label string
 			values      []string
-		}{{"ua_conflict", "UA 客户端碰撞", row.UAs}, {"ja3_mismatch", "JA3 / JA4 栈错配", append(row.JA3s, row.JA4s...)}, {"ttl_step", "TTL 步进差异", row.TTLs}}
+		}{{"ja3_mismatch", "TLS 客户端栈差异", append(row.JA3s, row.JA4s...)}, {"ttl_step", "网络栈 TTL 差异", row.TTLs}}
 		for _, set := range sets {
 			if len(set.values) < 2 {
 				continue
@@ -193,7 +192,7 @@ func (s *ClickHouseStore) QueryDPIFingerprintConflicts(ctx context.Context, quer
 			if confidence > 0.95 {
 				confidence = 0.95
 			}
-			items = append(items, DPIFingerprintConflict{ID: "dpi-conflict-" + shortHash(set.kind+"|"+row.IP+"|"+row.LastSeen), IP: row.IP, ConflictType: set.kind, TypeLabel: set.label, RiskLevel: level, Confidence: confidence, DeviceCount: len(set.values), DetectedSamples: set.values, Reason: fmt.Sprintf("%s 在同一观测窗口内出现 %d 组不同标准化指纹特征", row.IP, len(set.values)), LastSeen: clickHouseTimeRFC3339(row.LastSeen)})
+			items = append(items, DPIFingerprintConflict{ID: "dpi-conflict-" + shortHash(set.kind+"|"+row.IP+"|"+row.LastSeen), IP: row.IP, ConflictType: set.kind, TypeLabel: set.label, RiskLevel: level, Confidence: confidence, SampleCount: len(set.values), Scope: "ip_window", SignalTypes: []string{set.kind}, Assessment: "needs_corroboration", DetectedSamples: set.values, Reason: fmt.Sprintf("%s 在同一观测窗口内出现 %d 组网络客户端栈样本，需要结合身份会话、MAC 或 DHCP 证据复核", row.IP, len(set.values)), LastSeen: clickHouseTimeRFC3339(row.LastSeen)})
 		}
 	}
 	return items, nil

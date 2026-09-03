@@ -43,7 +43,7 @@ func RulesFromUAP(data []byte) ([]Rule, error) {
 			BrandReplacement:  normalizeReplacement(item.BrandReplacement),
 			ModelReplacement:  normalizeReplacement(item.ModelReplacement),
 			DeviceReplacement: normalizeReplacement(item.DeviceReplacement),
-			Confidence:        0.9,
+			Confidence:        0.4,
 		})
 	}
 	if len(rules) < 10 {

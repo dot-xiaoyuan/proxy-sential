@@ -49,7 +49,7 @@
 当前进展：
 
 - 已实现 `evidence --input [--output] [--window]`。
-- 已实现 `multi_user_agent`、`multi_ja3_ja4`、`domain_diversity`、`port_distribution`。
+- 已实现 `multi_ja3_ja4`、`domain_diversity`、`port_distribution`；`multi_user_agent` 已停止生成，仅保留历史审计兼容。
 - `ttl_clusters` 暂缓：当前标准事件和 Suricata adapter 还没有 TTL 字段，不能在证据层伪造该信号。
 
 任务：

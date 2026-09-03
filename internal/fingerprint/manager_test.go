@@ -70,8 +70,8 @@ func TestManagerUpdateActivatesValidatedLibraryAndKeepsLastGoodOnFailure(t *test
 	if _, err := os.Stat(filepath.Join(dir, "device-rules.json")); err != nil {
 		t.Fatal(err)
 	}
-	result := Default().Identify("00:0c:29:00:00:01", "Device7")
-	if result.Brand != "Brand7" || result.Model != "Model7" {
+	result := Default().IdentifySignals(Signals{MAC: "00:0c:29:00:00:01", UserAgents: []string{"Device7"}})
+	if result.Vendor != "VMware Test" || result.Brand != "" || result.Model != "" || Default().Version() != status.Version {
 		t.Fatalf("updated library not active: %+v", result)
 	}
 	lastVersion := Default().Version()

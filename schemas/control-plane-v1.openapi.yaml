@@ -3068,7 +3068,7 @@ components:
             type: string
     DpiFingerprintConflict:
       type: object
-      required: [id, ip, conflict_type, type_label, risk_level, confidence, device_count, detected_samples, reason, last_seen]
+      required: [id, ip, conflict_type, type_label, risk_level, confidence, sample_count, scope, supporting_signal_types, assessment, detected_samples, reason, last_seen]
       properties:
         id:
           type: string
@@ -3086,6 +3086,20 @@ components:
           maximum: 1
         device_count:
           type: integer
+          deprecated: true
+          description: 兼容旧客户端的废弃字段，不再表示设备数量。
+        sample_count:
+          type: integer
+        scope:
+          type: string
+          enum: [ip_window, endpoint, auth_session]
+        supporting_signal_types:
+          type: array
+          items:
+            type: string
+        assessment:
+          type: string
+          enum: [needs_corroboration, conflict, consistent]
         detected_samples:
           type: array
           items:

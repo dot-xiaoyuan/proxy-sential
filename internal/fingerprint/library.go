@@ -158,7 +158,7 @@ func LoadWithDomainData(version string, ouiCSV, rulesJSON, fingerbankJSON, alias
 func (l *Library) Version() string { return l.version }
 
 func (l *Library) Identify(mac string, values ...string) Result {
-	return l.IdentifySignals(Signals{MAC: mac, UserAgents: values, Hints: values})
+	return l.IdentifySignals(Signals{MAC: mac, Hints: values})
 }
 
 func (l *Library) IdentifySignals(signals Signals) Result {
@@ -181,12 +181,15 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			}
 		}
 	}
-	joined := strings.Join(append(append(append([]string{}, signals.UserAgents...), signals.Hostnames...), append(signals.Software, signals.Hints...)...), " ")
-	userAgents := strings.Join(signals.UserAgents, " ")
+	joined := strings.Join(append(append([]string{}, signals.Hostnames...), append(signals.Software, signals.Hints...)...), " ")
 	for _, rule := range l.rules {
 		input := joined
 		if rule.Input == "user_agent" {
-			input = userAgents
+			// UA identifies a client/runtime, not a physical endpoint. Keep the
+			// parser rules in the offline bundle for technical inspection, but
+			// never promote their brand/model/device result into the endpoint
+			// profile without an independent standard device signal.
+			continue
 		}
 		match := rule.compiled.FindStringSubmatchIndex(input)
 		if match == nil {

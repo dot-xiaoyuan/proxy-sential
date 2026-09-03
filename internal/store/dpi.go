@@ -16,7 +16,6 @@ import (
 const defaultDPIEventLimit = 100000
 
 type dpiIPSignals struct {
-	ua       map[string]activityBucket
 	ja       map[string]activityBucket
 	ttl      map[string]activityBucket
 	lastSeen string
@@ -155,7 +154,6 @@ func BuildDPIFingerprintConflicts(events []normalized.Event, risks map[string]ri
 		signal := signals[ip]
 		if signal == nil {
 			signal = &dpiIPSignals{
-				ua:  map[string]activityBucket{},
 				ja:  map[string]activityBucket{},
 				ttl: map[string]activityBucket{},
 			}
@@ -164,7 +162,6 @@ func BuildDPIFingerprintConflicts(events []normalized.Event, risks map[string]ri
 		if event.Timestamp > signal.lastSeen {
 			signal.lastSeen = event.Timestamp
 		}
-		increment(signal.ua, stringFromMap(event.Payload, "user_agent"), event.Timestamp)
 		increment(signal.ja, "ja3:"+stringFromMap(event.Payload, "ja3"), event.Timestamp)
 		increment(signal.ja, "ja4:"+stringFromMap(event.Payload, "ja4"), event.Timestamp)
 		if ttl := intFromMap(event.Flow, "ttl"); ttl > 0 {
@@ -173,14 +170,11 @@ func BuildDPIFingerprintConflicts(events []normalized.Event, risks map[string]ri
 	}
 	items := []DPIFingerprintConflict{}
 	for ip, signal := range signals {
-		if len(signal.ua) >= 2 {
-			items = append(items, dpiConflict(ip, "ua_conflict", "UA 客户端碰撞", signal.ua, signal.lastSeen, risks[ip]))
-		}
 		if len(signal.ja) >= 2 {
-			items = append(items, dpiConflict(ip, "ja3_mismatch", "JA3 / JA4 栈错配", signal.ja, signal.lastSeen, risks[ip]))
+			items = append(items, dpiConflict(ip, "ja3_mismatch", "TLS 客户端栈差异", signal.ja, signal.lastSeen, risks[ip]))
 		}
 		if len(signal.ttl) >= 2 {
-			items = append(items, dpiConflict(ip, "ttl_step", "TTL 步进差异", signal.ttl, signal.lastSeen, risks[ip]))
+			items = append(items, dpiConflict(ip, "ttl_step", "网络栈 TTL 差异", signal.ttl, signal.lastSeen, risks[ip]))
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -189,8 +183,8 @@ func BuildDPIFingerprintConflicts(events []normalized.Event, risks map[string]ri
 			right, _ := levelRank(items[j].RiskLevel)
 			return left > right
 		}
-		if items[i].DeviceCount != items[j].DeviceCount {
-			return items[i].DeviceCount > items[j].DeviceCount
+		if items[i].SampleCount != items[j].SampleCount {
+			return items[i].SampleCount > items[j].SampleCount
 		}
 		return items[i].LastSeen > items[j].LastSeen
 	})
@@ -240,12 +234,12 @@ func dpiConflict(ip string, conflictType string, label string, samples map[strin
 	if riskLevel == "" {
 		riskLevel = "normal"
 	}
-	deviceCount := len(samples)
-	confidence := 0.55 + float64(deviceCount)*0.08
+	sampleCount := len(samples)
+	confidence := 0.55 + float64(sampleCount)*0.08
 	if confidence > 0.95 {
 		confidence = 0.95
 	}
-	reason := fmt.Sprintf("%s 在同一观测窗口内出现 %d 组不同标准化指纹特征", ip, deviceCount)
+	reason := fmt.Sprintf("%s 在同一观测窗口内出现 %d 组网络客户端栈样本，需要结合身份会话、MAC 或 DHCP 证据复核", ip, sampleCount)
 	return DPIFingerprintConflict{
 		ID:              "dpi-conflict-" + shortHash(conflictType+"|"+ip+"|"+lastSeen),
 		IP:              ip,
@@ -253,7 +247,10 @@ func dpiConflict(ip string, conflictType string, label string, samples map[strin
 		TypeLabel:       label,
 		RiskLevel:       riskLevel,
 		Confidence:      confidence,
-		DeviceCount:     deviceCount,
+		SampleCount:     sampleCount,
+		Scope:           "ip_window",
+		SignalTypes:     []string{conflictType},
+		Assessment:      "needs_corroboration",
 		DetectedSamples: topActivityValues(samples, 8),
 		Reason:          reason,
 		LastSeen:        lastSeen,

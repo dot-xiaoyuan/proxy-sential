@@ -328,14 +328,6 @@ func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals
 			limitSamples(encryptedTransports, 8), createdAtText))
 	}
 
-	userAgents := sortedSet(signals.userAgents)
-	if len(userAgents) >= 2 {
-		score := cappedScore(10+len(userAgents)*3, 22)
-		output = append(output, newEvidence(ip, "multi_user_agent", windowText, score, 0.35, severity(score),
-			fmt.Sprintf("%s 内出现 %d 个不同 User-Agent；UA 可伪造，仅作为弱信号，需要结合 JA3/JA4、DHCP/OUI 或 TCP 指纹复核", windowText, len(userAgents)),
-			limitSamples(userAgents, 5), createdAtText))
-	}
-
 	fingerprints := append(prefixSamples("ja3:", sortedSet(signals.ja3)), prefixSamples("ja4:", sortedSet(signals.ja4))...)
 	sort.Strings(fingerprints)
 	if len(fingerprints) >= 2 {
@@ -343,14 +335,6 @@ func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals
 		output = append(output, newEvidence(ip, "multi_ja3_ja4", windowText, score, confidence(len(fingerprints)), severity(score),
 			fmt.Sprintf("%s 内出现 %d 个不同 TLS 指纹，可能对应多客户端栈", windowText, len(fingerprints)),
 			limitSamples(fingerprints, 5), createdAtText))
-	}
-
-	if len(userAgents) >= 2 && len(fingerprints) >= 2 {
-		samples := append(limitSamples(userAgents, 3), limitSamples(fingerprints, 4)...)
-		score := cappedScore(24+len(fingerprints)*4, 42)
-		output = append(output, newEvidence(ip, "device_signal_conflict", windowText, score, 0.68, severity(score),
-			fmt.Sprintf("%s 内 UA 弱信号与 TLS 指纹中信号同时出现多样性，疑似存在多客户端栈；仍需强设备信号确认", windowText),
-			samples, createdAtText))
 	}
 
 	deviceProfiles := sortedSet(signals.deviceProfiles)

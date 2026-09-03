@@ -90,7 +90,7 @@ Suricata 的流量主链路。
 基数、JA3/JA4 基数和目的端口基数。窗口结束时间取输入中的最新事件时间，
 保证固定 fixture 多次回放结果一致。
 
-`evidence` 在标准事件上生成可解释证据。当前支持 `multi_user_agent`、
+`evidence` 在标准事件上生成可解释证据。`multi_user_agent` 仅保留历史读取兼容，新事件不再生成；当前支持
 `multi_ja3_ja4`、`domain_diversity`、`port_distribution`、
 `vpn_proxy_rule_match`、`vpn_proxy_domain_hint` 和 `encrypted_tunnel_behavior`。
 `ttl_clusters` 需要标准事件先提供 TTL 信号，暂不在证据层伪造。
