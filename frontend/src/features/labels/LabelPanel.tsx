@@ -17,12 +17,16 @@ type FormValue = {
 
 export function LabelPanel({
   targetId,
+  targetType = 'ip',
   evidenceIds,
   disabled,
+  onSubmitted,
 }: {
   targetId: string
+  targetType?: 'ip' | 'account' | 'endpoint'
   evidenceIds: string[]
   disabled?: boolean
+  onSubmitted?: (label: LabelKind) => void
 }) {
   const [form] = Form.useForm<FormValue>()
   const { message } = AntApp.useApp()
@@ -36,7 +40,7 @@ export function LabelPanel({
       onFinish={(value) => {
         createLabel.mutate(
           {
-            target_type: 'ip',
+            target_type: targetType,
             target_id: targetId,
             label: value.label,
             reason: value.reason,
@@ -45,6 +49,7 @@ export function LabelPanel({
           {
             onSuccess: () => {
               message.success('标注已写入审计队列')
+              onSubmitted?.(value.label)
               form.resetFields()
             },
           },

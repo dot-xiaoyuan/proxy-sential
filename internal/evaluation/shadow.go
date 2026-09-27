@@ -22,14 +22,16 @@ import (
 var evaluationLevels = []string{"confirmed", "high", "suspicious", "normal"}
 
 type ShadowOptions struct {
-	ShadowDir     string
-	From          time.Time
-	To            time.Time
-	RequiredDays  int
-	SamplesPerDay int
-	ExportDir     string
-	PostgresDSN   string
-	Now           time.Time
+	ShadowDir           string
+	From                time.Time
+	To                  time.Time
+	RequiredDays        int
+	SamplesPerDay       int
+	ExportDir           string
+	PostgresDSN         string
+	Now                 time.Time
+	MinCandidateReviews int
+	MinNormalTruth      int
 }
 
 type ShadowEvaluationReport struct {
@@ -49,6 +51,9 @@ type ShadowEvaluationReport struct {
 	EvaluatedSampleCount   int                    `json:"evaluated_sample_count"`
 	ReviewedSnapshotCount  int                    `json:"reviewed_snapshot_count"`
 	ReviewCoverage         float64                `json:"review_coverage"`
+	CandidateReviewed      int                    `json:"candidate_reviewed"`
+	NormalTruthCount       int                    `json:"normal_truth_count"`
+	HighRiskPrecision      float64                `json:"high_risk_precision"`
 	LevelStats             map[string]ReviewStats `json:"level_stats"`
 	Daily                  []DailyReviewSummary   `json:"daily"`
 	MissingReviewBuckets   []string               `json:"missing_review_buckets"`
@@ -116,10 +121,16 @@ func EvaluateShadow(opts ShadowOptions) (ShadowEvaluationReport, error) {
 		opts.RequiredDays = 7
 	}
 	if opts.SamplesPerDay <= 0 {
-		opts.SamplesPerDay = 10
+		opts.SamplesPerDay = 30
 	}
 	if opts.Now.IsZero() {
 		opts.Now = time.Now().UTC()
+	}
+	if opts.MinCandidateReviews <= 0 {
+		opts.MinCandidateReviews = 200
+	}
+	if opts.MinNormalTruth <= 0 {
+		opts.MinNormalTruth = 200
 	}
 	if !opts.From.IsZero() && !opts.To.IsZero() && opts.From.After(opts.To) {
 		return ShadowEvaluationReport{}, fmt.Errorf("from must not be after to")
@@ -325,6 +336,10 @@ func buildReport(opts ShadowOptions, runs []runData) ShadowEvaluationReport {
 		stats.Precision = precision(stats)
 		report.LevelStats[level] = stats
 	}
+	confirmed, high := report.LevelStats["confirmed"], report.LevelStats["high"]
+	report.CandidateReviewed = confirmed.Confirmed + confirmed.FalsePositive + confirmed.Benign + high.Confirmed + high.FalsePositive + high.Benign
+	report.NormalTruthCount = report.LevelStats["normal"].Benign
+	report.HighRiskPrecision = precision(ReviewStats{Confirmed: confirmed.Confirmed + high.Confirmed, FalsePositive: confirmed.FalsePositive + high.FalsePositive, Benign: confirmed.Benign + high.Benign})
 	if report.EvaluatedSampleCount > 0 {
 		report.ReviewCoverage = float64(report.ReviewedSnapshotCount) / float64(report.EvaluatedSampleCount)
 	}
@@ -342,6 +357,15 @@ func buildReport(opts ShadowOptions, runs []runData) ShadowEvaluationReport {
 	}
 	if len(report.MissingReviewBuckets) > 0 {
 		report.Blockers = append(report.Blockers, fmt.Sprintf("存在 %d 个有样本但未复核的日期/等级分桶", len(report.MissingReviewBuckets)))
+	}
+	if report.CandidateReviewed < opts.MinCandidateReviews {
+		report.Blockers = append(report.Blockers, fmt.Sprintf("高风险候选有效复核仅 %d 条，要求至少 %d 条", report.CandidateReviewed, opts.MinCandidateReviews))
+	}
+	if report.NormalTruthCount < opts.MinNormalTruth {
+		report.Blockers = append(report.Blockers, fmt.Sprintf("正常主体人工真值仅 %d 条，要求至少 %d 条", report.NormalTruthCount, opts.MinNormalTruth))
+	}
+	if report.HighRiskPrecision < 0.95 {
+		report.Blockers = append(report.Blockers, fmt.Sprintf("高风险人工确认率 %.1f%%，要求至少 95%%", report.HighRiskPrecision*100))
 	}
 	if report.TruncatedRunCount > 0 || report.MalformedEventCount > 0 {
 		report.Blockers = append(report.Blockers, fmt.Sprintf("采集质量未通过：截断运行=%d，畸形事件=%d", report.TruncatedRunCount, report.MalformedEventCount))
@@ -462,13 +486,27 @@ func latestMatchingLabel(snapshot risk.Snapshot, labels []store.Label) (store.La
 			keys[kind+":"+id] = true
 		}
 	}
-	add(snapshot.SubjectType, snapshot.SubjectID)
-	add("account", snapshot.AccountID)
-	add("endpoint", snapshot.EndpointID)
-	add("ip", snapshot.IP)
+	if snapshot.SubjectType != "" && snapshot.SubjectID != "" {
+		add(snapshot.SubjectType, snapshot.SubjectID)
+	} else if snapshot.AccountID != "" {
+		add("account", snapshot.AccountID)
+	} else if snapshot.EndpointID != "" {
+		add("endpoint", snapshot.EndpointID)
+	} else {
+		add("ip", snapshot.IP)
+	}
+	evidenceIDs := map[string]bool{}
+	for _, id := range snapshot.EvidenceIDs {
+		evidenceIDs[id] = true
+	}
 	for _, label := range labels {
-		if keys[strings.ToLower(strings.TrimSpace(label.TargetType))+":"+strings.TrimSpace(label.TargetID)] {
-			return label, true
+		if !keys[strings.ToLower(strings.TrimSpace(label.TargetType))+":"+strings.TrimSpace(label.TargetID)] {
+			continue
+		}
+		for _, id := range label.EvidenceIDs {
+			if evidenceIDs[id] {
+				return label, true
+			}
 		}
 	}
 	return store.Label{}, false
@@ -481,10 +519,26 @@ func sampleFromSnapshot(runID, date string, snapshot risk.Snapshot) Sample {
 		SourceRunID: runID, SnapshotTime: snapshot.UpdatedAt}
 }
 
+// ReviewSamplesWithLabels refreshes only the sample status. Aggregate coverage
+// remains tied to the generated report until the next scheduled evaluation.
+func ReviewSamplesWithLabels(samples []Sample, labels []store.Label) []Sample {
+	ordered := append([]store.Label(nil), labels...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].CreatedAt > ordered[j].CreatedAt })
+	result := append([]Sample(nil), samples...)
+	for i := range result {
+		item := &result[i]
+		snapshot := risk.Snapshot{IP: item.IP, SubjectType: item.SubjectType, SubjectID: item.SubjectID, AccountID: item.AccountID, EndpointID: item.EndpointID, EvidenceIDs: item.EvidenceIDs}
+		if label, found := latestMatchingLabel(snapshot, ordered); found {
+			item.ReviewStatus, item.ReviewReason, item.ReviewedBy, item.ReviewedAt = label.Label, label.Reason, label.CreatedBy, label.CreatedAt
+		}
+	}
+	return result
+}
+
 func addReview(stats *ReviewStats, status string) {
 	stats.Total++
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "confirmed":
+	case "confirmed", "confirmed_proxy":
 		stats.Reviewed++
 		stats.Confirmed++
 	case "false_positive":
@@ -501,7 +555,7 @@ func addReview(stats *ReviewStats, status string) {
 
 func isReviewed(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "confirmed", "false_positive", "benign", "needs_more_data":
+	case "confirmed", "confirmed_proxy", "false_positive", "benign", "needs_more_data":
 		return true
 	default:
 		return false

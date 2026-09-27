@@ -100,6 +100,54 @@ func TestShadowEvaluationReturnsNotFoundBeforeFirstReport(t *testing.T) {
 	}
 }
 
+func TestShadowReviewSamplesFiltersAndPaginates(t *testing.T) {
+	shadowDir := t.TempDir()
+	exportDir := filepath.Join(shadowDir, "review-exports")
+	if err := os.MkdirAll(exportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	date := "2026-09-27"
+	mustWriteJSON(t, filepath.Join(exportDir, date+"-review-samples.json"), map[string]any{
+		"date": date,
+		"samples": []evaluation.Sample{
+			{Date: date, IP: "192.0.2.1", Level: "high", EvidenceIDs: []string{"e-1"}},
+			{Date: date, IP: "192.0.2.2", Level: "normal"},
+			{Date: date, IP: "192.0.2.3", Level: "high", EvidenceIDs: []string{"e-3"}},
+		},
+	})
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "test", ReadOnly: false})
+	if err := os.MkdirAll(filepath.Join(shadowDir, "evaluation"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteJSON(t, filepath.Join(shadowDir, "evaluation", "latest.json"), evaluation.ShadowEvaluationReport{GeneratedAt: "2026-09-27T09:00:00Z", DailySampleExports: []string{filepath.Join(exportDir, date+"-review-samples.json")}})
+	var publicReport evaluation.ShadowEvaluationReport
+	getJSON(t, server, "/api/v1/shadow/evaluation", http.StatusOK, &publicReport)
+	if len(publicReport.DailySampleExports) != 0 {
+		t.Fatalf("server paths leaked: %+v", publicReport.DailySampleExports)
+	}
+	var first shadowReviewSamplesResponse
+	getJSON(t, server, "/api/v1/shadow/review-samples?date="+date+"&level=high&limit=1", http.StatusOK, &first)
+	if first.Page.Total != 2 || first.Page.NextCursor == nil || len(first.Samples) != 1 || first.Samples[0].IP != "192.0.2.1" {
+		t.Fatalf("unexpected first page: %+v", first)
+	}
+	var created store.Label
+	postJSONBody(t, server, "/api/v1/labels", http.StatusCreated, &created, `{"target_type":"ip","target_id":"192.0.2.1","label":"false_positive","reason":"人工确认是正常业务","evidence_ids":["e-1"]}`)
+	getJSON(t, server, "/api/v1/shadow/review-samples?date="+date+"&level=high&limit=1", http.StatusOK, &first)
+	if first.Samples[0].ReviewStatus != "false_positive" || first.Samples[0].ReviewReason != "人工确认是正常业务" {
+		t.Fatalf("latest label was not reflected in sample: %+v", first.Samples[0])
+	}
+	var second shadowReviewSamplesResponse
+	getJSON(t, server, "/api/v1/shadow/review-samples?date="+date+"&level=high&limit=1&cursor="+*first.Page.NextCursor, http.StatusOK, &second)
+	if second.Page.Total != 2 || second.Page.NextCursor != nil || len(second.Samples) != 1 || second.Samples[0].IP != "192.0.2.3" {
+		t.Fatalf("unexpected second page: %+v", second)
+	}
+	var invalid ErrorResponse
+	getJSON(t, server, "/api/v1/shadow/review-samples?date=../secret", http.StatusBadRequest, &invalid)
+	if invalid.Code != "bad_date" {
+		t.Fatalf("unexpected invalid date response: %+v", invalid)
+	}
+}
+
 func TestCaseStateMachinePersistsAssignmentAndDisposition(t *testing.T) {
 	dir := t.TempDir()
 	server := NewServer(Options{ShadowDir: dir, OperationsFile: filepath.Join(dir, "operations.json")})
@@ -750,6 +798,12 @@ func TestCreateLabelWritesAuditInNonReadOnlyMode(t *testing.T) {
 	}`)
 	if label.LabelID == "" || label.CreatedBy == "" || label.TargetID != "10.0.0.8" {
 		t.Fatalf("unexpected created label: %#v", label)
+	}
+	for _, targetType := range []string{"account", "endpoint"} {
+		postJSONBody(t, server, "/api/v1/labels", http.StatusCreated, &label, `{"target_type":"`+targetType+`","target_id":"subject-1","label":"needs_more_data","reason":"等待身份材料复核","evidence_ids":["evidence-1"]}`)
+		if label.TargetType != targetType || label.TargetID != "subject-1" {
+			t.Fatalf("cross-subject label failed: %+v", label)
+		}
 	}
 
 	var audit struct {

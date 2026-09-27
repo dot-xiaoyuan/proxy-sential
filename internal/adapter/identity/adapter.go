@@ -203,7 +203,7 @@ func convertRecord(fields map[string]string, lineOffset int, opts Options) (norm
 	raw := canonical(fields)
 	return normalized.Event{
 		SchemaVersion:   "v1",
-		EventID:         "identity-" + shortHash(fmt.Sprintf("%s|%d", raw, lineOffset)),
+		EventID:         "identity-" + shortHash(raw),
 		Source:          source,
 		SourceEventType: "identity",
 		Type:            "identity",

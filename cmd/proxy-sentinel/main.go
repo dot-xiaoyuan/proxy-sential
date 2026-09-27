@@ -56,6 +56,8 @@ func run(args []string) error {
 		return runValidate(args[1:])
 	case "evaluate":
 		return runEvaluate(args[1:])
+	case "refresh":
+		return runRefresh(args[1:])
 	case "backfill":
 		return runBackfill(args[1:])
 	case "device-fingerprint":
@@ -70,6 +72,40 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command: %s", args[0])
 	}
+}
+
+func runRefresh(args []string) error {
+	if len(args) == 0 || args[0] != "activity-rollup" {
+		return fmt.Errorf("usage: proxy-sentinel refresh activity-rollup [--days 2]")
+	}
+	fs := flag.NewFlagSet("refresh activity-rollup", flag.ContinueOnError)
+	dsn := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
+	days := fs.Int("days", 2, "number of recent calendar days to replace")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *days < 1 || *days > 7 {
+		return fmt.Errorf("days must be between 1 and 7")
+	}
+	clickhouse, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: *dsn})
+	if err != nil {
+		return err
+	}
+	zone, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return err
+	}
+	now := time.Now().In(zone)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	for index := *days - 1; index >= 0; index-- {
+		date := now.AddDate(0, 0, -index).Format("2006-01-02")
+		if err := clickhouse.RefreshActivityRollupDay(ctx, date); err != nil {
+			return fmt.Errorf("refresh %s: %w", date, err)
+		}
+		fmt.Fprintf(os.Stderr, "activity rollup refreshed: %s\n", date)
+	}
+	return nil
 }
 
 func runMigrate(args []string) error {
@@ -446,6 +482,7 @@ func runRiskBatch(args []string) error {
 	fs.SetOutput(os.Stderr)
 	input := fs.String("input", "", "evidence JSON input path, or - for stdin")
 	output := fs.String("output", "", "risk snapshots JSON output path, or - for stdout")
+	candidatePolicy := fs.String("candidate-policy", "", "versioned offline candidate policy JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -456,6 +493,17 @@ func runRiskBatch(args []string) error {
 		return fmt.Errorf("--output is required")
 	}
 
+	if *candidatePolicy != "" {
+		if *input == "-" || *output == "-" {
+			return fmt.Errorf("candidate replay requires file input and output")
+		}
+		result, err := evaluation.BuildRuleCandidate(*input, *candidatePolicy, *output)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "risk candidate batch: snapshots=%d\n", len(result.Snapshots))
+		return nil
+	}
 	result, err := risk.BatchFile(*input, *output)
 	if err != nil {
 		return err
@@ -613,9 +661,42 @@ func runEvaluate(args []string) error {
 	switch args[0] {
 	case "shadow":
 		return runEvaluateShadow(args[1:])
+	case "rules":
+		return runEvaluateRules(args[1:])
 	default:
 		return fmt.Errorf("unknown evaluate command: %s", args[0])
 	}
+}
+
+func runEvaluateRules(args []string) error {
+	fs := flag.NewFlagSet("evaluate rules", flag.ContinueOnError)
+	baseline := fs.String("baseline", "", "baseline risk batch JSON")
+	candidate := fs.String("candidate", "", "candidate risk batch JSON")
+	labels := fs.String("labels", "", "review labels JSONL")
+	evidenceFile := fs.String("evidence", "", "evidence batch JSON")
+	baselineVersion := fs.String("baseline-version", "", "baseline ruleset version")
+	candidateVersion := fs.String("candidate-version", "", "candidate ruleset version")
+	output := fs.String("output", "-", "comparison report JSON path")
+	strict := fs.Bool("strict", false, "fail if the candidate regresses reviewed cases")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	report, err := evaluation.CompareRuleFiles(*baseline, *candidate, *labels, *evidenceFile, *baselineVersion, *candidateVersion)
+	if err != nil {
+		return err
+	}
+	out, closeOutput, err := openOutput(*output)
+	if err != nil {
+		return err
+	}
+	defer closeOutput()
+	if err := writeJSON(out, report); err != nil {
+		return err
+	}
+	if *strict && !report.Pass {
+		return fmt.Errorf("rule candidate did not pass replay: reviewed=%d changed=%d regressions=%d", report.Reviewed, report.Changed, report.Regressions)
+	}
+	return nil
 }
 
 func runEvaluateShadow(args []string) error {
@@ -625,7 +706,7 @@ func runEvaluateShadow(args []string) error {
 	fromRaw := fs.String("from", "", "optional RFC3339 or YYYY-MM-DD window start")
 	toRaw := fs.String("to", "", "optional RFC3339 or YYYY-MM-DD window end")
 	requiredDays := fs.Int("required-days", 7, "minimum continuous run and reviewed days")
-	samplesPerDay := fs.Int("samples-per-level", 10, "daily exported samples per risk level")
+	samplesPerDay := fs.Int("samples-per-level", 30, "daily exported samples per risk level")
 	exportDir := fs.String("daily-export-dir", "", "optional directory for stratified daily review samples")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "optional PostgreSQL DSN for labels written by DB/dual control planes")
 	output := fs.String("output", "-", "evaluation report JSON path, or - for stdout")

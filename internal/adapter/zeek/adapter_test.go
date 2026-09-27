@@ -73,6 +73,13 @@ func TestConvertDHCPFixture(t *testing.T) {
 	}
 }
 
+func TestZeekEventIDSurvivesOffsetReset(t *testing.T) {
+	raw := []byte(`{"ts":1785232900.5,"uids":["C5"],"mac":"AA-BB-CC-DD-EE-04"}`)
+	if first, replay := eventID(raw, 1), eventID(raw, 500); first != replay {
+		t.Fatalf("offset changed event ID: %s != %s", first, replay)
+	}
+}
+
 func TestConvertJSONLine(t *testing.T) {
 	input := bytes.NewBufferString(`{"ts":1785232900.5,"uids":["C5"],"client_addr":"0.0.0.0","server_addr":"192.168.10.1","mac":"AA-BB-CC-DD-EE-04","host_name":"DESKTOP-TEST","requested_addr":"192.168.10.23","assigned_addr":"192.168.10.23","client_software":"MSFT 5.0","requested_options":["1","3","6","15"]}` + "\n")
 

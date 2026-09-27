@@ -155,6 +155,7 @@ wait_storage
 
 log "applying forward-compatible migrations before application switch"
 PROXY_SENTINEL_STORAGE_MODE=db "$stage_dir/bin/proxy-sentinel" migrate --postgres-dir "$stage_dir/migrations/postgres" --clickhouse-dir "$stage_dir/migrations/clickhouse" >/dev/null
+"$stage_dir/bin/proxy-sentinel" refresh activity-rollup --days 7 >/dev/null
 
 admin_count="$(docker exec proxy-sentinel-postgres sh -c 'psql -Atq -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT count(*) FROM local_users"')"
 if [[ "$admin_count" == 0 ]]; then
@@ -174,13 +175,14 @@ EOF
 
 unit_backup="$(mktemp -d /tmp/proxy-sentinel-units.XXXXXX)"
 old_target="$(readlink -f "$root/current" 2>/dev/null || true)"
-for unit in proxy-sentinel-control-plane.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.service proxy-sentinel-shadow-evaluation.timer proxy-sentinel-suricata.service; do
+for unit in proxy-sentinel-control-plane.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.service proxy-sentinel-shadow-evaluation.timer proxy-sentinel-activity-rollup.service proxy-sentinel-activity-rollup.timer proxy-sentinel-suricata.service; do
   [[ -f "/etc/systemd/system/$unit" ]] && cp -a "/etc/systemd/system/$unit" "$unit_backup/$unit"
 done
 rollback_install() {
   log "health check failed; rolling application and systemd units back"
+  systemctl disable --now proxy-sentinel-activity-rollup.timer proxy-sentinel-activity-rollup.service >/dev/null 2>&1 || true
   if [[ -n "$old_target" ]]; then ln -sfn "$old_target" "$root/current.next"; mv -Tf "$root/current.next" "$root/current"; else rm -f "$root/current"; fi
-  for unit in proxy-sentinel-control-plane.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.service proxy-sentinel-shadow-evaluation.timer proxy-sentinel-suricata.service; do
+  for unit in proxy-sentinel-control-plane.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.service proxy-sentinel-shadow-evaluation.timer proxy-sentinel-activity-rollup.service proxy-sentinel-activity-rollup.timer proxy-sentinel-suricata.service; do
     if [[ -f "$unit_backup/$unit" ]]; then cp -a "$unit_backup/$unit" "/etc/systemd/system/$unit"; else rm -f "/etc/systemd/system/$unit"; fi
   done
   systemctl daemon-reload
@@ -252,6 +254,27 @@ Unit=proxy-sentinel-shadow-evaluation.service
 [Install]
 WantedBy=timers.target
 EOF
+cat > /etc/systemd/system/proxy-sentinel-activity-rollup.service <<EOF
+[Unit]
+Description=Refresh Proxy Sentinel activity rollup
+After=proxy-sentinel-shadow.service
+[Service]
+Type=oneshot
+WorkingDirectory=$root/current
+EnvironmentFile=$runtime_env
+ExecStart=$root/current/bin/proxy-sentinel refresh activity-rollup --days 2
+EOF
+cat > /etc/systemd/system/proxy-sentinel-activity-rollup.timer <<EOF
+[Unit]
+Description=Refresh Proxy Sentinel activity rollup every 10 minutes
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=10min
+Persistent=true
+Unit=proxy-sentinel-activity-rollup.service
+[Install]
+WantedBy=timers.target
+EOF
 
 if [[ "$manage_suricata" == true ]]; then
   command -v suricata >/dev/null || die "Suricata is required when PROXY_SENTINEL_MANAGE_SURICATA=true"
@@ -277,7 +300,7 @@ mkdir -p /usr/local/lib/proxy-sentinel
 install -m 0700 "$0" /usr/local/lib/proxy-sentinel/install-openeuler.sh
 systemctl daemon-reload
 if [[ "$manage_suricata" == true ]]; then systemctl enable --now proxy-sentinel-suricata.service; fi
-systemctl enable --now proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.timer proxy-sentinel-control-plane.service
+systemctl enable --now proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.timer proxy-sentinel-activity-rollup.timer proxy-sentinel-control-plane.service
 systemctl restart proxy-sentinel-control-plane.service
 
 for _ in $(seq 1 20); do

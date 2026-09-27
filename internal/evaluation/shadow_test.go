@@ -46,7 +46,7 @@ func TestEvaluateShadowCompletesSevenDayReviewedWindow(t *testing.T) {
 	writeLabels(t, filepath.Join(dir, "labels.jsonl"), labels)
 	exportDir := filepath.Join(dir, "exports")
 
-	report, err := EvaluateShadow(ShadowOptions{ShadowDir: dir, RequiredDays: 7, SamplesPerDay: 2, ExportDir: exportDir, Now: start.AddDate(0, 0, 7)})
+	report, err := EvaluateShadow(ShadowOptions{ShadowDir: dir, RequiredDays: 7, SamplesPerDay: 2, ExportDir: exportDir, Now: start.AddDate(0, 0, 7), MinCandidateReviews: 14, MinNormalTruth: 7})
 	if err != nil {
 		t.Fatalf("evaluate shadow: %v", err)
 	}
@@ -97,6 +97,36 @@ func TestEvaluateShadowDeduplicatesSubjectWithinDay(t *testing.T) {
 	}
 	if report.RiskSnapshotCount != 2 || report.EvaluatedSampleCount != 1 || report.LevelStats["high"].Total != 1 {
 		t.Fatalf("expected one evaluated subject-day from two snapshots, got %+v", report)
+	}
+}
+
+func TestShadowReviewRequiresMatchingEvidenceForEachDay(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	for day := 0; day < 2; day++ {
+		when := start.AddDate(0, 0, day)
+		id := fmt.Sprintf("evidence-day-%d", day)
+		writeEvaluationRun(t, dir, fmt.Sprintf("run-%d", day), when, []risk.Snapshot{{IP: "192.0.2.20", SubjectType: "ip", SubjectID: "192.0.2.20", Level: "high", Score: 80, EvidenceIDs: []string{id}, UpdatedAt: when.Format(time.RFC3339Nano)}}, []evidence.Evidence{{EvidenceID: id, IP: "192.0.2.20", Type: "vpn_proxy_rule_match"}})
+	}
+	writeLabels(t, filepath.Join(dir, "labels.jsonl"), []store.Label{{TargetType: "ip", TargetID: "192.0.2.20", Label: "confirmed_proxy", EvidenceIDs: []string{"evidence-day-0"}, CreatedAt: start.Add(48 * time.Hour).Format(time.RFC3339Nano)}})
+	report, err := EvaluateShadow(ShadowOptions{ShadowDir: dir, RequiredDays: 2, MinCandidateReviews: 1, MinNormalTruth: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.DaysWithReviews != 1 || report.ReviewedSnapshotCount != 1 || len(report.MissingReviewBuckets) != 1 {
+		t.Fatalf("one label was counted for another day's evidence: %+v", report)
+	}
+}
+
+func TestShadowReviewDoesNotCrossSubjectTypes(t *testing.T) {
+	snapshot := risk.Snapshot{IP: "192.0.2.30", SubjectType: "account", SubjectID: "student-30", AccountID: "student-30", EvidenceIDs: []string{"shared-evidence"}}
+	ipLabel := store.Label{TargetType: "ip", TargetID: "192.0.2.30", Label: "benign", EvidenceIDs: []string{"shared-evidence"}}
+	if _, found := latestMatchingLabel(snapshot, []store.Label{ipLabel}); found {
+		t.Fatal("IP label reviewed an account subject")
+	}
+	accountLabel := store.Label{TargetType: "account", TargetID: "student-30", Label: "confirmed_proxy", EvidenceIDs: []string{"shared-evidence"}}
+	if label, found := latestMatchingLabel(snapshot, []store.Label{ipLabel, accountLabel}); !found || label.TargetType != "account" {
+		t.Fatalf("account review not selected: %+v found=%v", label, found)
 	}
 }
 

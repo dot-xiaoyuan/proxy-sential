@@ -25,6 +25,7 @@ func TestClickHouseAggregatesOneHundredThousandEventsWithoutRawReads(t *testing.
 		cleanup, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		_ = clickhouse.exec(cleanup, "ALTER TABLE normalized_events DELETE WHERE sensor_id="+chQuote(sensorID)+" SETTINGS mutations_sync=2")
+		_ = clickhouse.exec(cleanup, "ALTER TABLE normalized_events_canonical DELETE WHERE sensor_id="+chQuote(sensorID)+" SETTINGS mutations_sync=2")
 		_ = clickhouse.exec(cleanup, "ALTER TABLE ingest_diagnostics DELETE WHERE sensor_id="+chQuote(sensorID)+" SETTINGS mutations_sync=2")
 	})
 	insert := fmt.Sprintf(`INSERT INTO normalized_events (timestamp,event_id,schema_version,source,source_event_type,type,sensor_id,subject_ip,src_ip,dst_ip,src_port,dst_port,proto,direction,observer_json,payload_json,flow_json,raw_ref_json,confidence,campus_id) WITH concat('10.88.',toString(intDiv(number%%1000,250)),'.',toString((number%%250)+1)) AS test_ip,['dns','http','tls','quic'][(number%%4)+1] AS event_type SELECT now64(6)-toIntervalSecond(number%%3600),concat('t7-',toString(number)),'1.0','integration','generated',event_type,%s,test_ip,test_ip,'203.0.113.10',40000+(number%%1000),if(event_type='dns',53,443),'tcp','egress','{}',concat('{"user_agent":"UA-',toString(intDiv(number,1000)%%2),'","query":"service.example","host":"service.example","sni":"service.example"}'),concat('{"ttl":',toString(64+intDiv(number,1000)%%2),'}'),'{}',0.95,'campus-t7' FROM numbers(100000)`, chQuote(sensorID))

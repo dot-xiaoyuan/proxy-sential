@@ -275,6 +275,10 @@ func (s *DBStore) CreateLabel(ctx context.Context, label Label) (Label, error) {
 	return s.pg.CreateLabel(ctx, label)
 }
 
+func (s *DBStore) ListLabels(ctx context.Context, limit int) ([]Label, error) {
+	return s.pg.ListLabels(ctx, limit)
+}
+
 func (s *DBStore) UpdateEndpointRegistration(ctx context.Context, update EndpointRegistrationUpdate) (EndpointEntity, error) {
 	return s.pg.UpdateEndpointRegistration(ctx, update)
 }

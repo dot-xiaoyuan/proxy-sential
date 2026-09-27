@@ -12,7 +12,7 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: `VITE_API_BASE= VITE_ENABLE_MOCKS=true pnpm dev --host 127.0.0.1 --port ${e2ePort} --strictPort`,
+    command: `VITE_API_BASE= VITE_ENABLE_MOCKS=true ./node_modules/.bin/vite --host 127.0.0.1 --port ${e2ePort} --strictPort`,
     url: e2eBaseURL,
     reuseExistingServer: false,
   },

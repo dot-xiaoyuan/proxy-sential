@@ -128,6 +128,7 @@ func (s *ClickHouseStore) WriteDomainEcosystemObservations(ctx context.Context, 
 		row := map[string]any{
 			"observed_at": clickHouseTimestamp(item.Timestamp), "event_id": item.EventID,
 			"sensor_id": item.SensorID, "campus_id": item.CampusID, "endpoint_id": item.EndpointID,
+			"subject_ip": item.IP, "attribution_method": item.AttributionMethod, "attribution_reason": item.AttributionReason,
 			"attributed": item.Attributed, "domain": item.Domain, "ecosystem": item.Ecosystem,
 			"event_source": item.EventSource, "category": item.Category, "rule_source": item.RuleSource,
 			"rule_version": item.RuleVersion, "confidence": item.Confidence,
@@ -189,7 +190,7 @@ func (s *ClickHouseStore) ListEventSamples(ctx context.Context, query Query) ([]
 	}
 	sql := fmt.Sprintf(`
 SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
-FROM normalized_events%s
+FROM normalized_events_canonical FINAL%s
 ORDER BY timestamp DESC, event_id DESC
 LIMIT %d OFFSET %d
 FORMAT JSONEachRow`, where, limit, cursor)
@@ -239,7 +240,7 @@ SELECT
   JSONExtractInt(payload_json, 'severity') AS severity,
   JSONExtractRaw(payload_json, 'metadata') AS metadata_json,
   count() AS aggregate_count
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 PREWHERE %s
 GROUP BY type, subject_ip, dst_ip, dst_port, proto, sni, server_name, host, query, ja3, ja4, signature, category, action, severity, metadata_json
 ORDER BY last_seen DESC
@@ -267,7 +268,7 @@ func (s *ClickHouseStore) ListEvents(ctx context.Context, query Query) (EventPag
 	}
 	sql := fmt.Sprintf(`
 SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
-FROM normalized_events%s
+FROM normalized_events_canonical FINAL%s
 ORDER BY timestamp DESC, event_id DESC
 LIMIT %d OFFSET %d
 FORMAT JSONEachRow`, where, limit, query.Cursor)
@@ -366,7 +367,7 @@ func (s *ClickHouseStore) ListEventsForActivityOverview(ctx context.Context, sen
 	}
 	sql := fmt.Sprintf(`
 SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s
 ORDER BY timestamp DESC, event_id DESC
 LIMIT %d
@@ -419,7 +420,7 @@ func (s *ClickHouseStore) GetActivityOverviewWithRisks(ctx context.Context, quer
 
 	if overview.EventTypeCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT type AS value, count() AS count, max(timestamp) AS last_seen
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s
 GROUP BY type
 ORDER BY count DESC, last_seen DESC, value ASC
@@ -429,7 +430,7 @@ FORMAT JSONEachRow`, where)); err != nil {
 	}
 	if overview.ProtocolCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT proto AS value, count() AS count, max(timestamp) AS last_seen
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s AND proto != ''
 GROUP BY proto
 ORDER BY count DESC, last_seen DESC, value ASC
@@ -439,7 +440,7 @@ FORMAT JSONEachRow`, where)); err != nil {
 	}
 	if overview.TopDstPorts, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT toString(dst_port) AS value, count() AS count, max(timestamp) AS last_seen
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s AND dst_port > 0
 GROUP BY dst_port
 ORDER BY count DESC, last_seen DESC, value ASC
@@ -449,7 +450,7 @@ FORMAT JSONEachRow`, where)); err != nil {
 	}
 	if overview.TopDstIPs, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT dst_ip AS value, count() AS count, max(timestamp) AS last_seen
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s AND dst_ip != ''
 GROUP BY dst_ip
 ORDER BY count DESC, last_seen DESC, value ASC
@@ -459,7 +460,7 @@ FORMAT JSONEachRow`, where)); err != nil {
 	}
 	if overview.TopSourceIPs, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT subject_ip AS value, count() AS count, max(timestamp) AS last_seen
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s AND subject_ip != ''
 GROUP BY subject_ip
 ORDER BY count DESC, last_seen DESC, value ASC
@@ -590,7 +591,7 @@ FORMAT JSONEachRow`, limit)
 func (s *ClickHouseStore) ListIngestEventTypes(ctx context.Context) ([]ingest.EventTypeCount, error) {
 	data, err := s.query(ctx, `
 SELECT type, count() AS count
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE timestamp >= now() - INTERVAL 24 HOUR
 GROUP BY type
 ORDER BY count DESC, type ASC
@@ -624,7 +625,7 @@ type activitySummaryRow struct {
 func (s *ClickHouseStore) activitySummary(ctx context.Context, where string) (activitySummaryRow, error) {
 	data, err := s.query(ctx, fmt.Sprintf(`
 SELECT count() AS event_count, uniqExact(subject_ip) AS active_ip_count, minOrNull(timestamp) AS first_seen, maxOrNull(timestamp) AS last_seen
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s
 FORMAT JSONEachRow`, where))
 	if err != nil {
@@ -657,7 +658,7 @@ func (s *ClickHouseStore) activityAccessObjectCount(ctx context.Context, where s
 SELECT uniqExact(value) AS count
 FROM (
   SELECT multiIf(type = 'dns', JSONExtractString(payload_json, 'query'), type = 'http', JSONExtractString(payload_json, 'host'), type = 'tls', JSONExtractString(payload_json, 'sni'), '') AS value
-  FROM normalized_events
+  FROM normalized_events_canonical FINAL
   WHERE %s
 )
 WHERE value != ''
@@ -685,7 +686,7 @@ func (s *ClickHouseStore) activityDomainCounts(ctx context.Context, where string
 SELECT value, count() AS count, max(timestamp) AS last_seen
 FROM (
   SELECT timestamp, multiIf(type = 'dns', JSONExtractString(payload_json, 'query'), type = 'http', JSONExtractString(payload_json, 'host'), type = 'tls', JSONExtractString(payload_json, 'sni'), '') AS value
-  FROM normalized_events
+  FROM normalized_events_canonical FINAL
   WHERE %s%s
 )
 WHERE value != ''
@@ -698,7 +699,7 @@ FORMAT JSONEachRow`, where, subjectClause, limit))
 func (s *ClickHouseStore) activityPayloadCounts(ctx context.Context, where string, eventType string, field string, prefix string, limit int) ([]ActivityCount, error) {
 	return s.activityCounts(ctx, fmt.Sprintf(`
 SELECT concat(%s, JSONExtractString(payload_json, %s)) AS value, count() AS count, max(timestamp) AS last_seen
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s AND type = %s AND JSONExtractString(payload_json, %s) != ''
 GROUP BY value
 ORDER BY count DESC, last_seen DESC, value ASC
@@ -711,11 +712,11 @@ func (s *ClickHouseStore) activityTLSFingerprintCounts(ctx context.Context, wher
 SELECT concat(kind, ':', fingerprint_value) AS value, count() AS count, max(timestamp) AS last_seen
 FROM (
   SELECT timestamp, 'ja3' AS kind, JSONExtractString(payload_json, 'ja3') AS fingerprint_value
-  FROM normalized_events
+  FROM normalized_events_canonical FINAL
   WHERE %s AND type = 'tls'
   UNION ALL
   SELECT timestamp, 'ja4' AS kind, JSONExtractString(payload_json, 'ja4') AS fingerprint_value
-  FROM normalized_events
+  FROM normalized_events_canonical FINAL
   WHERE %s AND type = 'tls'
 )
 WHERE fingerprint_value != ''
@@ -743,7 +744,7 @@ func (s *ClickHouseStore) activityRiskIPCounts(ctx context.Context, where string
 	}
 	data, err := s.query(ctx, fmt.Sprintf(`
 SELECT subject_ip AS value, count() AS count, max(timestamp) AS last_seen
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s AND subject_ip IN (%s)
 GROUP BY subject_ip
 ORDER BY count DESC, last_seen DESC, value ASC
@@ -821,7 +822,7 @@ func (s *ClickHouseStore) query(ctx context.Context, sql string) ([]byte, error)
 func (s *ClickHouseStore) eventCount(ctx context.Context, where string) (int, error) {
 	data, err := s.query(ctx, fmt.Sprintf(`
 SELECT count() AS count
-FROM normalized_events%s
+FROM normalized_events_canonical FINAL%s
 FORMAT JSONEachRow`, where))
 	if err != nil {
 		return 0, err
@@ -850,13 +851,13 @@ func eventWhereSQL(query Query) (string, error) {
 		if _, err := optionalTime(query.From); err != nil {
 			return "", fmt.Errorf("bad from: %w", err)
 		}
-		clauses = append(clauses, "timestamp >= parseDateTime64BestEffort("+chQuote(query.From)+")")
+		clauses = append(clauses, "timestamp >= parseDateTime64BestEffort("+chQuote(query.From)+",6,'UTC')")
 	}
 	if query.To != "" {
 		if _, err := optionalTime(query.To); err != nil {
 			return "", fmt.Errorf("bad to: %w", err)
 		}
-		clauses = append(clauses, "timestamp <= parseDateTime64BestEffort("+chQuote(query.To)+")")
+		clauses = append(clauses, "timestamp <= parseDateTime64BestEffort("+chQuote(query.To)+",6,'UTC')")
 	}
 	if query.Window != "" && query.From == "" && query.To == "" {
 		_, duration, err := NormalizeActivityWindow(query.Window)
@@ -914,7 +915,7 @@ func activityWhereSQL(sensorID, campusID, asOf string, duration time.Duration) (
 		if err != nil {
 			return "", fmt.Errorf("invalid as_of: %w", err)
 		}
-		anchor = "parseDateTime64BestEffort(" + chQuote(parsed.UTC().Format(time.RFC3339Nano)) + ")"
+		anchor = "parseDateTime64BestEffort(" + chQuote(parsed.UTC().Format(time.RFC3339Nano)) + ",6,'UTC')"
 	}
 	clauses := []string{fmt.Sprintf("timestamp >= %s - INTERVAL %d %s", anchor, intervalValue, intervalUnit), "timestamp <= " + anchor}
 	if sensorID != "" {
@@ -1173,7 +1174,7 @@ func clickHouseTimestamp(raw string) string {
 	if err != nil {
 		return raw
 	}
-	return timestamp.Format("2006-01-02 15:04:05.000000")
+	return timestamp.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04:05.000000")
 }
 
 func normalizeClickHouseTimestamp(raw string) string {

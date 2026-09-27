@@ -2,14 +2,14 @@ import { Alert, Skeleton, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { Link } from 'react-router-dom'
 
-import { useShadowEvaluation, useShadowRuns } from '../shared/api/queries'
+import { useShadowRuns } from '../shared/api/queries'
 import type { ShadowRun } from '../shared/api/types'
 import { AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { ShadowReviewWorkbench } from './ShadowReviewWorkbench'
 
 export function ShadowRunsPage() {
 	const pagination = useServerPagination()
   const runs = useShadowRuns({limit:pagination.pageSize,cursor:pagination.cursor})
-  const evaluation = useShadowEvaluation()
   if (runs.isLoading) return <Skeleton active />
   const columns:ColumnsType<ShadowRun> = [
     {title:'运行 ID',dataIndex:'run_id',width:250,render:(value:string)=><Link className="mono list-cell-nowrap" title={value} to={`/shadow-runs/${encodeURIComponent(value)}`}>{value}</Link>},
@@ -20,5 +20,5 @@ export function ShadowRunsPage() {
     {title:'Zeek',dataIndex:'zeek_status',width:110,render:(value?:string)=><Tag color={value==='ok'?'green':value?'gold':'default'}>{value || '未启用'}</Tag>},
     {title:'状态',dataIndex:'truncated',width:100,render:(value:boolean)=><Tag color={value?'gold':'green'}>{value?'截断':'完成'}</Tag>},
   ]
-  return <main className="page"><AppPageHeader title="影子运行" subtitle="单行展示运行结果，点击运行 ID 查看完整采集计数。" loading={runs.isFetching || evaluation.isFetching} onRefresh={()=>{void runs.refetch();void evaluation.refetch()}} />{runs.isError&&<Alert showIcon type="error" title="影子运行加载失败" />}{evaluation.isError&&<Alert showIcon type="warning" title="影子评估报告尚不可用" />}<section className="surface"><Table className="compact-list-table" columns={columns} dataSource={runs.data?.runs??[]} pagination={false} rowKey="run_id" scroll={{x:1160}} size="small"/><AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={runs.data?.page.total??0} onChange={pagination.update} /></section></main>
+  return <main className="page"><AppPageHeader title="影子评估" subtitle="查看采集运行、每日分级复核与上线阻塞项。" loading={runs.isFetching} onRefresh={()=>{void runs.refetch()}} /><ShadowReviewWorkbench />{runs.isError&&<Alert showIcon type="error" title="影子运行加载失败" />}<section className="surface"><Typography.Title level={4}>采集运行</Typography.Title><Table className="compact-list-table" columns={columns} dataSource={runs.data?.runs??[]} pagination={false} rowKey="run_id" scroll={{x:1160}} size="small"/><AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={runs.data?.page.total??0} onChange={pagination.update} /></section></main>
 }

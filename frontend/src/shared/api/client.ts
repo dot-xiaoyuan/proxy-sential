@@ -1,5 +1,8 @@
 import type {
   ActivityOverview,
+  AttributionDiagnosticQuery,
+  AttributionDiagnosticResponse,
+  AttributionComparison,
   ActivityOverviewQuery,
 	ActivityReport,
   AccountIdentityProfile,
@@ -43,6 +46,7 @@ import type {
   ShadowRun,
   ShadowRunListResponse,
   ShadowEvaluation,
+  ShadowReviewSamplesResponse,
   UpdateEndpointRegistrationRequest,
   ListQuery,
   DeviceFingerprintLibraryStatus,
@@ -138,6 +142,10 @@ export const api = {
     request<DpiFlowDetail>(`/dpi/flows/${encodeURIComponent(flowId)}`),
   devices: (query: DeviceQuery) => request<DeviceListResponse>(`/devices${search(query)}`),
   deviceRecognitionSummary: () => request<DeviceRecognitionSummary>('/device-recognition/summary'),
+  attributionDiagnostics: (query: AttributionDiagnosticQuery) =>
+    request<AttributionDiagnosticResponse>(`/device-recognition/attribution-diagnostics${search(query)}`),
+  attributionComparison: (query: { from: string; to: string; sensor_id?: string; before_version: string; after_version: string }) =>
+    request<AttributionComparison>(`/device-recognition/attribution-comparison${search(query)}`),
   device: (deviceId: string, query: DeviceQuery) =>
     request<ObservedDevice>(`/devices/${encodeURIComponent(deviceId)}${search(query)}`),
   deviceSignals: (query: DeviceQuery) =>
@@ -185,6 +193,8 @@ export const api = {
   shadowRuns: (query: ListQuery = {}) => request<ShadowRunListResponse>(`/shadow/runs${search(query)}`),
   shadowRun: (runId: string) => request<ShadowRun>(`/shadow/runs/${encodeURIComponent(runId)}`),
   shadowEvaluation: () => request<ShadowEvaluation>('/shadow/evaluation'),
+  shadowReviewSamples: (query: ListQuery & { date: string; level?: string }) =>
+    request<ShadowReviewSamplesResponse>(`/shadow/review-samples${search(query)}`),
   auditLogs: (query: ListQuery = {}) => request<AuditLogListResponse>(`/audit-logs${search(query)}`),
   auditLog: (auditId: string) => request<AuditLog>(`/audit-logs/${encodeURIComponent(auditId)}`),
   deviceFingerprintLibrary: () => request<DeviceFingerprintLibraryStatus>('/device-fingerprint-library'),

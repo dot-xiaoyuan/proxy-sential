@@ -31,6 +31,21 @@ func TestConvertRadiusJSONLToIdentityEvent(t *testing.T) {
 	requireIdentityNestedString(t, event, "payload", "vlan", "108")
 }
 
+func TestIdentityEventIDSurvivesBatchOffsetReset(t *testing.T) {
+	fields := map[string]string{"timestamp": "2026-09-27T09:00:00Z", "account_id": "student-1", "ip": "192.0.2.10", "session_id": "session-1"}
+	first, err := convertRecord(fields, 1, Options{SensorID: "office-30", Source: "radius"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := convertRecord(fields, 500, Options{SensorID: "office-30", Source: "radius"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.EventID != replay.EventID {
+		t.Fatalf("offset changed event ID: %s != %s", first.EventID, replay.EventID)
+	}
+}
+
 func TestConvertPortalCSVToIdentityEvent(t *testing.T) {
 	input := bytes.NewBufferString("timestamp,username,client_ip,client_mac,switch_port,entity_role\n2026-07-29 10:00:00,stu01,10.0.0.8,001122334455,sw1/0/3,endpoint\n")
 	var output bytes.Buffer

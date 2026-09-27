@@ -788,6 +788,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/device-recognition/attribution-diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAttributionDiagnostics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-recognition/attribution-comparison": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["compareAttributionVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/devices/{device_id}": {
         parameters: {
             query?: never;
@@ -1020,6 +1052,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getShadowEvaluation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shadow/review-samples": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listShadowReviewSamples"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2153,10 +2201,103 @@ export interface components {
             reviewed_snapshot_count: number;
             /** Format: double */
             review_coverage: number;
+            candidate_reviewed: number;
+            normal_truth_count: number;
+            /** Format: double */
+            high_risk_precision: number;
+            daily?: components["schemas"]["DailyReviewSummary"][];
+            level_stats?: {
+                [key: string]: components["schemas"]["ReviewStats"];
+            };
+            false_positive_reasons?: components["schemas"]["ReviewCount"][];
+            false_positive_evidence?: components["schemas"]["ReviewCount"][];
             missing_review_buckets: string[];
             recommended_adjustments: string[];
             ready: boolean;
             blockers: string[];
+        };
+        ReviewStats: {
+            total?: number;
+            reviewed?: number;
+            confirmed?: number;
+            false_positive?: number;
+            benign?: number;
+            needs_more_data?: number;
+            precision?: number;
+        };
+        ReviewCount: {
+            value?: string;
+            count?: number;
+        };
+        DailyReviewSummary: {
+            /** Format: date */
+            date?: string;
+            run_count?: number;
+            level_stats?: {
+                [key: string]: components["schemas"]["ReviewStats"];
+            };
+        };
+        ShadowReviewSample: {
+            /** Format: date */
+            date: string;
+            ip?: string;
+            subject_type?: string;
+            subject_id?: string;
+            account_id?: string;
+            endpoint_id?: string;
+            level: string;
+            score: number;
+            confidence: number;
+            evidence_ids: string[];
+            review_status: string;
+            review_reason?: string;
+            reviewed_by?: string;
+            /** Format: date-time */
+            reviewed_at?: string;
+            source_run_id: string;
+            /** Format: date-time */
+            snapshot_time: string;
+        };
+        ShadowReviewSamplesResponse: {
+            /** Format: date */
+            date: string;
+            level?: string;
+            samples: components["schemas"]["ShadowReviewSample"][];
+            page: components["schemas"]["Page"];
+        };
+        AttributionDiagnostic: {
+            event_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            sensor_id: string;
+            ip?: string;
+            endpoint_id?: string;
+            domain: string;
+            ecosystem: string;
+            rule_version: string;
+            attribution_method?: string;
+            reason: string;
+            attributed: boolean;
+            confidence: number;
+        };
+        AttributionDiagnosticResponse: {
+            items: components["schemas"]["AttributionDiagnostic"][];
+            page: components["schemas"]["Page"];
+        };
+        AttributionVersionStats: {
+            rule_version: string;
+            total: number;
+            attributed: number;
+            conflicts: number;
+            rate: number;
+        };
+        AttributionComparison: {
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            before: components["schemas"]["AttributionVersionStats"];
+            after: components["schemas"]["AttributionVersionStats"];
         };
         Overview: {
             level_counts: {
@@ -3699,6 +3840,63 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listAttributionDiagnostics: {
+        parameters: {
+            query?: {
+                from?: string;
+                to?: string;
+                sensor_id?: string;
+                status?: "all" | "attributed" | "unattributed";
+                reason?: string;
+                rule_version?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated domain ecosystem attribution diagnostics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributionDiagnosticResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    compareAttributionVersions: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                sensor_id?: string;
+                before_version: string;
+                after_version: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Same-window attribution rates before and after a versioned backfill. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributionComparison"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
     getDevice: {
         parameters: {
             query?: {
@@ -4103,6 +4301,33 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    listShadowReviewSamples: {
+        parameters: {
+            query: {
+                date: string;
+                level?: "normal" | "suspicious" | "high" | "confirmed";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One day of stratified shadow review samples. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShadowReviewSamplesResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
         };
     };
     listAuditLogs: {

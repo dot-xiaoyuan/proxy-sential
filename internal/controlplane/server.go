@@ -458,6 +458,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleDevices(w, r)
 	case r.Method == http.MethodGet && path == "/device-recognition/summary":
 		s.handleDeviceRecognitionSummary(w, r)
+	case r.Method == http.MethodGet && path == "/device-recognition/attribution-diagnostics":
+		s.handleAttributionDiagnostics(w, r)
+	case r.Method == http.MethodGet && path == "/device-recognition/attribution-comparison":
+		s.handleAttributionComparison(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/devices/"):
 		s.handleDevice(w, r, strings.TrimPrefix(path, "/devices/"))
 	case r.Method == http.MethodGet && path == "/device-signals":
@@ -498,6 +502,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleShadowRun(w, r, strings.TrimPrefix(path, "/shadow/runs/"))
 	case r.Method == http.MethodGet && path == "/shadow/evaluation":
 		s.handleShadowEvaluation(w, r)
+	case r.Method == http.MethodGet && path == "/shadow/review-samples":
+		s.handleShadowReviewSamples(w, r)
 	case r.Method == http.MethodGet && path == "/audit-logs":
 		s.handleAuditLogs(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/audit-logs/"):
@@ -1758,6 +1764,7 @@ func (s *Server) handleShadowEvaluation(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "decode_shadow_evaluation_failed", err.Error())
 		return
 	}
+	report.DailySampleExports = nil
 	writeJSON(w, http.StatusOK, report)
 }
 

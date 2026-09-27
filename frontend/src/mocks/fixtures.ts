@@ -854,6 +854,9 @@ export const shadowRuns: ShadowRun[] = [
 ]
 
 export const shadowEvaluation: ShadowEvaluation = {
+  candidate_reviewed: 1,
+  normal_truth_count: 0,
+  high_risk_precision: 1,
   generated_at: '2026-08-21T15:36:52Z',
   window_from: '2026-08-14T00:00:00Z',
   window_to: '2026-08-21T23:59:59Z',
@@ -870,6 +873,9 @@ export const shadowEvaluation: ShadowEvaluation = {
   recommended_adjustments: ['继续补充视频会议和企业 VPN 负证据'],
   ready: false,
   blockers: ['仅 3 天包含人工复核，要求至少 7 天', '存在 2 个有样本但未复核的日期/等级分桶'],
+  daily: [{ date: '2026-08-21', run_count: 12, level_stats: { high: { total: 2, reviewed: 0, confirmed: 0, false_positive: 0, benign: 0, needs_more_data: 0, precision: 0 } } }],
+  false_positive_reasons: [{ value: '视频会议', count: 3 }],
+  false_positive_evidence: [{ value: 'encrypted_tunnel_behavior', count: 2 }],
 }
 
 export const auditLogs: AuditLog[] = [

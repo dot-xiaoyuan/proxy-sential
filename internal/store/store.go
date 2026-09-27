@@ -569,6 +569,10 @@ type Reader interface {
 	ListIngestErrors(ctx context.Context, limit int) ([]ingest.Diagnostic, error)
 }
 
+type LabelReader interface {
+	ListLabels(context.Context, int) ([]Label, error)
+}
+
 type Writer interface {
 	WriteCollectorRun(ctx context.Context, run Run) error
 	WriteNormalizedEvents(ctx context.Context, events []normalized.Event) error

@@ -463,6 +463,10 @@ export function useShadowEvaluation() {
   });
 }
 
+export function useShadowReviewSamples(query: ListQuery & { date: string; level?: string }) {
+  return usePagedQuery(query, (value) => ['shadow-review-samples', value] as const, api.shadowReviewSamples, Boolean(query.date));
+}
+
 export function useAuditLogs(query: ListQuery = { limit: 20 }) {
   return usePagedQuery(query, queryKeys.auditLogs, api.auditLogs);
 }
@@ -496,6 +500,14 @@ export function useDeviceRecognitionSummary() {
     queryFn: api.deviceRecognitionSummary,
     staleTime: 60_000,
   });
+}
+
+export function useAttributionDiagnostics(query: import('./types').AttributionDiagnosticQuery) {
+  return usePagedQuery(query, value => ['attribution-diagnostics', value] as const, api.attributionDiagnostics);
+}
+
+export function useAttributionComparison(query: { from: string; to: string; sensor_id?: string; before_version: string; after_version: string }) {
+  return useQuery({ queryKey: ['attribution-comparison', query], queryFn: () => api.attributionComparison(query), enabled: Boolean(query.before_version && query.after_version && query.before_version !== query.after_version) });
 }
 
 export function useUpdateDeviceFingerprintLibrary() {

@@ -923,6 +923,10 @@ func (s *FileStore) fileLabels(limit int) []Label {
 	return labels
 }
 
+func (s *FileStore) ListLabels(_ context.Context, limit int) ([]Label, error) {
+	return s.fileLabels(limit), nil
+}
+
 func (s *FileStore) CreateLabel(ctx context.Context, label Label) (Label, error) {
 	if label.CreatedAt == "" {
 		label.CreatedAt = NowRFC3339()

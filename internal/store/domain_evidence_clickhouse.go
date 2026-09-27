@@ -33,7 +33,7 @@ func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, s
 	}
 	data, err := s.query(ctx, fmt.Sprintf(`
 SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,schema_version,source,source_event_type,type,subject_ip,endpoint_id,auth_session_id,payload_json,flow_json
-FROM normalized_events
+FROM normalized_events_canonical FINAL
 WHERE %s
 ORDER BY timestamp,event_id
 LIMIT %d

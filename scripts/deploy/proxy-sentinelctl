@@ -32,7 +32,7 @@ backup() {
   chmod 0700 "$root/backups" "$destination"
   docker inspect proxy-sentinel-postgres proxy-sentinel-clickhouse >/dev/null
   docker exec proxy-sentinel-postgres sh -c 'pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$destination/postgres.dump"
-  for table in normalized_events ingest_diagnostics; do
+  for table in normalized_events ingest_diagnostics domain_ecosystem_observations; do
     docker exec proxy-sentinel-clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" --database \"\$CLICKHOUSE_DB\" --query 'SELECT * FROM $table FORMAT Native'" | gzip -1 > "$destination/clickhouse-$table.native.gz"
   done
   docker exec proxy-sentinel-clickhouse sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "SHOW CREATE DATABASE $CLICKHOUSE_DB"' > "$destination/clickhouse-schema.sql"
@@ -57,14 +57,22 @@ restore() {
   destination="$(realpath "$destination")"
   case "$destination" in "$root"/backups/*) ;; *) echo "backup must be under $root/backups" >&2; exit 2 ;; esac
   (cd "$destination" && sha256sum -c SHA256SUMS)
-  systemctl stop proxy-sentinel-shadow.timer proxy-sentinel-shadow.service proxy-sentinel-control-plane.service || true
-  trap 'systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true' EXIT
+  systemctl stop proxy-sentinel-shadow.timer proxy-sentinel-shadow.service proxy-sentinel-control-plane.service proxy-sentinel-activity-rollup.timer proxy-sentinel-activity-rollup.service || true
+  trap 'systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer proxy-sentinel-activity-rollup.timer >/dev/null 2>&1 || true' EXIT
   docker exec -i proxy-sentinel-postgres sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$destination/postgres.dump"
+  docker exec proxy-sentinel-clickhouse sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "TRUNCATE TABLE normalized_events_canonical"'
   for table in normalized_events ingest_diagnostics; do
     docker exec proxy-sentinel-clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" --database \"\$CLICKHOUSE_DB\" --query 'TRUNCATE TABLE $table'"
     gzip -dc "$destination/clickhouse-$table.native.gz" | docker exec -i proxy-sentinel-clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" --database \"\$CLICKHOUSE_DB\" --query 'INSERT INTO $table FORMAT Native'"
   done
-  systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer
+  docker exec proxy-sentinel-clickhouse sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "TRUNCATE TABLE domain_ecosystem_observations"'
+  if [[ -f "$destination/clickhouse-domain_ecosystem_observations.native.gz" ]]; then
+    gzip -dc "$destination/clickhouse-domain_ecosystem_observations.native.gz" | docker exec -i proxy-sentinel-clickhouse sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "INSERT INTO domain_ecosystem_observations FORMAT Native"'
+  fi
+  docker exec proxy-sentinel-clickhouse sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "TRUNCATE TABLE activity_rollup_10m"'
+  docker exec proxy-sentinel-clickhouse sh -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database "$CLICKHOUSE_DB" --query "TRUNCATE TABLE activity_rollup_refreshes"'
+  "$root/current/bin/proxy-sentinel" refresh activity-rollup --days 7
+  systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer proxy-sentinel-activity-rollup.timer
   wait_ready
   trap - EXIT
   echo "restore completed from $destination"
@@ -76,6 +84,7 @@ rollback() {
   current_target="$(readlink -f "$root/current")"
   previous_target="$(readlink -f "$root/previous")"
   case "$current_target:$previous_target" in "$root"/releases/*:"$root"/releases/*) ;; *) echo "unsafe release links" >&2; exit 1 ;; esac
+  systemctl disable --now proxy-sentinel-activity-rollup.timer proxy-sentinel-activity-rollup.service >/dev/null 2>&1 || true
   ln -sfn "$previous_target" "$root/current.next"
   mv -Tf "$root/current.next" "$root/current"
   ln -sfn "$current_target" "$root/previous.next"

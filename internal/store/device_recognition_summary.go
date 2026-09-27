@@ -53,7 +53,7 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 	result.Coverage["device_type"] = coverage(deviceType, result.TotalEndpoints)
 	result.Coverage["os_family"] = coverage(osFamily, result.TotalEndpoints)
 	result.Coverage["ecosystem"] = coverage(ecosystem, result.TotalEndpoints)
-	data, err := s.ch.query(ctx, fmt.Sprintf(`SELECT count() AS event_count,countIf(endpoint_id!='') AS attributed_event_count FROM normalized_events PREWHERE timestamp>=now()-INTERVAL 24 HOUR FORMAT JSONEachRow`))
+	data, err := s.ch.query(ctx, fmt.Sprintf(`SELECT count() AS event_count,countIf(endpoint_id!='') AS attributed_event_count FROM normalized_events_canonical FINAL PREWHERE timestamp>=now()-INTERVAL 24 HOUR FORMAT JSONEachRow`))
 	if err != nil {
 		return result, fmt.Errorf("query event attribution: %w", err)
 	}

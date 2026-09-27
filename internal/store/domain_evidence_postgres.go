@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -44,12 +45,13 @@ type DomainBackfillProgress struct {
 
 type DomainEcosystemObservation struct {
 	DomainObservation
-	Ecosystem   string  `json:"ecosystem"`
-	Category    string  `json:"category"`
-	RuleSource  string  `json:"rule_source"`
-	RuleVersion string  `json:"rule_version"`
-	Confidence  float64 `json:"confidence"`
-	Attributed  bool    `json:"attributed"`
+	AttributionReason string  `json:"attribution_reason,omitempty"`
+	Ecosystem         string  `json:"ecosystem"`
+	Category          string  `json:"category"`
+	RuleSource        string  `json:"rule_source"`
+	RuleVersion       string  `json:"rule_version"`
+	Confidence        float64 `json:"confidence"`
+	Attributed        bool    `json:"attributed"`
 }
 
 func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normalized.Event, library *fingerprint.Library) (DomainBackfillProgress, error) {
@@ -72,12 +74,17 @@ func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normal
 			return result, err
 		}
 		if !found {
+			matchedObservation.AttributionReason, err = s.classifyDomainAttributionFailure(ctx, observation)
+			if err != nil {
+				return result, err
+			}
 			result.Observations = append(result.Observations, matchedObservation)
 			continue
 		}
 		result.Attributed++
 		matchedObservation.DomainObservation = attributed
 		matchedObservation.Attributed = true
+		matchedObservation.AttributionReason = "attributed"
 		result.Observations = append(result.Observations, matchedObservation)
 		if err := s.persistDomainEvidence(ctx, attributed, match, library.Version()); err != nil {
 			return result, err
@@ -90,6 +97,31 @@ func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normal
 		}
 	}
 	return result, nil
+}
+
+func (s *PostgresStore) classifyDomainAttributionFailure(ctx context.Context, observation DomainObservation) (string, error) {
+	if net.ParseIP(observation.IP) == nil {
+		return "missing_identity", nil
+	}
+	identity, found, err := s.ResolveIdentityAt(ctx, observation.IP, observation.Timestamp)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		if identity.Conflict {
+			return "identity_conflict", nil
+		}
+		return "no_unique_endpoint", nil
+	}
+	var knownIP bool
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_sessions WHERE ip=$1::inet) OR EXISTS(SELECT 1 FROM identity_ip_mac_history WHERE ip=$1::inet)`, observation.IP).Scan(&knownIP)
+	if err != nil {
+		return "", err
+	}
+	if knownIP {
+		return "time_mismatch", nil
+	}
+	return "missing_identity", nil
 }
 
 func (s *PostgresStore) updateEndpointEcosystemProfile(ctx context.Context, endpointID string) error {

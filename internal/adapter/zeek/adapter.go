@@ -496,8 +496,8 @@ func normalizeTimestamp(value string) string {
 	return ""
 }
 
-func eventID(raw []byte, lineOffset int) string {
-	sum := sha256.Sum256(append(raw, []byte(fmt.Sprintf("|%d", lineOffset))...))
+func eventID(raw []byte, _ int) string {
+	sum := sha256.Sum256(raw)
 	return "zeek-" + hex.EncodeToString(sum[:])[:24]
 }
 

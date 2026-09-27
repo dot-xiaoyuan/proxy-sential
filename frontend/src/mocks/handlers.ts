@@ -493,6 +493,22 @@ export const handlers = [
   http.get('/api/v1/shadow/runs', ({ request }) => { const result = mockPage(shadowRuns, new URL(request.url)); return HttpResponse.json({ runs: result.items, page: result.page }) }),
   http.get('/api/v1/shadow/runs/:runId', ({ params }) => { const item = shadowRuns.find((entry) => entry.run_id === params.runId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
   http.get('/api/v1/shadow/evaluation', () => HttpResponse.json(shadowEvaluation)),
+  http.get('/api/v1/shadow/review-samples', ({ request }) => {
+    const url = new URL(request.url)
+    const date = url.searchParams.get('date') || '2026-08-21'
+    const all = [{ date, ip: '10.255.0.59', subject_type: 'ip', subject_id: '10.255.0.59', level: 'high', score: 82, confidence: 0.91, evidence_ids: ['evidence-high-59'], review_status: 'unreviewed', source_run_id: 'shadow-001', snapshot_time: '2026-08-21T08:00:00Z' }]
+    const result = mockPage(all.filter(item => !url.searchParams.get('level') || item.level === url.searchParams.get('level')), url)
+    return HttpResponse.json({ date, level: url.searchParams.get('level') || '', samples: result.items, page: result.page })
+  }),
+  http.get('/api/v1/device-recognition/attribution-diagnostics', ({ request }) => {
+    const url = new URL(request.url)
+    const all = [{ event_id: 'event-http-59-a', observed_at: '2026-08-21T08:00:00Z', sensor_id: 'office-30', ip: '10.255.0.59', domain: 'portal.example.test', ecosystem: 'Apple', rule_version: 'mock-v1', reason: 'missing_identity', attributed: false, confidence: 0.55 }]
+    return HttpResponse.json(mockPage(all.filter(item => !url.searchParams.get('reason') || item.reason === url.searchParams.get('reason')), url))
+  }),
+  http.get('/api/v1/device-recognition/attribution-comparison', ({ request }) => {
+    const url = new URL(request.url)
+    return HttpResponse.json({ from: url.searchParams.get('from'), to: url.searchParams.get('to'), before: { rule_version: url.searchParams.get('before_version'), total: 100, attributed: 60, conflicts: 12, rate: 0.6 }, after: { rule_version: url.searchParams.get('after_version'), total: 100, attributed: 84, conflicts: 4, rate: 0.84 } })
+  }),
   http.get('/api/v1/audit-logs', ({ request }) => { const result = mockPage(auditLogs, new URL(request.url)); return HttpResponse.json({ logs: result.items, page: result.page }) }),
   http.get('/api/v1/audit-logs/:auditId', ({ params }) => { const item = auditLogs.find((entry) => entry.audit_id === params.auditId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
   http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,domain_rule_count:128,domain_ecosystem_count:8,domain_source_version:'abcdef123456',domain_backfill_status:'completed',domain_backfill_processed:3200,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0','MIT (NextDNS)'],backfill_status:'completed',backfill_processed:110 })),
