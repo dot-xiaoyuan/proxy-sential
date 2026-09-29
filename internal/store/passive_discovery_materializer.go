@@ -309,6 +309,41 @@ func passiveCapabilities(service string) []string {
 	return nil
 }
 
+func passivePrinterType(capabilities []string, values ...string) string {
+	if len(capabilities) == 0 || capabilities[0] != "printing" {
+		return ""
+	}
+	combined := strings.ToLower(strings.Join(values, " "))
+	if strings.Contains(combined, "laserjet") || strings.Contains(combined, "printer") || strings.Contains(combined, "ty=") || strings.Contains(combined, "product=") {
+		return "printer"
+	}
+	return ""
+}
+
+func passivePTRObservation(event normalized.Event, sensor, iface, recordName, instance string, at, validUntil time.Time, scope passiveDiscoveryScope) (discovery.Observation, bool) {
+	service := passiveServiceType(recordName)
+	capabilities := passiveCapabilities(service)
+	address := passiveString(event.Subject, "ip")
+	if len(capabilities) == 0 || !scope.allows(address) {
+		return discovery.Observation{}, false
+	}
+	name := strings.TrimSpace(strings.Split(instance, "._")[0])
+	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, "ptr", instance, address, event.EventID}, "\x00")))
+	payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": instance, "service_source": "ptr_responder", "ttl": int(validUntil.Sub(at).Seconds())}
+	evidence := event
+	evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])
+	evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
+	evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
+	observation := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: passivePrinterType(capabilities, instance), Capabilities: capabilities, Confidence: "strong", Explanation: "DNS-SD 服务响应由报文源地址被动关联", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
+	if observation.Site == "" {
+		observation.Site = sensor
+	}
+	if observation.Domain == "" {
+		observation.Domain = iface
+	}
+	return observation, true
+}
+
 func (s *DBStore) materializeMDNS(ctx context.Context, event normalized.Event, scope passiveDiscoveryScope) ([]discovery.Observation, string, error) {
 	if passiveString(event.Payload, "is_response") != "true" {
 		return nil, "mdns_query", nil
@@ -355,6 +390,12 @@ func (s *DBStore) materializeMDNS(ctx context.Context, event normalized.Event, s
 		return nil, "", err
 	}
 
+	result := []discovery.Observation{}
+	if recordType == "PTR" {
+		if observation, ok := passivePTRObservation(event, sensor, iface, recordName, value, at, validUntil, scope); ok {
+			result = append(result, observation)
+		}
+	}
 	rows, err := s.pg.db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at),srv.event_id
 FROM passive_discovery_mdns_records srv
 JOIN passive_discovery_mdns_records addr ON addr.sensor_id=srv.sensor_id AND addr.interface_name=srv.interface_name AND addr.record_name=srv.record_value AND addr.record_type IN ('A','AAAA') AND addr.valid_until>$3
@@ -364,7 +405,6 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		return nil, "", err
 	}
 	defer rows.Close()
-	result := []discovery.Observation{}
 	for rows.Next() {
 		var instance, target, address, textValue, srvEventID string
 		var until, observed time.Time
@@ -378,11 +418,7 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		}
 		hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, instance, target, address, srvEventID}, "\x00")))
 		name := strings.TrimSpace(strings.Split(instance, "._")[0])
-		deviceType := ""
-		combined := strings.ToLower(instance + " " + textValue)
-		if capabilities[0] == "printing" && (strings.Contains(combined, "laserjet") || strings.Contains(combined, "printer") || strings.Contains(combined, "ty=") || strings.Contains(combined, "product=")) {
-			deviceType = "printer"
-		}
+		deviceType := passivePrinterType(capabilities, instance, textValue)
 		payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": instance, "service_target": target, "txt": textValue, "ttl": int(until.Sub(observed).Seconds())}
 		evidence := event
 		evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])

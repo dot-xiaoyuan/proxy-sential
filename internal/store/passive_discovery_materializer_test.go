@@ -98,3 +98,20 @@ func TestPassiveDiscoveryRejectsPublicProtocolEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestPassivePTRResponseCreatesServiceWithoutTerminalIdentity(t *testing.T) {
+	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
+	at := time.Now().UTC()
+	event := passiveTestEvent("mdns", "192.168.0.254", "", map[string]any{"is_response": true})
+	observation, ok := passivePTRObservation(event, "office-30", "ens1f1", "_ipp._tcp.local", "hp laserjet pro mfp m128fw[5df46c]._ipp._tcp.local", at, at.Add(120*time.Second), scope)
+	if !ok || observation.DeviceType != "printer" || len(observation.Capabilities) != 1 || observation.Capabilities[0] != "printing" || observation.IP != "192.168.0.254" {
+		t.Fatalf("unexpected PTR observation: %+v", observation)
+	}
+	if observation.MAC != "" || observation.Evidence.Subject["mac"] != nil {
+		t.Fatal("PTR service response manufactured a terminal identity")
+	}
+	event.Subject["ip"] = "218.30.19.40"
+	if _, ok = passivePTRObservation(event, "office-30", "ens1f1", "_ipp._tcp.local", "hp laserjet._ipp._tcp.local", at, at.Add(time.Minute), scope); ok {
+		t.Fatal("public PTR responder created a discovery observation")
+	}
+}
