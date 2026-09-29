@@ -187,7 +187,7 @@ func TestAnalyzeRoutersCollapsesDHCPDerivedSoftwareSource(t *testing.T) {
 func TestAnalyzeRoutersConfirmsModelWithVRRPRole(t *testing.T) {
 	events := []normalized.Event{
 		routerTestEvent("dhcp", "2026-09-29T01:00:00Z", "AA:BB:CC:DD:EE:12", map[string]any{"vendor_class": "Cisco ISR4331"}),
-		routerTestEvent("vrrp", "2026-09-29T01:00:01Z", "AA:BB:CC:DD:EE:12", map[string]any{"virtual_router_id": 10, "priority": 110}),
+		routerTestControlEvent("vrrp", "2026-09-29T01:00:01Z", "AA:BB:CC:DD:EE:12", "224.0.0.18", map[string]any{"version": 2, "virtual_router_id": 10, "priority": 110}),
 	}
 	result, err := AnalyzeRouters(events, RouterOptions{})
 	if err != nil {
@@ -199,6 +199,29 @@ func TestAnalyzeRoutersConfirmsModelWithVRRPRole(t *testing.T) {
 	got := result.Assessments[0]
 	if !got.ConfirmedRouter || got.Status != "confirmed" || got.Confidence != 95 || got.IndependentSources != 2 || got.Brand != "Cisco" {
 		t.Fatalf("model plus VRRP role did not confirm router: %+v", got)
+	}
+}
+
+func TestAnalyzeRoutersRejectsMalformedHSRPEvidence(t *testing.T) {
+	event := routerTestControlEvent("hsrp", "2026-09-29T01:00:00Z", "AA:BB:CC:DD:EE:24", "218.30.19.40", map[string]any{"version": 1, "opcode": 105, "state": 77, "group": 0, "udp_port": 53})
+	result, err := AnalyzeRouters([]normalized.Event{event}, RouterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Assessments) != 0 || len(result.Evidence) != 0 {
+		t.Fatalf("malformed HSRP event produced router evidence: %+v", result)
+	}
+}
+
+func TestAnalyzeRoutersClassifiesCDPSwitchAsExclusion(t *testing.T) {
+	event := routerTestControlEvent("cdp", "2026-09-29T01:00:00Z", "AA:BB:CC:DD:EE:25", "01:00:0c:cc:cc:cc", map[string]any{"capabilities": "switch", "platform": "cisco WS-C2960X-24TS-L", "software": "Cisco IOS Software"})
+	delete(event.Subject, "ip")
+	result, err := AnalyzeRouters([]normalized.Event{event}, RouterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Assessments) != 1 || result.Assessments[0].Role != "switch" || result.Assessments[0].ConfirmedRouter || !routerContains(result.Assessments[0].Conflicts, "infrastructure_switch") {
+		t.Fatalf("CDP switch was exposed as a router candidate: %+v", result.Assessments)
 	}
 }
 
@@ -286,4 +309,10 @@ func routerTestEvent(kind, timestamp, mac string, payload map[string]any) normal
 		subject["mac"] = mac
 	}
 	return normalized.Event{SchemaVersion: "v1", EventID: kind + "-event", Source: "suricata", SourceEventType: kind, Type: kind, Timestamp: timestamp, Observer: map[string]any{"sensor_id": "test"}, Subject: subject, Flow: map[string]any{"src_ip": "192.0.2.10", "dst_ip": "192.0.2.1", "proto": "tcp", "direction": "outbound"}, Payload: payload, Confidence: 1}
+}
+
+func routerTestControlEvent(kind, timestamp, mac, destination string, payload map[string]any) normalized.Event {
+	event := routerTestEvent(kind, timestamp, mac, payload)
+	event.Flow["dst_ip"] = destination
+	return event
 }

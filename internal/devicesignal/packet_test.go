@@ -130,6 +130,40 @@ func TestParseVRRPRouterSignal(t *testing.T) {
 	}
 }
 
+func TestParseHSRPRejectsEphemeralPortCollision(t *testing.T) {
+	frame := make([]byte, 14+20+8+20)
+	copy(frame[6:12], []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x13})
+	frame[12], frame[13] = 0x08, 0
+	ip := frame[14:34]
+	ip[0], ip[9] = 0x45, 17
+	copy(ip[12:16], []byte{192, 168, 0, 45})
+	copy(ip[16:20], []byte{218, 30, 19, 40})
+	udp := frame[34:42]
+	udp[0], udp[1], udp[2], udp[3] = 0x07, 0xed, 0, 53 // ephemeral 2029 -> DNS
+	copy(frame[42:], []byte{1, 105, 77, 0, 0, 1, 0, 0})
+	if signal, ok := parseControlFrame(frame); ok {
+		t.Fatalf("ordinary DNS traffic was classified as HSRP: %+v", signal)
+	}
+}
+
+func TestParseHSRPv1RouterSignal(t *testing.T) {
+	frame := make([]byte, 14+20+8+20)
+	copy(frame[0:6], []byte{0x01, 0x00, 0x5e, 0x00, 0x00, 0x02})
+	copy(frame[6:12], []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x14})
+	frame[12], frame[13] = 0x08, 0
+	ip := frame[14:34]
+	ip[0], ip[9] = 0x45, 17
+	copy(ip[12:16], []byte{172, 20, 1, 2})
+	copy(ip[16:20], []byte{224, 0, 0, 2})
+	udp := frame[34:42]
+	udp[0], udp[1], udp[2], udp[3] = 0x07, 0xc1, 0x07, 0xc1
+	copy(frame[42:], []byte{0, 0, 16, 3, 10, 110, 42, 0})
+	signal, ok := parseControlFrame(frame)
+	if !ok || signal.Kind != "hsrp" || signal.IP != "172.20.1.2" || signal.Payload["version"] != 0 || signal.Payload["state"] != 16 || signal.Payload["group"] != 42 {
+		t.Fatalf("unexpected HSRP signal: ok=%t signal=%+v", ok, signal)
+	}
+}
+
 func TestParseSSDPResponseButNotClientSearch(t *testing.T) {
 	build := func(payload string) []byte {
 		frame := make([]byte, 14+20+8+len(payload))

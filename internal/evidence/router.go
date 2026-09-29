@@ -173,8 +173,11 @@ func AnalyzeRouters(events []normalized.Event, opts RouterOptions) (RouterResult
 		if family == "cdp" && routerCDPRouter(inputs) && len(matches) == 0 {
 			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, RouterEvidence{Kind: "router_signal", Role: "router", SourceFamily: family, RawValue: firstRouterInput(inputs, "cdp_capabilities"), Strength: "medium", Score: 30, RuleID: "cdp-router-capability", RuleVersion: rules.Version, Explanation: "CDP router capability 角色线索，缺少品牌或型号"})
 		}
-		if family == "first_hop_redundancy" {
+		if family == "first_hop_redundancy" && routerValidFirstHopEvidence(event) {
 			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, RouterEvidence{Kind: "router_signal", Role: "router", SourceFamily: family, RawValue: firstNonEmptyRouter(routerString(event.Payload["virtual_router_id"]), routerString(event.Payload["group"])), Strength: "strong", Score: 40, RuleID: "first-hop-redundancy-router-role", RuleVersion: rules.Version, Explanation: "VRRP/HSRP 首跳冗余协议广告，可确认设备承担路由角色"})
+		}
+		if routerLayer2SwitchEvidence(family, inputs) {
+			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, RouterEvidence{Kind: "conflict", Role: "switch", SourceFamily: family, RawValue: firstNonEmptyRouter(firstRouterInput(inputs, "cdp_capabilities"), firstRouterInput(inputs, "lldp_capabilities")), Strength: "strong", Score: -60, RuleID: "layer2-switch-capability", RuleVersion: rules.Version, Explanation: "链路发现协议仅声明二层交换能力，不应作为路由器候选", Conflict: true, ConflictCode: "infrastructure_switch", Exclusion: true})
 		}
 		if routerTerminalConflict(inputs) {
 			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, RouterEvidence{Kind: "conflict", Role: "endpoint", SourceFamily: "endpoint", RawValue: firstRouterInput(inputs, "user_agent"), Strength: "strong", Score: -35, RuleID: "endpoint-device-conflict", RuleVersion: rules.Version, Explanation: "手机、平板或 PC 终端特征与路由器判断冲突", Conflict: true, ConflictCode: "ordinary_endpoint"})
@@ -573,6 +576,43 @@ func routerLLDPRouter(inputs map[string][]string) bool {
 
 func routerCDPRouter(inputs map[string][]string) bool {
 	return routerContainsAny(inputs, "cdp_capabilities", "router", "routing")
+}
+
+func routerLayer2SwitchEvidence(family string, inputs map[string][]string) bool {
+	switch family {
+	case "cdp":
+		return routerContainsAny(inputs, "cdp_capabilities", "switch") && !routerCDPRouter(inputs)
+	case "lldp":
+		return routerContainsAny(inputs, "lldp_capabilities", "bridge") && !routerLLDPRouter(inputs)
+	default:
+		return false
+	}
+}
+
+func routerValidFirstHopEvidence(event normalized.Event) bool {
+	kind := strings.ToLower(firstNonEmptyRouter(event.SourceEventType, routerString(event.Payload["origin"]), event.Type))
+	destination := routerString(event.Flow["dst_ip"])
+	switch kind {
+	case "vrrp":
+		version := routerInt(event.Payload["version"])
+		virtualRouterID := routerInt(event.Payload["virtual_router_id"])
+		return (destination == "224.0.0.18" || strings.EqualFold(destination, "ff02::12")) && (version == 2 || version == 3) && virtualRouterID >= 1 && virtualRouterID <= 255
+	case "hsrp":
+		opcode := routerInt(event.Payload["opcode"])
+		state := routerInt(event.Payload["state"])
+		return destination == "224.0.0.2" && routerInt(event.Payload["udp_port"]) == 1985 && routerInt(event.Payload["version"]) == 0 && opcode >= 0 && opcode <= 2 && routerValidHSRPState(state)
+	default:
+		return false
+	}
+}
+
+func routerValidHSRPState(value int) bool {
+	switch value {
+	case 0, 1, 2, 4, 8, 16:
+		return true
+	default:
+		return false
+	}
 }
 
 func routerTerminalConflict(inputs map[string][]string) bool {

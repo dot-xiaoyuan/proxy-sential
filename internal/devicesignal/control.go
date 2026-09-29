@@ -98,7 +98,10 @@ func parseControlFrame(frame []byte) (controlSignal, bool) {
 	if sourcePort == 1900 || destinationPort == 1900 {
 		return parseSSDP(ethernet, source, destination, udpPayload)
 	}
-	if sourcePort == 1985 || destinationPort == 1985 || sourcePort == 2029 || destinationPort == 2029 {
+	// IPv4 HSRP uses UDP 1985 at both ends. Matching either endpoint (or the
+	// IPv6 HSRP port 2029 in this IPv4 parser) turns ordinary client traffic
+	// whose ephemeral source port happens to be 1985/2029 into router evidence.
+	if sourcePort == 1985 && destinationPort == 1985 {
 		return parseHSRP(ethernet, source, destination, sourcePort, destinationPort, udpPayload)
 	}
 	return controlSignal{}, false
@@ -271,32 +274,32 @@ func parseVRRP(ethernet ethernetFrame, source, destination string, payload []byt
 }
 
 func parseHSRP(ethernet ethernetFrame, source, destination string, sourcePort, destinationPort uint16, payload []byte) (controlSignal, bool) {
-	if len(payload) < 8 {
+	// HSRPv1 advertisements are sent to 224.0.0.2. HSRPv2 keeps UDP 1985
+	// but uses 224.0.0.102 and a different TLV body, which is not decoded here.
+	// Accept only the v1 fixed header instead of manufacturing fields from an
+	// arbitrary UDP payload.
+	if sourcePort != 1985 || destinationPort != 1985 || destination != "224.0.0.2" || len(payload) < 20 || payload[0] != 0 || payload[1] > 2 || !validHSRPState(payload[2]) {
 		return controlSignal{}, false
 	}
 	signal := baseControlSignal("hsrp", ethernet, source, destination)
-	signal.Payload["udp_port"] = int(firstNonZeroPort(destinationPort, sourcePort))
-	if sourcePort == 1985 || destinationPort == 1985 {
-		signal.Payload["version"] = int(payload[5])
-		signal.Payload["opcode"] = int(payload[0])
-		signal.Payload["state"] = int(payload[1])
-		signal.Payload["group"] = int(payload[6])
-	} else {
-		signal.Payload["version"] = 2
-	}
+	signal.Payload["udp_port"] = 1985
+	signal.Payload["version"] = int(payload[0])
+	signal.Payload["opcode"] = int(payload[1])
+	signal.Payload["state"] = int(payload[2])
+	signal.Payload["group"] = int(payload[6])
 	if signal.VLAN > 0 {
 		signal.Payload["vlan"] = signal.VLAN
 	}
 	return signal, true
 }
 
-func firstNonZeroPort(values ...uint16) uint16 {
-	for _, value := range values {
-		if value != 0 {
-			return value
-		}
+func validHSRPState(value byte) bool {
+	switch value {
+	case 0, 1, 2, 4, 8, 16:
+		return true
+	default:
+		return false
 	}
-	return 0
 }
 
 func parseSSDP(ethernet ethernetFrame, source, destination string, payload []byte) (controlSignal, bool) {

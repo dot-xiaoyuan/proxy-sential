@@ -19,6 +19,8 @@
     {"id":"ambiguous-no-mac","input":"ambiguous-no-mac.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"router","expected_status":"likely","expected_router":false},
     {"id":"expired-evidence","input":"expired.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"router","expected_status":"candidate","expected_router":false},
     {"id":"duplicate-out-of-order","input":"duplicate-out-of-order.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"router","expected_status":"confirmed","expected_router":true},
-    {"id":"ip-reuse-multiple-mac-vlan","input":"ip-reuse.jsonl","input_kind":"normalized_jsonl","expected_router":false}
+    {"id":"ip-reuse-multiple-mac-vlan","input":"ip-reuse.jsonl","input_kind":"normalized_jsonl","expected_router":false},
+    {"id":"hsrp-ephemeral-port-collision","input":"hsrp-ephemeral-collision.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"unknown","expected_status":"candidate","expected_router":false,"oui_only":true},
+    {"id":"cdp-cisco-switch-without-ip","input":"cdp-cisco-switch-no-ip.jsonl","input_kind":"normalized_jsonl","expected_brand":"Cisco","expected_role":"switch","expected_status":"candidate","expected_router":false}
   ]
 }

@@ -273,7 +273,7 @@ func (s *PostgresStore) RouterObservationSummaries(ctx context.Context, endpoint
 	if len(endpointIDs) == 0 {
 		return result, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT ON(endpoint_id) endpoint_id,assessment FROM router_assessments WHERE endpoint_id=ANY($1) ORDER BY endpoint_id,confidence DESC,last_seen DESC`, endpointIDs)
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT ON(endpoint_id) endpoint_id,assessment FROM router_assessments WHERE endpoint_id=ANY($1) AND expires_at>now() AND ip IS NOT NULL AND role='router' AND brand_reference_only=false ORDER BY endpoint_id,confidence DESC,last_seen DESC`, endpointIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +295,10 @@ func (s *PostgresStore) RouterObservationSummaries(ctx context.Context, endpoint
 }
 
 func routerWhere(query RouterQuery) (string, []any, error) {
-	clauses, args := []string{"expires_at>now()"}, []any{}
+	// The operator-facing router list is not a generic vendor/device inventory.
+	// Keep raw and excluded observations durable for audit, but do not surface
+	// address-less discovery frames or brand-only endpoint hints as routers.
+	clauses, args := []string{"expires_at>now()", "ip IS NOT NULL", "brand_reference_only=false"}, []any{}
 	add := func(clause string, value any) {
 		args = append(args, value)
 		clauses = append(clauses, fmt.Sprintf(clause, len(args)))
@@ -305,6 +308,9 @@ func routerWhere(query RouterQuery) (string, []any, error) {
 		position := len(args)
 		placeholder := fmt.Sprintf("$%d", position)
 		clauses = append(clauses, `(assessment_id ILIKE '%'||`+placeholder+`||'%' OR endpoint_id ILIKE '%'||`+placeholder+`||'%' OR host(ip) ILIKE '%'||`+placeholder+`||'%' OR mac ILIKE '%'||`+placeholder+`||'%' OR brand ILIKE '%'||`+placeholder+`||'%' OR series ILIKE '%'||`+placeholder+`||'%' OR model ILIKE '%'||`+placeholder+`||'%')`)
+	}
+	if strings.TrimSpace(query.Role) == "" {
+		clauses = append(clauses, "role='router'")
 	}
 	for _, item := range []struct{ value, clause string }{{query.IP, `ip=$%d::inet`}, {strings.ToLower(query.MAC), `lower(mac)=$%d`}, {query.VLAN, `$%d=ANY(vlans)`}, {query.Brand, `lower(brand)=lower($%d)`}, {query.Model, `lower(model)=lower($%d)`}, {query.Role, `role=$%d`}, {query.Status, `status=$%d`}, {query.Source, `$%d=ANY(sources)`}} {
 		if strings.TrimSpace(item.value) != "" {

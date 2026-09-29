@@ -13,13 +13,28 @@ func TestRouterWhereIncludesServerFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, fragment := range []string{"expires_at>now()", "assessment_id ILIKE", "ip=", "lower(mac)", "ANY(vlans)", "lower(brand)", "lower(model)", "role=", "status=", "ANY(sources)", "confidence >=", "confidence <=", "infrastructure=", "first_seen >=", "last_seen <="} {
+	for _, fragment := range []string{"expires_at>now()", "ip IS NOT NULL", "brand_reference_only=false", "assessment_id ILIKE", "ip=", "lower(mac)", "ANY(vlans)", "lower(brand)", "lower(model)", "role=", "status=", "ANY(sources)", "confidence >=", "confidence <=", "infrastructure=", "first_seen >=", "last_seen <="} {
 		if !strings.Contains(where, fragment) {
 			t.Fatalf("missing %q in %s", fragment, where)
 		}
 	}
 	if len(args) != 16 {
 		t.Fatalf("unexpected args: %#v", args)
+	}
+}
+
+func TestRouterWhereDefaultsToAddressedRouterRoles(t *testing.T) {
+	where, args, err := routerWhere(RouterQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"ip IS NOT NULL", "brand_reference_only=false", "role='router'"} {
+		if !strings.Contains(where, fragment) {
+			t.Fatalf("missing default precision filter %q in %s", fragment, where)
+		}
+	}
+	if len(args) != 0 {
+		t.Fatalf("unexpected default args: %#v", args)
 	}
 }
 
