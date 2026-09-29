@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const BehaviorRuleVersion = "shared-behavior/v5"
+const BehaviorRuleVersion = "shared-behavior/v6"
 
 type BehaviorRouterContext struct {
 	AssessmentID string `json:"assessment_id,omitempty"`

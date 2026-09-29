@@ -592,6 +592,9 @@ func routerMatchScore(family string, match fingerprint.RouterRuleMatch) int {
 	}
 	switch family {
 	case "dhcp":
+		if match.Rule.Score > 55 {
+			return match.Rule.Score
+		}
 		return 55
 	case "software":
 		return 50
