@@ -10,7 +10,7 @@ import (
 )
 
 type ieee1905AssociationRow struct {
-	Timestamp    string `json:"timestamp"`
+	Timestamp    string `json:"event_timestamp"`
 	EventID      string `json:"event_id"`
 	SensorID     string `json:"sensor_id"`
 	CampusID     string `json:"campus_id"`
@@ -38,7 +38,7 @@ func validUnicastMAC(value string) bool {
 
 func (s *DBStore) syncIEEE1905Associations(ctx context.Context, sensorID string, now time.Time) error {
 	query := fmt.Sprintf(`SELECT
- formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS timestamp,
+ formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS event_timestamp,
  event_id,sensor_id,campus_id,
  JSONExtractString(payload_json,'access_domain') AS access_domain,
  subject_ip AS gateway_ip,subject_mac AS gateway_mac,
@@ -46,7 +46,7 @@ func (s *DBStore) syncIEEE1905Associations(ctx context.Context, sensorID string,
  JSONExtractString(payload_json,'client_mac') AS client_mac,
  JSONExtractString(payload_json,'association_state') AS association_state,source
 FROM normalized_events
-PREWHERE sensor_id=%s AND timestamp>=parseDateTime64BestEffort(%s,6)
+PREWHERE sensor_id=%s AND normalized_events.timestamp>=parseDateTime64BestEffort(%s,6)
 WHERE source_event_type='ieee1905_client_association'
 ORDER BY timestamp,event_id
 LIMIT 100000 SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`,
