@@ -58,6 +58,29 @@ func TestSharedGatewayBehaviorDoesNotPromoteWeakVendorReference(t *testing.T) {
 	}
 }
 
+func TestSharedGatewayBehaviorAcceptsSpecificBrandAttribution(t *testing.T) {
+	asOf := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
+	items := []RouterEvidence{
+		{EvidenceID: "vendor", AssessmentID: "tplink", IP: "192.0.2.63", Kind: "router_signal", Source: "tls", SourceFamily: "tls_management", Brand: "TP-Link", BrandReferenceOnly: true, BrandAttribution: true, Strength: "medium", Score: 10, RuleID: "tplink-cloud-brand-attribution", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
+		{EvidenceID: "shared", AssessmentID: "tplink", IP: "192.0.2.63", Kind: "router_signal", Source: "shared-behavior-materializer", SourceFamily: "shared_gateway_behavior", Role: "router", Strength: "strong", Score: 85, RuleID: "verified-shared-gateway-role", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
+	}
+	assessment, present := AggregateRouterEvidence(items, nil, asOf)
+	if !present || assessment.Status != "likely" || assessment.IndependentSources != 1 || assessment.Brand != "TP-Link" || !assessment.BrandAttribution {
+		t.Fatalf("specific vendor attribution was not attached to independent gateway role: %+v present=%t", assessment, present)
+	}
+}
+
+func TestAnalyzeRoutersTPLinkCloudCertificateDoesNotInferRoleAlone(t *testing.T) {
+	event := routerTestEvent("tls", "2026-09-29T07:00:00Z", "", map[string]any{"certificate_subject": "C=CN, O=TP-LINK TECHNOLOGIES CO., LTD., CN=*.tplinkcloud.com.cn"})
+	result, err := AnalyzeRouters([]normalized.Event{event}, RouterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Assessments) != 1 || result.Assessments[0].Role != "unknown" || result.Assessments[0].Status != "candidate" || result.Assessments[0].Brand != "TP-Link" || !result.Assessments[0].BrandAttribution {
+		t.Fatalf("TP-Link cloud certificate was not kept as brand-only evidence: %+v", result.Assessments)
+	}
+}
+
 func TestAnalyzeRoutersOUINeverConfirms(t *testing.T) {
 	event := routerTestEvent("device", "2026-09-24T01:00:00Z", "AA:BB:CC:DD:EE:02", map[string]any{"oui_vendor": "Huawei"})
 	result, err := AnalyzeRouters([]normalized.Event{event}, RouterOptions{})

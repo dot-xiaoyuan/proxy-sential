@@ -11,6 +11,7 @@
     {"id":"huawei-airengine-ap","input":"huawei-ap.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"ap","expected_status":"candidate","expected_router":false},
     {"id":"huawei-ap-passive-access","input":"huawei-ap-access.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"ap","expected_status":"likely","expected_router":false},
     {"id":"zte-multiap-master","input":"zte-multiap-master.jsonl","input_kind":"normalized_jsonl","expected_brand":"ZTE","expected_role":"router","expected_status":"likely","expected_router":false},
+    {"id":"tplink-cloud-brand-only","input":"tplink-cloud-brand.jsonl","input_kind":"normalized_jsonl","expected_brand":"TP-Link","expected_role":"unknown","expected_status":"candidate","expected_router":false},
     {"id":"h3c-wa-wx-ap","input":"h3c-ap.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"ap","expected_status":"candidate","expected_router":false},
     {"id":"h3c-comware-switch","input":"h3c-switch.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"switch","expected_status":"candidate","expected_router":false},
     {"id":"huawei-usg-firewall","input":"huawei-usg.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"firewall","expected_status":"candidate","expected_router":false},

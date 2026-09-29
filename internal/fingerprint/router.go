@@ -35,8 +35,11 @@ type RouterRule struct {
 	Score        int      `json:"score"`
 	Exclude      bool     `json:"exclude"`
 	ConflictCode string   `json:"conflict_code,omitempty"`
-	Explanation  string   `json:"explanation"`
-	compiled     *regexp.Regexp
+	// BrandAttribution marks a vendor-specific signal that may name the
+	// manufacturer only after an independent device-role signal is present.
+	BrandAttribution bool   `json:"brand_attribution,omitempty"`
+	Explanation      string `json:"explanation"`
+	compiled         *regexp.Regexp
 }
 
 type RouterRuleSet struct {
@@ -46,13 +49,14 @@ type RouterRuleSet struct {
 }
 
 type RouterRuleMatch struct {
-	Rule      RouterRule `json:"rule"`
-	Input     string     `json:"input"`
-	RawValue  string     `json:"raw_value"`
-	Brand     string     `json:"brand,omitempty"`
-	Series    string     `json:"series,omitempty"`
-	Model     string     `json:"model,omitempty"`
-	BrandOnly bool       `json:"brand_reference_only"`
+	Rule             RouterRule `json:"rule"`
+	Input            string     `json:"input"`
+	RawValue         string     `json:"raw_value"`
+	Brand            string     `json:"brand,omitempty"`
+	Series           string     `json:"series,omitempty"`
+	Model            string     `json:"model,omitempty"`
+	BrandOnly        bool       `json:"brand_reference_only"`
+	BrandAttribution bool       `json:"brand_attribution"`
 }
 
 var (
@@ -135,7 +139,7 @@ func (r *RouterRuleSet) Match(inputs map[string][]string) []RouterRuleMatch {
 					}
 					return strings.TrimSpace(string(rule.compiled.ExpandString(nil, value, raw, indexes)))
 				}
-				matches = append(matches, RouterRuleMatch{Rule: rule, Input: input, RawValue: raw, Brand: expand(rule.Brand), Series: expand(rule.Series), Model: expand(rule.Model), BrandOnly: rule.Role == "unknown"})
+				matches = append(matches, RouterRuleMatch{Rule: rule, Input: input, RawValue: raw, Brand: expand(rule.Brand), Series: expand(rule.Series), Model: expand(rule.Model), BrandOnly: rule.Role == "unknown", BrandAttribution: rule.BrandAttribution})
 				matched = true
 				break
 			}

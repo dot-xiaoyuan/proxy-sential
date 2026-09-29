@@ -430,14 +430,15 @@ ORDER BY (endpoint_id=$2 AND $2<>'') DESC,(mac<>'') DESC,(expires_at>$3) DESC,
 	expiresAt := item.LastSeen.Add(24 * time.Hour)
 	evidenceID := stableSharedBehaviorID("router-role", router.AssessmentID, strings.Join(behaviorGroups, ","))
 	brand, series, model := router.Brand, router.Series, router.Model
-	if router.BrandReferenceOnly {
+	if router.BrandReferenceOnly && !router.BrandAttribution {
 		brand, series, model = "", "", ""
 	}
 	bridge := evidence.RouterEvidence{
 		EvidenceID: evidenceID, AssessmentID: router.AssessmentID, Kind: "router_signal",
 		EndpointID: router.EndpointID, IP: router.IP, MAC: router.MAC, Brand: brand,
 		Series: series, Model: model, Role: "router", Source: "shared-behavior-materializer",
-		SourceFamily: "shared_gateway_behavior", SourceEventType: "shared_access_window",
+		BrandAttribution: router.BrandAttribution,
+		SourceFamily:     "shared_gateway_behavior", SourceEventType: "shared_access_window",
 		RawValue: strings.Join(behaviorGroups, ","), Strength: "strong", Score: score,
 		RuleID: "verified-shared-gateway-role", RuleVersion: ruleVersion,
 		Explanation:        "重复共现的多终端协议栈与 TTL 路径表明该设备承担共享网关角色",

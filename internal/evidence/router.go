@@ -53,6 +53,7 @@ type RouterEvidence struct {
 	ConflictCode       string   `json:"conflict_code,omitempty"`
 	Exclusion          bool     `json:"exclusion"`
 	BrandReferenceOnly bool     `json:"brand_reference_only"`
+	BrandAttribution   bool     `json:"brand_attribution"`
 	AssociationQuality string   `json:"association_quality"`
 	AssociationReason  string   `json:"association_reason,omitempty"`
 	Ambiguous          bool     `json:"ambiguous"`
@@ -87,6 +88,7 @@ type RouterAssessment struct {
 	Sources            []string               `json:"sources"`
 	Infrastructure     bool                   `json:"infrastructure"`
 	BrandReferenceOnly bool                   `json:"brand_reference_only"`
+	BrandAttribution   bool                   `json:"brand_attribution"`
 	AssociationQuality string                 `json:"association_quality"`
 	Ambiguous          bool                   `json:"ambiguous"`
 	ConfirmedRouter    bool                   `json:"confirmed_router"`
@@ -162,6 +164,7 @@ func AnalyzeRouters(events []normalized.Event, opts RouterOptions) (RouterResult
 				RuleID: match.Rule.ID, RuleVersion: match.Rule.Version, Explanation: match.Rule.Explanation,
 				Conflict: match.Rule.Exclude, ConflictCode: match.Rule.ConflictCode, Exclusion: match.Rule.Exclude,
 				BrandReferenceOnly: match.BrandOnly,
+				BrandAttribution:   match.BrandAttribution,
 			})
 		}
 		if family == "ssdp" && routerContainsAny(inputs, "ssdp_type", "InternetGatewayDevice", "WANDevice") {
@@ -412,7 +415,8 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 	}
 	bestByFamily := map[string]RouterEvidence{}
 	vlans, conflicts := map[string]bool{}, map[string]bool{}
-	strong, exclusion, verifiedBrand := false, false, false
+	strong, exclusion, verifiedBrand, attributedBrand := false, false, false, false
+	brandRank := 0
 	for _, item := range items {
 		if item.VLAN != "" {
 			vlans[item.VLAN] = true
@@ -432,11 +436,25 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		if !item.Exclusion && (item.Role == "router" || item.Role == "ap") && assessment.Role == "unknown" {
 			assessment.Role = item.Role
 		}
-		if item.Brand != "" && (assessment.Brand == "" || !item.BrandReferenceOnly) {
-			assessment.Brand = item.Brand
+		itemBrandRank := 0
+		if item.Brand != "" {
+			itemBrandRank = 1
+			if item.BrandAttribution {
+				itemBrandRank = 2
+			}
+			if !item.BrandReferenceOnly {
+				itemBrandRank = 3
+			}
+		}
+		if itemBrandRank >= brandRank && itemBrandRank > 0 {
+			assessment.Brand, brandRank = item.Brand, itemBrandRank
 		}
 		if item.Brand != "" && !item.BrandReferenceOnly && !item.Expired {
 			verifiedBrand = true
+		}
+		if item.Brand != "" && item.BrandAttribution && !item.Expired {
+			attributedBrand = true
+			assessment.BrandAttribution = true
 		}
 		if item.Series != "" && !item.BrandReferenceOnly {
 			assessment.Series = item.Series
@@ -471,7 +489,7 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 	if sharedGatewayRole {
 		assessment.Role = "router"
 	}
-	if assessment.Role == "router" && sharedGatewayRole && !verifiedBrand {
+	if assessment.Role == "router" && sharedGatewayRole && !verifiedBrand && !attributedBrand {
 		// A vendor reference seen in a phone application certificate, DHCP
 		// class, or OUI is not a verified manufacturer for a separately
 		// confirmed router role.
