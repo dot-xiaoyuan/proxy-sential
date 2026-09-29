@@ -274,7 +274,7 @@ func (s *PostgresStore) RouterObservationSummaries(ctx context.Context, endpoint
 		return result, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT ON(endpoint_id) endpoint_id,assessment FROM router_assessments r WHERE endpoint_id=ANY($1) AND expires_at>now() AND ip IS NOT NULL AND role='router' AND status IN('likely','confirmed') AND brand_reference_only=false
-AND EXISTS(SELECT 1 FROM router_evidence_facts f WHERE f.assessment_id=r.assessment_id AND f.expires_at>now() AND f.conflict=false AND f.exclusion=false AND f.brand_reference_only=false AND f.data->>'role'='router')
+AND EXISTS(SELECT 1 FROM router_evidence_facts f WHERE f.assessment_id=r.assessment_id AND f.expires_at>now() AND f.conflict=false AND f.exclusion=false AND COALESCE(f.data->>'brand_reference_only','false')='false' AND f.data->>'role'='router')
 AND NOT EXISTS(SELECT 1 FROM labels review WHERE review.target_type='router_ip' AND review.target_id=host(r.ip) AND review.label='not_router' AND NOT EXISTS(SELECT 1 FROM labels newer WHERE newer.target_type='router_ip' AND newer.target_id=review.target_id AND (newer.created_at,newer.label_id)>(review.created_at,review.label_id)))
 ORDER BY endpoint_id,confidence DESC,last_seen DESC`, endpointIDs)
 	if err != nil {
@@ -314,7 +314,7 @@ func routerWhere(query RouterQuery) (string, []any, error) {
 	}
 	if strings.TrimSpace(query.Role) == "" {
 		clauses = append(clauses, "role='router'")
-		clauses = append(clauses, "EXISTS(SELECT 1 FROM router_evidence_facts active_router_fact WHERE active_router_fact.assessment_id=router_assessments.assessment_id AND active_router_fact.expires_at>now() AND active_router_fact.conflict=false AND active_router_fact.exclusion=false AND active_router_fact.brand_reference_only=false AND active_router_fact.data->>'role'='router')")
+		clauses = append(clauses, "EXISTS(SELECT 1 FROM router_evidence_facts active_router_fact WHERE active_router_fact.assessment_id=router_assessments.assessment_id AND active_router_fact.expires_at>now() AND active_router_fact.conflict=false AND active_router_fact.exclusion=false AND COALESCE(active_router_fact.data->>'brand_reference_only','false')='false' AND active_router_fact.data->>'role'='router')")
 		clauses = append(clauses, "NOT EXISTS(SELECT 1 FROM labels router_review WHERE router_review.target_type='router_ip' AND router_review.target_id=host(ip) AND router_review.label='not_router' AND NOT EXISTS(SELECT 1 FROM labels newer_router_review WHERE newer_router_review.target_type='router_ip' AND newer_router_review.target_id=router_review.target_id AND (newer_router_review.created_at,newer_router_review.label_id)>(router_review.created_at,router_review.label_id)))")
 	}
 	if strings.TrimSpace(query.Status) == "" {
