@@ -263,10 +263,14 @@ WHERE ip=$1::inet AND source_family='manual_review' AND expires_at>now()`, label
 		facts := make([]evidence.RouterEvidence, 0, len(templates))
 		for _, template := range templates {
 			confirmed := label.Label == "confirmed_router"
+			brand, series, model := template.Brand, template.Series, template.Model
+			if template.BrandReferenceOnly {
+				brand, series, model = "", "", ""
+			}
 			fact := evidence.RouterEvidence{
 				EvidenceID: stableSharedBehaviorID("router-review", label.LabelID, template.AssessmentID), AssessmentID: template.AssessmentID,
 				Kind: "router_signal", EndpointID: template.EndpointID, IP: label.IP, MAC: template.MAC,
-				Brand: template.Brand, Series: template.Series, Model: template.Model, Role: "router",
+				Brand: brand, Series: series, Model: model, Role: "router",
 				Source: "operator:" + label.CreatedBy, SourceFamily: "manual_review", SourceEventType: "router_review",
 				RawValue: label.Label, Strength: "strong", Score: 90, RuleID: "manual-confirmed-router",
 				RuleVersion: fingerprint.DefaultRouterRuleSet().Version, Explanation: label.Reason,

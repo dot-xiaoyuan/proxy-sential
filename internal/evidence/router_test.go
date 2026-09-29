@@ -81,6 +81,18 @@ func TestManualNotRouterReviewSuppressesAutomaticRouterEvidence(t *testing.T) {
 	}
 }
 
+func TestManualRouterReviewDoesNotPromoteWeakVendorReference(t *testing.T) {
+	asOf := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
+	items := []RouterEvidence{
+		{EvidenceID: "vendor", AssessmentID: "review", IP: "192.0.2.63", Kind: "router_signal", Source: "tls", SourceFamily: "tls_management", Brand: "Xiaomi", BrandReferenceOnly: true, Strength: "weak", Score: 10, RuleID: "vendor-reference", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
+		{EvidenceID: "manual", AssessmentID: "review", IP: "192.0.2.63", Kind: "router_signal", Source: "operator", SourceFamily: "manual_review", Role: "router", Strength: "strong", Score: 90, RuleID: "manual-confirmed-router", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
+	}
+	assessment, present := AggregateRouterEvidence(items, nil, asOf)
+	if !present || assessment.Status != "confirmed" || assessment.Brand != "" || assessment.Model != "" {
+		t.Fatalf("weak application vendor reference became confirmed router identity: %+v present=%t", assessment, present)
+	}
+}
+
 func TestAnalyzeRoutersOUINeverConfirms(t *testing.T) {
 	event := routerTestEvent("device", "2026-09-24T01:00:00Z", "AA:BB:CC:DD:EE:02", map[string]any{"oui_vendor": "Huawei"})
 	result, err := AnalyzeRouters([]normalized.Event{event}, RouterOptions{})

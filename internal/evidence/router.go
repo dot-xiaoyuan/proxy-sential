@@ -416,7 +416,7 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 	}
 	bestByFamily := map[string]RouterEvidence{}
 	vlans, conflicts := map[string]bool{}, map[string]bool{}
-	strong, exclusion := false, false
+	strong, exclusion, verifiedBrand := false, false, false
 	for _, item := range items {
 		if item.VLAN != "" {
 			vlans[item.VLAN] = true
@@ -438,6 +438,9 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		}
 		if item.Brand != "" && (assessment.Brand == "" || !item.BrandReferenceOnly) {
 			assessment.Brand = item.Brand
+		}
+		if item.Brand != "" && !item.BrandReferenceOnly && !item.Expired {
+			verifiedBrand = true
 		}
 		if item.Series != "" && !item.BrandReferenceOnly {
 			assessment.Series = item.Series
@@ -480,6 +483,12 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		assessment.Role = "endpoint"
 	} else if sharedGatewayRole {
 		assessment.Role = "router"
+	}
+	if assessment.Role == "router" && (manualConfirmed || sharedGatewayRole) && !verifiedBrand {
+		// A vendor reference seen in a phone application certificate, DHCP
+		// class, or OUI is not a verified manufacturer for a separately
+		// confirmed router role.
+		assessment.Brand, assessment.Series, assessment.Model = "", "", ""
 	}
 	for vlan := range vlans {
 		assessment.VLANs = append(assessment.VLANs, vlan)
