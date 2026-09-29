@@ -122,13 +122,13 @@ func (s *DBStore) sharedBehaviorKnownDeviceRows(ctx context.Context, sensorID st
  arraySlice(arraySort(groupUniqArray(toInt64(toUnixTimestamp64Milli(timestamp)/300000))),1,288) AS buckets,
  formatDateTime(min(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS first_seen,
  formatDateTime(max(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS last_seen
-FROM shared_behavior_signal_events_v1
-PREWHERE sensor_id=%s AND timestamp>=parseDateTime64BestEffort(%s,6) AND timestamp<parseDateTime64BestEffort(%s,6)
-WHERE subject_ip IN (%s) AND feature_family='device_model' AND feature_value!=''
+FROM shared_behavior_device_model_events_v1
+PREWHERE sensor_id=%s AND subject_ip IN (%s) AND timestamp>=parseDateTime64BestEffort(%s,6) AND timestamp<parseDateTime64BestEffort(%s,6)
+WHERE feature_value!=''
 GROUP BY sensor_id,campus_id,access_domain,ip,value
 ORDER BY ip,count DESC,value
 LIMIT 100 BY ip SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`,
-			chQuote(sensorID), chQuote(from.UTC().Format(time.RFC3339Nano)), chQuote(to.UTC().Format(time.RFC3339Nano)), strings.Join(quoted, ","))
+			chQuote(sensorID), strings.Join(quoted, ","), chQuote(from.UTC().Format(time.RFC3339Nano)), chQuote(to.UTC().Format(time.RFC3339Nano)))
 		raw, err := s.ch.query(ctx, query)
 		if err != nil {
 			return nil, err
