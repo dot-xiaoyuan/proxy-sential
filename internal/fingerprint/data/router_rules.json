@@ -1,5 +1,5 @@
 {
-  "version": "router-rules-2026-09-29.7",
+  "version": "router-rules-2026-09-29.8",
   "thresholds": {
     "likely_min": 60,
     "confirmed_min": 80,
