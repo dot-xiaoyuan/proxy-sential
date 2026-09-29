@@ -115,3 +115,14 @@ func TestPassivePTRResponseCreatesServiceWithoutTerminalIdentity(t *testing.T) {
 		t.Fatal("public PTR responder created a discovery observation")
 	}
 }
+
+func TestPassiveHostTokenRequiresStableHexSuffix(t *testing.T) {
+	if token := passiveHostToken("dev5df46c.local"); token != "5df46c" {
+		t.Fatalf("token=%q", token)
+	}
+	for _, name := range []string{"printer.local", "dev123.local", "office-xyz.local"} {
+		if token := passiveHostToken(name); token != "" {
+			t.Fatalf("weak host token %q from %q", token, name)
+		}
+	}
+}

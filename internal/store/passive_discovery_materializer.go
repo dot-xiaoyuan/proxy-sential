@@ -320,6 +320,20 @@ func passivePrinterType(capabilities []string, values ...string) string {
 	return ""
 }
 
+func passiveHostToken(name string) string {
+	label := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".local")
+	end := len(label)
+	start := end
+	for start > 0 && strings.ContainsRune("0123456789abcdef", rune(label[start-1])) {
+		start--
+	}
+	token := label[start:end]
+	if len(token) < 6 || len(token) > 16 {
+		return ""
+	}
+	return token
+}
+
 func passivePTRObservation(event normalized.Event, sensor, iface, recordName, instance string, at, validUntil time.Time, scope passiveDiscoveryScope) (discovery.Observation, bool) {
 	service := passiveServiceType(recordName)
 	capabilities := passiveCapabilities(service)
@@ -342,6 +356,36 @@ func passivePTRObservation(event normalized.Event, sensor, iface, recordName, in
 		observation.Domain = iface
 	}
 	return observation, true
+}
+
+func (s *DBStore) passivePTRAddressObservations(ctx context.Context, event normalized.Event, sensor, iface, host, address string, at, addressUntil time.Time, scope passiveDiscoveryScope) ([]discovery.Observation, error) {
+	token := passiveHostToken(host)
+	if token == "" || !scope.allows(address) {
+		return nil, nil
+	}
+	rows, err := s.pg.db.QueryContext(ctx, `SELECT record_name,record_value,least(valid_until,$4) FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_type='PTR' AND valid_until>$3 AND lower(record_value) LIKE $5`, sensor, iface, at, addressUntil, "%["+token+"]%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []discovery.Observation{}
+	for rows.Next() {
+		var serviceName, instance string
+		var validUntil time.Time
+		if err = rows.Scan(&serviceName, &instance, &validUntil); err != nil {
+			return nil, err
+		}
+		addressEvent := event
+		addressEvent.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
+		observation, ok := passivePTRObservation(addressEvent, sensor, iface, serviceName, instance, at, validUntil, scope)
+		if !ok {
+			continue
+		}
+		observation.Explanation = "DNS-SD 服务实例标识与地址主机名自动关联"
+		observation.Evidence.Payload["service_source"] = "ptr_host_token"
+		result = append(result, observation)
+	}
+	return result, rows.Err()
 }
 
 func (s *DBStore) materializeMDNS(ctx context.Context, event normalized.Event, scope passiveDiscoveryScope) ([]discovery.Observation, string, error) {
@@ -395,6 +439,13 @@ func (s *DBStore) materializeMDNS(ctx context.Context, event normalized.Event, s
 		if observation, ok := passivePTRObservation(event, sensor, iface, recordName, value, at, validUntil, scope); ok {
 			result = append(result, observation)
 		}
+	}
+	if recordType == "A" || recordType == "AAAA" {
+		linked, linkErr := s.passivePTRAddressObservations(ctx, event, sensor, iface, recordName, value, at, validUntil, scope)
+		if linkErr != nil {
+			return nil, "", linkErr
+		}
+		result = append(result, linked...)
 	}
 	rows, err := s.pg.db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at),srv.event_id
 FROM passive_discovery_mdns_records srv
