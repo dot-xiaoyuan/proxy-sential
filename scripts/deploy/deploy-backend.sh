@@ -40,7 +40,7 @@ COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations | ssh "$
   install -m 0755 "$stage/bin/proxy-sentinel" "$live.new"
   mv -f "$live.new" "$live"
   # 重启常驻后端服务；定时任务下次运行自动使用新程序。
-  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-device-signal; do
+  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-recognition-materializer proxy-sentinel-device-signal; do
     if systemctl is-active --quiet "$unit.service"; then
       systemctl restart "$unit.service"
       systemctl is-active --quiet "$unit.service"
