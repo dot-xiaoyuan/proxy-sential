@@ -61,6 +61,21 @@ func TestAssessBehaviorRejectsTLSAndTCPDiversityFromOneEndpoint(t *testing.T) {
 	}
 }
 
+func TestAssessBehaviorAllowsSpecificVendorGatewayAnchor(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	w := repeatedBehaviorWindow(now, map[string][]string{
+		"tcp_stack": {"mss=1460,ws=8", "mss=1460,ws=9"},
+		"tls_stack": {"ja3:browser", "ja3:application"},
+	})
+	item, present := AssessBehavior("tplink", "endpoint", w, BehaviorRouterContext{Brand: "TP-Link", BrandAttribution: true})
+	if !present || item.Status != "likely" || item.Confidence != 60 {
+		t.Fatalf("specific vendor control identity did not anchor diverse client stacks: %+v present=%t", item, present)
+	}
+	if _, present = AssessBehavior("generic", "endpoint", w, BehaviorRouterContext{Brand: "Huawei"}); present {
+		t.Fatal("generic vendor reference anchored diverse client stacks")
+	}
+}
+
 func TestAssessBehaviorConfirmationAndCoverageGate(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	w := repeatedBehaviorWindow(now, map[string][]string{

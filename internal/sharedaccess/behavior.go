@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const BehaviorRuleVersion = "shared-behavior/v6"
+const BehaviorRuleVersion = "shared-behavior/v7"
 
 type BehaviorRouterContext struct {
 	AssessmentID string `json:"assessment_id,omitempty"`
@@ -14,6 +14,9 @@ type BehaviorRouterContext struct {
 	Role         string `json:"role,omitempty"`
 	Status       string `json:"status,omitempty"`
 	Confidence   int    `json:"confidence,omitempty"`
+	// BrandAttribution is a vendor-specific control-plane identity. It may
+	// corroborate diverse client stacks but never proves a gateway by itself.
+	BrandAttribution bool `json:"brand_attribution,omitempty"`
 }
 
 type BehaviorScoreComponent struct {
@@ -96,6 +99,14 @@ func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContex
 		result.Confidence += item.score
 		result.SignalGroups = append(result.SignalGroups, item.name)
 		result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{Signal: item.name, Score: item.score, Explanation: item.explanation})
+	}
+	if router.BrandAttribution && router.Brand != "" && behaviorGroups >= 2 {
+		identityGroups++
+		result.SignalGroups = append(result.SignalGroups, "vendor_gateway_identity")
+		result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{
+			Signal: "vendor_gateway_identity", Score: 0,
+			Explanation: "专属厂商控制面身份仅作为多客户端协议栈的设备归属锚点",
+		})
 	}
 	if behaviorGroups < 2 || identityGroups == 0 {
 		return BehaviorAssessment{}, false

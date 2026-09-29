@@ -276,7 +276,7 @@ ORDER BY CASE WHEN $1<>'' AND endpoint_id=$1 THEN 0 ELSE 1 END,
 	if err = json.Unmarshal(raw, &item); err != nil {
 		return sharedaccess.BehaviorRouterContext{}, err
 	}
-	return sharedaccess.BehaviorRouterContext{AssessmentID: item.AssessmentID, Brand: item.Brand, Model: item.Model, Role: item.Role, Status: item.Status, Confidence: item.Confidence}, nil
+	return sharedaccess.BehaviorRouterContext{AssessmentID: item.AssessmentID, Brand: item.Brand, Model: item.Model, Role: item.Role, Status: item.Status, Confidence: item.Confidence, BrandAttribution: item.BrandAttribution}, nil
 }
 
 func (s *DBStore) persistSharedBehavior(ctx context.Context, item sharedaccess.BehaviorAssessment) error {
