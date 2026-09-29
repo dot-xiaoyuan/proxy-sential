@@ -1,11 +1,24 @@
 package store
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
 )
+
+func TestPassiveDiscoveryUsesBoundedSignalStream(t *testing.T) {
+	source, err := os.ReadFile("passive_discovery_materializer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	querySource := string(source)
+	if !strings.Contains(querySource, "FROM passive_discovery_events_v1 PREWHERE") || strings.Contains(querySource, "FROM normalized_events PREWHERE") {
+		t.Fatal("passive materializer must not scan the general normalized event table")
+	}
+}
 
 func passiveTestEvent(kind, ip, mac string, payload map[string]any) normalized.Event {
 	return normalized.Event{
