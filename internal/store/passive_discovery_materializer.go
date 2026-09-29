@@ -600,17 +600,20 @@ lease_owner='',lease_until='-infinity',last_success_at=now(),last_error='',updat
 
 func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID string) {
 	owner := fmt.Sprintf("passive-discovery-%d", os.Getpid())
+	const batchSize = 5000
 	for ctx.Err() == nil {
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		scope, err := parsePassiveDiscoveryScope(os.Getenv("PROXY_SENTINEL_DISCOVERY_CIDRS"))
 		claimed := false
+		batchEvents := 0
 		if err == nil {
 			var cursor passiveDiscoveryCursor
 			cursor, claimed, err = s.claimPassiveDiscovery(workCtx, sensorID, owner)
 			if err == nil && claimed {
 				var events []normalized.Event
 				var next passiveDiscoveryCursor
-				events, next, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, 2000)
+				events, next, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, batchSize)
+				batchEvents = len(events)
 				stats := passiveDiscoveryBatchStats{Protocols: map[string]int{}, Reasons: map[string]int{}}
 				if err == nil && len(events) > 0 {
 					stats, err = s.processPassiveDiscoveryBatch(workCtx, events, scope)
@@ -630,7 +633,9 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 		}
 		cancel()
 		delay := 5 * time.Second
-		if claimed && err == nil {
+		if claimed && err == nil && batchEvents >= batchSize {
+			delay = 0
+		} else if claimed && err == nil {
 			delay = time.Second
 		}
 		timer := time.NewTimer(delay)
