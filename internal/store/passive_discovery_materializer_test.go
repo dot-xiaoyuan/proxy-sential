@@ -16,7 +16,7 @@ func TestPassiveDiscoveryUsesBoundedSignalStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	querySource := string(source)
-	if !strings.Contains(querySource, "FROM passive_discovery_events_v1 PREWHERE") || strings.Contains(querySource, "FROM normalized_events PREWHERE") {
+	if !strings.Contains(querySource, "FROM passive_discovery_events_v2 PREWHERE") || strings.Contains(querySource, "FROM normalized_events PREWHERE") {
 		t.Fatal("passive materializer must not scan the general normalized event table")
 	}
 }
