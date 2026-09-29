@@ -2899,9 +2899,9 @@ export interface components {
             event_ids: string[];
             known_device_count: number;
             /** @enum {string} */
-            known_device_basis?: "explicit_hardware_model_lower_bound";
+            known_device_basis?: "explicit_hardware_model_lower_bound" | "ieee1905_association_current";
             /** @enum {string} */
-            known_device_window?: "24h";
+            known_device_window?: "24h" | "current";
             known_devices: components["schemas"]["SharedBehaviorKnownDevice"][];
         };
         SharedBehaviorHistory: {

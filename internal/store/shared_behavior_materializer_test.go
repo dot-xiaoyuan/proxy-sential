@@ -128,3 +128,25 @@ func TestSharedBehaviorKnownDevicesKeepsOnlyRepeatedExplicitModels(t *testing.T)
 		t.Fatalf("known devices were not merged conservatively: %+v", got)
 	}
 }
+
+func TestMergeIEEE1905AssociationWindowsCreatesPassiveGatewayWindow(t *testing.T) {
+	from := time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
+	to := from.Add(10 * time.Minute)
+	groups := []ieee1905AssociationGroup{{
+		SensorID: "sensor", CampusID: "ncu", AccessDomain: "campus-mirror",
+		GatewayIP: "192.168.0.22", GatewayMAC: "20:3a:eb:e9:de:10",
+		Clients: []string{"10:20:30:40:50:60", "10:20:30:40:50:61"}, EventIDs: []string{"event-1", "event-2"},
+		FirstSeen: from, LastSeen: to.Add(-time.Minute),
+	}}
+	windows := mergeIEEE1905AssociationWindows(nil, groups, from, to, true, nil)
+	if len(windows) != 1 {
+		t.Fatalf("windows=%d", len(windows))
+	}
+	window := windows[0]
+	if window.IP != "192.168.0.22" || len(window.AssociatedClients) != 2 || len(window.Records) != 2 {
+		t.Fatalf("unexpected passive gateway window: %+v", window)
+	}
+	if len(window.Samples["ieee1905_association"]) != 2 || window.Sources[0] != "packet-sidecar" {
+		t.Fatalf("association evidence was not retained: %+v", window)
+	}
+}

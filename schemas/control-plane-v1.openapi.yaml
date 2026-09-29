@@ -2798,8 +2798,8 @@ components:
             additionalProperties: true
         event_ids: { type: array, items: { type: string } }
         known_device_count: { type: integer, minimum: 0 }
-        known_device_basis: { type: string, enum: [explicit_hardware_model_lower_bound] }
-        known_device_window: { type: string, enum: [24h] }
+        known_device_basis: { type: string, enum: [explicit_hardware_model_lower_bound, ieee1905_association_current] }
+        known_device_window: { type: string, enum: [24h, current] }
         known_devices: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorKnownDevice' } }
     SharedBehaviorHistory:
       type: object

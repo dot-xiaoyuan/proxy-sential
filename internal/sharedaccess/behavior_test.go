@@ -155,3 +155,27 @@ func TestAssessBehaviorIgnoresNoisyThirdValueWhenARepeatedPairCoexists(t *testin
 		t.Fatalf("a noisy third value suppressed the valid repeated pair: %+v present=%t", item, present)
 	}
 }
+
+func TestAssessBehaviorUsesPassiveIEEE1905Associations(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	w := repeatedBehaviorWindow(now, nil)
+	w.AssociatedClients = []string{"10:20:30:40:50:60", "10:20:30:40:50:61"}
+	w.Samples["ieee1905_association"] = map[string]FeatureSample{
+		"10:20:30:40:50:60": {Count: 1, Buckets: []int64{now.Unix() / 5}},
+		"10:20:30:40:50:61": {Count: 1, Buckets: []int64{now.Unix() / 5}},
+	}
+	item, present := AssessBehavior("easy-mesh", "endpoint", w, BehaviorRouterContext{Role: "router", Status: "confirmed"})
+	if !present || item.Status != "confirmed" || item.Confidence != 90 || item.CoverageState != "verified" {
+		t.Fatalf("passive association state did not confirm shared behavior: %+v present=%t", item, present)
+	}
+	if len(item.SignalGroups) != 3 || item.SignalGroups[0] != "confirmed_same_exit_endpoints" || item.SignalGroups[1] != "ieee1905_association" || item.SignalGroups[2] != "router_identity" {
+		t.Fatalf("unexpected passive association signal groups: %+v", item.SignalGroups)
+	}
+
+	w.Complete = false
+	w.CoverageVerified = false
+	item, present = AssessBehavior("easy-mesh-partial", "endpoint", w, BehaviorRouterContext{})
+	if !present || item.Status != "candidate" || item.Confidence != 59 || item.CoverageState != "partial" {
+		t.Fatalf("incomplete capture bypassed the passive association gate: %+v present=%t", item, present)
+	}
+}

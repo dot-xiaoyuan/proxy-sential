@@ -42,27 +42,28 @@ type RecordRef struct {
 }
 
 type Window struct {
-	CoverageVerified bool                                `json:"coverage_verified,omitempty"`
-	Samples          map[string]map[string]FeatureSample `json:"feature_samples,omitempty"`
-	Records          []RecordRef                         `json:"records,omitempty"`
-	ID               string                              `json:"id"`
-	RuleVersion      string                              `json:"rule_version"`
-	IP               string                              `json:"ip"`
-	SensorID         string                              `json:"sensor_id"`
-	CampusID         string                              `json:"campus_id,omitempty"`
-	AccessDomain     string                              `json:"access_domain,omitempty"`
-	Sources          []string                            `json:"sources"`
-	From             time.Time                           `json:"from"`
-	To               time.Time                           `json:"to"`
-	LastObservedAt   time.Time                           `json:"last_observed_at"`
-	Complete         bool                                `json:"complete"`
-	EventIDs         []string                            `json:"event_ids"`
-	UAOS             []string                            `json:"ua_os"`
-	TTLPaths         []string                            `json:"ttl_paths"`
-	TLSStacks        []string                            `json:"tls_stacks"`
-	TCPStacks        []string                            `json:"tcp_stacks"`
-	DHCPProfiles     []string                            `json:"dhcp_profiles"`
-	Conflicts        []string                            `json:"conflicts"`
+	CoverageVerified  bool                                `json:"coverage_verified,omitempty"`
+	Samples           map[string]map[string]FeatureSample `json:"feature_samples,omitempty"`
+	Records           []RecordRef                         `json:"records,omitempty"`
+	ID                string                              `json:"id"`
+	RuleVersion       string                              `json:"rule_version"`
+	IP                string                              `json:"ip"`
+	SensorID          string                              `json:"sensor_id"`
+	CampusID          string                              `json:"campus_id,omitempty"`
+	AccessDomain      string                              `json:"access_domain,omitempty"`
+	Sources           []string                            `json:"sources"`
+	From              time.Time                           `json:"from"`
+	To                time.Time                           `json:"to"`
+	LastObservedAt    time.Time                           `json:"last_observed_at"`
+	Complete          bool                                `json:"complete"`
+	EventIDs          []string                            `json:"event_ids"`
+	UAOS              []string                            `json:"ua_os"`
+	TTLPaths          []string                            `json:"ttl_paths"`
+	TLSStacks         []string                            `json:"tls_stacks"`
+	TCPStacks         []string                            `json:"tcp_stacks"`
+	DHCPProfiles      []string                            `json:"dhcp_profiles"`
+	AssociatedClients []string                            `json:"associated_clients,omitempty"`
+	Conflicts         []string                            `json:"conflicts"`
 }
 type Result struct {
 	Records          []RecordRef `json:"records,omitempty"`

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const BehaviorRuleVersion = "shared-behavior/v8"
+const BehaviorRuleVersion = "shared-behavior/v9"
 
 type BehaviorRouterContext struct {
 	AssessmentID string `json:"assessment_id,omitempty"`
@@ -89,6 +89,30 @@ func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContex
 		result.CoverageState = "partial"
 	} else {
 		result.CoverageState = "unknown"
+	}
+	if diversity(w.AssociatedClients) >= 2 {
+		result.Confidence = 90
+		result.SignalGroups = append(result.SignalGroups, "confirmed_same_exit_endpoints", "ieee1905_association")
+		result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{
+			Signal: "ieee1905_association", Score: 90,
+			Explanation: "IEEE 1905.1/EasyMesh 当前关联状态确认多个终端接入同一设备",
+		})
+		if (router.Status == "confirmed" || router.Status == "likely") && router.Role == "router" {
+			result.SignalGroups = append(result.SignalGroups, "router_identity")
+			result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{
+				Signal: "router_identity", Score: 0, Explanation: "被动路由器画像与 EasyMesh 接入设备一致",
+			})
+		}
+		sort.Strings(result.SignalGroups)
+		if result.CoverageState != "verified" {
+			result.Confidence = 59
+			result.Conflicts = append(result.Conflicts, "capture_coverage_incomplete")
+			result.Reasons = append(result.Reasons, "EasyMesh 关联可见，但采集连续性尚未验证")
+			return result, true
+		}
+		result.Status = "confirmed"
+		result.Reasons = append(result.Reasons, "被动 EasyMesh 关联状态确认多个终端同时接入")
+		return result, true
 	}
 	type signal struct {
 		name        string

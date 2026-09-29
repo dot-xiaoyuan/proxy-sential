@@ -42,6 +42,11 @@ func Run(ctx context.Context, opts Options) error {
 	_ = syscall.SetNonblock(fd, true)
 	values := map[packetBucketKey]int{}
 	controlValues := map[string]controlSignal{}
+	type recentIP struct {
+		address string
+		seenAt  time.Time
+	}
+	recentIPByMAC := map[string]recentIP{}
 	bucket := time.Now().UTC().Truncate(opts.Bucket)
 	ticker := time.NewTicker(opts.Bucket)
 	defer ticker.Stop()
@@ -60,10 +65,10 @@ func Run(ctx context.Context, opts Options) error {
 				return recvErr
 			}
 			processed++
-			if signal, found := parseControlFrame(buffer[:n]); found {
-				controlValues[signal.key()] = signal
-			}
 			if value, ok := parsePacketFrame(buffer[:n]); ok && value.TTL > 0 {
+				if value.IP.IsPrivate() {
+					recentIPByMAC[net.HardwareAddr(value.MAC[:]).String()] = recentIP{address: value.IP.String(), seenAt: time.Now().UTC()}
+				}
 				value.Direction = opts.CaptureScope.DirectionAddr(value.IP, value.DestinationIP)
 				if value.Direction == "inbound" || value.Direction == "internal" {
 					continue
@@ -72,6 +77,14 @@ func Run(ctx context.Context, opts Options) error {
 					continue
 				}
 				values[packetBucketKey{IP: value.IP, MAC: value.MAC, Direction: value.Direction, Version: value.Version, TTL: value.TTL, TCP: value.TCP}]++
+			}
+			for _, signal := range parseControlFrames(buffer[:n]) {
+				if signal.IP == "" {
+					if recent, found := recentIPByMAC[signal.MAC]; found && time.Since(recent.seenAt) <= 24*time.Hour {
+						signal.IP = recent.address
+					}
+				}
+				controlValues[signal.key()] = signal
 			}
 		}
 		select {

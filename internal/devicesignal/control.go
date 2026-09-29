@@ -64,47 +64,195 @@ func parseEthernetFrame(frame []byte) (ethernetFrame, bool) {
 }
 
 func parseControlFrame(frame []byte) (controlSignal, bool) {
-	ethernet, ok := parseEthernetFrame(frame)
-	if !ok {
+	signals := parseControlFrames(frame)
+	if len(signals) == 0 {
 		return controlSignal{}, false
 	}
+	return signals[0], true
+}
+
+func parseControlFrames(frame []byte) []controlSignal {
+	ethernet, ok := parseEthernetFrame(frame)
+	if !ok {
+		return nil
+	}
 	if ethernet.etherType == 0x88cc {
-		return parseLLDP(ethernet)
+		if signal, found := parseLLDP(ethernet); found {
+			return []controlSignal{signal}
+		}
+		return nil
+	}
+	if ethernet.etherType == 0x893a {
+		return parseIEEE1905(ethernet)
 	}
 	if ethernet.destination == [6]byte{0x01, 0x00, 0x0c, 0xcc, 0xcc, 0xcc} {
 		if signal, found := parseCDP(ethernet); found {
-			return signal, true
+			return []controlSignal{signal}
 		}
 	}
 	if ethernet.etherType != 0x0800 || len(ethernet.payload) < 20 || ethernet.payload[0]>>4 != 4 {
-		return controlSignal{}, false
+		return nil
 	}
 	ipHeaderLength := int(ethernet.payload[0]&0x0f) * 4
 	if ipHeaderLength < 20 || len(ethernet.payload) < ipHeaderLength {
-		return controlSignal{}, false
+		return nil
 	}
 	source := net.IP(ethernet.payload[12:16]).String()
 	destination := net.IP(ethernet.payload[16:20]).String()
 	protocol := ethernet.payload[9]
 	transport := ethernet.payload[ipHeaderLength:]
 	if protocol == 112 {
-		return parseVRRP(ethernet, source, destination, transport)
+		if signal, found := parseVRRP(ethernet, source, destination, transport); found {
+			return []controlSignal{signal}
+		}
+		return nil
 	}
 	if protocol != 17 || len(transport) < 8 {
-		return controlSignal{}, false
+		return nil
 	}
 	sourcePort, destinationPort := binary.BigEndian.Uint16(transport[:2]), binary.BigEndian.Uint16(transport[2:4])
 	udpPayload := transport[8:]
 	if sourcePort == 1900 || destinationPort == 1900 {
-		return parseSSDP(ethernet, source, destination, udpPayload)
+		if signal, found := parseSSDP(ethernet, source, destination, udpPayload); found {
+			return []controlSignal{signal}
+		}
+		return nil
 	}
 	// IPv4 HSRP uses UDP 1985 at both ends. Matching either endpoint (or the
 	// IPv6 HSRP port 2029 in this IPv4 parser) turns ordinary client traffic
 	// whose ephemeral source port happens to be 1985/2029 into router evidence.
 	if sourcePort == 1985 && destinationPort == 1985 {
-		return parseHSRP(ethernet, source, destination, sourcePort, destinationPort, udpPayload)
+		if signal, found := parseHSRP(ethernet, source, destination, sourcePort, destinationPort, udpPayload); found {
+			return []controlSignal{signal}
+		}
 	}
-	return controlSignal{}, false
+	return nil
+}
+
+type ieee1905ClientAssociation struct {
+	clientMAC      string
+	bssid          string
+	state          string
+	associationAge int
+	snapshot       bool
+}
+
+func parseIEEE1905(ethernet ethernetFrame) []controlSignal {
+	// IEEE 1905.1 CMDUs use an eight-octet header followed by TLVs. Fragmented
+	// messages require reassembly, so only complete, unfragmented messages are
+	// emitted. Bit 7 of the flags octet marks the last fragment.
+	payload := ethernet.payload
+	if len(payload) < 8 || payload[0] != 0 || payload[6] != 0 || payload[7]&0x80 == 0 {
+		return nil
+	}
+	messageType := binary.BigEndian.Uint16(payload[2:4])
+	messageID := binary.BigEndian.Uint16(payload[4:6])
+	sourceMAC := net.HardwareAddr(ethernet.source[:]).String()
+	alMAC := sourceMAC
+	interfaceMAC := ""
+	vendorOUI := ""
+	clients := []ieee1905ClientAssociation{}
+	for tlvs := payload[8:]; len(tlvs) >= 3; {
+		kind, length := tlvs[0], int(binary.BigEndian.Uint16(tlvs[1:3]))
+		tlvs = tlvs[3:]
+		if length > len(tlvs) {
+			return nil
+		}
+		value := tlvs[:length]
+		tlvs = tlvs[length:]
+		switch kind {
+		case 0:
+			tlvs = nil
+		case 1:
+			if len(value) == 6 {
+				alMAC = net.HardwareAddr(value).String()
+			}
+		case 2:
+			if len(value) == 6 {
+				interfaceMAC = net.HardwareAddr(value).String()
+			}
+		case 0x0b:
+			if len(value) >= 3 {
+				vendorOUI = fmt.Sprintf("%02x:%02x:%02x", value[0], value[1], value[2])
+			}
+		case 0x92:
+			if len(value) != 13 {
+				continue
+			}
+			state := "left"
+			if value[12]&0x80 != 0 {
+				state = "joined"
+			}
+			clients = append(clients, ieee1905ClientAssociation{
+				clientMAC: net.HardwareAddr(value[:6]).String(), bssid: net.HardwareAddr(value[6:12]).String(), state: state,
+			})
+		case 0x84:
+			parsed, valid := parseIEEE1905AssociatedClients(value)
+			if !valid {
+				return nil
+			}
+			clients = append(clients, parsed...)
+		}
+	}
+	base := map[string]any{
+		"origin": "ieee1905", "al_mac": alMAC, "message_type": int(messageType), "message_id": int(messageID),
+	}
+	if interfaceMAC != "" {
+		base["interface_mac"] = interfaceMAC
+	}
+	if vendorOUI != "" {
+		base["vendor_oui"] = vendorOUI
+	}
+	if ethernet.vlan > 0 {
+		base["vlan"] = ethernet.vlan
+	}
+	signals := []controlSignal{}
+	if messageType == 0x0000 {
+		signals = append(signals, controlSignal{Kind: "ieee1905_topology", MAC: sourceMAC, VLAN: ethernet.vlan, Payload: base})
+	}
+	for _, client := range clients {
+		clientPayload := make(map[string]any, len(base)+5)
+		for key, value := range base {
+			clientPayload[key] = value
+		}
+		clientPayload["client_mac"] = client.clientMAC
+		clientPayload["bssid"] = client.bssid
+		clientPayload["association_state"] = client.state
+		if client.snapshot {
+			clientPayload["topology_snapshot"] = true
+			clientPayload["association_age_seconds"] = client.associationAge
+		}
+		signals = append(signals, controlSignal{Kind: "ieee1905_client_association", MAC: sourceMAC, VLAN: ethernet.vlan, Payload: clientPayload})
+	}
+	return signals
+}
+
+func parseIEEE1905AssociatedClients(value []byte) ([]ieee1905ClientAssociation, bool) {
+	if len(value) < 1 {
+		return nil, false
+	}
+	bssCount := int(value[0])
+	value = value[1:]
+	clients := []ieee1905ClientAssociation{}
+	for bss := 0; bss < bssCount; bss++ {
+		if len(value) < 8 {
+			return nil, false
+		}
+		bssid := net.HardwareAddr(value[:6]).String()
+		clientCount := int(binary.BigEndian.Uint16(value[6:8]))
+		value = value[8:]
+		if clientCount > len(value)/8 {
+			return nil, false
+		}
+		for index := 0; index < clientCount; index++ {
+			clients = append(clients, ieee1905ClientAssociation{
+				clientMAC: net.HardwareAddr(value[:6]).String(), bssid: bssid, state: "joined",
+				associationAge: int(binary.BigEndian.Uint16(value[6:8])), snapshot: true,
+			})
+			value = value[8:]
+		}
+	}
+	return clients, true
 }
 
 func baseControlSignal(kind string, ethernet ethernetFrame, ip, destination string) controlSignal {

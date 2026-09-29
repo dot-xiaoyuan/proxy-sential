@@ -387,6 +387,69 @@ func featureValues(values map[string]sharedaccess.FeatureSample) []string {
 	return result
 }
 
+func mergeIEEE1905AssociationWindows(windows []sharedaccess.Window, groups []ieee1905AssociationGroup, from, to time.Time, complete bool, coverageReasons []string) []sharedaccess.Window {
+	indexes := map[string]int{}
+	for index := range windows {
+		key := strings.Join([]string{windows[index].SensorID, windows[index].CampusID, windows[index].AccessDomain, windows[index].IP}, "\x00")
+		indexes[key] = index
+	}
+	for _, group := range groups {
+		if net.ParseIP(group.GatewayIP) == nil || len(group.Clients) == 0 {
+			continue
+		}
+		key := strings.Join([]string{group.SensorID, group.CampusID, group.AccessDomain, group.GatewayIP}, "\x00")
+		index, found := indexes[key]
+		if !found {
+			window := sharedaccess.Window{
+				RuleVersion: sharedaccess.RuleVersion, IP: group.GatewayIP, SensorID: group.SensorID,
+				CampusID: group.CampusID, AccessDomain: group.AccessDomain, From: from, To: to,
+				LastObservedAt: to, Complete: complete, CoverageVerified: complete,
+				Samples: map[string]map[string]sharedaccess.FeatureSample{}, Conflicts: append([]string{}, coverageReasons...),
+				Sources: []string{"packet-sidecar"},
+			}
+			window.ID = stableSharedBehaviorID(window.SensorID, window.CampusID, window.AccessDomain, window.IP, from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+			windows = append(windows, window)
+			index = len(windows) - 1
+			indexes[key] = index
+		}
+		window := &windows[index]
+		window.AssociatedClients = append([]string{}, group.Clients...)
+		if window.Samples == nil {
+			window.Samples = map[string]map[string]sharedaccess.FeatureSample{}
+		}
+		window.Samples["ieee1905_association"] = map[string]sharedaccess.FeatureSample{}
+		bucket := to.UnixMilli() / 5000
+		for _, client := range group.Clients {
+			window.Samples["ieee1905_association"][client] = sharedaccess.FeatureSample{Count: 1, Buckets: []int64{bucket}}
+		}
+		sourcePresent := false
+		for _, source := range window.Sources {
+			if source == "packet-sidecar" {
+				sourcePresent = true
+			}
+		}
+		if !sourcePresent {
+			window.Sources = append(window.Sources, "packet-sidecar")
+			sort.Strings(window.Sources)
+		}
+		seenEvents := map[string]bool{}
+		for _, eventID := range window.EventIDs {
+			seenEvents[eventID] = true
+		}
+		for _, eventID := range group.EventIDs {
+			if eventID == "" || seenEvents[eventID] || len(window.EventIDs) >= 64 {
+				continue
+			}
+			seenEvents[eventID] = true
+			window.EventIDs = append(window.EventIDs, eventID)
+			window.Records = append(window.Records, sharedaccess.RecordRef{EventID: eventID, Source: "packet-sidecar"})
+		}
+		sort.Strings(window.EventIDs)
+	}
+	sort.Slice(windows, func(i, j int) bool { return windows[i].IP < windows[j].IP })
+	return windows
+}
+
 func (s *DBStore) sharedBehaviorRouter(ctx context.Context, endpointID, ip string, at time.Time) (sharedaccess.BehaviorRouterContext, error) {
 	var raw []byte
 	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment FROM router_assessments
@@ -453,6 +516,13 @@ SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE NOT EXISTS(
 func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string, now time.Time) (int, error) {
 	windowEnd := now.UTC().Add(-90 * time.Second).Truncate(5 * time.Minute)
 	windowStart := windowEnd.Add(-10 * time.Minute)
+	if err := s.syncIEEE1905Associations(ctx, sensorID, now); err != nil {
+		return 0, err
+	}
+	associationGroups, err := s.activeIEEE1905AssociationGroups(ctx, sensorID)
+	if err != nil {
+		return 0, err
+	}
 	rows, err := s.sharedBehaviorSignalRows(ctx, sensorID, windowStart, windowEnd)
 	if err != nil {
 		return 0, err
@@ -465,6 +535,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 	if err != nil {
 		return 0, err
 	}
+	windows = mergeIEEE1905AssociationWindows(windows, associationGroups, windowStart, windowEnd, complete, coverageReasons)
 	windowIPs := make([]string, 0, len(windows))
 	for _, window := range windows {
 		windowIPs = append(windowIPs, window.IP)
@@ -499,7 +570,11 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 		key := strings.Join([]string{window.SensorID, window.CampusID, window.AccessDomain, window.IP}, "\x00")
 		item.KnownDevices = append([]sharedaccess.KnownDevice{}, knownDevices[key]...)
 		item.KnownDeviceCount = len(item.KnownDevices)
-		if item.KnownDeviceCount > 0 {
+		if len(window.AssociatedClients) > item.KnownDeviceCount {
+			item.KnownDeviceCount = len(window.AssociatedClients)
+			item.KnownDeviceBasis = "ieee1905_association_current"
+			item.KnownDeviceWindow = "current"
+		} else if item.KnownDeviceCount > 0 {
 			item.KnownDeviceBasis = "explicit_hardware_model_lower_bound"
 			item.KnownDeviceWindow = "24h"
 		}
