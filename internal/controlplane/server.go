@@ -10,15 +10,21 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"proxy-sentinel/internal/appdomain"
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/evaluation"
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/proxyprotocol"
 	"proxy-sentinel/internal/risk"
+	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
 )
 
@@ -29,6 +35,12 @@ const (
 )
 
 type Options struct {
+	NativeActions         map[string]NativeActionRuntime
+	SharedAccessConfig    string
+	IdentitySourcesConfig string
+	ProxyProtocolConfig   string
+	ApplicationsEnabled   bool
+	ApplicationsDir       string
 	Addr                  string
 	ShadowDir             string
 	SensorID              string
@@ -44,6 +56,8 @@ type Options struct {
 	FingerprintAutoUpdate bool
 	AuthFile              string
 	AuthCookieSecure      bool
+	OIDC                  OIDCOptions
+	ExportDir             string
 	IdentityIngestKey     string
 	OperationsFile        string
 	ActionMasterKey       string
@@ -51,6 +65,18 @@ type Options struct {
 }
 
 type Server struct {
+	managedIdentityFailures *managedIdentityFailureCache
+	sharedReviews           *sharedReviewRuntime
+
+	actionDeliveries   *actionDeliveryQueue
+	statistics         *statisticsCache
+	tasks              *taskRuntime
+	nativeActions      map[string]NativeActionRuntime
+	identitySources    []identitySourceRegistration
+	sharedConfig       sharedaccess.Config
+	proxyConfig        proxyprotocol.Config
+	proxyResults       *proxyprotocol.Repository
+	applications       *appdomain.Service
 	shadowDir          string
 	sensorID           string
 	frontendDir        string
@@ -59,6 +85,9 @@ type Server struct {
 	fingerprints       *fingerprint.Manager
 	fingerprintOffline bool
 	auth               *authManager
+	oidc               *oidcManager
+	oidcError          string
+	exports            *exportManager
 	identityIngest     *identityIngestState
 	operations         *operationsState
 	actionMasterKey    []byte
@@ -83,8 +112,11 @@ type RiskListResponse struct {
 }
 
 type DeviceListResponse struct {
-	Items []store.EndpointDeviceInventory `json:"items"`
-	Page  Page                            `json:"page"`
+	DeviceNamesDisabled bool                            `json:"device_names_disabled,omitempty"`
+	FacetsAsOf          string                          `json:"facets_as_of,omitempty"`
+	Items               []store.EndpointDeviceInventory `json:"items"`
+	Page                Page                            `json:"page"`
+	Facets              store.DeviceFilterFacets        `json:"facets"`
 }
 
 type EventListResponse struct {
@@ -119,20 +151,22 @@ type ShadowRun struct {
 }
 
 type Overview struct {
-	LevelCounts      LevelCounts        `json:"level_counts"`
-	PendingReviews   int                `json:"pending_reviews"`
-	LatestShadowRun  ShadowRun          `json:"latest_shadow_run"`
-	Throughput       Throughput         `json:"throughput"`
-	TopEvidence      []EvidenceTypeStat `json:"top_evidence"`
-	Window           string             `json:"window"`
-	SensorID         string             `json:"sensor_id"`
-	AsOf             string             `json:"as_of"`
-	FirstSeen        string             `json:"first_seen,omitempty"`
-	LastSeen         string             `json:"last_seen,omitempty"`
-	DataSource       string             `json:"data_source"`
-	ActiveIPCount    int                `json:"active_ip_count"`
-	OpenCaseCount    int                `json:"open_case_count"`
-	OverdueCaseCount int                `json:"overdue_case_count"`
+	StatisticsAsOf   string               `json:"statistics_as_of,omitempty"`
+	DataFreshness    *store.DataFreshness `json:"data_freshness,omitempty"`
+	LevelCounts      LevelCounts          `json:"level_counts"`
+	PendingReviews   int                  `json:"pending_reviews"`
+	LatestShadowRun  ShadowRun            `json:"latest_shadow_run"`
+	Throughput       Throughput           `json:"throughput"`
+	TopEvidence      []EvidenceTypeStat   `json:"top_evidence"`
+	Window           string               `json:"window"`
+	SensorID         string               `json:"sensor_id"`
+	AsOf             string               `json:"as_of"`
+	FirstSeen        string               `json:"first_seen,omitempty"`
+	LastSeen         string               `json:"last_seen,omitempty"`
+	DataSource       string               `json:"data_source"`
+	ActiveIPCount    int                  `json:"active_ip_count"`
+	OpenCaseCount    int                  `json:"open_case_count"`
+	OverdueCaseCount int                  `json:"overdue_case_count"`
 }
 
 type LevelCounts struct {
@@ -195,6 +229,9 @@ type ErrorResponse struct {
 }
 
 func Serve(opts Options) error {
+	if err := ValidateNativeTestListener(opts.NativeActions, opts.Addr); err != nil {
+		return err
+	}
 	addr := opts.Addr
 	if addr == "" {
 		addr = ":8080"
@@ -202,6 +239,21 @@ func Serve(opts Options) error {
 	server, err := NewServerWithError(opts)
 	if err != nil {
 		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Read-only mode blocks operator mutations and enforcement. Derived read
+	// models still need their cursors advanced so statistics remain queryable.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EMBEDDED_READ_MODELS")), "true") {
+		if models, ok := server.reader.(interface{ RunApplicationReadModels(context.Context) }); ok {
+			go models.RunApplicationReadModels(ctx)
+		}
+	}
+	if !opts.ReadOnly {
+		go server.runProxyProtocol(ctx)
+	}
+	if server.applications != nil && !opts.ReadOnly {
+		go server.applications.Run(ctx)
 	}
 	return http.ListenAndServe(addr, server.Handler())
 }
@@ -218,6 +270,10 @@ func NewServer(opts Options) *Server {
 }
 
 func NewServerWithError(opts Options) (*Server, error) {
+	registeredSources, sourceErr := loadIdentitySources(opts.IdentitySourcesConfig)
+	if sourceErr != nil {
+		return nil, fmt.Errorf("load identity sources: %w", sourceErr)
+	}
 	shadowDir := opts.ShadowDir
 	if shadowDir == "" {
 		shadowDir = "data/shadow"
@@ -267,6 +323,22 @@ func NewServerWithError(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	oidcContext, cancelOIDC := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelOIDC()
+	oidcAuth, err := newOIDCManager(oidcContext, opts.OIDC, auth)
+	oidcError := ""
+	if err != nil {
+		oidcError = err.Error()
+		oidcAuth = nil
+	}
+	exportDir := opts.ExportDir
+	if exportDir == "" {
+		exportDir = filepath.Join(shadowDir, "exports")
+	}
+	exports, err := newExportManager(exportDir)
+	if err != nil {
+		return nil, err
+	}
 	operationsFile := opts.OperationsFile
 	operationsDSN := ""
 	if mode == store.ModeFile && operationsFile == "" {
@@ -284,21 +356,65 @@ func NewServerWithError(opts Options) (*Server, error) {
 		return nil, err
 	}
 	server := &Server{
-		shadowDir:          shadowDir,
-		sensorID:           sensorID,
-		frontendDir:        opts.FrontendDir,
-		readOnly:           opts.ReadOnly,
-		reader:             reader,
-		fingerprints:       fingerprints,
-		fingerprintOffline: !opts.FingerprintAutoUpdate,
-		auth:               auth,
-		identityIngest:     identityIngest,
-		operations:         operations,
-		actionMasterKey:    []byte(opts.ActionMasterKey),
-		exceptions:         newExceptionManager(operations.db),
+		managedIdentityFailures: &managedIdentityFailureCache{},
+		sharedReviews:           &sharedReviewRuntime{},
+		statistics:              newStatisticsCache(),
+		tasks:                   &taskRuntime{dir: filepath.Join(exportDir, "task-input"), wake: make(chan struct{}, 2)},
+		nativeActions:           opts.NativeActions,
+		identitySources:         registeredSources,
+		shadowDir:               shadowDir,
+		sensorID:                sensorID,
+		frontendDir:             opts.FrontendDir,
+		readOnly:                opts.ReadOnly,
+		reader:                  reader,
+		fingerprints:            fingerprints,
+		fingerprintOffline:      !opts.FingerprintAutoUpdate,
+		auth:                    auth,
+		oidc:                    oidcAuth,
+		oidcError:               oidcError,
+		exports:                 exports,
+		identityIngest:          identityIngest,
+		operations:              operations,
+		actionMasterKey:         []byte(opts.ActionMasterKey),
+		exceptions:              newExceptionManager(operations.db),
+	}
+	server.bind4KCredentialProviders()
+	server.actionDeliveries = newActionDeliveryQueue(server.deliverAction)
+	server.sharedConfig, err = sharedaccess.Load(opts.SharedAccessConfig)
+	if err != nil {
+		return nil, fmt.Errorf("load shared access config: %w", err)
+	}
+	server.proxyConfig, err = proxyprotocol.Load(opts.ProxyProtocolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("load proxy protocol config: %w", err)
+	}
+	server.proxyResults = proxyprotocol.OpenRepository(operations.db, filepath.Join(shadowDir, "proxy-protocol"))
+	if _, supported := reader.(appdomain.EventSource); supported {
+		source, ok := reader.(appdomain.EventSource)
+		if !ok {
+			return nil, fmt.Errorf("store does not support application observations")
+		}
+		dir := opts.ApplicationsDir
+		if dir == "" {
+			dir = filepath.Join(shadowDir, "applications")
+		}
+		server.applications, err = appdomain.OpenServiceWithDefault(dir, source, opts.ApplicationsEnabled)
+		if err != nil {
+			return nil, fmt.Errorf("open application observations: %w", err)
+		}
+	}
+	persistContext, cancelPersist := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelPersist()
+	if err := server.persistFingerprintStatus(persistContext, fingerprints.Status()); err != nil {
+		return nil, fmt.Errorf("persist device fingerprint version: %w", err)
 	}
 	if opts.FingerprintAutoUpdate {
 		fingerprints.Start(context.Background(), 7*24*time.Hour)
+	}
+	if !opts.ReadOnly {
+		if worker, ok := server.reader.(interface{ StartDomainRecognition() }); ok {
+			worker.StartDomainRecognition()
+		}
 	}
 	fingerprintStatus := fingerprints.Status()
 	if !opts.ReadOnly && fingerprintStatus.Source == "offline-bundle" && (fingerprintStatus.BackfillStatus != "completed" || fingerprintStatus.DomainBackfillStatus == "pending" || fingerprintStatus.DomainBackfillStatus == "running" || fingerprintStatus.DomainBackfillStatus == "failed") {
@@ -306,6 +422,15 @@ func NewServerWithError(opts Options) (*Server, error) {
 	}
 	if !opts.ReadOnly && operations.db != nil {
 		server.startActionWorker()
+		server.startCaseSynchronizer()
+	}
+	if !opts.ReadOnly && len(server.exports.jobs) > 0 {
+		server.exports.startWorkers(server)
+	}
+	if !opts.ReadOnly && operations.db != nil {
+		server.startOperationWorkers()
+		server.startManagedIdentityWorker()
+		server.startSharedReviewWorker()
 	}
 	return server, nil
 }
@@ -321,6 +446,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/readyz" {
 		s.handleReadiness(w, r)
+		return
+	}
+	if r.URL.Path == "/metrics" {
+		s.handleMetrics(w, r)
 		return
 	}
 	if s.handleCORS(w, r) {
@@ -362,6 +491,10 @@ func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) bool {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+	if path == "/integrations/identity/snapshots" && r.Method == http.MethodPost {
+		s.handleIdentitySnapshot(w, r)
+		return
+	}
 	if path == "/integrations/identity/events" && r.Method == http.MethodPost {
 		if s.readOnly {
 			writeError(w, http.StatusForbidden, "read_only", "identity ingestion is disabled by the global read-only switch")
@@ -380,6 +513,25 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "/auth/logout" && r.Method == http.MethodPost {
 		s.handleLogout(w, r)
+		return
+	}
+	if path == "/auth/oidc/start" && r.Method == http.MethodGet {
+		if s.oidc == nil {
+			writeError(w, http.StatusNotFound, "oidc_disabled", "OIDC authentication is not enabled")
+			return
+		}
+		s.oidc.start(w, r)
+		return
+	}
+	if path == "/auth/oidc/callback" && r.Method == http.MethodGet {
+		if s.oidc == nil {
+			writeError(w, http.StatusNotFound, "oidc_disabled", "OIDC authentication is not enabled")
+			return
+		}
+		if err := s.oidc.callback(w, r); err != nil {
+			s.appendAudit(r.Context(), "security.oidc_login", "unknown", "failed")
+			writeError(w, http.StatusUnauthorized, "oidc_login_failed", err.Error())
+		}
 		return
 	}
 	session, ok := s.authenticate(r)
@@ -403,11 +555,33 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	r = r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, session))
+	if r.Method == http.MethodGet && s.statistics != nil && isStatisticsRoute(path) {
+		s.statistics.serve(w, r, path, s.dispatchAPI)
+		return
+	}
+	s.dispatchAPI(w, r, path)
+}
+
+func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string) {
+	if s.operations.db != nil && asynchronousOperation(r.Method, path) && r.Context().Value(operationTaskContextKey{}) != true {
+		s.submitOperationTask(w, r, path)
+		return
+	}
+
+	session := sessionFromContext(r.Context())
 	switch {
 	case r.Method == http.MethodGet && path == "/session":
 		writeJSON(w, http.StatusOK, session)
+	case r.Method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")):
+		s.handleSharedBehavior(w, r, path)
+	case (path == "/shared-access/reviews" || strings.HasPrefix(path, "/shared-access/reviews/")):
+		s.handleSharedReviews(w, r, path)
+	case r.Method == http.MethodGet && path == "/shared-access/status":
+		s.handleSharedAccessStatus(w, r)
 	case r.Method == http.MethodGet && path == "/system/status":
 		s.handleSystemStatus(w, r)
+	case strings.HasPrefix(path, "/tasks/"):
+		s.handleOperationTasks(w, r, path)
 	case strings.HasPrefix(path, "/users"):
 		s.handleUsers(w, r)
 	case strings.HasPrefix(path, "/campus-exceptions"):
@@ -418,14 +592,20 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleIdentityBatches(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/integrations/identity/batches/") && strings.HasSuffix(path, "/replay"):
 		s.handleIdentityBatchReplay(w, r)
+	case strings.HasPrefix(path, "/policies") || strings.HasPrefix(path, "/policy-executions") || (strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/quota")):
+		s.handlePolicies(w, r, path)
 	case strings.HasPrefix(path, "/cases"):
 		s.handleCases(w, r)
 	case strings.HasPrefix(path, "/organization"):
 		s.handleOrganization(w, r)
 	case strings.HasPrefix(path, "/actions"):
 		s.handleActions(w, r)
+	case strings.HasPrefix(path, "/exports"):
+		s.handleExports(w, r)
 	case r.Method == http.MethodGet && path == "/overview":
 		s.handleOverview(w, r)
+	case strings.HasPrefix(path, "/application-library") || strings.HasPrefix(path, "/application-activity"):
+		s.handleApplications(w, r, path)
 	case r.Method == http.MethodGet && path == "/activity/overview":
 		s.handleActivityOverview(w, r)
 	case r.Method == http.MethodGet && path == "/activity/reports":
@@ -454,6 +634,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleEndpoint(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/endpoints/"):
 		s.handleEndpointRegistration(w, r, strings.TrimPrefix(path, "/endpoints/"))
+	case strings.HasPrefix(path, "/discovery/"):
+		s.handleDiscovery(w, r, path)
+	case r.Method == http.MethodGet && (path == "/router-observations" || strings.HasPrefix(path, "/router-observations/")):
+		s.handleRouterObservations(w, r, path)
 	case r.Method == http.MethodGet && path == "/devices":
 		s.handleDevices(w, r)
 	case r.Method == http.MethodGet && path == "/device-recognition/summary":
@@ -465,7 +649,17 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && path == "/device-fingerprint-conflicts":
 		s.handleDeviceFingerprintConflicts(w, r)
 	case r.Method == http.MethodGet && path == "/device-fingerprint-library":
-		writeJSON(w, http.StatusOK, s.fingerprints.Status())
+		status := s.fingerprints.Status()
+		if reader, ok := s.reader.(store.DomainRecognitionStatusReader); ok {
+			if domain, err := reader.DomainRecognitionStatus(r.Context()); err == nil {
+				status.ActiveDomainVersion = domain.ActiveVersion
+				status.PendingDomainVersion = domain.PendingVersion
+				status.DomainProcessingError = domain.LastError
+			} else {
+				status.DomainProcessingError = err.Error()
+			}
+		}
+		writeJSON(w, http.StatusOK, status)
 	case r.Method == http.MethodPost && path == "/device-fingerprint-library/update":
 		s.handleFingerprintLibraryUpdate(w, r)
 	case r.Method == http.MethodPost && path == "/device-fingerprint-library/import":
@@ -498,6 +692,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleShadowRun(w, r, strings.TrimPrefix(path, "/shadow/runs/"))
 	case r.Method == http.MethodGet && path == "/shadow/evaluation":
 		s.handleShadowEvaluation(w, r)
+	case r.Method == http.MethodGet && path == "/shadow/review-samples":
+		s.handleShadowReviewSamples(w, r)
 	case r.Method == http.MethodGet && path == "/audit-logs":
 		s.handleAuditLogs(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/audit-logs/"):
@@ -572,6 +768,10 @@ func (s *Server) handleProxyReviews(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_proxy_review_window", err.Error())
+		return
+	}
+	if window != "24h" && window != "7d" {
+		writeError(w, http.StatusBadRequest, "bad_proxy_review_window", "proxy review window must be one of 24h, 7d")
 		return
 	}
 	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
@@ -680,7 +880,7 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) session() Session {
-	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read", "cases:read", "identity:read", "organization:read", "actions:read"}
+	permissions := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read", "cases:read", "identity:read", "organization:read", "actions:read", "exports:read"}
 	user := User{ID: "shadow-viewer", Name: "影子观测只读用户"}
 	role := "viewer"
 	if !s.readOnly {
@@ -761,6 +961,65 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func requiredPermission(method, path string) string {
+	if method == http.MethodPost && sharedDisconnectPath(path) {
+		return "actions:execute"
+	}
+	if path == "/shared-access/reviews" || strings.HasPrefix(path, "/shared-access/reviews/") {
+		if method == http.MethodGet {
+			return "cases:read"
+		}
+		return "cases:write"
+	}
+	if method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")) {
+		return "cases:read"
+	}
+	if method == http.MethodGet && path == "/shared-access/status" {
+		return "identity:read"
+	}
+	if _, ok := managedIdentityPath("/api/v1" + path); ok {
+		return "integrations:write"
+	}
+	if is4KDatabasePath(path) {
+		return "integrations:write"
+	}
+	if strings.HasPrefix(path, "/policy-executions/") && method == http.MethodPost {
+		if strings.HasSuffix(path, "/approve") {
+			return "policies:authorize"
+		}
+		if strings.HasSuffix(path, "/revoke") {
+			return "actions:revoke"
+		}
+		return "actions:execute"
+	}
+	if strings.HasPrefix(path, "/policies") || strings.HasPrefix(path, "/policy-executions") {
+		if method == http.MethodGet || strings.HasSuffix(path, "/simulate") {
+			return "policies:read"
+		}
+		return "policies:manage"
+	}
+	if strings.HasPrefix(path, "/application-library") || strings.HasPrefix(path, "/application-activity") {
+		if method != http.MethodGet && method != http.MethodHead {
+			return "device-fingerprint-library:update"
+		}
+		if strings.HasSuffix(path, "/unknown-domains") {
+			return "exports:read"
+		}
+		return "dpi:read"
+	}
+
+	if strings.HasPrefix(path, "/discovery/") {
+		if method == http.MethodGet {
+			return "identity:read"
+		}
+		return "integrations:write"
+	}
+
+	if strings.HasPrefix(path, "/exports") {
+		if method == http.MethodPost {
+			return "exports:create"
+		}
+		return "exports:read"
+	}
 	if strings.HasPrefix(path, "/users") {
 		return "users:manage"
 	}
@@ -812,7 +1071,7 @@ func requiredPermission(method, path string) string {
 		return "actions:read"
 	case strings.HasPrefix(path, "/integrations"):
 		return "integrations:write"
-	case strings.HasPrefix(path, "/accounts") || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/endpoints"):
+	case strings.HasPrefix(path, "/accounts") || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
 		return "identity:read"
 	default:
 		return "risks:read"
@@ -830,10 +1089,14 @@ func (s *Server) handleFingerprintLibraryUpdate(w http.ResponseWriter, r *http.R
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	status, err := s.fingerprints.Update(ctx)
+	status, err := s.fingerprints.UpdateWithGuard(ctx, s.operationCommitGuard(r.Context()))
 	if err != nil {
 		s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.update", "failed")
 		writeJSON(w, http.StatusBadGateway, status)
+		return
+	}
+	if err := s.persistFingerprintStatus(ctx, status); err != nil {
+		writeError(w, http.StatusInternalServerError, "persist_fingerprint_version_failed", err.Error())
 		return
 	}
 	s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.update", "updated:"+status.Version)
@@ -850,10 +1113,14 @@ func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "bad_fingerprint_bundle", err.Error())
 		return
 	}
-	status, err := s.fingerprints.Import(data)
+	status, err := s.fingerprints.ImportWithGuard(data, s.operationCommitGuard(r.Context()))
 	if err != nil {
 		s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.import", "failed")
 		writeError(w, http.StatusUnprocessableEntity, "invalid_fingerprint_bundle", err.Error())
+		return
+	}
+	if err := s.persistFingerprintStatus(r.Context(), status); err != nil {
+		writeError(w, http.StatusInternalServerError, "persist_fingerprint_version_failed", err.Error())
 		return
 	}
 	s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.import", "imported:"+status.Version)
@@ -862,18 +1129,25 @@ func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) startFingerprintBackfill(version string) {
-	if domainBackfiller, ok := s.reader.(store.DomainEvidenceVersionBackfiller); ok && s.fingerprints.Status().DomainRuleCount > 0 {
+	if domainBackfiller, ok := s.reader.(store.DomainEvidenceVersionBackfiller); ok {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 			defer cancel()
-			domainResult, err := domainBackfiller.RebuildDomainEvidenceVersion(ctx, version, 7*24*time.Hour, 10000, func(item store.DomainBackfillProgress) {
-				s.fingerprints.SetDomainBackfill(item.Status, item.Processed)
+			domainResult, err := domainBackfiller.RebuildDomainEvidenceVersion(ctx, version, 7*24*time.Hour, store.MaxDomainBatchSize, func(item store.DomainBackfillProgress) {
+				if s.fingerprints.Status().Version == version {
+					s.fingerprints.SetDomainBackfill(item.Status, item.Processed)
+				}
 			})
 			if err != nil {
-				s.fingerprints.SetDomainBackfillFailure(domainResult.Processed, err)
+				if s.fingerprints.Status().Version == version {
+					s.fingerprints.SetDomainBackfillFailure(domainResult.Processed, err)
+				}
+				_ = s.persistFingerprintStatus(context.Background(), s.fingerprints.Status())
 				return
 			}
-			s.startDeviceProfileBackfill(version)
+			if s.fingerprints.Status().Version == version {
+				s.startDeviceProfileBackfill(version)
+			}
 		}()
 		return
 	}
@@ -893,7 +1167,10 @@ func (s *Server) startDeviceProfileBackfill(version string) {
 			})
 			if err != nil {
 				s.fingerprints.SetBackfill("failed", result.Processed)
+				_ = s.persistFingerprintStatus(context.Background(), s.fingerprints.Status())
+				return
 			}
+			_ = s.persistFingerprintStatus(context.Background(), s.fingerprints.Status())
 		}()
 		return
 	}
@@ -905,13 +1182,32 @@ func (s *Server) startDeviceProfileBackfill(version string) {
 			processed, err := backfiller.RebuildDeviceProfiles(ctx, 500)
 			if err != nil {
 				s.fingerprints.SetBackfill("failed", processed)
+				_ = s.persistFingerprintStatus(context.Background(), s.fingerprints.Status())
 				return
 			}
 			s.fingerprints.SetBackfill("completed", processed)
+			_ = s.persistFingerprintStatus(context.Background(), s.fingerprints.Status())
 		}()
 		return
 	}
 	s.fingerprints.SetBackfill("not_required", 0)
+	_ = s.persistFingerprintStatus(context.Background(), s.fingerprints.Status())
+}
+
+func (s *Server) persistFingerprintStatus(ctx context.Context, status fingerprint.Status) error {
+	if s.operations == nil || s.operations.db == nil || strings.TrimSpace(status.Version) == "" {
+		return nil
+	}
+	details, err := json.Marshal(status)
+	if err != nil {
+		return err
+	}
+	_, err = s.operations.db.ExecContext(ctx, `
+INSERT INTO device_fingerprint_versions(version,source,checksum,status,details,activated_at)
+VALUES($1,$2,$3,$4,$5,CASE WHEN $4='ready' THEN COALESCE(NULLIF($6,'')::timestamptz,now()) ELSE NULL END)
+ON CONFLICT(version) DO UPDATE SET source=EXCLUDED.source,checksum=EXCLUDED.checksum,status=EXCLUDED.status,details=EXCLUDED.details,activated_at=COALESCE(device_fingerprint_versions.activated_at,EXCLUDED.activated_at)`,
+		status.Version, status.Source, status.Checksum, status.Status, details, status.UpdatedAt)
+	return err
 }
 
 func (s *Server) handleFingerprintLibraryValidate(w http.ResponseWriter, r *http.Request) {
@@ -1037,6 +1333,10 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest stri
 }
 
 func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest string) {
+	if strings.HasSuffix(rest, "/name-evidence") {
+		s.handleDeviceNameEvidence(w, r, rest)
+		return
+	}
 	if !strings.HasSuffix(rest, "/identity") {
 		writeError(w, http.StatusNotFound, "not_found", "endpoint endpoint not found")
 		return
@@ -1063,7 +1363,7 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 		writeError(w, http.StatusNotFound, "endpoint_identity_not_found", "endpoint identity profile not found")
 		return
 	}
-	if evidenceReader, supported := s.reader.(store.DomainEvidenceReader); supported {
+	if evidenceReader, supported := s.reader.(store.DomainEvidenceReader); supported && profile.EcosystemEvidence == nil {
 		evidence, evidenceErr := evidenceReader.ListEndpointDomainEvidence(ctx, endpointID, 200)
 		if evidenceErr != nil {
 			writeError(w, http.StatusInternalServerError, "read_endpoint_ecosystem_evidence_failed", evidenceErr.Error())
@@ -1071,10 +1371,20 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 		}
 		profile.EcosystemEvidence = evidence
 	}
+	profile.DeviceNamesDisabled = os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true"
+	if s.operations != nil && s.operations.db != nil {
+		if summaries, err := (discovery.Repository{DB: s.operations.db}).Summaries(ctx, []string{endpointID}); err == nil {
+			profile.Discovery = summaries[endpointID]
+		}
+	}
 	writeJSON(w, http.StatusOK, profile)
 }
 
 func (s *Server) handleEndpointRegistration(w http.ResponseWriter, r *http.Request, rest string) {
+	if strings.HasSuffix(rest, "/name-note") {
+		s.handleDeviceNameNote(w, r, rest)
+		return
+	}
 	if s.readOnly {
 		writeError(w, http.StatusForbidden, "read_only", "endpoint registration is disabled in read-only control plane mode")
 		return
@@ -1222,7 +1532,11 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		activeRiskCount = overview.Throughput["risks"]
 	}
 	asOf := firstNonEmptyString(asOfParam, time.Now().UTC().Format(time.RFC3339Nano))
-	caseSummary := s.operationsSummary()
+	caseSummary, err := s.operationsSummary(ctx)
+	if err != nil {
+		writeError(w, 503, "case_summary_unavailable", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, Overview{
 		LevelCounts: LevelCounts{
 			Normal:     counts["normal"],
@@ -1241,6 +1555,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		Window:           window,
 		SensorID:         sensorID,
 		AsOf:             asOf,
+		StatisticsAsOf:   activity.StatisticsAsOf,
+		DataFreshness:    activity.DataFreshness,
 		FirstSeen:        activity.FirstSeen,
 		LastSeen:         activity.LastSeen,
 		DataSource:       "normalized_events+risk_snapshots",
@@ -1377,6 +1693,15 @@ func (s *Server) handleIPEvidence(w http.ResponseWriter, r *http.Request, ip str
 		writeError(w, http.StatusInternalServerError, "read_evidence_failed", err.Error())
 		return
 	}
+	proxyItems, err := s.proxyEvidence(ctx, ip, limit)
+	if err != nil {
+		writeError(w, 503, "proxy_evidence_unavailable", err.Error())
+		return
+	}
+	items = append(proxyItems, items...)
+	if len(items) > limit {
+		items = items[:limit]
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"evidence": items})
 }
 
@@ -1413,11 +1738,17 @@ func (s *Server) handleIPDevices(w http.ResponseWriter, r *http.Request, ip stri
 }
 
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
+	view := r.URL.Query().Get("view")
+	if view != "" && view != "recent" && view != "history" {
+		writeError(w, http.StatusBadRequest, "bad_device_query", "invalid view")
+		return
+	}
 	query, err := deviceQuery(r.URL.Query())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_device_query", err.Error())
 		return
 	}
+	query.View = view
 	if query.SensorID == "" {
 		query.SensorID = s.sensorID
 	}
@@ -1431,7 +1762,31 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "read_devices_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, DeviceListResponse{Items: page.Items, Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total}})
+	if s.operations != nil && s.operations.db != nil {
+		ids := make([]string, 0, len(page.Items))
+		for _, d := range page.Items {
+			ids = append(ids, d.EndpointID)
+		}
+		if summaries, err := (discovery.Repository{DB: s.operations.db}).Summaries(ctx, ids); err == nil {
+			for i := range page.Items {
+				page.Items[i].Discovery = summaries[page.Items[i].EndpointID]
+			}
+		}
+	}
+	if reader, ok := s.reader.(store.RouterObservationSummaryReader); ok {
+		ids := make([]string, 0, len(page.Items))
+		for _, item := range page.Items {
+			ids = append(ids, item.EndpointID)
+		}
+		if summaries, summaryErr := reader.RouterObservationSummaries(ctx, ids); summaryErr == nil {
+			for index := range page.Items {
+				if summary, found := summaries[page.Items[index].EndpointID]; found {
+					page.Items[index].RouterObservation = &summary
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, DeviceListResponse{DeviceNamesDisabled: os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true", Items: page.Items, Facets: page.Facets, FacetsAsOf: page.FacetsAsOf, Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total}})
 }
 
 func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request, rawDeviceID string) {
@@ -1761,6 +2116,111 @@ func (s *Server) handleShadowEvaluation(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, report)
 }
 
+func (s *Server) handleShadowReviewSamples(w http.ResponseWriter, r *http.Request) {
+	exportDir := filepath.Join(s.shadowDir, "review-exports")
+	entries, err := os.ReadDir(exportDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "shadow_review_samples_not_found", "shadow review samples have not been generated yet")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "read_shadow_review_samples_failed", err.Error())
+		return
+	}
+	dates := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, "-review-samples.json") {
+			continue
+		}
+		date := strings.TrimSuffix(name, "-review-samples.json")
+		if _, parseErr := time.Parse("2006-01-02", date); parseErr == nil {
+			dates = append(dates, date)
+		}
+	}
+	sort.Strings(dates)
+	if len(dates) == 0 {
+		writeError(w, http.StatusNotFound, "shadow_review_samples_not_found", "shadow review samples have not been generated yet")
+		return
+	}
+	selectedDate := strings.TrimSpace(r.URL.Query().Get("date"))
+	if selectedDate == "" {
+		selectedDate = dates[len(dates)-1]
+	}
+	if _, err := time.Parse("2006-01-02", selectedDate); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_shadow_review_date", "date must use YYYY-MM-DD")
+		return
+	}
+	if !slices.Contains(dates, selectedDate) {
+		writeError(w, http.StatusNotFound, "shadow_review_date_not_found", "no review samples exist for the selected date")
+		return
+	}
+	file, err := os.Open(filepath.Join(exportDir, selectedDate+"-review-samples.json"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_shadow_review_samples_failed", err.Error())
+		return
+	}
+	defer file.Close()
+	var payload struct {
+		Date            string              `json:"date"`
+		SamplesPerLevel int                 `json:"samples_per_level"`
+		Samples         []evaluation.Sample `json:"samples"`
+	}
+	if err := json.NewDecoder(file).Decode(&payload); err != nil {
+		writeError(w, http.StatusInternalServerError, "decode_shadow_review_samples_failed", err.Error())
+		return
+	}
+	if lister, ok := s.reader.(interface {
+		ListLabels(context.Context, int) ([]store.Label, error)
+	}); ok {
+		labels, listErr := lister.ListLabels(r.Context(), 10000)
+		if listErr != nil {
+			writeError(w, http.StatusInternalServerError, "read_shadow_review_labels_failed", listErr.Error())
+			return
+		}
+		for index := range payload.Samples {
+			applyLatestSampleLabel(&payload.Samples[index], labels)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"date": selectedDate, "dates": dates, "samples_per_level": payload.SamplesPerLevel, "samples": payload.Samples})
+}
+
+func applyLatestSampleLabel(sample *evaluation.Sample, labels []store.Label) {
+	keys := map[string]bool{}
+	for kind, id := range map[string]string{"ip": sample.IP, "account": sample.AccountID, "endpoint": sample.EndpointID, "risk_snapshot": sample.SourceRunID, sample.SubjectType: sample.SubjectID} {
+		if kind = strings.ToLower(strings.TrimSpace(kind)); kind != "" && strings.TrimSpace(id) != "" {
+			keys[kind+":"+strings.TrimSpace(id)] = true
+		}
+	}
+	for _, label := range labels {
+		targetType := strings.ToLower(strings.TrimSpace(label.TargetType))
+		if !keys[targetType+":"+strings.TrimSpace(label.TargetID)] {
+			continue
+		}
+		if targetType != "risk_snapshot" && !stringSlicesOverlap(sample.EvidenceIDs, label.EvidenceIDs) {
+			continue
+		}
+		sample.ReviewStatus = label.Label
+		sample.ReviewReason = label.Reason
+		sample.ReviewedBy = label.CreatedBy
+		sample.ReviewedAt = label.CreatedAt
+		return
+	}
+}
+
+func stringSlicesOverlap(left, right []string) bool {
+	seen := make(map[string]bool, len(left))
+	for _, value := range left {
+		seen[value] = true
+	}
+	for _, value := range right {
+		if seen[value] {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
@@ -1967,6 +2427,22 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request, rawEventID 
 		writeError(w, http.StatusNotFound, "not_found", "event not found")
 		return
 	}
+	if event.Type == "proxy_transaction" {
+		result := proxyprotocol.Evaluate(event, s.proxyConfig)
+		if reader, ok := s.reader.(store.PolicyIdentityReader); ok {
+			sessions, err := s.policySessions(ctx, reader, time.Now().UTC())
+			if err != nil {
+				writeError(w, 503, "identity_unavailable", err.Error())
+				return
+			}
+			result = proxyprotocol.Attribute(result, sessions)
+		}
+		writeJSON(w, http.StatusOK, struct {
+			normalized.Event
+			ProxyProtocol proxyprotocol.Result `json:"proxy_protocol"`
+		}{event, result})
+		return
+	}
 	writeJSON(w, http.StatusOK, event)
 }
 
@@ -2033,6 +2509,8 @@ func deviceQuery(values url.Values) (store.Query, error) {
 		AP:          values.Get("ap"),
 		NASIP:       values.Get("nas_ip"),
 		Ecosystem:   values.Get("ecosystem"),
+		Brand:       strings.TrimSpace(values.Get("brand")),
+		OSFamily:    strings.TrimSpace(values.Get("os_family")),
 		Window:      window,
 		SrcIP:       values.Get("ip"),
 		Limit:       limit,

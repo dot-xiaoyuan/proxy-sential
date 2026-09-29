@@ -233,8 +233,10 @@ func NormalizeActivityWindow(raw string) (string, time.Duration, error) {
 		return "24h", 24 * time.Hour, nil
 	case "7d":
 		return "7d", 7 * 24 * time.Hour, nil
+	case "30d":
+		return "30d", 30 * 24 * time.Hour, nil
 	default:
-		return "", 0, fmt.Errorf("window must be one of 10m, 1h, 24h, 7d")
+		return "", 0, fmt.Errorf("window must be one of 10m, 1h, 24h, 7d, 30d")
 	}
 }
 

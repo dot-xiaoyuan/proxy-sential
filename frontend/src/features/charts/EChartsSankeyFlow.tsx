@@ -41,7 +41,7 @@ export function EChartsSankeyFlow({
         if (params.dataType === 'edge') {
           return `${params.data.source} ➔ ${params.data.target}<br/><b>标准事件数:</b> ${params.data.value}`
         }
-        return `<b>节点:</b> ${params.name}<br/><b>聚合事件:</b> ${params.value ?? '-'}`
+        return `<b>节点:</b> ${params.name}<br/><b>聚合事件:</b> ${params.value ?? ''}`
       },
     },
     series: [

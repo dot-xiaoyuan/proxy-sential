@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,11 +22,11 @@ func TestClickHouseDomainEventCursorQueryIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := store.ListDomainEventsAfter(context.Background(), "sensor-campus-a", "2026-09-01T00:00:00Z", "2026-09-02T09:00:00Z", "cursor-1", 50000)
+	events, err := store.ListDomainEventsAfter(context.Background(), "sensor-campus-a", "2026-09-01T00:00:00Z", "2026-09-02T09:00:00Z", "cursor-1", 500000)
 	if err != nil || len(events) != 1 || events[0].Subject["endpoint_id"] != "endpoint-1" || events[0].Payload["session_id"] != "session-1" {
 		t.Fatalf("unexpected cursor result: %+v err=%v", events, err)
 	}
-	for _, required := range []string{"type IN ('dns','tls','quic','http')", "sensor_id='sensor-campus-a'", "(timestamp,event_id) >", "LIMIT 10000"} {
+	for _, required := range []string{"type IN ('dns','tls','quic','http')", "sensor_id='sensor-campus-a'", "(timestamp,event_id) >", "LIMIT 100000"} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("query is not bounded/cursor based; missing %q: %s", required, query)
 		}
@@ -51,6 +52,24 @@ func TestClickHouseDomainObservationWriteIncludesUnattributedMatches(t *testing.
 	for _, expected := range []string{"INSERT INTO domain_ecosystem_observations", `"event_id":"event-unattributed"`, `"attributed":false`, `"ecosystem":"Apple"`} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("missing %q in domain observation insert: %s", expected, body)
+		}
+	}
+}
+
+func TestClickHouseTransportErrorDoesNotExposeCredentials(t *testing.T) {
+	s, err := NewClickHouseStore(ClickHouseOptions{DSN: "http://127.0.0.1:1/?password=must-remain-secret&user=private-user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = s.query(ctx, "SELECT 1")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cause lost: %v", err)
+	}
+	for _, secret := range []string{"must-remain-secret", "private-user", "password=", "127.0.0.1"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatal("transport error exposes DSN")
 		}
 	}
 }

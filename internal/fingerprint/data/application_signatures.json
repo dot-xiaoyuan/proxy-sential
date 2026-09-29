@@ -1,0 +1,6 @@
+[
+  {"pattern":"(?i)(网易|net\\s*ease)?\\s*uu\\s*(game\\s*)?加速器|uu-booster","name":"网易UU加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.85,"source":"legacy-curated","license":"internal-rule"},
+  {"pattern":"(?i)腾讯(网游)?加速器|tencent\\s*(game\\s*)?accelerator","name":"腾讯游戏加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.85,"source":"legacy-curated","license":"internal-rule"},
+  {"pattern":"(?i)迅游(网游)?加速器|xunyou","name":"迅游加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.82,"source":"legacy-curated","license":"internal-rule"},
+  {"pattern":"(?i)biubiu\\s*加速器","name":"biubiu加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.82,"source":"legacy-curated","license":"internal-rule"}
+]

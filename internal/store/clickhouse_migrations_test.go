@@ -16,6 +16,13 @@ func TestSplitClickHouseMigrationPreservesQuotedSemicolon(t *testing.T) {
 	}
 }
 
+func TestSplitClickHouseMigrationIgnoresCommentSemicolon(t *testing.T) {
+	items, err := splitClickHouseMigration("-- rollout note; no backfill\nCREATE TABLE a(x String) ENGINE=Memory;")
+	if err != nil || len(items) != 1 || items[0] != "CREATE TABLE a(x String) ENGINE=Memory" {
+		t.Fatalf("unexpected statements: %#v err=%v", items, err)
+	}
+}
+
 func TestApplyClickHouseMigrationsTracksChecksums(t *testing.T) {
 	dsn := os.Getenv("PROXY_SENTINEL_TEST_CLICKHOUSE_DSN")
 	if dsn == "" {

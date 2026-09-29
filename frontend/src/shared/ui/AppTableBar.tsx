@@ -33,7 +33,7 @@ export function AppTableBar({
 
   return (
     <div className="app-table-bar">
-      <Space className="app-table-bar-main" size="middle" wrap>
+      <Space className="app-table-bar-main" size="middle">
         <Input
           allowClear
           onChange={(e) => onSearchChange(e.target.value)}

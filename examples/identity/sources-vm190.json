@@ -1,0 +1,12 @@
+{
+  "schema_version": "identity-sources/v1",
+  "sources": [
+    {
+      "source": "srun190",
+      "sensor_id": "auth190",
+      "campus_id": "test190",
+      "access_domain": "srun190",
+      "reconcile_interval_seconds": 60
+    }
+  ]
+}

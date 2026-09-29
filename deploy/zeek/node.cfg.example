@@ -1,0 +1,22 @@
+# Copy to the ZeekControl spool configuration and replace the interface and CPU
+# list after checking `ethtool -l <interface>` and NUMA locality.
+[manager]
+type=manager
+host=localhost
+
+[logger]
+type=logger
+host=localhost
+
+[proxy-1]
+type=proxy
+host=localhost
+
+[worker-1]
+type=worker
+host=localhost
+interface=enp2s0f0
+lb_method=af_packet
+lb_procs=4
+pin_cpus=2,3,4,5
+af_packet_fanout_id=21

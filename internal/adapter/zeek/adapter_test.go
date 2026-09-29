@@ -6,9 +6,33 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/normalized"
 )
+
+func TestConvertAppliesCollectorInstanceBeforeCaptureScope(t *testing.T) {
+	now := time.Unix(1785232900, 0).UTC()
+	input := bytes.NewBufferString(`{"ts":1785232900.5,"uid":"C5","id.orig_h":"192.168.10.23","id.resp_h":"198.51.100.1","method":"GET","host":"example.test","user_agent":"Mozilla/5.0 (Windows NT 10.0)"}` + "\n")
+	var output bytes.Buffer
+	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "lab-30", CollectorInstanceID: "boot-1", CampusID: "campus", AccessDomain: "nas", ValidFrom: now.Add(-time.Minute), ValidUntil: now.Add(time.Minute)}
+	stats, err := Convert(input, &output, Options{SensorID: "lab-30", CollectorInstanceID: "boot-1", LogKind: "http", CaptureScope: scope})
+	if err != nil || stats.Emitted != 1 {
+		t.Fatalf("convert failed: stats=%+v err=%v", stats, err)
+	}
+	var event map[string]any
+	if err = json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil {
+		t.Fatal(err)
+	}
+	observer := event["observer"].(map[string]any)
+	subject := event["subject"].(map[string]any)
+	payload := event["payload"].(map[string]any)
+	if observer["collector_instance_id"] != "boot-1" || observer["capture_scope_issue"] != nil || subject["campus_id"] != "campus" || payload["access_domain"] != "nas" {
+		t.Fatalf("capture scope was not applied: %+v", event)
+	}
+}
 
 func TestConvertDHCPFixture(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "examples", "zeek", "dhcp-sample.log")
@@ -152,6 +176,96 @@ func TestConvertSkipsMalformedAndMissingDHCPFields(t *testing.T) {
 	}
 	if stats.Read != 5 || stats.Emitted != 1 || stats.Malformed != 1 || stats.Skipped != 3 {
 		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestEventIDIsStableAcrossReplayOffsets(t *testing.T) {
+	raw := []byte(`{"ts":1785232800.25,"client_addr":"10.0.0.2","server_addr":"10.0.0.1","assigned_addr":"10.0.0.2","mac":"aa:bb:cc:dd:ee:ff"}`)
+	parser := logParser{}
+	first, err := parser.convertLine(raw, 1, Options{SensorID: "sensor-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := parser.convertLine(raw, 9001, Options{SensorID: "sensor-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.EventID != replayed.EventID {
+		t.Fatalf("event id changed across replay: %s != %s", first.EventID, replayed.EventID)
+	}
+}
+
+func TestConvertLocalDiscoveryAndTTLSignals(t *testing.T) {
+	for _, tc := range []struct{ kind, raw, expected string }{
+		{"mdns", `{"ts":1785232800.25,"src_ip":"192.168.10.30","name":"yuan-iphone.local","answers":"192.168.10.30"}`, "yuan-iphone.local"},
+		{"nbns", `{"ts":1785232800.25,"src_ip":"192.168.10.31","name":"DESKTOP-01","mac":"aa:bb:cc:dd:ee:ff"}`, "DESKTOP-01"},
+		{"llmnr", `{"ts":1785232800.25,"src_ip":"192.168.10.32","query":"laptop-a"}`, "laptop-a"},
+	} {
+		var output bytes.Buffer
+		stats, err := Convert(strings.NewReader(tc.raw+"\n"), &output, Options{SensorID: "sensor-a", LogKind: tc.kind})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stats.Emitted != 1 || !strings.Contains(output.String(), tc.expected) || !strings.Contains(output.String(), `"origin":"`+tc.kind+`"`) {
+			t.Fatalf("unexpected %s output: %s", tc.kind, output.String())
+		}
+	}
+	var ttlOutput bytes.Buffer
+	if _, err := Convert(strings.NewReader(`{"ts":1785232800.25,"src_ip":"192.168.10.33","ttl":63}`+"\n"), &ttlOutput, Options{LogKind: "ttl"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ttlOutput.String(), `"ttl":63`) {
+		t.Fatalf("missing ttl payload: %s", ttlOutput.String())
+	}
+}
+
+func TestConvertRouterProtocolLogsJSON(t *testing.T) {
+	tests := []struct {
+		kind, raw, eventType, payloadKey, payloadValue string
+	}{
+		{"conn", `{"ts":1785232800.25,"id.orig_h":"10.0.0.2","id.resp_h":"198.51.100.2","id.orig_p":50000,"id.resp_p":443,"proto":"tcp","orig_l2_addr":"00-46-4B-12-34-56","vlan":"120","service":"ssl"}`, "flow", "vlan", "120"},
+		{"dns", `{"ts":1785232800.25,"id.orig_h":"10.0.0.2","id.resp_h":"10.0.0.53","proto":"udp","query":"router.huawei.test"}`, "dns", "query", "router.huawei.test"},
+		{"http", `{"ts":1785232800.25,"id.orig_h":"10.0.0.2","id.resp_h":"10.0.0.1","proto":"tcp","host":"ar6140.local","server":"Huawei AR Web","title":"AR6140 Management"}`, "http", "title", "AR6140 Management"},
+		{"ssl", `{"ts":1785232800.25,"id.orig_h":"10.0.0.2","id.resp_h":"10.0.0.1","proto":"tcp","server_name":"msr3600.local","subject":"CN=H3C MSR3600"}`, "tls", "certificate_subject", "CN=H3C MSR3600"},
+		{"x509", `{"ts":1785232800.25,"host":"10.0.0.1","subject":"CN=Huawei AR6140","issuer":"CN=Huawei","san.dns":"ar6140.local"}`, "tls", "certificate_san", "ar6140.local"},
+		{"lldp", `{"ts":1785232800.25,"src_ip":"10.0.0.1","src_mac":"00:46:4b:12:34:56","system_name":"AR6140","system_description":"Huawei AR6140","capabilities":"router,bridge","vlan":"120"}`, "discovery", "capabilities", "router,bridge"},
+		{"ssdp", `{"ts":1785232800.25,"src_ip":"10.0.0.1","st":"urn:schemas-upnp-org:device:InternetGatewayDevice:1","server":"Huawei HG8245"}`, "discovery", "st", "urn:schemas-upnp-org:device:InternetGatewayDevice:1"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.kind, func(t *testing.T) {
+			var output bytes.Buffer
+			stats, err := Convert(strings.NewReader(tc.raw+"\n"), &output, Options{SensorID: "router-test", LogKind: tc.kind})
+			if err != nil || stats.Emitted != 1 {
+				t.Fatalf("convert %s: stats=%+v err=%v output=%s", tc.kind, stats, err, output.String())
+			}
+			var event map[string]any
+			if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil {
+				t.Fatal(err)
+			}
+			if event["type"] != tc.eventType || event["source_event_type"] != tc.kind {
+				t.Fatalf("unexpected event type: %+v", event)
+			}
+			payload := event["payload"].(map[string]any)
+			if payload[tc.payloadKey] != tc.payloadValue {
+				t.Fatalf("missing normalized %s=%q in %+v", tc.payloadKey, tc.payloadValue, payload)
+			}
+			if tc.kind == "conn" {
+				subject := event["subject"].(map[string]any)
+				if subject["mac"] != "00:46:4b:12:34:56" {
+					t.Fatalf("MAC not normalized: %+v", subject)
+				}
+			}
+		})
+	}
+}
+
+func TestConvertRouterHTTPLogTSV(t *testing.T) {
+	input := "#separator \\x09\n#fields\tts\tid.orig_h\tid.orig_p\tid.resp_h\tid.resp_p\tproto\thost\tserver\ttitle\tvlan\n" +
+		"1785232800.25\t10.0.0.2\t50000\t10.0.0.1\t80\ttcp\tar6140.local\tHuawei AR Web\tAR6140 Management\t120\n"
+	var output bytes.Buffer
+	stats, err := Convert(strings.NewReader(input), &output, Options{LogKind: "http"})
+	if err != nil || stats.Emitted != 1 || !strings.Contains(output.String(), `"title":"AR6140 Management"`) || !strings.Contains(output.String(), `"vlan":"120"`) {
+		t.Fatalf("unexpected TSV conversion stats=%+v err=%v output=%s", stats, err, output.String())
 	}
 }
 

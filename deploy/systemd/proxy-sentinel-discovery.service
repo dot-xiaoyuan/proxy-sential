@@ -1,0 +1,19 @@
+[Unit]
+Description=Proxy Sentinel network discovery worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+EnvironmentFile=-/opt/proxy-sentinel/config/discovery.env
+ExecStart=/opt/proxy-sentinel/current/bin/discovery-worker --node ${PROXY_SENTINEL_SENSOR_ID}
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/proxy-sentinel
+
+[Install]
+WantedBy=multi-user.target

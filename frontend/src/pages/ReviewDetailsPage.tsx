@@ -31,9 +31,9 @@ export function ReviewDetailsPage() {
       <Space wrap><RiskLevelTag level={item.risk_level} /><ReviewStatusTag reason={item.review_reason} status={item.review_status} /><Tag>{item.confidence_level} 置信度</Tag><Tag>{item.risk_score} 分</Tag></Space>
       <Descriptions bordered column={{xs:1,md:2}} size="small" items={[
         {key:'ip',label:'IP',children:<Link className="mono list-cell-nowrap" to={`/ips/${encodeURIComponent(item.ip)}`}>{item.ip}</Link>},
-        {key:'account',label:'账号',children:item.account_id || '未关联'},
-        {key:'endpoint',label:'终端',children:item.endpoint_id ? <Link className="list-cell-nowrap" to={`/devices/${encodeURIComponent(item.endpoint_id)}`}>{item.endpoint_id}</Link> : '未关联'},
-        {key:'access',label:'接入位置',children:item.access_ids.join('、') || '未关联'},
+        {key:'account',label:'账号',children:item.account_id || ''},
+        {key:'endpoint',label:'终端',children:item.endpoint_id ? <Link className="list-cell-nowrap" to={`/devices/${encodeURIComponent(item.endpoint_id)}`}>{item.endpoint_id}</Link> : ''},
+        {key:'access',label:'接入位置',children:item.access_ids.join('、') || ''},
         {key:'events',label:'事件',children:`共 ${item.event_count} · TLS ${item.tls_count} · QUIC ${item.quic_count} · Alert ${item.alert_count}`},
         {key:'time',label:'时间范围',children:`${new Date(item.first_seen).toLocaleString()} — ${new Date(item.last_seen).toLocaleString()}`},
       ]} />

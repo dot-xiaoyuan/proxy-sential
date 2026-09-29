@@ -28,7 +28,7 @@ func TestActivityReportAggregatesInClickHouseAndKeepsUnknown(t *testing.T) {
 	if report.Total != 10 || report.ClassifiedCount != 8 || report.UnknownCount != 2 || len(report.Items) != 2 {
 		t.Fatalf("unexpected report: %+v", report)
 	}
-	for _, expected := range []string{"JSONExtractString(flow_json,'app_protocol')", "GROUP BY value", "LIMIT 10"} {
+	for _, expected := range []string{"app_protocol", "normalized_event_features FINAL", "GROUP BY value", "LIMIT 10"} {
 		if !strings.Contains(query, expected) {
 			t.Fatalf("missing %q in query: %s", expected, query)
 		}

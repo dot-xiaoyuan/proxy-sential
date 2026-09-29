@@ -1,0 +1,31 @@
+[Unit]
+Description=Proxy Sentinel realtime read-model worker
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proxy-sentinel
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+Environment=PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3=true
+Environment=PROXY_SENTINEL_RECOGNITION_SUMMARY_V1=true
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel read-model run --lane realtime --sensor-id ${PROXY_SENTINEL_SENSOR_ID}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+CPUQuota=100%
+CPUWeight=80
+MemoryHigh=768M
+MemoryMax=1G
+OOMPolicy=stop
+Nice=5
+IOWeight=50
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

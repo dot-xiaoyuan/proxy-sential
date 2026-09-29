@@ -40,7 +40,7 @@ export function EventsPage() {
       width: 170,
       render: (_, event) => (
         <Typography.Text className="mono list-cell-nowrap" title={stringField(event.subject, 'ip') || stringField(event.flow, 'src_ip')}>
-          {stringField(event.subject, 'ip') || stringField(event.flow, 'src_ip') || '-'}
+          {stringField(event.subject, 'ip') || stringField(event.flow, 'src_ip') || ''}
         </Typography.Text>
       ),
     },
@@ -49,14 +49,14 @@ export function EventsPage() {
       width: 190,
       render: (_, event) => (
         <Typography.Text className="mono list-cell-nowrap" title={stringField(event.flow, 'dst_ip')}>
-          {stringField(event.flow, 'dst_ip') || '-'}
+          {stringField(event.flow, 'dst_ip') || ''}
           {numberField(event.flow, 'dst_port') ? `:${numberField(event.flow, 'dst_port')}` : ''}
         </Typography.Text>
       ),
     },
     {
       title: 'L7 访问对象',
-      render: (_, event) => <Typography.Text className="mono list-cell-nowrap" title={eventTarget(event)}>{eventTarget(event) || '-'}</Typography.Text>,
+      render: (_, event) => <Typography.Text className="mono list-cell-nowrap" title={eventTarget(event)}>{eventTarget(event) || ''}</Typography.Text>,
     },
     {
       title: 'Event ID',
@@ -194,6 +194,7 @@ export function EventsPage() {
 
       <section className="surface">
         <Table<NormalizedEventSummary>
+          className="compact-list-table"
           columns={columns}
           dataSource={events.data?.events ?? []}
           pagination={false}

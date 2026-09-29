@@ -4,6 +4,903 @@
  */
 
 export interface paths {
+    "/discovery/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Discovery worker heartbeat; requires identity:read. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Node availability */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity. */
+        get: operations["getDiscoverySources"];
+        put?: never;
+        /** @description Requires integrations:write. Credentials are write-only and encrypted; versions use optimistic concurrency. Scan changes disable scheduling and invalidate prior trial. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Saved configuration without credentials */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Configuration version conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity. */
+        get: operations["getDiscoveryDevices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/router-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Passive Huawei/H3C router observations in shadow mode; requires identity:read and never triggers enforcement. */
+        get: operations["listRouterObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/router-observations/{assessment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Passive router observation details, evidence timeline and status history; requires identity:read. */
+        get: operations["getRouterObservation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity. */
+        get: operations["getDiscoveryTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity. */
+        get: operations["getDiscoverySummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/scan-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity. */
+        get: operations["getDiscoveryScanProfiles"];
+        put?: never;
+        /** @description Requires integrations:write. Credentials are write-only and encrypted; versions use optimistic concurrency. Scan changes disable scheduling and invalidate prior trial. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Saved configuration without credentials */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Configuration version conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/endpoint-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity. */
+        get: operations["getDiscoveryEndpointEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/sources/{id}/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Queue immutable SNMP snapshot; requires integrations:write. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Operation completed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid scope or configuration */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task pending or current trial required */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/tasks/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Cancel a pending or running task; requires integrations:write. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Operation completed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid scope or configuration */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task pending or current trial required */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/scan-profiles/{id}/trial": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Queue a bounded manual scan; requires integrations:write. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Operation completed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid scope or configuration */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task pending or current trial required */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/scan-profiles/{id}/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Enable or disable scheduling; current version trial required; requires integrations:write. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Operation completed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid scope or configuration */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task pending or current trial required */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Preview explicit allowed targets without network probes; requires integrations:write. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Operation completed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid scope or configuration */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task pending or current trial required */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires cases:read. Stable database keyset pagination by created_at and review_id. Empty does not prove no shared behavior. */
+        get: operations["listSharedAccessReviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Requires cases:read. Latest evidence summary and latest human conclusion; full histories are loaded separately. */
+        get: operations["getSharedAccessReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Requires cases:read. Append-only versions descending. Bounded original references are a summary and not a full packet history. */
+        get: operations["listSharedReviewEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Requires cases:read. Only explicitly linked actions; does not attach unrelated account actions. */
+        get: operations["listSharedReviewExecutions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/conclusion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires cases:write. Version-bound human conclusion and audit saved atomically. Never grants punishment authority. */
+        post: operations["concludeSharedAccessReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/disconnect-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires actions:execute and cases:read. Durable task queries complete authoritative identity and current evidence; completed task result is SharedDisconnectPreview. Does not send controls. */
+        post: operations["previewSharedReviewDisconnect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/disconnect": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires integrations:write, actions:execute and cases:write. Explicit yuantong test only, shadow connector, immutable 15-minute grant and five-minute account/scope cooldown. Task result contains grant_id and action_ids. Accepted does not prove offline. Every send revalidates current authority, evidence, exceptions and emergency stop. User logout is a separate unsupported capability. */
+        post: operations["confirmSharedReviewDisconnect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/connectors/{id}/identity-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Requires integrations:write. Returns public configuration and current sync status; never returns credentials. */
+        get: operations["getManagedIdentitySource"];
+        /** @description Synchronous version-checked save, resets authority until successful complete reconciliation. Requires integrations:write. Blank token preserves only the same inventory URL. */
+        put: operations["saveManagedIdentitySource"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires identity:read. Explicit unknown or blocked states are returned until independently verified. Configured does not mean healthy. */
+        get: operations["getSharedAccessStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Passive shared-gateway behavior observations; requires cases:read. Results are shadow-only and never authorize enforcement. */
+        get: operations["listSharedBehaviorObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/observations/{observation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Shared-gateway score, evidence references, router correlation and immutable decision history; requires cases:read. */
+        get: operations["getSharedBehaviorObservation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAccountPolicies"];
+        put?: never;
+        /** @description Always creates a disabled policy in observe mode. Requires policies:manage. */
+        post: operations["createAccountPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policies/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateAccountPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policies/{id}/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Read-only evaluation against stored event-time identity; requires policies:read. */
+        post: operations["simulateAccountPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{id}/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getAccountQuota"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listPolicyExecutions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-executions/{id}/approval-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only current account sessions, stage parameters, evidence IDs and fingerprint. Requires policies:read. Preview does not authorize execution. */
+        get: operations["previewPolicyApproval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-executions/{id}/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                operation: "approve" | "revoke";
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description approve requires policies:authorize; revoke requires actions:revoke and cancels pending stages. Shared-access evidence supports manual disconnect only, requires a matching confirmation fingerprint and fresh evidence plus current account identity; automatic enforcement remains forbidden. */
+        post: operations["mutatePolicyExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-library/jobs/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation: "pause" | "resume" | "cancel";
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Operation takes effect between committed batches; results and cursor are retained. */
+        post: operations["controlApplicationHistoryJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -36,6 +933,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/oidc/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["startOIDCLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/oidc/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["completeOIDCLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/session": {
         parameters: {
             query?: never;
@@ -60,6 +989,70 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getSystemStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exports/{export_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exports/{export_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cancelExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/exports/{export_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["downloadExport"];
         put?: never;
         post?: never;
         delete?: never;
@@ -164,6 +1157,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/cases/{case_id}/history/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCaseHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cases/{case_id}/{operation}": {
         parameters: {
             query?: never;
@@ -238,6 +1247,44 @@ export interface paths {
         get: operations["listActionConnectors"];
         put?: never;
         post: operations["saveActionConnector"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/connectors/{connector_id}/account-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only account targets for one configured source. Requires actions:read; never authorizes execution or proves global account coverage. */
+        get: operations["previewNativeAccountDisconnect"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/actions/connectors/{connector_id}/4k-database": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Requires integrations:write. Returns database configuration without passwords or appSecret. */
+        get: operations["getFourKDatabase"];
+        /** @description Requires integrations:write. Encrypts database password; an omitted or empty password preserves the existing password. Performs no remote database I/O. */
+        put: operations["saveFourKDatabase"];
+        /** @description Returns a persisted operation task (202); query /tasks/{task_id} for the authorization check result. Requires integrations:write. SELECT only in a read-only MySQL transaction. Selects enabled unexpired authorization, requiring an explicit ID if multiple are available. Does not verify management API or issue a disconnect. */
+        post: operations["checkFourKDatabase"];
         delete?: never;
         options?: never;
         head?: never;
@@ -324,6 +1371,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/actions/{action_id}/native-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires actions:read. Append-only observations in insertion order; not proof of completed account enforcement. */
+        get: operations["listNativeActionObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/actions/{action_id}/revoke": {
         parameters: {
             query?: never;
@@ -333,6 +1397,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Stops pending native disconnect dispatch or requests release for a reversible action. Native cancellation cannot recall an already sent request or restore a disconnected session. */
         post: operations["revokeAction"];
         delete?: never;
         options?: never;
@@ -366,6 +1431,23 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["ingestIdentityEvents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Atomically submit one complete online inventory for a source, sensor, campus and access domain. Requires the identity integration token and respects the global read-only switch. Incomplete inventories never close sessions. Maximum 10000 sessions per scope; do not split an inventory into independently complete requests. */
+        post: operations["commitIdentitySnapshot"];
         delete?: never;
         options?: never;
         head?: never;
@@ -724,6 +1806,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/endpoints/{endpoint_id}/name-note": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["updateDeviceNameNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/{endpoint_id}/name-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDeviceNameEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/endpoints/{endpoint_id}/identity": {
         parameters: {
             query?: never;
@@ -1028,6 +2142,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shadow/review-samples": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShadowReviewSamples"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/audit-logs": {
         parameters: {
             query?: never;
@@ -1140,10 +2270,921 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/application-library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 应用观测独立接口 */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApplicationLibraryStatus"];
+                    };
+                };
+                /** @description Application observations disabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 应用观测独立接口 */
+        get: {
+            parameters: {
+                query?: {
+                    window?: string;
+                    from?: string;
+                    to?: string;
+                    sensor_id?: string;
+                    campus_id?: string;
+                    ip?: string;
+                    application_id?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApplicationReport"];
+                    };
+                };
+                /** @description Application observations disabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-activity/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 应用观测独立接口 */
+        get: {
+            parameters: {
+                query?: {
+                    window?: string;
+                    from?: string;
+                    to?: string;
+                    sensor_id?: string;
+                    campus_id?: string;
+                    ip?: string;
+                    application_id?: string;
+                    offset?: number;
+                    limit?: number;
+                    cursor?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Success */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApplicationObservationPage"];
+                    };
+                };
+                /** @description Application observations disabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-activity/unknown-domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 提交未知域名异步导出任务，完成后通过 exports 下载 JSONL */
+        get: {
+            parameters: {
+                query?: {
+                    window?: string;
+                    from?: string;
+                    to?: string;
+                    sensor_id?: string;
+                    campus_id?: string;
+                    ip?: string;
+                    application_id?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 持久化导出任务已接受，状态及下载使用 exports 接口 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ExportJob"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-library/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 保存运行配置 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        enabled: boolean;
+                        update_url: string;
+                        token?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApplicationLibraryStatus"];
+                    };
+                };
+                /** @description Invalid request or conflicting operation */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Permission, CSRF or read-only restriction */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-library/pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 下载校验并导入应用规则包 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        token?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApplicationLibraryStatus"];
+                    };
+                };
+                /** @description 参数校验及任务持久化完成；通过 tasks 查询处理结果。上传完整传输另行计时。 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationTask"];
+                    };
+                };
+                /** @description Invalid request or conflicting operation */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Permission, CSRF or read-only restriction */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-library/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 校验并原子导入离线包 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApplicationLibraryStatus"];
+                    };
+                };
+                /** @description 参数校验及任务持久化完成；通过 tasks 查询处理结果。上传完整传输另行计时。 */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OperationTask"];
+                    };
+                };
+                /** @description Invalid request or conflicting operation */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Permission, CSRF or read-only restriction */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-library/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 切换到保留版本 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        version: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApplicationLibraryStatus"];
+                    };
+                };
+                /** @description Invalid request or conflicting operation */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Permission, CSRF or read-only restriction */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/application-library/reclassify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 提交或继续最近七天重分类任务 */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApplicationLibraryStatus"];
+                    };
+                };
+                /** @description Invalid request or conflicting operation */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Permission, CSRF or read-only restriction */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOperationTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{task_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cancelOperationTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SharedDisconnectPreview: {
+            review_id: string;
+            connector_id: string;
+            evidence_version: number;
+            identity_version: number;
+            config_version: string;
+            fingerprint: string;
+            ready: boolean;
+            blockers: string[];
+            plan: {
+                account: string;
+                campus_id: string;
+                access_domain: string;
+                fingerprint?: string;
+                sessions: {
+                    addresses: string[];
+                    target: {
+                        session_id: string;
+                        raw_online_id: string;
+                    };
+                }[];
+            };
+        };
+        SharedAccessReview: {
+            review_id: string;
+            account_id: string;
+            campus_id: string;
+            access_domain: string;
+            session_generation: string;
+            episode: number;
+            state: string;
+            latest_version: number;
+            latest_result: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            coverage_state: "unknown" | "verified" | "insufficient";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            last_conclusion?: {
+                [key: string]: unknown;
+            };
+        };
+        SharedBehaviorScoreComponent: {
+            /** @enum {string} */
+            signal: "ua_os" | "ttl_path" | "tcp_stack" | "tls_stack" | "dhcp_stack" | "router_identity";
+            score: number;
+            explanation: string;
+        };
+        SharedBehaviorRouterContext: {
+            assessment_id?: string;
+            brand?: string;
+            model?: string;
+            role?: string;
+            /** @enum {string} */
+            status?: "candidate" | "likely" | "confirmed";
+            confidence?: number;
+        };
+        SharedBehaviorAssessment: {
+            observation_id: string;
+            sensor_id: string;
+            campus_id?: string;
+            access_domain?: string;
+            ip: string;
+            endpoint_id?: string;
+            /** @enum {string} */
+            status: "candidate" | "likely" | "confirmed";
+            confidence: number;
+            signal_groups: string[];
+            reasons: string[];
+            conflicts: string[];
+            /** @enum {string} */
+            coverage_state: "unknown" | "partial" | "verified";
+            rule_version: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            /** Format: date-time */
+            window_start: string;
+            /** Format: date-time */
+            window_end: string;
+            /** Format: date-time */
+            expires_at: string;
+            router: components["schemas"]["SharedBehaviorRouterContext"];
+            score_components: components["schemas"]["SharedBehaviorScoreComponent"][];
+            feature_samples: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            event_ids: string[];
+        };
+        SharedBehaviorHistory: {
+            /** @enum {string} */
+            status: "candidate" | "likely" | "confirmed";
+            confidence: number;
+            signal_groups: string[];
+            /** @enum {string} */
+            coverage_state: "unknown" | "partial" | "verified";
+            rule_version: string;
+            /** Format: date-time */
+            observed_at: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        SharedBehaviorDetail: components["schemas"]["SharedBehaviorAssessment"] & {
+            history: components["schemas"]["SharedBehaviorHistory"][];
+        };
+        SharedBehaviorPage: {
+            items: components["schemas"]["SharedBehaviorAssessment"][];
+            page: {
+                limit: number;
+                next_cursor: string | null;
+                total: number;
+            };
+        };
+        SharedReviewHistoryPage: {
+            items: {
+                [key: string]: unknown;
+            }[];
+            next_cursor: string;
+        };
+        ManagedIdentityConfiguration: {
+            /** @enum {string} */
+            kind: "online_equipment" | "complete_inventory";
+            source: string;
+            sensor_id: string;
+            campus_id: string;
+            access_domain: string;
+            user_cidrs: string[];
+            inventory_url?: string;
+            token?: string;
+            max_records: number;
+            enabled: boolean;
+        };
+        ManagedIdentitySource: {
+            configuration: components["schemas"]["ManagedIdentityConfiguration"];
+            config_version: number;
+            token_configured: boolean;
+            state: string;
+            blocker: string;
+        };
+        FourKDatabaseConfig: {
+            host: string;
+            port: number;
+            database: string;
+            username: string;
+            password?: string;
+            tls: boolean;
+            /** @description Zero or omitted selects the unique enabled unexpired authorization. */
+            authorization_id?: number;
+        };
+        FourKDatabaseResponse: {
+            configuration: components["schemas"]["FourKDatabaseConfig"];
+            password_configured: boolean;
+            /** @enum {string} */
+            credential_source: "4k_database";
+        };
+        OperationTask: {
+            task_id: string;
+            kind: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "completed" | "failed" | "cancelled";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            completed_at?: string;
+            result?: {
+                [key: string]: unknown;
+            };
+            error?: string;
+            response_status?: number;
+        };
+        IdentitySnapshotRequest: {
+            source: string;
+            sensor_id: string;
+            campus_id: string;
+            access_domain: string;
+            /**
+             * Format: date-time
+             * @description Consistent upstream inventory time, within the past seven days, UTC with at most microsecond precision; never a fetch-completion timestamp for an inconsistent scan.
+             */
+            observed_at: string;
+            reconcile_interval_seconds: number;
+            /** @enum {boolean} */
+            complete: true;
+            expected_count: number;
+            records: ({
+                session_id: string;
+                account_id: string;
+                ip: string;
+                endpoint_id?: string;
+                mac?: string;
+                group_id?: string;
+                product_id?: string;
+                /** @enum {string} */
+                device_class?: "mobile" | "pc" | "other";
+            } & {
+                [key: string]: string;
+            })[];
+        };
+        IdentitySnapshotReceipt: {
+            snapshot_id: string;
+            /** @enum {string} */
+            status: "completed";
+            /** Format: date-time */
+            observed_at: string;
+            session_count: number;
+            replayed: boolean;
+        };
+        IdentitySourceStatus: {
+            source: string;
+            sensor_id: string;
+            campus_id: string;
+            access_domain: string;
+            snapshot_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            /** Format: date-time */
+            received_at: string;
+            reconcile_interval_seconds: number;
+            session_count: number;
+            /** @enum {string} */
+            state: "healthy" | "interrupted" | "never_seen" | "unregistered";
+            age_seconds: number;
+        };
+        ApplicationMatch: {
+            rule_id?: string;
+            target_id?: string;
+            target_type?: string;
+            name?: string;
+            category?: string;
+            source?: string;
+            source_version?: string;
+            confidence?: number;
+        };
+        ApplicationObservation: {
+            event_id?: string;
+            timestamp?: string;
+            sensor_id?: string;
+            campus_id?: string;
+            ip?: string;
+            connection_id?: string;
+            event_type?: string;
+            domain?: string;
+            source_field?: string;
+            bundle_version?: string;
+            match?: components["schemas"]["ApplicationMatch"];
+            upload_bytes?: number | null;
+            download_bytes?: number | null;
+        };
+        ApplicationBucket: {
+            connection_count?: number;
+            upload_bytes?: number | null;
+            download_bytes?: number | null;
+            missing_meter_connections?: number;
+        };
+        ApplicationActivityItem: {
+            application_id?: string;
+            name?: string;
+            category?: string;
+            last_seen?: string;
+            terminal_count?: number;
+            connection_count?: number;
+            observation_count?: number;
+            missing_meter_connections?: number;
+            upload_bytes?: number | null;
+            download_bytes?: number | null;
+        };
+        ApplicationReport: {
+            items?: components["schemas"]["ApplicationActivityItem"][];
+            versions?: {
+                [key: string]: number;
+            };
+            dns_observations?: number;
+            unknown_observations?: number;
+            missing_connection_observations?: number;
+            observation_count?: number;
+            unknown?: components["schemas"]["ApplicationBucket"];
+            multi_application?: components["schemas"]["ApplicationBucket"];
+            traffic_basis?: string;
+            /**
+             * Format: date-time
+             * @description 连接汇总统计时间；不超过五秒，否则请求失败
+             */
+            as_of?: string;
+            /** Format: date-time */
+            statistics_as_of?: string;
+        };
+        ApplicationLibraryStatus: {
+            enabled?: boolean;
+            library?: {
+                version?: string;
+                versions?: string[];
+                rule_count?: number;
+                activated_at?: string;
+            };
+            job?: components["schemas"]["ApplicationProcessingJob"];
+            last_scan?: string;
+            error?: string;
+            retained_observations?: number;
+            config?: {
+                enabled?: boolean;
+                update_url?: string;
+                last_pull_at?: string;
+                last_pull_error?: string;
+                credential_configured?: boolean;
+                /** @default 1000 */
+                history_interval_ms: number;
+            };
+            retained_observations_known?: boolean;
+            processing?: {
+                storage?: string;
+                query_millis?: number;
+                realtime?: components["schemas"]["ApplicationProcessingJob"];
+                history?: components["schemas"]["ApplicationProcessingJob"];
+                reconcile?: components["schemas"]["ApplicationProcessingJob"];
+            };
+        };
+        ApplicationProcessingJob: {
+            id?: string;
+            revision?: number;
+            status?: string;
+            version?: string;
+            from?: string;
+            to?: string;
+            processed?: number;
+            error?: string;
+            requested_control?: string;
+            last_success?: string;
+            batch_millis?: number;
+            retries?: number;
+            lag_seconds?: number;
+            available_from?: string;
+            available_to?: string;
+            after?: {
+                timestamp?: string;
+                sensor_id?: string;
+                event_id?: string;
+            };
+            /**
+             * Format: date-time
+             * @description 当前扫描时间片起点
+             */
+            scan_from?: string;
+            /**
+             * Format: date-time
+             * @description 当前扫描时间片终点
+             */
+            scan_to?: string;
+            /** @description 扫描时间片秒数；未设置时使用 600 秒 */
+            scan_seconds?: number;
+        };
+        ApplicationObservationPage: {
+            items?: components["schemas"]["ApplicationObservation"][];
+            total?: number;
+            /**
+             * Format: date-time
+             * @description 分页总数的统计来源时间；数据库模式最多延迟五秒。
+             */
+            total_as_of?: string;
+            limit?: number;
+            offset?: number;
+            /** @description 下一页游标；为空表示没有下一页。游标不能与非零 offset 同用。 */
+            next_cursor?: string;
+        };
+        CreateExportRequest: {
+            /** @enum {string} */
+            kind: "risks" | "evidence" | "cases" | "actions" | "audit";
+            /** Format: date-time */
+            from?: string;
+            /** Format: date-time */
+            to?: string;
+        };
+        ExportJob: {
+            export_id: string;
+            /** @enum {string} */
+            kind: "risks" | "evidence" | "cases" | "actions" | "audit" | "unknown-domains";
+            /** @enum {string} */
+            status: "queued" | "running" | "completed" | "failed" | "cancelled";
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            completed_at?: string;
+            row_count: number;
+            error?: string;
+            /** Format: date-time */
+            from?: string;
+            /** Format: date-time */
+            to?: string;
+        };
         LocalUser: {
             user_id: string;
             username: string;
@@ -1177,14 +3218,73 @@ export interface components {
             /** Format: date-time */
             created_at?: string;
         };
+        AccountPolicy: {
+            policy_id?: string;
+            name: string;
+            /** @default false */
+            enabled: boolean;
+            /**
+             * @default observe
+             * @enum {string}
+             */
+            mode: "observe" | "manual" | "automatic";
+            /** @enum {string} */
+            trigger: "quota_exceeded" | "shared_access" | "explicit_proxy";
+            priority?: number;
+            revision?: number;
+            scope?: components["schemas"]["AccountPolicyScope"];
+            exempt?: components["schemas"]["AccountPolicyScope"];
+            limits?: {
+                total?: number | null;
+                mobile?: number | null;
+                pc?: number | null;
+            };
+            sustain_seconds?: number;
+            window_seconds?: number;
+            recovery_seconds?: number;
+            cooldown_seconds?: number;
+            stages?: {
+                /** @enum {string} */
+                action: "notify" | "rate_limit" | "disconnect" | "disable_account";
+                connector_id: string;
+                after_seconds?: number;
+                min_episodes?: number;
+                duration_seconds?: number;
+                rate_kbps?: number;
+                template?: string;
+            }[];
+        };
+        /** @description OR within a field, AND across fields, matched on the same active session; schedules use Asia/Shanghai. */
+        AccountPolicyScope: {
+            accounts?: string[];
+            groups?: string[];
+            products?: string[];
+            campuses?: string[];
+            vlans?: string[];
+            cidrs?: string[];
+            weekdays?: number[];
+            start_minute?: number | null;
+            end_minute?: number | null;
+        };
         /** @enum {string} */
-        Permission: "risks:read" | "evidence:read" | "events:read" | "labels:create" | "endpoints:write" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read" | "device-fingerprint-library:update" | "cases:read" | "cases:write" | "identity:read" | "organization:read" | "organization:write" | "actions:read" | "actions:execute" | "actions:revoke" | "integrations:write" | "users:manage";
+        Permission: "policies:read" | "policies:manage" | "policies:authorize" | "risks:read" | "evidence:read" | "events:read" | "labels:create" | "endpoints:write" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read" | "device-fingerprint-library:update" | "exports:read" | "cases:read" | "cases:write" | "identity:read" | "organization:read" | "organization:write" | "actions:read" | "actions:execute" | "actions:revoke" | "integrations:write" | "users:manage";
         Page: {
             limit: number;
             next_cursor: string | null;
             total: number;
         };
         DeviceFingerprintLibraryStatus: {
+            domain_available?: boolean;
+            brand_eligible_rule_count?: number;
+            domain_processing_error?: string;
+            active_domain_version?: string;
+            pending_domain_version?: string;
+            domain_sources?: {
+                name: string;
+                version: string;
+                rule_count: number;
+                brand_eligible_rule_count: number;
+            }[];
             version: string;
             /** @enum {string} */
             status: "ready" | "checking" | "degraded";
@@ -1209,11 +3309,60 @@ export interface components {
             domain_backfill_status?: string;
             domain_backfill_processed?: number;
         };
+        BrandInference: {
+            /** @enum {string} */
+            status: "insufficient" | "inferred" | "conflict";
+            brand?: string;
+            confidence: number;
+            explanation: string;
+            rule_version: string;
+            window: string;
+            /** Format: date-time */
+            as_of: string;
+            candidates: {
+                brand: string;
+                confidence: number;
+                evidence: {
+                    rule_version?: string;
+                    event_source?: string;
+                    event_ids?: string[];
+                    /** Format: date-time */
+                    first_seen: string;
+                    /** Format: date-time */
+                    last_seen: string;
+                    count: number;
+                    match: {
+                        domain: string;
+                        rule_domain: string;
+                        match_type?: string;
+                        ecosystem: string;
+                        category: string;
+                        confidence: number;
+                        source: string;
+                        source_url?: string;
+                        source_version?: string;
+                        service?: string;
+                        purpose?: string;
+                        brand_eligible?: boolean;
+                        os_families?: string[];
+                        sources?: {
+                            name?: string;
+                            url?: string;
+                            version?: string;
+                        }[];
+                    };
+                }[];
+            }[];
+        };
         RecognitionCoverage: {
             known: number;
             rate: number;
         };
         DeviceRecognitionSummary: {
+            brand_inference_conflicts?: number;
+            brand_inference_enabled?: boolean;
+            domain_window?: string;
+            domain_processing_error?: string;
             total_endpoints: number;
             coverage: {
                 [key: string]: components["schemas"]["RecognitionCoverage"];
@@ -1309,6 +3458,9 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
             evidence_snapshot?: components["schemas"]["ProxyReviewCase"];
+            history_page?: {
+                [key: string]: components["schemas"]["Page"];
+            };
             evidence_history?: {
                 snapshot_id: string;
                 ruleset_version?: string;
@@ -1322,6 +3474,12 @@ export interface components {
             timeline?: {
                 [key: string]: unknown;
             }[];
+        };
+        CaseHistoryResponse: {
+            items: {
+                [key: string]: unknown;
+            }[];
+            page: components["schemas"]["Page"];
         };
         RiskCaseListResponse: {
             items: components["schemas"]["RiskCase"][];
@@ -1342,6 +3500,13 @@ export interface components {
             }[];
         };
         ActionConnector: {
+            /** @description Explicitly provisioned PEM leaf pin for HTTPS 4K. Empty uses system trust; no automatic first-use trust. */
+            certificate_pem?: string;
+            /**
+             * @default hmac
+             * @enum {string}
+             */
+            connector_type: "hmac" | "srun4k";
             connector_id: string;
             name: string;
             /** Format: uri */
@@ -1366,6 +3531,23 @@ export interface components {
             shadow_accuracy?: number;
             /** Format: date-time */
             updated_at: string;
+        };
+        NativeObservationPage: {
+            next_before?: string;
+            items: {
+                id: string;
+                step_failed: boolean;
+                /** Format: date-time */
+                recorded_at: string;
+                result: {
+                    /** @enum {string} */
+                    delivery: "reserved" | "acknowledged" | "uncertain";
+                    /** @enum {string} */
+                    observation: "unknown" | "online" | "absent" | "changed";
+                    /** Format: date-time */
+                    reserved_at: string;
+                };
+            }[];
         };
         EnforcementAction: {
             action_id: string;
@@ -1406,7 +3588,7 @@ export interface components {
         /** @enum {string} */
         RecommendedAction: "record" | "shadow_watch" | "shadow_manual_review" | "shadow_confirm_review";
         /** @enum {string} */
-        EvidenceSeverity: "low" | "medium" | "high";
+        EvidenceSeverity: "info" | "low" | "medium" | "high";
         RiskSnapshot: {
             ip: string;
             /** @enum {string} */
@@ -1436,6 +3618,13 @@ export interface components {
             /** Format: date-time */
             reviewed_at?: string;
             negative_evidence?: components["schemas"]["NegativeEvidence"][];
+            assessment_level?: components["schemas"]["RiskLevel"];
+            review_disposition?: string;
+            automation_eligible?: boolean;
+            automation_blockers?: string[];
+            /** @enum {string} */
+            detection_basis?: "explicit_tunnel" | "shared_device_divergence" | "behavioral_only";
+            independent_signal_groups?: ("protocol_rule" | "ttl_path" | "tls_client_stack" | "ua_os" | "dhcp_device_family" | "identity_mac" | "identity_access")[];
         };
         NegativeEvidence: {
             /** @enum {string} */
@@ -1462,7 +3651,45 @@ export interface components {
                 total: number;
             };
         };
+        ProxyProtocolEvidence: {
+            evidence_id: string;
+            protocol: string;
+            /** @enum {string} */
+            outcome: "success" | "failed" | "incomplete" | "unsupported" | "conflict";
+            trusted: boolean;
+            reason: string;
+            confidence?: number;
+            source: string;
+            sensor_id?: string;
+            instance_id?: string;
+            parser_id: string;
+            parser_version: string;
+            config_version: string;
+            rule_version: string;
+            connection_id: string;
+            transaction_id: string;
+            ip?: string;
+            campus_id?: string;
+            access_domain?: string;
+            /** Format: date-time */
+            request_at: string;
+            /** Format: date-time */
+            response_at: string;
+            /** Format: date-time */
+            observed_at?: string;
+            event_ids: string[];
+            raw_ref?: {
+                [key: string]: unknown;
+            };
+            attribution: {
+                state: string;
+                account_id?: string;
+                session_ids?: string[];
+                reasons?: string[];
+            };
+        };
         Evidence: {
+            proxy_protocol?: components["schemas"]["ProxyProtocolEvidence"];
             evidence_id: string;
             ip: string;
             /** @enum {string} */
@@ -1471,7 +3698,7 @@ export interface components {
             account_id?: string;
             endpoint_id?: string;
             /** @enum {string} */
-            type: "multi_user_agent" | "multi_ja3_ja4" | "ttl_clusters" | "domain_diversity" | "port_distribution" | "multi_device_fingerprint" | "multi_observed_device" | "device_signal_conflict" | "brand_os_conflict" | "tcp_tls_stack_conflict" | "dhcp_device_fingerprint" | "device_fingerprint_conflict" | "account_concurrent_macs" | "account_concurrent_endpoints" | "account_concurrent_access" | "auth_observed_mac_mismatch" | "vpn_proxy_rule_match" | "vpn_proxy_domain_hint" | "encrypted_tunnel_behavior";
+            type: "proxy_protocol_transaction" | "multi_user_agent" | "multi_ja3_ja4" | "ttl_clusters" | "domain_diversity" | "port_distribution" | "multi_device_fingerprint" | "multi_observed_device" | "device_signal_conflict" | "brand_os_conflict" | "tcp_tls_stack_conflict" | "dhcp_device_fingerprint" | "device_fingerprint_conflict" | "account_concurrent_macs" | "account_concurrent_endpoints" | "account_concurrent_access" | "auth_observed_mac_mismatch" | "vpn_proxy_rule_match" | "vpn_proxy_rule_hint" | "vpn_proxy_domain_hint" | "ai_relay_domain_usage" | "encrypted_tunnel_behavior" | "known_game_accelerator";
             window: string;
             score: number;
             confidence: number;
@@ -1564,7 +3791,113 @@ export interface components {
             /** Format: date-time */
             last_seen?: string;
         };
+        RouterEvidence: {
+            evidence_id: string;
+            assessment_id: string;
+            /** @enum {string} */
+            kind: "router_signal" | "conflict" | "confirmed_router";
+            endpoint_id?: string;
+            ip?: string;
+            mac?: string;
+            vlan?: string;
+            brand?: string;
+            series?: string;
+            model?: string;
+            role?: string;
+            source: string;
+            source_family: string;
+            source_event_type?: string;
+            raw_value?: string;
+            /** @enum {string} */
+            strength: "weak" | "medium" | "strong";
+            score: number;
+            rule_id: string;
+            rule_version: string;
+            explanation: string;
+            conflict?: boolean;
+            conflict_code?: string;
+            exclusion?: boolean;
+            brand_reference_only?: boolean;
+            association_quality: string;
+            association_reason?: string;
+            ambiguous?: boolean;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            /** Format: date-time */
+            expires_at: string;
+            expired: boolean;
+            event_ids: string[];
+        };
+        RouterScoreComponent: {
+            source_family: string;
+            evidence_id: string;
+            score: number;
+            explanation: string;
+        };
+        RouterAssessment: {
+            assessment_id: string;
+            endpoint_id?: string;
+            ip?: string;
+            mac?: string;
+            vlans?: string[];
+            brand?: string;
+            series?: string;
+            model?: string;
+            /** @enum {string} */
+            role: "router" | "ap" | "switch" | "firewall" | "endpoint" | "unknown";
+            /** @enum {string} */
+            status: "candidate" | "likely" | "confirmed";
+            confidence: number;
+            independent_sources: number;
+            sources: string[];
+            infrastructure: boolean;
+            brand_reference_only: boolean;
+            association_quality: string;
+            ambiguous: boolean;
+            confirmed_router: boolean;
+            rule_version: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            /** Format: date-time */
+            expires_at: string;
+            conflicts: string[];
+            score_components: components["schemas"]["RouterScoreComponent"][];
+            evidence?: components["schemas"]["RouterEvidence"][];
+            /** @description Number of active incremental assessments represented by this device row. */
+            merged_records?: number;
+        };
+        RouterAssessmentHistory: {
+            /** @enum {string} */
+            status: "candidate" | "likely" | "confirmed";
+            confidence: number;
+            rule_version: string;
+            /** Format: date-time */
+            changed_at: string;
+            conflicts: string[];
+        };
+        RouterObservationDetail: components["schemas"]["RouterAssessment"] & {
+            history: components["schemas"]["RouterAssessmentHistory"][];
+        };
+        RouterAssessmentPage: {
+            items: components["schemas"]["RouterAssessment"][];
+            page: {
+                limit: number;
+                next_cursor: string | null;
+                total: number;
+            };
+        };
         DeviceListResponse: {
+            device_names_disabled?: boolean;
+            /**
+             * Format: date-time
+             * @description Source time of recognition filter statistics.
+             */
+            facets_as_of?: string;
+            facets?: components["schemas"]["DeviceFilterFacets"];
             items: components["schemas"]["EndpointDeviceInventory"][];
             page: {
                 limit: number;
@@ -1572,7 +3905,50 @@ export interface components {
                 total: number;
             };
         };
+        /** @description All discovered endpoint recognition clues, independent of the current page and selected filters. Clues do not establish hardware identity. */
+        DeviceFilterFacets: {
+            brands: string[];
+            os_families: string[];
+        };
+        /** @description MAC 注册厂商对应的设备品牌参考，不确认整机品牌、型号或操作系统。 */
+        BrandReference: {
+            brand: string;
+            vendor: string;
+            /** @enum {string} */
+            source: "mac_vendor";
+            confidence: number;
+            explanation: string;
+        };
+        DeviceName: {
+            value: string;
+            source: string;
+            manual: boolean;
+            /** @enum {string} */
+            status: "current" | "historical";
+            multiple_names: boolean;
+        };
+        DeviceIPMatch: {
+            ip: string;
+            /** @enum {string} */
+            source: "ip_observation" | "account_session";
+            /** Format: date-time */
+            matched_at: string;
+            is_recent_ip: boolean;
+        };
+        DiscoveryRecognitionSummary: {
+            capabilities?: string[];
+            types?: string[];
+            positions?: string[];
+            conflict?: boolean;
+            evidence_count?: number;
+        };
         EndpointDeviceInventory: {
+            router_observation?: components["schemas"]["RouterAssessment"];
+            discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
+            ip_match?: components["schemas"]["DeviceIPMatch"];
+            device_name?: components["schemas"]["DeviceName"];
+            brand_reference?: components["schemas"]["BrandReference"];
+            brand_inference?: components["schemas"]["BrandInference"];
             endpoint_id: string;
             primary_mac?: string;
             /** @enum {string} */
@@ -1588,6 +3964,7 @@ export interface components {
             /** @enum {string} */
             merge_status: "active" | "merged" | "split";
             current_account?: string;
+            /** @description 最近观测 IP，不保证当前在线。字段名保留以兼容现有客户端。 */
             current_ip?: string;
             current_access_id?: string;
             accounts: string[];
@@ -1671,6 +4048,56 @@ export interface components {
             merged_into_endpoint_id?: string;
             split_from_endpoint_id?: string;
         };
+        SharedAccessEvaluation: {
+            id?: string;
+            /** @enum {string} */
+            state: "basis_present" | "not_matched" | "insufficient";
+            account_id?: string;
+            ip: string;
+            sensor_id: string;
+            campus_id?: string;
+            access_domain?: string;
+            rule_version?: string;
+            config_version?: string;
+            /** Format: date-time */
+            from?: string;
+            /** Format: date-time */
+            to?: string;
+            /** Format: date-time */
+            observed_at?: string;
+            device_lower_bound?: number;
+            quantity_known?: boolean;
+            confidence?: number;
+            signal_groups?: string[];
+            reasons: string[];
+            evidence_ids?: string[];
+            event_ids?: string[];
+            records?: {
+                event_id: string;
+                source: string;
+                collector_instance_id?: string;
+            }[];
+        };
+        /** @description Event-time session after checking the configured identity authority. An unregistered source remains unknown, including at action execution time. */
+        PolicyIdentitySession: {
+            session_id: string;
+            account_id: string;
+            ip: string;
+            source: string;
+            sensor_id?: string;
+            campus_id?: string;
+            access_domain?: string;
+            /** Format: date-time */
+            last_confirmed_at: string;
+            group_id: string;
+            product_id: string;
+            heartbeat_interval_seconds?: number;
+            reconcile_interval_seconds?: number;
+            /** @enum {string} */
+            identity_issue?: "unregistered_source";
+        } & {
+            [key: string]: unknown;
+        };
         AccountSession: {
             session_id: string;
             account_id: string;
@@ -1723,6 +4150,11 @@ export interface components {
             last_seen?: string;
         };
         EndpointIdentityProfile: {
+            discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
+            device_names_disabled?: boolean;
+            device_name?: components["schemas"]["DeviceName"];
+            recognition?: components["schemas"]["EndpointDeviceInventory"];
+            brand_inference?: components["schemas"]["BrandInference"];
             endpoint_id: string;
             summary: string;
             endpoint: components["schemas"]["EndpointEntity"];
@@ -1737,6 +4169,12 @@ export interface components {
             last_seen?: string;
         };
         EndpointDomainEvidence: {
+            rule_domain?: string;
+            source_url?: string;
+            source_version?: string;
+            service?: string;
+            purpose?: string;
+            brand_eligible?: boolean;
             endpoint_id: string;
             ip?: string;
             auth_session_id?: string;
@@ -1756,11 +4194,12 @@ export interface components {
             event_ids_sample?: string[];
         };
         NormalizedEventSummary: {
+            proxy_protocol?: components["schemas"]["ProxyProtocolEvidence"];
             event_id: string;
             source?: string;
             source_event_type?: string;
             /** @enum {string} */
-            type: "flow" | "dns" | "tls" | "http" | "quic" | "device" | "identity" | "alert";
+            type: "flow" | "dns" | "tls" | "http" | "quic" | "device" | "identity" | "alert" | "discovery";
             /** Format: date-time */
             timestamp: string;
             observer?: {
@@ -1810,10 +4249,26 @@ export interface components {
             /** Format: date-time */
             last_seen?: string;
         };
+        DataFreshness: {
+            /** @enum {string} */
+            status: "warming" | "fresh" | "delayed" | "stale";
+            /** Format: date-time */
+            as_of?: string;
+            lag_seconds: number;
+            /** Format: date-time */
+            available_from?: string;
+            partial: boolean;
+        };
         ActivityOverview: {
+            /**
+             * Format: date-time
+             * @description Source time of the statistics, at most five seconds old on a successful fresh response.
+             */
+            statistics_as_of?: string;
+            data_freshness?: components["schemas"]["DataFreshness"];
             sensor_id: string;
             /** @enum {string} */
-            window: "10m" | "1h" | "24h" | "latest-run";
+            window: "10m" | "1h" | "24h" | "7d" | "30d";
             event_count: number;
             active_ip_count: number;
             access_object_count: number;
@@ -1887,6 +4342,11 @@ export interface components {
             timestamp: string;
         };
         DpiOverview: {
+            /**
+             * Format: date-time
+             * @description Source time of the statistics, at most five seconds old on a successful fresh response.
+             */
+            statistics_as_of?: string;
             sensor_id: string;
             /** @enum {string} */
             window: "10m" | "1h" | "24h" | "latest-run";
@@ -2148,6 +4608,12 @@ export interface components {
             longest_continuous_days: number;
             days_with_reviews: number;
             run_count: number;
+            truncated_run_count?: number;
+            /** Format: double */
+            truncated_run_rate?: number;
+            malformed_event_count?: number;
+            /** Format: double */
+            malformed_event_rate?: number;
             risk_snapshot_count: number;
             evaluated_sample_count: number;
             reviewed_snapshot_count: number;
@@ -2155,10 +4621,47 @@ export interface components {
             review_coverage: number;
             missing_review_buckets: string[];
             recommended_adjustments: string[];
+            collection_warnings?: string[];
             ready: boolean;
             blockers: string[];
         };
+        ShadowReviewSample: {
+            /** Format: date */
+            date: string;
+            ip: string;
+            subject_type?: string;
+            subject_id?: string;
+            account_id?: string;
+            endpoint_id?: string;
+            level: components["schemas"]["RiskLevel"];
+            score: number;
+            /** Format: double */
+            confidence: number;
+            evidence_ids: string[];
+            /** @enum {string} */
+            review_status: "unreviewed" | "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
+            review_reason?: string;
+            reviewed_by?: string;
+            /** Format: date-time */
+            reviewed_at?: string;
+            source_run_id: string;
+            /** Format: date-time */
+            snapshot_time: string;
+        };
+        ShadowReviewSamples: {
+            /** Format: date */
+            date: string;
+            dates: string[];
+            samples_per_level: number;
+            samples: components["schemas"]["ShadowReviewSample"][];
+        };
         Overview: {
+            /**
+             * Format: date-time
+             * @description Source time of the statistics, at most five seconds old on a successful fresh response.
+             */
+            statistics_as_of?: string;
+            data_freshness?: components["schemas"]["DataFreshness"];
             level_counts: {
                 normal: number;
                 suspicious: number;
@@ -2264,6 +4767,842 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getDiscoverySources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getDiscoveryDevices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listRouterObservations: {
+        parameters: {
+            query?: {
+                keyword?: string;
+                ip?: string;
+                mac?: string;
+                vlan?: string;
+                brand?: string;
+                model?: string;
+                role?: "router" | "ap" | "switch" | "firewall" | "endpoint" | "unknown";
+                status?: "candidate" | "likely" | "confirmed";
+                source?: string;
+                confidence_min?: number;
+                confidence_max?: number;
+                first_seen_from?: string;
+                first_seen_to?: string;
+                last_seen_from?: string;
+                last_seen_to?: string;
+                infrastructure?: boolean;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Router observation page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouterAssessmentPage"];
+                };
+            };
+        };
+    };
+    getRouterObservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assessment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Router observation detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouterObservationDetail"];
+                };
+            };
+            /** @description Router observation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryTasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getDiscoverySummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getDiscoveryScanProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getDiscoveryEndpointEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listSharedAccessReviews: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Review page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SharedAccessReview"][];
+                        next_cursor: string;
+                    };
+                };
+            };
+        };
+    };
+    getSharedAccessReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Review summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedAccessReview"];
+                };
+            };
+            /** @description Review does not exist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listSharedReviewEvidence: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Previous page last version */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evidence versions page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedReviewHistoryPage"];
+                };
+            };
+        };
+    };
+    listSharedReviewExecutions: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Linked execution page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedReviewHistoryPage"];
+                };
+            };
+        };
+    };
+    concludeSharedAccessReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    evidence_version: number;
+                    /** @enum {string} */
+                    conclusion: "shared" | "normal" | "insufficient";
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Conclusion saved with enforcement_ready=false */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Evidence changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    previewSharedReviewDisconnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preview task persisted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
+                };
+            };
+            /** @description Permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review does not exist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    confirmSharedReviewDisconnect: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    fingerprint: string;
+                    evidence_version: number;
+                    identity_version: number;
+                    config_version: string;
+                    /** @constant */
+                    authorize_designated_test: true;
+                };
+            };
+        };
+        responses: {
+            /** @description Confirmation task persisted; business validation and target outcomes are obtained from the task and linked execution records */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
+                };
+            };
+            /** @description Missing idempotency key or invalid task submission */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review does not exist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getManagedIdentitySource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public identity configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedIdentitySource"];
+                };
+            };
+        };
+    };
+    saveManagedIdentitySource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    configuration: components["schemas"]["ManagedIdentityConfiguration"];
+                    config_version: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Saved immediately visible configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagedIdentitySource"];
+                };
+            };
+            /** @description Configuration changed or connector is not native 4K */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSharedAccessStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Shared access chain status and blockers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        checked_at: string;
+                        identity: {
+                            [key: string]: unknown;
+                        }[];
+                        collection: {
+                            [key: string]: unknown;
+                        };
+                        materialization: {
+                            [key: string]: unknown;
+                        };
+                        policy: {
+                            [key: string]: unknown;
+                        };
+                        controller: {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+        };
+    };
+    listSharedBehaviorObservations: {
+        parameters: {
+            query?: {
+                keyword?: string;
+                ip?: string;
+                status?: "candidate" | "likely" | "confirmed";
+                coverage_state?: "unknown" | "partial" | "verified";
+                confidence_min?: number;
+                limit?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Searchable shared-gateway observation page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBehaviorPage"];
+                };
+            };
+            /** @description Invalid filter or pagination */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSharedBehaviorObservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                observation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Shared-gateway observation detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBehaviorDetail"];
+                };
+            };
+            /** @description Shared-gateway observation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listAccountPolicies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Policies ordered by descending priority and stable ID */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["AccountPolicy"][];
+                    };
+                };
+            };
+        };
+    };
+    createAccountPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountPolicy"];
+            };
+        };
+        responses: {
+            /** @description Saved policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountPolicy"];
+                };
+            };
+        };
+    };
+    updateAccountPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountPolicy"];
+            };
+        };
+        responses: {
+            /** @description Updated policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountPolicy"];
+                };
+            };
+        };
+    };
+    simulateAccountPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    account_id: string;
+                    /** Format: date-time */
+                    at?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Quota lower bound, coverage, sessions, selections and explanations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        evaluations?: ({
+                            policy_id?: string;
+                            shared_error?: string;
+                            shared_evaluation?: components["schemas"]["SharedAccessEvaluation"][];
+                        } & {
+                            [key: string]: unknown;
+                        })[];
+                        sessions?: components["schemas"]["PolicyIdentitySession"][];
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getAccountQuota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current account inventory and configured quota evaluations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sessions?: components["schemas"]["PolicyIdentitySession"][];
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listPolicyExecutions: {
+        parameters: {
+            query?: {
+                account_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persistent policy episodes and stage child action IDs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    previewPolicyApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approval preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description No pending approval or incomplete identity */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mutatePolicyExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                operation: "approve" | "revoke";
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Required for disconnect approvals; must match a fresh approval-preview. */
+                    fingerprint?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated execution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    controlApplicationHistoryJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation: "pause" | "resume" | "cancel";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated application job status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -2306,6 +5645,59 @@ export interface operations {
         responses: {
             /** @description Session deleted. */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    startOIDCLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the configured OIDC provider using PKCE, state, and nonce. */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OIDC is not enabled. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    completeOIDCLogin: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OIDC session created and redirected to the control plane. */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OIDC response validation failed. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2369,6 +5761,138 @@ export interface operations {
                         checked_at: string;
                     };
                 };
+            };
+        };
+    };
+    createExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Export queued for background generation. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJob"];
+                };
+            };
+            /** @description Invalid kind or time range. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Export permission required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                export_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Export status visible to its creator or an administrator. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJob"];
+                };
+            };
+            /** @description Export not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                export_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persisted cancellation, visible to the creator or an administrator. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJob"];
+                };
+            };
+            /** @description Export has already completed or failed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Cancellation could not be persisted. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    downloadExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                export_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Completed CSV or unknown-domain JSONL export. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description Export is not completed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2592,6 +6116,33 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    getCaseHistory: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                case_id: string;
+                kind: "evidence" | "comments" | "timeline";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest-first paged immutable history, with stable timestamp and ID ordering. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaseHistoryResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
     updateCase: {
         parameters: {
             query?: never;
@@ -2756,6 +6307,146 @@ export interface operations {
             };
         };
     };
+    previewNativeAccountDisconnect: {
+        parameters: {
+            query: {
+                account_id: string;
+            };
+            header?: never;
+            path: {
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scoped session plan and confirmation fingerprint; session targets contain account, instance_id, session_id, raw_online_id and binding_hash with normalized addresses. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        connector_id: string;
+                        /** @enum {boolean} */
+                        read_only: true;
+                        /** @enum {string} */
+                        coverage: "configured_source_only" | "account_observation_only";
+                        /** Format: date-time */
+                        observed_at: string;
+                        plan: {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+            /** @description Invalid account. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Native connector unavailable. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Cannot establish current account targets. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Complete inventory unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getFourKDatabase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public configuration and password_configured; password is never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FourKDatabaseResponse"];
+                };
+            };
+        };
+    };
+    saveFourKDatabase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FourKDatabaseConfig"];
+            };
+        };
+        responses: {
+            /** @description Saved configuration without password. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FourKDatabaseResponse"];
+                };
+            };
+        };
+    };
+    checkFourKDatabase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persisted authorization check task; completed task result contains authorization metadata without appSecret. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
+                };
+            };
+            /** @description Database unavailable, no usable authorization, or ambiguous selection. Never treated as successful authentication. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     testActionConnector: {
         parameters: {
             query?: never;
@@ -2767,7 +6458,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Signed connectivity probe succeeded. */
+            /** @description Connectivity probe succeeded. Managed 4K connectors authenticate using saved database authorization and query a read-only management endpoint. A result with identity_verified=false does not verify authoritative inventory or permit enforcement. Private runtimes additionally check their inventory; reachability never grants shadow admission. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2776,6 +6467,15 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Connectivity probe durably queued. Inspect the task result for reachability, errors or timeout; acceptance is not proof of enforcement capability. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
                 };
             };
         };
@@ -2881,6 +6581,46 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listNativeActionObservations: {
+        parameters: {
+            query?: {
+                before?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                action_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Action-scoped native observation page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NativeObservationPage"];
+                };
+            };
+            /** @description Invalid cursor or page size. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Native observation database unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     revokeAction: {
         parameters: {
             query?: never;
@@ -2892,7 +6632,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Revocation accepted. */
+            /** @description Revocation accepted. Native disconnect returns the original action with blocked status; this does not prove remote restoration. */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -2900,6 +6640,20 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EnforcementAction"];
                 };
+            };
+            /** @description Completed one-shot disconnect cannot restore the original session. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Native cancellation persistence unavailable; retry the same request. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2963,6 +6717,76 @@ export interface operations {
             };
         };
     };
+    commitIdentitySnapshot: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentitySnapshotRequest"];
+            };
+        };
+        responses: {
+            /** @description Identical snapshot was already committed; freshness is not advanced by retry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentitySnapshotReceipt"];
+                };
+            };
+            /** @description Complete snapshot and audit record committed atomically. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentitySnapshotReceipt"];
+                };
+            };
+            /** @description Incomplete inventory */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid identity integration token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Global read-only mode. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Snapshot identity or observation time already contains different content */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Database commit failed or its result is uncertain; retry the same immutable request and key. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getIdentityIngestStatus: {
         parameters: {
             query?: never;
@@ -2972,12 +6796,21 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Recent identity batches and data freshness. */
+            /** @description Recent identity batches and complete-inventory freshness; requires integrations:write. Registered sources appear before their first snapshot; unregistered historical sources are identified. Freshness uses observation time, not receipt or retry time. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        enabled: boolean;
+                        last_received_at: string;
+                        completed_batches: number;
+                        failed_batches: number;
+                        reconciliation_supported: boolean;
+                        sources: components["schemas"]["IdentitySourceStatus"][];
+                    };
+                };
             };
         };
     };
@@ -3035,7 +6868,7 @@ export interface operations {
             query?: {
                 sensor_id?: string;
                 campus_id?: string;
-                window?: "10m" | "1h" | "24h" | "7d";
+                window?: "10m" | "1h" | "24h" | "7d" | "30d";
                 as_of?: string;
             };
             header?: never;
@@ -3060,7 +6893,7 @@ export interface operations {
         parameters: {
             query?: {
                 sensor_id?: string;
-                window?: "10m" | "1h" | "24h" | "7d";
+                window?: "10m" | "1h" | "24h" | "7d" | "30d";
                 campus_id?: string;
                 as_of?: string;
             };
@@ -3582,6 +7415,98 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    updateDeviceNameNote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 空字符串清除人工备注 */
+                    value: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 备注已更新并审计 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 名称或终端无效 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 需要 endpoints:write 权限且非只读模式 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listDeviceNameEvidence: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 名称证据分页；历史属性不伪造原始事件引用 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        total: number;
+                        items: {
+                            value?: string;
+                            original_value?: string;
+                            source?: string;
+                            kind?: string;
+                            event_id?: string;
+                            sensor_id?: string;
+                            address?: string;
+                            /** Format: date-time */
+                            observed_at?: string;
+                            /** Format: date-time */
+                            valid_until?: string;
+                            attribution?: string;
+                            parser_version?: string;
+                            /** @description 标准事件入库后进入队列至首次名称处理的耗时，历史回放不填充 */
+                            processing_latency_ms?: number;
+                        }[];
+                    };
+                };
+            };
+            /** @description 分页或终端参数无效 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getEndpointIdentity: {
         parameters: {
             query?: {
@@ -3645,10 +7570,17 @@ export interface operations {
     listDevices: {
         parameters: {
             query?: {
+                /** @description recent limits endpoint and IP evidence to window; omitted retains historical behavior. */
+                view?: "recent" | "history";
                 sensor_id?: string;
+                /** @description In recent view, omitted window defaults to 24h; history ignores the endpoint time window. */
                 window?: "10m" | "1h" | "24h";
                 ip?: string;
                 q?: string;
+                /** @description Filter by discovered brand clue, including inferred brands; unknown selects unidentified endpoints. */
+                brand?: string;
+                /** @description Filter by discovered operating system; unknown selects unidentified endpoints. */
+                os_family?: string;
                 campus_id?: components["parameters"]["CampusIdQuery"];
                 department?: components["parameters"]["DepartmentQuery"];
                 person_type?: components["parameters"]["PersonTypeQuery"];
@@ -4105,6 +8037,32 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getShadowReviewSamples: {
+        parameters: {
+            query?: {
+                /** @description Review sample date in YYYY-MM-DD; defaults to the latest available date. */
+                date?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stratified shadow samples for human review. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShadowReviewSamples"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listAuditLogs: {
         parameters: {
             query?: {
@@ -4195,6 +8153,15 @@ export interface operations {
                     "application/json": components["schemas"]["DeviceFingerprintLibraryStatus"];
                 };
             };
+            /** @description Durable asynchronous task accepted; query tasks for the business result */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
+                };
+            };
             403: components["responses"]["Forbidden"];
             /** @description Offline deployments require bundle import. */
             409: {
@@ -4228,6 +8195,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceFingerprintBundleManifest"];
+                };
+            };
+            /** @description Durable asynchronous task accepted; query tasks for the business result */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
                 };
             };
             403: components["responses"]["Forbidden"];
@@ -4265,6 +8241,15 @@ export interface operations {
                     "application/json": components["schemas"]["DeviceFingerprintLibraryStatus"];
                 };
             };
+            /** @description Durable asynchronous task accepted; query tasks for the business result */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
+                };
+            };
             403: components["responses"]["Forbidden"];
             /** @description Bundle validation failed. */
             422: {
@@ -4294,6 +8279,57 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getOperationTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner or administrator task state and completed business result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
+                };
+            };
+        };
+    };
+    cancelOperationTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Task cancelled */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
+                };
+            };
+            /** @description Task already terminal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
 }

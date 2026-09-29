@@ -163,6 +163,14 @@ DNS、TLS、HTTP 或 QUIC 的可见域名/SNI/Host 中出现代理、VPN 或隧�
 这是中置信线索，不能替代规则命中。常见远程办公、企业 VPN、测试域名和
 安全服务需要通过 labels 与负证据降权。
 
+### ai_relay_domain_usage
+
+DNS、TLS、HTTP 或 QUIC 的可见域名/SNI/Host 命中 `internal/airelay` 中登记的 AI API 中转站域名。
+
+基础分：26-42。
+
+这是弱证据，只证明访问了中转站域名，不证明发生了模型调用。域名会更换、会重用，也可能与其他站点共享 CDN；必须结合账号与人工复核。指标资产、来源与局限见 `docs/ai-relay-detection.md`。
+
 ### encrypted_tunnel_behavior
 
 窗口内出现 QUIC 或 UDP/443 加密传输行为。

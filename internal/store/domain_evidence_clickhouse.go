@@ -12,9 +12,12 @@ import (
 	"proxy-sentinel/internal/normalized"
 )
 
+// MaxDomainBatchSize bounds memory while amortizing historical ClickHouse scans.
+const MaxDomainBatchSize = 100000
+
 func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, since, cursorTimestamp, cursorEventID string, limit int) ([]normalized.Event, error) {
-	if limit <= 0 || limit > 10000 {
-		limit = 10000
+	if limit <= 0 || limit > MaxDomainBatchSize {
+		limit = MaxDomainBatchSize
 	}
 	start, err := time.Parse(time.RFC3339Nano, since)
 	if err != nil {
@@ -32,7 +35,7 @@ func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, s
 		clauses = append(clauses, "(timestamp,event_id) > (parseDateTime64BestEffort("+chQuote(cursor.UTC().Format(time.RFC3339Nano))+",6,'UTC'),"+chQuote(cursorEventID)+")")
 	}
 	data, err := s.query(ctx, fmt.Sprintf(`
-SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,schema_version,source,source_event_type,type,subject_ip,endpoint_id,auth_session_id,payload_json,flow_json
+SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,schema_version,source,source_event_type,type,subject_ip,endpoint_id,auth_session_id,sensor_id,campus_id,payload_json,flow_json
 FROM normalized_events
 WHERE %s
 ORDER BY timestamp,event_id
@@ -47,6 +50,8 @@ FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit))
 	for scanner.Scan() {
 		var row struct {
 			Timestamp       string `json:"event_timestamp"`
+			SensorID        string `json:"sensor_id"`
+			CampusID        string `json:"campus_id"`
 			EventID         string `json:"event_id"`
 			SchemaVersion   string `json:"schema_version"`
 			Source          string `json:"source"`
@@ -67,11 +72,11 @@ FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit))
 		if row.AuthSessionID != "" {
 			payload["session_id"] = row.AuthSessionID
 		}
-		subject := map[string]any{"ip": row.SubjectIP}
+		subject := map[string]any{"ip": row.SubjectIP, "campus_id": row.CampusID}
 		if row.EndpointID != "" {
 			subject["endpoint_id"] = row.EndpointID
 		}
-		items = append(items, normalized.Event{Timestamp: normalizeClickHouseTimestamp(row.Timestamp), EventID: row.EventID, SchemaVersion: row.SchemaVersion, Source: row.Source, SourceEventType: row.SourceEventType, Type: row.Type, Subject: subject, Payload: payload, Flow: flow})
+		items = append(items, normalized.Event{Timestamp: normalizeClickHouseTimestamp(row.Timestamp), EventID: row.EventID, SchemaVersion: row.SchemaVersion, Source: row.Source, SourceEventType: row.SourceEventType, Type: row.Type, Observer: map[string]any{"sensor_id": row.SensorID}, Subject: subject, Payload: payload, Flow: flow})
 	}
 	return items, scanner.Err()
 }

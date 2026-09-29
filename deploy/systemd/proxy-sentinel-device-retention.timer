@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Proxy Sentinel device snapshot maintenance
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+Unit=proxy-sentinel-device-retention.service
+
+[Install]
+WantedBy=timers.target

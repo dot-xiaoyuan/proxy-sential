@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +14,12 @@ import (
 )
 
 type EndpointDomainEvidence struct {
+	RuleDomain        string   `json:"rule_domain,omitempty"`
+	SourceURL         string   `json:"source_url,omitempty"`
+	SourceVersion     string   `json:"source_version,omitempty"`
+	Service           string   `json:"service,omitempty"`
+	Purpose           string   `json:"purpose,omitempty"`
+	BrandEligible     bool     `json:"brand_eligible,omitempty"`
 	EndpointID        string   `json:"endpoint_id"`
 	IP                string   `json:"ip,omitempty"`
 	AuthSessionID     string   `json:"auth_session_id,omitempty"`
@@ -54,7 +61,11 @@ type DomainEcosystemObservation struct {
 
 func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normalized.Event, library *fingerprint.Library) (DomainBackfillProgress, error) {
 	result := DomainBackfillProgress{Version: library.Version()}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO domain_rule_versions(version,rules) VALUES($1,$2) ON CONFLICT DO NOTHING`, library.Version(), library.DomainRulesJSON()); err != nil {
+		return result, err
+	}
 	touched := map[string]struct{}{}
+	validEndpoints := map[string]bool{}
 	for _, event := range events {
 		observation, observable := ExtractDomainObservation(event)
 		if !observable {
@@ -75,6 +86,17 @@ func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normal
 			result.Observations = append(result.Observations, matchedObservation)
 			continue
 		}
+		valid, checked := validEndpoints[attributed.EndpointID]
+		if !checked {
+			if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_entities WHERE endpoint_id=$1 AND entity_role='endpoint')`, attributed.EndpointID).Scan(&valid); err != nil {
+				return result, err
+			}
+			validEndpoints[attributed.EndpointID] = valid
+		}
+		if !valid {
+			result.Observations = append(result.Observations, matchedObservation)
+			continue
+		}
 		result.Attributed++
 		matchedObservation.DomainObservation = attributed
 		matchedObservation.Attributed = true
@@ -85,34 +107,11 @@ func (s *PostgresStore) ProcessDomainEvents(ctx context.Context, events []normal
 		touched[attributed.EndpointID] = struct{}{}
 	}
 	for endpointID := range touched {
-		if err := s.updateEndpointEcosystemProfile(ctx, endpointID); err != nil {
+		if err := s.refreshBrandInference(ctx, endpointID, library.Version()); err != nil {
 			return result, err
 		}
 	}
 	return result, nil
-}
-
-func (s *PostgresStore) updateEndpointEcosystemProfile(ctx context.Context, endpointID string) error {
-	ecosystem, _, err := s.endpointEcosystem(ctx, endpointID)
-	if err != nil {
-		return err
-	}
-	var brand, source string
-	var brandConfidence float64
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(brand,''),brand_confidence,COALESCE(recognition_source,'') FROM endpoint_device_profiles WHERE endpoint_id=$1`, endpointID).Scan(&brand, &brandConfidence, &source)
-	if err == sql.ErrNoRows {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	brand, brandConfidence, _ = fingerprint.FuseEcosystemBrand(brand, brandConfidence, source, ecosystem)
-	hint := ""
-	if ecosystem.Displayable && !ecosystem.Conflict {
-		hint = ecosystem.Hint
-	}
-	_, err = s.db.ExecContext(ctx, `UPDATE endpoint_device_profiles SET brand=NULLIF($2,''),brand_confidence=$3,ecosystem_hint=NULLIF($4,''),ecosystem_confidence=$5,ecosystem_conflict=$6,ecosystem_evidence_count=$7,updated_at=now() WHERE endpoint_id=$1`, endpointID, brand, brandConfidence, hint, ecosystem.Confidence, ecosystem.Conflict, ecosystem.EvidenceCount)
-	return err
 }
 
 func (s *PostgresStore) persistDomainEvidence(ctx context.Context, observation DomainObservation, match fingerprint.DomainMatch, version string) error {
@@ -132,13 +131,21 @@ func (s *PostgresStore) persistDomainEvidence(ctx context.Context, observation D
 	if !endpointExists {
 		return nil
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO endpoint_domain_evidence_events(rule_version,event_id,ecosystem,endpoint_id,observed_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, version, observation.EventID, match.Ecosystem, observation.EndpointID, when)
+	observationJSON, _ := json.Marshal(observation)
+	matchJSON, _ := json.Marshal(match)
+	result, err := tx.ExecContext(ctx, `INSERT INTO endpoint_domain_evidence_events(rule_version,event_id,ecosystem,endpoint_id,observed_at,observation,rule_match) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`, version, observation.EventID, match.Ecosystem, observation.EndpointID, when, observationJSON, matchJSON)
 	if err != nil {
 		return err
 	}
 	inserted, err := result.RowsAffected()
-	if err != nil || inserted == 0 {
+	if err != nil {
 		return err
+	}
+	if inserted == 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE endpoint_domain_evidence_events SET observation=$4,rule_match=$5 WHERE rule_version=$1 AND event_id=$2 AND ecosystem=$3 AND rule_match IS NULL`, version, observation.EventID, match.Ecosystem, observationJSON, matchJSON); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	sample, _ := json.Marshal([]string{observation.EventID})
 	_, err = tx.ExecContext(ctx, `
@@ -156,43 +163,6 @@ ON CONFLICT(endpoint_id,domain,ecosystem,event_source,rule_version) DO UPDATE SE
 		return err
 	}
 	return tx.Commit()
-}
-
-func (s *PostgresStore) ListEndpointDomainEvidence(ctx context.Context, endpointID string, limit int) ([]EndpointDomainEvidence, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT endpoint_id,domain,ecosystem,event_source,attribution_method,COALESCE(auth_session_id,''),rule_source,rule_version,category,confidence,first_seen,last_seen,hit_count,event_ids_sample FROM endpoint_domain_evidence WHERE endpoint_id=$1 ORDER BY last_seen DESC,domain LIMIT $2`, endpointID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []EndpointDomainEvidence{}
-	for rows.Next() {
-		var item EndpointDomainEvidence
-		var first, last time.Time
-		var sample []byte
-		if err := rows.Scan(&item.EndpointID, &item.Domain, &item.Ecosystem, &item.EventSource, &item.AttributionMethod, &item.AuthSessionID, &item.RuleSource, &item.RuleVersion, &item.Category, &item.Confidence, &first, &last, &item.Count, &sample); err != nil {
-			return nil, err
-		}
-		item.FirstSeen = first.UTC().Format(time.RFC3339Nano)
-		item.LastSeen = last.UTC().Format(time.RFC3339Nano)
-		_ = json.Unmarshal(sample, &item.EventIDs)
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-func (s *PostgresStore) endpointEcosystem(ctx context.Context, endpointID string) (fingerprint.EcosystemResult, []EndpointDomainEvidence, error) {
-	items, err := s.ListEndpointDomainEvidence(ctx, endpointID, 200)
-	if err != nil {
-		return fingerprint.EcosystemResult{}, nil, err
-	}
-	evidence := make([]fingerprint.DomainEvidence, 0, len(items))
-	for _, item := range items {
-		evidence = append(evidence, fingerprint.DomainEvidence{Match: fingerprint.DomainMatch{Domain: item.Domain, Ecosystem: item.Ecosystem, Category: item.Category, Confidence: item.Confidence, Source: item.RuleSource}, FirstSeen: item.FirstSeen, LastSeen: item.LastSeen, Count: item.Count})
-	}
-	return fingerprint.EvaluateEcosystem(evidence), items, nil
 }
 
 func scanDomainBackfillProgress(row *sql.Row, version string) (DomainBackfillProgress, error) {
@@ -221,4 +191,27 @@ func (s *PostgresStore) saveDomainBackfillFailure(version string, err error) {
 		return
 	}
 	_, _ = s.db.ExecContext(context.Background(), `UPDATE domain_evidence_backfill_jobs SET status='failed',last_error=$2,updated_at=now() WHERE version=$1`, version, strings.TrimSpace(err.Error()))
+}
+
+func (s *PostgresStore) ListEndpointDomainEvidence(ctx context.Context, endpointID string, limit int) ([]EndpointDomainEvidence, error) {
+	version, _, err := s.activeDomainVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	evidence, err := s.windowDomainEvidence(ctx, endpointID, version, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(evidence, func(i, j int) bool { return evidence[i].LastSeen > evidence[j].LastSeen })
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	if len(evidence) > limit {
+		evidence = evidence[:limit]
+	}
+	out := []EndpointDomainEvidence{}
+	for _, v := range evidence {
+		out = append(out, EndpointDomainEvidence{EndpointID: endpointID, Domain: v.Match.Domain, Ecosystem: v.Match.Ecosystem, EventSource: v.EventSource, AttributionMethod: v.AttributionMethod, RuleSource: v.Match.Source, RuleVersion: version, Category: v.Match.Category, Confidence: v.Match.Confidence, FirstSeen: v.FirstSeen, LastSeen: v.LastSeen, Count: v.Count, EventIDs: v.EventIDs, RuleDomain: v.Match.RuleDomain, SourceURL: v.Match.SourceURL, SourceVersion: v.Match.SourceVersion, Service: v.Match.Service, Purpose: v.Match.Purpose, BrandEligible: v.Match.BrandEligible})
+	}
+	return out, nil
 }

@@ -1,0 +1,8 @@
+{
+  "GET /cases/{case_id}": {
+    "path": "/cases/bench-scale-case-0"
+  },
+  "GET /cases/{case_id}/history/{kind}": {
+    "path": "/cases/bench-scale-case-0/history/evidence?limit=20"
+  }
+}

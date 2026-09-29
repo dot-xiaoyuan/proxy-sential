@@ -6,6 +6,555 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /discovery/nodes:
+    get:
+      description: Discovery worker heartbeat; requires identity:read.
+      responses:
+        '200':
+          description: Node availability
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /discovery/sources:
+    get:
+      operationId: getDiscoverySources
+      description: Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    post:
+      description: Requires integrations:write. Credentials are write-only and encrypted; versions use optimistic concurrency. Scan changes disable scheduling and invalidate prior trial.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Saved configuration without credentials }
+        '409': { description: Configuration version conflict }
+  /discovery/devices:
+    get:
+      operationId: getDiscoveryDevices
+      description: Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /router-observations:
+    get:
+      operationId: listRouterObservations
+      description: Passive Huawei/H3C router observations in shadow mode; requires identity:read and never triggers enforcement.
+      parameters:
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: ip, in: query, schema: { type: string } }
+        - { name: mac, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
+        - { name: brand, in: query, schema: { type: string } }
+        - { name: model, in: query, schema: { type: string } }
+        - { name: role, in: query, schema: { type: string, enum: [router, ap, switch, firewall, endpoint, unknown] } }
+        - { name: status, in: query, schema: { type: string, enum: [candidate, likely, confirmed] } }
+        - { name: source, in: query, schema: { type: string } }
+        - { name: confidence_min, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
+        - { name: confidence_max, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
+        - { name: first_seen_from, in: query, schema: { type: string, format: date-time } }
+        - { name: first_seen_to, in: query, schema: { type: string, format: date-time } }
+        - { name: last_seen_from, in: query, schema: { type: string, format: date-time } }
+        - { name: last_seen_to, in: query, schema: { type: string, format: date-time } }
+        - { name: infrastructure, in: query, schema: { type: boolean } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Router observation page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouterAssessmentPage' }
+  /router-observations/{assessment_id}:
+    get:
+      operationId: getRouterObservation
+      description: Passive router observation details, evidence timeline and status history; requires identity:read.
+      parameters:
+        - { name: assessment_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Router observation detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouterObservationDetail' }
+        '404': { description: Router observation not found }
+  /discovery/tasks:
+    get:
+      operationId: getDiscoveryTasks
+      description: Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /discovery/summary:
+    get:
+      operationId: getDiscoverySummary
+      description: Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /discovery/scan-profiles:
+    get:
+      operationId: getDiscoveryScanProfiles
+      description: Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    post:
+      description: Requires integrations:write. Credentials are write-only and encrypted; versions use optimistic concurrency. Scan changes disable scheduling and invalidate prior trial.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Saved configuration without credentials }
+        '409': { description: Configuration version conflict }
+  /discovery/endpoint-evidence:
+    get:
+      operationId: getDiscoveryEndpointEvidence
+      description: Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /discovery/sources/{id}/poll:
+    post:
+      description: 'Queue immutable SNMP snapshot; requires integrations:write.'
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Operation completed }
+        '202': { description: Task queued }
+        '400': { description: Invalid scope or configuration }
+        '409': { description: Task pending or current trial required }
+  /discovery/tasks/{id}/stop:
+    post:
+      description: 'Cancel a pending or running task; requires integrations:write.'
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Operation completed }
+        '202': { description: Task queued }
+        '400': { description: Invalid scope or configuration }
+        '409': { description: Task pending or current trial required }
+  /discovery/scan-profiles/{id}/trial:
+    post:
+      description: 'Queue a bounded manual scan; requires integrations:write.'
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Operation completed }
+        '202': { description: Task queued }
+        '400': { description: Invalid scope or configuration }
+        '409': { description: Task pending or current trial required }
+  /discovery/scan-profiles/{id}/schedule:
+    post:
+      description: 'Enable or disable scheduling; current version trial required; requires integrations:write.'
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Operation completed }
+        '202': { description: Task queued }
+        '400': { description: Invalid scope or configuration }
+        '409': { description: Task pending or current trial required }
+  /discovery/preview:
+    post:
+      description: 'Preview explicit allowed targets without network probes; requires integrations:write.'
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Operation completed }
+        '202': { description: Task queued }
+        '400': { description: Invalid scope or configuration }
+        '409': { description: Task pending or current trial required }
+  /shared-access/reviews:
+    get:
+      operationId: listSharedAccessReviews
+      description: Requires cases:read. Stable database keyset pagination by created_at and review_id. Empty does not prove no shared behavior.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Review page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/SharedAccessReview' } }
+                  next_cursor: { type: string }
+  /shared-access/reviews/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getSharedAccessReview
+      description: Requires cases:read. Latest evidence summary and latest human conclusion; full histories are loaded separately.
+      responses:
+        '200':
+          description: Review summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedAccessReview' }
+        '404': { description: Review does not exist }
+  /shared-access/reviews/{id}/evidence:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listSharedReviewEvidence
+      description: Requires cases:read. Append-only versions descending. Bounded original references are a summary and not a full packet history.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, description: Previous page last version, schema: { type: string } }
+      responses:
+        '200':
+          description: Evidence versions page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedReviewHistoryPage' }
+  /shared-access/reviews/{id}/executions:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listSharedReviewExecutions
+      description: Requires cases:read. Only explicitly linked actions; does not attach unrelated account actions.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Linked execution page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedReviewHistoryPage' }
+  /shared-access/reviews/{id}/conclusion:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: concludeSharedAccessReview
+      description: Requires cases:write. Version-bound human conclusion and audit saved atomically. Never grants punishment authority.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evidence_version, conclusion, reason]
+              properties:
+                evidence_version: { type: integer, minimum: 1 }
+                conclusion: { type: string, enum: [shared, normal, insufficient] }
+                reason: { type: string, minLength: 1, maxLength: 4096 }
+      responses:
+        '200': { description: Conclusion saved with enforcement_ready=false }
+        '409': { description: Evidence changed, re-review required }
+  /shared-access/reviews/{id}/disconnect-preview:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: previewSharedReviewDisconnect
+      description: Requires actions:execute and cases:read. Durable task queries complete authoritative identity and current evidence; completed task result is SharedDisconnectPreview. Does not send controls.
+      x-performance-category: task-submission
+      responses:
+        '202': { description: Preview task persisted, content: { application/json: { schema: { $ref: '#/components/schemas/OperationTask' } } } }
+        '403': { description: Permission, CSRF or read-only restriction }
+        '404': { description: Review does not exist }
+  /shared-access/reviews/{id}/disconnect:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+    post:
+      operationId: confirmSharedReviewDisconnect
+      description: Requires integrations:write, actions:execute and cases:write. Explicit yuantong test only, shadow connector, immutable 15-minute grant and five-minute account/scope cooldown. Task result contains grant_id and action_ids. Accepted does not prove offline. Every send revalidates current authority, evidence, exceptions and emergency stop. User logout is a separate unsupported capability.
+      x-performance-category: task-submission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [fingerprint, evidence_version, identity_version, config_version, authorize_designated_test]
+              properties:
+                fingerprint: { type: string, minLength: 1 }
+                evidence_version: { type: integer, minimum: 1 }
+                identity_version: { type: integer, minimum: 1 }
+                config_version: { type: string }
+                authorize_designated_test: { type: boolean, const: true }
+      responses:
+        '202': { description: Confirmation task persisted; business validation and target outcomes are obtained from the task and linked execution records, content: { application/json: { schema: { $ref: '#/components/schemas/OperationTask' } } } }
+        '400': { description: Missing idempotency key or invalid task submission }
+        '403': { description: Permission, CSRF or read-only restriction }
+        '404': { description: Review does not exist }
+  /actions/connectors/{id}/identity-source:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getManagedIdentitySource
+      description: Requires integrations:write. Returns public configuration and current sync status; never returns credentials.
+      responses:
+        '200':
+          description: Public identity configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedIdentitySource' }
+    put:
+      operationId: saveManagedIdentitySource
+      description: Synchronous version-checked save, resets authority until successful complete reconciliation. Requires integrations:write. Blank token preserves only the same inventory URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [configuration, config_version]
+              properties:
+                configuration: { $ref: '#/components/schemas/ManagedIdentityConfiguration' }
+                config_version: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Saved immediately visible configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedIdentitySource' }
+        '409': { description: Configuration changed or connector is not native 4K }
+  /shared-access/status:
+    get:
+      operationId: getSharedAccessStatus
+      description: Requires identity:read. Explicit unknown or blocked states are returned until independently verified. Configured does not mean healthy.
+      responses:
+        '200':
+          description: Shared access chain status and blockers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [checked_at, identity, collection, materialization, policy, controller]
+                properties:
+                  checked_at: { type: string, format: date-time }
+                  identity: { type: array, items: { type: object, additionalProperties: true } }
+                  collection: { type: object, additionalProperties: true }
+                  materialization: { type: object, additionalProperties: true }
+                  policy: { type: object, additionalProperties: true }
+                  controller: { type: object, additionalProperties: true }
+  /shared-access/observations:
+    get:
+      operationId: listSharedBehaviorObservations
+      description: Passive shared-gateway behavior observations; requires cases:read. Results are shadow-only and never authorize enforcement.
+      parameters:
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: ip, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [candidate, likely, confirmed] } }
+        - { name: coverage_state, in: query, schema: { type: string, enum: [unknown, partial, verified] } }
+        - { name: confidence_min, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Searchable shared-gateway observation page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedBehaviorPage' }
+        '400': { description: Invalid filter or pagination }
+  /shared-access/observations/{observation_id}:
+    get:
+      operationId: getSharedBehaviorObservation
+      description: Shared-gateway score, evidence references, router correlation and immutable decision history; requires cases:read.
+      parameters:
+        - { name: observation_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Shared-gateway observation detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedBehaviorDetail' }
+        '404': { description: Shared-gateway observation not found }
+  /policies:
+    get:
+      operationId: listAccountPolicies
+      responses:
+        '200':
+          description: Policies ordered by descending priority and stable ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AccountPolicy' }
+    post:
+      operationId: createAccountPolicy
+      description: Always creates a disabled policy in observe mode. Requires policies:manage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountPolicy' }
+      responses:
+        '200':
+          description: Saved policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountPolicy' }
+  /policies/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: updateAccountPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountPolicy' }
+      responses:
+        '200':
+          description: Updated policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountPolicy' }
+  /policies/{id}/simulate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: simulateAccountPolicy
+      description: Read-only evaluation against stored event-time identity; requires policies:read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account_id]
+              properties:
+                account_id: { type: string }
+                at: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Quota lower bound, coverage, sessions, selections and explanations
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  evaluations:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        policy_id: { type: string }
+                        shared_error: { type: string }
+                        shared_evaluation:
+                          type: array
+                          items: { $ref: '#/components/schemas/SharedAccessEvaluation' }
+                  sessions:
+                    type: array
+                    items: { $ref: '#/components/schemas/PolicyIdentitySession' }
+  /accounts/{id}/quota:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getAccountQuota
+      responses:
+        '200':
+          description: Current account inventory and configured quota evaluations
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: '#/components/schemas/PolicyIdentitySession' }
+  /policy-executions:
+    get:
+      operationId: listPolicyExecutions
+      parameters:
+        - { name: account_id, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Persistent policy episodes and stage child action IDs
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /policy-executions/{id}/approval-preview:
+    get:
+      operationId: previewPolicyApproval
+      description: Read-only current account sessions, stage parameters, evidence IDs and fingerprint. Requires policies:read. Preview does not authorize execution.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Approval preview
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '409': { description: No pending approval or incomplete identity }
+  /policy-executions/{id}/{operation}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: operation, in: path, required: true, schema: { type: string, enum: [approve, revoke] } }
+    post:
+      operationId: mutatePolicyExecution
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fingerprint: { type: string, description: Required for disconnect approvals; must match a fresh approval-preview. }
+      description: approve requires policies:authorize; revoke requires actions:revoke and cancels pending stages. Shared-access evidence supports manual disconnect only, requires a matching confirmation fingerprint and fresh evidence plus current account identity; automatic enforcement remains forbidden.
+      responses:
+        '200': { description: Updated execution }
+  /application-library/jobs/{operation}:
+    parameters:
+      - { name: operation, in: path, required: true, schema: { type: string, enum: [pause, resume, cancel] } }
+    post:
+      operationId: controlApplicationHistoryJob
+      description: Operation takes effect between committed batches; results and cursor are retained.
+      responses:
+        '200': { description: Updated application job status }
   /auth/login:
     post:
       operationId: login
@@ -30,6 +579,25 @@ paths:
       responses:
         "204":
           description: Session deleted.
+  /auth/oidc/start:
+    get:
+      operationId: startOIDCLogin
+      responses:
+        "302":
+          description: Redirect to the configured OIDC provider using PKCE, state, and nonce.
+        "404":
+          description: OIDC is not enabled.
+  /auth/oidc/callback:
+    get:
+      operationId: completeOIDCLogin
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, required: true, schema: { type: string } }
+      responses:
+        "302":
+          description: OIDC session created and redirected to the control plane.
+        "401":
+          description: OIDC response validation failed.
   /session:
     get:
       operationId: getSession
@@ -67,6 +635,60 @@ paths:
                   fingerprint_offline_mode: { type: boolean }
                   global_read_only: { type: boolean }
                   checked_at: { type: string, format: date-time }
+  /exports:
+    post:
+      operationId: createExport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateExportRequest"
+      responses:
+        "202":
+          description: Export queued for background generation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExportJob" }
+        "400": { description: Invalid kind or time range. }
+        "403": { description: Export permission required. }
+  /exports/{export_id}:
+    get:
+      operationId: getExport
+      parameters:
+        - { name: export_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Export status visible to its creator or an administrator.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExportJob" }
+        "404": { description: Export not found. }
+  /exports/{export_id}/cancel:
+    post:
+      operationId: cancelExport
+      parameters:
+        - { name: export_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Persisted cancellation, visible to the creator or an administrator.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExportJob" }
+        "409": { description: Export has already completed or failed. }
+        "503": { description: Cancellation could not be persisted. }
+  /exports/{export_id}/download:
+    get:
+      operationId: downloadExport
+      parameters:
+        - { name: export_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Completed CSV or unknown-domain JSONL export.
+          content:
+            text/csv:
+              schema: { type: string, format: binary }
+        "409": { description: Export is not completed. }
   /users:
     get:
       operationId: listUsers
@@ -151,6 +773,21 @@ paths:
                 $ref: "#/components/schemas/RiskCase"
         "404":
           $ref: "#/components/responses/NotFound"
+  /cases/{case_id}/history/{kind}:
+    get:
+      operationId: getCaseHistory
+      parameters:
+        - { name: case_id, in: path, required: true, schema: { type: string } }
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [evidence, comments, timeline] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Newest-first paged immutable history, with stable timestamp and ID ordering.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CaseHistoryResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /cases/{case_id}/{operation}:
     post:
       operationId: updateCase
@@ -242,14 +879,84 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ActionConnector" }
+  /actions/connectors/{connector_id}/account-preview:
+    get:
+      operationId: previewNativeAccountDisconnect
+      description: Read-only account targets for one configured source. Requires actions:read; never authorizes execution or proves global account coverage.
+      parameters:
+        - { name: connector_id, in: path, required: true, schema: { type: string } }
+        - { name: account_id, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+      responses:
+        "200":
+          description: Scoped session plan and confirmation fingerprint; session targets contain account, instance_id, session_id, raw_online_id and binding_hash with normalized addresses.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connector_id, read_only, coverage, observed_at, plan]
+                properties:
+                  connector_id: { type: string }
+                  read_only: { type: boolean, enum: [true] }
+                  coverage: { type: string, enum: [configured_source_only, account_observation_only] }
+                  observed_at: { type: string, format: date-time }
+                  plan: { type: object, additionalProperties: true }
+        "400": { description: Invalid account. }
+        "404": { description: Native connector unavailable. }
+        "409": { description: Cannot establish current account targets. }
+        "503": { description: Complete inventory unavailable. }
+  /actions/connectors/{connector_id}/4k-database:
+    parameters:
+      - in: path
+        name: connector_id
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getFourKDatabase
+      description: Requires integrations:write. Returns database configuration without passwords or appSecret.
+      responses:
+        '200':
+          description: Public configuration and password_configured; password is never returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FourKDatabaseResponse' }
+    put:
+      operationId: saveFourKDatabase
+      description: Requires integrations:write. Encrypts database password; an omitted or empty password preserves the existing password. Performs no remote database I/O.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FourKDatabaseConfig' }
+      responses:
+        '200':
+          description: Saved configuration without password.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FourKDatabaseResponse' }
+    post:
+      operationId: checkFourKDatabase
+      description: Returns a persisted operation task (202); query /tasks/{task_id} for the authorization check result. Requires integrations:write. SELECT only in a read-only MySQL transaction. Selects enabled unexpired authorization, requiring an explicit ID if multiple are available. Does not verify management API or issue a disconnect.
+      responses:
+        '202':
+          description: Persisted authorization check task; completed task result contains authorization metadata without appSecret.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationTask' }
+        '502':
+          description: Database unavailable, no usable authorization, or ambiguous selection. Never treated as successful authentication.
   /actions/connectors/{connector_id}/test:
     post:
       operationId: testActionConnector
       parameters:
         - { name: connector_id, in: path, required: true, schema: { type: string } }
       responses:
+        "202":
+          description: Connectivity probe durably queued. Inspect the task result for reachability, errors or timeout; acceptance is not proof of enforcement capability.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationTask" }
         "200":
-          description: Signed connectivity probe succeeded.
+          description: Connectivity probe succeeded. Managed 4K connectors authenticate using saved database authorization and query a read-only management endpoint. A result with identity_verified=false does not verify authoritative inventory or permit enforcement. Private runtimes additionally check their inventory; reachability never grants shadow admission.
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
@@ -311,17 +1018,37 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EnforcementAction" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /actions/{action_id}/native-observations:
+    get:
+      operationId: listNativeActionObservations
+      description: Requires actions:read. Append-only observations in insertion order; not proof of completed account enforcement.
+      parameters:
+        - { name: action_id, in: path, required: true, schema: { type: string } }
+        - { name: before, in: query, schema: { type: string, pattern: '^[1-9][0-9]*$' } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200":
+          description: Action-scoped native observation page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NativeObservationPage" }
+        "400": { description: Invalid cursor or page size. }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: Native observation database unavailable. }
   /actions/{action_id}/revoke:
     post:
       operationId: revokeAction
+      description: Stops pending native disconnect dispatch or requests release for a reversible action. Native cancellation cannot recall an already sent request or restore a disconnected session.
       parameters:
         - { name: action_id, in: path, required: true, schema: { type: string } }
       responses:
         "202":
-          description: Revocation accepted.
+          description: Revocation accepted. Native disconnect returns the original action with blocked status; this does not prove remote restoration.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EnforcementAction" }
+        "409": { description: Completed one-shot disconnect cannot restore the original session. }
+        "503": { description: Native cancellation persistence unavailable; retry the same request. }
   /actions/callback:
     post:
       operationId: acceptActionCallback
@@ -352,12 +1079,55 @@ paths:
       responses:
         "202":
           description: Identity batch normalized and accepted.
+  /integrations/identity/snapshots:
+    post:
+      operationId: commitIdentitySnapshot
+      description: Atomically submit one complete online inventory for a source, sensor, campus and access domain. Requires the identity integration token and respects the global read-only switch. Incomplete inventories never close sessions. Maximum 10000 sessions per scope; do not split an inventory into independently complete requests.
+      security:
+        - IdentityBearer: []
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentitySnapshotRequest' }
+      responses:
+        "202":
+          description: Complete snapshot and audit record committed atomically.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentitySnapshotReceipt' }
+        "200":
+          description: Identical snapshot was already committed; freshness is not advanced by retry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentitySnapshotReceipt' }
+        "400": { description: Incomplete inventory, count mismatch, invalid record, scope conflict or invalid observation time. }
+        "401": { description: Invalid identity integration token. }
+        "403": { description: Global read-only mode. }
+        "409": { description: Snapshot identity or observation time already contains different content, or storage does not support reconciliation. }
+        "503": { description: Database commit failed or its result is uncertain; retry the same immutable request and key. }
   /integrations/identity/status:
     get:
       operationId: getIdentityIngestStatus
       responses:
         "200":
-          description: Recent identity batches and data freshness.
+          description: Recent identity batches and complete-inventory freshness; requires integrations:write. Registered sources appear before their first snapshot; unregistered historical sources are identified. Freshness uses observation time, not receipt or retry time.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, last_received_at, completed_batches, failed_batches, reconciliation_supported, sources]
+                properties:
+                  enabled: { type: boolean }
+                  last_received_at: { type: string }
+                  completed_batches: { type: integer }
+                  failed_batches: { type: integer }
+                  reconciliation_supported: { type: boolean }
+                  sources:
+                    type: array
+                    items: { $ref: '#/components/schemas/IdentitySourceStatus' }
   /integrations/identity/batches:
     get:
       operationId: listIdentityBatches
@@ -385,7 +1155,7 @@ paths:
       parameters:
         - { name: sensor_id, in: query, schema: { type: string } }
         - { name: campus_id, in: query, schema: { type: string } }
-        - { name: window, in: query, schema: { type: string, enum: [10m, 1h, 24h, 7d], default: 1h } }
+        - { name: window, in: query, schema: { type: string, enum: [10m, 1h, 24h, 7d, 30d], default: 1h } }
         - { name: as_of, in: query, schema: { type: string, format: date-time } }
       responses:
         "200":
@@ -408,7 +1178,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [10m, 1h, 24h, 7d]
+            enum: [10m, 1h, 24h, 7d, 30d]
             default: 1h
         - { name: campus_id, in: query, schema: { type: string } }
         - { name: as_of, in: query, schema: { type: string, format: date-time } }
@@ -930,6 +1700,69 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /endpoints/{endpoint_id}/name-note:
+    post:
+      operationId: updateDeviceNameNote
+      parameters:
+        - name: endpoint_id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: {type: string, maxLength: 255, description: '空字符串清除人工备注'}
+      responses:
+        '200': {description: '备注已更新并审计'}
+        '400': {description: '名称或终端无效'}
+        '403': {description: '需要 endpoints:write 权限且非只读模式'}
+  /endpoints/{endpoint_id}/name-evidence:
+    get:
+      operationId: listDeviceNameEvidence
+      parameters:
+        - name: endpoint_id
+          in: path
+          required: true
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - name: offset
+          in: query
+          schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        '200':
+          description: '名称证据分页；历史属性不伪造原始事件引用'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  total: {type: integer}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        value: {type: string}
+                        original_value: {type: string}
+                        source: {type: string}
+                        kind: {type: string}
+                        event_id: {type: string}
+                        sensor_id: {type: string}
+                        address: {type: string}
+                        observed_at: {type: string, format: date-time}
+                        valid_until: {type: string, format: date-time}
+                        attribution: {type: string}
+                        parser_version: {type: string}
+                        processing_latency_ms: {type: integer, minimum: 0, description: 标准事件入库后进入队列至首次名称处理的耗时，历史回放不填充}
+        '400': {description: '分页或终端参数无效'}
   /endpoints/{endpoint_id}/identity:
     get:
       operationId: getEndpointIdentity
@@ -995,6 +1828,10 @@ paths:
     get:
       operationId: listDevices
       parameters:
+        - name: view
+          in: query
+          description: recent limits endpoint and IP evidence to window; omitted retains historical behavior.
+          schema: { type: string, enum: [recent, history] }
         - name: sensor_id
           in: query
           schema:
@@ -1004,13 +1841,23 @@ paths:
           schema:
             type: string
             enum: [10m, 1h, 24h]
-            default: 1h
+          description: In recent view, omitted window defaults to 24h; history ignores the endpoint time window.
         - name: ip
           in: query
           schema:
             type: string
         - name: q
           in: query
+          schema:
+            type: string
+        - name: brand
+          in: query
+          description: Filter by discovered brand clue, including inferred brands; unknown selects unidentified endpoints.
+          schema:
+            type: string
+        - name: os_family
+          in: query
+          description: Filter by discovered operating system; unknown selects unidentified endpoints.
           schema:
             type: string
         - $ref: "#/components/parameters/CampusIdQuery"
@@ -1501,6 +2348,27 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /shadow/review-samples:
+    get:
+      operationId: getShadowReviewSamples
+      parameters:
+        - name: date
+          in: query
+          description: Review sample date in YYYY-MM-DD; defaults to the latest available date.
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Stratified shadow samples for human review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShadowReviewSamples"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /audit-logs:
     get:
       operationId: listAuditLogs
@@ -1568,6 +2436,7 @@ paths:
     post:
       operationId: updateDeviceFingerprintLibrary
       responses:
+        "202": {description: "Durable asynchronous task accepted; query tasks for the business result", content: {application/json: {schema: {$ref: "#/components/schemas/OperationTask"}}}}
         "200":
           description: Updated device fingerprint library status.
           content:
@@ -1591,6 +2460,7 @@ paths:
               properties:
                 bundle: { type: string, format: binary }
       responses:
+        "202": {description: "Durable asynchronous task accepted; query tasks for the business result", content: {application/json: {schema: {$ref: "#/components/schemas/OperationTask"}}}}
         "200":
           description: Validated bundle manifest.
           content:
@@ -1611,6 +2481,7 @@ paths:
               properties:
                 bundle: { type: string, format: binary }
       responses:
+        "202": {description: "Durable asynchronous task accepted; query tasks for the business result", content: {application/json: {schema: {$ref: "#/components/schemas/OperationTask"}}}}
         "200":
           description: Imported and activated library status.
           content:
@@ -1630,6 +2501,32 @@ paths:
                 $ref: "#/components/schemas/RuleReloadResult"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /application-library: {"get": {"tags": ["Applications"], "summary": "应用观测独立接口", "responses": {"200": {"description": "Success", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApplicationLibraryStatus"}}}}, "503": {"description": "Application observations disabled"}}}}
+  /application-activity: {"get": {"tags": ["Applications"], "summary": "应用观测独立接口", "responses": {"200": {"description": "Success", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApplicationReport"}}}}, "503": {"description": "Application observations disabled"}}, "parameters": [{"in": "query", "name": "window", "schema": {"type": "string"}}, {"in": "query", "name": "from", "schema": {"type": "string"}}, {"in": "query", "name": "to", "schema": {"type": "string"}}, {"in": "query", "name": "sensor_id", "schema": {"type": "string"}}, {"in": "query", "name": "campus_id", "schema": {"type": "string"}}, {"in": "query", "name": "ip", "schema": {"type": "string"}}, {"in": "query", "name": "application_id", "schema": {"type": "string"}}]}}
+  /application-activity/observations: {"get": {"tags": ["Applications"], "summary": "应用观测独立接口", "responses": {"200": {"description": "Success", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApplicationObservationPage"}}}}, "503": {"description": "Application observations disabled"}}, "parameters": [{"in": "query", "name": "window", "schema": {"type": "string"}}, {"in": "query", "name": "from", "schema": {"type": "string"}}, {"in": "query", "name": "to", "schema": {"type": "string"}}, {"in": "query", "name": "sensor_id", "schema": {"type": "string"}}, {"in": "query", "name": "campus_id", "schema": {"type": "string"}}, {"in": "query", "name": "ip", "schema": {"type": "string"}}, {"in": "query", "name": "application_id", "schema": {"type": "string"}}, {"in": "query", "name": "offset", "schema": {"type": "integer", "minimum": 0}}, {"in": "query", "name": "limit", "schema": {"type": "integer", "minimum": 0}}, {"in": "query", "name": "cursor", "schema": {"type": "string"}}]}}
+  /application-activity/unknown-domains: {"get": {"tags": ["Applications"], "summary": "提交未知域名异步导出任务，完成后通过 exports 下载 JSONL", "parameters": [{"in": "query", "name": "window", "schema": {"type": "string"}}, {"in": "query", "name": "from", "schema": {"type": "string"}}, {"in": "query", "name": "to", "schema": {"type": "string"}}, {"in": "query", "name": "sensor_id", "schema": {"type": "string"}}, {"in": "query", "name": "campus_id", "schema": {"type": "string"}}, {"in": "query", "name": "ip", "schema": {"type": "string"}}, {"in": "query", "name": "application_id", "schema": {"type": "string"}}], "responses": {"202": {"description": "持久化导出任务已接受，状态及下载使用 exports 接口", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ExportJob"}}}}}}}
+  /application-library/config: {"post": {"tags": ["Applications"], "summary": "保存运行配置", "responses": {"200": {"description": "Status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApplicationLibraryStatus"}}}}, "400": {"description": "Invalid request or conflicting operation"}, "403": {"description": "Permission, CSRF or read-only restriction"}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "update_url": {"type": "string"}, "token": {"type": "string", "writeOnly": true}}, "required": ["enabled", "update_url"]}}}}}}
+  /application-library/pull: {"post": {"tags": ["Applications"], "summary": "下载校验并导入应用规则包", "responses": {"200": {"description": "Status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApplicationLibraryStatus"}}}}, "400": {"description": "Invalid request or conflicting operation"}, "403": {"description": "Permission, CSRF or read-only restriction"}, "202": {"description": "参数校验及任务持久化完成；通过 tasks 查询处理结果。上传完整传输另行计时。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OperationTask"}}}}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"token": {"type": "string", "writeOnly": true}}, "required": []}}}}, "x-performance-category": "task-submission"}}
+  /application-library/import: {"post": {"tags": ["Applications"], "summary": "校验并原子导入离线包", "responses": {"200": {"description": "Status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApplicationLibraryStatus"}}}}, "400": {"description": "Invalid request or conflicting operation"}, "403": {"description": "Permission, CSRF or read-only restriction"}, "202": {"description": "参数校验及任务持久化完成；通过 tasks 查询处理结果。上传完整传输另行计时。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OperationTask"}}}}}, "requestBody": {"required": true, "content": {"application/gzip": {"schema": {"type": "string", "format": "binary"}}}}, "x-performance-category": "task-submission"}}
+  /application-library/rollback: {"post": {"tags": ["Applications"], "summary": "切换到保留版本", "responses": {"200": {"description": "Status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApplicationLibraryStatus"}}}}, "400": {"description": "Invalid request or conflicting operation"}, "403": {"description": "Permission, CSRF or read-only restriction"}}, "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"version": {"type": "string"}}, "required": ["version"]}}}}}}
+  /application-library/reclassify: {"post": {"tags": ["Applications"], "summary": "提交或继续最近七天重分类任务", "responses": {"200": {"description": "Status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApplicationLibraryStatus"}}}}, "400": {"description": "Invalid request or conflicting operation"}, "403": {"description": "Permission, CSRF or read-only restriction"}}}}
+
+  /tasks/{task_id}:
+    get:
+      operationId: getOperationTask
+      parameters:
+        - {name: task_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Owner or administrator task state and completed business result", content: {application/json: {schema: {$ref: "#/components/schemas/OperationTask"}}}}
+  /tasks/{task_id}/cancel:
+    post:
+      operationId: cancelOperationTask
+      parameters:
+        - {name: task_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Task cancelled", content: {application/json: {schema: {$ref: "#/components/schemas/OperationTask"}}}}
+        "409": {description: "Task already terminal"}
+
 components:
   securitySchemes:
     IdentityBearer:
@@ -1791,6 +2688,278 @@ components:
       schema:
         type: string
   schemas:
+    SharedDisconnectPreview:
+      type: object
+      required: [review_id, connector_id, evidence_version, identity_version, config_version, fingerprint, ready, blockers, plan]
+      properties:
+        review_id: { type: string }
+        connector_id: { type: string }
+        evidence_version: { type: integer }
+        identity_version: { type: integer }
+        config_version: { type: string }
+        fingerprint: { type: string }
+        ready: { type: boolean }
+        blockers: { type: array, items: { type: string } }
+        plan:
+          type: object
+          required: [account, campus_id, access_domain, sessions]
+          properties:
+            account: { type: string }
+            campus_id: { type: string }
+            access_domain: { type: string }
+            fingerprint: { type: string }
+            sessions:
+              type: array
+              items:
+                type: object
+                required: [target, addresses]
+                properties:
+                  addresses: { type: array, items: { type: string } }
+                  target:
+                    type: object
+                    required: [session_id, raw_online_id]
+                    properties:
+                      session_id: { type: string }
+                      raw_online_id: { type: string }
+    SharedAccessReview:
+      type: object
+      required: [review_id, account_id, campus_id, access_domain, session_generation, episode, state, latest_version, latest_result, coverage_state, created_at, updated_at]
+      properties:
+        review_id: { type: string }
+        account_id: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        session_generation: { type: string }
+        episode: { type: integer }
+        state: { type: string }
+        latest_version: { type: integer }
+        latest_result: { type: object, additionalProperties: true }
+        coverage_state: { type: string, enum: [unknown, verified, insufficient] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_conclusion: { type: object, additionalProperties: true }
+    SharedBehaviorScoreComponent:
+      type: object
+      required: [signal, score, explanation]
+      properties:
+        signal: { type: string, enum: [ua_os, ttl_path, tcp_stack, tls_stack, dhcp_stack, router_identity] }
+        score: { type: integer }
+        explanation: { type: string }
+    SharedBehaviorRouterContext:
+      type: object
+      properties:
+        assessment_id: { type: string }
+        brand: { type: string }
+        model: { type: string }
+        role: { type: string }
+        status: { type: string, enum: [candidate, likely, confirmed] }
+        confidence: { type: integer, minimum: 0, maximum: 100 }
+    SharedBehaviorAssessment:
+      type: object
+      required: [observation_id, sensor_id, ip, status, confidence, signal_groups, reasons, conflicts, coverage_state, rule_version, first_seen, last_seen, window_start, window_end, expires_at, router, score_components, feature_samples, event_ids]
+      properties:
+        observation_id: { type: string }
+        sensor_id: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        ip: { type: string }
+        endpoint_id: { type: string }
+        status: { type: string, enum: [candidate, likely, confirmed] }
+        confidence: { type: integer, minimum: 0, maximum: 100 }
+        signal_groups: { type: array, items: { type: string } }
+        reasons: { type: array, items: { type: string } }
+        conflicts: { type: array, items: { type: string } }
+        coverage_state: { type: string, enum: [unknown, partial, verified] }
+        rule_version: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        router: { $ref: '#/components/schemas/SharedBehaviorRouterContext' }
+        score_components: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorScoreComponent' } }
+        feature_samples:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
+        event_ids: { type: array, items: { type: string } }
+    SharedBehaviorHistory:
+      type: object
+      required: [status, confidence, signal_groups, coverage_state, rule_version, observed_at, created_at]
+      properties:
+        status: { type: string, enum: [candidate, likely, confirmed] }
+        confidence: { type: integer, minimum: 0, maximum: 100 }
+        signal_groups: { type: array, items: { type: string } }
+        coverage_state: { type: string, enum: [unknown, partial, verified] }
+        rule_version: { type: string }
+        observed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    SharedBehaviorDetail:
+      allOf:
+        - { $ref: '#/components/schemas/SharedBehaviorAssessment' }
+        - type: object
+          required: [history]
+          properties:
+            history: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorHistory' } }
+    SharedBehaviorPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorAssessment' } }
+        page:
+          type: object
+          required: [limit, next_cursor, total]
+          properties:
+            limit: { type: integer }
+            next_cursor: { type: [string, 'null'] }
+            total: { type: integer }
+    SharedReviewHistoryPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array, items: { type: object, additionalProperties: true } }
+        next_cursor: { type: string }
+    ManagedIdentityConfiguration:
+      type: object
+      required: [kind, source, sensor_id, campus_id, access_domain, user_cidrs, max_records, enabled]
+      properties:
+        kind: { type: string, enum: [online_equipment, complete_inventory] }
+        source: { type: string }
+        sensor_id: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        user_cidrs: { type: array, minItems: 1, maxItems: 64, items: { type: string } }
+        inventory_url: { type: string }
+        token: { type: string, writeOnly: true }
+        max_records: { type: integer, minimum: 1, maximum: 10000 }
+        enabled: { type: boolean }
+    ManagedIdentitySource:
+      type: object
+      required: [configuration, config_version, token_configured, state, blocker]
+      properties:
+        configuration: { $ref: '#/components/schemas/ManagedIdentityConfiguration' }
+        config_version: { type: integer }
+        token_configured: { type: boolean }
+        state: { type: string }
+        blocker: { type: string }
+    FourKDatabaseConfig:
+      type: object
+      additionalProperties: false
+      required: [host, port, database, username, tls]
+      properties:
+        host: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        database: { type: string, maxLength: 64 }
+        username: { type: string, maxLength: 128 }
+        password: { type: string, writeOnly: true, maxLength: 4096 }
+        tls: { type: boolean }
+        authorization_id: { type: integer, minimum: 0, description: Zero or omitted selects the unique enabled unexpired authorization. }
+    FourKDatabaseResponse:
+      type: object
+      required: [configuration, password_configured, credential_source]
+      properties:
+        configuration: { $ref: '#/components/schemas/FourKDatabaseConfig' }
+        password_configured: { type: boolean }
+        credential_source: { type: string, enum: [4k_database] }
+
+    OperationTask:
+      type: object
+      required: [task_id, kind, status, created_at]
+      properties:
+        task_id: {type: string}
+        kind: {type: string}
+        status: {type: string, enum: [queued, running, completed, failed, cancelled]}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+        result: {type: object, additionalProperties: true}
+        error: {type: string}
+        response_status: {type: integer}
+    IdentitySnapshotRequest:
+      type: object
+      additionalProperties: false
+      required: [source, sensor_id, campus_id, access_domain, observed_at, reconcile_interval_seconds, complete, expected_count, records]
+      properties:
+        source: { type: string, minLength: 1, maxLength: 200 }
+        sensor_id: { type: string, minLength: 1, maxLength: 200 }
+        campus_id: { type: string, minLength: 1, maxLength: 200 }
+        access_domain: { type: string, minLength: 1, maxLength: 200 }
+        observed_at:
+          type: string
+          format: date-time
+          description: Consistent upstream inventory time, within the past seven days, UTC with at most microsecond precision; never a fetch-completion timestamp for an inconsistent scan.
+        reconcile_interval_seconds: { type: integer, minimum: 1, maximum: 86400 }
+        complete: { type: boolean, enum: [true] }
+        expected_count: { type: integer, minimum: 0, maximum: 10000 }
+        records:
+          type: array
+          maxItems: 10000
+          items:
+            type: object
+            required: [session_id, account_id, ip]
+            properties:
+              session_id: { type: string, minLength: 1 }
+              account_id: { type: string, minLength: 1 }
+              ip: { type: string }
+              endpoint_id: { type: string }
+              mac: { type: string }
+              group_id: { type: string }
+              product_id: { type: string }
+              device_class: { type: string, enum: [mobile, pc, other] }
+            additionalProperties: { type: string }
+    IdentitySnapshotReceipt:
+      type: object
+      required: [snapshot_id, status, observed_at, session_count, replayed]
+      properties:
+        snapshot_id: { type: string }
+        status: { type: string, enum: [completed] }
+        observed_at: { type: string, format: date-time }
+        session_count: { type: integer }
+        replayed: { type: boolean }
+    IdentitySourceStatus:
+      type: object
+      required: [source, sensor_id, campus_id, access_domain, snapshot_id, observed_at, received_at, reconcile_interval_seconds, session_count, state, age_seconds]
+      properties:
+        source: { type: string }
+        sensor_id: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        snapshot_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+        reconcile_interval_seconds: { type: integer }
+        session_count: { type: integer }
+        state: { type: string, enum: [healthy, interrupted, never_seen, unregistered] }
+        age_seconds: { type: number }
+    ApplicationMatch: {"type": "object", "properties": {"rule_id": {"type": "string"}, "target_id": {"type": "string"}, "target_type": {"type": "string"}, "name": {"type": "string"}, "category": {"type": "string"}, "source": {"type": "string"}, "source_version": {"type": "string"}, "confidence": {"type": "number"}}}
+    ApplicationObservation: {"type": "object", "properties": {"event_id": {"type": "string"}, "timestamp": {"type": "string"}, "sensor_id": {"type": "string"}, "campus_id": {"type": "string"}, "ip": {"type": "string"}, "connection_id": {"type": "string"}, "event_type": {"type": "string"}, "domain": {"type": "string"}, "source_field": {"type": "string"}, "bundle_version": {"type": "string"}, "match": {"$ref": "#/components/schemas/ApplicationMatch"}, "upload_bytes": {"type": "integer", "minimum": 0, "nullable": true}, "download_bytes": {"type": "integer", "minimum": 0, "nullable": true}}}
+    ApplicationBucket: {"type": "object", "properties": {"connection_count": {"type": "integer", "minimum": 0}, "upload_bytes": {"type": "integer", "minimum": 0, "nullable": true}, "download_bytes": {"type": "integer", "minimum": 0, "nullable": true}, "missing_meter_connections": {"type": "integer", "minimum": 0}}}
+    ApplicationActivityItem: {"type": "object", "properties": {"application_id": {"type": "string"}, "name": {"type": "string"}, "category": {"type": "string"}, "last_seen": {"type": "string"}, "terminal_count": {"type": "integer", "minimum": 0}, "connection_count": {"type": "integer", "minimum": 0}, "observation_count": {"type": "integer", "minimum": 0}, "missing_meter_connections": {"type": "integer", "minimum": 0}, "upload_bytes": {"type": "integer", "minimum": 0, "nullable": true}, "download_bytes": {"type": "integer", "minimum": 0, "nullable": true}}}
+    ApplicationReport: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/ApplicationActivityItem"}}, "versions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}, "dns_observations": {"type": "integer", "minimum": 0}, "unknown_observations": {"type": "integer", "minimum": 0}, "missing_connection_observations": {"type": "integer", "minimum": 0}, "observation_count": {"type": "integer", "minimum": 0}, "unknown": {"$ref": "#/components/schemas/ApplicationBucket"}, "multi_application": {"$ref": "#/components/schemas/ApplicationBucket"}, "traffic_basis": {"type": "string"}, "as_of": {"type": "string", "format": "date-time", "description": "连接汇总统计时间；不超过五秒，否则请求失败"}, "statistics_as_of": {"type": "string", "format": "date-time"}}}
+    ApplicationLibraryStatus: {"type": "object", "properties": {"enabled": {"type": "boolean"}, "library": {"type": "object", "properties": {"version": {"type": "string"}, "versions": {"type": "array", "items": {"type": "string"}}, "rule_count": {"type": "integer", "minimum": 0}, "activated_at": {"type": "string"}}}, "job": {"$ref": "#/components/schemas/ApplicationProcessingJob"}, "last_scan": {"type": "string"}, "error": {"type": "string"}, "retained_observations": {"type": "integer", "minimum": 0}, "config": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "update_url": {"type": "string"}, "last_pull_at": {"type": "string"}, "last_pull_error": {"type": "string"}, "credential_configured": {"type": "boolean"}, "history_interval_ms": {"type": "integer", "minimum": 1000, "maximum": 60000, "default": 1000}}}, "retained_observations_known": {"type": "boolean"}, "processing": {"type": "object", "properties": {"storage": {"type": "string"}, "query_millis": {"type": "integer"}, "realtime": {"$ref": "#/components/schemas/ApplicationProcessingJob"}, "history": {"$ref": "#/components/schemas/ApplicationProcessingJob"}, "reconcile": {"$ref": "#/components/schemas/ApplicationProcessingJob"}}}}}
+    ApplicationProcessingJob: {"type": "object", "properties": {"id": {"type": "string"}, "revision": {"type": "integer"}, "status": {"type": "string"}, "version": {"type": "string"}, "from": {"type": "string"}, "to": {"type": "string"}, "processed": {"type": "integer"}, "error": {"type": "string"}, "requested_control": {"type": "string"}, "last_success": {"type": "string"}, "batch_millis": {"type": "integer"}, "retries": {"type": "integer"}, "lag_seconds": {"type": "number"}, "available_from": {"type": "string"}, "available_to": {"type": "string"}, "after": {"type": "object", "properties": {"timestamp": {"type": "string"}, "sensor_id": {"type": "string"}, "event_id": {"type": "string"}}}, "scan_from": {"type": "string", "format": "date-time", "description": "当前扫描时间片起点"}, "scan_to": {"type": "string", "format": "date-time", "description": "当前扫描时间片终点"}, "scan_seconds": {"type": "integer", "description": "扫描时间片秒数；未设置时使用 600 秒"}}}
+    ApplicationObservationPage: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/ApplicationObservation"}}, "total": {"type": "integer", "minimum": 0}, "total_as_of": {"type": "string", "format": "date-time", "description": "分页总数的统计来源时间；数据库模式最多延迟五秒。"}, "limit": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "next_cursor": {"type": "string", "description": "下一页游标；为空表示没有下一页。游标不能与非零 offset 同用。"}}}
+    CreateExportRequest:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [risks, evidence, cases, actions, audit] }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+    ExportJob:
+      type: object
+      required: [export_id, kind, status, created_by, created_at, row_count]
+      properties:
+        export_id: { type: string }
+        kind: { type: string, enum: [risks, evidence, cases, actions, audit, unknown-domains] }
+        status: { type: string, enum: [queued, running, completed, failed, cancelled] }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        row_count: { type: integer, minimum: 0 }
+        error: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
     LocalUser:
       type: object
       required: [user_id, username, display_name, role, disabled]
@@ -1823,9 +2992,61 @@ components:
         enabled: { type: boolean }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
+    AccountPolicy:
+      type: object
+      required: [name, trigger]
+      properties:
+        policy_id: { type: string }
+        name: { type: string }
+        enabled: { type: boolean, default: false }
+        mode: { type: string, enum: [observe, manual, automatic], default: observe }
+        trigger: { type: string, enum: [quota_exceeded, shared_access, explicit_proxy] }
+        priority: { type: integer }
+        revision: { type: integer }
+        scope: { $ref: '#/components/schemas/AccountPolicyScope' }
+        exempt: { $ref: '#/components/schemas/AccountPolicyScope' }
+        limits:
+          type: object
+          properties:
+            total: { type: [integer, 'null'], minimum: 0 }
+            mobile: { type: [integer, 'null'], minimum: 0 }
+            pc: { type: [integer, 'null'], minimum: 0 }
+        sustain_seconds: { type: integer, minimum: 0 }
+        window_seconds: { type: integer, minimum: 1 }
+        recovery_seconds: { type: integer, minimum: 0 }
+        cooldown_seconds: { type: integer, minimum: 0 }
+        stages:
+          type: array
+          items:
+            type: object
+            required: [action, connector_id]
+            properties:
+              action: { type: string, enum: [notify, rate_limit, disconnect, disable_account] }
+              connector_id: { type: string }
+              after_seconds: { type: integer, minimum: 0 }
+              min_episodes: { type: integer, minimum: 0 }
+              duration_seconds: { type: integer, minimum: 0 }
+              rate_kbps: { type: integer, minimum: 0 }
+              template: { type: string }
+    AccountPolicyScope:
+      type: object
+      description: OR within a field, AND across fields, matched on the same active session; schedules use Asia/Shanghai.
+      properties:
+        accounts: { type: array, items: { type: string } }
+        groups: { type: array, items: { type: string } }
+        products: { type: array, items: { type: string } }
+        campuses: { type: array, items: { type: string } }
+        vlans: { type: array, items: { type: string } }
+        cidrs: { type: array, items: { type: string } }
+        weekdays: { type: array, items: { type: integer, minimum: 0, maximum: 6 } }
+        start_minute: { type: [integer, 'null'], minimum: 0, maximum: 1439 }
+        end_minute: { type: [integer, 'null'], minimum: 0, maximum: 1439 }
     Permission:
       type: string
       enum:
+        - policies:read
+        - policies:manage
+        - policies:authorize
         - risks:read
         - evidence:read
         - events:read
@@ -1837,6 +3058,7 @@ components:
         - ingest:read
         - dpi:read
         - device-fingerprint-library:update
+        - exports:read
         - cases:read
         - cases:write
         - identity:read
@@ -1863,6 +3085,21 @@ components:
       type: object
       required: [version, status, source, checksum]
       properties:
+        domain_available: { type: boolean }
+        brand_eligible_rule_count: { type: integer }
+        domain_processing_error: { type: string }
+        active_domain_version: { type: string }
+        pending_domain_version: { type: string }
+        domain_sources:
+          type: array
+          items:
+            type: object
+            required: [name, version, rule_count, brand_eligible_rule_count]
+            properties:
+              name: { type: string }
+              version: { type: string }
+              rule_count: { type: integer }
+              brand_eligible_rule_count: { type: integer }
         version: { type: string }
         status:
           type: string
@@ -1889,6 +3126,62 @@ components:
         domain_source_version: { type: string }
         domain_backfill_status: { type: string }
         domain_backfill_processed: { type: integer }
+    BrandInference:
+      type: object
+      required: [status, confidence, explanation, rule_version, window, as_of, candidates]
+      properties:
+        status: { type: string, enum: [insufficient, inferred, conflict] }
+        brand: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 0.7 }
+        explanation: { type: string }
+        rule_version: { type: string }
+        window: { type: string }
+        as_of: { type: string, format: date-time }
+        candidates:
+          type: array
+          items:
+            type: object
+            required: [brand, confidence, evidence]
+            properties:
+              brand: { type: string }
+              confidence: { type: number }
+              evidence:
+                type: array
+                items:
+                  type: object
+                  required: [match, first_seen, last_seen, count]
+                  properties:
+                    rule_version: { type: string }
+                    event_source: { type: string }
+                    event_ids: { type: array, items: { type: string } }
+                    first_seen: { type: string, format: date-time }
+                    last_seen: { type: string, format: date-time }
+                    count: { type: integer }
+                    match:
+                      type: object
+                      required: [domain, rule_domain, ecosystem, category, confidence, source]
+                      properties:
+                        domain: { type: string }
+                        rule_domain: { type: string }
+                        match_type: { type: string }
+                        ecosystem: { type: string }
+                        category: { type: string }
+                        confidence: { type: number }
+                        source: { type: string }
+                        source_url: { type: string }
+                        source_version: { type: string }
+                        service: { type: string }
+                        purpose: { type: string }
+                        brand_eligible: { type: boolean }
+                        os_families: { type: array, items: { type: string } }
+                        sources:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name: { type: string }
+                              url: { type: string }
+                              version: { type: string }
     RecognitionCoverage:
       type: object
       required: [known, rate]
@@ -1899,6 +3192,10 @@ components:
       type: object
       required: [total_endpoints, coverage, event_count, attributed_event_count, event_attribution_rate, ecosystem_matched, ecosystem_attributed, ecosystem_unattributed, ecosystem_conflicts, backfill_processed, as_of, window]
       properties:
+        brand_inference_conflicts: { type: integer }
+        brand_inference_enabled: { type: boolean }
+        domain_window: { type: string }
+        domain_processing_error: { type: string }
         total_endpoints: { type: integer }
         coverage:
           type: object
@@ -2007,6 +3304,9 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         evidence_snapshot: { $ref: "#/components/schemas/ProxyReviewCase" }
+        history_page:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/Page" }
         evidence_history:
           type: array
           items:
@@ -2019,6 +3319,12 @@ components:
               created_at: { type: string, format: date-time }
         comments: { type: array, items: { type: object, additionalProperties: true } }
         timeline: { type: array, items: { type: object, additionalProperties: true } }
+    CaseHistoryResponse:
+      type: object
+      required: [items, page]
+      properties:
+        items: { type: array, items: { type: object, additionalProperties: true } }
+        page: { $ref: "#/components/schemas/Page" }
     RiskCaseListResponse:
       type: object
       required: [items, page]
@@ -2037,6 +3343,8 @@ components:
       type: object
       required: [connector_id, name, endpoint_url, action_mapping, mode, enabled, shadow_ready, updated_at]
       properties:
+        certificate_pem: { type: string, maxLength: 65536, description: "Explicitly provisioned PEM leaf pin for HTTPS 4K. Empty uses system trust; no automatic first-use trust." }
+        connector_type: { type: string, enum: [hmac, srun4k], default: hmac }
         connector_id: { type: string }
         name: { type: string }
         endpoint_url: { type: string, format: uri }
@@ -2052,6 +3360,27 @@ components:
         shadow_reviewed_count: { type: integer }
         shadow_accuracy: { type: number, format: double }
         updated_at: { type: string, format: date-time }
+    NativeObservationPage:
+      type: object
+      required: [items]
+      properties:
+        next_before: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, result, step_failed, recorded_at]
+            properties:
+              id: { type: string }
+              step_failed: { type: boolean }
+              recorded_at: { type: string, format: date-time }
+              result:
+                type: object
+                required: [delivery, observation, reserved_at]
+                properties:
+                  delivery: { type: string, enum: [reserved, acknowledged, uncertain] }
+                  observation: { type: string, enum: [unknown, online, absent, changed] }
+                  reserved_at: { type: string, format: date-time }
     EnforcementAction:
       type: object
       required: [action_id, idempotency_key, connector_id, action_type, subject_id, status, mode, created_at, updated_at]
@@ -2088,7 +3417,7 @@ components:
       enum: [record, shadow_watch, shadow_manual_review, shadow_confirm_review]
     EvidenceSeverity:
       type: string
-      enum: [low, medium, high]
+      enum: [info, low, medium, high]
     RiskSnapshot:
       type: object
       required: [ip, score, level, confidence, window, evidence_ids, summary, recommended_action, updated_at, suspected_device_count, device_confidence]
@@ -2158,6 +3487,24 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/NegativeEvidence"
+        assessment_level:
+          $ref: "#/components/schemas/RiskLevel"
+        review_disposition:
+          type: string
+        automation_eligible:
+          type: boolean
+        automation_blockers:
+          type: array
+          items:
+            type: string
+        detection_basis:
+          type: string
+          enum: [explicit_tunnel, shared_device_divergence, behavioral_only]
+        independent_signal_groups:
+          type: array
+          items:
+            type: string
+            enum: [protocol_rule, ttl_path, tls_client_stack, ua_os, dhcp_device_family, identity_mac, identity_access]
     NegativeEvidence:
       type: object
       required: [type, source, reason, score_delta]
@@ -2215,10 +3562,47 @@ components:
                 - "null"
             total:
               type: integer
+    ProxyProtocolEvidence:
+      type: object
+      required: [evidence_id, protocol, outcome, trusted, reason, source, parser_id, parser_version, rule_version, config_version, request_at, response_at, connection_id, transaction_id, event_ids, attribution]
+      properties:
+        evidence_id: { type: string }
+        protocol: { type: string }
+        outcome: { type: string, enum: [success, failed, incomplete, unsupported, conflict] }
+        trusted: { type: boolean }
+        reason: { type: string }
+        confidence: { type: number }
+        source: { type: string }
+        sensor_id: { type: string }
+        instance_id: { type: string }
+        parser_id: { type: string }
+        parser_version: { type: string }
+        config_version: { type: string }
+        rule_version: { type: string }
+        connection_id: { type: string }
+        transaction_id: { type: string }
+        ip: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        request_at: { type: string, format: date-time }
+        response_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        event_ids: { type: array, items: { type: string } }
+        raw_ref: { type: object, additionalProperties: true }
+        attribution:
+          type: object
+          required: [state]
+          properties:
+            state: { type: string }
+            account_id: { type: string }
+            session_ids: { type: array, items: { type: string } }
+            reasons: { type: array, items: { type: string } }
     Evidence:
       type: object
       required: [evidence_id, ip, type, window, score, confidence, severity, reason, samples, created_at]
       properties:
+        proxy_protocol:
+          $ref: '#/components/schemas/ProxyProtocolEvidence'
         evidence_id:
           type: string
         ip:
@@ -2234,7 +3618,7 @@ components:
           type: string
         type:
           type: string
-          enum: [multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint, multi_observed_device, device_signal_conflict, brand_os_conflict, tcp_tls_stack_conflict, dhcp_device_fingerprint, device_fingerprint_conflict, account_concurrent_macs, account_concurrent_endpoints, account_concurrent_access, auth_observed_mac_mismatch, vpn_proxy_rule_match, vpn_proxy_domain_hint, encrypted_tunnel_behavior]
+          enum: [proxy_protocol_transaction, multi_user_agent, multi_ja3_ja4, ttl_clusters, domain_diversity, port_distribution, multi_device_fingerprint, multi_observed_device, device_signal_conflict, brand_os_conflict, tcp_tls_stack_conflict, dhcp_device_fingerprint, device_fingerprint_conflict, account_concurrent_macs, account_concurrent_endpoints, account_concurrent_access, auth_observed_mac_mismatch, vpn_proxy_rule_match, vpn_proxy_rule_hint, vpn_proxy_domain_hint, ai_relay_domain_usage, encrypted_tunnel_behavior, known_game_accelerator]
         window:
           type: string
         score:
@@ -2435,10 +3819,117 @@ components:
         last_seen:
           type: string
           format: date-time
+    RouterEvidence:
+      type: object
+      required: [evidence_id, assessment_id, kind, source, source_family, strength, score, rule_id, rule_version, explanation, association_quality, first_seen, last_seen, expires_at, expired, event_ids]
+      properties:
+        evidence_id: { type: string }
+        assessment_id: { type: string }
+        kind: { type: string, enum: [router_signal, conflict, confirmed_router] }
+        endpoint_id: { type: string }
+        ip: { type: string }
+        mac: { type: string }
+        vlan: { type: string }
+        brand: { type: string }
+        series: { type: string }
+        model: { type: string }
+        role: { type: string }
+        source: { type: string }
+        source_family: { type: string }
+        source_event_type: { type: string }
+        raw_value: { type: string }
+        strength: { type: string, enum: [weak, medium, strong] }
+        score: { type: integer }
+        rule_id: { type: string }
+        rule_version: { type: string }
+        explanation: { type: string }
+        conflict: { type: boolean }
+        conflict_code: { type: string }
+        exclusion: { type: boolean }
+        brand_reference_only: { type: boolean }
+        association_quality: { type: string }
+        association_reason: { type: string }
+        ambiguous: { type: boolean }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        expired: { type: boolean }
+        event_ids: { type: array, items: { type: string } }
+    RouterScoreComponent:
+      type: object
+      required: [source_family, evidence_id, score, explanation]
+      properties:
+        source_family: { type: string }
+        evidence_id: { type: string }
+        score: { type: integer }
+        explanation: { type: string }
+    RouterAssessment:
+      type: object
+      required: [assessment_id, role, status, confidence, independent_sources, sources, infrastructure, brand_reference_only, association_quality, ambiguous, confirmed_router, rule_version, first_seen, last_seen, expires_at, conflicts, score_components]
+      properties:
+        assessment_id: { type: string }
+        endpoint_id: { type: string }
+        ip: { type: string }
+        mac: { type: string }
+        vlans: { type: array, items: { type: string } }
+        brand: { type: string }
+        series: { type: string }
+        model: { type: string }
+        role: { type: string, enum: [router, ap, switch, firewall, endpoint, unknown] }
+        status: { type: string, enum: [candidate, likely, confirmed] }
+        confidence: { type: integer, minimum: 0, maximum: 100 }
+        independent_sources: { type: integer }
+        sources: { type: array, items: { type: string } }
+        infrastructure: { type: boolean }
+        brand_reference_only: { type: boolean }
+        association_quality: { type: string }
+        ambiguous: { type: boolean }
+        confirmed_router: { type: boolean }
+        rule_version: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        conflicts: { type: array, items: { type: string } }
+        score_components: { type: array, items: { $ref: '#/components/schemas/RouterScoreComponent' } }
+        evidence: { type: array, items: { $ref: '#/components/schemas/RouterEvidence' } }
+        merged_records: { type: integer, minimum: 1, description: Number of active incremental assessments represented by this device row. }
+    RouterAssessmentHistory:
+      type: object
+      required: [status, confidence, rule_version, changed_at, conflicts]
+      properties:
+        status: { type: string, enum: [candidate, likely, confirmed] }
+        confidence: { type: integer, minimum: 0, maximum: 100 }
+        rule_version: { type: string }
+        changed_at: { type: string, format: date-time }
+        conflicts: { type: array, items: { type: string } }
+    RouterObservationDetail:
+      allOf:
+        - { $ref: '#/components/schemas/RouterAssessment' }
+        - type: object
+          required: [history]
+          properties:
+            history: { type: array, items: { $ref: '#/components/schemas/RouterAssessmentHistory' } }
+    RouterAssessmentPage:
+      type: object
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/RouterAssessment' } }
+        page:
+          type: object
+          required: [limit, next_cursor, total]
+          properties:
+            limit: { type: integer }
+            next_cursor: { type: [string, 'null'] }
+            total: { type: integer }
     DeviceListResponse:
       type: object
       required: [items, page]
       properties:
+        device_names_disabled:
+          type: boolean
+        facets_as_of: { type: string, format: date-time, description: Source time of recognition filter statistics. }
+        facets:
+          $ref: "#/components/schemas/DeviceFilterFacets"
         items:
           type: array
           items:
@@ -2455,10 +3946,73 @@ components:
                 - "null"
             total:
               type: integer
+    DeviceFilterFacets:
+      type: object
+      description: All discovered endpoint recognition clues, independent of the current page and selected filters. Clues do not establish hardware identity.
+      required: [brands, os_families]
+      properties:
+        brands:
+          type: array
+          items:
+            type: string
+        os_families:
+          type: array
+          items:
+            type: string
+    BrandReference:
+      type: object
+      description: MAC 注册厂商对应的设备品牌参考，不确认整机品牌、型号或操作系统。
+      required: [brand, vendor, source, confidence, explanation]
+      properties:
+        brand: { type: string }
+        vendor: { type: string }
+        source: { type: string, enum: [mac_vendor] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        explanation: { type: string }
+    DeviceName:
+      type: object
+      required: [value, source, manual, status, multiple_names]
+      properties:
+        value:
+          type: string
+        source:
+          type: string
+        manual:
+          type: boolean
+        status:
+          type: string
+          enum: [current, historical]
+        multiple_names:
+          type: boolean
+    DeviceIPMatch:
+      type: object
+      required: [ip, source, matched_at, is_recent_ip]
+      properties:
+        ip: { type: string }
+        source: { type: string, enum: [ip_observation, account_session] }
+        matched_at: { type: string, format: date-time }
+        is_recent_ip: { type: boolean }
+    DiscoveryRecognitionSummary:
+      type: object
+      properties:
+        capabilities: { type: array, items: { type: string } }
+        types: { type: array, items: { type: string } }
+        positions: { type: array, items: { type: string } }
+        conflict: { type: boolean }
+        evidence_count: { type: integer }
     EndpointDeviceInventory:
       type: object
       required: [endpoint_id, entity_role, registration_status, merge_status, accounts, ips, access_ids, identity_confidence, recognition_confidence, randomized_mac, summary]
       properties:
+        router_observation:
+          $ref: '#/components/schemas/RouterAssessment'
+        discovery:
+          $ref: '#/components/schemas/DiscoveryRecognitionSummary'
+        ip_match: { $ref: '#/components/schemas/DeviceIPMatch' }
+        device_name:
+          $ref: '#/components/schemas/DeviceName'
+        brand_reference: { $ref: "#/components/schemas/BrandReference" }
+        brand_inference: { $ref: "#/components/schemas/BrandInference" }
         endpoint_id:
           type: string
         primary_mac:
@@ -2487,6 +4041,7 @@ components:
           type: string
         current_ip:
           type: string
+          description: 最近观测 IP，不保证当前在线。字段名保留以兼容现有客户端。
         current_access_id:
           type: string
         accounts:
@@ -2632,6 +4187,57 @@ components:
           type: string
         split_from_endpoint_id:
           type: string
+    SharedAccessEvaluation:
+      type: object
+      required: [state, ip, sensor_id, reasons]
+      properties:
+        id: { type: string }
+        state: { type: string, enum: [basis_present, not_matched, insufficient] }
+        account_id: { type: string }
+        ip: { type: string }
+        sensor_id: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        rule_version: { type: string }
+        config_version: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        device_lower_bound: { type: integer }
+        quantity_known: { type: boolean }
+        confidence: { type: number }
+        signal_groups: { type: array, items: { type: string } }
+        reasons: { type: array, items: { type: string } }
+        evidence_ids: { type: array, items: { type: string } }
+        event_ids: { type: array, items: { type: string } }
+        records:
+          type: array
+          items:
+            type: object
+            required: [event_id, source]
+            properties:
+              event_id: { type: string }
+              source: { type: string }
+              collector_instance_id: { type: string }
+    PolicyIdentitySession:
+      type: object
+      description: Event-time session after checking the configured identity authority. An unregistered source remains unknown, including at action execution time.
+      additionalProperties: true
+      required: [session_id, account_id, ip, source, last_confirmed_at, group_id, product_id]
+      properties:
+        session_id: { type: string }
+        account_id: { type: string }
+        ip: { type: string }
+        source: { type: string }
+        sensor_id: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        last_confirmed_at: { type: string, format: date-time }
+        group_id: { type: string }
+        product_id: { type: string }
+        heartbeat_interval_seconds: { type: integer }
+        reconcile_interval_seconds: { type: integer }
+        identity_issue: { type: string, enum: [unregistered_source] }
     AccountSession:
       type: object
       required: [session_id, account_id, endpoint_id, entity_role, started_at, ended_at, identity_confidence, source]
@@ -2740,6 +4346,14 @@ components:
       type: object
       required: [endpoint_id, summary, endpoint, accounts, sessions, ip_history, access_history]
       properties:
+        discovery:
+          $ref: '#/components/schemas/DiscoveryRecognitionSummary'
+        device_names_disabled:
+          type: boolean
+        device_name:
+          $ref: '#/components/schemas/DeviceName'
+        recognition: { $ref: "#/components/schemas/EndpointDeviceInventory" }
+        brand_inference: { $ref: "#/components/schemas/BrandInference" }
         endpoint_id:
           type: string
         summary:
@@ -2776,6 +4390,12 @@ components:
       type: object
       required: [endpoint_id, domain, ecosystem, event_source, attribution_method, rule_source, rule_version, category, confidence, first_seen, last_seen, count]
       properties:
+        rule_domain: { type: string }
+        source_url: { type: string }
+        source_version: { type: string }
+        service: { type: string }
+        purpose: { type: string }
+        brand_eligible: { type: boolean }
         endpoint_id: { type: string }
         ip: { type: string }
         auth_session_id: { type: string }
@@ -2797,6 +4417,8 @@ components:
       type: object
       required: [event_id, type, timestamp, subject, flow, confidence]
       properties:
+        proxy_protocol:
+          $ref: '#/components/schemas/ProxyProtocolEvidence'
         event_id:
           type: string
         source:
@@ -2805,7 +4427,7 @@ components:
           type: string
         type:
           type: string
-          enum: [flow, dns, tls, http, quic, device, identity, alert]
+          enum: [flow, dns, tls, http, quic, device, identity, alert, discovery]
         timestamp:
           type: string
           format: date-time
@@ -2874,6 +4496,24 @@ components:
         last_seen:
           type: string
           format: date-time
+    DataFreshness:
+      type: object
+      required: [status, lag_seconds, partial]
+      properties:
+        status:
+          type: string
+          enum: [warming, fresh, delayed, stale]
+        as_of:
+          type: string
+          format: date-time
+        lag_seconds:
+          type: integer
+          minimum: 0
+        available_from:
+          type: string
+          format: date-time
+        partial:
+          type: boolean
     ActivityOverview:
       type: object
       required:
@@ -2895,11 +4535,17 @@ components:
         - top_source_ips
         - top_active_risk_ips
       properties:
+        statistics_as_of:
+          type: string
+          format: date-time
+          description: Source time of the statistics, at most five seconds old on a successful fresh response.
+        data_freshness:
+          $ref: "#/components/schemas/DataFreshness"
         sensor_id:
           type: string
         window:
           type: string
-          enum: [10m, 1h, 24h, latest-run]
+          enum: [10m, 1h, 24h, 7d, 30d]
         event_count:
           type: integer
         active_ip_count:
@@ -3088,6 +4734,10 @@ components:
         - fingerprint_conflict_count
         - flow_sample_count
       properties:
+        statistics_as_of:
+          type: string
+          format: date-time
+          description: Source time of the statistics, at most five seconds old on a successful fresh response.
         sensor_id:
           type: string
         window:
@@ -3629,6 +5279,16 @@ components:
           type: integer
         run_count:
           type: integer
+        truncated_run_count:
+          type: integer
+        truncated_run_rate:
+          type: number
+          format: double
+        malformed_event_count:
+          type: integer
+        malformed_event_rate:
+          type: number
+          format: double
         risk_snapshot_count:
           type: integer
         evaluated_sample_count:
@@ -3646,16 +5306,64 @@ components:
           type: array
           items:
             type: string
+        collection_warnings:
+          type: array
+          items:
+            type: string
         ready:
           type: boolean
         blockers:
           type: array
           items:
             type: string
+    ShadowReviewSample:
+      type: object
+      required: [date, ip, level, score, confidence, evidence_ids, review_status, source_run_id, snapshot_time]
+      properties:
+        date: { type: string, format: date }
+        ip: { type: string }
+        subject_type: { type: string }
+        subject_id: { type: string }
+        account_id: { type: string }
+        endpoint_id: { type: string }
+        level:
+          $ref: "#/components/schemas/RiskLevel"
+        score: { type: integer }
+        confidence: { type: number, format: double }
+        evidence_ids:
+          type: array
+          items: { type: string }
+        review_status:
+          type: string
+          enum: [unreviewed, confirmed_proxy, false_positive, benign, needs_more_data]
+        review_reason: { type: string }
+        reviewed_by: { type: string }
+        reviewed_at: { type: string, format: date-time }
+        source_run_id: { type: string }
+        snapshot_time: { type: string, format: date-time }
+    ShadowReviewSamples:
+      type: object
+      required: [date, dates, samples_per_level, samples]
+      properties:
+        date: { type: string, format: date }
+        dates:
+          type: array
+          items: { type: string, format: date }
+        samples_per_level: { type: integer }
+        samples:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShadowReviewSample"
     Overview:
       type: object
       required: [level_counts, pending_reviews, latest_shadow_run, throughput, top_evidence]
       properties:
+        statistics_as_of:
+          type: string
+          format: date-time
+          description: Source time of the statistics, at most five seconds old on a successful fresh response.
+        data_freshness:
+          $ref: "#/components/schemas/DataFreshness"
         level_counts:
           type: object
           required: [normal, suspicious, high, confirmed]

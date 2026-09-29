@@ -180,6 +180,9 @@ func convertRecord(fields map[string]string, lineOffset int, opts Options) (norm
 	payload := map[string]any{
 		"origin": source,
 	}
+	for _, key := range []string{"group_id", "product_id", "access_domain", "heartbeat_interval_seconds", "reconcile_interval_seconds", "device_class"} {
+		copyPayload(payload, fields, key, key)
+	}
 	copyPayload(payload, fields, "action", "action")
 	copyPayload(payload, fields, "auth_method", "auth_method")
 	copyPayload(payload, fields, "vlan", "vlan")
@@ -190,6 +193,11 @@ func convertRecord(fields map[string]string, lineOffset int, opts Options) (norm
 	copyPayload(payload, fields, "nas_ip", "nas_ip")
 	copyPayload(payload, fields, "nas_port_id", "nas_port_id")
 	copyPayload(payload, fields, "session_id", "session_id")
+	copyPayload(payload, fields, "source_session_id", "source_session_id")
+	copyPayload(payload, fields, "source_instance_id", "source_instance_id")
+	for _, key := range []string{"raw_online_id", "source_login_generation", "session_id_source"} {
+		copyPayload(payload, fields, key, key)
+	}
 	copyPayload(payload, fields, "auth_mac", "auth_mac")
 	copyPayload(payload, fields, "observed_mac", "observed_mac")
 	for _, key := range []string{"person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type"} {
@@ -203,7 +211,7 @@ func convertRecord(fields map[string]string, lineOffset int, opts Options) (norm
 	raw := canonical(fields)
 	return normalized.Event{
 		SchemaVersion:   "v1",
-		EventID:         "identity-" + shortHash(fmt.Sprintf("%s|%d", raw, lineOffset)),
+		EventID:         "identity-" + shortHash(canonical(map[string]string{"source": source, "sensor_id": opts.SensorID, "record": raw})),
 		Source:          source,
 		SourceEventType: "identity",
 		Type:            "identity",

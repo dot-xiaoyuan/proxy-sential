@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -13,7 +14,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"proxy-sentinel/internal/evidence"
-	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
@@ -30,12 +30,13 @@ type PostgresOptions struct {
 }
 
 type PostgresStore struct {
-	db            *sql.DB
-	dsn           string
-	sensorID      string
-	collectorKind string
-	collectorVer  string
-	interfaceName string
+	recognitionCatalog recognitionCatalogCache
+	db                 *sql.DB
+	dsn                string
+	sensorID           string
+	collectorKind      string
+	collectorVer       string
+	interfaceName      string
 }
 
 func NewPostgresStore(opts PostgresOptions) (*PostgresStore, error) {
@@ -162,7 +163,7 @@ func (s *PostgresStore) ListRisks(ctx context.Context, query Query) (RiskPage, e
 	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
-       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups
 FROM risk_snapshots`+where+`
 ORDER BY
   CASE level WHEN 'confirmed' THEN 3 WHEN 'high' THEN 2 WHEN 'suspicious' THEN 1 ELSE 0 END DESC,
@@ -201,7 +202,7 @@ ORDER BY
 func (s *PostgresStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
-       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups
 FROM risk_snapshots WHERE ip = $1::inet`, ip)
 	if err != nil {
 		return risk.Snapshot{}, err
@@ -220,7 +221,7 @@ FROM risk_snapshots WHERE ip = $1::inet`, ip)
 func (s *PostgresStore) RiskSnapshotMap(ctx context.Context) (map[string]risk.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
-       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups
 FROM risk_snapshots`)
 	if err != nil {
 		return nil, err
@@ -238,7 +239,7 @@ func (s *PostgresStore) GetIPEvidence(ctx context.Context, ip string, limit int)
 		limit = 20
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT evidence_id, host(ip), type, "window", score, confidence, severity, reason, samples, created_at
+SELECT evidence_id, host(ip), type, "window", score, confidence, severity, reason, samples, created_at, metadata
 FROM evidence WHERE ip = $1::inet ORDER BY created_at DESC, evidence_id ASC LIMIT $2`, ip, limit)
 	if err != nil {
 		return nil, err
@@ -247,12 +248,19 @@ FROM evidence WHERE ip = $1::inet ORDER BY created_at DESC, evidence_id ASC LIMI
 	items := []evidence.Evidence{}
 	for rows.Next() {
 		var item evidence.Evidence
-		var samples []byte
+		var samples, metadata []byte
 		var created time.Time
-		if err := rows.Scan(&item.EvidenceID, &item.IP, &item.Type, &item.Window, &item.Score, &item.Confidence, &item.Severity, &item.Reason, &samples, &created); err != nil {
+		if err := rows.Scan(&item.EvidenceID, &item.IP, &item.Type, &item.Window, &item.Score, &item.Confidence, &item.Severity, &item.Reason, &samples, &created, &metadata); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(samples, &item.Samples)
+		if err := json.Unmarshal(samples, &item.Samples); err != nil {
+			return nil, err
+		}
+		var extra evidence.Evidence
+		if err := json.Unmarshal(metadata, &extra); err != nil {
+			return nil, err
+		}
+		item.SharedAccess = extra.SharedAccess
 		item.CreatedAt = created.Format(time.RFC3339Nano)
 		items = append(items, item)
 	}
@@ -373,6 +381,11 @@ func (s *PostgresStore) resolveIdentityHistoryAt(ctx context.Context, ip string,
 }
 
 func (s *PostgresStore) GetEndpointIdentity(ctx context.Context, endpointID string, query Query) (EndpointIdentityProfile, bool, error) {
+	var snapshotErr error
+	ctx, snapshotErr = s.domainSnapshot(ctx)
+	if snapshotErr != nil {
+		return EndpointIdentityProfile{}, false, snapshotErr
+	}
 	limit := identityLimit(query.Limit)
 	state := IdentityState{
 		Endpoints:      []EndpointEntity{},
@@ -402,25 +415,109 @@ func (s *PostgresStore) GetEndpointIdentity(ctx context.Context, endpointID stri
 	}
 	state.AccessHistory = accessHistory
 	profile, ok := BuildEndpointIdentityProfile(state, endpointID)
+	if ok {
+		item := BuildEndpointDeviceInventory(profile)
+		if err := s.enrichDomainRecognition(ctx, &item); err != nil {
+			return profile, false, err
+		}
+		names, nameErr := s.DeviceNames(ctx, []string{endpointID}, time.Now().UTC())
+		if nameErr != nil {
+			return profile, false, nameErr
+		}
+		item.DeviceName = names[endpointID]
+		profile.DeviceName = item.DeviceName
+		profile.Recognition = &item
+		profile.BrandInference = item.BrandInference
+		profile.EcosystemEvidence, err = s.ListEndpointDomainEvidence(ctx, endpointID, 200)
+		if err != nil {
+			return profile, false, err
+		}
+	}
 	return profile, ok, nil
 }
 
 func (s *PostgresStore) ListEndpointDevices(ctx context.Context, query Query) (EndpointDevicePage, error) {
+	var snapshotErr error
+	ctx, snapshotErr = s.domainSnapshot(ctx)
+	if snapshotErr != nil {
+		return EndpointDevicePage{}, snapshotErr
+	}
 	limit := query.Limit
 	if limit == 0 {
 		limit = 50
 	}
+	snapshot := ctx.Value(domainReadKey{}).(domainReadSnapshot)
 	where := []string{"entity_role = 'endpoint'"}
-	args := []any{}
-	if query.Q != "" {
+	args := []any{snapshot.version, snapshot.now.Add(-7 * 24 * time.Hour), snapshot.now}
+	where = append(where, "$1::text IS NOT NULL", "$2::timestamptz <= $3::timestamptz")
+	catalog, facetsAsOf, err := s.endpointRecognitionCatalog(ctx)
+	if err != nil {
+		return EndpointDevicePage{}, err
+	}
+	if query.View == "recent" {
+		scopedRows, scopeErr := s.db.QueryContext(ctx, `SELECT endpoint_id FROM endpoint_entities WHERE entity_role='endpoint' AND last_seen >= $1 AND last_seen <= $2`, deviceViewStart(query, snapshot.now), snapshot.now)
+		if scopeErr != nil {
+			return EndpointDevicePage{}, scopeErr
+		}
+		ids := map[string]bool{}
+		for scopedRows.Next() {
+			var id string
+			if scopeErr = scopedRows.Scan(&id); scopeErr != nil {
+				scopedRows.Close()
+				return EndpointDevicePage{}, scopeErr
+			}
+			ids[id] = true
+		}
+		scopeErr = scopedRows.Err()
+		scopedRows.Close()
+		if scopeErr != nil {
+			return EndpointDevicePage{}, scopeErr
+		}
+		scoped := make([]EndpointDeviceInventory, 0, len(catalog))
+		for _, item := range catalog {
+			if ids[item.EndpointID] {
+				scoped = append(scoped, item)
+			}
+		}
+		catalog = scoped
+		args = append(args, deviceViewStart(query, snapshot.now))
+		where = append(where, "last_seen >= $"+strconvArg(len(args))+" AND last_seen <= $3")
+	}
+	facets := deviceFilterFacets(catalog)
+	if query.Brand != "" || query.OSFamily != "" {
+		matching := []string{}
+		for _, item := range catalog {
+			if deviceRecognitionMatches(item, query) {
+				matching = append(matching, item.EndpointID)
+			}
+		}
+		args = append(args, matching)
+		where = append(where, "endpoint_id = ANY($"+strconvArg(len(args))+"::text[])")
+	}
+	if query.SrcIP != "" {
+		args = append(args, query.SrcIP)
+		parameter := "$" + strconvArg(len(args))
+		where = append(where, `(EXISTS(SELECT 1 FROM identity_ip_mac_history ip_filter WHERE ip_filter.endpoint_id=endpoint_entities.endpoint_id AND ip_filter.ip=`+parameter+`::inet) OR EXISTS(SELECT 1 FROM account_sessions ip_session WHERE ip_session.endpoint_id=endpoint_entities.endpoint_id AND ip_session.ip=`+parameter+`::inet))`)
+	}
+
+	if ip := net.ParseIP(strings.TrimSpace(query.Q)); ip != nil {
+		base := len(args)
+		args = append(args, ip.String(), query.View == "recent", deviceViewStart(query, snapshot.now), snapshot.now)
+		relation := deviceIPMatchRelation
+		for n := 4; n >= 1; n-- {
+			relation = strings.ReplaceAll(relation, "$"+strconvArg(n), "$MATCH"+strconvArg(base+n))
+		}
+		relation = strings.ReplaceAll(relation, "$MATCH", "$")
+		where = append(where, "endpoint_id IN (SELECT endpoint_id FROM ("+relation+") exact_ip)")
+	} else if query.Q != "" {
 		args = append(args, "%"+strings.ToLower(query.Q)+"%")
 		placeholder := "$" + strconvArg(len(args))
-		where = append(where, `(lower(endpoint_id) LIKE `+placeholder+` OR lower(coalesce(primary_mac, '')) LIKE `+placeholder+` OR lower(coalesce(registration_status, '')) LIKE `+placeholder+` OR lower(coalesce(owner_account, '')) LIKE `+placeholder+` OR lower(coalesce(owner_name, '')) LIKE `+placeholder+` OR lower(coalesce(owner_department, '')) LIKE `+placeholder+` OR lower(coalesce(asset_tag, '')) LIKE `+placeholder+` OR EXISTS (SELECT 1 FROM endpoint_domain_evidence domain_search WHERE domain_search.endpoint_id=endpoint_entities.endpoint_id AND lower(domain_search.ecosystem) LIKE `+placeholder+`))`)
+		where = append(where, `(EXISTS (SELECT 1 FROM device_name_evidence name_search WHERE name_search.endpoint_id=endpoint_entities.endpoint_id AND lower(name_search.value) LIKE `+placeholder+`) OR EXISTS (SELECT 1 FROM device_name_notes name_note WHERE name_note.endpoint_id=endpoint_entities.endpoint_id AND lower(name_note.value) LIKE `+placeholder+`) OR lower(endpoint_id) LIKE `+placeholder+` OR lower(coalesce(primary_mac, '')) LIKE `+placeholder+` OR lower(coalesce(registration_status, '')) LIKE `+placeholder+` OR lower(coalesce(owner_account, '')) LIKE `+placeholder+` OR lower(coalesce(owner_name, '')) LIKE `+placeholder+` OR lower(coalesce(owner_department, '')) LIKE `+placeholder+` OR lower(coalesce(asset_tag, '')) LIKE `+placeholder+` OR EXISTS (SELECT 1 FROM identity_ip_mac_history ip_search WHERE ip_search.endpoint_id=endpoint_entities.endpoint_id AND lower(host(ip_search.ip)) LIKE `+placeholder+`) OR EXISTS (SELECT 1 FROM account_sessions session_search WHERE session_search.endpoint_id=endpoint_entities.endpoint_id AND (lower(host(session_search.ip)) LIKE `+placeholder+` OR lower(session_search.account_id) LIKE `+placeholder+`)) OR EXISTS (SELECT 1 FROM endpoint_domain_evidence_events domain_search WHERE domain_search.endpoint_id=endpoint_entities.endpoint_id AND domain_search.rule_version=$1 AND domain_search.observed_at BETWEEN $2 AND $3 AND lower(domain_search.ecosystem) LIKE `+placeholder+`))`)
 	}
 	if query.Ecosystem != "" {
 		args = append(args, strings.ToLower(query.Ecosystem))
 		placeholder := "$" + strconvArg(len(args))
-		where = append(where, "EXISTS (SELECT 1 FROM endpoint_domain_evidence ecosystem_filter WHERE ecosystem_filter.endpoint_id=endpoint_entities.endpoint_id AND lower(ecosystem_filter.ecosystem)="+placeholder+")")
+		where = append(where, "EXISTS (SELECT 1 FROM endpoint_domain_evidence_events ecosystem_filter WHERE ecosystem_filter.endpoint_id=endpoint_entities.endpoint_id AND ecosystem_filter.rule_version=$1 AND ecosystem_filter.observed_at BETWEEN $2 AND $3 AND lower(ecosystem_filter.ecosystem)="+placeholder+")")
 	}
 	for column, value := range map[string]string{"campus_id": query.CampusID, "department": query.Department, "person_type": query.PersonType, "ssid": query.SSID, "vlan": query.VLAN, "ap": query.AP, "nas_ip": query.NASIP} {
 		if value == "" {
@@ -459,41 +556,35 @@ LIMIT $`+strconvArg(len(selectArgs)-1)+` OFFSET $`+strconvArg(len(selectArgs)), 
 	if err := rows.Err(); err != nil {
 		return EndpointDevicePage{}, err
 	}
-	items := []EndpointDeviceInventory{}
-	for _, endpointID := range endpointIDs {
-		profile, ok, err := s.GetEndpointIdentity(ctx, endpointID, Query{Limit: 200})
-		if err != nil {
-			return EndpointDevicePage{}, err
-		}
-		if !ok {
-			continue
-		}
-		item := BuildEndpointDeviceInventory(profile)
-		ecosystem, _, ecosystemErr := s.endpointEcosystem(ctx, endpointID)
-		if ecosystemErr != nil {
-			return EndpointDevicePage{}, ecosystemErr
-		}
-		item.EcosystemConflict = ecosystem.Conflict
-		item.EcosystemEvidenceCount = ecosystem.EvidenceCount
-		item.EcosystemConfidence = ecosystem.Confidence
-		if ecosystem.Displayable && !ecosystem.Conflict {
-			item.EcosystemHint = ecosystem.Hint
-		}
-		if brand, confidence, promoted := fingerprint.FuseEcosystemBrand(item.Brand, item.BrandConfidence, item.RecognitionSource, ecosystem); promoted {
-			item.Brand = brand
-			item.BrandConfidence = confidence
-			item.RecognitionEvidence = append(item.RecognitionEvidence, "品牌生态线索与独立设备信号一致")
-		}
-		if query.SrcIP == "" || item.CurrentIP == query.SrcIP || stringSliceContains(item.IPs, query.SrcIP) {
-			items = append(items, item)
+	allItems, err := s.endpointDevicePage(ctx, endpointIDs, catalog, facetsAsOf)
+	if err != nil {
+		return EndpointDevicePage{}, err
+	}
+	items := allItems
+	matches, matchErr := s.deviceIPMatches(ctx, endpointIDs, query, snapshot.now)
+	if matchErr != nil {
+		return EndpointDevicePage{}, matchErr
+	}
+	for i := range items {
+		if m := matches[items[i].EndpointID]; m != nil {
+			m.IsRecentIP = net.ParseIP(m.IP).Equal(net.ParseIP(items[i].CurrentIP))
+			items[i].IPMatch = m
 		}
 	}
+	names, nameErr := s.DeviceNames(ctx, endpointIDs, snapshot.now)
+	if nameErr != nil {
+		return EndpointDevicePage{}, nameErr
+	}
+	for i := range items {
+		items[i].DeviceName = names[items[i].EndpointID]
+	}
+
 	var next *string
 	if query.Cursor+len(endpointIDs) < total {
 		value := fmt.Sprintf("%d", query.Cursor+len(endpointIDs))
 		next = &value
 	}
-	return EndpointDevicePage{Items: items, Page: Page{Limit: query.Limit, NextCursor: next, Total: total}}, nil
+	return EndpointDevicePage{Items: items, Facets: facets, FacetsAsOf: facetsAsOf.UTC().Format(time.RFC3339Nano), Page: Page{Limit: query.Limit, NextCursor: next, Total: total}}, nil
 }
 
 func identityLimit(limit int) int {
@@ -530,7 +621,7 @@ FROM endpoint_entities WHERE endpoint_id = $1`, endpointID)
 func (s *PostgresStore) queryAccountSessions(ctx context.Context, where string, args []any, limit int) ([]AccountSession, error) {
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT session_id, account_id, endpoint_id, host(ip), mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref
+SELECT session_id, account_id, endpoint_id, host(ip), mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, policy_metadata
 FROM account_sessions
 WHERE `+where+`
 ORDER BY started_at DESC, session_id ASC
@@ -556,7 +647,7 @@ func (s *PostgresStore) queryIdentityIPMACHistory(ctx context.Context, where str
 SELECT event_id, endpoint_id, account_id, entity_role, host(ip), mac, source, first_seen, last_seen, identity_confidence, event_ids_sample
 FROM identity_ip_mac_history
 WHERE `+where+`
-ORDER BY last_seen DESC, event_id ASC
+ORDER BY last_seen DESC, first_seen DESC, host(ip) ASC, event_id ASC
 LIMIT $`+strconvArg(len(args)), args...)
 	if err != nil {
 		return nil, err
@@ -634,8 +725,8 @@ func scanAccountSession(rows *sql.Rows) (AccountSession, error) {
 	var endpointID, ip, mac, accessID sql.NullString
 	var startedAt time.Time
 	var endedAt sql.NullTime
-	var rawRef []byte
-	if err := rows.Scan(&item.SessionID, &item.AccountID, &endpointID, &ip, &mac, &accessID, &item.Source, &startedAt, &endedAt, &item.IdentityConfidence, &rawRef); err != nil {
+	var rawRef, policyMetadata []byte
+	if err := rows.Scan(&item.SessionID, &item.AccountID, &endpointID, &ip, &mac, &accessID, &item.Source, &startedAt, &endedAt, &item.IdentityConfidence, &rawRef, &policyMetadata); err != nil {
 		return AccountSession{}, err
 	}
 	item.EndpointID = nullStringValue(endpointID)
@@ -646,6 +737,17 @@ func scanAccountSession(rows *sql.Rows) (AccountSession, error) {
 	item.EndedAt = nullTimeText(endedAt)
 	item.RawRef = map[string]any{}
 	_ = json.Unmarshal(rawRef, &item.RawRef)
+	var metadata AccountSession
+	_ = json.Unmarshal(policyMetadata, &metadata)
+	item.GroupID = metadata.GroupID
+	item.ProductID = metadata.ProductID
+	item.AccessDomain = metadata.AccessDomain
+	item.LastConfirmedAt = metadata.LastConfirmedAt
+	item.HeartbeatSeconds = metadata.HeartbeatSeconds
+	item.ReconcileSeconds = metadata.ReconcileSeconds
+	item.DeviceClass = metadata.DeviceClass
+	item.CampusID = metadata.CampusID
+	item.VLAN = metadata.VLAN
 	return item, nil
 }
 
@@ -1165,6 +1267,12 @@ func (s *PostgresStore) WriteEvidence(ctx context.Context, items []evidence.Evid
 	defer tx.Rollback()
 	for _, item := range items {
 		samples, _ := json.Marshal(item.Samples)
+		metadata, err := json.Marshal(struct {
+			SharedAccess any `json:"shared_access,omitempty"`
+		}{SharedAccess: item.SharedAccess})
+		if err != nil {
+			return err
+		}
 		if item.SubjectType != "" && item.SubjectType != "ip" {
 			if _, err := tx.ExecContext(ctx, `
 INSERT INTO subject_evidence(evidence_id, subject_type, subject_id, account_id, endpoint_id, ip, type, "window", score, confidence, severity, reason, samples, created_at)
@@ -1179,10 +1287,10 @@ ON CONFLICT(evidence_id) DO UPDATE SET score = EXCLUDED.score, confidence = EXCL
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO evidence(evidence_id, ip, type, "window", score, confidence, severity, reason, samples, created_at)
-VALUES($1,$2::inet,$3,$4,$5,$6,$7,$8,$9,$10)
-ON CONFLICT(evidence_id) DO UPDATE SET score = EXCLUDED.score, confidence = EXCLUDED.confidence, severity = EXCLUDED.severity, reason = EXCLUDED.reason, samples = EXCLUDED.samples`,
-			item.EvidenceID, item.IP, item.Type, item.Window, item.Score, item.Confidence, item.Severity, item.Reason, samples, item.CreatedAt); err != nil {
+INSERT INTO evidence(evidence_id, ip, type, "window", score, confidence, severity, reason, samples, created_at, metadata)
+VALUES($1,$2::inet,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT(evidence_id) DO UPDATE SET score = EXCLUDED.score, confidence = EXCLUDED.confidence, severity = EXCLUDED.severity, reason = EXCLUDED.reason, samples = EXCLUDED.samples, metadata = EXCLUDED.metadata`,
+			item.EvidenceID, item.IP, item.Type, item.Window, item.Score, item.Confidence, item.Severity, item.Reason, samples, item.CreatedAt, metadata); err != nil {
 			return err
 		}
 	}
@@ -1201,13 +1309,14 @@ func (s *PostgresStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk
 	for _, snapshot := range snapshots {
 		evidenceIDs, _ := json.Marshal(snapshot.EvidenceIDs)
 		automationBlockers, _ := json.Marshal(snapshot.AutomationBlockers)
+		signalGroups, _ := json.Marshal(snapshot.IndependentSignalGroups)
 		payload, _ := json.Marshal(snapshot)
 		if snapshot.SubjectType != "" && snapshot.SubjectType != "ip" {
 			if _, err := tx.ExecContext(ctx, `
-INSERT INTO subject_risk_snapshots(subject_type, subject_id, account_id, endpoint_id, ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers)
-VALUES($1,$2,$3,$4,NULLIF($5, '')::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULLIF($15, ''),$16,$17)
-ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(subject_risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers`,
-				snapshot.SubjectType, snapshot.SubjectID, snapshot.AccountID, snapshot.EndpointID, snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers); err != nil {
+INSERT INTO subject_risk_snapshots(subject_type, subject_id, account_id, endpoint_id, ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers, detection_basis, independent_signal_groups)
+VALUES($1,$2,$3,$4,NULLIF($5, '')::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULLIF($15, ''),$16,$17,$18,$19)
+ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(subject_risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups`,
+				snapshot.SubjectType, snapshot.SubjectID, snapshot.AccountID, snapshot.EndpointID, snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers, snapshot.DetectionBasis, signalGroups); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `
@@ -1221,15 +1330,32 @@ VALUES($1, $2, $3)`, snapshot.SubjectType, snapshot.SubjectID, payload); err != 
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers)
-VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11, ''),$12,$13)
-ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers`,
-			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers); err != nil {
+INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers, detection_basis, independent_signal_groups)
+VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11, ''),$12,$13,$14,$15)
+ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups`,
+			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers, snapshot.DetectionBasis, signalGroups); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO risk_snapshot_history(ip, snapshot) VALUES($1::inet, $2)`, snapshot.IP, payload); err != nil {
 			return err
 		}
+	}
+	return tx.Commit()
+}
+
+// ExpireRiskSnapshots removes only current materialized views that have fallen
+// outside the rolling window. Immutable history remains available for replay.
+func (s *PostgresStore) ExpireRiskSnapshots(ctx context.Context, before time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM risk_snapshots WHERE updated_at < $1`, before); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM subject_risk_snapshots WHERE updated_at < $1`, before); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -1250,7 +1376,13 @@ ON CONFLICT(sensor_id) DO UPDATE SET collector_kind = EXCLUDED.collector_kind, c
 		run.SensorID, s.collectorKind, s.collectorVer, s.interfaceName); err != nil {
 		return err
 	}
+	if err := writeDeviceLeases(ctx, tx, events); err != nil {
+		return err
+	}
 	identityState := BuildIdentityState(events)
+	if err := writePolicyIdentityEvents(ctx, tx, events); err != nil {
+		return err
+	}
 	if err := writeIdentityState(ctx, tx, identityState); err != nil {
 		return err
 	}
@@ -1288,6 +1420,12 @@ func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normal
 		return err
 	}
 	defer tx.Rollback()
+	if err := writePolicyIdentityEvents(ctx, tx, events); err != nil {
+		return err
+	}
+	if err := writeDeviceLeases(ctx, tx, events); err != nil {
+		return err
+	}
 	identityState := BuildIdentityState(events)
 	if err := writeIdentityState(ctx, tx, identityState); err != nil {
 		return err
@@ -1299,6 +1437,15 @@ func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normal
 }
 
 func writeEndpointDeviceProfiles(ctx context.Context, tx *sql.Tx, state IdentityState) error {
+	for i := range state.Endpoints {
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, `SELECT attributes FROM endpoint_entities WHERE endpoint_id=$1`, state.Endpoints[i].EndpointID).Scan(&raw); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &state.Endpoints[i].Attributes); err != nil {
+			return err
+		}
+	}
 	for _, item := range BuildEndpointDeviceInventories(state, Query{}) {
 		if err := upsertEndpointDeviceProfile(ctx, tx, item); err != nil {
 			return err
@@ -1592,6 +1739,11 @@ ON CONFLICT(session_id) DO UPDATE SET
   session_status = COALESCE(EXCLUDED.session_status, account_sessions.session_status),
   updated_at = now()`,
 		session.SessionID, session.AccountID, session.EndpointID, session.IP, session.MAC, session.AccessID, session.Source, startedAt, endedAt, session.IdentityConfidence, rawRef, session.PersonType, session.Department, session.CampusID, session.BuildingID, session.NetworkZoneID, session.SSID, session.VLAN, session.AP, session.NASIP, session.SessionStatus)
+	if err != nil {
+		return err
+	}
+	metadata, _ := json.Marshal(session)
+	_, err = tx.ExecContext(ctx, `UPDATE account_sessions SET policy_metadata=$2 WHERE session_id=$1 AND COALESCE(NULLIF(policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz) <= $3::timestamptz`, session.SessionID, metadata, session.LastConfirmedAt)
 	return err
 }
 
@@ -1932,18 +2084,32 @@ LIMIT 1`, sensorID, window, ip)
 }
 
 func (s *PostgresStore) GetDevice(ctx context.Context, deviceID string, query Query) (ObservedDevice, bool, error) {
-	page, err := s.ListDeviceInventories(ctx, Query{SensorID: query.SensorID, Window: query.Window, IncludeWeak: true, Limit: -1})
+	sensor := query.SensorID
+	if sensor == "" {
+		sensor = s.sensorID
+	}
+	window := query.Window
+	if window == "" {
+		window = "1h"
+	}
+	var raw []byte
+	err := s.db.QueryRowContext(ctx, `SELECT device FROM device_inventory_snapshots s
+ CROSS JOIN LATERAL jsonb_array_elements(coalesce(nullif(s.inventory->'devices','null'::jsonb),'[]'::jsonb)) AS d(device)
+ WHERE sensor_id=$1 AND "window"=$2
+ AND run_id=(SELECT run_id FROM device_inventory_snapshots WHERE sensor_id=$1 AND "window"=$2 ORDER BY created_at DESC,run_id DESC LIMIT 1)
+ AND s.inventory->'devices' @> jsonb_build_array(jsonb_build_object('device_id',$3::text))
+ AND device->>'device_id'=$3 LIMIT 1`, sensor, window, deviceID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return ObservedDevice{}, false, nil
+	}
 	if err != nil {
 		return ObservedDevice{}, false, err
 	}
-	for _, inventory := range page.Items {
-		for _, device := range inventory.Devices {
-			if device.DeviceID == deviceID {
-				return device, true, nil
-			}
-		}
+	var device ObservedDevice
+	if err = json.Unmarshal(raw, &device); err != nil {
+		return ObservedDevice{}, false, err
 	}
-	return ObservedDevice{}, false, nil
+	return device, true, nil
 }
 
 func (s *PostgresStore) ListDeviceSignals(ctx context.Context, query Query) ([]DeviceSignal, error) {
@@ -2040,7 +2206,7 @@ func scanDeviceSignal(scanner deviceSignalScanner) (DeviceSignal, error) {
 }
 
 func (s *PostgresStore) topEvidence(ctx context.Context) ([]ingest.EventTypeCount, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT type, count(*) FROM evidence GROUP BY type ORDER BY count(*) DESC, type ASC LIMIT 20`)
+	rows, err := s.db.QueryContext(ctx, `SELECT type,evidence_count FROM evidence_type_counts WHERE evidence_count>0 ORDER BY evidence_count DESC,type ASC LIMIT 20`)
 	if errors.Is(err, sql.ErrNoRows) {
 		return []ingest.EventTypeCount{}, nil
 	}
@@ -2103,12 +2269,14 @@ func scanRiskRows(rows *sql.Rows) ([]risk.Snapshot, error) {
 		var item risk.Snapshot
 		var evidenceIDs []byte
 		var automationBlockers []byte
+		var signalGroups []byte
 		var updated time.Time
-		if err := rows.Scan(&item.IP, &item.Score, &item.Level, &item.Confidence, &item.Window, &evidenceIDs, &item.Summary, &item.RecommendedAction, &updated, &item.AssessmentLevel, &item.ReviewDisposition, &item.AutomationEligible, &automationBlockers); err != nil {
+		if err := rows.Scan(&item.IP, &item.Score, &item.Level, &item.Confidence, &item.Window, &evidenceIDs, &item.Summary, &item.RecommendedAction, &updated, &item.AssessmentLevel, &item.ReviewDisposition, &item.AutomationEligible, &automationBlockers, &item.DetectionBasis, &signalGroups); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(evidenceIDs, &item.EvidenceIDs)
 		_ = json.Unmarshal(automationBlockers, &item.AutomationBlockers)
+		_ = json.Unmarshal(signalGroups, &item.IndependentSignalGroups)
 		item.UpdatedAt = updated.Format(time.RFC3339Nano)
 		items = append(items, item)
 	}

@@ -19,6 +19,7 @@ const OverviewPage = lazy(() =>
 )
 const ReviewPage = lazy(() => import('../pages/ReviewPage').then((module) => ({ default: module.ReviewPage })))
 const ReviewDetailsPage = lazy(() => import('../pages/ReviewDetailsPage').then((module) => ({ default: module.ReviewDetailsPage })))
+const ShadowReviewSamplesPage = lazy(() => import('../pages/ShadowReviewSamplesPage').then((module) => ({ default: module.ShadowReviewSamplesPage })))
 const EventDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.EventDetailsPage })))
 const ShadowRunDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.ShadowRunDetailsPage })))
 const AuditDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.AuditDetailsPage })))
@@ -121,6 +122,7 @@ export function ReviewRoute() {
 }
 
 export function ReviewDetailsRoute() { return <RouteSuspense><ReviewDetailsPage /></RouteSuspense> }
+export function ShadowReviewSamplesRoute() { return <RouteSuspense><ShadowReviewSamplesPage /></RouteSuspense> }
 export function EventDetailsRoute() { return <RouteSuspense><EventDetailsPage /></RouteSuspense> }
 export function ShadowRunDetailsRoute() { return <RouteSuspense><ShadowRunDetailsPage /></RouteSuspense> }
 export function AuditDetailsRoute() { return <RouteSuspense><AuditDetailsPage /></RouteSuspense> }
@@ -154,3 +156,18 @@ export function CaseDetailsRoute(){return <RouteSuspense><CaseDetailsPage/></Rou
 export function OrganizationRoute(){return <RouteSuspense><OrganizationPage/></RouteSuspense>}
 export function ActionsRoute(){return <RouteSuspense><ActionsPage/></RouteSuspense>}
 export function SecuritySettingsRoute(){return <RouteSuspense><SecuritySettingsPage/></RouteSuspense>}
+
+const PoliciesPage = lazy(() => import("../pages/PoliciesPage").then(m=>({default:m.PoliciesPage})))
+export function PoliciesRoute(){return <RouteSuspense><PoliciesPage/></RouteSuspense>}
+
+const SharedAccessPage = lazy(() => import('../pages/SharedAccessPage').then(m=>({default:m.SharedAccessPage})))
+const SharedBehaviorDetailsPage = lazy(() => import('../pages/SharedAccessPage').then(m=>({default:m.SharedBehaviorDetailsPage})))
+const SharedReviewDetailsPage = lazy(() => import('../pages/SharedAccessPage').then(m=>({default:m.SharedReviewDetailsPage})))
+export function SharedAccessRoute(){return <RouteSuspense><SharedAccessPage/></RouteSuspense>}
+export function SharedBehaviorDetailsRoute(){return <RouteSuspense><SharedBehaviorDetailsPage/></RouteSuspense>}
+export function SharedReviewDetailsRoute(){return <RouteSuspense><SharedReviewDetailsPage/></RouteSuspense>}
+
+const DiscoveryPage = lazy(() => import("../pages/DiscoveryPage").then(m=>({default:m.DiscoveryPage})))
+const RouterObservationDetailsPage = lazy(() => import('../pages/RouterObservationDetailsPage').then(m=>({default:m.RouterObservationDetailsPage})))
+export function DiscoveryRoute(){return <RouteSuspense><DiscoveryPage/></RouteSuspense>}
+export function RouterObservationDetailsRoute(){return <RouteSuspense><RouterObservationDetailsPage/></RouteSuspense>}

@@ -54,7 +54,7 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	items, err := postgres.ListEndpointDomainEvidence(ctx, endpointID, 20)
+	items, err := postgres.windowDomainEvidence(ctx, endpointID, testNamespace, time.Date(2026, 9, 2, 11, 0, 0, 0, time.UTC))
 	if err != nil || len(items) != 1 || items[0].Count != 1 || items[0].AttributionMethod != "active_auth_session" {
 		t.Fatalf("idempotent evidence failed: %+v err=%v", items, err)
 	}

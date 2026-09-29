@@ -80,6 +80,40 @@ func TestConvertSkipsMalformedAndUnsupportedLines(t *testing.T) {
 	}
 }
 
+func TestConvertRouterIdentityFields(t *testing.T) {
+	input := bytes.NewBufferString(
+		`{"timestamp":"2026-09-24T09:30:00.000000+0800","event_type":"http","src_ip":"10.0.0.2","dest_ip":"10.0.0.1","src_port":50000,"dest_port":80,"proto":"TCP","ether":{"src_mac":"00-46-4B-12-34-56","dest_mac":"00:00:5e:00:53:01"},"vlan":[120],"http":{"hostname":"ar6140.local","http_server":"Huawei AR Web","http_title":"AR6140 Management"}}` + "\n" +
+			`{"timestamp":"2026-09-24T09:30:01.000000+0800","event_type":"tls","src_ip":"10.0.0.2","dest_ip":"10.0.0.1","src_port":50001,"dest_port":443,"proto":"TCP","ether":{"src_mac":"00:46:4b:12:34:56"},"vlan":120,"tls":{"sni":"ar6140.local","subject":"CN=Huawei AR6140","issuerdn":"CN=Huawei","serial":"01AB","fingerprint":"AA:BB","san":["ar6140.local"]}}` + "\n" +
+			`{"timestamp":"2026-09-24T09:30:02.000000+0800","event_type":"alert","src_ip":"10.0.0.2","dest_ip":"10.0.0.1","proto":"TCP","alert":{"signature_id":900001,"signature":"Router management login","category":"Device management","metadata":{"device":["router"]}}}` + "\n")
+	var output bytes.Buffer
+	stats, err := Convert(input, &output, Options{})
+	if err != nil || stats.Emitted != 3 {
+		t.Fatalf("unexpected conversion stats=%+v err=%v", stats, err)
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(output.Bytes()))
+	var events []map[string]any
+	for scanner.Scan() {
+		var event map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if events[0]["subject"].(map[string]any)["mac"] != "00:46:4b:12:34:56" || events[0]["payload"].(map[string]any)["vlan"] != "120" || events[0]["payload"].(map[string]any)["server"] != "Huawei AR Web" || events[0]["payload"].(map[string]any)["title"] != "AR6140 Management" {
+		t.Fatalf("unexpected HTTP identity fields: %+v", events[0])
+	}
+	tls := events[1]["payload"].(map[string]any)
+	for _, key := range []string{"certificate_subject", "certificate_issuer", "certificate_serial", "certificate_fingerprint", "certificate_san"} {
+		if tls[key] == nil {
+			t.Fatalf("missing TLS %s: %+v", key, tls)
+		}
+	}
+	alert := events[2]["payload"].(map[string]any)
+	if alert["signature"] != "Router management login" || alert["category"] != "Device management" || alert["metadata"] == nil {
+		t.Fatalf("missing alert management clues: %+v", alert)
+	}
+}
+
 func TestConvertPreservesObservedApplicationProtocol(t *testing.T) {
 	input := bytes.NewBufferString("{\"timestamp\":\"2026-07-24T13:16:46.672238+0800\",\"event_type\":\"flow\",\"src_ip\":\"10.0.0.1\",\"dest_ip\":\"198.51.100.2\",\"proto\":\"TCP\",\"app_proto\":\"http2\",\"flow\":{}}\n")
 	var output bytes.Buffer
@@ -125,6 +159,21 @@ func TestConvertAlertAndQUICEvents(t *testing.T) {
 	requireString(t, events[1], "type", "quic")
 	requireNestedString(t, events[1], "payload", "sni")
 	requireNestedString(t, events[1], "payload", "ja4")
+}
+
+func TestEventIDIsStableAcrossReplayOffsets(t *testing.T) {
+	raw := []byte(`{"timestamp":"2026-07-22T10:00:00Z","event_type":"dns","src_ip":"10.0.0.2","dest_ip":"1.1.1.1","proto":"UDP","dns":{"rrname":"example.test"}}`)
+	first, err := convertLine(raw, 1, Options{SensorID: "sensor-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := convertLine(raw, 9001, Options{SensorID: "sensor-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.EventID != replayed.EventID {
+		t.Fatalf("event id changed across replay: %s != %s", first.EventID, replayed.EventID)
+	}
 }
 
 func requireString(t *testing.T, event map[string]any, key string, expected string) {

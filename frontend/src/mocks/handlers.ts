@@ -1,6 +1,13 @@
+import { discoveryHandlers } from './discovery'
+import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './deviceRecognition'
+import { proxyProof } from './proxyProtocol'
+import { domainOnlyDevice, domainOnlyProfile } from './brandInference'
+import { policyHandlers } from './policies'
+import { applicationHandlers } from './applications'
+import { routerObservationHandlers } from './routerObservations'
 import { delay, http, HttpResponse } from 'msw'
 
-import type { CreateLabelRequest, RiskCase } from '../shared/api/types'
+import type { CreateLabelRequest, RiskCase, CaseHistoryRow } from '../shared/api/types'
 import {
   activityByIp,
   getActivityOverviewByWindow,
@@ -21,6 +28,7 @@ import {
   riskSnapshots,
   shadowRuns,
   shadowEvaluation,
+  shadowReviewSamples,
 } from './fixtures'
 
 function normalizeIp(value: string) {
@@ -63,6 +71,11 @@ const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管�
 const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
 
 export const handlers = [
+ ...discoveryHandlers,
+ ...routerObservationHandlers,
+ http.get("/api/v1/events/proxy-fixture",()=>HttpResponse.json({event_id:"proxy-fixture",type:"proxy_transaction",source:"zeek",timestamp:proxyProof.response_at,proxy_protocol:proxyProof})),
+  ...applicationHandlers,
+  ...policyHandlers,
   http.get('/api/v1/session', async () => {
     await delay(120)
     return HttpResponse.json(mockSession)
@@ -79,6 +92,13 @@ export const handlers = [
     const url = new URL(request.url)
     const result = mockPage(mockCases.filter((item) => !url.searchParams.get('status') || item.status === url.searchParams.get('status')), url)
     return HttpResponse.json(result)
+  }),
+  http.get('/api/v1/cases/:caseId/history/:kind', ({params,request}) => {
+    const item=mockCases.find(entry=>entry.case_id===params.caseId)
+    if(!item)return new HttpResponse(null,{status:404})
+    const evidence=item.evidence_snapshot
+    const rows:CaseHistoryRow[]=params.kind==='evidence'?(evidence?Array.from({length:45},(_,index)=>({snapshot_id:`${item.case_id}-snapshot-${45-index}`,evidence,ruleset_version:'review-v1',created_at:item.created_at})):[]):params.kind==='comments'?(item.comments??[]):(item.timeline??[]).slice().reverse()
+    return HttpResponse.json(mockPage(rows,new URL(request.url)))
   }),
   http.get('/api/v1/cases/:caseId', ({ params }) => {
     const item = mockCases.find((entry) => entry.case_id === params.caseId)
@@ -116,6 +136,10 @@ export const handlers = [
   http.post('/api/v1/actions/connectors', async ({request}) => {const payload=await request.json() as typeof mockConnectors[number] & {secret?:string};const existing=mockConnectors.findIndex(item=>item.connector_id===payload.connector_id);const item={...payload,shadow_ready:existing>=0?mockConnectors[existing].shadow_ready:false,updated_at:new Date().toISOString()};delete item.secret;if(existing>=0)mockConnectors[existing]=item;else mockConnectors.push(item);return HttpResponse.json(item)}),
   http.post('/api/v1/actions/connectors/:connectorId/test', ({params}) => HttpResponse.json({connector_id:params.connectorId,reachable:true,checked_at:new Date().toISOString()})),
   http.get('/api/v1/actions', ({ request }) => { const result = mockPage(mockActions, new URL(request.url)); return HttpResponse.json(result) }),
+  http.get('/api/v1/actions/:actionId/native-observations', ({ request }) => {
+    const older = new URL(request.url).searchParams.has('before')
+    return HttpResponse.json({items:[{id:older?'9007199254740992':'9007199254740993',step_failed:!older,recorded_at:'2026-09-15T09:00:00Z',result:{delivery:older?'acknowledged':'uncertain',observation:older?'online':'absent',reserved_at:'2026-09-15T08:59:00Z'}}],...(older?{}:{next_before:'9007199254740993'})})
+  }),
   http.post('/api/v1/actions/execute', async ({ request }) => {
     const payload = await request.json() as Record<string, string>
     const action = { ...payload, action_id: `action-${Date.now()}`, idempotency_key: 'mock', subject_id: payload.ip, mode: 'shadow', status: 'shadow', blockers: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
@@ -126,12 +150,12 @@ export const handlers = [
   http.post('/api/v1/actions/emergency-stop', () => HttpResponse.json({ global_stop: true })),
   http.get('/api/v1/overview', async () => {
     await delay(160)
-    return HttpResponse.json(overview)
+    return HttpResponse.json({...overview,statistics_as_of:new Date().toISOString()})
   }),
   http.get('/api/v1/activity/overview', ({ request }) => {
     const url = new URL(request.url)
     const windowValue = url.searchParams.get('window') ?? '1h'
-    return HttpResponse.json(getActivityOverviewByWindow(windowValue))
+    return HttpResponse.json({...getActivityOverviewByWindow(windowValue),statistics_as_of:new Date().toISOString()})
   }),
   http.get('/api/v1/activity/reports', ({request}) => {
     const dimension=new URL(request.url).searchParams.get('dimension')??'domain'
@@ -254,6 +278,8 @@ export const handlers = [
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()
     const ip = url.searchParams.get('ip')
+    const brand = url.searchParams.get('brand')?.toLowerCase()
+    const osFamily = url.searchParams.get('os_family')?.toLowerCase()
 	const ecosystem=url.searchParams.get('ecosystem')?.toLowerCase()
     const limit = Number(url.searchParams.get('limit') ?? 50)
     const cursor = Number(url.searchParams.get('cursor') ?? 0)
@@ -275,14 +301,15 @@ export const handlers = [
         accounts: device.account_id ? [device.account_id] : [],
         ips: [inventory.ip],
         access_ids: device.access_id ? [device.access_id] : [],
-        brand: device.brand || device.vendor || '',
+        brand: device.brand || '',
         vendor: device.vendor || '',
         model: device.model || '',
         vendor_confidence: device.vendor && device.vendor !== 'unknown' ? device.confidence : 0,
         brand_confidence: device.brand && device.brand !== 'unknown' ? device.confidence : 0,
         model_confidence: device.model && device.model !== 'unknown' ? device.confidence : 0,
         device_type_confidence: 0,
-        os_family_confidence: 0,
+        os_family: device.os_family || '',
+        os_family_confidence: device.confidence,
         recognition_confidence: device.confidence,
         randomized_mac: false,
         recognition_conflict: false,
@@ -296,21 +323,40 @@ export const handlers = [
         summary: `${device.brand && device.brand !== 'unknown' ? device.brand + ' ' : ''}${device.model && device.model !== 'unknown' ? device.model + ' ' : ''}终端 ${device.endpoint_id || device.device_id}，观察到 1 个 IP`,
       })),
     )
-    const filtered = endpointItems
+    const now=Date.now(),view=url.searchParams.get('view'),window=url.searchParams.get('window')||'24h'
+    const cutoff=now-({'10m':600000,'1h':3600000,'24h':86400000}[window]||86400000)
+    const allItems = [...endpointItems, domainOnlyDevice, macOSDevice, ...manufacturerReferenceDevices].filter(item=>view!=='recent'||(Date.parse(item.last_seen||'')>=cutoff&&Date.parse(item.last_seen||'')<=now))
+    const brandValue = (item: typeof allItems[number]) => {
+      const inference = 'brand_inference' in item ? item.brand_inference : undefined
+      if (inference?.status === 'inferred' && ((item.brand_confidence ?? 0) < .8 || item.recognition_conflict)) return inference.brand || 'unknown'
+      if (!item.recognition_conflict && (item.brand_confidence ?? 0) >= .8 && item.brand && item.brand.toLowerCase() !== 'unknown') return item.brand
+      if (inference?.status === 'inferred') return inference.brand || 'unknown'
+      const reference = 'brand_reference' in item ? item.brand_reference : undefined
+      if (!item.recognition_conflict && reference && inference?.status !== 'conflict') return reference.brand
+      if (!item.recognition_conflict && item.brand && item.brand.toLowerCase() !== 'unknown') return item.brand
+      return 'unknown'
+    }
+    const osValue = (item: typeof allItems[number]) => !item.recognition_conflict && item.os_family ? item.os_family : 'unknown'
+    const facets = { brands: [...new Set(allItems.map(brandValue))].sort(), os_families: [...new Set(allItems.map(osValue))].sort() }
+    const filtered = allItems
+      .filter(item => !brand || brandValue(item).toLowerCase() === brand)
+      .filter(item => !osFamily || osValue(item).toLowerCase() === osFamily)
       .filter((item) => !ip || item.current_ip === ip)
-      .filter((item) => !q || JSON.stringify(item).toLowerCase().includes(q))
-	  .filter((item)=>!ecosystem||item.ecosystem_hint.toLowerCase()===ecosystem)
-    const pageItems = filtered.slice(cursor, cursor + limit)
+      .filter((item) => !q || (/^\d+\.\d+\.\d+\.\d+$/.test(q) ? item.ips.includes(q) : JSON.stringify(item).toLowerCase().includes(q)))
+	  .filter((item)=>!ecosystem||(item.ecosystem_hint || '').toLowerCase()===ecosystem)
+    const pageItems = filtered.slice(cursor, cursor + limit).map(item=>({...item,...(q&&/^\d+\.\d+\.\d+\.\d+$/.test(q)?{ip_match:{ip:q,source:'ip_observation',matched_at:item.last_seen,is_recent_ip:item.current_ip===q}}:{})}))
     const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
 
     return HttpResponse.json({
       items: pageItems,
+      facets,
       page: { limit, next_cursor: nextCursor, total: filtered.length },
     })
   }),
   http.get('/api/v1/device-recognition/summary', () => HttpResponse.json({
     total_endpoints: 121,
-    coverage: { vendor: { known: 52, rate: 52 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, device_type: { known: 15, rate: 15 / 121 }, os_family: { known: 15, rate: 15 / 121 }, ecosystem: { known: 0, rate: 0 } },
+    brand_inference_conflicts: 0, brand_inference_enabled: true, domain_window: '7d',
+    coverage: { brand_inferred: { known: 1, rate: 1 / 121 }, vendor: { known: 52, rate: 52 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, device_type: { known: 15, rate: 15 / 121 }, os_family: { known: 15, rate: 15 / 121 }, ecosystem: { known: 0, rate: 0 } },
     event_count: 3_795_418,
     attributed_event_count: 0,
     event_attribution_rate: 0,
@@ -324,8 +370,18 @@ export const handlers = [
     as_of: new Date().toISOString(),
     window: '24h',
   })),
+  http.get('/api/v1/endpoints/:endpointId/name-evidence', () => HttpResponse.json({items: [{value:'office-mac41.local',source:'dhcp_hostname',kind:'hostname',event_id:'fixture-name-event',sensor_id:'fixture',observed_at:new Date().toISOString(),valid_until:new Date(Date.now()+86400000).toISOString(),attribution:'dhcp_mac'}],total:1})),
+  http.post('/api/v1/endpoints/:endpointId/name-note', async ({request}) => {
+    const {value}=await request.json() as {value:string}
+    macOSProfile.device_name=value?{value,source:'manual',manual:true,status:'current',multiple_names:false}:macOSDevice.device_name
+    return HttpResponse.json({updated:true})
+  }),
   http.get('/api/v1/endpoints/:endpointId/identity', ({ params }) => {
     const endpointId = decodeURIComponent(String(params.endpointId))
+    const referenceDevice = manufacturerReferenceDevices.find(item => item.endpoint_id === endpointId)
+    if (referenceDevice) return HttpResponse.json({ ...macOSProfile, endpoint_id: endpointId, endpoint: { ...macOSProfile.endpoint, endpoint_id: endpointId, primary_mac: referenceDevice.primary_mac, attributes: { oui_vendor: referenceDevice.vendor } }, recognition: referenceDevice })
+    if (endpointId === macOSDevice.endpoint_id) return HttpResponse.json(macOSProfile)
+    if (endpointId === domainOnlyDevice.endpoint_id) return HttpResponse.json(domainOnlyProfile)
     for (const inventory of Object.values(deviceInventoriesByIp)) {
       const device = inventory.devices.find((item) => item.endpoint_id === endpointId || item.device_id === endpointId)
       if (!device) {
@@ -493,9 +549,13 @@ export const handlers = [
   http.get('/api/v1/shadow/runs', ({ request }) => { const result = mockPage(shadowRuns, new URL(request.url)); return HttpResponse.json({ runs: result.items, page: result.page }) }),
   http.get('/api/v1/shadow/runs/:runId', ({ params }) => { const item = shadowRuns.find((entry) => entry.run_id === params.runId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
   http.get('/api/v1/shadow/evaluation', () => HttpResponse.json(shadowEvaluation)),
+  http.get('/api/v1/shadow/review-samples', ({ request }) => {
+    const date = new URL(request.url).searchParams.get('date')
+    return HttpResponse.json({ ...shadowReviewSamples, date: date ?? shadowReviewSamples.date })
+  }),
   http.get('/api/v1/audit-logs', ({ request }) => { const result = mockPage(auditLogs, new URL(request.url)); return HttpResponse.json({ logs: result.items, page: result.page }) }),
   http.get('/api/v1/audit-logs/:auditId', ({ params }) => { const item = auditLogs.find((entry) => entry.audit_id === params.auditId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
-  http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,domain_rule_count:128,domain_ecosystem_count:8,domain_source_version:'abcdef123456',domain_backfill_status:'completed',domain_backfill_processed:3200,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0','MIT (NextDNS)'],backfill_status:'completed',backfill_processed:110 })),
+  http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ domain_available:true,brand_eligible_rule_count:3,domain_sources:[{name:'Apple enterprise networks',version:'reviewed-2026-09-08',rule_count:3,brand_eligible_rule_count:3},{name:'HaGeZi',version:'mock-pinned',rule_count:100,brand_eligible_rule_count:0}],version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,domain_rule_count:128,domain_ecosystem_count:8,domain_source_version:'abcdef123456',domain_backfill_status:'completed',domain_backfill_processed:3200,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0','MIT (NextDNS)'],backfill_status:'completed',backfill_processed:110 })),
   http.post('/api/v1/device-fingerprint-library/update', () => HttpResponse.json({ code:'offline_update_required',message:'import a verified bundle' },{status:409})),
   http.post('/api/v1/device-fingerprint-library/validate', () => HttpResponse.json({schema_version:'device-fingerprint-bundle/v1',version:'offline-20260831-mock',created_at:new Date().toISOString(),sources:[{name:'IEEE MA-L/MA-M/MA-S',version:'2026-08-31',url:'https://standards-oui.ieee.org/',license:'IEEE public registry'},{name:'uap-core',version:'mocksha',url:'https://github.com/ua-parser/uap-core',license:'Apache-2.0'},{name:'Fingerbank public snapshot',version:'6.8.2-20140609',url:'https://github.com/karottc/fingerbank',license:'ODbL-1.0/DbCL-1.0'}],files:{}})),
   http.post('/api/v1/device-fingerprint-library/import', () => HttpResponse.json({version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0'],backfill_status:'pending',backfill_processed:0})),

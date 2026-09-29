@@ -106,7 +106,7 @@ func TestRunWritesExpectedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, name := range []string{"normalized", "evidence", "risk_snapshots", "risk_list_suspicious", "run_summary"} {
+	for _, name := range []string{"normalized", "evidence", "risk_snapshots", "risk_list_suspicious", "router_evidence", "router_assessments", "run_summary"} {
 		path, ok := summary.Files[name].(string)
 		if !ok || path == "" {
 			t.Fatalf("missing file %s in %+v", name, summary.Files)
@@ -173,6 +173,9 @@ func TestRunAppendsZeekDHCPDeviceEvents(t *testing.T) {
 	}
 	if state.ZeekDHCPPath != zeekPath || state.ZeekDHCPOffset == 0 {
 		t.Fatalf("unexpected zeek state: %+v", state)
+	}
+	if state.Sources["dhcp"].Path != zeekPath || state.Sources["dhcp"].Offset == 0 {
+		t.Fatalf("generic source state was not persisted: %+v", state.Sources)
 	}
 }
 

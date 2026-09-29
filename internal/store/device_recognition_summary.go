@@ -12,20 +12,24 @@ type RecognitionCoverage struct {
 }
 
 type DeviceRecognitionSummary struct {
-	TotalEndpoints        int                            `json:"total_endpoints"`
-	Coverage              map[string]RecognitionCoverage `json:"coverage"`
-	EventCount            int                            `json:"event_count"`
-	AttributedEventCount  int                            `json:"attributed_event_count"`
-	EventAttributionRate  float64                        `json:"event_attribution_rate"`
-	EcosystemMatched      int                            `json:"ecosystem_matched"`
-	EcosystemAttributed   int                            `json:"ecosystem_attributed"`
-	EcosystemUnattributed int                            `json:"ecosystem_unattributed"`
-	EcosystemConflicts    int                            `json:"ecosystem_conflicts"`
-	DomainRuleVersion     string                         `json:"domain_rule_version,omitempty"`
-	BackfillStatus        string                         `json:"backfill_status,omitempty"`
-	BackfillProcessed     int                            `json:"backfill_processed"`
-	AsOf                  string                         `json:"as_of"`
-	Window                string                         `json:"window"`
+	BrandInferenceConflicts int                            `json:"brand_inference_conflicts"`
+	BrandInferenceEnabled   bool                           `json:"brand_inference_enabled"`
+	DomainWindow            string                         `json:"domain_window"`
+	DomainProcessingError   string                         `json:"domain_processing_error,omitempty"`
+	TotalEndpoints          int                            `json:"total_endpoints"`
+	Coverage                map[string]RecognitionCoverage `json:"coverage"`
+	EventCount              int                            `json:"event_count"`
+	AttributedEventCount    int                            `json:"attributed_event_count"`
+	EventAttributionRate    float64                        `json:"event_attribution_rate"`
+	EcosystemMatched        int                            `json:"ecosystem_matched"`
+	EcosystemAttributed     int                            `json:"ecosystem_attributed"`
+	EcosystemUnattributed   int                            `json:"ecosystem_unattributed"`
+	EcosystemConflicts      int                            `json:"ecosystem_conflicts"`
+	DomainRuleVersion       string                         `json:"domain_rule_version,omitempty"`
+	BackfillStatus          string                         `json:"backfill_status,omitempty"`
+	BackfillProcessed       int                            `json:"backfill_processed"`
+	AsOf                    string                         `json:"as_of"`
+	Window                  string                         `json:"window"`
 }
 
 type DeviceRecognitionSummaryReader interface {
@@ -41,18 +45,58 @@ func coverage(known, total int) RecognitionCoverage {
 }
 
 func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version string) (DeviceRecognitionSummary, error) {
-	result := DeviceRecognitionSummary{Coverage: map[string]RecognitionCoverage{}, DomainRuleVersion: version, Window: "24h", AsOf: time.Now().UTC().Format(time.RFC3339Nano)}
-	var vendor, brand, model, deviceType, osFamily, ecosystem int
-	err := s.pg.db.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER (WHERE vendor IS NOT NULL AND vendor<>''),count(*) FILTER (WHERE brand IS NOT NULL AND brand<>'' AND brand_confidence>=0.8 AND NOT recognition_conflict),count(*) FILTER (WHERE model IS NOT NULL AND model<>'' AND model_confidence>=0.8 AND NOT recognition_conflict),count(*) FILTER (WHERE device_type IS NOT NULL AND device_type<>'' AND device_type_confidence>=0.8 AND NOT recognition_conflict),count(*) FILTER (WHERE os_family IS NOT NULL AND os_family<>'' AND os_family_confidence>=0.8 AND NOT recognition_conflict),count(*) FILTER (WHERE ecosystem_hint IS NOT NULL AND ecosystem_hint<>'' AND ecosystem_confidence>=0.55 AND NOT ecosystem_conflict),count(*) FILTER (WHERE ecosystem_conflict) FROM endpoint_device_profiles`).Scan(&result.TotalEndpoints, &vendor, &brand, &model, &deviceType, &osFamily, &ecosystem, &result.EcosystemConflicts)
-	if err != nil {
-		return result, fmt.Errorf("query recognition coverage: %w", err)
+	var snapshotErr error
+	ctx, snapshotErr = s.pg.domainSnapshot(ctx)
+	if snapshotErr != nil {
+		return DeviceRecognitionSummary{}, snapshotErr
 	}
-	result.Coverage["vendor"] = coverage(vendor, result.TotalEndpoints)
-	result.Coverage["brand"] = coverage(brand, result.TotalEndpoints)
-	result.Coverage["model"] = coverage(model, result.TotalEndpoints)
-	result.Coverage["device_type"] = coverage(deviceType, result.TotalEndpoints)
-	result.Coverage["os_family"] = coverage(osFamily, result.TotalEndpoints)
-	result.Coverage["ecosystem"] = coverage(ecosystem, result.TotalEndpoints)
+	result := DeviceRecognitionSummary{Coverage: map[string]RecognitionCoverage{}, DomainRuleVersion: version, Window: "24h", AsOf: time.Now().UTC().Format(time.RFC3339Nano)}
+	active, enabled, err := s.pg.activeDomainVersion(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.DomainRuleVersion = active
+	version = active
+	result.DomainWindow = "7d"
+	result.BrandInferenceEnabled = enabled
+	_ = s.pg.db.QueryRowContext(ctx, `SELECT last_error FROM domain_recognition_state WHERE singleton`).Scan(&result.DomainProcessingError)
+	items, catalogAsOf, err := s.pg.endpointRecognitionCatalog(ctx)
+	if err != nil {
+		return result, err
+	}
+
+	result.AsOf = catalogAsOf.UTC().Format(time.RFC3339Nano)
+	counts := map[string]int{}
+	for _, item := range items {
+		if !item.RecognitionConflict {
+			for key, v := range map[string]struct {
+				value string
+				score float64
+			}{"vendor": {item.Vendor, item.VendorConfidence}, "brand": {item.Brand, item.BrandConfidence}, "model": {item.Model, item.ModelConfidence}, "device_type": {item.DeviceType, item.DeviceTypeConfidence}, "os_family": {item.OSFamily, item.OSFamilyConfidence}} {
+				if v.value != "" && v.value != "unknown" && v.score >= .8 {
+					counts[key]++
+				}
+			}
+		}
+		if item.EcosystemHint != "" && !item.EcosystemConflict {
+			counts["ecosystem"]++
+		}
+		if item.EcosystemConflict {
+			result.EcosystemConflicts++
+		}
+		if item.BrandInference != nil {
+			if item.BrandInference.Status == "inferred" {
+				counts["brand_inferred"]++
+			}
+			if item.BrandInference.Status == "conflict" {
+				result.BrandInferenceConflicts++
+			}
+		}
+	}
+	result.TotalEndpoints = len(items)
+	for _, key := range []string{"vendor", "brand", "model", "device_type", "os_family", "ecosystem", "brand_inferred"} {
+		result.Coverage[key] = coverage(counts[key], result.TotalEndpoints)
+	}
 	data, err := s.ch.query(ctx, fmt.Sprintf(`SELECT count() AS event_count,countIf(endpoint_id!='') AS attributed_event_count FROM normalized_events PREWHERE timestamp>=now()-INTERVAL 24 HOUR FORMAT JSONEachRow`))
 	if err != nil {
 		return result, fmt.Errorf("query event attribution: %w", err)

@@ -25,7 +25,7 @@ func (s *ClickHouseStore) QueryDPIOverview(ctx context.Context, query ActivityQu
 		return DPIOverview{}, err
 	}
 	protocol := `multiIf(type='dns','DNS',type='http','HTTP',type='tls','TLS',type='quic','QUIC',type='flow' AND proto!='',upper(proto),upper(type))`
-	data, err := s.query(ctx, fmt.Sprintf(`SELECT count() AS event_count, uniqExactIf(subject_ip,subject_ip!='') AS active_ip_count, uniqExactIf(%s,%s!='') AS protocol_flow_count, minOrNull(timestamp) AS first_seen, maxOrNull(timestamp) AS last_seen FROM normalized_events PREWHERE %s FORMAT JSONEachRow`, protocol, protocol, where))
+	data, err := s.activityFeatureQuery(ctx, fmt.Sprintf(`SELECT count() AS event_count, uniqExactIf(subject_ip,subject_ip!='') AS active_ip_count, uniqExactIf(%s,%s!='') AS protocol_flow_count, minOrNull(timestamp) AS first_seen, maxOrNull(timestamp) AS last_seen FROM normalized_events PREWHERE %s FORMAT JSONEachRow`, protocol, protocol, where))
 	if err != nil {
 		return DPIOverview{}, err
 	}
@@ -53,7 +53,7 @@ func (s *ClickHouseStore) QueryDPIOverview(ctx context.Context, query ActivityQu
 		}
 	}
 	conflictSQL := fmt.Sprintf(`SELECT sum(toUInt8(length(ja3s)+length(ja4s)>1)+toUInt8(length(ttls)>1)) AS count FROM (SELECT groupUniqArrayIf(8)(JSONExtractString(payload_json,'ja3'),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(JSONExtractString(payload_json,'ja4'),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls FROM normalized_events PREWHERE %s AND subject_ip!='' GROUP BY subject_ip) FORMAT JSONEachRow`, where)
-	data, err = s.query(ctx, conflictSQL)
+	data, err = s.activityFeatureQuery(ctx, conflictSQL)
 	if err != nil {
 		return DPIOverview{}, err
 	}
@@ -89,7 +89,7 @@ func (s *ClickHouseStore) QueryDPITrends(ctx context.Context, query ActivityQuer
 		riskExpression = "uniqExactIf(subject_ip, subject_ip IN (" + strings.Join(riskIPs, ",") + "))"
 	}
 	sql := fmt.Sprintf(`SELECT toString(%s) AS bucket, count() AS event_count, uniqExact(subject_ip) AS active_devices, %s AS risk_ips FROM normalized_events PREWHERE %s GROUP BY bucket ORDER BY bucket FORMAT JSONEachRow`, bucket, riskExpression, where)
-	data, err := s.query(ctx, sql)
+	data, err := s.activityFeatureQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func (s *ClickHouseStore) QueryDPIProtocolFlows(ctx context.Context, query Activ
 	protocol := `multiIf(type='dns','DNS',type='http','HTTP',type='tls','TLS',type='quic','QUIC',type='flow' AND proto!='',upper(proto),upper(type))`
 	target := `multiIf(type='dns',JSONExtractString(payload_json,'query'),type='http',JSONExtractString(payload_json,'host'),type='tls',JSONExtractString(payload_json,'sni'),dst_ip)`
 	sql := fmt.Sprintf(`SELECT protocol, sum(target_count) AS event_count, arrayMap(item -> item.1, arraySlice(arrayReverseSort(item -> item.2, groupArray((target,target_count))),1,6)) AS top_apps FROM (SELECT %s AS protocol, %s AS target, count() AS target_count FROM normalized_events PREWHERE %s GROUP BY protocol,target HAVING protocol!='') GROUP BY protocol ORDER BY event_count DESC,protocol LIMIT 50 FORMAT JSONEachRow`, protocol, target, where)
-	data, err := s.query(ctx, sql)
+	data, err := s.activityFeatureQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func (s *ClickHouseStore) QueryDPIFingerprintConflicts(ctx context.Context, quer
 		return nil, err
 	}
 	sql := fmt.Sprintf(`SELECT subject_ip AS ip, groupUniqArrayIf(8)(concat('ja3:',JSONExtractString(payload_json,'ja3')),JSONExtractString(payload_json,'ja3')!='') AS ja3s, groupUniqArrayIf(8)(concat('ja4:',JSONExtractString(payload_json,'ja4')),JSONExtractString(payload_json,'ja4')!='') AS ja4s, groupUniqArrayIf(8)(toString(JSONExtractInt(flow_json,'ttl')),JSONExtractInt(flow_json,'ttl')>0) AS ttls, toString(max(timestamp)) AS last_seen FROM normalized_events PREWHERE %s AND subject_ip != '' GROUP BY ip HAVING length(ja3s)+length(ja4s)>1 OR length(ttls)>1 ORDER BY last_seen DESC LIMIT 200 FORMAT JSONEachRow`, where)
-	data, err := s.query(ctx, sql)
+	data, err := s.activityFeatureQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Proxy Sentinel ZeekControl statistics and log maintenance
+After=proxy-sentinel-zeek.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/zeek/bin/zeekctl cron --no-watch
+Nice=10
+CPUWeight=10
+IOWeight=10
+NoNewPrivileges=true
+ProtectHome=true

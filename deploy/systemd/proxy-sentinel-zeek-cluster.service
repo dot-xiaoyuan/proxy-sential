@@ -1,0 +1,26 @@
+[Unit]
+Description=Proxy Sentinel ZeekControl AF_PACKET cluster
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=/usr/local/zeek
+ExecStart=/usr/local/zeek/bin/zeekctl deploy
+ExecReload=/usr/local/zeek/bin/zeekctl deploy
+ExecStop=/usr/local/zeek/bin/zeekctl stop
+TimeoutStartSec=2min
+TimeoutStopSec=1min
+CPUQuota=500%
+CPUWeight=90
+MemoryHigh=5G
+MemoryMax=6G
+OOMPolicy=stop
+LimitNOFILE=1048576
+UMask=0027
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

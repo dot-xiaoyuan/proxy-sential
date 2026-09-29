@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"proxy-sentinel/internal/discovery"
+	"proxy-sentinel/internal/fingerprint"
 	"time"
 
 	"proxy-sentinel/internal/evidence"
@@ -20,31 +22,36 @@ const (
 )
 
 type Query struct {
-	Level       string
-	Q           string
-	SensorID    string
-	CampusID    string
-	Department  string
-	PersonType  string
-	SSID        string
-	VLAN        string
-	AP          string
-	NASIP       string
-	Ecosystem   string
-	From        string
-	To          string
-	Window      string
-	SrcIP       string
-	DstIP       string
-	Domain      string
-	UserAgent   string
-	Fingerprint string
-	Port        int
-	Proto       string
-	AppProtocol string
-	Limit       int
-	Cursor      int
-	IncludeWeak bool
+	View            string
+	DiagnosticStage string
+	DiagnosticType  string
+	Level           string
+	Q               string
+	SensorID        string
+	CampusID        string
+	Department      string
+	PersonType      string
+	SSID            string
+	VLAN            string
+	AP              string
+	NASIP           string
+	Ecosystem       string
+	Brand           string
+	OSFamily        string
+	From            string
+	To              string
+	Window          string
+	SrcIP           string
+	DstIP           string
+	Domain          string
+	UserAgent       string
+	Fingerprint     string
+	Port            int
+	Proto           string
+	AppProtocol     string
+	Limit           int
+	Cursor          int
+	IncludeWeak     bool
 }
 
 type Page struct {
@@ -64,8 +71,10 @@ type DevicePage struct {
 }
 
 type EndpointDevicePage struct {
-	Items []EndpointDeviceInventory `json:"items"`
-	Page  Page                      `json:"page"`
+	Items      []EndpointDeviceInventory `json:"items"`
+	Page       Page                      `json:"page"`
+	Facets     DeviceFilterFacets        `json:"facets"`
+	FacetsAsOf string                    `json:"facets_as_of,omitempty"`
 }
 
 type EventPage struct {
@@ -233,6 +242,8 @@ type ActivityQuery struct {
 }
 
 type ActivityOverview struct {
+	StatisticsAsOf     string              `json:"statistics_as_of,omitempty"`
+	DataFreshness      *DataFreshness      `json:"data_freshness,omitempty"`
 	SensorID           string              `json:"sensor_id"`
 	Window             string              `json:"window"`
 	EventCount         int                 `json:"event_count"`
@@ -253,6 +264,14 @@ type ActivityOverview struct {
 	TopDstIPs          []ActivityCount     `json:"top_dst_ips"`
 	TopSourceIPs       []ActivityCount     `json:"top_source_ips"`
 	TopActiveRiskIPs   []ActivityIPSummary `json:"top_active_risk_ips"`
+}
+
+type DataFreshness struct {
+	Status        string `json:"status"`
+	AsOf          string `json:"as_of,omitempty"`
+	LagSeconds    int64  `json:"lag_seconds"`
+	AvailableFrom string `json:"available_from,omitempty"`
+	Partial       bool   `json:"partial"`
 }
 
 type ActivityIPSummary struct {
@@ -333,6 +352,7 @@ type ProxyRuleMatch struct {
 }
 
 type DPIOverview struct {
+	StatisticsAsOf           string `json:"statistics_as_of,omitempty"`
 	SensorID                 string `json:"sensor_id"`
 	Window                   string `json:"window"`
 	EventCount               int    `json:"event_count"`
@@ -490,47 +510,63 @@ type IPDeviceInventory struct {
 	LastSeen             string           `json:"last_seen,omitempty"`
 }
 
+type DeviceIPMatch struct {
+	IP         string `json:"ip"`
+	Source     string `json:"source"`
+	MatchedAt  string `json:"matched_at"`
+	IsRecentIP bool   `json:"is_recent_ip"`
+}
+
 type EndpointDeviceInventory struct {
-	EndpointID             string   `json:"endpoint_id"`
-	PrimaryMAC             string   `json:"primary_mac,omitempty"`
-	EntityRole             string   `json:"entity_role"`
-	RegistrationStatus     string   `json:"registration_status"`
-	OwnerAccount           string   `json:"owner_account,omitempty"`
-	OwnerName              string   `json:"owner_name,omitempty"`
-	OwnerDepartment        string   `json:"owner_department,omitempty"`
-	AssetTag               string   `json:"asset_tag,omitempty"`
-	OwnershipClass         string   `json:"ownership_class"`
-	MergeStatus            string   `json:"merge_status"`
-	CurrentAccount         string   `json:"current_account,omitempty"`
-	CurrentIP              string   `json:"current_ip,omitempty"`
-	CurrentAccessID        string   `json:"current_access_id,omitempty"`
-	Accounts               []string `json:"accounts"`
-	IPs                    []string `json:"ips"`
-	AccessIDs              []string `json:"access_ids"`
-	FirstSeen              string   `json:"first_seen,omitempty"`
-	LastSeen               string   `json:"last_seen,omitempty"`
-	IdentityConfidence     float64  `json:"identity_confidence"`
-	Vendor                 string   `json:"vendor,omitempty"`
-	Brand                  string   `json:"brand,omitempty"`
-	Model                  string   `json:"model,omitempty"`
-	DeviceType             string   `json:"device_type,omitempty"`
-	OSFamily               string   `json:"os_family,omitempty"`
-	RecognitionConfidence  float64  `json:"recognition_confidence"`
-	VendorConfidence       float64  `json:"vendor_confidence"`
-	BrandConfidence        float64  `json:"brand_confidence"`
-	ModelConfidence        float64  `json:"model_confidence"`
-	DeviceTypeConfidence   float64  `json:"device_type_confidence"`
-	OSFamilyConfidence     float64  `json:"os_family_confidence"`
-	RecognitionSource      string   `json:"recognition_source,omitempty"`
-	FingerprintVersion     string   `json:"fingerprint_version,omitempty"`
-	RandomizedMAC          bool     `json:"randomized_mac"`
-	RecognitionConflict    bool     `json:"recognition_conflict"`
-	RecognitionEvidence    []string `json:"recognition_evidence,omitempty"`
-	EcosystemHint          string   `json:"ecosystem_hint,omitempty"`
-	EcosystemConfidence    float64  `json:"ecosystem_confidence"`
-	EcosystemConflict      bool     `json:"ecosystem_conflict"`
-	EcosystemEvidenceCount int      `json:"ecosystem_evidence_count"`
-	Summary                string   `json:"summary"`
+	Discovery         *discovery.Summary         `json:"discovery,omitempty"`
+	RouterObservation *evidence.RouterAssessment `json:"router_observation,omitempty"`
+	IPMatch           *DeviceIPMatch             `json:"ip_match,omitempty"`
+	DeviceName        *DeviceName                `json:"device_name,omitempty"`
+	// Shared recognition snapshot; never serialized or used for identity fields.
+	domainEvidence []fingerprint.DomainEvidence
+
+	BrandReference         *fingerprint.BrandReference `json:"brand_reference,omitempty"`
+	BrandInference         *fingerprint.BrandInference `json:"brand_inference,omitempty"`
+	EndpointID             string                      `json:"endpoint_id"`
+	PrimaryMAC             string                      `json:"primary_mac,omitempty"`
+	EntityRole             string                      `json:"entity_role"`
+	RegistrationStatus     string                      `json:"registration_status"`
+	OwnerAccount           string                      `json:"owner_account,omitempty"`
+	OwnerName              string                      `json:"owner_name,omitempty"`
+	OwnerDepartment        string                      `json:"owner_department,omitempty"`
+	AssetTag               string                      `json:"asset_tag,omitempty"`
+	OwnershipClass         string                      `json:"ownership_class"`
+	MergeStatus            string                      `json:"merge_status"`
+	CurrentAccount         string                      `json:"current_account,omitempty"`
+	CurrentIP              string                      `json:"current_ip,omitempty"` // Most recently observed address; does not imply online status.
+	CurrentAccessID        string                      `json:"current_access_id,omitempty"`
+	Accounts               []string                    `json:"accounts"`
+	IPs                    []string                    `json:"ips"`
+	AccessIDs              []string                    `json:"access_ids"`
+	FirstSeen              string                      `json:"first_seen,omitempty"`
+	LastSeen               string                      `json:"last_seen,omitempty"`
+	IdentityConfidence     float64                     `json:"identity_confidence"`
+	Vendor                 string                      `json:"vendor,omitempty"`
+	Brand                  string                      `json:"brand,omitempty"`
+	Model                  string                      `json:"model,omitempty"`
+	DeviceType             string                      `json:"device_type,omitempty"`
+	OSFamily               string                      `json:"os_family,omitempty"`
+	RecognitionConfidence  float64                     `json:"recognition_confidence"`
+	VendorConfidence       float64                     `json:"vendor_confidence"`
+	BrandConfidence        float64                     `json:"brand_confidence"`
+	ModelConfidence        float64                     `json:"model_confidence"`
+	DeviceTypeConfidence   float64                     `json:"device_type_confidence"`
+	OSFamilyConfidence     float64                     `json:"os_family_confidence"`
+	RecognitionSource      string                      `json:"recognition_source,omitempty"`
+	FingerprintVersion     string                      `json:"fingerprint_version,omitempty"`
+	RandomizedMAC          bool                        `json:"randomized_mac"`
+	RecognitionConflict    bool                        `json:"recognition_conflict"`
+	RecognitionEvidence    []string                    `json:"recognition_evidence,omitempty"`
+	EcosystemHint          string                      `json:"ecosystem_hint,omitempty"`
+	EcosystemConfidence    float64                     `json:"ecosystem_confidence"`
+	EcosystemConflict      bool                        `json:"ecosystem_conflict"`
+	EcosystemEvidenceCount int                         `json:"ecosystem_evidence_count"`
+	Summary                string                      `json:"summary"`
 }
 
 type Reader interface {

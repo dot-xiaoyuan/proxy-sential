@@ -1,0 +1,24 @@
+{
+  "as_of": "2026-09-24T02:00:00Z",
+  "cases": [
+    {"id":"huawei-ar-confirmed","input":"huawei-ar.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"router","expected_status":"confirmed","expected_router":true},
+    {"id":"huawei-ne-me-confirmed","input":"huawei-ne-me.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"router","expected_status":"confirmed","expected_router":true},
+    {"id":"h3c-msr-confirmed","input":"h3c-msr.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"router","expected_status":"confirmed","expected_router":true},
+    {"id":"h3c-er-gr-confirmed","input":"h3c-er-gr.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"router","expected_status":"confirmed","expected_router":true},
+    {"id":"dhcp-model-no-http","input":"dhcp-only.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"router","expected_status":"likely","expected_router":false},
+    {"id":"management-no-dhcp","input":"management-only.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"router","expected_status":"likely","expected_router":false},
+    {"id":"lldp-model-role","input":"lldp-router.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"router","expected_status":"candidate","expected_router":false},
+    {"id":"huawei-airengine-ap","input":"huawei-ap.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"ap","expected_status":"candidate","expected_router":false},
+    {"id":"h3c-wa-wx-ap","input":"h3c-ap.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"ap","expected_status":"candidate","expected_router":false},
+    {"id":"h3c-comware-switch","input":"h3c-switch.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"switch","expected_status":"candidate","expected_router":false},
+    {"id":"huawei-usg-firewall","input":"huawei-usg.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"firewall","expected_status":"candidate","expected_router":false},
+    {"id":"h3c-secpath-firewall","input":"h3c-secpath.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"firewall","expected_status":"candidate","expected_router":false},
+    {"id":"campus-core-infrastructure","input":"campus-core.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"router","expected_status":"likely","expected_router":false},
+    {"id":"huawei-oui-only","input":"oui-only.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_status":"candidate","expected_router":false,"oui_only":true},
+    {"id":"ordinary-user-agent","input":"user-agent-only.jsonl","input_kind":"normalized_jsonl","expected_router":false},
+    {"id":"ambiguous-no-mac","input":"ambiguous-no-mac.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"router","expected_status":"likely","expected_router":false},
+    {"id":"expired-evidence","input":"expired.jsonl","input_kind":"normalized_jsonl","expected_brand":"Huawei","expected_role":"router","expected_status":"candidate","expected_router":false},
+    {"id":"duplicate-out-of-order","input":"duplicate-out-of-order.jsonl","input_kind":"normalized_jsonl","expected_brand":"H3C","expected_role":"router","expected_status":"confirmed","expected_router":true},
+    {"id":"ip-reuse-multiple-mac-vlan","input":"ip-reuse.jsonl","input_kind":"normalized_jsonl","expected_router":false}
+  ]
+}

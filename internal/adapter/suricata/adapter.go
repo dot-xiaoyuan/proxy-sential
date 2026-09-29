@@ -8,15 +8,18 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
-	"strconv"
 	"strings"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/proxyprotocol"
 )
 
 type Options struct {
-	SensorID string
+	CaptureScope        *normalized.CaptureScope
+	ProxyProducer       *proxyprotocol.Producer
+	SensorID            string
+	CollectorInstanceID string
 }
 
 type Stats struct {
@@ -29,7 +32,7 @@ type Stats struct {
 
 type eveEvent struct {
 	Timestamp string         `json:"timestamp"`
-	FlowID    any            `json:"flow_id"`
+	FlowID    json.Number    `json:"flow_id"`
 	InIface   string         `json:"in_iface"`
 	EventType string         `json:"event_type"`
 	SrcIP     string         `json:"src_ip"`
@@ -45,6 +48,8 @@ type eveEvent struct {
 	HTTP      map[string]any `json:"http"`
 	QUIC      map[string]any `json:"quic"`
 	Alert     map[string]any `json:"alert"`
+	Ether     map[string]any `json:"ether"`
+	VLAN      any            `json:"vlan"`
 }
 
 var supportedTypes = map[string]bool{
@@ -81,11 +86,19 @@ func Convert(r io.Reader, w io.Writer, opts Options) (Stats, error) {
 			continue
 		}
 
+		event = opts.CaptureScope.Apply(event)
 		if err := encoder.Encode(event); err != nil {
 			return stats, fmt.Errorf("write normalized event: %w", err)
 		}
 		stats.Emitted++
 		stats.ByType[event.Type]++
+		if proxy, ok := proxyTransaction(event, opts); ok {
+			if err := encoder.Encode(proxy); err != nil {
+				return stats, err
+			}
+			stats.Emitted++
+			stats.ByType[proxy.Type]++
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return stats, fmt.Errorf("read eve input: %w", err)
@@ -123,6 +136,9 @@ func convertLine(raw []byte, lineOffset int, opts Options) (normalized.Event, er
 	if appProtocol := strings.TrimSpace(eve.AppProto); appProtocol != "" {
 		flow["app_protocol"] = strings.ToLower(appProtocol)
 	}
+	if id := normalized.ConnectionID(opts.SensorID, "suricata", opts.CollectorInstanceID, string(eve.FlowID)); id != "" {
+		flow["connection_id"] = id
+	}
 	if eve.SrcPort != nil {
 		flow["src_port"] = *eve.SrcPort
 	}
@@ -137,7 +153,10 @@ func convertLine(raw []byte, lineOffset int, opts Options) (normalized.Event, er
 	copyString(flow, eve.Flow, "end")
 
 	payload := payloadFor(eve)
-	observer := map[string]any{}
+	if vlan := firstVLAN(eve.VLAN); vlan != "" {
+		payload["vlan"] = vlan
+	}
+	observer := map[string]any{"collector_instance_id": opts.CollectorInstanceID}
 	if opts.SensorID != "" {
 		observer["sensor_id"] = opts.SensorID
 	}
@@ -149,13 +168,20 @@ func convertLine(raw []byte, lineOffset int, opts Options) (normalized.Event, er
 		"backend":     "suricata",
 		"line_offset": lineOffset,
 	}
-	if eve.FlowID != nil {
+	if eve.FlowID != "" {
 		rawRef["flow_id"] = eve.FlowID
 	}
 	if eve.TxID != nil {
 		rawRef["tx_id"] = eve.TxID
 	}
 
+	subject := map[string]any{
+		"ip":          subjectIP(eve.SrcIP, eve.DestIP),
+		"entity_role": "unknown",
+	}
+	if mac := subjectMAC(eve); mac != "" {
+		subject["mac"] = mac
+	}
 	return normalized.Event{
 		SchemaVersion:   "v1",
 		EventID:         eventID(raw, lineOffset),
@@ -164,14 +190,11 @@ func convertLine(raw []byte, lineOffset int, opts Options) (normalized.Event, er
 		Type:            eve.EventType,
 		Timestamp:       normalizeTimestamp(eve.Timestamp),
 		Observer:        observer,
-		Subject: map[string]any{
-			"ip":          subjectIP(eve.SrcIP, eve.DestIP),
-			"entity_role": "unknown",
-		},
-		Flow:       flow,
-		Payload:    payload,
-		Confidence: 1.0,
-		RawRef:     rawRef,
+		Subject:         subject,
+		Flow:            flow,
+		Payload:         payload,
+		Confidence:      1.0,
+		RawRef:          rawRef,
 	}, nil
 }
 
@@ -274,6 +297,25 @@ func tlsPayload(tls map[string]any) map[string]any {
 			payload["alpn"] = values
 		}
 	}
+	copyStringAs(payload, tls, "subject", "certificate_subject")
+	copyStringAs(payload, tls, "issuerdn", "certificate_issuer")
+	copyStringAs(payload, tls, "issuer", "certificate_issuer")
+	copyStringAs(payload, tls, "serial", "certificate_serial")
+	copyStringAs(payload, tls, "fingerprint", "certificate_fingerprint")
+	for _, key := range []string{"san", "subjectaltname"} {
+		if value, ok := tls[key]; ok {
+			payload["certificate_san"] = value
+		}
+	}
+	if certificates, ok := tls["certificates"].([]any); ok && len(certificates) > 0 {
+		if certificate, ok := certificates[0].(map[string]any); ok {
+			copyStringAs(payload, certificate, "subject", "certificate_subject")
+			copyStringAs(payload, certificate, "issuer", "certificate_issuer")
+			if san, ok := certificate["san"]; ok {
+				payload["certificate_san"] = san
+			}
+		}
+	}
 	return payload
 }
 
@@ -283,10 +325,57 @@ func httpPayload(http map[string]any) map[string]any {
 	copyStringAs(payload, http, "http_method", "method")
 	copyString(payload, http, "url")
 	copyStringAs(payload, http, "http_user_agent", "user_agent")
+	copyStringAs(payload, http, "http_server", "server")
+	copyString(payload, http, "server")
+	copyStringAs(payload, http, "http_title", "title")
+	copyString(payload, http, "title")
 	copyString(payload, http, "protocol")
 	copyNumeric(payload, http, "status")
 	copyNumeric(payload, http, "length")
 	return payload
+}
+
+func subjectMAC(event eveEvent) string {
+	subject := subjectIP(event.SrcIP, event.DestIP)
+	key := "src_mac"
+	if subject == event.DestIP {
+		key = "dest_mac"
+	}
+	value, _ := event.Ether[key].(string)
+	return normalizeMAC(value)
+}
+
+func normalizeMAC(value string) string {
+	value = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "-", ":"))
+	parts := strings.Split(value, ":")
+	if len(parts) != 6 {
+		return ""
+	}
+	for index, part := range parts {
+		if len(part) == 1 {
+			parts[index] = "0" + part
+		}
+		if len(parts[index]) != 2 {
+			return ""
+		}
+	}
+	return strings.Join(parts, ":")
+}
+
+func firstVLAN(value any) string {
+	switch item := value.(type) {
+	case string:
+		return strings.TrimSpace(item)
+	case json.Number:
+		return item.String()
+	case float64:
+		return fmt.Sprintf("%.0f", item)
+	case []any:
+		if len(item) > 0 {
+			return firstVLAN(item[0])
+		}
+	}
+	return ""
 }
 
 func fingerprint(value any) string {
@@ -364,7 +453,8 @@ func normalizeTimestamp(value string) string {
 
 func eventID(raw []byte, lineOffset int) string {
 	sum := sha256.Sum256(raw)
-	return "suricata-" + strconv.Itoa(lineOffset) + "-" + hex.EncodeToString(sum[:])[:16]
+	// Keep IDs stable when the same record is replayed from another batch.
+	return "suricata-" + hex.EncodeToString(sum[:])[:24]
 }
 
 func copyString(dst map[string]any, src map[string]any, key string) {

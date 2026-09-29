@@ -20,6 +20,13 @@ import (
 )
 
 const sessionCookieName = "proxy_sentinel_session"
+const DefaultInitialAdminPassword = "Srun@4000"
+
+func validBootstrapPassword(password string) bool {
+	// Only the documented first-login credential is exempt from the normal
+	// length policy. Passwords changed in the control plane still need 12 chars.
+	return password == DefaultInitialAdminPassword || len(password) >= 12
+}
 
 type localUser struct {
 	ID           string `json:"id"`
@@ -103,8 +110,8 @@ func newAuthManager(path string, secure bool, postgresDSN string) (*authManager,
 
 func BootstrapAdmin(path, username, name, password string) error {
 	username = strings.TrimSpace(username)
-	if username == "" || len(password) < 12 {
-		return errors.New("username is required and password must contain at least 12 characters")
+	if username == "" || !validBootstrapPassword(password) {
+		return errors.New("username is required and the bootstrap password must be the documented initial password or contain at least 12 characters")
 	}
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("auth file already exists: %s", path)
@@ -132,8 +139,8 @@ func BootstrapAdmin(path, username, name, password string) error {
 
 func BootstrapAdminPostgres(dsn, username, name, password string) error {
 	username = strings.TrimSpace(username)
-	if username == "" || len(password) < 12 {
-		return errors.New("username is required and password must contain at least 12 characters")
+	if username == "" || !validBootstrapPassword(password) {
+		return errors.New("username is required and the bootstrap password must be the documented initial password or contain at least 12 characters")
 	}
 	hash, err := hashPassword(password)
 	if err != nil {
@@ -202,14 +209,14 @@ func validRole(role string) bool {
 }
 
 func rolePermissions(role string) []string {
-	read := []string{"risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read", "cases:read", "identity:read", "organization:read", "actions:read"}
+	read := []string{"policies:read", "risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read", "cases:read", "identity:read", "organization:read", "actions:read", "exports:read"}
 	switch role {
 	case "reviewer":
-		return append(read, "labels:create", "cases:write")
+		return append(read, "labels:create", "cases:write", "exports:create")
 	case "operator":
-		return append(read, "labels:create", "cases:write", "endpoints:write", "actions:execute", "actions:revoke")
+		return append(read, "labels:create", "cases:write", "endpoints:write", "actions:execute", "actions:revoke", "exports:create")
 	case "admin":
-		return append(read, "labels:create", "cases:write", "endpoints:write", "actions:execute", "actions:revoke", "rules:reload", "device-fingerprint-library:update", "organization:write", "integrations:write", "users:manage")
+		return append(read, "labels:create", "cases:write", "endpoints:write", "actions:execute", "actions:revoke", "rules:reload", "device-fingerprint-library:update", "organization:write", "integrations:write", "users:manage", "policies:manage", "policies:authorize", "exports:create")
 	default:
 		return read
 	}

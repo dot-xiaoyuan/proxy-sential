@@ -84,3 +84,28 @@ func TestRandomizedMACDoesNotUseOUI(t *testing.T) {
 		t.Fatalf("randomized MAC must not resolve vendor: %+v", result)
 	}
 }
+
+func TestDarwinMacOSClueRequiresDHCPAndMacHostname(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		signals Signals
+		want    string
+	}{
+		{"combined", Signals{DHCPVendorClass: "darwin", Hostnames: []string{"office-mac41.local"}}, "macOS"},
+		{"MacBook", Signals{DHCPVendorClass: "Darwin", Hostnames: []string{"Alice-MacBook-Pro.local"}}, "macOS"},
+		{"vendor alone", Signals{DHCPVendorClass: "darwin"}, ""},
+		{"hostname alone", Signals{Hostnames: []string{"office-mac41.local"}}, ""},
+		{"iPhone", Signals{DHCPVendorClass: "darwin", Hostnames: []string{"campus-client"}}, ""},
+		{"substring", Signals{DHCPVendorClass: "darwin", Hostnames: []string{"machine41.local"}}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := Default().IdentifySignals(c.signals)
+			if got.OSFamily != c.want || got.Brand != "" || got.Model != "" {
+				t.Fatalf("unexpected recognition: %+v", got)
+			}
+			if c.want != "" && (got.OSFamilyConfidence >= .8 || len(got.Evidence) == 0) {
+				t.Fatalf("must retain inference confidence and evidence: %+v", got)
+			}
+		})
+	}
+}

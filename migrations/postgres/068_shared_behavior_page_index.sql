@@ -1,0 +1,2 @@
+CREATE INDEX IF NOT EXISTS shared_behavior_observations_confidence_page_idx
+ON shared_behavior_observations(confidence DESC,last_seen DESC,observation_id DESC);

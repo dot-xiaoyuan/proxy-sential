@@ -46,13 +46,8 @@ remote_tmp="$(ssh -o BatchMode=yes "$target" 'mktemp -d /tmp/proxy-sentinel-depl
 
 admin_secret=""
 if ! ssh -o BatchMode=yes "$target" 'docker inspect proxy-sentinel-postgres >/dev/null 2>&1 && docker exec proxy-sentinel-postgres sh -c '\''psql -Atq -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1 FROM local_users LIMIT 1"'\'' 2>/dev/null | grep -q 1'; then
-  admin_password="${PROXY_SENTINEL_INITIAL_ADMIN_PASSWORD:-}"
-  if [[ -z "$admin_password" ]]; then
-    [[ -t 0 ]] || { echo "initial administrator password is required; run interactively" >&2; exit 1; }
-    read -r -s -p "初始管理员密码（至少 12 位，不会写入日志）: " admin_password
-    echo
-  fi
-  [[ ${#admin_password} -ge 12 ]] || { echo "initial administrator password must contain at least 12 characters" >&2; exit 1; }
+  admin_password="${PROXY_SENTINEL_INITIAL_ADMIN_PASSWORD:-Srun@4000}"
+  [[ "$admin_password" == 'Srun@4000' || ${#admin_password} -ge 12 ]] || { echo "initial administrator password must be Srun@4000 or contain at least 12 characters" >&2; exit 1; }
   admin_secret="$work_dir/admin-password"
   printf '%s\n' "$admin_password" > "$admin_secret"
   chmod 0600 "$admin_secret"

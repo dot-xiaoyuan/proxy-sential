@@ -87,7 +87,7 @@ export function FlowInspectorDrawer({ ip, open, onClose }: FlowInspectorDrawerPr
     { title: '应用协议', dataIndex: 'app_protocol', width: 110 },
     { title: '源端口', dataIndex: 'src_port', width: 80 },
     { title: '目的端口', dataIndex: 'dst_port', width: 90 },
-    { title: 'SNI / Domain', render: (_, row) => row.tls_sni || row.domain || '-' },
+    { title: 'SNI / Domain', render: (_, row) => row.tls_sni || row.domain || '' },
     { title: 'TTL', dataIndex: 'ttl', width: 60 },
     { title: 'Payload 摘要', dataIndex: 'payload_summary', render: (v: string) => <span className="mono wrap-text">{v}</span> },
   ]
@@ -122,11 +122,11 @@ export function FlowInspectorDrawer({ ip, open, onClose }: FlowInspectorDrawerPr
         <Card size="small" title="IP 深度概览与采集上下文">
           <Descriptions column={2} size="small">
             <Descriptions.Item label="目标 IP">{ip}</Descriptions.Item>
-            <Descriptions.Item label="风险等级">{snapshot ? <RiskLevelTag level={snapshot.level} /> : '-'}</Descriptions.Item>
-            <Descriptions.Item label="风险评分">{snapshot?.score ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="风险等级">{snapshot ? <RiskLevelTag level={snapshot.level} /> : ''}</Descriptions.Item>
+            <Descriptions.Item label="风险评分">{snapshot?.score ?? ''}</Descriptions.Item>
             <Descriptions.Item label="证据条数">{evidence.data?.evidence.length ?? 0}</Descriptions.Item>
-            <Descriptions.Item label="活跃 Sensor">{firstFlow?.sensor_id ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label="采集接口">{firstFlow?.interface_name ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="活跃 Sensor">{firstFlow?.sensor_id ?? ''}</Descriptions.Item>
+            <Descriptions.Item label="采集接口">{firstFlow?.interface_name ?? ''}</Descriptions.Item>
           </Descriptions>
         </Card>
 

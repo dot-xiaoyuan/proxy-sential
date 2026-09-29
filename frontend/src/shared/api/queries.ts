@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   keepPreviousData,
+  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
@@ -8,6 +9,7 @@ import {
 
 import { api } from "./client";
 import type {
+  CaseHistoryKind,
   ActivityOverviewQuery,
   CreateLabelRequest,
   DeviceQuery,
@@ -30,6 +32,7 @@ function usePagedQuery<
   keyFor: (value: TQuery) => readonly unknown[],
   load: (value: TQuery) => Promise<TData>,
   enabled = true,
+  refetchInterval: number | false = false,
 ) {
   const client = useQueryClient();
   const queryFingerprint = JSON.stringify(query);
@@ -41,6 +44,8 @@ function usePagedQuery<
     queryKey: keyFor(stableQuery),
     queryFn: () => load(stableQuery),
     enabled,
+    refetchInterval,
+    refetchIntervalInBackground: false,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
     gcTime: 30 * 60_000,
@@ -113,6 +118,7 @@ export const queryKeys = {
   shadowRuns: (query: ListQuery) => ["shadow-runs", query] as const,
   shadowRun: (runId: string) => ["shadow-run", runId] as const,
   shadowEvaluation: ["shadow-evaluation"] as const,
+  shadowReviewSamples: (date?: string) => ["shadow-review-samples", date ?? "latest"] as const,
   auditLogs: (query: ListQuery) => ["audit-logs", query] as const,
   auditLog: (auditId: string) => ["audit-log", auditId] as const,
   proxyReview: (caseId: string, window: string) =>
@@ -250,7 +256,7 @@ export function useDpiFlow(flowId: string) {
 }
 
 export function useDevices(query: DeviceQuery, enabled = true) {
-  return usePagedQuery(query, queryKeys.devices, api.devices, enabled);
+  return usePagedQuery(query, queryKeys.devices, api.devices, enabled, 15000);
 }
 
 export function useDevice(deviceId: string, query: DeviceQuery) {
@@ -327,6 +333,8 @@ export function useEndpointIdentity(
     queryKey: queryKeys.endpointIdentity(endpointId, query),
     queryFn: () => api.endpointIdentity(endpointId, query),
     enabled: !!endpointId,
+    refetchInterval: 15000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -435,6 +443,7 @@ export function useCreateLabel() {
       void client.invalidateQueries({ queryKey: ["risks"] });
       void client.invalidateQueries({ queryKey: ["proxy-reviews"] });
       void client.invalidateQueries({ queryKey: queryKeys.shadowEvaluation });
+      void client.invalidateQueries({ queryKey: ["shadow-review-samples"] });
       if (variables.target_type === "ip") {
         void client.invalidateQueries({
           queryKey: queryKeys.ipRisk(variables.target_id),
@@ -460,6 +469,13 @@ export function useShadowEvaluation() {
   return useQuery({
     queryKey: queryKeys.shadowEvaluation,
     queryFn: api.shadowEvaluation,
+  });
+}
+
+export function useShadowReviewSamples(date?: string) {
+  return useQuery({
+    queryKey: queryKeys.shadowReviewSamples(date),
+    queryFn: () => api.shadowReviewSamples(date),
   });
 }
 
@@ -588,6 +604,8 @@ export function useCaseMutation() {
     },
     onSuccess: (item) => {
       client.setQueryData(queryKeys.caseDetail(item.case_id), item);
+      void client.invalidateQueries({queryKey: ["case-history",item.case_id]});
+      void client.invalidateQueries({queryKey: queryKeys.caseDetail(item.case_id)});
       void client.invalidateQueries({ queryKey: ["cases"] });
       void client.invalidateQueries({ queryKey: ["overview"] });
     },
@@ -708,4 +726,8 @@ export function useCampusExceptionMutation() {
       void client.invalidateQueries({ queryKey: ["cases"] });
     },
   });
+}
+
+export function useCaseHistory(caseId: string, kind: CaseHistoryKind, enabled: boolean) {
+  return useInfiniteQuery({queryKey: ['case-history',caseId,kind], initialPageParam: '0', queryFn: ({pageParam}) => api.caseHistory(caseId,kind,pageParam), getNextPageParam: (page) => page.page.next_cursor ?? undefined, enabled: enabled && !!caseId})
 }

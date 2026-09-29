@@ -28,7 +28,7 @@ func TestActiveActionSignsRequestPersistsSessionAndCreatesReversal(t *testing.T)
 		var payload map[string]any
 		_ = json.Unmarshal(body, &payload)
 		received <- payload
-		_ = json.NewEncoder(w).Encode(map[string]any{"action_id": "remote-1"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"action_id": "remote-1", "status": "completed"})
 	}))
 	defer northbound.Close()
 
@@ -205,4 +205,31 @@ func waitActionStatus(t *testing.T, server *Server, actionID, expected string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("action %s did not reach %s", actionID, expected)
+}
+
+func TestTransportSuccessRequiresCompletionReceipt(t *testing.T) {
+	for _, body := range []string{`{"action_id":"remote","status":"pending"}`, `{"code":10503}`, `{"action_id":"remote"}`, `<html>login</html>`, `{"action_id":"remote","status":"completed"}`} {
+		t.Run(body, func(t *testing.T) {
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if body == `{"action_id":"remote","status":"completed"}` {
+					// Valid JSON prefix, but the declared HTTP body was not delivered.
+					w.Header().Set("Content-Length", "999")
+				}
+				io.WriteString(w, body)
+			}))
+			defer remote.Close()
+			s := NewServer(Options{ShadowDir: t.TempDir(), ReadOnly: true, ActionMasterKey: "0123456789abcdef0123456789abcdef"})
+			secret, err := s.encryptConnectorSecret("test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.operations.doc.Connectors["lab"] = ActionConnector{ConnectorID: "lab", Enabled: true, Mode: "active", EndpointURL: remote.URL, EncryptedSecret: secret}
+			s.operations.doc.Actions["action"] = EnforcementAction{ActionID: "action", ConnectorID: "lab", Status: "pending", ActionType: "notify", IdempotencyKey: "stable-key"}
+			s.deliverAction("action", false)
+			got := s.operations.doc.Actions["action"]
+			if got.Status == "succeeded" || got.Status == "revoked" || got.RetryCount != 1 || got.LastError == "" {
+				t.Fatal("unconfirmed action completed", got)
+			}
+		})
+	}
 }

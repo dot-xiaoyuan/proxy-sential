@@ -35,7 +35,7 @@ func TestInspectMultipleStrongEvidenceCanConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Score != 85 || snapshot.Level != "confirmed" || snapshot.RecommendedAction != "shadow_confirm_review" {
+	if snapshot.Score != 100 || snapshot.Level != "confirmed" || snapshot.RecommendedAction != "shadow_confirm_review" || snapshot.DetectionBasis != "shared_device_divergence" {
 		t.Fatalf("unexpected confirmed snapshot: %+v", snapshot)
 	}
 	if len(snapshot.EvidenceIDs) != 3 {
@@ -58,6 +58,25 @@ func TestInspectMultiUserAgentIsWeakEvidence(t *testing.T) {
 	}
 }
 
+// TestAIRelayDomainUsageIsWeakEvidence protects the rule that matching a relay
+// domain is a review clue and must never authorize automation on its own.
+func TestAIRelayDomainUsageIsWeakEvidence(t *testing.T) {
+	if !isWeakEvidence("ai_relay_domain_usage") {
+		t.Fatal("ai_relay_domain_usage must be classified as weak evidence")
+	}
+	input := evidenceInput(
+		ev("ai-relay-1", "10.0.0.1", "ai_relay_domain_usage", 30, 0.80),
+		ev("ai-relay-2", "10.0.0.1", "ai_relay_domain_usage", 34, 0.80),
+	)
+	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Level == "high" || snapshot.Level == "confirmed" || snapshot.AutomationEligible {
+		t.Fatalf("relay domain evidence must stay review-only: %+v", snapshot)
+	}
+}
+
 func TestInspectEncryptedTunnelBehaviorIsWeakEvidence(t *testing.T) {
 	input := evidenceInput(
 		ev("quic-1", "10.0.0.1", "encrypted_tunnel_behavior", 25, 0.45),
@@ -70,6 +89,42 @@ func TestInspectEncryptedTunnelBehaviorIsWeakEvidence(t *testing.T) {
 	}
 	if snapshot.Score != 29 || snapshot.Level != "normal" || snapshot.RecommendedAction != "record" {
 		t.Fatalf("encrypted transport behavior must not confirm risk alone: %+v", snapshot)
+	}
+}
+
+func TestTTLClustersCannotConfirmOnTheirOwn(t *testing.T) {
+	input := evidenceInput(ev("ttl-1", "10.0.0.1", "ttl_clusters", 30, 0.68))
+	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Level == "high" || snapshot.Level == "confirmed" || snapshot.AutomationEligible {
+		t.Fatalf("ttl-only evidence escalated risk: %+v", snapshot)
+	}
+}
+
+func TestTTLAndTLSDiversityWithoutDeviceAnchorStayBehavioral(t *testing.T) {
+	input := evidenceInput(
+		ev("ttl", "10.0.0.1", "ttl_clusters", 30, 0.68),
+		ev("tls", "10.0.0.1", "multi_ja3_ja4", 30, 0.75),
+	)
+	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.DetectionBasis != "behavioral_only" || snapshot.Level != "suspicious" || snapshot.Score > 59 {
+		t.Fatalf("ordinary TLS diversity plus path variation must not become a shared-device verdict: %+v", snapshot)
+	}
+}
+
+func TestKnownGameAcceleratorOnlyDownweightsRisk(t *testing.T) {
+	input := evidenceInput(ev("vpn-hint", "10.0.0.1", "vpn_proxy_domain_hint", 45, .68), ev("accelerator", "10.0.0.1", "known_game_accelerator", 0, .82))
+	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Score != 30 || snapshot.Level != "suspicious" || len(snapshot.NegativeEvidence) != 1 {
+		t.Fatalf("unexpected accelerator adjustment: %+v", snapshot)
 	}
 }
 
@@ -251,5 +306,16 @@ func accountEv(id, accountID, evidenceType string, score int, confidence float64
 		Reason:      "test account evidence",
 		Samples:     []string{"sample"},
 		CreatedAt:   "2026-07-24T13:20:00Z",
+	}
+}
+
+func TestSharedObservationCannotInflateRisk(t *testing.T) {
+	input := evidenceInput(ev("shared-window", "10.0.0.1", "shared_access_window", 100, 1))
+	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Score != 0 || len(snapshot.EvidenceIDs) != 0 {
+		t.Fatalf("observation promoted into risk: %+v", snapshot)
 	}
 }

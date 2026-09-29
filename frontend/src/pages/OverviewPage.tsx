@@ -18,7 +18,8 @@ import {
   AppLoadingState,
   AppMetricCard,
   AppPageHeader,
-  type QuickWindow,
+  StatisticsTime,
+  type ReportWindow,
 } from '../shared/ui'
 
 const levelOrder: RiskLevel[] = ['confirmed', 'high', 'suspicious', 'normal']
@@ -38,7 +39,7 @@ const levelNames: Record<RiskLevel, string> = {
 }
 
 export function OverviewPage() {
-  const [quickWindow, setQuickWindow] = useState<QuickWindow>('1h')
+  const [quickWindow, setQuickWindow] = useState<ReportWindow>('1h')
   const [campusId,setCampusId]=useState('')
   const organization=useOrganization()
   const overview = useOverview({ window: quickWindow, campus_id:campusId||undefined })
@@ -49,7 +50,7 @@ export function OverviewPage() {
   }
 
   if (overview.isError || !overview.data) {
-    return <AppErrorAlert title="总览控制塔加载失败" />
+    return <AppErrorAlert title="总览控制塔加载失败" message={overview.error?.message} />
   }
 
   const riskPieData = levelOrder.map((level) => ({
@@ -68,10 +69,13 @@ export function OverviewPage() {
           void activity.refetch()
         }}
         quickWindow={quickWindow}
+        quickWindows={['10m', '1h', '24h', '7d', '30d']}
         extra={<Select className="campus-filter" value={campusId} onChange={setCampusId} options={[{value:'',label:'全部校区'},...(organization.data?.campuses??[]).map(item=>({value:item.campus_id,label:item.name}))]} />}
         subtitle="统一窗口内的风险待办、终端活动、数据健康与处置情况"
         title="高校网络风险运营工作台"
       />
+
+      <StatisticsTime freshness={overview.data.data_freshness} value={overview.data.statistics_as_of} />
 
       <section className="metric-grid">
         <AppMetricCard

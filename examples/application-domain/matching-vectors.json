@@ -1,0 +1,13 @@
+[
+ {"domain":"api.weixin.qq.com","target_type":"application","target_id":"wechat"},
+ {"domain":"work.weixin.qq.com","target_type":"application","target_id":"wecom"},
+ {"domain":"api.douyin.com","target_type":"application","target_id":"douyin"},
+ {"domain":"www.bilibili.com","target_type":"application","target_id":"bilibili"},
+ {"domain":"im.qq.com","target_type":"application","target_id":"qq"},
+ {"domain":"video.qq.com","target_type":"application","target_id":"tencent-video"},
+ {"domain":"other.qq.com","target_type":"ecosystem","target_id":"tencent"},
+ {"domain":"cdn.example.com","target_type":"infrastructure","target_id":"shared-cdn"},
+ {"domain":"bilibili.com.evil.example","target_type":"","target_id":""},
+ {"domain":"fakedouyin.com","target_type":"","target_id":""},
+ {"domain":"tiktok.com","target_type":"","target_id":""}
+]

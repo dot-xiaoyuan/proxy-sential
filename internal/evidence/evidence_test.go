@@ -98,10 +98,93 @@ func TestAnalyzeEmitsDHCPDeviceFingerprintEvidence(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing evidence type %s in %+v", expected, byType)
 		}
-		if ev.Score == 0 || ev.Confidence < 0.8 || len(ev.Samples) == 0 || ev.Reason == "" {
+		if expected == "dhcp_device_fingerprint" && (ev.Score != 0 || ev.Severity != "info") {
+			t.Fatalf("DHCP profile must remain explanatory: %+v", ev)
+		}
+		if expected != "dhcp_device_fingerprint" && ev.Score == 0 || ev.Confidence < 0.8 || len(ev.Samples) == 0 || ev.Reason == "" {
 			t.Fatalf("unexpected device evidence: %+v", ev)
 		}
 	}
+}
+
+func TestAnalyzeCombinesLocalDeviceProtocolsIntoConflictEvidence(t *testing.T) {
+	input := bytes.NewBufferString(
+		normalizedLine("mdns-ios", "device", map[string]any{
+			"origin": "mdns", "hostname": "iphone.local",
+		}, map[string]any{}) + "\n" +
+			normalizedLine("nbns-win", "device", map[string]any{
+				"origin": "nbns", "hostname": "WINDOWS-LAPTOP",
+			}, map[string]any{}) + "\n")
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byType := map[string]Evidence{}
+	for _, item := range result.Evidence {
+		byType[item.Type] = item
+	}
+	profile, ok := byType["dhcp_device_fingerprint"]
+	if !ok || profile.Score != 0 || profile.Severity != "info" {
+		t.Fatalf("local device profile must remain explanatory: %+v", profile)
+	}
+	conflict, ok := byType["device_fingerprint_conflict"]
+	if !ok || conflict.Score < 50 || conflict.Confidence < .8 {
+		t.Fatalf("expected independent device-family conflict: %+v", conflict)
+	}
+}
+
+func TestSingleDHCPProfileAndTwoTLSFingerprintsDoNotImplyDeviceConflict(t *testing.T) {
+	input := bytes.NewBufferString(
+		normalizedLine("device", "device", map[string]any{
+			"origin": "dhcp", "client_mac": "aa:bb:cc:dd:ee:01",
+		}, map[string]any{}) + "\n" +
+			normalizedLine("tls-a", "tls", map[string]any{"ja3": "fingerprint-a"}, map[string]any{}) + "\n" +
+			normalizedLine("tls-b", "tls", map[string]any{"ja3": "fingerprint-b"}, map[string]any{}) + "\n")
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range result.Evidence {
+		if item.Type == "device_fingerprint_conflict" {
+			t.Fatalf("application-level TLS diversity must not turn one DHCP device into a physical-device conflict: %+v", item)
+		}
+	}
+}
+
+func TestTTLClustersAreWeakExplainableEvidence(t *testing.T) {
+	input := bytes.NewBufferString(
+		normalizedLine("ttl-1", "device", map[string]any{"origin": "ttl", "ttl": 63}, map[string]any{}) + "\n" +
+			normalizedLine("ttl-2", "device", map[string]any{"origin": "ttl", "ttl": 126}, map[string]any{}) + "\n")
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range result.Evidence {
+		if item.Type == "ttl_clusters" {
+			if item.Score > 30 || item.Confidence >= .8 || len(item.Samples) != 2 {
+				t.Fatalf("ttl evidence must remain weak: %+v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("ttl_clusters evidence missing: %+v", result.Evidence)
+}
+
+func TestKnownGameAcceleratorEmitsZeroScoreExplanatoryEvidence(t *testing.T) {
+	input := bytes.NewBufferString(normalizedLine("app-1", "http", map[string]any{"application": "uu-booster"}, map[string]any{"dst_port": 443}) + "\n")
+	result, err := Analyze(input, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range result.Evidence {
+		if item.Type == "known_game_accelerator" {
+			if item.Score != 0 || item.Confidence < .8 {
+				t.Fatalf("unexpected application evidence: %+v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("application evidence missing: %+v", result.Evidence)
 }
 
 func TestAnalyzeEmitsAccountSharingEvidence(t *testing.T) {
@@ -173,6 +256,7 @@ func TestAnalyzeEmitsVPNProxyEvidenceConfidenceLevels(t *testing.T) {
 			"category":     "Potential Corporate Privacy Violation",
 			"severity":     float64(2),
 			"action":       "allowed",
+			"metadata":     []string{"proxy_sentinel_confidence high", "source proxy-sentinel"},
 		}, map[string]any{"dst_port": 1194}) + "\n" +
 			normalizedLine("quic-vpn", "quic", map[string]any{
 				"sni":     "student-vpn.example.test",
@@ -209,6 +293,17 @@ func TestAnalyzeEmitsVPNProxyEvidenceConfidenceLevels(t *testing.T) {
 	}
 	if encryptedBehavior.Score >= 30 || encryptedBehavior.Confidence >= 0.5 || encryptedBehavior.Severity != "low" {
 		t.Fatalf("ordinary encrypted transport should stay low confidence: %+v", encryptedBehavior)
+	}
+}
+
+func TestSuricataMetadataMapMarksOnlyHighRuleAsExplicit(t *testing.T) {
+	payload := map[string]any{"signature": "PROXY_SENTINEL WireGuard handshake", "metadata": map[string]any{"proxy_sentinel_confidence": []any{"high"}}}
+	if !IsVPNAlert(payload) {
+		t.Fatal("expected alert classification")
+	}
+	_, confidence, ok := vpnAlertSample(payload)
+	if !ok || confidence != "high" {
+		t.Fatalf("unexpected confidence: %q ok=%t", confidence, ok)
 	}
 }
 

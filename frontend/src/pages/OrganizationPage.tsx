@@ -199,8 +199,8 @@ export function OrganizationPage() {
                                 className="list-cell-nowrap"
                                 type="secondary"
                               >
-                                SSID {zone.ssids.join("、") || "-"} · VLAN{" "}
-                                {zone.vlans.join("、") || "-"}
+                                SSID {zone.ssids.join("、") || ""} · VLAN{" "}
+                                {zone.vlans.join("、") || ""}
                               </Typography.Text>
                             }
                           />

@@ -30,6 +30,13 @@ type ShadowOptions struct {
 	ExportDir     string
 	PostgresDSN   string
 	Now           time.Time
+	// Accuracy gates. Zero disables the corresponding check so existing
+	// deployments and tests keep their current behavior. The CLI supplies the
+	// documented defaults (95%, 200 normal ground-truth reviews, 200 candidate
+	// reviews).
+	MinPrecision         float64
+	MinNormalGroundTruth int
+	MinCandidateReviews  int
 }
 
 type ShadowEvaluationReport struct {
@@ -42,7 +49,9 @@ type ShadowEvaluationReport struct {
 	DaysWithReviews        int                    `json:"days_with_reviews"`
 	RunCount               int                    `json:"run_count"`
 	TruncatedRunCount      int                    `json:"truncated_run_count"`
+	TruncatedRunRate       float64                `json:"truncated_run_rate"`
 	MalformedEventCount    int                    `json:"malformed_event_count"`
+	MalformedEventRate     float64                `json:"malformed_event_rate"`
 	NormalizedEventCount   int                    `json:"normalized_event_count"`
 	EvidenceCount          int                    `json:"evidence_count"`
 	RiskSnapshotCount      int                    `json:"risk_snapshot_count"`
@@ -50,11 +59,16 @@ type ShadowEvaluationReport struct {
 	ReviewedSnapshotCount  int                    `json:"reviewed_snapshot_count"`
 	ReviewCoverage         float64                `json:"review_coverage"`
 	LevelStats             map[string]ReviewStats `json:"level_stats"`
+	CandidateReviewed      int                    `json:"candidate_reviewed"`
+	CandidateConfirmed     int                    `json:"candidate_confirmed"`
+	CandidatePrecision     float64                `json:"candidate_precision"`
+	NormalReviewed         int                    `json:"normal_reviewed"`
 	Daily                  []DailyReviewSummary   `json:"daily"`
 	MissingReviewBuckets   []string               `json:"missing_review_buckets"`
 	FalsePositiveReasons   []Count                `json:"false_positive_reasons"`
 	FalsePositiveEvidence  []Count                `json:"false_positive_evidence"`
 	RecommendedAdjustments []string               `json:"recommended_adjustments"`
+	CollectionWarnings     []string               `json:"collection_warnings,omitempty"`
 	DailySampleExports     []string               `json:"daily_sample_exports,omitempty"`
 	Ready                  bool                   `json:"ready"`
 	Blockers               []string               `json:"blockers"`
@@ -217,7 +231,7 @@ func readRuns(opts ShadowOptions, labels []store.Label) ([]runData, error) {
 		}
 		run := runData{id: entry.Name(), date: finished.Format("2006-01-02"), summary: summary, evidence: evidenceByID}
 		for _, snapshot := range batch.Snapshots {
-			label, reviewed := latestMatchingLabel(snapshot, labels)
+			label, reviewed := latestMatchingLabel(run.id, snapshot, labels)
 			sample := sampleFromSnapshot(run.id, run.date, snapshot)
 			if reviewed {
 				sample.ReviewStatus = label.Label
@@ -243,6 +257,7 @@ func buildReport(opts ShadowOptions, runs []runData) ShadowEvaluationReport {
 		GeneratedAt: opts.Now.Format(time.RFC3339Nano), RequiredDays: opts.RequiredDays,
 		LevelStats: map[string]ReviewStats{}, Daily: []DailyReviewSummary{}, MissingReviewBuckets: []string{},
 		FalsePositiveReasons: []Count{}, FalsePositiveEvidence: []Count{}, RecommendedAdjustments: []string{}, Blockers: []string{},
+		CollectionWarnings: []string{},
 	}
 	for _, level := range evaluationLevels {
 		report.LevelStats[level] = ReviewStats{}
@@ -325,6 +340,15 @@ func buildReport(opts ShadowOptions, runs []runData) ShadowEvaluationReport {
 		stats.Precision = precision(stats)
 		report.LevelStats[level] = stats
 	}
+	report.CandidateReviewed, report.CandidateConfirmed, report.CandidatePrecision = candidateAccuracy(report.LevelStats)
+	report.NormalReviewed = report.LevelStats["normal"].Reviewed
+	if report.RunCount > 0 {
+		report.TruncatedRunRate = float64(report.TruncatedRunCount) / float64(report.RunCount)
+	}
+	processedEvents := report.NormalizedEventCount + report.MalformedEventCount
+	if processedEvents > 0 {
+		report.MalformedEventRate = float64(report.MalformedEventCount) / float64(processedEvents)
+	}
 	if report.EvaluatedSampleCount > 0 {
 		report.ReviewCoverage = float64(report.ReviewedSnapshotCount) / float64(report.EvaluatedSampleCount)
 	}
@@ -343,11 +367,42 @@ func buildReport(opts ShadowOptions, runs []runData) ShadowEvaluationReport {
 	if len(report.MissingReviewBuckets) > 0 {
 		report.Blockers = append(report.Blockers, fmt.Sprintf("存在 %d 个有样本但未复核的日期/等级分桶", len(report.MissingReviewBuckets)))
 	}
-	if report.TruncatedRunCount > 0 || report.MalformedEventCount > 0 {
-		report.Blockers = append(report.Blockers, fmt.Sprintf("采集质量未通过：截断运行=%d，畸形事件=%d", report.TruncatedRunCount, report.MalformedEventCount))
+	if report.TruncatedRunCount > 0 {
+		report.CollectionWarnings = append(report.CollectionWarnings, fmt.Sprintf("检测到 %d 次日志截断或轮转，已由采集账本恢复", report.TruncatedRunCount))
+	}
+	if report.MalformedEventCount > 0 {
+		report.CollectionWarnings = append(report.CollectionWarnings, fmt.Sprintf("已隔离 %d 条畸形事件", report.MalformedEventCount))
+	}
+	if report.TruncatedRunRate > 0.05 || report.MalformedEventRate > 0.01 {
+		report.Blockers = append(report.Blockers, fmt.Sprintf("采集质量未通过：截断/轮转运行率=%.2f%%，畸形事件率=%.2f%%", report.TruncatedRunRate*100, report.MalformedEventRate*100))
+	}
+	if opts.MinCandidateReviews > 0 && report.CandidateReviewed < opts.MinCandidateReviews {
+		report.Blockers = append(report.Blockers, fmt.Sprintf("候选复核仅 %d 条，要求至少 %d 条", report.CandidateReviewed, opts.MinCandidateReviews))
+	}
+	if opts.MinNormalGroundTruth > 0 && report.NormalReviewed < opts.MinNormalGroundTruth {
+		report.Blockers = append(report.Blockers, fmt.Sprintf("正常真值仅 %d 条，要求至少 %d 条", report.NormalReviewed, opts.MinNormalGroundTruth))
+	}
+	if opts.MinPrecision > 0 && report.CandidatePrecision < opts.MinPrecision {
+		report.Blockers = append(report.Blockers, fmt.Sprintf("候选准确率 %.2f 低于要求 %.2f", report.CandidatePrecision, opts.MinPrecision))
 	}
 	report.Ready = len(report.Blockers) == 0
 	return report
+}
+
+// candidateAccuracy aggregates the decided candidate levels. needs_more_data is
+// review coverage, not a decision, so it never enters the precision denominator.
+func candidateAccuracy(levels map[string]ReviewStats) (reviewed, confirmed int, value float64) {
+	decided := 0
+	for _, level := range []string{"confirmed", "high", "suspicious"} {
+		stats := levels[level]
+		reviewed += stats.Reviewed
+		confirmed += stats.Confirmed
+		decided += stats.Confirmed + stats.FalsePositive + stats.Benign
+	}
+	if decided > 0 {
+		value = float64(confirmed) / float64(decided)
+	}
+	return reviewed, confirmed, value
 }
 
 func exportDailySamples(exportDir string, runs []runData, perLevel int) ([]string, error) {
@@ -454,7 +509,7 @@ func readLabels(path string, to time.Time) ([]store.Label, error) {
 	return labels, nil
 }
 
-func latestMatchingLabel(snapshot risk.Snapshot, labels []store.Label) (store.Label, bool) {
+func latestMatchingLabel(runID string, snapshot risk.Snapshot, labels []store.Label) (store.Label, bool) {
 	keys := map[string]bool{}
 	add := func(kind, id string) {
 		kind, id = strings.ToLower(strings.TrimSpace(kind)), strings.TrimSpace(id)
@@ -466,12 +521,30 @@ func latestMatchingLabel(snapshot risk.Snapshot, labels []store.Label) (store.La
 	add("account", snapshot.AccountID)
 	add("endpoint", snapshot.EndpointID)
 	add("ip", snapshot.IP)
+	add("risk_snapshot", runID)
 	for _, label := range labels {
-		if keys[strings.ToLower(strings.TrimSpace(label.TargetType))+":"+strings.TrimSpace(label.TargetID)] {
+		targetType := strings.ToLower(strings.TrimSpace(label.TargetType))
+		if !keys[targetType+":"+strings.TrimSpace(label.TargetID)] {
+			continue
+		}
+		if targetType == "risk_snapshot" || evidenceIDsOverlap(snapshot.EvidenceIDs, label.EvidenceIDs) {
 			return label, true
 		}
 	}
 	return store.Label{}, false
+}
+
+func evidenceIDsOverlap(snapshotIDs, labelIDs []string) bool {
+	seen := make(map[string]bool, len(snapshotIDs))
+	for _, id := range snapshotIDs {
+		seen[id] = true
+	}
+	for _, id := range labelIDs {
+		if seen[id] {
+			return true
+		}
+	}
+	return false
 }
 
 func sampleFromSnapshot(runID, date string, snapshot risk.Snapshot) Sample {
@@ -484,7 +557,7 @@ func sampleFromSnapshot(runID, date string, snapshot risk.Snapshot) Sample {
 func addReview(stats *ReviewStats, status string) {
 	stats.Total++
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "confirmed":
+	case "confirmed", "confirmed_proxy":
 		stats.Reviewed++
 		stats.Confirmed++
 	case "false_positive":
@@ -501,7 +574,7 @@ func addReview(stats *ReviewStats, status string) {
 
 func isReviewed(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "confirmed", "false_positive", "benign", "needs_more_data":
+	case "confirmed", "confirmed_proxy", "false_positive", "benign", "needs_more_data":
 		return true
 	default:
 		return false

@@ -1,0 +1,7 @@
+{
+  "version": "replay-v1",
+  "producers": [
+    {"sensor_id":"replay","source":"zeek","instance_id":"replay-boot","parser_id":"sentinel-zeek-proxy","parser_version":"1","campus_id":"test-campus","access_domain":"test-nas","key":"TEST-ONLY-REPLACE-WITH-A-RANDOM-SECRET-32-BYTES"},
+    {"sensor_id":"replay","source":"suricata","instance_id":"replay-boot","parser_id":"sentinel-suricata-http","parser_version":"1","campus_id":"test-campus","access_domain":"test-nas","key":"TEST-ONLY-REPLACE-WITH-A-RANDOM-SECRET-32-BYTES"}
+  ]
+}

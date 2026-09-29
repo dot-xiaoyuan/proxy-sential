@@ -143,6 +143,10 @@ func (s *Server) handleIdentityIngest(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusUnprocessableEntity, batch)
 			return
 		}
+		if err := s.applyIdentityRegistration(&event); err != nil {
+			writeError(w, 403, "identity_source_not_registered", err.Error())
+			return
+		}
 		events = append(events, event)
 	}
 	if err := scanner.Err(); err != nil {
@@ -190,6 +194,22 @@ func (s *Server) recordIdentityBatch(batch IdentityIngestBatch, events []normali
 }
 
 func (s *Server) handleIdentityIngestStatus(w http.ResponseWriter, r *http.Request) {
+	sources := []store.IdentitySourceStatus{}
+	backend, supported := s.reader.(store.IdentityReconciler)
+	if supported {
+		var err error
+		sources, err = backend.IdentitySources(r.Context(), time.Now().UTC())
+		if err != nil {
+			writeError(w, 503, "identity_sources_unavailable", err.Error())
+			return
+		}
+	}
+	var mergeError error
+	sources, mergeError = s.mergeManagedIdentitySources(r.Context(), sources, time.Now().UTC())
+	if mergeError != nil {
+		writeError(w, 503, "identity_sources_unavailable", "身份来源状态不可用")
+		return
+	}
 	if s.identityIngest.db != nil {
 		var completed, failed int
 		var lastSeen sql.NullTime
@@ -202,7 +222,7 @@ func (s *Server) handleIdentityIngestStatus(w http.ResponseWriter, r *http.Reque
 		if lastSeen.Valid {
 			last = lastSeen.Time.UTC().Format(time.RFC3339Nano)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"enabled": s.identityIngest.key != "", "last_received_at": last, "completed_batches": completed, "failed_batches": failed})
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": s.identityIngest.key != "", "last_received_at": last, "completed_batches": completed, "failed_batches": failed, "reconciliation_supported": supported, "sources": sources})
 		return
 	}
 	s.identityIngest.mu.Lock()
@@ -215,7 +235,7 @@ func (s *Server) handleIdentityIngestStatus(w http.ResponseWriter, r *http.Reque
 			failed++
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.identityIngest.key != "", "last_received_at": s.identityIngest.lastSeen, "completed_batches": completed, "failed_batches": failed})
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": s.identityIngest.key != "", "last_received_at": s.identityIngest.lastSeen, "completed_batches": completed, "failed_batches": failed, "reconciliation_supported": supported, "sources": sources})
 }
 
 func (s *Server) handleIdentityBatches(w http.ResponseWriter, r *http.Request) {

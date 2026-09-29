@@ -25,6 +25,18 @@ func TestBootstrapAdminDoesNotOverwriteExistingCredentials(t *testing.T) {
 	}
 }
 
+func TestBootstrapPasswordPolicyAllowsOnlyDocumentedShortInitialPassword(t *testing.T) {
+	if !validBootstrapPassword(DefaultInitialAdminPassword) {
+		t.Fatal("documented initial administrator password must be accepted during bootstrap")
+	}
+	if validBootstrapPassword("short-pass") {
+		t.Fatal("an arbitrary password shorter than 12 characters must be rejected")
+	}
+	if !validBootstrapPassword("long-password-123") {
+		t.Fatal("a custom password with at least 12 characters must be accepted")
+	}
+}
+
 func TestFileUserLifecyclePersistsAndInvalidatesSessions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "users.json")
 	if err := BootstrapAdmin(path, "admin", "管理员", "long-password-123"); err != nil {

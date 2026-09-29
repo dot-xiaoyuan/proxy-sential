@@ -39,6 +39,13 @@ func TestPostgresIdentitySessionPersistsUniversityDimensionsAndEndTime(t *testin
 	if err := postgres.WriteIdentityEvents(ctx, events); err != nil {
 		t.Fatal(err)
 	}
+	// IP search must work before paging and must not duplicate a device for repeated observations.
+	for _, q := range []string{"192.0.2.31", "192.0.2.3"} {
+		page, err := postgres.ListEndpointDevices(ctx, Query{Q: q, Limit: 1})
+		if err != nil || page.Page.Total != 1 || len(page.Items) != 1 || page.Items[0].EndpointID != endpointID {
+			t.Fatalf("IP search %q: page=%+v err=%v", q, page, err)
+		}
+	}
 	updatedEndpoint, err := postgres.UpdateEndpointRegistration(ctx, EndpointRegistrationUpdate{EndpointID: endpointID, RegistrationStatus: "registered", OwnershipClass: "school_asset", AssetTag: "ASSET-INTEGRATION-31", MergeStatus: "active", RegistrationUpdatedBy: "integration-admin", RegistrationUpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
 	if err != nil || updatedEndpoint.OwnershipClass != "school_asset" {
 		t.Fatalf("endpoint ownership class was not persisted: value=%+v err=%v", updatedEndpoint, err)

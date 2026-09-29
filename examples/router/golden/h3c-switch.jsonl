@@ -1,0 +1,1 @@
+{"schema_version":"v1","event_id":"h3c-switch","source":"zeek","source_event_type":"software","type":"device","timestamp":"2026-09-24T01:00:00Z","observer":{"sensor_id":"golden"},"subject":{"ip":"192.0.2.22","mac":"00:11:22:33:45:03"},"flow":{},"payload":{"software_name":"H3C S5130 Comware"},"confidence":0.9}

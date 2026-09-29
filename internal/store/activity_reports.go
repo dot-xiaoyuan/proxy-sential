@@ -70,7 +70,7 @@ func (s *ClickHouseStore) QueryActivityReport(ctx context.Context, query Activit
 
 func (s *ClickHouseStore) queryActivityReport(ctx context.Context, query ActivityReportQuery, value, table, where string) (ActivityReport, error) {
 	sql := fmt.Sprintf(`SELECT value AS key,value AS label,count() AS count,sum(count()) OVER () AS total_count,sum(countIf(value='未知')) OVER () AS unknown_count,toString(max(observed)) AS last_seen FROM (SELECT if(trim(toString(%s))='','未知',trim(toString(%s))) AS value,%s AS observed FROM %s PREWHERE %s) GROUP BY value ORDER BY count DESC,value LIMIT %d FORMAT JSONEachRow`, value, value, reportTimestamp(table), table, where, query.Limit)
-	data, err := s.query(ctx, sql)
+	data, err := s.activityFeatureQuery(ctx, sql)
 	if err != nil {
 		return ActivityReport{}, err
 	}

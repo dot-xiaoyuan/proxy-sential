@@ -28,31 +28,40 @@ const (
 )
 
 type Status struct {
-	Version                 string         `json:"version"`
-	Status                  string         `json:"status"`
-	Source                  string         `json:"source"`
-	Checksum                string         `json:"checksum"`
-	UpdatedAt               string         `json:"updated_at,omitempty"`
-	LastCheckedAt           string         `json:"last_checked_at,omitempty"`
-	LastError               string         `json:"last_error,omitempty"`
-	OfflineMode             bool           `json:"offline_mode"`
-	RuleCount               int            `json:"rule_count"`
-	OUICount                int            `json:"oui_count"`
-	DHCPRuleCount           int            `json:"dhcp_rule_count"`
-	Sources                 []BundleSource `json:"sources,omitempty"`
-	Licenses                []string       `json:"licenses,omitempty"`
-	BackfillStatus          string         `json:"backfill_status,omitempty"`
-	BackfillProcessed       int            `json:"backfill_processed,omitempty"`
-	DomainRuleCount         int            `json:"domain_rule_count"`
-	DomainEcosystemCount    int            `json:"domain_ecosystem_count"`
-	DomainSourceVersion     string         `json:"domain_source_version,omitempty"`
-	DomainBackfillStatus    string         `json:"domain_backfill_status,omitempty"`
-	DomainBackfillProcessed int            `json:"domain_backfill_processed,omitempty"`
-	DomainBackfillLastError string         `json:"domain_backfill_last_error,omitempty"`
+	ActiveDomainVersion     string               `json:"active_domain_version,omitempty"`
+	PendingDomainVersion    string               `json:"pending_domain_version,omitempty"`
+	DomainProcessingError   string               `json:"domain_processing_error,omitempty"`
+	Version                 string               `json:"version"`
+	Status                  string               `json:"status"`
+	Source                  string               `json:"source"`
+	Checksum                string               `json:"checksum"`
+	UpdatedAt               string               `json:"updated_at,omitempty"`
+	LastCheckedAt           string               `json:"last_checked_at,omitempty"`
+	LastError               string               `json:"last_error,omitempty"`
+	OfflineMode             bool                 `json:"offline_mode"`
+	RuleCount               int                  `json:"rule_count"`
+	RouterRuleCount         int                  `json:"router_rule_count"`
+	ApplicationRuleCount    int                  `json:"application_rule_count"`
+	OUICount                int                  `json:"oui_count"`
+	DHCPRuleCount           int                  `json:"dhcp_rule_count"`
+	Sources                 []BundleSource       `json:"sources,omitempty"`
+	Licenses                []string             `json:"licenses,omitempty"`
+	BackfillStatus          string               `json:"backfill_status,omitempty"`
+	BackfillProcessed       int                  `json:"backfill_processed,omitempty"`
+	DomainAvailable         bool                 `json:"domain_available"`
+	BrandEligibleRuleCount  int                  `json:"brand_eligible_rule_count"`
+	DomainSources           []DomainSourceStatus `json:"domain_sources,omitempty"`
+	DomainRuleCount         int                  `json:"domain_rule_count"`
+	DomainEcosystemCount    int                  `json:"domain_ecosystem_count"`
+	DomainSourceVersion     string               `json:"domain_source_version,omitempty"`
+	DomainBackfillStatus    string               `json:"domain_backfill_status,omitempty"`
+	DomainBackfillProcessed int                  `json:"domain_backfill_processed,omitempty"`
+	DomainBackfillLastError string               `json:"domain_backfill_last_error,omitempty"`
 }
 
 type Manager struct {
 	mu           sync.RWMutex
+	importMu     sync.Mutex
 	dir          string
 	client       *http.Client
 	status       Status
@@ -84,7 +93,11 @@ func (m *Manager) SetOffline(offline bool) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) Import(data []byte) (Status, error) {
+func (m *Manager) Import(data []byte) (Status, error) { return m.ImportWithGuard(data, nil) }
+
+func (m *Manager) ImportWithGuard(data []byte, check func() error) (Status, error) {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
 	bundle, err := VerifyBundleBytes(data)
 	if err != nil {
 		return m.fail(err)
@@ -93,10 +106,29 @@ func (m *Manager) Import(data []byte) (Status, error) {
 	if err != nil {
 		return m.fail(err)
 	}
+	current := m.Status()
+	if current.Version == bundle.Manifest.Version && current.Checksum != "" && current.Checksum != bundleChecksum(bundle) {
+		return m.fail(fmt.Errorf("rule version already exists with different content"))
+	}
+	if check != nil {
+		if err := check(); err != nil {
+			return m.Status(), err
+		}
+	}
 	if err := m.activateBundle(bundle); err != nil {
 		return m.fail(err)
 	}
+	routerRuleSet, err := LoadRouterRuleSet(bundle.Files["router-rules.json"])
+	if err != nil {
+		return m.fail(err)
+	}
+	if len(bundle.Files["application-signatures.json"]) > 0 {
+		if err := setApplicationSignatures(bundle.Files["application-signatures.json"], bundle.Manifest.Version); err != nil {
+			return m.fail(err)
+		}
+	}
 	SetDefault(library)
+	SetDefaultRouterRuleSet(routerRuleSet)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	m.mu.Lock()
 	status := libraryStatus(library, Status{Version: bundle.Manifest.Version, Status: "ready", Source: "offline-bundle", Checksum: bundleChecksum(bundle), UpdatedAt: now, LastCheckedAt: now, OfflineMode: m.status.OfflineMode, Sources: bundle.Manifest.Sources, Licenses: bundleLicenses(bundle.Manifest), BackfillStatus: "pending", DomainBackfillStatus: domainBackfillInitialStatus(bundle.Manifest)})
@@ -191,16 +223,29 @@ func bundleChecksum(bundle Bundle) string {
 	return hex.EncodeToString(sum[:])
 }
 func libraryStatus(library *Library, status Status) Status {
+	status.ApplicationRuleCount = ApplicationRuleCount()
 	if library != nil {
 		status.RuleCount = len(library.rules)
 		status.OUICount = len(library.ouis)
 		status.DHCPRuleCount = 0
 		status.DomainRuleCount = library.DomainRuleCount()
+		status.DomainAvailable = status.DomainRuleCount > 0
+		if status.DomainAvailable {
+			status.DomainSourceVersion = library.Version()
+		}
+		status.DomainSources = library.DomainSourceStatus()
+		status.BrandEligibleRuleCount = 0
+		for _, rule := range library.domains {
+			if rule.BrandEligible {
+				status.BrandEligibleRuleCount++
+			}
+		}
 		status.DomainEcosystemCount = library.DomainEcosystemCount()
 		for _, items := range library.dhcp {
 			status.DHCPRuleCount += len(items)
 		}
 	}
+	status.RouterRuleCount = len(DefaultRouterRuleSet().Rules)
 	for _, source := range status.Sources {
 		if source.Name == "NextDNS native-tracking-domains" {
 			status.DomainSourceVersion = source.Version
@@ -212,13 +257,20 @@ func libraryStatus(library *Library, status Status) Status {
 
 func bundleLicenses(manifest BundleManifest) []string {
 	result := []string{"Apache-2.0", "ODbL-1.0", "DbCL-1.0", "IEEE public registry"}
-	if manifest.SchemaVersion == BundleSchemaVersionV2 {
-		result = append(result, "MIT (NextDNS)")
+	for _, source := range manifest.Sources {
+		if source.Name == "HaGeZi native trackers" {
+			result = append(result, "GPL-3.0 (HaGeZi)")
+		}
+	}
+	for _, source := range manifest.Sources {
+		if source.Name == "NextDNS native-tracking-domains" {
+			result = append(result, "MIT (NextDNS)")
+		}
 	}
 	return result
 }
 func domainBackfillInitialStatus(manifest BundleManifest) string {
-	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 {
 		return "pending"
 	}
 	return "not_required"
@@ -288,7 +340,9 @@ func (m *Manager) Start(ctx context.Context, interval time.Duration) {
 	}()
 }
 
-func (m *Manager) Update(ctx context.Context) (Status, error) {
+func (m *Manager) Update(ctx context.Context) (Status, error) { return m.UpdateWithGuard(ctx, nil) }
+
+func (m *Manager) UpdateWithGuard(ctx context.Context, check func() error) (Status, error) {
 	m.mu.RLock()
 	offline := m.status.OfflineMode
 	m.mu.RUnlock()
@@ -336,6 +390,14 @@ func (m *Manager) Update(ctx context.Context) (Status, error) {
 	library, err := Load(version, ouiData, rulesData)
 	if err != nil {
 		return m.fail(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return m.Status(), err
+	}
+	if check != nil {
+		if err := check(); err != nil {
+			return m.Status(), err
+		}
 	}
 	if err := m.activate(ouiData, rulesData); err != nil {
 		return m.fail(err)
@@ -444,11 +506,21 @@ func (m *Manager) loadCurrent() {
 		aliasesData = embeddedBrandAliases
 	}
 	domainData, _ := os.ReadFile(filepath.Join(base, "domain-signatures.json"))
+	applicationData, _ := os.ReadFile(filepath.Join(base, "application-signatures.json"))
+	routerData, _ := os.ReadFile(filepath.Join(base, "router-rules.json"))
 	library, err := LoadWithDomainData(status.Version, ouiData, rulesData, fingerbankData, aliasesData, domainData)
 	if err != nil {
+		m.status.Status = "degraded"
+		m.status.LastError = "load domain/device rules: " + err.Error()
 		return
 	}
 	SetDefault(library)
+	if loaded, loadErr := LoadRouterRuleSet(routerData); loadErr == nil {
+		SetDefaultRouterRuleSet(loaded)
+	}
+	if len(applicationData) > 0 {
+		_ = setApplicationSignatures(applicationData, status.Version)
+	}
 	m.status = libraryStatus(library, status)
 }
 

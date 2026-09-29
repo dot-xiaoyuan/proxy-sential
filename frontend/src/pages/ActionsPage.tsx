@@ -1,9 +1,11 @@
+import { IdentitySourceModal } from "../features/integrations/IdentitySourceModal";
 import { useState } from "react";
 import {
   Alert,
   App as AntApp,
   Button,
   Card,
+  Collapse,
   Form,
   Input,
   List,
@@ -18,6 +20,9 @@ import {
 } from "antd";
 
 import { api } from "../shared/api/client";
+import { NativeAccountPreview } from "../entities/evidence/NativeAccountPreview";
+import { FourKDatabaseModal } from "../features/integrations/FourKDatabaseModal";
+import { NativeObservations } from "../entities/evidence/NativeObservations";
 import {
   useActionConnectors,
   useActions,
@@ -34,6 +39,9 @@ import {
 } from "../shared/ui";
 
 type ConnectorForm = {
+  certificate_pem?: string;
+  four_k_host?: string;
+  connector_type: "hmac" | "srun4k";
   connector_id: string;
   name: string;
   endpoint_url: string;
@@ -55,8 +63,13 @@ export function ActionsPage() {
   const { message } = AntApp.useApp();
   const [editing, setEditing] = useState<ActionConnector | null | undefined>();
   const [saving, setSaving] = useState(false);
+  const [selectedAction, setSelectedAction] = useState<string>();
+  const [previewConnector, setPreviewConnector] = useState<string>();
+  const [identityConnector, setIdentityConnector] = useState<string>();
+  const [fourKConnector, setFourKConnector] = useState<string>();
   const [activeTab, setActiveTab] = useState("connectors");
   const [form] = Form.useForm<ConnectorForm>();
+  const connectorType = Form.useWatch("connector_type", form);
   if (connectors.isLoading || actions.isLoading)
     return <AppLoadingState rows={7} />;
   if (
@@ -66,12 +79,15 @@ export function ActionsPage() {
     !actions.data
   )
     return <AppErrorAlert title="处置网关加载失败" />;
-  const openEditor = (item?: ActionConnector) => {
+  const openEditor = (item?: ActionConnector, kind: "hmac" | "srun4k" = "hmac") => {
     setEditing(item ?? null);
     form.setFieldsValue({
+      four_k_host: item?.endpoint_url ? new URL(item.endpoint_url).hostname.replace(/^\[|\]$/g, "") : "192.168.0.190",
+      connector_type: item?.connector_type ?? kind,
       connector_id: item?.connector_id ?? "",
       name: item?.name ?? "",
-      endpoint_url: item?.endpoint_url ?? "",
+      endpoint_url: item?.endpoint_url ?? (kind === "srun4k" ? "https://192.168.0.190:8001" : ""),
+      certificate_pem: item?.certificate_pem ?? "",
       secret: "",
       mode: item?.mode ?? "shadow",
       enabled: item?.enabled ?? false,
@@ -80,6 +96,12 @@ export function ActionsPage() {
   };
   const saveConnector = async () => {
     const value = await form.validateFields();
+    if (value.connector_type === "srun4k") {
+      value.endpoint_url = form.getFieldValue("endpoint_url") || `https://${value.four_k_host?.includes(":") ? `[${value.four_k_host}]` : value.four_k_host || "192.168.0.190"}:8001`;
+      value.certificate_pem = form.getFieldValue("certificate_pem") ?? editing?.certificate_pem ?? "";
+      value.connector_id = editing?.connector_id || `four-k-${Array.from(crypto.getRandomValues(new Uint8Array(12)), byte => byte.toString(16).padStart(2, "0")).join("")}`;
+      value.name = editing?.name || `4K 认证系统（${new URL(value.endpoint_url).hostname}）`;
+    }
     let mapping: Record<string, string>;
     try {
       mapping = JSON.parse(value.action_mapping || "{}") as Record<
@@ -94,12 +116,14 @@ export function ActionsPage() {
     try {
       await api.saveActionConnector({
         ...value,
+        secret: value.connector_type === "srun4k" ? undefined : value.secret,
         action_mapping: mapping,
         shadow_ready: editing?.shadow_ready ?? false,
         updated_at: editing?.updated_at ?? new Date().toISOString(),
       });
       void message.success("连接器配置已保存");
       setEditing(undefined);
+      if (value.connector_type === "srun4k" && editing === null) setFourKConnector(value.connector_id);
       void connectors.refetch();
     } catch (error) {
       void message.error(
@@ -161,29 +185,33 @@ export function ActionsPage() {
       {activeTab === "connectors" && (
         <section className="details-grid margin-top-md">
           <Card
-            title="北向连接器"
+            className="actions-connectors"
+            title="认证与处置连接器"
             extra={
               canManage ? (
-                <Button onClick={() => openEditor()}>新增连接器</Button>
+                <Space wrap><Button type="primary" onClick={() => openEditor(undefined, "srun4k")}>配置 4K 接入</Button><Button onClick={() => openEditor()}>新增连接器</Button></Space>
               ) : undefined
             }
           >
             <List
-              locale={{ emptyText: "尚未配置北向接口" }}
+              locale={{ emptyText: "尚未配置连接器，请点击「配置 4K 接入」设置认证系统与数据库授权" }}
               dataSource={connectors.data.items}
               renderItem={(item) => (
                 <List.Item
                   actions={
                     canManage
                       ? [
+                          item.connector_type === "srun4k" ? <Button key="identity" onClick={() => setIdentityConnector(item.connector_id)}>身份来源与范围</Button> : null,
+                          <Button key="4k" onClick={() => setFourKConnector(item.connector_id)}>4K 数据库授权</Button>,
+                          <Button key="preview" onClick={() => setPreviewConnector(item.connector_id)}>账号会话预览</Button>,
                           <Button
                             key="test"
                             onClick={async () => {
                               try {
-                                await api.testActionConnector(
+                                const result = await api.testActionConnector(
                                   item.connector_id,
                                 );
-                                void message.success("连通性与签名验证通过");
+                                void message.success(result.identity_verified === false ? "管理 API 连通与授权检查通过；完整身份清单尚未接通，暂不能处置" : "连接检查通过，处置能力仍需单独验收");
                               } catch (error) {
                                 void message.error(
                                   error instanceof Error
@@ -305,7 +333,7 @@ export function ActionsPage() {
                   dataIndex: "blockers",
                   render: (value?: string[]) => (
                     <span className="ellipsis-cell" title={value?.join("、")}>
-                      {value?.join("、") || "-"}
+                      {value?.join("、") || ""}
                     </span>
                   ),
                 },
@@ -322,6 +350,8 @@ export function ActionsPage() {
                 {
                   title: "操作",
                   render: (_, item) => (
+                    <Space wrap>
+                    <Button onClick={() => setSelectedAction(item.action_id)}>执行记录</Button>
                     <Button
                       disabled={
                         !can(session.data, "actions:revoke") ||
@@ -335,6 +365,7 @@ export function ActionsPage() {
                     >
                       撤销
                     </Button>
+                    </Space>
                   ),
                 },
               ]}
@@ -363,6 +394,7 @@ export function ActionsPage() {
                     <span>重试 {item.retry_count ?? 0}</span>
                     <span>{new Date(item.created_at).toLocaleString()}</span>
                   </div>
+                  <Button onClick={() => setSelectedAction(item.action_id)}>执行记录</Button>
                 </Card>
               </List.Item>
             )}
@@ -375,8 +407,17 @@ export function ActionsPage() {
           />
         </Card>
       )}
+      {identityConnector && <IdentitySourceModal key={identityConnector} connectorId={identityConnector} onClose={() => setIdentityConnector(undefined)} />}
+      {fourKConnector && <FourKDatabaseModal key={fourKConnector} connectorId={fourKConnector} onClose={() => setFourKConnector(undefined)} />}
+      <Modal title="账号会话预览" open={Boolean(previewConnector)} footer={null} onCancel={() => setPreviewConnector(undefined)} destroyOnHidden>
+        {previewConnector && <NativeAccountPreview key={previewConnector} connectorId={previewConnector} />}
+      </Modal>
+      <Modal title="原生执行记录" open={Boolean(selectedAction)} footer={null} onCancel={() => setSelectedAction(undefined)} destroyOnHidden>
+        {selectedAction && <NativeObservations key={selectedAction} actionId={selectedAction} />}
+      </Modal>
       <Modal
-        title={editing ? "编辑北向连接器" : "新增北向连接器"}
+        className="connector-editor-modal"
+        title={editing ? "编辑连接器" : "新增连接器"}
         open={editing !== undefined}
         confirmLoading={saving}
         onCancel={() => setEditing(undefined)}
@@ -385,7 +426,18 @@ export function ActionsPage() {
         forceRender
       >
         <Form form={form} layout="vertical">
-          <Form.Item
+          <Form.Item name="connector_type" label="连接器类型" rules={[{ required: true }]}>
+            <Select options={[{ value: "hmac", label: "通用 HMAC 连接器" }, { value: "srun4k", label: "原生 4K 连接器" }]} />
+          </Form.Item>
+          {connectorType === "srun4k" ? <>
+            <Form.Item name="four_k_host" label="认证系统 IP" rules={[{ required: true }, { validator: (_, value: string) => {
+              try { if (!value || /[\s/?#@]/.test(value)) throw new Error(); new URL(`https://${value.includes(":") ? `[${value}]` : value}:8001`); return Promise.resolve(); }
+              catch { return Promise.reject(new Error("请输入有效的 IP 或主机名")); }
+            } }]} extra="默认 HTTPS、8001 端口。">
+              <Input onChange={event => { const host = event.target.value; form.setFieldValue("endpoint_url", `https://${host.includes(":") ? `[${host}]` : host}:8001`); }} />
+            </Form.Item>
+            <Collapse items={[{ key: "advanced", label: "高级设置", children: <><Form.Item name="endpoint_url" label="管理 API 根地址" rules={[{ required: true }, { type: "url" }]}><Input /></Form.Item><Form.Item name="certificate_pem" label="服务器信任证书（PEM）" extra="留空使用系统信任；自签名证书请填写从管理方取得并核实的服务器证书。仅信任这张证书，证书轮换需更新。"><Input.TextArea rows={5} placeholder="-----BEGIN CERTIFICATE-----" /></Form.Item></> }]} />
+          </> : <>          <Form.Item
             name="connector_id"
             label="连接器 ID"
             rules={[{ required: true }]}
@@ -402,27 +454,28 @@ export function ActionsPage() {
           >
             <Input />
           </Form.Item>
-          <Form.Item
+          </>}
+          {connectorType !== "srun4k" && <Form.Item
             name="secret"
             label={editing ? "HMAC 密钥（留空保持不变）" : "HMAC 密钥"}
             rules={editing ? [] : [{ required: true, min: 16 }]}
           >
             <Input.Password />
-          </Form.Item>
-          <Form.Item name="mode" label="运行模式">
+          </Form.Item>}
+          <Form.Item name="mode" label="运行模式" extra="数据库授权和只读接口检查可在影子模式完成；真实处置需另行通过准入验收。">
             <Select
               options={[
                 { value: "shadow", label: "影子模式" },
-                { value: "active", label: "真实模式（需通过七天验收）" },
+                { value: "active", label: "真实模式（需通过七天验收）", disabled: !editing?.shadow_ready },
               ]}
             />
           </Form.Item>
           <Form.Item name="enabled" label="启用" valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="action_mapping" label="动作映射 JSON">
+          {connectorType !== "srun4k" && <Form.Item name="action_mapping" label="动作映射 JSON">
             <Input.TextArea rows={5} />
-          </Form.Item>
+          </Form.Item>}
         </Form>
       </Modal>
     </main>

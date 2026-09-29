@@ -23,6 +23,21 @@ export function EChartsDistributionPie({ title, data, subtext }: EChartsDistribu
   }))
 
   const option = {
+    media: [
+      {
+        query: { maxWidth: 380 },
+        option: {
+          legend: { orient: 'horizontal', left: 'center', right: 'auto', top: 'auto', bottom: 0, type: 'scroll' },
+          series: [{ center: ['50%', '42%'], radius: ['38%', '62%'] }],
+        },
+      },
+      {
+        option: {
+          legend: { orient: 'vertical', left: 'auto', right: 10, top: 'center', bottom: 'auto', type: 'plain' },
+          series: [{ center: ['38%', '50%'], radius: ['45%', '72%'] }],
+        },
+      },
+    ],
     tooltip: {
       trigger: 'item',
       formatter: '{b}: <b>{c}</b> ({d}%)',

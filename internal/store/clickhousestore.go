@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -22,13 +24,17 @@ import (
 const ClickHouseDDLPath = "migrations/clickhouse/001_production_schema.sql"
 
 type ClickHouseOptions struct {
-	DSN            string
-	RequestTimeout time.Duration
+	DSN                   string
+	RequestTimeout        time.Duration
+	EventIDIndexCutover   time.Time
+	EventIDIndexV2Cutover time.Time
 }
 
 type ClickHouseStore struct {
-	dsn    string
-	client *http.Client
+	dsn              string
+	client           *http.Client
+	eventIDCutover   time.Time
+	eventIDV2Cutover time.Time
 }
 
 func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
@@ -43,6 +49,11 @@ func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
 		return nil, fmt.Errorf("clickhouse dsn must be an http(s) URL for the HTTP interface")
 	}
 	params := parsed.Query()
+	// Carry the instant and zone in every JSON DateTime result. Typed read models
+	// use UTC while legacy columns use Asia/Shanghai; naive text is ambiguous.
+	if params.Get("date_time_output_format") == "" {
+		params.Set("date_time_output_format", "iso")
+	}
 	// Aggregate counters are UInt64. Emitting them as JSON numbers keeps the
 	// HTTP contract compatible with Go's integer fields and avoids a production-
 	// only decoding failure once ClickHouse returns real count() results.
@@ -50,13 +61,35 @@ func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
 		params.Set("output_format_json_quote_64bit_integers", "0")
 		parsed.RawQuery = params.Encode()
 	}
+	parsed.RawQuery = params.Encode()
 	requestTimeout := opts.RequestTimeout
 	if requestTimeout <= 0 {
 		requestTimeout = 2 * time.Minute
 	}
+	cutover := opts.EventIDIndexCutover.UTC()
+	if raw := strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EVENT_ID_INDEX_CUTOVER")); cutover.IsZero() && raw != "" {
+		cutover, err = time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse PROXY_SENTINEL_EVENT_ID_INDEX_CUTOVER: %w", err)
+		}
+		cutover = cutover.UTC()
+	}
+	v2Cutover := opts.EventIDIndexV2Cutover.UTC()
+	if raw := strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EVENT_ID_INDEX_V2_CUTOVER")); v2Cutover.IsZero() && raw != "" {
+		v2Cutover, err = time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse PROXY_SENTINEL_EVENT_ID_INDEX_V2_CUTOVER: %w", err)
+		}
+		v2Cutover = v2Cutover.UTC()
+	}
+	if !cutover.IsZero() && !v2Cutover.IsZero() && v2Cutover.Before(cutover) {
+		return nil, fmt.Errorf("PROXY_SENTINEL_EVENT_ID_INDEX_V2_CUTOVER must not precede the v1 cutover")
+	}
 	return &ClickHouseStore{
-		dsn:    parsed.String(),
-		client: &http.Client{Timeout: requestTimeout},
+		dsn:              parsed.String(),
+		client:           &http.Client{Timeout: requestTimeout},
+		eventIDCutover:   cutover,
+		eventIDV2Cutover: v2Cutover,
 	}, nil
 }
 
@@ -73,6 +106,20 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 		return nil
 	}
 	events = uniqueEventsByID(events)
+	existing, err := s.existingEventIDs(ctx, events)
+	if err != nil {
+		return fmt.Errorf("check normalized event idempotency: %w", err)
+	}
+	pending := events[:0]
+	for _, event := range events {
+		if _, found := existing[event.EventID]; !found {
+			pending = append(pending, event)
+		}
+	}
+	events = pending
+	if len(events) == 0 {
+		return nil
+	}
 	var body bytes.Buffer
 	body.WriteString(`INSERT INTO normalized_events FORMAT JSONEachRow`)
 	body.WriteByte('\n')
@@ -86,6 +133,7 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 			"type":              event.Type,
 			"sensor_id":         stringFromMap(event.Observer, "sensor_id"),
 			"subject_ip":        stringFromMap(event.Subject, "ip"),
+			"subject_mac":       stringFromMap(event.Subject, "mac"),
 			"account_id":        stringFromMap(event.Subject, "account_id"),
 			"endpoint_id":       stringFromMap(event.Subject, "endpoint_id"),
 			"campus_id":         firstNonEmpty(stringFromMap(event.Subject, "campus_id"), stringFromMap(event.Payload, "campus_id")),
@@ -115,6 +163,84 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 		}
 	}
 	return s.exec(ctx, body.String())
+}
+
+func (s *ClickHouseStore) existingEventIDs(ctx context.Context, events []normalized.Event) (map[string]struct{}, error) {
+	result := map[string]struct{}{}
+	const chunkSize = 500
+	for start := 0; start < len(events); start += chunkSize {
+		end := start + chunkSize
+		if end > len(events) {
+			end = len(events)
+		}
+		indexedV2IDs := make([]string, 0, end-start)
+		indexedIDs := make([]string, 0, end-start)
+		legacyIDs := make([]string, 0, end-start)
+		var legacyFrom, legacyTo time.Time
+		for _, event := range events[start:end] {
+			if event.EventID == "" {
+				continue
+			}
+			stamp, stampErr := time.Parse(time.RFC3339Nano, event.Timestamp)
+			if !s.eventIDV2Cutover.IsZero() && stampErr == nil && !stamp.Before(s.eventIDV2Cutover) {
+				quoted := chQuote(event.EventID)
+				indexedV2IDs = append(indexedV2IDs, "(sipHash64("+quoted+"),"+quoted+")")
+				continue
+			}
+			if !s.eventIDCutover.IsZero() && stampErr == nil && !stamp.Before(s.eventIDCutover) {
+				indexedIDs = append(indexedIDs, chQuote(event.EventID))
+				continue
+			}
+			legacyIDs = append(legacyIDs, chQuote(event.EventID))
+			if stampErr == nil {
+				stamp = stamp.UTC()
+				if legacyFrom.IsZero() || stamp.Before(legacyFrom) {
+					legacyFrom = stamp
+				}
+				if legacyTo.IsZero() || stamp.After(legacyTo) {
+					legacyTo = stamp
+				}
+			}
+		}
+		queries := []string{}
+		if len(indexedV2IDs) > 0 {
+			queries = append(queries, "SELECT event_id FROM normalized_event_ids_v2 WHERE (event_id_hash,event_id) IN ("+strings.Join(indexedV2IDs, ",")+") FORMAT JSONEachRow")
+		}
+		if len(indexedIDs) > 0 {
+			queries = append(queries, "SELECT event_id FROM normalized_event_ids_v1 WHERE event_id IN ("+strings.Join(indexedIDs, ",")+") FORMAT JSONEachRow")
+		}
+		if len(legacyIDs) > 0 {
+			where := "event_id IN (" + strings.Join(legacyIDs, ",") + ")"
+			if !legacyFrom.IsZero() && !legacyTo.IsZero() {
+				from := legacyFrom.Add(-time.Second).Format(time.RFC3339Nano)
+				to := legacyTo.Add(time.Second).Format(time.RFC3339Nano)
+				where += " AND timestamp>=parseDateTime64BestEffort(" + chQuote(from) + ",6) AND timestamp<=parseDateTime64BestEffort(" + chQuote(to) + ",6)"
+			}
+			queries = append(queries, "SELECT event_id FROM normalized_events WHERE "+where+" FORMAT JSONEachRow")
+		}
+		for _, query := range queries {
+			data, err := s.query(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			scanner := bufio.NewScanner(bytes.NewReader(data))
+			for scanner.Scan() {
+				var row struct {
+					EventID string `json:"event_id"`
+				}
+				if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+					return nil, fmt.Errorf("decode existing event id: %w", err)
+				}
+				if row.EventID != "" {
+					result[row.EventID] = struct{}{}
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return result, nil
 }
 
 func (s *ClickHouseStore) WriteDomainEcosystemObservations(ctx context.Context, observations []DomainEcosystemObservation) error {
@@ -179,25 +305,74 @@ func (s *ClickHouseStore) ListEventSamples(ctx context.Context, query Query) ([]
 	if limit < 0 {
 		limit = defaultDPIEventLimit
 	}
-	cursor := query.Cursor
-	if cursor < 0 {
-		cursor = 0
+	if query.Cursor < 0 {
+		query.Cursor = 0
 	}
 	where, err := eventWhereSQL(query)
 	if err != nil {
 		return nil, err
 	}
-	sql := fmt.Sprintf(`
-SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
-FROM normalized_events%s
-ORDER BY timestamp DESC, event_id DESC
-LIMIT %d OFFSET %d
-FORMAT JSONEachRow`, where, limit, cursor)
-	data, err := s.query(ctx, sql)
-	if err != nil {
-		return nil, err
+	// Full offsets and timestamp ties retain their original order. Start with
+	// a small descending time slice and expand only when it cannot fill a page.
+	anchor := time.Now().UTC()
+	if query.To != "" {
+		anchor, _ = time.Parse(time.RFC3339Nano, query.To)
 	}
-	return decodeEventRows(data)
+	span := 5 * time.Minute
+	var events []normalized.Event
+	for {
+		pageWhere := where
+		lower := anchor.Add(-span)
+		bounded := false
+		if query.From != "" {
+			from, _ := time.Parse(time.RFC3339Nano, query.From)
+			if !lower.After(from) {
+				lower = from
+				bounded = true
+			}
+		}
+		if query.Window != "" && query.From == "" && query.To == "" {
+			_, duration, _ := NormalizeActivityWindow(query.Window)
+			if span >= duration {
+				bounded = true
+			}
+		}
+		if bounded || span >= 7*24*time.Hour {
+			pageWhere = where
+			bounded = true
+		} else {
+			clause := "timestamp>=parseDateTime64BestEffort(" + chQuote(lower.Format(time.RFC3339Nano)) + ")"
+			if pageWhere == "" {
+				pageWhere = " WHERE " + clause
+			} else {
+				pageWhere += " AND " + clause
+			}
+		}
+		// Sort only the small identity columns, then read payloads for the selected
+		// keys. ClickHouse 24.8 projections improve pruning but still sort wide rows
+		// if full JSON payloads are selected in the first paging stage.
+		keys := fmt.Sprintf("SELECT timestamp,event_id,sensor_id FROM normalized_events%s ORDER BY timestamp DESC,event_id DESC,sensor_id DESC LIMIT %d", pageWhere, limit+query.Cursor)
+		sql := fmt.Sprintf(`
+SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, campus_id, observer_json, payload_json, flow_json, raw_ref_json, confidence
+FROM normalized_events
+WHERE (timestamp,event_id,sensor_id) IN (%s)
+ORDER BY timestamp DESC,event_id DESC,sensor_id DESC
+LIMIT %d OFFSET %d
+SETTINGS max_threads=1,max_block_size=8192,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, keys, limit, query.Cursor)
+		data, err := s.query(ctx, sql)
+		if err != nil {
+			return nil, err
+		}
+		events, err = decodeEventRows(data)
+		if err != nil {
+			return nil, err
+		}
+		if len(events) >= limit || bounded {
+			break
+		}
+		span *= 2
+	}
+	return events, nil
 }
 
 // ListProxyReviewEvents reduces the seven-day TLS/QUIC/alert data set inside
@@ -261,21 +436,12 @@ func (s *ClickHouseStore) ListEvents(ctx context.Context, query Query) (EventPag
 	if err != nil {
 		return EventPage{}, err
 	}
-	total, err := s.eventCount(ctx, where)
+	total, err := s.eventPageCount(ctx, query, where)
 	if err != nil {
 		return EventPage{}, err
 	}
-	sql := fmt.Sprintf(`
-SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
-FROM normalized_events%s
-ORDER BY timestamp DESC, event_id DESC
-LIMIT %d OFFSET %d
-FORMAT JSONEachRow`, where, limit, query.Cursor)
-	data, err := s.query(ctx, sql)
-	if err != nil {
-		return EventPage{}, err
-	}
-	events, err := decodeEventRows(data)
+	query.Limit = limit
+	events, err := s.ListEventSamples(ctx, query)
 	if err != nil {
 		return EventPage{}, err
 	}
@@ -365,7 +531,7 @@ func (s *ClickHouseStore) ListEventsForActivityOverview(ctx context.Context, sen
 		clauses = append(clauses, "sensor_id = "+chQuote(sensorID))
 	}
 	sql := fmt.Sprintf(`
-SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
+SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, campus_id, observer_json, payload_json, flow_json, raw_ref_json, confidence
 FROM normalized_events
 WHERE %s
 ORDER BY timestamp DESC, event_id DESC
@@ -379,9 +545,16 @@ FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit)
 }
 
 func (s *ClickHouseStore) GetActivityOverviewWithRisks(ctx context.Context, query ActivityQuery, window time.Duration, risks map[string]risk.Snapshot) (ActivityOverview, error) {
+	return s.getActivityOverview(ctx, query, window, risks, false)
+}
+
+func (s *ClickHouseStore) getActivityOverview(ctx context.Context, query ActivityQuery, window time.Duration, risks map[string]risk.Snapshot, buckets bool) (ActivityOverview, error) {
 	windowLabel := query.Window
 	if windowLabel == "" {
 		windowLabel = "1h"
+	}
+	if query.AsOf == "" {
+		query.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	where, err := activityWhereSQL(query.SensorID, query.CampusID, query.AsOf, window)
 	if err != nil {
@@ -404,85 +577,123 @@ func (s *ClickHouseStore) GetActivityOverviewWithRisks(ctx context.Context, quer
 		RiskLevelCounts:    map[string]int{"normal": 0, "suspicious": 0, "high": 0, "confirmed": 0},
 	}
 
-	summary, err := s.activitySummary(ctx, where)
-	if err != nil {
-		return ActivityOverview{}, err
-	}
-	overview.EventCount = summary.EventCount
-	overview.ActiveIPCount = summary.ActiveIPCount
-	overview.FirstSeen = summary.FirstSeen
-	overview.LastSeen = summary.LastSeen
-	overview.AccessObjectCount, err = s.activityAccessObjectCount(ctx, where)
-	if err != nil {
-		return ActivityOverview{}, err
-	}
-
-	if overview.EventTypeCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
+	jobs := []func(context.Context) error{
+		func(ctx context.Context) error {
+			summary, err := s.activitySummary(ctx, where)
+			if err != nil {
+				return err
+			}
+			overview.EventCount, overview.ActiveIPCount, overview.FirstSeen, overview.LastSeen = summary.EventCount, summary.ActiveIPCount, summary.FirstSeen, summary.LastSeen
+			return nil
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.AccessObjectCount, err = s.activityAccessObjectCount(ctx, where)
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.EventTypeCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT type AS value, count() AS count, max(timestamp) AS last_seen
 FROM normalized_events
 WHERE %s
 GROUP BY type
 ORDER BY count DESC, last_seen DESC, value ASC
 LIMIT 20
-FORMAT JSONEachRow`, where)); err != nil {
-		return ActivityOverview{}, err
-	}
-	if overview.ProtocolCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
+FORMAT JSONEachRow`, where))
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.ProtocolCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT proto AS value, count() AS count, max(timestamp) AS last_seen
 FROM normalized_events
 WHERE %s AND proto != ''
 GROUP BY proto
 ORDER BY count DESC, last_seen DESC, value ASC
 LIMIT 20
-FORMAT JSONEachRow`, where)); err != nil {
-		return ActivityOverview{}, err
-	}
-	if overview.TopDstPorts, err = s.activityCounts(ctx, fmt.Sprintf(`
+FORMAT JSONEachRow`, where))
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopDstPorts, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT toString(dst_port) AS value, count() AS count, max(timestamp) AS last_seen
 FROM normalized_events
 WHERE %s AND dst_port > 0
 GROUP BY dst_port
 ORDER BY count DESC, last_seen DESC, value ASC
 LIMIT 20
-FORMAT JSONEachRow`, where)); err != nil {
-		return ActivityOverview{}, err
-	}
-	if overview.TopDstIPs, err = s.activityCounts(ctx, fmt.Sprintf(`
+FORMAT JSONEachRow`, where))
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopDstIPs, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT dst_ip AS value, count() AS count, max(timestamp) AS last_seen
 FROM normalized_events
 WHERE %s AND dst_ip != ''
 GROUP BY dst_ip
 ORDER BY count DESC, last_seen DESC, value ASC
 LIMIT 20
-FORMAT JSONEachRow`, where)); err != nil {
-		return ActivityOverview{}, err
-	}
-	if overview.TopSourceIPs, err = s.activityCounts(ctx, fmt.Sprintf(`
+FORMAT JSONEachRow`, where))
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopSourceIPs, err = s.activityCounts(ctx, fmt.Sprintf(`
 SELECT subject_ip AS value, count() AS count, max(timestamp) AS last_seen
 FROM normalized_events
 WHERE %s AND subject_ip != ''
 GROUP BY subject_ip
 ORDER BY count DESC, last_seen DESC, value ASC
 LIMIT 20
-FORMAT JSONEachRow`, where)); err != nil {
-		return ActivityOverview{}, err
+FORMAT JSONEachRow`, where))
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopDomains, err = s.activityDomainCounts(ctx, where, "", 20)
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopHTTPHosts, err = s.activityPayloadCounts(ctx, where, "http", "host", "", 20)
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopTLSSNI, err = s.activityPayloadCounts(ctx, where, "tls", "sni", "", 20)
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopUserAgents, err = s.activityPayloadCounts(ctx, where, "http", "user_agent", "", 20)
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopTLSFingerprints, err = s.activityTLSFingerprintCounts(ctx, where)
+			return err
+		},
+		func(ctx context.Context) error {
+			var err error
+			overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, overview.RiskLevelCounts, err = s.activityRiskIPCounts(ctx, where, risks)
+			return err
+		},
 	}
-	if overview.TopDomains, err = s.activityDomainCounts(ctx, where, "", 20); err != nil {
-		return ActivityOverview{}, err
+	if buckets {
+		riskJob := func(ctx context.Context) error {
+			source, err := activityChartFactRowsSQL(query, window, []string{"source_ip", "ip_domain"})
+			if err != nil {
+				return err
+			}
+			overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, overview.RiskLevelCounts, err = s.activityRiskIPCounts(ctx, where, risks, source)
+			return err
+		}
+		jobs = []func(context.Context) error{func(ctx context.Context) error { return s.populateActivityChartBuckets(ctx, query, window, &overview) }, riskJob}
 	}
-	if overview.TopHTTPHosts, err = s.activityPayloadCounts(ctx, where, "http", "host", "", 20); err != nil {
-		return ActivityOverview{}, err
-	}
-	if overview.TopTLSSNI, err = s.activityPayloadCounts(ctx, where, "tls", "sni", "", 20); err != nil {
-		return ActivityOverview{}, err
-	}
-	if overview.TopUserAgents, err = s.activityPayloadCounts(ctx, where, "http", "user_agent", "", 20); err != nil {
-		return ActivityOverview{}, err
-	}
-	if overview.TopTLSFingerprints, err = s.activityTLSFingerprintCounts(ctx, where); err != nil {
-		return ActivityOverview{}, err
-	}
-	if overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, overview.RiskLevelCounts, err = s.activityRiskIPCounts(ctx, where, risks); err != nil {
+	if err := runActivityQueries(ctx, jobs); err != nil {
 		return ActivityOverview{}, err
 	}
 	return overview, nil
@@ -490,12 +701,12 @@ FORMAT JSONEachRow`, where)); err != nil {
 
 func (s *ClickHouseStore) GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error) {
 	sql := fmt.Sprintf(`
-SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, observer_json, payload_json, flow_json, raw_ref_json, confidence
+SELECT timestamp, event_id, schema_version, source, source_event_type, type, subject_ip, campus_id, observer_json, payload_json, flow_json, raw_ref_json, confidence
 FROM normalized_events
 WHERE event_id = %s
 ORDER BY timestamp DESC
 LIMIT 1
-FORMAT JSONEachRow`, chQuote(eventID))
+SETTINGS max_threads=1,max_block_size=8192,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, chQuote(eventID))
 	data, err := s.query(ctx, sql)
 	if err != nil {
 		return normalized.Event{}, false, err
@@ -515,12 +726,32 @@ func (s *ClickHouseStore) ListIngestDiagnostics(ctx context.Context, query Query
 	if limit == 0 {
 		limit = 50
 	}
+	clauses := []string{}
+	if query.SensorID != "" {
+		clauses = append(clauses, "sensor_id = "+chQuote(query.SensorID))
+	}
+	if query.DiagnosticStage != "" {
+		clauses = append(clauses, "stage = "+chQuote(query.DiagnosticStage))
+	}
+	if query.DiagnosticType != "" {
+		clauses = append(clauses, "type = "+chQuote(query.DiagnosticType))
+	}
+	if query.From != "" {
+		if _, err := optionalTime(query.From); err != nil {
+			return nil, err
+		}
+		clauses = append(clauses, "timestamp >= parseDateTime64BestEffort("+chQuote(query.From)+")")
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
 	sql := fmt.Sprintf(`
 SELECT timestamp, diagnostic_id, schema_version, sensor_id, collector_kind, collector_version, interface_name, stage, type, severity, summary, counters_json, by_type_json, raw_ref_json, details_json
-FROM ingest_diagnostics
+FROM ingest_diagnostics%s
 ORDER BY timestamp DESC, diagnostic_id DESC
 LIMIT %d
-FORMAT JSONEachRow`, limit)
+FORMAT JSONEachRow`, where, limit)
 	data, err := s.query(ctx, sql)
 	if err != nil {
 		return nil, err
@@ -622,7 +853,7 @@ type activitySummaryRow struct {
 }
 
 func (s *ClickHouseStore) activitySummary(ctx context.Context, where string) (activitySummaryRow, error) {
-	data, err := s.query(ctx, fmt.Sprintf(`
+	data, err := s.activityFeatureQuery(ctx, fmt.Sprintf(`
 SELECT count() AS event_count, uniqExact(subject_ip) AS active_ip_count, minOrNull(timestamp) AS first_seen, maxOrNull(timestamp) AS last_seen
 FROM normalized_events
 WHERE %s
@@ -653,7 +884,7 @@ FORMAT JSONEachRow`, where))
 }
 
 func (s *ClickHouseStore) activityAccessObjectCount(ctx context.Context, where string) (int, error) {
-	data, err := s.query(ctx, fmt.Sprintf(`
+	data, err := s.activityFeatureQuery(ctx, fmt.Sprintf(`
 SELECT uniqExact(value) AS count
 FROM (
   SELECT multiIf(type = 'dns', JSONExtractString(payload_json, 'query'), type = 'http', JSONExtractString(payload_json, 'host'), type = 'tls', JSONExtractString(payload_json, 'sni'), '') AS value
@@ -669,7 +900,7 @@ FORMAT JSONEachRow`, where))
 }
 
 func (s *ClickHouseStore) activityCounts(ctx context.Context, sql string) ([]ActivityCount, error) {
-	data, err := s.query(ctx, sql)
+	data, err := s.activityFeatureQuery(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -725,7 +956,7 @@ LIMIT 20
 FORMAT JSONEachRow`, where, where))
 }
 
-func (s *ClickHouseStore) activityRiskIPCounts(ctx context.Context, where string, risks map[string]risk.Snapshot) ([]ActivityIPSummary, int, map[string]int, error) {
+func (s *ClickHouseStore) activityRiskIPCounts(ctx context.Context, where string, risks map[string]risk.Snapshot, sources ...string) ([]ActivityIPSummary, int, map[string]int, error) {
 	levelCounts := map[string]int{"normal": 0, "suspicious": 0, "high": 0, "confirmed": 0}
 	riskIPs := make([]string, 0, len(risks))
 	for ip, snapshot := range risks {
@@ -741,13 +972,17 @@ func (s *ClickHouseStore) activityRiskIPCounts(ctx context.Context, where string
 	for _, ip := range riskIPs {
 		quotedIPs = append(quotedIPs, chQuote(ip))
 	}
-	data, err := s.query(ctx, fmt.Sprintf(`
+	countSQL := fmt.Sprintf(`
 SELECT subject_ip AS value, count() AS count, max(timestamp) AS last_seen
 FROM normalized_events
 WHERE %s AND subject_ip IN (%s)
 GROUP BY subject_ip
 ORDER BY count DESC, last_seen DESC, value ASC
-FORMAT JSONEachRow`, where, strings.Join(quotedIPs, ",")))
+FORMAT JSONEachRow`, where, strings.Join(quotedIPs, ","))
+	if len(sources) > 0 {
+		countSQL = "SELECT value,sum(event_count) AS count,max(last_seen) AS last_seen FROM(" + sources[0] + ") WHERE dimension='source_ip' AND value IN(" + strings.Join(quotedIPs, ",") + ") GROUP BY value ORDER BY count DESC,last_seen DESC,value FORMAT JSONEachRow"
+	}
+	data, err := s.activityFeatureQuery(ctx, countSQL)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -758,16 +993,12 @@ FORMAT JSONEachRow`, where, strings.Join(quotedIPs, ",")))
 	items := make([]ActivityIPSummary, 0, len(counts))
 	for _, count := range counts {
 		snapshot := risks[count.Value]
-		domains, err := s.activityDomainCounts(ctx, where, count.Value, 5)
-		if err != nil {
-			return nil, 0, nil, err
-		}
 		items = append(items, ActivityIPSummary{
 			IP:         count.Value,
 			EventCount: count.Count,
 			RiskLevel:  snapshot.Level,
 			Score:      snapshot.Score,
-			TopDomains: domains,
+			TopDomains: []ActivityCount{},
 			LastSeen:   count.LastSeen,
 		})
 		levelCounts[snapshot.Level]++
@@ -790,6 +1021,38 @@ FORMAT JSONEachRow`, where, strings.Join(quotedIPs, ",")))
 	if len(items) > 50 {
 		items = items[:50]
 	}
+	if len(items) > 0 {
+		ips := make([]string, len(items))
+		for i, item := range items {
+			ips[i] = chQuote(item.IP)
+		}
+		query := fmt.Sprintf(`SELECT subject_ip AS ip,value,count() AS count,max(timestamp) AS last_seen FROM (SELECT subject_ip,timestamp,multiIf(type='dns',JSONExtractString(payload_json,'query'),type='http',JSONExtractString(payload_json,'host'),type='tls',JSONExtractString(payload_json,'sni'),'') AS value FROM normalized_events WHERE %s AND subject_ip IN (%s)) WHERE value!='' GROUP BY subject_ip,value ORDER BY subject_ip,count DESC,last_seen DESC,value LIMIT 5 BY subject_ip FORMAT JSONEachRow`, where, strings.Join(ips, ","))
+		if len(sources) > 0 {
+			query = "SELECT ip,domain AS value,sum(event_count) AS count,max(last_seen) AS last_seen FROM(SELECT JSONExtractString(p.value,1) AS ip,JSONExtractString(p.value,2) AS domain,event_count,last_seen FROM(" + sources[0] + ") AS p WHERE p.dimension='ip_domain') WHERE ip IN(" + strings.Join(ips, ",") + ") GROUP BY ip,domain ORDER BY ip,count DESC,last_seen DESC,value LIMIT 5 BY ip FORMAT JSONEachRow"
+		}
+		raw, err := s.activityFeatureQuery(ctx, query)
+		if err != nil {
+			return nil, 0, nil, err
+		}
+		var rows []struct {
+			IP       string `json:"ip"`
+			Value    string `json:"value"`
+			Count    int    `json:"count"`
+			LastSeen string `json:"last_seen"`
+		}
+		if err = decodeJSONEachRow(raw, &rows); err != nil {
+			return nil, 0, nil, err
+		}
+		domains := map[string][]ActivityCount{}
+		for _, row := range rows {
+			domains[row.IP] = append(domains[row.IP], ActivityCount{Value: row.Value, Count: row.Count, LastSeen: normalizeClickHouseTimestamp(row.LastSeen)})
+		}
+		for i := range items {
+			if values, ok := domains[items[i].IP]; ok {
+				items[i].TopDomains = values
+			}
+		}
+	}
 	return items, total, levelCounts, nil
 }
 
@@ -799,12 +1062,39 @@ func (s *ClickHouseStore) exec(ctx context.Context, sql string) error {
 }
 
 func (s *ClickHouseStore) query(ctx context.Context, sql string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.dsn, strings.NewReader(sql))
+	return s.queryWithSettings(ctx, sql, nil)
+}
+
+func (s *ClickHouseStore) queryWithSettings(ctx context.Context, sql string, settings map[string]string) ([]byte, error) {
+	requestURL := s.dsn
+	trace := queryTraceID(ctx)
+	if trace != "" || len(settings) > 0 {
+		parsed, err := url.Parse(requestURL)
+		if err != nil {
+			return nil, err
+		}
+		params := parsed.Query()
+		if trace != "" {
+			params.Set("query_id", trace)
+		}
+		for key, value := range settings {
+			params.Set(key, value)
+		}
+		parsed.RawQuery = params.Encode()
+		requestURL = parsed.String()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, strings.NewReader(sql))
 	if err != nil {
 		return nil, err
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// net/http wraps transport failures with the full URL, which can contain
+		// DSN credentials. Keep the cause for retries without persisting the URL.
+		var transportError *url.Error
+		if errors.As(err, &transportError) {
+			return nil, fmt.Errorf("clickhouse transport: %w", transportError.Err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -822,7 +1112,7 @@ func (s *ClickHouseStore) eventCount(ctx context.Context, where string) (int, er
 	data, err := s.query(ctx, fmt.Sprintf(`
 SELECT count() AS count
 FROM normalized_events%s
-FORMAT JSONEachRow`, where))
+SETTINGS max_threads=1,max_block_size=8192,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where))
 	if err != nil {
 		return 0, err
 	}
@@ -975,6 +1265,7 @@ func decodeEventRows(data []byte) ([]normalized.Event, error) {
 			SourceEventType string  `json:"source_event_type"`
 			Type            string  `json:"type"`
 			SubjectIP       string  `json:"subject_ip"`
+			CampusID        string  `json:"campus_id"`
 			ObserverJSON    string  `json:"observer_json"`
 			PayloadJSON     string  `json:"payload_json"`
 			FlowJSON        string  `json:"flow_json"`
@@ -1000,6 +1291,9 @@ func decodeEventRows(data []byte) ([]normalized.Event, error) {
 		}
 		if row.SubjectIP != "" {
 			event.Subject["ip"] = row.SubjectIP
+		}
+		if row.CampusID != "" {
+			event.Subject["campus_id"] = row.CampusID
 		}
 		_ = json.Unmarshal([]byte(row.ObserverJSON), &event.Observer)
 		_ = json.Unmarshal([]byte(row.PayloadJSON), &event.Payload)
@@ -1173,7 +1467,11 @@ func clickHouseTimestamp(raw string) string {
 	if err != nil {
 		return raw
 	}
-	return timestamp.Format("2006-01-02 15:04:05.000000")
+	// ClickHouse columns use Asia/Shanghai. Formatting an RFC3339 value without
+	// first converting its instant to that location silently shifts UTC Zeek
+	// events by eight hours when the zone suffix is removed.
+	shanghai := time.FixedZone("Asia/Shanghai", 8*60*60)
+	return timestamp.In(shanghai).Format("2006-01-02 15:04:05.000000")
 }
 
 func normalizeClickHouseTimestamp(raw string) string {

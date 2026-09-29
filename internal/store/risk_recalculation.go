@@ -126,20 +126,21 @@ func (s *PostgresStore) currentRiskSnapshots(ctx context.Context) (map[string]ri
 	for _, item := range ipItems {
 		items[riskKey(item)] = item
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT subject_type,subject_id,COALESCE(account_id,''),COALESCE(endpoint_id,''),COALESCE(host(ip),''),score,level,confidence,"window",evidence_ids,summary,recommended_action,updated_at,COALESCE(assessment_level,level),COALESCE(review_disposition,''),automation_eligible,automation_blockers FROM subject_risk_snapshots`)
+	rows, err := s.db.QueryContext(ctx, `SELECT subject_type,subject_id,COALESCE(account_id,''),COALESCE(endpoint_id,''),COALESCE(host(ip),''),score,level,confidence,"window",evidence_ids,summary,recommended_action,updated_at,COALESCE(assessment_level,level),COALESCE(review_disposition,''),automation_eligible,automation_blockers,detection_basis,independent_signal_groups FROM subject_risk_snapshots`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item risk.Snapshot
-		var evidenceIDs, blockers []byte
+		var evidenceIDs, blockers, signalGroups []byte
 		var updated time.Time
-		if err := rows.Scan(&item.SubjectType, &item.SubjectID, &item.AccountID, &item.EndpointID, &item.IP, &item.Score, &item.Level, &item.Confidence, &item.Window, &evidenceIDs, &item.Summary, &item.RecommendedAction, &updated, &item.AssessmentLevel, &item.ReviewDisposition, &item.AutomationEligible, &blockers); err != nil {
+		if err := rows.Scan(&item.SubjectType, &item.SubjectID, &item.AccountID, &item.EndpointID, &item.IP, &item.Score, &item.Level, &item.Confidence, &item.Window, &evidenceIDs, &item.Summary, &item.RecommendedAction, &updated, &item.AssessmentLevel, &item.ReviewDisposition, &item.AutomationEligible, &blockers, &item.DetectionBasis, &signalGroups); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(evidenceIDs, &item.EvidenceIDs)
 		_ = json.Unmarshal(blockers, &item.AutomationBlockers)
+		_ = json.Unmarshal(signalGroups, &item.IndependentSignalGroups)
 		item.UpdatedAt = formatPostgresTime(updated)
 		items[riskKey(item)] = item
 	}

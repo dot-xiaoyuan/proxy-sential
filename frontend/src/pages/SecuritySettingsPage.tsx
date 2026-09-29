@@ -153,7 +153,7 @@ export function SecuritySettingsPage() {
     {
       title: "版本",
       dataIndex: "ruleset_version",
-      render: (value) => <span className="nowrap-cell">{value || "-"}</span>,
+      render: (value) => <span className="nowrap-cell">{value || ""}</span>,
     },
     {
       title: "有效期",

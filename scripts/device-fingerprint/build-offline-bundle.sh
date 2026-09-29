@@ -16,6 +16,11 @@ if [[ ! "$nextdns_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "无法解析 NextDNS main 提交 SHA" >&2
   exit 1
 fi
-GOTOOLCHAIN=local go run ./cmd/proxy-sentinel device-fingerprint build --uap-sha "$uap_sha" --nextdns-sha "$nextdns_sha" --output "$output"
+hagezi_sha=$(git ls-remote https://github.com/hagezi/dns-blocklists.git refs/heads/main | awk 'NR == 1 {print $1}')
+if [[ ! "$hagezi_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "无法解析 HaGeZi main 提交 SHA" >&2
+  exit 1
+fi
+GOTOOLCHAIN=local go run ./cmd/proxy-sentinel device-fingerprint build --hagezi-sha "$hagezi_sha" --uap-sha "$uap_sha" --nextdns-sha "$nextdns_sha" --output "$output"
 GOTOOLCHAIN=local go run ./cmd/proxy-sentinel device-fingerprint verify --bundle "$output"
 echo "离线设备特征包已生成：$output"

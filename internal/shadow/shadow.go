@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,58 +23,79 @@ import (
 )
 
 type Options struct {
-	EVEPath          string
-	ZeekDHCPPath     string
-	ZeekSoftwarePath string
-	StatePath        string
-	OutDir           string
-	SensorID         string
-	Window           time.Duration
-	ListMinLevel     string
-	ListLimit        int
-	Retention        time.Duration
-	StorageMode      string
-	PostgresDSN      string
-	ClickHouseDSN    string
-	StoreTimeout     time.Duration
+	CollectorInstanceID string
+	EVEPath             string
+	ZeekDHCPPath        string
+	ZeekSoftwarePath    string
+	ZeekLogs            map[string]string
+	StatePath           string
+	OutDir              string
+	SensorID            string
+	Window              time.Duration
+	ListMinLevel        string
+	ListLimit           int
+	Retention           time.Duration
+	StorageMode         string
+	PostgresDSN         string
+	ClickHouseDSN       string
+	StoreTimeout        time.Duration
 }
 
 type State struct {
-	EVEPath            string `json:"eve_path"`
-	Offset             int64  `json:"offset"`
-	ZeekDHCPPath       string `json:"zeek_dhcp_path,omitempty"`
-	ZeekDHCPOffset     int64  `json:"zeek_dhcp_offset,omitempty"`
-	ZeekSoftwarePath   string `json:"zeek_software_path,omitempty"`
-	ZeekSoftwareOffset int64  `json:"zeek_software_offset,omitempty"`
-	UpdatedAt          string `json:"updated_at"`
+	EVEPath            string                 `json:"eve_path"`
+	Offset             int64                  `json:"offset"`
+	ZeekDHCPPath       string                 `json:"zeek_dhcp_path,omitempty"`
+	ZeekDHCPOffset     int64                  `json:"zeek_dhcp_offset,omitempty"`
+	ZeekSoftwarePath   string                 `json:"zeek_software_path,omitempty"`
+	ZeekSoftwareOffset int64                  `json:"zeek_software_offset,omitempty"`
+	Sources            map[string]SourceState `json:"sources,omitempty"`
+	UpdatedAt          string                 `json:"updated_at"`
+}
+
+type SourceState struct {
+	Path   string `json:"path"`
+	Offset int64  `json:"offset"`
+}
+
+type SourceSummary struct {
+	Path           string `json:"path"`
+	PreviousOffset int64  `json:"previous_offset"`
+	NewOffset      int64  `json:"new_offset"`
+	Truncated      bool   `json:"truncated"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason,omitempty"`
 }
 
 type RunSummary struct {
-	StartedAt              string         `json:"started_at"`
-	FinishedAt             string         `json:"finished_at"`
-	EVEPath                string         `json:"eve_path"`
-	ZeekDHCPPath           string         `json:"zeek_dhcp_path,omitempty"`
-	ZeekSoftwarePath       string         `json:"zeek_software_path,omitempty"`
-	ZeekStatus             string         `json:"zeek_status,omitempty"`
-	ZeekReason             string         `json:"zeek_reason,omitempty"`
-	RunDir                 string         `json:"run_dir"`
-	PreviousOffset         int64          `json:"previous_offset"`
-	NewOffset              int64          `json:"new_offset"`
-	ZeekPrevOffset         int64          `json:"zeek_previous_offset,omitempty"`
-	ZeekNewOffset          int64          `json:"zeek_new_offset,omitempty"`
-	ZeekSoftwarePrevOffset int64          `json:"zeek_software_previous_offset,omitempty"`
-	ZeekSoftwareNewOffset  int64          `json:"zeek_software_new_offset,omitempty"`
-	Truncated              bool           `json:"truncated"`
-	ZeekTruncated          bool           `json:"zeek_truncated,omitempty"`
-	ZeekSoftwareTruncated  bool           `json:"zeek_software_truncated,omitempty"`
-	Files                  map[string]any `json:"files"`
-	Normalized             suricata.Stats `json:"normalized"`
-	ZeekNormalized         zeek.Stats     `json:"zeek_normalized,omitempty"`
-	EvidenceStats          evidence.Stats `json:"evidence_stats"`
-	EvidenceCount          int            `json:"evidence_count"`
-	RiskCount              int            `json:"risk_count"`
-	RiskListCount          int            `json:"risk_list_count"`
-	StorageMode            string         `json:"storage_mode"`
+	StartedAt                string                   `json:"started_at"`
+	FinishedAt               string                   `json:"finished_at"`
+	EVEPath                  string                   `json:"eve_path"`
+	ZeekDHCPPath             string                   `json:"zeek_dhcp_path,omitempty"`
+	ZeekSoftwarePath         string                   `json:"zeek_software_path,omitempty"`
+	ZeekStatus               string                   `json:"zeek_status,omitempty"`
+	ZeekReason               string                   `json:"zeek_reason,omitempty"`
+	RunDir                   string                   `json:"run_dir"`
+	PreviousOffset           int64                    `json:"previous_offset"`
+	NewOffset                int64                    `json:"new_offset"`
+	ZeekPrevOffset           int64                    `json:"zeek_previous_offset,omitempty"`
+	ZeekNewOffset            int64                    `json:"zeek_new_offset,omitempty"`
+	ZeekSoftwarePrevOffset   int64                    `json:"zeek_software_previous_offset,omitempty"`
+	ZeekSoftwareNewOffset    int64                    `json:"zeek_software_new_offset,omitempty"`
+	Truncated                bool                     `json:"truncated"`
+	ZeekTruncated            bool                     `json:"zeek_truncated,omitempty"`
+	ZeekSoftwareTruncated    bool                     `json:"zeek_software_truncated,omitempty"`
+	ZeekSources              map[string]SourceSummary `json:"zeek_sources,omitempty"`
+	Files                    map[string]any           `json:"files"`
+	Normalized               suricata.Stats           `json:"normalized"`
+	ZeekNormalized           zeek.Stats               `json:"zeek_normalized,omitempty"`
+	EvidenceStats            evidence.Stats           `json:"evidence_stats"`
+	EvidenceCount            int                      `json:"evidence_count"`
+	RiskCount                int                      `json:"risk_count"`
+	RiskListCount            int                      `json:"risk_list_count"`
+	RouterEvidenceCount      int                      `json:"router_evidence_count"`
+	RouterAssessmentCount    int                      `json:"router_assessment_count"`
+	RouterSourceDistribution map[string]int           `json:"router_source_distribution,omitempty"`
+	StorageMode              string                   `json:"storage_mode"`
 }
 
 type zeekAppendResult struct {
@@ -131,23 +153,77 @@ func Run(opts Options) (RunSummary, error) {
 	evidencePath := filepath.Join(runDir, "evidence.json")
 	riskPath := filepath.Join(runDir, "risk-snapshots.json")
 	riskListPath := filepath.Join(runDir, "risk-list-suspicious.json")
+	routerEvidencePath := filepath.Join(runDir, "router-evidence.json")
+	routerAssessmentsPath := filepath.Join(runDir, "router-assessments.json")
 	summaryPath := filepath.Join(runDir, "run-summary.json")
 
-	normalizedStats, err := writeNormalized(file, previousOffset, stat.Size(), normalizedPath, opts.SensorID)
+	normalizedStats, err := writeNormalized(file, previousOffset, stat.Size(), normalizedPath, opts.SensorID, opts.CollectorInstanceID)
 	if err != nil {
 		return RunSummary{}, err
 	}
-	zeekDHCPResult, err := appendZeekLog(opts.ZeekDHCPPath, state.ZeekDHCPPath, state.ZeekDHCPOffset, normalizedPath, opts.SensorID, "dhcp")
+	zeekPaths := map[string]string{}
+	for kind, path := range opts.ZeekLogs {
+		zeekPaths[strings.ToLower(strings.TrimSpace(kind))] = path
+	}
+	if opts.ZeekDHCPPath != "" {
+		zeekPaths["dhcp"] = opts.ZeekDHCPPath
+	}
+	if opts.ZeekSoftwarePath != "" {
+		zeekPaths["software"] = opts.ZeekSoftwarePath
+	}
+	if state.Sources == nil {
+		state.Sources = map[string]SourceState{}
+	}
+	if _, ok := state.Sources["dhcp"]; !ok && state.ZeekDHCPPath != "" {
+		state.Sources["dhcp"] = SourceState{Path: state.ZeekDHCPPath, Offset: state.ZeekDHCPOffset}
+	}
+	if _, ok := state.Sources["software"]; !ok && state.ZeekSoftwarePath != "" {
+		state.Sources["software"] = SourceState{Path: state.ZeekSoftwarePath, Offset: state.ZeekSoftwareOffset}
+	}
+	kinds := make([]string, 0, len(zeekPaths))
+	for kind := range zeekPaths {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	zeekResults := map[string]zeekAppendResult{}
+	zeekStats := zeek.Stats{ByType: map[string]int{}}
+	for _, kind := range kinds {
+		previous := state.Sources[kind]
+		result, appendErr := appendZeekLog(zeekPaths[kind], previous.Path, previous.Offset, normalizedPath, opts.SensorID, kind)
+		if appendErr != nil {
+			return RunSummary{}, appendErr
+		}
+		zeekResults[kind] = result
+		zeekStats = mergeZeekStats(zeekStats, result.Stats)
+		normalizedStats = mergeStats(normalizedStats, result.Stats)
+	}
+	statusInputs := make([]zeekAppendResult, 0, len(zeekResults))
+	for _, kind := range kinds {
+		statusInputs = append(statusInputs, zeekResults[kind])
+	}
+	zeekStatus, zeekReason := aggregateZeekStatus(statusInputs...)
+	zeekDHCPResult, zeekSoftwareResult := zeekResults["dhcp"], zeekResults["software"]
+
+	routerEvents, err := readNormalizedEventsFile(normalizedPath)
 	if err != nil {
 		return RunSummary{}, err
 	}
-	zeekSoftwareResult, err := appendZeekLog(opts.ZeekSoftwarePath, state.ZeekSoftwarePath, state.ZeekSoftwareOffset, normalizedPath, opts.SensorID, "software")
+	routerResult, err := evidence.AnalyzeRouters(routerEvents, evidence.RouterOptions{AsOf: time.Now().UTC(), ShadowMode: true})
 	if err != nil {
 		return RunSummary{}, err
 	}
-	zeekStats := mergeZeekStats(zeekDHCPResult.Stats, zeekSoftwareResult.Stats)
-	normalizedStats = mergeStats(normalizedStats, zeekStats)
-	zeekStatus, zeekReason := aggregateZeekStatus(zeekDHCPResult, zeekSoftwareResult)
+	if err := writeJSONFile(routerEvidencePath, map[string]any{"rule_version": routerResult.RuleVersion, "shadow_mode": true, "evidence": routerResult.Evidence}); err != nil {
+		return RunSummary{}, err
+	}
+	if err := writeJSONFile(routerAssessmentsPath, map[string]any{"rule_version": routerResult.RuleVersion, "shadow_mode": true, "assessments": routerResult.Assessments}); err != nil {
+		return RunSummary{}, err
+	}
+	routerSources := map[string]int{}
+	for _, item := range routerResult.Evidence {
+		if item.SourceFamily != "derived" {
+			routerSources[item.SourceFamily]++
+		}
+	}
 
 	evidenceResult, err := evidence.AnalyzeFiles(normalizedPath, evidencePath, evidence.Options{Window: opts.Window})
 	if err != nil {
@@ -163,6 +239,11 @@ func Run(opts Options) (RunSummary, error) {
 	}
 
 	finished := time.Now()
+	zeekSourceSummary := map[string]SourceSummary{}
+	for _, kind := range kinds {
+		item := zeekResults[kind]
+		zeekSourceSummary[kind] = SourceSummary{Path: zeekPaths[kind], PreviousOffset: item.PreviousOffset, NewOffset: item.NewOffset, Truncated: item.Truncated, Status: item.Status, Reason: item.Reason}
+	}
 	summary := RunSummary{
 		StartedAt:              started.Format(time.RFC3339Nano),
 		FinishedAt:             finished.Format(time.RFC3339Nano),
@@ -181,28 +262,38 @@ func Run(opts Options) (RunSummary, error) {
 		Truncated:              truncated,
 		ZeekTruncated:          zeekDHCPResult.Truncated,
 		ZeekSoftwareTruncated:  zeekSoftwareResult.Truncated,
+		ZeekSources:            zeekSourceSummary,
 		Files: map[string]any{
 			"normalized":           normalizedPath,
 			"evidence":             evidencePath,
 			"risk_snapshots":       riskPath,
 			"risk_list_suspicious": riskListPath,
+			"router_evidence":      routerEvidencePath,
+			"router_assessments":   routerAssessmentsPath,
 			"run_summary":          summaryPath,
 		},
-		Normalized:     normalizedStats,
-		ZeekNormalized: zeekStats,
-		EvidenceStats:  evidenceResult.Stats,
-		EvidenceCount:  len(evidenceResult.Evidence),
-		RiskCount:      len(riskResult.Snapshots),
-		RiskListCount:  len(riskListResult.Snapshots),
-		StorageMode:    opts.StorageMode,
+		Normalized:               normalizedStats,
+		ZeekNormalized:           zeekStats,
+		EvidenceStats:            evidenceResult.Stats,
+		EvidenceCount:            len(evidenceResult.Evidence),
+		RiskCount:                len(riskResult.Snapshots),
+		RiskListCount:            len(riskListResult.Snapshots),
+		RouterEvidenceCount:      len(routerResult.Evidence),
+		RouterAssessmentCount:    len(routerResult.Assessments),
+		RouterSourceDistribution: routerSources,
+		StorageMode:              opts.StorageMode,
 	}
 	if err := writeJSONFile(summaryPath, summary); err != nil {
 		return RunSummary{}, err
 	}
-	if err := writeStoreOutputs(opts, summary, evidenceResult, riskResult, normalizedPath); err != nil {
+	if err := writeStoreOutputs(opts, summary, evidenceResult, riskResult, routerResult, normalizedPath); err != nil {
 		return RunSummary{}, err
 	}
 
+	sources := map[string]SourceState{}
+	for _, kind := range kinds {
+		sources[kind] = SourceState{Path: zeekPaths[kind], Offset: zeekResults[kind].NewOffset}
+	}
 	state = State{
 		EVEPath:            opts.EVEPath,
 		Offset:             stat.Size(),
@@ -210,6 +301,7 @@ func Run(opts Options) (RunSummary, error) {
 		ZeekDHCPOffset:     zeekDHCPResult.NewOffset,
 		ZeekSoftwarePath:   opts.ZeekSoftwarePath,
 		ZeekSoftwareOffset: zeekSoftwareResult.NewOffset,
+		Sources:            sources,
 		UpdatedAt:          finished.Format(time.RFC3339Nano),
 	}
 	if err := writeJSONFile(opts.StatePath, state); err != nil {
@@ -244,7 +336,7 @@ func withDefaults(opts Options) Options {
 	return opts
 }
 
-func writeStoreOutputs(opts Options, summary RunSummary, evidenceResult evidence.Result, riskResult risk.BatchResult, normalizedPath string) error {
+func writeStoreOutputs(opts Options, summary RunSummary, evidenceResult evidence.Result, riskResult risk.BatchResult, routerResult evidence.RouterResult, normalizedPath string) error {
 	mode := store.Mode(opts.StorageMode)
 	if mode == "" || mode == store.ModeFile {
 		return nil
@@ -361,6 +453,11 @@ func writeStoreOutputs(opts Options, summary RunSummary, evidenceResult evidence
 	if err := writer.WriteDeviceState(ctx, run, events, riskResult.Snapshots); err != nil {
 		return err
 	}
+	if routerWriter, ok := writer.(store.RouterObservationWriter); ok {
+		if err := routerWriter.WriteRouterObservations(ctx, routerResult); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -411,7 +508,7 @@ func readNormalizedEventsFile(path string) ([]normalized.Event, error) {
 	return events, scanner.Err()
 }
 
-func writeNormalized(file *os.File, offset int64, size int64, outputPath string, sensorID string) (suricata.Stats, error) {
+func writeNormalized(file *os.File, offset int64, size int64, outputPath string, sensorID string, instances ...string) (suricata.Stats, error) {
 	output, err := os.Create(outputPath)
 	if err != nil {
 		return suricata.Stats{}, fmt.Errorf("create normalized output: %w", err)
@@ -423,7 +520,11 @@ func writeNormalized(file *os.File, offset int64, size int64, outputPath string,
 		length = 0
 	}
 	section := io.NewSectionReader(file, offset, length)
-	stats, err := suricata.Convert(section, output, suricata.Options{SensorID: sensorID})
+	instance := ""
+	if len(instances) > 0 {
+		instance = instances[0]
+	}
+	stats, err := suricata.Convert(section, output, suricata.Options{SensorID: sensorID, CollectorInstanceID: instance})
 	if err != nil {
 		return stats, err
 	}
@@ -488,7 +589,7 @@ func appendZeekLog(path string, statePath string, stateOffset int64, outputPath 
 			reader = io.MultiReader(bytes.NewReader(header), section)
 		}
 	}
-	stats, err := zeek.Convert(reader, output, zeek.Options{SensorID: sensorID})
+	stats, err := zeek.Convert(reader, output, zeek.Options{SensorID: sensorID, LogKind: logName})
 	result.Stats = stats
 	if err != nil {
 		return result, err

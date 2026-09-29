@@ -1,0 +1,9 @@
+{
+  "POST /organization/{kind}": [
+    {
+      "field": "name",
+      "op": "eq",
+      "value": "Isolated synchronous config"
+    }
+  ]
+}

@@ -14,15 +14,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"proxy-sentinel/internal/actionreceipt"
 	"reflect"
 	"sort"
 	"strings"
 	"time"
 
+	"proxy-sentinel/internal/srunapi"
 	"proxy-sentinel/internal/store"
 )
 
 type ActionConnector struct {
+	CertificatePEM        string            `json:"certificate_pem,omitempty"`
+	ConnectorType         string            `json:"connector_type"`
 	ConnectorID           string            `json:"connector_id"`
 	Name                  string            `json:"name"`
 	EndpointURL           string            `json:"endpoint_url"`
@@ -42,34 +46,35 @@ type ActionConnector struct {
 }
 
 type EnforcementAction struct {
-	ActionID        string   `json:"action_id"`
-	IdempotencyKey  string   `json:"idempotency_key"`
-	CaseID          string   `json:"case_id,omitempty"`
-	ConnectorID     string   `json:"connector_id"`
-	ActionType      string   `json:"action_type"`
-	SubjectType     string   `json:"subject_type"`
-	SubjectID       string   `json:"subject_id"`
-	IP              string   `json:"ip,omitempty"`
-	AccountID       string   `json:"account_id,omitempty"`
-	EndpointID      string   `json:"endpoint_id,omitempty"`
-	SessionID       string   `json:"session_id,omitempty"`
-	CampusID        string   `json:"campus_id,omitempty"`
-	Status          string   `json:"status"`
-	Mode            string   `json:"mode"`
-	DurationSeconds int      `json:"duration_seconds"`
-	EvidenceIDs     []string `json:"evidence_ids"`
-	RulesetVersion  string   `json:"ruleset_version,omitempty"`
-	RemoteActionID  string   `json:"remote_action_id,omitempty"`
-	RetryCount      int      `json:"retry_count"`
-	ParentActionID  string   `json:"parent_action_id,omitempty"`
-	NextAttemptAt   string   `json:"next_attempt_at,omitempty"`
-	CooldownUntil   string   `json:"cooldown_until,omitempty"`
-	ExpiresAt       string   `json:"expires_at,omitempty"`
-	LastError       string   `json:"last_error,omitempty"`
-	CreatedBy       string   `json:"created_by"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
-	Blockers        []string `json:"blockers,omitempty"`
+	PolicyParameters PolicyActionParameters `json:"policy_parameters,omitempty"`
+	ActionID         string                 `json:"action_id"`
+	IdempotencyKey   string                 `json:"idempotency_key"`
+	CaseID           string                 `json:"case_id,omitempty"`
+	ConnectorID      string                 `json:"connector_id"`
+	ActionType       string                 `json:"action_type"`
+	SubjectType      string                 `json:"subject_type"`
+	SubjectID        string                 `json:"subject_id"`
+	IP               string                 `json:"ip,omitempty"`
+	AccountID        string                 `json:"account_id,omitempty"`
+	EndpointID       string                 `json:"endpoint_id,omitempty"`
+	SessionID        string                 `json:"session_id,omitempty"`
+	CampusID         string                 `json:"campus_id,omitempty"`
+	Status           string                 `json:"status"`
+	Mode             string                 `json:"mode"`
+	DurationSeconds  int                    `json:"duration_seconds"`
+	EvidenceIDs      []string               `json:"evidence_ids"`
+	RulesetVersion   string                 `json:"ruleset_version,omitempty"`
+	RemoteActionID   string                 `json:"remote_action_id,omitempty"`
+	RetryCount       int                    `json:"retry_count"`
+	ParentActionID   string                 `json:"parent_action_id,omitempty"`
+	NextAttemptAt    string                 `json:"next_attempt_at,omitempty"`
+	CooldownUntil    string                 `json:"cooldown_until,omitempty"`
+	ExpiresAt        string                 `json:"expires_at,omitempty"`
+	LastError        string                 `json:"last_error,omitempty"`
+	CreatedBy        string                 `json:"created_by"`
+	CreatedAt        string                 `json:"created_at"`
+	UpdatedAt        string                 `json:"updated_at"`
+	Blockers         []string               `json:"blockers,omitempty"`
 }
 
 type executeActionRequest struct {
@@ -82,14 +87,16 @@ type executeActionRequest struct {
 }
 
 type connectorRequest struct {
-	ConnectorID   string            `json:"connector_id"`
-	Name          string            `json:"name"`
-	EndpointURL   string            `json:"endpoint_url"`
-	ActionMapping map[string]string `json:"action_mapping"`
-	Mode          string            `json:"mode"`
-	Enabled       bool              `json:"enabled"`
-	ShadowReady   bool              `json:"shadow_ready"`
-	Secret        string            `json:"secret"`
+	CertificatePEM *string           `json:"certificate_pem,omitempty"`
+	ConnectorType  string            `json:"connector_type"`
+	ConnectorID    string            `json:"connector_id"`
+	Name           string            `json:"name"`
+	EndpointURL    string            `json:"endpoint_url"`
+	ActionMapping  map[string]string `json:"action_mapping"`
+	Mode           string            `json:"mode"`
+	Enabled        bool              `json:"enabled"`
+	ShadowReady    bool              `json:"shadow_ready"`
+	Secret         string            `json:"secret"`
 }
 
 func (s *Server) startActionWorker() {
@@ -98,12 +105,27 @@ func (s *Server) startActionWorker() {
 		defer ticker.Stop()
 		s.processDueActions(time.Now().UTC())
 		for now := range ticker.C {
+			s.processAccountPolicies(now.UTC())
 			s.processDueActions(now.UTC())
 		}
 	}()
 }
 
 func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
+	if id, ok := managedIdentityPath(r.URL.Path); ok {
+		s.handleManagedIdentity(w, r, id)
+		return
+	}
+	if is4KDatabasePath(r.URL.Path) {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		s.handle4KDatabase(w, r, parts[len(parts)-2])
+		return
+	}
+
+	if r.Method == http.MethodGet && s.operations.db != nil && !s.operations.readView {
+		s.actionReadPostgres(w, r)
+		return
+	}
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/actions"), "/")
 	if rest == "callback" && r.Method == http.MethodPost {
 		s.handleActionCallback(w, r)
@@ -126,6 +148,15 @@ func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(rest, "/")
+	if r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "connectors" && parts[2] == "account-preview" {
+		s.handleNativeAccountPreview(w, r, parts[1])
+		return
+	}
+
+	if r.Method == http.MethodGet && len(parts) == 2 && parts[1] == "native-observations" {
+		s.handleNativeActionObservations(w, r, parts[0])
+		return
+	}
 	if r.Method == http.MethodPost && len(parts) == 3 && parts[0] == "connectors" && parts[2] == "test" {
 		s.handleConnectorTest(w, r, parts[1])
 		return
@@ -149,6 +180,10 @@ func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && s.operations.db != nil && !s.operations.readView {
+		s.saveConnectorPostgres(w, r)
+		return
+	}
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
 	if r.Method == http.MethodGet {
@@ -180,16 +215,47 @@ func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	existing := s.operations.doc.Connectors[request.ConnectorID]
+	if request.ConnectorType == "" {
+		request.ConnectorType = existing.ConnectorType
+		if request.ConnectorType == "" {
+			request.ConnectorType = "hmac"
+		}
+	}
+	if request.ConnectorType != "hmac" && request.ConnectorType != "srun4k" {
+		writeError(w, 400, "bad_connector_type", "connector_type must be hmac or srun4k")
+		return
+	}
+	if request.ConnectorType == "srun4k" && request.Secret != "" {
+		writeError(w, 400, "native_connector_secret_not_supported", "4K uses database authorization instead of HMAC")
+		return
+	}
+
+	certificate := existing.CertificatePEM
+	if request.CertificatePEM != nil {
+		certificate = strings.TrimSpace(*request.CertificatePEM)
+	}
+	if certificate != "" {
+		if request.ConnectorType != "srun4k" || endpoint.Scheme != "https" {
+			writeError(w, 400, "bad_connector_certificate", "证书固定信任仅适用于HTTPS原生4K连接器")
+			return
+		}
+		client, err := srunapi.NewCertificatePinnedClient([]byte(certificate))
+		if err != nil {
+			writeError(w, 400, "bad_connector_certificate", "请提供一张有效的PEM格式服务器证书")
+			return
+		}
+		client.CloseIdleConnections()
+	}
 	s.refreshConnectorShadowReadinessLocked(&existing, time.Now().UTC())
-	materialChange := existing.ConnectorID != "" && (existing.EndpointURL != request.EndpointURL || !reflect.DeepEqual(existing.ActionMapping, request.ActionMapping))
+	materialChange := existing.ConnectorID != "" && ((existing.ConnectorType != "" && existing.ConnectorType != request.ConnectorType) || existing.CertificatePEM != certificate || existing.EndpointURL != request.EndpointURL || !reflect.DeepEqual(existing.ActionMapping, request.ActionMapping))
 	if materialChange {
 		existing.ShadowReady = false
 		existing.ShadowValidationSince = time.Now().UTC().Format(time.RFC3339Nano)
 		existing.ShadowStartedAt = ""
 		existing.ShadowCandidateCount, existing.ShadowReviewedCount, existing.ShadowAccuracy = 0, 0, 0
 	}
-	if request.Mode == "active" && !existing.ShadowReady {
-		writeError(w, 409, "shadow_gate_required", "active mode requires at least seven days of reviewed shadow candidates with 95% accuracy and no normal-campus false action")
+	if request.Mode == "active" && !existing.ShadowReady && s.nativeActions[request.ConnectorID].TestAccount == "" {
+		writeError(w, 409, "shadow_gate_required", "真实模式尚未通过准入验收：至少七天影子复核、准确率不低于95%，且保护对象零误处置。请使用影子模式配置授权和检查接口。")
 		return
 	}
 	encrypted := existing.EncryptedSecret
@@ -201,21 +267,31 @@ func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		}
 		encrypted = value
 	}
-	if encrypted == "" {
+	if _, nativeConfigured := s.nativeActions[request.ConnectorID]; encrypted == "" && !nativeConfigured && request.ConnectorType != "srun4k" {
 		writeError(w, 400, "connector_secret_required", "secret is required for a new connector")
 		return
 	}
-	item := ActionConnector{ConnectorID: request.ConnectorID, Name: request.Name, EndpointURL: request.EndpointURL, ActionMapping: request.ActionMapping, Mode: request.Mode, Enabled: request.Enabled, ShadowReady: existing.ShadowReady, EncryptedSecret: encrypted, CircuitOpenUntil: existing.CircuitOpenUntil, ConsecutiveFailures: existing.ConsecutiveFailures, ShadowStartedAt: existing.ShadowStartedAt, ShadowValidationSince: existing.ShadowValidationSince, ShadowCandidateCount: existing.ShadowCandidateCount, ShadowReviewedCount: existing.ShadowReviewedCount, ShadowAccuracy: existing.ShadowAccuracy, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	if request.ConnectorType == "srun4k" {
+		encrypted = ""
+	}
+	item := ActionConnector{CertificatePEM: certificate, ConnectorType: request.ConnectorType, ConnectorID: request.ConnectorID, Name: request.Name, EndpointURL: request.EndpointURL, ActionMapping: request.ActionMapping, Mode: request.Mode, Enabled: request.Enabled, ShadowReady: existing.ShadowReady, EncryptedSecret: encrypted, CircuitOpenUntil: existing.CircuitOpenUntil, ConsecutiveFailures: existing.ConsecutiveFailures, ShadowStartedAt: existing.ShadowStartedAt, ShadowValidationSince: existing.ShadowValidationSince, ShadowCandidateCount: existing.ShadowCandidateCount, ShadowReviewedCount: existing.ShadowReviewedCount, ShadowAccuracy: existing.ShadowAccuracy, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	s.operations.doc.Connectors[item.ConnectorID] = item
 	if err := s.operations.saveLocked(); err != nil {
 		writeError(w, 500, "save_connector_failed", err.Error())
 		return
 	}
-	s.appendAudit(r.Context(), "enforcement.connector.save", item.ConnectorID, item.Mode)
+	auditMode := item.Mode
+	if item.Mode == "active" && !item.ShadowReady && s.nativeActions[item.ConnectorID].TestAccount != "" {
+		auditMode = "active_scoped_test_exception"
+	}
+	s.appendAudit(r.Context(), "enforcement.connector.save", item.ConnectorID, auditMode)
 	writeJSON(w, 200, item)
 }
 
 func (s *Server) refreshConnectorShadowReadinessLocked(connector *ActionConnector, now time.Time) {
+	if s.operations.shadowMetricsPrepared {
+		return
+	}
 	if until, err := time.Parse(time.RFC3339Nano, connector.CircuitOpenUntil); err == nil && !until.After(now) {
 		connector.CircuitOpenUntil = ""
 		connector.ConsecutiveFailures = 0
@@ -264,6 +340,18 @@ func (s *Server) handleEmergencyStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bad_emergency_stop", err.Error())
 		return
 	}
+	if s.operations.db != nil && !s.operations.readView {
+		ctx, cancel := contextWithRequestTimeout(r.Context())
+		defer cancel()
+		value, _ := json.Marshal(body.Enabled)
+		if _, err := s.operations.db.ExecContext(ctx, `INSERT INTO control_plane_settings(setting_key,setting_value) VALUES('global_emergency_stop',$1::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value`, value); err != nil {
+			writeError(w, 503, "save_emergency_stop_failed", err.Error())
+			return
+		}
+		s.appendAudit(r.Context(), "enforcement.emergency_stop", "global", fmt.Sprintf("enabled=%t", body.Enabled))
+		writeJSON(w, 200, map[string]any{"global_stop": body.Enabled})
+		return
+	}
 	s.operations.mu.Lock()
 	s.operations.doc.GlobalStop = body.Enabled
 	err := s.operations.saveLocked()
@@ -277,6 +365,10 @@ func (s *Server) handleEmergencyStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConnectorTest(w http.ResponseWriter, r *http.Request, connectorID string) {
+	if s.operations.db != nil && !s.operations.readView {
+		s.connectorTestPostgres(w, r, connectorID)
+		return
+	}
 	s.operations.mu.Lock()
 	connector, ok := s.operations.doc.Connectors[connectorID]
 	s.operations.mu.Unlock()
@@ -284,6 +376,14 @@ func (s *Server) handleConnectorTest(w http.ResponseWriter, r *http.Request, con
 		writeError(w, 404, "connector_not_found", "connector not found")
 		return
 	}
+	if s.handleNativeConnectorProbe(w, r, connectorID) {
+		return
+	}
+	if connector.ConnectorType == "srun4k" {
+		s.handleManaged4KProbe(w, r, connector)
+		return
+	}
+
 	secret, err := s.decryptConnectorSecret(connector.EncryptedSecret)
 	if err != nil {
 		writeError(w, 409, "connector_secret_unavailable", err.Error())
@@ -314,6 +414,10 @@ func (s *Server) handleConnectorTest(w http.ResponseWriter, r *http.Request, con
 }
 
 func (s *Server) handleActionCallback(w http.ResponseWriter, r *http.Request) {
+	if s.operations.db != nil && !s.operations.readView {
+		s.actionCallbackPostgres(w, r)
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil || !json.Valid(body) {
 		writeError(w, 400, "bad_action_callback", "callback must contain valid JSON")
@@ -349,12 +453,19 @@ func (s *Server) handleActionCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "callback_signature_invalid", "callback signature or timestamp is invalid")
 		return
 	}
-	s.finishAction(callback.ActionID, callback.Status, callback.RemoteActionID, callback.Error)
+	if err := s.finishAction(callback.ActionID, callback.Status, callback.RemoteActionID, callback.Error); err != nil {
+		writeError(w, 503, "action_storage_failed", err.Error())
+		return
+	}
 	s.appendAudit(r.Context(), "enforcement.callback", callback.ActionID, callback.Status)
 	writeJSON(w, 200, map[string]any{"accepted": true, "action_id": callback.ActionID})
 }
 
 func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
+	if s.operations.db != nil && !s.operations.readView {
+		s.executeActionPostgres(w, r)
+		return
+	}
 	var request executeActionRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
 		writeError(w, 400, "bad_action", err.Error())
@@ -435,15 +546,22 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 	if snapshot.Confidence < .90 {
 		blockers = append(blockers, "risk_confidence_below_0_90")
 	}
-	hasStrong := false
-	for _, item := range evidenceItems {
-		if item.Type == "vpn_proxy_rule_match" && item.Confidence >= .90 {
-			hasStrong = true
-			break
+	strongBasis := snapshot.DetectionBasis == "explicit_tunnel"
+	if snapshot.DetectionBasis == "shared_device_divergence" && len(snapshot.IndependentSignalGroups) >= 2 {
+		strongBasis = true
+	}
+	// Pre-migration snapshots do not have detection_basis. The minute
+	// materializer will replace them, but retain a safe explicit-rule fallback.
+	if snapshot.DetectionBasis == "" || len(snapshot.IndependentSignalGroups) == 0 {
+		for _, item := range evidenceItems {
+			if item.Type == "vpn_proxy_rule_match" && item.Confidence >= .90 {
+				strongBasis = true
+				break
+			}
 		}
 	}
-	if !hasStrong {
-		blockers = append(blockers, "explicit_proxy_rule_required")
+	if !strongBasis {
+		blockers = append(blockers, "strong_detection_basis_required")
 	}
 	if snapshot.ReviewStatus == "false_positive" || snapshot.ReviewStatus == "benign" {
 		blockers = append(blockers, "manual_exception_applied")
@@ -475,26 +593,38 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 		blockers = append(blockers, "global_emergency_stop")
 	}
 	now := time.Now().UTC()
-	s.operations.mu.Lock()
-	for _, previous := range s.operations.doc.Actions {
-		sameSubject := snapshot.AccountID != "" && previous.AccountID == snapshot.AccountID || snapshot.EndpointID != "" && previous.EndpointID == snapshot.EndpointID
-		if sameSubject && (previous.Status == "succeeded" || previous.Status == "revoked" || previous.Status == "expired") {
-			if until, e := time.Parse(time.RFC3339Nano, previous.CooldownUntil); e == nil && until.After(now) {
-				blockers = append(blockers, "subject_cooldown_active")
-			}
-		}
-	}
 	campusCount, hourCount := 0, 0
-	for _, previous := range s.operations.doc.Actions {
-		created, _ := time.Parse(time.RFC3339Nano, previous.CreatedAt)
-		if previous.Mode == "active" && (previous.Status == "pending" || previous.Status == "running" || previous.Status == "succeeded") && now.Sub(created) <= time.Hour {
-			hourCount++
-			if request.CampusID != "" && previous.CampusID == request.CampusID && now.Sub(created) <= 10*time.Minute {
-				campusCount++
+	if s.operations.db != nil && s.operations.readView {
+		var cooling bool
+		campusCount, hourCount, cooling, err = s.actionAdmissionCounts(r.Context(), snapshot.AccountID, snapshot.EndpointID, request.CampusID, now)
+		if err != nil {
+			writeError(w, 503, "action_storage_failed", err.Error())
+			return
+		}
+		if cooling {
+			blockers = append(blockers, "subject_cooldown_active")
+		}
+	} else {
+		s.operations.mu.Lock()
+		for _, previous := range s.operations.doc.Actions {
+			sameSubject := snapshot.AccountID != "" && previous.AccountID == snapshot.AccountID || snapshot.EndpointID != "" && previous.EndpointID == snapshot.EndpointID
+			if sameSubject && (previous.Status == "succeeded" || previous.Status == "revoked" || previous.Status == "expired") {
+				if until, e := time.Parse(time.RFC3339Nano, previous.CooldownUntil); e == nil && until.After(now) {
+					blockers = append(blockers, "subject_cooldown_active")
+				}
 			}
 		}
+		for _, previous := range s.operations.doc.Actions {
+			created, _ := time.Parse(time.RFC3339Nano, previous.CreatedAt)
+			if previous.Mode == "active" && (previous.Status == "pending" || previous.Status == "running" || previous.Status == "succeeded") && now.Sub(created) <= time.Hour {
+				hourCount++
+				if request.CampusID != "" && previous.CampusID == request.CampusID && now.Sub(created) <= 10*time.Minute {
+					campusCount++
+				}
+			}
+		}
+		s.operations.mu.Unlock()
 	}
-	s.operations.mu.Unlock()
 	if campusCount >= 5 {
 		blockers = append(blockers, "campus_circuit_open")
 	}
@@ -524,7 +654,7 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if status == "pending" {
-		go s.deliverAction(action.ActionID, false)
+		s.enqueueActionDelivery(action.ActionID, false)
 	}
 	s.appendAudit(r.Context(), "enforcement.execute", action.ActionID, status)
 	writeJSON(w, http.StatusAccepted, action)
@@ -541,6 +671,23 @@ func currentIdentitySession(sessions []store.AccountSession, accountID, ip, requ
 }
 
 func (s *Server) deliverAction(actionID string, revoke bool) {
+	if s.operations.db != nil && !s.operations.readView {
+		s.deliverActionPostgres(actionID, revoke)
+		return
+	}
+	if s.deliverNativeAction(actionID, revoke) {
+		return
+	}
+	s.operations.mu.Lock()
+	preview := s.operations.doc.Actions[actionID]
+	s.operations.mu.Unlock()
+	if preview.Status != "pending" {
+		return
+	}
+	if err := s.validatePolicyDelivery(preview); err != nil {
+		s.finishAction(actionID, "blocked", "", err.Error())
+		return
+	}
 	s.operations.mu.Lock()
 	action, ok := s.operations.doc.Actions[actionID]
 	connector := s.operations.doc.Connectors[action.ConnectorID]
@@ -552,7 +699,11 @@ func (s *Server) deliverAction(actionID string, revoke bool) {
 		s.operations.mu.Unlock()
 		return
 	}
-	if s.operations.doc.GlobalStop || !connector.Enabled || connector.Mode != "active" {
+	if s.operations.lockErr != nil {
+		s.operations.mu.Unlock()
+		return
+	}
+	if s.operations.doc.GlobalStop || !connector.Enabled || connector.Mode != "active" || (action.PolicyParameters.ExecutionID != "" && !connector.ShadowReady) {
 		action.Status = "blocked"
 		action.Blockers = append(action.Blockers, "connector_or_global_stop_changed")
 		action.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -564,14 +715,29 @@ func (s *Server) deliverAction(actionID string, revoke bool) {
 	action.Status = "running"
 	action.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	s.operations.doc.Actions[actionID] = action
-	_ = s.operations.saveLocked()
+	if err := s.operations.saveLocked(); err != nil {
+		s.operations.mu.Unlock()
+		return
+	}
 	s.operations.mu.Unlock()
+	s.deliverActionRequest(action, connector, revoke)
+}
+
+func (s *Server) deliverActionRequest(action EnforcementAction, connector ActionConnector, revoke bool) {
+	actionID := action.ActionID
+	if connector.ConnectorType == "srun4k" {
+		s.finishAction(actionID, "blocked", "", "native runtime or action capability unavailable")
+		return
+	}
 	secret, err := s.decryptConnectorSecret(connector.EncryptedSecret)
 	if err != nil {
 		s.finishAction(actionID, "failed", "", err.Error())
 		return
 	}
 	payload := map[string]any{"action_id": action.ActionID, "idempotency_key": action.IdempotencyKey, "case_id": action.CaseID, "action": action.ActionType, "revoke": revoke, "subject": map[string]any{"account_id": action.AccountID, "endpoint_id": action.EndpointID, "ip": action.IP, "campus_id": action.CampusID, "session_id": action.SessionID}, "duration_seconds": action.DurationSeconds, "evidence_ids": action.EvidenceIDs, "ruleset_version": action.RulesetVersion, "expires_at": action.ExpiresAt}
+	if action.PolicyParameters.ExecutionID != "" {
+		payload["policy"] = action.PolicyParameters
+	}
 	data, _ := json.Marshal(payload)
 	mapped := connector.ActionMapping[action.ActionType]
 	if mapped != "" {
@@ -592,18 +758,24 @@ func (s *Server) deliverAction(actionID string, revoke bool) {
 	lastError := ""
 	if resp != nil {
 		statusCode = resp.StatusCode
-		responseBody, _ = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		var readErr error
+		responseBody, readErr = io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 		_ = resp.Body.Close()
-	}
-	if requestErr == nil && statusCode >= 200 && statusCode < 300 {
-		var result struct {
-			RemoteActionID string `json:"action_id"`
+		if readErr != nil && requestErr == nil {
+			requestErr = fmt.Errorf("incomplete action receipt: %w", readErr)
 		}
-		_ = json.Unmarshal(responseBody, &result)
-		s.recordActionAttempt(action, data, responseBody, statusCode, "")
-		s.finishAction(actionID, map[bool]string{true: "revoked", false: "succeeded"}[revoke], result.RemoteActionID, "")
-		return
 	}
+
+	if requestErr == nil && statusCode >= 200 && statusCode < 300 {
+		remoteID, err := actionreceipt.Completed(responseBody, revoke)
+		if err == nil {
+			s.recordActionAttempt(action, data, responseBody, statusCode, "")
+			s.finishAction(actionID, map[bool]string{true: "revoked", false: "succeeded"}[revoke], remoteID, "")
+			return
+		}
+		requestErr = err
+	}
+
 	if requestErr != nil {
 		lastError = requestErr.Error()
 	} else {
@@ -634,10 +806,23 @@ func nullableJSON(value []byte) any {
 	return json.RawMessage(value)
 }
 
-func (s *Server) scheduleActionRetry(id, lastError string) {
+func (s *Server) scheduleActionRetry(id, lastError string) error {
+	if s.operations.db != nil && !s.operations.readView {
+		return s.scheduleActionRetryPostgres(id, lastError)
+	}
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
-	action := s.operations.doc.Actions[id]
+	action, exists := s.operations.doc.Actions[id]
+	if !exists {
+		return fmt.Errorf("action not found")
+	}
+	// A late transport failure must not undo a completed callback.
+	if action.Status != "running" && action.Status != "pending" {
+		if s.operations.db != nil {
+			return s.operations.saveLocked()
+		}
+		return nil
+	}
 	action.RetryCount++
 	action.LastError = lastError
 	action.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -655,13 +840,26 @@ func (s *Server) scheduleActionRetry(id, lastError string) {
 		action.NextAttemptAt = time.Now().UTC().Add(time.Duration(1<<uint(action.RetryCount-1)) * time.Second).Format(time.RFC3339Nano)
 	}
 	s.operations.doc.Actions[id] = action
-	_ = s.operations.saveLocked()
+	return s.operations.saveLocked()
 }
 
-func (s *Server) finishAction(id, status, remoteID, lastError string) {
+func (s *Server) finishAction(id, status, remoteID, lastError string) error {
+	if s.operations.db != nil && !s.operations.readView {
+		return s.finishActionPostgres(id, status, remoteID, lastError)
+	}
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
-	action := s.operations.doc.Actions[id]
+	action, exists := s.operations.doc.Actions[id]
+	if !exists {
+		return fmt.Errorf("action not found")
+	}
+	if action.Status == status && (remoteID == "" || remoteID == action.RemoteActionID) && action.LastError == lastError {
+		if s.operations.db != nil {
+			return s.operations.saveLocked()
+		}
+		return nil
+	}
+
 	action.Status = status
 	action.RemoteActionID = firstNonEmptyString(remoteID, action.RemoteActionID)
 	action.LastError = lastError
@@ -692,10 +890,17 @@ func (s *Server) finishAction(id, status, remoteID, lastError string) {
 		s.operations.doc.Actions[parent.ActionID] = parent
 	}
 	s.operations.doc.Actions[id] = action
-	_ = s.operations.saveLocked()
+	return s.operations.saveLocked()
 }
 
 func (s *Server) handleRevokeAction(w http.ResponseWriter, r *http.Request, id string) {
+	if s.operations.db != nil && !s.operations.readView {
+		s.revokeActionPostgres(w, r, id)
+		return
+	}
+	if s.handleNativeCancel(w, r, id) {
+		return
+	}
 	s.operations.mu.Lock()
 	action, ok := s.operations.doc.Actions[id]
 	if !ok {
@@ -730,16 +935,22 @@ func (s *Server) handleRevokeAction(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	s.operations.mu.Unlock()
-	go s.deliverAction(reversal.ActionID, true)
+	s.enqueueActionDelivery(reversal.ActionID, true)
 	s.appendAudit(r.Context(), "enforcement.revoke", id, "accepted")
 	writeJSON(w, 202, reversal)
 }
 
 func (s *Server) newReleaseAction(parent EnforcementAction, actor string, now time.Time) EnforcementAction {
-	return EnforcementAction{ActionID: "action-" + shortToken(10), ParentActionID: parent.ActionID, IdempotencyKey: parent.IdempotencyKey + ":release", CaseID: parent.CaseID, ConnectorID: parent.ConnectorID, ActionType: "release", SubjectType: parent.SubjectType, SubjectID: parent.SubjectID, IP: parent.IP, AccountID: parent.AccountID, EndpointID: parent.EndpointID, SessionID: parent.SessionID, CampusID: parent.CampusID, Status: "pending", Mode: parent.Mode, EvidenceIDs: parent.EvidenceIDs, RulesetVersion: parent.RulesetVersion, CreatedBy: actor, CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
+	return EnforcementAction{PolicyParameters: parent.PolicyParameters, ActionID: "action-" + shortToken(10), ParentActionID: parent.ActionID, IdempotencyKey: parent.IdempotencyKey + ":release", CaseID: parent.CaseID, ConnectorID: parent.ConnectorID, ActionType: "release", SubjectType: parent.SubjectType, SubjectID: parent.SubjectID, IP: parent.IP, AccountID: parent.AccountID, EndpointID: parent.EndpointID, SessionID: parent.SessionID, CampusID: parent.CampusID, Status: "pending", Mode: parent.Mode, EvidenceIDs: parent.EvidenceIDs, RulesetVersion: parent.RulesetVersion, CreatedBy: actor, CreatedAt: now.Format(time.RFC3339Nano), UpdatedAt: now.Format(time.RFC3339Nano)}
 }
 
 func (s *Server) processDueActions(now time.Time) {
+	if s.operations.db != nil && !s.operations.readView {
+		if err := s.processDueActionsPostgres(now); err != nil {
+			s.operations.setHealthError(err)
+		}
+		return
+	}
 	type delivery struct {
 		id     string
 		revoke bool
@@ -748,6 +959,19 @@ func (s *Server) processDueActions(now time.Time) {
 	changed := false
 	s.operations.mu.Lock()
 	for id, action := range s.operations.doc.Actions {
+		if action.Status == "running" {
+			lease := 90 * time.Second
+			if action.PolicyParameters.NativeSelected {
+				lease = 45 * time.Second
+			}
+			updated, err := time.Parse(time.RFC3339Nano, action.UpdatedAt)
+			if err == nil && !updated.Add(lease).After(now) {
+				action.Status = "pending"
+				action.NextAttemptAt = ""
+				s.operations.doc.Actions[id] = action
+				changed = true
+			}
+		}
 		if action.Status == "pending" {
 			due, err := time.Parse(time.RFC3339Nano, action.NextAttemptAt)
 			if action.NextAttemptAt == "" || err != nil || !due.After(now) {
@@ -775,12 +999,16 @@ func (s *Server) processDueActions(now time.Time) {
 			changed = true
 		}
 	}
-	if changed {
-		_ = s.operations.saveLocked()
+	var saveErr error
+	if changed || s.operations.db != nil {
+		saveErr = s.operations.saveLocked()
 	}
 	s.operations.mu.Unlock()
+	if saveErr != nil {
+		return
+	}
 	for _, item := range deliver {
-		go s.deliverAction(item.id, item.revoke)
+		s.enqueueActionDelivery(item.id, item.revoke)
 	}
 }
 

@@ -1,0 +1,222 @@
+[
+  {
+    "event_id": "early",
+    "timestamp": "2026-09-08T08:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "one",
+    "event_type": "tls",
+    "domain": "wx.example",
+    "source_field": "tls.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "application",
+      "target_id": "wx",
+      "name": "wx",
+      "category": "test"
+    },
+    "upload_bytes": 20,
+    "download_bytes": 10
+  },
+  {
+    "event_id": "flow",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "one",
+    "event_type": "flow",
+    "domain": "unknown.example",
+    "source_field": "flow.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "",
+      "target_id": "",
+      "name": "",
+      "category": "test"
+    },
+    "upload_bytes": 30,
+    "download_bytes": 15
+  },
+  {
+    "event_id": "multi-a",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "multi",
+    "event_type": "tls",
+    "domain": "wx.example",
+    "source_field": "tls.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "application",
+      "target_id": "wx",
+      "name": "wx",
+      "category": "test"
+    },
+    "upload_bytes": 50,
+    "download_bytes": 30
+  },
+  {
+    "event_id": "multi-b",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "multi",
+    "event_type": "http",
+    "domain": "qq.example",
+    "source_field": "http.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "application",
+      "target_id": "qq",
+      "name": "qq",
+      "category": "test"
+    },
+    "upload_bytes": 40,
+    "download_bytes": 20
+  },
+  {
+    "event_id": "dns",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "dns",
+    "event_type": "dns",
+    "domain": "wx.example",
+    "source_field": "dns.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "application",
+      "target_id": "wx",
+      "name": "wx",
+      "category": "test"
+    },
+    "upload_bytes": 999,
+    "download_bytes": 999
+  },
+  {
+    "event_id": "missing",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "",
+    "event_type": "http",
+    "domain": "qq.example",
+    "source_field": "http.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "application",
+      "target_id": "qq",
+      "name": "qq",
+      "category": "test"
+    },
+    "upload_bytes": null,
+    "download_bytes": null
+  },
+  {
+    "event_id": "unknown",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "unknown",
+    "event_type": "tls",
+    "domain": "unknown.example",
+    "source_field": "tls.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "",
+      "target_id": "",
+      "name": "",
+      "category": "test"
+    },
+    "upload_bytes": 7,
+    "download_bytes": null
+  },
+  {
+    "event_id": "infra",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "infra",
+    "event_type": "tls",
+    "domain": "cdn.example",
+    "source_field": "tls.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "infrastructure",
+      "target_id": "cdn",
+      "name": "cdn",
+      "category": "test"
+    },
+    "upload_bytes": 9,
+    "download_bytes": 2
+  },
+  {
+    "event_id": "other",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s2",
+    "campus_id": "b",
+    "ip": "10.0.0.1",
+    "connection_id": "one",
+    "event_type": "tls",
+    "domain": "qq.example",
+    "source_field": "tls.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "application",
+      "target_id": "qq",
+      "name": "qq",
+      "category": "test"
+    },
+    "upload_bytes": 70,
+    "download_bytes": 8
+  },
+  {
+    "event_id": "future",
+    "timestamp": "2026-09-08T12:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "one",
+    "event_type": "flow",
+    "domain": "unknown.example",
+    "source_field": "flow.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "",
+      "target_id": "",
+      "name": "",
+      "category": "test"
+    },
+    "upload_bytes": 10000,
+    "download_bytes": 10000
+  },
+  {
+    "event_id": "flow",
+    "timestamp": "2026-09-08T10:00:00Z",
+    "sensor_id": "s",
+    "campus_id": "a",
+    "ip": "10.0.0.1",
+    "connection_id": "one",
+    "event_type": "flow",
+    "domain": "unknown.example",
+    "source_field": "flow.host",
+    "bundle_version": "v1",
+    "match": {
+      "target_type": "",
+      "target_id": "",
+      "name": "",
+      "category": "test"
+    },
+    "upload_bytes": 30,
+    "download_bytes": 15
+  }
+]

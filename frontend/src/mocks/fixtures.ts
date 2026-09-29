@@ -1,3 +1,4 @@
+import { proxyProof } from './proxyProtocol'
 import type {
   AuditLog,
   Evidence,
@@ -12,6 +13,7 @@ import type {
   Session,
   ShadowRun,
   ShadowEvaluation,
+  ShadowReviewSamples,
   FingerprintConflictItem,
   DpiProtocolFlowItem,
   DpiTrendPoint,
@@ -24,6 +26,7 @@ export const mockSession: Session = {
   user: { id: 'ops-001', name: '运营复核员' },
   role: 'operator',
   permissions: [
+    "policies:read", "policies:manage", "policies:authorize",
     'risks:read',
     'evidence:read',
     'events:read',
@@ -34,6 +37,7 @@ export const mockSession: Session = {
     'rules:reload',
     'ingest:read',
     'dpi:read',
+    'exports:read',
     'device-fingerprint-library:update',
     'cases:read',
     'cases:write',
@@ -456,6 +460,7 @@ export const deviceInventoriesByIp: Record<string, IpDeviceInventory> = {
 
 export const evidenceByIp: Record<string, Evidence[]> = {
   '10.255.0.59': [
+ {evidence_id:proxyProof.evidence_id,ip:'10.255.0.59',type:'proxy_protocol_transaction',window:'7d',score:0,confidence:.99,severity:'info',reason:proxyProof.reason,samples:proxyProof.event_ids,created_at:proxyProof.response_at,proxy_protocol:proxyProof},
     {
       evidence_id: 'evidence-ua-59',
       ip: '10.255.0.59',
@@ -872,6 +877,16 @@ export const shadowEvaluation: ShadowEvaluation = {
   blockers: ['仅 3 天包含人工复核，要求至少 7 天', '存在 2 个有样本但未复核的日期/等级分桶'],
 }
 
+export const shadowReviewSamples: ShadowReviewSamples = {
+  date: '2026-08-21',
+  dates: ['2026-08-20', '2026-08-21'],
+  samples_per_level: 10,
+  samples: [
+    { date: '2026-08-21', ip: '10.255.0.98', subject_type: 'ip', subject_id: '10.255.0.98', level: 'high', score: 82, confidence: 0.86, evidence_ids: ['evidence-001'], review_status: 'unreviewed', source_run_id: 'shadow-run-001', snapshot_time: '2026-08-21T14:30:00Z' },
+    { date: '2026-08-21', ip: '10.255.0.42', subject_type: 'ip', subject_id: '10.255.0.42', level: 'normal', score: 24, confidence: 0.68, evidence_ids: ['evidence-002'], review_status: 'benign', review_reason: '普通单终端', reviewed_by: 'ops-001', reviewed_at: '2026-08-21T15:00:00Z', source_run_id: 'shadow-run-001', snapshot_time: '2026-08-21T14:30:00Z' },
+  ],
+}
+
 export const auditLogs: AuditLog[] = [
   {
     audit_id: 'audit-001',
@@ -1085,7 +1100,7 @@ export function getActivityOverviewByWindow(window: string): ActivityOverview {
     }))
 
   const targetWindow: ActivityOverview['window'] =
-    window === '10m' || window === '24h' || window === '1h' || window === 'latest-run'
+    window === '10m' || window === '24h' || window === '1h' || window === '7d' || window === '30d'
       ? window
       : '1h'
 

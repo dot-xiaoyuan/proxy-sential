@@ -1,0 +1,24 @@
+{
+  "POST /organization/{kind}": {
+    "path": "/organization/network-zones",
+    "body": {
+      "network_zone_id": "bench-concurrent-network-zones",
+      "name": "Isolated synchronous config",
+      "campus_id": "bench-campus",
+      "cidrs": [
+        "10.200.0.0/24"
+      ]
+    },
+    "unique_fields": [
+      "network_zone_id"
+    ],
+    "visibility": {
+      "path": "/organization",
+      "collection": "network_zones",
+      "id_field": "network_zone_id",
+      "match_fields": [
+        "name"
+      ]
+    }
+  }
+}

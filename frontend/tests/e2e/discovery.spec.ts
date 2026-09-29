@@ -1,0 +1,20 @@
+import {test,expect} from '@playwright/test'
+import {writeFile} from 'node:fs/promises'
+for(const width of [390,1280,1440])test(`discovery layout ${width}`,async({page},info)=>{
+ await page.setViewportSize({width,height:width===390?844:width===1280?800:900})
+ await page.goto('/discovery')
+ await expect(page.getByRole('heading',{name:'网络设备发现'})).toBeVisible()
+ await expect(page.getByText('192.0.2.10',{exact:true}).filter({visible:true})).toBeVisible()
+ await expect(page.getByText('当前仅有厂商线索').filter({visible:true})).toBeVisible()
+ const probe=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+2,controls:[...document.querySelectorAll('.discovery-page .ant-btn,.discovery-page .ant-tag')].map(e=>({wrap:getComputedStyle(e).whiteSpace,shrink:getComputedStyle(e).flexShrink}))}))
+ expect(probe.overflow).toBe(false);expect(probe.controls.every(c=>c.wrap==='nowrap'&&c.shrink==='0')).toBe(true)
+ await writeFile(info.outputPath('dom.json'),JSON.stringify(probe,null,2));await page.screenshot({path:info.outputPath('discovery.png')})
+ await page.getByRole('link',{name:'查看详情'}).filter({visible:true}).first().click()
+ await expect(page.getByRole('heading',{name:/Huawei · AR6140 · 路由器/})).toBeVisible()
+ const detailProbe=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>innerWidth+2,controls:[...document.querySelectorAll('.router-detail-page .ant-tag')].map(e=>({wrap:getComputedStyle(e).whiteSpace,shrink:getComputedStyle(e).flexShrink}))}))
+ expect(detailProbe.overflow).toBe(false);expect(detailProbe.controls.every(c=>c.wrap==='nowrap'&&c.shrink==='0')).toBe(true)
+ await writeFile(info.outputPath('router-detail-dom.json'),JSON.stringify(detailProbe,null,2));await page.screenshot({path:info.outputPath('router-detail.png'),fullPage:true})
+ await page.goBack();await expect(page.getByRole('tab',{name:'路由识别',exact:true})).toBeVisible()
+ await page.getByRole('tab',{name:'主动发现',exact:true}).click();await expect(page.getByText('默认关闭；仅探测明确指定范围')).toBeVisible()
+ await page.getByRole('button',{name:'新增探测配置'}).click();await expect(page.getByRole('button',{name:'确 定'})).toBeDisabled()
+})

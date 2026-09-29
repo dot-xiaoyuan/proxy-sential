@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/store"
 )
 
@@ -66,6 +67,7 @@ type RiskCase struct {
 	UpdatedAt        string                 `json:"updated_at"`
 	EvidenceSnapshot store.ProxyReviewCase  `json:"evidence_snapshot"`
 	EvidenceHistory  []CaseEvidenceSnapshot `json:"evidence_history,omitempty"`
+	HistoryPage      map[string]store.Page  `json:"history_page,omitempty"`
 	Comments         []CaseComment          `json:"comments,omitempty"`
 	Timeline         []CaseTimeline         `json:"timeline,omitempty"`
 }
@@ -139,28 +141,38 @@ type AccessPoint struct {
 }
 
 type operationsDocument struct {
-	Version      int                          `json:"version"`
-	Cases        map[string]RiskCase          `json:"cases"`
-	Campuses     map[string]Campus            `json:"campuses"`
-	Buildings    map[string]Building          `json:"buildings"`
-	NetworkZones map[string]NetworkZone       `json:"network_zones"`
-	AccessPoints map[string]AccessPoint       `json:"access_points"`
-	Connectors   map[string]ActionConnector   `json:"connectors,omitempty"`
-	Actions      map[string]EnforcementAction `json:"actions,omitempty"`
-	SLAPolicies  map[string]SLAPolicy         `json:"sla_policies,omitempty"`
-	GlobalStop   bool                         `json:"global_stop"`
+	policyVersions   map[[2]string]time.Time
+	Policies         map[string]policy.Definition `json:"policies"`
+	PolicyExecutions map[string]policy.Execution  `json:"policy_executions"`
+	Version          int                          `json:"version"`
+	Cases            map[string]RiskCase          `json:"cases"`
+	Campuses         map[string]Campus            `json:"campuses"`
+	Buildings        map[string]Building          `json:"buildings"`
+	NetworkZones     map[string]NetworkZone       `json:"network_zones"`
+	AccessPoints     map[string]AccessPoint       `json:"access_points"`
+	Connectors       map[string]ActionConnector   `json:"connectors,omitempty"`
+	Actions          map[string]EnforcementAction `json:"actions,omitempty"`
+	SLAPolicies      map[string]SLAPolicy         `json:"sla_policies,omitempty"`
+	GlobalStop       bool                         `json:"global_stop"`
 }
 
 type operationsState struct {
-	mu        operationsMutex
-	path      string
-	doc       operationsDocument
-	db        *sql.DB
-	tx        *sql.Tx
-	txCancel  context.CancelFunc
-	lockErr   error
-	healthMu  sync.RWMutex
-	healthErr error
+	recordBaseline        map[[2]string][32]byte
+	recordVersionBaseline map[[2]string]string
+	caseVersionBaseline   map[string]string
+	readView              bool
+	shadowMetricsPrepared bool
+	organizationBaseline  map[[2]string]string
+	persistedHistory      map[[2]string]bool
+	mu                    operationsMutex
+	path                  string
+	doc                   operationsDocument
+	db                    *sql.DB
+	tx                    *sql.Tx
+	txCancel              context.CancelFunc
+	lockErr               error
+	healthMu              sync.RWMutex
+	healthErr             error
 }
 
 type operationsMutex struct {
@@ -250,10 +262,16 @@ func operationsDocumentEmpty(doc operationsDocument) bool {
 }
 
 func emptyOperationsDocument() operationsDocument {
-	return operationsDocument{Version: 1, Cases: map[string]RiskCase{}, Campuses: map[string]Campus{}, Buildings: map[string]Building{}, NetworkZones: map[string]NetworkZone{}, AccessPoints: map[string]AccessPoint{}, Connectors: map[string]ActionConnector{}, Actions: map[string]EnforcementAction{}, SLAPolicies: defaultSLAPolicies()}
+	return operationsDocument{Policies: map[string]policy.Definition{}, PolicyExecutions: map[string]policy.Execution{}, Version: 1, Cases: map[string]RiskCase{}, Campuses: map[string]Campus{}, Buildings: map[string]Building{}, NetworkZones: map[string]NetworkZone{}, AccessPoints: map[string]AccessPoint{}, Connectors: map[string]ActionConnector{}, Actions: map[string]EnforcementAction{}, SLAPolicies: defaultSLAPolicies()}
 }
 
 func (s *operationsState) ensureMaps() {
+	if s.doc.Policies == nil {
+		s.doc.Policies = map[string]policy.Definition{}
+	}
+	if s.doc.PolicyExecutions == nil {
+		s.doc.PolicyExecutions = map[string]policy.Execution{}
+	}
 	if s.doc.Cases == nil {
 		s.doc.Cases = map[string]RiskCase{}
 	}
@@ -300,6 +318,20 @@ func (s *operationsState) saveLocked() error {
 			s.setHealthError(err)
 			return err
 		}
+		// A successful synchronous save must be committed before a handler can
+		// write its success response. Unlock must not hide a later commit error.
+		err := s.tx.Commit()
+		s.tx = nil
+		if s.txCancel != nil {
+			s.txCancel()
+			s.txCancel = nil
+		}
+		if err != nil {
+			s.lockErr = fmt.Errorf("commit PostgreSQL operations: %w", err)
+			s.setHealthError(s.lockErr)
+			return s.lockErr
+		}
+		s.setHealthError(nil)
 		return nil
 	}
 	if s.path == "" {
@@ -321,11 +353,42 @@ func (s *operationsState) saveLocked() error {
 
 func (s *Server) syncCases(r *http.Request) error {
 	window := firstNonEmptyString(r.URL.Query().Get("window"), "7d")
-	result, err := s.reader.GetProxyReviews(r.Context(), store.ActivityQuery{SensorID: r.URL.Query().Get("sensor_id"), Window: window, SampleLimit: maxProxyReviewAggregateRows})
+	return s.syncCasesContext(r.Context(), r.URL.Query().Get("sensor_id"), window)
+}
+
+func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) error {
+	result, err := s.reader.GetProxyReviews(ctx, store.ActivityQuery{SensorID: sensorID, Window: window, SampleLimit: maxProxyReviewAggregateRows})
 	if err != nil {
 		return err
 	}
-	exceptions, err := s.exceptions.list(r.Context(), true)
+	// A shared-device case may be driven by TTL/DHCP/UA signals without a TLS,
+	// QUIC or alert row. Merge every materialized high/confirmed IP so case
+	// creation is independent from opening the proxy-review endpoint.
+	riskPage, err := s.reader.ListRisks(ctx, store.Query{SensorID: sensorID, Window: window, Limit: 1000})
+	if err != nil {
+		return err
+	}
+	seenIPs := map[string]struct{}{}
+	for _, item := range result.Items {
+		seenIPs[item.IP] = struct{}{}
+	}
+	for _, snapshot := range riskPage.Items {
+		if snapshot.IP == "" || (snapshot.Level != "high" && snapshot.Level != "confirmed") {
+			continue
+		}
+		if _, ok := seenIPs[snapshot.IP]; ok {
+			continue
+		}
+		sum := sha256.Sum256([]byte("materialized-risk\x00" + snapshot.IP))
+		confidenceLevel := "low"
+		if snapshot.Confidence >= .90 {
+			confidenceLevel = "high"
+		} else if snapshot.Confidence >= .60 {
+			confidenceLevel = "medium"
+		}
+		result.Items = append(result.Items, store.ProxyReviewCase{CaseID: "proxy-" + hex.EncodeToString(sum[:])[:20], IP: snapshot.IP, AccountID: snapshot.AccountID, EndpointID: snapshot.EndpointID, AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{}, DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{}, RuleMatches: []store.ProxyRuleMatch{}, ConfidenceLevel: confidenceLevel, FirstSeen: snapshot.UpdatedAt, LastSeen: snapshot.UpdatedAt, EvidenceIDs: append([]string{}, snapshot.EvidenceIDs...), RiskScore: snapshot.Score, RiskLevel: snapshot.Level, ReviewStatus: firstNonEmptyString(snapshot.ReviewStatus, "unreviewed")})
+	}
+	exceptions, err := s.exceptions.list(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -334,7 +397,7 @@ func (s *Server) syncCases(r *http.Request) error {
 	resolver, canResolveIdentity := s.reader.(store.IdentityAttributionResolver)
 	if canResolveIdentity {
 		for _, item := range result.Items {
-			attribution, found, resolveErr := resolver.ResolveIdentityAt(r.Context(), item.IP, item.LastSeen)
+			attribution, found, resolveErr := resolver.ResolveIdentityAt(ctx, item.IP, item.LastSeen)
 			if resolveErr != nil {
 				return fmt.Errorf("resolve case identity %s: %w", item.CaseID, resolveErr)
 			}
@@ -345,6 +408,9 @@ func (s *Server) syncCases(r *http.Request) error {
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
 	for _, item := range result.Items {
+		if item.RiskLevel != "high" && item.RiskLevel != "confirmed" {
+			continue
+		}
 		matchedException := matchException(exceptions, item.IP, item.AccountID, item.EndpointID, "")
 		if matchedException == nil {
 			for _, destination := range item.DestinationDomains {
@@ -363,7 +429,7 @@ func (s *Server) syncCases(r *http.Request) error {
 		caseID := item.CaseID
 		existing, ok := s.operations.doc.Cases[caseID]
 		for candidateID, candidate := range s.operations.doc.Cases {
-			if candidate.Status != "closed" && (candidate.DedupeKey == dedupeKey || candidate.DedupeKey == "" && candidate.SubjectID == item.IP) {
+			if activeCaseMatches(candidate, item, dedupeKey) {
 				caseID, existing, ok = candidateID, candidate, true
 				break
 			}
@@ -395,7 +461,13 @@ func (s *Server) syncCases(r *http.Request) error {
 		if len(existing.EvidenceHistory) == 0 && existing.EvidenceSnapshot.CaseID != "" {
 			existing.EvidenceHistory = append(existing.EvidenceHistory, newCaseEvidenceSnapshot(existing.CaseID, existing.RulesetVersion, existing.EvidenceSnapshot, parseOrNow(existing.CreatedAt)))
 		}
-		if !caseEvidenceSnapshotExists(existing.EvidenceHistory, snapshot.SnapshotID) {
+		snapshotExists := caseEvidenceSnapshotExists(existing.EvidenceHistory, snapshot.SnapshotID)
+		if !snapshotExists && s.operations.tx != nil {
+			if err := s.operations.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM risk_case_evidence_snapshots WHERE snapshot_id=$1)`, snapshot.SnapshotID).Scan(&snapshotExists); err != nil {
+				return err
+			}
+		}
+		if !snapshotExists {
 			existing.EvidenceHistory = append(existing.EvidenceHistory, snapshot)
 			if existing.EvidenceSnapshot.CaseID == "" {
 				existing.EvidenceSnapshot = item
@@ -426,6 +498,38 @@ func (s *Server) syncCases(r *http.Request) error {
 		s.operations.doc.Cases[existing.CaseID] = existing
 	}
 	return s.operations.saveLocked()
+}
+
+func (s *Server) startCaseSynchronizer() {
+	go func() {
+		// Let the initial rolling risk materialization finish before consuming
+		// snapshots left by a previous ruleset during an upgrade.
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			err := s.syncCasesContext(ctx, s.sensorID, "10m")
+			cancel()
+			if err != nil {
+				s.operations.setHealthError(fmt.Errorf("automatic case synchronization: %w", err))
+			} else {
+				s.operations.setHealthError(nil)
+			}
+		}
+	}()
+}
+
+func activeCaseMatches(candidate RiskCase, item store.ProxyReviewCase, dedupeKey string) bool {
+	if candidate.Status == "closed" {
+		return false
+	}
+	if candidate.DedupeKey == dedupeKey {
+		return true
+	}
+	// Evidence and protocol rules evolve while one investigation remains open.
+	// Keep one active case per IP subject and append evidence history instead of
+	// opening a second case merely because the evidence-derived key changed.
+	return candidate.SubjectType == "ip" && (candidate.SubjectID == item.IP || candidate.IP == item.IP)
 }
 
 func caseDedupeKey(item store.ProxyReviewCase) string {
@@ -492,6 +596,10 @@ func confidenceLevelValue(level string) float64 {
 
 func (s *Server) handleCases(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/cases"), "/") == "" {
+		if s.operations.db != nil {
+			s.listCasesPostgres(w, r)
+			return
+		}
 		if err := s.syncCases(r); err != nil {
 			writeError(w, 500, "sync_cases_failed", err.Error())
 			return
@@ -514,7 +622,19 @@ func (s *Server) handleCases(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "bad_case_id", err.Error())
 		return
 	}
+	if r.Method == http.MethodGet && len(parts) == 3 && parts[1] == "history" {
+		if s.operations.db == nil {
+			s.caseHistoryFile(w, r, caseID, parts[2])
+		} else {
+			s.caseHistoryPostgres(w, r, caseID, parts[2])
+		}
+		return
+	}
 	if r.Method == http.MethodGet && len(parts) == 1 {
+		if s.operations.db != nil {
+			s.getCasePostgres(w, r, caseID)
+			return
+		}
 		s.getCase(w, caseID)
 		return
 	}
@@ -571,6 +691,11 @@ func (s *Server) getCase(w http.ResponseWriter, id string) {
 }
 
 func (s *Server) mutateCase(w http.ResponseWriter, r *http.Request, id, operation string) {
+	if s.operations.db != nil && !s.operations.readView {
+		s.mutateCasePostgres(w, r, id, operation)
+		return
+	}
+
 	var body struct {
 		AssigneeID  string `json:"assignee_id"`
 		Status      string `json:"status"`
@@ -728,6 +853,10 @@ func (s *Server) mutateCasesBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOrganization(w http.ResponseWriter, r *http.Request) {
+	if s.operations.db != nil {
+		s.handleOrganizationPostgres(w, r)
+		return
+	}
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/organization"), "/")
 	s.operations.mu.Lock()
 	if r.Method == http.MethodGet {
@@ -861,7 +990,15 @@ func (s *Server) applyCaseDispositionByTarget(targetID, disposition, actor strin
 	_ = s.operations.saveLocked()
 }
 
-func (s *Server) operationsSummary() map[string]int {
+func (s *Server) operationsSummary(ctx context.Context) (map[string]int, error) {
+	if s.operations.db != nil {
+		result := map[string]int{}
+		var open, overdue, resolved int
+		err := s.operations.db.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE status NOT IN ('resolved','closed')),count(*) FILTER (WHERE status NOT IN ('resolved','closed') AND due_at<now()),count(*) FILTER (WHERE status IN ('resolved','closed')) FROM risk_cases`).Scan(&open, &overdue, &resolved)
+		result["open"], result["overdue"], result["resolved"] = open, overdue, resolved
+		return result, err
+	}
+
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
 	result := map[string]int{"open": 0, "overdue": 0, "resolved": 0}
@@ -876,7 +1013,7 @@ func (s *Server) operationsSummary() map[string]int {
 			result["overdue"]++
 		}
 	}
-	return result
+	return result, nil
 }
 
 func validateOperationsPath(path string) error {

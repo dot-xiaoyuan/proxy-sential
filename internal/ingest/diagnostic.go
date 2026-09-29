@@ -39,3 +39,30 @@ type EventTypeCount struct {
 	Type  string `json:"type"`
 	Count int    `json:"count"`
 }
+
+type Checkpoint struct {
+	SensorID    string `json:"sensor_id"`
+	SourceKind  string `json:"source_kind"`
+	SourcePath  string `json:"source_path"`
+	FileID      string `json:"file_id"`
+	Offset      int64  `json:"committed_offset"`
+	LastEventAt string `json:"last_event_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
+type Batch struct {
+	BatchID     string `json:"batch_id"`
+	SensorID    string `json:"sensor_id"`
+	SourceKind  string `json:"source_kind"`
+	SourcePath  string `json:"source_path"`
+	FileID      string `json:"file_id"`
+	StartOffset int64  `json:"start_offset"`
+	EndOffset   int64  `json:"end_offset"`
+	Checksum    string `json:"checksum"`
+	Status      string `json:"status"`
+	EventCount  int    `json:"event_count"`
+	Malformed   int    `json:"malformed_count"`
+	LastError   string `json:"last_error,omitempty"`
+	StartedAt   string `json:"started_at"`
+	CommittedAt string `json:"committed_at,omitempty"`
+}

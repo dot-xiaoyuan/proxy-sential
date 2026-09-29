@@ -1,3 +1,4 @@
+import { ApplicationLibrary } from "../features/applications/ApplicationLibrary";
 import { useState } from "react";
 import { UploadOutlined } from "@ant-design/icons";
 import {
@@ -72,8 +73,10 @@ export function RulesPage() {
       )}
       <section className="surface operations-tabs-surface">
         <Tabs
+          defaultActiveKey="risk"
           destroyOnHidden
           items={[
+            {key:"application-domains", label:"应用域名特征库", children:<ApplicationLibrary />},
             {
               key: "risk",
               label: "风险规则",
@@ -155,14 +158,14 @@ export function RulesPage() {
                           label: "当前版本",
                           children: (
                             <Typography.Text className="mono list-cell-nowrap">
-                              {fingerprintLibrary.data?.version || "-"}
+                              {fingerprintLibrary.data?.version || ""}
                             </Typography.Text>
                           ),
                         },
                         {
                           key: "source",
                           label: "数据来源",
-                          children: fingerprintLibrary.data?.source || "-",
+                          children: fingerprintLibrary.data?.source || "",
                         },
                         {
                           key: "status",
@@ -204,6 +207,21 @@ export function RulesPage() {
                           key: "counts",
                           label: "规则规模",
                           children: `OUI ${fingerprintLibrary.data?.oui_count ?? 0} · UA/自有规则 ${fingerprintLibrary.data?.rule_count ?? 0} · DHCP ${fingerprintLibrary.data?.dhcp_rule_count ?? 0} · 域名 ${fingerprintLibrary.data?.domain_rule_count ?? 0} / ${fingerprintLibrary.data?.domain_ecosystem_count ?? 0} 个生态`,
+                        },
+                        {
+                          key: "domain-availability",
+                          label: "域名识别",
+                          children: (fingerprintLibrary.data?.domain_rule_count ?? 0) === 0 ? "域名识别不可用：未加载域名规则" : `可用 · 可推断品牌规则 ${fingerprintLibrary.data?.brand_eligible_rule_count ?? 0} 条`,
+                        },
+                        {
+                          key: "domain-provenance",
+                          label: "域名来源明细",
+                          children: <div className="brand-evidence-wrap">{fingerprintLibrary.data?.domain_sources?.map(source => <div key={`${source.name}-${source.version}`}>{source.name} · {source.version} · {source.rule_count} 条 / 可推断 {source.brand_eligible_rule_count} 条</div>) || "旧规则包未提供来源明细"}</div>,
+                        },
+                        {
+                          key: "domain-processing",
+                          label: "域名处理状态",
+                          children: <div className="brand-evidence-wrap">生效 {fingerprintLibrary.data?.active_domain_version || ""} · 待重算 {fingerprintLibrary.data?.pending_domain_version || "无"} · {fingerprintLibrary.data?.domain_processing_error || "无处理错误"}</div>,
                         },
                         {
                           key: "domain-source",

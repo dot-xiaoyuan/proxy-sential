@@ -13,10 +13,15 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/proxyprotocol"
 )
 
 type Options struct {
-	SensorID string
+	CaptureScope        *normalized.CaptureScope
+	CollectorInstanceID string
+	ProxyProducer       *proxyprotocol.Producer
+	SensorID            string
+	LogKind             string
 }
 
 type Stats struct {
@@ -65,6 +70,13 @@ func Convert(r io.Reader, w io.Writer, opts Options) (Stats, error) {
 			}
 			continue
 		}
+		if opts.CollectorInstanceID != "" {
+			if event.Observer == nil {
+				event.Observer = map[string]any{}
+			}
+			event.Observer["collector_instance_id"] = opts.CollectorInstanceID
+		}
+		event = opts.CaptureScope.Apply(event)
 		if err := encoder.Encode(event); err != nil {
 			return stats, fmt.Errorf("write normalized event: %w", err)
 		}
@@ -125,10 +137,202 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 	if err != nil {
 		return normalized.Event{}, err
 	}
+	if opts.LogKind == "proxy" {
+		return proxyEvent(raw, fields, opts)
+	}
+	switch opts.LogKind {
+	case "conn":
+		return connectionEventFromFields(raw, fields, lineOffset, opts)
+	case "dns", "http", "ssl", "tls", "x509":
+		return protocolEventFromFields(raw, fields, lineOffset, opts)
+	case "lldp", "ssdp":
+		return infrastructureDiscoveryEventFromFields(raw, fields, lineOffset, opts)
+	}
 	if isSoftwareFields(fields) {
 		return softwareEventFromFields(raw, fields, lineOffset, opts)
 	}
+	if opts.LogKind == "mdns" || opts.LogKind == "nbns" || opts.LogKind == "llmnr" || opts.LogKind == "ttl" {
+		return discoveryEventFromFields(raw, fields, lineOffset, opts)
+	}
 	return dhcpEventFromFields(raw, fields, lineOffset, opts)
+}
+
+func connectionEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	srcIP, dstIP := first(fields, "id.orig_h", "src_ip"), first(fields, "id.resp_h", "dst_ip")
+	if timestamp == "" || srcIP == "" || dstIP == "" {
+		return normalized.Event{}, fmt.Errorf("missing Zeek conn fields")
+	}
+	flow := zeekFlow(fields, srcIP, dstIP)
+	for _, pair := range [][2]string{{"orig_bytes", "bytes_toserver"}, {"resp_bytes", "bytes_toclient"}, {"orig_pkts", "pkts_toserver"}, {"resp_pkts", "pkts_toclient"}} {
+		if value := intField(fields, pair[0]); value > 0 {
+			flow[pair[1]] = value
+		}
+	}
+	payload := map[string]any{}
+	copyPayload(payload, fields, "service", "service")
+	copyPayload(payload, fields, "conn_state", "state")
+	copyPayload(payload, fields, "history", "history")
+	copyPayload(payload, fields, "vlan", "vlan")
+	return zeekNetworkEvent(raw, fields, lineOffset, opts, "flow", "conn", timestamp, srcIP, dstIP, flow, payload), nil
+}
+
+func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	srcIP, dstIP := first(fields, "id.orig_h", "src_ip", "host"), first(fields, "id.resp_h", "dst_ip")
+	if timestamp == "" || srcIP == "" {
+		return normalized.Event{}, fmt.Errorf("missing Zeek %s fields", opts.LogKind)
+	}
+	if dstIP == "" {
+		dstIP = srcIP
+	}
+	kind := opts.LogKind
+	eventType := kind
+	if kind == "ssl" || kind == "x509" {
+		eventType = "tls"
+	}
+	payload := map[string]any{}
+	switch kind {
+	case "dns":
+		copyPayload(payload, fields, "query", "query")
+		copyPayload(payload, fields, "answers", "answers")
+		copyPayload(payload, fields, "qtype_name", "qtype")
+		copyPayload(payload, fields, "rcode_name", "rcode")
+	case "http":
+		for _, pair := range [][2]string{{"host", "host"}, {"method", "method"}, {"uri", "url"}, {"user_agent", "user_agent"}, {"server", "server"}, {"title", "title"}, {"status_code", "status"}} {
+			copyPayload(payload, fields, pair[0], pair[1])
+		}
+	case "ssl", "tls", "x509":
+		for _, pair := range [][2]string{{"server_name", "sni"}, {"version", "version"}, {"cipher", "cipher"}, {"subject", "certificate_subject"}, {"certificate.subject", "certificate_subject"}, {"issuer", "certificate_issuer"}, {"certificate.issuer", "certificate_issuer"}, {"san.dns", "certificate_san"}, {"san", "certificate_san"}, {"ja3", "ja3"}, {"ja4", "ja4"}} {
+			copyPayload(payload, fields, pair[0], pair[1])
+		}
+	}
+	copyPayload(payload, fields, "vlan", "vlan")
+	return zeekNetworkEvent(raw, fields, lineOffset, opts, eventType, kind, timestamp, srcIP, dstIP, zeekFlow(fields, srcIP, dstIP), payload), nil
+}
+
+func infrastructureDiscoveryEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	srcIP := first(fields, "id.orig_h", "src_ip", "host", "address", "ip")
+	if timestamp == "" || srcIP == "" {
+		return normalized.Event{}, fmt.Errorf("missing Zeek %s fields", opts.LogKind)
+	}
+	dstIP := first(fields, "id.resp_h", "dst_ip")
+	if dstIP == "" {
+		if opts.LogKind == "ssdp" {
+			dstIP = "239.255.255.250"
+		} else {
+			dstIP = srcIP
+		}
+	}
+	payload := map[string]any{"origin": opts.LogKind}
+	if opts.LogKind == "lldp" {
+		for _, pair := range [][2]string{{"system_name", "system_name"}, {"system_description", "system_description"}, {"system_capabilities", "system_capabilities"}, {"capabilities", "capabilities"}, {"chassis_id", "chassis_id"}, {"port_id", "port_id"}, {"management_address", "management_address"}} {
+			copyPayload(payload, fields, pair[0], pair[1])
+		}
+	} else {
+		for _, pair := range [][2]string{{"st", "st"}, {"nt", "nt"}, {"usn", "usn"}, {"server", "server"}, {"location", "location"}} {
+			copyPayload(payload, fields, pair[0], pair[1])
+		}
+	}
+	copyPayload(payload, fields, "vlan", "vlan")
+	subject := map[string]any{"ip": srcIP, "entity_role": "network_device"}
+	if mac := first(fields, "src_mac", "mac", "chassis_id"); mac != "" {
+		subject["mac"] = normalizeMAC(mac)
+	}
+	event := zeekNetworkEvent(raw, fields, lineOffset, opts, "discovery", opts.LogKind, timestamp, srcIP, dstIP, zeekFlow(fields, srcIP, dstIP), payload)
+	event.Subject = subject
+	event.Confidence = 0.85
+	return event, nil
+}
+
+func zeekNetworkEvent(raw []byte, fields map[string]string, lineOffset int, opts Options, eventType, sourceType, timestamp, srcIP, dstIP string, flow, payload map[string]any) normalized.Event {
+	observer := map[string]any{}
+	if opts.SensorID != "" {
+		observer["sensor_id"] = opts.SensorID
+	}
+	subject := map[string]any{"ip": srcIP}
+	if mac := first(fields, "orig_l2_addr", "src_mac", "mac", "client_mac"); mac != "" {
+		subject["mac"] = normalizeMAC(mac)
+	}
+	return normalized.Event{SchemaVersion: "v1", EventID: eventID(raw, lineOffset), Source: "zeek", SourceEventType: sourceType, Type: eventType, Timestamp: timestamp, Observer: observer, Subject: subject, Flow: flow, Payload: payload, Confidence: 0.9, RawRef: map[string]any{"backend": "zeek", "log": sourceType, "line_offset": lineOffset}}
+}
+
+func zeekFlow(fields map[string]string, srcIP, dstIP string) map[string]any {
+	proto := strings.ToLower(first(fields, "proto"))
+	if proto != "tcp" && proto != "udp" && proto != "icmp" {
+		proto = "other"
+	}
+	flow := map[string]any{"src_ip": srcIP, "dst_ip": dstIP, "proto": proto, "direction": "unknown"}
+	if port := intField(fields, "id.orig_p"); port > 0 {
+		flow["src_port"] = port
+	}
+	if port := intField(fields, "id.resp_p"); port > 0 {
+		flow["dst_port"] = port
+	}
+	if uid := first(fields, "uid"); uid != "" {
+		flow["connection_id"] = uid
+	}
+	return flow
+}
+
+func discoveryEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	if timestamp == "" {
+		return normalized.Event{}, fmt.Errorf("missing zeek ts")
+	}
+	subjectIP := first(fields, "src_ip", "client_addr", "id.orig_h", "host", "address", "ip")
+	if subjectIP == "" {
+		return normalized.Event{}, fmt.Errorf("missing %s subject address", opts.LogKind)
+	}
+	destination := first(fields, "dst_ip", "id.resp_h", "server_addr")
+	if destination == "" {
+		destination = "224.0.0.252"
+		if opts.LogKind == "mdns" {
+			destination = "224.0.0.251"
+		}
+	}
+	payload := map[string]any{"origin": opts.LogKind}
+	if opts.LogKind == "mdns" {
+		payload["is_response"] = first(fields, "is_response") == "true" || first(fields, "is_response") == "T"
+		for _, key := range []string{"record_type", "record_name", "record_address", "record_ttl", "service_target", "parser_version"} {
+			if value := first(fields, key); value != "" {
+				payload[key] = value
+			}
+		}
+	}
+	for _, mapping := range [][2]string{{"hostname", "hostname"}, {"name", "device_name"}, {"query", "query"}, {"answers", "answers"}, {"mac", "client_mac"}, {"client_mac", "client_mac"}, {"ttl", "ttl"}} {
+		if value := first(fields, mapping[0]); value != "" {
+			if opts.LogKind == "mdns" && (mapping[1] == "device_name" || mapping[1] == "hostname") {
+				payload["discovery_name"] = value
+				continue
+			}
+			if mapping[1] == "ttl" {
+				if number, err := strconv.Atoi(value); err == nil {
+					payload[mapping[1]] = number
+				}
+			} else {
+				payload[mapping[1]] = value
+			}
+		}
+	}
+	subject := map[string]any{"ip": subjectIP}
+	if mac := first(fields, "mac", "client_mac"); mac != "" {
+		subject["mac"] = normalizeMAC(mac)
+	}
+	observer := map[string]any{}
+	if opts.SensorID != "" {
+		observer["sensor_id"] = opts.SensorID
+	}
+	proto := first(fields, "proto")
+	if proto == "" {
+		proto = "udp"
+	}
+	direction := first(fields, "direction")
+	if direction == "" {
+		direction = "outbound"
+	}
+	return normalized.Event{SchemaVersion: "v1", EventID: eventID(raw, lineOffset), Source: "zeek", SourceEventType: opts.LogKind, Type: "device", Timestamp: timestamp, Observer: observer, Subject: subject, Flow: map[string]any{"src_ip": subjectIP, "dst_ip": destination, "proto": strings.ToLower(proto), "direction": direction}, Payload: payload, Confidence: 0.75, RawRef: map[string]any{"backend": "zeek", "log": opts.LogKind, "line_offset": lineOffset}}, nil
 }
 
 func (p logParser) fieldsFor(raw []byte) (map[string]string, error) {
@@ -269,6 +473,10 @@ func softwareEventFromFields(raw []byte, fields map[string]string, lineOffset in
 
 func dhcpPayload(fields map[string]string) map[string]any {
 	payload := map[string]any{"origin": "dhcp"}
+	copyPayload(payload, fields, "lease_time", "lease_time")
+	if at := normalizeTimestamp(first(fields, "lease_observed_at")); at != "" {
+		payload["lease_observed_at"] = at
+	}
 	copyPayload(payload, fields, "host_name", "hostname")
 	copyPayload(payload, fields, "hostname", "hostname")
 	copyPayload(payload, fields, "client_software", "vendor_class")
@@ -497,7 +705,9 @@ func normalizeTimestamp(value string) string {
 }
 
 func eventID(raw []byte, lineOffset int) string {
-	sum := sha256.Sum256(append(raw, []byte(fmt.Sprintf("|%d", lineOffset))...))
+	// Zeek timestamps and connection fields are part of the raw record. The
+	// current line number is deliberately excluded so replay stays idempotent.
+	sum := sha256.Sum256(raw)
 	return "zeek-" + hex.EncodeToString(sum[:])[:24]
 }
 

@@ -1,0 +1,4 @@
+Proxy Sentinel rule pack license: BSD-3-Clause.
+
+Protocol field values are derived from public WireGuard and OpenVPN protocol
+specifications. The rules in this directory are original Proxy Sentinel rules.

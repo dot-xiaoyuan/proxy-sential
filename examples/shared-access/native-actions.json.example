@@ -1,0 +1,15 @@
+[
+  {
+    "connector_id": "srun-radius-lab",
+    "campus_id": "lab",
+    "access_domain": "lab-nas",
+    "endpoint": "https://192.0.2.190:8001",
+    "certificate_file": "/etc/proxy-sentinel/srun-management.pem",
+    "max_records": 1000,
+    "drop_type": "radius",
+    "test_account": "REPLACE_EXPLICIT_TEST_ACCOUNT",
+    "inventory_url": "https://192.0.2.190/REPLACE_EXISTING_COMPLETE_INVENTORY_API",
+    "inventory_token": "REPLACE_PRIVATE_INVENTORY_TOKEN",
+    "credential_source": "4k_database"
+  }
+]

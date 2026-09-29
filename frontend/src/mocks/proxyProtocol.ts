@@ -1,0 +1,2 @@
+import type { ProxyProtocolEvidence } from '../shared/api/types'
+export const proxyProof: ProxyProtocolEvidence={evidence_id:'proxy-fixture-evidence',protocol:'socks5',outcome:'success',trusted:true,reason:'检测到成功代理连接',source:'zeek',parser_id:'sentinel-zeek-proxy',parser_version:'1',rule_version:'proxy-transactions/v1',config_version:'replay-v1',request_at:'2026-09-11T01:00:00Z',response_at:'2026-09-11T01:00:01Z',connection_id:'conn-'+ 'a'.repeat(64),transaction_id:'1',event_ids:['proxy-fixture'],attribution:{state:'resolved',account_id:'staff-001'},ip:'10.255.0.59'}

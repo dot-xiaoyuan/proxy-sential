@@ -1,0 +1,9 @@
+{
+  "schema_version": "shared-access-sources/v1",
+  "version": "campus-lab-20260915",
+  "freshness_seconds": 180,
+  "sources": [
+    {"sensor_id":"campus-lab","source":"suricata","campus_id":"campus-lab","access_domain":"lab-nas"},
+    {"sensor_id":"campus-lab","source":"packet-sidecar","campus_id":"campus-lab","access_domain":"lab-nas"}
+  ]
+}

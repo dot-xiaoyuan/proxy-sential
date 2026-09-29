@@ -43,6 +43,18 @@ func TestShadowRunsEmptyDirectoryReturnsEmptyArrays(t *testing.T) {
 	}
 }
 
+func TestActiveCaseMatchesSameIPWhenEvidenceDedupeChanges(t *testing.T) {
+	item := store.ProxyReviewCase{IP: "192.0.2.10"}
+	candidate := RiskCase{SubjectType: "ip", SubjectID: item.IP, IP: item.IP, Status: "new", DedupeKey: "old-evidence"}
+	if !activeCaseMatches(candidate, item, "new-evidence") {
+		t.Fatal("an open IP case must be updated when its evidence-derived key changes")
+	}
+	candidate.Status = "closed"
+	if activeCaseMatches(candidate, item, "new-evidence") {
+		t.Fatal("a closed case must not absorb a new detection episode")
+	}
+}
+
 func TestHealthAndReadinessEndpoints(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
 	var health map[string]any
@@ -59,6 +71,12 @@ func TestHealthAndReadinessEndpoints(t *testing.T) {
 	getJSON(t, server, "/api/v1/system/status", http.StatusOK, &system)
 	if system["fingerprint_offline_mode"] != true {
 		t.Fatalf("unexpected system status: %#v", system)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "proxy_sentinel_ready 1") || !strings.Contains(response.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("unexpected metrics response: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -97,6 +115,48 @@ func TestShadowEvaluationReturnsNotFoundBeforeFirstReport(t *testing.T) {
 	getJSON(t, server, "/api/v1/shadow/evaluation", http.StatusNotFound, &response)
 	if response.Code != "shadow_evaluation_not_found" {
 		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestShadowReviewSamplesReturnsLatestDateAndRejectsInvalidDate(t *testing.T) {
+	shadowDir := t.TempDir()
+	exportDir := filepath.Join(shadowDir, "review-exports")
+	if err := os.MkdirAll(exportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, date := range []string{"2026-09-06", "2026-09-07"} {
+		mustWriteJSON(t, filepath.Join(exportDir, date+"-review-samples.json"), map[string]any{
+			"date": date, "samples_per_level": 10, "samples": []evaluation.Sample{{
+				Date: date, IP: "10.0.0.8", SubjectType: "ip", SubjectID: "10.0.0.8", Level: "normal",
+				EvidenceIDs: []string{"evidence-1"}, ReviewStatus: "unreviewed", SourceRunID: "run-1", SnapshotTime: date + "T10:00:00Z",
+			}},
+		})
+	}
+	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "office-30", ReadOnly: true})
+	var response struct {
+		Date    string              `json:"date"`
+		Dates   []string            `json:"dates"`
+		Samples []evaluation.Sample `json:"samples"`
+	}
+	getJSON(t, server, "/api/v1/shadow/review-samples", http.StatusOK, &response)
+	if response.Date != "2026-09-07" || len(response.Dates) != 2 || len(response.Samples) != 1 {
+		t.Fatalf("unexpected review samples: %+v", response)
+	}
+	var badDate ErrorResponse
+	getJSON(t, server, "/api/v1/shadow/review-samples?date=../../etc/passwd", http.StatusBadRequest, &badDate)
+	if badDate.Code != "bad_shadow_review_date" {
+		t.Fatalf("unexpected invalid-date response: %+v", badDate)
+	}
+}
+
+func TestApplyLatestSampleLabelUsesSubjectIdentity(t *testing.T) {
+	sample := evaluation.Sample{IP: "10.0.0.8", SubjectType: "ip", SubjectID: "10.0.0.8", SourceRunID: "run-1", EvidenceIDs: []string{"evidence-1"}, ReviewStatus: "unreviewed"}
+	applyLatestSampleLabel(&sample, []store.Label{{
+		TargetType: "ip", TargetID: "10.0.0.8", Label: "confirmed_proxy", Reason: "受控隧道复核",
+		EvidenceIDs: []string{"evidence-1"}, CreatedBy: "reviewer", CreatedAt: "2026-09-07T08:00:00Z",
+	}})
+	if sample.ReviewStatus != "confirmed_proxy" || sample.ReviewedBy != "reviewer" || sample.ReviewReason != "受控隧道复核" {
+		t.Fatalf("latest label was not applied: %+v", sample)
 	}
 }
 
@@ -664,6 +724,13 @@ func TestDeviceQueryAcceptsEcosystemFilter(t *testing.T) {
 	query, err := deviceQuery(url.Values{"ecosystem": {"Microsoft Windows"}, "limit": {"20"}})
 	if err != nil || query.Ecosystem != "Microsoft Windows" || query.Limit != 20 {
 		t.Fatalf("unexpected ecosystem device query: %+v err=%v", query, err)
+	}
+}
+
+func TestDeviceQueryAcceptsBrandAndOSFamily(t *testing.T) {
+	query, err := deviceQuery(url.Values{"brand": {" Dell "}, "os_family": {"Windows"}, "limit": {"20"}, "cursor": {"20"}})
+	if err != nil || query.Brand != "Dell" || query.OSFamily != "Windows" || query.Cursor != 20 {
+		t.Fatalf("unexpected recognition filter query: %+v err=%v", query, err)
 	}
 }
 

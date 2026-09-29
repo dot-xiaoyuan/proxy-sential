@@ -1,0 +1,5 @@
+# Explicit development override; keep verbose internal logs disabled on recreation.
+services:
+  clickhouse:
+    volumes:
+      - ${PROXY_SENTINEL_CONFIG_DIR:-/opt/proxy-sentinel/config}/development-logging.xml:/etc/clickhouse-server/config.d/development-logging.xml:ro

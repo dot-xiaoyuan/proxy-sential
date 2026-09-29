@@ -2,7 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"proxy-sentinel/internal/evidence"
@@ -13,9 +17,13 @@ import (
 )
 
 type DBStore struct {
-	pg          *PostgresStore
-	ch          *ClickHouseStore
-	storageMode Mode
+	pg           *PostgresStore
+	ch           *ClickHouseStore
+	storageMode  Mode
+	domainOnce   sync.Once
+	domainQueue  chan domainBatch
+	domainCancel context.CancelFunc
+	domainDone   chan struct{}
 }
 
 func (s *DBStore) Health(ctx context.Context) error {
@@ -79,6 +87,10 @@ func (s *DBStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, erro
 	return s.pg.GetIPRisk(ctx, ip)
 }
 
+func (s *DBStore) ListLabels(ctx context.Context, limit int) ([]Label, error) {
+	return s.pg.ListLabels(ctx, limit)
+}
+
 func (s *DBStore) GetIPEvidence(ctx context.Context, ip string, limit int) ([]evidence.Evidence, error) {
 	return s.pg.GetIPEvidence(ctx, ip, limit)
 }
@@ -132,13 +144,87 @@ func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) 
 		return ActivityOverview{}, err
 	}
 	query.Window = window
-	return s.ch.GetActivityOverviewWithRisks(ctx, query, duration, risks)
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3")), "true") {
+		freshness, freshnessErr := s.activityV3Freshness(ctx, duration, query.AsOf)
+		if freshnessErr != nil {
+			return ActivityOverview{}, freshnessErr
+		}
+		result, queryErr := s.ch.getActivityOverview(ctx, query, duration, risks, true)
+		result.StatisticsAsOf = freshness.AsOf
+		result.DataFreshness = &freshness
+		return result, queryErr
+	}
+	if err := s.activityStatisticsReadModelHealth(ctx); err != nil {
+		return ActivityOverview{}, err
+	}
+	var sourceAt time.Time
+	if err := s.pg.db.QueryRowContext(ctx, `SELECT updated_at FROM activity_chart_read_model_cursor_v2 WHERE id=1`).Scan(&sourceAt); err != nil {
+		return ActivityOverview{}, err
+	}
+	result, err := s.ch.getActivityOverview(ctx, query, duration, risks, true)
+	result.StatisticsAsOf = sourceAt.UTC().Format(time.RFC3339Nano)
+	return result, err
+}
+
+func (s *DBStore) activityV3Freshness(ctx context.Context, window time.Duration, rawAsOf string) (DataFreshness, error) {
+	cutover, err := s.ensureActivityV3Cutover(ctx)
+	if err != nil {
+		return DataFreshness{}, err
+	}
+	asOf := time.Time{}
+	var raw string
+	if err = s.pg.db.QueryRowContext(ctx, `SELECT state->>'as_of' FROM read_model_runtime_state WHERE name='activity-v3-5m'`).Scan(&raw); err == nil && raw != "" {
+		asOf, err = parseReadModelTime(raw)
+		if err != nil {
+			return DataFreshness{}, err
+		}
+	} else if err != nil && err != sql.ErrNoRows {
+		return DataFreshness{}, err
+	}
+	now := time.Now().UTC()
+	requestedTo := now
+	if rawAsOf != "" {
+		requestedTo, err = time.Parse(time.RFC3339Nano, rawAsOf)
+		if err != nil {
+			return DataFreshness{}, err
+		}
+	}
+	lag := int64(0)
+	status := "warming"
+	if !asOf.IsZero() {
+		lag = int64(now.Sub(asOf).Seconds())
+		if lag < 0 {
+			lag = 0
+		}
+		switch {
+		case lag <= 60:
+			status = "fresh"
+		case lag <= 300:
+			status = "delayed"
+		default:
+			status = "stale"
+		}
+	}
+	asOfText := ""
+	if !asOf.IsZero() {
+		asOfText = asOf.UTC().Format(time.RFC3339Nano)
+	}
+	return DataFreshness{
+		Status:        status,
+		AsOf:          asOfText,
+		LagSeconds:    lag,
+		AvailableFrom: cutover.UTC().Format(time.RFC3339Nano),
+		Partial:       requestedTo.Add(-window).Before(cutover),
+	}, nil
 }
 
 func (s *DBStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (ProxyReviewResponse, error) {
 	window, duration, err := NormalizeActivityWindow(firstNonEmpty(query.Window, defaultProxyReviewWindow))
 	if err != nil {
 		return ProxyReviewResponse{}, err
+	}
+	if window != "24h" && window != "7d" {
+		return ProxyReviewResponse{}, fmt.Errorf("proxy review window must be one of 24h, 7d")
 	}
 	sensorID := firstNonEmpty(query.SensorID, s.pg.sensorID)
 	limit := query.SampleLimit
@@ -160,7 +246,16 @@ func (s *DBStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIO
 	if query.SensorID == "" {
 		query.SensorID = s.pg.sensorID
 	}
-	return s.ch.QueryDPIOverview(ctx, query)
+	if err := s.activityStatisticsReadModelHealth(ctx); err != nil {
+		return DPIOverview{}, err
+	}
+	var sourceAt time.Time
+	if err := s.pg.db.QueryRowContext(ctx, `SELECT updated_at FROM activity_chart_read_model_cursor_v2 WHERE id=1`).Scan(&sourceAt); err != nil {
+		return DPIOverview{}, err
+	}
+	result, err := s.ch.queryDPICoarseOverview(ctx, query)
+	result.StatisticsAsOf = sourceAt.UTC().Format(time.RFC3339Nano)
+	return result, err
 }
 
 func (s *DBStore) ListDPITrends(ctx context.Context, query ActivityQuery) ([]DPITrendPoint, error) {
@@ -345,7 +440,11 @@ func (s *DBStore) WriteCollectorRun(ctx context.Context, run Run) error {
 }
 
 func (s *DBStore) WriteNormalizedEvents(ctx context.Context, events []normalized.Event) error {
-	return s.ch.WriteNormalizedEvents(ctx, events)
+	if err := s.ch.WriteNormalizedEvents(ctx, events); err != nil {
+		return err
+	}
+	s.enqueueDomainEvents(events)
+	return nil
 }
 
 func (s *DBStore) IngestIdentityEvents(ctx context.Context, events []normalized.Event) error {
@@ -371,19 +470,15 @@ func (s *DBStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk.Snaps
 	return s.pg.WriteRiskSnapshots(ctx, snapshots)
 }
 
+func (s *DBStore) ExpireRiskSnapshots(ctx context.Context, before time.Time) error {
+	return s.pg.ExpireRiskSnapshots(ctx, before)
+}
+
 func (s *DBStore) WriteDeviceState(ctx context.Context, run Run, events []normalized.Event, snapshots []risk.Snapshot) error {
 	if err := s.pg.WriteDeviceState(ctx, run, events, snapshots); err != nil {
 		return err
 	}
-	copyEvents := append([]normalized.Event(nil), events...)
-	go func() {
-		background, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		result, err := s.pg.ProcessDomainEvents(background, copyEvents, fingerprint.Default())
-		if err == nil {
-			_ = s.ch.WriteDomainEcosystemObservations(background, result.Observations)
-		}
-	}()
+	s.enqueueDomainEvents(events)
 	return nil
 }
 
@@ -395,26 +490,37 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 	if version == "" {
 		return result, fmt.Errorf("domain rule version is required")
 	}
+	library := fingerprint.Default()
+	if library.Version() != version {
+		return result, fmt.Errorf("domain backfill version %s is not loaded", version)
+	}
+
 	if window <= 0 {
 		window = 7 * 24 * time.Hour
 	}
-	if batchSize <= 0 || batchSize > 10000 {
-		batchSize = 10000
+	if batchSize <= 0 || batchSize > MaxDomainBatchSize {
+		batchSize = MaxDomainBatchSize
 	}
 	conn, err := s.pg.db.Conn(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer conn.Close()
-	lockName := "proxy-sentinel-domain-evidence-backfill:" + version
-	var locked bool
-	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, lockName).Scan(&locked); err != nil {
+	lockName := "proxy-sentinel-domain-evidence-backfill"
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtext($1))`, lockName); err != nil {
 		return result, err
 	}
-	if !locked {
-		return s.pg.loadDomainBackfillProgress(ctx, version)
-	}
 	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, lockName)
+	if fingerprint.Default().Version() != version {
+		return result, fmt.Errorf("domain version %s was superseded", version)
+	}
+	if _, err := s.pg.db.ExecContext(ctx, `INSERT INTO domain_recognition_state(singleton,pending_version) VALUES(true,$1) ON CONFLICT(singleton) DO UPDATE SET pending_version=EXCLUDED.pending_version,updated_at=now()`, version); err != nil {
+		return result, err
+	}
+	if _, err := s.pg.db.ExecContext(ctx, `INSERT INTO domain_rule_versions(version,rules) VALUES($1,$2) ON CONFLICT DO NOTHING`, version, library.DomainRulesJSON()); err != nil {
+		return result, err
+	}
+
 	since := time.Now().UTC().Add(-window)
 	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO domain_evidence_backfill_jobs(version,status,cursor_timestamp,started_at,updated_at) VALUES($1,'pending',$2,now(),now()) ON CONFLICT(version) DO NOTHING`, version, since)
 	if err != nil {
@@ -425,6 +531,9 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		return result, err
 	}
 	if result.Status == "completed" {
+		if err := s.activateDomainVersion(ctx, version); err != nil {
+			return result, err
+		}
 		if progress != nil {
 			progress(result)
 		}
@@ -448,7 +557,10 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 			}
 		}
 	}()
-	for {
+	for library.DomainRuleCount() > 0 {
+		if fingerprint.Default().Version() != version {
+			return result, fmt.Errorf("domain version %s was superseded", version)
+		}
 		events, queryErr := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), result.CursorTimestamp, result.CursorEventID, batchSize)
 		if queryErr != nil {
 			return result, queryErr
@@ -456,7 +568,7 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		if len(events) == 0 {
 			break
 		}
-		batchResult, processErr := s.pg.ProcessDomainEvents(ctx, events, fingerprint.Default())
+		batchResult, processErr := s.pg.ProcessDomainEvents(ctx, events, library)
 		if processErr != nil {
 			return result, processErr
 		}
@@ -485,6 +597,9 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		return result, err
 	}
 	result.Status = "completed"
+	if err := s.activateDomainVersion(ctx, version); err != nil {
+		return result, err
+	}
 	if progress != nil {
 		progress(result)
 	}

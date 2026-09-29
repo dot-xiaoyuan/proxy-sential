@@ -5,6 +5,13 @@ services:
     image: ${POSTGRES_IMAGE:?POSTGRES_IMAGE must be a Coding registry image pinned by sha256 digest}
     container_name: proxy-sentinel-postgres
     restart: unless-stopped
+    cpus: "2.0"
+    mem_limit: 3g
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-proxy_sentinel}
       POSTGRES_USER: ${POSTGRES_USER:-proxy_sentinel}
@@ -24,6 +31,13 @@ services:
     image: ${CLICKHOUSE_IMAGE:?CLICKHOUSE_IMAGE must be a Coding registry image pinned by sha256 digest}
     container_name: proxy-sentinel-clickhouse
     restart: unless-stopped
+    cpus: "8.0"
+    mem_limit: 12g
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-proxy_sentinel}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-proxy_sentinel}

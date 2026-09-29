@@ -1,0 +1,21 @@
+# Proxy Sentinel conservative protocol rules v2026.09.04
+# High-confidence rules require stable protocol bytes. Port, domain and generic
+# proxy handshakes are medium hints and cannot authorize an action alone.
+
+alert udp $HOME_NET any -> $EXTERNAL_NET any (msg:"PROXY_SENTINEL WireGuard handshake initiation"; flow:to_server; content:"|01 00 00 00|"; offset:0; depth:4; dsize:148; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200001; rev:1;)
+alert udp $EXTERNAL_NET any -> $HOME_NET any (msg:"PROXY_SENTINEL WireGuard handshake response"; flow:to_client; content:"|02 00 00 00|"; offset:0; depth:4; dsize:92; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200002; rev:1;)
+
+# OpenVPN P_CONTROL_HARD_RESET_CLIENT_V2 opcode is 7 (upper five bits), with
+# the lower three bits carrying key-id. Standard UDP/1194 plus the opcode is
+# deliberately required to keep this a high-confidence signature.
+alert udp $HOME_NET any -> $EXTERNAL_NET 1194 (msg:"PROXY_SENTINEL OpenVPN client hard reset v2 key0"; flow:to_server; content:"|38|"; offset:0; depth:1; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200010; rev:1;)
+alert udp $HOME_NET any -> $EXTERNAL_NET 1194 (msg:"PROXY_SENTINEL OpenVPN client hard reset v2 key1"; flow:to_server; content:"|39|"; offset:0; depth:1; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200011; rev:1;)
+alert udp $HOME_NET any -> $EXTERNAL_NET 1194 (msg:"PROXY_SENTINEL OpenVPN client hard reset v2 key2"; flow:to_server; content:"|3a|"; offset:0; depth:1; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200012; rev:1;)
+alert udp $HOME_NET any -> $EXTERNAL_NET 1194 (msg:"PROXY_SENTINEL OpenVPN client hard reset v2 key3"; flow:to_server; content:"|3b|"; offset:0; depth:1; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200013; rev:1;)
+alert udp $HOME_NET any -> $EXTERNAL_NET 1194 (msg:"PROXY_SENTINEL OpenVPN client hard reset v2 key4"; flow:to_server; content:"|3c|"; offset:0; depth:1; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200014; rev:1;)
+alert udp $HOME_NET any -> $EXTERNAL_NET 1194 (msg:"PROXY_SENTINEL OpenVPN client hard reset v2 key5"; flow:to_server; content:"|3d|"; offset:0; depth:1; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200015; rev:1;)
+alert udp $HOME_NET any -> $EXTERNAL_NET 1194 (msg:"PROXY_SENTINEL OpenVPN client hard reset v2 key6"; flow:to_server; content:"|3e|"; offset:0; depth:1; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200016; rev:1;)
+alert udp $HOME_NET any -> $EXTERNAL_NET 1194 (msg:"PROXY_SENTINEL OpenVPN client hard reset v2 key7"; flow:to_server; content:"|3f|"; offset:0; depth:1; metadata: proxy_sentinel_confidence high, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200017; rev:1;)
+
+alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"PROXY_SENTINEL HTTP CONNECT proxy hint"; flow:established,to_server; content:"CONNECT "; offset:0; depth:8; nocase; metadata: proxy_sentinel_confidence medium, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200100; rev:1;)
+alert tcp $HOME_NET any -> $EXTERNAL_NET any (msg:"PROXY_SENTINEL SOCKS5 no-auth greeting hint"; flow:established,to_server; content:"|05 01 00|"; offset:0; depth:3; metadata: proxy_sentinel_confidence medium, source proxy_sentinel, license BSD-3-Clause; classtype:policy-violation; sid:4200101; rev:1;)

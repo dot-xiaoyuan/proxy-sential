@@ -1,0 +1,9 @@
+{
+  "schema_version": "proxy-sentinel-suricata-rules/v1",
+  "version": "2026.09.04",
+  "source": "Proxy Sentinel maintained signatures based on public protocol specifications",
+  "license": "BSD-3-Clause",
+  "high_confidence_protocols": ["WireGuard", "OpenVPN UDP/1194"],
+  "medium_confidence_hints": ["HTTP CONNECT", "SOCKS5 no-auth greeting"],
+  "excluded_as_unstable": ["Shadowsocks", "Hysteria", "generic domain keywords"]
+}

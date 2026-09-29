@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"proxy-sentinel/internal/discovery"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/normalized"
@@ -57,6 +60,14 @@ type InfrastructureEntity struct {
 }
 
 type AccountSession struct {
+	GroupID          string `json:"group_id,omitempty"`
+	ProductID        string `json:"product_id,omitempty"`
+	AccessDomain     string `json:"access_domain,omitempty"`
+	LastConfirmedAt  string `json:"last_confirmed_at,omitempty"`
+	HeartbeatSeconds int    `json:"heartbeat_interval_seconds,omitempty"`
+	ReconcileSeconds int    `json:"reconcile_interval_seconds,omitempty"`
+	DeviceClass      string `json:"device_class,omitempty"`
+
 	SessionID          string         `json:"session_id"`
 	AccountID          string         `json:"account_id"`
 	EndpointID         string         `json:"endpoint_id,omitempty"`
@@ -129,16 +140,21 @@ type AccountIdentityProfile struct {
 }
 
 type EndpointIdentityProfile struct {
-	EndpointID        string                   `json:"endpoint_id"`
-	Summary           string                   `json:"summary"`
-	Endpoint          EndpointEntity           `json:"endpoint"`
-	Accounts          []string                 `json:"accounts"`
-	Sessions          []AccountSession         `json:"sessions"`
-	IPHistory         []IdentityIPMACHistory   `json:"ip_history"`
-	AccessHistory     []IdentityAccessHistory  `json:"access_history"`
-	FirstSeen         string                   `json:"first_seen,omitempty"`
-	LastSeen          string                   `json:"last_seen,omitempty"`
-	EcosystemEvidence []EndpointDomainEvidence `json:"ecosystem_evidence,omitempty"`
+	Discovery           *discovery.Summary          `json:"discovery,omitempty"`
+	DeviceNamesDisabled bool                        `json:"device_names_disabled,omitempty"`
+	DeviceName          *DeviceName                 `json:"device_name,omitempty"`
+	BrandInference      *fingerprint.BrandInference `json:"brand_inference,omitempty"`
+	Recognition         *EndpointDeviceInventory    `json:"recognition,omitempty"`
+	EndpointID          string                      `json:"endpoint_id"`
+	Summary             string                      `json:"summary"`
+	Endpoint            EndpointEntity              `json:"endpoint"`
+	Accounts            []string                    `json:"accounts"`
+	Sessions            []AccountSession            `json:"sessions"`
+	IPHistory           []IdentityIPMACHistory      `json:"ip_history"`
+	AccessHistory       []IdentityAccessHistory     `json:"access_history"`
+	FirstSeen           string                      `json:"first_seen,omitempty"`
+	LastSeen            string                      `json:"last_seen,omitempty"`
+	EcosystemEvidence   []EndpointDomainEvidence    `json:"ecosystem_evidence,omitempty"`
 }
 
 func BuildIdentityState(events []normalized.Event) IdentityState {
@@ -354,6 +370,9 @@ func BuildEndpointIdentityProfile(state IdentityState, endpointID string) (Endpo
 }
 
 func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDeviceInventory {
+	if profile.Recognition != nil {
+		return *profile.Recognition
+	}
 	endpoint := profile.Endpoint
 	ensureEndpointRegistrationDefaults(&endpoint)
 	ips := uniqueIdentityValues(profile.IPHistory, func(item IdentityIPMACHistory) string { return item.IP })
@@ -370,7 +389,7 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 		OwnershipClass:     firstNonEmpty(endpoint.OwnershipClass, "unknown"),
 		MergeStatus:        endpoint.MergeStatus,
 		CurrentAccount:     firstString(profile.Accounts),
-		CurrentIP:          firstString(ips),
+		CurrentIP:          recentEndpointIP(profile.IPHistory),
 		CurrentAccessID:    firstString(accessIDs),
 		Accounts:           append([]string{}, profile.Accounts...),
 		IPs:                ips,
@@ -421,6 +440,7 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	if item.LastSeen == "" {
 		item.LastSeen = endpoint.LastSeen
 	}
+	item.BrandReference = fingerprint.MACVendorBrandReference(item.PrimaryMAC, item.Vendor, item.VendorConfidence)
 	item.Summary = endpointDeviceSummary(item)
 	return item
 }
@@ -450,8 +470,14 @@ func BuildEndpointDeviceInventories(state IdentityState, query Query) []Endpoint
 }
 
 func endpointDeviceMatchesQuery(item EndpointDeviceInventory, query Query) bool {
+	if !deviceRecognitionMatches(item, query) {
+		return false
+	}
 	if query.SrcIP != "" && item.CurrentIP != query.SrcIP && !stringSliceContains(item.IPs, query.SrcIP) {
 		return false
+	}
+	if ip := deviceExactIP(query); ip != "" {
+		return item.CurrentIP == ip || stringSliceContains(item.IPs, ip)
 	}
 	q := strings.ToLower(strings.TrimSpace(query.Q))
 	if q == "" {
@@ -636,6 +662,11 @@ func mergeEndpointEntity(current EndpointEntity, fact identityFact) EndpointEnti
 		current.IdentityConfidence = fact.Confidence
 	}
 	ensureEndpointRegistrationDefaults(&current)
+	for key, value := range identityAttributes(fact) {
+		if value != nil && fmt.Sprint(value) != "" {
+			current.Attributes[key] = value
+		}
+	}
 	return current
 }
 
@@ -675,6 +706,9 @@ func mergeInfrastructureEntity(current InfrastructureEntity, fact identityFact) 
 
 func accountSessionFromFact(fact identityFact) AccountSession {
 	session := AccountSession{
+		GroupID: stringFromMap(fact.Payload, "group_id"), ProductID: stringFromMap(fact.Payload, "product_id"),
+		AccessDomain:    firstNonEmpty(stringFromMap(fact.Payload, "access_domain"), stringFromMap(fact.Payload, "nas_ip")),
+		LastConfirmedAt: fact.Timestamp, HeartbeatSeconds: policyInterval(fact.Payload, "heartbeat_interval_seconds"), ReconcileSeconds: policyInterval(fact.Payload, "reconcile_interval_seconds"), DeviceClass: stringFromMap(fact.Payload, "device_class"),
 		SessionID:          fact.SessionID(),
 		AccountID:          fact.AccountID,
 		EndpointID:         fact.EndpointID,
@@ -706,6 +740,19 @@ func accountSessionFromFact(fact identityFact) AccountSession {
 func mergeAccountSession(current, incoming AccountSession) AccountSession {
 	if current.SessionID == "" {
 		return incoming
+	}
+	if incoming.LastConfirmedAt >= current.LastConfirmedAt {
+		current.GroupID = firstNonEmpty(incoming.GroupID, current.GroupID)
+		current.ProductID = firstNonEmpty(incoming.ProductID, current.ProductID)
+		current.AccessDomain = firstNonEmpty(incoming.AccessDomain, current.AccessDomain)
+		current.DeviceClass = firstNonEmpty(incoming.DeviceClass, current.DeviceClass)
+		if incoming.HeartbeatSeconds > 0 {
+			current.HeartbeatSeconds = incoming.HeartbeatSeconds
+		}
+		if incoming.ReconcileSeconds > 0 {
+			current.ReconcileSeconds = incoming.ReconcileSeconds
+		}
+		current.LastConfirmedAt = incoming.LastConfirmedAt
 	}
 	current.StartedAt = minNonEmptyTime(current.StartedAt, incoming.StartedAt)
 	current.EndedAt = maxNonEmptyTime(current.EndedAt, incoming.EndedAt)
@@ -787,6 +834,24 @@ func identitySummary(label, id string, primaryCount int, ips []string, accessIDs
 	return strings.Join(parts, "，")
 }
 
+// recentEndpointIP reports an observation, not an active lease or online status.
+func recentEndpointIP(history []IdentityIPMACHistory) string {
+	var selected IdentityIPMACHistory
+	var latest, first time.Time
+	for _, item := range history {
+		if item.IP == "" {
+			continue
+		}
+		lastAt, _ := time.Parse(time.RFC3339Nano, item.LastSeen)
+		firstAt, _ := time.Parse(time.RFC3339Nano, item.FirstSeen)
+		if selected.IP == "" || lastAt.After(latest) ||
+			(lastAt.Equal(latest) && (firstAt.After(first) || (firstAt.Equal(first) && item.IP < selected.IP))) {
+			selected, latest, first = item, lastAt, firstAt
+		}
+	}
+	return selected.IP
+}
+
 func uniqueIdentityValues[T any](items []T, pick func(T) string) []string {
 	seen := map[string]struct{}{}
 	for _, item := range items {
@@ -835,4 +900,12 @@ func identityJSON(value any) []byte {
 func stableIdentityID(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
 	return hex.EncodeToString(sum[:])[:20]
+}
+
+func policyInterval(m map[string]any, k string) int {
+	n, _ := strconv.Atoi(fmt.Sprint(m[k]))
+	if n < 0 || n > 86400 {
+		return 0
+	}
+	return n
 }

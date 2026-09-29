@@ -1,3 +1,4 @@
+import { ApplicationActivity } from "../features/applications/ApplicationActivity";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import {
@@ -93,6 +94,12 @@ export function IpDetailsPage() {
             <Descriptions.Item label="窗口">
               {risk.data.window}
             </Descriptions.Item>
+            <Descriptions.Item label="检测依据">
+              <Space wrap>
+                <Tag>{({ explicit_tunnel: "明确隧道协议", shared_device_divergence: "共享设备分歧", behavioral_only: "仅行为线索" } as Record<string, string>)[risk.data.detection_basis ?? "behavioral_only"]}</Tag>
+                {(risk.data.independent_signal_groups ?? []).map((group) => <Tag key={group} color="blue">{group}</Tag>)}
+              </Space>
+            </Descriptions.Item>
             {(risk.data.raw_score || risk.data.raw_level) && (
               <Descriptions.Item label="原始风险">
                 <Space wrap>
@@ -128,7 +135,7 @@ export function IpDetailsPage() {
               {new Date(risk.data.updated_at).toLocaleString()}
             </Descriptions.Item>
             <Descriptions.Item label="证据解释">
-              <Typography.Text className="wrap-text text-white-bg">
+              <Typography.Text className="wrap-text">
                 {risk.data.summary}
               </Typography.Text>
             </Descriptions.Item>
@@ -160,10 +167,13 @@ export function IpDetailsPage() {
           items={[
             { key: "devices", label: "设备识别" },
             { key: "activity", label: "访问画像" },
+            { key: "applications", label: "应用访问" },
             { key: "evidence", label: "证据与技术信息" },
           ]}
         />
       </section>
+
+      {activeTab === "applications" && <ApplicationActivity ip={ip} />}
 
       {activeTab === "devices" && (
         <section className="surface">
@@ -343,7 +353,7 @@ export function IpDetailsPage() {
                         width: 160,
                         render: (_, row) => (
                           <Typography.Text className="mono">
-                            {row.dst_ip ?? "-"}
+                            {row.dst_ip ?? ""}
                             {row.dst_port ? `:${row.dst_port}` : ""}
                           </Typography.Text>
                         ),
@@ -354,7 +364,7 @@ export function IpDetailsPage() {
                           <Typography.Text className="wrap-text">
                             {[row.method, row.user_agent]
                               .filter(Boolean)
-                              .join(" / ") || "-"}
+                              .join(" / ") || ""}
                           </Typography.Text>
                         ),
                       },
@@ -392,7 +402,7 @@ export function IpDetailsPage() {
                           type="secondary"
                           className="font-size-sm"
                         >
-                          {acc.target_kind} · {acc.dst_ip ?? "-"}:
+                          {acc.target_kind} · {acc.dst_ip ?? ""}:
                           {acc.dst_port ?? ""}
                         </Typography.Text>
                         {acc.user_agent && (
@@ -716,7 +726,7 @@ function EventField({ label, value }: { label: string; value: string }) {
     <div className="event-compact-field">
       <Typography.Text type="secondary">{label}</Typography.Text>
       <Typography.Text className="mono wrap-text">
-        {value || "-"}
+        {value || ""}
       </Typography.Text>
     </div>
   );
@@ -738,7 +748,7 @@ function eventDestination(event: NormalizedEventSummary) {
   const ip = firstString(event.flow, ["dst_ip"]);
   const port = firstString(event.flow, ["dst_port"]);
   if (!ip) {
-    return "-";
+    return "";
   }
   return port ? `${ip}:${port}` : ip;
 }
@@ -748,7 +758,7 @@ function eventSource(event: NormalizedEventSummary) {
     firstString(event.flow, ["src_ip"]) || firstString(event.subject, ["ip"]);
   const port = firstString(event.flow, ["src_port"]);
   if (!ip) {
-    return "-";
+    return "";
   }
   return port ? `${ip}:${port}` : ip;
 }

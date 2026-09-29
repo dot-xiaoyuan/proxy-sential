@@ -257,18 +257,77 @@ func (s *FileStore) GetEndpointIdentity(ctx context.Context, endpointID string, 
 }
 
 func (s *FileStore) ListEndpointDevices(ctx context.Context, query Query) (EndpointDevicePage, error) {
-	state, err := s.identityState(ctx, query)
+	stateQuery := query
+	stateQuery.Window = "" // Apply view after building identity history.
+	stateQuery.Limit = -1  // Event reads must not be truncated by endpoint page size.
+	state, err := s.identityState(ctx, stateQuery)
 	if err != nil {
 		return EndpointDevicePage{}, err
 	}
-	items := BuildEndpointDeviceInventories(state, query)
+	allItems := BuildEndpointDeviceInventories(state, Query{})
+	now := time.Now().UTC()
+	scoped := make([]EndpointDeviceInventory, 0, len(allItems))
+	for _, item := range allItems {
+		if deviceInView(item, query, now) {
+			scoped = append(scoped, item)
+		}
+	}
+	allItems = scoped
+	facets := deviceFilterFacets(allItems)
+	items := []EndpointDeviceInventory{}
+	for _, item := range allItems {
+		if endpointDeviceMatchesQuery(item, query) {
+			if ip := deviceExactIP(query); ip != "" {
+				var matched *DeviceIPMatch
+				consider := func(source, at string) {
+					if matched == nil || at > matched.MatchedAt {
+						matched = &DeviceIPMatch{IP: ip, Source: source, MatchedAt: at, IsRecentIP: ip == item.CurrentIP}
+					}
+				}
+				for _, h := range state.IPMACHistory {
+					if h.EndpointID != item.EndpointID || h.IP != ip {
+						continue
+					}
+					at, err := time.Parse(time.RFC3339Nano, h.LastSeen)
+					if err == nil && (query.View != "recent" || (!at.Before(deviceViewStart(query, now)) && !at.After(now))) {
+						consider("ip_observation", h.LastSeen)
+					}
+				}
+				for _, h := range state.Sessions {
+					if h.EndpointID != item.EndpointID || h.IP != ip {
+						continue
+					}
+					start, _ := time.Parse(time.RFC3339Nano, h.StartedAt)
+					end := now
+					if h.EndedAt != "" {
+						end, _ = time.Parse(time.RFC3339Nano, h.EndedAt)
+					}
+					if query.View != "recent" || (!start.After(now) && !end.Before(deviceViewStart(query, now))) {
+						if end.After(now) {
+							end = now
+						}
+						matchTime := h.EndedAt
+						if matchTime == "" {
+							matchTime = h.StartedAt
+						}
+						consider("account_session", matchTime)
+					}
+				}
+				if matched == nil {
+					continue
+				}
+				item.IPMatch = matched
+			}
+			items = append(items, item)
+		}
+	}
 	total := len(items)
 	limit := query.Limit
 	if limit == 0 {
 		limit = 50
 	}
 	if limit < 0 {
-		return EndpointDevicePage{Items: items, Page: Page{Limit: limit, Total: total}}, nil
+		return EndpointDevicePage{Items: items, Facets: facets, Page: Page{Limit: limit, Total: total}}, nil
 	}
 	cursor := query.Cursor
 	if cursor > total {
@@ -283,7 +342,7 @@ func (s *FileStore) ListEndpointDevices(ctx context.Context, query Query) (Endpo
 		value := strconv.Itoa(end)
 		next = &value
 	}
-	return EndpointDevicePage{Items: items[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+	return EndpointDevicePage{Items: items[cursor:end], Facets: facets, Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
 }
 
 func (s *FileStore) identityState(ctx context.Context, query Query) (IdentityState, error) {

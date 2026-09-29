@@ -21,7 +21,10 @@ import (
 const (
 	BundleSchemaVersionV1   = "device-fingerprint-bundle/v1"
 	BundleSchemaVersionV2   = "device-fingerprint-bundle/v2"
-	BundleSchemaVersion     = BundleSchemaVersionV2
+	BundleSchemaVersionV3   = "device-fingerprint-bundle/v3"
+	BundleSchemaVersionV4   = "device-fingerprint-bundle/v4"
+	BundleSchemaVersionV5   = "device-fingerprint-bundle/v5"
+	BundleSchemaVersion     = BundleSchemaVersionV5
 	MaxBundleBytes          = 32 << 20
 	MaxBundleContent        = 128 << 20
 	fingerbankURL           = "https://raw.githubusercontent.com/karottc/fingerbank/master/dhcp_fingerprints.conf"
@@ -71,7 +74,52 @@ type BuildOptions struct {
 	NextDNSCommitURL   string
 	NextDNSRawURL      string
 	NextDNSSHA         string
+	HaGeZiSHA          string
+	HaGeZiCommitURL    string
+	HaGeZiRawURL       string
 	ProjectDomainRules []byte
+}
+
+// BuildEmbeddedBundle creates a fully verifiable bootstrap pack without
+// network access. It is intentionally smaller than the externally refreshed
+// library, but contains non-empty OUI, UA, DHCP, domain and application data.
+func BuildEmbeddedBundle(output, version string, now time.Time) (BundleManifest, error) {
+	if strings.TrimSpace(version) == "" {
+		version = EmbeddedVersion + "-offline"
+	}
+	files := map[string][]byte{
+		"oui.csv":                     embeddedOUI,
+		"device-rules.json":           embeddedRules,
+		"router-rules.json":           embeddedRouterRules,
+		"fingerbank-dhcp.json":        []byte(`[{"requested_options":"1,3,6,15,31,33,43,44,46,47,119,121,249,252","device_type":"desktop","os_family":"Windows","description":"Proxy Sentinel offline bootstrap","confidence":0.84}]`),
+		"brand-aliases.json":          embeddedBrandAliases,
+		"domain-signatures.json":      embeddedDomainSignatures,
+		"application-signatures.json": embeddedApplicationSignatures,
+		"licenses/ODbL-1.0.html":      []byte("Open Database License ODbL 1.0; full license: https://opendatacommons.org/licenses/odbl/1-0/"),
+		"licenses/DbCL-1.0.html":      []byte("Database Contents License DbCL 1.0; full license: https://opendatacommons.org/licenses/dbcl/1-0/"),
+		"licenses/NOTICE.txt":         []byte("Offline bootstrap snapshot. Fingerbank-compatible DHCP data is distributed under ODbL and DbCL. Apple device-service rules are based on documented service facts. Proxy Sentinel application signatures are internal rules."),
+	}
+	manifest := BundleManifest{SchemaVersion: BundleSchemaVersion, Version: version, CreatedAt: now.UTC().Format(time.RFC3339Nano), Sources: []BundleSource{
+		{Name: "IEEE MA-L/MA-M/MA-S", Version: EmbeddedVersion, URL: "https://standards-oui.ieee.org/", License: "IEEE public registry terms"},
+		{Name: "uap-core", Version: EmbeddedVersion, URL: "https://github.com/ua-parser/uap-core", License: "Apache-2.0"},
+		{Name: "Fingerbank public snapshot", Version: "offline-bootstrap-1", URL: "https://github.com/karottc/fingerbank", License: "ODbL-1.0/DbCL-1.0"},
+		{Name: "Apple enterprise networks", Version: "reviewed-2026-09-08", URL: "https://support.apple.com/en-ie/101555", License: "documented-service-facts"},
+		{Name: "Proxy Sentinel application signatures", Version: ApplicationSignatureVersion, URL: "internal://proxy-sentinel/application-signatures", License: "internal-rule"},
+	}, Files: map[string]BundleFile{}}
+	for name, data := range files {
+		manifest.Files[name] = bundleFile(data)
+	}
+	data, err := encodeBundle(manifest, files)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	if _, err := VerifyBundleBytes(data); err != nil {
+		return BundleManifest{}, err
+	}
+	if err := writeBundleAtomic(output, data); err != nil {
+		return BundleManifest{}, err
+	}
+	return manifest, nil
 }
 
 func BuildOfflineBundle(ctx context.Context, output string, options BuildOptions) (BundleManifest, error) {
@@ -178,14 +226,23 @@ func BuildOfflineBundle(ctx context.Context, output string, options BuildOptions
 		if downloadErr != nil {
 			return BundleManifest{}, downloadErr
 		}
+		beforeCount := len(domainRules)
 		for _, line := range strings.Split(string(content), "\n") {
 			domain := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
 			if domain == "" {
 				continue
 			}
-			domainRules = append(domainRules, DomainSignature{Domain: domain, MatchType: DomainMatchSubdomain, Ecosystem: ecosystemDisplayName(ecosystem), Category: "telemetry", Confidence: 0.55, Source: "NextDNS"})
+			domainRules = append(domainRules, DomainSignature{Domain: domain, MatchType: DomainMatchSubdomain, Ecosystem: ecosystemDisplayName(ecosystem), Category: "telemetry", Confidence: 0.55, Source: "NextDNS", SourceURL: rawURL, SourceVersion: nextDNSSHA, Purpose: "原生遥测生态线索"})
+		}
+		if len(domainRules) == beforeCount {
+			return BundleManifest{}, fmt.Errorf("empty NextDNS category: %s", ecosystem)
 		}
 	}
+	hageziRules, hageziSource, hageziFiles, err := buildHaGeZi(ctx, client, options)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	domainRules = append(domainRules, hageziRules...)
 	projectData := options.ProjectDomainRules
 	if len(projectData) == 0 {
 		projectData = embeddedDomainSignatures
@@ -204,17 +261,27 @@ func BuildOfflineBundle(ctx context.Context, output string, options BuildOptions
 	}
 	files := map[string][]byte{
 		"oui.csv": ouiData, "device-rules.json": rulesData, "fingerbank-dhcp.json": fingerbankData,
+		"router-rules.json":  embeddedRouterRules,
 		"brand-aliases.json": embeddedBrandAliases, "licenses/ODbL-1.0.html": odbl, "licenses/DbCL-1.0.html": dbcl,
 		"domain-signatures.json": domainData, "licenses/NextDNS-MIT.txt": nextDNSLicense,
-		"licenses/NOTICE.txt": []byte("Fingerbank public snapshot is used under ODbL-1.0 and its individual contents under DbCL-1.0. The snapshot is historical and is used only as auxiliary DHCP evidence.\nNextDNS native-tracking-domains is used under the MIT License as an auxiliary ecosystem signal.\n"),
+		"application-signatures.json": embeddedApplicationSignatures,
+		"licenses/NOTICE.txt":         []byte("Fingerbank public snapshot is used under ODbL-1.0 and its individual contents under DbCL-1.0. The snapshot is historical and is used only as auxiliary DHCP evidence.\nNextDNS native-tracking-domains is used under the MIT License as an auxiliary ecosystem signal.\nProxy Sentinel application signatures are project-maintained internal rules and are explanatory or negative evidence only.\n"),
 	}
+	for name, content := range hageziFiles {
+		files[name] = content
+	}
+	files["licenses/NOTICE.txt"] = append(files["licenses/NOTICE.txt"], []byte("HaGeZi native tracker lists: GPL-3.0; original lists in sources/hagezi.json, converted into auxiliary ecosystem rules. Apple network service facts reviewed for project rules.\n")...)
 	createdAt := now().UTC()
 	manifest := BundleManifest{SchemaVersion: BundleSchemaVersion, Version: "offline-" + createdAt.Format("20060102") + "-" + commit.SHA[:12], CreatedAt: createdAt.Format(time.RFC3339Nano), Sources: []BundleSource{
 		{Name: "IEEE MA-L/MA-M/MA-S", Version: createdAt.Format("2006-01-02"), URL: "https://standards-oui.ieee.org/", License: "IEEE public registry"},
 		{Name: "uap-core", Version: commit.SHA, URL: fmt.Sprintf(uapRawURL, commit.SHA), License: "Apache-2.0"},
 		{Name: "Fingerbank public snapshot", Version: "6.8.2-20140609", URL: fbURL, License: "ODbL-1.0/DbCL-1.0"},
 		{Name: "NextDNS native-tracking-domains", Version: nextDNSSHA, URL: fmt.Sprintf(nextDNSRawURL, nextDNSSHA, "domains/"), License: "MIT"},
+		{Name: "Proxy Sentinel application signatures", Version: ApplicationSignatureVersion, URL: "project://internal/fingerprint/data/application_signatures.json", License: "internal-rule"},
 	}, Files: map[string]BundleFile{}}
+	manifest.Sources = append(manifest.Sources, hageziSource)
+	hash := sha256.Sum256(domainData)
+	manifest.Version += "-" + hex.EncodeToString(hash[:])[:12]
 	for name, data := range files {
 		manifest.Files[name] = bundleFile(data)
 	}
@@ -222,10 +289,13 @@ func BuildOfflineBundle(ctx context.Context, output string, options BuildOptions
 	if err != nil {
 		return BundleManifest{}, err
 	}
+	if _, err := VerifyBundleBytes(data); err != nil {
+		return BundleManifest{}, err
+	}
 	if len(data) > MaxBundleBytes {
 		return BundleManifest{}, fmt.Errorf("bundle exceeds %d bytes", MaxBundleBytes)
 	}
-	if err := os.WriteFile(output, data, 0o640); err != nil {
+	if err := writeBundleAtomic(output, data); err != nil {
 		return BundleManifest{}, err
 	}
 	return manifest, nil
@@ -243,7 +313,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	reader := tar.NewReader(gz)
 	files := map[string][]byte{}
 	total := int64(0)
-	allowed := map[string]bool{"manifest.json": true, "oui.csv": true, "device-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "domain-signatures.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NextDNS-MIT.txt": true, "licenses/NOTICE.txt": true}
+	allowed := map[string]bool{"manifest.json": true, "oui.csv": true, "device-rules.json": true, "router-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "domain-signatures.json": true, "application-signatures.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NextDNS-MIT.txt": true, "licenses/NOTICE.txt": true, "licenses/HaGeZi-GPL-3.0.txt": true, "sources/hagezi.json": true}
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -278,15 +348,39 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 		return Bundle{}, fmt.Errorf("decode manifest: %w", err)
 	}
 	required := []string{"manifest.json", "oui.csv", "device-rules.json", "fingerbank-dhcp.json", "brand-aliases.json", "licenses/ODbL-1.0.html", "licenses/DbCL-1.0.html", "licenses/NOTICE.txt"}
-	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 {
 		required = append(required, "domain-signatures.json", "licenses/NextDNS-MIT.txt")
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV4 {
+		required = append(required, "domain-signatures.json")
+		for _, source := range manifest.Sources {
+			if source.Name == "NextDNS native-tracking-domains" {
+				required = append(required, "licenses/NextDNS-MIT.txt")
+			}
+		}
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 {
+		required = append(required, "application-signatures.json")
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV5 {
+		required = append(required, "domain-signatures.json", "application-signatures.json", "router-rules.json")
+		for _, source := range manifest.Sources {
+			if source.Name == "NextDNS native-tracking-domains" {
+				required = append(required, "licenses/NextDNS-MIT.txt")
+			}
+		}
+	}
+	for _, source := range manifest.Sources {
+		if source.Name == "HaGeZi native trackers" {
+			required = append(required, "licenses/HaGeZi-GPL-3.0.txt", "sources/hagezi.json")
+		}
 	}
 	for _, name := range required {
 		if len(files[name]) == 0 {
 			return Bundle{}, fmt.Errorf("bundle is missing %q", name)
 		}
 	}
-	if (manifest.SchemaVersion != BundleSchemaVersionV1 && manifest.SchemaVersion != BundleSchemaVersionV2) || manifest.Version == "" {
+	if (manifest.SchemaVersion != BundleSchemaVersionV1 && manifest.SchemaVersion != BundleSchemaVersionV2 && manifest.SchemaVersion != BundleSchemaVersionV3 && manifest.SchemaVersion != BundleSchemaVersionV4 && manifest.SchemaVersion != BundleSchemaVersionV5) || manifest.Version == "" {
 		return Bundle{}, fmt.Errorf("unsupported bundle manifest")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt); err != nil {
@@ -308,8 +402,25 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
+	if manifest.SchemaVersion == BundleSchemaVersionV4 && library.DomainRuleCount() == 0 {
+		return Bundle{}, fmt.Errorf("v4 bundle requires non-empty domain rules")
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV5 {
+		if library.DomainRuleCount() == 0 {
+			return Bundle{}, fmt.Errorf("v5 bundle requires non-empty domain rules")
+		}
+		if _, err := LoadRouterRuleSet(files["router-rules.json"]); err != nil {
+			return Bundle{}, err
+		}
+	}
 	if len(library.ouis) == 0 || len(library.rules) == 0 || len(library.dhcp) == 0 || len(library.aliases) == 0 {
 		return Bundle{}, fmt.Errorf("bundle must contain non-empty OUI, device, DHCP and brand alias rules")
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 {
+		rules, err := ParseApplicationSignatures(files["application-signatures.json"])
+		if err != nil || len(rules) == 0 {
+			return Bundle{}, fmt.Errorf("bundle application signatures are invalid: %w", err)
+		}
 	}
 	return Bundle{Manifest: manifest, Files: files}, nil
 }
@@ -320,10 +431,20 @@ func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string]
 		"uap-core":                   "Apache-2.0",
 		"Fingerbank public snapshot": "ODbL-1.0/DbCL-1.0",
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || len(files["licenses/NextDNS-MIT.txt"]) > 0 {
 		requiredSources["NextDNS native-tracking-domains"] = "MIT"
 	}
+	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 {
+		requiredSources["Proxy Sentinel application signatures"] = "internal-rule"
+	}
 	seen := map[string]bool{}
+	for _, source := range manifest.Sources {
+		if source.Name == "HaGeZi native trackers" {
+			if source.License != "GPL-3.0" || !bytes.Contains(files["licenses/HaGeZi-GPL-3.0.txt"], []byte("GNU GENERAL PUBLIC LICENSE")) || !json.Valid(files["sources/hagezi.json"]) {
+				return fmt.Errorf("invalid HaGeZi provenance or license")
+			}
+		}
+	}
 	for _, source := range manifest.Sources {
 		if strings.TrimSpace(source.Version) == "" || strings.TrimSpace(source.URL) == "" {
 			return fmt.Errorf("bundle source %q is missing version or URL", source.Name)
@@ -350,11 +471,14 @@ func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string]
 	if !strings.Contains(notice, "fingerbank") || !strings.Contains(notice, "odbl") || !strings.Contains(notice, "dbcl") {
 		return fmt.Errorf("bundle NOTICE must preserve Fingerbank ODbL/DbCL attribution")
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV2 {
+	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || len(files["licenses/NextDNS-MIT.txt"]) > 0 {
 		license := strings.ToLower(string(files["licenses/NextDNS-MIT.txt"]))
 		if !strings.Contains(license, "mit license") || !strings.Contains(license, "nextdns") || !strings.Contains(notice, "nextdns") || !strings.Contains(notice, "mit") {
 			return fmt.Errorf("bundle must preserve NextDNS MIT attribution")
 		}
+	}
+	if (manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5) && (!strings.Contains(notice, "application signatures") || !strings.Contains(notice, "internal rules")) {
+		return fmt.Errorf("bundle NOTICE must describe application signature licensing")
 	}
 	return nil
 }

@@ -75,6 +75,18 @@ func ApplyClickHouseMigrations(ctx context.Context, dsn, dir string) (MigrationR
 // semicolons inside quoted strings intact. ClickHouse DDL is not transactional,
 // so every migration must remain additive and retry-safe.
 func splitClickHouseMigration(body string) ([]string, error) {
+	// Migration comments are documentation, not executable statements. Remove
+	// full-line comments before splitting so punctuation in prose cannot create
+	// an empty ClickHouse request.
+	var uncommented strings.Builder
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		uncommented.WriteString(line)
+		uncommented.WriteByte('\n')
+	}
+	body = uncommented.String()
 	statements := []string{}
 	var current strings.Builder
 	var quote rune

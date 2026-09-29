@@ -2,31 +2,33 @@ import type { ReactNode } from 'react'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Button, Select, Space, Typography } from 'antd'
 
-import { AppTimePicker, type QuickWindow } from './AppTimePicker'
+import { AppTimePicker, type QuickWindow, type ReportWindow } from './AppTimePicker'
 
-interface AppPageHeaderProps {
+interface AppPageHeaderProps<T extends ReportWindow> {
   title: string
   subtitle?: string
   extra?: ReactNode
   sensorId?: string
   onSensorChange?: (sensorId: string) => void
-  quickWindow?: QuickWindow
-  onQuickWindowChange?: (window: QuickWindow) => void
+  quickWindow?: T
+  onQuickWindowChange?: (window: T) => void
   onRefresh?: () => void
   loading?: boolean
+  quickWindows?: T[]
 }
 
-export function AppPageHeader({
+export function AppPageHeader<T extends ReportWindow = QuickWindow>({
   title,
   subtitle,
   extra,
   sensorId = 'current-sensor',
   onSensorChange,
-  quickWindow = '1h',
+  quickWindow,
   onQuickWindowChange,
   onRefresh,
   loading = false,
-}: AppPageHeaderProps) {
+  quickWindows,
+}: AppPageHeaderProps<T>) {
   return (
     <div className="page-header page-header-spaced">
       <div className="page-header-main">
@@ -57,7 +59,8 @@ export function AppPageHeader({
         {onQuickWindowChange && (
           <AppTimePicker
             onQuickWindowChange={onQuickWindowChange}
-            quickWindow={quickWindow}
+            quickWindow={(quickWindow ?? '1h') as T}
+            windows={quickWindows}
           />
         )}
 

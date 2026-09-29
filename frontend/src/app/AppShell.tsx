@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { OperationTaskProgress } from '../shared/ui/OperationTaskProgress'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   AuditOutlined,
+  CheckSquareOutlined,
   DashboardOutlined,
   DatabaseOutlined,
   DesktopOutlined,
@@ -29,6 +31,7 @@ function buildNavItems(session: Session): MenuProps['items'] {
   const systemChildren: MenuProps['items'] = [
     can(session,'ingest:read') ? {key:'/ingest',icon:<DatabaseOutlined />,label:<NavLink to="/ingest">数据源与采集</NavLink>} : null,
     can(session,'shadow:read') ? {key:'/shadow-runs',icon:<FieldTimeOutlined />,label:<NavLink to="/shadow-runs">影子评估</NavLink>} : null,
+    can(session,'shadow:read') && can(session,'labels:create') ? {key:'/review-samples',icon:<CheckSquareOutlined />,label:<NavLink to="/review-samples">影子分层复核</NavLink>} : null,
     can(session,'audit:read') ? {key:'/audit',icon:<AuditOutlined />,label:<NavLink to="/audit">审计日志</NavLink>} : null,
     can(session,'rules:reload') || can(session,'device-fingerprint-library:update') ? {key:'/settings/rules',icon:<SettingOutlined />,label:<NavLink to="/settings/rules">规则与特征库</NavLink>} : null,
     can(session,'organization:read') ? {key:'/settings/organization',icon:<ApartmentOutlined />,label:<NavLink to="/settings/organization">校区与网络区域</NavLink>} : null,
@@ -37,8 +40,11 @@ function buildNavItems(session: Session): MenuProps['items'] {
   ].filter(Boolean) as MenuProps['items']
   return [
     {key:'/overview',icon:<DashboardOutlined />,label:<NavLink to="/overview">运营工作台</NavLink>},
+    can(session,'policies:read') ? {key:'/policies',icon:<ControlOutlined />,label:<NavLink to="/policies">防代理策略</NavLink>} : null,
+    can(session,'cases:read') ? {key:'/shared-access',icon:<SafetyOutlined />,label:<NavLink to="/shared-access">共享发现与复核</NavLink>} : null,
     can(session,'cases:read') ? {key:'/cases',icon:<SafetyOutlined />,label:<NavLink to="/cases">风险处置</NavLink>} : null,
     can(session,'identity:read') ? {key:'/devices',icon:<DesktopOutlined />,label:<NavLink to="/devices">终端画像</NavLink>} : null,
+    can(session,'identity:read') ? {key:'/discovery',icon:<SearchOutlined />,label:<NavLink to="/discovery">网络设备发现</NavLink>} : null,
     can(session,'dpi:read') ? {key:'/activity',icon:<GlobalOutlined />,label:<NavLink to="/activity">网络态势</NavLink>} : null,
     can(session,'events:read') ? {key:'/events',icon:<SearchOutlined />,label:<NavLink to="/events">调查取证</NavLink>} : null,
     {key:'system',icon:<SettingOutlined />,label:'系统管理',children:systemChildren},
@@ -58,12 +64,17 @@ function SentinelLogo() {
 export function AppShell() {
   const [collapsed, setCollapsed] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const contentRef = useRef<HTMLElement | null>(null)
   const location = useLocation()
   const session = useSession()
   const logout = useLogout()
   const selected = `/${location.pathname.split('/')[1] || 'overview'}`
   const selectedKey = location.pathname.startsWith('/settings/') ? location.pathname : selected
   const isMockEnabled = !import.meta.env.PROD && import.meta.env.VITE_ENABLE_MOCKS !== 'false'
+
+  useEffect(() => {
+    contentRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+  }, [location.pathname, location.search])
 
   if (session.isLoading) return <AppLoadingState rows={6} />
   if (session.isError || !session.data) return <LoginPage />
@@ -133,7 +144,8 @@ export function AppShell() {
             </div>
           </Space>
         </Layout.Header>
-        <Layout.Content className="app-content">
+        <Layout.Content className="app-content" ref={contentRef}>
+          <OperationTaskProgress />
           <Outlet />
         </Layout.Content>
       </Layout>

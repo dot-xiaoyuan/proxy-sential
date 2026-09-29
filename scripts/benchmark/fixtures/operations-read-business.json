@@ -1,0 +1,48 @@
+{
+  "GET /organization": [
+    {
+      "field": "campuses",
+      "op": "nonempty"
+    },
+    {
+      "field": "buildings",
+      "op": "nonempty"
+    },
+    {
+      "field": "network_zones",
+      "op": "nonempty"
+    },
+    {
+      "field": "access_points",
+      "op": "nonempty"
+    }
+  ],
+  "GET /cases": [
+    {
+      "field": "items",
+      "op": "nonempty"
+    }
+  ],
+  "GET /cases/{case_id}": [
+    {
+      "field": "case_id",
+      "op": "eq",
+      "value": "bench-scale-case-0"
+    },
+    {
+      "field": "evidence_history",
+      "op": "nonempty"
+    }
+  ],
+  "GET /cases/{case_id}/history/{kind}": [
+    {
+      "field": "items",
+      "op": "nonempty"
+    },
+    {
+      "field": "page.total",
+      "op": "gt",
+      "value": 500
+    }
+  ]
+}

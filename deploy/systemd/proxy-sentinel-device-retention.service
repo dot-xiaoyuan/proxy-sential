@@ -1,0 +1,23 @@
+[Unit]
+Description=Proxy Sentinel seven-day device snapshot maintenance
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/proxy-sentinel
+Environment=RETENTION_BATCH_SIZE=500
+Environment=RETENTION_MAX_BATCHES=120
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+EnvironmentFile=-/opt/proxy-sentinel/config/device-retention.env
+ExecStart=/opt/proxy-sentinel/current/bin/device-retention --apply --batch-size ${RETENTION_BATCH_SIZE} --max-batches ${RETENTION_MAX_BATCHES}
+TimeoutStartSec=15min
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+Nice=10
+CPUWeight=20
+IOWeight=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

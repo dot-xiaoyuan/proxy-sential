@@ -1,0 +1,59 @@
+[
+  {
+    "domain": "albert.apple.com",
+    "match_type": "exact",
+    "ecosystem": "Apple",
+    "category": "activation",
+    "confidence": 0.65,
+    "source": "Apple enterprise networks",
+    "source_url": "https://support.apple.com/en-ie/101555",
+    "source_version": "reviewed-2026-09-08",
+    "service": "apple-activation",
+    "purpose": "Apple 设备激活",
+    "os_families": [
+      "iOS",
+      "iPadOS",
+      "macOS",
+      "tvOS"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "push.apple.com",
+    "match_type": "subdomain",
+    "ecosystem": "Apple",
+    "category": "push",
+    "confidence": 0.65,
+    "source": "Apple enterprise networks",
+    "source_url": "https://support.apple.com/en-ie/101555",
+    "source_version": "reviewed-2026-09-08",
+    "service": "apple-push",
+    "purpose": "Apple 设备推送连接",
+    "os_families": [
+      "iOS",
+      "iPadOS",
+      "macOS",
+      "tvOS"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "deviceenrollment.apple.com",
+    "match_type": "exact",
+    "ecosystem": "Apple",
+    "category": "device_management",
+    "confidence": 0.65,
+    "source": "Apple enterprise networks",
+    "source_url": "https://support.apple.com/en-ie/101555",
+    "source_version": "reviewed-2026-09-08",
+    "service": "apple-enrollment",
+    "purpose": "Apple 设备注册",
+    "os_families": [
+      "iOS",
+      "iPadOS",
+      "macOS",
+      "tvOS"
+    ],
+    "brand_eligible": true
+  }
+]

@@ -1,0 +1,79 @@
+package store
+
+import (
+	"testing"
+	"time"
+
+	"proxy-sentinel/internal/sharedaccess"
+)
+
+func TestBuildSharedBehaviorWindowsPreservesSourcesAndRecordReferences(t *testing.T) {
+	from := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	to := from.Add(10 * time.Minute)
+	rows := []sharedBehaviorSignalRow{
+		{
+			SensorID: "sensor-1", CampusID: "ncu", AccessDomain: "campus-mirror", IP: "172.21.20.171",
+			FeatureFamily: "ua_os", FeatureValue: "Android", FeatureCount: 3, Buckets: []int64{1, 2},
+			EventIDs: []string{"event-z"}, Sources: []string{"zeek"},
+			EventRefs: [][]string{{"event-z", "zeek", "instance-1"}},
+			FirstSeen: from.Add(time.Second).Format(time.RFC3339Nano), LastSeen: to.Add(-time.Second).Format(time.RFC3339Nano),
+		},
+		{
+			SensorID: "sensor-1", CampusID: "ncu", AccessDomain: "campus-mirror", IP: "172.21.20.171",
+			FeatureFamily: "tcp_stack", FeatureValue: "stack-a", FeatureCount: 3, Buckets: []int64{1, 2},
+			EventIDs: []string{"event-a"}, Sources: []string{"packet-sidecar"},
+			EventRefs: [][]string{{"event-a", "packet-sidecar", "instance-1"}, {"event-a", "packet-sidecar", "instance-1"}},
+			FirstSeen: from.Add(time.Second).Format(time.RFC3339Nano), LastSeen: to.Add(-2 * time.Second).Format(time.RFC3339Nano),
+		},
+	}
+	windows, err := buildSharedBehaviorWindows(rows, from, to, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(windows) != 1 {
+		t.Fatalf("windows=%d", len(windows))
+	}
+	window := windows[0]
+	if got, want := len(window.Sources), 2; got != want || window.Sources[0] != "packet-sidecar" || window.Sources[1] != "zeek" {
+		t.Fatalf("sources=%v", window.Sources)
+	}
+	if got, want := len(window.Records), 2; got != want {
+		t.Fatalf("records=%v", window.Records)
+	}
+	if window.Records[0].EventID != "event-a" || window.Records[0].Source != "packet-sidecar" || window.Records[1].EventID != "event-z" || window.Records[1].Source != "zeek" {
+		t.Fatalf("records=%v", window.Records)
+	}
+}
+
+func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
+	now := time.Date(2026, 9, 28, 10, 10, 0, 0, time.UTC)
+	window := sharedaccess.Window{
+		ID: "shared-1", RuleVersion: sharedaccess.RuleVersion, IP: "172.21.20.171", SensorID: "sensor-1",
+		CampusID: "ncu", AccessDomain: "campus-mirror", Sources: []string{"zeek", "packet-sidecar"},
+		From: now.Add(-10 * time.Minute), To: now, LastObservedAt: now.Add(-time.Second), Complete: true, CoverageVerified: true,
+		EventIDs: []string{"event-1"}, Records: []sharedaccess.RecordRef{{EventID: "event-1", Source: "zeek", InstanceID: "instance-1"}},
+	}
+	item := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 95, CoverageState: "verified"}
+	got, ok := confirmedSharedBehaviorEvidence(window, item)
+	if !ok || got.Type != "shared_access_window" || got.Score != 95 || got.Confidence != .95 || got.SharedAccess == nil {
+		t.Fatalf("evidence=%+v ok=%v", got, ok)
+	}
+
+	for name, mutate := range map[string]func(*sharedaccess.Window, *sharedaccess.BehaviorAssessment){
+		"likely":          func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) { a.Status = "likely" },
+		"partial":         func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) { a.CoverageState = "partial" },
+		"incomplete":      func(w *sharedaccess.Window, _ *sharedaccess.BehaviorAssessment) { w.Complete = false },
+		"unverified":      func(w *sharedaccess.Window, _ *sharedaccess.BehaviorAssessment) { w.CoverageVerified = false },
+		"conflict":        func(w *sharedaccess.Window, _ *sharedaccess.BehaviorAssessment) { w.Conflicts = []string{"ambiguous"} },
+		"missing sources": func(w *sharedaccess.Window, _ *sharedaccess.BehaviorAssessment) { w.Sources = nil },
+		"missing records": func(w *sharedaccess.Window, _ *sharedaccess.BehaviorAssessment) { w.Records = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			copyWindow, copyItem := window, item
+			mutate(&copyWindow, &copyItem)
+			if _, allowed := confirmedSharedBehaviorEvidence(copyWindow, copyItem); allowed {
+				t.Fatal("unsafe observation bridged")
+			}
+		})
+	}
+}

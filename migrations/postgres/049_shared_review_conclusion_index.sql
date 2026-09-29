@@ -1,0 +1,1 @@
+CREATE INDEX shared_access_review_conclusions_latest ON shared_access_review_conclusions(review_id,conclusion_id DESC);

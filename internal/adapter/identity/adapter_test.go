@@ -50,6 +50,21 @@ func TestConvertPortalCSVToIdentityEvent(t *testing.T) {
 	requireIdentityNestedString(t, event, "subject", "access_id", "sw1/0/3")
 }
 
+func TestIdentityEventIDIsStableAcrossReplayOffsets(t *testing.T) {
+	fields := map[string]string{"timestamp": "2026-07-29T10:00:00Z", "username": "stu01", "client_ip": "10.0.0.8"}
+	first, err := convertRecord(fields, 1, Options{Source: "radius"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := convertRecord(fields, 9001, Options{Source: "radius"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.EventID != second.EventID {
+		t.Fatalf("event id changed across replay offsets: %s != %s", first.EventID, second.EventID)
+	}
+}
+
 func requireIdentityString(t *testing.T, event map[string]any, key string, expected string) {
 	t.Helper()
 	value, ok := event[key].(string)
@@ -67,5 +82,18 @@ func requireIdentityNestedString(t *testing.T, event map[string]any, objectKey, 
 	value, ok := object[fieldKey].(string)
 	if !ok || value != expected {
 		t.Fatalf("expected %s.%s=%q, got %#v", objectKey, fieldKey, expected, object[fieldKey])
+	}
+}
+
+func TestIdentityEventIDSeparatesAuthoritySources(t *testing.T) {
+	fields := map[string]string{"timestamp": "2026-09-14T00:00:00Z", "account_id": "alice", "ip": "192.0.2.1"}
+	a, err := convertRecord(fields, 1, Options{Source: "radius", SensorID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := convertRecord(fields, 1, Options{Source: "radius", SensorID: "b"})
+	c, _ := convertRecord(fields, 1, Options{Source: "other", SensorID: "a"})
+	if a.EventID == b.EventID || a.EventID == c.EventID {
+		t.Fatal("cross-source identity deduplication")
 	}
 }

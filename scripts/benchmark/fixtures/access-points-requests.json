@@ -1,0 +1,23 @@
+{
+  "POST /organization/{kind}": {
+    "path": "/organization/access-points",
+    "body": {
+      "access_point_id": "bench-concurrent-access-points",
+      "name": "Isolated synchronous config",
+      "campus_id": "bench-campus",
+      "management_ip": "10.200.0.1"
+    },
+    "unique_fields": [
+      "access_point_id"
+    ],
+    "visibility": {
+      "path": "/organization",
+      "collection": "access_points",
+      "id_field": "access_point_id",
+      "match_fields": [
+        "name",
+        "management_ip"
+      ]
+    }
+  }
+}

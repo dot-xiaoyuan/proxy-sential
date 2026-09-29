@@ -1,0 +1,1 @@
+{"schema_version":"v1","event_id":"h3c-secpath","source":"zeek","source_event_type":"software","type":"device","timestamp":"2026-09-24T01:00:00Z","observer":{"sensor_id":"golden"},"subject":{"ip":"192.0.2.24","mac":"00:11:22:33:45:05"},"flow":{},"payload":{"software_name":"H3C SecPath F1000"},"confidence":0.9}

@@ -21,15 +21,23 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_root="$(mktemp -d "${TMPDIR:-/tmp}/proxy-sentinel-release.XXXXXX")"
 trap 'rm -rf "$build_root"' EXIT
 release_dir="$build_root/release"
-mkdir -p "$release_dir/bin" "$release_dir/frontend" "$release_dir/scripts" "$release_dir/deploy/compose"
+mkdir -p "$release_dir/bin" "$release_dir/frontend" "$release_dir/scripts" "$release_dir/deploy/compose" "$release_dir/assets/device-fingerprints" "$release_dir/assets/applications"
 
 (
   cd "$repo_root"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$release_dir/bin/proxy-sentinel" ./cmd/proxy-sentinel
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/discovery-worker" ./cmd/discovery-worker
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/device-retention" ./cmd/device-retention
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-identity-snapshot" ./cmd/srun-identity-snapshot
   (cd frontend && pnpm build)
   cp -R frontend/dist "$release_dir/frontend/dist"
   cp -R migrations "$release_dir/migrations"
+  cp -R assets/suricata "$release_dir/assets/suricata"
+  cp -R assets/zeek "$release_dir/assets/zeek"
+  go run ./cmd/proxy-sentinel device-fingerprint build-embedded --version "offline-$version" --output "$release_dir/assets/device-fingerprints/bootstrap.tar.gz"
+  cp examples/application-domain/contract-fixture.tar.gz "$release_dir/assets/applications/bootstrap.tar.gz"
   cp deploy/compose/storage.yml "$release_dir/deploy/compose/storage.yml"
+  cp -R deploy/systemd "$release_dir/deploy/systemd"
   cp scripts/deploy/proxy-sentinelctl "$release_dir/scripts/proxy-sentinelctl"
 )
 

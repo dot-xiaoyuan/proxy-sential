@@ -284,7 +284,7 @@ export function IngestPage() {
                     <Descriptions.Item label="DHCP Log">
                       <span className="mono-path">
                         {stringDetail(latestDiagnostic, "zeek_dhcp_path") ||
-                          "-"}
+                          ""}
                       </span>
                     </Descriptions.Item>
                     <Descriptions.Item label="DHCP Offset">{`${numberDetail(latestDiagnostic, "zeek_previous_offset")} → ${numberDetail(latestDiagnostic, "zeek_new_offset")}`}</Descriptions.Item>

@@ -1,6 +1,8 @@
 import type { components } from './generated'
 
-export type Permission = components['schemas']['Permission'] | 'cases:read' | 'cases:write' | 'identity:read' | 'organization:read' | 'organization:write' | 'actions:read' | 'actions:execute' | 'actions:revoke' | 'integrations:write' | 'users:manage'
+export type NativeObservationPage = components['schemas']['NativeObservationPage']
+
+export type Permission = 'policies:read' | 'policies:manage' | 'policies:authorize' | components['schemas']['Permission'] | 'exports:read' | 'cases:read' | 'cases:write' | 'identity:read' | 'organization:read' | 'organization:write' | 'actions:read' | 'actions:execute' | 'actions:revoke' | 'integrations:write' | 'users:manage'
 export type Role = components['schemas']['Role']
 export type Session = Omit<components['schemas']['Session'],'permissions'> & { permissions: Permission[]; csrf_token?: string }
 
@@ -39,7 +41,13 @@ export type RiskCase = {
   comments?: Array<{ comment_id: string; author_id: string; body: string; created_at: string }>
   timeline?: Array<{ event_id: string; actor_id: string; type: string; created_at: string }>
   evidence_snapshot?: ProxyReviewCase
+  history_page?: Partial<Record<CaseHistoryKind, Page>>
+  evidence_history?: CaseEvidenceSnapshot[]
 }
+export type CaseHistoryKind = 'evidence' | 'comments' | 'timeline'
+export type CaseEvidenceSnapshot = { snapshot_id: string; evidence: ProxyReviewCase; ruleset_version?: string; created_at: string }
+export type CaseHistoryRow = CaseEvidenceSnapshot | NonNullable<RiskCase['comments']>[number] | NonNullable<RiskCase['timeline']>[number]
+export type CaseHistoryResponse = { items: CaseHistoryRow[]; page: Page }
 export type RiskCaseListResponse = { items: RiskCase[]; page: Page }
 export type Organization = {
   campuses: Array<{ campus_id: string; code: string; name: string; enabled: boolean }>
@@ -49,7 +57,7 @@ export type Organization = {
 }
 export type OrganizationKind = keyof Organization
 export type OrganizationListResponse<K extends OrganizationKind = OrganizationKind> = { items: Organization[K]; page: Page }
-export type ActionConnector = { connector_id: string; name: string; endpoint_url: string; action_mapping: Record<string,string>; mode: 'shadow'|'active'; enabled: boolean; shadow_ready: boolean; circuit_open_until?:string; consecutive_failures?:number; shadow_started_at?:string; shadow_validation_since?:string; shadow_candidate_count?:number; shadow_reviewed_count?:number; shadow_accuracy?:number; updated_at: string }
+export type ActionConnector = { certificate_pem?: string; connector_type?: "hmac"|"srun4k"; connector_id: string; name: string; endpoint_url: string; action_mapping: Record<string,string>; mode: 'shadow'|'active'; enabled: boolean; shadow_ready: boolean; circuit_open_until?:string; consecutive_failures?:number; shadow_started_at?:string; shadow_validation_since?:string; shadow_candidate_count?:number; shadow_reviewed_count?:number; shadow_accuracy?:number; updated_at: string }
 export type EnforcementAction = { action_id:string; idempotency_key:string; case_id?:string; connector_id:string; action_type:string; subject_id:string; ip?:string; account_id?:string; endpoint_id?:string; campus_id?:string; session_id?:string; ruleset_version?:string; remote_action_id?:string; parent_action_id?:string; retry_count?:number; next_attempt_at?:string; cooldown_until?:string; expires_at?:string; status:string; mode:string; blockers?:string[]; last_error?:string; created_at:string; updated_at:string }
 export type LocalUser = components['schemas']['LocalUser']
 export type UserMutation = components['schemas']['UserMutation']
@@ -80,6 +88,8 @@ export type CreateLabelRequest = components['schemas']['CreateLabelRequest']
 export type Label = components['schemas']['Label']
 export type ShadowRun = components['schemas']['ShadowRun']
 export type ShadowEvaluation = components['schemas']['ShadowEvaluation']
+export type ShadowReviewSample = components['schemas']['ShadowReviewSample']
+export type ShadowReviewSamples = components['schemas']['ShadowReviewSamples']
 export type AuditLog = components['schemas']['AuditLog']
 export type Overview = components['schemas']['Overview'] & { window?:string; sensor_id?:string; as_of?:string; first_seen?:string; last_seen?:string; data_source?:string; active_ip_count?:number; open_case_count?:number; overdue_case_count?:number }
 export type RuleReloadResult = components['schemas']['RuleReloadResult']
@@ -95,7 +105,12 @@ export type ObservedDevice = components['schemas']['ObservedDevice']
 export type DeviceConflict = components['schemas']['DeviceConflict']
 export type IpDeviceInventory = components['schemas']['IpDeviceInventory']
 export type DeviceListResponse = components['schemas']['DeviceListResponse']
+export type BrandInference = components['schemas']['BrandInference']
 export type EndpointDeviceInventory = components['schemas']['EndpointDeviceInventory']
+export type RouterEvidence = components['schemas']['RouterEvidence']
+export type RouterAssessment = components['schemas']['RouterAssessment']
+export type RouterObservationDetail = components['schemas']['RouterObservationDetail']
+export type RouterAssessmentPage = components['schemas']['RouterAssessmentPage']
 export type EndpointEntity = components['schemas']['EndpointEntity']
 export type UpdateEndpointRegistrationRequest =
   components['schemas']['UpdateEndpointRegistrationRequest']
@@ -159,7 +174,7 @@ export type ActivityOverviewQuery = {
   sensor_id?: string
   campus_id?: string
   as_of?: string
-  window?: '10m' | '1h' | '24h' | '7d'
+  window?: '10m' | '1h' | '24h' | '7d' | '30d'
 }
 
 export type ProxyReviewQuery = {
@@ -177,6 +192,12 @@ export type ShadowRunListResponse = { runs: ShadowRun[]; page: Page }
 export type AuditLogListResponse = { logs: AuditLog[]; page: Page }
 export type IngestDiagnosticListResponse = { diagnostics: IngestDiagnostic[]; page: Page }
 export type DeviceFingerprintLibraryStatus = {
+  domain_available?: boolean
+  brand_eligible_rule_count?: number
+  domain_processing_error?: string
+  active_domain_version?: string
+  pending_domain_version?: string
+  domain_sources?: {name:string;version:string;rule_count:number;brand_eligible_rule_count:number}[]
   version: string
   status: 'ready' | 'checking' | 'degraded'
   source: string
@@ -204,6 +225,9 @@ export type DeviceFingerprintBundleManifest = { schema_version: string; version:
 export type DeviceRecognitionSummary = components['schemas']['DeviceRecognitionSummary']
 
 export type DeviceQuery = {
+  view?: 'recent' | 'history'
+  brand?: string
+  os_family?: string
   sensor_id?: string
   campus_id?: string
   department?: string
@@ -221,6 +245,27 @@ export type DeviceQuery = {
 	 ecosystem?: string
 }
 
+export type RouterObservationQuery = {
+  keyword?: string
+  ip?: string
+  mac?: string
+  vlan?: string
+  brand?: string
+  model?: string
+  role?: string
+  status?: 'candidate' | 'likely' | 'confirmed'
+  source?: string
+  confidence_min?: number
+  confidence_max?: number
+  first_seen_from?: string
+  first_seen_to?: string
+  last_seen_from?: string
+  last_seen_to?: string
+  infrastructure?: boolean
+  limit?: number
+  cursor?: string
+}
+
 export type IdentityQuery = {
   sensor_id?: string
   window?: '10m' | '1h' | '24h'
@@ -228,3 +273,23 @@ export type IdentityQuery = {
   to?: string
   limit?: number
 }
+
+export type ProxyProtocolEvidence = components["schemas"]["ProxyProtocolEvidence"]
+
+export type FourKDatabaseConfig = {
+  host: string
+  port: number
+  database: string
+  username: string
+  password?: string
+  tls: boolean
+  authorization_id?: number
+}
+export type FourKDatabaseResponse = { configuration: FourKDatabaseConfig; password_configured: boolean; credential_source: '4k_database' }
+export type FourKAuthorizationCheck = { read_only: true; authorization_id: number; app_id: string; organization: string; expires_at: number; checked_at: string; management_api_verified: false }
+
+export type ManagedIdentityConfiguration = {
+  kind: 'online_equipment' | 'complete_inventory'; source: string; sensor_id: string; campus_id: string; access_domain: string;
+  user_cidrs: string[]; inventory_url?: string; token?: string; max_records: number; enabled: boolean;
+}
+export type ManagedIdentitySource = { configuration: ManagedIdentityConfiguration; config_version: number; token_configured: boolean; state: string; blocker: string }

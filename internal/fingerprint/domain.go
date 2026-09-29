@@ -17,9 +17,23 @@ const (
 	DomainMatchSubdomain = "subdomain"
 )
 
-var validDomainCategories = map[string]bool{"telemetry": true, "update": true, "push": true, "device_cloud": true}
+var validDomainCategories = map[string]bool{"telemetry": true, "update": true, "push": true, "device_cloud": true, "activation": true, "device_management": true}
+
+type RuleProvenance struct {
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Version string `json:"version"`
+}
 
 type DomainSignature struct {
+	SourceURL     string           `json:"source_url,omitempty"`
+	SourceVersion string           `json:"source_version,omitempty"`
+	Sources       []RuleProvenance `json:"sources,omitempty"`
+	Service       string           `json:"service,omitempty"`
+	Purpose       string           `json:"purpose,omitempty"`
+	OSFamilies    []string         `json:"os_families,omitempty"`
+	BrandEligible bool             `json:"brand_eligible,omitempty"`
+
 	Domain     string  `json:"domain"`
 	MatchType  string  `json:"match_type"`
 	Ecosystem  string  `json:"ecosystem"`
@@ -29,6 +43,14 @@ type DomainSignature struct {
 }
 
 type DomainMatch struct {
+	SourceURL     string           `json:"source_url,omitempty"`
+	SourceVersion string           `json:"source_version,omitempty"`
+	Sources       []RuleProvenance `json:"sources,omitempty"`
+	Service       string           `json:"service,omitempty"`
+	Purpose       string           `json:"purpose,omitempty"`
+	OSFamilies    []string         `json:"os_families,omitempty"`
+	BrandEligible bool             `json:"brand_eligible,omitempty"`
+
 	Domain     string  `json:"domain"`
 	RuleDomain string  `json:"rule_domain"`
 	MatchType  string  `json:"match_type"`
@@ -39,10 +61,14 @@ type DomainMatch struct {
 }
 
 type DomainEvidence struct {
-	Match     DomainMatch `json:"match"`
-	FirstSeen string      `json:"first_seen"`
-	LastSeen  string      `json:"last_seen"`
-	Count     int         `json:"count"`
+	AttributionMethod string      `json:"attribution_method,omitempty"`
+	RuleVersion       string      `json:"rule_version,omitempty"`
+	EventIDs          []string    `json:"event_ids,omitempty"`
+	EventSource       string      `json:"event_source,omitempty"`
+	Match             DomainMatch `json:"match"`
+	FirstSeen         string      `json:"first_seen"`
+	LastSeen          string      `json:"last_seen"`
+	Count             int         `json:"count"`
 }
 
 type EcosystemResult struct {
@@ -91,6 +117,9 @@ func parseDomainSignatures(data []byte) ([]DomainSignature, *domainNode, error) 
 		if strings.EqualFold(rule.Source, "nextdns") && rule.Confidence > 0.55 {
 			return nil, nil, fmt.Errorf("NextDNS domain signature %d exceeds confidence cap", index)
 		}
+		if rule.BrandEligible && (rule.Service == "" || rule.Purpose == "" || rule.SourceURL == "" || rule.SourceVersion == "") {
+			return nil, nil, fmt.Errorf("brand eligible rule requires service, purpose and provenance")
+		}
 		key := rule.MatchType + ":" + rule.Domain
 		if ecosystem, ok := seen[key]; ok {
 			if !strings.EqualFold(ecosystem, rule.Ecosystem) {
@@ -126,15 +155,24 @@ func parseDomainSignatures(data []byte) ([]DomainSignature, *domainNode, error) 
 func encodeDomainSignatures(rules []DomainSignature) ([]byte, error) {
 	unique := make([]DomainSignature, 0, len(rules))
 	seen := map[string]string{}
+	indexes := map[string]int{}
 	for _, rule := range rules {
 		key := strings.ToLower(strings.TrimSpace(rule.MatchType)) + ":" + strings.ToLower(strings.TrimSuffix(strings.TrimSpace(rule.Domain), "."))
 		if ecosystem, ok := seen[key]; ok {
 			if !strings.EqualFold(ecosystem, rule.Ecosystem) {
 				return nil, fmt.Errorf("domain %q maps to conflicting ecosystems", rule.Domain)
 			}
+			i := indexes[key]
+			merged := append(unique[i].Sources, provenance(rule)...)
+			if rule.BrandEligible && !unique[i].BrandEligible {
+				unique[i] = rule
+			}
+			unique[i].Sources = uniqueProvenance(merged)
 			continue
 		}
 		seen[key] = rule.Ecosystem
+		indexes[key] = len(unique)
+		rule.Sources = uniqueProvenance(provenance(rule))
 		unique = append(unique, rule)
 	}
 	data, err := json.Marshal(unique)
@@ -183,7 +221,7 @@ func (l *Library) MatchDomain(value string) (DomainMatch, bool) {
 	if candidate == nil {
 		return DomainMatch{}, false
 	}
-	return DomainMatch{Domain: domain, RuleDomain: candidate.Domain, MatchType: candidate.MatchType, Ecosystem: candidate.Ecosystem, Category: candidate.Category, Confidence: candidate.Confidence, Source: candidate.Source}, true
+	return DomainMatch{SourceURL: candidate.SourceURL, SourceVersion: candidate.SourceVersion, Sources: candidate.Sources, Service: candidate.Service, Purpose: candidate.Purpose, OSFamilies: candidate.OSFamilies, BrandEligible: candidate.BrandEligible, Domain: domain, RuleDomain: candidate.Domain, MatchType: candidate.MatchType, Ecosystem: candidate.Ecosystem, Category: candidate.Category, Confidence: candidate.Confidence, Source: candidate.Source}, true
 }
 
 func EvaluateEcosystem(evidence []DomainEvidence) EcosystemResult {
@@ -207,7 +245,14 @@ func EvaluateEcosystem(evidence []DomainEvidence) EcosystemResult {
 			byEcosystem[key] = current
 		}
 		current.count += max(item.Count, 1)
-		current.domains[item.Match.Domain] = struct{}{}
+		serviceKey := item.Match.Service
+		if serviceKey == "" {
+			serviceKey = item.Match.RuleDomain
+		}
+		if serviceKey == "" {
+			serviceKey = item.Match.Domain
+		}
+		current.domains[serviceKey] = struct{}{}
 		if item.Match.Confidence > current.confidence {
 			current.confidence = item.Match.Confidence
 		}
@@ -259,7 +304,7 @@ func EvaluateEcosystem(evidence []DomainEvidence) EcosystemResult {
 // agreeing brand signal. OUI plus ecosystem is explicitly not a brand proof.
 func FuseEcosystemBrand(brand string, brandConfidence float64, source string, ecosystem EcosystemResult) (string, float64, bool) {
 	brand = strings.TrimSpace(brand)
-	if brand == "" || ecosystem.Hint == "" || ecosystem.Conflict || strings.EqualFold(source, "ieee_oui") || !sameBrandEcosystem(brand, ecosystem.Hint) {
+	if !ecosystem.Displayable || brand == "" || ecosystem.Hint == "" || ecosystem.Conflict || strings.EqualFold(source, "ieee_oui") || !sameBrandEcosystem(brand, ecosystem.Hint) {
 		return brand, brandConfidence, false
 	}
 	combined := 1 - (1-brandConfidence)*(1-ecosystem.Confidence)

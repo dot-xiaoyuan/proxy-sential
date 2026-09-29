@@ -31,6 +31,9 @@ type DomainObservation struct {
 // ecosystem recognition. Encrypted DNS/ECH events without an observable domain
 // are deliberately ignored.
 func ExtractDomainObservation(event normalized.Event) (DomainObservation, bool) {
+	if isInfrastructureEntityRole(stringFromMap(event.Subject, "entity_role")) {
+		return DomainObservation{}, false
+	}
 	field := ""
 	switch strings.ToLower(strings.TrimSpace(event.Type)) {
 	case "dns":
@@ -71,6 +74,26 @@ func AttributeDomainObservation(ctx context.Context, observation DomainObservati
 	}
 	if resolver == nil || observation.IP == "" || observation.Timestamp == "" {
 		return observation, false, nil
+	}
+	// Prefer scoped passive device ownership without manufacturing account attribution.
+	if scoped, ok := resolver.(interface {
+		ResolveDeviceAt(context.Context, DomainObservation) (IdentityAttribution, bool, error)
+	}); ok {
+		item, found, err := scoped.ResolveDeviceAt(ctx, observation)
+		if err != nil {
+			return observation, false, err
+		}
+		if found {
+			if item.Conflict {
+				return observation, false, nil
+			}
+			observation.EndpointID = item.EndpointID
+			observation.AttributionMethod = "dhcp_lease"
+			return observation, true, nil
+		}
+		if observation.SensorID != "" {
+			return observation, false, nil
+		}
 	}
 	attribution, found, err := resolver.ResolveIdentityAt(ctx, observation.IP, observation.Timestamp)
 	if err != nil {

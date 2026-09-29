@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CaseHistoryList } from "./CaseHistoryList";
 import { Link, useParams } from "react-router-dom";
 import {
   Alert,
@@ -73,7 +74,7 @@ export function CaseDetailsPage() {
               label: "IP",
               children: (
                 <Link to={`/ips/${encodeURIComponent(data.ip ?? "")}`}>
-                  {data.ip || "-"}
+                  {data.ip || ""}
                 </Link>
               ),
             },
@@ -180,6 +181,7 @@ export function CaseDetailsPage() {
                   >
                     添加记录
                   </Button>
+                  <CaseHistoryList caseId={data.case_id} kind="comments" total={data.history_page?.comments?.total} />
                 </>
               ),
             },
@@ -196,6 +198,7 @@ export function CaseDetailsPage() {
                   <Typography.Text type="secondary">
                     案件保存发现时证据，规则更新不会覆盖历史判断。
                   </Typography.Text>
+                  <CaseHistoryList caseId={data.case_id} kind="evidence" total={data.history_page?.evidence?.total} />
                 </>
               ),
             },
@@ -203,6 +206,7 @@ export function CaseDetailsPage() {
               key: "timeline",
               label: `活动记录 ${(data.timeline ?? []).length}`,
               children: (
+                <>
                 <Timeline
                   items={(data.timeline ?? [])
                     .slice()
@@ -221,6 +225,8 @@ export function CaseDetailsPage() {
                       ),
                     }))}
                 />
+                <CaseHistoryList caseId={data.case_id} kind="timeline" total={data.history_page?.timeline?.total} />
+                </>
               ),
             },
           ]}

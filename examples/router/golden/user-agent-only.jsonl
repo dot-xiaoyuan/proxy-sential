@@ -1,0 +1,1 @@
+{"schema_version":"v1","event_id":"ua-only","source":"suricata","source_event_type":"http","type":"http","timestamp":"2026-09-24T01:00:00Z","observer":{"sensor_id":"golden"},"subject":{"ip":"192.0.2.27","mac":"00:11:22:33:45:08"},"flow":{},"payload":{"user_agent":"Mozilla/5.0 (Linux; Android 15) Huawei Browser"},"confidence":1}

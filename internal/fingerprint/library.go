@@ -26,6 +26,8 @@ var embeddedDomainSignatures []byte
 
 const EmbeddedVersion = "embedded-2026-08"
 
+var macHostnameClue = regexp.MustCompile(`(?i)(^|[-_. ])(mac(book|intosh)?|imac)($|[-_. 0-9])`)
+
 type Result struct {
 	Vendor               string   `json:"vendor,omitempty"`
 	Brand                string   `json:"brand,omitempty"`
@@ -81,7 +83,7 @@ type Library struct {
 
 var (
 	defaultMu      sync.RWMutex
-	defaultLibrary = MustLoad(EmbeddedVersion, embeddedOUI, embeddedRules)
+	defaultLibrary = mustLoadEmbedded()
 )
 
 func Default() *Library {
@@ -218,6 +220,25 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 		result.Evidence = append(result.Evidence, "设备规则: "+rule.Pattern)
 		break
 	}
+	// Darwin alone does not distinguish Apple's operating systems. A Mac hostname
+	// corroborates only a tentative macOS clue; neither signal establishes brand.
+	// Keep this standard-signal fallback available with installed offline bundles.
+	if result.OSFamily == "" && strings.EqualFold(strings.TrimSpace(signals.DHCPVendorClass), "darwin") {
+		for _, hostname := range signals.Hostnames {
+			if !macHostnameClue.MatchString(hostname) {
+				continue
+			}
+			result.OSFamily, result.OSFamilyConfidence = "macOS", .65
+			if result.Confidence < .65 {
+				result.Confidence = .65
+			}
+			if result.Source == "" || result.Source == "ieee_oui" {
+				result.Source = "dhcp_hostname_hint"
+			}
+			result.Evidence = append(result.Evidence, "macOS 推测: DHCP vendor class darwin + Mac 主机名 "+hostname)
+			break
+		}
+	}
 	if candidates := l.dhcp[normalizeDHCPOptions(signals.DHCPRequestedOptions)]; len(candidates) > 0 {
 		candidate, ok := bestDHCPFingerprint(candidates, signals.DHCPVendorClass)
 		if ok {
@@ -350,4 +371,12 @@ func (l *Library) normalizedBrand(vendor string) string {
 		}
 	}
 	return ""
+}
+
+func mustLoadEmbedded() *Library {
+	l, err := LoadWithDomainData(EmbeddedVersion, embeddedOUI, embeddedRules, []byte("[]"), embeddedBrandAliases, embeddedDomainSignatures)
+	if err != nil {
+		panic(err)
+	}
+	return l
 }

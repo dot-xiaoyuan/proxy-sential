@@ -11,8 +11,27 @@ set -a
 source "$env_file"
 set +a
 
-compose() {
-  docker compose --env-file "$env_file" -f "$compose_file" "$@"
+has_compose() {
+  docker compose version >/dev/null 2>&1
+}
+
+storage_ps() {
+  if has_compose; then
+    docker compose --env-file "$env_file" -f "$compose_file" ps
+  else
+    docker ps --filter name=proxy-sentinel-postgres --filter name=proxy-sentinel-clickhouse --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+  fi
+}
+
+storage_config_check() {
+  if has_compose; then
+    docker compose --env-file "$env_file" -f "$compose_file" config --quiet
+  else
+    for variable in POSTGRES_IMAGE CLICKHOUSE_IMAGE POSTGRES_PASSWORD CLICKHOUSE_PASSWORD; do
+      [[ -n "${!variable:-}" ]] || { echo "missing runtime variable: $variable" >&2; return 1; }
+    done
+    docker inspect proxy-sentinel-postgres proxy-sentinel-clickhouse >/dev/null
+  fi
 }
 
 wait_ready() {
@@ -22,6 +41,17 @@ wait_ready() {
     sleep 2
   done
   return 1
+}
+
+ingest_enabled() {
+  [[ "${PROXY_SENTINEL_INGEST_ENABLED:-true}" == true ]] && systemctl cat proxy-sentinel-ingest.service >/dev/null 2>&1
+}
+
+timer_scheduled() {
+  local timer="$1" next
+  systemctl is-active --quiet "$timer" || return 1
+  next="$(systemctl show "$timer" -p NextElapseUSecRealtime -p NextElapseUSecMonotonic --value | grep -Ev '^(|0|infinity)$' || true)"
+  [[ -n "$next" ]] || { echo "timer has no next trigger: $timer" >&2; return 1; }
 }
 
 backup() {
@@ -57,14 +87,15 @@ restore() {
   destination="$(realpath "$destination")"
   case "$destination" in "$root"/backups/*) ;; *) echo "backup must be under $root/backups" >&2; exit 2 ;; esac
   (cd "$destination" && sha256sum -c SHA256SUMS)
-  systemctl stop proxy-sentinel-shadow.timer proxy-sentinel-shadow.service proxy-sentinel-control-plane.service || true
-  trap 'systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true' EXIT
+  systemctl stop proxy-sentinel-shadow.timer proxy-sentinel-shadow.service proxy-sentinel-ingest.service proxy-sentinel-control-plane.service || true
+  trap 'systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true; if ingest_enabled; then systemctl start proxy-sentinel-ingest.service >/dev/null 2>&1 || true; fi' EXIT
   docker exec -i proxy-sentinel-postgres sh -c 'pg_restore --clean --if-exists --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$destination/postgres.dump"
   for table in normalized_events ingest_diagnostics; do
     docker exec proxy-sentinel-clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" --database \"\$CLICKHOUSE_DB\" --query 'TRUNCATE TABLE $table'"
     gzip -dc "$destination/clickhouse-$table.native.gz" | docker exec -i proxy-sentinel-clickhouse sh -c "clickhouse-client --user \"\$CLICKHOUSE_USER\" --password \"\$CLICKHOUSE_PASSWORD\" --database \"\$CLICKHOUSE_DB\" --query 'INSERT INTO $table FORMAT Native'"
   done
   systemctl start proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer
+  if ingest_enabled; then systemctl start proxy-sentinel-ingest.service; fi
   wait_ready
   trap - EXIT
   echo "restore completed from $destination"
@@ -82,6 +113,7 @@ rollback() {
   mv -Tf "$root/previous.next" "$root/previous"
   systemctl daemon-reload
   systemctl restart proxy-sentinel-control-plane.service
+  if ingest_enabled; then systemctl restart proxy-sentinel-ingest.service; fi
   wait_ready || { echo "rollback health check failed" >&2; exit 1; }
   echo "rolled back to $(basename "$previous_target")"
 }
@@ -91,19 +123,39 @@ doctor() {
   [[ "$ID" == "openEuler" && "$(uname -m)" == "x86_64" ]] || { echo "unsupported platform: $ID $(uname -m)" >&2; return 1; }
   for command in docker systemctl curl ip ss sha256sum gzip; do command -v "$command" >/dev/null || { echo "missing command: $command" >&2; return 1; }; done
   docker info >/dev/null
-  docker compose version >/dev/null
-  ip link show "${PROXY_SENTINEL_MIRROR_INTERFACE:-ens1f1}" >/dev/null
-  [[ "${POSTGRES_IMAGE:-}" == *@sha256:* && "${CLICKHOUSE_IMAGE:-}" == *@sha256:* ]] || { echo "storage images are not digest-pinned" >&2; return 1; }
-  compose config --quiet
-  compose ps
+  if [[ "${PROXY_SENTINEL_MANAGE_SURICATA:-true}" == true || "${PROXY_SENTINEL_MANAGE_ZEEK:-false}" == true ]]; then
+    ip link show "${PROXY_SENTINEL_MIRROR_INTERFACE:-ens1f1}" >/dev/null
+  fi
+  if [[ "${PROXY_SENTINEL_OFFLINE:-false}" == true ]]; then
+    [[ "${POSTGRES_IMAGE:-}" =~ :airgap-[a-f0-9]{64}$ && "${CLICKHOUSE_IMAGE:-}" =~ :airgap-[a-f0-9]{64}$ ]] || { echo "offline storage images do not use verified digest tags" >&2; return 1; }
+    [[ "${POSTGRES_IMAGE_ID:-}" =~ ^sha256:[a-f0-9]{64}$ && "${CLICKHOUSE_IMAGE_ID:-}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "offline storage image IDs are missing" >&2; return 1; }
+  else
+    [[ "${POSTGRES_IMAGE:-}" == *@sha256:* && "${CLICKHOUSE_IMAGE:-}" == *@sha256:* ]] || { echo "storage images are not digest-pinned" >&2; return 1; }
+  fi
+  storage_config_check
+  storage_ps
+  if [[ "${PROXY_SENTINEL_INGEST_ENABLED:-true}" == true ]]; then systemctl is-active proxy-sentinel-ingest.service; fi
+  if [[ "${PROXY_SENTINEL_MANAGE_SURICATA:-true}" == true ]]; then
+    systemctl is-active proxy-sentinel-suricata.service
+    rule_count="$(grep -Ec '^[[:space:]]*(alert|drop|reject|pass)[[:space:]]' /var/lib/suricata/rules/suricata.rules || true)"
+    (( rule_count > 0 )) || { echo "Suricata loaded rule file is empty" >&2; return 1; }
+    timer_scheduled proxy-sentinel-logrotate.timer
+  fi
+  if [[ "${PROXY_SENTINEL_MANAGE_ZEEK:-false}" == true ]]; then systemctl is-active proxy-sentinel-zeek.service; fi
+  if [[ "${PROXY_SENTINEL_MANAGE_DEVICE_SIGNALS:-${PROXY_SENTINEL_MANAGE_SURICATA:-true}}" == true ]]; then systemctl is-active proxy-sentinel-device-signal.service; fi
+  systemctl is-active proxy-sentinel-risk-materializer.service
+  timer_scheduled proxy-sentinel-shadow.timer
+  timer_scheduled proxy-sentinel-shadow-evaluation.timer
   systemctl is-active proxy-sentinel-control-plane.service
   wait_ready
   echo "doctor: all checks passed"
 }
 
 status() {
-  compose ps
-  systemctl --no-pager --full status proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer | sed -n '1,120p'
+  storage_ps
+  local units=(proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer)
+  if ingest_enabled; then units+=(proxy-sentinel-ingest.service); fi
+  systemctl --no-pager --full status "${units[@]}" | sed -n '1,160p'
   curl -fsS "${PROXY_SENTINEL_HEALTH_URL:-http://127.0.0.1:18080/readyz}"
   echo
 }
@@ -111,7 +163,7 @@ status() {
 case "${1:-}" in
   status) status ;;
   doctor) doctor ;;
-  logs) shift; if [[ $# -eq 0 ]]; then journalctl -u proxy-sentinel-control-plane.service -u proxy-sentinel-shadow.service --no-pager -n 200; else journalctl -u proxy-sentinel-control-plane.service -u proxy-sentinel-shadow.service --no-pager "$@"; fi ;;
+  logs) shift; if [[ $# -eq 0 ]]; then journalctl -u proxy-sentinel-control-plane.service -u proxy-sentinel-ingest.service -u proxy-sentinel-shadow.service --no-pager -n 200; else journalctl -u proxy-sentinel-control-plane.service -u proxy-sentinel-ingest.service -u proxy-sentinel-shadow.service --no-pager "$@"; fi ;;
   backup) backup ;;
   restore) restore "${2:-}" "${3:-}" ;;
   rollback) rollback ;;

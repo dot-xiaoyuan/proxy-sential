@@ -13,34 +13,36 @@ import (
 )
 
 type Snapshot struct {
-	IP                   string             `json:"ip"`
-	SubjectType          string             `json:"subject_type,omitempty"`
-	SubjectID            string             `json:"subject_id,omitempty"`
-	AccountID            string             `json:"account_id,omitempty"`
-	EndpointID           string             `json:"endpoint_id,omitempty"`
-	Score                int                `json:"score"`
-	RawScore             int                `json:"raw_score,omitempty"`
-	Level                string             `json:"level"`
-	RawLevel             string             `json:"raw_level,omitempty"`
-	Confidence           float64            `json:"confidence"`
-	Window               string             `json:"window"`
-	EvidenceIDs          []string           `json:"evidence_ids"`
-	Summary              string             `json:"summary"`
-	RecommendedAction    string             `json:"recommended_action"`
-	UpdatedAt            string             `json:"updated_at"`
-	SuspectedDeviceCount int                `json:"suspected_device_count"`
-	DeviceSummary        string             `json:"device_summary,omitempty"`
-	DeviceConfidence     float64            `json:"device_confidence"`
-	ReviewStatus         string             `json:"review_status,omitempty"`
-	ReviewLabelID        string             `json:"review_label_id,omitempty"`
-	ReviewReason         string             `json:"review_reason,omitempty"`
-	ReviewedBy           string             `json:"reviewed_by,omitempty"`
-	ReviewedAt           string             `json:"reviewed_at,omitempty"`
-	NegativeEvidence     []NegativeEvidence `json:"negative_evidence,omitempty"`
-	AssessmentLevel      string             `json:"assessment_level,omitempty"`
-	ReviewDisposition    string             `json:"review_disposition,omitempty"`
-	AutomationEligible   bool               `json:"automation_eligible"`
-	AutomationBlockers   []string           `json:"automation_blockers,omitempty"`
+	IP                      string             `json:"ip"`
+	SubjectType             string             `json:"subject_type,omitempty"`
+	SubjectID               string             `json:"subject_id,omitempty"`
+	AccountID               string             `json:"account_id,omitempty"`
+	EndpointID              string             `json:"endpoint_id,omitempty"`
+	Score                   int                `json:"score"`
+	RawScore                int                `json:"raw_score,omitempty"`
+	Level                   string             `json:"level"`
+	RawLevel                string             `json:"raw_level,omitempty"`
+	Confidence              float64            `json:"confidence"`
+	Window                  string             `json:"window"`
+	EvidenceIDs             []string           `json:"evidence_ids"`
+	Summary                 string             `json:"summary"`
+	RecommendedAction       string             `json:"recommended_action"`
+	UpdatedAt               string             `json:"updated_at"`
+	SuspectedDeviceCount    int                `json:"suspected_device_count"`
+	DeviceSummary           string             `json:"device_summary,omitempty"`
+	DeviceConfidence        float64            `json:"device_confidence"`
+	ReviewStatus            string             `json:"review_status,omitempty"`
+	ReviewLabelID           string             `json:"review_label_id,omitempty"`
+	ReviewReason            string             `json:"review_reason,omitempty"`
+	ReviewedBy              string             `json:"reviewed_by,omitempty"`
+	ReviewedAt              string             `json:"reviewed_at,omitempty"`
+	NegativeEvidence        []NegativeEvidence `json:"negative_evidence,omitempty"`
+	AssessmentLevel         string             `json:"assessment_level,omitempty"`
+	ReviewDisposition       string             `json:"review_disposition,omitempty"`
+	AutomationEligible      bool               `json:"automation_eligible"`
+	AutomationBlockers      []string           `json:"automation_blockers,omitempty"`
+	DetectionBasis          string             `json:"detection_basis"`
+	IndependentSignalGroups []string           `json:"independent_signal_groups,omitempty"`
 }
 
 type NegativeEvidence struct {
@@ -112,6 +114,9 @@ func Batch(r io.Reader) (BatchResult, error) {
 
 	evidenceBySubject := map[string][]evidence.Evidence{}
 	for _, item := range allEvidence {
+		if item.Type == "shared_access_window" {
+			continue
+		}
 		subjectType, subjectID := evidenceSubject(item)
 		if subjectID == "" {
 			continue
@@ -206,6 +211,9 @@ func Inspect(r io.Reader, opts InspectOptions) (Snapshot, error) {
 
 	selected := make([]evidence.Evidence, 0)
 	for _, item := range allEvidence {
+		if item.Type == "shared_access_window" {
+			continue
+		}
 		if item.IP == opts.IP {
 			selected = append(selected, item)
 		}
@@ -229,6 +237,7 @@ func Inspect(r io.Reader, opts InspectOptions) (Snapshot, error) {
 			Summary:           "未发现该 IP 的有效风险证据",
 			RecommendedAction: "record",
 			UpdatedAt:         now,
+			DetectionBasis:    "behavioral_only",
 		}, nil
 	}
 
@@ -243,8 +252,9 @@ func snapshotFor(ip string, selected []evidence.Evidence) Snapshot {
 		return selected[i].Score > selected[j].Score
 	})
 
-	score := combinedScore(selected)
-	level := levelFor(score, selected)
+	basis, signalGroups := detectionBasis(selected)
+	score := combinedScore(selected, basis, len(signalGroups))
+	level := levelFor(score, selected, basis, signalGroups)
 	updatedAt := latestCreatedAt(selected)
 	window := selected[0].Window
 	if window == "" {
@@ -259,26 +269,37 @@ func snapshotFor(ip string, selected []evidence.Evidence) Snapshot {
 	}
 
 	confidence := combinedConfidence(selected)
-	eligible, blockers := automationAssessment(selected, score, confidence)
-	return Snapshot{
-		IP:                 snapshotIP(ip, selected),
-		SubjectType:        subjectType,
-		SubjectID:          subjectID,
-		AccountID:          accountIDFor(selected),
-		EndpointID:         endpointIDFor(selected),
-		Score:              score,
-		Level:              level,
-		Confidence:         confidence,
-		Window:             window,
-		EvidenceIDs:        evidenceIDs(selected),
-		Summary:            summaryFor(selected, level),
-		RecommendedAction:  actionFor(level),
-		UpdatedAt:          updatedAt,
-		AssessmentLevel:    assessmentLevel(level),
-		ReviewDisposition:  "unreviewed",
-		AutomationEligible: eligible,
-		AutomationBlockers: blockers,
+	if basis == "shared_device_divergence" && len(signalGroups) >= 2 {
+		confidence = round2(minFloat(0.96, maxFloat(confidence, maxEvidenceConfidence(selected))+0.04*float64(len(signalGroups)-1)))
 	}
+	eligible, blockers := automationAssessment(basis, signalGroups, score, confidence)
+	snapshot := Snapshot{
+		IP:                      snapshotIP(ip, selected),
+		SubjectType:             subjectType,
+		SubjectID:               subjectID,
+		AccountID:               accountIDFor(selected),
+		EndpointID:              endpointIDFor(selected),
+		Score:                   score,
+		Level:                   level,
+		Confidence:              confidence,
+		Window:                  window,
+		EvidenceIDs:             evidenceIDs(selected),
+		Summary:                 summaryFor(selected, level),
+		RecommendedAction:       actionFor(level),
+		UpdatedAt:               updatedAt,
+		AssessmentLevel:         assessmentLevel(level),
+		ReviewDisposition:       "unreviewed",
+		AutomationEligible:      eligible,
+		AutomationBlockers:      blockers,
+		DetectionBasis:          basis,
+		IndependentSignalGroups: signalGroups,
+	}
+	for _, item := range selected {
+		if item.Type == "known_game_accelerator" {
+			return ApplyNegativeEvidence(snapshot, []NegativeEvidence{{Type: "known_game_accelerator", Source: "application-signatures", Reason: "识别到普通游戏加速器，降低弱行为信号权重", ScoreDelta: -15}})
+		}
+	}
+	return snapshot
 }
 
 func assessmentLevel(level string) string {
@@ -288,7 +309,7 @@ func assessmentLevel(level string) string {
 	return level
 }
 
-func automationAssessment(items []evidence.Evidence, score int, confidence float64) (bool, []string) {
+func automationAssessment(basis string, signalGroups []string, score int, confidence float64) (bool, []string) {
 	blockers := []string{}
 	if score < 90 {
 		blockers = append(blockers, "risk_score_below_90")
@@ -296,15 +317,8 @@ func automationAssessment(items []evidence.Evidence, score int, confidence float
 	if confidence < 0.90 {
 		blockers = append(blockers, "risk_confidence_below_0_90")
 	}
-	hasExplicitRule := false
-	for _, item := range items {
-		if item.Type == "vpn_proxy_rule_match" && item.Confidence >= 0.90 {
-			hasExplicitRule = true
-			break
-		}
-	}
-	if !hasExplicitRule {
-		blockers = append(blockers, "explicit_proxy_rule_required")
+	if basis != "explicit_tunnel" && !(basis == "shared_device_divergence" && len(signalGroups) >= 2) {
+		blockers = append(blockers, "strong_detection_basis_required")
 	}
 	// Identity freshness, campus exceptions and connector state are evaluated by
 	// the control-plane action gate. A risk snapshot alone can never authorize a
@@ -397,7 +411,7 @@ func readBatch(r io.Reader) (BatchResult, error) {
 	return result, nil
 }
 
-func combinedScore(items []evidence.Evidence) int {
+func combinedScore(items []evidence.Evidence, basis string, signalGroupCount int) int {
 	total := 0
 	types := map[string]struct{}{}
 	weakOnly := true
@@ -408,10 +422,13 @@ func combinedScore(items []evidence.Evidence) int {
 			weakOnly = false
 		}
 	}
+	if basis == "shared_device_divergence" && signalGroupCount >= 2 {
+		total += 15 * (signalGroupCount - 1)
+	}
 	if total > 100 {
 		total = 100
 	}
-	if weakOnly {
+	if weakOnly && basis == "behavioral_only" {
 		if len(types) <= 1 && total > 29 {
 			return 29
 		}
@@ -419,12 +436,18 @@ func combinedScore(items []evidence.Evidence) int {
 			return 45
 		}
 	}
+	if basis == "behavioral_only" && total > 59 {
+		return 59
+	}
 	return total
 }
 
-func levelFor(score int, items []evidence.Evidence) string {
+func levelFor(score int, items []evidence.Evidence, basis string, signalGroups []string) string {
 	if score < 30 {
 		return "normal"
+	}
+	if basis == "behavioral_only" {
+		return "suspicious"
 	}
 	if score < 60 {
 		return "suspicious"
@@ -432,7 +455,10 @@ func levelFor(score int, items []evidence.Evidence) string {
 	if score < 80 {
 		return "high"
 	}
-	if strongEvidenceTypeCount(items) >= 2 {
+	if basis == "shared_device_divergence" && (len(signalGroups) >= 3 || containsAll(signalGroups, "identity_access", "identity_mac")) {
+		return "confirmed"
+	}
+	if basis == "explicit_tunnel" && strongEvidenceTypeCount(items) >= 2 {
 		return "confirmed"
 	}
 	return "high"
@@ -629,7 +655,90 @@ func summaryFor(items []evidence.Evidence, level string) string {
 }
 
 func isWeakEvidence(evidenceType string) bool {
-	return evidenceType == "multi_user_agent" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior" || evidenceType == "vpn_proxy_domain_hint"
+	return evidenceType == "multi_user_agent" || evidenceType == "ua_os_divergence" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior" || evidenceType == "vpn_proxy_domain_hint" || evidenceType == "vpn_proxy_rule_hint" || evidenceType == "ai_relay_domain_usage" || evidenceType == "ttl_clusters" || evidenceType == "dhcp_device_fingerprint" || evidenceType == "known_game_accelerator"
+}
+
+func detectionBasis(items []evidence.Evidence) (string, []string) {
+	groups := map[string]struct{}{}
+	for _, item := range items {
+		switch item.Type {
+		case "vpn_proxy_rule_match":
+			if item.Confidence >= 0.90 {
+				groups["protocol_rule"] = struct{}{}
+			}
+		case "ttl_clusters":
+			groups["ttl_path"] = struct{}{}
+		case "multi_ja3_ja4":
+			groups["tls_client_stack"] = struct{}{}
+		case "multi_user_agent", "ua_os_divergence":
+			groups["ua_os"] = struct{}{}
+		case "device_fingerprint_conflict", "device_signal_conflict":
+			groups["dhcp_device_family"] = struct{}{}
+		case "account_concurrent_macs":
+			groups["identity_mac"] = struct{}{}
+		case "account_concurrent_access", "account_concurrent_endpoints", "account_concurrent_ips":
+			groups["identity_access"] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(groups))
+	for group := range groups {
+		result = append(result, group)
+	}
+	sort.Strings(result)
+	if _, ok := groups["protocol_rule"]; ok {
+		return "explicit_tunnel", result
+	}
+	deviceGroups := 0
+	for _, group := range result {
+		if group != "protocol_rule" {
+			deviceGroups++
+		}
+	}
+	_, hasUAOSDivergence := groups["ua_os"]
+	_, hasDeviceFamilyConflict := groups["dhcp_device_family"]
+	_, hasIdentityAccess := groups["identity_access"]
+	_, hasIdentityMAC := groups["identity_mac"]
+	hasSharedDeviceAnchor := hasUAOSDivergence || hasDeviceFamilyConflict || hasIdentityAccess || hasIdentityMAC
+	if deviceGroups >= 2 && hasSharedDeviceAnchor {
+		return "shared_device_divergence", result
+	}
+	return "behavioral_only", result
+}
+
+func maxEvidenceConfidence(items []evidence.Evidence) float64 {
+	result := 0.0
+	for _, item := range items {
+		if item.Confidence > result {
+			result = item.Confidence
+		}
+	}
+	return result
+}
+
+func containsAll(values []string, wanted ...string) bool {
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	for _, value := range wanted {
+		if _, ok := seen[value]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func strongEvidenceTypeCount(items []evidence.Evidence) int {

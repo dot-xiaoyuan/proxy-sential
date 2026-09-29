@@ -126,8 +126,21 @@ func TestBundleRejectsNormalizedAndDuplicatePaths(t *testing.T) {
 }
 
 func TestBuildOfflineBundlePinsSources(t *testing.T) {
+	badHaGeZi := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/hagezi-commit":
+			fmt.Fprint(w, `{"sha":"aabbccddeeff0011"}`)
+		case strings.HasPrefix(r.URL.Path, "/hagezi-raw/"):
+			if badHaGeZi {
+				fmt.Fprint(w, "# empty upstream list\n")
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/LICENSE") {
+				fmt.Fprint(w, "GNU GENERAL PUBLIC LICENSE Version 3")
+			} else {
+				fmt.Fprintf(w, "telemetry.%s.test\n", strings.ReplaceAll(filepath.Base(r.URL.Path), "-", "."))
+			}
 		case r.URL.Path == "/commit":
 			fmt.Fprint(w, `{"sha":"1234567890abcdef"}`)
 		case r.URL.Path == "/next-commit":
@@ -160,23 +173,37 @@ func TestBuildOfflineBundlePinsSources(t *testing.T) {
 	}))
 	defer server.Close()
 	path := filepath.Join(t.TempDir(), "bundle.tar.gz")
-	manifest, err := BuildOfflineBundle(context.Background(), path, BuildOptions{OUIURLs: []string{server.URL + "/oui-l", server.URL + "/oui-m", server.URL + "/oui-s"}, UAPCommitURL: server.URL + "/commit", UAPRawURL: server.URL + "/raw/%s", FingerbankURL: server.URL + "/fingerbank", ODbLURL: server.URL + "/license/odbl", DbCLURL: server.URL + "/license/dbcl", NextDNSCommitURL: server.URL + "/next-commit", NextDNSRawURL: server.URL + "/next-raw/%s/%s", Now: func() time.Time { return time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC) }})
+	options := BuildOptions{OUIURLs: []string{server.URL + "/oui-l", server.URL + "/oui-m", server.URL + "/oui-s"}, UAPCommitURL: server.URL + "/commit", UAPRawURL: server.URL + "/raw/%s", FingerbankURL: server.URL + "/fingerbank", ODbLURL: server.URL + "/license/odbl", DbCLURL: server.URL + "/license/dbcl", HaGeZiCommitURL: server.URL + "/hagezi-commit", HaGeZiRawURL: server.URL + "/hagezi-raw/%s/%s", NextDNSCommitURL: server.URL + "/next-commit", NextDNSRawURL: server.URL + "/next-raw/%s/%s", Now: func() time.Time { return time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC) }}
+	manifest, err := BuildOfflineBundle(context.Background(), path, options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(manifest.Version, "1234567890ab") {
 		t.Fatalf("version is not pinned: %s", manifest.Version)
 	}
-	if manifest.SchemaVersion != BundleSchemaVersionV2 || manifest.Sources[len(manifest.Sources)-1].Version != "abcdef1234567890" {
-		t.Fatalf("NextDNS source is not pinned in v2 manifest: %+v", manifest)
+	if manifest.SchemaVersion != BundleSchemaVersionV5 || manifest.Sources[3].Version != "abcdef1234567890" {
+		t.Fatalf("NextDNS source is not pinned in v5 manifest: %+v", manifest)
 	}
 	bundle, err := VerifyBundleFile(path)
-	if err != nil || len(bundle.Files["domain-signatures.json"]) == 0 || len(bundle.Files["licenses/NextDNS-MIT.txt"]) == 0 {
-		t.Fatalf("v2 bundle verification failed: files=%v err=%v", bundle.Files, err)
+	if err != nil || len(bundle.Files["domain-signatures.json"]) == 0 || len(bundle.Files["licenses/NextDNS-MIT.txt"]) == 0 || len(bundle.Files["application-signatures.json"]) == 0 {
+		t.Fatalf("v5 bundle verification failed: files=%v err=%v", bundle.Files, err)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
 	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badHaGeZi = true
+	if _, err := BuildOfflineBundle(context.Background(), path, options); err == nil {
+		t.Fatal("empty upstream replaced valid bundle")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("failed refresh changed output")
+	}
+
 }
 
 func testBundleBytes(t *testing.T) []byte {

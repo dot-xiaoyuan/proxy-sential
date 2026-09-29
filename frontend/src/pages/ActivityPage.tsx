@@ -1,3 +1,4 @@
+import { ApplicationActivity } from "../features/applications/ApplicationActivity";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { SearchOutlined } from "@ant-design/icons";
@@ -22,13 +23,15 @@ import {
   AppLoadingState,
   AppMetricCard,
   AppPageHeader,
-  type QuickWindow,
+  StatisticsTime,
+  type ReportWindow,
 } from "../shared/ui";
 
 export function ActivityPage() {
   const navigate = useNavigate();
-  const [quickWindow, setQuickWindow] = useState<QuickWindow>("1h");
+  const [quickWindow, setQuickWindow] = useState<ReportWindow>("1h");
   const [tabKey, setTabKey] = useState<
+    | "visits"
     | "applications"
     | "ecosystem"
     | "matrix"
@@ -36,7 +39,7 @@ export function ActivityPage() {
     | "fingerprints"
     | "network"
     | "risks"
-  >("applications");
+  >("visits");
   const [inspectIp, setInspectIp] = useState<string | null>(null);
 
   const activity = useActivityOverview({ window: quickWindow });
@@ -89,7 +92,7 @@ export function ActivityPage() {
   }
 
   if (activity.isError || !activity.data) {
-    return <AppErrorAlert title="DPI 访问态势加载失败" />;
+    return <AppErrorAlert title="DPI 访问态势加载失败" message={activity.error?.message} />;
   }
 
   const data = activity.data;
@@ -134,7 +137,7 @@ export function ActivityPage() {
       dataIndex: "last_seen",
       width: 170,
       render: (value?: string) =>
-        value ? new Date(value).toLocaleString() : "-",
+        value ? new Date(value).toLocaleString() : "",
     },
     {
       title: "快捷追查",
@@ -156,6 +159,8 @@ export function ActivityPage() {
 
   const renderActiveTabContent = () => {
     switch (tabKey) {
+      case "visits":
+        return <ApplicationActivity window={quickWindow} />;
       case "applications":
         return (
           <Row className="activity-tab-panel" gutter={[16, 16]}>
@@ -348,7 +353,8 @@ export function ActivityPage() {
   };
 
   const tabItems = [
-    { key: "applications", label: "应用与协议报表" },
+    { key: "visits", label: "应用访问" },
+    { key: "applications", label: "应用协议" },
     { key: "ecosystem", label: "访问生态" },
     { key: "matrix", label: "多源指纹一致性" },
     { key: "domains", label: "访问对象 (Domains)" },
@@ -372,9 +378,12 @@ export function ActivityPage() {
           if (tabKey === "matrix") void fingerprintConflicts.refetch();
         }}
         quickWindow={quickWindow}
+        quickWindows={['10m', '1h', '24h', '7d', '30d']}
         subtitle="基于标准事件元数据呈现 L7 协议流向、终端指纹碰撞与访问对象排行"
         title="DPI 观测与访问态势"
       />
+
+      <StatisticsTime freshness={activity.data.data_freshness} value={activity.data.statistics_as_of} />
 
       <section className="metric-grid">
         <AppMetricCard

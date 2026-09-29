@@ -18,7 +18,7 @@
       "type": "string"
     },
     "type": {
-      "enum": ["flow", "dns", "tls", "http", "quic", "device", "identity", "alert"]
+      "enum": ["flow", "dns", "tls", "http", "quic", "device", "identity", "alert", "discovery"]
     },
     "timestamp": {
       "type": "string",

@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { DiscoveryEvidence } from "../entities/device/DiscoveryEvidence"
+import { DeviceBrandSummary } from '../entities/device/DeviceInventoryCells'
+import { DeviceNamePanel } from '../entities/device/DeviceNameView'
+import { BrandInferenceDetails } from '../entities/device/BrandInferenceView';
+import { useEffect, useMemo } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   App as AntApp,
   Alert,
@@ -103,11 +107,15 @@ function attributionText(value: string) {
 }
 
 export function EndpointDetailsPage() {
+  const [params,setParams]=useSearchParams()
+  const returnTo=params.get('return_to')||''
+  const back=returnTo.startsWith('/devices?')?returnTo:'/devices'
   const rawEndpointId = useParams().endpointId ?? "";
   const endpointId = decodeURIComponent(rawEndpointId);
   const { message } = AntApp.useApp();
   const [registrationForm] = Form.useForm<UpdateEndpointRegistrationRequest>();
-  const [activeTab, setActiveTab] = useState("overview");
+  const activeTab = params.get("tab") || "overview";
+  const setActiveTab=(tab:string)=>setParams(current=>{const next=new URLSearchParams(current);next.set("tab",tab);return next},{replace:true});
   const identity = useEndpointIdentity(endpointId, { limit: 500 });
   const signals = useDeviceSignals(
     {
@@ -128,10 +136,10 @@ export function EndpointDetailsPage() {
   const profile = identity.data ?? fallbackEndpointProfile(endpointId);
   const canUpdateRegistration = can(session.data, "endpoints:write");
   const mergeStatus = Form.useWatch("merge_status", registrationForm);
-  const latestIP = profile?.ip_history?.[0]?.ip ?? "";
+  const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? "";
   const latestAccess = profile?.access_history?.[0]?.access_id ?? "";
   const signalItems = signals.data?.items ?? [];
-  const recognition = inventory.data?.items.find(
+  const recognition = profile.recognition ?? inventory.data?.items.find(
     (item) => item.endpoint_id === endpointId,
   );
   const uniqueIPs = useMemo(
@@ -170,17 +178,18 @@ export function EndpointDetailsPage() {
   }
 
   return (
-    <main className="page">
+    <main className="page endpoint-details-page">
       <div className="page-header">
         <div>
           <Typography.Title className="page-title mono" level={3}>
-            {profile.endpoint_id}
+            {[profile.device_names_disabled ? '' : profile.device_name?.value,latestIP].filter(Boolean).join(' · ') || profile.endpoint.primary_mac || '终端详情'}
           </Typography.Title>
           <Typography.Text type="secondary">
             终端登记、账号历史、IP 历史、接入位置和设备信号。
           </Typography.Text>
         </div>
         <Space wrap>
+          <Link to={back}>返回终端列表</Link>
           <Tag
             color={registrationStatusColor(
               profile.endpoint.registration_status,
@@ -193,6 +202,7 @@ export function EndpointDetailsPage() {
           </Tag>
         </Space>
       </div>
+
 
       <section className="metric-grid">
         <div className="surface metric-card">
@@ -238,6 +248,7 @@ export function EndpointDetailsPage() {
 
       {activeTab === "overview" && (
         <section className="details-grid">
+          {recognition&&<section className="surface"><Typography.Title level={4}>设备识别</Typography.Title><DeviceBrandSummary device={recognition}/><Button type="link" onClick={()=>setActiveTab('recognition')}>查看识别依据</Button></section>}
           {identity.isError && (
             <Alert
               className="endpoint-detail-alert"
@@ -253,16 +264,16 @@ export function EndpointDetailsPage() {
                 {registrationStatusText(profile.endpoint.registration_status)}
               </Descriptions.Item>
               <Descriptions.Item label="责任账号">
-                {profile.endpoint.owner_account || "-"}
+                {profile.endpoint.owner_account || ""}
               </Descriptions.Item>
               <Descriptions.Item label="责任人">
-                {profile.endpoint.owner_name || "-"}
+                {profile.endpoint.owner_name || ""}
               </Descriptions.Item>
               <Descriptions.Item label="部门">
-                {profile.endpoint.owner_department || "-"}
+                {profile.endpoint.owner_department || ""}
               </Descriptions.Item>
               <Descriptions.Item label="资产编号">
-                {profile.endpoint.asset_tag || "-"}
+                {profile.endpoint.asset_tag || ""}
               </Descriptions.Item>
               <Descriptions.Item label="终端归属">
                 {ownershipClassText(profile.endpoint.ownership_class)}
@@ -271,21 +282,21 @@ export function EndpointDetailsPage() {
                 {profile.endpoint.merge_status || "active"}
               </Descriptions.Item>
               <Descriptions.Item label="备注">
-                {profile.endpoint.registration_note || "-"}
+                {profile.endpoint.registration_note || ""}
               </Descriptions.Item>
             </Descriptions>
           </div>
 
           <div className="surface">
-            <Typography.Title level={4}>当前观察</Typography.Title>
+            <Typography.Title level={4}>观测摘要</Typography.Title>
             <Descriptions column={1} size="small">
               <Descriptions.Item label="MAC">
-                {profile.endpoint.primary_mac || "-"}
+                {profile.endpoint.primary_mac || ""}
               </Descriptions.Item>
               <Descriptions.Item label="当前账号">
-                {profile.accounts[0] || "-"}
+                {profile.accounts[0] || ""}
               </Descriptions.Item>
-              <Descriptions.Item label="当前 IP">
+              <Descriptions.Item label="最近观测 IP">
                 {latestIP ? (
                   <Link
                     className="mono"
@@ -294,11 +305,11 @@ export function EndpointDetailsPage() {
                     {latestIP}
                   </Link>
                 ) : (
-                  "-"
+                  ""
                 )}
               </Descriptions.Item>
               <Descriptions.Item label="当前接入">
-                {latestAccess || "-"}
+                {latestAccess || ""}
               </Descriptions.Item>
               <Descriptions.Item label="首次发现">
                 {formatTime(profile.first_seen)}
@@ -313,6 +324,9 @@ export function EndpointDetailsPage() {
 
       {activeTab === "recognition" && (
         <>
+      {profile.discovery && <DiscoveryEvidence endpointId={endpointId} />}
+      {!profile.device_names_disabled && <DeviceNamePanel endpointId={endpointId} name={profile.device_name} canEdit={canUpdateRegistration} />}
+          <BrandInferenceDetails value={profile.brand_inference ?? recognition?.brand_inference} />
           <section className="surface">
             <Typography.Title level={4}>设备识别</Typography.Title>
             <Alert
@@ -322,29 +336,13 @@ export function EndpointDetailsPage() {
               title="生态线索表示终端访问过相关厂商服务，不等于硬件品牌、型号或设备类型已经确认。"
             />
             <Descriptions column={{ xs: 1, md: 2 }} size="small">
-              <Descriptions.Item label="注册厂商">
-                {recognition?.vendor || "未知"}（
-                {confidenceText(recognition?.vendor_confidence)}）
-              </Descriptions.Item>
-              <Descriptions.Item label="终端品牌">
-                {recognition?.brand || "未知"}（
-                {confidenceText(recognition?.brand_confidence)}）
-              </Descriptions.Item>
-              <Descriptions.Item label="型号">
-                {recognition?.model || "未知"}（
-                {confidenceText(recognition?.model_confidence)}）
-              </Descriptions.Item>
-              <Descriptions.Item label="类型">
-                {recognition?.device_type || "未知"}（
-                {confidenceText(recognition?.device_type_confidence)}）
-              </Descriptions.Item>
-              <Descriptions.Item label="操作系统">
-                {recognition?.os_family || "未知"}（
-                {confidenceText(recognition?.os_family_confidence)}）
-              </Descriptions.Item>
+              <Descriptions.Item label="识别摘要">{recognition&&<DeviceBrandSummary device={recognition}/>}</Descriptions.Item>
+              {recognition?.vendor&&<Descriptions.Item label="MAC 注册厂商">{recognition.vendor}</Descriptions.Item>}
+              {recognition?.brand_reference&&<Descriptions.Item label="MAC 品牌参考">{recognition.brand_reference.explanation}</Descriptions.Item>}
+              <Descriptions.Item label="终端 ID"><Typography.Text className="detail-value-wrap" copyable>{profile.endpoint_id}</Typography.Text></Descriptions.Item>
               <Descriptions.Item label="规则版本">
                 <Typography.Text className="mono list-cell-nowrap">
-                  {recognition?.fingerprint_version || "-"}
+                  {recognition?.fingerprint_version || ""}
                 </Typography.Text>
               </Descriptions.Item>
               <Descriptions.Item label="随机 MAC">
@@ -352,14 +350,14 @@ export function EndpointDetailsPage() {
               </Descriptions.Item>
               <Descriptions.Item label="识别冲突">
                 {recognition?.recognition_conflict
-                  ? "是；列表按未知设备处理"
+                  ? "是；请核对冲突证据"
                   : "否"}
               </Descriptions.Item>
               <Descriptions.Item label="生态线索">
                 {recognition?.ecosystem_conflict
                   ? "存在冲突"
-                  : recognition?.ecosystem_hint || "未知"}
-                （{confidenceText(recognition?.ecosystem_confidence)}）
+                  : recognition?.ecosystem_hint || ""}
+                {recognition?.ecosystem_hint && `（${confidenceText(recognition?.ecosystem_confidence)}）`}
               </Descriptions.Item>
               <Descriptions.Item label="识别证据">
                 {recognition?.recognition_evidence?.join("；") || "暂无"}
@@ -484,7 +482,7 @@ export function EndpointDetailsPage() {
               >
                 <Select
                   options={[
-                    { label: "未知", value: "unknown" },
+                    { label: "空值", value: "unknown" },
                     { label: "个人终端（BYOD）", value: "byod" },
                     { label: "学校资产", value: "school_asset" },
                     { label: "公共终端", value: "public_terminal" },
@@ -642,21 +640,21 @@ const sessionColumns: ColumnsType<AccountSession> = [
     title: "IP",
     dataIndex: "ip",
     width: 140,
-    render: (value?: string) => value || "-",
+    render: (value?: string) => value || "",
   },
   {
     title: "MAC",
     dataIndex: "mac",
     width: 170,
     render: (value?: string) => (
-      <Typography.Text className="mono">{value || "-"}</Typography.Text>
+      <Typography.Text className="mono">{value || ""}</Typography.Text>
     ),
   },
   {
     title: "接入位置",
     dataIndex: "access_id",
     width: 180,
-    render: (value?: string) => value || "-",
+    render: (value?: string) => value || "",
   },
   { title: "来源", dataIndex: "source", width: 120 },
   {
@@ -686,7 +684,7 @@ const ipColumns: ColumnsType<IdentityIPMACHistory> = [
           {value}
         </Link>
       ) : (
-        "-"
+        ""
       ),
   },
   {
@@ -694,7 +692,7 @@ const ipColumns: ColumnsType<IdentityIPMACHistory> = [
     dataIndex: "mac",
     width: 170,
     render: (value?: string) => (
-      <Typography.Text className="mono">{value || "-"}</Typography.Text>
+      <Typography.Text className="mono">{value || ""}</Typography.Text>
     ),
   },
   {
@@ -702,7 +700,7 @@ const ipColumns: ColumnsType<IdentityIPMACHistory> = [
     dataIndex: "account_id",
     width: 150,
     render: (value?: string) => (
-      <Typography.Text className="mono">{value || "-"}</Typography.Text>
+      <Typography.Text className="mono">{value || ""}</Typography.Text>
     ),
   },
   { title: "来源", dataIndex: "source", width: 120 },
@@ -715,25 +713,25 @@ const accessColumns: ColumnsType<IdentityAccessHistory> = [
     title: "AP",
     dataIndex: "ap",
     width: 150,
-    render: (value?: string) => value || "-",
+    render: (value?: string) => value || "",
   },
   {
     title: "交换机",
     dataIndex: "switch_id",
     width: 150,
-    render: (value?: string) => value || "-",
+    render: (value?: string) => value || "",
   },
   {
     title: "端口",
     dataIndex: "switch_port",
     width: 120,
-    render: (value?: string) => value || "-",
+    render: (value?: string) => value || "",
   },
   {
     title: "VLAN",
     dataIndex: "vlan",
     width: 100,
-    render: (value?: string) => value || "-",
+    render: (value?: string) => value || "",
   },
   { title: "最近出现", dataIndex: "last_seen", width: 180, render: formatTime },
 ];
@@ -802,9 +800,9 @@ function ownershipClassText(value?: string) {
         school_asset: "学校资产",
         public_terminal: "公共终端",
         infrastructure: "基础设施",
-        unknown: "未知",
+        unknown: "",
       } as Record<string, string>
-    )[value ?? "unknown"] ?? "未知"
+    )[value ?? "unknown"] ?? ""
   );
 }
 
@@ -824,7 +822,7 @@ function signalStrengthColor(value: string) {
 }
 
 function formatTime(value?: string) {
-  return value ? new Date(value).toLocaleString() : "-";
+  return value ? new Date(value).toLocaleString() : "";
 }
 
 function uniqueValues(values: string[]) {

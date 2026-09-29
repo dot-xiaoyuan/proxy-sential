@@ -1,0 +1,14 @@
+{
+  "source": "campus-radius",
+  "sensor_id": "auth-authority-1",
+  "campus_id": "east",
+  "access_domain": "campus-wifi",
+  "observed_at": "2026-09-14T00:00:00Z",
+  "reconcile_interval_seconds": 60,
+  "complete": true,
+  "expected_count": 2,
+  "records": [
+    {"session_id": "auth-session-001", "account_id": "student-001", "ip": "192.0.2.10", "endpoint_id": "managed-device-001", "group_id": "students", "product_id": "basic", "device_class": "mobile"},
+    {"session_id": "auth-session-002", "account_id": "student-002", "ip": "192.0.2.11"}
+  ]
+}

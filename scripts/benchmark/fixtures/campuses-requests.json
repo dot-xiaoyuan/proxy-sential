@@ -1,0 +1,22 @@
+{
+  "POST /organization/{kind}": {
+    "path": "/organization/campuses",
+    "body": {
+      "campus_id": "bench-concurrent-campuses",
+      "name": "Isolated synchronous config",
+      "code": "BENCH-CONCURRENT"
+    },
+    "unique_fields": [
+      "campus_id",
+      "code"
+    ],
+    "visibility": {
+      "path": "/organization",
+      "collection": "campuses",
+      "id_field": "campus_id",
+      "match_fields": [
+        "name"
+      ]
+    }
+  }
+}

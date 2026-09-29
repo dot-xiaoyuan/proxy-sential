@@ -28,3 +28,6 @@ deploy/compose/storage.env
 # IDE
 .idea/
 .vscode/
+
+# Embedded fingerprint rules are source assets, not runtime data.
+!internal/fingerprint/data/

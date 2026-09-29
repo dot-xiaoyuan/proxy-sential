@@ -1,0 +1,2 @@
+{"schema_version":"v1","event_id":"dhcp-only","source":"zeek","source_event_type":"dhcp","type":"device","timestamp":"2026-09-24T01:00:00Z","observer":{"sensor_id":"golden"},"subject":{"ip":"192.0.2.14","mac":"00:11:22:33:44:05"},"flow":{},"payload":{"vendor_class":"Huawei AX3 Pro"},"confidence":0.9}
+{"schema_version":"v1","event_id":"dhcp-ttl","source":"zeek","source_event_type":"ttl","type":"device","timestamp":"2026-09-24T01:01:00Z","observer":{"sensor_id":"golden"},"subject":{"ip":"192.0.2.14","mac":"00:11:22:33:44:05"},"flow":{"ttl":64},"payload":{},"confidence":0.7}

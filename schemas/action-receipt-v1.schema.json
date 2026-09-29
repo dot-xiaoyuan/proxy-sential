@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sentinel connector terminal receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action_id",
+    "status"
+  ],
+  "properties": {
+    "action_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "succeeded",
+        "revoked"
+      ]
+    }
+  },
+  "description": "completed confirms the requested operation; succeeded is execution-only; revoked is reversal-only. Pending/accepted and business codes are not terminal receipts. Maximum body size is 1 MiB."
+}

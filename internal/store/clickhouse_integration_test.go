@@ -142,3 +142,77 @@ func TestClickHouseAggregatesOneHundredThousandEventsWithoutRawReads(t *testing.
 		t.Fatalf("error diagnostic filtering failed: items=%d err=%v", len(errors), err)
 	}
 }
+
+func TestClickHouseEventPageCounterBoundariesMatchRaw(t *testing.T) {
+	dsn := os.Getenv("PROXY_SENTINEL_TEST_CLICKHOUSE_DSN")
+	if dsn == "" {
+		t.Skip("isolated ClickHouse required")
+	}
+	ctx := context.Background()
+	if _, err := ApplyClickHouseMigrations(ctx, dsn, "../../migrations/clickhouse"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewClickHouseStore(ClickHouseOptions{DSN: dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sensor := fmt.Sprintf("event-count-replay-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		for _, table := range []string{"normalized_events", "normalized_event_features", "collector_event_counts_10m", "activity_chart_dirty_log", "activity_chart_bucket_facts_v2", "activity_chart_hour_facts", "activity_chart_day_facts"} {
+			s.exec(ctx, "ALTER TABLE "+table+" DELETE WHERE sensor_id="+chQuote(sensor)+" SETTINGS mutations_sync=2")
+		}
+	})
+	base := time.Now().UTC().Add(-time.Hour).Truncate(10 * time.Minute)
+	query := fmt.Sprintf(`INSERT INTO normalized_events(timestamp,event_id,schema_version,source,source_event_type,type,sensor_id,subject_ip,observer_json,payload_json,flow_json,raw_ref_json) SELECT parseDateTime64BestEffort(%s,6)+toIntervalSecond(number),concat('count-event-',toString(number)),'v1','fixture','dns',if(number%%2=0,'dns','tls'),%s,'10.0.0.1','{}','{}','{}','{}' FROM numbers(1801)`, chQuote(base.Format(time.RFC3339Nano)), chQuote(sensor))
+	if err = s.exec(ctx, query); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.exec(ctx, fmt.Sprintf(`INSERT INTO normalized_events(timestamp,event_id,type,sensor_id) SELECT parseDateTime64BestEffort(%s,6),concat('tied-event-',toString(number)),'tls',%s FROM numbers(3)`, chQuote(base.Add(599*time.Second).Format(time.RFC3339Nano)), chQuote(sensor))); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, bounds := range [][2]int{{0, 1800}, {20, 45}, {599, 600}, {600, 601}, {350, 1550}} {
+		for _, level := range []string{"", "dns"} {
+			q := Query{SensorID: sensor, Level: level, From: base.Add(time.Duration(bounds[0]) * time.Second).Format(time.RFC3339Nano), To: base.Add(time.Duration(bounds[1]) * time.Second).Format(time.RFC3339Nano)}
+			where, err := eventWhereSQL(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := s.eventCount(ctx, where)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.eventPageCount(ctx, q, where)
+			if err != nil || got != want {
+				t.Fatalf("bounds %v level %s: got=%d want=%d err=%v", bounds, level, got, want, err)
+			}
+			for _, offset := range []int{0, 3, 100, 2000} {
+				q.Limit = 3
+				q.Cursor = offset
+				page, err := s.ListEvents(ctx, q)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := s.query(ctx, fmt.Sprintf("SELECT event_id FROM normalized_events%s ORDER BY timestamp DESC,event_id DESC,sensor_id DESC LIMIT 3 OFFSET %d FORMAT JSONEachRow", where, offset))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var reference []struct {
+					EventID string `json:"event_id"`
+				}
+				if err = decodeJSONEachRow(data, &reference); err != nil {
+					t.Fatal(err)
+				}
+				if page.Page.Total != want || len(reference) != len(page.Items) {
+					t.Fatalf("page total=%d want=%d size=%d want=%d", page.Page.Total, want, len(page.Items), len(reference))
+				}
+				for i, row := range reference {
+					if row.EventID != page.Items[i].EventID {
+						t.Fatalf("unstable page offset=%d position=%d got=%s want=%s", offset, i, page.Items[i].EventID, row.EventID)
+					}
+				}
+			}
+
+		}
+	}
+}
