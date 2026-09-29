@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -13,6 +14,11 @@ import (
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/normalized"
 )
+
+type routerReviewLabel struct {
+	LabelID, IP, Label, Reason, CreatedBy string
+	CreatedAt                             time.Time
+}
 
 type routerRecognitionCursor struct {
 	Timestamp time.Time
@@ -168,6 +174,119 @@ func (s *DBStore) finishRouterRecognition(ctx context.Context, cursor routerReco
 	return err
 }
 
+func (s *DBStore) applyRouterReviewLabels(ctx context.Context, sensorID string, now time.Time) error {
+	rows, err := s.pg.db.QueryContext(ctx, `SELECT DISTINCT ON(target_id) label_id,target_id,label,reason,created_by,created_at
+FROM labels WHERE target_type='router_ip' AND label IN('confirmed_router','not_router')
+ORDER BY target_id,created_at DESC,label_id DESC`)
+	if err != nil {
+		return err
+	}
+	labels := []routerReviewLabel{}
+	for rows.Next() {
+		var item routerReviewLabel
+		if err = rows.Scan(&item.LabelID, &item.IP, &item.Label, &item.Reason, &item.CreatedBy, &item.CreatedAt); err != nil {
+			rows.Close()
+			return err
+		}
+		labels = append(labels, item)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, label := range labels {
+		if net.ParseIP(label.IP) == nil {
+			continue
+		}
+		templates := []evidence.RouterAssessment{}
+		assessmentRows, queryErr := s.pg.db.QueryContext(ctx, `SELECT assessment FROM router_assessments
+WHERE ip=$1::inet AND (expires_at>now()-interval '7 days' OR updated_at>now()-interval '7 days')
+ORDER BY (expires_at>now()) DESC,(endpoint_id<>'') DESC,(mac<>'') DESC,last_seen DESC LIMIT 20`, label.IP)
+		if queryErr != nil {
+			return queryErr
+		}
+		for assessmentRows.Next() {
+			var raw []byte
+			if queryErr = assessmentRows.Scan(&raw); queryErr != nil {
+				assessmentRows.Close()
+				return queryErr
+			}
+			var item evidence.RouterAssessment
+			if queryErr = json.Unmarshal(raw, &item); queryErr != nil {
+				assessmentRows.Close()
+				return queryErr
+			}
+			templates = append(templates, item)
+		}
+		queryErr = assessmentRows.Err()
+		assessmentRows.Close()
+		if queryErr != nil {
+			return queryErr
+		}
+		if len(templates) == 0 {
+			item := evidence.RouterAssessment{AssessmentID: stableSharedBehaviorID("router-assessment", label.IP), IP: label.IP, AssociationQuality: "manual_review"}
+			if attribution, found, resolveErr := s.ResolveDeviceAt(ctx, DomainObservation{IP: label.IP, Timestamp: now.Format(time.RFC3339Nano), SensorID: sensorID}); resolveErr != nil {
+				return resolveErr
+			} else if found && !attribution.Conflict {
+				item.EndpointID = attribution.EndpointID
+				if strings.HasPrefix(attribution.EndpointID, "mac:") {
+					item.MAC = strings.TrimPrefix(attribution.EndpointID, "mac:")
+				}
+			}
+			templates = append(templates, item)
+		}
+		if label.Label == "confirmed_router" && len(templates) > 1 {
+			// A positive review identifies one physical device. Prefer the best
+			// endpoint/MAC association instead of confirming every historical
+			// IP-only association for the address.
+			templates = templates[:1]
+		}
+		allCurrent := true
+		for _, template := range templates {
+			evidenceID := stableSharedBehaviorID("router-review", label.LabelID, template.AssessmentID)
+			var current bool
+			if err = s.pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM router_evidence_facts
+WHERE evidence_id=$1 AND expires_at>now()+interval '1 day' AND rule_version=$2)`, evidenceID, fingerprint.DefaultRouterRuleSet().Version).Scan(&current); err != nil {
+				return err
+			}
+			allCurrent = allCurrent && current
+		}
+		if allCurrent {
+			continue
+		}
+		// A newer review supersedes every prior manual role decision for the IP.
+		if _, err = s.pg.db.ExecContext(ctx, `UPDATE router_evidence_facts SET expires_at=LEAST(expires_at,now())
+WHERE ip=$1::inet AND source_family='manual_review' AND expires_at>now()`, label.IP); err != nil {
+			return err
+		}
+		facts := make([]evidence.RouterEvidence, 0, len(templates))
+		for _, template := range templates {
+			confirmed := label.Label == "confirmed_router"
+			fact := evidence.RouterEvidence{
+				EvidenceID: stableSharedBehaviorID("router-review", label.LabelID, template.AssessmentID), AssessmentID: template.AssessmentID,
+				Kind: "router_signal", EndpointID: template.EndpointID, IP: label.IP, MAC: template.MAC,
+				Brand: template.Brand, Series: template.Series, Model: template.Model, Role: "router",
+				Source: "operator:" + label.CreatedBy, SourceFamily: "manual_review", SourceEventType: "router_review",
+				RawValue: label.Label, Strength: "strong", Score: 90, RuleID: "manual-confirmed-router",
+				RuleVersion: fingerprint.DefaultRouterRuleSet().Version, Explanation: label.Reason,
+				AssociationQuality: firstNonEmpty(template.AssociationQuality, "manual_review"),
+				FirstSeen:          label.CreatedAt.UTC().Format(time.RFC3339Nano), LastSeen: label.CreatedAt.UTC().Format(time.RFC3339Nano),
+				ExpiresAt: now.AddDate(10, 0, 0).UTC().Format(time.RFC3339Nano), EventIDs: []string{label.LabelID},
+			}
+			if !confirmed {
+				fact.Kind, fact.Role, fact.Score = "conflict", "endpoint", -100
+				fact.RuleID, fact.Conflict, fact.ConflictCode, fact.Exclusion = "manual-not-router", true, "manual_not_router", true
+			}
+			facts = append(facts, fact)
+		}
+		if err = s.WriteRouterObservations(ctx, evidence.RouterResult{RuleVersion: fingerprint.DefaultRouterRuleSet().Version, ShadowMode: true, Evidence: facts}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *DBStore) runRouterRecognitionMaterializer(ctx context.Context, sensorID string) {
 	owner := fmt.Sprintf("router-recognition-%d", os.Getpid())
 	for ctx.Err() == nil {
@@ -201,6 +320,9 @@ func (s *DBStore) runRouterRecognitionMaterializer(ctx context.Context, sensorID
 				} else {
 					err = s.WriteRouterObservations(workCtx, result)
 				}
+			}
+			if err == nil {
+				err = s.applyRouterReviewLabels(workCtx, sensorID, time.Now().UTC())
 			}
 			if err == nil {
 				cursor = next

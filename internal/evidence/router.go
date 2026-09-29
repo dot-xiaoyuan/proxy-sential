@@ -403,6 +403,17 @@ func AggregateRouterEvidence(items []RouterEvidence, rules *fingerprint.RouterRu
 func buildRouterAssessment(id string, association routerEventAssociation, items []RouterEvidence, rules *fingerprint.RouterRuleSet, asOf time.Time) RouterAssessment {
 	sort.Slice(items, func(i, j int) bool { return items[i].LastSeen < items[j].LastSeen })
 	assessment := RouterAssessment{AssessmentID: id, EndpointID: association.endpoint, IP: association.ip, MAC: association.mac, Status: "candidate", Role: "unknown", Infrastructure: association.infrastructure, AssociationQuality: association.quality, Ambiguous: association.ambiguous, RuleVersion: rules.Version, Evidence: items, Sources: []string{}, Conflicts: []string{}, ScoreComponents: []RouterScoreComponent{}}
+	manualConfirmed, manualRejected, sharedGatewayRole := false, false, false
+	for _, item := range items {
+		if item.Expired {
+			continue
+		}
+		if item.SourceFamily == "manual_review" {
+			manualConfirmed = manualConfirmed || item.Role == "router" && !item.Exclusion
+			manualRejected = manualRejected || item.Exclusion
+		}
+		sharedGatewayRole = sharedGatewayRole || item.SourceFamily == "shared_gateway_behavior" && item.Role == "router" && !item.Exclusion
+	}
 	bestByFamily := map[string]RouterEvidence{}
 	vlans, conflicts := map[string]bool{}, map[string]bool{}
 	strong, exclusion := false, false
@@ -416,6 +427,9 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		if item.LastSeen > assessment.LastSeen {
 			assessment.LastSeen, assessment.ExpiresAt = item.LastSeen, item.ExpiresAt
 		}
+		// Retain expired identity metadata for audit/history. Current list
+		// eligibility is checked against live role facts, so stale metadata can no
+		// longer make an expired router visible.
 		if item.Exclusion {
 			assessment.Role = item.Role
 		}
@@ -434,6 +448,16 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		if item.Expired {
 			continue
 		}
+		if manualRejected && item.SourceFamily != "manual_review" {
+			continue
+		}
+		overriddenRoleConflict := manualConfirmed && item.SourceFamily != "manual_review" && (item.Exclusion || item.Conflict)
+		if sharedGatewayRole && (item.Exclusion && item.ConflictCode == "infrastructure_ap" || item.ConflictCode == "ordinary_endpoint") {
+			overriddenRoleConflict = true
+		}
+		if overriddenRoleConflict {
+			continue
+		}
 		if item.Conflict {
 			conflicts[firstNonEmptyRouter(item.ConflictCode, item.Explanation)] = true
 		}
@@ -447,6 +471,15 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		if item.Strength == "strong" && item.Score > 0 && !item.BrandReferenceOnly {
 			strong = true
 		}
+	}
+	if manualConfirmed {
+		assessment.Role = "router"
+		assessment.Infrastructure = false
+		assessment.Ambiguous = false
+	} else if manualRejected {
+		assessment.Role = "endpoint"
+	} else if sharedGatewayRole {
+		assessment.Role = "router"
 	}
 	for vlan := range vlans {
 		assessment.VLANs = append(assessment.VLANs, vlan)
@@ -491,7 +524,7 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 	if assessment.Confidence >= rules.Thresholds.LikelyMin {
 		assessment.Status = "likely"
 	}
-	canConfirm := assessment.Confidence >= rules.Thresholds.ConfirmedMin && positiveSources >= rules.Thresholds.ConfirmedSourcesMin && strong && !association.ambiguous && !association.infrastructure && !exclusion && assessment.Role == "router"
+	canConfirm := manualConfirmed || assessment.Confidence >= rules.Thresholds.ConfirmedMin && positiveSources >= rules.Thresholds.ConfirmedSourcesMin && strong && !association.ambiguous && !association.infrastructure && !exclusion && assessment.Role == "router"
 	if canConfirm {
 		assessment.Status, assessment.ConfirmedRouter = "confirmed", true
 	}

@@ -46,6 +46,41 @@ func TestAggregateRouterEvidenceCombinesIndependentBatches(t *testing.T) {
 	}
 }
 
+func TestManualRouterReviewOverridesAutomaticAPExclusion(t *testing.T) {
+	asOf := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
+	items := []RouterEvidence{
+		{
+			EvidenceID: "ap", AssessmentID: "router-review", IP: "192.0.2.33", MAC: "84:a9:c4:8d:d6:a0",
+			Kind: "conflict", Source: "zeek", SourceFamily: "dhcp", Role: "ap", Brand: "Huawei", Model: "AP7050DE",
+			Strength: "strong", Score: -60, Conflict: true, ConflictCode: "infrastructure_ap", Exclusion: true,
+			RuleID: "huawei-airengine", RuleVersion: "test", FirstSeen: asOf.Add(-time.Hour).Format(time.RFC3339Nano),
+			LastSeen: asOf.Add(-time.Hour).Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano),
+		},
+		{
+			EvidenceID: "manual", AssessmentID: "router-review", IP: "192.0.2.33", MAC: "84:a9:c4:8d:d6:a0",
+			Kind: "router_signal", Source: "operator", SourceFamily: "manual_review", SourceEventType: "router_review",
+			Role: "router", Strength: "strong", Score: 90, RuleID: "manual-confirmed-router", RuleVersion: "test",
+			FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(24 * time.Hour).Format(time.RFC3339Nano),
+		},
+	}
+	assessment, present := AggregateRouterEvidence(items, nil, asOf)
+	if !present || assessment.Role != "router" || assessment.Status != "confirmed" || !assessment.ConfirmedRouter || len(assessment.Conflicts) != 0 {
+		t.Fatalf("manual review did not resolve the automatic AP conflict: %+v present=%t", assessment, present)
+	}
+}
+
+func TestManualNotRouterReviewSuppressesAutomaticRouterEvidence(t *testing.T) {
+	asOf := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
+	items := []RouterEvidence{
+		{EvidenceID: "auto", AssessmentID: "phone", IP: "192.0.2.45", Kind: "router_signal", Source: "capture", SourceFamily: "first_hop_redundancy", Role: "router", Strength: "strong", Score: 40, RuleID: "auto", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
+		{EvidenceID: "manual", AssessmentID: "phone", IP: "192.0.2.45", Kind: "conflict", Source: "operator", SourceFamily: "manual_review", Role: "endpoint", Strength: "strong", Score: -100, Conflict: true, ConflictCode: "manual_not_router", Exclusion: true, RuleID: "manual-not-router", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(24 * time.Hour).Format(time.RFC3339Nano)},
+	}
+	assessment, present := AggregateRouterEvidence(items, nil, asOf)
+	if !present || assessment.Role != "endpoint" || assessment.Status != "candidate" || assessment.ConfirmedRouter || assessment.Confidence != 0 {
+		t.Fatalf("manual non-router review did not suppress automatic evidence: %+v present=%t", assessment, present)
+	}
+}
+
 func TestAnalyzeRoutersOUINeverConfirms(t *testing.T) {
 	event := routerTestEvent("device", "2026-09-24T01:00:00Z", "AA:BB:CC:DD:EE:02", map[string]any{"oui_vendor": "Huawei"})
 	result, err := AnalyzeRouters([]normalized.Event{event}, RouterOptions{})

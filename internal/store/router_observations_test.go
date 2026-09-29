@@ -28,7 +28,7 @@ func TestRouterWhereDefaultsToAddressedRouterRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, fragment := range []string{"ip IS NOT NULL", "brand_reference_only=false", "role='router'"} {
+	for _, fragment := range []string{"ip IS NOT NULL", "brand_reference_only=false", "role='router'", "status IN('likely','confirmed')", "active_router_fact.expires_at>now()", "active_router_fact.data->>'role'='router'"} {
 		if !strings.Contains(where, fragment) {
 			t.Fatalf("missing default precision filter %q in %s", fragment, where)
 		}

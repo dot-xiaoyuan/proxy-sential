@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const BehaviorRuleVersion = "shared-behavior/v3"
+const BehaviorRuleVersion = "shared-behavior/v4"
 
 type BehaviorRouterContext struct {
 	AssessmentID string `json:"assessment_id,omitempty"`
@@ -81,16 +81,23 @@ func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContex
 		{"dhcp_stack", w.DHCPProfiles, 25, "同一出口反复共现多个 DHCP 协议栈"},
 	}
 	behaviorGroups := 0
+	identityGroups := 0
 	for _, item := range signals {
 		if diversity(item.values) < 2 || !w.repeatedTogether(item.name, item.values) {
 			continue
 		}
 		behaviorGroups++
+		// TLS and TCP fingerprints vary across applications and operating-system
+		// updates on one endpoint. They corroborate sharing, but do not by
+		// themselves prove that multiple endpoint identities sit behind an IP.
+		if item.name == "ua_os" || item.name == "ttl_path" || item.name == "dhcp_stack" {
+			identityGroups++
+		}
 		result.Confidence += item.score
 		result.SignalGroups = append(result.SignalGroups, item.name)
 		result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{Signal: item.name, Score: item.score, Explanation: item.explanation})
 	}
-	if behaviorGroups < 2 {
+	if behaviorGroups < 2 || identityGroups == 0 {
 		return BehaviorAssessment{}, false
 	}
 	routerStrong := false

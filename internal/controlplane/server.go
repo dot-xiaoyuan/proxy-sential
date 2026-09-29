@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1434,7 +1435,7 @@ func (s *Server) handleEndpointRegistration(w http.ResponseWriter, r *http.Reque
 
 func validateLabelRequest(request CreateLabelRequest) error {
 	switch request.TargetType {
-	case "ip", "risk_snapshot", "evidence", "account", "endpoint":
+	case "ip", "risk_snapshot", "evidence", "account", "endpoint", "router_ip":
 	default:
 		return fmt.Errorf("unsupported target_type: %s", request.TargetType)
 	}
@@ -1442,14 +1443,24 @@ func validateLabelRequest(request CreateLabelRequest) error {
 		return fmt.Errorf("target_id is required")
 	}
 	switch request.Label {
-	case "confirmed_proxy", "false_positive", "benign", "needs_more_data":
+	case "confirmed_proxy", "false_positive", "benign", "needs_more_data", "confirmed_router", "not_router":
 	default:
 		return fmt.Errorf("unsupported label: %s", request.Label)
 	}
 	if len(strings.TrimSpace(request.Reason)) < 2 {
 		return fmt.Errorf("reason must contain at least 2 characters")
 	}
-	if len(request.EvidenceIDs) == 0 {
+	if request.TargetType == "router_ip" {
+		if request.Label != "confirmed_router" && request.Label != "not_router" {
+			return fmt.Errorf("router_ip labels must be confirmed_router or not_router")
+		}
+		if net.ParseIP(strings.TrimSpace(request.TargetID)) == nil {
+			return fmt.Errorf("router_ip target_id must be an IP address")
+		}
+	} else if request.Label == "confirmed_router" || request.Label == "not_router" {
+		return fmt.Errorf("router labels require target_type router_ip")
+	}
+	if request.TargetType != "router_ip" && len(request.EvidenceIDs) == 0 {
 		return fmt.Errorf("evidence_ids must contain at least one evidence id")
 	}
 	return nil

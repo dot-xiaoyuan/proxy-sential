@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"slices"
 	"testing"
 	"time"
 
@@ -75,5 +77,32 @@ func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
 				t.Fatal("unsafe observation bridged")
 			}
 		})
+	}
+}
+
+func TestSharedBehaviorCoverageAcceptsSuricataAsApplicationCollector(t *testing.T) {
+	now := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
+	checkpoints := map[string]sharedBehaviorCheckpoint{
+		"device-signals": {eventAt: sql.NullTime{Time: now.Add(-30 * time.Second), Valid: true}, updatedAt: now.Add(-10 * time.Second)},
+		"suricata":       {eventAt: sql.NullTime{Time: now.Add(-20 * time.Second), Valid: true}, updatedAt: now.Add(-5 * time.Second)},
+	}
+	if reasons := sharedBehaviorCoverageReasons(checkpoints, now, now); len(reasons) != 0 {
+		t.Fatalf("healthy Suricata deployment was treated as partial: %v", reasons)
+	}
+}
+
+func TestSharedBehaviorCoverageRequiresTransportAndApplicationCollectors(t *testing.T) {
+	now := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
+	checkpoints := map[string]sharedBehaviorCheckpoint{
+		"suricata": {eventAt: sql.NullTime{Time: now, Valid: true}, updatedAt: now},
+	}
+	reasons := sharedBehaviorCoverageReasons(checkpoints, now, now)
+	if !slices.Contains(reasons, "device-signals_checkpoint_missing") {
+		t.Fatalf("missing packet-sidecar coverage was accepted: %v", reasons)
+	}
+	delete(checkpoints, "suricata")
+	reasons = sharedBehaviorCoverageReasons(checkpoints, now, now)
+	if !slices.Contains(reasons, "application_checkpoint_missing") {
+		t.Fatalf("missing application collector was accepted: %v", reasons)
 	}
 }

@@ -42,6 +42,25 @@ func TestAssessBehaviorRequiresIndependentRepeatedSignals(t *testing.T) {
 	}
 }
 
+func TestAssessBehaviorRejectsTLSAndTCPDiversityFromOneEndpoint(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	w := repeatedBehaviorWindow(now, map[string][]string{
+		"tcp_stack": {"mss=1460,ws=8", "mss=1460,ws=9"},
+		"tls_stack": {"ja3:browser", "ja3:application"},
+	})
+	if _, present := AssessBehavior("phone", "endpoint", w, BehaviorRouterContext{}); present {
+		t.Fatal("ordinary per-application TLS/TCP diversity became shared gateway behavior")
+	}
+	w.UAOS = []string{"Android", "Windows"}
+	w.Samples["ua_os"] = map[string]FeatureSample{
+		"Android": {Count: 3, Buckets: []int64{now.Add(-time.Minute).Unix() / 5, now.Add(-30*time.Second).Unix() / 5}},
+		"Windows": {Count: 3, Buckets: []int64{now.Add(-time.Minute).Unix() / 5, now.Add(-30*time.Second).Unix() / 5}},
+	}
+	if item, present := AssessBehavior("gateway", "endpoint", w, BehaviorRouterContext{}); !present || item.Status != "confirmed" {
+		t.Fatalf("cross-OS evidence did not restore the shared gateway result: %+v present=%t", item, present)
+	}
+}
+
 func TestAssessBehaviorConfirmationAndCoverageGate(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	w := repeatedBehaviorWindow(now, map[string][]string{

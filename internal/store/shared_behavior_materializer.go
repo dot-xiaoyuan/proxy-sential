@@ -40,6 +40,11 @@ type sharedBehaviorGroup struct {
 	sources    map[string]bool
 }
 
+type sharedBehaviorCheckpoint struct {
+	eventAt   sql.NullTime
+	updatedAt time.Time
+}
+
 func stableSharedBehaviorID(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return "shared-behavior-" + hex.EncodeToString(sum[:16])
@@ -77,14 +82,12 @@ LIMIT 100000 SETTINGS max_threads=2,max_memory_usage=536870912,max_execution_tim
 
 func (s *DBStore) sharedBehaviorCoverage(ctx context.Context, sensorID string, windowEnd time.Time) (bool, []string, error) {
 	rows, err := s.pg.db.QueryContext(ctx, `SELECT source_kind,max(last_event_at),max(updated_at)
-FROM ingest_checkpoints WHERE sensor_id=$1 AND source_kind IN ('zeek-http','device-signals') GROUP BY source_kind`, sensorID)
+FROM ingest_checkpoints WHERE sensor_id=$1 AND source_kind IN ('zeek-http','suricata','device-signals') GROUP BY source_kind`, sensorID)
 	if err != nil {
 		return false, nil, err
 	}
 	defer rows.Close()
-	seen := map[string]bool{}
-	reasons := []string{}
-	now := time.Now().UTC()
+	checkpoints := map[string]sharedBehaviorCheckpoint{}
 	for rows.Next() {
 		var kind string
 		var eventAt sql.NullTime
@@ -92,24 +95,54 @@ FROM ingest_checkpoints WHERE sensor_id=$1 AND source_kind IN ('zeek-http','devi
 		if err = rows.Scan(&kind, &eventAt, &updatedAt); err != nil {
 			return false, nil, err
 		}
-		seen[kind] = true
-		if !eventAt.Valid || eventAt.Time.Before(windowEnd.Add(-90*time.Second)) {
-			reasons = append(reasons, kind+"_event_lag")
-		}
-		if now.Sub(updatedAt) > 2*time.Minute {
-			reasons = append(reasons, kind+"_checkpoint_stale")
-		}
+		checkpoints[kind] = sharedBehaviorCheckpoint{eventAt: eventAt, updatedAt: updatedAt}
 	}
 	if err = rows.Err(); err != nil {
 		return false, nil, err
 	}
-	for _, kind := range []string{"zeek-http", "device-signals"} {
-		if !seen[kind] {
-			reasons = append(reasons, kind+"_checkpoint_missing")
+	reasons := sharedBehaviorCoverageReasons(checkpoints, windowEnd, time.Now().UTC())
+	return len(reasons) == 0, reasons, nil
+}
+
+func sharedBehaviorCoverageReasons(checkpoints map[string]sharedBehaviorCheckpoint, windowEnd, now time.Time) []string {
+	health := func(kind string) (bool, []string) {
+		checkpoint, found := checkpoints[kind]
+		if !found {
+			return false, []string{kind + "_checkpoint_missing"}
+		}
+		reasons := []string{}
+		if !checkpoint.eventAt.Valid || checkpoint.eventAt.Time.Before(windowEnd.Add(-90*time.Second)) {
+			reasons = append(reasons, kind+"_event_lag")
+		}
+		if now.Sub(checkpoint.updatedAt) > 2*time.Minute {
+			reasons = append(reasons, kind+"_checkpoint_stale")
+		}
+		return len(reasons) == 0, reasons
+	}
+	reasons := []string{}
+	if healthy, deviceReasons := health("device-signals"); !healthy {
+		reasons = append(reasons, deviceReasons...)
+	}
+	// HTTP/TLS identity signals may come from either Suricata EVE or Zeek HTTP.
+	// Requiring a collector that is not configured makes otherwise complete
+	// deployments permanently partial.
+	suricataHealthy, suricataReasons := health("suricata")
+	zeekHealthy, zeekReasons := health("zeek-http")
+	if !suricataHealthy && !zeekHealthy {
+		if _, found := checkpoints["suricata"]; found {
+			reasons = append(reasons, suricataReasons...)
+		}
+		if _, found := checkpoints["zeek-http"]; found {
+			reasons = append(reasons, zeekReasons...)
+		}
+		if _, suricataFound := checkpoints["suricata"]; !suricataFound {
+			if _, zeekFound := checkpoints["zeek-http"]; !zeekFound {
+				reasons = append(reasons, "application_checkpoint_missing")
+			}
 		}
 	}
 	sort.Strings(reasons)
-	return len(reasons) == 0, reasons, nil
+	return reasons
 }
 
 func buildSharedBehaviorWindows(rows []sharedBehaviorSignalRow, from, to time.Time, complete bool, coverageReasons []string) ([]sharedaccess.Window, error) {
@@ -362,23 +395,36 @@ func (s *DBStore) writeSharedGatewayRouterEvidence(ctx context.Context, item sha
 	}
 	var raw []byte
 	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment FROM router_assessments
-WHERE ip=$1::inet AND expires_at>$2 AND role='router' AND model<>'' AND confidence>=45
- AND NOT infrastructure AND NOT ambiguous
-ORDER BY confidence DESC,last_seen DESC LIMIT 1`, item.IP, item.LastSeen).Scan(&raw)
+WHERE ip=$1::inet
+ORDER BY (endpoint_id=$2 AND $2<>'') DESC,(mac<>'') DESC,(expires_at>$3) DESC,
+ infrastructure ASC,ambiguous ASC,confidence DESC,last_seen DESC LIMIT 1`, item.IP, item.EndpointID, item.LastSeen).Scan(&raw)
+	router := evidence.RouterAssessment{}
 	if err == sql.ErrNoRows {
-		return nil
+		err = nil
 	}
 	if err != nil {
 		return err
 	}
-	var router evidence.RouterAssessment
-	if err = json.Unmarshal(raw, &router); err != nil {
+	if len(raw) > 0 {
+		err = json.Unmarshal(raw, &router)
+	}
+	if err != nil {
 		return err
 	}
+	if router.AssessmentID == "" {
+		router.AssessmentID = stableSharedBehaviorID("router-assessment", item.EndpointID, item.IP)
+		router.EndpointID, router.IP, router.AssociationQuality = item.EndpointID, item.IP, "shared_gateway_window"
+		if strings.HasPrefix(item.EndpointID, "mac:") {
+			router.MAC = strings.TrimPrefix(item.EndpointID, "mac:")
+		}
+	}
 	sort.Strings(behaviorGroups)
-	score := 25
-	if len(behaviorGroups) >= 3 {
-		score = 30
+	score := item.Confidence
+	if score < 60 {
+		score = 60
+	}
+	if score > 85 {
+		score = 85
 	}
 	ruleVersion := fingerprint.DefaultRouterRuleSet().Version
 	expiresAt := item.LastSeen.Add(24 * time.Hour)
@@ -388,7 +434,7 @@ ORDER BY confidence DESC,last_seen DESC LIMIT 1`, item.IP, item.LastSeen).Scan(&
 		EndpointID: router.EndpointID, IP: router.IP, MAC: router.MAC, Brand: router.Brand,
 		Series: router.Series, Model: router.Model, Role: "router", Source: "shared-behavior-materializer",
 		SourceFamily: "shared_gateway_behavior", SourceEventType: "shared_access_window",
-		RawValue: strings.Join(behaviorGroups, ","), Strength: "medium", Score: score,
+		RawValue: strings.Join(behaviorGroups, ","), Strength: "strong", Score: score,
 		RuleID: "verified-shared-gateway-role", RuleVersion: ruleVersion,
 		Explanation:        "重复共现的多终端协议栈与 TTL 路径表明该设备承担共享网关角色",
 		AssociationQuality: router.AssociationQuality, Ambiguous: router.Ambiguous,
