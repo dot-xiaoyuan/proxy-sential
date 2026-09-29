@@ -112,6 +112,21 @@ func TestAssessBehaviorRejectsNonCoexistingDiversity(t *testing.T) {
 	}
 }
 
+func TestAssessBehaviorAcceptsRepeatedSignalsWithinThirtySeconds(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	w := repeatedBehaviorWindow(now, map[string][]string{
+		"ua_os":     {"Android", "Windows"},
+		"tcp_stack": {"stack-a", "stack-b"},
+	})
+	base := now.Add(-time.Minute).Unix() / 5
+	w.Samples["ua_os"]["Android"] = FeatureSample{Count: 3, Buckets: []int64{base, base + 10}}
+	w.Samples["ua_os"]["Windows"] = FeatureSample{Count: 3, Buckets: []int64{base + 2, base + 12}}
+	item, present := AssessBehavior("nearby", "endpoint", w, BehaviorRouterContext{})
+	if !present || item.Status != "likely" {
+		t.Fatalf("nearby repeated client signals were not correlated: %+v present=%t", item, present)
+	}
+}
+
 func TestAssessBehaviorIgnoresNoisyThirdValueWhenARepeatedPairCoexists(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	w := repeatedBehaviorWindow(now, map[string][]string{

@@ -881,21 +881,6 @@ func TestCreateLabelRequiresEvidenceIDs(t *testing.T) {
 	}
 }
 
-func TestRouterReviewLabelUsesAuditedOperatorReasonAsEvidence(t *testing.T) {
-	request := CreateLabelRequest{TargetType: "router_ip", TargetID: "192.0.2.33", Label: "confirmed_router", Reason: "现场确认承担网关转发"}
-	if err := validateLabelRequest(request); err != nil {
-		t.Fatalf("valid router review was rejected: %v", err)
-	}
-	request.TargetID = "not-an-ip"
-	if err := validateLabelRequest(request); err == nil {
-		t.Fatal("invalid router review target was accepted")
-	}
-	request = CreateLabelRequest{TargetType: "ip", TargetID: "192.0.2.33", Label: "confirmed_router", Reason: "错误目标类型", EvidenceIDs: []string{"event"}}
-	if err := validateLabelRequest(request); err == nil {
-		t.Fatal("router label was accepted for a generic risk target")
-	}
-}
-
 func TestUpdateEndpointRegistrationWritesAuditAndProfile(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: false})
 

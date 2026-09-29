@@ -1,6 +1,9 @@
 package sharedaccess
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // FeatureSample counts distinct standard events, never the packet_count carried
 // by an aggregate event. Buckets retain temporal coexistence independently.
@@ -71,16 +74,37 @@ func (w Window) repeatedTogether(family string, values []string) bool {
 	// or malformed fingerprint suppress an otherwise valid pair.
 	for i := range sets {
 		for j := i + 1; j < len(sets); j++ {
-			common := 0
-			for bin := range sets[i] {
-				if sets[j][bin] {
-					common++
-				}
-			}
-			if common >= 2 {
+			if repeatedBucketMatches(sets[i], sets[j], 6) >= 2 {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func repeatedBucketMatches(left, right map[int64]bool, tolerance int64) int {
+	a := make([]int64, 0, len(left))
+	b := make([]int64, 0, len(right))
+	for value := range left {
+		a = append(a, value)
+	}
+	for value := range right {
+		b = append(b, value)
+	}
+	sort.Slice(a, func(i, j int) bool { return a[i] < a[j] })
+	sort.Slice(b, func(i, j int) bool { return b[i] < b[j] })
+	matches := 0
+	for i, j := 0, 0; i < len(a) && j < len(b); {
+		switch {
+		case a[i] < b[j]-tolerance:
+			i++
+		case b[j] < a[i]-tolerance:
+			j++
+		default:
+			matches++
+			i++
+			j++
+		}
+	}
+	return matches
 }

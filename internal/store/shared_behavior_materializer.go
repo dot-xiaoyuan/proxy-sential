@@ -429,10 +429,14 @@ ORDER BY (endpoint_id=$2 AND $2<>'') DESC,(mac<>'') DESC,(expires_at>$3) DESC,
 	ruleVersion := fingerprint.DefaultRouterRuleSet().Version
 	expiresAt := item.LastSeen.Add(24 * time.Hour)
 	evidenceID := stableSharedBehaviorID("router-role", router.AssessmentID, strings.Join(behaviorGroups, ","))
+	brand, series, model := router.Brand, router.Series, router.Model
+	if router.BrandReferenceOnly {
+		brand, series, model = "", "", ""
+	}
 	bridge := evidence.RouterEvidence{
 		EvidenceID: evidenceID, AssessmentID: router.AssessmentID, Kind: "router_signal",
-		EndpointID: router.EndpointID, IP: router.IP, MAC: router.MAC, Brand: router.Brand,
-		Series: router.Series, Model: router.Model, Role: "router", Source: "shared-behavior-materializer",
+		EndpointID: router.EndpointID, IP: router.IP, MAC: router.MAC, Brand: brand,
+		Series: series, Model: model, Role: "router", Source: "shared-behavior-materializer",
 		SourceFamily: "shared_gateway_behavior", SourceEventType: "shared_access_window",
 		RawValue: strings.Join(behaviorGroups, ","), Strength: "strong", Score: score,
 		RuleID: "verified-shared-gateway-role", RuleVersion: ruleVersion,

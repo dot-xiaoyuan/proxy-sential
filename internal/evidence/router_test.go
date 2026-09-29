@@ -46,49 +46,14 @@ func TestAggregateRouterEvidenceCombinesIndependentBatches(t *testing.T) {
 	}
 }
 
-func TestManualRouterReviewOverridesAutomaticAPExclusion(t *testing.T) {
-	asOf := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
-	items := []RouterEvidence{
-		{
-			EvidenceID: "ap", AssessmentID: "router-review", IP: "192.0.2.33", MAC: "84:a9:c4:8d:d6:a0",
-			Kind: "conflict", Source: "zeek", SourceFamily: "dhcp", Role: "ap", Brand: "Huawei", Model: "AP7050DE",
-			Strength: "strong", Score: -60, Conflict: true, ConflictCode: "infrastructure_ap", Exclusion: true,
-			RuleID: "huawei-airengine", RuleVersion: "test", FirstSeen: asOf.Add(-time.Hour).Format(time.RFC3339Nano),
-			LastSeen: asOf.Add(-time.Hour).Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano),
-		},
-		{
-			EvidenceID: "manual", AssessmentID: "router-review", IP: "192.0.2.33", MAC: "84:a9:c4:8d:d6:a0",
-			Kind: "router_signal", Source: "operator", SourceFamily: "manual_review", SourceEventType: "router_review",
-			Role: "router", Strength: "strong", Score: 90, RuleID: "manual-confirmed-router", RuleVersion: "test",
-			FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(24 * time.Hour).Format(time.RFC3339Nano),
-		},
-	}
-	assessment, present := AggregateRouterEvidence(items, nil, asOf)
-	if !present || assessment.Role != "router" || assessment.Status != "confirmed" || !assessment.ConfirmedRouter || len(assessment.Conflicts) != 0 {
-		t.Fatalf("manual review did not resolve the automatic AP conflict: %+v present=%t", assessment, present)
-	}
-}
-
-func TestManualNotRouterReviewSuppressesAutomaticRouterEvidence(t *testing.T) {
-	asOf := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
-	items := []RouterEvidence{
-		{EvidenceID: "auto", AssessmentID: "phone", IP: "192.0.2.45", Kind: "router_signal", Source: "capture", SourceFamily: "first_hop_redundancy", Role: "router", Strength: "strong", Score: 40, RuleID: "auto", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
-		{EvidenceID: "manual", AssessmentID: "phone", IP: "192.0.2.45", Kind: "conflict", Source: "operator", SourceFamily: "manual_review", Role: "endpoint", Strength: "strong", Score: -100, Conflict: true, ConflictCode: "manual_not_router", Exclusion: true, RuleID: "manual-not-router", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(24 * time.Hour).Format(time.RFC3339Nano)},
-	}
-	assessment, present := AggregateRouterEvidence(items, nil, asOf)
-	if !present || assessment.Role != "endpoint" || assessment.Status != "candidate" || assessment.ConfirmedRouter || assessment.Confidence != 0 {
-		t.Fatalf("manual non-router review did not suppress automatic evidence: %+v present=%t", assessment, present)
-	}
-}
-
-func TestManualRouterReviewDoesNotPromoteWeakVendorReference(t *testing.T) {
+func TestSharedGatewayBehaviorDoesNotPromoteWeakVendorReference(t *testing.T) {
 	asOf := time.Date(2026, 9, 29, 7, 0, 0, 0, time.UTC)
 	items := []RouterEvidence{
 		{EvidenceID: "vendor", AssessmentID: "review", IP: "192.0.2.63", Kind: "router_signal", Source: "tls", SourceFamily: "tls_management", Brand: "Xiaomi", BrandReferenceOnly: true, Strength: "weak", Score: 10, RuleID: "vendor-reference", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
-		{EvidenceID: "manual", AssessmentID: "review", IP: "192.0.2.63", Kind: "router_signal", Source: "operator", SourceFamily: "manual_review", Role: "router", Strength: "strong", Score: 90, RuleID: "manual-confirmed-router", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
+		{EvidenceID: "shared", AssessmentID: "review", IP: "192.0.2.63", Kind: "router_signal", Source: "shared-behavior-materializer", SourceFamily: "shared_gateway_behavior", Role: "router", Strength: "strong", Score: 85, RuleID: "verified-shared-gateway-role", RuleVersion: "test", FirstSeen: asOf.Format(time.RFC3339Nano), LastSeen: asOf.Format(time.RFC3339Nano), ExpiresAt: asOf.Add(time.Hour).Format(time.RFC3339Nano)},
 	}
 	assessment, present := AggregateRouterEvidence(items, nil, asOf)
-	if !present || assessment.Status != "confirmed" || assessment.Brand != "" || assessment.Model != "" {
+	if !present || assessment.Status != "likely" || assessment.IndependentSources != 1 || assessment.Brand != "" || assessment.Model != "" {
 		t.Fatalf("weak application vendor reference became confirmed router identity: %+v present=%t", assessment, present)
 	}
 }
@@ -334,6 +299,34 @@ func TestAnalyzeRoutersDoesNotTreatZTEPhoneAsRouter(t *testing.T) {
 	}
 	if len(result.Assessments) != 1 || result.Assessments[0].Role == "router" || result.Assessments[0].Confidence != 10 {
 		t.Fatalf("ZTE phone was classified as a router: %+v", result)
+	}
+}
+
+func TestAnalyzeRoutersRecognizesZTESRMultiAPMaster(t *testing.T) {
+	events := []normalized.Event{
+		routerTestEvent("dhcp", "2026-09-29T01:00:00Z", "20:3A:EB:E9:DE:10", map[string]any{"hostname": "ZXSLC SR7410-20:3a:eb:e9:de:10", "vendor_class": "MULTIAP_MASTER"}),
+		routerTestEvent("ttl", "2026-09-29T01:00:05Z", "20:3A:EB:E9:DE:10", map[string]any{"ttl": 64}),
+	}
+	result, err := AnalyzeRouters(events, RouterOptions{AsOf: time.Date(2026, 9, 29, 1, 1, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Assessments) != 1 || result.Assessments[0].Brand != "ZTE" || result.Assessments[0].Model != "SR7410-20" || result.Assessments[0].Role != "router" || result.Assessments[0].Status != "likely" {
+		t.Fatalf("ZTE Multi-AP master was not recognized from passive identity evidence: %+v", result.Assessments)
+	}
+}
+
+func TestAnalyzeRoutersKeepsHuaweiAPAsPositiveAccessDevice(t *testing.T) {
+	events := []normalized.Event{
+		routerTestEvent("dhcp", "2026-09-29T01:00:00Z", "84:A9:C4:8D:D6:A0", map[string]any{"vendor_class": "huawei AP7050DE"}),
+		routerTestEvent("ttl", "2026-09-29T01:00:05Z", "84:A9:C4:8D:D6:A0", map[string]any{"ttl": 255}),
+	}
+	result, err := AnalyzeRouters(events, RouterOptions{AsOf: time.Date(2026, 9, 29, 1, 1, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Assessments) != 1 || result.Assessments[0].Role != "ap" || result.Assessments[0].Status != "likely" || len(result.Assessments[0].Conflicts) != 0 {
+		t.Fatalf("Huawei AP identity was still treated as a routing conflict: %+v", result.Assessments)
 	}
 }
 

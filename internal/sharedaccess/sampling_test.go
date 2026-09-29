@@ -19,7 +19,7 @@ func TestSharedTemporalEvidenceRequired(t *testing.T) {
 		{"repeated coexistence", 3, []int64{now.Unix()/5 - 2, now.Unix()/5 - 1}, []int64{now.Unix()/5 - 2, now.Unix()/5 - 1}, "basis_present"},
 		{"only two observations", 2, []int64{now.Unix()/5 - 2, now.Unix()/5 - 1}, []int64{now.Unix()/5 - 2, now.Unix()/5 - 1}, "insufficient"},
 		{"one bucket despite packet volume", 3, []int64{now.Unix()/5 - 1}, []int64{now.Unix()/5 - 1}, "insufficient"},
-		{"sequential profiles", 3, []int64{now.Unix()/5 - 4, now.Unix()/5 - 3}, []int64{now.Unix()/5 - 2, now.Unix()/5 - 1}, "insufficient"},
+		{"sequential profiles", 3, []int64{now.Unix()/5 - 10, now.Unix()/5 - 9}, []int64{now.Unix()/5 - 2, now.Unix()/5 - 1}, "insufficient"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := Window{ID: "window", RuleVersion: RuleVersion, IP: session.IP, SensorID: "s", CampusID: "c", AccessDomain: "nas", Sources: []string{"dpi"}, From: now.Add(-time.Minute), To: now, LastObservedAt: now, Complete: true, EventIDs: []string{"event"}, UAOS: []string{"Android", "Windows"}, TTLPaths: []string{"63", "127"}, TLSStacks: []string{"one", "two"}}

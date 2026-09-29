@@ -403,14 +403,10 @@ func AggregateRouterEvidence(items []RouterEvidence, rules *fingerprint.RouterRu
 func buildRouterAssessment(id string, association routerEventAssociation, items []RouterEvidence, rules *fingerprint.RouterRuleSet, asOf time.Time) RouterAssessment {
 	sort.Slice(items, func(i, j int) bool { return items[i].LastSeen < items[j].LastSeen })
 	assessment := RouterAssessment{AssessmentID: id, EndpointID: association.endpoint, IP: association.ip, MAC: association.mac, Status: "candidate", Role: "unknown", Infrastructure: association.infrastructure, AssociationQuality: association.quality, Ambiguous: association.ambiguous, RuleVersion: rules.Version, Evidence: items, Sources: []string{}, Conflicts: []string{}, ScoreComponents: []RouterScoreComponent{}}
-	manualConfirmed, manualRejected, sharedGatewayRole := false, false, false
+	sharedGatewayRole := false
 	for _, item := range items {
 		if item.Expired {
 			continue
-		}
-		if item.SourceFamily == "manual_review" {
-			manualConfirmed = manualConfirmed || item.Role == "router" && !item.Exclusion
-			manualRejected = manualRejected || item.Exclusion
 		}
 		sharedGatewayRole = sharedGatewayRole || item.SourceFamily == "shared_gateway_behavior" && item.Role == "router" && !item.Exclusion
 	}
@@ -433,8 +429,8 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		if item.Exclusion {
 			assessment.Role = item.Role
 		}
-		if !item.Exclusion && item.Role == "router" && assessment.Role == "unknown" {
-			assessment.Role = "router"
+		if !item.Exclusion && (item.Role == "router" || item.Role == "ap") && assessment.Role == "unknown" {
+			assessment.Role = item.Role
 		}
 		if item.Brand != "" && (assessment.Brand == "" || !item.BrandReferenceOnly) {
 			assessment.Brand = item.Brand
@@ -451,10 +447,7 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		if item.Expired {
 			continue
 		}
-		if manualRejected && item.SourceFamily != "manual_review" {
-			continue
-		}
-		overriddenRoleConflict := manualConfirmed && item.SourceFamily != "manual_review" && (item.Exclusion || item.Conflict)
+		overriddenRoleConflict := false
 		if sharedGatewayRole && (item.Exclusion && item.ConflictCode == "infrastructure_ap" || item.ConflictCode == "ordinary_endpoint") {
 			overriddenRoleConflict = true
 		}
@@ -475,16 +468,10 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 			strong = true
 		}
 	}
-	if manualConfirmed {
-		assessment.Role = "router"
-		assessment.Infrastructure = false
-		assessment.Ambiguous = false
-	} else if manualRejected {
-		assessment.Role = "endpoint"
-	} else if sharedGatewayRole {
+	if sharedGatewayRole {
 		assessment.Role = "router"
 	}
-	if assessment.Role == "router" && (manualConfirmed || sharedGatewayRole) && !verifiedBrand {
+	if assessment.Role == "router" && sharedGatewayRole && !verifiedBrand {
 		// A vendor reference seen in a phone application certificate, DHCP
 		// class, or OUI is not a verified manufacturer for a separately
 		// confirmed router role.
@@ -502,7 +489,9 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 				weakScore += item.Score
 				continue
 			}
-			positiveSources++
+			if !item.BrandReferenceOnly {
+				positiveSources++
+			}
 			assessment.Sources = append(assessment.Sources, family)
 		}
 		assessment.Confidence += item.Score
@@ -533,7 +522,7 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 	if assessment.Confidence >= rules.Thresholds.LikelyMin {
 		assessment.Status = "likely"
 	}
-	canConfirm := manualConfirmed || assessment.Confidence >= rules.Thresholds.ConfirmedMin && positiveSources >= rules.Thresholds.ConfirmedSourcesMin && strong && !association.ambiguous && !association.infrastructure && !exclusion && assessment.Role == "router"
+	canConfirm := assessment.Confidence >= rules.Thresholds.ConfirmedMin && positiveSources >= rules.Thresholds.ConfirmedSourcesMin && strong && !association.ambiguous && !association.infrastructure && !exclusion && assessment.Role == "router"
 	if canConfirm {
 		assessment.Status, assessment.ConfirmedRouter = "confirmed", true
 	}
