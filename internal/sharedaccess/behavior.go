@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const BehaviorRuleVersion = "shared-behavior/v7"
+const BehaviorRuleVersion = "shared-behavior/v8"
 
 type BehaviorRouterContext struct {
 	AssessmentID string `json:"assessment_id,omitempty"`
@@ -25,29 +25,48 @@ type BehaviorScoreComponent struct {
 	Explanation string `json:"explanation"`
 }
 
+// KnownDevice is a conservative downstream identity derived from an explicit
+// hardware model in passive application metadata. Generic operating systems,
+// TLS fingerprints, and application names are intentionally excluded because
+// they cannot be counted as physical devices.
+type KnownDevice struct {
+	IdentityID   string    `json:"identity_id"`
+	Brand        string    `json:"brand,omitempty"`
+	Model        string    `json:"model"`
+	OSFamily     string    `json:"os_family,omitempty"`
+	DeviceType   string    `json:"device_type,omitempty"`
+	Observations int       `json:"observations"`
+	FirstSeen    time.Time `json:"first_seen"`
+	LastSeen     time.Time `json:"last_seen"`
+}
+
 type BehaviorAssessment struct {
-	ObservationID   string                              `json:"observation_id"`
-	SensorID        string                              `json:"sensor_id"`
-	CampusID        string                              `json:"campus_id,omitempty"`
-	AccessDomain    string                              `json:"access_domain,omitempty"`
-	IP              string                              `json:"ip"`
-	EndpointID      string                              `json:"endpoint_id,omitempty"`
-	Status          string                              `json:"status"`
-	Confidence      int                                 `json:"confidence"`
-	SignalGroups    []string                            `json:"signal_groups"`
-	Reasons         []string                            `json:"reasons"`
-	Conflicts       []string                            `json:"conflicts"`
-	CoverageState   string                              `json:"coverage_state"`
-	RuleVersion     string                              `json:"rule_version"`
-	FirstSeen       time.Time                           `json:"first_seen"`
-	LastSeen        time.Time                           `json:"last_seen"`
-	WindowStart     time.Time                           `json:"window_start"`
-	WindowEnd       time.Time                           `json:"window_end"`
-	ExpiresAt       time.Time                           `json:"expires_at"`
-	Router          BehaviorRouterContext               `json:"router"`
-	ScoreComponents []BehaviorScoreComponent            `json:"score_components"`
-	FeatureSamples  map[string]map[string]FeatureSample `json:"feature_samples"`
-	EventIDs        []string                            `json:"event_ids"`
+	ObservationID     string                              `json:"observation_id"`
+	SensorID          string                              `json:"sensor_id"`
+	CampusID          string                              `json:"campus_id,omitempty"`
+	AccessDomain      string                              `json:"access_domain,omitempty"`
+	IP                string                              `json:"ip"`
+	EndpointID        string                              `json:"endpoint_id,omitempty"`
+	Status            string                              `json:"status"`
+	Confidence        int                                 `json:"confidence"`
+	SignalGroups      []string                            `json:"signal_groups"`
+	Reasons           []string                            `json:"reasons"`
+	Conflicts         []string                            `json:"conflicts"`
+	CoverageState     string                              `json:"coverage_state"`
+	RuleVersion       string                              `json:"rule_version"`
+	FirstSeen         time.Time                           `json:"first_seen"`
+	LastSeen          time.Time                           `json:"last_seen"`
+	WindowStart       time.Time                           `json:"window_start"`
+	WindowEnd         time.Time                           `json:"window_end"`
+	ExpiresAt         time.Time                           `json:"expires_at"`
+	Router            BehaviorRouterContext               `json:"router"`
+	ScoreComponents   []BehaviorScoreComponent            `json:"score_components"`
+	FeatureSamples    map[string]map[string]FeatureSample `json:"feature_samples"`
+	EventIDs          []string                            `json:"event_ids"`
+	KnownDeviceCount  int                                 `json:"known_device_count"`
+	KnownDeviceBasis  string                              `json:"known_device_basis,omitempty"`
+	KnownDeviceWindow string                              `json:"known_device_window,omitempty"`
+	KnownDevices      []KnownDevice                       `json:"known_devices"`
 }
 
 // AssessBehavior deliberately separates observable NAT/shared-gateway behavior
@@ -62,6 +81,7 @@ func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContex
 		ExpiresAt: w.To.Add(30 * 24 * time.Hour), Router: router, FeatureSamples: w.Samples,
 		EventIDs: append([]string{}, w.EventIDs...), Conflicts: append([]string{}, w.Conflicts...),
 		SignalGroups: []string{}, Reasons: []string{}, ScoreComponents: []BehaviorScoreComponent{},
+		KnownDevices: []KnownDevice{},
 	}
 	if w.CoverageVerified && w.Complete && len(w.Conflicts) == 0 {
 		result.CoverageState = "verified"

@@ -2742,7 +2742,7 @@ components:
       type: object
       required: [signal, score, explanation]
       properties:
-        signal: { type: string, enum: [ua_os, ttl_path, tcp_stack, tls_stack, dhcp_stack, router_identity] }
+        signal: { type: string, enum: [ua_os, ttl_path, tcp_stack, tls_stack, dhcp_stack, router_identity, vendor_gateway_identity] }
         score: { type: integer }
         explanation: { type: string }
     SharedBehaviorRouterContext:
@@ -2754,9 +2754,22 @@ components:
         role: { type: string }
         status: { type: string, enum: [candidate, likely, confirmed] }
         confidence: { type: integer, minimum: 0, maximum: 100 }
+        brand_attribution: { type: boolean }
+    SharedBehaviorKnownDevice:
+      type: object
+      required: [identity_id, model, observations, first_seen, last_seen]
+      properties:
+        identity_id: { type: string }
+        brand: { type: string }
+        model: { type: string }
+        os_family: { type: string }
+        device_type: { type: string }
+        observations: { type: integer, minimum: 2 }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
     SharedBehaviorAssessment:
       type: object
-      required: [observation_id, sensor_id, ip, status, confidence, signal_groups, reasons, conflicts, coverage_state, rule_version, first_seen, last_seen, window_start, window_end, expires_at, router, score_components, feature_samples, event_ids]
+      required: [observation_id, sensor_id, ip, status, confidence, signal_groups, reasons, conflicts, coverage_state, rule_version, first_seen, last_seen, window_start, window_end, expires_at, router, score_components, feature_samples, event_ids, known_device_count, known_devices]
       properties:
         observation_id: { type: string }
         sensor_id: { type: string }
@@ -2784,6 +2797,10 @@ components:
             type: object
             additionalProperties: true
         event_ids: { type: array, items: { type: string } }
+        known_device_count: { type: integer, minimum: 0 }
+        known_device_basis: { type: string, enum: [explicit_hardware_model_lower_bound] }
+        known_device_window: { type: string, enum: [24h] }
+        known_devices: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorKnownDevice' } }
     SharedBehaviorHistory:
       type: object
       required: [status, confidence, signal_groups, coverage_state, rule_version, observed_at, created_at]

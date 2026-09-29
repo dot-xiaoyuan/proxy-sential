@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,5 +105,26 @@ func TestSharedBehaviorCoverageRequiresTransportAndApplicationCollectors(t *test
 	reasons = sharedBehaviorCoverageReasons(checkpoints, now, now)
 	if !slices.Contains(reasons, "application_checkpoint_missing") {
 		t.Fatalf("missing application collector was accepted: %v", reasons)
+	}
+}
+
+func TestSharedBehaviorKnownDevicesKeepsOnlyRepeatedExplicitModels(t *testing.T) {
+	from := time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC)
+	rows := []sharedBehaviorKnownDeviceRow{
+		{SensorID: "sensor", IP: "192.0.2.63", Value: "|Android|mobile|MAA-AN00", Count: 2, Buckets: []int64{1, 2}, FirstSeen: from.Format(time.RFC3339Nano), LastSeen: from.Add(time.Hour).Format(time.RFC3339Nano)},
+		{SensorID: "sensor", IP: "192.0.2.63", Value: "Honor|Android|mobile|MAA-AN00", Count: 3, Buckets: []int64{2, 3}, FirstSeen: from.Add(time.Minute).Format(time.RFC3339Nano), LastSeen: from.Add(2 * time.Hour).Format(time.RFC3339Nano)},
+		{SensorID: "sensor", IP: "192.0.2.63", Value: "Apple|iOS|mobile|iPhone18,4", Count: 2, Buckets: []int64{4, 5}, FirstSeen: from.Format(time.RFC3339Nano), LastSeen: from.Add(3 * time.Hour).Format(time.RFC3339Nano)},
+		{SensorID: "sensor", IP: "192.0.2.63", Value: "Samsung|Android|mobile|GT-I9505", Count: 4, Buckets: []int64{6}, FirstSeen: from.Format(time.RFC3339Nano), LastSeen: from.Add(time.Minute).Format(time.RFC3339Nano)},
+	}
+	got := sharedBehaviorKnownDevices(rows)[strings.Join([]string{"sensor", "", "", "192.0.2.63"}, "\x00")]
+	if len(got) != 2 {
+		t.Fatalf("known devices=%+v", got)
+	}
+	byModel := map[string]sharedaccess.KnownDevice{}
+	for _, item := range got {
+		byModel[item.Model] = item
+	}
+	if byModel["MAA-AN00"].Brand != "Honor" || byModel["MAA-AN00"].Observations != 5 || byModel["iPhone18,4"].Brand != "Apple" {
+		t.Fatalf("known devices were not merged conservatively: %+v", got)
 	}
 }

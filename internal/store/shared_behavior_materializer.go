@@ -40,6 +40,18 @@ type sharedBehaviorGroup struct {
 	sources    map[string]bool
 }
 
+type sharedBehaviorKnownDeviceRow struct {
+	SensorID     string  `json:"sensor_id"`
+	CampusID     string  `json:"campus_id"`
+	AccessDomain string  `json:"access_domain"`
+	IP           string  `json:"ip"`
+	Value        string  `json:"value"`
+	Count        int     `json:"count"`
+	Buckets      []int64 `json:"buckets"`
+	FirstSeen    string  `json:"first_seen"`
+	LastSeen     string  `json:"last_seen"`
+}
+
 type sharedBehaviorCheckpoint struct {
 	eventAt   sql.NullTime
 	updatedAt time.Time
@@ -78,6 +90,98 @@ LIMIT 100000 SETTINGS max_threads=2,max_memory_usage=536870912,max_execution_tim
 		return nil, fmt.Errorf("shared behavior signal result reached safety limit")
 	}
 	return rows, nil
+}
+
+func (s *DBStore) sharedBehaviorKnownDeviceRows(ctx context.Context, sensorID string, from, to time.Time) ([]sharedBehaviorKnownDeviceRow, error) {
+	query := fmt.Sprintf(`SELECT sensor_id,campus_id,access_domain,subject_ip AS ip,feature_value AS value,
+ uniqExact(event_id) AS count,
+ arraySlice(arraySort(groupUniqArray(toInt64(toUnixTimestamp64Milli(timestamp)/300000))),1,288) AS buckets,
+ formatDateTime(min(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS first_seen,
+ formatDateTime(max(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS last_seen
+FROM shared_behavior_signal_events_v1
+PREWHERE sensor_id=%s AND timestamp>=parseDateTime64BestEffort(%s,6) AND timestamp<parseDateTime64BestEffort(%s,6)
+WHERE subject_ip!='' AND feature_family='device_model' AND feature_value!=''
+GROUP BY sensor_id,campus_id,access_domain,ip,value
+ORDER BY ip,value
+LIMIT 10000 SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`,
+		chQuote(sensorID), chQuote(from.UTC().Format(time.RFC3339Nano)), chQuote(to.UTC().Format(time.RFC3339Nano)))
+	raw, err := s.ch.query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	rows := []sharedBehaviorKnownDeviceRow{}
+	if err = decodeJSONEachRow(raw, &rows); err != nil {
+		return nil, err
+	}
+	if len(rows) >= 10000 {
+		return nil, fmt.Errorf("shared behavior known-device result reached safety limit")
+	}
+	return rows, nil
+}
+
+type sharedBehaviorKnownDeviceAccumulator struct {
+	device  sharedaccess.KnownDevice
+	buckets map[int64]bool
+}
+
+func sharedBehaviorKnownDevices(rows []sharedBehaviorKnownDeviceRow) map[string][]sharedaccess.KnownDevice {
+	groups := map[string]map[string]*sharedBehaviorKnownDeviceAccumulator{}
+	for _, row := range rows {
+		parts := strings.SplitN(row.Value, "|", 4)
+		if len(parts) != 4 || strings.TrimSpace(parts[3]) == "" || row.Count <= 0 {
+			continue
+		}
+		firstSeen, firstErr := time.Parse(time.RFC3339Nano, normalizeClickHouseTimestamp(row.FirstSeen))
+		lastSeen, lastErr := time.Parse(time.RFC3339Nano, normalizeClickHouseTimestamp(row.LastSeen))
+		if firstErr != nil || lastErr != nil {
+			continue
+		}
+		key := strings.Join([]string{row.SensorID, row.CampusID, row.AccessDomain, row.IP}, "\x00")
+		modelKey := strings.ToLower(strings.TrimSpace(parts[3]))
+		if groups[key] == nil {
+			groups[key] = map[string]*sharedBehaviorKnownDeviceAccumulator{}
+		}
+		item := groups[key][modelKey]
+		if item == nil {
+			item = &sharedBehaviorKnownDeviceAccumulator{device: sharedaccess.KnownDevice{
+				IdentityID: stableSharedBehaviorID("known-device", key, modelKey), Brand: strings.TrimSpace(parts[0]),
+				OSFamily: strings.TrimSpace(parts[1]), DeviceType: strings.TrimSpace(parts[2]), Model: strings.TrimSpace(parts[3]),
+				FirstSeen: firstSeen, LastSeen: lastSeen,
+			}, buckets: map[int64]bool{}}
+			groups[key][modelKey] = item
+		}
+		if item.device.Brand == "" && strings.TrimSpace(parts[0]) != "" {
+			item.device.Brand = strings.TrimSpace(parts[0])
+		}
+		if firstSeen.Before(item.device.FirstSeen) {
+			item.device.FirstSeen = firstSeen
+		}
+		if lastSeen.After(item.device.LastSeen) {
+			item.device.LastSeen = lastSeen
+		}
+		item.device.Observations += row.Count
+		for _, bucket := range row.Buckets {
+			item.buckets[bucket] = true
+		}
+	}
+	result := map[string][]sharedaccess.KnownDevice{}
+	for key, items := range groups {
+		for _, item := range items {
+			// Two observations in different five-minute buckets keep one-shot,
+			// synthetic, or malformed user agents out of the device lower bound.
+			if item.device.Observations < 2 || len(item.buckets) < 2 {
+				continue
+			}
+			result[key] = append(result[key], item.device)
+		}
+		sort.Slice(result[key], func(i, j int) bool {
+			if result[key][i].LastSeen != result[key][j].LastSeen {
+				return result[key][i].LastSeen.After(result[key][j].LastSeen)
+			}
+			return result[key][i].Model < result[key][j].Model
+		})
+	}
+	return result
 }
 
 func (s *DBStore) sharedBehaviorCoverage(ctx context.Context, sensorID string, windowEnd time.Time) (bool, []string, error) {
@@ -338,6 +442,11 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 	if err != nil {
 		return 0, err
 	}
+	knownRows, err := s.sharedBehaviorKnownDeviceRows(ctx, sensorID, windowEnd.Add(-24*time.Hour), windowEnd)
+	if err != nil {
+		return 0, err
+	}
+	knownDevices := sharedBehaviorKnownDevices(knownRows)
 	written := 0
 	for _, window := range windows {
 		attribution, found, resolveErr := s.ResolveDeviceAt(ctx, DomainObservation{IP: window.IP, Timestamp: window.LastObservedAt.Format(time.RFC3339Nano), SensorID: window.SensorID, CampusID: window.CampusID})
@@ -359,6 +468,13 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 		item, present := sharedaccess.AssessBehavior(window.ID, endpointID, window, router)
 		if !present {
 			continue
+		}
+		key := strings.Join([]string{window.SensorID, window.CampusID, window.AccessDomain, window.IP}, "\x00")
+		item.KnownDevices = append([]sharedaccess.KnownDevice{}, knownDevices[key]...)
+		item.KnownDeviceCount = len(item.KnownDevices)
+		if item.KnownDeviceCount > 0 {
+			item.KnownDeviceBasis = "explicit_hardware_model_lower_bound"
+			item.KnownDeviceWindow = "24h"
 		}
 		if err = s.persistSharedBehavior(ctx, item); err != nil {
 			return written, err
@@ -441,7 +557,7 @@ ORDER BY (endpoint_id=$2 AND $2<>'') DESC,(mac<>'') DESC,(expires_at>$3) DESC,
 		SourceFamily:     "shared_gateway_behavior", SourceEventType: "shared_access_window",
 		RawValue: strings.Join(behaviorGroups, ","), Strength: "strong", Score: score,
 		RuleID: "verified-shared-gateway-role", RuleVersion: ruleVersion,
-		Explanation:        "重复共现的多终端协议栈与 TTL 路径表明该设备承担共享网关角色",
+		Explanation:        "重复共现的多终端协议栈与独立设备身份表明该设备承担共享网关角色",
 		AssociationQuality: router.AssociationQuality, Ambiguous: router.Ambiguous,
 		FirstSeen: item.FirstSeen.UTC().Format(time.RFC3339Nano), LastSeen: item.LastSeen.UTC().Format(time.RFC3339Nano),
 		ExpiresAt: expiresAt.UTC().Format(time.RFC3339Nano), EventIDs: append([]string{}, item.EventIDs...),

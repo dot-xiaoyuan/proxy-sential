@@ -2837,7 +2837,7 @@ export interface components {
         };
         SharedBehaviorScoreComponent: {
             /** @enum {string} */
-            signal: "ua_os" | "ttl_path" | "tcp_stack" | "tls_stack" | "dhcp_stack" | "router_identity";
+            signal: "ua_os" | "ttl_path" | "tcp_stack" | "tls_stack" | "dhcp_stack" | "router_identity" | "vendor_gateway_identity";
             score: number;
             explanation: string;
         };
@@ -2849,6 +2849,19 @@ export interface components {
             /** @enum {string} */
             status?: "candidate" | "likely" | "confirmed";
             confidence?: number;
+            brand_attribution?: boolean;
+        };
+        SharedBehaviorKnownDevice: {
+            identity_id: string;
+            brand?: string;
+            model: string;
+            os_family?: string;
+            device_type?: string;
+            observations: number;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
         };
         SharedBehaviorAssessment: {
             observation_id: string;
@@ -2884,6 +2897,12 @@ export interface components {
                 };
             };
             event_ids: string[];
+            known_device_count: number;
+            /** @enum {string} */
+            known_device_basis?: "explicit_hardware_model_lower_bound";
+            /** @enum {string} */
+            known_device_window?: "24h";
+            known_devices: components["schemas"]["SharedBehaviorKnownDevice"][];
         };
         SharedBehaviorHistory: {
             /** @enum {string} */
