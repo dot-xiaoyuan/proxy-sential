@@ -383,6 +383,7 @@ func (s *DBStore) passivePTRAddressObservations(ctx context.Context, event norma
 		}
 		observation.Explanation = "DNS-SD 服务实例标识与地址主机名自动关联"
 		observation.Evidence.Payload["service_source"] = "ptr_host_token"
+		observation.Evidence.Payload["service_target"] = host
 		result = append(result, observation)
 	}
 	return result, rows.Err()

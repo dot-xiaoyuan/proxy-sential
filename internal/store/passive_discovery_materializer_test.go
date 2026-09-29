@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/normalized"
 )
 
@@ -124,5 +125,17 @@ func TestPassiveHostTokenRequiresStableHexSuffix(t *testing.T) {
 		if token := passiveHostToken(name); token != "" {
 			t.Fatalf("weak host token %q from %q", token, name)
 		}
+	}
+}
+
+func TestPassiveDNSServiceTargetMergesIPv4AndIPv6(t *testing.T) {
+	base := passiveTestEvent("mdns", "192.168.0.254", "", map[string]any{})
+	base.Payload = map[string]any{"service_target": "dev5df46c.local"}
+	first := discovery.Observation{SourceID: "passive:office-30:ens1f1", Origin: "dns_sd", IP: "192.168.0.254", Evidence: base}
+	second := first
+	second.IP = "fe80::ca5a:cfff:fe5d:f46c"
+	second.Interface = "ens1f1"
+	if first.Key() != second.Key() {
+		t.Fatal("DNS-SD service target addresses were split into separate devices")
 	}
 }

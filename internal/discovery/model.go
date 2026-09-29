@@ -50,8 +50,15 @@ type Observation struct {
 
 func (o Observation) Key() string {
 	identity := o.MAC
+	linkLocalIdentity := false
+	if identity == "" && o.Origin == "dns_sd" {
+		if target := str(o.Evidence.Payload, "service_target"); target != "" {
+			identity = o.SourceID + ":dns:" + strings.ToLower(strings.TrimSuffix(target, "."))
+		}
+	}
 	if identity == "" {
 		identity = o.IP
+		linkLocalIdentity = strings.HasPrefix(o.IP, "fe80:")
 	}
 	if identity == "" {
 		identity = str(o.Evidence.Payload, "chassis_id")
@@ -63,7 +70,7 @@ func (o Observation) Key() string {
 		}
 		identity = o.SourceID + ":" + identity
 	}
-	if strings.HasPrefix(o.IP, "fe80:") {
+	if linkLocalIdentity {
 		identity += ":" + o.Interface
 	}
 	if o.Site == "" || o.Domain == "" {
