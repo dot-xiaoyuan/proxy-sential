@@ -92,31 +92,54 @@ LIMIT 100000 SETTINGS max_threads=2,max_memory_usage=536870912,max_execution_tim
 	return rows, nil
 }
 
-func (s *DBStore) sharedBehaviorKnownDeviceRows(ctx context.Context, sensorID string, from, to time.Time) ([]sharedBehaviorKnownDeviceRow, error) {
-	query := fmt.Sprintf(`SELECT sensor_id,campus_id,access_domain,subject_ip AS ip,feature_value AS value,
+func (s *DBStore) sharedBehaviorKnownDeviceRows(ctx context.Context, sensorID string, subjectIPs []string, from, to time.Time) ([]sharedBehaviorKnownDeviceRow, error) {
+	if len(subjectIPs) == 0 {
+		return []sharedBehaviorKnownDeviceRow{}, nil
+	}
+	uniqueIPs := map[string]bool{}
+	for _, ip := range subjectIPs {
+		if strings.TrimSpace(ip) != "" {
+			uniqueIPs[ip] = true
+		}
+	}
+	ips := make([]string, 0, len(uniqueIPs))
+	for ip := range uniqueIPs {
+		ips = append(ips, ip)
+	}
+	sort.Strings(ips)
+	result := []sharedBehaviorKnownDeviceRow{}
+	for start := 0; start < len(ips); start += 50 {
+		end := start + 50
+		if end > len(ips) {
+			end = len(ips)
+		}
+		quoted := make([]string, 0, end-start)
+		for _, ip := range ips[start:end] {
+			quoted = append(quoted, chQuote(ip))
+		}
+		query := fmt.Sprintf(`SELECT sensor_id,campus_id,access_domain,subject_ip AS ip,feature_value AS value,
  uniqExact(event_id) AS count,
  arraySlice(arraySort(groupUniqArray(toInt64(toUnixTimestamp64Milli(timestamp)/300000))),1,288) AS buckets,
  formatDateTime(min(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS first_seen,
  formatDateTime(max(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS last_seen
 FROM shared_behavior_signal_events_v1
 PREWHERE sensor_id=%s AND timestamp>=parseDateTime64BestEffort(%s,6) AND timestamp<parseDateTime64BestEffort(%s,6)
-WHERE subject_ip!='' AND feature_family='device_model' AND feature_value!=''
+WHERE subject_ip IN (%s) AND feature_family='device_model' AND feature_value!=''
 GROUP BY sensor_id,campus_id,access_domain,ip,value
-ORDER BY ip,value
-LIMIT 10000 SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`,
-		chQuote(sensorID), chQuote(from.UTC().Format(time.RFC3339Nano)), chQuote(to.UTC().Format(time.RFC3339Nano)))
-	raw, err := s.ch.query(ctx, query)
-	if err != nil {
-		return nil, err
+ORDER BY ip,count DESC,value
+LIMIT 100 BY ip SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`,
+			chQuote(sensorID), chQuote(from.UTC().Format(time.RFC3339Nano)), chQuote(to.UTC().Format(time.RFC3339Nano)), strings.Join(quoted, ","))
+		raw, err := s.ch.query(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		rows := []sharedBehaviorKnownDeviceRow{}
+		if err = decodeJSONEachRow(raw, &rows); err != nil {
+			return nil, err
+		}
+		result = append(result, rows...)
 	}
-	rows := []sharedBehaviorKnownDeviceRow{}
-	if err = decodeJSONEachRow(raw, &rows); err != nil {
-		return nil, err
-	}
-	if len(rows) >= 10000 {
-		return nil, fmt.Errorf("shared behavior known-device result reached safety limit")
-	}
-	return rows, nil
+	return result, nil
 }
 
 type sharedBehaviorKnownDeviceAccumulator struct {
@@ -442,7 +465,11 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 	if err != nil {
 		return 0, err
 	}
-	knownRows, err := s.sharedBehaviorKnownDeviceRows(ctx, sensorID, windowEnd.Add(-24*time.Hour), windowEnd)
+	windowIPs := make([]string, 0, len(windows))
+	for _, window := range windows {
+		windowIPs = append(windowIPs, window.IP)
+	}
+	knownRows, err := s.sharedBehaviorKnownDeviceRows(ctx, sensorID, windowIPs, windowEnd.Add(-24*time.Hour), windowEnd)
 	if err != nil {
 		return 0, err
 	}
