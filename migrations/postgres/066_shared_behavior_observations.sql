@@ -45,3 +45,4 @@ CREATE TABLE IF NOT EXISTS shared_behavior_observation_history (
 
 CREATE INDEX IF NOT EXISTS shared_behavior_observation_history_item
  ON shared_behavior_observation_history(observation_id,observed_at DESC,history_id DESC);
+

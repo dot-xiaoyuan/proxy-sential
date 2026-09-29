@@ -38,3 +38,4 @@ ARRAY JOIN arrayFilter(item -> item.2!='', [
   hex(MD5(concat(JSONExtractString(payload_json,'vendor_class'),'|',JSONExtractString(payload_json,'requested_options')))),''))
 ]) AS feature
 WHERE subject_ip!='';
+
