@@ -15,6 +15,7 @@ export {
         record_address: addr &log &optional;
         record_ttl: count &log &optional;
         service_target: string &log &optional;
+        record_text: string &log &optional;
         parser_version: string &log &default="device-names/v1";
         query: string &log &optional;
         name: string &log &optional;
@@ -63,5 +64,19 @@ event dns_SRV_reply(c: connection, msg: dns_msg, ans: dns_answer, target: string
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
     Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=(c$device_dns_is_orig ? c$id$orig_h : c$id$resp_h), $dst_ip=(c$device_dns_is_orig ? c$id$resp_h : c$id$orig_h),
         $is_response=T, $record_type="SRV", $record_name=ans$query, $service_target=target,
+        $record_ttl=double_to_count(interval_to_double(ans$TTL))]);
+    }
+event dns_PTR_reply(c: connection, msg: dns_msg, ans: dns_answer, name: string)
+    {
+    if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
+    Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=(c$device_dns_is_orig ? c$id$orig_h : c$id$resp_h), $dst_ip=(c$device_dns_is_orig ? c$id$resp_h : c$id$orig_h),
+        $is_response=T, $record_type="PTR", $record_name=ans$query, $service_target=name,
+        $record_ttl=double_to_count(interval_to_double(ans$TTL))]);
+    }
+event dns_TXT_reply(c: connection, msg: dns_msg, ans: dns_answer, txt: string_vec)
+    {
+    if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
+    Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=(c$device_dns_is_orig ? c$id$orig_h : c$id$resp_h), $dst_ip=(c$device_dns_is_orig ? c$id$resp_h : c$id$orig_h),
+        $is_response=T, $record_type="TXT", $record_name=ans$query, $record_text=join_string_vec(txt, " "),
         $record_ttl=double_to_count(interval_to_double(ans$TTL))]);
     }

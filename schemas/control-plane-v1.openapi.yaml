@@ -38,7 +38,15 @@ paths:
   /discovery/devices:
     get:
       operationId: getDiscoveryDevices
-      description: Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity.
+      description: Windowed passive, infrastructure, or active discovery read model; requires identity:read. Does not claim online state or create terminal identities.
+      parameters:
+        - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
+        - { name: window, in: query, schema: { type: string, default: 24h } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string } }
+        - { name: capability, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
       responses:
         '200':
           description: Discovery result

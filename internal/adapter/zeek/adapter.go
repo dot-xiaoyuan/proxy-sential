@@ -295,7 +295,7 @@ func discoveryEventFromFields(raw []byte, fields map[string]string, lineOffset i
 	payload := map[string]any{"origin": opts.LogKind}
 	if opts.LogKind == "mdns" {
 		payload["is_response"] = first(fields, "is_response") == "true" || first(fields, "is_response") == "T"
-		for _, key := range []string{"record_type", "record_name", "record_address", "record_ttl", "service_target", "parser_version"} {
+		for _, key := range []string{"record_type", "record_name", "record_address", "record_ttl", "service_target", "record_text", "parser_version"} {
 			if value := first(fields, key); value != "" {
 				payload[key] = value
 			}

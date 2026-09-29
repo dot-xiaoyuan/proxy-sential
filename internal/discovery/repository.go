@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"proxy-sentinel/internal/normalized"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -140,36 +142,214 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 	}
 	return err
 }
+
+type DeviceQuery struct {
+	Mode       string
+	Window     time.Duration
+	Search     string
+	DeviceType string
+	Capability string
+	Limit      int
+	Offset     int
+}
+
+type DeviceView struct {
+	ID            string        `json:"id"`
+	PrimaryIP     string        `json:"primary_ip,omitempty"`
+	Addresses     []string      `json:"addresses"`
+	MAC           string        `json:"mac,omitempty"`
+	Name          string        `json:"name,omitempty"`
+	DeviceType    string        `json:"device_type,omitempty"`
+	Capabilities  []string      `json:"capabilities"`
+	Protocols     []string      `json:"protocols"`
+	Confidence    string        `json:"confidence"`
+	FirstSeen     time.Time     `json:"first_seen"`
+	LastSeen      time.Time     `json:"last_seen"`
+	Current       bool          `json:"current"`
+	EvidenceCount int           `json:"evidence_count"`
+	EndpointID    string        `json:"endpoint_id,omitempty"`
+	Observations  []Observation `json:"observations"`
+}
+
 func (r Repository) Devices(ctx context.Context, limit, offset int) (map[string]any, error) {
+	return r.DevicesFiltered(ctx, DeviceQuery{Window: 24 * time.Hour, Limit: limit, Offset: offset})
+}
+
+func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map[string]any, error) {
+	if query.Window <= 0 || query.Window > 30*24*time.Hour {
+		query.Window = 24 * time.Hour
+	}
+	if query.Limit <= 0 || query.Limit > 200 {
+		query.Limit = 50
+	}
+	if query.Offset < 0 {
+		query.Offset = 0
+	}
 	tx, err := r.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	// Latest observation per source/service wins, including withdrawals; no capped evidence aggregation.
-	const cte = `WITH latest AS (SELECT DISTINCT ON (device_key,source_id,origin,coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port','')) * FROM discovery_observations WHERE observed_at<=now() ORDER BY device_key,source_id,origin,coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC), devices AS (SELECT device_key,max(observed_at) AS observed_at,jsonb_agg(data ORDER BY observed_at DESC) AS evidence FROM latest WHERE NOT withdrawn AND valid_until>now() GROUP BY device_key) `
-	var total int
-	if err := tx.QueryRowContext(ctx, cte+`SELECT count(*) FROM devices`).Scan(&total); err != nil {
-		return nil, err
+	origins := []string{}
+	switch query.Mode {
+	case "passive":
+		origins = []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "ieee1905_client"}
+	case "infrastructure":
+		origins = []string{"fdb", "neighbor", "lldp", "cdp"}
+	case "active":
+		origins = []string{"active"}
+	case "", "all":
+	default:
+		return nil, fmt.Errorf("invalid discovery mode %q", query.Mode)
 	}
-	rows, err := tx.QueryContext(ctx, cte+`SELECT device_key,evidence FROM devices ORDER BY observed_at DESC,device_key LIMIT $1 OFFSET $2`, limit, offset)
+	originClause := ""
+	args := []any{time.Now().Add(-query.Window)}
+	if len(origins) > 0 {
+		parts := make([]string, len(origins))
+		for i, origin := range origins {
+			args = append(args, origin)
+			parts[i] = fmt.Sprintf("$%d", len(args))
+		}
+		originClause = " AND origin IN (" + strings.Join(parts, ",") + ")"
+	}
+	// Keep observations seen inside the selected window even when their TTL has
+	// expired. `current` below communicates protocol validity without claiming
+	// that a device is online.
+	statement := `WITH latest AS (
+ SELECT DISTINCT ON (device_key,source_id,origin,coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''))
+   id,device_key,observed_at,valid_until,withdrawn,data
+ FROM discovery_observations
+ WHERE observed_at<=now() AND observed_at>=$1` + originClause + `
+ ORDER BY device_key,source_id,origin,coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC)
+SELECT l.device_key,l.data,coalesce(i.endpoint_id,'')
+FROM latest l LEFT JOIN discovery_identity_links i ON i.observation_id=l.id
+ORDER BY l.observed_at DESC,l.device_key`
+	rows, err := tx.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []map[string]any{}
-	for rows.Next() {
-		var id string
-		var b []byte
-		if err = rows.Scan(&id, &b); err != nil {
-			return nil, err
-		}
-		var ev []Observation
-		if err = json.Unmarshal(b, &ev); err != nil {
-			return nil, err
-		}
-		items = append(items, map[string]any{"id": id, "observations": ev})
+	type collected struct {
+		view      DeviceView
+		addresses map[string]bool
+		caps      map[string]bool
+		protocols map[string]bool
+		endpoints map[string]bool
 	}
-	return map[string]any{"items": items, "total": total, "limit": limit, "offset": offset}, rows.Err()
+	groups := map[string]*collected{}
+	for rows.Next() {
+		var id, endpointID string
+		var b []byte
+		if err = rows.Scan(&id, &b, &endpointID); err != nil {
+			return nil, err
+		}
+		var observation Observation
+		if err = json.Unmarshal(b, &observation); err != nil {
+			return nil, err
+		}
+		group := groups[id]
+		if group == nil {
+			group = &collected{view: DeviceView{ID: id, FirstSeen: observation.ObservedAt, LastSeen: observation.ObservedAt}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}}
+			groups[id] = group
+		}
+		group.view.Observations = append(group.view.Observations, observation)
+		group.view.EvidenceCount++
+		if observation.ObservedAt.Before(group.view.FirstSeen) {
+			group.view.FirstSeen = observation.ObservedAt
+		}
+		if observation.ObservedAt.After(group.view.LastSeen) {
+			group.view.LastSeen = observation.ObservedAt
+		}
+		if observation.Current(time.Now()) {
+			group.view.Current = true
+		}
+		if observation.IP != "" {
+			group.addresses[observation.IP] = true
+		}
+		if group.view.MAC == "" && observation.MAC != "" {
+			group.view.MAC = observation.MAC
+		}
+		if group.view.Name == "" && observation.Name != "" {
+			group.view.Name = observation.Name
+		}
+		if group.view.DeviceType == "" && observation.DeviceType != "" {
+			group.view.DeviceType = observation.DeviceType
+		}
+		for _, capability := range observation.Capabilities {
+			group.caps[capability] = true
+		}
+		group.protocols[observation.Origin] = true
+		if endpointID != "" {
+			group.endpoints[endpointID] = true
+		}
+		if confidenceRank(observation.Confidence) > confidenceRank(group.view.Confidence) {
+			group.view.Confidence = observation.Confidence
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	items := make([]DeviceView, 0, len(groups))
+	needle := strings.ToLower(strings.TrimSpace(query.Search))
+	for _, group := range groups {
+		for value := range group.addresses {
+			group.view.Addresses = append(group.view.Addresses, value)
+		}
+		sort.Strings(group.view.Addresses)
+		if len(group.view.Addresses) > 0 {
+			group.view.PrimaryIP = group.view.Addresses[0]
+		}
+		for value := range group.caps {
+			group.view.Capabilities = append(group.view.Capabilities, value)
+		}
+		for value := range group.protocols {
+			group.view.Protocols = append(group.view.Protocols, value)
+		}
+		sort.Strings(group.view.Capabilities)
+		sort.Strings(group.view.Protocols)
+		if len(group.endpoints) == 1 {
+			for value := range group.endpoints {
+				group.view.EndpointID = value
+			}
+		}
+		if query.DeviceType != "" && group.view.DeviceType != query.DeviceType {
+			continue
+		}
+		if query.Capability != "" && !group.caps[query.Capability] {
+			continue
+		}
+		haystack := strings.ToLower(strings.Join(append(append([]string{group.view.Name, group.view.MAC, group.view.DeviceType}, group.view.Addresses...), group.view.Capabilities...), " "))
+		if needle != "" && !strings.Contains(haystack, needle) {
+			continue
+		}
+		items = append(items, group.view)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].LastSeen.Equal(items[j].LastSeen) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].LastSeen.After(items[j].LastSeen)
+	})
+	total := len(items)
+	start, end := query.Offset, query.Offset+query.Limit
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	return map[string]any{"items": items[start:end], "total": total, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, tx.Commit()
+}
+
+func confidenceRank(value string) int {
+	switch value {
+	case "confirmed":
+		return 3
+	case "strong":
+		return 2
+	case "clue":
+		return 1
+	}
+	return 0
 }

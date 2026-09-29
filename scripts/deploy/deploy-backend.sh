@@ -8,6 +8,8 @@ work_dir="$(mktemp -d "${TMPDIR:-/tmp}/proxy-sentinel-backend.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 mkdir -p "$work_dir/bin"
 cp -R "$repo_root/migrations" "$work_dir/migrations"
+mkdir -p "$work_dir/assets"
+cp -R "$repo_root/assets/zeek" "$work_dir/assets/zeek"
 
 echo "构建 Linux amd64 后端"
 (
@@ -17,7 +19,7 @@ echo "构建 Linux amd64 后端"
 )
 
 echo "更新后端到 $target"
-COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations | ssh "$target" '
+COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations assets | ssh "$target" '
   set -eu
   live=/opt/proxy-sentinel/current/bin/proxy-sentinel
   test -f "$live"
@@ -36,11 +38,13 @@ COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations | ssh "$
     --backfill-application-read-model --timeout 2h
   mkdir -p /opt/proxy-sentinel/current/migrations
   cp -R "$stage/migrations/postgres" "$stage/migrations/clickhouse" /opt/proxy-sentinel/current/migrations/
+  mkdir -p /opt/proxy-sentinel/current/assets
+  cp -R "$stage/assets/zeek" /opt/proxy-sentinel/current/assets/
   # 替换文件而非覆盖运行中进程正在使用的二进制。
   install -m 0755 "$stage/bin/proxy-sentinel" "$live.new"
   mv -f "$live.new" "$live"
   # 重启常驻后端服务；定时任务下次运行自动使用新程序。
-  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-recognition-materializer proxy-sentinel-device-signal; do
+  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-recognition-materializer proxy-sentinel-device-signal proxy-sentinel-zeek; do
     if systemctl is-active --quiet "$unit.service"; then
       systemctl restart "$unit.service"
       systemctl is-active --quiet "$unit.service"

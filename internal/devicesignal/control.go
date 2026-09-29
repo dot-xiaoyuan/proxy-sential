@@ -85,6 +85,18 @@ func parseControlFrames(frame []byte) []controlSignal {
 	if ethernet.etherType == 0x893a {
 		return parseIEEE1905(ethernet)
 	}
+	if ethernet.etherType == 0x0806 {
+		if signal, found := parseARP(ethernet); found {
+			return []controlSignal{signal}
+		}
+		return nil
+	}
+	if ethernet.etherType == 0x86dd {
+		if signal, found := parseNDP(ethernet); found {
+			return []controlSignal{signal}
+		}
+		return nil
+	}
 	if ethernet.destination == [6]byte{0x01, 0x00, 0x0c, 0xcc, 0xcc, 0xcc} {
 		if signal, found := parseCDP(ethernet); found {
 			return []controlSignal{signal}
@@ -118,6 +130,12 @@ func parseControlFrames(frame []byte) []controlSignal {
 		}
 		return nil
 	}
+	if sourcePort == 3702 || destinationPort == 3702 {
+		if signal, found := parseWSDiscovery(ethernet, source, destination, udpPayload); found {
+			return []controlSignal{signal}
+		}
+		return nil
+	}
 	// IPv4 HSRP uses UDP 1985 at both ends. Matching either endpoint (or the
 	// IPv6 HSRP port 2029 in this IPv4 parser) turns ordinary client traffic
 	// whose ephemeral source port happens to be 1985/2029 into router evidence.
@@ -127,6 +145,98 @@ func parseControlFrames(frame []byte) []controlSignal {
 		}
 	}
 	return nil
+}
+
+func parseARP(ethernet ethernetFrame) (controlSignal, bool) {
+	payload := ethernet.payload
+	if len(payload) < 28 || binary.BigEndian.Uint16(payload[0:2]) != 1 || binary.BigEndian.Uint16(payload[2:4]) != 0x0800 || payload[4] != 6 || payload[5] != 4 {
+		return controlSignal{}, false
+	}
+	op := binary.BigEndian.Uint16(payload[6:8])
+	if op != 1 && op != 2 {
+		return controlSignal{}, false
+	}
+	mac := net.HardwareAddr(payload[8:14])
+	ip := net.IP(payload[14:18])
+	if len(mac) != 6 || mac[0]&1 != 0 || mac.String() == "00:00:00:00:00:00" || ip.IsUnspecified() || ip.IsMulticast() {
+		return controlSignal{}, false
+	}
+	signal := baseControlSignal("arp", ethernet, ip.String(), net.IP(payload[24:28]).String())
+	signal.MAC = mac.String()
+	if op == 1 {
+		signal.Payload["message"] = "request"
+	} else {
+		signal.Payload["message"] = "reply"
+	}
+	return signal, true
+}
+
+func parseNDP(ethernet ethernetFrame) (controlSignal, bool) {
+	payload := ethernet.payload
+	if len(payload) < 64 || payload[0]>>4 != 6 || payload[6] != 58 {
+		return controlSignal{}, false
+	}
+	source, destination := net.IP(payload[8:24]), net.IP(payload[24:40])
+	icmp := payload[40:]
+	if (icmp[0] != 135 && icmp[0] != 136) || source.IsUnspecified() || source.IsMulticast() {
+		return controlSignal{}, false
+	}
+	mac := net.HardwareAddr(ethernet.source[:])
+	if mac[0]&1 != 0 || mac.String() == "00:00:00:00:00:00" {
+		return controlSignal{}, false
+	}
+	signal := baseControlSignal("ndp", ethernet, source.String(), destination.String())
+	signal.MAC = mac.String()
+	if len(icmp) >= 24 {
+		signal.Payload["target"] = net.IP(icmp[8:24]).String()
+	}
+	if icmp[0] == 135 {
+		signal.Payload["message"] = "neighbor_solicitation"
+	} else {
+		signal.Payload["message"] = "neighbor_advertisement"
+	}
+	return signal, true
+}
+
+func parseWSDiscovery(ethernet ethernetFrame, source, destination string, payload []byte) (controlSignal, bool) {
+	if len(payload) == 0 || len(payload) > 32768 {
+		return controlSignal{}, false
+	}
+	text := string(payload)
+	lower := strings.ToLower(text)
+	kind := ""
+	withdrawn := false
+	switch {
+	case strings.Contains(lower, ":probematches") || strings.Contains(lower, "<probematches"):
+		kind = "probe_matches"
+	case strings.Contains(lower, ":resolvematches") || strings.Contains(lower, "<resolvematches"):
+		kind = "resolve_matches"
+	case strings.Contains(lower, ":hello") || strings.Contains(lower, "<hello"):
+		kind = "hello"
+	case strings.Contains(lower, ":bye") || strings.Contains(lower, "<bye"):
+		kind, withdrawn = "bye", true
+	default:
+		return controlSignal{}, false
+	}
+	signal := baseControlSignal("ws_discovery", ethernet, source, destination)
+	signal.Payload["message"] = kind
+	signal.Payload["withdrawn"] = withdrawn
+	for _, field := range []struct{ start, end, key string }{
+		{"<wsa:address>", "</wsa:address>", "endpoint_reference"},
+		{"<d:types>", "</d:types>", "types"},
+		{"<d:xaddrs>", "</d:xaddrs>", "xaddrs"},
+	} {
+		start := strings.Index(lower, field.start)
+		if start < 0 {
+			continue
+		}
+		start += len(field.start)
+		end := strings.Index(lower[start:], field.end)
+		if end >= 0 {
+			signal.Payload[field.key] = strings.TrimSpace(text[start : start+end])
+		}
+	}
+	return signal, true
 }
 
 type ieee1905ClientAssociation struct {
@@ -514,7 +624,11 @@ func writeControlBucket(path, sensorID, interfaceName, instance string, scope *n
 	for _, key := range keys {
 		signal := values[key]
 		sum := sha256.Sum256([]byte(strings.Join([]string{sensorID, signal.Kind, signal.IP, signal.MAC, key, bucket.UTC().Format(time.RFC3339)}, "\x00")))
-		subject := map[string]any{"entity_role": "network_device"}
+		role := "network_device"
+		if signal.Kind == "arp" || signal.Kind == "ndp" || signal.Kind == "ws_discovery" {
+			role = "endpoint"
+		}
+		subject := map[string]any{"entity_role": role}
 		if signal.IP != "" {
 			subject["ip"] = signal.IP
 		}

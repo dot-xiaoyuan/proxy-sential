@@ -114,6 +114,51 @@ func TestParseLLDPRouterSignal(t *testing.T) {
 	}
 }
 
+func TestParseARPAndNDPDeviceSignals(t *testing.T) {
+	arp := make([]byte, 14+28)
+	copy(arp[0:6], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	copy(arp[6:12], []byte{0x22, 0x07, 0x44, 0x95, 0x05, 0xf7})
+	arp[12], arp[13] = 0x08, 0x06
+	copy(arp[14:], []byte{0, 1, 8, 0, 6, 4, 0, 1, 0x22, 0x07, 0x44, 0x95, 0x05, 0xf7, 192, 168, 0, 45, 0, 0, 0, 0, 0, 0, 192, 168, 0, 1})
+	signal, ok := parseControlFrame(arp)
+	if !ok || signal.Kind != "arp" || signal.IP != "192.168.0.45" || signal.MAC != "22:07:44:95:05:f7" {
+		t.Fatalf("unexpected ARP signal: %+v", signal)
+	}
+
+	ndp := make([]byte, 14+40+24)
+	copy(ndp[6:12], []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff})
+	ndp[12], ndp[13], ndp[14], ndp[20] = 0x86, 0xdd, 0x60, 58
+	copy(ndp[22:38], netip.MustParseAddr("fe80::10").AsSlice())
+	copy(ndp[38:54], netip.MustParseAddr("ff02::1").AsSlice())
+	ndp[54] = 136
+	copy(ndp[62:78], netip.MustParseAddr("fe80::10").AsSlice())
+	signal, ok = parseControlFrame(ndp)
+	if !ok || signal.Kind != "ndp" || signal.IP != "fe80::10" || signal.Payload["message"] != "neighbor_advertisement" {
+		t.Fatalf("unexpected NDP signal: %+v", signal)
+	}
+}
+
+func TestParseWSDiscoveryResponseButNotProbe(t *testing.T) {
+	build := func(body string) []byte {
+		frame := make([]byte, 14+20+8+len(body))
+		copy(frame[6:12], []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x22})
+		frame[12], frame[13], frame[14], frame[23] = 0x08, 0x00, 0x45, 17
+		copy(frame[26:30], []byte{192, 168, 0, 60})
+		copy(frame[30:34], []byte{239, 255, 255, 250})
+		frame[34], frame[35], frame[36], frame[37] = 0x0e, 0x76, 0x0e, 0x76
+		copy(frame[42:], body)
+		return frame
+	}
+	response := `<s:Envelope><s:Body><d:ProbeMatches><d:ProbeMatch><d:Types>dn:NetworkVideoTransmitter</d:Types><d:XAddrs>http://192.168.0.60/onvif/device_service</d:XAddrs></d:ProbeMatch></d:ProbeMatches></s:Body></s:Envelope>`
+	signal, ok := parseControlFrame(build(response))
+	if !ok || signal.Kind != "ws_discovery" || signal.Payload["message"] != "probe_matches" {
+		t.Fatalf("unexpected WS-Discovery signal: %+v", signal)
+	}
+	if _, ok = parseControlFrame(build(`<s:Envelope><s:Body><d:Probe/></s:Body></s:Envelope>`)); ok {
+		t.Fatal("WS-Discovery client probe was accepted as device evidence")
+	}
+}
+
 func TestParseIEEE1905ClientAssociationEvent(t *testing.T) {
 	frame := []byte{
 		0x01, 0x80, 0xc2, 0x00, 0x00, 0x13, 0x20, 0x3a, 0xeb, 0xe9, 0xde, 0x10, 0x89, 0x3a,

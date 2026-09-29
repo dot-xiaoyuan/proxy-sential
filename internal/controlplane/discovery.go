@@ -170,7 +170,16 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		s.appendAudit(ctx, "discovery.poll", source, "queued")
 		writeJSON(w, 202, map[string]string{"id": id, "status": "pending"})
 	case path == "/discovery/devices" && r.Method == "GET":
-		page, err := repo.Devices(ctx, limit, offset)
+		window := 24 * time.Hour
+		if value := r.URL.Query().Get("window"); value != "" {
+			parsed, parseErr := time.ParseDuration(value)
+			if parseErr != nil || parsed < 10*time.Minute || parsed > 30*24*time.Hour {
+				writeError(w, 400, "bad_window", "时间窗口无效")
+				return
+			}
+			window = parsed
+		}
+		page, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset})
 		if err != nil {
 			writeError(w, 500, "discovery_read", "读取发现结果失败")
 			return
@@ -225,8 +234,15 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		}
 		writeJSON(w, 200, map[string]any{"targets": targets, "total": len(targets), "active_enabled": false})
 	case path == "/discovery/summary" && r.Method == "GET":
-		var infrastructure, active, pending int
-		err := repo.DB.QueryRowContext(ctx, `SELECT count(DISTINCT device_key) FILTER(WHERE origin IN ('fdb','neighbor','lldp')),count(DISTINCT device_key) FILTER(WHERE origin='active'),count(DISTINCT device_key) FILTER(WHERE NOT EXISTS(SELECT 1 FROM discovery_identity_links l WHERE l.observation_id=discovery_observations.id AND l.valid_until>now())) FROM discovery_observations WHERE observed_at<=now() AND observed_at>=now()-interval '24 hours' AND valid_until>now() AND NOT withdrawn`).Scan(&infrastructure, &active, &pending)
+		var infrastructure, active, pending, passive, services, linked int
+		err := repo.DB.QueryRowContext(ctx, `SELECT
+ count(DISTINCT device_key) FILTER(WHERE origin IN ('fdb','neighbor','lldp','cdp')),
+ count(DISTINCT device_key) FILTER(WHERE origin='active'),
+ count(DISTINCT device_key) FILTER(WHERE NOT EXISTS(SELECT 1 FROM discovery_identity_links l WHERE l.observation_id=discovery_observations.id)),
+ count(DISTINCT device_key) FILTER(WHERE origin IN ('dhcp','arp','ndp','dns_sd','ssdp','ws_discovery','ieee1905_client')),
+ count(DISTINCT device_key) FILTER(WHERE origin IN ('dns_sd','ssdp','ws_discovery') AND jsonb_array_length(coalesce(data->'capabilities','[]'::jsonb))>0),
+ count(DISTINCT device_key) FILTER(WHERE origin IN ('dhcp','arp','ndp','dns_sd','ssdp','ws_discovery','ieee1905_client') AND EXISTS(SELECT 1 FROM discovery_identity_links l WHERE l.observation_id=discovery_observations.id))
+ FROM discovery_observations WHERE observed_at<=now() AND observed_at>=now()-interval '24 hours' AND NOT withdrawn`).Scan(&infrastructure, &active, &pending, &passive, &services, &linked)
 		if err != nil {
 			writeError(w, 500, "summary_read", "读取汇总失败")
 			return
@@ -236,7 +252,23 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			writeError(w, 500, "summary_read", "读取汇总失败")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"window": "24h", "infrastructure": infrastructure, "active_responses": active, "pending_association": pending, "active_enabled": enabled})
+		var lastSuccess sql.NullTime
+		var materializerStatus, materializerError string
+		var protocolCounts, skipCounts json.RawMessage
+		var processed, emitted, skipped int64
+		_ = repo.DB.QueryRowContext(ctx, `SELECT last_success_at,CASE WHEN last_error<>'' THEN 'error' WHEN last_success_at IS NULL THEN 'waiting' WHEN last_success_at<now()-interval '2 minutes' THEN 'lagging' ELSE 'ready' END,last_error,protocol_counts,skip_counts,processed_events,emitted_observations,skipped_events FROM passive_discovery_state ORDER BY updated_at DESC LIMIT 1`).Scan(&lastSuccess, &materializerStatus, &materializerError, &protocolCounts, &skipCounts, &processed, &emitted, &skipped)
+		response := map[string]any{"window": "24h", "infrastructure": infrastructure, "active_responses": active, "pending_association": pending, "passive_devices": passive, "service_devices": services, "linked_endpoints": linked, "active_enabled": enabled, "materializer_status": materializerStatus, "materializer_error": materializerError}
+		if len(protocolCounts) > 0 {
+			response["protocol_counts"] = protocolCounts
+		}
+		if len(skipCounts) > 0 {
+			response["skip_counts"] = skipCounts
+		}
+		response["processed_events"], response["emitted_observations"], response["skipped_events"] = processed, emitted, skipped
+		if lastSuccess.Valid {
+			response["last_materialized_at"] = lastSuccess.Time
+		}
+		writeJSON(w, 200, response)
 	default:
 		writeError(w, 404, "not_found", "发现接口不存在")
 	}
