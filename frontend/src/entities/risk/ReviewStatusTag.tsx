@@ -19,7 +19,7 @@ export function ReviewStatusTag({
   reason?: string
   status?: ReviewStatus
 }) {
-  const meta = reviewStatusMeta[status] ?? reviewStatusMeta.unreviewed
+  const meta = reviewStatusMeta[status] ?? {color:'default',label:status}
   const tag = (
     <Tag className="review-status-tag" color={meta.color}>
       {meta.label}

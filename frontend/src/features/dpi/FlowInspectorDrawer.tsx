@@ -1,12 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   CheckCircleOutlined,
   CloseOutlined,
   CodeOutlined,
-  FieldTimeOutlined,
   TagOutlined,
 } from '@ant-design/icons'
-import { Alert, Button, Card, Descriptions, Drawer, message, Modal, Space, Table, Typography } from 'antd'
+import { Alert, Button, Card, Descriptions, Drawer, message, Space, Table, Typography } from 'antd'
+import { Link } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../../entities/risk/RiskLevelTag'
@@ -15,31 +15,30 @@ import {
   useDpiIpFlows,
   useIpEvidence,
   useIpRisk,
-  useReloadRules,
   useSession,
 } from '../../shared/api/queries'
-import type { CreateLabelRequest, DpiFlowSample } from '../../shared/api/types'
+import type { CreateLabelRequest, DpiFlowSample, EventQuery } from '../../shared/api/types'
 
 interface FlowInspectorDrawerProps {
   ip: string | null
   open: boolean
   onClose: () => void
+  context?: EventQuery
 }
 
-export function FlowInspectorDrawer({ ip, open, onClose }: FlowInspectorDrawerProps) {
+export function FlowInspectorDrawer({ ip, open, onClose, context }: FlowInspectorDrawerProps) {
   const [selectedFlow, setSelectedFlow] = useState<DpiFlowSample | null>(null)
   const session = useSession()
-  const risk = useIpRisk(ip ?? '')
-  const evidence = useIpEvidence(ip ?? '')
-  const flowSamples = useDpiIpFlows(ip ?? '', { window: '1h', limit: 50 })
+  const permissions = session.data?.permissions ?? []
+  const risk = useIpRisk(ip ?? '', open && permissions.includes('risks:read'))
+  const evidence = useIpEvidence(ip ?? '', {limit:20}, open && permissions.includes('evidence:read'))
+  const flowSamples = useDpiIpFlows(ip ?? '', { window: '1h', ...context, limit: 50 }, open && permissions.includes('dpi:read'))
   const createLabel = useCreateLabel()
-  const reloadRules = useReloadRules()
+  useEffect(() => setSelectedFlow(null), [ip])
 
   if (!ip) return null
 
-  const permissions = session.data?.permissions ?? []
-  const canCreateLabel = permissions.includes('labels:create')
-  const canReloadRules = permissions.includes('rules:reload')
+  const canCreateLabel = permissions.includes('labels:create') && !evidence.isFetching && !evidence.isError && Boolean(evidence.data?.evidence.length)
   const rows = flowSamples.data?.items ?? []
   const firstFlow = rows[0]
   const snapshot = risk.data
@@ -60,23 +59,6 @@ export function FlowInspectorDrawer({ ip, open, onClose }: FlowInspectorDrawerPr
       message.success(`成功为 IP ${ip} 添加标签 [${label}]`)
     } catch {
       message.error('标签添加失败')
-    } finally {
-    }
-  }
-
-  const handleTriggerShadow = async () => {
-    if (!canReloadRules) {
-      message.warning('当前控制面为只读模式，规则 reload 已禁用')
-      return
-    }
-    try {
-      await reloadRules.mutateAsync()
-      Modal.success({
-        title: '影子审计任务已发起',
-        content: `IP ${ip} 的 DPI 特征规则已重新加载并加入影子审计，审计日志可至【影子运行】页面查验。`,
-      })
-    } catch {
-      message.error('触发影子审计失败')
     } finally {
     }
   }
@@ -110,14 +92,16 @@ export function FlowInspectorDrawer({ ip, open, onClose }: FlowInspectorDrawerPr
           {snapshot && <RiskLevelTag level={snapshot.level} />}
         </div>
       }
-      width={780}
     >
       <div className="drawer-stack">
         <Alert
-          description="当前展示标准化 DPI Flow 元数据、风险摘要与证据上下文，不展示 Suricata 原始 EVE 或 payload 全量内容。"
+          description={`Flow 查询窗口：${context?.window || '1h'}。风险与复核依据为当前风险快照，历史回放请进入样本复核。`}
           showIcon
           type="info"
         />
+        {risk.isError && <Alert type="error" showIcon title="当前风险快照读取失败" />}
+        {evidence.isError && <Alert type="error" showIcon title="复核证据读取失败" />}
+        {flowSamples.isError && <Alert type="error" showIcon title="Flow 样本读取失败" />}
 
         <Card size="small" title="IP 深度概览与采集上下文">
           <Descriptions column={2} size="small">
@@ -140,7 +124,7 @@ export function FlowInspectorDrawer({ ip, open, onClose }: FlowInspectorDrawerPr
               onClick={() => handleCreateLabel('confirmed_proxy')}
               type="primary"
             >
-              确认违规共享上网
+              确认代理
             </Button>
             <Button
               className="dpi-badge-tag"
@@ -149,17 +133,9 @@ export function FlowInspectorDrawer({ ip, open, onClose }: FlowInspectorDrawerPr
               loading={createLabel.isPending}
               onClick={() => handleCreateLabel('false_positive')}
             >
-              标记误报 / 白名单
+              标记误报
             </Button>
-            <Button
-              className="dpi-badge-tag"
-              disabled={!canReloadRules}
-              icon={<FieldTimeOutlined />}
-              loading={reloadRules.isPending}
-              onClick={handleTriggerShadow}
-            >
-              一键加入影子审计
-            </Button>
+            {permissions.includes('shadow:read') && <Link to="/shadow-runs">查看影子评估</Link>}
           </Space>
         </Card>
 

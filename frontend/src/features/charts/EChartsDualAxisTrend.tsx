@@ -12,13 +12,13 @@ interface EChartsDualAxisTrendProps {
 export function EChartsDualAxisTrend({
   loading = false,
   points,
-  title = '24h 设备并发与 PPS/BPS 吞吐双轴趋势 (Concurrency & Throughput)',
+  title = '活跃 IP 与吞吐趋势',
 }: EChartsDualAxisTrendProps) {
   const times = points.map((p) => p.time)
   const activeDevices = points.map((p) => p.active_devices)
   const riskIps = points.map((p) => p.risk_ips)
-  const pps = points.map((p) => p.pps ?? 0)
-  const bps = points.map((p) => p.bps_mbps ?? 0)
+  const pps = points.map((p) => p.pps ?? null)
+  const bps = points.map((p) => p.bps_mbps ?? null)
   const events = points.map((p) => p.event_count)
 
   const option = {
@@ -27,7 +27,7 @@ export function EChartsDualAxisTrend({
       axisPointer: { type: 'cross', crossStyle: { color: '#94a3b8' } },
     },
     legend: {
-      data: ['估计并发设备数', '活跃风险 IP 数', '事件数', '吞吐 rate (Mbps)', '包速率 (kPPS)'],
+      data: ['活跃 IP 数', '活跃风险 IP 数', '事件数', '吞吐 rate (Mbps)', '包速率 (kPPS)'],
       bottom: 0,
       textStyle: { color: '#475569', fontSize: 12 },
     },
@@ -48,7 +48,7 @@ export function EChartsDualAxisTrend({
     yAxis: [
       {
         type: 'value',
-        name: '设备 / IP 数',
+        name: 'IP 数',
         min: 0,
         axisLine: { lineStyle: { color: '#0284c7' } },
         splitLine: { lineStyle: { color: '#f1f5f9' } },
@@ -63,7 +63,7 @@ export function EChartsDualAxisTrend({
     ],
     series: [
       {
-        name: '估计并发设备数',
+        name: '活跃 IP 数',
         type: 'line',
         smooth: true,
         data: activeDevices,
@@ -109,7 +109,7 @@ export function EChartsDualAxisTrend({
         name: '包速率 (kPPS)',
         type: 'bar',
         yAxisIndex: 1,
-        data: pps.map((v) => Number((v / 1000).toFixed(1))),
+        data: pps.map((v) => v === null ? null : Number((v / 1000).toFixed(1))),
         itemStyle: { color: '#10b981', opacity: 0.6, borderRadius: [4, 4, 0, 0] },
       },
     ],
@@ -125,7 +125,7 @@ export function EChartsDualAxisTrend({
           </Tag>
         </div>
         <Typography.Text className="dpi-card-hint" type="secondary">
-          结合设备数、风险 IP 与事件速率洞察共享上网突发；缺少 packets/bytes 时 PPS/BPS 置空
+          结合活跃 IP、风险 IP 与事件速率洞察共享上网突发；缺少 packets/bytes 时 PPS/BPS 置空
         </Typography.Text>
       </div>
 

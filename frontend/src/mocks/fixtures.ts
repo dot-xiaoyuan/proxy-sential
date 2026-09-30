@@ -873,6 +873,9 @@ export const shadowEvaluation: ShadowEvaluation = {
   review_coverage: 48 / 716,
   missing_review_buckets: ['2026-08-18:high', '2026-08-19:suspicious'],
   recommended_adjustments: ['继续补充视频会议和企业 VPN 负证据'],
+  candidate_reviewed:24,candidate_confirmed:22,candidate_precision:22/24,normal_reviewed:24,
+  level_stats:{high:{total:100,reviewed:24,confirmed:22,false_positive:2,benign:0,needs_more_data:0,precision:22/24},normal:{total:616,reviewed:24,confirmed:0,false_positive:0,benign:24,needs_more_data:0,precision:0}},
+  false_positive_reasons:[{value:'校园业务应用',count:2}],false_positive_evidence:[],
   ready: false,
   blockers: ['仅 3 天包含人工复核，要求至少 7 天', '存在 2 个有样本但未复核的日期/等级分桶'],
 }
@@ -882,8 +885,8 @@ export const shadowReviewSamples: ShadowReviewSamples = {
   dates: ['2026-08-20', '2026-08-21'],
   samples_per_level: 10,
   samples: [
-    { date: '2026-08-21', ip: '10.255.0.98', subject_type: 'ip', subject_id: '10.255.0.98', level: 'high', score: 82, confidence: 0.86, evidence_ids: ['evidence-001'], review_status: 'unreviewed', source_run_id: 'shadow-run-001', snapshot_time: '2026-08-21T14:30:00Z' },
-    { date: '2026-08-21', ip: '10.255.0.42', subject_type: 'ip', subject_id: '10.255.0.42', level: 'normal', score: 24, confidence: 0.68, evidence_ids: ['evidence-002'], review_status: 'benign', review_reason: '普通单终端', reviewed_by: 'ops-001', reviewed_at: '2026-08-21T15:00:00Z', source_run_id: 'shadow-run-001', snapshot_time: '2026-08-21T14:30:00Z' },
+    { sample_id:'sample-demo-high', date: '2026-08-21', ip: '10.255.0.98', subject_type: 'ip', subject_id: '10.255.0.98', level: 'high', score: 82, confidence: 0.86, evidence_ids: ['evidence-ua-98','evidence-ja3-98'], review_status: 'unreviewed', source_run_id: 'shadow-run-001', snapshot_time: '2026-08-21T14:30:00Z' },
+    { sample_id:'sample-demo-normal', date: '2026-08-21', ip: '10.255.0.42', subject_type: 'ip', subject_id: '10.255.0.42', level: 'normal', score: 24, confidence: 0.68, evidence_ids: ['expired-evidence-42'], review_status: 'benign', review_reason: '普通单终端', reviewed_by: 'ops-001', reviewed_at: '2026-08-21T15:00:00Z', source_run_id: 'shadow-run-001', snapshot_time: '2026-08-21T14:30:00Z' },
   ],
 }
 

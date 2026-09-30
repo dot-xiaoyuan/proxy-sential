@@ -1,3 +1,4 @@
+import { sharedAccessHandlers } from './sharedAccess'
 import { discoveryHandlers } from './discovery'
 import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './deviceRecognition'
 import { proxyProof } from './proxyProtocol'
@@ -47,7 +48,7 @@ const mockCases: RiskCase[] = proxyReviewResponse.items.map((item, index) => ({
   priority: item.risk_score >= 90 ? 'high' as const : 'medium' as const,
   risk_score: item.risk_score,
   risk_confidence: Math.min(0.99, Math.max(0.5, item.risk_score / 100)),
-  assessment_level: item.risk_score >= 90 ? 'high' : 'medium',
+  assessment_level: item.risk_score >= 90 ? 'high' : 'suspicious',
   due_at: new Date(Date.now() + (index - 1) * 3_600_000).toISOString(),
   first_seen: item.first_seen,
   last_seen: item.last_seen,
@@ -71,6 +72,7 @@ const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管�
 const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
 
 export const handlers = [
+ ...sharedAccessHandlers,
  ...discoveryHandlers,
  ...routerObservationHandlers,
  http.get("/api/v1/events/proxy-fixture",()=>HttpResponse.json({event_id:"proxy-fixture",type:"proxy_transaction",source:"zeek",timestamp:proxyProof.response_at,proxy_protocol:proxyProof})),
@@ -536,6 +538,10 @@ export const handlers = [
       created_by: mockSession.user.id,
       created_at: new Date().toISOString(),
     }
+    if(payload.target_type==='risk_snapshot'){
+      const sample=shadowReviewSamples.samples.find(sample=>sample.sample_id===payload.target_id);
+      if(sample){sample.review_status=payload.label;sample.review_reason=payload.reason;sample.reviewed_by=created.created_by;sample.reviewed_at=created.created_at;}
+    }
     auditLogs.unshift({
       audit_id: `audit-${Date.now()}`,
       actor: mockSession.user.id,
@@ -559,9 +565,11 @@ export const handlers = [
   http.post('/api/v1/device-fingerprint-library/update', () => HttpResponse.json({ code:'offline_update_required',message:'import a verified bundle' },{status:409})),
   http.post('/api/v1/device-fingerprint-library/validate', () => HttpResponse.json({schema_version:'device-fingerprint-bundle/v1',version:'offline-20260831-mock',created_at:new Date().toISOString(),sources:[{name:'IEEE MA-L/MA-M/MA-S',version:'2026-08-31',url:'https://standards-oui.ieee.org/',license:'IEEE public registry'},{name:'uap-core',version:'mocksha',url:'https://github.com/ua-parser/uap-core',license:'Apache-2.0'},{name:'Fingerbank public snapshot',version:'6.8.2-20140609',url:'https://github.com/karottc/fingerbank',license:'ODbL-1.0/DbCL-1.0'}],files:{}})),
   http.post('/api/v1/device-fingerprint-library/import', () => HttpResponse.json({version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0'],backfill_status:'pending',backfill_processed:0})),
+  http.get('/api/v1/rules/status', () => HttpResponse.json({reload_supported:false,reload_status:'disabled'})),
+  http.get('/api/v1/shadow/review-samples/:sampleId', ({params}) => { const sample=shadowReviewSamples.samples.find(s=>s.sample_id===params.sampleId); if(!sample)return new HttpResponse(null,{status:404}); const evidence=(evidenceByIp[sample.ip]??[]).filter(e=>sample.evidence_ids.includes(e.evidence_id)); return HttpResponse.json({sample,snapshot:{ip:sample.ip,level:sample.level,score:sample.score,confidence:sample.confidence,window:"24h",updated_at:sample.snapshot_time,evidence_ids:sample.evidence_ids,summary:"历史回放快照"},evidence,missing_evidence_ids:sample.evidence_ids.filter(id=>!evidence.some(e=>e.evidence_id===id))}); }),
   http.post('/api/v1/rules/reload', () =>
     HttpResponse.json(
-      { status: 'accepted', mode: 'shadow', requested_at: new Date().toISOString() },
+      { status: 'disabled', mode: 'shadow', requested_at: new Date().toISOString() },
       { status: 202 },
     ),
   ),

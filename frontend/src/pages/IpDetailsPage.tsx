@@ -1,6 +1,8 @@
+import { safeReturnTo } from '../app/navigation'
+import { useUrlState } from '../shared/ui/useUrlState'
 import { ApplicationActivity } from "../features/applications/ApplicationActivity";
-import { useState } from "react";
-import { useParams } from "react-router-dom";
+
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Descriptions,
@@ -34,6 +36,7 @@ import type {
   DeviceSignal,
   IpDeviceInventory,
   NegativeEvidence,
+  DeviceQuery,
   NormalizedEventSummary,
   ObservedDevice,
 } from "../shared/api/types";
@@ -42,13 +45,13 @@ import { can } from "../shared/auth/permissions";
 export function IpDetailsPage() {
   const rawIp = useParams().ip ?? "";
   const ip = decodeURIComponent(rawIp);
-  const [activeTab, setActiveTab] = useState("devices");
+  const [params]=useSearchParams();const [activeTab,setActiveTab]=useUrlState("tab","devices",["devices","activity","applications","evidence"]);
   const session = useSession();
   const risk = useIpRisk(ip);
-  const evidence = useIpEvidence(ip, { limit: 20 }, activeTab === "evidence");
-  const activity = useIpActivity(ip, activeTab === "activity");
-  const devices = useIpDevices(ip, { window: "24h" }, activeTab === "devices");
-  const events = useIpEvents(ip, 20, activeTab === "evidence");
+  const evidence = useIpEvidence(ip, { limit: 20 }, activeTab === "evidence" && can(session.data,"evidence:read"));
+  const activity = useIpActivity(ip, activeTab === "activity" && can(session.data,"dpi:read"));
+  const devices = useIpDevices(ip, { window: (params.get("window")||"24h") as DeviceQuery["window"],sensor_id:params.get("sensor_id")||undefined,campus_id:params.get("campus_id")||undefined }, activeTab === "devices" && can(session.data,"identity:read"));
+  const events = useIpEvents(ip, 20, activeTab === "evidence" && can(session.data,"events:read"));
   const canLabel = can(session.data, "labels:create");
 
   if (risk.isLoading) {
@@ -77,6 +80,7 @@ export function IpDetailsPage() {
           </Typography.Text>
         </div>
         <Space wrap>
+          <Link to={safeReturnTo(params.get('return_to'))}>返回来源列表</Link>
           <RiskLevelTag level={risk.data.level} />
           <RiskScore score={risk.data.score} />
         </Space>

@@ -1,3 +1,4 @@
+import { detailPath,safeReturnTo } from '../app/navigation'
 import { DiscoveryEvidence } from "../entities/device/DiscoveryEvidence"
 import { DeviceBrandSummary } from '../entities/device/DeviceInventoryCells'
 import { DeviceNamePanel } from '../entities/device/DeviceNameView'
@@ -109,7 +110,7 @@ function attributionText(value: string) {
 export function EndpointDetailsPage() {
   const [params,setParams]=useSearchParams()
   const returnTo=params.get('return_to')||''
-  const back=returnTo.startsWith('/devices?')?returnTo:'/devices'
+  const back=safeReturnTo(returnTo,'/devices')
   const rawEndpointId = useParams().endpointId ?? "";
   const endpointId = decodeURIComponent(rawEndpointId);
   const { message } = AntApp.useApp();
@@ -300,7 +301,7 @@ export function EndpointDetailsPage() {
                 {latestIP ? (
                   <Link
                     className="mono"
-                    to={`/ips/${encodeURIComponent(latestIP)}`}
+                    to={detailPath(`/ips/${encodeURIComponent(latestIP)}`,`/devices/${encodeURIComponent(endpointId)}?${params.toString()}`)}
                   >
                     {latestIP}
                   </Link>
@@ -680,7 +681,7 @@ const ipColumns: ColumnsType<IdentityIPMACHistory> = [
     width: 150,
     render: (value?: string) =>
       value ? (
-        <Link className="mono" to={`/ips/${encodeURIComponent(value)}`}>
+        <Link className="mono" to={detailPath(`/ips/${encodeURIComponent(value)}`,window.location.pathname+window.location.search)}>
           {value}
         </Link>
       ) : (

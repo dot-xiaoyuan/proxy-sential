@@ -167,10 +167,11 @@ export function useLogout() {
   });
 }
 
-export function useActivityOverview(query: ActivityOverviewQuery) {
+export function useActivityOverview(query: ActivityOverviewQuery, enabled = true) {
   return useQuery({
     queryKey: queryKeys.activityOverview(query),
     queryFn: () => api.activityOverview(query),
+    enabled,
   });
 }
 
@@ -206,10 +207,11 @@ export function useDpiOverview(query: ActivityOverviewQuery) {
   });
 }
 
-export function useDpiTrends(query: ActivityOverviewQuery) {
+export function useDpiTrends(query: ActivityOverviewQuery, enabled = true) {
   return useQuery({
     queryKey: queryKeys.dpiTrends(query),
     queryFn: () => api.dpiTrends(query),
+    enabled,
   });
 }
 
@@ -239,11 +241,11 @@ export function useDpiFlows(query: EventQuery) {
   return usePagedQuery(query, queryKeys.dpiFlows, api.dpiFlows);
 }
 
-export function useDpiIpFlows(ip: string, query: EventQuery) {
+export function useDpiIpFlows(ip: string, query: EventQuery, enabled = true) {
   return useQuery({
     queryKey: queryKeys.dpiIpFlows(ip, query),
     queryFn: () => api.dpiIpFlows(ip, query),
-    enabled: !!ip,
+    enabled: !!ip && enabled,
   });
 }
 
@@ -286,11 +288,11 @@ export function useRisks(query: RiskQuery) {
   return usePagedQuery(query, queryKeys.risks, api.risks);
 }
 
-export function useIpRisk(ip: string) {
+export function useIpRisk(ip: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.ipRisk(ip),
     queryFn: () => api.ipRisk(ip),
-    enabled: !!ip,
+    enabled: !!ip && enabled,
   });
 }
 
@@ -499,10 +501,11 @@ export function useIngestDiagnostic(diagnosticId: string) {
   });
 }
 
-export function useDeviceFingerprintLibrary() {
+export function useDeviceFingerprintLibrary(enabled = true) {
   return useQuery({
     queryKey: queryKeys.deviceFingerprintLibrary,
     queryFn: api.deviceFingerprintLibrary,
+    enabled,
   });
 }
 
@@ -630,10 +633,11 @@ export function useCasesBatchMutation() {
     },
   });
 }
-export function useOrganization() {
+export function useOrganization(enabled = true) {
   return useQuery({
     queryKey: queryKeys.organization,
     queryFn: api.organization,
+    enabled,
   });
 }
 export function useOrganizationList<K extends OrganizationKind>(
@@ -655,10 +659,11 @@ export function useOrganizationMutation() {
       void client.invalidateQueries({ queryKey: queryKeys.organization }),
   });
 }
-export function useActionConnectors() {
+export function useActionConnectors(enabled = true) {
   return useQuery({
     queryKey: queryKeys.actionConnectors,
     queryFn: api.actionConnectors,
+    enabled,
   });
 }
 export function useActions(query: ListQuery = {}) {

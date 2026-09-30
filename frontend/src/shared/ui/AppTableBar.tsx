@@ -33,7 +33,7 @@ export function AppTableBar({
 
   return (
     <div className="app-table-bar">
-      <Space className="app-table-bar-main" size="middle">
+      <Space className="app-table-bar-main" size="middle" wrap>
         <Input
           allowClear
           onChange={(e) => onSearchChange(e.target.value)}
@@ -44,7 +44,7 @@ export function AppTableBar({
         />
 
         {filterOptions.length > 0 && (
-          <Space size="small">
+          <Space className="app-table-filter-group" size="small" wrap>
             <Typography.Text className="app-table-filter-label" type="secondary">
               快捷筛选:
             </Typography.Text>

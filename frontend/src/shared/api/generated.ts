@@ -2254,6 +2254,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rules/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRulesStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shadow/review-samples/{sample_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShadowSampleDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rules/reload": {
         parameters: {
             query?: never;
@@ -3708,6 +3740,11 @@ export interface components {
             };
         };
         Evidence: {
+            shared_access?: {
+                rule_version?: string;
+            } & {
+                [key: string]: unknown;
+            };
             proxy_protocol?: components["schemas"]["ProxyProtocolEvidence"];
             evidence_id: string;
             ip: string;
@@ -4555,6 +4592,8 @@ export interface components {
         /** @enum {string} */
         LabelKind: "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
         CreateLabelRequest: {
+            /** Format: date */
+            sample_date?: string;
             /** @enum {string} */
             target_type: "ip" | "risk_snapshot" | "evidence" | "account" | "endpoint";
             target_id: string;
@@ -4615,7 +4654,50 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        ShadowReviewStats: {
+            total: number;
+            reviewed: number;
+            confirmed: number;
+            false_positive: number;
+            benign: number;
+            needs_more_data: number;
+            precision: number;
+        };
         ShadowEvaluation: {
+            normalized_event_count?: number;
+            evidence_count?: number;
+            candidate_reviewed?: number;
+            candidate_confirmed?: number;
+            candidate_precision?: number;
+            normal_reviewed?: number;
+            level_stats?: {
+                [key: string]: {
+                    total: number;
+                    reviewed: number;
+                    confirmed: number;
+                    false_positive: number;
+                    benign: number;
+                    needs_more_data: number;
+                    precision: number;
+                };
+            };
+            false_positive_reasons?: {
+                value: string;
+                count: number;
+            }[];
+            false_positive_evidence?: {
+                value: string;
+                count: number;
+            }[];
+            daily?: {
+                /** Format: date */
+                date: string;
+                run_count: number;
+                level_stats: {
+                    [key: string]: components["schemas"]["ShadowReviewStats"];
+                };
+            }[];
+            daily_sample_exports?: string[];
             /** Format: date-time */
             generated_at: string;
             /** Format: date-time */
@@ -4645,6 +4727,8 @@ export interface components {
             blockers: string[];
         };
         ShadowReviewSample: {
+            sample_id: string;
+            review_conflict?: boolean;
             /** Format: date */
             date: string;
             ip: string;
@@ -4700,6 +4784,17 @@ export interface components {
                 type: string;
                 count: number;
             }[];
+        };
+        RulesStatus: {
+            reload_supported: boolean;
+            /** @enum {string} */
+            reload_status: "disabled";
+        };
+        ShadowSampleDetail: {
+            sample: components["schemas"]["ShadowReviewSample"];
+            snapshot?: components["schemas"]["RiskSnapshot"];
+            evidence: components["schemas"]["Evidence"][];
+            missing_evidence_ids: string[];
         };
         RuleReloadResult: {
             /** @enum {string} */
@@ -8277,6 +8372,54 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    getRulesStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Actual rule reload capability */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RulesStatus"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getShadowSampleDetail: {
+        parameters: {
+            query: {
+                date: string;
+            };
+            header?: never;
+            path: {
+                sample_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Historical sample with its original evidence */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShadowSampleDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     reloadRules: {

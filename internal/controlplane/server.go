@@ -208,6 +208,7 @@ type CreateLabelRequest struct {
 	Label       string   `json:"label"`
 	Reason      string   `json:"reason"`
 	EvidenceIDs []string `json:"evidence_ids"`
+	SampleDate  string   `json:"sample_date,omitempty"`
 }
 
 type UpdateEndpointRegistrationRequest struct {
@@ -692,6 +693,10 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleShadowRun(w, r, strings.TrimPrefix(path, "/shadow/runs/"))
 	case r.Method == http.MethodGet && path == "/shadow/evaluation":
 		s.handleShadowEvaluation(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shadow/review-samples/"):
+		s.handleShadowSampleDetail(w, r, strings.TrimPrefix(path, "/shadow/review-samples/"))
+	case r.Method == http.MethodGet && path == "/rules/status":
+		writeJSON(w, http.StatusOK, map[string]any{"reload_supported": false, "reload_status": "disabled"})
 	case r.Method == http.MethodGet && path == "/shadow/review-samples":
 		s.handleShadowReviewSamples(w, r)
 	case r.Method == http.MethodGet && path == "/audit-logs":
@@ -961,6 +966,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func requiredPermission(method, path string) string {
+	if method == http.MethodGet && (path == "/rules/status" || strings.HasPrefix(path, "/campus-exceptions")) {
+		return "risks:read"
+	}
 	if method == http.MethodPost && sharedDisconnectPath(path) {
 		return "actions:execute"
 	}
@@ -1282,6 +1290,21 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_label_request", err.Error())
 		return
 	}
+	if request.TargetType == "risk_snapshot" && strings.HasPrefix(request.TargetID, "sample-") {
+		detail, err := s.readShadowSample(request.SampleDate, request.TargetID)
+		if detail.Sample.SampleID != request.TargetID || (err != nil && request.Label != "needs_more_data") {
+			writeError(w, 409, "historical_sample_unavailable", "historical sample evidence cannot be read")
+			return
+		}
+		if request.Label != "needs_more_data" && (len(detail.MissingEvidenceIDs) > 0 || len(detail.Evidence) == 0) {
+			writeError(w, 409, "historical_evidence_incomplete", "historical evidence is incomplete")
+			return
+		}
+		if !sameEvidenceIDs(request.EvidenceIDs, detail.Sample.EvidenceIDs) {
+			writeError(w, 409, "sample_evidence_mismatch", "review must use the historical sample evidence")
+			return
+		}
+	}
 	label := store.Label{
 		TargetType:  request.TargetType,
 		TargetID:    request.TargetID,
@@ -1449,7 +1472,7 @@ func validateLabelRequest(request CreateLabelRequest) error {
 	if len(strings.TrimSpace(request.Reason)) < 2 {
 		return fmt.Errorf("reason must contain at least 2 characters")
 	}
-	if len(request.EvidenceIDs) == 0 {
+	if len(request.EvidenceIDs) == 0 && !(request.TargetType == "risk_snapshot" && strings.HasPrefix(request.TargetID, "sample-") && request.Label == "needs_more_data") {
 		return fmt.Errorf("evidence_ids must contain at least one evidence id")
 	}
 	return nil
@@ -2170,6 +2193,10 @@ func (s *Server) handleShadowReviewSamples(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "decode_shadow_review_samples_failed", err.Error())
 		return
 	}
+	for index := range payload.Samples {
+		payload.Samples[index].Date = selectedDate
+		payload.Samples[index].SampleID = evaluation.SampleID(payload.Samples[index])
+	}
 	if lister, ok := s.reader.(interface {
 		ListLabels(context.Context, int) ([]store.Label, error)
 	}); ok {
@@ -2178,34 +2205,22 @@ func (s *Server) handleShadowReviewSamples(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusInternalServerError, "read_shadow_review_labels_failed", listErr.Error())
 			return
 		}
+		peersByRun := make(map[string][]evaluation.Sample)
 		for index := range payload.Samples {
-			applyLatestSampleLabel(&payload.Samples[index], labels)
+			runID := payload.Samples[index].SourceRunID
+			peers, found := peersByRun[runID]
+			if !found {
+				peers, _, _ = s.shadowRunSamples(runID, selectedDate)
+				peersByRun[runID] = peers
+			}
+			evaluation.ApplySampleReview(&payload.Samples[index], peers, labels)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"date": selectedDate, "dates": dates, "samples_per_level": payload.SamplesPerLevel, "samples": payload.Samples})
 }
 
 func applyLatestSampleLabel(sample *evaluation.Sample, labels []store.Label) {
-	keys := map[string]bool{}
-	for kind, id := range map[string]string{"ip": sample.IP, "account": sample.AccountID, "endpoint": sample.EndpointID, "risk_snapshot": sample.SourceRunID, sample.SubjectType: sample.SubjectID} {
-		if kind = strings.ToLower(strings.TrimSpace(kind)); kind != "" && strings.TrimSpace(id) != "" {
-			keys[kind+":"+strings.TrimSpace(id)] = true
-		}
-	}
-	for _, label := range labels {
-		targetType := strings.ToLower(strings.TrimSpace(label.TargetType))
-		if !keys[targetType+":"+strings.TrimSpace(label.TargetID)] {
-			continue
-		}
-		if targetType != "risk_snapshot" && !stringSlicesOverlap(sample.EvidenceIDs, label.EvidenceIDs) {
-			continue
-		}
-		sample.ReviewStatus = label.Label
-		sample.ReviewReason = label.Reason
-		sample.ReviewedBy = label.CreatedBy
-		sample.ReviewedAt = label.CreatedAt
-		return
-	}
+	evaluation.ApplySampleReview(sample, []evaluation.Sample{*sample}, labels)
 }
 
 func stringSlicesOverlap(left, right []string) bool {

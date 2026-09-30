@@ -96,22 +96,24 @@ type Count struct {
 }
 
 type Sample struct {
-	Date         string   `json:"date"`
-	IP           string   `json:"ip"`
-	SubjectType  string   `json:"subject_type,omitempty"`
-	SubjectID    string   `json:"subject_id,omitempty"`
-	AccountID    string   `json:"account_id,omitempty"`
-	EndpointID   string   `json:"endpoint_id,omitempty"`
-	Level        string   `json:"level"`
-	Score        int      `json:"score"`
-	Confidence   float64  `json:"confidence"`
-	EvidenceIDs  []string `json:"evidence_ids"`
-	ReviewStatus string   `json:"review_status"`
-	ReviewReason string   `json:"review_reason,omitempty"`
-	ReviewedBy   string   `json:"reviewed_by,omitempty"`
-	ReviewedAt   string   `json:"reviewed_at,omitempty"`
-	SourceRunID  string   `json:"source_run_id"`
-	SnapshotTime string   `json:"snapshot_time"`
+	SampleID       string   `json:"sample_id"`
+	ReviewConflict bool     `json:"review_conflict,omitempty"`
+	Date           string   `json:"date"`
+	IP             string   `json:"ip"`
+	SubjectType    string   `json:"subject_type,omitempty"`
+	SubjectID      string   `json:"subject_id,omitempty"`
+	AccountID      string   `json:"account_id,omitempty"`
+	EndpointID     string   `json:"endpoint_id,omitempty"`
+	Level          string   `json:"level"`
+	Score          int      `json:"score"`
+	Confidence     float64  `json:"confidence"`
+	EvidenceIDs    []string `json:"evidence_ids"`
+	ReviewStatus   string   `json:"review_status"`
+	ReviewReason   string   `json:"review_reason,omitempty"`
+	ReviewedBy     string   `json:"reviewed_by,omitempty"`
+	ReviewedAt     string   `json:"reviewed_at,omitempty"`
+	SourceRunID    string   `json:"source_run_id"`
+	SnapshotTime   string   `json:"snapshot_time"`
 }
 
 type runData struct {
@@ -231,15 +233,10 @@ func readRuns(opts ShadowOptions, labels []store.Label) ([]runData, error) {
 		}
 		run := runData{id: entry.Name(), date: finished.Format("2006-01-02"), summary: summary, evidence: evidenceByID}
 		for _, snapshot := range batch.Snapshots {
-			label, reviewed := latestMatchingLabel(run.id, snapshot, labels)
-			sample := sampleFromSnapshot(run.id, run.date, snapshot)
-			if reviewed {
-				sample.ReviewStatus = label.Label
-				sample.ReviewReason = label.Reason
-				sample.ReviewedBy = label.CreatedBy
-				sample.ReviewedAt = label.CreatedAt
-			}
-			run.samples = append(run.samples, sample)
+			run.samples = append(run.samples, sampleFromSnapshot(run.id, run.date, snapshot))
+		}
+		for index := range run.samples {
+			ApplySampleReview(&run.samples[index], run.samples, labels)
 		}
 		result = append(result, run)
 	}
@@ -509,31 +506,6 @@ func readLabels(path string, to time.Time) ([]store.Label, error) {
 	return labels, nil
 }
 
-func latestMatchingLabel(runID string, snapshot risk.Snapshot, labels []store.Label) (store.Label, bool) {
-	keys := map[string]bool{}
-	add := func(kind, id string) {
-		kind, id = strings.ToLower(strings.TrimSpace(kind)), strings.TrimSpace(id)
-		if kind != "" && id != "" {
-			keys[kind+":"+id] = true
-		}
-	}
-	add(snapshot.SubjectType, snapshot.SubjectID)
-	add("account", snapshot.AccountID)
-	add("endpoint", snapshot.EndpointID)
-	add("ip", snapshot.IP)
-	add("risk_snapshot", runID)
-	for _, label := range labels {
-		targetType := strings.ToLower(strings.TrimSpace(label.TargetType))
-		if !keys[targetType+":"+strings.TrimSpace(label.TargetID)] {
-			continue
-		}
-		if targetType == "risk_snapshot" || evidenceIDsOverlap(snapshot.EvidenceIDs, label.EvidenceIDs) {
-			return label, true
-		}
-	}
-	return store.Label{}, false
-}
-
 func evidenceIDsOverlap(snapshotIDs, labelIDs []string) bool {
 	seen := make(map[string]bool, len(snapshotIDs))
 	for _, id := range snapshotIDs {
@@ -548,10 +520,12 @@ func evidenceIDsOverlap(snapshotIDs, labelIDs []string) bool {
 }
 
 func sampleFromSnapshot(runID, date string, snapshot risk.Snapshot) Sample {
-	return Sample{Date: date, IP: snapshot.IP, SubjectType: snapshot.SubjectType, SubjectID: snapshot.SubjectID,
+	sample := Sample{Date: date, IP: snapshot.IP, SubjectType: snapshot.SubjectType, SubjectID: snapshot.SubjectID,
 		AccountID: snapshot.AccountID, EndpointID: snapshot.EndpointID, Level: normalizedLevel(snapshot.Level), Score: snapshot.Score,
 		Confidence: snapshot.Confidence, EvidenceIDs: append([]string{}, snapshot.EvidenceIDs...), ReviewStatus: "unreviewed",
 		SourceRunID: runID, SnapshotTime: snapshot.UpdatedAt}
+	sample.SampleID = SampleID(sample)
+	return sample
 }
 
 func addReview(stats *ReviewStats, status string) {

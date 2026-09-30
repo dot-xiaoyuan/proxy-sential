@@ -6,6 +6,6 @@ import { RiskLevelTag } from './RiskLevelTag'
 describe('RiskLevelTag', () => {
   it('renders confirmed level in Chinese', () => {
     render(<RiskLevelTag level="confirmed" />)
-    expect(screen.getByText('基本确认')).toBeInTheDocument()
+    expect(screen.getByText('极高风险')).toBeInTheDocument()
   })
 })

@@ -1,4 +1,8 @@
 import { ApplicationLibrary } from "../features/applications/ApplicationLibrary";
+import { useQuery } from '@tanstack/react-query';
+import { request } from '../shared/api/client';
+import type { RulesStatus } from '../shared/api/types';
+import { useSearchParams } from 'react-router-dom';
 import { useState } from "react";
 import { UploadOutlined } from "@ant-design/icons";
 import {
@@ -17,31 +21,26 @@ import {
 import {
   useDeviceFingerprintLibrary,
   useImportDeviceFingerprintBundle,
-  useReloadRules,
   useSession,
   useValidateDeviceFingerprintBundle,
 } from "../shared/api/queries";
 import type { DeviceFingerprintBundleManifest } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
+import { statusText } from '../shared/ui/status';
 
-const shadowActions = [
-  "record",
-  "shadow_watch",
-  "shadow_manual_review",
-  "shadow_confirm_review",
-];
+
 
 export function RulesPage() {
   const session = useSession();
   const { message } = AntApp.useApp();
-  const reloadRules = useReloadRules();
-  const fingerprintLibrary = useDeviceFingerprintLibrary();
+  const [params,setParams] = useSearchParams();
+  const ruleStatus = useQuery({queryKey:["rules-status"],queryFn:()=>request<RulesStatus>("/rules/status"),enabled:(params.get("tab")||"risk")==="risk"});
+  const fingerprintLibrary = useDeviceFingerprintLibrary(params.get("tab")==="fingerprints");
   const validateBundle = useValidateDeviceFingerprintBundle();
   const importBundle = useImportDeviceFingerprintBundle();
   const [bundleFile, setBundleFile] = useState<File | null>(null);
   const [manifest, setManifest] =
     useState<DeviceFingerprintBundleManifest | null>(null);
-  const allowed = can(session.data, "rules:reload");
   const canUpdateLibrary = can(
     session.data,
     "device-fingerprint-library:update",
@@ -56,87 +55,30 @@ export function RulesPage() {
       <div className="page-header">
         <div>
           <Typography.Title className="page-title" level={3}>
-            规则配置
+            规则与特征库
           </Typography.Title>
           <Typography.Text type="secondary">
-            第一阶段只保留影子 reload 入口，不触发处罚动作。
+            查看风险规则能力，维护应用与设备特征库。
           </Typography.Text>
         </div>
       </div>
-      {!allowed && (
-        <Alert
-          showIcon
-          className="margin-bottom-md"
-          title="当前会话没有 rules:reload 权限"
-          type="warning"
-        />
-      )}
       <section className="surface operations-tabs-surface">
         <Tabs
-          defaultActiveKey="risk"
+          activeKey={params.get("tab") || "risk"}
+          onChange={tab=>setParams(current=>{const next=new URLSearchParams(current);next.set("tab",tab);return next})}
           destroyOnHidden
           items={[
-            {key:"application-domains", label:"应用域名特征库", children:<ApplicationLibrary />},
+            {key:"application-domains", label:"应用域名特征库", disabled:!can(session.data,'dpi:read'), children:<ApplicationLibrary />},
             {
               key: "risk",
               label: "风险规则",
-              children: (
-                <div>
-                  <Typography.Title level={4}>
-                    影子模式规则矩阵
-                  </Typography.Title>
-                  <Descriptions
-                    bordered
-                    column={1}
-                    size="small"
-                    className="margin-bottom-lg"
-                  >
-                    <Descriptions.Item label="配置版本">
-                      <Typography.Text className="mono">
-                        mock-rules-20260727
-                      </Typography.Text>
-                    </Descriptions.Item>
-                    <Descriptions.Item label="运行模式">
-                      <Tag color="processing">shadow</Tag>
-                    </Descriptions.Item>
-                    <Descriptions.Item label="动作边界">
-                      <Space wrap size={[6, 6]}>
-                        {shadowActions.map((action) => (
-                          <Tag
-                            color="blue"
-                            key={action}
-                            className="tag-margin-zero"
-                          >
-                            {action}
-                          </Tag>
-                        ))}
-                      </Space>
-                    </Descriptions.Item>
-                  </Descriptions>
-                  <Space wrap>
-                    <Button
-                      disabled={!allowed}
-                      loading={reloadRules.isPending}
-                      onClick={() =>
-                        reloadRules.mutate(undefined, {
-                          onSuccess: (result) =>
-                            message.success(`规则 reload ${result.status}`),
-                        })
-                      }
-                      type="default"
-                    >
-                      影子 reload 重新加载
-                    </Button>
-                    <Typography.Text type="secondary" className="font-size-sm">
-                      此操作仅热重载风控规则与权重系数，不会写回防火墙或阻塞流量。
-                    </Typography.Text>
-                  </Space>
-                </div>
-              ),
+              disabled:!can(session.data,'risks:read'),
+              children: ruleStatus.isLoading ? <Skeleton active/> : ruleStatus.isError ? <Alert type="error" showIcon title="规则能力读取失败" description={ruleStatus.error.message}/> : <Alert type="info" showIcon title="风险规则热重载尚未开放" description="当前服务未开放风险规则在线热重载。应用和设备特征库分别展示各自实际生效版本。"/>,
             },
             {
               key: "fingerprints",
               label: "设备特征库",
+              disabled:!can(session.data,'identity:read'),
               children: (
                 <div>
                   <Typography.Title level={4}>设备特征库</Typography.Title>
@@ -178,7 +120,7 @@ export function RulesPage() {
                                   : "gold"
                               }
                             >
-                              {fingerprintLibrary.data?.status || "loading"}
+                              {statusText(fingerprintLibrary.data?.status)}
                             </Tag>
                           ),
                         },
@@ -189,12 +131,12 @@ export function RulesPage() {
                             ? new Date(
                                 fingerprintLibrary.data.updated_at,
                               ).toLocaleString()
-                            : "内置离线版本",
+                            : "",
                         },
                         {
                           key: "error",
                           label: "最近错误",
-                          children: fingerprintLibrary.data?.last_error || "无",
+                          children: fingerprintLibrary.data?.last_error || "",
                         },
                         {
                           key: "mode",
@@ -254,10 +196,7 @@ export function RulesPage() {
                           key: "licenses",
                           label: "数据许可",
                           children: (
-                            fingerprintLibrary.data?.licenses || [
-                              "IEEE public registry",
-                              "Apache-2.0",
-                            ]
+                            fingerprintLibrary.data?.licenses || []
                           ).join("、"),
                         },
                       ]}

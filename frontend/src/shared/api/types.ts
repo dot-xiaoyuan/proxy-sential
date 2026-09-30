@@ -157,7 +157,7 @@ export type EventQuery = {
   nas_ip?: string
   from?: string
   to?: string
-  window?: '10m' | '1h' | '24h'
+  window?: '10m' | '1h' | '24h' | '7d' | '30d'
   src_ip?: string
   dst_ip?: string
   domain?: string
@@ -236,7 +236,7 @@ export type DeviceQuery = {
   vlan?: string
   ap?: string
   nas_ip?: string
-  window?: '10m' | '1h' | '24h'
+  window?: '10m' | '1h' | '24h' | '7d' | '30d'
   ip?: string
   q?: string
   limit?: number
@@ -293,3 +293,6 @@ export type ManagedIdentityConfiguration = {
   user_cidrs: string[]; inventory_url?: string; token?: string; max_records: number; enabled: boolean;
 }
 export type ManagedIdentitySource = { configuration: ManagedIdentityConfiguration; config_version: number; token_configured: boolean; state: string; blocker: string }
+
+export type ShadowSampleDetail = components['schemas']['ShadowSampleDetail']
+export type RulesStatus = components['schemas']['RulesStatus']

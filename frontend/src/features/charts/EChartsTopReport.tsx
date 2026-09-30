@@ -1,3 +1,4 @@
+import { displayField } from '../../shared/ui/status'
 import ReactECharts from 'echarts-for-react'
 import { Card, Typography } from 'antd'
 
@@ -9,9 +10,9 @@ export function EChartsTopReport({ title, report, kind, note, onSelect }: { titl
 		animation: false,
 		grid: { left: 12, right: 26, top: 8, bottom: 8, containLabel: true },
 		xAxis: { type: 'value', axisLabel: { color: '#64748b' }, splitLine: { lineStyle: { color: '#f1f5f9' } } },
-		yAxis: { type: 'category', inverse: true, data: items.map(item=>item.label), axisLabel: { width: 210, overflow: 'truncate', color: '#334155' } },
+		yAxis: { type: 'category', inverse: true, data: items.map(item=>displayField(item.label)), axisLabel: { width: 210, overflow: 'truncate', color: '#334155' } },
 		tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-		series: [{ type: 'bar', data: items.map(item=>({value:item.count,name:item.key})), barMaxWidth: 18, itemStyle: { color: '#2563eb', borderRadius: [0,4,4,0] } }],
+		series: [{ type: 'bar', data: items.map(item=>({value:item.count,name:displayField(item.label),key:item.key})), barMaxWidth: 18, itemStyle: { color: '#2563eb', borderRadius: [0,4,4,0] } }],
 	} : {
 		animation: false,
 		tooltip: { trigger: 'item', formatter: '{b}<br/>{c}（{d}%）' },
@@ -19,13 +20,13 @@ export function EChartsTopReport({ title, report, kind, note, onSelect }: { titl
 		series: [{ type: 'pie', radius: ['48%','70%'], center: ['50%','43%'], label: { show: false }, data: donutData(items) }],
 	}
 	return <Card className="report-chart-card" size="small" title={title}>
-		{items.length === 0 ? <Typography.Text type="secondary">暂无可报表化数据</Typography.Text> : <ReactECharts className="report-chart" option={option} onEvents={onSelect?{click:(params:{name:string})=>onSelect(params.name)}:undefined} />}
+		{items.length === 0 ? <Typography.Text type="secondary">暂无可报表化数据</Typography.Text> : <ReactECharts className="report-chart" option={option} onEvents={onSelect?{click:(params:{data?:{key?:string}})=>{if(params.data?.key)onSelect(params.data.key)}}:undefined} />}
 		{note && <Typography.Text className="report-chart-note" type="secondary">{note}</Typography.Text>}
 	</Card>
 }
 
 function donutData(items:ActivityReport['items']) {
-	const visible=items.slice(0,6).map(item=>({name:item.label,value:item.count}))
+	const visible:Array<{name:string;value:number;key?:string}>=items.slice(0,6).map(item=>({name:displayField(item.label),value:item.count,key:item.key}))
 	const other=items.slice(6).reduce((sum,item)=>sum+item.count,0)
 	if(other>0)visible.push({name:'其他',value:other})
 	return visible

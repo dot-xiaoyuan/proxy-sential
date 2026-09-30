@@ -3148,3 +3148,46 @@ pre.wrap-code {
     width: 100%;
     justify-content: space-between;
   }
+
+/* Navigation repair: constrain children as well as the document viewport. */
+.page, .page-header, .page-header-main, .page-header-actions,
+.app-table-bar, .app-table-bar-main, .app-table-bar-extra {
+  min-width: 0;
+  max-width: 100%;
+}
+.app-table-filter-group { flex-wrap: wrap; gap: 8px; min-width: 0; }
+.app-table-filter-label { white-space: nowrap; flex-shrink: 0; }
+.ant-btn, .ant-tag, .ant-badge, .ant-menu-title-content { white-space: nowrap; flex-shrink: 0; }
+@media (max-width: 560px) {
+  .app-table-bar-main { width: 100%; }
+  .app-table-bar-main > .ant-space-item { min-width: 0; max-width: 100%; }
+  .app-table-bar-main > .ant-space-item:first-child { width: 100%; }
+  .app-table-search { width: 100%; }
+  .app-table-filter-group { width: 100%; }
+}
+
+.sources-page, .sample-review-drawer .ant-drawer-body, .detail-stack { min-width: 0; }
+.sources-page > .surface { margin-bottom: 16px; }
+.platform-health > summary, .detail-stack > details > summary { cursor: pointer; font-weight: 600; color: #334155; }
+.platform-health .overview-runtime-grid { margin-top: 16px; }
+.overview-risk-summary { min-width: 0; }
+.workbench-actions p { color: #475569; }
+.sources-page .page { gap: 16px; }
+.sample-review-drawer .ant-drawer-body { overflow-wrap: anywhere; }
+.shadow-review-actions, .policy-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.ant-menu-light .ant-menu-item-selected { color: #1d4ed8; background: #eff6ff; }
+.ant-menu-light .ant-menu-item-selected a { color: #1d4ed8; }
+@media (max-width: 560px) {
+  .surface, .ant-card .ant-card-body { padding: 14px; }
+  .record-json { max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .sample-review-drawer .ant-drawer-body { padding: 14px; }
+}
+
+.ant-tabs .ant-tabs-tab-active .ant-tabs-tab-btn { color: #1d4ed8; }
+.ant-tag-checkable-checked { color: #1d4ed8; background: #eff6ff; border-color: #93c5fd; }
+.actions-connectors .ant-list .ant-list-item-action { margin: 0; min-width: 0; max-width: 100%; }
+@media (max-width: 560px) {
+  .actions-connectors .ant-card-head-wrapper { flex-wrap: wrap; gap: 8px; min-width: 0; }
+  .actions-connectors .ant-card-head-title { flex-basis: 100%; }
+  .actions-connectors .ant-card-extra { margin-inline-start: 0; max-width: 100%; }
+}

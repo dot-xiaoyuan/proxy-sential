@@ -2489,6 +2489,23 @@ paths:
               schema: { $ref: "#/components/schemas/DeviceFingerprintLibraryStatus" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { description: Bundle validation failed. }
+  /rules/status:
+    get:
+      operationId: getRulesStatus
+      responses:
+        "200": {description: "Actual rule reload capability", content: {application/json: {schema: {$ref: "#/components/schemas/RulesStatus"}}}}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /shadow/review-samples/{sample_id}:
+    get:
+      operationId: getShadowSampleDetail
+      parameters:
+        - {name: sample_id, in: path, required: true, schema: {type: string}}
+        - {name: date, in: query, required: true, schema: {type: string, format: date}}
+      responses:
+        "200": {description: "Historical sample with its original evidence", content: {application/json: {schema: {$ref: "#/components/schemas/ShadowSampleDetail"}}}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/InternalError"}
   /rules/reload:
     post:
       operationId: reloadRules
@@ -3618,6 +3635,12 @@ components:
       type: object
       required: [evidence_id, ip, type, window, score, confidence, severity, reason, samples, created_at]
       properties:
+        shared_access:
+          type: object
+          additionalProperties: true
+          properties:
+            rule_version:
+              type: string
         proxy_protocol:
           $ref: '#/components/schemas/ProxyProtocolEvidence'
         evidence_id:
@@ -5145,6 +5168,7 @@ components:
       type: object
       required: [target_type, target_id, label, reason, evidence_ids]
       properties:
+        sample_date: {type: string, format: date}
         target_type:
           type: string
           enum: [ip, risk_snapshot, evidence, account, endpoint]
@@ -5259,6 +5283,17 @@ components:
         created_at:
           type: string
           format: date-time
+    ShadowReviewStats:
+      type: object
+      required: [total, reviewed, confirmed, false_positive, benign, needs_more_data, precision]
+      properties:
+        total: {type: integer}
+        reviewed: {type: integer}
+        confirmed: {type: integer}
+        false_positive: {type: integer}
+        benign: {type: integer}
+        needs_more_data: {type: integer}
+        precision: {type: number}
     ShadowEvaluation:
       type: object
       required:
@@ -5277,6 +5312,40 @@ components:
         - ready
         - blockers
       properties:
+        normalized_event_count: {type: integer}
+        evidence_count: {type: integer}
+        candidate_reviewed: {type: integer}
+        candidate_confirmed: {type: integer}
+        candidate_precision: {type: number}
+        normal_reviewed: {type: integer}
+        level_stats:
+          type: object
+          additionalProperties:
+            type: object
+            required: [total, reviewed, confirmed, false_positive, benign, needs_more_data, precision]
+            properties:
+              total: {type: integer}
+              reviewed: {type: integer}
+              confirmed: {type: integer}
+              false_positive: {type: integer}
+              benign: {type: integer}
+              needs_more_data: {type: integer}
+              precision: {type: number}
+        false_positive_reasons: {type: array, items: {type: object, required: [value, count], properties: {value: {type: string}, count: {type: integer}}}}
+        false_positive_evidence: {type: array, items: {type: object, required: [value, count], properties: {value: {type: string}, count: {type: integer}}}}
+        daily:
+          type: array
+          items:
+            type: object
+            required: [date, run_count, level_stats]
+            properties:
+              date: {type: string, format: date}
+              run_count: {type: integer}
+              level_stats:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/ShadowReviewStats"
+        daily_sample_exports: {type: array, items: {type: string}}
         generated_at:
           type: string
           format: date-time
@@ -5335,8 +5404,10 @@ components:
             type: string
     ShadowReviewSample:
       type: object
-      required: [date, ip, level, score, confidence, evidence_ids, review_status, source_run_id, snapshot_time]
+      required: [sample_id, date, ip, level, score, confidence, evidence_ids, review_status, source_run_id, snapshot_time]
       properties:
+        sample_id: {type: string}
+        review_conflict: {type: boolean}
         date: { type: string, format: date }
         ip: { type: string }
         subject_type: { type: string }
@@ -5421,6 +5492,20 @@ components:
                 type: string
               count:
                 type: integer
+    RulesStatus:
+      type: object
+      required: [reload_supported, reload_status]
+      properties:
+        reload_supported: {type: boolean}
+        reload_status: {type: string, enum: [disabled]}
+    ShadowSampleDetail:
+      type: object
+      required: [sample, evidence, missing_evidence_ids]
+      properties:
+        sample: {$ref: "#/components/schemas/ShadowReviewSample"}
+        snapshot: {$ref: "#/components/schemas/RiskSnapshot"}
+        evidence: {type: array, items: {$ref: "#/components/schemas/Evidence"}}
+        missing_evidence_ids: {type: array, items: {type: string}}
     RuleReloadResult:
       type: object
       required: [status, mode, requested_at]

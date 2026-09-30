@@ -21,7 +21,7 @@ export const applicationAPI = {
  exportStatus: (id: string) => request<ApplicationExport>(`/exports/${encodeURIComponent(id)}`),
  downloadExport: async (id: string) => {
  const response = await fetch(`${getApiBase()}/exports/${encodeURIComponent(id)}/download`, {credentials: 'include'})
- if (!response.ok) throw new Error('未知域名下载失败')
+ if (!response.ok) throw new Error('待补特征域名下载失败')
  const url = URL.createObjectURL(await response.blob()); const a = document.createElement('a'); a.href = url; a.download = 'unknown-domains.jsonl'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
 
  },

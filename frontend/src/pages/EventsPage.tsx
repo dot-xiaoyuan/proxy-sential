@@ -1,5 +1,6 @@
+import { detailPath } from '../app/navigation'
 import { useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useLocation } from 'react-router-dom'
 import { Input, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
@@ -12,13 +13,14 @@ import {
 	AppServerPagination,
   AppTableBar,
   UniversityDimensionFilters,
-  type QuickWindow,
+  type ReportWindow,
 } from '../shared/ui'
 
 export function EventsPage() {
+  const location=useLocation();
   const [searchParams, setSearchParams] = useSearchParams()
   const query = useMemo(() => queryFromSearchParams(searchParams), [searchParams])
-  const quickWindow: QuickWindow = query.window ?? '1h'
+  const quickWindow: ReportWindow = query.window ?? '1h'
   const activeType = query.type ?? ''
   const events = useEvents({ ...query, window: quickWindow })
 
@@ -62,7 +64,7 @@ export function EventsPage() {
       title: 'Event ID',
       dataIndex: 'event_id',
       width: 220,
-      render: (value: string) => <Link className="mono list-cell-nowrap" title={value} to={`/events/${encodeURIComponent(value)}`}>{value}</Link>,
+      render: (value: string) => <Link className="mono list-cell-nowrap" title={value} to={detailPath(`/events/${encodeURIComponent(value)}`,location.pathname+location.search)}>{value}</Link>,
     },
   ]
 
@@ -88,6 +90,7 @@ export function EventsPage() {
           void events.refetch()
         }}
         quickWindow={quickWindow}
+        quickWindows={['10m','1h','24h','7d','30d']}
         subtitle="按时间、源/目的 IP、L7 访问对象与协议快速检索解耦后的标准事件流"
         title="DPI 标准事件检索"
       />
@@ -180,6 +183,7 @@ export function EventsPage() {
             type="number"
             value={query.port ?? ''}
           />
+          <Input aria-label="应用协议" placeholder="应用协议" value={query.app_protocol??''} allowClear onChange={event=>updateQuery(setSearchParams,{...query,app_protocol:event.target.value||undefined,cursor:undefined})}/>
           <Input
             allowClear
             onChange={(event) =>
@@ -262,13 +266,14 @@ function updateQuery(setSearchParams: (params: URLSearchParams) => void, query: 
   if (query.fingerprint) params.set('fingerprint', query.fingerprint)
   if (query.port) params.set('port', String(query.port))
   if (query.proto) params.set('proto', query.proto)
+  if (query.app_protocol) params.set('app_protocol', query.app_protocol)
   if (query.limit) params.set('limit', String(query.limit))
   if (query.cursor) params.set('cursor', query.cursor)
   setSearchParams(params)
 }
 
-function parseQuickWindow(value: string | null): QuickWindow | undefined {
-  if (value === '10m' || value === '1h' || value === '24h') {
+function parseQuickWindow(value: string | null): ReportWindow | undefined {
+  if (value === '10m' || value === '1h' || value === '24h' || value === '7d' || value === '30d') {
     return value
   }
   return undefined

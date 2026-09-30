@@ -306,7 +306,7 @@ func TestEvaluateShadowWarnsWithoutBlockingForRecoveredCollectionNoise(t *testin
 		writeEvaluationRun(t, dir, fmt.Sprintf("run-%03d", run), finished, []risk.Snapshot{{
 			IP: ip, SubjectType: "ip", SubjectID: ip, Level: "normal", UpdatedAt: finished.Format(time.RFC3339Nano),
 		}}, nil)
-		labels = append(labels, store.Label{LabelID: fmt.Sprintf("label-%03d", run), TargetType: "risk_snapshot", TargetID: fmt.Sprintf("run-%03d", run), Label: "benign", CreatedAt: finished.Add(time.Second).Format(time.RFC3339Nano)})
+		labels = append(labels, store.Label{LabelID: fmt.Sprintf("label-%03d", run), TargetType: "risk_snapshot", TargetID: SampleID(Sample{Date: finished.Format("2006-01-02"), SourceRunID: fmt.Sprintf("run-%03d", run), SubjectType: "ip", SubjectID: ip, SnapshotTime: finished.Format(time.RFC3339Nano)}), Label: "benign", CreatedAt: finished.Add(time.Second).Format(time.RFC3339Nano)})
 	}
 	writeLabels(t, filepath.Join(dir, "labels.jsonl"), labels)
 	firstSummaryPath := filepath.Join(dir, "runs", "run-000", "run-summary.json")
