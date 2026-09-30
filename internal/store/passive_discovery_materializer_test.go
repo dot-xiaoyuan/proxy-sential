@@ -27,6 +27,19 @@ func TestPassiveDiscoveryBatchFitsLeaseBudget(t *testing.T) {
 	}
 }
 
+func TestPassiveDiscoveryBatchUsesSingleTransaction(t *testing.T) {
+	source, err := os.ReadFile("passive_discovery_materializer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := string(source)
+	for _, fragment := range []string{"processPassiveDiscoveryBatch", "BeginTx(ctx, nil)", "materializeMDNS(ctx, tx", "insertPassiveObservation(ctx, tx", "tx.Commit()"} {
+		if !strings.Contains(code, fragment) {
+			t.Fatalf("passive discovery batch transaction omitted %q", fragment)
+		}
+	}
+}
+
 func TestPassiveDiscoveryBindingLookupIsIndexed(t *testing.T) {
 	migration, err := os.ReadFile("../../migrations/postgres/072_passive_discovery_binding_lookup.sql")
 	if err != nil {

@@ -48,6 +48,12 @@ type passiveDiscoveryBatchStats struct {
 	Reasons   map[string]int
 }
 
+type passiveDiscoveryDB interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 // A passive event can fan out into several PostgreSQL lookups and idempotent
 // writes (notably mDNS). Keep each claim comfortably inside the 90-second
 // lease and 45-second work budget so a busy sensor can advance its cursor
@@ -364,12 +370,12 @@ func passivePTRObservation(event normalized.Event, sensor, iface, recordName, in
 	return observation, true
 }
 
-func (s *DBStore) passivePTRAddressObservations(ctx context.Context, event normalized.Event, sensor, iface, host, address string, at, addressUntil time.Time, scope passiveDiscoveryScope) ([]discovery.Observation, error) {
+func (s *DBStore) passivePTRAddressObservations(ctx context.Context, db passiveDiscoveryDB, event normalized.Event, sensor, iface, host, address string, at, addressUntil time.Time, scope passiveDiscoveryScope) ([]discovery.Observation, error) {
 	token := passiveHostToken(host)
 	if token == "" || !scope.allows(address) {
 		return nil, nil
 	}
-	rows, err := s.pg.db.QueryContext(ctx, `SELECT record_name,record_value,least(valid_until,$4) FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_type='PTR' AND valid_until>$3 AND lower(record_value) LIKE $5`, sensor, iface, at, addressUntil, "%["+token+"]%")
+	rows, err := db.QueryContext(ctx, `SELECT record_name,record_value,least(valid_until,$4) FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_type='PTR' AND valid_until>$3 AND lower(record_value) LIKE $5`, sensor, iface, at, addressUntil, "%["+token+"]%")
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +401,7 @@ func (s *DBStore) passivePTRAddressObservations(ctx context.Context, event norma
 	return result, rows.Err()
 }
 
-func (s *DBStore) materializeMDNS(ctx context.Context, event normalized.Event, scope passiveDiscoveryScope) ([]discovery.Observation, string, error) {
+func (s *DBStore) materializeMDNS(ctx context.Context, db passiveDiscoveryDB, event normalized.Event, scope passiveDiscoveryScope) ([]discovery.Observation, string, error) {
 	if passiveString(event.Payload, "is_response") != "true" {
 		return nil, "mdns_query", nil
 	}
@@ -423,19 +429,19 @@ func (s *DBStore) materializeMDNS(ctx context.Context, event normalized.Event, s
 	validUntil := at.Add(time.Duration(ttl) * time.Second)
 	raw, _ := json.Marshal(event.Payload)
 	if ttl == 0 {
-		_, err = s.pg.db.ExecContext(ctx, `DELETE FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_name=$3 AND record_type=$4 AND record_value=$5`, sensor, iface, recordName, recordType, value)
+		_, err = db.ExecContext(ctx, `DELETE FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_name=$3 AND record_type=$4 AND record_value=$5`, sensor, iface, recordName, recordType, value)
 		if err == nil {
 			switch recordType {
 			case "A", "AAAA":
-				_, err = s.pg.db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->>'ip'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, value)
+				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->>'ip'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, value)
 			case "SRV", "TXT":
-				_, err = s.pg.db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, recordName)
+				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, recordName)
 			case "PTR":
-				_, err = s.pg.db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, value)
+				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, value)
 			}
 		}
 	} else {
-		_, err = s.pg.db.ExecContext(ctx, `INSERT INTO passive_discovery_mdns_records(sensor_id,interface_name,record_name,record_type,record_value,observed_at,valid_until,event_id,payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(sensor_id,interface_name,record_name,record_type,record_value) DO UPDATE SET observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,event_id=EXCLUDED.event_id,payload=EXCLUDED.payload WHERE EXCLUDED.observed_at>=passive_discovery_mdns_records.observed_at`, sensor, iface, recordName, recordType, value, at, validUntil, event.EventID, raw)
+		_, err = db.ExecContext(ctx, `INSERT INTO passive_discovery_mdns_records(sensor_id,interface_name,record_name,record_type,record_value,observed_at,valid_until,event_id,payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(sensor_id,interface_name,record_name,record_type,record_value) DO UPDATE SET observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,event_id=EXCLUDED.event_id,payload=EXCLUDED.payload WHERE EXCLUDED.observed_at>=passive_discovery_mdns_records.observed_at`, sensor, iface, recordName, recordType, value, at, validUntil, event.EventID, raw)
 	}
 	if err != nil || ttl == 0 {
 		return nil, "", err
@@ -448,13 +454,13 @@ func (s *DBStore) materializeMDNS(ctx context.Context, event normalized.Event, s
 		}
 	}
 	if recordType == "A" || recordType == "AAAA" {
-		linked, linkErr := s.passivePTRAddressObservations(ctx, event, sensor, iface, recordName, value, at, validUntil, scope)
+		linked, linkErr := s.passivePTRAddressObservations(ctx, db, event, sensor, iface, recordName, value, at, validUntil, scope)
 		if linkErr != nil {
 			return nil, "", linkErr
 		}
 		result = append(result, linked...)
 	}
-	rows, err := s.pg.db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at),srv.event_id
+	rows, err := db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at),srv.event_id
 FROM passive_discovery_mdns_records srv
 JOIN passive_discovery_mdns_records addr ON addr.sensor_id=srv.sensor_id AND addr.interface_name=srv.interface_name AND addr.record_name=srv.record_value AND addr.record_type IN ('A','AAAA') AND addr.valid_until>$3
 LEFT JOIN passive_discovery_mdns_records txt ON txt.sensor_id=srv.sensor_id AND txt.interface_name=srv.interface_name AND txt.record_name=srv.record_name AND txt.record_type='TXT' AND txt.valid_until>$3
@@ -494,7 +500,7 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 	return result, "", rows.Err()
 }
 
-func (s *DBStore) insertPassiveObservation(ctx context.Context, o discovery.Observation) error {
+func (s *DBStore) insertPassiveObservation(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) error {
 	if o.ID == "" || o.ObservedAt.IsZero() {
 		return nil
 	}
@@ -505,7 +511,7 @@ func (s *DBStore) insertPassiveObservation(ctx context.Context, o discovery.Obse
 	// event-time DHCP/ARP/NDP binding; never manufacture a terminal identity.
 	if o.MAC == "" && o.IP != "" {
 		var mac string
-		err := s.pg.db.QueryRowContext(ctx, `SELECT lower(data->>'mac')
+		err := db.QueryRowContext(ctx, `SELECT lower(data->>'mac')
 FROM discovery_observations
 WHERE data->>'node'=$1 AND data->>'ip'=$2 AND coalesce(data->>'mac','')<>''
   AND origin IN ('dhcp','arp','ndp') AND observed_at<=$3 AND valid_until>$3
@@ -517,13 +523,13 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 		}
 	}
 	raw, _ := json.Marshal(o)
-	if _, err := s.pg.db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data WHERE EXCLUDED.observed_at>=discovery_observations.observed_at`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data WHERE EXCLUDED.observed_at>=discovery_observations.observed_at`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw); err != nil {
 		return err
 	}
-	return s.linkPassiveObservation(ctx, o)
+	return s.linkPassiveObservation(ctx, db, o)
 }
 
-func (s *DBStore) linkPassiveObservation(ctx context.Context, o discovery.Observation) error {
+func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) error {
 	mac := validPassiveMAC(o.MAC)
 	if mac == "" {
 		return nil
@@ -533,12 +539,12 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, o discovery.Observ
 	}
 	endpointID := "mac:" + mac
 	var exists bool
-	if err := s.pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_entities WHERE endpoint_id=$1 AND entity_role='endpoint')`, endpointID).Scan(&exists); err != nil || !exists {
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_entities WHERE endpoint_id=$1 AND entity_role='endpoint')`, endpointID).Scan(&exists); err != nil || !exists {
 		return err
 	}
 	if o.IP != "" {
 		var leaseEndpoint string
-		err := s.pg.db.QueryRowContext(ctx, `SELECT endpoint_id FROM device_address_leases WHERE sensor_id=$1 AND campus_id=$2 AND ip=$3::inet AND action='ack' AND observed_at<=$4 AND valid_until>$4 ORDER BY observed_at DESC,event_id DESC LIMIT 1`, o.Node, passiveString(o.Evidence.Subject, "campus_id"), o.IP, o.ObservedAt).Scan(&leaseEndpoint)
+		err := db.QueryRowContext(ctx, `SELECT endpoint_id FROM device_address_leases WHERE sensor_id=$1 AND campus_id=$2 AND ip=$3::inet AND action='ack' AND observed_at<=$4 AND valid_until>$4 ORDER BY observed_at DESC,event_id DESC LIMIT 1`, o.Node, passiveString(o.Evidence.Subject, "campus_id"), o.IP, o.ObservedAt).Scan(&leaseEndpoint)
 		if err == sql.ErrNoRows || leaseEndpoint != endpointID {
 			return nil
 		}
@@ -547,20 +553,25 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, o discovery.Observ
 		}
 	}
 	basis, _ := json.Marshal(map[string]any{"kind": "passive_event_time_identity", "sensor": o.Node, "ip": o.IP, "mac": mac})
-	_, err := s.pg.db.ExecContext(ctx, `INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis) VALUES($1,$2,$3,$4) ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis`, o.ID, endpointID, o.ValidUntil, basis)
+	_, err := db.ExecContext(ctx, `INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis) VALUES($1,$2,$3,$4) ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis`, o.ID, endpointID, o.ValidUntil, basis)
 	return err
 }
 
 func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []normalized.Event, scope passiveDiscoveryScope) (passiveDiscoveryBatchStats, error) {
 	stats := passiveDiscoveryBatchStats{Protocols: map[string]int{}, Reasons: map[string]int{}}
+	tx, err := s.pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return stats, err
+	}
+	defer tx.Rollback()
 	for _, event := range events {
 		stats.Processed++
 		stats.Protocols[event.SourceEventType]++
 		var observations []discovery.Observation
 		var reason string
-		var err error
+		var eventErr error
 		if event.SourceEventType == "mdns" {
-			observations, reason, err = s.materializeMDNS(ctx, event, scope)
+			observations, reason, eventErr = s.materializeMDNS(ctx, tx, event, scope)
 		} else {
 			var observation discovery.Observation
 			observation, reason = passiveObservation(event, scope)
@@ -568,8 +579,8 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 				observations = []discovery.Observation{observation}
 			}
 		}
-		if err != nil {
-			return stats, err
+		if eventErr != nil {
+			return stats, eventErr
 		}
 		if reason != "" {
 			stats.Skipped++
@@ -577,13 +588,13 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 			continue
 		}
 		for _, observation := range observations {
-			if err = s.insertPassiveObservation(ctx, observation); err != nil {
-				return stats, err
+			if eventErr = s.insertPassiveObservation(ctx, tx, observation); eventErr != nil {
+				return stats, eventErr
 			}
 			stats.Emitted++
 		}
 	}
-	return stats, nil
+	return stats, tx.Commit()
 }
 
 func (s *DBStore) finishPassiveDiscovery(ctx context.Context, sensorID string, cursor passiveDiscoveryCursor, stats passiveDiscoveryBatchStats, runErr error) error {
