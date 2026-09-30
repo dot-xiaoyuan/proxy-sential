@@ -69,6 +69,7 @@ type Server struct {
 	sharedReviews           *sharedReviewRuntime
 
 	actionDeliveries   *actionDeliveryQueue
+	discoveryDevices   *discovery.DeviceCache
 	statistics         *statisticsCache
 	tasks              *taskRuntime
 	nativeActions      map[string]NativeActionRuntime
@@ -358,6 +359,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 	server := &Server{
 		managedIdentityFailures: &managedIdentityFailureCache{},
 		sharedReviews:           &sharedReviewRuntime{},
+		discoveryDevices:        discovery.NewDeviceCache(15 * time.Second),
 		statistics:              newStatisticsCache(),
 		tasks:                   &taskRuntime{dir: filepath.Join(exportDir, "task-input"), wake: make(chan struct{}, 2)},
 		nativeActions:           opts.NativeActions,

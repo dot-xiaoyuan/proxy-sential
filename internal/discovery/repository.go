@@ -9,13 +9,57 @@ import (
 	"proxy-sentinel/internal/normalized"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Repository struct {
-	DB      *sql.DB
-	Archive func(context.Context, []normalized.Event) error
+	DB          *sql.DB
+	Archive     func(context.Context, []normalized.Event) error
+	DeviceCache *DeviceCache
 }
+
+type deviceCacheEntry struct {
+	expires time.Time
+	items   []DeviceView
+}
+
+type DeviceCache struct {
+	mu      sync.Mutex
+	ttl     time.Duration
+	entries map[string]deviceCacheEntry
+}
+
+func NewDeviceCache(ttl time.Duration) *DeviceCache {
+	if ttl <= 0 {
+		ttl = 15 * time.Second
+	}
+	return &DeviceCache{ttl: ttl, entries: map[string]deviceCacheEntry{}}
+}
+
+func (c *DeviceCache) load(key string, loader func() ([]DeviceView, error)) ([]DeviceView, error) {
+	if c == nil {
+		return loader()
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if entry, ok := c.entries[key]; ok && entry.expires.After(now) {
+		return append([]DeviceView(nil), entry.items...), nil
+	}
+	items, err := loader()
+	if err != nil {
+		return nil, err
+	}
+	for existingKey, entry := range c.entries {
+		if !entry.expires.After(now) {
+			delete(c.entries, existingKey)
+		}
+	}
+	c.entries[key] = deviceCacheEntry{expires: now.Add(c.ttl), items: append([]DeviceView(nil), items...)}
+	return append([]DeviceView(nil), items...), nil
+}
+
 type Task struct {
 	ID              string          `json:"id"`
 	SourceID        string          `json:"source_id"`
@@ -507,12 +551,6 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 	if query.Offset < 0 {
 		query.Offset = 0
 	}
-	tx, err := r.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
 	origins := []string{}
 	switch query.Mode {
 	case "passive":
@@ -525,63 +563,11 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 	default:
 		return nil, fmt.Errorf("invalid discovery mode %q", query.Mode)
 	}
-	originClause := ""
-	args := []any{time.Now().Add(-query.Window)}
-	if len(origins) > 0 {
-		parts := make([]string, len(origins))
-		for i, origin := range origins {
-			args = append(args, origin)
-			parts[i] = fmt.Sprintf("$%d", len(args))
-		}
-		originClause = " AND origin IN (" + strings.Join(parts, ",") + ")"
-	}
-	// Keep observations seen inside the selected window even when their TTL has
-	// expired. `current` below communicates protocol validity without claiming
-	// that a device is online.
-	statement := `WITH latest AS (
- SELECT DISTINCT ON (device_key,source_id,origin,coalesce(data->>'ip',''),coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''))
-   id,device_key,observed_at,valid_until,withdrawn,data
- FROM discovery_observations
- WHERE observed_at<=now() AND observed_at>=$1` + originClause + `
- ORDER BY device_key,source_id,origin,coalesce(data->>'ip',''),coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC)
-SELECT l.device_key,l.data,coalesce(i.endpoint_id,dl.endpoint_id,''),
-       coalesce(nullif(s.role,''),p.device_type,''),
-       CASE WHEN coalesce(s.role,'')<>'' THEN s.confidence ELSE coalesce(p.device_type_confidence,0) END,
-       CASE WHEN coalesce(s.role,'')<>'' THEN s.conflict ELSE coalesce(p.recognition_conflict,false) END
-FROM latest l
-LEFT JOIN discovery_identity_links i ON i.observation_id=l.id
-LEFT JOIN device_address_leases dl ON dl.event_id=l.id AND dl.action='ack'
-  AND dl.sensor_id=coalesce(l.data->>'node','') AND host(dl.ip)=coalesce(l.data->>'ip','')
-  AND dl.campus_id=coalesce(l.data->'evidence'->'subject'->>'campus_id','')
-  AND dl.endpoint_id='mac:'||lower(coalesce(l.data->>'mac',''))
-LEFT JOIN endpoint_recognition_summary s ON s.endpoint_id=coalesce(i.endpoint_id,dl.endpoint_id)
-LEFT JOIN endpoint_device_profiles p ON p.endpoint_id=coalesce(i.endpoint_id,dl.endpoint_id)
-ORDER BY l.observed_at DESC,l.device_key`
-	rows, err := tx.QueryContext(ctx, statement, args...)
+	cacheKey := query.Mode + ":" + query.Window.String()
+	items, err := r.DeviceCache.load(cacheKey, func() ([]DeviceView, error) {
+		return r.loadDeviceViews(ctx, query.Window, origins)
+	})
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	deviceRows := []deviceObservationRow{}
-	for rows.Next() {
-		var id, endpointID, profileDeviceType string
-		var profileTypeConfidence float64
-		var profileConflict bool
-		var b []byte
-		if err = rows.Scan(&id, &b, &endpointID, &profileDeviceType, &profileTypeConfidence, &profileConflict); err != nil {
-			return nil, err
-		}
-		var observation Observation
-		if err = json.Unmarshal(b, &observation); err != nil {
-			return nil, err
-		}
-		deviceRows = append(deviceRows, deviceObservationRow{DeviceKey: id, EndpointID: endpointID, ProfileDeviceType: profileDeviceType, ProfileTypeConfidence: profileTypeConfidence, ProfileConflict: profileConflict, Observation: observation})
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	items := aggregateDeviceRows(deviceRows, time.Now())
-	if err = attachHistoricalAddresses(ctx, tx, items); err != nil {
 		return nil, err
 	}
 	needle := strings.ToLower(strings.TrimSpace(query.Search))
@@ -634,7 +620,80 @@ ORDER BY l.observed_at DESC,l.device_key`
 			linkedEndpoints++
 		}
 	}
-	return map[string]any{"items": items[start:end], "total": total, "facets": facets, "service_devices": serviceDevices, "linked_endpoints": linkedEndpoints, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, tx.Commit()
+	return map[string]any{"items": items[start:end], "total": total, "facets": facets, "service_devices": serviceDevices, "linked_endpoints": linkedEndpoints, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, nil
+}
+
+func (r Repository) loadDeviceViews(ctx context.Context, window time.Duration, origins []string) ([]DeviceView, error) {
+	tx, err := r.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	originClause := ""
+	args := []any{time.Now().Add(-window)}
+	if len(origins) > 0 {
+		parts := make([]string, len(origins))
+		for i, origin := range origins {
+			args = append(args, origin)
+			parts[i] = fmt.Sprintf("$%d", len(args))
+		}
+		originClause = " AND origin IN (" + strings.Join(parts, ",") + ")"
+	}
+	// Keep observations seen inside the selected window even when their TTL has
+	// expired. `current` communicates protocol validity without claiming online.
+	statement := `WITH latest AS (
+ SELECT DISTINCT ON (device_key,source_id,origin,coalesce(data->>'ip',''),coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''))
+   id,device_key,observed_at,valid_until,withdrawn,data
+ FROM discovery_observations
+ WHERE observed_at<=now() AND observed_at>=$1` + originClause + `
+ ORDER BY device_key,source_id,origin,coalesce(data->>'ip',''),coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC)
+SELECT l.device_key,l.data,coalesce(i.endpoint_id,dl.endpoint_id,''),
+       coalesce(nullif(s.role,''),p.device_type,''),
+       CASE WHEN coalesce(s.role,'')<>'' THEN s.confidence ELSE coalesce(p.device_type_confidence,0) END,
+       CASE WHEN coalesce(s.role,'')<>'' THEN s.conflict ELSE coalesce(p.recognition_conflict,false) END
+FROM latest l
+LEFT JOIN discovery_identity_links i ON i.observation_id=l.id
+LEFT JOIN device_address_leases dl ON dl.event_id=l.id AND dl.action='ack'
+  AND dl.sensor_id=coalesce(l.data->>'node','') AND host(dl.ip)=coalesce(l.data->>'ip','')
+  AND dl.campus_id=coalesce(l.data->'evidence'->'subject'->>'campus_id','')
+  AND dl.endpoint_id='mac:'||lower(coalesce(l.data->>'mac',''))
+LEFT JOIN endpoint_recognition_summary s ON s.endpoint_id=coalesce(i.endpoint_id,dl.endpoint_id)
+LEFT JOIN endpoint_device_profiles p ON p.endpoint_id=coalesce(i.endpoint_id,dl.endpoint_id)
+ORDER BY l.observed_at DESC,l.device_key`
+	rows, err := tx.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, err
+	}
+	deviceRows := []deviceObservationRow{}
+	for rows.Next() {
+		var id, endpointID, profileDeviceType string
+		var profileTypeConfidence float64
+		var profileConflict bool
+		var b []byte
+		if err = rows.Scan(&id, &b, &endpointID, &profileDeviceType, &profileTypeConfidence, &profileConflict); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		var observation Observation
+		if err = json.Unmarshal(b, &observation); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		deviceRows = append(deviceRows, deviceObservationRow{DeviceKey: id, EndpointID: endpointID, ProfileDeviceType: profileDeviceType, ProfileTypeConfidence: profileTypeConfidence, ProfileConflict: profileConflict, Observation: observation})
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	items := aggregateDeviceRows(deviceRows, time.Now())
+	if err = attachHistoricalAddresses(ctx, tx, items); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func attachHistoricalAddresses(ctx context.Context, tx *sql.Tx, items []DeviceView) error {

@@ -26,7 +26,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	repo := discovery.Repository{DB: s.operations.db}
+	repo := discovery.Repository{DB: s.operations.db, DeviceCache: s.discoveryDevices}
 	limit, offset := 50, 0
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, e := strconv.Atoi(v)

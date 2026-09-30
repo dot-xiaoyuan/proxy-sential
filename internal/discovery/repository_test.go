@@ -138,6 +138,27 @@ func TestPassiveDiscoveryLatestReadHasMatchingIndex(t *testing.T) {
 	}
 }
 
+func TestDeviceCacheReusesOneSnapshotAcrossCategoryQueries(t *testing.T) {
+	cache := NewDeviceCache(time.Minute)
+	loads := 0
+	load := func() ([]DeviceView, error) {
+		loads++
+		return []DeviceView{{ID: "phone", Category: "mobile"}}, nil
+	}
+	first, err := cache.load("passive:24h", load)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first[0].Category = "changed-by-caller"
+	second, err := cache.load("passive:24h", load)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loads != 1 || second[0].Category != "mobile" {
+		t.Fatalf("cache did not preserve one immutable snapshot: loads=%d items=%+v", loads, second)
+	}
+}
+
 func TestAggregateDeviceRowsDescribesLinkLayerIdentity(t *testing.T) {
 	at := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	row := deviceObservationRow{DeviceKey: "client", Observation: Observation{ID: "client", SourceID: "passive:office-30:ens1f1", Node: "office-30", Site: "office-30", Domain: "ens1f1", MAC: "00:11:22:33:44:66", Origin: "ieee1905_client", Confidence: "confirmed", ObservedAt: at, ValidUntil: at.Add(time.Hour)}}
