@@ -27,6 +27,19 @@ func TestPassiveDiscoveryBatchFitsLeaseBudget(t *testing.T) {
 	}
 }
 
+func TestPassiveDiscoveryBindingLookupIsIndexed(t *testing.T) {
+	migration, err := os.ReadFile("../../migrations/postgres/072_passive_discovery_binding_lookup.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(migration)
+	for _, fragment := range []string{"discovery_observation_binding_lookup", "(data->>'node')", "(data->>'ip')", "origin IN ('dhcp','arp','ndp')"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("binding lookup migration omitted %q", fragment)
+		}
+	}
+}
+
 func passiveTestEvent(kind, ip, mac string, payload map[string]any) normalized.Event {
 	return normalized.Event{
 		EventID:         kind + "-event",
