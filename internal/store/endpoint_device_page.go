@@ -90,8 +90,13 @@ func (s *PostgresStore) endpointDevicePage(ctx context.Context, ids []string, ca
 		}
 	}
 	evidence := make(map[string][]fingerprint.DomainEvidence, len(ids))
+	cachedRecognition := make(map[string]EndpointDeviceInventory, len(catalog))
 	for _, cached := range catalog {
+		if cached.FingerprintVersion != fingerprint.Default().Version() {
+			continue
+		}
 		evidence[cached.EndpointID] = cached.domainEvidence
+		cachedRecognition[cached.EndpointID] = cached
 	}
 	missing := []string{}
 	freshIDs := map[string]bool{}
@@ -111,19 +116,54 @@ func (s *PostgresStore) endpointDevicePage(ctx context.Context, ids []string, ca
 		}
 	}
 	snapshot := ctx.Value(domainReadKey{}).(domainReadSnapshot)
+	passiveHints, err := s.PassiveDiscoveryRecognitionHints(ctx, ids, snapshot.now)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]EndpointDeviceInventory, 0, len(ids))
 	for _, id := range ids {
 		profile, ok := BuildEndpointIdentityProfile(state, id)
 		if !ok {
 			continue
 		}
+		profile.DiscoveryRecognitionHints = passiveHints[id]
 		item := BuildEndpointDeviceInventory(profile)
-		recognitionAt := asOf
-		if freshIDs[id] {
-			recognitionAt = snapshot.now
+		if cached, found := cachedRecognition[id]; found {
+			applyMaterializedRecognition(&item, cached)
+		} else {
+			recognitionAt := asOf
+			if freshIDs[id] {
+				recognitionAt = snapshot.now
+			}
+			applyDomainRecognition(&item, evidence[id], snapshot.version, recognitionAt, snapshot.enabled)
 		}
-		applyDomainRecognition(&item, evidence[id], snapshot.version, recognitionAt, snapshot.enabled)
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+func applyMaterializedRecognition(item *EndpointDeviceInventory, cached EndpointDeviceInventory) {
+	item.Vendor = cached.Vendor
+	item.Brand = cached.Brand
+	item.Model = cached.Model
+	item.DeviceType = cached.DeviceType
+	item.OSFamily = cached.OSFamily
+	item.RecognitionConfidence = cached.RecognitionConfidence
+	item.VendorConfidence = cached.VendorConfidence
+	item.BrandConfidence = cached.BrandConfidence
+	item.ModelConfidence = cached.ModelConfidence
+	item.DeviceTypeConfidence = cached.DeviceTypeConfidence
+	item.OSFamilyConfidence = cached.OSFamilyConfidence
+	item.RecognitionSource = cached.RecognitionSource
+	item.FingerprintVersion = cached.FingerprintVersion
+	item.RandomizedMAC = cached.RandomizedMAC
+	item.RecognitionConflict = cached.RecognitionConflict
+	item.RecognitionEvidence = append([]string{}, cached.RecognitionEvidence...)
+	item.BrandReference = cached.BrandReference
+	item.BrandInference = cached.BrandInference
+	item.EcosystemHint = cached.EcosystemHint
+	item.EcosystemConfidence = cached.EcosystemConfidence
+	item.EcosystemConflict = cached.EcosystemConflict
+	item.EcosystemEvidenceCount = cached.EcosystemEvidenceCount
+	item.Summary = endpointDeviceSummary(*item)
 }

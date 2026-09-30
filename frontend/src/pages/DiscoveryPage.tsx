@@ -25,19 +25,20 @@ const values=<T,>(items:T[]|null|undefined):T[]=>items??[]
 export function DiscoveryPage(){
  const session=useSession();const manage=can(session.data,'integrations:write')
  const client=useQueryClient();const [form]=Form.useForm();const [editing,setEditing]=useState<Source|null>();const [page,setPage]=useState(1);const [passivePage,setPassivePage]=useState(1);const [search,setSearch]=useState('');const [category,setCategory]=useState('');const [capability,setCapability]=useState('');const [detail,setDetail]=useState<Device>();const [saving,setSaving]=useState(false)
- const options={refetchInterval:()=>document.visibilityState==='visible'?15000:false,refetchIntervalInBackground:false}
- const sources=useQuery({queryKey:['discovery','sources'],queryFn:()=>request<{items:Source[]}>('/discovery/sources'),...options})
- const devices=useQuery({queryKey:['discovery','devices','infrastructure',page],queryFn:()=>request<{items:Device[];total:number}>(`/discovery/devices?mode=infrastructure&window=24h&limit=20&offset=${(page-1)*20}`),...options})
+ const snapshotOptions={staleTime:5*60*1000,refetchOnWindowFocus:false}
+ const monitorOptions={refetchInterval:()=>document.visibilityState==='visible'?15000:false,refetchIntervalInBackground:false}
+ const sources=useQuery({queryKey:['discovery','sources'],queryFn:()=>request<{items:Source[]}>('/discovery/sources'),...snapshotOptions})
+ const devices=useQuery({queryKey:['discovery','devices','infrastructure',page],queryFn:()=>request<{items:Device[];total:number}>(`/discovery/devices?mode=infrastructure&window=24h&limit=20&offset=${(page-1)*20}`),...snapshotOptions})
  const passiveParams=new URLSearchParams({mode:'passive',window:'24h',limit:'20',offset:String((passivePage-1)*20)});if(search)passiveParams.set('search',search);if(category)passiveParams.set('category',category);if(capability)passiveParams.set('capability',capability)
- const passiveDevices=useQuery({queryKey:['discovery','devices','passive',passivePage,search,category,capability],queryFn:()=>request<DevicePage>(`/discovery/devices?${passiveParams}`),...options})
- const tasks=useQuery({queryKey:['discovery','tasks'],queryFn:()=>request<{items:Task[]}>('/discovery/tasks'),...options})
+ const passiveDevices=useQuery({queryKey:['discovery','devices','passive',passivePage,search,category,capability],queryFn:()=>request<DevicePage>(`/discovery/devices?${passiveParams}`),...snapshotOptions})
+ const tasks=useQuery({queryKey:['discovery','tasks'],queryFn:()=>request<{items:Task[]}>('/discovery/tasks'),...monitorOptions})
  const [scanForm]=Form.useForm();const [scanOpen,setScanOpen]=useState(false);const[scanEditing,setScanEditing]=useState<ScanProfile>();const [preview,setPreview]=useState<number>();
- const profiles=useQuery({queryKey:['discovery','profiles'],queryFn:()=>request<{items:ScanProfile[]}>('/discovery/scan-profiles'),...options})
+ const profiles=useQuery({queryKey:['discovery','profiles'],queryFn:()=>request<{items:ScanProfile[]}>('/discovery/scan-profiles'),...snapshotOptions})
  const scanConfig=(v:Record<string,unknown>)=>({allow:String(v.allow??'').split(/[,\s]+/).filter(Boolean),exclude:String(v.exclude??'').split(/[,\s]+/).filter(Boolean),addresses:String(v.addresses??'').split(/[,\s]+/).filter(Boolean),interface:v.interface??'',protocols:v.protocols??['icmp'],sensitive:v.sensitive??false,interval_seconds:Number(v.interval_seconds??86400)})
  async function previewScan(){try{const v=await scanForm.validateFields();const result=await request<{total:number}>('/discovery/preview',{method:'POST',body:JSON.stringify(scanConfig(v))});setPreview(result.total)}catch(e){void message.error(String(e))}}
  async function saveScan(){try{const v=await scanForm.validateFields();await request('/discovery/scan-profiles',{method:'POST',body:JSON.stringify({id:v.id,node:v.node,site:v.site,domain:v.domain,config:scanConfig(v),version:scanEditing?.version??0})});setScanOpen(false);void refresh()}catch(e){void message.error(String(e))}}
- const summary=useQuery({queryKey:['discovery','summary'],queryFn:()=>request<{window:string;infrastructure:number;active_responses:number;pending_association:number;passive_devices:number;service_devices:number;linked_endpoints:number;last_materialized_at?:string;materializer_status?:string;materializer_error?:string}>('/discovery/summary'),...options})
- const nodes=useQuery({queryKey:['discovery','nodes'],queryFn:()=>request<{items:{node:string;available:boolean}[]}>('/discovery/nodes'),...options})
+ const summary=useQuery({queryKey:['discovery','summary'],queryFn:()=>request<{window:string;infrastructure:number;active_responses:number;pending_association:number;passive_devices:number;service_devices:number;linked_endpoints:number;last_materialized_at?:string;materializer_status?:string;materializer_error?:string}>('/discovery/summary'),...snapshotOptions})
+ const nodes=useQuery({queryKey:['discovery','nodes'],queryFn:()=>request<{items:{node:string;available:boolean}[]}>('/discovery/nodes'),...monitorOptions})
  const refresh=()=>client.invalidateQueries({queryKey:['discovery']})
  async function action(path:string){try{await request(path,{method:'POST',body:'{}'});void refresh()}catch(e){void message.error(String(e))}}
  function edit(s:Source|null){setEditing(s);form.resetFields();form.setFieldsValue(s??{snmp_version:'3',interval_seconds:300,enabled:false})}

@@ -416,16 +416,22 @@ func (s *PostgresStore) GetEndpointIdentity(ctx context.Context, endpointID stri
 	state.AccessHistory = accessHistory
 	profile, ok := BuildEndpointIdentityProfile(state, endpointID)
 	if ok {
+		now := time.Now().UTC()
+		names, nameErr := s.DeviceNames(ctx, []string{endpointID}, now)
+		if nameErr != nil {
+			return profile, false, nameErr
+		}
+		hints, hintErr := s.PassiveDiscoveryRecognitionHints(ctx, []string{endpointID}, now)
+		if hintErr != nil {
+			return profile, false, hintErr
+		}
+		profile.DeviceName = names[endpointID]
+		profile.DiscoveryRecognitionHints = hints[endpointID]
 		item := BuildEndpointDeviceInventory(profile)
 		if err := s.enrichDomainRecognition(ctx, &item); err != nil {
 			return profile, false, err
 		}
-		names, nameErr := s.DeviceNames(ctx, []string{endpointID}, time.Now().UTC())
-		if nameErr != nil {
-			return profile, false, nameErr
-		}
-		item.DeviceName = names[endpointID]
-		profile.DeviceName = item.DeviceName
+		item.DeviceName = profile.DeviceName
 		profile.Recognition = &item
 		profile.BrandInference = item.BrandInference
 		profile.EcosystemEvidence, err = s.ListEndpointDomainEvidence(ctx, endpointID, 200)

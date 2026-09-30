@@ -24,7 +24,7 @@ var embeddedBrandAliases []byte
 //go:embed data/domain_signatures.json
 var embeddedDomainSignatures []byte
 
-const EmbeddedVersion = "embedded-2026-08"
+const EmbeddedVersion = "embedded-2026-09"
 
 var macHostnameClue = regexp.MustCompile(`(?i)(^|[-_. ])(mac(book|intosh)?|imac)($|[-_. 0-9])`)
 

@@ -1,6 +1,8 @@
 [
   {"pattern":"iPhone","brand":"Apple","device_type":"mobile","os_family":"iOS","confidence":0.95},
   {"pattern":"iPad","brand":"Apple","device_type":"tablet","os_family":"iPadOS","confidence":0.95},
+  {"pattern":"Mac[ _-]?mini[ _-]?M4","brand":"Apple","model":"Mac mini M4","device_type":"desktop","os_family":"macOS","confidence":0.96},
+  {"pattern":"Mac[ _-]?mini","brand":"Apple","model":"Mac mini","device_type":"desktop","os_family":"macOS","confidence":0.95},
   {"pattern":"Macintosh|Mac OS X","brand":"Apple","device_type":"desktop","os_family":"macOS","confidence":0.9},
   {"pattern":"MI[ -]?9SE|MI9SE","brand":"Xiaomi","model":"Mi 9 SE","device_type":"mobile","os_family":"Android","confidence":0.9},
   {"pattern":"Android","device_type":"mobile","os_family":"Android","confidence":0.82},
