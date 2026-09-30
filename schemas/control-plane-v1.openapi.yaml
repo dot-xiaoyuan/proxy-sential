@@ -752,6 +752,7 @@ paths:
         - { name: ap, in: query, schema: { type: string } }
         - { name: nas_ip, in: query, schema: { type: string } }
         - { name: window, in: query, schema: { type: string, enum: [24h, 7d] } }
+        - { name: include_router_observations, in: query, description: Include current likely or confirmed router observations in the operational queue., schema: { type: boolean, default: true } }
       responses:
         "200":
           description: Paginated operational risk cases.
@@ -3317,13 +3318,13 @@ components:
         identity_blocker: { type: string }
         dedupe_key: { type: string }
         status: { type: string, enum: [new, assigned, investigating, waiting_data, resolved, closed, reopened] }
-        disposition: { type: string, enum: [confirmed_proxy, confirmed_shared_access, false_positive, benign, needs_more_data] }
+        disposition: { type: string, enum: [confirmed_proxy, confirmed_shared_access, confirmed_router, false_positive, benign, needs_more_data] }
         priority: { type: string, enum: [high, medium, low] }
         assignee_id: { type: string }
         risk_score: { type: integer, minimum: 0, maximum: 100 }
         risk_confidence: { type: number, minimum: 0, maximum: 1 }
         assessment_level: { type: string }
-        risk_kind: { type: string, enum: [shared_access] }
+        risk_kind: { type: string, enum: [shared_access, router_observation] }
         due_at: { type: string, format: date-time }
         first_seen: { type: string, format: date-time }
         last_seen: { type: string, format: date-time }
@@ -4741,6 +4742,8 @@ components:
           type: string
         shared_access:
           $ref: "#/components/schemas/SharedAccessCaseEvidence"
+        router_observation:
+          $ref: "#/components/schemas/RouterAssessment"
     SharedAccessCaseEvidence:
       type: object
       required: [observation_id, generation_id, status, confidence, strong_anchor, device_lower_bound, coverage_state, window_start, window_end, signal_groups, reasons, source_event_ids, anchor_identities]

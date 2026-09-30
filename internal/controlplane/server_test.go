@@ -77,14 +77,39 @@ func TestShadowRunsEmptyDirectoryReturnsEmptyArrays(t *testing.T) {
 }
 
 func TestActiveCaseMatchesSameIPWhenEvidenceDedupeChanges(t *testing.T) {
-	item := store.ProxyReviewCase{IP: "192.0.2.10"}
-	candidate := RiskCase{SubjectType: "ip", SubjectID: item.IP, IP: item.IP, Status: "new", DedupeKey: "old-evidence"}
+	item := store.ProxyReviewCase{IP: "192.0.2.10", SharedAccess: &store.SharedAccessCaseEvidence{}}
+	candidate := RiskCase{SubjectType: "ip", SubjectID: item.IP, IP: item.IP, Status: "new", RiskKind: "shared_access", DedupeKey: "old-evidence"}
 	if !activeCaseMatches(candidate, item, "new-evidence") {
 		t.Fatal("an open IP case must be updated when its evidence-derived key changes")
 	}
+	candidate.RiskKind = "router_observation"
+	if activeCaseMatches(candidate, item, "new-evidence") {
+		t.Fatal("different risk kinds on one IP must remain separate cases")
+	}
+	candidate.RiskKind = "shared_access"
 	candidate.Status = "closed"
 	if activeCaseMatches(candidate, item, "new-evidence") {
 		t.Fatal("a closed case must not absorb a new detection episode")
+	}
+}
+
+func TestRouterAssessmentCreatesIndependentCaseEvidence(t *testing.T) {
+	assessment := evidence.RouterAssessment{
+		AssessmentID: "router-assessment-1", EndpointID: "mac:aa:bb:cc:dd:ee:ff", IP: "192.0.2.63", MAC: "aa:bb:cc:dd:ee:ff",
+		Brand: "TP-Link", Model: "Archer", Role: "router", Status: "likely", Confidence: 82, IndependentSources: 2,
+		Sources: []string{"dhcp", "tls"}, RuleVersion: "router-v3", FirstSeen: "2026-09-30T07:00:00Z", LastSeen: "2026-09-30T07:10:00Z",
+		ExpiresAt: "2026-09-30T08:10:00Z", ScoreComponents: []evidence.RouterScoreComponent{{EvidenceID: "evidence-b"}, {EvidenceID: "evidence-a"}},
+	}
+
+	item := proxyReviewCaseForRouterAssessment(assessment)
+	if item.RouterObservation == nil || item.SharedAccess != nil || item.RiskLevel != "suspicious" {
+		t.Fatalf("router evidence was not isolated from shared behavior: %#v", item)
+	}
+	if got := item.EvidenceIDs; len(got) != 2 || got[0] != "evidence-a" || got[1] != "evidence-b" {
+		t.Fatalf("router evidence identifiers not preserved and sorted: %#v", got)
+	}
+	if caseRiskKind(item) != "router_observation" || caseRulesetVersion(item) != "router-observation/router-v3" || caseRiskConfidence(item) != .82 {
+		t.Fatalf("router case metadata is inconsistent: %#v", item)
 	}
 }
 

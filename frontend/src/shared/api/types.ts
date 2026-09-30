@@ -27,13 +27,13 @@ export type RiskCase = {
   identity_conflict?: boolean
   identity_blocker?: string
   status: 'new' | 'assigned' | 'investigating' | 'waiting_data' | 'resolved' | 'closed' | 'reopened'
-  disposition?: 'confirmed_proxy' | 'confirmed_shared_access' | 'false_positive' | 'benign' | 'needs_more_data'
+  disposition?: 'confirmed_proxy' | 'confirmed_shared_access' | 'confirmed_router' | 'false_positive' | 'benign' | 'needs_more_data'
   priority: 'high' | 'medium' | 'low'
   assignee_id?: string
   risk_score: number
   risk_confidence: number
   assessment_level: string
-  risk_kind?: 'shared_access' | string
+  risk_kind?: 'shared_access' | 'router_observation' | string
   due_at: string
   first_seen: string
   last_seen: string

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"proxy-sentinel/internal/store"
@@ -26,5 +27,39 @@ func TestDatabaseCaseQueueDoesNotSynchronizeOnRead(t *testing.T) {
 	s.handleCases(w, r)
 	if w.Code != 503 {
 		t.Fatalf("want bounded database error, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestFileCaseQueueCanHideRouterObservations(t *testing.T) {
+	operations := &operationsState{doc: emptyOperationsDocument()}
+	operations.doc.Cases["shared"] = RiskCase{CaseID: "shared", RulesetVersion: "shared-behavior/v10", RiskKind: "shared_access", Status: "new", UpdatedAt: "2026-09-30T07:00:00Z"}
+	operations.doc.Cases["router"] = RiskCase{CaseID: "router", RulesetVersion: "router-observation/router-v3", RiskKind: "router_observation", Status: "new", UpdatedAt: "2026-09-30T07:01:00Z"}
+	server := &Server{operations: operations}
+
+	list := func(path string) struct {
+		Items []RiskCase `json:"items"`
+		Page  Page       `json:"page"`
+	} {
+		t.Helper()
+		response := httptest.NewRecorder()
+		server.listCases(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("list cases: %d %s", response.Code, response.Body.String())
+		}
+		var body struct {
+			Items []RiskCase `json:"items"`
+			Page  Page       `json:"page"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+
+	if body := list("/api/v1/cases"); len(body.Items) != 2 || body.Page.Total != 2 {
+		t.Fatalf("router observations should be included by default: %#v", body)
+	}
+	if body := list("/api/v1/cases?include_router_observations=false"); len(body.Items) != 1 || body.Items[0].RiskKind != "shared_access" || body.Page.Total != 1 {
+		t.Fatalf("router observation filter is inconsistent: %#v", body)
 	}
 }

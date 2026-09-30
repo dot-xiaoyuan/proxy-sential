@@ -16,13 +16,14 @@ import (
 	"sync"
 	"time"
 
+	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
 )
 
 var caseStatuses = map[string]bool{"new": true, "assigned": true, "investigating": true, "waiting_data": true, "resolved": true, "closed": true, "reopened": true}
-var caseDispositions = map[string]bool{"confirmed_proxy": true, "confirmed_shared_access": true, "false_positive": true, "benign": true, "needs_more_data": true}
+var caseDispositions = map[string]bool{"confirmed_proxy": true, "confirmed_shared_access": true, "confirmed_router": true, "false_positive": true, "benign": true, "needs_more_data": true}
 var casePriorities = map[string]bool{"high": true, "medium": true, "low": true}
 var caseStatusTransitions = map[string]map[string]bool{
 	"new":           {"assigned": true, "investigating": true, "waiting_data": true},
@@ -365,7 +366,9 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		return fmt.Errorf("shared behavior reader unavailable")
 	}
 	items := []store.ProxyReviewCase{}
+	closableKinds := map[string]bool{}
 	query := store.SharedBehaviorQuery{Status: "confirmed", CoverageState: "verified", Limit: 100}
+	sharedGenerationVerified := true
 	for {
 		page, err := reader.ListSharedBehavior(ctx, query)
 		if err != nil {
@@ -373,7 +376,8 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		}
 		// An incomplete or stale generation must not create or close cases.
 		if page.CoverageState != "verified" || page.Stale {
-			return nil
+			sharedGenerationVerified = false
+			break
 		}
 		for _, assessment := range page.Items {
 			if assessment.StrongAnchor == "" || assessment.DeviceLowerBound < 2 {
@@ -390,6 +394,35 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		}
 		query.Cursor = next
 	}
+	if !sharedGenerationVerified {
+		items = items[:0]
+	} else {
+		closableKinds["shared_access"] = true
+	}
+	if routerReader, available := s.reader.(store.RouterObservationReader); available {
+		routerQuery := store.RouterQuery{Role: "router", Limit: 100}
+		for {
+			page, err := routerReader.ListRouterObservations(ctx, routerQuery)
+			if err != nil {
+				return err
+			}
+			for _, assessment := range page.Items {
+				if assessment.Ambiguous || assessment.BrandReferenceOnly || (assessment.Status != "likely" && assessment.Status != "confirmed") {
+					continue
+				}
+				items = append(items, proxyReviewCaseForRouterAssessment(assessment))
+			}
+			if page.Page.NextCursor == nil {
+				break
+			}
+			next, err := strconv.Atoi(*page.Page.NextCursor)
+			if err != nil {
+				return err
+			}
+			routerQuery.Cursor = next
+		}
+		closableKinds["router_observation"] = true
+	}
 	exceptions, err := s.exceptions.list(ctx, true)
 	if err != nil {
 		return err
@@ -399,7 +432,8 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 	defer s.operations.mu.Unlock()
 	active := map[string]bool{}
 	for _, item := range items {
-		if item.RiskLevel != "high" && item.RiskLevel != "confirmed" {
+		kind := caseRiskKind(item)
+		if kind == "" {
 			continue
 		}
 		matchedException := matchException(exceptions, item.IP, item.AccountID, item.EndpointID, "")
@@ -416,7 +450,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		if matchedException != nil {
 			continue
 		}
-		dedupeKey := "shared-access:" + item.CaseID
+		dedupeKey := strings.ReplaceAll(kind, "_", "-") + ":" + item.CaseID
 		active[dedupeKey] = true
 		caseID := item.CaseID
 		existing, ok := s.operations.doc.Cases[caseID]
@@ -429,17 +463,15 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		if ok && existing.Status == "closed" {
 			caseID, ok = item.CaseID+"-"+shortToken(6), false
 		}
-		level := item.RiskLevel
-		slaLevel := level
-		if slaLevel == "confirmed" {
-			slaLevel = "high"
-		}
-		priority := "medium"
-		if slaLevel == "high" {
-			priority = "high"
+		level, rulesetVersion := caseAssessmentLevel(item), caseRulesetVersion(item)
+		slaLevel, priority := "medium", "medium"
+		if kind == "shared_access" {
+			slaLevel, priority = "high", "high"
+		} else if level == "likely" {
+			slaLevel, priority = "low", "low"
 		}
 		if !ok {
-			existing = RiskCase{CaseID: caseID, DedupeKey: dedupeKey, SubjectType: "ip", SubjectID: item.IP, IP: item.IP, EndpointID: item.EndpointID, Status: "new", Priority: priority, RulesetVersion: sharedaccess.BehaviorRuleVersion, RiskKind: "shared_access", CreatedAt: now.Format(time.RFC3339Nano), FirstSeen: item.FirstSeen, Timeline: []CaseTimeline{}, Comments: []CaseComment{}, EvidenceHistory: []CaseEvidenceSnapshot{}}
+			existing = RiskCase{CaseID: caseID, DedupeKey: dedupeKey, SubjectType: "ip", SubjectID: item.IP, IP: item.IP, EndpointID: item.EndpointID, Status: "new", Priority: priority, RulesetVersion: rulesetVersion, RiskKind: kind, CreatedAt: now.Format(time.RFC3339Nano), FirstSeen: item.FirstSeen, Timeline: []CaseTimeline{}, Comments: []CaseComment{}, EvidenceHistory: []CaseEvidenceSnapshot{}}
 			existing.DueAt = caseDueAt(now, slaLevel, s.operations.doc.SLAPolicies).Format(time.RFC3339Nano)
 			existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.created", After: map[string]any{"status": "new"}, CreatedAt: now.Format(time.RFC3339Nano)})
 		}
@@ -447,7 +479,8 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		existing.RiskScore = item.RiskScore
 		existing.RiskConfidence = caseRiskConfidence(item)
 		existing.AssessmentLevel = level
-		existing.RiskKind = "shared_access"
+		existing.RiskKind = kind
+		existing.RulesetVersion = rulesetVersion
 		existing.LastSeen = item.LastSeen
 		existing.UpdatedAt = now.Format(time.RFC3339Nano)
 		existing.DedupeKey = dedupeKey
@@ -463,7 +496,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		}
 		if !snapshotExists {
 			existing.EvidenceHistory = append(existing.EvidenceHistory, snapshot)
-			if existing.EvidenceSnapshot.CaseID == "" || (item.SharedAccess != nil && existing.EvidenceSnapshot.SharedAccess == nil) {
+			if existing.EvidenceSnapshot.CaseID == "" || (item.SharedAccess != nil && existing.EvidenceSnapshot.SharedAccess == nil) || (item.RouterObservation != nil && existing.EvidenceSnapshot.RouterObservation == nil) {
 				existing.EvidenceSnapshot = item
 			} else {
 				existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.evidence_appended", Before: map[string]any{"risk_score": previousScore}, After: map[string]any{"risk_score": item.RiskScore, "snapshot_id": snapshot.SnapshotID}, CreatedAt: now.Format(time.RFC3339Nano)})
@@ -472,7 +505,8 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		s.operations.doc.Cases[existing.CaseID] = existing
 	}
 	for caseID, existing := range s.operations.doc.Cases {
-		if !strings.HasPrefix(existing.RulesetVersion, "shared-behavior/") || existing.Status == "closed" || active[existing.DedupeKey] {
+		kind := riskKindForRuleset(existing.RulesetVersion)
+		if !closableKinds[kind] || existing.Status == "closed" || active[existing.DedupeKey] {
 			continue
 		}
 		before := existing.Status
@@ -513,7 +547,7 @@ func activeCaseMatches(candidate RiskCase, item store.ProxyReviewCase, dedupeKey
 	// Evidence and protocol rules evolve while one investigation remains open.
 	// Keep one active case per IP subject and append evidence history instead of
 	// opening a second case merely because the evidence-derived key changed.
-	return candidate.SubjectType == "ip" && (candidate.SubjectID == item.IP || candidate.IP == item.IP)
+	return candidate.RiskKind == caseRiskKind(item) && candidate.SubjectType == "ip" && (candidate.SubjectID == item.IP || candidate.IP == item.IP)
 }
 
 func caseDedupeKey(item store.ProxyReviewCase) string {
@@ -582,7 +616,44 @@ func caseRiskConfidence(item store.ProxyReviewCase) float64 {
 	if item.SharedAccess != nil {
 		return float64(item.SharedAccess.Confidence) / 100
 	}
+	if item.RouterObservation != nil {
+		return float64(item.RouterObservation.Confidence) / 100
+	}
 	return confidenceLevelValue(item.ConfidenceLevel)
+}
+
+func caseRiskKind(item store.ProxyReviewCase) string {
+	if item.SharedAccess != nil {
+		return "shared_access"
+	}
+	if item.RouterObservation != nil {
+		return "router_observation"
+	}
+	return ""
+}
+
+func caseAssessmentLevel(item store.ProxyReviewCase) string {
+	if item.RouterObservation != nil {
+		return item.RouterObservation.Status
+	}
+	return item.RiskLevel
+}
+
+func caseRulesetVersion(item store.ProxyReviewCase) string {
+	if item.RouterObservation != nil {
+		return "router-observation/" + item.RouterObservation.RuleVersion
+	}
+	return sharedaccess.BehaviorRuleVersion
+}
+
+func riskKindForRuleset(rulesetVersion string) string {
+	if strings.HasPrefix(rulesetVersion, "shared-behavior/") {
+		return "shared_access"
+	}
+	if strings.HasPrefix(rulesetVersion, "router-observation/") {
+		return "router_observation"
+	}
+	return ""
 }
 
 func proxyReviewCaseForSharedAssessment(assessment sharedaccess.BehaviorAssessment) store.ProxyReviewCase {
@@ -610,6 +681,26 @@ func proxyReviewCaseForSharedAssessment(assessment sharedaccess.BehaviorAssessme
 			AnchorIdentities: anchorIdentities, ReferenceDeviceCount24h: assessment.ReferenceDeviceCount24h,
 			RouterBrand: assessment.Router.Brand, RouterModel: assessment.Router.Model, RouterConfidence: assessment.Router.Confidence,
 		},
+	}
+}
+
+func proxyReviewCaseForRouterAssessment(assessment evidence.RouterAssessment) store.ProxyReviewCase {
+	scope := firstNonEmptyString(assessment.AssessmentID, assessment.EndpointID, assessment.MAC, assessment.IP)
+	sum := sha256.Sum256([]byte("router-observation-case\x00" + scope))
+	evidenceIDs := make([]string, 0, len(assessment.ScoreComponents))
+	for _, component := range assessment.ScoreComponents {
+		if component.EvidenceID != "" {
+			evidenceIDs = append(evidenceIDs, component.EvidenceID)
+		}
+	}
+	sort.Strings(evidenceIDs)
+	return store.ProxyReviewCase{
+		CaseID: "router-" + hex.EncodeToString(sum[:])[:20], IP: assessment.IP, EndpointID: assessment.EndpointID,
+		AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{},
+		DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{},
+		RuleMatches: []store.ProxyRuleMatch{}, ConfidenceLevel: map[bool]string{true: "high", false: "medium"}[assessment.Status == "confirmed"],
+		FirstSeen: assessment.FirstSeen, LastSeen: assessment.LastSeen, EvidenceIDs: evidenceIDs,
+		RiskScore: assessment.Confidence, RiskLevel: map[bool]string{true: "confirmed", false: "suspicious"}[assessment.Status == "confirmed"], ReviewStatus: "unreviewed", RouterObservation: &assessment,
 	}
 }
 
@@ -668,11 +759,13 @@ func (s *Server) listCases(w http.ResponseWriter, r *http.Request) {
 	limit, _ := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	cursor, _ := cursorOffset(r.URL.Query().Get("cursor"))
 	q, status, assignee, campus := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q"))), r.URL.Query().Get("status"), r.URL.Query().Get("assignee_id"), r.URL.Query().Get("campus_id")
+	includeRouterObservations := !strings.EqualFold(r.URL.Query().Get("include_router_observations"), "false")
 	dimensions := map[string]string{"department": r.URL.Query().Get("department"), "person_type": r.URL.Query().Get("person_type"), "ssid": r.URL.Query().Get("ssid"), "vlan": r.URL.Query().Get("vlan"), "ap": r.URL.Query().Get("ap"), "nas_ip": r.URL.Query().Get("nas_ip")}
 	s.operations.mu.Lock()
 	items := []RiskCase{}
 	for _, item := range s.operations.doc.Cases {
-		if !strings.HasPrefix(item.RulesetVersion, "shared-behavior/") || status == "" && (item.Status == "resolved" || item.Status == "closed") {
+		kind := riskKindForRuleset(item.RulesetVersion)
+		if kind == "" || kind == "router_observation" && !includeRouterObservations || status == "" && (item.Status == "resolved" || item.Status == "closed") {
 			continue
 		}
 		if status != "" && item.Status != status || assignee != "" && item.AssigneeID != assignee || campus != "" && item.CampusID != campus {

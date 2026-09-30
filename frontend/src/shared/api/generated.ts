@@ -3470,7 +3470,7 @@ export interface components {
             /** @enum {string} */
             status: "new" | "assigned" | "investigating" | "waiting_data" | "resolved" | "closed" | "reopened";
             /** @enum {string} */
-            disposition?: "confirmed_proxy" | "confirmed_shared_access" | "false_positive" | "benign" | "needs_more_data";
+            disposition?: "confirmed_proxy" | "confirmed_shared_access" | "confirmed_router" | "false_positive" | "benign" | "needs_more_data";
             /** @enum {string} */
             priority: "high" | "medium" | "low";
             assignee_id?: string;
@@ -3478,7 +3478,7 @@ export interface components {
             risk_confidence: number;
             assessment_level: string;
             /** @enum {string} */
-            risk_kind?: "shared_access";
+            risk_kind?: "shared_access" | "router_observation";
             /** Format: date-time */
             due_at: string;
             /** Format: date-time */
@@ -4376,6 +4376,7 @@ export interface components {
             review_status: "unreviewed" | "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
             review_reason?: string;
             shared_access?: components["schemas"]["SharedAccessCaseEvidence"];
+            router_observation?: components["schemas"]["RouterAssessment"];
         };
         SharedAccessCaseEvidence: {
             observation_id: string;
@@ -6144,6 +6145,8 @@ export interface operations {
                 ap?: string;
                 nas_ip?: string;
                 window?: "24h" | "7d";
+                /** @description Include current likely or confirmed router observations in the operational queue. */
+                include_router_observations?: boolean;
             };
             header?: never;
             path?: never;

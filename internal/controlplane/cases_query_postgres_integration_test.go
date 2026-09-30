@@ -31,7 +31,7 @@ func TestPostgresCaseQueueIsIndependentOfSynchronization(t *testing.T) {
 	defer db.Close()
 	prefix := fmt.Sprintf("queue-test-%d", time.Now().UnixNano())
 	defer db.ExecContext(context.Background(), `DELETE FROM risk_cases WHERE campus_id=$1`, prefix)
-	_, err = db.ExecContext(ctx, `INSERT INTO risk_cases(case_id,dedupe_key,subject_type,subject_id,ip,campus_id,department,person_type,ssid,vlan,ap,nas_ip,status,priority,assignee_id,risk_score,risk_confidence,assessment_level,first_seen,last_seen,created_at,updated_at) SELECT $1||'-'||lpad(n::text,5,'0'),$1||'-'||n,'ip',$1||'-'||n,'192.0.2.1'::inet,$1,'computing','student','wifi','310','ap-1','192.0.2.254'::inet,CASE WHEN n%2=0 THEN 'assigned' ELSE 'new' END,'high','operator',90,0.9,'high',now(),now(),now(),now() FROM generate_series(1,10000) n`, prefix)
+	_, err = db.ExecContext(ctx, `INSERT INTO risk_cases(case_id,dedupe_key,subject_type,subject_id,ip,campus_id,department,person_type,ssid,vlan,ap,nas_ip,status,priority,assignee_id,risk_score,risk_confidence,assessment_level,ruleset_version,first_seen,last_seen,created_at,updated_at) SELECT $1||'-'||lpad(n::text,5,'0'),$1||'-'||n,'ip',$1||'-'||n,'192.0.2.1'::inet,$1,'computing','student','wifi','310','ap-1','192.0.2.254'::inet,CASE WHEN n%2=0 THEN 'assigned' ELSE 'new' END,'high','operator',90,0.9,'high',CASE WHEN n=1 THEN 'router-observation/router-v3' ELSE 'shared-behavior/v10' END,now(),now(),now(),now() FROM generate_series(1,10000) n`, prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +73,12 @@ func TestPostgresCaseQueueIsIndependentOfSynchronization(t *testing.T) {
 		return body.Items, body.Page
 	}
 	items, page := fetch("&limit=20")
-	if len(items) != 20 || page.Total != 10000 || page.NextCursor == nil || *page.NextCursor != "20" || items[0].IP != "192.0.2.1" || len(items[0].EvidenceHistory) != 0 {
+	if len(items) != 20 || page.Total != 10000 || page.NextCursor == nil || *page.NextCursor != "20" || items[0].IP != "192.0.2.1" || items[0].RiskKind != "router_observation" || len(items[0].EvidenceHistory) != 0 {
 		t.Fatalf("incorrect queue page %+v %+v", page, items[0])
+	}
+	withoutRouters, withoutRoutersPage := fetch("&limit=20&include_router_observations=false")
+	if len(withoutRouters) != 20 || withoutRoutersPage.Total != 9999 || withoutRouters[0].RiskKind != "shared_access" {
+		t.Fatalf("router observation toggle changed queue incorrectly: %+v %+v", withoutRoutersPage, withoutRouters[0])
 	}
 	second, _ := fetch("&limit=20&cursor=20")
 	if second[0].CaseID == items[0].CaseID {

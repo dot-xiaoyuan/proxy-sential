@@ -237,6 +237,8 @@ func loadCaseHeaders(ctx context.Context, q operationsQuerier, doc *operationsDo
 		}
 		if strings.HasPrefix(item.RulesetVersion, "shared-behavior/") {
 			item.RiskKind = "shared_access"
+		} else if strings.HasPrefix(item.RulesetVersion, "router-observation/") {
+			item.RiskKind = "router_observation"
 		}
 		item.Comments = []CaseComment{}
 		item.Timeline = []CaseTimeline{}
@@ -314,7 +316,7 @@ func loadCases(ctx context.Context, q operationsQuerier, doc *operationsDocument
 		_ = json.Unmarshal(raw, &snapshot.Evidence)
 		snapshot.CreatedAt = formatDBTime(createdAt)
 		caseItem.EvidenceHistory = append(caseItem.EvidenceHistory, snapshot)
-		if caseItem.EvidenceSnapshot.CaseID == "" || (caseItem.RiskKind == "shared_access" && snapshot.Evidence.SharedAccess != nil) {
+		if caseItem.EvidenceSnapshot.CaseID == "" || (caseItem.RiskKind == "shared_access" && snapshot.Evidence.SharedAccess != nil) || (caseItem.RiskKind == "router_observation" && snapshot.Evidence.RouterObservation != nil) {
 			caseItem.EvidenceSnapshot = snapshot.Evidence
 		}
 		doc.Cases[caseID] = caseItem

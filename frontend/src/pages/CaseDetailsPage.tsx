@@ -32,7 +32,9 @@ export function CaseDetailsPage() {
     return <AppErrorAlert title="案件不存在或已超过保留期" />;
   const data = item.data;
   const sharedEvidence = data.evidence_snapshot?.shared_access;
+  const routerEvidence = data.evidence_snapshot?.router_observation;
   const isSharedAccess = data.risk_kind === "shared_access" || Boolean(sharedEvidence);
+  const isRouterObservation = data.risk_kind === "router_observation" || Boolean(routerEvidence);
   const campusLocation = [data.campus_id, data.building_id].filter(Boolean).join(" / ");
   const accessLocation = [data.ssid, data.vlan, data.ap].filter(Boolean).join(" / ");
   const writable = can(session.data, "cases:write");
@@ -64,7 +66,11 @@ export function CaseDetailsPage() {
       <Card className="surface-card" title="案件摘要">
         <Space wrap>
           <Tag color="red">
-            {isSharedAccess ? "已确认共享" : data.assessment_level}
+            {isSharedAccess
+              ? "已确认共享"
+              : isRouterObservation
+                ? data.assessment_level === "confirmed" ? "已确认路由器" : "较可信路由器观察"
+                : data.assessment_level}
           </Tag>
           <Tag>{caseStatusText(data.status)}</Tag>
           <Typography.Text strong>
@@ -160,6 +166,8 @@ export function CaseDetailsPage() {
                       options={[
                         isSharedAccess
                           ? { value: "confirmed_shared_access", label: "确认共享行为" }
+                          : isRouterObservation
+                            ? { value: "confirmed_router", label: "确认路由设备" }
                           : { value: "confirmed_proxy", label: "确认代理" },
                         { value: "false_positive", label: "误报" },
                         { value: "benign", label: "良性" },
@@ -230,6 +238,37 @@ export function CaseDetailsPage() {
                           {sharedEvidence.source_event_ids.join("\n")}
                         </div>
                       </details>
+                    </div>
+                  ) : routerEvidence ? (
+                    <div className="router-observation-evidence">
+                      <Typography.Paragraph>
+                        <Typography.Text strong>{routerEvidence.status === "confirmed" ? "路由设备已确认" : "较可信路由设备观察"}</Typography.Text>
+                        {` · 置信度 ${routerEvidence.confidence}% · 独立证据源 ${routerEvidence.independent_sources} 类`}
+                      </Typography.Paragraph>
+                      <Descriptions
+                        column={{ xs: 1, md: 2 }}
+                        items={[
+                          { key: "role", label: "设备角色", children: routerRoleText(routerEvidence.role) },
+                          ...(routerEvidence.brand ? [{ key: "brand", label: "品牌", children: routerEvidence.brand }] : []),
+                          ...(routerEvidence.series ? [{ key: "series", label: "系列", children: routerEvidence.series }] : []),
+                          ...(routerEvidence.model ? [{ key: "model", label: "型号", children: routerEvidence.model }] : []),
+                          ...(routerEvidence.mac ? [{ key: "mac", label: "MAC", children: <span className="mono wrap-anywhere">{routerEvidence.mac}</span> }] : []),
+                          { key: "window", label: "当前有效观察", children: `${formatTime(routerEvidence.first_seen)} — ${formatTime(routerEvidence.expires_at)}` },
+                          { key: "rules", label: "规则版本", children: routerEvidence.rule_version },
+                        ]}
+                      />
+                      {routerEvidence.sources.length > 0 && <Space wrap>{routerEvidence.sources.map(source => <Tag key={source}>{routerSourceText(source)}</Tag>)}</Space>}
+                      {routerEvidence.score_components.length > 0 && (
+                        <div className="router-score-components">
+                          {routerEvidence.score_components.map(component => (
+                            <Typography.Paragraph key={`${component.source_family}-${component.evidence_id}`}>
+                              <Typography.Text strong>{routerSourceText(component.source_family)} +{component.score}</Typography.Text>
+                              {` · ${component.explanation}`}
+                            </Typography.Paragraph>
+                          ))}
+                        </div>
+                      )}
+                      {routerEvidence.conflicts.length > 0 && <Alert showIcon type="warning" title="证据存在冲突" description={routerEvidence.conflicts.join("；")} />}
                     </div>
                   ) : (
                     <Typography.Paragraph>
@@ -311,6 +350,14 @@ function sharedAnchorText(anchor: string) {
       coexisting_device_identities: "当前窗口稳定物理设备重复共现",
     } as Record<string, string>
   )[anchor] ?? anchor;
+}
+
+function routerRoleText(role:string) {
+  return ({router:"路由器",ap:"无线接入点",switch:"交换机",firewall:"防火墙"} as Record<string,string>)[role] ?? role;
+}
+
+function routerSourceText(source:string) {
+  return ({dhcp:"DHCP",oui:"MAC 厂商",tls:"TLS 管理面",shared_gateway_behavior:"共享网关行为",vendor_control_plane:"厂商控制面"} as Record<string,string>)[source] ?? source;
 }
 
 function formatTime(value: string) {

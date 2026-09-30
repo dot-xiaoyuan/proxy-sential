@@ -316,31 +316,32 @@ type ProxyReviewResponse struct {
 }
 
 type ProxyReviewCase struct {
-	CaseID             string                    `json:"case_id"`
-	IP                 string                    `json:"ip"`
-	AccountID          string                    `json:"account_id,omitempty"`
-	EndpointID         string                    `json:"endpoint_id,omitempty"`
-	AccessIDs          []string                  `json:"access_ids"`
-	Destinations       []ActivityCount           `json:"destinations"`
-	DestinationIPs     []ActivityCount           `json:"destination_ips"`
-	DestinationDomains []ActivityCount           `json:"destination_domains"`
-	TLSFingerprints    []ActivityCount           `json:"tls_fingerprints"`
-	Protocols          []ActivityCount           `json:"protocols"`
-	RuleMatches        []ProxyRuleMatch          `json:"rule_matches"`
-	EventCount         int                       `json:"event_count"`
-	TLSCount           int                       `json:"tls_count"`
-	QUICCount          int                       `json:"quic_count"`
-	AlertCount         int                       `json:"alert_count"`
-	ConfidenceLevel    string                    `json:"confidence_level"`
-	FirstSeen          string                    `json:"first_seen"`
-	LastSeen           string                    `json:"last_seen"`
-	DurationSeconds    int64                     `json:"duration_seconds"`
-	EvidenceIDs        []string                  `json:"evidence_ids"`
-	RiskScore          int                       `json:"risk_score"`
-	RiskLevel          string                    `json:"risk_level"`
-	ReviewStatus       string                    `json:"review_status"`
-	ReviewReason       string                    `json:"review_reason,omitempty"`
-	SharedAccess       *SharedAccessCaseEvidence `json:"shared_access,omitempty"`
+	CaseID             string                     `json:"case_id"`
+	IP                 string                     `json:"ip"`
+	AccountID          string                     `json:"account_id,omitempty"`
+	EndpointID         string                     `json:"endpoint_id,omitempty"`
+	AccessIDs          []string                   `json:"access_ids"`
+	Destinations       []ActivityCount            `json:"destinations"`
+	DestinationIPs     []ActivityCount            `json:"destination_ips"`
+	DestinationDomains []ActivityCount            `json:"destination_domains"`
+	TLSFingerprints    []ActivityCount            `json:"tls_fingerprints"`
+	Protocols          []ActivityCount            `json:"protocols"`
+	RuleMatches        []ProxyRuleMatch           `json:"rule_matches"`
+	EventCount         int                        `json:"event_count"`
+	TLSCount           int                        `json:"tls_count"`
+	QUICCount          int                        `json:"quic_count"`
+	AlertCount         int                        `json:"alert_count"`
+	ConfidenceLevel    string                     `json:"confidence_level"`
+	FirstSeen          string                     `json:"first_seen"`
+	LastSeen           string                     `json:"last_seen"`
+	DurationSeconds    int64                      `json:"duration_seconds"`
+	EvidenceIDs        []string                   `json:"evidence_ids"`
+	RiskScore          int                        `json:"risk_score"`
+	RiskLevel          string                     `json:"risk_level"`
+	ReviewStatus       string                     `json:"review_status"`
+	ReviewReason       string                     `json:"review_reason,omitempty"`
+	SharedAccess       *SharedAccessCaseEvidence  `json:"shared_access,omitempty"`
+	RouterObservation  *evidence.RouterAssessment `json:"router_observation,omitempty"`
 }
 
 // SharedAccessCaseEvidence preserves the exact confirmed shared-access basis

@@ -565,6 +565,7 @@ export function useCases(
     ap?: string;
     nas_ip?: string;
     window?: string;
+    include_router_observations?: boolean;
   } = {},
 ) {
   return usePagedQuery(query, queryKeys.cases, api.cases);
