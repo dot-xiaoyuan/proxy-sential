@@ -359,7 +359,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 	server := &Server{
 		managedIdentityFailures: &managedIdentityFailureCache{},
 		sharedReviews:           &sharedReviewRuntime{},
-		discoveryDevices:        discovery.NewDeviceCache(15 * time.Second),
+		discoveryDevices:        discovery.NewDeviceCache(time.Minute),
 		statistics:              newStatisticsCache(),
 		tasks:                   &taskRuntime{dir: filepath.Join(exportDir, "task-input"), wake: make(chan struct{}, 2)},
 		nativeActions:           opts.NativeActions,
