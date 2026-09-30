@@ -171,6 +171,13 @@ type DeviceView struct {
 	Observations  []Observation `json:"observations"`
 }
 
+func newDeviceView(id string, observedAt time.Time) DeviceView {
+	return DeviceView{
+		ID: id, FirstSeen: observedAt, LastSeen: observedAt,
+		Addresses: []string{}, Capabilities: []string{}, Protocols: []string{}, Observations: []Observation{},
+	}
+}
+
 func (r Repository) Devices(ctx context.Context, limit, offset int) (map[string]any, error) {
 	return r.DevicesFiltered(ctx, DeviceQuery{Window: 24 * time.Hour, Limit: limit, Offset: offset})
 }
@@ -250,7 +257,7 @@ ORDER BY l.observed_at DESC,l.device_key`
 		}
 		group := groups[id]
 		if group == nil {
-			group = &collected{view: DeviceView{ID: id, FirstSeen: observation.ObservedAt, LastSeen: observation.ObservedAt}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}}
+			group = &collected{view: newDeviceView(id, observation.ObservedAt), addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}}
 			groups[id] = group
 		}
 		group.view.Observations = append(group.view.Observations, observation)
