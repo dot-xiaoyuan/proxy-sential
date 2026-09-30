@@ -171,3 +171,10 @@ const DiscoveryPage = lazy(() => import("../pages/DiscoveryPage").then(m=>({defa
 const RouterObservationDetailsPage = lazy(() => import('../pages/RouterObservationDetailsPage').then(m=>({default:m.RouterObservationDetailsPage})))
 export function DiscoveryRoute(){return <RouteSuspense><DiscoveryPage/></RouteSuspense>}
 export function RouterObservationDetailsRoute(){return <RouteSuspense><RouterObservationDetailsPage/></RouteSuspense>}
+
+const ActionRecordsPage=lazy(()=>import('../pages/ActionRecordsPage').then(m=>({default:m.ActionRecordsPage})))
+const CampusExceptionsPage=lazy(()=>import('../pages/CampusExceptionsPage').then(m=>({default:m.CampusExceptionsPage})))
+const SourcesPage=lazy(()=>import('../pages/SourcesPage').then(m=>({default:m.SourcesPage})))
+export function ActionRecordsRoute(){return <RouteSuspense><ActionRecordsPage/></RouteSuspense>}
+export function CampusExceptionsRoute(){return <RouteSuspense><CampusExceptionsPage/></RouteSuspense>}
+export function SourcesRoute(){return <RouteSuspense><SourcesPage/></RouteSuspense>}

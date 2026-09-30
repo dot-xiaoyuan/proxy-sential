@@ -1,6 +1,7 @@
+import { safeReturnTo } from '../app/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Descriptions, Progress, Space, Tag, Timeline, Typography } from 'antd'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../shared/api/client'
 import type { RouterEvidence } from '../shared/api/types'
 import { AppErrorAlert, AppLoadingState } from '../shared/ui'
@@ -11,6 +12,7 @@ const sourceLabels: Record<string, string> = { oui: 'MAC 厂商', dhcp: 'DHCP', 
 const conflictLabels: Record<string, string> = { ordinary_endpoint: '普通终端特征冲突', infrastructure_ap: '接入点排除', infrastructure_switch: '交换机排除', infrastructure_firewall: '防火墙排除', infrastructure_role: '基础设施角色', ambiguous_association: '关联不唯一', brand_reference_only: '仅品牌参考', strong_evidence_required: '缺少强证据' }
 
 export function RouterObservationDetailsPage() {
+ const [params]=useSearchParams();
   const { assessmentId = '' } = useParams()
   const query = useQuery({ queryKey: ['router-observation', assessmentId], queryFn: () => api.routerObservation(assessmentId), enabled: Boolean(assessmentId) })
   if (query.isLoading) return <main className="page router-detail-page"><AppLoadingState rows={8} /></main>
@@ -19,7 +21,7 @@ export function RouterObservationDetailsPage() {
   const evidence = [...(item.evidence || [])].sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen))
   const history = meaningfulHistory(item.history)
   return <main className="page router-detail-page">
-    <header className="router-detail-header"><div><Link to="/discovery">返回网络设备发现</Link><Typography.Title level={3}>{[item.brand, item.model || item.series, roles[item.role]].filter(Boolean).join(' · ')}</Typography.Title><Typography.Text className="router-detail-id">{item.assessment_id}</Typography.Text></div><Space wrap><Tag className={`router-status router-status-${item.status}`}>{statuses[item.status]}</Tag><strong>{item.confidence} 分</strong></Space></header>
+    <header className="router-detail-header"><div><Link to={safeReturnTo(params.get('return_to'),'/discovery?tab=routers')}>返回网络设备发现</Link><Typography.Title level={3}>{[item.brand, item.model || item.series, roles[item.role]].filter(Boolean).join(' · ')}</Typography.Title><Typography.Text className="router-detail-id">{item.assessment_id}</Typography.Text></div><Space wrap><Tag className={`router-status router-status-${item.status}`}>{statuses[item.status]}</Tag><strong>{item.confidence} 分</strong></Space></header>
     {item.brand_reference_only && <Alert type="info" showIcon title="仅为品牌参考，不足以确认路由器" description="当前观察只有厂商或 OUI 线索，没有满足型号、角色强证据和独立来源要求。" />}
     {item.infrastructure && <Alert type="warning" showIcon title="基础设施设备不进入路由器确认" description="保留真实角色与证据用于核查，但该标记会阻止 confirmed_router。" />}
     {!!item.conflicts.length && <Alert type="error" showIcon title="存在冲突证据" description={item.conflicts.map(value => conflictLabels[value] || value).join('；')} />}

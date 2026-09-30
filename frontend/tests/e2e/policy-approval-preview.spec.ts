@@ -2,7 +2,7 @@ import { test,expect } from '@playwright/test'
 import {mkdir,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 for(const [width,height] of [[390,844],[1280,800],[1440,900]])test(`policy approval ${width}`,async({page})=>{
- await page.setViewportSize({width,height});await page.goto('/policies')
+ await page.setViewportSize({width,height});await page.goto('/actions?tab=executions')
  await page.getByRole('button',{name:'确认执行',exact:true}).first().click()
  const dialog=page.getByRole('dialog')
  await expect(dialog.getByText('账号：staff-001',{exact:true})).toBeVisible()

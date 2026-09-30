@@ -2,21 +2,11 @@ import { OperationTaskProgress } from '../shared/ui/OperationTaskProgress'
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  AuditOutlined,
-  CheckSquareOutlined,
   DashboardOutlined,
-  DatabaseOutlined,
-  DesktopOutlined,
-  FieldTimeOutlined,
-  GlobalOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  SafetyOutlined,
-  SearchOutlined,
   SettingOutlined,
   UserOutlined,
-	ApartmentOutlined,
-	ControlOutlined,
 } from '@ant-design/icons'
 import { Button, Drawer, Layout, Menu, Space, Typography } from 'antd'
 import type { MenuProps } from 'antd'
@@ -25,30 +15,14 @@ import { useLogout, useSession } from '../shared/api/queries'
 import { LoginPage } from '../pages/LoginPage'
 import { AppLoadingState } from '../shared/ui'
 import { can } from '../shared/auth/permissions'
+import { routeOwner, routePermission, visibleNavigation } from './navigation'
+import { Alert } from 'antd'
 import type { Session } from '../shared/api/types'
 
 function buildNavItems(session: Session): MenuProps['items'] {
-  const systemChildren: MenuProps['items'] = [
-    can(session,'ingest:read') ? {key:'/ingest',icon:<DatabaseOutlined />,label:<NavLink to="/ingest">数据源与采集</NavLink>} : null,
-    can(session,'shadow:read') ? {key:'/shadow-runs',icon:<FieldTimeOutlined />,label:<NavLink to="/shadow-runs">影子评估</NavLink>} : null,
-    can(session,'shadow:read') && can(session,'labels:create') ? {key:'/review-samples',icon:<CheckSquareOutlined />,label:<NavLink to="/review-samples">影子分层复核</NavLink>} : null,
-    can(session,'audit:read') ? {key:'/audit',icon:<AuditOutlined />,label:<NavLink to="/audit">审计日志</NavLink>} : null,
-    can(session,'rules:reload') || can(session,'device-fingerprint-library:update') ? {key:'/settings/rules',icon:<SettingOutlined />,label:<NavLink to="/settings/rules">规则与特征库</NavLink>} : null,
-    can(session,'organization:read') ? {key:'/settings/organization',icon:<ApartmentOutlined />,label:<NavLink to="/settings/organization">校区与网络区域</NavLink>} : null,
-    can(session,'actions:read') ? {key:'/settings/actions',icon:<ControlOutlined />,label:<NavLink to="/settings/actions">处置网关</NavLink>} : null,
-    can(session,'users:manage') ? {key:'/settings/security',icon:<UserOutlined />,label:<NavLink to="/settings/security">权限与校园例外</NavLink>} : null,
-  ].filter(Boolean) as MenuProps['items']
-  return [
-    {key:'/overview',icon:<DashboardOutlined />,label:<NavLink to="/overview">运营工作台</NavLink>},
-    can(session,'policies:read') ? {key:'/policies',icon:<ControlOutlined />,label:<NavLink to="/policies">防代理策略</NavLink>} : null,
-    can(session,'cases:read') ? {key:'/shared-access',icon:<SafetyOutlined />,label:<NavLink to="/shared-access">共享发现与复核</NavLink>} : null,
-    can(session,'cases:read') ? {key:'/cases',icon:<SafetyOutlined />,label:<NavLink to="/cases">风险处置</NavLink>} : null,
-    can(session,'identity:read') ? {key:'/devices',icon:<DesktopOutlined />,label:<NavLink to="/devices">终端画像</NavLink>} : null,
-    can(session,'identity:read') ? {key:'/discovery',icon:<SearchOutlined />,label:<NavLink to="/discovery">网络设备发现</NavLink>} : null,
-    can(session,'dpi:read') ? {key:'/activity',icon:<GlobalOutlined />,label:<NavLink to="/activity">网络态势</NavLink>} : null,
-    can(session,'events:read') ? {key:'/events',icon:<SearchOutlined />,label:<NavLink to="/events">调查取证</NavLink>} : null,
-    {key:'system',icon:<SettingOutlined />,label:'系统管理',children:systemChildren},
-  ].filter(Boolean) as MenuProps['items']
+  return visibleNavigation(session).map(group => group.key === 'workbench' ? {
+    key: group.items[0].key, icon: <DashboardOutlined />, label: <NavLink to={group.items[0].to}>{group.title}</NavLink>
+  } : {key:group.key,label:group.title,icon:<SettingOutlined />,children:group.items.map(entry=>({key:entry.key,label:<NavLink to={entry.to}>{entry.title}</NavLink>}))})
 }
 
 function SentinelLogo() {
@@ -68,8 +42,9 @@ export function AppShell() {
   const location = useLocation()
   const session = useSession()
   const logout = useLogout()
-  const selected = `/${location.pathname.split('/')[1] || 'overview'}`
-  const selectedKey = location.pathname.startsWith('/settings/') ? location.pathname : selected
+  const owner = routeOwner(location.pathname,location.search)
+  const [openKeys,setOpenKeys] = useState<string[]>([])
+  useEffect(()=>{if(owner && owner.group.key !== 'workbench')setOpenKeys(keys=>[...new Set([...keys,owner.group.key])])},[owner?.group.key])
   const isMockEnabled = !import.meta.env.PROD && import.meta.env.VITE_ENABLE_MOCKS !== 'false'
 
   useEffect(() => {
@@ -84,7 +59,9 @@ export function AppShell() {
     <Menu
       items={navItems}
       mode="inline"
-      selectedKeys={[selectedKey]}
+      selectedKeys={owner ? [owner.entry.key] : []}
+      openKeys={openKeys}
+      onOpenChange={setOpenKeys}
       theme="light"
       onClick={() => setDrawerOpen(false)}
     />
@@ -146,7 +123,7 @@ export function AppShell() {
         </Layout.Header>
         <Layout.Content className="app-content" ref={contentRef}>
           <OperationTaskProgress />
-          <Outlet />
+          {!routePermission(location.pathname,location.search) || can(session.data,routePermission(location.pathname,location.search)!) ? <Outlet /> : <Alert showIcon type="warning" title="没有访问权限" description="当前账号无权读取此功能，请联系管理员调整权限。" />}
         </Layout.Content>
       </Layout>
       <Drawer

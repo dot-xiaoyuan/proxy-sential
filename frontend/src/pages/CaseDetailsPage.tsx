@@ -1,6 +1,7 @@
+import { safeReturnTo,detailPath } from '../app/navigation'
 import { useState } from "react";
 import { CaseHistoryList } from "./CaseHistoryList";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams, useLocation } from "react-router-dom";
 import {
   Alert,
   Button,
@@ -17,11 +18,14 @@ import {
   message,
 } from "antd";
 
+import { RiskLevelTag } from '../entities/risk/RiskLevelTag';
+import type { RiskLevel } from '../shared/api/types';
 import { can } from "../shared/auth/permissions";
 import { useCase, useCaseMutation, useSession } from "../shared/api/queries";
 import { AppErrorAlert, AppLoadingState, AppPageHeader } from "../shared/ui";
 
 export function CaseDetailsPage() {
+ const [params]=useSearchParams();const location=useLocation();
   const { caseId = "" } = useParams();
   const item = useCase(caseId);
   const mutation = useCaseMutation();
@@ -45,7 +49,7 @@ export function CaseDetailsPage() {
       <AppPageHeader
         title={`案件 ${data.case_id}`}
         subtitle="风险、身份、证据、复核结论与处置动作统一留痕"
-        extra={<Link to="/cases">返回案件队列</Link>}
+        extra={<Link to={safeReturnTo(params.get('return_to'),'/cases')}>返回案件队列</Link>}
       />
       {!writable && <Alert showIcon title="当前角色只有查看权限" type="info" />}
       {data.identity_blocker && (
@@ -59,7 +63,7 @@ export function CaseDetailsPage() {
       )}
       <Card className="surface-card" title="案件摘要">
         <Space wrap>
-          <Tag color="red">{data.assessment_level}</Tag>
+          <RiskLevelTag level={data.assessment_level as RiskLevel}/>
           <Tag>{caseStatusText(data.status)}</Tag>
           <Typography.Text strong>
             {data.risk_score} 分 / {Math.round(data.risk_confidence * 100)}%
@@ -73,7 +77,7 @@ export function CaseDetailsPage() {
               key: "ip",
               label: "IP",
               children: (
-                <Link to={`/ips/${encodeURIComponent(data.ip ?? "")}`}>
+                <Link to={detailPath(`/ips/${encodeURIComponent(data.ip ?? "")}`,location.pathname+location.search)}>
                   {data.ip || ""}
                 </Link>
               ),
@@ -81,12 +85,12 @@ export function CaseDetailsPage() {
             {
               key: "account",
               label: "账号",
-              children: data.account_id || "待关联",
+              children: data.account_id || "",
             },
             {
               key: "endpoint",
               label: "终端",
-              children: data.endpoint_id || "待关联",
+              children: data.endpoint_id || "",
             },
             {
               key: "campus",
@@ -94,14 +98,14 @@ export function CaseDetailsPage() {
               children:
                 [data.campus_id, data.building_id]
                   .filter(Boolean)
-                  .join(" / ") || "待关联",
+                  .join(" / ") || "",
             },
             {
               key: "access",
               label: "SSID / VLAN / AP",
               children:
                 [data.ssid, data.vlan, data.ap].filter(Boolean).join(" / ") ||
-                "待关联",
+                "",
             },
             {
               key: "due",

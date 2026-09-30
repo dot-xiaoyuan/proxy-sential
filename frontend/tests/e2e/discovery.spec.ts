@@ -15,6 +15,6 @@ for(const width of [390,1280,1440])test(`discovery layout ${width}`,async({page}
  expect(detailProbe.overflow).toBe(false);expect(detailProbe.controls.every(c=>c.wrap==='nowrap'&&c.shrink==='0')).toBe(true)
  await writeFile(info.outputPath('router-detail-dom.json'),JSON.stringify(detailProbe,null,2));await page.screenshot({path:info.outputPath('router-detail.png'),fullPage:true})
  await page.goBack();await expect(page.getByRole('tab',{name:'路由识别',exact:true})).toBeVisible()
- await page.getByRole('tab',{name:'主动发现',exact:true}).click();await expect(page.getByText('默认关闭；仅探测明确指定范围')).toBeVisible()
+ await page.goto('/settings/sources?tab=scan');await expect(page.getByText('默认关闭；仅探测明确指定范围')).toBeVisible()
  await page.getByRole('button',{name:'新增探测配置'}).click();await expect(page.getByRole('button',{name:'确 定'})).toBeDisabled()
 })

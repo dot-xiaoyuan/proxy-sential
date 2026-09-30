@@ -1,3 +1,4 @@
+import { useUrlState } from '../shared/ui/useUrlState'
 import { useState } from "react";
 import {
   ApartmentOutlined,
@@ -42,6 +43,7 @@ type OrganizationKind =
   "campuses" | "buildings" | "network-zones" | "access-points";
 
 export function OrganizationPage() {
+ const [activeTab,setActiveTab]=useUrlState('tab','campuses',['campuses','zones']);
   const campusPage = useServerPagination("campuses_");
   const zonePage = useServerPagination("zones_");
   const query = useOrganization();
@@ -140,7 +142,7 @@ export function OrganizationPage() {
         </Col>
       </Row>
       <Card className="surface-card margin-top-md operations-tabs-surface">
-        <Tabs
+        <Tabs activeKey={activeTab} onChange={setActiveTab}
           destroyOnHidden
           items={[
             {

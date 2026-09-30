@@ -8,7 +8,7 @@ test('prefetches the next server-side event page', async ({ page }) => {
 test('redirects the legacy risk list to cases and opens a case', async ({ page }) => {
   await page.goto('/risks')
   await expect(page).toHaveURL(/\/cases$/)
-  await expect(page.getByRole('heading', { name: '风险处置' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '风险案件' })).toBeVisible()
   const firstCase = page.locator('tbody a[href^="/cases/"]').first()
   await firstCase.click()
   await expect(page.getByText('证据快照')).toBeVisible()
@@ -44,8 +44,8 @@ test('shows shadow run summaries', async ({ page }) => {
   await expect(page.getByText('截断')).toBeVisible()
   await expect(page.getByRole('columnheader', { name: '标准化' })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Zeek' })).toBeVisible()
-  await expect(page.getByText('unavailable')).toBeVisible()
-  await expect(page.getByText('no_dhcp_events')).toBeVisible()
+  await expect(page.getByText('不可用',{exact:true})).toBeVisible()
+  await expect(page.getByText('无 DHCP 事件',{exact:true})).toBeVisible()
 })
 
 test('shows compact endpoint inventory and opens endpoint detail', async ({ page }) => {
@@ -78,7 +78,7 @@ test('redirects the legacy review queue into the unified case workflow', async (
 
 test('shows ingest diagnostics and normalized event samples', async ({ page }) => {
   await page.goto('/ingest')
-  await expect(page.getByRole('heading', { name: '采集诊断' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '采集诊断与节点性能' })).toBeVisible()
   await expect(page.getByText('suricata', { exact: true })).toBeVisible()
   await expect(page.getByText('ens1f1', { exact: true })).toBeVisible()
   await expect(page.getByRole('tab', { name: '事件类型报表' })).toBeVisible()
@@ -90,25 +90,23 @@ test('shows ingest diagnostics and normalized event samples', async ({ page }) =
 })
 
 test('shows observed activity posture and opens active risk IP detail', async ({ page }) => {
-  await page.goto('/activity')
-  await expect(page.getByRole('heading', { name: 'DPI 观测与访问态势' })).toBeVisible()
-  await expect(page.getByText('基于标准事件元数据呈现 L7 协议流向')).toBeVisible()
+  await page.goto('/activity?section=access')
+  await expect(page.getByRole('heading', { name: '访问分析' })).toBeVisible()
   await page.getByRole('tab', { name: '访问对象 (Domains)' }).click()
   await expect(page.getByText('Top 访问域名（DNS / Host / SNI）')).toBeVisible()
-  await page.getByRole('tab', { name: '客户端指纹' }).click()
+  await page.goto('/activity?section=technical&tab=fingerprints')
   await expect(page.getByText('UA 可重复、可伪造，只用于技术检索，不表示设备数量或硬件品牌。')).toBeVisible()
-  await page.getByRole('tab', { name: /活跃风险 IP/ }).click()
-  await expect(page.getByText('10.255.0.59').first()).toBeVisible()
+  await page.goto('/overview')
   await page.getByRole('link', { name: '10.255.0.59' }).click()
   await expect(page.getByRole('heading', { name: '10.255.0.59' })).toBeVisible()
 })
 
 test('shows local users and versioned campus exceptions', async ({ page }) => {
   await page.goto('/settings/security')
-  await expect(page.getByRole('heading', { name: '权限与校园例外' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '用户权限' })).toBeVisible()
   await expect(page.getByText('系统管理员').first()).toBeVisible()
   await expect(page.getByRole('button', { name: '新建用户' })).toBeVisible()
-  await page.getByRole('tab', { name: '校园例外库' }).click()
+  await page.goto('/policies/exceptions')
   await expect(page.getByText('vpn.henu.edu.cn')).toBeVisible()
   await expect(page.getByRole('button', { name: '新增例外' })).toBeVisible()
 })
@@ -124,7 +122,7 @@ test('maintains campus organization mappings and exposes university filters', as
   await expect(page.getByText('组织与网络位置映射已保存')).toBeVisible()
 
   await page.goto('/devices')
-  await page.locator('summary').filter({ hasText: '高校维度筛选' }).click()
+  await page.locator('summary').filter({ hasText: '更多筛选' }).click()
   await expect(page.getByText('全部校区', { exact: true })).toBeVisible()
   await expect(page.getByPlaceholder('院系')).toBeVisible()
   await expect(page.getByPlaceholder('NAS IP')).toBeVisible()
@@ -132,10 +130,10 @@ test('maintains campus organization mappings and exposes university filters', as
 
 test('configures and tests a northbound action connector', async ({ page }) => {
   await page.goto('/settings/actions')
-  await expect(page.getByRole('heading', { name: '旁路处置网关' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '认证与处置接入' })).toBeVisible()
   await page.getByRole('button', { name: '连通测试' }).click()
-  await expect(page.getByText('连通性与签名验证通过')).toBeVisible()
-  await page.getByRole('button', { name: '新增连接器' }).click()
+  await expect(page.getByText('连接检查通过，处置能力仍需单独验收')).toBeVisible()
+  await page.getByRole('button', { name: '新增通用连接器' }).click()
   await page.getByLabel('连接器 ID').fill('campus-firewall')
   await page.getByLabel('名称').fill('校园防火墙北向接口')
   await page.getByLabel('北向 HTTP 地址').fill('https://firewall.example.edu/actions')

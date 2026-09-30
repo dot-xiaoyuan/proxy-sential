@@ -4,10 +4,10 @@ import path from 'node:path'
 
 for (const [width,height] of [[390,844],[1280,800],[1440,900]]) test(`native action observations ${width}`,async({page})=>{
   await page.setViewportSize({width,height})
-  await page.goto('/settings/actions')
+  await page.goto('/actions?tab=actions')
   await expect(page.getByRole('tab',{name:/处置动作/})).toBeVisible()
   await page.evaluate(async()=>{await fetch('/api/v1/actions/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action_type:'disconnect',subject_id:'campus-lab',account_id:'campus-lab',connector_id:'portal-gateway',mode:'shadow'})})})
-  await page.getByRole('button',{name:'刷新数据'}).click()
+  await page.getByRole('button',{name:'刷新动作'}).click()
   await page.getByRole('tab',{name:/处置动作/}).click()
   await page.getByRole('button',{name:'执行记录',exact:true}).filter({visible:true}).first().click()
   const dialog=page.getByRole('dialog')

@@ -6,9 +6,8 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
   test(`asynchronous application export design audit ${viewport.width}x${viewport.height}`, async ({page}) => {
     await page.setViewportSize(viewport);
     await page.goto('/activity');
-    await page.getByRole('tab',{name:'应用访问',exact:true}).click();
     await expect(page.getByText('统计时间：')).toBeVisible();
-    await page.getByRole('button',{name:'导出未知域名',exact:true}).click();
+    await page.getByRole('button',{name:'导出待补特征域名',exact:true}).click();
     await expect(page.getByText('导出任务：正在生成文件')).toBeVisible();
     await expect(page.getByText('导出任务：已完成 · 2 条')).toBeVisible();
     const downloadPromise=page.waitForEvent('download');
@@ -31,8 +30,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
 
  test('cancel queued or running unknown-domain export',async({page})=>{
  await page.goto('/activity');
- await page.getByRole('tab',{name:'应用访问',exact:true}).click();
- await page.getByRole('button',{name:'导出未知域名',exact:true}).click();
+ await page.getByRole('button',{name:'导出待补特征域名',exact:true}).click();
  await page.getByRole('button',{name:'取消导出',exact:true}).click();
  await expect(page.getByText('导出任务：已取消')).toBeVisible();
  await expect(page.getByRole('button',{name:'下载文件',exact:true})).toHaveCount(0);

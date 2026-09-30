@@ -1,3 +1,6 @@
+import { statusText } from '../shared/ui/status'
+import { detailPath } from '../app/navigation'
+import { useUrlState } from '../shared/ui/useUrlState'
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { CodeOutlined } from "@ant-design/icons";
@@ -32,12 +35,10 @@ import {
   AppPageHeader,
   AppServerPagination,
   useServerPagination,
-  type QuickWindow,
 } from "../shared/ui";
 
 export function IngestPage() {
-  const [quickWindow, setQuickWindow] = useState<QuickWindow>("1h");
-  const [activeTab, setActiveTab] = useState("nodes");
+  const [activeTab, setActiveTab] = useUrlState("diagnostic_tab","nodes",["nodes","types","diagnostics","errors","events"]);
   const [inspectJson, setInspectJson] = useState<{
     title: string;
     data: unknown;
@@ -101,7 +102,7 @@ export function IngestPage() {
           value === "error" ? "red" : value === "warning" ? "gold" : "green";
         return (
           <Tag className="dpi-badge-tag" color={color}>
-            {value}
+            {statusText(value)}
           </Tag>
         );
       },
@@ -134,7 +135,7 @@ export function IngestPage() {
       render: (_, record) => (
         <Link
           className="list-cell-nowrap"
-          to={`/ingest/diagnostics/${encodeURIComponent(record.diagnostic_id)}`}
+          to={detailPath(`/settings/sources/diagnostics/${encodeURIComponent(record.diagnostic_id)}`,`/settings/sources?tab=diagnostics&diagnostic_tab=${activeTab}`)}
         >
           查看详情
         </Link>
@@ -196,14 +197,12 @@ export function IngestPage() {
     <main className="page">
       <AppPageHeader
         loading={status.isFetching}
-        onQuickWindowChange={setQuickWindow}
         onRefresh={() => {
           void status.refetch();
           void diagnostics.refetch();
           void errors.refetch();
         }}
-        quickWindow={quickWindow}
-        subtitle="面向生产环境的 AF_XDP/Suricata 抓包引擎、丢包率与事件标准化诊断大图"
+        subtitle="检查采集节点、标准事件、丢包与异常记录"
         title="采集诊断与节点性能"
       />
 
@@ -420,7 +419,7 @@ function renderCounters(
   onInspect: () => void,
 ) {
   if (!counters || Object.keys(counters).length === 0)
-    return <span className="mono-path">-</span>;
+    return null;
   const entries = Object.entries(counters);
   return (
     <div className="ingest-counters-wrap">
@@ -448,7 +447,7 @@ function renderSubject(
   onInspect: () => void,
 ) {
   if (!subject || Object.keys(subject).length === 0)
-    return <span className="mono-path">-</span>;
+    return null;
   const ip = typeof subject.ip === "string" ? subject.ip : "";
   const mac = typeof subject.mac === "string" ? subject.mac : "";
   const hostname = typeof subject.hostname === "string" ? subject.hostname : "";

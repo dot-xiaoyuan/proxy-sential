@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { detailPath } from '../app/navigation'
+import { useServerPagination } from '../shared/ui'
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Form, Input, InputNumber, Progress, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { Link } from 'react-router-dom'
+import { Link,useLocation,useSearchParams } from 'react-router-dom'
 import { ApartmentOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { api } from '../shared/api/client'
 import type { RouterAssessment, RouterObservationQuery } from '../shared/api/types'
@@ -22,23 +24,25 @@ function iso(value?: string) {
 
 export function RouterObservationsPanel() {
   const [form] = Form.useForm()
-  const [query, setQuery] = useState<RouterObservationQuery>({ limit: 20 })
-  const [page, setPage] = useState(1)
+  const location=useLocation();const [params,setParams]=useSearchParams();const pagination=useServerPagination('routers_');const page=pagination.page;const setPage=(value:number)=>pagination.update(value,pagination.pageSize)
+  const query=Object.fromEntries([...params.entries()].filter(([key])=>key.startsWith('router_')).map(([key,value])=>[key.slice(7),['confidence_min','confidence_max'].includes(key.slice(7))?Number(value):key==='router_infrastructure'?value==='true':value])) as RouterObservationQuery
+  query.limit=20
+  useEffect(()=>{form.setFieldsValue(query)},[params,form])
   const requestQuery = { ...query, cursor: String((page - 1) * (query.limit || 20)) }
   const observations = useQuery({ queryKey: ['router-observations', requestQuery], queryFn: () => api.routerObservations(requestQuery) })
   useEffect(() => { if (observations.data && observations.data.items.length === 0 && page > 1) setPage(1) }, [observations.data, page])
   const submit = (values: Record<string, string | number | boolean | undefined>) => {
-    setPage(1)
-    setQuery({ ...values, first_seen_from: iso(values.first_seen_from as string), first_seen_to: iso(values.first_seen_to as string), last_seen_from: iso(values.last_seen_from as string), last_seen_to: iso(values.last_seen_to as string), limit: 20 } as RouterObservationQuery)
+    const query={ ...values, first_seen_from: iso(values.first_seen_from as string), first_seen_to: iso(values.first_seen_to as string), last_seen_from: iso(values.last_seen_from as string), last_seen_to: iso(values.last_seen_to as string) }
+    setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith('router_')||key==='routers_page')next.delete(key);for(const [key,value]of Object.entries(query))if(value!==undefined&&value!=='')next.set(`router_${key}`,String(value));return next})
   }
   const columns: ColumnsType<RouterAssessment> = [
     { title: '设备', key: 'identity', width: 270, render: (_, item) => <DeviceIdentity item={item} /> },
-    { title: '网络身份', key: 'address', width: 220, render: (_, item) => <div className="router-address"><strong>{item.ip || 'IP 未知'}</strong><span className="router-monospace">{item.mac || 'MAC 未关联'}</span>{item.vlans?.length ? <span>VLAN {item.vlans.join(', ')}</span> : null}</div> },
+    { title: '网络身份', key: 'address', width: 220, render: (_, item) => <div className="router-address"><strong>{item.ip || ''}</strong><span className="router-monospace">{item.mac || ''}</span>{item.vlans?.length ? <span>VLAN {item.vlans.join(', ')}</span> : null}</div> },
     { title: '识别判定', key: 'status', width: 185, render: (_, item) => <div className="router-verdict"><div><Tag className={`router-status router-status-${item.status}`}>{statusLabels[item.status]}</Tag><strong>{item.confidence} 分</strong></div><Progress percent={item.confidence} showInfo={false} size="small" status={item.status === 'confirmed' ? 'success' : 'normal'} /><span>{item.independent_sources} 类独立证据</span></div> },
     { title: '关键依据', key: 'sources', width: 250, render: (_, item) => <EvidenceTags sources={item.sources} /> },
     { title: '校验情况', key: 'constraints', width: 190, render: (_, item) => <ConstraintTags item={item} /> },
     { title: '最近发现', dataIndex: 'last_seen', width: 170, render: value => formatTime(value) },
-    { title: '操作', key: 'action', width: 90, fixed: 'right', render: (_, item) => <Link to={`/discovery/routers/${encodeURIComponent(item.assessment_id)}`}>查看详情</Link> },
+    { title: '操作', key: 'action', width: 90, fixed: 'right', render: (_, item) => <Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link> },
   ]
   const items = observations.data?.items || []
   const total = observations.data?.page.total || 0
@@ -66,7 +70,7 @@ export function RouterObservationsPanel() {
     <div className="router-list-heading"><Typography.Title level={4}>路由设备识别</Typography.Title><Typography.Text type="secondary">{total} 台当前设备 · 已自动合并重复观察 · 仅用于影子验证</Typography.Text></div>
     {observations.isLoading ? <AppLoadingState rows={6} /> : observations.isError ? <AppErrorAlert title="路由观察加载失败" message={observations.error.message} /> : <>
       <div className="router-desktop-list"><Table rowKey="assessment_id" size="small" columns={columns} dataSource={items} pagination={{ current: page, pageSize: query.limit || 20, total, showSizeChanger: false, onChange: setPage }} scroll={{ x: 1320 }} locale={{ emptyText: '没有匹配的路由设备' }} /></div>
-      <div className="router-mobile-list">{items.map(item => <article className="router-observation-card" key={item.assessment_id}><div className="router-card-heading"><DeviceIdentity item={item} /><Tag className={`router-status router-status-${item.status}`}>{statusLabels[item.status]} · {item.confidence} 分</Tag></div><div className="router-address"><strong>{item.ip || 'IP 未知'}</strong><span className="router-monospace">{item.mac || 'MAC 未关联'}</span>{item.vlans?.length ? <span>VLAN {item.vlans.join(', ')}</span> : null}</div><Progress percent={item.confidence} showInfo={false} size="small" status={item.status === 'confirmed' ? 'success' : 'normal'} /><EvidenceTags sources={item.sources} /><ConstraintTags item={item} /><div className="router-card-footer"><span>最近发现 {formatTime(item.last_seen)}</span><Link to={`/discovery/routers/${encodeURIComponent(item.assessment_id)}`}>查看详情</Link></div></article>)}</div>
+      <div className="router-mobile-list">{items.map(item => <article className="router-observation-card" key={item.assessment_id}><div className="router-card-heading"><DeviceIdentity item={item} /><Tag className={`router-status router-status-${item.status}`}>{statusLabels[item.status]} · {item.confidence} 分</Tag></div><div className="router-address"><strong>{item.ip || ''}</strong><span className="router-monospace">{item.mac || ''}</span>{item.vlans?.length ? <span>VLAN {item.vlans.join(', ')}</span> : null}</div><Progress percent={item.confidence} showInfo={false} size="small" status={item.status === 'confirmed' ? 'success' : 'normal'} /><EvidenceTags sources={item.sources} /><ConstraintTags item={item} /><div className="router-card-footer"><span>最近发现 {formatTime(item.last_seen)}</span><Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link></div></article>)}</div>
     </>}
   </div>
 }

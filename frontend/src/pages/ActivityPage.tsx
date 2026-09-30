@@ -1,12 +1,9 @@
+import { useUrlState } from '../shared/ui/useUrlState'
 import { ApplicationActivity } from "../features/applications/ApplicationActivity";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { SearchOutlined } from "@ant-design/icons";
-import { Button, Col, Row, Table, Tabs, Typography } from "antd";
-import type { ColumnsType } from "antd/es/table";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Col, Row, Tabs } from "antd";
 
-import { RiskLevelTag } from "../entities/risk/RiskLevelTag";
-import { RiskScore } from "../entities/risk/RiskScore";
 import { EChartsDualAxisTrend } from "../features/charts/EChartsDualAxisTrend";
 import { EChartsTopReport } from "../features/charts/EChartsTopReport";
 import { FingerprintConflictMatrix } from "../features/dpi/FingerprintConflictMatrix";
@@ -17,7 +14,6 @@ import {
   useDpiFingerprintConflicts,
   useDpiTrends,
 } from "../shared/api/queries";
-import type { ActivityCount, ActivityIpSummary } from "../shared/api/types";
 import {
   AppErrorAlert,
   AppLoadingState,
@@ -29,64 +25,60 @@ import {
 
 export function ActivityPage() {
   const navigate = useNavigate();
-  const [quickWindow, setQuickWindow] = useState<ReportWindow>("1h");
-  const [tabKey, setTabKey] = useState<
-    | "visits"
-    | "applications"
-    | "ecosystem"
-    | "matrix"
-    | "domains"
-    | "fingerprints"
-    | "network"
-    | "risks"
-  >("visits");
+  const [params]=useSearchParams();
+  const [windowValue,setQuickWindow]=useUrlState('window','1h',['10m','1h','24h','7d','30d']);const quickWindow=windowValue as ReportWindow;
+  const [section]=useUrlState('section','applications',['applications','access','technical']);
+  const allowed=section==='applications'?['visits']:section==='technical'?['matrix','fingerprints']:['applications','ecosystem','domains','network'];
+  const [tabKey,setTabKey]=useUrlState('tab',allowed[0],allowed);
+  const context={window:quickWindow,sensor_id:params.get('sensor_id')||undefined,campus_id:params.get('campus_id')||undefined};
   const [inspectIp, setInspectIp] = useState<string | null>(null);
 
-  const activity = useActivityOverview({ window: quickWindow });
-  const dpiTrends = useDpiTrends({ window: quickWindow });
+  const activity = useActivityOverview(context,section!=='applications');
+  const dpiTrends = useDpiTrends(context,section==='access');
   const fingerprintConflicts = useDpiFingerprintConflicts(
-    { window: quickWindow },
+    context,
     tabKey === "matrix",
   );
   const applicationReport = useActivityReport(
-    { window: quickWindow, dimension: "application", limit: 10 },
+    { ...context, dimension: "application", limit: 10 },
     tabKey === "applications",
   );
   const protocolReport = useActivityReport(
-    { window: quickWindow, dimension: "protocol", limit: 10 },
+    { ...context, dimension: "protocol", limit: 10 },
     tabKey === "applications" || tabKey === "network",
   );
   const ecosystemReport = useActivityReport(
-    { window: quickWindow, dimension: "ecosystem", limit: 10 },
+    { ...context, dimension: "ecosystem", limit: 10 },
     tabKey === "ecosystem",
   );
   const domainReport = useActivityReport(
-    { window: quickWindow, dimension: "domain", limit: 10 },
+    { ...context, dimension: "domain", limit: 10 },
     tabKey === "domains",
   );
   const hostReport = useActivityReport(
-    { window: quickWindow, dimension: "http_host", limit: 10 },
+    { ...context, dimension: "http_host", limit: 10 },
     tabKey === "domains",
   );
   const sniReport = useActivityReport(
-    { window: quickWindow, dimension: "tls_sni", limit: 10 },
+    { ...context, dimension: "tls_sni", limit: 10 },
     tabKey === "domains",
   );
   const uaReport = useActivityReport(
-    { window: quickWindow, dimension: "user_agent", limit: 10 },
+    { ...context, dimension: "user_agent", limit: 10 },
     tabKey === "fingerprints",
   );
   const portReport = useActivityReport(
-    { window: quickWindow, dimension: "dst_port", limit: 10 },
+    { ...context, dimension: "dst_port", limit: 10 },
     tabKey === "network",
   );
   const destinationReport = useActivityReport(
-    { window: quickWindow, dimension: "dst_ip", limit: 10 },
+    { ...context, dimension: "dst_ip", limit: 10 },
     tabKey === "network",
   );
   const navigateReport = (dimension: string, key: string) =>
-    navigate(reportSearchPath(dimension, key, quickWindow));
+    navigate(reportSearchPath(dimension, key, quickWindow, params));
 
+  if(section==='applications')return <main className="page"><AppPageHeader title="应用访问" subtitle="按明确应用特征查看服务访问与对应观测" quickWindow={quickWindow} quickWindows={['10m','1h','24h','7d','30d']} onQuickWindowChange={setQuickWindow}/><section className="surface"><ApplicationActivity window={quickWindow}/></section></main>;
   if (activity.isLoading) {
     return <AppLoadingState rows={8} />;
   }
@@ -96,66 +88,6 @@ export function ActivityPage() {
   }
 
   const data = activity.data;
-
-  const riskColumns: ColumnsType<ActivityIpSummary> = [
-    {
-      title: "IP 地址",
-      dataIndex: "ip",
-      width: 160,
-      render: (value: string) => (
-        <Link
-          className="mono wrap-text"
-          to={`/ips/${encodeURIComponent(value)}`}
-        >
-          {value}
-        </Link>
-      ),
-    },
-    {
-      title: "风险等级",
-      dataIndex: "risk_level",
-      width: 100,
-      render: (value: ActivityIpSummary["risk_level"]) => (
-        <RiskLevelTag level={value} />
-      ),
-    },
-    {
-      title: "综合评分",
-      dataIndex: "score",
-      width: 90,
-      render: (value: number) => <RiskScore score={value} />,
-    },
-    { title: "DPI 事件数", dataIndex: "event_count", width: 100 },
-    {
-      title: "Top 访问对象 (DNS/SNI/Host)",
-      dataIndex: "top_domains",
-      render: (items: ActivityCount[]) =>
-        renderCountTokens(items, "暂无域名对象"),
-    },
-    {
-      title: "最后抓包时间",
-      dataIndex: "last_seen",
-      width: 170,
-      render: (value?: string) =>
-        value ? new Date(value).toLocaleString() : "",
-    },
-    {
-      title: "快捷追查",
-      key: "action",
-      width: 110,
-      render: (_, record) => (
-        <Button
-          className="dpi-badge-tag"
-          icon={<SearchOutlined />}
-          onClick={() => setInspectIp(record.ip)}
-          size="small"
-          type="link"
-        >
-          DPI Flow 样本
-        </Button>
-      ),
-    },
-  ];
 
   const renderActiveTabContent = () => {
     switch (tabKey) {
@@ -169,7 +101,7 @@ export function ActivityPage() {
                 title="应用协议分布"
                 kind="donut"
                 report={applicationReport.data}
-                note="仅使用传感器明确输出的应用协议；无法识别时归入未知。"
+                note="仅使用传感器明确输出的应用协议；无法识别时保留在空值分组。"
                 onSelect={(key) => navigateReport("application", key)}
               />
             </Col>
@@ -328,40 +260,17 @@ export function ActivityPage() {
             </Col>
           </Row>
         );
-      case "risks":
-        return (
-          <div className="activity-tab-panel">
-            <div className="surface-title-row">
-              <Typography.Title className="surface-title" level={4}>
-                活跃共享风险 IP
-              </Typography.Title>
-              <Typography.Text className="surface-subtitle" type="secondary">
-                点击 DPI Flow 样本展开追查抽屉
-              </Typography.Text>
-            </div>
-            <Table<ActivityIpSummary>
-              columns={riskColumns}
-              dataSource={data.top_active_risk_ips}
-              pagination={false}
-              rowKey="ip"
-              scroll={{ x: 960 }}
-              size="small"
-            />
-          </div>
-        );
     }
   };
 
   const tabItems = [
-    { key: "visits", label: "应用访问" },
     { key: "applications", label: "应用协议" },
     { key: "ecosystem", label: "访问生态" },
     { key: "matrix", label: "多源指纹一致性" },
     { key: "domains", label: "访问对象 (Domains)" },
     { key: "fingerprints", label: "客户端指纹 (UA/JA3)" },
     { key: "network", label: "网络与端口分布" },
-    { key: "risks", label: `活跃风险 IP ${data.top_active_risk_ips.length}` },
-  ];
+  ].filter(item=>allowed.includes(item.key));
 
   return (
     <main className="page">
@@ -380,7 +289,7 @@ export function ActivityPage() {
         quickWindow={quickWindow}
         quickWindows={['10m', '1h', '24h', '7d', '30d']}
         subtitle="基于标准事件元数据呈现 L7 协议流向、终端指纹碰撞与访问对象排行"
-        title="DPI 观测与访问态势"
+        title={section==='technical'?'技术指纹':'访问分析'}
       />
 
       <StatisticsTime freshness={activity.data.data_freshness} value={activity.data.statistics_as_of} />
@@ -404,20 +313,15 @@ export function ActivityPage() {
           title="L7 访问目标数"
           value={data.access_object_count}
         />
-        <AppMetricCard
-          statusColor="red"
-          statusText="多重指纹碰撞"
-          title="活跃共享风险 IP"
-          value={data.active_risk_ip_count}
-        />
       </section>
 
-      <section className="activity-trend-section">
+      {section==='access' && <section className="activity-trend-section">
         <EChartsDualAxisTrend
+          title={`${quickWindow} 活跃 IP 与吞吐趋势`}
           loading={dpiTrends.isLoading}
           points={dpiTrends.data?.points ?? []}
         />
-      </section>
+      </section>}
 
       <section className="surface">
         <Tabs
@@ -429,6 +333,7 @@ export function ActivityPage() {
       </section>
 
       <FlowInspectorDrawer
+        context={{...context,from:params.get('from')||undefined,to:params.get('to')||undefined}}
         ip={inspectIp}
         onClose={() => setInspectIp(null)}
         open={Boolean(inspectIp)}
@@ -437,10 +342,9 @@ export function ActivityPage() {
   );
 }
 
-function reportSearchPath(kind: string, value: string, window: string) {
-  if (kind === "ecosystem")
-    return `/devices?ecosystem=${encodeURIComponent(value)}`;
+export function reportSearchPath(kind: string, value: string, window: string, source = new URLSearchParams()) {
   const params = new URLSearchParams({ window });
+  for(const key of ['sensor_id','campus_id','from','to'])if(source.get(key))params.set(key,source.get(key)!);
   if (kind === "port") {
     params.set("port", value);
   } else if (kind === "protocol") {
@@ -450,23 +354,6 @@ function reportSearchPath(kind: string, value: string, window: string) {
   } else {
     params.set(kind, value);
   }
+  if(kind==='ecosystem')return `/devices?${params.toString()}`;
   return `/events?${params.toString()}`;
-}
-
-function renderCountTokens(items: ActivityCount[], empty: string) {
-  if (items.length === 0) {
-    return <Typography.Text type="secondary">{empty}</Typography.Text>;
-  }
-  return (
-    <div className="sample-list">
-      {items.map((item) => (
-        <span className="sample-token" key={`${item.value}-${item.count}`}>
-          <Typography.Text className="mono wrap-text">
-            {item.value}
-          </Typography.Text>
-          <Typography.Text type="secondary"> ×{item.count}</Typography.Text>
-        </span>
-      ))}
-    </div>
-  );
 }

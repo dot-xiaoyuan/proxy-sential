@@ -1,7 +1,9 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom'
 
+import { LegacyRedirect,LegacySettingsEntry,ActivityEntry } from './LegacyRedirect'
 import { AppShell } from './AppShell'
 import {
+  ActionRecordsRoute,CampusExceptionsRoute,SourcesRoute,
   PoliciesRoute,
  SharedAccessRoute,
  SharedBehaviorDetailsRoute,
@@ -15,7 +17,6 @@ import {
   EndpointDetailsRoute,
   EventsRoute,
   EventDetailsRoute,
-  IngestRoute,
   IngestDiagnosticDetailsRoute,
   IpDetailsRoute,
   OverviewRoute,
@@ -38,18 +39,18 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate replace to="/overview" /> },
       { path: 'overview', element: <OverviewRoute /> },
-      { path: 'activity', element: <ActivityRoute /> },
+      { path: 'activity', element: <ActivityEntry><ActivityRoute /></ActivityEntry> },
       { path: 'devices', element: <DevicesRoute /> },
       { path: 'discovery', element: <DiscoveryRoute /> },
       { path: 'discovery/routers/:assessmentId', element: <RouterObservationDetailsRoute /> },
       { path: 'devices/:endpointId', element: <EndpointDetailsRoute /> },
       { path: 'events', element: <EventsRoute /> },
       { path: 'events/:eventId', element: <EventDetailsRoute /> },
-      { path: 'ingest', element: <IngestRoute /> },
+      { path: 'ingest', element: <LegacyRedirect to="/settings/sources" tab="diagnostics" /> },
       { path: 'ingest/diagnostics/:diagnosticId', element: <IngestDiagnosticDetailsRoute /> },
-      { path: 'risks', element: <Navigate replace to="/cases" /> },
+      { path: 'risks', element: <LegacyRedirect to="/cases" /> },
       { path: 'ips/:ip', element: <IpDetailsRoute /> },
-      { path: 'review', element: <Navigate replace to="/cases" /> },
+      { path: 'review', element: <LegacyRedirect to="/cases" /> },
       { path: 'review/:caseId', element: <ReviewDetailsRoute /> },
 	  { path: 'review-samples', element: <ShadowReviewSamplesRoute /> },
 	  { path: 'cases', element: <CasesRoute /> },
@@ -64,8 +65,12 @@ export const router = createBrowserRouter([
       { path: 'policies', element: <PoliciesRoute /> },
       { path: 'settings/rules', element: <RulesRoute /> },
 	  { path: 'settings/organization', element: <OrganizationRoute /> },
-	  { path: 'settings/actions', element: <ActionsRoute /> },
-	  { path: 'settings/security', element: <SecuritySettingsRoute /> },
+	  { path: 'actions', element: <ActionRecordsRoute /> },
+      { path: 'policies/exceptions', element: <CampusExceptionsRoute /> },
+      { path: 'settings/sources', element: <SourcesRoute /> },
+      { path: 'settings/sources/diagnostics/:diagnosticId', element: <IngestDiagnosticDetailsRoute /> },
+      { path: 'settings/actions', element: <LegacySettingsEntry kind="actions"><ActionsRoute /></LegacySettingsEntry> },
+	  { path: 'settings/security', element: <LegacySettingsEntry kind="security"><SecuritySettingsRoute /></LegacySettingsEntry> },
     ],
   },
 ])
