@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 
-for (const route of ['/', '/activity']) {
+for (const route of ['/', '/activity?section=access']) {
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
     test(`statistics source time ${route} ${viewport.width}x${viewport.height}`, async ({ page }) => {
       await page.setViewportSize(viewport)

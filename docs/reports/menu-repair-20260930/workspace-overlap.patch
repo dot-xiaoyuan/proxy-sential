@@ -1,0 +1,452 @@
+--- a/frontend/src/pages/OverviewPage.tsx
++++ b/frontend/src/pages/OverviewPage.tsx
+@@ -1 +1,5 @@
+-import { useState, type ReactNode } from 'react'
++import { ActiveRiskIps } from './ActiveRiskIps'
++import { useUrlState } from '../shared/ui/useUrlState'
++import { useSession } from '../shared/api/queries'
++import { can } from '../shared/auth/permissions'
++import { type ReactNode } from 'react'
+@@ -134,5 +138,7 @@
+-  const [quickWindow, setQuickWindow] = useState<ReportWindow>('1h')
+-  const [campusId, setCampusId] = useState('')
+-  const organization = useOrganization()
+-  const overview = useOverview({ window: quickWindow, campus_id: campusId || undefined })
+-  const activity = useActivityOverview({ window: quickWindow, campus_id: campusId || undefined })
++  const [windowValue,setQuickWindow]=useUrlState('window','1h',['10m','1h','24h','7d','30d']);const quickWindow=windowValue as ReportWindow
++  const [campusId,setCampusId]=useUrlState('campus_id','');const session=useSession();
++  const [sensorId]=useUrlState('sensor_id','');
++  const context=new URLSearchParams({window:quickWindow,...(campusId?{campus_id:campusId}:{}),...(sensorId?{sensor_id:sensorId}:{})}).toString()
++  const organization = useOrganization(can(session.data,'organization:read'))
++  const overview = useOverview({ window: quickWindow, sensor_id:sensorId||undefined, campus_id: campusId || undefined })
++  const activity = useActivityOverview({ window: quickWindow, sensor_id:sensorId||undefined, campus_id: campusId || undefined },can(session.data,'dpi:read'))
+@@ -181 +187 @@
+-        subtitle="统一查看风险待办、证据变化、数据链路与平台运行负载"
++        subtitle="优先处理风险待办、超时案件和证据复核"
+@@ -218 +224,7 @@
+-      <section className="overview-runtime-grid">
++      <section className="surface workbench-actions"><Typography.Title level={4}>风险待办</Typography.Title><p>待处理 {overview.data.open_case_count??overview.data.pending_reviews} 件 · 超时 {overview.data.overdue_case_count??0} 件</p><div className="policy-toolbar">
++      {can(session.data,'cases:read')&&<><Link to={`/cases?${context}`}>处理风险案件</Link><Link to={`/shared-access?tab=reviews&${context}`}>进入账号复核</Link></>}
++      {can(session.data,'shadow:read')&&<Link to="/review-samples">复核历史样本</Link>}
++      {can(session.data,'actions:read')&&<Link to="/actions?tab=actions">核对处置记录</Link>}
++      </div></section>
++      {activity.data&&<section className="surface"><ActiveRiskIps items={activity.data.top_active_risk_ips}/></section>}
++      <section className="overview-risk-summary">
+@@ -237,39 +248,0 @@
+-        <Card className="surface-card overview-panel" size="small">
+-          <PanelHeader icon={<CloudServerOutlined />} title="服务器负载" meta={host ? `${host.logical_cpus} 核` : undefined} />
+-          <div className="overview-load-stack">
+-            {hostLoadPercent !== undefined && host?.load_1 !== undefined && (
+-              <LoadRow label="1 分钟负载" percent={hostLoadPercent} detail={host.load_1.toFixed(2)} />
+-            )}
+-            {host?.memory_used_percent !== undefined && (
+-              <LoadRow
+-                label="物理内存"
+-                percent={host.memory_used_percent}
+-                detail={`${formatBytes(host.memory_used_bytes)} / ${formatBytes(host.memory_total_bytes)}`}
+-              />
+-            )}
+-          </div>
+-          {host && (host.load_5 !== undefined || host.load_15 !== undefined) && (
+-            <div className="overview-inline-stats">
+-              {host.load_5 !== undefined && <div><span>5 分钟负载</span><strong>{host.load_5.toFixed(2)}</strong></div>}
+-              {host.load_15 !== undefined && <div><span>15 分钟负载</span><strong>{host.load_15.toFixed(2)}</strong></div>}
+-            </div>
+-          )}
+-        </Card>
+-
+-        <Card className="surface-card overview-panel" size="small">
+-          <PanelHeader icon={<CodeOutlined />} title="程序负载" meta={process ? `运行 ${formatDuration(process.uptime_seconds)}` : undefined} />
+-          {process && (
+-            <>
+-              <div className="overview-load-stack">
+-                <LoadRow label="进程 CPU" percent={process.cpu_percent} detail={`${process.cpu_percent.toFixed(1)}%`} />
+-              </div>
+-              <div className="overview-inline-stats overview-process-stats">
+-                {process.resident_memory_bytes !== undefined && <div><span>常驻内存</span><strong>{formatBytes(process.resident_memory_bytes)}</strong></div>}
+-                <div><span>Go 堆内存</span><strong>{formatBytes(process.heap_alloc_bytes)}</strong></div>
+-                <div><span>协程</span><strong>{process.goroutines.toLocaleString()}</strong></div>
+-                <div><span>GC 次数</span><strong>{process.gc_cycles.toLocaleString()}</strong></div>
+-              </div>
+-            </>
+-          )}
+-          {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="运行状态接口加载失败" />}
+-        </Card>
+@@ -302,0 +276,70 @@
++      </section>
++
++      <section className="overview-detail-grid">
++        <div className="surface overview-activity-summary">
++          <div>
++            <Typography.Title level={4}>DPI 访问态势</Typography.Title>
++            <Typography.Text type="secondary">
++              {quickWindow} 内覆盖 {activity.data?.active_ip_count ?? 0} 个活跃 IP 与 {activity.data?.access_object_count ?? 0} 个访问目标
++            </Typography.Text>
++          </div>
++          <div className="overview-activity-metrics">
++            <div><span>标准事件</span><strong>{(activity.data?.event_count ?? 0).toLocaleString()}</strong></div>
++            <div><span>活跃共享 IP</span><strong className="text-danger-color">{activity.data?.active_risk_ip_count ?? 0}</strong></div>
++            <Link to={`/activity?section=access&${context}`}>进入访问分析</Link>
++          </div>
++        </div>
++
++        <div className="surface overview-shadow-summary">
++          <PanelHeader icon={<ClockCircleOutlined />} title="最近影子运行" />
++          <div className="overview-shadow-content">
++            {overview.data.latest_shadow_run.run_id && (
++              <Typography.Text className="mono overview-shadow-id">{overview.data.latest_shadow_run.run_id}</Typography.Text>
++            )}
++            <div className="overview-shadow-meta">
++              {overview.data.latest_shadow_run.sensor_id && <span>Sensor {overview.data.latest_shadow_run.sensor_id}</span>}
++              <span>评估快照 {overview.data.latest_shadow_run.risk_list_count}</span>
++              {overview.data.latest_shadow_run.truncated && <RiskLevelTag level="suspicious" />}
++            </div>
++          </div>
++        </div>
++      </section>
++      <details className="surface platform-health"><summary>平台健康与运行负载</summary><div className="overview-runtime-grid">        <Card className="surface-card overview-panel" size="small">
++          <PanelHeader icon={<CloudServerOutlined />} title="服务器负载" meta={host ? `${host.logical_cpus} 核` : undefined} />
++          <div className="overview-load-stack">
++            {hostLoadPercent !== undefined && host?.load_1 !== undefined && (
++              <LoadRow label="1 分钟负载" percent={hostLoadPercent} detail={host.load_1.toFixed(2)} />
++            )}
++            {host?.memory_used_percent !== undefined && (
++              <LoadRow
++                label="物理内存"
++                percent={host.memory_used_percent}
++                detail={`${formatBytes(host.memory_used_bytes)} / ${formatBytes(host.memory_total_bytes)}`}
++              />
++            )}
++          </div>
++          {host && (host.load_5 !== undefined || host.load_15 !== undefined) && (
++            <div className="overview-inline-stats">
++              {host.load_5 !== undefined && <div><span>5 分钟负载</span><strong>{host.load_5.toFixed(2)}</strong></div>}
++              {host.load_15 !== undefined && <div><span>15 分钟负载</span><strong>{host.load_15.toFixed(2)}</strong></div>}
++            </div>
++          )}
++        </Card>
++
++        <Card className="surface-card overview-panel" size="small">
++          <PanelHeader icon={<CodeOutlined />} title="程序负载" meta={process ? `运行 ${formatDuration(process.uptime_seconds)}` : undefined} />
++          {process && (
++            <>
++              <div className="overview-load-stack">
++                <LoadRow label="进程 CPU" percent={process.cpu_percent} detail={`${process.cpu_percent.toFixed(1)}%`} />
++              </div>
++              <div className="overview-inline-stats overview-process-stats">
++                {process.resident_memory_bytes !== undefined && <div><span>常驻内存</span><strong>{formatBytes(process.resident_memory_bytes)}</strong></div>}
++                <div><span>Go 堆内存</span><strong>{formatBytes(process.heap_alloc_bytes)}</strong></div>
++                <div><span>协程</span><strong>{process.goroutines.toLocaleString()}</strong></div>
++                <div><span>GC 次数</span><strong>{process.gc_cycles.toLocaleString()}</strong></div>
++              </div>
++            </>
++          )}
++          {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="运行状态接口加载失败" />}
++        </Card>
+@@ -321,31 +364 @@
+-      </section>
+-
+-      <section className="overview-detail-grid">
+-        <div className="surface overview-activity-summary">
+-          <div>
+-            <Typography.Title level={4}>DPI 访问态势</Typography.Title>
+-            <Typography.Text type="secondary">
+-              {quickWindow} 内覆盖 {activity.data?.active_ip_count ?? 0} 个活跃终端与 {activity.data?.access_object_count ?? 0} 个访问目标
+-            </Typography.Text>
+-          </div>
+-          <div className="overview-activity-metrics">
+-            <div><span>标准事件</span><strong>{(activity.data?.event_count ?? 0).toLocaleString()}</strong></div>
+-            <div><span>活跃共享 IP</span><strong className="text-danger-color">{activity.data?.active_risk_ip_count ?? 0}</strong></div>
+-            <Link to="/activity">进入网络态势</Link>
+-          </div>
+-        </div>
+-
+-        <div className="surface overview-shadow-summary">
+-          <PanelHeader icon={<ClockCircleOutlined />} title="最近影子运行" />
+-          <div className="overview-shadow-content">
+-            {overview.data.latest_shadow_run.run_id && (
+-              <Typography.Text className="mono overview-shadow-id">{overview.data.latest_shadow_run.run_id}</Typography.Text>
+-            )}
+-            <div className="overview-shadow-meta">
+-              {overview.data.latest_shadow_run.sensor_id && <span>Sensor {overview.data.latest_shadow_run.sensor_id}</span>}
+-              <span>评估快照 {overview.data.latest_shadow_run.risk_list_count}</span>
+-              {overview.data.latest_shadow_run.truncated && <RiskLevelTag level="suspicious" />}
+-            </div>
+-          </div>
+-        </div>
+-      </section>
++</div></details>
+--- a/frontend/src/pages/PoliciesPage.tsx
++++ b/frontend/src/pages/PoliciesPage.tsx
+@@ -1 +1,2 @@
+-import { ApprovalPreview } from '../features/policies/ApprovalPreview'
++import { reasonNames } from '../features/policies/reasonMeta'
++import { Link } from 'react-router-dom'
+@@ -6 +7 @@
+-import { Alert, Button, Card, Empty, Input, Modal, Switch, Tag, Typography, message } from 'antd'
++import { Alert, Button, Card, Empty, Input, Switch, Tag, Typography, message } from 'antd'
+@@ -14 +14,0 @@
+-const reasonNames: Record<string,string> = {shared_session_generation_missing:'缺少认证会话代次',shared_session_generation_changed_within_window:'观测期间认证会话发生变化',shared_features_lack_repeated_coexistence:'共享特征缺少重复采样或时间共现',invalid_shared_evidence:'共享证据格式无效',stale_or_invalid_shared_window:'观测已过期或时间窗口无效',shared_observation_conflict:'观测记录存在冲突',invalid_shared_ip:'观测 IP 无效',missing_access_scope:'缺少园区或接入域',unregistered_shared_source:'采集来源配置缺失',ambiguous_shared_source_scope:'采集来源范围冲突',shared_source_scope_mismatch:'观测范围与来源配置不一致',shared_identity_unknown_or_conflicting:'事件时身份存在缺口或冲突',shared_identity_changed_within_window:'观测期间账号发生变化',incomplete_shared_observation_window:'观测窗口不完整',shared_device_identity_insufficient:'缺少可确认的设备身份',insufficient_independent_shared_signals:'独立共享信号不足',missing_shared_scope_observation:'该接入位置缺少观测',shared_scope_account_changed:'该接入位置的账号已变化',shared_evidence_unavailable:'共享证据暂不可用',shared_access_observation_only:'共享证据当前仅用于观测',shared_evidence_insufficient_or_expired:'共享证据不足或已过期',no_shared_basis_in_complete_window:'当前完整窗口未发现共享依据',corroborated_shared_access_basis_requires_review:'存在共享依据，仍需核对组织策略',proxy_evidence_unavailable:"代理证据暂不可用",no_fresh_confirmed_proxy_evidence:"没有可归责的有效成功连接证据",confirmed_proxy_connection_requires_review:"检测到成功代理连接，需人工复核是否违规",proxy_automatic_forbidden:"此类证据禁止自动处置",proxy_evidence_changed_review_again:"证据发生变化，请重新复核",disabled:'策略未启用',selected:'按优先级选中',scope_or_schedule_mismatch:'范围或时段不匹配',exempt:'命中豁免',higher_priority_policy_selected:'同类触发已选中更高优先级策略',risk_evidence_not_evaluated:'风险证据评估尚未接入',identity_or_device_coverage_incomplete:'身份或设备覆盖不足',identity_coverage_incomplete:'身份覆盖不足',product_policy_catalog_unavailable:'产品策略目录读取失败',product_policy_snapshot_stale:'产品策略快照已过期',product_missing:'产品已从完整目录停用',no_fresh_online_inventory:'无新鲜在线清单',total_exceeded:'总设备数超限',mobile_exceeded:'手机数超限',pc_exceeded:'电脑数超限',session_quota_exceeded:'认证会话数超限'}
+@@ -19,2 +18,0 @@
+- const directory = useQuery({queryKey:['four-k-directory'],queryFn:policiesAPI.fourKDirectory,retry:false})
+- const connectors = useActionConnectors()
+@@ -23 +20,0 @@
+- const [approvalId,setApprovalId]=useState<string>();
+@@ -24,0 +22,2 @@
++ const directory=useQuery({queryKey:['four-k-directory'],queryFn:policiesAPI.fourKDirectory,retry:false,enabled:!!editing})
++ const connectors=useActionConnectors(!!editing&&can(session.data,'actions:read'))
+@@ -29,3 +28,2 @@
+- const operation=useMutation({mutationFn:({id,op}:{id:string;op:'approve'|'revoke'})=>policiesAPI.operation(id,op),onSuccess:()=>{void cache.invalidateQueries({queryKey:['policy-executions']})},onError:(e:Error)=>message.error(e.message)})
+- if(query.isLoading||connectors.isLoading||directory.isLoading)return <AppLoadingState rows={5}/>
+- if(query.isError||connectors.isError)return <AppErrorAlert title="策略加载失败"/>
++ if(query.isLoading)return <AppLoadingState rows={5}/>
++ if(query.isError)return <AppErrorAlert title="策略加载失败"/>
+@@ -35 +33 @@
+- <div className="policy-toolbar"><Input aria-label="试算账号" placeholder="输入认证账号进行试算" value={account} onChange={e=>setAccount(e.target.value)}/><Button type="primary" disabled={!writable} onClick={()=>edit(emptyPolicy(),true)}>新建策略</Button></div>
++ <div className="policy-toolbar"><Input aria-label="试算账号" placeholder="输入认证账号进行试算" value={account} onChange={e=>setAccount(e.target.value)}/><Button type="primary" disabled={!writable} onClick={()=>edit(emptyPolicy(),true)}>新建设备配额策略</Button></div>
+@@ -37 +35 @@
+- <div className="policy-cards">{query.data?.items.map(p=><Card key={p.policy_id} title={p.name} extra={<Switch aria-label={`${p.name}策略开关`} checked={p.enabled} disabled={!writable||toggle.isPending} onChange={enabled=>toggle.mutate({...p,enabled})}/>}>
++ <div className="policy-cards">{query.data?.items.map(p=><Card key={p.policy_id} title={p.name} extra={<Switch aria-label={`${p.name}策略开关`} checked={p.enabled} disabled={!writable||toggle.isPending||Boolean(p.origin)} onChange={enabled=>toggle.mutate({...p,enabled})}/>}>
+@@ -39,3 +37,3 @@
+- <Typography.Paragraph>认定条件：{[p.limits.total!=null&&`全部设备数 > ${p.limits.total}`,p.limits.pc!=null&&`电脑数量 > ${p.limits.pc}`,p.limits.mobile!=null&&`移动设备数量 > ${p.limits.mobile}`].filter(Boolean).join('，')}</Typography.Paragraph>
+- <Typography.Paragraph>处理动作：{p.stages.length?p.stages.map(stage=>({notify:'消息提醒',disconnect:'强制下线',rate_limit:'带宽降速',disable_account:'用户封禁',record:'仅记录'}[stage.action]??stage.action)).join('，'):''}</Typography.Paragraph>
+- {p.trigger==='session_quota_exceeded'?<Typography.Paragraph>认证会话上限：{p.limits.sessions}</Typography.Paragraph>:<Typography.Paragraph>设备上限：总数 {p.limits.total??'不限'} / 手机 {p.limits.mobile??'不限'} / 电脑 {p.limits.pc??'不限'}</Typography.Paragraph>}
++ {p.trigger==='quota_exceeded'&&<Typography.Paragraph>认定条件：{[p.limits.total!=null&&`全部设备数 > ${p.limits.total}`,p.limits.pc!=null&&`电脑数量 > ${p.limits.pc}`,p.limits.mobile!=null&&`移动设备数量 > ${p.limits.mobile}`].filter(Boolean).join('，')}</Typography.Paragraph>}
++ {p.stages.length>0&&<Typography.Paragraph>处理动作：{p.stages.length?p.stages.map(stage=>({notify:'消息提醒',disconnect:'强制下线',rate_limit:'带宽降速',disable_account:'用户封禁',record:'仅记录'}[stage.action]??stage.action)).join('，'):''}</Typography.Paragraph>}
++ {p.trigger==='session_quota_exceeded'?<Typography.Paragraph>认证会话上限：{p.limits.sessions}</Typography.Paragraph>:p.trigger==='quota_exceeded'?<Typography.Paragraph>设备上限：总数 {p.limits.total??'不限'} / 手机 {p.limits.mobile??'不限'} / 电脑 {p.limits.pc??'不限'}</Typography.Paragraph>:null}
+@@ -44 +42 @@
+- <div className="policy-toolbar"><Button disabled={!writable||p.trigger!=='quota_exceeded'||Boolean(p.origin)} onClick={()=>edit(p)}>编辑策略</Button><Button disabled={!account.trim()} loading={simulate.isPending} onClick={()=>simulate.mutate(p.policy_id)}>策略试算</Button></div>
++ {(p.trigger!=='quota_exceeded'||p.origin)&&<Typography.Paragraph type="secondary">{p.origin?'此策略由来源系统同步，当前页面仅供查看。':'此类策略编辑尚未开放，现有评估和复核流程继续生效。'}</Typography.Paragraph>}<div className="policy-toolbar"><Button disabled={!writable||p.trigger!=='quota_exceeded'||Boolean(p.origin)} onClick={()=>edit(p)}>编辑策略</Button><Button disabled={!account.trim()} loading={simulate.isPending} onClick={()=>simulate.mutate(p.policy_id)}>策略试算</Button></div>
+@@ -52,2 +50 @@
+- <Modal title="确认策略执行" open={Boolean(approvalId)} footer={null} destroyOnHidden onCancel={()=>setApprovalId(undefined)}>{approvalId&&<ApprovalPreview key={approvalId} id={approvalId} onComplete={()=>{setApprovalId(undefined);void cache.invalidateQueries({queryKey:['policy-executions']})}}/>}</Modal>
+- <Card title="策略执行记录">{executions.isError?<AppErrorAlert title="执行记录加载失败"/>:executions.data?.items.length?executions.data.items.map(e=><div className="policy-execution" key={e.execution_id}><strong className="policy-identifier">{e.account_id} · {e.policy_id}</strong><p>第 {e.episode} 轮 · {e.state}</p><p>{e.reasons.map(r=>reasonNames[r]??r).join('、')}</p>{e.proxy_evidence?.map(proof=><ProxyProtocolView key={proof.evidence_id} evidence={proof}/>)}{e.stages.map(st=><p key={st.index}>阶段 {st.index+1}：{st.status} · {st.action_ids.length} 个子动作</p>)}<div className="policy-toolbar"><Button disabled={!can(session.data,'policies:authorize')||!e.stages.some(st=>st.status==='awaiting_approval')} onClick={()=>setApprovalId(e.execution_id)}>确认执行</Button><Button disabled={!can(session.data,'actions:revoke')} onClick={()=>operation.mutate({id:e.execution_id,op:'revoke'})}>撤销本轮</Button></div></div>):<Empty description="暂无执行记录"/>}</Card>
++ <Card title="执行摘要"><Typography.Paragraph>当前记录 {executions.data?.items.length ?? 0} 条</Typography.Paragraph><Link to="/actions?tab=executions">查看策略执行与审批记录</Link></Card>
+--- a/frontend/src/pages/ActionsPage.tsx
++++ b/frontend/src/pages/ActionsPage.tsx
+@@ -14,2 +13,0 @@
+-  Table,
+-  Tabs,
+@@ -23 +20,0 @@
+-import { NativeObservations } from "../entities/evidence/NativeObservations";
+@@ -26 +22,0 @@
+-  useActions,
+@@ -35,2 +30,0 @@
+-  AppServerPagination,
+-  useServerPagination,
+@@ -51 +44,0 @@
+-  const pagination = useServerPagination();
+@@ -53,4 +45,0 @@
+-  const actions = useActions({
+-    limit: pagination.pageSize,
+-    cursor: pagination.cursor,
+-  });
+@@ -62 +50,0 @@
+-  const [selectedAction, setSelectedAction] = useState<string>();
+@@ -65 +52,0 @@
+-  const [activeTab, setActiveTab] = useState("connectors");
+@@ -67 +54 @@
+-  if (connectors.isLoading || actions.isLoading)
++  if (connectors.isLoading)
+@@ -71,3 +58 @@
+-    actions.isError ||
+-    !connectors.data ||
+-    !actions.data
++    !connectors.data
+@@ -75 +60 @@
+-    return <AppErrorAlert title="处置网关加载失败" />;
++    return <AppErrorAlert title="认证与处置接入加载失败" />;
+@@ -129 +114 @@
+-        title="旁路处置网关"
++        title="认证与处置接入"
+@@ -133 +117,0 @@
+-          void actions.refetch();
+@@ -160,11 +143,0 @@
+-      <section className="surface details-tab-shell margin-top-md">
+-        <Tabs
+-          activeKey={activeTab}
+-          onChange={setActiveTab}
+-          items={[
+-            { key: "connectors", label: "连接器与安全门槛" },
+-            { key: "actions", label: `处置动作 ${actions.data.page.total}` },
+-          ]}
+-        />
+-      </section>
+-      {activeTab === "connectors" && (
+@@ -266,8 +239,6 @@
+-                "风险分 ≥ 90",
+-                "风险置信度 ≥ 90%",
+-                "明确代理/隧道强规则",
+-                "账号与终端会话可定位",
+-                "无校园例外或良性结论",
+-                "24 小时对象冷却",
+-                "校区 5次/10分钟、全局20次/小时熔断",
+-                "通用外部连接器需完成影子验收；4K托管接入按事件通道状态准入",
++                "按触发类型检查设备配额、会话配额或可归责的风险证据",
++                "核验当前账号、在线会话与登录代次",
++                "检查策略范围、校园例外与人工复核结论",
++                "真实动作遵守策略冷却和连接器熔断",
++                "通用外部连接器需完成影子验收；4K 托管接入按事件通道状态准入",
++                "全局紧急停止阻断真实动作；所有操作保留审计和撤销入口",
+@@ -279,119 +249,0 @@
+-      )}
+-      {activeTab === "actions" && (
+-        <Card className="margin-top-md" title="最近动作">
+-          <div className="desktop-only">
+-            <Table
+-              className="compact-list-table"
+-              dataSource={actions.data.items}
+-              pagination={false}
+-              rowKey="action_id"
+-              columns={[
+-                { title: "动作", dataIndex: "action_type" },
+-                {
+-                  title: "对象",
+-                  dataIndex: "subject_id",
+-                  render: (value: string) => (
+-                    <span className="nowrap-cell">{value}</span>
+-                  ),
+-                },
+-                {
+-                  title: "模式",
+-                  dataIndex: "mode",
+-                  render: (value: string) => <Tag>{value}</Tag>,
+-                },
+-                {
+-                  title: "状态",
+-                  dataIndex: "status",
+-                  render: (value: string) => (
+-                    <Tag
+-                      color={
+-                        value === "succeeded"
+-                          ? "green"
+-                          : value === "failed" || value === "blocked"
+-                            ? "red"
+-                            : "blue"
+-                      }
+-                    >
+-                      {value}
+-                    </Tag>
+-                  ),
+-                },
+-                {
+-                  title: "阻断原因",
+-                  dataIndex: "blockers",
+-                  render: (value?: string[]) => (
+-                    <span className="ellipsis-cell" title={value?.join("、")}>
+-                      {value?.join("、") || ""}
+-                    </span>
+-                  ),
+-                },
+-                { title: "重试", dataIndex: "retry_count" },
+-                {
+-                  title: "时间",
+-                  dataIndex: "created_at",
+-                  render: (value: string) => (
+-                    <span className="nowrap-cell">
+-                      {new Date(value).toLocaleString()}
+-                    </span>
+-                  ),
+-                },
+-                {
+-                  title: "操作",
+-                  render: (_, item) => (
+-                    <Space wrap>
+-                    <Button onClick={() => setSelectedAction(item.action_id)}>执行记录</Button>
+-                    <Button
+-                      disabled={
+-                        !can(session.data, "actions:revoke") ||
+-                        item.status !== "succeeded"
+-                      }
+-                      onClick={async () => {
+-                        await api.revokeAction(item.action_id);
+-                        void message.success("撤销请求已提交");
+-                        void actions.refetch();
+-                      }}
+-                    >
+-                      撤销
+-                    </Button>
+-                    </Space>
+-                  ),
+-                },
+-              ]}
+-            />
+-          </div>
+-          <List
+-            className="mobile-only"
+-            dataSource={actions.data.items}
+-            locale={{ emptyText: "暂无处置动作" }}
+-            renderItem={(item) => (
+-              <List.Item>
+-                <Card className="mobile-case-card" size="small">
+-                  <div className="mobile-case-head">
+-                    <Typography.Text className="nowrap-cell" strong>
+-                      {item.action_type}
+-                    </Typography.Text>
+-                    <Tag>{item.status}</Tag>
+-                  </div>
+-                  <div className="mobile-case-row">
+-                    <span className="ellipsis-cell" title={item.subject_id}>
+-                      {item.subject_id}
+-                    </span>
+-                    <span>{item.mode}</span>
+-                  </div>
+-                  <div className="mobile-case-row">
+-                    <span>重试 {item.retry_count ?? 0}</span>
+-                    <span>{new Date(item.created_at).toLocaleString()}</span>
+-                  </div>
+-                  <Button onClick={() => setSelectedAction(item.action_id)}>执行记录</Button>
+-                </Card>
+-              </List.Item>
+-            )}
+-          />
+-          <AppServerPagination
+-            page={pagination.page}
+-            pageSize={pagination.pageSize}
+-            total={actions.data.page.total}
+-            onChange={pagination.update}
+-          />
+-        </Card>
+-      )}
+@@ -401,3 +252,0 @@
+-      </Modal>
+-      <Modal title="原生执行记录" open={Boolean(selectedAction)} footer={null} onCancel={() => setSelectedAction(undefined)} destroyOnHidden>
+-        {selectedAction && <NativeObservations key={selectedAction} actionId={selectedAction} />}
+--- a/frontend/tests/e2e/policies.spec.ts
++++ b/frontend/tests/e2e/policies.spec.ts
+@@ -13 +13 @@
+- await page.getByRole('button',{name:'新建策略',exact:true}).click()
++ await page.getByRole('button',{name:'新建设备配额策略',exact:true}).click()
+@@ -16,2 +16,2 @@
+- await expect(page.getByRole('dialog').locator('.ant-steps').getByText('代理行为认定条件',{exact:true})).toBeVisible()
+- await expect(page.getByRole('dialog').locator('.ant-steps').getByText('代理行为处理动作',{exact:true})).toBeVisible()
++ await expect(page.getByRole('dialog').locator('.ant-steps').getByText('配额超限认定条件',{exact:true})).toBeVisible()
++ await expect(page.getByRole('dialog').locator('.ant-steps').getByText('配额超限处理动作',{exact:true})).toBeVisible()
+--- a/frontend/src/features/policies/PolicyStrategyEditor.tsx
++++ b/frontend/src/features/policies/PolicyStrategyEditor.tsx
+@@ -153 +153 @@
+-  const options = [{ value: 'duration', label: '代理行为持续时间' }]
++  const options = [{ value: 'duration', label: '配额超限持续时间' }]
+@@ -213 +213 @@
+-  return <Modal className="policy-modal policy-strategy-modal" title={creating ? '新增防代理策略' : '编辑防代理策略'} open width={900} destroyOnHidden onCancel={onCancel} footer={
++  return <Modal className="policy-modal policy-strategy-modal" title={creating ? '新增设备配额策略' : '编辑设备配额策略'} open width={900} destroyOnHidden onCancel={onCancel} footer={
+@@ -220 +220 @@
+-    <Steps className="policy-editor-steps" current={step} responsive items={[{ title: '策略信息' }, { title: '代理行为认定条件' }, { title: '代理行为处理动作' }]} />
++    <Steps className="policy-editor-steps" current={step} responsive items={[{ title: '策略信息' }, { title: '配额超限认定条件' }, { title: '配额超限处理动作' }]} />
+@@ -236 +236 @@
+-        <Typography.Title level={5}>代理行为认定条件</Typography.Title>
++        <Typography.Title level={5}>配额超限认定条件</Typography.Title>
+@@ -248 +248 @@
+-        <Typography.Title level={5}>代理行为处理动作</Typography.Title>
++        <Typography.Title level={5}>配额超限处理动作</Typography.Title>
+@@ -255 +255 @@
+-            <Form.Item name={['actions', 'notify_after_seconds']} label="代理行为持续秒数" rules={[{ required: true }]}><InputNumber min={1} precision={0} /></Form.Item>
++            <Form.Item name={['actions', 'notify_after_seconds']} label="配额超限持续秒数" rules={[{ required: true }]}><InputNumber min={1} precision={0} /></Form.Item>
+--- a/frontend/tests/e2e/overview-workbench.spec.ts
++++ b/frontend/tests/e2e/overview-workbench.spec.ts
+@@ -16,0 +17 @@
++      await page.getByText('平台健康与运行负载',{exact:true}).click()
+--- a/frontend/tests/e2e/product-policy-import.spec.ts
++++ b/frontend/tests/e2e/product-policy-import.spec.ts
+@@ -9 +9 @@
+-  await expect(page.getByRole('button',{name:'同步4K产品与用户'}).first()).toBeVisible()
++  await expect(page.getByRole('button',{name:'配置与同步4K'}).first()).toBeVisible()

@@ -14,7 +14,7 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
   test('capture 1280x800 cases page', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await page.goto('/cases')
-    await expect(page.getByRole('heading', { name: '风险处置' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '风险案件' })).toBeVisible()
     await page.screenshot({ path: path.join(artifactDir, 'cases-1280x800.png'), fullPage: true })
   })
 
@@ -62,7 +62,7 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
   test('capture 390x844 rules page with strict DOM internal container overflow checks', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/settings/rules')
-    await expect(page.getByRole('heading', { name: '规则配置' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '规则与特征库' })).toBeVisible()
 
     // 1. 全局 Document 根层级防溢出
     const docOverflow = await page.evaluate(() => ({

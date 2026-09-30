@@ -82,7 +82,7 @@ export function RulesPage() {
               children: (
                 <div>
                   <Typography.Title level={4}>设备特征库</Typography.Title>
-                  {fingerprintLibrary.isError ? (
+                  {fingerprintLibrary.isLoading ? <Skeleton active/> : fingerprintLibrary.isError ? (
                     <Alert
                       showIcon
                       type="error"
@@ -141,8 +141,8 @@ export function RulesPage() {
                         {
                           key: "mode",
                           label: "更新模式",
-                          children: fingerprintLibrary.data?.offline_mode
-                            ? "离线包导入（30 机器不访问外网）"
+                          children: fingerprintLibrary.data?.offline_mode === undefined ? '' : fingerprintLibrary.data.offline_mode
+                            ? "离线包导入"
                             : "联网更新",
                         },
                         {
@@ -153,12 +153,12 @@ export function RulesPage() {
                         {
                           key: "domain-availability",
                           label: "域名识别",
-                          children: (fingerprintLibrary.data?.domain_rule_count ?? 0) === 0 ? "域名识别不可用：未加载域名规则" : `可用 · 可推断品牌规则 ${fingerprintLibrary.data?.brand_eligible_rule_count ?? 0} 条`,
+                          children: fingerprintLibrary.data?.domain_rule_count === undefined ? '' : fingerprintLibrary.data.domain_rule_count === 0 ? "域名识别不可用：未加载域名规则" : `可用 · 可推断品牌规则 ${fingerprintLibrary.data?.brand_eligible_rule_count ?? ''} 条`,
                         },
                         {
                           key: "domain-provenance",
                           label: "域名来源明细",
-                          children: <div className="brand-evidence-wrap">{fingerprintLibrary.data?.domain_sources?.map(source => <div key={`${source.name}-${source.version}`}>{source.name} · {source.version} · {source.rule_count} 条 / 可推断 {source.brand_eligible_rule_count} 条</div>) || "旧规则包未提供来源明细"}</div>,
+                          children: <div className="brand-evidence-wrap">{fingerprintLibrary.data?.domain_sources?.map(source => <div key={`${source.name}-${source.version}`}>{source.name} · {source.version} · {source.rule_count} 条 / 可推断 {source.brand_eligible_rule_count} 条</div>)}</div>,
                         },
                         {
                           key: "domain-processing",
@@ -171,26 +171,26 @@ export function RulesPage() {
                           children: (
                             <Typography.Text className="mono list-cell-nowrap">
                               {fingerprintLibrary.data?.domain_source_version ||
-                                "v1 包未包含域名规则"}
+                                ""}
                             </Typography.Text>
                           ),
                         },
                         {
                           key: "domain-backfill",
                           label: "域名证据回填",
-                          children: `${fingerprintLibrary.data?.domain_backfill_status || "未启动"} · ${fingerprintLibrary.data?.domain_backfill_processed ?? 0} 条`,
+                          children: fingerprintLibrary.data?.domain_backfill_status ? `${statusText(fingerprintLibrary.data.domain_backfill_status)} · ${fingerprintLibrary.data?.domain_backfill_processed ?? ''} 条` : '',
                         },
                         {
                           key: "domain-error",
                           label: "域名回填错误",
                           children:
                             fingerprintLibrary.data
-                              ?.domain_backfill_last_error || "无",
+                              ?.domain_backfill_last_error || "",
                         },
                         {
                           key: "backfill",
                           label: "画像回填",
-                          children: `${fingerprintLibrary.data?.backfill_status || "未启动"} · ${fingerprintLibrary.data?.backfill_processed ?? 0} 条`,
+                          children: fingerprintLibrary.data?.backfill_status ? `${statusText(fingerprintLibrary.data.backfill_status)} · ${fingerprintLibrary.data?.backfill_processed ?? ''} 条` : '',
                         },
                         {
                           key: "licenses",

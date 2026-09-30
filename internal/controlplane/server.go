@@ -1464,6 +1464,9 @@ func validateLabelRequest(request CreateLabelRequest) error {
 	if strings.TrimSpace(request.TargetID) == "" {
 		return fmt.Errorf("target_id is required")
 	}
+	if targetID := strings.TrimSpace(request.TargetID); request.TargetType == "risk_snapshot" && strings.HasPrefix(targetID, "sample-") && targetID != request.TargetID {
+		return fmt.Errorf("sample target_id must not contain surrounding whitespace")
+	}
 	switch request.Label {
 	case "confirmed_proxy", "false_positive", "benign", "needs_more_data":
 	default:

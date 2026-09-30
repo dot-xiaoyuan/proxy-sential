@@ -13,6 +13,8 @@ export const statusLabels: Record<string,string> = {
  disconnect:'强制下线', rate_limit:'带宽降速', disable_account:'用户封禁', notify:'消息提醒', record:'仅记录',
 }
 export function statusText(value?: string | null) { return value ? statusLabels[value] ?? value : '' }
+const severityLabels:Record<string,string>={critical:'严重',high:'高',medium:'中',low:'低',info:'提示',warning:'警告',error:'错误'}
+export function severityText(value?:string|null){return value?severityLabels[value]??value:''}
 export function displayField(value?: string | null) {
  if(!value || /^(?:unknown|未知.*|未识别.*|未获取.*|未关联.*|待关联.*|未观测.*|[—-])$/i.test(value.trim()))return ''
  return value

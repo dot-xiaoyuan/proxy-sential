@@ -2,6 +2,7 @@ import { ProxyProtocolView } from './ProxyProtocolView'
 import { Tag, Typography } from 'antd'
 
 import type { Evidence } from '../../shared/api/types'
+import { severityText } from '../../shared/ui/status'
 
 const maxVisibleEvidence = 6
 const maxSamplesPerEvidence = 3
@@ -21,9 +22,9 @@ export function EvidenceList({ evidence }: { evidence: Evidence[] }) {
           {item.proxy_protocol ? <ProxyProtocolView evidence={item.proxy_protocol}/> : <div className="evidence-compact-main">
             <div className="evidence-item__head">
               <Typography.Text className="evidence-type-title">{item.type}</Typography.Text>
-              <Tag className="compact-tag" color={severityColor(item.severity)}>{item.severity}</Tag>
+              <Tag className="compact-tag" color={severityColor(item.severity)}>{severityText(item.severity)}</Tag>
               <Typography.Text className="evidence-meta-text">
-                score {item.score} · confidence {Math.round(item.confidence * 100)}% · {item.window}
+                {item.score} 分 · 置信度 {Math.round(item.confidence * 100)}% · {item.window}
               </Typography.Text>
             </div>
             <Typography.Text className="evidence-reason-text wrap-text">{item.reason}</Typography.Text>

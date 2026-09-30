@@ -138,6 +138,19 @@ func TestStableSampleReviewListAndReplayUseSameMatching(t *testing.T) {
 	}
 }
 
+func TestHistoricalSampleReviewRejectsPaddedTargetID(t *testing.T) {
+	server, sample, _ := historicalSampleFixture(t)
+	server.readOnly = false
+	for _, targetID := range []string{" " + sample.SampleID, sample.SampleID + " ", "\t" + sample.SampleID + "\n"} {
+		body, err := json.Marshal(CreateLabelRequest{TargetType: "risk_snapshot", TargetID: targetID, SampleDate: sample.Date, Label: "confirmed_proxy", Reason: "历史证据复核", EvidenceIDs: sample.EvidenceIDs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response ErrorResponse
+		postJSONBody(t, server, "/api/v1/labels", http.StatusBadRequest, &response, string(body))
+	}
+}
+
 func TestHistoricalSampleRejectsSnapshotProofMismatchAndReadError(t *testing.T) {
 	server, sample, dir := historicalSampleFixture(t)
 	if err := os.WriteFile(filepath.Join(dir, "runs/run-1/evidence.json"), []byte("invalid JSON"), 0600); err != nil {
