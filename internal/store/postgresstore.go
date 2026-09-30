@@ -163,7 +163,7 @@ func (s *PostgresStore) ListRisks(ctx context.Context, query Query) (RiskPage, e
 	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
-       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups, metadata
 FROM risk_snapshots`+where+`
 ORDER BY
   CASE level WHEN 'confirmed' THEN 3 WHEN 'high' THEN 2 WHEN 'suspicious' THEN 1 ELSE 0 END DESC,
@@ -202,7 +202,7 @@ ORDER BY
 func (s *PostgresStore) GetIPRisk(ctx context.Context, ip string) (risk.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
-       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups, metadata
 FROM risk_snapshots WHERE ip = $1::inet`, ip)
 	if err != nil {
 		return risk.Snapshot{}, err
@@ -221,7 +221,7 @@ FROM risk_snapshots WHERE ip = $1::inet`, ip)
 func (s *PostgresStore) RiskSnapshotMap(ctx context.Context) (map[string]risk.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT host(ip), score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at,
-       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups
+       COALESCE(assessment_level, level), COALESCE(review_disposition, ''), automation_eligible, automation_blockers, detection_basis, independent_signal_groups, metadata
 FROM risk_snapshots`)
 	if err != nil {
 		return nil, err
@@ -1267,9 +1267,7 @@ func (s *PostgresStore) WriteEvidence(ctx context.Context, items []evidence.Evid
 	defer tx.Rollback()
 	for _, item := range items {
 		samples, _ := json.Marshal(item.Samples)
-		metadata, err := json.Marshal(struct {
-			SharedAccess any `json:"shared_access,omitempty"`
-		}{SharedAccess: item.SharedAccess})
+		metadata, err := json.Marshal(item)
 		if err != nil {
 			return err
 		}
@@ -1330,10 +1328,10 @@ VALUES($1, $2, $3)`, snapshot.SubjectType, snapshot.SubjectID, payload); err != 
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers, detection_basis, independent_signal_groups)
-VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11, ''),$12,$13,$14,$15)
-ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups`,
-			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers, snapshot.DetectionBasis, signalGroups); err != nil {
+INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers, detection_basis, independent_signal_groups,metadata)
+VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11, ''),$12,$13,$14,$15,$16)
+ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups,metadata=EXCLUDED.metadata`,
+			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers, snapshot.DetectionBasis, signalGroups, payload); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO risk_snapshot_history(ip, snapshot) VALUES($1::inet, $2)`, snapshot.IP, payload); err != nil {
@@ -2270,14 +2268,16 @@ func scanRiskRows(rows *sql.Rows) ([]risk.Snapshot, error) {
 		var evidenceIDs []byte
 		var automationBlockers []byte
 		var signalGroups []byte
+		var metadata []byte
 		var updated time.Time
-		if err := rows.Scan(&item.IP, &item.Score, &item.Level, &item.Confidence, &item.Window, &evidenceIDs, &item.Summary, &item.RecommendedAction, &updated, &item.AssessmentLevel, &item.ReviewDisposition, &item.AutomationEligible, &automationBlockers, &item.DetectionBasis, &signalGroups); err != nil {
+		if err := rows.Scan(&item.IP, &item.Score, &item.Level, &item.Confidence, &item.Window, &evidenceIDs, &item.Summary, &item.RecommendedAction, &updated, &item.AssessmentLevel, &item.ReviewDisposition, &item.AutomationEligible, &automationBlockers, &item.DetectionBasis, &signalGroups, &metadata); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(evidenceIDs, &item.EvidenceIDs)
 		_ = json.Unmarshal(automationBlockers, &item.AutomationBlockers)
 		_ = json.Unmarshal(signalGroups, &item.IndependentSignalGroups)
 		item.UpdatedAt = updated.Format(time.RFC3339Nano)
+		_ = json.Unmarshal(metadata, &item)
 		items = append(items, item)
 	}
 	return items, rows.Err()

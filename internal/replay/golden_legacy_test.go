@@ -37,16 +37,8 @@ func TestGoldenLegacyEssentialsRemainReplayable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	byIP := map[string]risk.Snapshot{}
-	for _, snapshot := range riskResult.Snapshots {
-		byIP[snapshot.IP] = snapshot
-	}
-	assertRiskAtMost(t, byIP["10.10.0.30"], "suspicious", "single DHCP profile")
-	assertRiskAtMost(t, byIP["10.10.0.10"], "suspicious", "known game accelerator")
-	assertRiskAtMost(t, byIP["10.10.0.1"], "suspicious", "infrastructure TTL")
-	assertRiskAtMost(t, byIP["2001:db8:10::12"], "suspicious", "IPv6 hop-limit only")
-	if snapshot := byIP["10.10.0.9"]; snapshot.DetectionBasis != "explicit_tunnel" || (snapshot.Level != "high" && snapshot.Level != "confirmed") {
-		t.Fatalf("explicit VPN rule did not produce an explicit tunnel result: %+v", snapshot)
+	if len(riskResult.Snapshots) != 0 {
+		t.Fatalf("legacy VPN and behavioral evidence entered the default shared-access risk set: %+v", riskResult.Snapshots)
 	}
 }
 

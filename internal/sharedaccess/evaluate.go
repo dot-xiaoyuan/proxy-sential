@@ -63,7 +63,11 @@ type Window struct {
 	TCPStacks         []string                            `json:"tcp_stacks"`
 	DHCPProfiles      []string                            `json:"dhcp_profiles"`
 	AssociatedClients []string                            `json:"associated_clients,omitempty"`
-	Conflicts         []string                            `json:"conflicts"`
+	// PhysicalDeviceIdentities contains conservative, stable device identities
+	// that were each observed repeatedly inside this exact evaluation window.
+	// It is the only non-EasyMesh device-count anchor allowed to confirm sharing.
+	PhysicalDeviceIdentities []string `json:"physical_device_identities,omitempty"`
+	Conflicts                []string `json:"conflicts"`
 }
 type Result struct {
 	Records          []RecordRef `json:"records,omitempty"`

@@ -529,7 +529,7 @@ func runBackfill(args []string) error {
 		return fmt.Errorf("--limit must be greater than zero")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	clickhouseStore, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: *clickhouseDSN})
 	if err != nil {
@@ -750,9 +750,62 @@ func runRisk(args []string) error {
 		return runRiskRecalculate(args[1:])
 	case "materialize":
 		return runRiskMaterialize(args[1:])
+	case "reset-shared-test-data":
+		return runRiskResetSharedTestData(args[1:])
+	case "audit-shared-state":
+		return runRiskAuditSharedState(args[1:])
 	default:
 		return fmt.Errorf("unknown risk command: %s", args[0])
 	}
+}
+
+func runRiskAuditSharedState(args []string) error {
+	fs := flag.NewFlagSet("risk audit-shared-state", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *postgresDSN == "" {
+		return fmt.Errorf("--postgres-dsn is required")
+	}
+	postgres, err := store.NewPostgresStore(store.PostgresOptions{DSN: *postgresDSN})
+	if err != nil {
+		return err
+	}
+	defer postgres.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	report, err := postgres.AuditSharedRiskState(ctx)
+	if err != nil {
+		return err
+	}
+	return writeJSON(os.Stdout, report)
+}
+
+func runRiskResetSharedTestData(args []string) error {
+	fs := flag.NewFlagSet("risk reset-shared-test-data", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	confirm := fs.Bool("confirm-test-reset", false, "confirm deletion of derived test risk and case data")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *postgresDSN == "" || !*confirm {
+		return fmt.Errorf("--postgres-dsn and --confirm-test-reset are required")
+	}
+	postgres, err := store.NewPostgresStore(store.PostgresOptions{DSN: *postgresDSN})
+	if err != nil {
+		return err
+	}
+	defer postgres.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	report, err := postgres.ResetSharedRiskTestData(ctx)
+	if err != nil {
+		return err
+	}
+	return writeJSON(os.Stdout, report)
 }
 
 func runRiskMaterialize(args []string) error {

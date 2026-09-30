@@ -1,13 +1,15 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/risk"
+	"proxy-sentinel/internal/sharedaccess"
 )
 
 type RiskComparison struct {
@@ -42,11 +44,7 @@ func (s *PostgresStore) RecalculateRisks(ctx context.Context, window time.Durati
 	if err != nil {
 		return RiskRecalculationReport{}, err
 	}
-	data, err := json.Marshal(evidence.Result{Evidence: items})
-	if err != nil {
-		return RiskRecalculationReport{}, err
-	}
-	batch, err := risk.Batch(bytes.NewReader(data))
+	batch, err := s.currentSharedRiskBatch(ctx)
 	if err != nil {
 		return RiskRecalculationReport{}, err
 	}
@@ -63,9 +61,22 @@ func (s *PostgresStore) RecalculateRisks(ctx context.Context, window time.Durati
 			report.Changes = append(report.Changes, RiskComparison{SubjectType: firstNonEmpty(item.SubjectType, "ip"), SubjectID: firstNonEmpty(item.SubjectID, item.IP), IP: item.IP, OldScore: old.Score, NewScore: item.Score, OldLevel: old.Level, NewLevel: item.Level, OldConfidence: old.Confidence, NewConfidence: item.Confidence})
 		}
 	}
+	newKeys := map[string]bool{}
+	for _, item := range batch.Snapshots {
+		newKeys[riskKey(item)] = true
+	}
+	for key, old := range previous {
+		if newKeys[key] {
+			continue
+		}
+		report.Changes = append(report.Changes, RiskComparison{SubjectType: firstNonEmpty(old.SubjectType, "ip"), SubjectID: firstNonEmpty(old.SubjectID, old.IP), IP: old.IP, OldScore: old.Score, OldLevel: old.Level, OldConfidence: old.Confidence, NewLevel: "normal"})
+	}
 	report.ChangedCount = len(report.Changes)
 	if apply {
 		if err := s.archiveCurrentRiskSnapshots(ctx, previous, report.GeneratedAt, rulesetVersion); err != nil {
+			return report, err
+		}
+		if err := s.deleteRisksOutsideRecalculation(ctx, batch.Snapshots); err != nil {
 			return report, err
 		}
 		if err := s.WriteRiskSnapshots(ctx, batch.Snapshots); err != nil {
@@ -75,21 +86,83 @@ func (s *PostgresStore) RecalculateRisks(ctx context.Context, window time.Durati
 	return report, nil
 }
 
+func (s *PostgresStore) currentSharedRiskBatch(ctx context.Context) (risk.BatchResult, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT observation FROM shared_behavior_observations
+WHERE current AND status='confirmed' AND coverage_state='verified' ORDER BY confidence DESC,last_seen DESC`)
+	if err != nil {
+		return risk.BatchResult{}, err
+	}
+	defer rows.Close()
+	byIP := map[string]risk.Snapshot{}
+	for rows.Next() {
+		var raw []byte
+		if err = rows.Scan(&raw); err != nil {
+			return risk.BatchResult{}, err
+		}
+		var assessment sharedaccess.BehaviorAssessment
+		if err = json.Unmarshal(raw, &assessment); err != nil {
+			return risk.BatchResult{}, err
+		}
+		if snapshot, ok := risk.SnapshotForSharedBehavior(assessment); ok {
+			if _, exists := byIP[snapshot.IP]; !exists {
+				byIP[snapshot.IP] = snapshot
+			}
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return risk.BatchResult{}, err
+	}
+	result := risk.BatchResult{Snapshots: make([]risk.Snapshot, 0, len(byIP))}
+	for _, snapshot := range byIP {
+		result.Snapshots = append(result.Snapshots, snapshot)
+	}
+	return result, nil
+}
+
+func (s *PostgresStore) deleteRisksOutsideRecalculation(ctx context.Context, snapshots []risk.Snapshot) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM subject_risk_snapshots`); err != nil {
+		return err
+	}
+	args := []any{}
+	placeholders := []string{}
+	for _, snapshot := range snapshots {
+		if snapshot.IP == "" {
+			continue
+		}
+		args = append(args, snapshot.IP)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
+	query := `DELETE FROM risk_snapshots`
+	if len(placeholders) > 0 {
+		query += ` WHERE host(ip) NOT IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	if _, err = tx.ExecContext(ctx, query, args...); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *PostgresStore) evidenceSince(ctx context.Context, since time.Time) ([]evidence.Evidence, error) {
 	items := []evidence.Evidence{}
-	rows, err := s.db.QueryContext(ctx, `SELECT evidence_id,host(ip),type,"window",score,confidence,severity,reason,samples,created_at FROM evidence WHERE created_at >= $1 ORDER BY created_at`, since)
+	rows, err := s.db.QueryContext(ctx, `SELECT evidence_id,host(ip),type,"window",score,confidence,severity,reason,samples,created_at,metadata FROM evidence WHERE created_at >= $1 ORDER BY created_at`, since)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var item evidence.Evidence
-		var samples []byte
+		var samples, metadata []byte
 		var created time.Time
-		if err := rows.Scan(&item.EvidenceID, &item.IP, &item.Type, &item.Window, &item.Score, &item.Confidence, &item.Severity, &item.Reason, &samples, &created); err != nil {
+		if err := rows.Scan(&item.EvidenceID, &item.IP, &item.Type, &item.Window, &item.Score, &item.Confidence, &item.Severity, &item.Reason, &samples, &created, &metadata); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		_ = json.Unmarshal(samples, &item.Samples)
+		_ = json.Unmarshal(metadata, &item)
 		item.SubjectType = "ip"
 		item.SubjectID = item.IP
 		item.CreatedAt = formatPostgresTime(created)

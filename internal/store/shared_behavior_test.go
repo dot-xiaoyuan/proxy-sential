@@ -18,7 +18,9 @@ func TestListSharedBehaviorReturnsLatestGatewayProfile(t *testing.T) {
 	store := &PostgresStore{db: db}
 	observed := time.Date(2026, 9, 28, 11, 0, 0, 0, time.UTC)
 	raw := `{"observation_id":"shared-behavior-latest","sensor_id":"sensor-a","ip":"192.0.2.1","status":"confirmed","confidence":95,"signal_groups":["tcp_stack","ttl_path","ua_os"],"reasons":[],"conflicts":[],"coverage_state":"verified","rule_version":"shared-behavior/v3","first_seen":"2026-09-28T10:50:00Z","last_seen":"2026-09-28T11:00:00Z","window_start":"2026-09-28T10:50:00Z","window_end":"2026-09-28T11:00:00Z","expires_at":"2026-10-28T11:00:00Z","router":{},"score_components":[],"feature_samples":{},"event_ids":[]}`
-	mock.ExpectQuery(regexp.QuoteMeta("WITH latest AS (")).
+	mock.ExpectQuery("SELECT generation_id,window_end,coverage_state").
+		WillReturnRows(sqlmock.NewRows([]string{"generation_id", "window_end", "coverage_state"}).AddRow("generation-1", observed, "verified"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT observation,count(*) OVER() FROM shared_behavior_observations WHERE current=true AND expires_at>now()")).
 		WithArgs(20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"observation", "count"}).AddRow([]byte(raw), 1))
 	page, err := store.ListSharedBehavior(context.Background(), SharedBehaviorQuery{Limit: 20})

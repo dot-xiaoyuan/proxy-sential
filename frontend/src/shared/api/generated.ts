@@ -2837,7 +2837,7 @@ export interface components {
         };
         SharedBehaviorScoreComponent: {
             /** @enum {string} */
-            signal: "ua_os" | "ttl_path" | "tcp_stack" | "tls_stack" | "dhcp_stack" | "router_identity" | "vendor_gateway_identity";
+            signal: "ua_os" | "ttl_path" | "tcp_stack" | "tls_stack" | "dhcp_stack" | "router_identity" | "vendor_gateway_identity" | "ieee1905_association" | "coexisting_device_identities";
             score: number;
             explanation: string;
         };
@@ -2865,6 +2865,7 @@ export interface components {
         };
         SharedBehaviorAssessment: {
             observation_id: string;
+            generation_id?: string;
             sensor_id: string;
             campus_id?: string;
             access_domain?: string;
@@ -2899,10 +2900,14 @@ export interface components {
             event_ids: string[];
             known_device_count: number;
             /** @enum {string} */
-            known_device_basis?: "explicit_hardware_model_lower_bound" | "ieee1905_association_current";
+            known_device_basis?: "explicit_hardware_model_lower_bound" | "ieee1905_association_current" | "coexisting_physical_identities";
             /** @enum {string} */
             known_device_window?: "24h" | "current";
             known_devices: components["schemas"]["SharedBehaviorKnownDevice"][];
+            /** @enum {string} */
+            strong_anchor?: "ieee1905_association" | "coexisting_device_identities";
+            device_lower_bound?: number;
+            reference_device_count_24h?: number;
         };
         SharedBehaviorHistory: {
             /** @enum {string} */
@@ -2922,6 +2927,12 @@ export interface components {
         };
         SharedBehaviorPage: {
             items: components["schemas"]["SharedBehaviorAssessment"][];
+            /** Format: date-time */
+            as_of?: string;
+            generation_id?: string;
+            /** @enum {string} */
+            coverage_state: "unknown" | "verified" | "incomplete" | "failed";
+            stale: boolean;
             page: {
                 limit: number;
                 next_cursor: string | null;
@@ -3642,8 +3653,20 @@ export interface components {
             automation_eligible?: boolean;
             automation_blockers?: string[];
             /** @enum {string} */
-            detection_basis?: "explicit_tunnel" | "shared_device_divergence" | "behavioral_only";
-            independent_signal_groups?: ("protocol_rule" | "ttl_path" | "tls_client_stack" | "ua_os" | "dhcp_device_family" | "identity_mac" | "identity_access")[];
+            detection_basis?: "explicit_tunnel" | "shared_device_divergence" | "behavioral_only" | "shared_multi_client";
+            independent_signal_groups?: ("protocol_rule" | "ttl_path" | "tls_client_stack" | "ua_os" | "dhcp_device_family" | "identity_mac" | "identity_access" | "ieee1905_association" | "coexisting_device_identities")[];
+            /** @enum {string} */
+            risk_kind?: "shared_access";
+            /** @enum {string} */
+            strong_anchor?: "ieee1905_association" | "coexisting_device_identities";
+            device_lower_bound?: number;
+            /** @enum {string} */
+            coverage_state?: "verified";
+            /** Format: date-time */
+            window_start?: string;
+            /** Format: date-time */
+            window_end?: string;
+            current_generation?: string;
         };
         NegativeEvidence: {
             /** @enum {string} */

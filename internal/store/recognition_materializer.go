@@ -112,12 +112,18 @@ func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 
 func (s *DBStore) runSharedBehaviorMaterializer(ctx context.Context, sensorID string) {
 	for ctx.Err() == nil {
-		workCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// One complete generation includes ClickHouse signal/identity joins plus
+		// PostgreSQL attribution and must finish atomically. The five-minute
+		// generation cadence does not require an unsafe 30-second cutoff.
+		workCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		_, err := s.materializeSharedBehavior(workCtx, sensorID, time.Now().UTC())
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "shared behavior materialize failed: %v\n", err)
-			state, _ := json.Marshal(map[string]any{"error": err.Error()})
-			_, _ = s.pg.db.ExecContext(context.WithoutCancel(workCtx), `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
+			failureCtx, failureCancel := context.WithTimeout(context.WithoutCancel(workCtx), 10*time.Second)
+			_ = s.recordFailedSharedBehaviorGeneration(failureCtx, sensorID, time.Now().UTC(), err)
+			state, _ := json.Marshal(map[string]any{"error": err.Error(), "coverage_state": "failed", "stale": true})
+			_, _ = s.pg.db.ExecContext(failureCtx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
+			failureCancel()
 		}
 		cancel()
 		timer := time.NewTimer(30 * time.Second)

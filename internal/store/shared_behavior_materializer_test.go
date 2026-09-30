@@ -56,7 +56,7 @@ func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
 		From: now.Add(-10 * time.Minute), To: now, LastObservedAt: now.Add(-time.Second), Complete: true, CoverageVerified: true,
 		EventIDs: []string{"event-1"}, Records: []sharedaccess.RecordRef{{EventID: "event-1", Source: "zeek", InstanceID: "instance-1"}},
 	}
-	item := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 95, CoverageState: "verified"}
+	item := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 95, CoverageState: "verified", StrongAnchor: "coexisting_device_identities", DeviceLowerBound: 2}
 	got, ok := confirmedSharedBehaviorEvidence(window, item)
 	if !ok || got.Type != "shared_access_window" || got.Score != 95 || got.Confidence != .95 || got.SharedAccess == nil {
 		t.Fatalf("evidence=%+v ok=%v", got, ok)
@@ -78,6 +78,22 @@ func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
 				t.Fatal("unsafe observation bridged")
 			}
 		})
+	}
+}
+
+func TestSharedBehaviorPhysicalIdentityAnchorRequiresRepeatedBucketOverlap(t *testing.T) {
+	rows := []sharedBehaviorKnownDeviceRow{
+		{SensorID: "sensor", IP: "192.0.2.63", Value: "mac:02:00:00:00:00:01", Count: 3, Buckets: []int64{10, 11}},
+		{SensorID: "sensor", IP: "192.0.2.63", Value: "mac:02:00:00:00:00:02", Count: 3, Buckets: []int64{10, 11}},
+		{SensorID: "sensor", IP: "192.0.2.64", Value: "mac:02:00:00:00:00:01", Count: 3, Buckets: []int64{10, 11}},
+		{SensorID: "sensor", IP: "192.0.2.64", Value: "mac:02:00:00:00:00:02", Count: 3, Buckets: []int64{11, 12}},
+	}
+	got := sharedBehaviorCoexistingDeviceIdentities(rows)
+	if len(got[strings.Join([]string{"sensor", "", "", "192.0.2.63"}, "\x00")]) != 2 {
+		t.Fatalf("repeated coexistence was not retained: %+v", got)
+	}
+	if len(got[strings.Join([]string{"sensor", "", "", "192.0.2.64"}, "\x00")]) != 0 {
+		t.Fatalf("one overlapping bucket incorrectly confirmed coexistence: %+v", got)
 	}
 }
 

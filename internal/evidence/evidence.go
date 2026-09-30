@@ -38,22 +38,27 @@ type Result struct {
 }
 
 type Evidence struct {
-	SharedAccess  *sharedaccess.Window  `json:"shared_access,omitempty"`
-	ProxyProtocol *proxyprotocol.Result `json:"proxy_protocol,omitempty"`
-	EvidenceID    string                `json:"evidence_id"`
-	IP            string                `json:"ip"`
-	SubjectType   string                `json:"subject_type,omitempty"`
-	SubjectID     string                `json:"subject_id,omitempty"`
-	AccountID     string                `json:"account_id,omitempty"`
-	EndpointID    string                `json:"endpoint_id,omitempty"`
-	Type          string                `json:"type"`
-	Window        string                `json:"window"`
-	Score         int                   `json:"score"`
-	Confidence    float64               `json:"confidence"`
-	Severity      string                `json:"severity"`
-	Reason        string                `json:"reason"`
-	Samples       []string              `json:"samples"`
-	CreatedAt     string                `json:"created_at"`
+	SharedAccess     *sharedaccess.Window  `json:"shared_access,omitempty"`
+	ProxyProtocol    *proxyprotocol.Result `json:"proxy_protocol,omitempty"`
+	EvidenceID       string                `json:"evidence_id"`
+	IP               string                `json:"ip"`
+	SubjectType      string                `json:"subject_type,omitempty"`
+	SubjectID        string                `json:"subject_id,omitempty"`
+	AccountID        string                `json:"account_id,omitempty"`
+	EndpointID       string                `json:"endpoint_id,omitempty"`
+	Type             string                `json:"type"`
+	Window           string                `json:"window"`
+	Score            int                   `json:"score"`
+	Confidence       float64               `json:"confidence"`
+	Severity         string                `json:"severity"`
+	Reason           string                `json:"reason"`
+	Samples          []string              `json:"samples"`
+	CreatedAt        string                `json:"created_at"`
+	RiskKind         string                `json:"risk_kind,omitempty"`
+	StrongAnchor     string                `json:"strong_anchor,omitempty"`
+	DeviceLowerBound int                   `json:"device_lower_bound,omitempty"`
+	CoverageState    string                `json:"coverage_state,omitempty"`
+	GenerationID     string                `json:"generation_id,omitempty"`
 }
 
 type parsedEvent struct {

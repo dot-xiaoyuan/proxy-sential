@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/sharedaccess"
 )
 
 func TestInspectWeakEvidenceDoesNotEscalateBeyondSuspicious(t *testing.T) {
@@ -153,14 +155,8 @@ func TestBatchBuildsSnapshotsForEveryEvidenceIP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Snapshots) != 2 {
-		t.Fatalf("expected 2 snapshots, got %+v", result.Snapshots)
-	}
-	if result.Snapshots[0].IP != "10.0.0.1" || result.Snapshots[0].Level != "suspicious" {
-		t.Fatalf("unexpected first snapshot: %+v", result.Snapshots[0])
-	}
-	if result.Snapshots[1].IP != "10.0.0.2" || result.Snapshots[1].Level != "high" {
-		t.Fatalf("unexpected second snapshot: %+v", result.Snapshots[1])
+	if len(result.Snapshots) != 0 {
+		t.Fatalf("generic evidence entered the default shared risk set: %+v", result.Snapshots)
 	}
 }
 
@@ -174,15 +170,26 @@ func TestBatchBuildsAccountSubjectSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Snapshots) != 1 {
-		t.Fatalf("expected 1 account snapshot, got %+v", result.Snapshots)
+	if len(result.Snapshots) != 0 {
+		t.Fatalf("account evidence entered the IP shared risk set: %+v", result.Snapshots)
 	}
-	snapshot := result.Snapshots[0]
-	if snapshot.SubjectType != "account" || snapshot.SubjectID != "2026000123" || snapshot.AccountID != "2026000123" || snapshot.IP != "" {
-		t.Fatalf("unexpected account subject snapshot: %+v", snapshot)
+}
+
+func TestBatchOnlyMaterializesConfirmedSharedAnchor(t *testing.T) {
+	now := time.Date(2026, 9, 30, 8, 0, 0, 0, time.UTC)
+	item := ev("shared", "10.0.0.8", "shared_access_window", 90, .9)
+	item.RiskKind = "shared_access"
+	item.StrongAnchor = "ieee1905_association"
+	item.DeviceLowerBound = 2
+	item.CoverageState = "verified"
+	item.GenerationID = "generation-1"
+	item.SharedAccess = &sharedaccess.Window{Complete: true, CoverageVerified: true, From: now.Add(-10 * time.Minute), To: now}
+	result, err := Batch(bytes.NewReader(evidenceInput(item, ev("vpn", "10.0.0.9", "vpn_proxy_domain_hint", 100, 1))))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if snapshot.Score != 100 || snapshot.Level != "confirmed" || snapshot.RecommendedAction != "shadow_confirm_review" {
-		t.Fatalf("unexpected account risk level: %+v", snapshot)
+	if len(result.Snapshots) != 1 || result.Snapshots[0].RiskKind != "shared_access" || result.Snapshots[0].StrongAnchor != "ieee1905_association" {
+		t.Fatalf("unexpected shared-only snapshots: %+v", result.Snapshots)
 	}
 }
 

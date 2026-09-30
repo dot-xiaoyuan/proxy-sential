@@ -2742,7 +2742,7 @@ components:
       type: object
       required: [signal, score, explanation]
       properties:
-        signal: { type: string, enum: [ua_os, ttl_path, tcp_stack, tls_stack, dhcp_stack, router_identity, vendor_gateway_identity] }
+        signal: { type: string, enum: [ua_os, ttl_path, tcp_stack, tls_stack, dhcp_stack, router_identity, vendor_gateway_identity, ieee1905_association, coexisting_device_identities] }
         score: { type: integer }
         explanation: { type: string }
     SharedBehaviorRouterContext:
@@ -2772,6 +2772,7 @@ components:
       required: [observation_id, sensor_id, ip, status, confidence, signal_groups, reasons, conflicts, coverage_state, rule_version, first_seen, last_seen, window_start, window_end, expires_at, router, score_components, feature_samples, event_ids, known_device_count, known_devices]
       properties:
         observation_id: { type: string }
+        generation_id: { type: string }
         sensor_id: { type: string }
         campus_id: { type: string }
         access_domain: { type: string }
@@ -2798,9 +2799,12 @@ components:
             additionalProperties: true
         event_ids: { type: array, items: { type: string } }
         known_device_count: { type: integer, minimum: 0 }
-        known_device_basis: { type: string, enum: [explicit_hardware_model_lower_bound, ieee1905_association_current] }
+        known_device_basis: { type: string, enum: [explicit_hardware_model_lower_bound, ieee1905_association_current, coexisting_physical_identities] }
         known_device_window: { type: string, enum: [24h, current] }
         known_devices: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorKnownDevice' } }
+        strong_anchor: { type: string, enum: [ieee1905_association, coexisting_device_identities] }
+        device_lower_bound: { type: integer, minimum: 0 }
+        reference_device_count_24h: { type: integer, minimum: 0 }
     SharedBehaviorHistory:
       type: object
       required: [status, confidence, signal_groups, coverage_state, rule_version, observed_at, created_at]
@@ -2821,9 +2825,13 @@ components:
             history: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorHistory' } }
     SharedBehaviorPage:
       type: object
-      required: [items, page]
+      required: [items, page, coverage_state, stale]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorAssessment' } }
+        as_of: { type: string, format: date-time }
+        generation_id: { type: string }
+        coverage_state: { type: string, enum: [unknown, verified, incomplete, failed] }
+        stale: { type: boolean }
         page:
           type: object
           required: [limit, next_cursor, total]
@@ -3516,12 +3524,19 @@ components:
             type: string
         detection_basis:
           type: string
-          enum: [explicit_tunnel, shared_device_divergence, behavioral_only]
+          enum: [explicit_tunnel, shared_device_divergence, behavioral_only, shared_multi_client]
         independent_signal_groups:
           type: array
           items:
             type: string
-            enum: [protocol_rule, ttl_path, tls_client_stack, ua_os, dhcp_device_family, identity_mac, identity_access]
+            enum: [protocol_rule, ttl_path, tls_client_stack, ua_os, dhcp_device_family, identity_mac, identity_access, ieee1905_association, coexisting_device_identities]
+        risk_kind: { type: string, enum: [shared_access] }
+        strong_anchor: { type: string, enum: [ieee1905_association, coexisting_device_identities] }
+        device_lower_bound: { type: integer, minimum: 0 }
+        coverage_state: { type: string, enum: [verified] }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        current_generation: { type: string }
     NegativeEvidence:
       type: object
       required: [type, source, reason, score_delta]

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/sharedaccess"
 )
 
 type Snapshot struct {
@@ -43,6 +44,13 @@ type Snapshot struct {
 	AutomationBlockers      []string           `json:"automation_blockers,omitempty"`
 	DetectionBasis          string             `json:"detection_basis"`
 	IndependentSignalGroups []string           `json:"independent_signal_groups,omitempty"`
+	RiskKind                string             `json:"risk_kind,omitempty"`
+	StrongAnchor            string             `json:"strong_anchor,omitempty"`
+	DeviceLowerBound        int                `json:"device_lower_bound,omitempty"`
+	CoverageState           string             `json:"coverage_state,omitempty"`
+	WindowStart             string             `json:"window_start,omitempty"`
+	WindowEnd               string             `json:"window_end,omitempty"`
+	CurrentGeneration       string             `json:"current_generation,omitempty"`
 }
 
 type NegativeEvidence struct {
@@ -114,7 +122,7 @@ func Batch(r io.Reader) (BatchResult, error) {
 
 	evidenceBySubject := map[string][]evidence.Evidence{}
 	for _, item := range allEvidence {
-		if item.Type == "shared_access_window" {
+		if !confirmedSharedEvidence(item) {
 			continue
 		}
 		subjectType, subjectID := evidenceSubject(item)
@@ -132,9 +140,57 @@ func Batch(r io.Reader) (BatchResult, error) {
 
 	result := BatchResult{Snapshots: []Snapshot{}}
 	for _, key := range keys {
-		result.Snapshots = append(result.Snapshots, snapshotFor(subjectIDFromKey(key), evidenceBySubject[key]))
+		result.Snapshots = append(result.Snapshots, snapshotForConfirmedShared(evidenceBySubject[key]))
 	}
 	return result, nil
+}
+
+func confirmedSharedEvidence(item evidence.Evidence) bool {
+	if item.Type != "shared_access_window" || item.RiskKind != "shared_access" || item.CoverageState != "verified" || item.DeviceLowerBound < 2 || item.GenerationID == "" {
+		return false
+	}
+	if item.StrongAnchor != "ieee1905_association" && item.StrongAnchor != "coexisting_device_identities" {
+		return false
+	}
+	return item.SharedAccess != nil && item.SharedAccess.Complete && item.SharedAccess.CoverageVerified && len(item.SharedAccess.Conflicts) == 0
+}
+
+func snapshotForConfirmedShared(items []evidence.Evidence) Snapshot {
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt > items[j].CreatedAt })
+	item := items[0]
+	windowStart, windowEnd := "", ""
+	if item.SharedAccess != nil {
+		windowStart = item.SharedAccess.From.UTC().Format(time.RFC3339Nano)
+		windowEnd = item.SharedAccess.To.UTC().Format(time.RFC3339Nano)
+	}
+	return Snapshot{
+		IP: item.IP, SubjectType: "ip", SubjectID: item.IP, EndpointID: item.EndpointID,
+		Score: item.Score, Level: "confirmed", Confidence: item.Confidence, Window: item.Window,
+		EvidenceIDs: []string{item.EvidenceID}, Summary: "当前完整窗口确认同一出口存在至少两个终端",
+		RecommendedAction: "shadow_manual_review", UpdatedAt: item.CreatedAt, AssessmentLevel: "high",
+		ReviewDisposition: "unreviewed", AutomationEligible: false,
+		AutomationBlockers: []string{"shadow_mode", "manual_review_required", "authoritative_identity_not_available"},
+		DetectionBasis:     "shared_multi_client", IndependentSignalGroups: []string{item.StrongAnchor},
+		RiskKind: "shared_access", StrongAnchor: item.StrongAnchor, DeviceLowerBound: item.DeviceLowerBound,
+		CoverageState: item.CoverageState, WindowStart: windowStart, WindowEnd: windowEnd, CurrentGeneration: item.GenerationID,
+	}
+}
+
+func SnapshotForSharedBehavior(item sharedaccess.BehaviorAssessment) (Snapshot, bool) {
+	if item.Status != "confirmed" || item.CoverageState != "verified" || item.StrongAnchor == "" || item.DeviceLowerBound < 2 || item.GenerationID == "" {
+		return Snapshot{}, false
+	}
+	return Snapshot{
+		IP: item.IP, SubjectType: "ip", SubjectID: item.IP, EndpointID: item.EndpointID,
+		Score: item.Confidence, Level: "confirmed", Confidence: float64(item.Confidence) / 100,
+		Window: item.WindowEnd.Sub(item.WindowStart).String(), EvidenceIDs: []string{item.ObservationID},
+		Summary: "当前完整窗口确认同一出口存在至少两个终端", RecommendedAction: "shadow_manual_review",
+		UpdatedAt: item.LastSeen.UTC().Format(time.RFC3339Nano), AssessmentLevel: "high", ReviewDisposition: "unreviewed",
+		AutomationEligible: false, AutomationBlockers: []string{"shadow_mode", "manual_review_required", "authoritative_identity_not_available"},
+		DetectionBasis: "shared_multi_client", IndependentSignalGroups: []string{item.StrongAnchor}, RiskKind: "shared_access",
+		StrongAnchor: item.StrongAnchor, DeviceLowerBound: item.DeviceLowerBound, CoverageState: item.CoverageState,
+		WindowStart: item.WindowStart.UTC().Format(time.RFC3339Nano), WindowEnd: item.WindowEnd.UTC().Format(time.RFC3339Nano), CurrentGeneration: item.GenerationID,
+	}, true
 }
 
 func ListFile(inputPath, outputPath string, opts ListOptions) (ListResult, error) {

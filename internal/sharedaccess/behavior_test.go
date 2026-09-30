@@ -37,8 +37,8 @@ func TestAssessBehaviorRequiresIndependentRepeatedSignals(t *testing.T) {
 		w.Samples["ttl_path"][value] = FeatureSample{Count: 3, Buckets: []int64{now.Add(-time.Minute).Unix() / 5, now.Add(-30*time.Second).Unix() / 5}}
 	}
 	item, present := AssessBehavior("two", "endpoint", w, BehaviorRouterContext{})
-	if !present || item.Status != "likely" || item.Confidence != 65 {
-		t.Fatalf("two repeated independent signals were not retained as likely: %+v present=%t", item, present)
+	if !present || item.Status != "candidate" || item.Confidence != 59 {
+		t.Fatalf("protocol-only signals must remain candidates: %+v present=%t", item, present)
 	}
 }
 
@@ -48,16 +48,16 @@ func TestAssessBehaviorRejectsTLSAndTCPDiversityFromOneEndpoint(t *testing.T) {
 		"tcp_stack": {"mss=1460,ws=8", "mss=1460,ws=9"},
 		"tls_stack": {"ja3:browser", "ja3:application"},
 	})
-	if _, present := AssessBehavior("phone", "endpoint", w, BehaviorRouterContext{}); present {
-		t.Fatal("ordinary per-application TLS/TCP diversity became shared gateway behavior")
+	if item, present := AssessBehavior("phone", "endpoint", w, BehaviorRouterContext{}); !present || item.Status != "candidate" {
+		t.Fatalf("multi-class protocol clues should be retained only as a candidate: %+v present=%t", item, present)
 	}
 	w.UAOS = []string{"Android", "Windows"}
 	w.Samples["ua_os"] = map[string]FeatureSample{
 		"Android": {Count: 3, Buckets: []int64{now.Add(-time.Minute).Unix() / 5, now.Add(-30*time.Second).Unix() / 5}},
 		"Windows": {Count: 3, Buckets: []int64{now.Add(-time.Minute).Unix() / 5, now.Add(-30*time.Second).Unix() / 5}},
 	}
-	if item, present := AssessBehavior("gateway", "endpoint", w, BehaviorRouterContext{}); !present || item.Status != "confirmed" {
-		t.Fatalf("cross-OS evidence did not restore the shared gateway result: %+v present=%t", item, present)
+	if item, present := AssessBehavior("gateway", "endpoint", w, BehaviorRouterContext{}); !present || item.Status != "candidate" {
+		t.Fatalf("cross-OS evidence escaped the candidate gate: %+v present=%t", item, present)
 	}
 }
 
@@ -68,11 +68,11 @@ func TestAssessBehaviorAllowsSpecificVendorGatewayAnchor(t *testing.T) {
 		"tls_stack": {"ja3:browser", "ja3:application"},
 	})
 	item, present := AssessBehavior("tplink", "endpoint", w, BehaviorRouterContext{Brand: "TP-Link", BrandAttribution: true})
-	if !present || item.Status != "likely" || item.Confidence != 60 {
+	if !present || item.Status != "candidate" || item.Confidence != 59 {
 		t.Fatalf("specific vendor control identity did not anchor diverse client stacks: %+v present=%t", item, present)
 	}
-	if _, present = AssessBehavior("generic", "endpoint", w, BehaviorRouterContext{Brand: "Huawei"}); present {
-		t.Fatal("generic vendor reference anchored diverse client stacks")
+	if item, present = AssessBehavior("generic", "endpoint", w, BehaviorRouterContext{Brand: "Huawei"}); !present || item.Status != "candidate" {
+		t.Fatalf("generic vendor reference should not raise protocol candidate: %+v present=%t", item, present)
 	}
 }
 
@@ -82,15 +82,15 @@ func TestAssessBehaviorConfirmationAndCoverageGate(t *testing.T) {
 		"ua_os": {"Android", "Windows"}, "ttl_path": {"initial=64,hops=1", "initial=128,hops=1"}, "tls_stack": {"ja4:a", "ja4:b"},
 	})
 	item, present := AssessBehavior("three", "endpoint", w, BehaviorRouterContext{})
-	if !present || item.Status != "confirmed" || item.Confidence != 95 {
-		t.Fatalf("three repeated signal groups should confirm shared behavior: %+v", item)
+	if !present || item.Status != "candidate" || item.Confidence != 59 {
+		t.Fatalf("three protocol signal groups must remain a candidate: %+v", item)
 	}
 	two := repeatedBehaviorWindow(now, map[string][]string{
 		"ua_os": {"Android", "Windows"}, "ttl_path": {"initial=64,hops=1", "initial=128,hops=1"},
 	})
 	item, present = AssessBehavior("router", "endpoint", two, BehaviorRouterContext{AssessmentID: "router-1", Role: "router", Status: "likely", Confidence: 70})
-	if !present || item.Status != "confirmed" || item.Confidence != 85 {
-		t.Fatalf("two signals plus a strong router identity should confirm: %+v", item)
+	if !present || item.Status != "likely" || item.Confidence != 79 {
+		t.Fatalf("router plus corroboration must stop at likely: %+v", item)
 	}
 	two.CoverageVerified = false
 	two.Complete = false
@@ -111,8 +111,8 @@ func TestAssessBehaviorConfirmsWithRepeatedTCPStackEvidence(t *testing.T) {
 		},
 	})
 	item, present := AssessBehavior("tcp", "endpoint", w, BehaviorRouterContext{})
-	if !present || item.Status != "confirmed" || item.Confidence != 95 {
-		t.Fatalf("three repeated signal groups including TCP should confirm shared behavior: %+v", item)
+	if !present || item.Status != "candidate" || item.Confidence != 59 {
+		t.Fatalf("protocol diversity must not confirm shared behavior: %+v", item)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestAssessBehaviorAcceptsRepeatedSignalsWithinThirtySeconds(t *testing.T) {
 	w.Samples["ua_os"]["Android"] = FeatureSample{Count: 3, Buckets: []int64{base, base + 10}}
 	w.Samples["ua_os"]["Windows"] = FeatureSample{Count: 3, Buckets: []int64{base + 2, base + 12}}
 	item, present := AssessBehavior("nearby", "endpoint", w, BehaviorRouterContext{})
-	if !present || item.Status != "likely" {
+	if !present || item.Status != "candidate" {
 		t.Fatalf("nearby repeated client signals were not correlated: %+v present=%t", item, present)
 	}
 }
@@ -151,8 +151,24 @@ func TestAssessBehaviorIgnoresNoisyThirdValueWhenARepeatedPairCoexists(t *testin
 	w.TTLPaths = append(w.TTLPaths, "initial=255,hops=1")
 	w.Samples["ttl_path"]["initial=255,hops=1"] = FeatureSample{Count: 1, Buckets: []int64{now.Add(-10*time.Second).Unix() / 5}}
 	item, present := AssessBehavior("noisy", "", w, BehaviorRouterContext{})
-	if !present || item.Status != "likely" || item.Confidence != 65 {
+	if !present || item.Status != "candidate" || item.Confidence != 59 {
 		t.Fatalf("a noisy third value suppressed the valid repeated pair: %+v present=%t", item, present)
+	}
+}
+
+func TestAssessBehaviorConfirmsRepeatedPhysicalDevicesInCurrentWindow(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	w := repeatedBehaviorWindow(now, nil)
+	w.PhysicalDeviceIdentities = []string{"device:a", "device:b"}
+	item, present := AssessBehavior("physical", "", w, BehaviorRouterContext{})
+	if !present || item.Status != "confirmed" || item.StrongAnchor != "coexisting_device_identities" || item.DeviceLowerBound != 2 {
+		t.Fatalf("current repeated physical identities did not confirm sharing: %+v present=%t", item, present)
+	}
+	w.Complete = false
+	w.CoverageVerified = false
+	item, present = AssessBehavior("physical-partial", "", w, BehaviorRouterContext{})
+	if !present || item.Status != "candidate" || item.StrongAnchor != "" {
+		t.Fatalf("partial physical identity window bypassed coverage gate: %+v present=%t", item, present)
 	}
 }
 

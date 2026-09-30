@@ -127,13 +127,10 @@ func RunOnce(ctx context.Context, backend Store, opts Options) (Result, error) {
 	if err := backend.WriteEvidence(ctx, evidenceResult.Evidence); err != nil {
 		return result, fmt.Errorf("persist evidence: %w", err)
 	}
-	if err := backend.WriteRiskSnapshots(ctx, riskResult.Snapshots); err != nil {
-		return result, fmt.Errorf("persist risk snapshots: %w", err)
-	}
-	cutoff := time.Now().UTC().Add(-opts.Window - time.Minute)
-	if err := backend.ExpireRiskSnapshots(ctx, cutoff); err != nil {
-		return result, fmt.Errorf("expire stale snapshots: %w", err)
-	}
+	// The generic materializer persists reusable evidence only. Current default
+	// risk is replaced atomically by the verified shared-behavior generation;
+	// allowing this rolling job to write or expire snapshots would reintroduce
+	// VPN/behavior scoring and could clear a valid set during incomplete capture.
 	result.CompletedAt = time.Now().UTC()
 	runID := fmt.Sprintf("risk-materializer-%d", result.StartedAt.UnixNano())
 	run := store.Run{RunID: runID, SensorID: opts.SensorID, StartedAt: result.StartedAt.Format(time.RFC3339Nano), FinishedAt: result.CompletedAt.Format(time.RFC3339Nano), EvidenceCount: result.Evidence, RiskCount: result.Snapshots, Normalized: store.NormalizedCounts{Read: result.Events, Emitted: result.Events, ByType: map[string]int{}}, RawRef: map[string]any{"kind": "risk-materializer", "window": opts.Window.String()}}

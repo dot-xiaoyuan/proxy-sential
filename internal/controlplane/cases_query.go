@@ -39,7 +39,10 @@ func (s *Server) listCasesPostgres(w http.ResponseWriter, r *http.Request) {
 }
 func queryCaseQueue(ctx context.Context, db *sql.DB, r *http.Request, limit, offset int) ([]RiskCase, int, error) {
 	args := []any{}
-	conditions := []string{"true"}
+	conditions := []string{"c.ruleset_version LIKE 'shared-behavior/%'"}
+	if r.URL.Query().Get("status") == "" {
+		conditions = append(conditions, "c.status NOT IN ('resolved','closed')")
+	}
 	for _, column := range []string{"status", "assignee_id", "campus_id", "department", "person_type", "ssid", "vlan", "ap"} {
 		if value := r.URL.Query().Get(column); value != "" {
 			args = append(args, value)

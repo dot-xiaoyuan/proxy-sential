@@ -11,11 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"proxy-sentinel/internal/policy"
+	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
 )
 
@@ -357,57 +359,54 @@ func (s *Server) syncCases(r *http.Request) error {
 }
 
 func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) error {
-	result, err := s.reader.GetProxyReviews(ctx, store.ActivityQuery{SensorID: sensorID, Window: window, SampleLimit: maxProxyReviewAggregateRows})
-	if err != nil {
-		return err
+	reader, ok := s.reader.(store.SharedBehaviorReader)
+	if !ok {
+		return fmt.Errorf("shared behavior reader unavailable")
 	}
-	// A shared-device case may be driven by TTL/DHCP/UA signals without a TLS,
-	// QUIC or alert row. Merge every materialized high/confirmed IP so case
-	// creation is independent from opening the proxy-review endpoint.
-	riskPage, err := s.reader.ListRisks(ctx, store.Query{SensorID: sensorID, Window: window, Limit: 1000})
-	if err != nil {
-		return err
-	}
-	seenIPs := map[string]struct{}{}
-	for _, item := range result.Items {
-		seenIPs[item.IP] = struct{}{}
-	}
-	for _, snapshot := range riskPage.Items {
-		if snapshot.IP == "" || (snapshot.Level != "high" && snapshot.Level != "confirmed") {
-			continue
+	items := []store.ProxyReviewCase{}
+	query := store.SharedBehaviorQuery{Status: "confirmed", CoverageState: "verified", Limit: 100}
+	for {
+		page, err := reader.ListSharedBehavior(ctx, query)
+		if err != nil {
+			return err
 		}
-		if _, ok := seenIPs[snapshot.IP]; ok {
-			continue
+		// An incomplete or stale generation must not create or close cases.
+		if page.CoverageState != "verified" || page.Stale {
+			return nil
 		}
-		sum := sha256.Sum256([]byte("materialized-risk\x00" + snapshot.IP))
-		confidenceLevel := "low"
-		if snapshot.Confidence >= .90 {
-			confidenceLevel = "high"
-		} else if snapshot.Confidence >= .60 {
-			confidenceLevel = "medium"
+		for _, assessment := range page.Items {
+			if assessment.StrongAnchor == "" || assessment.DeviceLowerBound < 2 {
+				continue
+			}
+			scope := strings.Join([]string{assessment.SensorID, assessment.CampusID, assessment.AccessDomain, assessment.IP}, "\x00")
+			sum := sha256.Sum256([]byte("shared-access-case\x00" + scope))
+			items = append(items, store.ProxyReviewCase{
+				CaseID: "shared-" + hex.EncodeToString(sum[:])[:20], IP: assessment.IP, EndpointID: assessment.EndpointID,
+				AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{},
+				DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{},
+				RuleMatches: []store.ProxyRuleMatch{}, ConfidenceLevel: "high", FirstSeen: assessment.FirstSeen.UTC().Format(time.RFC3339Nano),
+				LastSeen: assessment.LastSeen.UTC().Format(time.RFC3339Nano), DurationSeconds: int64(assessment.WindowEnd.Sub(assessment.WindowStart).Seconds()),
+				EvidenceIDs: []string{assessment.ObservationID}, RiskScore: assessment.Confidence, RiskLevel: "confirmed", ReviewStatus: "unreviewed",
+			})
 		}
-		result.Items = append(result.Items, store.ProxyReviewCase{CaseID: "proxy-" + hex.EncodeToString(sum[:])[:20], IP: snapshot.IP, AccountID: snapshot.AccountID, EndpointID: snapshot.EndpointID, AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{}, DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{}, RuleMatches: []store.ProxyRuleMatch{}, ConfidenceLevel: confidenceLevel, FirstSeen: snapshot.UpdatedAt, LastSeen: snapshot.UpdatedAt, EvidenceIDs: append([]string{}, snapshot.EvidenceIDs...), RiskScore: snapshot.Score, RiskLevel: snapshot.Level, ReviewStatus: firstNonEmptyString(snapshot.ReviewStatus, "unreviewed")})
+		if page.Page.NextCursor == nil {
+			break
+		}
+		next, err := strconv.Atoi(*page.Page.NextCursor)
+		if err != nil {
+			return err
+		}
+		query.Cursor = next
 	}
 	exceptions, err := s.exceptions.list(ctx, true)
 	if err != nil {
 		return err
 	}
-	attributions := map[string]store.IdentityAttribution{}
-	attributionFound := map[string]bool{}
-	resolver, canResolveIdentity := s.reader.(store.IdentityAttributionResolver)
-	if canResolveIdentity {
-		for _, item := range result.Items {
-			attribution, found, resolveErr := resolver.ResolveIdentityAt(ctx, item.IP, item.LastSeen)
-			if resolveErr != nil {
-				return fmt.Errorf("resolve case identity %s: %w", item.CaseID, resolveErr)
-			}
-			attributions[item.CaseID], attributionFound[item.CaseID] = attribution, found
-		}
-	}
 	now := time.Now().UTC()
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
-	for _, item := range result.Items {
+	active := map[string]bool{}
+	for _, item := range items {
 		if item.RiskLevel != "high" && item.RiskLevel != "confirmed" {
 			continue
 		}
@@ -425,7 +424,8 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		if matchedException != nil {
 			continue
 		}
-		dedupeKey := caseDedupeKey(item)
+		dedupeKey := "shared-access:" + item.CaseID
+		active[dedupeKey] = true
 		caseID := item.CaseID
 		existing, ok := s.operations.doc.Cases[caseID]
 		for candidateID, candidate := range s.operations.doc.Cases {
@@ -446,7 +446,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 			priority = "high"
 		}
 		if !ok {
-			existing = RiskCase{CaseID: caseID, DedupeKey: dedupeKey, SubjectType: "ip", SubjectID: item.IP, IP: item.IP, AccountID: item.AccountID, EndpointID: item.EndpointID, Status: "new", Priority: priority, RulesetVersion: "review-rules-v1", CreatedAt: now.Format(time.RFC3339Nano), FirstSeen: item.FirstSeen, Timeline: []CaseTimeline{}, Comments: []CaseComment{}, EvidenceHistory: []CaseEvidenceSnapshot{}}
+			existing = RiskCase{CaseID: caseID, DedupeKey: dedupeKey, SubjectType: "ip", SubjectID: item.IP, IP: item.IP, EndpointID: item.EndpointID, Status: "new", Priority: priority, RulesetVersion: sharedaccess.BehaviorRuleVersion, CreatedAt: now.Format(time.RFC3339Nano), FirstSeen: item.FirstSeen, Timeline: []CaseTimeline{}, Comments: []CaseComment{}, EvidenceHistory: []CaseEvidenceSnapshot{}}
 			existing.DueAt = caseDueAt(now, level, s.operations.doc.SLAPolicies).Format(time.RFC3339Nano)
 			existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.created", After: map[string]any{"status": "new"}, CreatedAt: now.Format(time.RFC3339Nano)})
 		}
@@ -475,27 +475,17 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 				existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.evidence_appended", Before: map[string]any{"risk_score": previousScore}, After: map[string]any{"risk_score": item.RiskScore, "snapshot_id": snapshot.SnapshotID}, CreatedAt: now.Format(time.RFC3339Nano)})
 			}
 		}
-		if attribution, found := attributions[item.CaseID]; found {
-			existing.AccountID = attribution.AccountID
-			existing.EndpointID = attribution.EndpointID
-			existing.PersonType = attribution.PersonType
-			existing.Department = attribution.Department
-			existing.CampusID = attribution.CampusID
-			existing.BuildingID = attribution.BuildingID
-			existing.NetworkZoneID = attribution.NetworkZoneID
-			existing.SSID = attribution.SSID
-			existing.VLAN = attribution.VLAN
-			existing.AP = attribution.AP
-			existing.NASIP = attribution.NASIP
-			existing.AuthSessionID = attribution.SessionID
-			existing.IdentityConflict = attribution.Conflict
-			existing.IdentityBlocker = attribution.ConflictReason
-		} else if canResolveIdentity {
-			existing.IdentityBlocker = "风险发生时间没有可准确定位的认证会话"
-		} else {
-			existing.IdentityBlocker = "身份关联数据源不可用"
-		}
 		s.operations.doc.Cases[existing.CaseID] = existing
+	}
+	for caseID, existing := range s.operations.doc.Cases {
+		if !strings.HasPrefix(existing.RulesetVersion, "shared-behavior/") || existing.Status == "closed" || active[existing.DedupeKey] {
+			continue
+		}
+		before := existing.Status
+		existing.Status = "closed"
+		existing.UpdatedAt = now.Format(time.RFC3339Nano)
+		existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.auto_closed_current_set", Before: map[string]any{"status": before}, After: map[string]any{"status": "closed"}, CreatedAt: now.Format(time.RFC3339Nano)})
+		s.operations.doc.Cases[caseID] = existing
 	}
 	return s.operations.saveLocked()
 }
@@ -653,6 +643,9 @@ func (s *Server) listCases(w http.ResponseWriter, r *http.Request) {
 	s.operations.mu.Lock()
 	items := []RiskCase{}
 	for _, item := range s.operations.doc.Cases {
+		if !strings.HasPrefix(item.RulesetVersion, "shared-behavior/") || status == "" && (item.Status == "resolved" || item.Status == "closed") {
+			continue
+		}
 		if status != "" && item.Status != status || assignee != "" && item.AssigneeID != assignee || campus != "" && item.CampusID != campus {
 			continue
 		}

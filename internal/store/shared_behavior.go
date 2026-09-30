@@ -22,8 +22,12 @@ type SharedBehaviorQuery struct {
 }
 
 type SharedBehaviorPage struct {
-	Items []sharedaccess.BehaviorAssessment `json:"items"`
-	Page  Page                              `json:"page"`
+	Items         []sharedaccess.BehaviorAssessment `json:"items"`
+	Page          Page                              `json:"page"`
+	AsOf          time.Time                         `json:"as_of,omitempty"`
+	GenerationID  string                            `json:"generation_id,omitempty"`
+	CoverageState string                            `json:"coverage_state"`
+	Stale         bool                              `json:"stale"`
 }
 
 type SharedBehaviorHistory struct {
@@ -47,7 +51,7 @@ type SharedBehaviorReader interface {
 }
 
 func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
-	clauses := []string{"expires_at>now()"}
+	clauses := []string{"current=true", "expires_at>now()"}
 	args := []any{}
 	add := func(clause string, value any) {
 		args = append(args, value)
@@ -96,20 +100,18 @@ func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBeha
 		return SharedBehaviorPage{}, err
 	}
 	args = append(args, query.Limit, query.Cursor)
-	// Observations are immutable ten-minute windows. The operational list is a
-	// gateway profile, so select the newest window for each capture scope and IP
-	// before applying user filters. Raw windows remain queryable through the
-	// detail history and are never deleted by this view.
-	rows, err := s.db.QueryContext(ctx, `WITH latest AS (
- SELECT DISTINCT ON(sensor_id,campus_id,access_domain,ip) *
- FROM shared_behavior_observations WHERE expires_at>now()
- ORDER BY sensor_id,campus_id,access_domain,ip,last_seen DESC,observation_id DESC)
-SELECT observation,count(*) OVER() FROM latest `+where+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,observation_id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+	page := SharedBehaviorPage{Items: []sharedaccess.BehaviorAssessment{}, Page: Page{Limit: query.Limit}, CoverageState: "unknown", Stale: true}
+	err = s.db.QueryRowContext(ctx, `SELECT generation_id,window_end,coverage_state
+FROM shared_behavior_generations ORDER BY window_end DESC,created_at DESC LIMIT 1`).Scan(&page.GenerationID, &page.AsOf, &page.CoverageState)
+	if err != nil && err != sql.ErrNoRows {
+		return page, err
+	}
+	page.Stale = page.CoverageState != "verified" || page.AsOf.IsZero() || time.Since(page.AsOf) > 20*time.Minute
+	rows, err := s.db.QueryContext(ctx, `SELECT observation,count(*) OVER() FROM shared_behavior_observations `+where+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,observation_id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		return SharedBehaviorPage{}, err
 	}
 	defer rows.Close()
-	page := SharedBehaviorPage{Items: []sharedaccess.BehaviorAssessment{}, Page: Page{Limit: query.Limit}}
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw, &page.Page.Total); err != nil {
