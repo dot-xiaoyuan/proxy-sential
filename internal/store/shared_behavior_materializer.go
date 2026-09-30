@@ -452,10 +452,17 @@ func mergeIEEE1905AssociationWindows(windows []sharedaccess.Window, groups []iee
 
 func (s *DBStore) sharedBehaviorRouter(ctx context.Context, endpointID, ip string, at time.Time) (sharedaccess.BehaviorRouterContext, error) {
 	var raw []byte
-	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment FROM router_assessments
+	var independentRole bool
+	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment,EXISTS(
+ SELECT 1 FROM router_evidence_facts f
+ WHERE f.assessment_id=router_assessments.assessment_id AND f.expires_at>$3
+ AND f.source_family<>'shared_gateway_behavior' AND f.score>0 AND NOT f.exclusion
+ AND COALESCE(f.data->>'role','') IN('router','ap')
+ AND COALESCE(f.data->>'brand_reference_only','false')<>'true'
+) FROM router_assessments
 WHERE expires_at>$3 AND (($1<>'' AND endpoint_id=$1) OR ip=NULLIF($2,'')::inet)
 ORDER BY CASE WHEN $1<>'' AND endpoint_id=$1 THEN 0 ELSE 1 END,
- CASE status WHEN 'confirmed' THEN 0 WHEN 'likely' THEN 1 ELSE 2 END,confidence DESC,last_seen DESC LIMIT 1`, endpointID, ip, at).Scan(&raw)
+	CASE status WHEN 'confirmed' THEN 0 WHEN 'likely' THEN 1 ELSE 2 END,confidence DESC,last_seen DESC LIMIT 1`, endpointID, ip, at).Scan(&raw, &independentRole)
 	if err == sql.ErrNoRows {
 		return sharedaccess.BehaviorRouterContext{}, nil
 	}
@@ -465,6 +472,14 @@ ORDER BY CASE WHEN $1<>'' AND endpoint_id=$1 THEN 0 ELSE 1 END,
 	var item evidence.RouterAssessment
 	if err = json.Unmarshal(raw, &item); err != nil {
 		return sharedaccess.BehaviorRouterContext{}, err
+	}
+	// A router assessment emitted from an earlier shared-behavior window must
+	// not be fed back as router identity for the next window. Keep vendor
+	// attribution (for example a TP-Link-only control-plane certificate), but
+	// only expose a router role when a non-shared role fact independently
+	// supports it.
+	if !independentRole {
+		item.Role, item.Status, item.Confidence = "", "", 0
 	}
 	return sharedaccess.BehaviorRouterContext{AssessmentID: item.AssessmentID, Brand: item.Brand, Model: item.Model, Role: item.Role, Status: item.Status, Confidence: item.Confidence, BrandAttribution: item.BrandAttribution}, nil
 }
@@ -578,6 +593,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 			item.KnownDeviceBasis = "explicit_hardware_model_lower_bound"
 			item.KnownDeviceWindow = "24h"
 		}
+		item = constrainUnanchoredSharedBehavior(item)
 		if err = s.persistSharedBehavior(ctx, item); err != nil {
 			return written, err
 		}
@@ -598,8 +614,28 @@ ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
 	return written, err
 }
 
+func constrainUnanchoredSharedBehavior(item sharedaccess.BehaviorAssessment) sharedaccess.BehaviorAssessment {
+	if item.KnownDeviceCount >= 2 || (item.Router.Role == "router" && item.Router.Status == "confirmed") {
+		return item
+	}
+	for _, group := range item.SignalGroups {
+		if group == "ieee1905_association" {
+			return item
+		}
+	}
+	if item.Status != "likely" && item.Status != "confirmed" {
+		return item
+	}
+	item.Status = "candidate"
+	if item.Confidence > 59 {
+		item.Confidence = 59
+	}
+	item.Reasons = []string{"协议栈差异尚未对应至少两台独立设备，仅保留共享候选"}
+	return item
+}
+
 func (s *DBStore) writeSharedGatewayRouterEvidence(ctx context.Context, item sharedaccess.BehaviorAssessment) error {
-	if item.CoverageState != "verified" || (item.Status != "likely" && item.Status != "confirmed") || len(item.Conflicts) > 0 {
+	if item.CoverageState != "verified" || (item.Status != "likely" && item.Status != "confirmed") || len(item.Conflicts) > 0 || item.KnownDeviceCount < 2 {
 		return nil
 	}
 	behaviorGroups := []string{}
