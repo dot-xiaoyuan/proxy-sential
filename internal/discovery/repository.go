@@ -162,31 +162,37 @@ type AddressDetail struct {
 	Primary bool   `json:"primary"`
 }
 
+type HistoricalAddress struct {
+	Value    string    `json:"value"`
+	LastSeen time.Time `json:"last_seen"`
+}
+
 type DeviceView struct {
-	ID             string          `json:"id"`
-	PrimaryIP      string          `json:"primary_ip,omitempty"`
-	Addresses      []string        `json:"addresses"`
-	AddressDetails []AddressDetail `json:"address_details"`
-	MAC            string          `json:"mac,omitempty"`
-	Name           string          `json:"name,omitempty"`
-	DeviceType     string          `json:"device_type,omitempty"`
-	Category       string          `json:"category"`
-	IdentityKind   string          `json:"identity_kind"`
-	Capabilities   []string        `json:"capabilities"`
-	Protocols      []string        `json:"protocols"`
-	Confidence     string          `json:"confidence"`
-	FirstSeen      time.Time       `json:"first_seen"`
-	LastSeen       time.Time       `json:"last_seen"`
-	Current        bool            `json:"current"`
-	EvidenceCount  int             `json:"evidence_count"`
-	EndpointID     string          `json:"endpoint_id,omitempty"`
-	Observations   []Observation   `json:"observations"`
+	ID                  string              `json:"id"`
+	PrimaryIP           string              `json:"primary_ip,omitempty"`
+	Addresses           []string            `json:"addresses"`
+	AddressDetails      []AddressDetail     `json:"address_details"`
+	HistoricalAddresses []HistoricalAddress `json:"historical_addresses"`
+	MAC                 string              `json:"mac,omitempty"`
+	Name                string              `json:"name,omitempty"`
+	DeviceType          string              `json:"device_type,omitempty"`
+	Category            string              `json:"category"`
+	IdentityKind        string              `json:"identity_kind"`
+	Capabilities        []string            `json:"capabilities"`
+	Protocols           []string            `json:"protocols"`
+	Confidence          string              `json:"confidence"`
+	FirstSeen           time.Time           `json:"first_seen"`
+	LastSeen            time.Time           `json:"last_seen"`
+	Current             bool                `json:"current"`
+	EvidenceCount       int                 `json:"evidence_count"`
+	EndpointID          string              `json:"endpoint_id,omitempty"`
+	Observations        []Observation       `json:"observations"`
 }
 
 func newDeviceView(id string, observedAt time.Time) DeviceView {
 	return DeviceView{
 		ID: id, FirstSeen: observedAt, LastSeen: observedAt,
-		Addresses: []string{}, AddressDetails: []AddressDetail{}, Capabilities: []string{}, Protocols: []string{}, Observations: []Observation{},
+		Addresses: []string{}, AddressDetails: []AddressDetail{}, HistoricalAddresses: []HistoricalAddress{}, Capabilities: []string{}, Protocols: []string{}, Observations: []Observation{},
 	}
 }
 
@@ -343,6 +349,7 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 	for index, row := range rows {
 		o := row.Observation
 		NormalizeObservationName(&o)
+		NormalizeObservationClassification(&o)
 		root := sets.find(index)
 		group := groups[root]
 		if group == nil {
@@ -537,10 +544,18 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
  FROM discovery_observations
  WHERE observed_at<=now() AND observed_at>=$1` + originClause + `
  ORDER BY device_key,source_id,origin,coalesce(data->>'ip',''),coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC)
-SELECT l.device_key,l.data,coalesce(i.endpoint_id,''),coalesce(p.device_type,''),coalesce(p.device_type_confidence,0),coalesce(p.recognition_conflict,false)
+SELECT l.device_key,l.data,coalesce(i.endpoint_id,dl.endpoint_id,''),
+       coalesce(nullif(s.role,''),p.device_type,''),
+       CASE WHEN coalesce(s.role,'')<>'' THEN s.confidence ELSE coalesce(p.device_type_confidence,0) END,
+       CASE WHEN coalesce(s.role,'')<>'' THEN s.conflict ELSE coalesce(p.recognition_conflict,false) END
 FROM latest l
 LEFT JOIN discovery_identity_links i ON i.observation_id=l.id
-LEFT JOIN endpoint_device_profiles p ON p.endpoint_id=i.endpoint_id
+LEFT JOIN device_address_leases dl ON dl.event_id=l.id AND dl.action='ack'
+  AND dl.sensor_id=coalesce(l.data->>'node','') AND host(dl.ip)=coalesce(l.data->>'ip','')
+  AND dl.campus_id=coalesce(l.data->'evidence'->'subject'->>'campus_id','')
+  AND dl.endpoint_id='mac:'||lower(coalesce(l.data->>'mac',''))
+LEFT JOIN endpoint_recognition_summary s ON s.endpoint_id=coalesce(i.endpoint_id,dl.endpoint_id)
+LEFT JOIN endpoint_device_profiles p ON p.endpoint_id=coalesce(i.endpoint_id,dl.endpoint_id)
 ORDER BY l.observed_at DESC,l.device_key`
 	rows, err := tx.QueryContext(ctx, statement, args...)
 	if err != nil {
@@ -566,6 +581,9 @@ ORDER BY l.observed_at DESC,l.device_key`
 		return nil, err
 	}
 	items := aggregateDeviceRows(deviceRows, time.Now())
+	if err = attachHistoricalAddresses(ctx, tx, items); err != nil {
+		return nil, err
+	}
 	needle := strings.ToLower(strings.TrimSpace(query.Search))
 	filtered := items[:0]
 	for _, item := range items {
@@ -575,7 +593,11 @@ ORDER BY l.observed_at DESC,l.device_key`
 		if query.Capability != "" && !containsString(item.Capabilities, query.Capability) {
 			continue
 		}
-		haystack := strings.ToLower(strings.Join(append(append([]string{item.Name, item.MAC, item.DeviceType}, item.Addresses...), item.Capabilities...), " "))
+		history := make([]string, 0, len(item.HistoricalAddresses))
+		for _, address := range item.HistoricalAddresses {
+			history = append(history, address.Value)
+		}
+		haystack := strings.ToLower(strings.Join(append(append(append([]string{item.Name, item.MAC, item.DeviceType}, item.Addresses...), history...), item.Capabilities...), " "))
 		if needle != "" && !strings.Contains(haystack, needle) {
 			continue
 		}
@@ -613,6 +635,55 @@ ORDER BY l.observed_at DESC,l.device_key`
 		}
 	}
 	return map[string]any{"items": items[start:end], "total": total, "facets": facets, "service_devices": serviceDevices, "linked_endpoints": linkedEndpoints, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, tx.Commit()
+}
+
+func attachHistoricalAddresses(ctx context.Context, tx *sql.Tx, items []DeviceView) error {
+	endpointItems := map[string][]int{}
+	for index := range items {
+		if items[index].EndpointID != "" && len(items[index].Addresses) == 0 {
+			endpointItems[items[index].EndpointID] = append(endpointItems[items[index].EndpointID], index)
+		}
+	}
+	if len(endpointItems) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(endpointItems))
+	for endpointID := range endpointItems {
+		ids = append(ids, endpointID)
+	}
+	sort.Strings(ids)
+	args := make([]any, len(ids))
+	placeholders := make([]string, len(ids))
+	for index, endpointID := range ids {
+		args[index] = endpointID
+		placeholders[index] = fmt.Sprintf("$%d", index+1)
+	}
+	statement := `WITH recent AS (
+ SELECT endpoint_id,host(ip) value,max(last_seen) last_seen
+ FROM identity_ip_mac_history
+ WHERE endpoint_id IN (` + strings.Join(placeholders, ",") + `) AND last_seen>=now()-interval '30 days'
+ GROUP BY endpoint_id,host(ip)
+), ranked AS (
+ SELECT endpoint_id,value,last_seen,row_number() OVER(PARTITION BY endpoint_id ORDER BY last_seen DESC,value) rank
+ FROM recent
+)
+SELECT endpoint_id,value,last_seen FROM ranked WHERE rank<=3 ORDER BY endpoint_id,last_seen DESC,value`
+	rows, err := tx.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var endpointID, value string
+		var lastSeen time.Time
+		if err = rows.Scan(&endpointID, &value, &lastSeen); err != nil {
+			return err
+		}
+		for _, index := range endpointItems[endpointID] {
+			items[index].HistoricalAddresses = append(items[index].HistoricalAddresses, HistoricalAddress{Value: value, LastSeen: lastSeen})
+		}
+	}
+	return rows.Err()
 }
 
 type DeviceFacet struct {

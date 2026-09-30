@@ -116,6 +116,9 @@ func TestPassiveDiscoveryProtocolClassification(t *testing.T) {
 		{name: "ssdp gateway", kind: "ssdp", ip: "192.168.0.1", wantType: "gateway", wantCapability: "routing", payload: map[string]any{"nt": "urn:schemas-upnp-org:device:InternetGatewayDevice:1"}},
 		{name: "ws discovery", kind: "ws_discovery", ip: "192.168.0.9", wantType: "camera", wantCapability: "network_video", payload: map[string]any{"message": "hello", "types": "dn:NetworkVideoTransmitter"}},
 		{name: "lldp", kind: "lldp", ip: "192.168.0.2", mac: "00:11:22:33:44:02", wantType: "switch", payload: map[string]any{"system_capabilities": "bridge"}},
+		{name: "ikuai lldp", kind: "lldp", ip: "0.0.0.0", mac: "00:e0:67:2a:4f:4f", wantType: "router", wantCapability: "routing", payload: map[string]any{"system_name": "iKuai-X86", "system_description": "4.0.310@iKuaiOS", "management_address": "0.0.0.0", "system_capabilities": "station"}},
+		{name: "android dhcp", kind: "dhcp", ip: "192.168.0.45", mac: "a2:0c:05:7a:0f:33", wantType: "mobile", payload: map[string]any{"msg_types": "REQUEST,ACK", "hostname": "HBN-AL00", "device_hint": "android", "vendor_class": "HUAWEI:android:HBN"}},
+		{name: "vivo model dhcp", kind: "dhcp", ip: "192.168.0.82", mac: "42:59:38:7a:fc:b3", wantType: "mobile", payload: map[string]any{"msg_types": "REQUEST,ACK", "hostname": "vivo-X200-Ultra", "vendor_class": "dhcpcd-16"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

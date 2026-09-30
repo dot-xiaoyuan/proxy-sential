@@ -3041,9 +3041,13 @@ pre.wrap-code {
 .discovery-category-grid { display: grid; grid-template-columns: repeat(9, minmax(92px, 1fr)); gap: 8px; margin-bottom: 14px; }
 .discovery-category-card { min-width: 0; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #475569; display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; white-space: nowrap; }
 .discovery-category-card:hover { border-color: #93c5fd; color: #1d4ed8; }
+.discovery-category-card:disabled { cursor: wait; opacity: .7; }
 .discovery-category-card.is-selected { border-color: #2563eb; background: #eff6ff; color: #1e40af; box-shadow: 0 0 0 1px #2563eb inset; }
 .discovery-category-card strong { color: #0f172a; font-size: 16px; }
 .discovery-filters { display: grid; grid-template-columns: minmax(220px, 1fr) 180px; gap: 10px; margin-bottom: 14px; }
+.discovery-query-status { min-height: 24px; margin: -6px 0 8px; display: flex; align-items: center; gap: 8px; color: #475569; font-size: 12px; }
+.discovery-query-indicator { width: 12px; height: 12px; border: 2px solid #bfdbfe; border-top-color: #2563eb; border-radius: 50%; animation: discovery-query-spin .7s linear infinite; flex-shrink: 0; }
+@keyframes discovery-query-spin { to { transform: rotate(360deg); } }
 .discovery-device-cell { display: grid; gap: 5px; min-width: 260px; }
 .discovery-device-title { color: #0f172a; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .discovery-device-addresses { display: flex; flex-wrap: wrap; gap: 3px 12px; color: #334155; }
@@ -3056,6 +3060,8 @@ pre.wrap-code {
 .discovery-other-addresses { color: #475569; }
 .discovery-other-addresses summary { width: fit-content; cursor: pointer; color: #2563eb; white-space: nowrap; }
 .discovery-other-addresses > div { display: grid; gap: 4px; padding-top: 5px; }
+.discovery-history-addresses { display: grid; gap: 4px; padding: 7px 9px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.discovery-history-addresses .ant-typography { margin: 0; font-size: 12px; }
 .discovery-raw-name { color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
 .discovery-device-cell a { width: fit-content; }
 .discovery-evidence-cell { display: grid; gap: 5px; }

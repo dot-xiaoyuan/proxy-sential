@@ -302,6 +302,7 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	default:
 		return discovery.Observation{}, "unsupported_protocol"
 	}
+	discovery.NormalizeObservationClassification(&o)
 	discovery.NormalizeObservationName(&o)
 	return o, ""
 }

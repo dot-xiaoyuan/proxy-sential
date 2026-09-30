@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"encoding/json"
+	"os"
 	"proxy-sentinel/internal/normalized"
 	"strings"
 	"testing"
@@ -74,6 +75,66 @@ func TestAggregateDeviceRowsClassifiesReliableEndpointProfile(t *testing.T) {
 	items = aggregateDeviceRows([]deviceObservationRow{row}, at.Add(time.Minute))
 	if items[0].DeviceType != "" || items[0].Category != "identity_only" {
 		t.Fatalf("conflicting profile type must not be promoted: %+v", items[0])
+	}
+}
+
+func TestAggregateDeviceRowsReclassifiesExplicitLegacyEvidence(t *testing.T) {
+	at := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	phone := passiveRepositoryRow("phone", "192.168.0.82", "42:59:38:7a:fc:b3", "vivo-X200-Ultra", "", "", at)
+	phone.Observation.Origin = "dhcp"
+	phone.Observation.Evidence.Payload = map[string]any{"hostname": "vivo-X200-Ultra", "vendor_class": "dhcpcd-16"}
+	router := passiveRepositoryRow("router", "", "00:e0:67:2a:4f:4f", "iKuai-X86", "", "", at)
+	router.Observation.Origin = "lldp"
+	router.Observation.Capabilities = nil
+	router.Observation.Evidence.Payload = map[string]any{"system_description": "4.0.310@iKuaiOS"}
+	items := aggregateDeviceRows([]deviceObservationRow{phone, router}, at.Add(time.Minute))
+	if len(items) != 2 {
+		t.Fatalf("explicit devices merged unexpectedly: %+v", items)
+	}
+	categories := map[string]string{}
+	for _, item := range items {
+		categories[item.Name] = item.Category
+	}
+	if categories["vivo-X200-Ultra"] != "mobile" || categories["iKuai-X86"] != "network" {
+		t.Fatalf("legacy explicit evidence was not reclassified: %+v", items)
+	}
+}
+
+func TestDeviceViewSerializesHistoricalAddressEvidenceSeparately(t *testing.T) {
+	view := newDeviceView("ikuai", time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC))
+	view.HistoricalAddresses = []HistoricalAddress{{Value: "192.168.15.1", LastSeen: time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)}}
+	data, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"primary_ip":"192.168.15.1"`) || !strings.Contains(string(data), `"historical_addresses":[{"value":"192.168.15.1"`) {
+		t.Fatalf("historical address must not be promoted to a current primary address: %s", data)
+	}
+}
+
+func TestDiscoveryReadQueryUsesCurrentRecognitionAndExactDHCPLeaseLink(t *testing.T) {
+	source, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := string(source)
+	for _, fragment := range []string{"endpoint_recognition_summary", "dl.event_id=l.id", "coalesce(i.endpoint_id,dl.endpoint_id,'')"} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("discovery read query omitted %q", fragment)
+		}
+	}
+}
+
+func TestPassiveDiscoveryLatestReadHasMatchingIndex(t *testing.T) {
+	migration, err := os.ReadFile("../../migrations/postgres/074_discovery_latest_read.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement := string(migration)
+	for _, fragment := range []string{"device_key", "source_id", "origin", "observed_at DESC", "id DESC"} {
+		if !strings.Contains(statement, fragment) {
+			t.Fatalf("latest observation index omitted %q", fragment)
+		}
 	}
 }
 

@@ -86,6 +86,30 @@ func (o Observation) Key() string {
 func (o Observation) Current(now time.Time) bool {
 	return !o.Withdrawn && !o.ObservedAt.After(now) && o.ValidUntil.After(now)
 }
+
+// NormalizeObservationClassification applies only explicit product or operating
+// system evidence. It is also run while reading older observations so a rule
+// improvement does not require rewriting the immutable evidence payload.
+func NormalizeObservationClassification(o *Observation) {
+	if o == nil {
+		return
+	}
+	switch o.Origin {
+	case "dhcp":
+		identity := strings.ToLower(strings.Join([]string{o.Name, str(o.Evidence.Payload, "hostname"), str(o.Evidence.Payload, "device_hint"), str(o.Evidence.Payload, "vendor_class")}, " "))
+		if o.DeviceType == "" && (strings.Contains(identity, "android") || strings.Contains(identity, "vivo-")) {
+			o.DeviceType = "mobile"
+		}
+	case "lldp", "cdp":
+		identity := strings.ToLower(strings.Join([]string{o.Name, str(o.Evidence.Payload, "system_name"), str(o.Evidence.Payload, "system_description")}, " "))
+		if strings.Contains(identity, "ikuai") {
+			o.DeviceType = "router"
+			if !containsString(o.Capabilities, "routing") {
+				o.Capabilities = append(o.Capabilities, "routing")
+			}
+		}
+	}
+}
 func str(m map[string]any, k string) string { v, _ := m[k].(string); return strings.TrimSpace(v) }
 func number(m map[string]any, k string) int {
 	switch v := m[k].(type) {
