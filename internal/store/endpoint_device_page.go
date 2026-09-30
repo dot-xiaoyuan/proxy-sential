@@ -128,7 +128,7 @@ func (s *PostgresStore) endpointDevicePage(ctx context.Context, ids []string, ca
 		}
 		profile.DiscoveryRecognitionHints = passiveHints[id]
 		item := BuildEndpointDeviceInventory(profile)
-		if cached, found := cachedRecognition[id]; found {
+		if cached, found := cachedRecognition[id]; found && materializedRecognitionPreferred(item, cached) {
 			applyMaterializedRecognition(&item, cached)
 		} else {
 			recognitionAt := asOf
@@ -140,6 +140,25 @@ func (s *PostgresStore) endpointDevicePage(ctx context.Context, ids []string, ca
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+func materializedRecognitionPreferred(current, cached EndpointDeviceInventory) bool {
+	specificity := func(item EndpointDeviceInventory) int {
+		count := 0
+		for _, value := range []string{item.Brand, item.Model, item.DeviceType, item.OSFamily} {
+			if value != "" {
+				count++
+			}
+		}
+		return count
+	}
+	if specificity(current) > specificity(cached) && current.RecognitionConfidence >= cached.RecognitionConfidence {
+		return false
+	}
+	if current.RecognitionSource == "passive_discovery" && cached.RecognitionSource != "passive_discovery" && current.RecognitionConfidence >= cached.RecognitionConfidence {
+		return false
+	}
+	return true
 }
 
 func applyMaterializedRecognition(item *EndpointDeviceInventory, cached EndpointDeviceInventory) {

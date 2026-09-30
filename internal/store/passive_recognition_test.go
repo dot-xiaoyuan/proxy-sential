@@ -49,3 +49,18 @@ func TestPassiveDiscoveryHintKeepsExplicitConflictVisible(t *testing.T) {
 		t.Fatalf("explicit evidence must remain authoritative and conflict visible: %+v", item)
 	}
 }
+
+func TestEmptyMaterializedRecognitionCannotErasePassiveResult(t *testing.T) {
+	current := EndpointDeviceInventory{
+		Brand: "Apple", Model: "Mac mini", DeviceType: "desktop", OSFamily: "macOS",
+		RecognitionConfidence: .95, RecognitionSource: "passive_discovery",
+	}
+	cached := EndpointDeviceInventory{RecognitionConfidence: .9, RecognitionSource: "ieee_oui"}
+	if materializedRecognitionPreferred(current, cached) {
+		t.Fatal("less specific cached recognition would erase current passive evidence")
+	}
+	cached = current
+	if !materializedRecognitionPreferred(current, cached) {
+		t.Fatal("equivalent materialized recognition should remain reusable")
+	}
+}

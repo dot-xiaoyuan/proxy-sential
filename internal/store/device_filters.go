@@ -95,7 +95,7 @@ func (s *PostgresStore) loadEndpointRecognitionCatalog(ctx context.Context) ([]E
 	if err != nil {
 		return nil, err
 	}
-	items := []EndpointDeviceInventory{}
+	endpoints := []EndpointEntity{}
 	for rows.Next() {
 		var raw []byte
 		if err := rows.Scan(&raw); err != nil {
@@ -107,7 +107,7 @@ func (s *PostgresStore) loadEndpointRecognitionCatalog(ctx context.Context) ([]E
 			rows.Close()
 			return nil, err
 		}
-		items = append(items, BuildEndpointDeviceInventory(EndpointIdentityProfile{EndpointID: endpoint.EndpointID, Endpoint: endpoint}))
+		endpoints = append(endpoints, endpoint)
 	}
 	err = rows.Err()
 	rows.Close()
@@ -115,9 +115,19 @@ func (s *PostgresStore) loadEndpointRecognitionCatalog(ctx context.Context) ([]E
 		return nil, err
 	}
 	snapshot := ctx.Value(domainReadKey{}).(domainReadSnapshot)
-	ids := make([]string, 0, len(items))
-	for _, item := range items {
-		ids = append(ids, item.EndpointID)
+	ids := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		ids = append(ids, endpoint.EndpointID)
+	}
+	passiveHints, err := s.PassiveDiscoveryRecognitionHints(ctx, ids, snapshot.now)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]EndpointDeviceInventory, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		items = append(items, BuildEndpointDeviceInventory(EndpointIdentityProfile{
+			EndpointID: endpoint.EndpointID, Endpoint: endpoint, DiscoveryRecognitionHints: passiveHints[endpoint.EndpointID],
+		}))
 	}
 	evidence, err := s.endpointDomainEvidenceBatch(ctx, ids)
 	if err != nil {
