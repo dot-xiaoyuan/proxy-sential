@@ -238,15 +238,20 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		err := repo.DB.QueryRowContext(ctx, `SELECT
  count(DISTINCT device_key) FILTER(WHERE origin IN ('fdb','neighbor','lldp','cdp')),
  count(DISTINCT device_key) FILTER(WHERE origin='active'),
- count(DISTINCT device_key) FILTER(WHERE NOT EXISTS(SELECT 1 FROM discovery_identity_links l WHERE l.observation_id=discovery_observations.id)),
- count(DISTINCT device_key) FILTER(WHERE origin IN ('dhcp','arp','ndp','dns_sd','ssdp','ws_discovery','ieee1905_client')),
- count(DISTINCT device_key) FILTER(WHERE origin IN ('dns_sd','ssdp','ws_discovery') AND jsonb_array_length(coalesce(data->'capabilities','[]'::jsonb))>0),
- count(DISTINCT device_key) FILTER(WHERE origin IN ('dhcp','arp','ndp','dns_sd','ssdp','ws_discovery','ieee1905_client') AND EXISTS(SELECT 1 FROM discovery_identity_links l WHERE l.observation_id=discovery_observations.id))
- FROM discovery_observations WHERE observed_at<=now() AND observed_at>=now()-interval '24 hours' AND NOT withdrawn`).Scan(&infrastructure, &active, &pending, &passive, &services, &linked)
+	count(DISTINCT device_key) FILTER(WHERE NOT EXISTS(SELECT 1 FROM discovery_identity_links l WHERE l.observation_id=discovery_observations.id))
+ FROM discovery_observations WHERE observed_at<=now() AND observed_at>=now()-interval '24 hours' AND NOT withdrawn`).Scan(&infrastructure, &active, &pending)
 		if err != nil {
 			writeError(w, 500, "summary_read", "读取汇总失败")
 			return
 		}
+		passivePage, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: "passive", Window: 24 * time.Hour, Limit: 1})
+		if err != nil {
+			writeError(w, 500, "summary_read", "读取汇总失败")
+			return
+		}
+		passive, _ = passivePage["total"].(int)
+		services, _ = passivePage["service_devices"].(int)
+		linked, _ = passivePage["linked_endpoints"].(int)
 		var enabled bool
 		if err = repo.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM discovery_scan_profiles WHERE enabled)`).Scan(&enabled); err != nil {
 			writeError(w, 500, "summary_read", "读取汇总失败")

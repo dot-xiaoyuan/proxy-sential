@@ -3039,8 +3039,14 @@ pre.wrap-code {
 .discovery-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; display: grid; gap: 8px; overflow-wrap: anywhere; }
 .discovery-page .ant-btn, .discovery-page .ant-tag { white-space: nowrap; flex-shrink: 0; }
 .discovery-filters { display: grid; grid-template-columns: minmax(220px, 1fr) 180px 180px; gap: 10px; margin-bottom: 14px; }
-.discovery-name-cell { display: grid; gap: 3px; min-width: 120px; }
-.discovery-name-cell .ant-typography, .discovery-name-cell a { margin: 0; }
+.discovery-device-cell { display: grid; gap: 5px; min-width: 260px; }
+.discovery-device-title { color: #0f172a; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.discovery-device-addresses { display: flex; flex-wrap: wrap; gap: 3px 12px; color: #334155; }
+.discovery-device-mac { margin: 0; font-size: 12px; }
+.discovery-device-tags { margin-top: 2px; }
+.discovery-device-cell a { width: fit-content; }
+.discovery-evidence-cell { display: grid; gap: 5px; }
+.discovery-evidence-cell .ant-typography { margin: 0; font-size: 12px; }
 .discovery-identifier { overflow-wrap: anywhere; }
 .discovery-validity { display: block; margin-top: 2px; font-size: 12px; }
 .discovery-card-tags { min-height: 24px; }

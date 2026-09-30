@@ -21,6 +21,12 @@ func TestPassiveDiscoveryUsesBoundedSignalStream(t *testing.T) {
 	}
 }
 
+func TestPassiveDiscoveryBatchFitsLeaseBudget(t *testing.T) {
+	if passiveDiscoveryBatchSize <= 0 || passiveDiscoveryBatchSize > 500 {
+		t.Fatalf("passive discovery batch must stay bounded, got %d", passiveDiscoveryBatchSize)
+	}
+}
+
 func passiveTestEvent(kind, ip, mac string, payload map[string]any) normalized.Event {
 	return normalized.Event{
 		EventID:         kind + "-event",

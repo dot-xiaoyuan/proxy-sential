@@ -178,6 +178,234 @@ func newDeviceView(id string, observedAt time.Time) DeviceView {
 	}
 }
 
+type deviceObservationRow struct {
+	DeviceKey   string
+	EndpointID  string
+	Observation Observation
+}
+
+type deviceSet struct{ parent []int }
+
+func newDeviceSet(size int) *deviceSet {
+	parent := make([]int, size)
+	for i := range parent {
+		parent[i] = i
+	}
+	return &deviceSet{parent: parent}
+}
+
+func (s *deviceSet) find(value int) int {
+	if s.parent[value] != value {
+		s.parent[value] = s.find(s.parent[value])
+	}
+	return s.parent[value]
+}
+
+func (s *deviceSet) union(left, right int) {
+	left, right = s.find(left), s.find(right)
+	if left != right {
+		s.parent[right] = left
+	}
+}
+
+func discoveryScope(o Observation) string {
+	return strings.Join([]string{o.Node, o.Site, o.Domain, o.VLAN, o.VRF}, "\x00")
+}
+
+func normalizedMDNSInstance(value string) string {
+	value = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(value, ".")))
+	if marker := strings.Index(value, "._"); marker >= 0 {
+		value = value[:marker]
+	}
+	if marker := strings.IndexByte(value, '@'); marker > 0 {
+		prefix := value[:marker]
+		hexOnly := len(prefix) >= 10 && len(prefix) <= 16
+		for _, char := range prefix {
+			if !strings.ContainsRune("0123456789abcdef", char) {
+				hexOnly = false
+				break
+			}
+		}
+		if hexOnly {
+			value = value[marker+1:]
+		}
+	}
+	return strings.TrimSpace(value)
+}
+
+func deviceAliases(row deviceObservationRow) []string {
+	o := row.Observation
+	scope := discoveryScope(o) + "\x00"
+	aliases := make([]string, 0, 7)
+	if row.DeviceKey != "" {
+		aliases = append(aliases, "device-key:"+row.DeviceKey)
+	}
+	if row.EndpointID != "" {
+		aliases = append(aliases, scope+"endpoint:"+strings.ToLower(row.EndpointID))
+	}
+	if o.MAC != "" {
+		aliases = append(aliases, scope+"mac:"+strings.ToLower(o.MAC))
+	}
+	if o.IP != "" {
+		ipScope := scope
+		if strings.HasPrefix(strings.ToLower(o.IP), "fe80:") {
+			ipScope += "interface:" + o.Interface + "\x00"
+		}
+		aliases = append(aliases, ipScope+"ip:"+strings.ToLower(o.IP))
+	}
+	if o.Origin == "dns_sd" {
+		if target := strings.ToLower(strings.TrimSuffix(str(o.Evidence.Payload, "service_target"), ".")); target != "" {
+			aliases = append(aliases, scope+"mdns-target:"+target)
+		}
+		if instance := normalizedMDNSInstance(str(o.Evidence.Payload, "service_instance")); instance != "" {
+			aliases = append(aliases, scope+"mdns-instance:"+instance)
+		}
+	}
+	return aliases
+}
+
+func deviceAnchor(row deviceObservationRow) string {
+	scope := discoveryScope(row.Observation) + "\x00"
+	if row.EndpointID != "" {
+		return scope + "endpoint:" + strings.ToLower(row.EndpointID)
+	}
+	if row.Observation.MAC != "" {
+		return scope + "mac:" + strings.ToLower(row.Observation.MAC)
+	}
+	return ""
+}
+
+func betterDeviceName(candidate, current string) bool {
+	if candidate == "" {
+		return false
+	}
+	if current == "" {
+		return true
+	}
+	return normalizedMDNSInstance(candidate) == candidate && normalizedMDNSInstance(current) != current
+}
+
+func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceView {
+	anchorsByAlias := map[string]map[string]bool{}
+	for _, row := range rows {
+		anchor := deviceAnchor(row)
+		if anchor == "" {
+			continue
+		}
+		for _, alias := range deviceAliases(row) {
+			if anchorsByAlias[alias] == nil {
+				anchorsByAlias[alias] = map[string]bool{}
+			}
+			anchorsByAlias[alias][anchor] = true
+		}
+	}
+	sets := newDeviceSet(len(rows))
+	firstByAlias := map[string]int{}
+	for index, row := range rows {
+		for _, alias := range deviceAliases(row) {
+			// An alias observed with more than one reliable terminal identity is
+			// ambiguous (for example an IP reused inside the 24-hour window).
+			if len(anchorsByAlias[alias]) > 1 {
+				continue
+			}
+			if first, ok := firstByAlias[alias]; ok {
+				sets.union(first, index)
+			} else {
+				firstByAlias[alias] = index
+			}
+		}
+	}
+	type collected struct {
+		view       DeviceView
+		deviceKeys map[string]bool
+		addresses  map[string]bool
+		caps       map[string]bool
+		protocols  map[string]bool
+		endpoints  map[string]bool
+	}
+	groups := map[int]*collected{}
+	for index, row := range rows {
+		o := row.Observation
+		root := sets.find(index)
+		group := groups[root]
+		if group == nil {
+			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}}
+			groups[root] = group
+		}
+		group.deviceKeys[row.DeviceKey] = true
+		group.view.Observations = append(group.view.Observations, o)
+		group.view.EvidenceCount++
+		if o.ObservedAt.Before(group.view.FirstSeen) {
+			group.view.FirstSeen = o.ObservedAt
+		}
+		if o.ObservedAt.After(group.view.LastSeen) {
+			group.view.LastSeen = o.ObservedAt
+		}
+		if o.Current(now) {
+			group.view.Current = true
+		}
+		if o.IP != "" {
+			group.addresses[o.IP] = true
+		}
+		if group.view.MAC == "" && o.MAC != "" {
+			group.view.MAC = o.MAC
+		}
+		if betterDeviceName(o.Name, group.view.Name) {
+			group.view.Name = o.Name
+		}
+		if group.view.DeviceType == "" && o.DeviceType != "" {
+			group.view.DeviceType = o.DeviceType
+		}
+		for _, capability := range o.Capabilities {
+			group.caps[capability] = true
+		}
+		group.protocols[o.Origin] = true
+		if row.EndpointID != "" {
+			group.endpoints[row.EndpointID] = true
+		}
+		if confidenceRank(o.Confidence) > confidenceRank(group.view.Confidence) {
+			group.view.Confidence = o.Confidence
+		}
+	}
+	items := make([]DeviceView, 0, len(groups))
+	for _, group := range groups {
+		keys := make([]string, 0, len(group.deviceKeys))
+		for value := range group.deviceKeys {
+			keys = append(keys, value)
+		}
+		sort.Strings(keys)
+		group.view.ID = keys[0]
+		for value := range group.addresses {
+			group.view.Addresses = append(group.view.Addresses, value)
+		}
+		sort.Slice(group.view.Addresses, func(i, j int) bool {
+			leftV6, rightV6 := strings.Contains(group.view.Addresses[i], ":"), strings.Contains(group.view.Addresses[j], ":")
+			if leftV6 != rightV6 {
+				return !leftV6
+			}
+			return group.view.Addresses[i] < group.view.Addresses[j]
+		})
+		if len(group.view.Addresses) > 0 {
+			group.view.PrimaryIP = group.view.Addresses[0]
+		}
+		for value := range group.caps {
+			group.view.Capabilities = append(group.view.Capabilities, value)
+		}
+		for value := range group.protocols {
+			group.view.Protocols = append(group.view.Protocols, value)
+		}
+		sort.Strings(group.view.Capabilities)
+		sort.Strings(group.view.Protocols)
+		if len(group.endpoints) == 1 {
+			for value := range group.endpoints {
+				group.view.EndpointID = value
+			}
+		}
+		items = append(items, group.view)
+	}
+	return items
+}
+
 func (r Repository) Devices(ctx context.Context, limit, offset int) (map[string]any, error) {
 	return r.DevicesFiltered(ctx, DeviceQuery{Window: 24 * time.Hour, Limit: limit, Offset: offset})
 }
@@ -224,11 +452,11 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 	// expired. `current` below communicates protocol validity without claiming
 	// that a device is online.
 	statement := `WITH latest AS (
- SELECT DISTINCT ON (device_key,source_id,origin,coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''))
+ SELECT DISTINCT ON (device_key,source_id,origin,coalesce(data->>'ip',''),coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''))
    id,device_key,observed_at,valid_until,withdrawn,data
  FROM discovery_observations
  WHERE observed_at<=now() AND observed_at>=$1` + originClause + `
- ORDER BY device_key,source_id,origin,coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC)
+ ORDER BY device_key,source_id,origin,coalesce(data->>'ip',''),coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC)
 SELECT l.device_key,l.data,coalesce(i.endpoint_id,'')
 FROM latest l LEFT JOIN discovery_identity_links i ON i.observation_id=l.id
 ORDER BY l.observed_at DESC,l.device_key`
@@ -237,14 +465,7 @@ ORDER BY l.observed_at DESC,l.device_key`
 		return nil, err
 	}
 	defer rows.Close()
-	type collected struct {
-		view      DeviceView
-		addresses map[string]bool
-		caps      map[string]bool
-		protocols map[string]bool
-		endpoints map[string]bool
-	}
-	groups := map[string]*collected{}
+	deviceRows := []deviceObservationRow{}
 	for rows.Next() {
 		var id, endpointID string
 		var b []byte
@@ -255,83 +476,28 @@ ORDER BY l.observed_at DESC,l.device_key`
 		if err = json.Unmarshal(b, &observation); err != nil {
 			return nil, err
 		}
-		group := groups[id]
-		if group == nil {
-			group = &collected{view: newDeviceView(id, observation.ObservedAt), addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}}
-			groups[id] = group
-		}
-		group.view.Observations = append(group.view.Observations, observation)
-		group.view.EvidenceCount++
-		if observation.ObservedAt.Before(group.view.FirstSeen) {
-			group.view.FirstSeen = observation.ObservedAt
-		}
-		if observation.ObservedAt.After(group.view.LastSeen) {
-			group.view.LastSeen = observation.ObservedAt
-		}
-		if observation.Current(time.Now()) {
-			group.view.Current = true
-		}
-		if observation.IP != "" {
-			group.addresses[observation.IP] = true
-		}
-		if group.view.MAC == "" && observation.MAC != "" {
-			group.view.MAC = observation.MAC
-		}
-		if group.view.Name == "" && observation.Name != "" {
-			group.view.Name = observation.Name
-		}
-		if group.view.DeviceType == "" && observation.DeviceType != "" {
-			group.view.DeviceType = observation.DeviceType
-		}
-		for _, capability := range observation.Capabilities {
-			group.caps[capability] = true
-		}
-		group.protocols[observation.Origin] = true
-		if endpointID != "" {
-			group.endpoints[endpointID] = true
-		}
-		if confidenceRank(observation.Confidence) > confidenceRank(group.view.Confidence) {
-			group.view.Confidence = observation.Confidence
-		}
+		deviceRows = append(deviceRows, deviceObservationRow{DeviceKey: id, EndpointID: endpointID, Observation: observation})
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	items := make([]DeviceView, 0, len(groups))
+	items := aggregateDeviceRows(deviceRows, time.Now())
 	needle := strings.ToLower(strings.TrimSpace(query.Search))
-	for _, group := range groups {
-		for value := range group.addresses {
-			group.view.Addresses = append(group.view.Addresses, value)
-		}
-		sort.Strings(group.view.Addresses)
-		if len(group.view.Addresses) > 0 {
-			group.view.PrimaryIP = group.view.Addresses[0]
-		}
-		for value := range group.caps {
-			group.view.Capabilities = append(group.view.Capabilities, value)
-		}
-		for value := range group.protocols {
-			group.view.Protocols = append(group.view.Protocols, value)
-		}
-		sort.Strings(group.view.Capabilities)
-		sort.Strings(group.view.Protocols)
-		if len(group.endpoints) == 1 {
-			for value := range group.endpoints {
-				group.view.EndpointID = value
-			}
-		}
-		if query.DeviceType != "" && group.view.DeviceType != query.DeviceType {
+	filtered := items[:0]
+	for _, item := range items {
+		if query.DeviceType != "" && item.DeviceType != query.DeviceType {
 			continue
 		}
-		if query.Capability != "" && !group.caps[query.Capability] {
+		if query.Capability != "" && !containsString(item.Capabilities, query.Capability) {
 			continue
 		}
-		haystack := strings.ToLower(strings.Join(append(append([]string{group.view.Name, group.view.MAC, group.view.DeviceType}, group.view.Addresses...), group.view.Capabilities...), " "))
+		haystack := strings.ToLower(strings.Join(append(append([]string{item.Name, item.MAC, item.DeviceType}, item.Addresses...), item.Capabilities...), " "))
 		if needle != "" && !strings.Contains(haystack, needle) {
 			continue
 		}
-		items = append(items, group.view)
+		filtered = append(filtered, item)
 	}
+	items = filtered
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].LastSeen.Equal(items[j].LastSeen) {
 			return items[i].ID < items[j].ID
@@ -346,7 +512,25 @@ ORDER BY l.observed_at DESC,l.device_key`
 	if end > total {
 		end = total
 	}
-	return map[string]any{"items": items[start:end], "total": total, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, tx.Commit()
+	serviceDevices, linkedEndpoints := 0, 0
+	for _, item := range items {
+		if len(item.Capabilities) > 0 {
+			serviceDevices++
+		}
+		if item.EndpointID != "" {
+			linkedEndpoints++
+		}
+	}
+	return map[string]any{"items": items[start:end], "total": total, "service_devices": serviceDevices, "linked_endpoints": linkedEndpoints, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, tx.Commit()
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func confidenceRank(value string) int {

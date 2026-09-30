@@ -48,6 +48,12 @@ type passiveDiscoveryBatchStats struct {
 	Reasons   map[string]int
 }
 
+// A passive event can fan out into several PostgreSQL lookups and idempotent
+// writes (notably mDNS). Keep each claim comfortably inside the 90-second
+// lease and 45-second work budget so a busy sensor can advance its cursor
+// instead of replaying the same oversized batch forever.
+const passiveDiscoveryBatchSize = 250
+
 type passiveDiscoveryScope struct{ prefixes []netip.Prefix }
 
 func parsePassiveDiscoveryScope(raw string) (passiveDiscoveryScope, error) {
@@ -600,7 +606,6 @@ lease_owner='',lease_until='-infinity',last_success_at=now(),last_error='',updat
 
 func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID string) {
 	owner := fmt.Sprintf("passive-discovery-%d", os.Getpid())
-	const batchSize = 5000
 	for ctx.Err() == nil {
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		scope, err := parsePassiveDiscoveryScope(os.Getenv("PROXY_SENTINEL_DISCOVERY_CIDRS"))
@@ -612,7 +617,7 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 			if err == nil && claimed {
 				var events []normalized.Event
 				var next passiveDiscoveryCursor
-				events, next, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, batchSize)
+				events, next, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, passiveDiscoveryBatchSize)
 				batchEvents = len(events)
 				stats := passiveDiscoveryBatchStats{Protocols: map[string]int{}, Reasons: map[string]int{}}
 				if err == nil && len(events) > 0 {
@@ -633,7 +638,7 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 		}
 		cancel()
 		delay := 5 * time.Second
-		if claimed && err == nil && batchEvents >= batchSize {
+		if claimed && err == nil && batchEvents >= passiveDiscoveryBatchSize {
 			delay = 0
 		} else if claimed && err == nil {
 			delay = time.Second
