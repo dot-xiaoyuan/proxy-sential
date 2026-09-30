@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -234,6 +235,9 @@ func loadCaseHeaders(ctx context.Context, q operationsQuerier, doc *operationsDo
 		if due.Valid {
 			item.DueAt = formatDBTime(due.Time)
 		}
+		if strings.HasPrefix(item.RulesetVersion, "shared-behavior/") {
+			item.RiskKind = "shared_access"
+		}
 		item.Comments = []CaseComment{}
 		item.Timeline = []CaseTimeline{}
 		doc.Cases[item.CaseID] = item
@@ -310,7 +314,7 @@ func loadCases(ctx context.Context, q operationsQuerier, doc *operationsDocument
 		_ = json.Unmarshal(raw, &snapshot.Evidence)
 		snapshot.CreatedAt = formatDBTime(createdAt)
 		caseItem.EvidenceHistory = append(caseItem.EvidenceHistory, snapshot)
-		if caseItem.EvidenceSnapshot.CaseID == "" {
+		if caseItem.EvidenceSnapshot.CaseID == "" || (caseItem.RiskKind == "shared_access" && snapshot.Evidence.SharedAccess != nil) {
 			caseItem.EvidenceSnapshot = snapshot.Evidence
 		}
 		doc.Cases[caseID] = caseItem

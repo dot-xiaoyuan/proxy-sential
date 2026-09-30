@@ -48,6 +48,21 @@ func TestBuildSharedBehaviorWindowsPreservesSourcesAndRecordReferences(t *testin
 	}
 }
 
+func TestIEEE1905DeviceContextKeepsCurrentBasisWhenCountsAreEqual(t *testing.T) {
+	item := sharedaccess.BehaviorAssessment{StrongAnchor: "ieee1905_association", DeviceLowerBound: 2}
+	window := sharedaccess.Window{AssociatedClients: []string{"aa:aa:aa:aa:aa:aa", "bb:bb:bb:bb:bb:bb"}}
+	references := []sharedaccess.KnownDevice{{IdentityID: "model-reference", Model: "reference-only"}}
+
+	applySharedBehaviorDeviceContext(&item, window, references)
+
+	if item.KnownDeviceBasis != "ieee1905_association_current" || item.KnownDeviceWindow != "current" {
+		t.Fatalf("current IEEE 1905 basis was mislabeled: %#v", item)
+	}
+	if item.KnownDeviceCount != 2 || item.ReferenceDeviceCount24h != 1 {
+		t.Fatalf("current and 24h reference counts were mixed: %#v", item)
+	}
+}
+
 func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
 	now := time.Date(2026, 9, 28, 10, 10, 0, 0, time.UTC)
 	window := sharedaccess.Window{

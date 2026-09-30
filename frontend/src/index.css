@@ -356,6 +356,15 @@ a:hover {
   box-sizing: border-box;
 }
 
+.surface-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.surface-card > .ant-card-head {
+  border-bottom-color: #e2e8f0;
+}
+
 .page-header {
   display: flex;
   gap: 12px;

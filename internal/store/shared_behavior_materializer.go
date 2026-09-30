@@ -780,17 +780,7 @@ ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
 			continue
 		}
 		item.GenerationID = generationID
-		item.KnownDevices = append([]sharedaccess.KnownDevice{}, referenceDevices[key]...)
-		item.ReferenceDeviceCount24h = len(item.KnownDevices)
-		item.KnownDeviceCount = item.DeviceLowerBound
-		if len(window.AssociatedClients) > item.KnownDeviceCount {
-			item.KnownDeviceCount = len(window.AssociatedClients)
-			item.KnownDeviceBasis = "ieee1905_association_current"
-			item.KnownDeviceWindow = "current"
-		} else if item.StrongAnchor == "coexisting_device_identities" {
-			item.KnownDeviceBasis = "coexisting_physical_identities"
-			item.KnownDeviceWindow = "current"
-		}
+		applySharedBehaviorDeviceContext(&item, window, referenceDevices[key])
 		items = append(items, item)
 		windowsByID[item.ObservationID] = window
 	}
@@ -812,6 +802,22 @@ ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
 	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now())
 ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
 	return len(items), err
+}
+
+func applySharedBehaviorDeviceContext(item *sharedaccess.BehaviorAssessment, window sharedaccess.Window, references []sharedaccess.KnownDevice) {
+	item.KnownDevices = append([]sharedaccess.KnownDevice{}, references...)
+	item.ReferenceDeviceCount24h = len(item.KnownDevices)
+	item.KnownDeviceCount = item.DeviceLowerBound
+	if item.StrongAnchor == "ieee1905_association" {
+		if len(window.AssociatedClients) > item.KnownDeviceCount {
+			item.KnownDeviceCount = len(window.AssociatedClients)
+		}
+		item.KnownDeviceBasis = "ieee1905_association_current"
+		item.KnownDeviceWindow = "current"
+	} else if item.StrongAnchor == "coexisting_device_identities" {
+		item.KnownDeviceBasis = "coexisting_physical_identities"
+		item.KnownDeviceWindow = "current"
+	}
 }
 
 func (s *DBStore) recordFailedSharedBehaviorGeneration(ctx context.Context, sensorID string, now time.Time, runErr error) error {

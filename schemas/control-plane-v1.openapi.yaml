@@ -3317,12 +3317,13 @@ components:
         identity_blocker: { type: string }
         dedupe_key: { type: string }
         status: { type: string, enum: [new, assigned, investigating, waiting_data, resolved, closed, reopened] }
-        disposition: { type: string, enum: [confirmed_proxy, false_positive, benign, needs_more_data] }
+        disposition: { type: string, enum: [confirmed_proxy, confirmed_shared_access, false_positive, benign, needs_more_data] }
         priority: { type: string, enum: [high, medium, low] }
         assignee_id: { type: string }
         risk_score: { type: integer, minimum: 0, maximum: 100 }
         risk_confidence: { type: number, minimum: 0, maximum: 1 }
         assessment_level: { type: string }
+        risk_kind: { type: string, enum: [shared_access] }
         due_at: { type: string, format: date-time }
         first_seen: { type: string, format: date-time }
         last_seen: { type: string, format: date-time }
@@ -4738,6 +4739,37 @@ components:
           enum: [unreviewed, confirmed_proxy, false_positive, benign, needs_more_data]
         review_reason:
           type: string
+        shared_access:
+          $ref: "#/components/schemas/SharedAccessCaseEvidence"
+    SharedAccessCaseEvidence:
+      type: object
+      required: [observation_id, generation_id, status, confidence, strong_anchor, device_lower_bound, coverage_state, window_start, window_end, signal_groups, reasons, source_event_ids, anchor_identities]
+      properties:
+        observation_id: { type: string }
+        generation_id: { type: string }
+        status: { type: string, enum: [confirmed] }
+        confidence: { type: integer, minimum: 0, maximum: 100 }
+        strong_anchor: { type: string, enum: [ieee1905_association, coexisting_device_identities] }
+        device_lower_bound: { type: integer, minimum: 2 }
+        coverage_state: { type: string, enum: [verified] }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        signal_groups:
+          type: array
+          items: { type: string }
+        reasons:
+          type: array
+          items: { type: string }
+        source_event_ids:
+          type: array
+          items: { type: string }
+        anchor_identities:
+          type: array
+          items: { type: string }
+        reference_device_count_24h: { type: integer, minimum: 0 }
+        router_brand: { type: string }
+        router_model: { type: string }
+        router_confidence: { type: integer, minimum: 0, maximum: 100 }
     ProxyRuleMatch:
       type: object
       required: [event_id, signature, timestamp]

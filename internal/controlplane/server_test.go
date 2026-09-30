@@ -22,8 +22,41 @@ import (
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
 	"proxy-sentinel/internal/shadow"
+	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
 )
+
+func TestSharedAssessmentCaseEvidencePreservesCurrentAnchor(t *testing.T) {
+	from := time.Date(2026, 9, 30, 7, 30, 0, 0, time.UTC)
+	assessment := sharedaccess.BehaviorAssessment{
+		ObservationID: "shared-observation", GenerationID: "shared-generation", SensorID: "sensor-a",
+		CampusID: "campus-a", AccessDomain: "mirror-a", IP: "192.0.2.22", EndpointID: "mac:aa:bb:cc:dd:ee:ff",
+		Status: "confirmed", Confidence: 90, StrongAnchor: "ieee1905_association", DeviceLowerBound: 2,
+		CoverageState: "verified", FirstSeen: from, LastSeen: from.Add(10 * time.Minute), WindowStart: from,
+		WindowEnd: from.Add(10 * time.Minute), SignalGroups: []string{"confirmed_same_exit_endpoints", "ieee1905_association"},
+		EventIDs: []string{"control-b", "control-a"}, FeatureSamples: map[string]map[string]sharedaccess.FeatureSample{
+			"ieee1905_association": {
+				"bb:bb:bb:bb:bb:bb": {Count: 1, Buckets: []int64{1}},
+				"aa:aa:aa:aa:aa:aa": {Count: 1, Buckets: []int64{1}},
+			},
+		},
+		Router: sharedaccess.BehaviorRouterContext{Brand: "ZTE", Model: "SR7410-20", Confidence: 100},
+	}
+
+	item := proxyReviewCaseForSharedAssessment(assessment)
+	if item.SharedAccess == nil || item.EventCount != 2 {
+		t.Fatalf("shared evidence missing from case: %#v", item)
+	}
+	if got := item.SharedAccess.AnchorIdentities; len(got) != 2 || got[0] != "aa:aa:aa:aa:aa:aa" || got[1] != "bb:bb:bb:bb:bb:bb" {
+		t.Fatalf("anchor identities not preserved and sorted: %#v", got)
+	}
+	if item.SharedAccess.GenerationID != assessment.GenerationID || item.SharedAccess.WindowStart != from.Format(time.RFC3339Nano) {
+		t.Fatalf("generation/window missing: %#v", item.SharedAccess)
+	}
+	if got := caseRiskConfidence(item); got != .9 {
+		t.Fatalf("shared confidence=%v, want .9", got)
+	}
+}
 
 func TestShadowRunsEmptyDirectoryReturnsEmptyArrays(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})

@@ -316,30 +316,55 @@ type ProxyReviewResponse struct {
 }
 
 type ProxyReviewCase struct {
-	CaseID             string           `json:"case_id"`
-	IP                 string           `json:"ip"`
-	AccountID          string           `json:"account_id,omitempty"`
-	EndpointID         string           `json:"endpoint_id,omitempty"`
-	AccessIDs          []string         `json:"access_ids"`
-	Destinations       []ActivityCount  `json:"destinations"`
-	DestinationIPs     []ActivityCount  `json:"destination_ips"`
-	DestinationDomains []ActivityCount  `json:"destination_domains"`
-	TLSFingerprints    []ActivityCount  `json:"tls_fingerprints"`
-	Protocols          []ActivityCount  `json:"protocols"`
-	RuleMatches        []ProxyRuleMatch `json:"rule_matches"`
-	EventCount         int              `json:"event_count"`
-	TLSCount           int              `json:"tls_count"`
-	QUICCount          int              `json:"quic_count"`
-	AlertCount         int              `json:"alert_count"`
-	ConfidenceLevel    string           `json:"confidence_level"`
-	FirstSeen          string           `json:"first_seen"`
-	LastSeen           string           `json:"last_seen"`
-	DurationSeconds    int64            `json:"duration_seconds"`
-	EvidenceIDs        []string         `json:"evidence_ids"`
-	RiskScore          int              `json:"risk_score"`
-	RiskLevel          string           `json:"risk_level"`
-	ReviewStatus       string           `json:"review_status"`
-	ReviewReason       string           `json:"review_reason,omitempty"`
+	CaseID             string                    `json:"case_id"`
+	IP                 string                    `json:"ip"`
+	AccountID          string                    `json:"account_id,omitempty"`
+	EndpointID         string                    `json:"endpoint_id,omitempty"`
+	AccessIDs          []string                  `json:"access_ids"`
+	Destinations       []ActivityCount           `json:"destinations"`
+	DestinationIPs     []ActivityCount           `json:"destination_ips"`
+	DestinationDomains []ActivityCount           `json:"destination_domains"`
+	TLSFingerprints    []ActivityCount           `json:"tls_fingerprints"`
+	Protocols          []ActivityCount           `json:"protocols"`
+	RuleMatches        []ProxyRuleMatch          `json:"rule_matches"`
+	EventCount         int                       `json:"event_count"`
+	TLSCount           int                       `json:"tls_count"`
+	QUICCount          int                       `json:"quic_count"`
+	AlertCount         int                       `json:"alert_count"`
+	ConfidenceLevel    string                    `json:"confidence_level"`
+	FirstSeen          string                    `json:"first_seen"`
+	LastSeen           string                    `json:"last_seen"`
+	DurationSeconds    int64                     `json:"duration_seconds"`
+	EvidenceIDs        []string                  `json:"evidence_ids"`
+	RiskScore          int                       `json:"risk_score"`
+	RiskLevel          string                    `json:"risk_level"`
+	ReviewStatus       string                    `json:"review_status"`
+	ReviewReason       string                    `json:"review_reason,omitempty"`
+	SharedAccess       *SharedAccessCaseEvidence `json:"shared_access,omitempty"`
+}
+
+// SharedAccessCaseEvidence preserves the exact confirmed shared-access basis
+// in an operations case. It deliberately does not reuse proxy traffic counters:
+// a shared-access decision is explained by a current multi-client anchor and
+// its verified materialization window, not by TLS/QUIC volume.
+type SharedAccessCaseEvidence struct {
+	ObservationID           string   `json:"observation_id"`
+	GenerationID            string   `json:"generation_id"`
+	Status                  string   `json:"status"`
+	Confidence              int      `json:"confidence"`
+	StrongAnchor            string   `json:"strong_anchor"`
+	DeviceLowerBound        int      `json:"device_lower_bound"`
+	CoverageState           string   `json:"coverage_state"`
+	WindowStart             string   `json:"window_start"`
+	WindowEnd               string   `json:"window_end"`
+	SignalGroups            []string `json:"signal_groups"`
+	Reasons                 []string `json:"reasons"`
+	SourceEventIDs          []string `json:"source_event_ids"`
+	AnchorIdentities        []string `json:"anchor_identities"`
+	ReferenceDeviceCount24h int      `json:"reference_device_count_24h,omitempty"`
+	RouterBrand             string   `json:"router_brand,omitempty"`
+	RouterModel             string   `json:"router_model,omitempty"`
+	RouterConfidence        int      `json:"router_confidence,omitempty"`
 }
 
 type ProxyRuleMatch struct {

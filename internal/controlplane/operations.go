@@ -22,7 +22,7 @@ import (
 )
 
 var caseStatuses = map[string]bool{"new": true, "assigned": true, "investigating": true, "waiting_data": true, "resolved": true, "closed": true, "reopened": true}
-var caseDispositions = map[string]bool{"confirmed_proxy": true, "false_positive": true, "benign": true, "needs_more_data": true}
+var caseDispositions = map[string]bool{"confirmed_proxy": true, "confirmed_shared_access": true, "false_positive": true, "benign": true, "needs_more_data": true}
 var casePriorities = map[string]bool{"high": true, "medium": true, "low": true}
 var caseStatusTransitions = map[string]map[string]bool{
 	"new":           {"assigned": true, "investigating": true, "waiting_data": true},
@@ -61,6 +61,7 @@ type RiskCase struct {
 	RiskScore        int                    `json:"risk_score"`
 	RiskConfidence   float64                `json:"risk_confidence"`
 	AssessmentLevel  string                 `json:"assessment_level"`
+	RiskKind         string                 `json:"risk_kind,omitempty"`
 	RulesetVersion   string                 `json:"ruleset_version,omitempty"`
 	DueAt            string                 `json:"due_at"`
 	FirstSeen        string                 `json:"first_seen"`
@@ -378,16 +379,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 			if assessment.StrongAnchor == "" || assessment.DeviceLowerBound < 2 {
 				continue
 			}
-			scope := strings.Join([]string{assessment.SensorID, assessment.CampusID, assessment.AccessDomain, assessment.IP}, "\x00")
-			sum := sha256.Sum256([]byte("shared-access-case\x00" + scope))
-			items = append(items, store.ProxyReviewCase{
-				CaseID: "shared-" + hex.EncodeToString(sum[:])[:20], IP: assessment.IP, EndpointID: assessment.EndpointID,
-				AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{},
-				DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{},
-				RuleMatches: []store.ProxyRuleMatch{}, ConfidenceLevel: "high", FirstSeen: assessment.FirstSeen.UTC().Format(time.RFC3339Nano),
-				LastSeen: assessment.LastSeen.UTC().Format(time.RFC3339Nano), DurationSeconds: int64(assessment.WindowEnd.Sub(assessment.WindowStart).Seconds()),
-				EvidenceIDs: []string{assessment.ObservationID}, RiskScore: assessment.Confidence, RiskLevel: "confirmed", ReviewStatus: "unreviewed",
-			})
+			items = append(items, proxyReviewCaseForSharedAssessment(assessment))
 		}
 		if page.Page.NextCursor == nil {
 			break
@@ -438,22 +430,24 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 			caseID, ok = item.CaseID+"-"+shortToken(6), false
 		}
 		level := item.RiskLevel
-		if level == "confirmed" {
-			level = "high"
+		slaLevel := level
+		if slaLevel == "confirmed" {
+			slaLevel = "high"
 		}
 		priority := "medium"
-		if level == "high" {
+		if slaLevel == "high" {
 			priority = "high"
 		}
 		if !ok {
-			existing = RiskCase{CaseID: caseID, DedupeKey: dedupeKey, SubjectType: "ip", SubjectID: item.IP, IP: item.IP, EndpointID: item.EndpointID, Status: "new", Priority: priority, RulesetVersion: sharedaccess.BehaviorRuleVersion, CreatedAt: now.Format(time.RFC3339Nano), FirstSeen: item.FirstSeen, Timeline: []CaseTimeline{}, Comments: []CaseComment{}, EvidenceHistory: []CaseEvidenceSnapshot{}}
-			existing.DueAt = caseDueAt(now, level, s.operations.doc.SLAPolicies).Format(time.RFC3339Nano)
+			existing = RiskCase{CaseID: caseID, DedupeKey: dedupeKey, SubjectType: "ip", SubjectID: item.IP, IP: item.IP, EndpointID: item.EndpointID, Status: "new", Priority: priority, RulesetVersion: sharedaccess.BehaviorRuleVersion, RiskKind: "shared_access", CreatedAt: now.Format(time.RFC3339Nano), FirstSeen: item.FirstSeen, Timeline: []CaseTimeline{}, Comments: []CaseComment{}, EvidenceHistory: []CaseEvidenceSnapshot{}}
+			existing.DueAt = caseDueAt(now, slaLevel, s.operations.doc.SLAPolicies).Format(time.RFC3339Nano)
 			existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.created", After: map[string]any{"status": "new"}, CreatedAt: now.Format(time.RFC3339Nano)})
 		}
 		previousScore := existing.RiskScore
 		existing.RiskScore = item.RiskScore
-		existing.RiskConfidence = confidenceLevelValue(item.ConfidenceLevel)
+		existing.RiskConfidence = caseRiskConfidence(item)
 		existing.AssessmentLevel = level
+		existing.RiskKind = "shared_access"
 		existing.LastSeen = item.LastSeen
 		existing.UpdatedAt = now.Format(time.RFC3339Nano)
 		existing.DedupeKey = dedupeKey
@@ -469,7 +463,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		}
 		if !snapshotExists {
 			existing.EvidenceHistory = append(existing.EvidenceHistory, snapshot)
-			if existing.EvidenceSnapshot.CaseID == "" {
+			if existing.EvidenceSnapshot.CaseID == "" || (item.SharedAccess != nil && existing.EvidenceSnapshot.SharedAccess == nil) {
 				existing.EvidenceSnapshot = item
 			} else {
 				existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.evidence_appended", Before: map[string]any{"risk_score": previousScore}, After: map[string]any{"risk_score": item.RiskScore, "snapshot_id": snapshot.SnapshotID}, CreatedAt: now.Format(time.RFC3339Nano)})
@@ -581,6 +575,41 @@ func confidenceLevelValue(level string) float64 {
 		return .65
 	default:
 		return .35
+	}
+}
+
+func caseRiskConfidence(item store.ProxyReviewCase) float64 {
+	if item.SharedAccess != nil {
+		return float64(item.SharedAccess.Confidence) / 100
+	}
+	return confidenceLevelValue(item.ConfidenceLevel)
+}
+
+func proxyReviewCaseForSharedAssessment(assessment sharedaccess.BehaviorAssessment) store.ProxyReviewCase {
+	scope := strings.Join([]string{assessment.SensorID, assessment.CampusID, assessment.AccessDomain, assessment.IP}, "\x00")
+	sum := sha256.Sum256([]byte("shared-access-case\x00" + scope))
+	anchorIdentities := make([]string, 0)
+	for value := range assessment.FeatureSamples[assessment.StrongAnchor] {
+		anchorIdentities = append(anchorIdentities, value)
+	}
+	sort.Strings(anchorIdentities)
+	return store.ProxyReviewCase{
+		CaseID: "shared-" + hex.EncodeToString(sum[:])[:20], IP: assessment.IP, EndpointID: assessment.EndpointID,
+		AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{},
+		DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{},
+		RuleMatches: []store.ProxyRuleMatch{}, EventCount: len(assessment.EventIDs), ConfidenceLevel: "high",
+		FirstSeen: assessment.FirstSeen.UTC().Format(time.RFC3339Nano), LastSeen: assessment.LastSeen.UTC().Format(time.RFC3339Nano),
+		DurationSeconds: int64(assessment.WindowEnd.Sub(assessment.WindowStart).Seconds()), EvidenceIDs: []string{assessment.ObservationID},
+		RiskScore: assessment.Confidence, RiskLevel: "confirmed", ReviewStatus: "unreviewed",
+		SharedAccess: &store.SharedAccessCaseEvidence{
+			ObservationID: assessment.ObservationID, GenerationID: assessment.GenerationID, Status: assessment.Status,
+			Confidence: assessment.Confidence, StrongAnchor: assessment.StrongAnchor, DeviceLowerBound: assessment.DeviceLowerBound,
+			CoverageState: assessment.CoverageState, WindowStart: assessment.WindowStart.UTC().Format(time.RFC3339Nano),
+			WindowEnd: assessment.WindowEnd.UTC().Format(time.RFC3339Nano), SignalGroups: append([]string{}, assessment.SignalGroups...),
+			Reasons: append([]string{}, assessment.Reasons...), SourceEventIDs: append([]string{}, assessment.EventIDs...),
+			AnchorIdentities: anchorIdentities, ReferenceDeviceCount24h: assessment.ReferenceDeviceCount24h,
+			RouterBrand: assessment.Router.Brand, RouterModel: assessment.Router.Model, RouterConfidence: assessment.Router.Confidence,
+		},
 	}
 }
 

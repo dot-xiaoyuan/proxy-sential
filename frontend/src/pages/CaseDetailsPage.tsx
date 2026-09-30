@@ -31,6 +31,10 @@ export function CaseDetailsPage() {
   if (item.isError || !item.data)
     return <AppErrorAlert title="案件不存在或已超过保留期" />;
   const data = item.data;
+  const sharedEvidence = data.evidence_snapshot?.shared_access;
+  const isSharedAccess = data.risk_kind === "shared_access" || Boolean(sharedEvidence);
+  const campusLocation = [data.campus_id, data.building_id].filter(Boolean).join(" / ");
+  const accessLocation = [data.ssid, data.vlan, data.ap].filter(Boolean).join(" / ");
   const writable = can(session.data, "cases:write");
   const mutate = (
     operation: "assign" | "status" | "priority" | "disposition" | "comment",
@@ -59,10 +63,12 @@ export function CaseDetailsPage() {
       )}
       <Card className="surface-card" title="案件摘要">
         <Space wrap>
-          <Tag color="red">{data.assessment_level}</Tag>
+          <Tag color="red">
+            {isSharedAccess ? "已确认共享" : data.assessment_level}
+          </Tag>
           <Tag>{caseStatusText(data.status)}</Tag>
           <Typography.Text strong>
-            {data.risk_score} 分 / {Math.round(data.risk_confidence * 100)}%
+            风险分 {data.risk_score} · 置信度 {Math.round(data.risk_confidence * 100)}%
           </Typography.Text>
         </Space>
         <Descriptions
@@ -78,31 +84,26 @@ export function CaseDetailsPage() {
                 </Link>
               ),
             },
-            {
+            ...(data.account_id ? [{
               key: "account",
               label: "账号",
-              children: data.account_id || "待关联",
-            },
-            {
+              children: data.account_id,
+            }] : []),
+            ...(data.endpoint_id ? [{
               key: "endpoint",
               label: "终端",
-              children: data.endpoint_id || "待关联",
-            },
-            {
+              children: data.endpoint_id,
+            }] : []),
+            ...(campusLocation ? [{
               key: "campus",
               label: "校区/楼宇",
-              children:
-                [data.campus_id, data.building_id]
-                  .filter(Boolean)
-                  .join(" / ") || "待关联",
-            },
-            {
+              children: campusLocation,
+            }] : []),
+            ...(accessLocation ? [{
               key: "access",
               label: "SSID / VLAN / AP",
-              children:
-                [data.ssid, data.vlan, data.ap].filter(Boolean).join(" / ") ||
-                "待关联",
-            },
+              children: accessLocation,
+            }] : []),
             {
               key: "due",
               label: "SLA 截止",
@@ -157,7 +158,9 @@ export function CaseDetailsPage() {
                       placeholder="选择复核结论"
                       onChange={(value) => mutate("disposition", value)}
                       options={[
-                        { value: "confirmed_proxy", label: "确认代理" },
+                        isSharedAccess
+                          ? { value: "confirmed_shared_access", label: "确认共享行为" }
+                          : { value: "confirmed_proxy", label: "确认代理" },
                         { value: "false_positive", label: "误报" },
                         { value: "benign", label: "良性" },
                         { value: "needs_more_data", label: "需要更多数据" },
@@ -190,11 +193,51 @@ export function CaseDetailsPage() {
               label: "证据快照",
               children: (
                 <>
-                  <Typography.Paragraph>
-                    {data.evidence_snapshot?.event_count
-                      ? `共 ${data.evidence_snapshot.event_count} 条事件，TLS ${data.evidence_snapshot.tls_count}，QUIC ${data.evidence_snapshot.quic_count}，明确规则命中 ${data.evidence_snapshot.rule_matches?.length ?? 0} 条。`
-                      : "暂无证据快照"}
-                  </Typography.Paragraph>
+                  {sharedEvidence ? (
+                    <div className="shared-behavior-evidence">
+                      <Typography.Paragraph>
+                        <Typography.Text strong>共享行为已确认</Typography.Text>
+                        {` · 置信度 ${sharedEvidence.confidence}% · 当前设备下界 ${sharedEvidence.device_lower_bound} 台`}
+                      </Typography.Paragraph>
+                      <Typography.Paragraph>
+                        强锚点：{sharedAnchorText(sharedEvidence.strong_anchor)} · 覆盖状态：
+                        {sharedEvidence.coverage_state === "verified"
+                          ? "完整覆盖已验证"
+                          : sharedEvidence.coverage_state}
+                      </Typography.Paragraph>
+                      <Typography.Paragraph>
+                        当前窗口：{formatTime(sharedEvidence.window_start)} — {formatTime(sharedEvidence.window_end)}
+                      </Typography.Paragraph>
+                      <Typography.Paragraph className="case-history-id">
+                        当前代次：{sharedEvidence.generation_id}
+                      </Typography.Paragraph>
+                      {sharedEvidence.anchor_identities.length > 0 && (
+                        <Space wrap>
+                          {sharedEvidence.anchor_identities.map((identity) => (
+                            <Tag key={identity}>{identity}</Tag>
+                          ))}
+                        </Space>
+                      )}
+                      {(sharedEvidence.reference_device_count_24h ?? 0) > 0 && (
+                        <Typography.Paragraph type="secondary">
+                          24 小时明确型号参考数：{sharedEvidence.reference_device_count_24h ?? 0}
+                          （仅供详情参考，不参与本次确认）
+                        </Typography.Paragraph>
+                      )}
+                      <details>
+                        <summary>原始事件引用（{sharedEvidence.source_event_ids.length}）</summary>
+                        <div className="case-history-json">
+                          {sharedEvidence.source_event_ids.join("\n")}
+                        </div>
+                      </details>
+                    </div>
+                  ) : (
+                    <Typography.Paragraph>
+                      {data.evidence_snapshot?.event_count
+                        ? `共 ${data.evidence_snapshot.event_count} 条事件，TLS ${data.evidence_snapshot.tls_count}，QUIC ${data.evidence_snapshot.quic_count}，明确规则命中 ${data.evidence_snapshot.rule_matches?.length ?? 0} 条。`
+                        : "暂无证据快照"}
+                    </Typography.Paragraph>
+                  )}
                   <Typography.Text type="secondary">
                     案件保存发现时证据，规则更新不会覆盖历史判断。
                   </Typography.Text>
@@ -259,4 +302,17 @@ function caseNextStatuses(status: string) {
 }
 function caseStatusText(status: string) {
   return caseStatusNames[status] ?? status;
+}
+
+function sharedAnchorText(anchor: string) {
+  return (
+    {
+      ieee1905_association: "IEEE 1905.1 / EasyMesh 当前关联终端",
+      coexisting_device_identities: "当前窗口稳定物理设备重复共现",
+    } as Record<string, string>
+  )[anchor] ?? anchor;
+}
+
+function formatTime(value: string) {
+  return value ? new Date(value).toLocaleString() : "";
 }

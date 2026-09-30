@@ -3470,13 +3470,15 @@ export interface components {
             /** @enum {string} */
             status: "new" | "assigned" | "investigating" | "waiting_data" | "resolved" | "closed" | "reopened";
             /** @enum {string} */
-            disposition?: "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
+            disposition?: "confirmed_proxy" | "confirmed_shared_access" | "false_positive" | "benign" | "needs_more_data";
             /** @enum {string} */
             priority: "high" | "medium" | "low";
             assignee_id?: string;
             risk_score: number;
             risk_confidence: number;
             assessment_level: string;
+            /** @enum {string} */
+            risk_kind?: "shared_access";
             /** Format: date-time */
             due_at: string;
             /** Format: date-time */
@@ -4373,6 +4375,31 @@ export interface components {
             /** @enum {string} */
             review_status: "unreviewed" | "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
             review_reason?: string;
+            shared_access?: components["schemas"]["SharedAccessCaseEvidence"];
+        };
+        SharedAccessCaseEvidence: {
+            observation_id: string;
+            generation_id: string;
+            /** @enum {string} */
+            status: "confirmed";
+            confidence: number;
+            /** @enum {string} */
+            strong_anchor: "ieee1905_association" | "coexisting_device_identities";
+            device_lower_bound: number;
+            /** @enum {string} */
+            coverage_state: "verified";
+            /** Format: date-time */
+            window_start: string;
+            /** Format: date-time */
+            window_end: string;
+            signal_groups: string[];
+            reasons: string[];
+            source_event_ids: string[];
+            anchor_identities: string[];
+            reference_device_count_24h?: number;
+            router_brand?: string;
+            router_model?: string;
+            router_confidence?: number;
         };
         ProxyRuleMatch: {
             event_id: string;

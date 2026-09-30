@@ -58,6 +58,25 @@ const mockCases: RiskCase[] = proxyReviewResponse.items.map((item, index) => ({
   evidence_snapshot: item,
 }))
 
+mockCases.unshift({
+  case_id: 'shared-e2e-current', subject_type: 'ip', subject_id: '192.0.2.22', ip: '192.0.2.22',
+  endpoint_id: 'mac:20:3a:eb:e9:de:10', risk_kind: 'shared_access', status: 'new', priority: 'high',
+  risk_score: 90, risk_confidence: .9, assessment_level: 'confirmed', due_at: '2026-09-30T11:23:35Z',
+  first_seen: '2026-09-30T07:45:00Z', last_seen: '2026-09-30T07:55:00Z', created_at: '2026-09-30T07:45:00Z', updated_at: '2026-09-30T07:55:00Z',
+  comments: [], timeline: [{event_id:'shared-timeline-created',actor_id:'system',type:'case.created',created_at:'2026-09-30T07:45:00Z'}],
+  evidence_snapshot: {
+    case_id: 'shared-e2e-current', ip: '192.0.2.22', endpoint_id: 'mac:20:3a:eb:e9:de:10', access_ids: [], destinations: [], destination_ips: [], destination_domains: [],
+    tls_fingerprints: [], protocols: [], rule_matches: [], event_count: 2, tls_count: 0, quic_count: 0, alert_count: 0, confidence_level: 'high',
+    first_seen: '2026-09-30T07:45:00Z', last_seen: '2026-09-30T07:55:00Z', duration_seconds: 600, evidence_ids: ['shared-observation'], risk_score: 90,
+    risk_level: 'confirmed', review_status: 'unreviewed', shared_access: {
+      observation_id: 'shared-observation', generation_id: 'shared-generation', status: 'confirmed', confidence: 90,
+      strong_anchor: 'ieee1905_association', device_lower_bound: 2, coverage_state: 'verified', window_start: '2026-09-30T07:45:00Z', window_end: '2026-09-30T07:55:00Z',
+      signal_groups: ['confirmed_same_exit_endpoints','ieee1905_association'], reasons: ['被动 EasyMesh 关联状态确认多个终端同时接入'],
+      source_event_ids: ['control-a','control-b'], anchor_identities: ['aa:aa:aa:aa:aa:aa','bb:bb:bb:bb:bb:bb'], reference_device_count_24h: 1,
+    },
+  },
+})
+
 const mockOrganization = {
   campuses: [{ campus_id: 'main', code: 'MAIN', name: '主校区', enabled: true }, { campus_id: 'north', code: 'NORTH', name: '北校区', enabled: true }],
   buildings: [{ building_id: 'lib', campus_id: 'main', code: 'LIB', name: '图书馆', enabled: true }],
