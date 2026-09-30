@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"proxy-sentinel/internal/normalized"
 	"sort"
 	"strings"
@@ -148,40 +149,54 @@ type DeviceQuery struct {
 	Window     time.Duration
 	Search     string
 	DeviceType string
+	Category   string
 	Capability string
 	Limit      int
 	Offset     int
 }
 
+type AddressDetail struct {
+	Value   string `json:"value"`
+	Family  string `json:"family"`
+	Scope   string `json:"scope"`
+	Primary bool   `json:"primary"`
+}
+
 type DeviceView struct {
-	ID            string        `json:"id"`
-	PrimaryIP     string        `json:"primary_ip,omitempty"`
-	Addresses     []string      `json:"addresses"`
-	MAC           string        `json:"mac,omitempty"`
-	Name          string        `json:"name,omitempty"`
-	DeviceType    string        `json:"device_type,omitempty"`
-	Capabilities  []string      `json:"capabilities"`
-	Protocols     []string      `json:"protocols"`
-	Confidence    string        `json:"confidence"`
-	FirstSeen     time.Time     `json:"first_seen"`
-	LastSeen      time.Time     `json:"last_seen"`
-	Current       bool          `json:"current"`
-	EvidenceCount int           `json:"evidence_count"`
-	EndpointID    string        `json:"endpoint_id,omitempty"`
-	Observations  []Observation `json:"observations"`
+	ID             string          `json:"id"`
+	PrimaryIP      string          `json:"primary_ip,omitempty"`
+	Addresses      []string        `json:"addresses"`
+	AddressDetails []AddressDetail `json:"address_details"`
+	MAC            string          `json:"mac,omitempty"`
+	Name           string          `json:"name,omitempty"`
+	DeviceType     string          `json:"device_type,omitempty"`
+	Category       string          `json:"category"`
+	IdentityKind   string          `json:"identity_kind"`
+	Capabilities   []string        `json:"capabilities"`
+	Protocols      []string        `json:"protocols"`
+	Confidence     string          `json:"confidence"`
+	FirstSeen      time.Time       `json:"first_seen"`
+	LastSeen       time.Time       `json:"last_seen"`
+	Current        bool            `json:"current"`
+	EvidenceCount  int             `json:"evidence_count"`
+	EndpointID     string          `json:"endpoint_id,omitempty"`
+	Observations   []Observation   `json:"observations"`
 }
 
 func newDeviceView(id string, observedAt time.Time) DeviceView {
 	return DeviceView{
 		ID: id, FirstSeen: observedAt, LastSeen: observedAt,
-		Addresses: []string{}, Capabilities: []string{}, Protocols: []string{}, Observations: []Observation{},
+		Addresses: []string{}, AddressDetails: []AddressDetail{}, Capabilities: []string{}, Protocols: []string{}, Observations: []Observation{},
 	}
 }
 
 type deviceObservationRow struct {
-	DeviceKey   string
-	EndpointID  string
-	Observation Observation
+	DeviceKey             string
+	EndpointID            string
+	ProfileDeviceType     string
+	ProfileTypeConfidence float64
+	ProfileConflict       bool
+	Observation           Observation
 }
 
 type deviceSet struct{ parent []int }
@@ -316,20 +331,22 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		}
 	}
 	type collected struct {
-		view       DeviceView
-		deviceKeys map[string]bool
-		addresses  map[string]bool
-		caps       map[string]bool
-		protocols  map[string]bool
-		endpoints  map[string]bool
+		view         DeviceView
+		deviceKeys   map[string]bool
+		addresses    map[string]bool
+		caps         map[string]bool
+		protocols    map[string]bool
+		endpoints    map[string]bool
+		profileTypes map[string]bool
 	}
 	groups := map[int]*collected{}
 	for index, row := range rows {
 		o := row.Observation
+		NormalizeObservationName(&o)
 		root := sets.find(index)
 		group := groups[root]
 		if group == nil {
-			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}}
+			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}, profileTypes: map[string]bool{}}
 			groups[root] = group
 		}
 		group.deviceKeys[row.DeviceKey] = true
@@ -363,6 +380,9 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		if row.EndpointID != "" {
 			group.endpoints[row.EndpointID] = true
 		}
+		if !row.ProfileConflict && row.ProfileTypeConfidence >= .8 && row.ProfileDeviceType != "" {
+			group.profileTypes[row.ProfileDeviceType] = true
+		}
 		if confidenceRank(o.Confidence) > confidenceRank(group.view.Confidence) {
 			group.view.Confidence = o.Confidence
 		}
@@ -388,6 +408,9 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		if len(group.view.Addresses) > 0 {
 			group.view.PrimaryIP = group.view.Addresses[0]
 		}
+		for _, value := range group.view.Addresses {
+			group.view.AddressDetails = append(group.view.AddressDetails, addressDetail(value, value == group.view.PrimaryIP))
+		}
 		for value := range group.caps {
 			group.view.Capabilities = append(group.view.Capabilities, value)
 		}
@@ -401,9 +424,66 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 				group.view.EndpointID = value
 			}
 		}
+		if group.view.DeviceType == "" && len(group.profileTypes) == 1 {
+			for value := range group.profileTypes {
+				group.view.DeviceType = value
+			}
+		}
+		group.view.Category = deviceCategory(group.view.DeviceType)
+		group.view.IdentityKind = deviceIdentityKind(group.view)
 		items = append(items, group.view)
 	}
 	return items
+}
+
+func addressDetail(value string, primary bool) AddressDetail {
+	detail := AddressDetail{Value: value, Family: "ipv4", Scope: "private", Primary: primary}
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		return detail
+	}
+	if address.Is6() {
+		detail.Family = "ipv6"
+	}
+	if address.IsLinkLocalUnicast() {
+		detail.Scope = "link_local"
+	} else if address.IsPrivate() {
+		detail.Scope = "private"
+	} else {
+		detail.Scope = "global"
+	}
+	return detail
+}
+
+func deviceCategory(deviceType string) string {
+	switch strings.ToLower(strings.TrimSpace(deviceType)) {
+	case "mobile", "phone", "smartphone":
+		return "mobile"
+	case "tablet":
+		return "tablet"
+	case "desktop", "computer", "laptop", "workstation":
+		return "desktop"
+	case "printer":
+		return "printer"
+	case "camera":
+		return "camera"
+	case "router", "switch", "access_point", "gateway":
+		return "network"
+	case "media_device":
+		return "media"
+	default:
+		return "identity_only"
+	}
+}
+
+func deviceIdentityKind(item DeviceView) string {
+	if len(item.Addresses) > 0 {
+		return "network_address"
+	}
+	if containsString(item.Protocols, "ieee1905_client") {
+		return "link_layer_association"
+	}
+	return "link_layer_device"
 }
 
 func (r Repository) Devices(ctx context.Context, limit, offset int) (map[string]any, error) {
@@ -457,8 +537,10 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
  FROM discovery_observations
  WHERE observed_at<=now() AND observed_at>=$1` + originClause + `
  ORDER BY device_key,source_id,origin,coalesce(data->>'ip',''),coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC)
-SELECT l.device_key,l.data,coalesce(i.endpoint_id,'')
-FROM latest l LEFT JOIN discovery_identity_links i ON i.observation_id=l.id
+SELECT l.device_key,l.data,coalesce(i.endpoint_id,''),coalesce(p.device_type,''),coalesce(p.device_type_confidence,0),coalesce(p.recognition_conflict,false)
+FROM latest l
+LEFT JOIN discovery_identity_links i ON i.observation_id=l.id
+LEFT JOIN endpoint_device_profiles p ON p.endpoint_id=i.endpoint_id
 ORDER BY l.observed_at DESC,l.device_key`
 	rows, err := tx.QueryContext(ctx, statement, args...)
 	if err != nil {
@@ -467,16 +549,18 @@ ORDER BY l.observed_at DESC,l.device_key`
 	defer rows.Close()
 	deviceRows := []deviceObservationRow{}
 	for rows.Next() {
-		var id, endpointID string
+		var id, endpointID, profileDeviceType string
+		var profileTypeConfidence float64
+		var profileConflict bool
 		var b []byte
-		if err = rows.Scan(&id, &b, &endpointID); err != nil {
+		if err = rows.Scan(&id, &b, &endpointID, &profileDeviceType, &profileTypeConfidence, &profileConflict); err != nil {
 			return nil, err
 		}
 		var observation Observation
 		if err = json.Unmarshal(b, &observation); err != nil {
 			return nil, err
 		}
-		deviceRows = append(deviceRows, deviceObservationRow{DeviceKey: id, EndpointID: endpointID, Observation: observation})
+		deviceRows = append(deviceRows, deviceObservationRow{DeviceKey: id, EndpointID: endpointID, ProfileDeviceType: profileDeviceType, ProfileTypeConfidence: profileTypeConfidence, ProfileConflict: profileConflict, Observation: observation})
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
@@ -497,7 +581,14 @@ ORDER BY l.observed_at DESC,l.device_key`
 		}
 		filtered = append(filtered, item)
 	}
-	items = filtered
+	facets := deviceFacets(filtered)
+	items = filtered[:0]
+	for _, item := range filtered {
+		if query.Category != "" && item.Category != query.Category {
+			continue
+		}
+		items = append(items, item)
+	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].LastSeen.Equal(items[j].LastSeen) {
 			return items[i].ID < items[j].ID
@@ -521,7 +612,25 @@ ORDER BY l.observed_at DESC,l.device_key`
 			linkedEndpoints++
 		}
 	}
-	return map[string]any{"items": items[start:end], "total": total, "service_devices": serviceDevices, "linked_endpoints": linkedEndpoints, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, tx.Commit()
+	return map[string]any{"items": items[start:end], "total": total, "facets": facets, "service_devices": serviceDevices, "linked_endpoints": linkedEndpoints, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, tx.Commit()
+}
+
+type DeviceFacet struct {
+	Category string `json:"category"`
+	Count    int    `json:"count"`
+}
+
+func deviceFacets(items []DeviceView) []DeviceFacet {
+	order := []string{"all", "mobile", "tablet", "desktop", "printer", "camera", "network", "media", "identity_only"}
+	counts := map[string]int{"all": len(items)}
+	for _, item := range items {
+		counts[item.Category]++
+	}
+	result := make([]DeviceFacet, 0, len(order))
+	for _, category := range order {
+		result = append(result, DeviceFacet{Category: category, Count: counts[category]})
+	}
+	return result
 }
 
 func containsString(values []string, wanted string) bool {

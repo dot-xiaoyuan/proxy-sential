@@ -94,6 +94,17 @@ func TestPassiveDiscoveryRequiresDHCPACK(t *testing.T) {
 	}
 }
 
+func TestPassiveDiscoveryRetainsOriginalNormalizedDeviceName(t *testing.T) {
+	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
+	event := passiveTestEvent("dhcp", "192.168.0.6", "50:2b:73:d9:70:34", map[string]any{
+		"msg_types": "ACK", "hostname": "ld的电脑", "hostname_original": `ld\xb5\xc4\xb5\xe7\xc4\xd4`, "hostname_encoding": "gb18030-escape",
+	})
+	observation, reason := passiveObservation(event, scope)
+	if reason != "" || observation.Name != "ld的电脑" || observation.OriginalName != `ld\xb5\xc4\xb5\xe7\xc4\xd4` || observation.NameEncoding != "gb18030-escape" {
+		t.Fatalf("normalized DHCP name evidence was not retained: reason=%q observation=%+v", reason, observation)
+	}
+}
+
 func TestPassiveDiscoveryProtocolClassification(t *testing.T) {
 	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
 	cases := []struct {

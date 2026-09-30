@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"proxy-sentinel/internal/devicename"
 	"proxy-sentinel/internal/normalized"
 	"regexp"
 	"sort"
@@ -31,6 +32,8 @@ type Observation struct {
 	IP            string           `json:"ip,omitempty"`
 	MAC           string           `json:"mac,omitempty"`
 	Name          string           `json:"name,omitempty"`
+	OriginalName  string           `json:"original_name,omitempty"`
+	NameEncoding  string           `json:"name_encoding,omitempty"`
 	Origin        string           `json:"origin"`
 	Port          string           `json:"port,omitempty"`
 	Interface     string           `json:"interface,omitempty"`
@@ -138,6 +141,7 @@ func FromEvent(e normalized.Event) (Observation, error) {
 	}
 	o.LocationKind = str(e.Payload, "location_kind")
 	o.Name = str(e.Payload, "name")
+	NormalizeObservationName(&o)
 	label := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(o.Name), "."), ".local")
 	if len(o.Name) > 253 || label == "localhost" || label == "unknown" || label == "android" || label == "iphone" || regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{16,}$|^[0-9]+$`).MatchString(label) || strings.ContainsAny(o.Name, "\n\r\x00") {
 		o.Name = ""
@@ -207,6 +211,21 @@ func FromEvent(e normalized.Event) (Observation, error) {
 		return o, fmt.Errorf("unsupported discovery origin %q", o.Origin)
 	}
 	return o, nil
+}
+
+// NormalizeObservationName cleans the display name without altering the raw
+// normalized event retained in Evidence.
+func NormalizeObservationName(o *Observation) {
+	if o == nil || o.Name == "" {
+		return
+	}
+	original := o.Name
+	normalized, encoding := devicename.Normalize(original)
+	o.Name = normalized
+	if strings.TrimSpace(original) != normalized {
+		o.OriginalName = original
+		o.NameEncoding = encoding
+	}
 }
 
 type ScanConfig struct {

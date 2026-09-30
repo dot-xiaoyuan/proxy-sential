@@ -4815,6 +4815,7 @@ export interface operations {
                 window?: string;
                 search?: string;
                 type?: string;
+                category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
                 capability?: string;
                 limit?: number;
                 offset?: number;

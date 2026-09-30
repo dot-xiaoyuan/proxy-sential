@@ -179,7 +179,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			}
 			window = parsed
 		}
-		page, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset})
+		page, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset})
 		if err != nil {
 			writeError(w, 500, "discovery_read", "读取发现结果失败")
 			return

@@ -35,7 +35,7 @@ func TestConvertAppliesCollectorInstanceBeforeCaptureScope(t *testing.T) {
 }
 
 func TestConvertDHCPFixture(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "examples", "zeek", "dhcp-sample.log")
+	path := filepath.Join("testdata", "dhcp-sample.log")
 	input, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -123,6 +123,27 @@ func TestConvertJSONLine(t *testing.T) {
 	subject := event["subject"].(map[string]any)
 	if subject["mac"] != "aa:bb:cc:dd:ee:04" || payload["mac"] != "aa:bb:cc:dd:ee:04" || payload["client_mac"] != "aa:bb:cc:dd:ee:04" {
 		t.Fatalf("expected normalized MAC fields, subject=%+v payload=%+v", subject, payload)
+	}
+}
+
+func TestConvertDHCPDecodesEscapedDeviceNamesAndKeepsOriginal(t *testing.T) {
+	input := bytes.NewBufferString("#separator \\x09\n" +
+		"#empty_field\t(empty)\n" +
+		"#unset_field\t-\n" +
+		"#fields\tts\tclient_addr\tserver_addr\tmac\thost_name\tassigned_addr\tmsg_types\n" +
+		"1785232900.5\t0.0.0.0\t192.168.0.1\t50:2b:73:d9:70:34\tld\\xb5\\xc4\\xb5\\xe7\\xc4\\xd4\t192.168.0.6\tACK\n")
+	var output bytes.Buffer
+	stats, err := Convert(input, &output, Options{SensorID: "lab-30"})
+	if err != nil || stats.Emitted != 1 {
+		t.Fatalf("convert failed: stats=%+v err=%v", stats, err)
+	}
+	var event map[string]any
+	if err = json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil {
+		t.Fatal(err)
+	}
+	payload := event["payload"].(map[string]any)
+	if payload["hostname"] != "ld的电脑" || payload["hostname_original"] != `ld\xb5\xc4\xb5\xe7\xc4\xd4` || payload["hostname_encoding"] != "gb18030-escape" {
+		t.Fatalf("unexpected normalized hostname payload: %#v", payload)
 	}
 }
 

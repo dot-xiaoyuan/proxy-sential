@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"proxy-sentinel/internal/devicename"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/proxyprotocol"
 )
@@ -230,6 +231,7 @@ func infrastructureDiscoveryEventFromFields(raw []byte, fields map[string]string
 		for _, pair := range [][2]string{{"system_name", "system_name"}, {"system_description", "system_description"}, {"system_capabilities", "system_capabilities"}, {"capabilities", "capabilities"}, {"chassis_id", "chassis_id"}, {"port_id", "port_id"}, {"management_address", "management_address"}} {
 			copyPayload(payload, fields, pair[0], pair[1])
 		}
+		normalizePayloadName(payload, "system_name")
 	} else {
 		for _, pair := range [][2]string{{"st", "st"}, {"nt", "nt"}, {"usn", "usn"}, {"server", "server"}, {"location", "location"}} {
 			copyPayload(payload, fields, pair[0], pair[1])
@@ -304,7 +306,7 @@ func discoveryEventFromFields(raw []byte, fields map[string]string, lineOffset i
 	for _, mapping := range [][2]string{{"hostname", "hostname"}, {"name", "device_name"}, {"query", "query"}, {"answers", "answers"}, {"mac", "client_mac"}, {"client_mac", "client_mac"}, {"ttl", "ttl"}} {
 		if value := first(fields, mapping[0]); value != "" {
 			if opts.LogKind == "mdns" && (mapping[1] == "device_name" || mapping[1] == "hostname") {
-				payload["discovery_name"] = value
+				setNormalizedPayloadName(payload, "discovery_name", value)
 				continue
 			}
 			if mapping[1] == "ttl" {
@@ -477,15 +479,15 @@ func dhcpPayload(fields map[string]string) map[string]any {
 	if at := normalizeTimestamp(first(fields, "lease_observed_at")); at != "" {
 		payload["lease_observed_at"] = at
 	}
-	copyPayload(payload, fields, "host_name", "hostname")
-	copyPayload(payload, fields, "hostname", "hostname")
+	copyNormalizedPayloadName(payload, fields, "host_name", "hostname")
+	copyNormalizedPayloadName(payload, fields, "hostname", "hostname")
 	copyPayload(payload, fields, "client_software", "vendor_class")
 	copyPayload(payload, fields, "vendor_class", "vendor_class")
 	copyPayload(payload, fields, "requested_options", "requested_options")
 	copyMACPayload(payload, fields, "mac")
 	copyMACPayload(payload, fields, "client_mac")
 	copyPayload(payload, fields, "client_chaddr", "client_chaddr")
-	copyPayload(payload, fields, "client_fqdn", "client_fqdn")
+	copyNormalizedPayloadName(payload, fields, "client_fqdn", "client_fqdn")
 	copyPayload(payload, fields, "domain", "domain")
 	copyPayload(payload, fields, "requested_addr", "requested_addr")
 	copyPayload(payload, fields, "assigned_addr", "assigned_addr")
@@ -496,6 +498,32 @@ func dhcpPayload(fields map[string]string) map[string]any {
 		payload["device_hint"] = hint
 	}
 	return payload
+}
+
+func copyNormalizedPayloadName(payload map[string]any, fields map[string]string, field, key string) {
+	if value := first(fields, field); value != "" {
+		setNormalizedPayloadName(payload, key, value)
+	}
+}
+
+func normalizePayloadName(payload map[string]any, key string) {
+	value, _ := payload[key].(string)
+	if value != "" {
+		setNormalizedPayloadName(payload, key, value)
+	}
+}
+
+func setNormalizedPayloadName(payload map[string]any, key, value string) {
+	normalized, encoding := devicename.Normalize(value)
+	if normalized == "" {
+		delete(payload, key)
+		return
+	}
+	payload[key] = normalized
+	if normalized != strings.TrimSpace(value) {
+		payload[key+"_original"] = value
+		payload[key+"_encoding"] = encoding
+	}
 }
 
 func softwarePayload(fields map[string]string) map[string]any {

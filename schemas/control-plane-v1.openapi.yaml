@@ -44,6 +44,7 @@ paths:
         - { name: window, in: query, schema: { type: string, default: 24h } }
         - { name: search, in: query, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string, enum: [mobile, tablet, desktop, printer, camera, network, media, identity_only] } }
         - { name: capability, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0 } }

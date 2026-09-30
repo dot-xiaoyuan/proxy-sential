@@ -225,9 +225,13 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 			return discovery.Observation{}, "dhcp_not_ack_or_out_of_scope"
 		}
 		o.Origin, o.Name, o.Explanation = "dhcp", passiveString(event.Payload, "client_fqdn"), "DHCP 确认的地址与 MAC 绑定"
+		nameField := "client_fqdn"
 		if o.Name == "" {
 			o.Name = passiveString(event.Payload, "hostname")
+			nameField = "hostname"
 		}
+		o.OriginalName = passiveString(event.Payload, nameField+"_original")
+		o.NameEncoding = passiveString(event.Payload, nameField+"_encoding")
 		o.Confidence = "confirmed"
 		o.ValidUntil = at.Add(time.Duration(passiveTTL(event.Payload, 24*3600)) * time.Second)
 	case "arp":
@@ -284,6 +288,8 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 			return discovery.Observation{}, "infrastructure_without_identity"
 		}
 		o.Origin, o.Name, o.Explanation, o.ValidUntil = kind, passiveString(event.Payload, "system_name"), strings.ToUpper(kind)+" 网络基础设施公告", at.Add(10*time.Minute)
+		o.OriginalName = passiveString(event.Payload, "system_name_original")
+		o.NameEncoding = passiveString(event.Payload, "system_name_encoding")
 		caps := strings.ToLower(passiveString(event.Payload, "system_capabilities") + "," + passiveString(event.Payload, "capabilities"))
 		switch {
 		case strings.Contains(caps, "router"):
@@ -296,6 +302,7 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	default:
 		return discovery.Observation{}, "unsupported_protocol"
 	}
+	discovery.NormalizeObservationName(&o)
 	return o, ""
 }
 
