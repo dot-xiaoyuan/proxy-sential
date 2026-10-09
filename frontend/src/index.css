@@ -3416,6 +3416,7 @@ pre.wrap-code {
 .device-network-identity, .device-context-cell { display: grid; gap: 5px; min-width: 0; }
 .device-context-cell > div { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: baseline; gap: 8px; min-width: 0; }
 .device-context-cell > div > .ant-typography-secondary { font-size: 11px; white-space: nowrap; }
+.device-inventory-page .device-context-cell .brand-evidence-wrap { display: block; white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 .device-observed-ip { display: block; min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 13px; }
 .device-mac-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .device-mac-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
