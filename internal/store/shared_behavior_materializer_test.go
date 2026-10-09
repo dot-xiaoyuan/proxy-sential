@@ -1,7 +1,11 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +13,34 @@ import (
 
 	"proxy-sentinel/internal/sharedaccess"
 )
+
+func TestIEEE1905SyncReadsOnlyFreshWindowAndLaterLeaves(t *testing.T) {
+	from := time.Date(2026, 9, 30, 14, 5, 0, 0, time.UTC)
+	now := from.Add(17 * time.Minute)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		if query == "" {
+			raw, _ := io.ReadAll(r.Body)
+			query = string(raw)
+		}
+		// Reading the live 17 minutes includes leaves after the delayed window
+		// end; scanning days of payloads previously exhausted the query deadline.
+		for _, bound := range []string{from.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)} {
+			if !strings.Contains(query, bound) {
+				t.Errorf("association query omitted fresh-window boundary %s", bound)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&DBStore{ch: ch}).syncIEEE1905Associations(context.Background(), "office-30", from, now); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestBuildSharedBehaviorWindowsPreservesSourcesAndRecordReferences(t *testing.T) {
 	from := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
@@ -56,13 +88,18 @@ func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
 		From: now.Add(-10 * time.Minute), To: now, LastObservedAt: now.Add(-time.Second), Complete: true, CoverageVerified: true,
 		EventIDs: []string{"event-1"}, Records: []sharedaccess.RecordRef{{EventID: "event-1", Source: "zeek", InstanceID: "instance-1"}},
 	}
-	item := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 95, CoverageState: "verified"}
+	item := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 95, CoverageState: "verified", StrongAnchor: "coexisting_device_models", DeviceLowerBound: 2}
 	got, ok := confirmedSharedBehaviorEvidence(window, item)
 	if !ok || got.Type != "shared_access_window" || got.Score != 95 || got.Confidence != .95 || got.SharedAccess == nil {
 		t.Fatalf("evidence=%+v ok=%v", got, ok)
 	}
 
 	for name, mutate := range map[string]func(*sharedaccess.Window, *sharedaccess.BehaviorAssessment){
+		"missing anchor": func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) { a.StrongAnchor = "" },
+		"unknown anchor": func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) {
+			a.StrongAnchor = "unsupported-anchor"
+		},
+		"single device":   func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) { a.DeviceLowerBound = 1 },
 		"likely":          func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) { a.Status = "likely" },
 		"partial":         func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) { a.CoverageState = "partial" },
 		"incomplete":      func(w *sharedaccess.Window, _ *sharedaccess.BehaviorAssessment) { w.Complete = false },
@@ -89,6 +126,39 @@ func TestSharedBehaviorCoverageAcceptsSuricataAsApplicationCollector(t *testing.
 	}
 	if reasons := sharedBehaviorCoverageReasons(checkpoints, now, now); len(reasons) != 0 {
 		t.Fatalf("healthy Suricata deployment was treated as partial: %v", reasons)
+	}
+}
+
+func TestSharedBehaviorCoverageAcceptsDedicatedPayloadFreeCollector(t *testing.T) {
+	now := time.Date(2026, 10, 8, 14, 0, 0, 0, time.UTC)
+	checkpoints := map[string]sharedBehaviorCheckpoint{
+		"shared-device-signals": {eventAt: sql.NullTime{Time: now.Add(-30 * time.Second), Valid: true}, updatedAt: now.Add(-10 * time.Second)},
+	}
+	if reasons := sharedBehaviorCoverageReasons(checkpoints, now, now); len(reasons) != 0 {
+		t.Fatalf("healthy dedicated shared-signal collector was treated as partial: %v", reasons)
+	}
+	checkpoints["shared-device-signals"] = sharedBehaviorCheckpoint{eventAt: sql.NullTime{Time: now.Add(-3 * time.Minute), Valid: true}, updatedAt: now.Add(-3 * time.Minute)}
+	if reasons := sharedBehaviorCoverageReasons(checkpoints, now, now); len(reasons) == 0 {
+		t.Fatal("stale dedicated shared-signal collector was accepted")
+	}
+}
+
+func TestSharedBehaviorPrefilterDropsOrdinarySingleStackCampusEndpoints(t *testing.T) {
+	now := time.Date(2026, 10, 8, 14, 40, 0, 0, time.UTC)
+	ordinary := sharedaccess.Window{From: now.Add(-10 * time.Minute), To: now, LastObservedAt: now.Add(-time.Minute), Complete: true, CoverageVerified: true, TCPStacks: []string{"one"}, Samples: map[string]map[string]sharedaccess.FeatureSample{}, EventIDs: []string{"ordinary"}}
+	if sharedBehaviorPotentialWindow(ordinary) {
+		t.Fatal("ordinary single-stack endpoint reached PostgreSQL enrichment")
+	}
+	shared := ordinary
+	shared.Sources = []string{"shared-syn-sidecar"}
+	shared.TCPStacks = []string{"one", "two", "three"}
+	shared.Samples["tcp_stack"] = map[string]sharedaccess.FeatureSample{
+		"one":   {Count: 3, Buckets: []int64{now.Add(-3*time.Minute).Unix() / 5, now.Add(-2*time.Minute).Unix() / 5}},
+		"two":   {Count: 3, Buckets: []int64{now.Add(-3*time.Minute).Unix() / 5, now.Add(-2*time.Minute).Unix() / 5}},
+		"three": {Count: 3, Buckets: []int64{now.Add(-3*time.Minute).Unix() / 5, now.Add(-2*time.Minute).Unix() / 5}},
+	}
+	if !sharedBehaviorPotentialWindow(shared) {
+		t.Fatal("dedicated repeated TCP candidate was removed by the prefilter")
 	}
 }
 
@@ -126,5 +196,58 @@ func TestSharedBehaviorKnownDevicesKeepsOnlyRepeatedExplicitModels(t *testing.T)
 	}
 	if byModel["MAA-AN00"].Brand != "Honor" || byModel["MAA-AN00"].Observations != 5 || byModel["iPhone18,4"].Brand != "Apple" {
 		t.Fatalf("known devices were not merged conservatively: %+v", got)
+	}
+}
+
+func TestSharedBehaviorModelRefsRemainTraceable(t *testing.T) {
+	window := sharedaccess.Window{EventIDs: []string{"transport"}, Sources: []string{"packet-sidecar"}}
+	rows := []sharedBehaviorKnownDeviceRow{{SensorID: "office", IP: "192.0.2.63", EventIDs: []string{"model"}, Sources: []string{"zeek"}, EventRefs: [][]string{{"model", "zeek", "boot-1"}}}}
+	key := "office\x00\x00\x00192.0.2.63"
+	appendSharedBehaviorModelRefs(&window, rows, key)
+	appendSharedBehaviorModelRefs(&window, rows, key)
+	if len(window.EventIDs) != 2 || len(window.Records) != 1 || window.Records[0].EventID != "model" || window.Records[0].InstanceID != "boot-1" {
+		t.Fatalf("model proof missing or duplicated: %+v", window)
+	}
+}
+
+func TestSharedBehaviorDoesNotPromoteOldMeshJoins(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	groups := []ieee1905AssociationGroup{{SensorID: "office", GatewayIP: "192.0.2.22", Clients: []string{"a", "b"}, LastSeen: now.Add(-time.Hour)}}
+	if windows := mergeIEEE1905AssociationWindows(nil, groups, now.Add(-10*time.Minute), now, true, nil); len(windows) != 0 {
+		t.Fatalf("old join history became current occupancy: %+v", windows)
+	}
+}
+
+func TestIEEE1905MergePreservesActualSourceTime(t *testing.T) {
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	sourceAt := now.Add(-3 * time.Minute)
+	group := ieee1905AssociationGroup{SensorID: "office", GatewayIP: "192.0.2.22", GatewayMAC: "20:3a:eb:e9:de:10", Clients: []string{"02:00:00:00:00:01", "02:00:00:00:00:03"}, LastSeen: sourceAt, EventIDs: []string{"a", "b"}}
+	windows := mergeIEEE1905AssociationWindows(nil, []ieee1905AssociationGroup{group}, now.Add(-10*time.Minute), now, true, nil)
+	if len(windows) != 1 || !windows[0].LastObservedAt.Equal(sourceAt) {
+		t.Fatalf("rebuild fabricated a fresh source observation: %+v", windows)
+	}
+	for _, sample := range windows[0].Samples["ieee1905_association"] {
+		if len(sample.Buckets) != 1 || sample.Buckets[0] != sourceAt.UnixMilli()/5000 {
+			t.Fatalf("rebuild fabricated an association bucket: %+v", sample)
+		}
+	}
+	// Independent later traffic keeps its actual observation time.
+	later := now.Add(-time.Minute)
+	windows = mergeIEEE1905AssociationWindows([]sharedaccess.Window{{SensorID: "office", IP: group.GatewayIP, From: now.Add(-10 * time.Minute), To: now, LastObservedAt: later}}, []ieee1905AssociationGroup{group}, now.Add(-10*time.Minute), now, true, nil)
+	if !windows[0].LastObservedAt.Equal(later) {
+		t.Fatalf("association overwrote newer source time: %s", windows[0].LastObservedAt)
+	}
+}
+
+func TestIEEE1905MergeKeepsEachClientSourceBucket(t *testing.T) {
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	a, b := now.Add(-4*time.Minute), now.Add(-3*time.Minute)
+	group := ieee1905AssociationGroup{SensorID: "office", GatewayIP: "192.0.2.22", Clients: []string{"a", "b"}, LastSeen: b, ClientLastSeen: map[string]time.Time{"a": a, "b": b}}
+	windows := mergeIEEE1905AssociationWindows(nil, []ieee1905AssociationGroup{group}, now.Add(-10*time.Minute), now, true, nil)
+	for client, at := range group.ClientLastSeen {
+		sample := windows[0].Samples["ieee1905_association"][client]
+		if len(sample.Buckets) != 1 || sample.Buckets[0] != at.UnixMilli()/5000 {
+			t.Fatalf("client %s source bucket changed: %+v", client, sample)
+		}
 	}
 }

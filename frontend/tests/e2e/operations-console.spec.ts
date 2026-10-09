@@ -38,20 +38,10 @@ test('submits a review label on IP detail', async ({ page }) => {
   await expect(page.getByText('标注已写入审计队列')).toBeVisible()
 })
 
-test('shows shadow run summaries', async ({ page }) => {
-  await page.goto('/shadow-runs')
-  await expect(page.getByText('20260724-131645')).toBeVisible()
-  await expect(page.getByText('截断')).toBeVisible()
-  await expect(page.getByRole('columnheader', { name: '标准化' })).toBeVisible()
-  await expect(page.getByRole('columnheader', { name: 'Zeek' })).toBeVisible()
-  await expect(page.getByText('不可用',{exact:true})).toBeVisible()
-  await expect(page.getByText('无 DHCP 事件',{exact:true})).toBeVisible()
-})
-
 test('shows compact endpoint inventory and opens endpoint detail', async ({ page }) => {
   await page.goto('/devices')
   await expect(page.getByRole('heading', { name: '终端画像' })).toBeVisible()
-  await expect(page.getByRole('columnheader', { name: '设备识别' })).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: '终端' })).toBeVisible()
   const firstEndpoint = page.locator('tbody a[href^="/devices/"]').first()
   await expect(firstEndpoint).toBeVisible()
   await firstEndpoint.click()

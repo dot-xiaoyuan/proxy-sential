@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"proxy-sentinel/internal/proxyprotocol"
@@ -126,9 +127,12 @@ func (s *Server) handlePolicies(w http.ResponseWriter, r *http.Request, path str
 				p.ID = policy.StableID(p.Name, time.Now().UTC().String())
 			}
 			p.Enabled = false
-			p.Mode = "observe"
 		} else if p.ID != id {
 			writeError(w, 400, "invalid_policy", "策略 ID 与路径不一致")
+			return
+		}
+		if err := s.bindSRunPolicyConnector(r.Context(), &p); err != nil {
+			writeError(w, 400, "invalid_srun4k_policy", err.Error())
 			return
 		}
 		if err := p.Validate(); err != nil {
@@ -184,6 +188,44 @@ func (s *Server) handlePolicies(w http.ResponseWriter, r *http.Request, path str
 		return
 	}
 	writeError(w, 405, "method_not_allowed", "不支持的策略操作")
+}
+
+// bindSRunPolicyConnector makes the 4K source the authority for choosing its
+// execution connector. This prevents API clients from accidentally routing a
+// matched 4K identity to another 4K instance or a generic gateway.
+func (s *Server) bindSRunPolicyConnector(ctx context.Context, definition *policy.Definition) error {
+	srunSource := ""
+	for _, source := range definition.Scope.Sources {
+		if !strings.HasPrefix(source, "srun4k:") {
+			continue
+		}
+		if srunSource != "" || len(definition.Scope.Sources) != 1 {
+			return fmt.Errorf("4K策略必须且只能绑定一个4K身份来源")
+		}
+		srunSource = source
+	}
+	if srunSource == "" {
+		return nil
+	}
+	if s.operations == nil || s.operations.db == nil {
+		return fmt.Errorf("4K策略连接器目录不可用")
+	}
+	if len(definition.Stages) == 0 {
+		return fmt.Errorf("4K策略至少需要一个处理动作")
+	}
+	var connectorID string
+	if err := s.operations.db.QueryRowContext(ctx, `SELECT connector_id FROM srun4k_integrations WHERE source=$1`, srunSource).Scan(&connectorID); err != nil {
+		return fmt.Errorf("4K身份来源没有对应的执行连接器")
+	}
+	for index := range definition.Stages {
+		switch definition.Stages[index].Action {
+		case "notify", "disconnect", "disable_account":
+			definition.Stages[index].ConnectorID = connectorID
+		default:
+			return fmt.Errorf("4K策略仅支持消息提醒、强制下线和用户禁用")
+		}
+	}
+	return nil
 }
 
 func (s *Server) policySimulation(w http.ResponseWriter, r *http.Request, account, id string) {
@@ -244,11 +286,21 @@ func (s *Server) policySimulation(w http.ResponseWriter, r *http.Request, accoun
 		input := policy.Input{AccountID: account, Reasons: []string{"risk_evidence_not_evaluated"}}
 		item := map[string]any{"policy_id": p.ID}
 		if p.Trigger == "quota_exceeded" {
-			q := policy.EvaluateQuota(account, sessions, p.Limits, at)
+			q := policy.EvaluateQuotaForScope(account, sessions, p.Scope, p.Limits, at)
 			item["quota"] = q
+			input.Known = q.CoverageComplete
+			input.Violated = q.CoverageComplete && q.State == "exceeded"
+			input.Reasons = q.Reasons
+			input.DeviceCount, input.MobileCount, input.PCCount, input.CoverageComplete = &q.Total, &q.Mobile, &q.PC, &q.CoverageComplete
+		}
+		if p.Trigger == "session_quota_exceeded" {
+			q := policy.EvaluateSessionQuota(account, sessions, p.Scope, p.Limits.Sessions, at)
+			item["session_quota"] = q
 			input.Known = q.State != "unknown"
 			input.Violated = q.State == "exceeded"
 			input.Reasons = q.Reasons
+			input.EvidenceIDs = append([]string{}, q.SessionIDs...)
+			input.SessionCount, input.CoverageComplete = &q.Sessions, &q.CoverageComplete
 		}
 		if p.Trigger == "explicit_proxy" {
 			input = s.proxyPolicyInput(r.Context(), p, account, sessions, at)
@@ -366,9 +418,17 @@ func (s *Server) handlePolicyExecutionMutation(w http.ResponseWriter, r *http.Re
 			writeError(w, 409, "policy_review_invalid", "策略已变化或不再适用，请重新试算")
 			return
 		}
-		if e.Definition.Trigger == "quota_exceeded" && policy.EvaluateQuota(e.AccountID, approvalSessions, e.Definition.Limits, now).State != "exceeded" {
+		if e.Definition.Trigger == "quota_exceeded" {
+			q := policy.EvaluateQuotaForScope(e.AccountID, approvalSessions, e.Definition.Scope, e.Definition.Limits, now)
+			if !q.CoverageComplete || q.State != "exceeded" {
+				s.operations.mu.Unlock()
+				writeError(w, 409, "quota_review_invalid", "当前配额违规无法确认")
+				return
+			}
+		}
+		if e.Definition.Trigger == "session_quota_exceeded" && policy.EvaluateSessionQuota(e.AccountID, approvalSessions, e.Definition.Scope, e.Definition.Limits.Sessions, now).State != "exceeded" {
 			s.operations.mu.Unlock()
-			writeError(w, 409, "quota_review_invalid", "当前配额违规无法确认")
+			writeError(w, 409, "quota_review_invalid", "当前会话配额违规无法确认")
 			return
 		}
 		if e.Definition.Trigger == "shared_access" {

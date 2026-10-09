@@ -13,6 +13,7 @@ import (
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
+	"proxy-sentinel/internal/store"
 )
 
 func TestActiveActionSignsRequestPersistsSessionAndCreatesReversal(t *testing.T) {
@@ -39,8 +40,11 @@ func TestActiveActionSignsRequestPersistsSessionAndCreatesReversal(t *testing.T)
 	snapshot.Confidence, snapshot.AccountID, snapshot.EndpointID, snapshot.EvidenceIDs = .96, "student-9", "mac:"+mac, []string{"strong-active"}
 	strong := evidenceItem("strong-active", ip, "vpn_proxy_rule_match", now.Format(time.RFC3339Nano))
 	strong.Confidence = .96
-	writeRun(t, dir, "active-action-run", testRun{startedAt: now.Format(time.RFC3339Nano), risks: []risk.Snapshot{snapshot}, evidence: []evidence.Evidence{strong}, events: []normalized.Event{identityEvent("identity-active", "student-9", ip, mac, "ap-9", "session-9", now.Format(time.RFC3339Nano))}})
+	identity := identityEvent("identity-active", "student-9", ip, mac, "ap-9", "session-9", now.Format(time.RFC3339Nano))
+	identity.Payload["campus_id"], identity.Payload["access_domain"], identity.Payload["heartbeat_interval_seconds"] = "main", "test-nas", 60
+	writeRun(t, dir, "active-action-run", testRun{startedAt: now.Format(time.RFC3339Nano), risks: []risk.Snapshot{snapshot}, evidence: []evidence.Evidence{strong}, events: []normalized.Event{identity}})
 	server := NewServer(Options{ShadowDir: dir, OperationsFile: filepath.Join(dir, "operations.json"), ActionMasterKey: "0123456789abcdef0123456789abcdef"})
+	server.identitySources = []identitySourceRegistration{{IdentityScope: store.IdentityScope{Source: "radius", SensorID: "test-sensor", CampusID: "main", AccessDomain: "test-nas"}, IntervalSeconds: 60}}
 	encrypted, err := server.encryptConnectorSecret(secret)
 	if err != nil {
 		t.Fatal(err)

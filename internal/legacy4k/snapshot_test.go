@@ -7,13 +7,16 @@ import (
 
 func TestOnlineSnapshotValidation(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	good := OnlineInventory{InstanceID: "redis-epoch", ObservedAt: now, Rows: []map[string]string{{"rad_online_id": "7", "user_name": "alice", "ip": "192.0.2.4", "user_mac": "00:11:22:33:44:55"}}}
+	good := OnlineInventory{InstanceID: "redis-epoch", ObservedAt: now, Rows: []map[string]string{{"rad_online_id": "7", "user_name": "alice", "ip": "192.0.2.4", "user_mac": "00:11:22:33:44:55", "vlan_id": "108", "control_id": "9"}}}
 	rows, err := good.IdentityRecords()
 	if err != nil || len(rows) != 1 {
 		t.Fatal(rows, err)
 	}
 	if rows[0]["session_id"] != "redis-epoch:7" || rows[0]["source_session_id"] != "7" {
 		t.Fatal(rows)
+	}
+	if rows[0]["vlan"] != "108" || rows[0]["control_id"] != "9" {
+		t.Fatalf("4K strategy-match directory fields were dropped: %+v", rows[0])
 	}
 	for _, name := range []string{"missing_id", "invalid_ip", "duplicate", "missing_account", "missing_epoch"} {
 		t.Run(name, func(t *testing.T) {

@@ -41,6 +41,7 @@ import type {
   ObservedDevice,
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
+import { displayField, statusText } from "../shared/ui/status";
 
 export function IpDetailsPage() {
   const rawIp = useParams().ip ?? "";
@@ -67,9 +68,10 @@ export function IpDetailsPage() {
   const profile = activity.data;
   const deviceInventory = devices.data;
   const recentAccesses = profile?.recent_accesses.slice(0, 8) ?? [];
+  const hasRiskAssessment = Boolean(risk.data.window) && risk.data.window !== "none";
 
   return (
-    <main className="page">
+    <main className="page ip-details-page">
       <div className="page-header">
         <div>
           <Typography.Title className="page-title mono" level={3}>
@@ -81,8 +83,8 @@ export function IpDetailsPage() {
         </div>
         <Space wrap>
           <Link to={safeReturnTo(params.get('return_to'))}>返回来源列表</Link>
-          <RiskLevelTag level={risk.data.level} />
-          <RiskScore score={risk.data.score} />
+          {hasRiskAssessment && <RiskLevelTag level={risk.data.level} />}
+          {hasRiskAssessment && <RiskScore score={risk.data.score} />}
         </Space>
       </div>
 
@@ -90,6 +92,7 @@ export function IpDetailsPage() {
         <div className="surface">
           <Typography.Title level={4}>风险摘要与置信度</Typography.Title>
           <Descriptions column={1} size="small">
+            {hasRiskAssessment && <>
             <Descriptions.Item label="置信度">
               <Typography.Text strong className="text-light-blue">
                 {Math.round(risk.data.confidence * 100)}%
@@ -101,7 +104,7 @@ export function IpDetailsPage() {
             <Descriptions.Item label="检测依据">
               <Space wrap>
                 <Tag>{({ explicit_tunnel: "明确隧道协议", shared_device_divergence: "共享设备分歧", behavioral_only: "仅行为线索" } as Record<string, string>)[risk.data.detection_basis ?? "behavioral_only"]}</Tag>
-                {(risk.data.independent_signal_groups ?? []).map((group) => <Tag key={group} color="blue">{group}</Tag>)}
+                {(risk.data.independent_signal_groups ?? []).map((group) => <Tag key={group} title={group}>{({ protocol_rule: '协议规则', ttl_path: 'TTL 路径线索', tls_client_stack: 'TLS 客户端线索', ua_os: '软件系统线索', device_profile_reference: '设备画像线索', identity_mac_reference: 'MAC 身份线索', identity_access_reference: '接入身份线索' } as Record<string,string>)[group] ?? group}</Tag>)}
               </Space>
             </Descriptions.Item>
             {(risk.data.raw_score || risk.data.raw_level) && (
@@ -117,7 +120,7 @@ export function IpDetailsPage() {
               </Descriptions.Item>
             )}
             <Descriptions.Item label="建议动作">
-              <Tag color="cyan">{risk.data.recommended_action}</Tag>
+              {risk.data.recommended_action && <Tag>{statusText(risk.data.recommended_action)}</Tag>}
             </Descriptions.Item>
             <Descriptions.Item label="复核状态">
               <Space wrap>
@@ -136,8 +139,10 @@ export function IpDetailsPage() {
               </Space>
             </Descriptions.Item>
             <Descriptions.Item label="更新时间">
-              {new Date(risk.data.updated_at).toLocaleString()}
+              {risk.data.updated_at && Number.isFinite(Date.parse(risk.data.updated_at)) ? new Date(risk.data.updated_at).toLocaleString() : ''}
             </Descriptions.Item>
+            {risk.data.evidence_ids.length > 0 && <Descriptions.Item label="证据 ID"><Typography.Text className="mono wrap-text">{risk.data.evidence_ids.join(' / ')}</Typography.Text></Descriptions.Item>}
+            </>}
             <Descriptions.Item label="证据解释">
               <Typography.Text className="wrap-text">
                 {risk.data.summary}
@@ -156,11 +161,11 @@ export function IpDetailsPage() {
               type="warning"
             />
           )}
-          <LabelPanel
+          {risk.data.evidence_ids.length === 0 ? <Alert showIcon type="warning" title="当前对象没有可关联证据 ID，暂不能提交复核标注" /> : <LabelPanel
             disabled={!canLabel}
             evidenceIds={risk.data.evidence_ids}
             targetId={risk.data.ip}
-          />
+          />}
         </div>
       </section>
 
@@ -189,7 +194,7 @@ export function IpDetailsPage() {
           ) : deviceInventory ? (
             renderDeviceInventory(deviceInventory)
           ) : (
-            <Typography.Text type="secondary">暂无设备识别结果</Typography.Text>
+            null
           )}
         </section>
       )}
@@ -531,19 +536,19 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
             ? "warning"
             : inventory.status === "weak_signals_only"
               ? "info"
-              : "success"
+              : inventory.status === "single_candidate" ? "success" : "info"
         }
       />
       <div className="metric-grid">
-        <div className="surface metric-card">
+        {inventory.suspected_device_count > 0 && <div className="surface metric-card">
           <Statistic
-            title="疑似设备数"
+            title="设备候选数"
             value={inventory.suspected_device_count}
           />
-        </div>
-        <div className="surface metric-card">
+        </div>}
+        {inventory.confidence > 0 && <div className="surface metric-card">
           <Statistic suffix="%" title="设备置信度" value={confidencePercent} />
-        </div>
+        </div>}
         <div className="surface metric-card">
           <Statistic title="识别信号" value={inventory.signals.length} />
         </div>
@@ -587,12 +592,13 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
 }
 
 function renderObservedDevice(device: ObservedDevice) {
+  const historicalHint = (signal: DeviceSignal) => (signal.source === 'dhcp' || signal.source === 'software') && ((signal.kind === 'os_family' || signal.kind === 'device_hint') && !displayField(device.os_family) || signal.kind === 'device_type' && !displayField(device.device_type));
   return (
     <div className="device-card" key={device.device_id}>
       <div className="device-card-header">
         <div className="device-card-title">
           <Typography.Text className="wrap-text" strong>
-            {device.label}
+            {displayField(device.label)}
           </Typography.Text>
           <Typography.Text className="mono device-card-id" type="secondary">
             {device.device_id}
@@ -615,37 +621,41 @@ function renderObservedDevice(device: ObservedDevice) {
         {device.summary}
       </Typography.Paragraph>
       <div className="device-signal-stats">
+        <Typography.Text type="secondary">原始信号</Typography.Text>
         <Tag color="green">强 {device.strong_signal_count}</Tag>
         <Tag color="blue">中 {device.medium_signal_count}</Tag>
         <Tag color="default">弱 {device.weak_signal_count}</Tag>
       </div>
+      {device.signals.some(historicalHint) && <Typography.Paragraph className="device-summary" type="secondary">下方系统、类型提示保留为历史推测，当前画像没有采用该结论。</Typography.Paragraph>}
       <div className="device-signal-list">
-        {device.signals.map((signal) => renderDeviceSignal(signal))}
+        {device.signals.map((signal) => renderDeviceSignal(signal, historicalHint(signal)))}
       </div>
     </div>
   );
 }
 
 function DeviceAttribute({ label, value }: { label: string; value: string }) {
+  const content = displayField(value);
+  if (!content) return null;
   return (
     <div className="device-attribute">
       <Typography.Text type="secondary">{label}</Typography.Text>
       <Typography.Text className="wrap-text">
-        {value || "unknown"}
+        {content}
       </Typography.Text>
     </div>
   );
 }
 
-function renderDeviceSignal(signal: DeviceSignal) {
+function renderDeviceSignal(signal: DeviceSignal, historicalInference = false) {
   return (
     <span className="device-signal-token" key={signal.signal_id}>
-      <Tag color={signalStrengthColor(signal.strength)}>
-        {signalStrengthText(signal.strength)}
+      <Tag color={historicalInference ? undefined : signalStrengthColor(signal.strength)}>
+        {historicalInference ? '历史推测' : signalStrengthText(signal.strength)}
       </Tag>
       <Tag>{signalSourceText(signal.source)}</Tag>
       {signal.seen_count ? <Tag>出现 {signal.seen_count} 次</Tag> : null}
-      <Typography.Text className="mono wrap-text">
+      <Typography.Text className="mono wrap-text" title={signal.event_ids.join(' / ') || undefined} type={historicalInference ? 'secondary' : undefined}>
         {signal.kind}: {signal.value}
       </Typography.Text>
     </span>
@@ -657,14 +667,14 @@ function renderDeviceConflict(conflict: DeviceConflict) {
     <div className="device-conflict-card" key={conflict.conflict_id}>
       <Space wrap>
         <Tag color={signalStrengthColor(conflict.strength)}>
-          {conflict.strength}
+          {signalStrengthText(conflict.strength)}
         </Tag>
         <Tag>{conflict.type}</Tag>
         <Typography.Text type="secondary">
-          confidence {Math.round(conflict.confidence * 100)}%
+          置信度 {Math.round(conflict.confidence * 100)}%
         </Typography.Text>
       </Space>
-      <Typography.Paragraph className="device-summary">
+      <Typography.Paragraph className="device-summary" type={conflict.strength === "strong" ? undefined : "secondary"}>
         {conflict.summary}
       </Typography.Paragraph>
       <div className="device-signal-list">
@@ -808,6 +818,8 @@ function signalSourceText(source: string) {
 
 function deviceStatusText(status: string) {
   switch (status) {
+    case "non_endpoint_or_weak":
+      return "仅有协议或基础设施线索";
     case "multi_candidate":
       return "发现多个设备候选";
     case "single_candidate":

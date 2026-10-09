@@ -29,17 +29,21 @@ func (s *Server) deliverActionPostgres(id string, revoke bool) {
 		return
 	}
 	preview, exists := doc.Actions[id]
-	if !exists || preview.Status != "pending" {
+	if !exists || !actionDispatchDue(preview, time.Now().UTC()) {
 		return
 	}
-	_, native := s.nativeActions[preview.ConnectorID]
+	_, native := s.nativeRuntime(preview.ConnectorID)
+	if !native {
+		var connectorType string
+		native = s.operations.db.QueryRowContext(ctx, `SELECT connector_type FROM enforcement_connectors WHERE connector_id=$1`, preview.ConnectorID).Scan(&connectorType) == nil && connectorType == "srun4k"
+	}
 	if native || preview.PolicyParameters.NativeSelected || preview.PolicyParameters.NativeIntent != nil {
 		// Native reconciliation retains its stricter durable intent journal.
 		s.deliverNativeAction(id, revoke)
 		return
 	}
-	if err := s.validatePolicyDelivery(preview); err != nil {
-		_ = s.finishAction(id, "blocked", "", err.Error())
+	if err := s.validatePolicyDeliveryContext(ctx, preview); err != nil {
+		_ = s.recordActionPrecheckFailure(preview, err)
 		return
 	}
 	view, tx, err := s.targetActionMutation(ctx, id)
@@ -61,8 +65,12 @@ func (s *Server) deliverActionPostgres(id string, revoke bool) {
 	if operationFingerprint("action", action) != operationFingerprint("action", preview) {
 		return
 	}
+	action.PrecheckRetryable = false
+	action.NextAttemptAt = ""
+	action.LastError = ""
 	if view.operations.doc.GlobalStop || !connector.Enabled || connector.Mode != "active" || (action.PolicyParameters.ExecutionID != "" && !connector.ShadowReady) {
 		action.Status = "blocked"
+		action.LastError = "连接器或紧急停止状态已变更，动作已阻塞"
 		action.Blockers = append(action.Blockers, "connector_or_global_stop_changed")
 	} else {
 		action.Status = "running"
@@ -72,6 +80,7 @@ func (s *Server) deliverActionPostgres(id string, revoke bool) {
 	if err = view.operations.saveLocked(); err != nil || action.Status != "running" {
 		return
 	}
+	action = view.operations.doc.Actions[id]
 	// The transaction is committed before the external request. Its receipt and
 	// retries each use a fresh target transaction, never this detached view.
 	s.deliverActionRequest(action, connector, revoke)
@@ -105,8 +114,10 @@ func (s *Server) policyDeliveryState(ctx context.Context, action EnforcementActi
 		err = loadConnectorsScoped(ctx, s.operations.db, &doc, ` WHERE connector_id=$1`, []any{action.ConnectorID})
 		return ex, doc.Connectors[action.ConnectorID], definitions, err
 	}
-	s.operations.mu.Lock()
-	defer s.operations.mu.Unlock()
+	if err := s.lockActionPrecheckDocument(ctx); err != nil {
+		return policy.Execution{}, ActionConnector{}, nil, err
+	}
+	defer s.operations.mu.Mutex.Unlock()
 	definitions := make([]policy.Definition, 0, len(s.operations.doc.Policies))
 	for _, p := range s.operations.doc.Policies {
 		definitions = append(definitions, p)

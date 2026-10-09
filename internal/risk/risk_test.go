@@ -28,14 +28,14 @@ func TestInspectMultipleStrongEvidenceCanConfirm(t *testing.T) {
 	input := evidenceInput(
 		ev("weak-ua", "10.0.0.1", "multi_user_agent", 22, 0.35),
 		ev("strong-2", "10.0.0.1", "multi_ja3_ja4", 30, 0.75),
-		ev("strong-3", "10.0.0.1", "device_signal_conflict", 33, 0.68),
+		ev("strong-3", "10.0.0.1", "vpn_proxy_rule_match", 75, 0.96),
 	)
 
 	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Score != 100 || snapshot.Level != "confirmed" || snapshot.RecommendedAction != "shadow_confirm_review" || snapshot.DetectionBasis != "shared_device_divergence" {
+	if snapshot.Score != 100 || snapshot.Level != "confirmed" || snapshot.RecommendedAction != "shadow_confirm_review" || snapshot.DetectionBasis != "explicit_tunnel" {
 		t.Fatalf("unexpected confirmed snapshot: %+v", snapshot)
 	}
 	if len(snapshot.EvidenceIDs) != 3 {
@@ -117,13 +117,45 @@ func TestTTLAndTLSDiversityWithoutDeviceAnchorStayBehavioral(t *testing.T) {
 	}
 }
 
+func TestUAOSAndProtocolDiversityDoNotInventSharedDeviceAnchor(t *testing.T) {
+	for _, uaType := range []string{"multi_user_agent", "ua_os_divergence", "device_signal_conflict"} {
+		t.Run(uaType, func(t *testing.T) {
+			input := evidenceInput(ev("ua", "10.0.0.1", uaType, 35, .68), ev("ttl", "10.0.0.1", "ttl_clusters", 35, .68), ev("tls", "10.0.0.1", "multi_ja3_ja4", 30, .75))
+			got, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.DetectionBasis != "behavioral_only" || got.Score > 59 || got.Level == "high" || got.Level == "confirmed" {
+				t.Fatalf("unverified software clues became a physical sharing conclusion: basis=%s level=%s score=%d", got.DetectionBasis, got.Level, got.Score)
+			}
+		})
+	}
+}
+
+func TestHistoricalDeviceProfilesDoNotProveConcurrentSharedDevices(t *testing.T) {
+	// Existing snapshots assigned high confidence to hostname/DHCP families.
+	// Different profiles can be sequential IP leases or local name broadcasts.
+	input := evidenceInput(ev("profiles", "10.0.0.1", "device_fingerprint_conflict", 58, .88), ev("ttl", "10.0.0.1", "ttl_clusters", 35, .68), ev("tls", "10.0.0.1", "multi_ja3_ja4", 30, .75))
+	got, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DetectionBasis != "behavioral_only" || got.Score > 59 || got.Level == "confirmed" {
+		t.Fatalf("historical profile set became verified concurrency: %+v", got)
+	}
+}
+
 func TestKnownGameAcceleratorOnlyDownweightsRisk(t *testing.T) {
+	baseline, err := Inspect(bytes.NewReader(evidenceInput(ev("vpn-hint", "10.0.0.1", "vpn_proxy_domain_hint", 45, .68))), InspectOptions{IP: "10.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	input := evidenceInput(ev("vpn-hint", "10.0.0.1", "vpn_proxy_domain_hint", 45, .68), ev("accelerator", "10.0.0.1", "known_game_accelerator", 0, .82))
 	snapshot, err := Inspect(bytes.NewReader(input), InspectOptions{IP: "10.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Score != 30 || snapshot.Level != "suspicious" || len(snapshot.NegativeEvidence) != 1 {
+	if baseline.Score != 29 || snapshot.RawScore != baseline.Score || snapshot.Score != baseline.Score-15 || snapshot.Level != "normal" || len(snapshot.NegativeEvidence) != 1 {
 		t.Fatalf("unexpected accelerator adjustment: %+v", snapshot)
 	}
 }
@@ -159,7 +191,7 @@ func TestBatchBuildsSnapshotsForEveryEvidenceIP(t *testing.T) {
 	if result.Snapshots[0].IP != "10.0.0.1" || result.Snapshots[0].Level != "suspicious" {
 		t.Fatalf("unexpected first snapshot: %+v", result.Snapshots[0])
 	}
-	if result.Snapshots[1].IP != "10.0.0.2" || result.Snapshots[1].Level != "high" {
+	if result.Snapshots[1].IP != "10.0.0.2" || result.Snapshots[1].Level != "suspicious" {
 		t.Fatalf("unexpected second snapshot: %+v", result.Snapshots[1])
 	}
 }
@@ -181,7 +213,7 @@ func TestBatchBuildsAccountSubjectSnapshot(t *testing.T) {
 	if snapshot.SubjectType != "account" || snapshot.SubjectID != "2026000123" || snapshot.AccountID != "2026000123" || snapshot.IP != "" {
 		t.Fatalf("unexpected account subject snapshot: %+v", snapshot)
 	}
-	if snapshot.Score != 100 || snapshot.Level != "confirmed" || snapshot.RecommendedAction != "shadow_confirm_review" {
+	if snapshot.Score > 59 || snapshot.Level == "confirmed" || snapshot.DetectionBasis != "behavioral_only" {
 		t.Fatalf("unexpected account risk level: %+v", snapshot)
 	}
 }

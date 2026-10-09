@@ -2,6 +2,7 @@ package sharedaccess
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -49,6 +50,35 @@ func (w *Window) ObserveFeature(family, value string, at time.Time) bool {
 }
 
 func (w Window) repeatedTogether(family string, values []string) bool {
+	if family == "ttl_path" {
+		for i, left := range values {
+			ld, li, valid := TTLPathFamily(left)
+			if !valid {
+				continue
+			}
+			for _, right := range values[i+1:] {
+				rd, ri, valid := TTLPathFamily(right)
+				if valid && ld == rd && li != ri && w.repeatedFeatureTogether(family, []string{left, right}) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return w.repeatedFeatureTogether(family, values)
+}
+
+// HasRepeatedFeature exposes the conservative coexistence gate to storage
+// prefilters without duplicating its count, bucket and timing semantics.
+func (w Window) HasRepeatedFeature(family string) bool {
+	values := map[string][]string{
+		"ua_os": w.UAOS, "ttl_path": w.TTLPaths, "tcp_stack": w.TCPStacks,
+		"tls_stack": w.TLSStacks, "dhcp_stack": w.DHCPProfiles,
+	}[family]
+	return w.repeatedTogether(family, values)
+}
+
+func (w Window) repeatedFeatureTogether(family string, values []string) bool {
 	if len(values) < 2 {
 		return false
 	}
@@ -107,4 +137,46 @@ func repeatedBucketMatches(left, right map[int64]bool, tolerance int64) int {
 		}
 	}
 	return matches
+}
+
+// CoexistingDeviceModels excludes a 24h union and brand aliases of one model.
+// Each admitted model must participate in a repeated pair in this window.
+func (w Window) CoexistingDeviceModels() []string {
+	canonical := map[string]FeatureSample{}
+	for value, sample := range w.Samples["device_model"] {
+		parts := strings.SplitN(value, "|", 4)
+		if len(parts) != 4 || strings.TrimSpace(parts[3]) == "" {
+			continue
+		}
+		model := strings.ToLower(strings.TrimSpace(parts[3]))
+		old := canonical[model]
+		if sample.Count > old.Count {
+			old.Count = sample.Count
+		}
+		old.Buckets = append(old.Buckets, sample.Buckets...)
+		canonical[model] = old
+	}
+	probe := w
+	probe.Samples = map[string]map[string]FeatureSample{"device_model": canonical}
+	models := make([]string, 0, len(canonical))
+	for model := range canonical {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	admitted := map[string]bool{}
+	for i, left := range models {
+		for _, right := range models[i+1:] {
+			if probe.repeatedTogether("device_model", []string{left, right}) {
+				admitted[left] = true
+				admitted[right] = true
+			}
+		}
+	}
+	result := []string{}
+	for _, model := range models {
+		if admitted[model] {
+			result = append(result, model)
+		}
+	}
+	return result
 }

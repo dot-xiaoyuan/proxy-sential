@@ -22,14 +22,14 @@ func TestIdentitySourceRegistrationAndNeverSeen(t *testing.T) {
 	}
 	s := &Server{identitySources: registered}
 	scope := store.IdentityScope{Source: "srun", SensorID: "vm190", CampusID: "test", AccessDomain: "portal"}
-	if err = s.validateIdentitySource(scope, 60); err != nil {
+	if err = s.validateIdentitySourceContext(context.Background(), scope, 60); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.validateIdentitySource(scope, 3600); err == nil {
+	if err = s.validateIdentitySourceContext(context.Background(), scope, 3600); err == nil {
 		t.Fatal("sender changed freshness contract")
 	}
 	scope.CampusID = "other"
-	if err = s.validateIdentitySource(scope, 60); err == nil {
+	if err = s.validateIdentitySourceContext(context.Background(), scope, 60); err == nil {
 		t.Fatal("unregistered scope accepted")
 	}
 	statuses := s.mergeIdentitySources(nil, time.Now())

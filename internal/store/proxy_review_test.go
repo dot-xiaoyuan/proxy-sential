@@ -25,14 +25,14 @@ func TestBuildProxyReviewResponseAggregatesIdentityDestinationAndRules(t *testin
 	}})
 
 	result := BuildProxyReviewResponse("office-30", "7d", events, risks)
-	if result.CaseCount != 1 || result.AccountCount != 1 || result.EndpointCount != 1 || result.HighConfidenceCount != 1 {
+	if result.CaseCount != 1 || result.AccountCount != 1 || result.EndpointCount != 1 || result.HighConfidenceCount != 0 {
 		t.Fatalf("unexpected overview: %+v", result)
 	}
 	item := result.Items[0]
 	if item.AccountID != "account-1" || item.EndpointID != "endpoint-1" || len(item.AccessIDs) != 1 || item.AccessIDs[0] != "Dorm-A-AP01" {
 		t.Fatalf("identity correlation failed: %+v", item)
 	}
-	if item.ConfidenceLevel != "high" || item.AlertCount != 1 || len(item.RuleMatches) != 1 || item.RuleMatches[0].Signature == "" {
+	if item.ConfidenceLevel != "medium" || item.AlertCount != 1 || len(item.RuleMatches) != 1 || item.RuleMatches[0].Signature == "" {
 		t.Fatalf("rule aggregation failed: %+v", item)
 	}
 	if item.DurationSeconds != 180 || item.RiskScore != 88 || item.RiskLevel != "confirmed" || item.ReviewStatus != "needs_more_data" {

@@ -26,7 +26,7 @@ func TestPolicyCreateDefaultsAndFilePersistence(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.Enabled || p.Mode != "observe" {
+	if p.Enabled || p.Mode != "automatic" {
 		t.Fatal(p)
 	}
 	reopened := NewServer(Options{ShadowDir: dir, ReadOnly: true})
@@ -45,6 +45,46 @@ func TestPolicyPartialFailureStopsStages(t *testing.T) {
 	s.refreshPolicyStagesLocked(&e, time.Now())
 	if e.Stages[0].Status != "partial_success" || !e.Stages[0].CompletedAt.IsZero() {
 		t.Fatal(e)
+	}
+}
+
+func TestObserveSessionQuotaCreatesShadowRecordWithoutAction(t *testing.T) {
+	now := time.Now().UTC()
+	limit := 0
+	s := NewServer(Options{ShadowDir: t.TempDir()})
+	s.reader = policySandboxReader{sessions: []policy.Session{{ID: "login-1", AccountID: "a", ProductID: "office", IP: "192.0.2.1", CampusID: "office-test", AccessDomain: "office-lan", Source: "srun", SensorID: "srun-190", StartedAt: now.Add(-time.Minute), ConfirmedAt: now, HeartbeatSeconds: 5}}}
+	s.identitySources = []identitySourceRegistration{{IdentityScope: store.IdentityScope{Source: "srun", SensorID: "srun-190", CampusID: "office-test", AccessDomain: "office-lan"}, IntervalSeconds: 5}}
+	p := policy.Definition{ID: "session-quota", Name: "认证会话上限", Enabled: true, Mode: "observe", Trigger: "session_quota_exceeded", Scope: policy.Scope{Products: []string{"office"}}, Limits: policy.Limits{Sessions: &limit}, Stages: []policy.Stage{{Action: "record", MinEpisodes: 1}}}
+	s.operations.doc.Policies[p.ID] = p
+	s.processAccountPolicies(now)
+	execution := s.operations.doc.PolicyExecutions[policy.StableID(p.ID, "a")]
+	if len(execution.Stages) != 1 || execution.Stages[0].Status != "shadow_succeeded" || len(s.operations.doc.Actions) != 0 {
+		t.Fatalf("observe policy escaped shadow boundary: execution=%+v actions=%+v", execution, s.operations.doc.Actions)
+	}
+}
+
+func TestIncompleteDeviceCoverageBlocksLowerBoundViolation(t *testing.T) {
+	now := time.Now().UTC()
+	limit := 0
+	s := NewServer(Options{ShadowDir: t.TempDir()})
+	s.reader = policySandboxReader{sessions: []policy.Session{
+		{ID: "known-device", AccountID: "a", ProductID: "office", EndpointID: "device-1", IP: "192.0.2.1", CampusID: "office-test", AccessDomain: "office-lan", Source: "srun", SensorID: "srun-190", StartedAt: now.Add(-time.Minute), ConfirmedAt: now, HeartbeatSeconds: 5},
+		{ID: "missing-device", AccountID: "a", ProductID: "office", IP: "192.0.2.2", CampusID: "office-test", AccessDomain: "office-lan", Source: "srun", SensorID: "srun-190", StartedAt: now.Add(-time.Minute), ConfirmedAt: now, HeartbeatSeconds: 5},
+	}}
+	s.identitySources = []identitySourceRegistration{{IdentityScope: store.IdentityScope{Source: "srun", SensorID: "srun-190", CampusID: "office-test", AccessDomain: "office-lan"}, IntervalSeconds: 5}}
+	p := policy.Definition{ID: "device-quota", Name: "设备配额", Enabled: true, Mode: "observe", Trigger: "quota_exceeded", Scope: policy.Scope{Products: []string{"office"}}, Limits: policy.Limits{Total: &limit}, Stages: []policy.Stage{{Action: "record", MinEpisodes: 1}}}
+	s.operations.doc.Policies[p.ID] = p
+
+	s.processAccountPolicies(now)
+
+	execution := s.operations.doc.PolicyExecutions[policy.StableID(p.ID, "a")]
+	if execution.State != "waiting_data" || len(s.operations.doc.Actions) != 0 {
+		t.Fatalf("incomplete coverage escaped waiting_data: execution=%+v actions=%+v", execution, s.operations.doc.Actions)
+	}
+	for _, stage := range execution.Stages {
+		if stage.Status == "shadow_succeeded" {
+			t.Fatalf("incomplete coverage created shadow violation: %+v", execution)
+		}
 	}
 }
 

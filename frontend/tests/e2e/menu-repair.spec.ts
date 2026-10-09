@@ -37,7 +37,6 @@ for(const role of ['viewer','reviewer','operator','admin'])test(`menu read and a
  else{await expect(page.getByText('没有访问权限')).toBeVisible();expect(requested.some(url=>url.includes('/api/v1/users'))).toBe(false)}
  await page.goto('/policies/exceptions');await expect(page.getByRole('heading',{name:'校园例外',exact:true})).toBeVisible();const add=page.getByRole('button',{name:'新增例外'});if(role==='admin')await expect(add).toBeEnabled();else await expect(add).toBeDisabled()
  expect(requested.filter(url=>url.includes('/api/v1/users')).length).toBe(role==='admin'?1:0)
- await page.goto('/review-samples');await page.getByRole('button',{name:'查看证据与复核'}).first().click();const confirm=page.getByRole('button',{name:'确认代理',exact:true});if(role==='viewer')await expect(confirm).toBeDisabled();else await expect(confirm).toBeEnabled()
 })
 
 test('split pages isolate unrelated failed requests',async({page})=>{
@@ -47,13 +46,7 @@ test('split pages isolate unrelated failed requests',async({page})=>{
  await page.goto('/policies/exceptions');await expect(page.getByText('vpn.henu.edu.cn')).toBeVisible();expect(requested.some(url=>url.includes('/api/v1/users'))).toBe(false)
 })
 
-test('sample review displays original proof and disables conclusions on missing evidence',async({page})=>{
- await page.goto('/review-samples');await page.getByRole('button',{name:'查看证据与复核'}).first().click();await expect(page.getByText('历史回放快照',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'确认代理',exact:true})).toBeEnabled()
- await page.getByRole('button',{name:'确认代理',exact:true}).click();await page.getByLabel('复核原因').fill('历史证据回放确认');await page.getByRole('button',{name:'提交标注',exact:true}).click();await expect(page.getByText('人工真值已提交')).toBeVisible()
- await page.locator('.ant-drawer-close').click();await page.getByRole('button',{name:'查看证据与复核'}).nth(1).click();await expect(page.getByText('历史证据不完整')).toBeVisible();await expect(page.getByRole('button',{name:'确认代理',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'需补数据',exact:true})).toBeEnabled()
-})
-
-const routes=[['/overview','高校网络风险运营工作台'],['/shared-access?tab=observations','共享发现'],['/shared-access?tab=reviews','账号复核'],['/cases','风险案件'],['/actions?tab=executions','处置记录'],['/actions?tab=actions','处置记录'],['/devices','终端画像'],['/discovery','网络设备发现'],['/activity?section=applications','应用访问'],['/activity?section=access&window=7d','访问分析'],['/activity?section=technical','技术指纹'],['/events','DPI 标准事件检索'],['/policies','防代理策略'],['/policies/exceptions','校园例外'],['/settings/rules','规则与特征库'],['/shadow-runs','影子评估'],['/review-samples','样本复核'],['/settings/sources','采集诊断与节点性能'],['/settings/sources?tab=sources','发现采集配置'],['/settings/sources?tab=scan','发现采集配置'],['/settings/sources?tab=tasks','发现采集配置'],['/settings/actions','认证与处置接入'],['/settings/organization','校区与网络区域'],['/settings/security','用户权限'],['/audit','系统操作与策略审计日志']]
+const routes=[['/overview','高校网络风险运营工作台'],['/shared-access?tab=observations','共享发现'],['/shared-access?tab=reviews','账号复核'],['/cases','风险案件'],['/actions?tab=executions','处置记录'],['/actions?tab=actions','处置记录'],['/devices','终端画像'],['/discovery','网络设备发现'],['/activity?section=applications','应用访问'],['/activity?section=access&window=7d','访问分析'],['/activity?section=technical','技术指纹'],['/events','DPI 标准事件检索'],['/policies','防代理策略'],['/policies/exceptions','校园例外'],['/settings/rules','规则与特征库'],['/settings/sources','采集诊断与节点性能'],['/settings/sources?tab=sources','发现采集配置'],['/settings/sources?tab=scan','发现采集配置'],['/settings/sources?tab=tasks','发现采集配置'],['/settings/actions','认证与处置接入'],['/settings/organization','校区与网络区域'],['/settings/security','用户权限'],['/audit','系统操作与策略审计日志']]
 for(const [width,height]of [[390,844],[1280,800],[1440,900]])test(`all menu layout and style probes ${width}`,async({page},info)=>{
  test.setTimeout(150000);await page.setViewportSize({width,height});const dir=info.outputPath('menus');await mkdir(dir,{recursive:true});const probes=[]
  for(const [url,title]of routes){await page.goto(url);await expect(page.getByRole('heading',{name:title,exact:true}).first()).toBeVisible();await page.waitForTimeout(150)
@@ -64,19 +57,43 @@ for(const [width,height]of [[390,844],[1280,800],[1440,900]])test(`all menu layo
  await writeFile(info.outputPath('dom.json'),JSON.stringify(probes,null,2))
 })
 
-for(const [width,height]of [[390,844],[1280,800],[1440,900]])test(`sample and business details ${width}`,async({page},info)=>{
- await page.setViewportSize({width,height});await page.goto('/review-samples');await page.getByRole('button',{name:'查看证据与复核'}).filter({visible:true}).first().click()
- await expect(page.getByText('历史回放快照',{exact:true})).toBeVisible();await page.getByRole('button',{name:'确认代理',exact:true}).click()
- const modal=page.getByRole('dialog',{name:'提交人工真值：确认代理'});await modal.getByLabel('复核原因').fill('历史样本回放复核');const probe=await modal.evaluate(el=>({overflow:el.scrollWidth>el.clientWidth+2,footer:el.querySelector('.ant-modal-footer')?.getBoundingClientRect().bottom,controls:[...el.querySelectorAll('.ant-btn')].filter(e=>getComputedStyle(e).whiteSpace!=='nowrap'||getComputedStyle(e).flexShrink!=='0').map(e=>e.textContent)}));expect(probe.overflow).toBe(false);expect(probe.footer).toBeLessThanOrEqual(height);expect(probe.controls).toEqual([]);await page.screenshot({path:info.outputPath('sample-modal.png'),animations:'disabled'})
- await modal.getByRole('button',{name:/取\s*消/}).click();await page.screenshot({path:info.outputPath('sample-detail.png'),animations:'disabled'})
- for(const list of ['/audit','/shadow-runs','/settings/sources?tab=diagnostics&diagnostic_tab=diagnostics']){
- await page.goto(list);const link=page.locator('.app-content a[href*="/audit/"],.app-content a[href*="/shadow-runs/"],.app-content a[href*="/settings/sources/diagnostics/"]').filter({visible:true}).first();await expect(link).toBeVisible();await link.click();await expect(page.getByText('技术详情',{exact:true})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2)).toBe(false);await page.screenshot({path:info.outputPath(`${list.split('?')[0].replaceAll('/','-')}-detail.png`),fullPage:true,animations:'disabled'})
+for(const [width,height]of [[390,844],[1280,800],[1440,900]])test(`business details ${width}`,async({page},info)=>{
+ await page.setViewportSize({width,height})
+ for(const list of ['/audit','/settings/sources?tab=diagnostics&diagnostic_tab=diagnostics']){
+  await page.goto(list)
+  const link=page.locator('.app-content a[href*="/audit/"],.app-content a[href*="/settings/sources/diagnostics/"]').filter({visible:true}).first()
+  await expect(link).toBeVisible()
+  await link.click()
+  await expect(page.getByText('技术详情',{exact:true})).toBeVisible()
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2)).toBe(false)
+  await page.screenshot({path:info.outputPath(`${list.split('?')[0].replaceAll('/','-')}-detail.png`),fullPage:true,animations:'disabled'})
  }
- await writeFile(info.outputPath('sample-modal-probe.json'),JSON.stringify(probe,null,2))
 })
 
-test('evaluation read failure has no pass conclusion',async({page})=>{
- await session(page,'admin',['/api/v1/shadow/evaluation']);await page.goto('/shadow-runs');await expect(page.getByText('评估报告读取失败',{exact:true})).toBeVisible();await expect(page.getByText('评估报告满足准入条件',{exact:true})).toHaveCount(0)
+test('retired evaluation routes are absent from navigation',async({page},info)=>{
+ for(const [width,height] of [[390,844],[1280,800],[1440,900]]){
+  await page.setViewportSize({width,height})
+  await page.goto('/overview')
+  await expect(page.getByRole('heading',{name:'高校网络风险运营工作台'})).toBeVisible()
+  await expect(page.getByRole('menuitem',{name:'影子评估'})).toHaveCount(0)
+  await expect(page.getByRole('menuitem',{name:'样本复核'})).toHaveCount(0)
+  const probe=await page.evaluate(()=>({
+   overflow:document.documentElement.scrollWidth>innerWidth+2,
+   selected:[...document.querySelectorAll('.ant-menu-item-selected')].map(el=>({color:getComputedStyle(el).color,background:getComputedStyle(el).backgroundColor})),
+   staleLinks:[...document.querySelectorAll('a[href]')].filter(el=>/\/(shadow-runs|review-samples)(\/|$)/.test(el.getAttribute('href')||'')).length,
+   activityWidth:document.querySelector('.overview-activity-summary')?.getBoundingClientRect().width||0,
+  }))
+  expect(probe.overflow).toBe(false)
+  expect(probe.staleLinks).toBe(0)
+  expect(probe.activityWidth).toBeGreaterThan(0)
+  for(const selected of probe.selected)expect(contrast(selected.color,selected.background)).toBeGreaterThanOrEqual(4.5)
+  await page.screenshot({path:info.outputPath(`overview-${width}.png`),fullPage:true,animations:'disabled'})
+ }
+ for(const path of ['/shadow-runs','/review-samples']){
+  await page.goto(path)
+  await expect(page.getByRole('heading',{name:'影子评估'})).toHaveCount(0)
+  await expect(page.getByRole('heading',{name:'样本复核'})).toHaveCount(0)
+ }
 })
 
 function contrast(color:string,background:string){
@@ -85,16 +102,7 @@ function contrast(color:string,background:string){
 
 test('flow investigation preserves window and avoids disabled rule reload',async({page})=>{
  const requested:string[]=[];page.on('request',request=>requested.push(request.url()))
- await page.goto('/overview?window=30d&campus_id=east');await page.getByRole('button',{name:'DPI Flow 样本'}).filter({visible:true}).first().click();await expect(page.getByText('Flow 查询窗口：30d。风险与复核依据为当前风险快照，历史回放请进入样本复核。')).toBeVisible()
+ await page.goto('/overview?window=30d&campus_id=east');await page.getByRole('button',{name:'DPI Flow 样本'}).filter({visible:true}).first().click();await expect(page.getByText('Flow 查询窗口：30d。风险与复核依据为当前风险快照。')).toBeVisible()
  await expect.poll(()=>requested.some(url=>url.includes('/dpi/ips/')&&url.includes('window=30d')&&url.includes('campus_id=east'))).toBe(true)
  await expect(page.getByRole('button',{name:'一键加入影子审计'})).toHaveCount(0);expect(requested.some(url=>url.includes('/rules/reload'))).toBe(false)
-})
-
-test('historical evidence read errors allow only needs-data review',async({page})=>{
- await session(page,'reviewer',['/api/v1/shadow/review-samples/sample-']);await page.goto('/review-samples');await page.getByRole('button',{name:'查看证据与复核'}).first().click();await expect(page.getByText('历史样本证据读取失败')).toBeVisible();await expect(page.getByRole('button',{name:'确认代理',exact:true})).toBeDisabled();await page.getByRole('button',{name:'需补数据',exact:true}).click();await page.getByLabel('复核原因').fill('历史证据读取失败，需要补齐');await page.getByRole('button',{name:'提交标注',exact:true}).click();await expect(page.getByText('人工真值已提交')).toBeVisible()
-})
-
-test('missing evaluation report has no admission conclusion',async({page})=>{
- await page.addInitScript(()=>{const original=window.fetch;window.fetch=async(...args)=>String(args[0]).includes('/api/v1/shadow/evaluation')?new Response(JSON.stringify({message:'报告未生成'}),{status:404,headers:{'Content-Type':'application/json'}}):original(...args)})
- await page.goto('/shadow-runs');await expect(page.getByText('评估报告尚未生成',{exact:true})).toBeVisible();await expect(page.getByText('评估报告满足准入条件',{exact:true})).toHaveCount(0)
 })

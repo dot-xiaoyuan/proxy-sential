@@ -3,7 +3,16 @@
   "$id": "https://proxy-sentinel.local/schemas/normalized-event-v1.schema.json",
   "title": "Proxy Sentinel Normalized Event v1",
   "type": "object",
-  "required": ["schema_version", "event_id", "source", "type", "timestamp", "subject", "flow", "confidence"],
+  "required": [
+    "schema_version",
+    "event_id",
+    "source",
+    "type",
+    "timestamp",
+    "subject",
+    "flow",
+    "confidence"
+  ],
   "properties": {
     "schema_version": {
       "const": "v1"
@@ -18,7 +27,17 @@
       "type": "string"
     },
     "type": {
-      "enum": ["flow", "dns", "tls", "http", "quic", "device", "identity", "alert", "discovery"]
+      "enum": [
+        "flow",
+        "dns",
+        "tls",
+        "http",
+        "quic",
+        "device",
+        "identity",
+        "alert",
+        "discovery"
+      ]
     },
     "timestamp": {
       "type": "string",
@@ -30,16 +49,35 @@
     },
     "subject": {
       "type": "object",
-      "required": ["ip"],
       "properties": {
-        "ip": { "type": "string" },
-        "user_id": { "type": "string" },
-        "account_id": { "type": "string" },
-        "endpoint_id": { "type": "string" },
-        "mac": { "type": "string" },
-        "access_id": { "type": "string" },
+        "ip": {
+          "type": "string"
+        },
+        "user_id": {
+          "type": "string"
+        },
+        "account_id": {
+          "type": "string"
+        },
+        "endpoint_id": {
+          "type": "string"
+        },
+        "mac": {
+          "type": "string"
+        },
+        "access_id": {
+          "type": "string"
+        },
         "entity_role": {
-          "enum": ["endpoint", "infrastructure", "gateway", "nat", "server", "network_device", "unknown"]
+          "enum": [
+            "endpoint",
+            "infrastructure",
+            "gateway",
+            "nat",
+            "server",
+            "network_device",
+            "unknown"
+          ]
         },
         "identity_confidence": {
           "type": "number",
@@ -51,19 +89,78 @@
     },
     "flow": {
       "type": "object",
-      "required": ["src_ip", "dst_ip", "proto", "direction"],
       "properties": {
-        "src_ip": { "type": "string" },
-        "dst_ip": { "type": "string" },
-        "src_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
-        "dst_port": { "type": "integer", "minimum": 0, "maximum": 65535 },
-        "proto": { "enum": ["tcp", "udp", "icmp", "other"] },
-        "app_protocol": { "type": "string", "description": "传感器明确识别的应用协议；不得由 UA 或域名猜测。" },
-        "direction": { "enum": ["outbound", "inbound", "unknown"] },
-        "bytes_toserver": { "type": "integer", "minimum": 0 },
-        "bytes_toclient": { "type": "integer", "minimum": 0 },
-        "pkts_toserver": { "type": "integer", "minimum": 0 },
-        "pkts_toclient": { "type": "integer", "minimum": 0 }
+        "src_ip": {
+          "type": "string"
+        },
+        "dst_ip": {
+          "type": "string"
+        },
+        "src_port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "dst_port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "proto": {
+          "enum": [
+            "tcp",
+            "udp",
+            "icmp",
+            "other",
+            "ieee1905_topology",
+            "ieee1905_client_association",
+            "ieee1905_client_snapshot",
+            "lldp",
+            "cdp",
+            "vrrp",
+            "hsrp",
+            "ssdp"
+          ]
+        },
+        "app_protocol": {
+          "type": "string",
+          "description": "传感器明确识别的应用协议；不得由 UA 或域名猜测。"
+        },
+        "direction": {
+          "enum": [
+            "outbound",
+            "inbound",
+            "unknown",
+            "internal"
+          ]
+        },
+        "bytes_toserver": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_toclient": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pkts_toserver": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pkts_toclient": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "traffic_scope": {
+          "type": "string",
+          "enum": [
+            "unicast",
+            "multicast",
+            "broadcast",
+            "protocol_specific",
+            "unclassified"
+          ],
+          "description": "抓包器按目的地址、链路广播标识及协议字段归一化的 TTL 适用范围；单个聚合桶不得混合不同范围，不代表每一目的地址。"
+        }
       },
       "additionalProperties": true
     },
@@ -81,5 +178,559 @@
       "additionalProperties": true
     }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": [
+              "source_event_type"
+            ],
+            "properties": {
+              "source_event_type": {
+                "enum": [
+                  "ieee1905_topology",
+                  "ieee1905_client_association",
+                  "ieee1905_client_snapshot"
+                ]
+              }
+            }
+          },
+          {
+            "required": [
+              "source_event_type",
+              "source"
+            ],
+            "properties": {
+              "source": {
+                "const": "packet-sidecar"
+              },
+              "source_event_type": {
+                "enum": [
+                  "lldp",
+                  "cdp",
+                  "vrrp",
+                  "hsrp",
+                  "ssdp"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "const": "device"
+          },
+          "subject": {
+            "required": [
+              "mac"
+            ],
+            "properties": {
+              "mac": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
+              }
+            }
+          },
+          "flow": {
+            "required": [
+              "proto",
+              "direction"
+            ]
+          }
+        }
+      },
+      "else": {
+        "if": {
+          "required": [
+            "source",
+            "source_event_type",
+            "type"
+          ],
+          "properties": {
+            "source": {
+              "const": "packet-sidecar"
+            },
+            "source_event_type": {
+              "enum": [
+                "ttl",
+                "hop_limit"
+              ]
+            },
+            "type": {
+              "const": "device"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "payload"
+          ],
+          "properties": {
+            "subject": {
+              "required": [
+                "ip"
+              ]
+            },
+            "flow": {
+              "required": [
+                "src_ip",
+                "direction",
+                "ip_version",
+                "traffic_scope"
+              ],
+              "properties": {
+                "ip_version": {
+                  "enum": [
+                    4,
+                    6
+                  ]
+                }
+              }
+            },
+            "payload": {
+              "required": [
+                "origin",
+                "ip_version",
+                "observed_count"
+              ],
+              "properties": {
+                "observed_count": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "oneOf": [
+                {
+                  "required": [
+                    "ttl"
+                  ],
+                  "properties": {
+                    "origin": {
+                      "const": "ttl"
+                    },
+                    "ip_version": {
+                      "const": 4
+                    },
+                    "ttl": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 255
+                    }
+                  },
+                  "not": {
+                    "required": [
+                      "hop_limit"
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "hop_limit"
+                  ],
+                  "properties": {
+                    "origin": {
+                      "const": "hop_limit"
+                    },
+                    "ip_version": {
+                      "const": 6
+                    },
+                    "hop_limit": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 255
+                    }
+                  },
+                  "not": {
+                    "required": [
+                      "ttl"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "source_event_type": {
+                  "const": "ttl"
+                },
+                "flow": {
+                  "properties": {
+                    "ip_version": {
+                      "const": 4
+                    }
+                  }
+                },
+                "payload": {
+                  "properties": {
+                    "origin": {
+                      "const": "ttl"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "source_event_type": {
+                  "const": "hop_limit"
+                },
+                "flow": {
+                  "properties": {
+                    "ip_version": {
+                      "const": 6
+                    }
+                  }
+                },
+                "payload": {
+                  "properties": {
+                    "origin": {
+                      "const": "hop_limit"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "else": {
+          "properties": {
+            "subject": {
+              "required": [
+                "ip"
+              ]
+            },
+            "flow": {
+              "required": [
+                "src_ip",
+                "dst_ip",
+                "proto",
+                "direction"
+              ],
+              "properties": {
+                "proto": {
+                  "enum": [
+                    "tcp",
+                    "udp",
+                    "icmp",
+                    "other"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "ieee1905_client_snapshot"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "subject": {
+            "properties": {
+              "mac": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
+              }
+            }
+          },
+          "payload": {
+            "required": [
+              "origin",
+              "bss_snapshots"
+            ],
+            "properties": {
+              "origin": {
+                "const": "ieee1905"
+              },
+              "bss_snapshots": {
+                "type": "array",
+                "maxItems": 255,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "bssid",
+                    "client_macs"
+                  ],
+                  "properties": {
+                    "bssid": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
+                    },
+                    "client_macs": {
+                      "type": "array",
+                      "maxItems": 8191,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "payload"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type",
+          "source"
+        ],
+        "properties": {
+          "source_event_type": {
+            "enum": [
+              "vrrp",
+              "hsrp",
+              "ssdp"
+            ]
+          },
+          "source": {
+            "const": "packet-sidecar"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "subject": {
+            "required": [
+              "ip"
+            ]
+          },
+          "flow": {
+            "required": [
+              "src_ip",
+              "dst_ip",
+              "proto",
+              "direction"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type",
+          "source"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "lldp"
+          },
+          "source": {
+            "const": "packet-sidecar"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "flow": {
+            "properties": {
+              "proto": {
+                "const": "lldp"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type",
+          "source"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "cdp"
+          },
+          "source": {
+            "const": "packet-sidecar"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "flow": {
+            "properties": {
+              "proto": {
+                "const": "cdp"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type",
+          "source"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "vrrp"
+          },
+          "source": {
+            "const": "packet-sidecar"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "flow": {
+            "properties": {
+              "proto": {
+                "const": "vrrp"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type",
+          "source"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "hsrp"
+          },
+          "source": {
+            "const": "packet-sidecar"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "flow": {
+            "properties": {
+              "proto": {
+                "const": "hsrp"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type",
+          "source"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "ssdp"
+          },
+          "source": {
+            "const": "packet-sidecar"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "flow": {
+            "properties": {
+              "proto": {
+                "const": "ssdp"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "ieee1905_topology"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "flow": {
+            "properties": {
+              "proto": {
+                "const": "ieee1905_topology"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "ieee1905_client_association"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "flow": {
+            "properties": {
+              "proto": {
+                "const": "ieee1905_client_association"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "source_event_type"
+        ],
+        "properties": {
+          "source_event_type": {
+            "const": "ieee1905_client_snapshot"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "flow": {
+            "properties": {
+              "proto": {
+                "const": "ieee1905_client_snapshot"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -11,12 +12,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"proxy-sentinel/internal/adapter/suricata"
 	"proxy-sentinel/internal/adapter/zeek"
-	"proxy-sentinel/internal/evaluation"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
@@ -25,13 +26,134 @@ import (
 	"proxy-sentinel/internal/store"
 )
 
-func TestShadowRunsEmptyDirectoryReturnsEmptyArrays(t *testing.T) {
+type lightweightInventoryReader struct {
+	store.Reader
+	page store.DeviceInventoryListPage
+}
+
+type countingInventoryReader struct {
+	store.Reader
+	mu    sync.Mutex
+	calls int
+	page  store.DeviceInventoryListPage
+}
+
+func (r *countingInventoryReader) ListDeviceInventory(ctx context.Context, _ store.Query) (store.DeviceInventoryListPage, error) {
+	r.mu.Lock()
+	r.calls++
+	r.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return store.DeviceInventoryListPage{}, ctx.Err()
+	case <-time.After(25 * time.Millisecond):
+		return r.page, nil
+	}
+}
+
+func (r lightweightInventoryReader) ListDeviceInventory(context.Context, store.Query) (store.DeviceInventoryListPage, error) {
+	return r.page, nil
+}
+
+func TestDeviceInventoryTwentyRowsStayBelowPayloadBudget(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "test-sensor", ReadOnly: true})
+	items := make([]store.DeviceInventoryListItem, 20)
+	for index := range items {
+		items[index] = store.DeviceInventoryListItem{
+			EndpointID: "mac:00:10:20:30:40:" + strconv.Itoa(index), PrimaryMAC: "00:10:20:30:40:50",
+			CurrentIP: "192.0.2.100", CurrentAccount: "2026000123", CurrentAccessID: "Campus-WiFi/AP-D3-01",
+			Brand: "Dell", Model: "Latitude 7440", DeviceType: "laptop", OSFamily: "Windows 11",
+			BrandConfidence: .95, ModelConfidence: .92, DeviceTypeConfidence: .91, OSFamilyConfidence: .9,
+			LastSeen:   time.Now().UTC().Format(time.RFC3339Nano),
+			DeviceName: &store.DeviceName{Value: "engineering-office-terminal-" + strings.Repeat("x", 32), Source: "manual_note"},
+		}
+	}
+	server.reader = lightweightInventoryReader{Reader: server.reader, page: store.DeviceInventoryListPage{
+		Items: items, Page: store.Page{Limit: 20, Total: 20}, Facets: store.DeviceFilterFacets{Brands: []string{"Dell"}, OSFamilies: []string{"Windows 11"}}, AsOf: time.Now().UTC().Format(time.RFC3339Nano),
+	}}
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/device-inventory?limit=20", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Body.Len() > 80*1024 {
+		t.Fatalf("20-row inventory payload=%d bytes, budget=%d", recorder.Body.Len(), 80*1024)
+	}
+	for _, forbidden := range []string{`"accounts"`, `"ips"`, `"access_ids"`, `"recognition_evidence"`} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("lightweight payload contains detail-only field %s", forbidden)
+		}
+	}
+}
+
+func TestDeviceInventoryEmptyCollectionsSerializeAsArrays(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "test-sensor", ReadOnly: true})
+	server.reader = lightweightInventoryReader{Reader: server.reader, page: store.DeviceInventoryListPage{
+		Page: store.Page{Limit: 20},
+	}}
+
+	for request := 0; request < 2; request++ {
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/device-inventory?view=recent&window=24h&limit=20", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("request %d status=%d body=%s", request+1, recorder.Code, recorder.Body.String())
+		}
+		var response struct {
+			Items  json.RawMessage `json:"items"`
+			Facets struct {
+				Brands     json.RawMessage `json:"brands"`
+				OSFamilies json.RawMessage `json:"os_families"`
+			} `json:"facets"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if string(response.Items) != "[]" || string(response.Facets.Brands) != "[]" || string(response.Facets.OSFamilies) != "[]" {
+			t.Fatalf("empty collections must be arrays: %s", recorder.Body.String())
+		}
+	}
+}
+
+func TestDeviceInventoryCoalescesConcurrentIdenticalReads(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "test-sensor", ReadOnly: true})
+	reader := &countingInventoryReader{Reader: server.reader, page: store.DeviceInventoryListPage{
+		Items: []store.DeviceInventoryListItem{{EndpointID: "mac:00:10:20:30:40:50"}},
+		Page:  store.Page{Limit: 20, Total: 1},
+	}}
+	server.reader = reader
+
+	const clients = 20
+	statuses := make(chan int, clients)
+	var group sync.WaitGroup
+	for range clients {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			recorder := httptest.NewRecorder()
+			server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/device-inventory?view=recent&window=24h&limit=20", nil))
+			statuses <- recorder.Code
+		}()
+	}
+	group.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("unexpected status %d", status)
+		}
+	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.calls != 1 {
+		t.Fatalf("identical concurrent inventory reads=%d, want 1", reader.calls)
+	}
+}
+
+func TestIngestRunsEmptyDirectoryReturnsEmptyArrays(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
 
 	var runs struct {
 		Runs []ShadowRun `json:"runs"`
 	}
-	getJSON(t, server, "/api/v1/shadow/runs", http.StatusOK, &runs)
+	getJSON(t, server, "/api/v1/ingest/runs", http.StatusOK, &runs)
 	if runs.Runs == nil || len(runs.Runs) != 0 {
 		t.Fatalf("expected empty runs array, got %#v", runs.Runs)
 	}
@@ -72,6 +194,15 @@ func TestHealthAndReadinessEndpoints(t *testing.T) {
 	if system["fingerprint_offline_mode"] != true {
 		t.Fatalf("unexpected system status: %#v", system)
 	}
+	runtimeStatus, ok := system["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("system status must expose runtime load: %#v", system)
+	}
+	host, hostOK := runtimeStatus["host"].(map[string]any)
+	process, processOK := runtimeStatus["process"].(map[string]any)
+	if !hostOK || !processOK || host["logical_cpus"] == nil || process["heap_alloc_bytes"] == nil || process["goroutines"] == nil {
+		t.Fatalf("runtime load is incomplete: %#v", runtimeStatus)
+	}
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -87,76 +218,11 @@ func TestProductionStorageRequiresBothDatabases(t *testing.T) {
 	}
 }
 
-func TestShadowEvaluationReturnsLatestReport(t *testing.T) {
-	shadowDir := t.TempDir()
-	evaluationDir := filepath.Join(shadowDir, "evaluation")
-	if err := os.MkdirAll(evaluationDir, 0o755); err != nil {
-		t.Fatalf("create evaluation dir: %v", err)
-	}
-	expected := evaluation.ShadowEvaluationReport{
-		GeneratedAt: "2026-08-21T15:00:00Z", RequiredDays: 7, ObservedDays: 8,
-		LongestContinuousDays: 8, DaysWithReviews: 0, RunCount: 1010,
-		RiskSnapshotCount: 24663, EvaluatedSampleCount: 716, ReviewedSnapshotCount: 0,
-		Ready: false, Blockers: []string{"仅 0 天包含人工复核，要求至少 7 天"},
-	}
-	mustWriteJSON(t, filepath.Join(evaluationDir, "latest.json"), expected)
-	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "office-30", ReadOnly: true})
-
-	var actual evaluation.ShadowEvaluationReport
-	getJSON(t, server, "/api/v1/shadow/evaluation", http.StatusOK, &actual)
-	if actual.RunCount != expected.RunCount || actual.ObservedDays != expected.ObservedDays || actual.Ready {
-		t.Fatalf("unexpected shadow evaluation: %#v", actual)
-	}
-}
-
-func TestShadowEvaluationReturnsNotFoundBeforeFirstReport(t *testing.T) {
+func TestShadowEvaluationEndpointsAreRetired(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
-	var response ErrorResponse
-	getJSON(t, server, "/api/v1/shadow/evaluation", http.StatusNotFound, &response)
-	if response.Code != "shadow_evaluation_not_found" {
-		t.Fatalf("unexpected response: %#v", response)
-	}
-}
-
-func TestShadowReviewSamplesReturnsLatestDateAndRejectsInvalidDate(t *testing.T) {
-	shadowDir := t.TempDir()
-	exportDir := filepath.Join(shadowDir, "review-exports")
-	if err := os.MkdirAll(exportDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, date := range []string{"2026-09-06", "2026-09-07"} {
-		mustWriteJSON(t, filepath.Join(exportDir, date+"-review-samples.json"), map[string]any{
-			"date": date, "samples_per_level": 10, "samples": []evaluation.Sample{{
-				Date: date, IP: "10.0.0.8", SubjectType: "ip", SubjectID: "10.0.0.8", Level: "normal",
-				EvidenceIDs: []string{"evidence-1"}, ReviewStatus: "unreviewed", SourceRunID: "run-1", SnapshotTime: date + "T10:00:00Z",
-			}},
-		})
-	}
-	server := NewServer(Options{ShadowDir: shadowDir, SensorID: "office-30", ReadOnly: true})
-	var response struct {
-		Date    string              `json:"date"`
-		Dates   []string            `json:"dates"`
-		Samples []evaluation.Sample `json:"samples"`
-	}
-	getJSON(t, server, "/api/v1/shadow/review-samples", http.StatusOK, &response)
-	if response.Date != "2026-09-07" || len(response.Dates) != 2 || len(response.Samples) != 1 {
-		t.Fatalf("unexpected review samples: %+v", response)
-	}
-	var badDate ErrorResponse
-	getJSON(t, server, "/api/v1/shadow/review-samples?date=../../etc/passwd", http.StatusBadRequest, &badDate)
-	if badDate.Code != "bad_shadow_review_date" {
-		t.Fatalf("unexpected invalid-date response: %+v", badDate)
-	}
-}
-
-func TestApplyLatestSampleLabelUsesSubjectIdentity(t *testing.T) {
-	sample := evaluation.Sample{IP: "10.0.0.8", SubjectType: "ip", SubjectID: "10.0.0.8", SourceRunID: "run-1", EvidenceIDs: []string{"evidence-1"}, ReviewStatus: "unreviewed"}
-	applyLatestSampleLabel(&sample, []store.Label{{
-		TargetType: "ip", TargetID: "10.0.0.8", Label: "confirmed_proxy", Reason: "受控隧道复核",
-		EvidenceIDs: []string{"evidence-1"}, CreatedBy: "reviewer", CreatedAt: "2026-09-07T08:00:00Z",
-	}})
-	if sample.ReviewStatus != "confirmed_proxy" || sample.ReviewedBy != "reviewer" || sample.ReviewReason != "受控隧道复核" {
-		t.Fatalf("latest label was not applied: %+v", sample)
+	for _, path := range []string{"/api/v1/shadow/runs", "/api/v1/shadow/runs/run-a", "/api/v1/shadow/evaluation", "/api/v1/shadow/review-samples", "/api/v1/shadow/review-samples/sample-a?date=2026-09-07"} {
+		var response ErrorResponse
+		getJSON(t, server, path, http.StatusNotFound, &response)
 	}
 }
 
@@ -236,8 +302,11 @@ func TestActionHardGateRequiresCurrentIdentityAndSupportsIdempotency(t *testing.
 	snapshot.EvidenceIDs = []string{"strong-1"}
 	strong := evidenceItem("strong-1", ip, "vpn_proxy_rule_match", now.Format(time.RFC3339Nano))
 	strong.Confidence = .95
-	writeRun(t, dir, "current-action-run", testRun{startedAt: now.Format(time.RFC3339Nano), risks: []risk.Snapshot{snapshot}, evidence: []evidence.Evidence{strong}, events: []normalized.Event{identityEvent("identity-current", "student-1", ip, mac, "ap-1", "session-1", now.Format(time.RFC3339Nano))}})
+	identity := identityEvent("identity-current", "student-1", ip, mac, "ap-1", "session-1", now.Format(time.RFC3339Nano))
+	identity.Payload["campus_id"], identity.Payload["access_domain"], identity.Payload["heartbeat_interval_seconds"] = "main", "test-nas", 60
+	writeRun(t, dir, "current-action-run", testRun{startedAt: now.Format(time.RFC3339Nano), risks: []risk.Snapshot{snapshot}, evidence: []evidence.Evidence{strong}, events: []normalized.Event{identity}})
 	server := NewServer(Options{ShadowDir: dir, OperationsFile: filepath.Join(dir, "operations.json")})
+	server.identitySources = []identitySourceRegistration{{IdentityScope: store.IdentityScope{Source: "radius", SensorID: "test-sensor", CampusID: "main", AccessDomain: "test-nas"}, IntervalSeconds: 60}}
 	server.operations.doc.Connectors["gateway"] = ActionConnector{ConnectorID: "gateway", Name: "测试网关", EndpointURL: "https://gateway.invalid/actions", Mode: "shadow", Enabled: true, ShadowReady: true}
 
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/actions/execute", strings.NewReader(`{"connector_id":"gateway","action_type":"disconnect","ip":"10.0.0.8","campus_id":"main"}`))
@@ -317,20 +386,20 @@ func TestOverviewAndShadowRunsUseLatestRun(t *testing.T) {
 	var runs struct {
 		Runs []ShadowRun `json:"runs"`
 	}
-	getJSON(t, server, "/api/v1/shadow/runs", http.StatusOK, &runs)
+	getJSON(t, server, "/api/v1/ingest/runs", http.StatusOK, &runs)
 	if len(runs.Runs) != 2 || runs.Runs[0].RunID != "20260727-101000" || runs.Runs[0].SensorID != "office-30" {
 		t.Fatalf("unexpected runs: %#v", runs.Runs)
 	}
 	normalized := runs.Runs[0].Normalized.(map[string]any)
 	if normalized["by_type"].(map[string]any)["device"].(float64) != 2 {
-		t.Fatalf("expected merged device by_type in shadow run, got %#v", runs.Runs[0].Normalized)
+		t.Fatalf("expected merged device by_type in ingest run, got %#v", runs.Runs[0].Normalized)
 	}
 	zeekNormalized := runs.Runs[0].ZeekNormalized.(map[string]any)
 	if zeekNormalized["by_type"].(map[string]any)["device"].(float64) != 2 {
-		t.Fatalf("expected zeek device stats in shadow run, got %#v", runs.Runs[0].ZeekNormalized)
+		t.Fatalf("expected zeek device stats in ingest run, got %#v", runs.Runs[0].ZeekNormalized)
 	}
 	if runs.Runs[0].ZeekStatus != "ok" || runs.Runs[0].ZeekPrevOffset != 1000 || runs.Runs[0].ZeekNewOffset != 2000 {
-		t.Fatalf("expected zeek status and offsets in shadow run, got %#v", runs.Runs[0])
+		t.Fatalf("expected zeek status and offsets in ingest run, got %#v", runs.Runs[0])
 	}
 
 	var diagnostics struct {
@@ -499,8 +568,8 @@ func TestDeviceInventoryEndpointsExposeConservativeSignals(t *testing.T) {
 
 	var inventory store.IPDeviceInventory
 	getJSON(t, server, "/api/v1/ips/"+url.PathEscape(ip)+"/devices?window=1h", http.StatusOK, &inventory)
-	if inventory.IP != ip || inventory.SuspectedDeviceCount < 2 || len(inventory.Devices) < 2 {
-		t.Fatalf("expected multiple device candidates, got %#v", inventory)
+	if inventory.IP != ip || inventory.SuspectedDeviceCount != 0 || len(inventory.Devices) > 1 {
+		t.Fatalf("UA and TLS application clues must not become physical device identities: count=%d devices=%d", inventory.SuspectedDeviceCount, len(inventory.Devices))
 	}
 	if len(inventory.Conflicts) == 0 {
 		t.Fatalf("expected signal conflicts, got %#v", inventory)
@@ -513,7 +582,7 @@ func TestDeviceInventoryEndpointsExposeConservativeSignals(t *testing.T) {
 
 	var risks RiskListResponse
 	getJSON(t, server, "/api/v1/risks", http.StatusOK, &risks)
-	if len(risks.Items) != 1 || risks.Items[0].SuspectedDeviceCount < 2 || risks.Items[0].DeviceSummary == "" {
+	if len(risks.Items) != 1 || risks.Items[0].SuspectedDeviceCount != 0 || risks.Items[0].DeviceSummary == "" {
 		t.Fatalf("expected enriched risk device summary, got %#v", risks.Items)
 	}
 
@@ -559,6 +628,14 @@ func TestIdentityProfileEndpointsExposeAccountAndEndpointContext(t *testing.T) {
 	getJSON(t, server, "/api/v1/devices?limit=20", http.StatusOK, &devices)
 	if len(devices.Items) != 1 || devices.Items[0].EndpointID != "mac:aa:bb:cc:dd:ee:01" || devices.Items[0].CurrentIP == "" || devices.Items[0].CurrentAccessID != "Dorm-A-AP01" {
 		t.Fatalf("unexpected endpoint device list: %#v", devices)
+	}
+	var inventory DeviceInventoryListResponse
+	getJSON(t, server, "/api/v1/device-inventory?limit=20", http.StatusOK, &inventory)
+	if len(inventory.Items) != 1 || inventory.Items[0].EndpointID != "mac:aa:bb:cc:dd:ee:01" || inventory.Items[0].CurrentIP == "" || inventory.Items[0].CurrentAccessID != "Dorm-A-AP01" {
+		t.Fatalf("unexpected lightweight device inventory: %#v", inventory)
+	}
+	if raw, err := json.Marshal(inventory); err != nil || len(raw) > 80*1024 || bytes.Contains(raw, []byte(`"ip_history"`)) || bytes.Contains(raw, []byte(`"access_history"`)) || bytes.Contains(raw, []byte(`"sessions"`)) {
+		t.Fatalf("lightweight inventory payload is not bounded: bytes=%d err=%v", len(raw), err)
 	}
 
 	var errResponse ErrorResponse
@@ -659,14 +736,14 @@ func TestProxyReviewsExposeSevenDayAccountEndpointAggregation(t *testing.T) {
 
 	var response store.ProxyReviewResponse
 	getJSON(t, server, "/api/v1/proxy-reviews?window=7d", http.StatusOK, &response)
-	if response.Window != "7d" || response.CaseCount != 1 || response.HighConfidenceCount != 1 {
+	if response.Window != "7d" || response.CaseCount != 1 || response.HighConfidenceCount != 0 {
 		t.Fatalf("unexpected proxy review overview: %#v", response)
 	}
 	item := response.Items[0]
 	if response.Page.Limit != 20 || response.Page.Total != 1 {
 		t.Fatalf("unexpected proxy review page: %#v", response.Page)
 	}
-	if item.AccountID != "2026000123" || item.EndpointID != "mac:aa:bb:cc:dd:ee:01" || len(item.RuleMatches) != 1 || item.DurationSeconds != 360 {
+	if item.AccountID != "2026000123" || item.EndpointID != "mac:aa:bb:cc:dd:ee:01" || item.ConfidenceLevel != "medium" || len(item.RuleMatches) != 1 || item.DurationSeconds != 360 {
 		t.Fatalf("unexpected proxy review item: %#v", item)
 	}
 	var detail store.ProxyReviewCase
@@ -946,6 +1023,25 @@ func TestAPICORSAllowsLocalDevOrigins(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:5173" {
 		t.Fatalf("unexpected allow origin on GET: %q", got)
+	}
+}
+
+func TestReadOnlyControlPlaneCanOptIntoIdentityIngestionOnly(t *testing.T) {
+	request := func(server *Server) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/integrations/identity/events", strings.NewReader(`{"source":"ncu-srun4k","sensor_id":"ncu-auth-redis","records":[]}`))
+		r.Header.Set("Authorization", "Bearer token")
+		r.Header.Set("Idempotency-Key", "read-only-identity-probe")
+		w := httptest.NewRecorder()
+		server.Handler().ServeHTTP(w, r)
+		return w
+	}
+	blocked := NewServer(Options{ShadowDir: t.TempDir(), ReadOnly: true, IdentityIngestKey: "token"})
+	if response := request(blocked); response.Code != http.StatusForbidden {
+		t.Fatalf("default read-only server admitted identity ingestion: %d %s", response.Code, response.Body.String())
+	}
+	allowed := NewServer(Options{ShadowDir: t.TempDir(), ReadOnly: true, AllowIdentityIngest: true, IdentityIngestKey: "token"})
+	if response := request(allowed); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "records must contain") {
+		t.Fatalf("identity-only exception did not reach authenticated validation: %d %s", response.Code, response.Body.String())
 	}
 }
 

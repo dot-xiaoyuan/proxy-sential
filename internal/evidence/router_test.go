@@ -353,6 +353,61 @@ func TestAnalyzeRoutersKeepsHuaweiAPAsPositiveAccessDevice(t *testing.T) {
 	}
 }
 
+func TestAnalyzeRoutersKeepsSNMPAloneBelowConfirmation(t *testing.T) {
+	event := routerTestEvent("snmp", "2026-10-08T12:00:00Z", "AA:BB:CC:DD:EE:30", map[string]any{"system_description": "Huawei AR6140"})
+	result, err := AnalyzeRouters([]normalized.Event{event}, RouterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Assessments) != 1 {
+		t.Fatalf("expected one SNMP assessment: %+v", result)
+	}
+	got := result.Assessments[0]
+	if got.ConfirmedRouter || got.Status != "candidate" || got.IndependentSources != 1 || got.Confidence != 55 || got.Role != "router" || got.Brand != "Huawei" || got.Model != "AR6140" {
+		t.Fatalf("SNMP-only identity was promoted or lost: %+v", got)
+	}
+	if len(got.Sources) != 1 || got.Sources[0] != "snmp_management" {
+		t.Fatalf("SNMP source family missing: %+v", got.Sources)
+	}
+}
+
+func TestAnalyzeRoutersConfirmsSNMPModelWithVRRPRole(t *testing.T) {
+	events := []normalized.Event{
+		routerTestEvent("snmp", "2026-10-08T12:00:00Z", "AA:BB:CC:DD:EE:31", map[string]any{"system_description": "Cisco ISR4331"}),
+		routerTestControlEvent("vrrp", "2026-10-08T12:00:01Z", "AA:BB:CC:DD:EE:31", "224.0.0.18", map[string]any{"version": 2, "virtual_router_id": 10, "priority": 110}),
+	}
+	result, err := AnalyzeRouters(events, RouterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Assessments) != 1 {
+		t.Fatalf("expected one combined assessment: %+v", result)
+	}
+	got := result.Assessments[0]
+	if !got.ConfirmedRouter || got.Status != "confirmed" || got.IndependentSources != 2 || got.Confidence != 95 || got.Brand != "Cisco" {
+		t.Fatalf("SNMP plus VRRP did not confirm router: %+v", got)
+	}
+}
+
+func TestAnalyzeRoutersSNMPPreservesInfrastructureRoles(t *testing.T) {
+	for _, tc := range []struct {
+		description string
+		role        string
+	}{
+		{description: "Huawei AP4051DN", role: "ap"},
+		{description: "Huawei Switch S12700E-8", role: "switch"},
+		{description: "Huawei USG6000", role: "firewall"},
+	} {
+		result, err := AnalyzeRouters([]normalized.Event{routerTestEvent("snmp", "2026-10-08T12:00:00Z", "AA:BB:CC:DD:EE:32", map[string]any{"system_description": tc.description})}, RouterOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Assessments) != 1 || result.Assessments[0].Role != tc.role || result.Assessments[0].ConfirmedRouter {
+			t.Fatalf("SNMP infrastructure identity %q was exposed as router: %+v", tc.description, result.Assessments)
+		}
+	}
+}
+
 func TestAnalyzeRoutersDoesNotTreatMagicColorAsH3C(t *testing.T) {
 	event := routerTestEvent("dhcp", "2026-09-29T01:00:00Z", "AA:BB:CC:DD:EE:23", map[string]any{
 		"hostname": "Magic-color", "vendor_class": "udhcp",

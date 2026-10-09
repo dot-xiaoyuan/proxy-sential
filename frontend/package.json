@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "pnpm typecheck && vite build",
-    "typecheck": "tsc -b",
+    "typecheck": "pnpm check:api && tsc -b",
+    "check:api": "node ../scripts/check-api-contract.mjs",
     "generate:api": "openapi-typescript ../schemas/control-plane-v1.openapi.yaml -o src/shared/api/generated.ts",
     "lint": "oxlint .",
     "test": "vitest run",

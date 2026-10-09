@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,21 @@ import (
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/store"
 )
+
+func TestSharedDeviceSignalsUseTheNormalizedEventBoundary(t *testing.T) {
+	event := normalized.Event{SchemaVersion: "v1", EventID: "device-shared-1", Source: "packet-sidecar", SourceEventType: "ttl", Type: "device", Timestamp: "2026-10-08T14:00:00Z", Observer: map[string]any{"sensor_id": "untrusted"}, Subject: map[string]any{"ip": "192.0.2.10"}, Payload: map[string]any{"ttl": 63, "tcp_stack": "mss=1460,ws=8,sack=true,ts=true,df=true,opt=2-4-8-1-3"}}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, stats, err := normalize(Source{Kind: "shared-device-signals"}, append(raw, '\n'), 0, "ncu-184-router-pilot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || stats.Emitted != 1 || events[0].Observer["sensor_id"] != "ncu-184-router-pilot" {
+		t.Fatalf("shared signal did not preserve the standard-event boundary: events=%+v stats=%+v", events, stats)
+	}
+}
 
 type fakeBackend struct {
 	checkpoint    ingest.Checkpoint

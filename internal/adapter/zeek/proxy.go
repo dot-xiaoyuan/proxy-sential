@@ -30,7 +30,9 @@ func proxyEvent(raw []byte, f map[string]string, opts Options) (normalized.Event
 	}
 	e := normalized.Event{SchemaVersion: "v1", EventID: "zeek-proxy-" + hex.EncodeToString(sum[:]), Source: "zeek", SourceEventType: "proxy_transactions", Type: "proxy_transaction", Timestamp: ts, Observer: map[string]any{"sensor_id": opts.SensorID, "collector_instance_id": opts.CollectorInstanceID}, Subject: map[string]any{"ip": f["id.orig_h"]}, Flow: map[string]any{"src_ip": f["id.orig_h"], "dst_ip": f["id.resp_h"], "connection_id": normalized.ConnectionID(opts.SensorID, "zeek", opts.CollectorInstanceID, f["uid"])}, Payload: payload, RawRef: map[string]any{"backend": "zeek", "uid": f["uid"]}, Confidence: 1}
 	if opts.ProxyProducer != nil {
-		proxyprotocol.Sign(&e, *opts.ProxyProducer)
+		if err := proxyprotocol.Sign(&e, *opts.ProxyProducer); err != nil {
+			return normalized.Event{}, err
+		}
 	}
 	return e, nil
 }

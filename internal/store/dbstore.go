@@ -111,6 +111,10 @@ func (s *DBStore) ListEndpointDevices(ctx context.Context, query Query) (Endpoin
 	return s.pg.ListEndpointDevices(ctx, query)
 }
 
+func (s *DBStore) ListDeviceInventory(ctx context.Context, query Query) (DeviceInventoryListPage, error) {
+	return s.pg.ListDeviceInventory(ctx, query)
+}
+
 func (s *DBStore) GetIPDeviceInventory(ctx context.Context, ip string, query ActivityQuery) (IPDeviceInventory, error) {
 	return s.pg.GetIPDeviceInventory(ctx, ip, query)
 }
@@ -167,7 +171,7 @@ func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) 
 }
 
 func (s *DBStore) activityV3Freshness(ctx context.Context, window time.Duration, rawAsOf string) (DataFreshness, error) {
-	cutover, err := s.ensureActivityV3Cutover(ctx)
+	cutover, err := s.readActivityV3Cutover(ctx)
 	if err != nil {
 		return DataFreshness{}, err
 	}
@@ -223,8 +227,10 @@ func (s *DBStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (Pro
 	if err != nil {
 		return ProxyReviewResponse{}, err
 	}
-	if window != "24h" && window != "7d" {
-		return ProxyReviewResponse{}, fmt.Errorf("proxy review window must be one of 24h, 7d")
+	// The background case synchronizer consumes the same rolling ten-minute
+	// window as the risk materializer. Public review lists remain 24h/7d.
+	if window != "10m" && window != "24h" && window != "7d" {
+		return ProxyReviewResponse{}, fmt.Errorf("proxy review window must be one of 10m, 24h, 7d")
 	}
 	sensorID := firstNonEmpty(query.SensorID, s.pg.sensorID)
 	limit := query.SampleLimit
@@ -243,14 +249,28 @@ func (s *DBStore) GetProxyReviews(ctx context.Context, query ActivityQuery) (Pro
 }
 
 func (s *DBStore) GetDPIOverview(ctx context.Context, query ActivityQuery) (DPIOverview, error) {
+	window, duration, err := NormalizeActivityWindow(query.Window)
+	if err != nil {
+		return DPIOverview{}, err
+	}
+	query.Window = window
 	if query.SensorID == "" {
 		query.SensorID = s.pg.sensorID
 	}
-	if err := s.activityStatisticsReadModelHealth(ctx); err != nil {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3")), "true") {
+		freshness, e := s.activityV3Freshness(ctx, duration, query.AsOf)
+		if e != nil {
+			return DPIOverview{}, e
+		}
+		result, e := s.ch.queryDPICoarseOverview(ctx, query)
+		result.StatisticsAsOf = freshness.AsOf
+		return result, e
+	}
+	if err = s.activityStatisticsReadModelHealth(ctx); err != nil {
 		return DPIOverview{}, err
 	}
 	var sourceAt time.Time
-	if err := s.pg.db.QueryRowContext(ctx, `SELECT updated_at FROM activity_chart_read_model_cursor_v2 WHERE id=1`).Scan(&sourceAt); err != nil {
+	if err = s.pg.db.QueryRowContext(ctx, `SELECT updated_at FROM activity_chart_read_model_cursor_v2 WHERE id=1`).Scan(&sourceAt); err != nil {
 		return DPIOverview{}, err
 	}
 	result, err := s.ch.queryDPICoarseOverview(ctx, query)
@@ -342,6 +362,10 @@ func (s *DBStore) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.pg.ListRuns(ctx, limit)
 }
 
+func (s *DBStore) ListSensorRuns(ctx context.Context, sensorID string, limit int) ([]Run, error) {
+	return s.pg.ListSensorRuns(ctx, sensorID, limit)
+}
+
 func (s *DBStore) ListRunsPage(ctx context.Context, query Query) ([]Run, Page, error) {
 	return s.pg.ListRunsPage(ctx, query)
 }
@@ -375,7 +399,7 @@ func (s *DBStore) UpdateEndpointRegistration(ctx context.Context, update Endpoin
 }
 
 func (s *DBStore) IngestStatus(ctx context.Context) (ingest.Status, error) {
-	runs, err := s.pg.ListRuns(ctx, 1)
+	runs, err := s.pg.ListSensorRuns(ctx, s.pg.sensorID, 1)
 	if err != nil {
 		return ingest.Status{}, err
 	}
@@ -401,7 +425,7 @@ func (s *DBStore) IngestStatus(ctx context.Context) (ingest.Status, error) {
 		"skipped":   run.Normalized.Skipped,
 		"malformed": run.Normalized.Malformed,
 	}
-	eventTypes, _ := s.ch.ListIngestEventTypes(ctx)
+	eventTypes, _ := s.ch.ListSensorIngestEventTypes(ctx, s.pg.sensorID)
 	status.LastEventTypeDist = map[string]int{}
 	for _, item := range eventTypes {
 		status.LastEventTypeDist[item.Type] = item.Count

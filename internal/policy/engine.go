@@ -12,6 +12,7 @@ import (
 
 type Scope struct {
 	Accounts    []string `json:"accounts"`
+	Sources     []string `json:"sources,omitempty"`
 	Groups      []string `json:"groups"`
 	Products    []string `json:"products"`
 	Campuses    []string `json:"campuses"`
@@ -22,13 +23,26 @@ type Scope struct {
 	EndMinute   *int     `json:"end_minute"`
 }
 type Stage struct {
-	Action          string `json:"action"`
-	ConnectorID     string `json:"connector_id"`
-	AfterSeconds    int    `json:"after_seconds"`
-	MinEpisodes     int    `json:"min_episodes"`
-	DurationSeconds int    `json:"duration_seconds"`
-	RateKbps        int    `json:"rate_kbps"`
-	Template        string `json:"template"`
+	Action          string   `json:"action"`
+	ConnectorID     string   `json:"connector_id"`
+	AfterSeconds    int      `json:"after_seconds"`
+	MinEpisodes     int      `json:"min_episodes"`
+	DurationSeconds int      `json:"duration_seconds"`
+	RateKbps        int      `json:"rate_kbps"`
+	Template        string   `json:"template"`
+	DependsOn       []string `json:"depends_on,omitempty"`
+	IntervalSeconds int      `json:"interval_seconds,omitempty"`
+	SyncNotify      bool     `json:"sync_notify,omitempty"`
+	PutBlack        bool     `json:"put_black,omitempty"`
+}
+type Origin struct {
+	Source            string   `json:"source"`
+	SnapshotID        string   `json:"snapshot_id"`
+	ExternalProductID string   `json:"external_product_id,omitempty"`
+	ExternalPolicyIDs []string `json:"external_policy_ids,omitempty"`
+	ConversionVersion string   `json:"conversion_version"`
+	ImportBatchID     string   `json:"import_batch_id"`
+	ReferenceFields   []string `json:"reference_fields,omitempty"`
 }
 type Definition struct {
 	ID              string  `json:"policy_id"`
@@ -45,7 +59,9 @@ type Definition struct {
 	RecoverySeconds int     `json:"recovery_seconds"`
 	CooldownSeconds int     `json:"cooldown_seconds"`
 	Stages          []Stage `json:"stages"`
+	ActionModel     string  `json:"action_model,omitempty"`
 	Revision        int     `json:"revision"`
+	Origin          *Origin `json:"origin,omitempty"`
 }
 
 func (p *Definition) Validate() error {
@@ -58,7 +74,7 @@ func (p *Definition) Validate() error {
 	if p.Mode != "observe" && p.Mode != "manual" && p.Mode != "automatic" {
 		return fmt.Errorf("invalid mode")
 	}
-	if p.Trigger != "quota_exceeded" && p.Trigger != "shared_access" && p.Trigger != "explicit_proxy" {
+	if p.Trigger != "quota_exceeded" && p.Trigger != "session_quota_exceeded" && p.Trigger != "shared_access" && p.Trigger != "explicit_proxy" {
 		return fmt.Errorf("invalid trigger")
 	}
 	if p.Trigger == "explicit_proxy" && p.Mode == "automatic" {
@@ -67,7 +83,24 @@ func (p *Definition) Validate() error {
 	if p.Trigger == "shared_access" && p.Mode == "automatic" {
 		return fmt.Errorf("shared access supports observe or manual mode until detection and control gates are verified")
 	}
-	for _, v := range []*int{p.Limits.Total, p.Limits.Mobile, p.Limits.PC} {
+	if p.Trigger == "session_quota_exceeded" && p.Limits.Sessions == nil {
+		return fmt.Errorf("session quota required")
+	}
+	if p.Trigger == "quota_exceeded" && p.Limits.Total == nil && p.Limits.Mobile == nil && p.Limits.PC == nil {
+		return fmt.Errorf("at least one device quota required")
+	}
+	if p.ActionModel != "" && p.ActionModel != "dpi-strategy/v1" {
+		return fmt.Errorf("invalid action model")
+	}
+	if p.Origin != nil {
+		if p.Origin.Source == "" || p.Origin.SnapshotID == "" || p.Origin.ConversionVersion == "" || p.Origin.ImportBatchID == "" {
+			return fmt.Errorf("complete policy origin required")
+		}
+		if p.Mode != "observe" {
+			return fmt.Errorf("imported policy origin supports observe mode only")
+		}
+	}
+	for _, v := range []*int{p.Limits.Total, p.Limits.Mobile, p.Limits.PC, p.Limits.Sessions} {
 		if v != nil && *v < 0 {
 			return fmt.Errorf("negative quota")
 		}
@@ -98,14 +131,22 @@ func (p *Definition) Validate() error {
 			}
 		}
 	}
+	seenActions := map[string]bool{}
 	for _, st := range p.Stages {
+		if seenActions[st.Action] {
+			return fmt.Errorf("duplicate policy action")
+		}
 		if p.Trigger == "shared_access" && st.Action != "disconnect" {
 			return fmt.Errorf("shared access currently supports disconnect only; other actions require verified control and recovery capabilities")
 		}
-		if st.ConnectorID == "" {
+		if p.Mode != "observe" && st.ConnectorID == "" {
 			return fmt.Errorf("connector required")
 		}
 		switch st.Action {
+		case "record":
+			if p.Mode != "observe" {
+				return fmt.Errorf("record stage supports observe mode only")
+			}
 		case "notify":
 			if st.Template == "" {
 				return fmt.Errorf("notification template required")
@@ -122,9 +163,21 @@ func (p *Definition) Validate() error {
 		default:
 			return fmt.Errorf("unsupported action")
 		}
-		if st.AfterSeconds < 0 || st.MinEpisodes < 0 {
+		if st.AfterSeconds < 0 || st.MinEpisodes < 0 || st.IntervalSeconds < 0 {
 			return fmt.Errorf("invalid stage timing")
 		}
+		for _, dependency := range st.DependsOn {
+			if dependency != "notify" && dependency != "rate_limit" && dependency != "disconnect" && dependency != "disable_account" {
+				return fmt.Errorf("invalid stage dependency")
+			}
+			if dependency == st.Action {
+				return fmt.Errorf("stage cannot depend on itself")
+			}
+			if !seenActions[dependency] {
+				return fmt.Errorf("stage dependency must reference an earlier action")
+			}
+		}
+		seenActions[st.Action] = true
 	}
 	return nil
 }
@@ -140,7 +193,7 @@ func contains(values []string, v string) bool {
 	return false
 }
 func (s Scope) Empty() bool {
-	return len(s.Accounts)+len(s.Groups)+len(s.Products)+len(s.Campuses)+len(s.VLANs)+len(s.CIDRs)+len(s.Weekdays) == 0 && s.StartMinute == nil
+	return len(s.Accounts)+len(s.Sources)+len(s.Groups)+len(s.Products)+len(s.Campuses)+len(s.VLANs)+len(s.CIDRs)+len(s.Weekdays) == 0 && s.StartMinute == nil
 }
 func (s Scope) Match(account string, sessions []Session, now time.Time) bool {
 	if !contains(s.Accounts, account) {
@@ -170,29 +223,32 @@ func (s Scope) Match(account string, sessions []Session, now time.Time) bool {
 		}
 	}
 	for _, session := range sessions {
-		if session.AccountID != account || session.State(now) != "active" {
-			continue
+		if s.MatchSession(account, session, now) {
+			return true
 		}
-		if !contains(s.Groups, session.GroupID) || !contains(s.Products, session.ProductID) || !contains(s.Campuses, session.CampusID) || !contains(s.VLANs, session.VLAN) {
-			continue
-		}
-		if len(s.CIDRs) > 0 {
-			ip, err := netip.ParseAddr(session.IP)
-			if err != nil {
-				continue
-			}
-			found := false
-			for _, raw := range s.CIDRs {
-				p, _ := netip.ParsePrefix(raw)
-				if p.Contains(ip) {
-					found = true
-				}
-			}
-			if !found {
-				continue
-			}
-		}
+	}
+	return false
+}
+
+// MatchSession applies the identity part of a scope to one active session. It
+// is also used by quota evaluation so a product-scoped policy cannot count an
+// account's sessions from another product.
+func (s Scope) MatchSession(account string, session Session, now time.Time) bool {
+	if session.AccountID != account || session.State(now) != "active" || !contains(s.Accounts, account) || !contains(s.Sources, session.Source) || !contains(s.Groups, session.GroupID) || !contains(s.Products, session.ProductID) || !contains(s.Campuses, session.CampusID) || !contains(s.VLANs, session.VLAN) {
+		return false
+	}
+	if len(s.CIDRs) == 0 {
 		return true
+	}
+	ip, err := netip.ParseAddr(session.IP)
+	if err != nil {
+		return false
+	}
+	for _, raw := range s.CIDRs {
+		prefix, _ := netip.ParsePrefix(raw)
+		if prefix.Contains(ip) {
+			return true
+		}
 	}
 	return false
 }
@@ -240,11 +296,16 @@ func Select(defs []Definition, account string, ss []Session, now time.Time) ([]D
 }
 
 type Input struct {
-	AccountID   string   `json:"account_id"`
-	Known       bool     `json:"known"`
-	Violated    bool     `json:"violated"`
-	Reasons     []string `json:"reasons"`
-	EvidenceIDs []string `json:"evidence_ids"`
+	AccountID        string   `json:"account_id"`
+	Known            bool     `json:"known"`
+	Violated         bool     `json:"violated"`
+	Reasons          []string `json:"reasons"`
+	EvidenceIDs      []string `json:"evidence_ids"`
+	SessionCount     *int     `json:"session_count,omitempty"`
+	DeviceCount      *int     `json:"device_count,omitempty"`
+	MobileCount      *int     `json:"mobile_count,omitempty"`
+	PCCount          *int     `json:"pc_count,omitempty"`
+	CoverageComplete *bool    `json:"coverage_complete,omitempty"`
 }
 type StageState struct {
 	ApprovedSessionBindings []string  `json:"approved_session_bindings,omitempty"`
@@ -254,6 +315,8 @@ type StageState struct {
 	Key                     string    `json:"idempotency_key"`
 	Status                  string    `json:"status"`
 	ActionIDs               []string  `json:"action_ids"`
+	HistoryActionIDs        []string  `json:"history_action_ids,omitempty"`
+	ExecuteCount            int       `json:"execute_count"`
 	CompletedAt             time.Time `json:"completed_at"`
 }
 type Execution struct {
@@ -353,6 +416,9 @@ func Advance(p Definition, e Execution, in Input, now time.Time) Decision {
 		e.Definition = p
 	}
 	p = e.Definition
+	if p.ActionModel == "dpi-strategy/v1" {
+		return advanceDPIActions(p, e, now)
+	}
 	e.State = "violating"
 	recent := 0
 	for _, at := range e.Episodes {
@@ -394,6 +460,82 @@ func Advance(p Definition, e Execution, in Input, now time.Time) Decision {
 		e.Stages = append(e.Stages, state)
 		e.State = status
 		return Decision{e, &Intent{key, e.AccountID, i, stage, p.Mode}}
+	}
+	return Decision{Execution: e}
+}
+
+// advanceDPIActions mirrors dpi-analyze's strategy evaluator: actions without
+// dependencies count from the beginning of the current violation, while a
+// dependent action waits for the configured number of completed predecessor
+// executions. Interval actions can run again without serializing unrelated
+// actions behind them.
+func advanceDPIActions(p Definition, e Execution, now time.Time) Decision {
+	if len(e.Stages) != len(p.Stages) {
+		e.Stages = make([]StageState, len(p.Stages))
+		for i := range p.Stages {
+			e.Stages[i] = StageState{Index: i, Key: StableID(e.AccountID, p.ID, fmt.Sprint(e.Episode), fmt.Sprint(i), "0"), Status: "waiting", ActionIDs: []string{}, HistoryActionIDs: []string{}}
+		}
+	}
+	counts := map[string]int{}
+	for i, stage := range p.Stages {
+		counts[stage.Action] = e.Stages[i].ExecuteCount
+	}
+	pendingState := ""
+	for i, stage := range p.Stages {
+		state := &e.Stages[i]
+		switch state.Status {
+		case "pending_action", "awaiting_approval", "blocked", "failed", "partial_success":
+			if pendingState == "" {
+				pendingState = state.Status
+			}
+			continue
+		case "succeeded", "shadow_succeeded":
+			if stage.IntervalSeconds <= 0 || now.Sub(state.CompletedAt) < time.Duration(stage.IntervalSeconds)*time.Second {
+				continue
+			}
+			state.HistoryActionIDs = append(state.HistoryActionIDs, state.ActionIDs...)
+			state.ActionIDs = []string{}
+			state.Status = "waiting"
+			state.CompletedAt = time.Time{}
+			state.CompletedPausedSeconds = 0
+		}
+		ready := true
+		if len(stage.DependsOn) == 0 {
+			ready = now.Sub(e.StartedAt)-time.Duration(e.PausedSeconds)*time.Second >= time.Duration(stage.AfterSeconds)*time.Second
+		} else {
+			required := stage.MinEpisodes
+			if required <= 0 {
+				required = 1
+			}
+			for _, dependency := range stage.DependsOn {
+				if counts[dependency] < required {
+					ready = false
+					break
+				}
+			}
+		}
+		if !ready {
+			continue
+		}
+		state.Key = StableID(e.AccountID, p.ID, fmt.Sprint(e.Episode), fmt.Sprint(i), fmt.Sprint(state.ExecuteCount))
+		state.Status = "pending_action"
+		if p.Mode == "manual" {
+			state.Status = "awaiting_approval"
+		}
+		if p.Mode == "observe" {
+			state.Status = "shadow_succeeded"
+			state.ExecuteCount++
+			state.CompletedAt = now
+			state.CompletedPausedSeconds = e.PausedSeconds
+			counts[stage.Action] = state.ExecuteCount
+		}
+		e.State = state.Status
+		return Decision{Execution: e, Intent: &Intent{Key: state.Key, AccountID: e.AccountID, StageIndex: i, Stage: stage, Mode: p.Mode}}
+	}
+	if pendingState != "" {
+		e.State = pendingState
+	} else {
+		e.State = "violating"
 	}
 	return Decision{Execution: e}
 }

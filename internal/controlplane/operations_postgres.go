@@ -67,9 +67,18 @@ func (s *operationsState) setHealthError(err error) {
 	s.healthMu.Unlock()
 }
 
+func (s *operationsState) setCaseSyncHealthError(err error) {
+	s.healthMu.Lock()
+	s.caseSyncHealthErr = err
+	s.healthMu.Unlock()
+}
+
 func (s *operationsState) health(ctx context.Context) error {
 	s.healthMu.RLock()
 	err := s.healthErr
+	if err == nil {
+		err = s.caseSyncHealthErr
+	}
 	s.healthMu.RUnlock()
 	if err != nil {
 		return err
@@ -234,6 +243,7 @@ func loadCaseHeaders(ctx context.Context, q operationsQuerier, doc *operationsDo
 		if due.Valid {
 			item.DueAt = formatDBTime(due.Time)
 		}
+		item.RiskKind = riskKindForRuleset(item.RulesetVersion)
 		item.Comments = []CaseComment{}
 		item.Timeline = []CaseTimeline{}
 		doc.Cases[item.CaseID] = item
@@ -293,7 +303,13 @@ func loadCases(ctx context.Context, q operationsQuerier, doc *operationsDocument
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	rows, err = q.QueryContext(ctx, `SELECT h.snapshot_id,h.case_id,COALESCE(h.ruleset_version,''),h.evidence,h.created_at FROM risk_cases c JOIN LATERAL ((SELECT * FROM risk_case_evidence_snapshots WHERE case_id=c.case_id ORDER BY created_at,snapshot_id LIMIT 1) UNION (SELECT * FROM risk_case_evidence_snapshots WHERE case_id=c.case_id ORDER BY created_at DESC,snapshot_id DESC LIMIT 1)) h ON true ORDER BY h.case_id,h.created_at,h.snapshot_id`)
+	rows, err = q.QueryContext(ctx, `SELECT h.snapshot_id,h.case_id,COALESCE(h.ruleset_version,''),h.evidence,h.created_at FROM risk_cases c JOIN LATERAL (
+(SELECT * FROM risk_case_evidence_snapshots WHERE case_id=c.case_id ORDER BY created_at,snapshot_id LIMIT 1)
+UNION
+(SELECT * FROM risk_case_evidence_snapshots WHERE case_id=c.case_id ORDER BY created_at DESC,snapshot_id DESC LIMIT 1)
+UNION
+(SELECT * FROM risk_case_evidence_snapshots WHERE case_id=c.case_id AND (evidence ? 'shared_access' OR evidence ? 'router_observation') ORDER BY created_at DESC,snapshot_id DESC LIMIT 1)
+) h ON true ORDER BY h.case_id,h.created_at,h.snapshot_id`)
 	if err != nil {
 		return fmt.Errorf("load case evidence snapshots: %w", err)
 	}
@@ -310,7 +326,7 @@ func loadCases(ctx context.Context, q operationsQuerier, doc *operationsDocument
 		_ = json.Unmarshal(raw, &snapshot.Evidence)
 		snapshot.CreatedAt = formatDBTime(createdAt)
 		caseItem.EvidenceHistory = append(caseItem.EvidenceHistory, snapshot)
-		if caseItem.EvidenceSnapshot.CaseID == "" {
+		if caseItem.EvidenceSnapshot.CaseID == "" || (caseItem.RiskKind == "shared_access" && snapshot.Evidence.SharedAccess != nil) || (caseItem.RiskKind == "router_observation" && snapshot.Evidence.RouterObservation != nil) {
 			caseItem.EvidenceSnapshot = snapshot.Evidence
 		}
 		doc.Cases[caseID] = caseItem
@@ -356,7 +372,7 @@ func loadActions(ctx context.Context, q operationsQuerier, doc *operationsDocume
 	return loadActionsScoped(ctx, q, doc, "", nil)
 }
 func loadActionsScoped(ctx context.Context, q operationsQuerier, doc *operationsDocument, suffix string, args []any) error {
-	rows, err := q.QueryContext(ctx, `SELECT action_id, idempotency_key, COALESCE(case_id,''), COALESCE(connector_id,''), action_type, subject_type, subject_id, COALESCE(account_id,''), COALESCE(endpoint_id,''), COALESCE(host(ip),''), COALESCE(session_id,''), COALESCE(campus_id,''), status, mode, COALESCE(duration_seconds,0), evidence_ids, COALESCE(ruleset_version,''), COALESCE(remote_action_id,''), retry_count, COALESCE(parent_action_id,''), next_attempt_at, cooldown_until, expires_at, COALESCE(last_error,''), created_by, created_at, updated_at, policy_parameters FROM enforcement_actions`+suffix, args...)
+	rows, err := q.QueryContext(ctx, `SELECT action_id, idempotency_key, COALESCE(case_id,''), COALESCE(connector_id,''), action_type, subject_type, subject_id, COALESCE(account_id,''), COALESCE(endpoint_id,''), COALESCE(host(ip),''), COALESCE(session_id,''), COALESCE(campus_id,''), status, mode, COALESCE(duration_seconds,0), evidence_ids, COALESCE(ruleset_version,''), COALESCE(remote_action_id,''), retry_count, COALESCE(parent_action_id,''), next_attempt_at, cooldown_until, expires_at, COALESCE(last_error,''), created_by, created_at, updated_at, policy_parameters, precheck_retry_count, precheck_retryable FROM enforcement_actions`+suffix, args...)
 	if err != nil {
 		return fmt.Errorf("load enforcement actions: %w", err)
 	}
@@ -366,7 +382,7 @@ func loadActionsScoped(ctx context.Context, q operationsQuerier, doc *operations
 		var evidenceIDs, parameters []byte
 		var nextAttempt, cooldown, expires sql.NullTime
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&item.ActionID, &item.IdempotencyKey, &item.CaseID, &item.ConnectorID, &item.ActionType, &item.SubjectType, &item.SubjectID, &item.AccountID, &item.EndpointID, &item.IP, &item.SessionID, &item.CampusID, &item.Status, &item.Mode, &item.DurationSeconds, &evidenceIDs, &item.RulesetVersion, &item.RemoteActionID, &item.RetryCount, &item.ParentActionID, &nextAttempt, &cooldown, &expires, &item.LastError, &item.CreatedBy, &createdAt, &updatedAt, &parameters); err != nil {
+		if err := rows.Scan(&item.ActionID, &item.IdempotencyKey, &item.CaseID, &item.ConnectorID, &item.ActionType, &item.SubjectType, &item.SubjectID, &item.AccountID, &item.EndpointID, &item.IP, &item.SessionID, &item.CampusID, &item.Status, &item.Mode, &item.DurationSeconds, &evidenceIDs, &item.RulesetVersion, &item.RemoteActionID, &item.RetryCount, &item.ParentActionID, &nextAttempt, &cooldown, &expires, &item.LastError, &item.CreatedBy, &createdAt, &updatedAt, &parameters, &item.PrecheckRetryCount, &item.PrecheckRetryable); err != nil {
 			return err
 		}
 		_ = json.Unmarshal(evidenceIDs, &item.EvidenceIDs)
@@ -471,18 +487,21 @@ func (s *operationsState) savePostgres(tx *sql.Tx) error {
 			continue
 		}
 		evidenceIDs, _ := json.Marshal(item.EvidenceIDs)
-		result, err := tx.ExecContext(ctx, `INSERT INTO enforcement_actions(action_id,idempotency_key,case_id,connector_id,action_type,subject_type,subject_id,account_id,endpoint_id,ip,session_id,campus_id,status,mode,duration_seconds,evidence_ids,ruleset_version,remote_action_id,retry_count,parent_action_id,next_attempt_at,cooldown_until,expires_at,last_error,created_by,created_at,updated_at) VALUES($1,$2,NULLIF($3,''),NULLIF($4,''),$5,$6,$7,NULLIF($8,''),NULLIF($9,''),NULLIF($10,'')::inet,NULLIF($11,''),NULLIF($12,''),$13,$14,$15,$16,NULLIF($17,''),NULLIF($18,''),$19,NULLIF($20,''),NULLIF($21,'')::timestamptz,NULLIF($22,'')::timestamptz,NULLIF($23,'')::timestamptz,NULLIF($24,''),$25,$26::timestamptz,$27::timestamptz) ON CONFLICT(action_id) DO UPDATE SET status=EXCLUDED.status,remote_action_id=EXCLUDED.remote_action_id,retry_count=EXCLUDED.retry_count,parent_action_id=EXCLUDED.parent_action_id,next_attempt_at=EXCLUDED.next_attempt_at,cooldown_until=EXCLUDED.cooldown_until,expires_at=EXCLUDED.expires_at,last_error=EXCLUDED.last_error,updated_at=greatest(clock_timestamp(),enforcement_actions.updated_at+interval '1 microsecond') WHERE ($29::boolean=false OR enforcement_actions.updated_at=NULLIF($28,'')::timestamptz)`, item.ActionID, item.IdempotencyKey, item.CaseID, item.ConnectorID, item.ActionType, item.SubjectType, item.SubjectID, item.AccountID, item.EndpointID, item.IP, item.SessionID, item.CampusID, item.Status, item.Mode, item.DurationSeconds, evidenceIDs, item.RulesetVersion, item.RemoteActionID, item.RetryCount, item.ParentActionID, item.NextAttemptAt, item.CooldownUntil, item.ExpiresAt, item.LastError, item.CreatedBy, item.CreatedAt, item.UpdatedAt, s.recordVersionBaseline[[2]string{"action", item.ActionID}], s.recordVersionBaseline != nil)
+		var persistedUpdatedAt time.Time
+		err := tx.QueryRowContext(ctx, `INSERT INTO enforcement_actions(action_id,idempotency_key,case_id,connector_id,action_type,subject_type,subject_id,account_id,endpoint_id,ip,session_id,campus_id,status,mode,duration_seconds,evidence_ids,ruleset_version,remote_action_id,retry_count,parent_action_id,next_attempt_at,cooldown_until,expires_at,last_error,created_by,created_at,updated_at) VALUES($1,$2,NULLIF($3,''),NULLIF($4,''),$5,$6,$7,NULLIF($8,''),NULLIF($9,''),NULLIF($10,'')::inet,NULLIF($11,''),NULLIF($12,''),$13,$14,$15,$16,NULLIF($17,''),NULLIF($18,''),$19,NULLIF($20,''),NULLIF($21,'')::timestamptz,NULLIF($22,'')::timestamptz,NULLIF($23,'')::timestamptz,NULLIF($24,''),$25,$26::timestamptz,$27::timestamptz) ON CONFLICT(action_id) DO UPDATE SET status=EXCLUDED.status,remote_action_id=EXCLUDED.remote_action_id,retry_count=EXCLUDED.retry_count,parent_action_id=EXCLUDED.parent_action_id,next_attempt_at=EXCLUDED.next_attempt_at,cooldown_until=EXCLUDED.cooldown_until,expires_at=EXCLUDED.expires_at,last_error=EXCLUDED.last_error,updated_at=greatest(clock_timestamp(),enforcement_actions.updated_at+interval '1 microsecond') WHERE ($29::boolean=false OR enforcement_actions.updated_at=NULLIF($28,'')::timestamptz) RETURNING updated_at`, item.ActionID, item.IdempotencyKey, item.CaseID, item.ConnectorID, item.ActionType, item.SubjectType, item.SubjectID, item.AccountID, item.EndpointID, item.IP, item.SessionID, item.CampusID, item.Status, item.Mode, item.DurationSeconds, evidenceIDs, item.RulesetVersion, item.RemoteActionID, item.RetryCount, item.ParentActionID, item.NextAttemptAt, item.CooldownUntil, item.ExpiresAt, item.LastError, item.CreatedBy, item.CreatedAt, item.UpdatedAt, s.recordVersionBaseline[[2]string{"action", item.ActionID}], s.recordVersionBaseline != nil).Scan(&persistedUpdatedAt)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("action %s changed concurrently", item.ActionID)
+		}
 		if err != nil {
 			return fmt.Errorf("save enforcement action %s: %w", item.ActionID, err)
 		}
-		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-			return fmt.Errorf("action %s changed concurrently", item.ActionID)
-		}
+		item.UpdatedAt = formatDBTime(persistedUpdatedAt)
+		s.doc.Actions[item.ActionID] = item
 		parameters, err := json.Marshal(item.PolicyParameters)
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE enforcement_actions SET policy_parameters=$2 WHERE action_id=$1`, item.ActionID, parameters); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE enforcement_actions SET policy_parameters=$2,precheck_retry_count=$3,precheck_retryable=$4 WHERE action_id=$1`, item.ActionID, parameters, item.PrecheckRetryCount, item.PrecheckRetryable); err != nil {
 			return err
 		}
 	}

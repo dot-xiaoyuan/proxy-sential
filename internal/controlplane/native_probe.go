@@ -10,7 +10,7 @@ import (
 )
 
 func (s *Server) handleNativeConnectorProbe(w http.ResponseWriter, r *http.Request, id string) bool {
-	runtime, ok := s.nativeActions[id]
+	runtime, ok := s.nativeRuntime(id)
 	if !ok {
 		return false
 	}

@@ -39,7 +39,7 @@ type nativeConfigEntry struct {
 // LoadNativeActions performs no network requests. Secrets remain in the private
 // configuration file and runtime, never in public connector responses.
 func LoadNativeActions(path string) (map[string]NativeActionRuntime, func(), error) {
-	clients := []*redis.Client{}
+	clients := []*legacy4k.RedisOnlineClient{}
 	closeAll := func() {
 		for _, c := range clients {
 			_ = c.Close()
@@ -147,7 +147,7 @@ func LoadNativeActions(path string) (map[string]NativeActionRuntime, func(), err
 		ro.WriteTimeout = 3 * time.Second
 		ro.MaxRetries = -1
 		ro.PoolSize = 2
-		rc := redis.NewClient(ro)
+		rc := legacy4k.NewRedisOnlineClient(ro)
 		clients = append(clients, rc)
 		result[c.ConnectorID] = NativeActionRuntime{CredentialsFrom4K: c.CredentialSource == "4k_database", TestAccount: c.TestAccount, Probe: native.OnlineTotal, Client: native, CampusID: c.CampusID, AccessDomain: c.AccessDomain, DropType: c.DropType, Read: func(ctx context.Context) (legacy4k.OnlineInventory, error) {
 			inventory, err := legacy4k.ReadOnlineInventory(ctx, rc, c.OnlineList, c.ReadyKey, c.MaxRecords)

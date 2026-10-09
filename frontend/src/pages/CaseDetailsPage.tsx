@@ -18,8 +18,7 @@ import {
   message,
 } from "antd";
 
-import { RiskLevelTag } from '../entities/risk/RiskLevelTag';
-import type { RiskLevel } from '../shared/api/types';
+import { CaseAssessment } from '../entities/risk/CaseAssessment';
 import { can } from "../shared/auth/permissions";
 import { useCase, useCaseMutation, useSession } from "../shared/api/queries";
 import { AppErrorAlert, AppLoadingState, AppPageHeader } from "../shared/ui";
@@ -35,6 +34,8 @@ export function CaseDetailsPage() {
   if (item.isError || !item.data)
     return <AppErrorAlert title="案件不存在或已超过保留期" />;
   const data = item.data;
+  const sharedEvidence = data.evidence_snapshot?.shared_access;
+  const routerEvidence = data.evidence_snapshot?.router_observation;
   const writable = can(session.data, "cases:write");
   const mutate = (
     operation: "assign" | "status" | "priority" | "disposition" | "comment",
@@ -63,11 +64,8 @@ export function CaseDetailsPage() {
       )}
       <Card className="surface-card" title="案件摘要">
         <Space wrap>
-          <RiskLevelTag level={data.assessment_level as RiskLevel}/>
+          <CaseAssessment item={data} showConfidence/>
           <Tag>{caseStatusText(data.status)}</Tag>
-          <Typography.Text strong>
-            {data.risk_score} 分 / {Math.round(data.risk_confidence * 100)}%
-          </Typography.Text>
         </Space>
         <Descriptions
           className="margin-top-md"
@@ -110,7 +108,7 @@ export function CaseDetailsPage() {
             {
               key: "due",
               label: "SLA 截止",
-              children: new Date(data.due_at).toLocaleString(),
+              children: data.due_at && Number.isFinite(Date.parse(data.due_at)) ? new Date(data.due_at).toLocaleString() : "",
             },
           ]}
         />
@@ -161,7 +159,8 @@ export function CaseDetailsPage() {
                       placeholder="选择复核结论"
                       onChange={(value) => mutate("disposition", value)}
                       options={[
-                        { value: "confirmed_proxy", label: "确认代理" },
+                        ...(data.risk_kind === "shared_access" ? [{ value: "confirmed_shared_access", label: "确认共享上网" }] : []),
+                        ...(data.risk_kind === "router_observation" ? [{ value: "confirmed_router", label: "确认路由设备" }] : []),
                         { value: "false_positive", label: "误报" },
                         { value: "benign", label: "良性" },
                         { value: "needs_more_data", label: "需要更多数据" },
@@ -195,9 +194,13 @@ export function CaseDetailsPage() {
               children: (
                 <>
                   <Typography.Paragraph>
-                    {data.evidence_snapshot?.event_count
-                      ? `共 ${data.evidence_snapshot.event_count} 条事件，TLS ${data.evidence_snapshot.tls_count}，QUIC ${data.evidence_snapshot.quic_count}，明确规则命中 ${data.evidence_snapshot.rule_matches?.length ?? 0} 条。`
-                      : "暂无证据快照"}
+                    {sharedEvidence
+                      ? `当前完整窗口确认至少 ${sharedEvidence.device_lower_bound} 个终端共用出口；强锚点：${strongAnchorName(sharedEvidence.strong_anchor)}；覆盖状态：完整。`
+                      : routerEvidence
+                        ? `${routerEvidence.brand || ""}${routerEvidence.model ? ` ${routerEvidence.model}` : ""}，设备角色为路由器，识别置信度 ${routerEvidence.confidence}%。`
+                        : data.evidence_snapshot?.event_count
+                          ? `共 ${data.evidence_snapshot.event_count} 条事件。`
+                          : ""}
                   </Typography.Paragraph>
                   <Typography.Text type="secondary">
                     案件保存发现时证据，规则更新不会覆盖历史判断。
@@ -263,4 +266,10 @@ function caseNextStatuses(status: string) {
 }
 function caseStatusText(status: string) {
   return caseStatusNames[status] ?? status;
+}
+
+function strongAnchorName(value: string) {
+  if (value === "ieee1905_association") return "EasyMesh 当前关联终端";
+  if (value === "coexisting_device_models") return "当前窗口物理设备共现";
+  return value;
 }

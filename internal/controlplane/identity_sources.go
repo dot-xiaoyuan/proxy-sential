@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/store"
 	"sort"
@@ -27,6 +26,9 @@ func (s *Server) policySessions(ctx context.Context, reader store.PolicyIdentity
 }
 
 func (s *Server) policySessionsForScope(ctx context.Context, reader store.PolicyIdentityReader, at time.Time, campus, domain string) ([]policy.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var observed []policy.Session
 	var err error
 	if campus != "" && domain != "" {
@@ -40,9 +42,15 @@ func (s *Server) policySessionsForScope(ctx context.Context, reader store.Policy
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if campus != "" || domain != "" {
-		scoped := observed[:0]
+		scoped := make([]policy.Session, 0, len(observed))
 		for _, session := range observed {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if (campus == "" || session.CampusID == campus) && (domain == "" || session.AccessDomain == domain) {
 				scoped = append(scoped, session)
 			}
@@ -59,16 +67,20 @@ func (s *Server) policySessionsForScope(ctx context.Context, reader store.Policy
 		return nil, err
 	}
 	out := append([]policy.Session{}, observed...)
+	// Resolve authority once per exact scope for this read. Do not retain this
+	// cache across reads: configuration changes must affect execution prechecks.
+	authority := newIdentityAuthorityResolver(s)
 	for i := range out {
 		out[i].IdentityIssue = "unregistered_source"
 		scope := store.IdentityScope{Source: out[i].Source, SensorID: out[i].SensorID, CampusID: out[i].CampusID, AccessDomain: out[i].AccessDomain}
-		for _, source := range s.identitySources {
-			if source.IdentityScope == scope {
-				out[i].IdentityIssue = ""
-				out[i].HeartbeatSeconds = source.IntervalSeconds
-				out[i].ReconcileSeconds = source.IntervalSeconds
-				break
-			}
+		registration, err := authority.resolve(ctx, scope)
+		if err != nil {
+			return nil, err
+		}
+		if registration.registered {
+			out[i].IdentityIssue = ""
+			out[i].HeartbeatSeconds = registration.interval
+			out[i].ReconcileSeconds = registration.interval
 		}
 
 		for _, source := range managed {
@@ -82,6 +94,9 @@ func (s *Server) policySessionsForScope(ctx context.Context, reader store.Policy
 				break
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -127,17 +142,6 @@ func loadIdentitySources(path string) ([]identitySourceRegistration, error) {
 	}
 	return cfg.Sources, nil
 }
-func (s *Server) validateIdentitySource(scope store.IdentityScope, interval int) error {
-	for _, source := range s.identitySources {
-		if source.IdentityScope == scope {
-			if interval != source.IntervalSeconds {
-				return fmt.Errorf("identity interval differs from registered source")
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("identity source is not registered for this sensor, campus and access domain")
-}
 func (s *Server) mergeIdentitySources(observed []store.IdentitySourceStatus, at time.Time) []store.IdentitySourceStatus {
 	out := append([]store.IdentitySourceStatus{}, observed...)
 	for _, registered := range s.identitySources {
@@ -178,30 +182,40 @@ func (s *Server) mergeIdentitySources(observed []store.IdentitySourceStatus, at 
 	return out
 }
 
-// Freshness is controlled by registered collection configuration, not a sender's
-// self-declared interval. Scope must be explicit on every normalized record.
-func (s *Server) applyIdentityRegistration(event *normalized.Event) error {
-	sensor, _ := event.Observer["sensor_id"].(string)
-	campus, _ := event.Subject["campus_id"].(string)
-	domain, _ := event.Payload["access_domain"].(string)
-	scope := store.IdentityScope{Source: event.Source, SensorID: sensor, CampusID: campus, AccessDomain: domain}
-	for _, source := range s.identitySources {
-		if source.IdentityScope == scope {
-			event.Payload["heartbeat_interval_seconds"] = source.IntervalSeconds
-			event.Payload["reconcile_interval_seconds"] = source.IntervalSeconds
-			return nil
-		}
-	}
-	return fmt.Errorf("identity record has an unregistered source scope")
-}
-
 func (s *Server) mergeManagedIdentitySources(ctx context.Context, observed []store.IdentitySourceStatus, at time.Time) ([]store.IdentitySourceStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	out := s.mergeIdentitySources(observed, at)
 	registrations, err := s.managedIdentityRegistrations(ctx)
 	if err != nil {
 		return nil, err
 	}
+	// Direct 4K sources are registered by their integration, just as in policy
+	// reads. A snapshot is not unregistered merely because it has no static
+	// deployment entry. Event-channel readiness remains a separate action gate.
+	authority := newIdentityAuthorityResolver(s)
+	for i := range out {
+		registration, err := authority.resolve(ctx, out[i].IdentityScope)
+		if err != nil {
+			return nil, err
+		}
+		if !registration.registered {
+			continue
+		}
+		interval := registration.interval
+		out[i].IntervalSeconds = interval
+		out[i].State = "healthy"
+		if out[i].ObservedAt.IsZero() {
+			out[i].State = "never_seen"
+		} else if out[i].ObservedAt.After(at) || !at.Before(out[i].ObservedAt.Add(time.Duration(3*interval)*time.Second)) {
+			out[i].State = "interrupted"
+		}
+	}
 	for _, registered := range registrations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		index := -1
 		for i := range out {
 			if out[i].IdentityScope == registered.Config.IdentityScope {
@@ -229,6 +243,9 @@ func (s *Server) mergeManagedIdentitySources(ctx context.Context, observed []sto
 			out[index].Blocker = "identity_source_stale"
 		}
 		out[index].SessionCount = registered.RecordCount
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

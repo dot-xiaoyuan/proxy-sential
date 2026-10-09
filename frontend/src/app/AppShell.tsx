@@ -27,7 +27,7 @@ function buildNavItems(session: Session): MenuProps['items'] {
 
 function SentinelLogo() {
   return (
-    <svg className="brand-logo-svg" fill="none" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+    <svg aria-label="Proxy Sentinel" role="img" className="brand-logo-svg" fill="none" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
       <path d="M16 3L5 7V14C5 20.5 9.7 26.5 16 29C22.3 26.5 27 20.5 27 14V7L16 3Z" stroke="#0284c7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
       <circle cx="16" cy="15" r="5" stroke="#0ea5e9" strokeWidth="2" />
       <circle cx="16" cy="15" fill="#0284c7" r="2" />
@@ -57,6 +57,7 @@ export function AppShell() {
 
   const menu = (
     <Menu
+      inlineIndent={16}
       items={navItems}
       mode="inline"
       selectedKeys={owner ? [owner.entry.key] : []}
@@ -70,7 +71,6 @@ export function AppShell() {
   return (
     <Layout className="app-shell">
       <Layout.Sider
-        breakpoint="lg"
         className="app-sider"
         collapsed={collapsed}
         collapsible
@@ -82,7 +82,7 @@ export function AppShell() {
         <div className="brand">
           <SentinelLogo />
           {!collapsed && (
-            <div>
+            <div className="brand-copy">
               <div className="brand-title">Proxy Sentinel</div>
               <div className="brand-subtitle">高校网络风险运营平台</div>
             </div>
@@ -101,6 +101,7 @@ export function AppShell() {
               type="text"
             />
             <Button
+              aria-label="打开导航"
               className="mobile-menu-button"
               icon={<MenuUnfoldOutlined />}
               onClick={() => setDrawerOpen(true)}
@@ -127,12 +128,12 @@ export function AppShell() {
         </Layout.Content>
       </Layout>
       <Drawer
-        className="mobile-nav"
+        rootClassName="mobile-nav"
         onClose={() => setDrawerOpen(false)}
         open={drawerOpen}
         placement="left"
-        size="default"
-        title="Proxy Sentinel - 高校网络风险运营平台"
+        title="Proxy Sentinel"
+        size={320}
       >
         {menu}
       </Drawer>

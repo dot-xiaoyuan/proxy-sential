@@ -90,7 +90,7 @@ func (d *applicationDB) Report(ctx context.Context, q appdomain.Query) (appdomai
 	}
 	started := time.Now()
 	defer func() { d.queryMillis.Store(time.Since(started).Milliseconds()) }()
-	r := appdomain.Report{Items: []appdomain.Item{}, Versions: map[string]int{}, TrafficBasis: "仅汇总已被特征库识别的应用连接累计字节；未分类域名保留在观测统计中，不进入连接流量合计"}
+	r := appdomain.Report{Items: []appdomain.Item{}, Versions: map[string]int{}, TrafficBasis: appdomain.ClassifiedTrafficBasis}
 	var modelAsOf time.Time
 	if err := d.store.pg.db.QueryRowContext(ctx, `SELECT updated_at FROM application_connection_read_model_v2_cursor WHERE id=1`).Scan(&modelAsOf); err != nil {
 		return r, fmt.Errorf("connection read model is not ready: %w", err)

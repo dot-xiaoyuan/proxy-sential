@@ -5,6 +5,7 @@ package devicesignal
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"proxy-sentinel/internal/normalized"
 	"syscall"
@@ -18,6 +19,8 @@ type Options struct {
 	Output              string
 	SensorID            string
 	Bucket              time.Duration
+	RouterProtocolsOnly bool
+	SharedSignalsOnly   bool
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -26,6 +29,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if opts.Bucket <= 0 {
 		opts.Bucket = 5 * time.Second
+	}
+	if opts.RouterProtocolsOnly && opts.SharedSignalsOnly {
+		return fmt.Errorf("router protocol and shared signal filters are mutually exclusive")
 	}
 	iface, err := net.InterfaceByName(opts.Interface)
 	if err != nil {
@@ -39,9 +45,21 @@ func Run(ctx context.Context, opts Options) error {
 	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0003), Ifindex: iface.Index}); err != nil {
 		return fmt.Errorf("bind %s: %w", opts.Interface, err)
 	}
+	if opts.RouterProtocolsOnly {
+		if err := attachRouterProtocolFilter(fd); err != nil {
+			return fmt.Errorf("attach router protocol BPF: %w", err)
+		}
+	} else if opts.SharedSignalsOnly {
+		if err := attachSharedSignalFilter(fd); err != nil {
+			return fmt.Errorf("attach shared signal BPF: %w", err)
+		}
+	}
 	_ = syscall.SetNonblock(fd, true)
-	values := map[packetBucketKey]int{}
-	controlValues := map[string]controlSignal{}
+	state := newCaptureBucket()
+	packetSource := "packet-sidecar"
+	if opts.SharedSignalsOnly {
+		packetSource = "shared-syn-sidecar"
+	}
 	bucket := time.Now().UTC().Truncate(opts.Bucket)
 	ticker := time.NewTicker(opts.Bucket)
 	defer ticker.Stop()
@@ -60,53 +78,55 @@ func Run(ctx context.Context, opts Options) error {
 				return recvErr
 			}
 			processed++
-			if signal, found := parseControlFrame(buffer[:n]); found {
-				controlValues[signal.key()] = signal
-			}
-			if value, ok := parsePacketFrame(buffer[:n]); ok && value.TTL > 0 {
-				value.Direction = opts.CaptureScope.DirectionAddr(value.IP, value.DestinationIP)
-				if value.Direction == "inbound" || value.Direction == "internal" {
-					continue
-				}
-				if value.Direction == "unknown" && !value.IP.IsPrivate() {
-					continue
-				}
-				values[packetBucketKey{IP: value.IP, MAC: value.MAC, Direction: value.Direction, Version: value.Version, TTL: value.TTL, TCP: value.TCP}]++
-			}
+			state.addFrame(buffer[:n], opts.CaptureScope)
 		}
 		select {
 		case <-ctx.Done():
-			if err := writePacketBucketWithScope(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, values); err != nil {
+			if state.droppedPacketKeys > 0 {
+				log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
+			}
+			if err := writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, bucket, state.packets); err != nil {
 				return err
 			}
-			return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, controlValues)
+			return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls)
 		case now := <-ticker.C:
-			if err := writePacketBucketWithScope(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, values); err != nil {
+			if state.droppedPacketKeys > 0 {
+				log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
+			}
+			if err := writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, bucket, state.packets); err != nil {
 				return err
 			}
-			if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, controlValues); err != nil {
+			if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls); err != nil {
 				return err
 			}
-			values = map[packetBucketKey]int{}
-			controlValues = map[string]controlSignal{}
+			state.packets = map[packetBucketKey]int{}
+			state.controls = map[string]controlSignal{}
+			state.droppedPacketKeys = 0
 			bucket = now.UTC().Truncate(opts.Bucket)
 		default:
 			if processed == 0 {
 				select {
 				case <-ctx.Done():
-					if err := writePacketBucketWithScope(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, values); err != nil {
+					if state.droppedPacketKeys > 0 {
+						log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
+					}
+					if err := writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, bucket, state.packets); err != nil {
 						return err
 					}
-					return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, controlValues)
+					return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls)
 				case now := <-ticker.C:
-					if err := writePacketBucketWithScope(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, values); err != nil {
+					if state.droppedPacketKeys > 0 {
+						log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
+					}
+					if err := writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, bucket, state.packets); err != nil {
 						return err
 					}
-					if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, controlValues); err != nil {
+					if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls); err != nil {
 						return err
 					}
-					values = map[packetBucketKey]int{}
-					controlValues = map[string]controlSignal{}
+					state.packets = map[packetBucketKey]int{}
+					state.controls = map[string]controlSignal{}
+					state.droppedPacketKeys = 0
 					bucket = now.UTC().Truncate(opts.Bucket)
 				case <-time.After(20 * time.Millisecond):
 				}

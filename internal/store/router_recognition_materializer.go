@@ -131,9 +131,14 @@ func (s *DBStore) routerSignalBatch(ctx context.Context, sensorID string, cursor
 			event.Subject["entity_role"] = "network_device"
 		}
 		if strings.TrimSpace(row.ObserverJSON) != "" {
-			_ = json.Unmarshal([]byte(row.ObserverJSON), &event.Observer)
-			event.Observer["sensor_id"] = row.SensorID
+			if err = json.Unmarshal([]byte(row.ObserverJSON), &event.Observer); err != nil {
+				return nil, cursor, fmt.Errorf("decode router observer metadata: %w", err)
+			}
 		}
+		if event.Observer == nil {
+			event.Observer = map[string]any{}
+		}
+		event.Observer["sensor_id"] = row.SensorID
 		if strings.TrimSpace(row.PayloadJSON) != "" {
 			if err = json.Unmarshal([]byte(row.PayloadJSON), &event.Payload); err != nil {
 				return nil, cursor, err
@@ -155,7 +160,9 @@ func (s *DBStore) routerSignalBatch(ctx context.Context, sensorID string, cursor
 	return events, next, nil
 }
 
-func (s *DBStore) finishRouterRecognition(ctx context.Context, cursor routerRecognitionCursor, processed int, runErr error) error {
+func (s *DBStore) finishRouterRecognition(parent context.Context, cursor routerRecognitionCursor, processed int, runErr error) error {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
 	if runErr != nil {
 		_, err := s.pg.db.ExecContext(ctx, `UPDATE router_recognition_state SET lease_owner='',lease_until='-infinity',last_error=$2,updated_at=now() WHERE singleton AND lease_owner=$1`, cursor.Owner, runErr.Error())
 		return err
@@ -203,9 +210,12 @@ func (s *DBStore) runRouterRecognitionMaterializer(ctx context.Context, sensorID
 				}
 			}
 			if err == nil {
+				_, err = s.pg.refreshExpiredRouterAssessments(workCtx, 50)
+			}
+			if err == nil {
 				cursor = next
 			}
-			if finishErr := s.finishRouterRecognition(context.WithoutCancel(workCtx), cursor, len(events), err); err == nil {
+			if finishErr := s.finishRouterRecognition(ctx, cursor, len(events), err); err == nil {
 				err = finishErr
 			}
 		}

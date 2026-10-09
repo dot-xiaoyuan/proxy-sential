@@ -10,8 +10,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"proxy-sentinel/internal/actionreceipt"
@@ -21,7 +23,6 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/srunapi"
-	"proxy-sentinel/internal/store"
 )
 
 type ActionConnector struct {
@@ -46,35 +47,37 @@ type ActionConnector struct {
 }
 
 type EnforcementAction struct {
-	PolicyParameters PolicyActionParameters `json:"policy_parameters,omitempty"`
-	ActionID         string                 `json:"action_id"`
-	IdempotencyKey   string                 `json:"idempotency_key"`
-	CaseID           string                 `json:"case_id,omitempty"`
-	ConnectorID      string                 `json:"connector_id"`
-	ActionType       string                 `json:"action_type"`
-	SubjectType      string                 `json:"subject_type"`
-	SubjectID        string                 `json:"subject_id"`
-	IP               string                 `json:"ip,omitempty"`
-	AccountID        string                 `json:"account_id,omitempty"`
-	EndpointID       string                 `json:"endpoint_id,omitempty"`
-	SessionID        string                 `json:"session_id,omitempty"`
-	CampusID         string                 `json:"campus_id,omitempty"`
-	Status           string                 `json:"status"`
-	Mode             string                 `json:"mode"`
-	DurationSeconds  int                    `json:"duration_seconds"`
-	EvidenceIDs      []string               `json:"evidence_ids"`
-	RulesetVersion   string                 `json:"ruleset_version,omitempty"`
-	RemoteActionID   string                 `json:"remote_action_id,omitempty"`
-	RetryCount       int                    `json:"retry_count"`
-	ParentActionID   string                 `json:"parent_action_id,omitempty"`
-	NextAttemptAt    string                 `json:"next_attempt_at,omitempty"`
-	CooldownUntil    string                 `json:"cooldown_until,omitempty"`
-	ExpiresAt        string                 `json:"expires_at,omitempty"`
-	LastError        string                 `json:"last_error,omitempty"`
-	CreatedBy        string                 `json:"created_by"`
-	CreatedAt        string                 `json:"created_at"`
-	UpdatedAt        string                 `json:"updated_at"`
-	Blockers         []string               `json:"blockers,omitempty"`
+	PolicyParameters   PolicyActionParameters `json:"policy_parameters,omitempty"`
+	ActionID           string                 `json:"action_id"`
+	IdempotencyKey     string                 `json:"idempotency_key"`
+	CaseID             string                 `json:"case_id,omitempty"`
+	ConnectorID        string                 `json:"connector_id"`
+	ActionType         string                 `json:"action_type"`
+	SubjectType        string                 `json:"subject_type"`
+	SubjectID          string                 `json:"subject_id"`
+	IP                 string                 `json:"ip,omitempty"`
+	AccountID          string                 `json:"account_id,omitempty"`
+	EndpointID         string                 `json:"endpoint_id,omitempty"`
+	SessionID          string                 `json:"session_id,omitempty"`
+	CampusID           string                 `json:"campus_id,omitempty"`
+	Status             string                 `json:"status"`
+	Mode               string                 `json:"mode"`
+	DurationSeconds    int                    `json:"duration_seconds"`
+	EvidenceIDs        []string               `json:"evidence_ids"`
+	RulesetVersion     string                 `json:"ruleset_version,omitempty"`
+	RemoteActionID     string                 `json:"remote_action_id,omitempty"`
+	RetryCount         int                    `json:"retry_count"`
+	PrecheckRetryCount int                    `json:"precheck_retry_count,omitempty"`
+	PrecheckRetryable  bool                   `json:"precheck_retryable,omitempty"`
+	ParentActionID     string                 `json:"parent_action_id,omitempty"`
+	NextAttemptAt      string                 `json:"next_attempt_at,omitempty"`
+	CooldownUntil      string                 `json:"cooldown_until,omitempty"`
+	ExpiresAt          string                 `json:"expires_at,omitempty"`
+	LastError          string                 `json:"last_error,omitempty"`
+	CreatedBy          string                 `json:"created_by"`
+	CreatedAt          string                 `json:"created_at"`
+	UpdatedAt          string                 `json:"updated_at"`
+	Blockers           []string               `json:"blockers,omitempty"`
 }
 
 type executeActionRequest struct {
@@ -112,6 +115,10 @@ func (s *Server) startActionWorker() {
 }
 
 func (s *Server) handleActions(w http.ResponseWriter, r *http.Request) {
+	if id, ok := fourKSyncPath(r.URL.Path); ok {
+		s.handle4KSync(w, r, id)
+		return
+	}
 	if id, ok := managedIdentityPath(r.URL.Path); ok {
 		s.handleManagedIdentity(w, r, id)
 		return
@@ -229,6 +236,14 @@ func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "native_connector_secret_not_supported", "4K uses database authorization instead of HMAC")
 		return
 	}
+	if request.ConnectorType == "srun4k" {
+		// This describes the execution capability exposed by the connector. It is
+		// not a policy action: policy authors still choose and order actions.
+		request.ActionMapping = map[string]string{
+			"account_policy_v1":  "supported",
+			"session.disconnect": "online-drop",
+		}
+	}
 
 	certificate := existing.CertificatePEM
 	if request.CertificatePEM != nil {
@@ -254,7 +269,8 @@ func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		existing.ShadowStartedAt = ""
 		existing.ShadowCandidateCount, existing.ShadowReviewedCount, existing.ShadowAccuracy = 0, 0, 0
 	}
-	if request.Mode == "active" && !existing.ShadowReady && s.nativeActions[request.ConnectorID].TestAccount == "" {
+	runtime, _ := s.nativeRuntime(request.ConnectorID)
+	if request.Mode == "active" && !existing.ShadowReady && runtime.TestAccount == "" {
 		writeError(w, 409, "shadow_gate_required", "真实模式尚未通过准入验收：至少七天影子复核、准确率不低于95%，且保护对象零误处置。请使用影子模式配置授权和检查接口。")
 		return
 	}
@@ -267,7 +283,7 @@ func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		}
 		encrypted = value
 	}
-	if _, nativeConfigured := s.nativeActions[request.ConnectorID]; encrypted == "" && !nativeConfigured && request.ConnectorType != "srun4k" {
+	if _, nativeConfigured := s.nativeRuntime(request.ConnectorID); encrypted == "" && !nativeConfigured && request.ConnectorType != "srun4k" {
 		writeError(w, 400, "connector_secret_required", "secret is required for a new connector")
 		return
 	}
@@ -281,7 +297,8 @@ func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditMode := item.Mode
-	if item.Mode == "active" && !item.ShadowReady && s.nativeActions[item.ConnectorID].TestAccount != "" {
+	runtime, _ = s.nativeRuntime(item.ConnectorID)
+	if item.Mode == "active" && !item.ShadowReady && runtime.TestAccount != "" {
 		auditMode = "active_scoped_test_exception"
 	}
 	s.appendAudit(r.Context(), "enforcement.connector.save", item.ConnectorID, auditMode)
@@ -453,7 +470,12 @@ func (s *Server) handleActionCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "callback_signature_invalid", "callback signature or timestamp is invalid")
 		return
 	}
-	if err := s.finishAction(callback.ActionID, callback.Status, callback.RemoteActionID, callback.Error); err != nil {
+	if err := s.finishActionReceipt(action, callback.Status, callback.RemoteActionID, callback.Error); err != nil {
+		if errors.Is(err, errActionReceiptConflict) {
+			s.appendAudit(r.Context(), "enforcement.callback", callback.ActionID, "receipt_conflict:"+callback.Status)
+			writeError(w, http.StatusConflict, "action_receipt_conflict", err.Error())
+			return
+		}
 		writeError(w, 503, "action_storage_failed", err.Error())
 		return
 	}
@@ -511,6 +533,12 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blockers := []string{}
+	if snapshot.IP != request.IP {
+		blockers = append(blockers, "risk_subject_mismatch")
+	}
+	if snapshot.Level != "high" && snapshot.Level != "confirmed" {
+		blockers = append(blockers, "risk_level_not_actionable")
+	}
 	if connector.Mode == "active" && (!caseOK || request.CaseID == "") {
 		blockers = append(blockers, "case_required_for_active_action")
 	}
@@ -521,7 +549,7 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 		if caseItem.IP != "" && caseItem.IP != request.IP {
 			blockers = append(blockers, "case_subject_mismatch")
 		}
-		if caseItem.Disposition == "false_positive" || caseItem.Disposition == "benign" {
+		if caseItem.Disposition == "false_positive" || caseItem.Disposition == "benign" || caseItem.Disposition == "needs_more_data" || caseItem.Status == "closed" || caseItem.Status == "resolved" {
 			blockers = append(blockers, "manual_exception_applied")
 		}
 		if caseItem.IdentityConflict || caseItem.IdentityBlocker != "" {
@@ -540,29 +568,16 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 	} else if matchEvidenceException(activeExceptions, evidenceItems, request.CampusID) != nil {
 		blockers = appendUnique(blockers, "campus_exception_applied")
 	}
+	if err := s.checkActionWhitelist(r.Context(), EnforcementAction{ActionType: request.ActionType, AccountID: snapshot.AccountID, IP: request.IP, CampusID: request.CampusID}); err != nil {
+		blockers = appendUnique(blockers, err.Error())
+	}
 	if snapshot.Score < 90 {
 		blockers = append(blockers, "risk_score_below_90")
 	}
 	if snapshot.Confidence < .90 {
 		blockers = append(blockers, "risk_confidence_below_0_90")
 	}
-	strongBasis := snapshot.DetectionBasis == "explicit_tunnel"
-	if snapshot.DetectionBasis == "shared_device_divergence" && len(snapshot.IndependentSignalGroups) >= 2 {
-		strongBasis = true
-	}
-	// Pre-migration snapshots do not have detection_basis. The minute
-	// materializer will replace them, but retain a safe explicit-rule fallback.
-	if snapshot.DetectionBasis == "" || len(snapshot.IndependentSignalGroups) == 0 {
-		for _, item := range evidenceItems {
-			if item.Type == "vpn_proxy_rule_match" && item.Confidence >= .90 {
-				strongBasis = true
-				break
-			}
-		}
-	}
-	if !strongBasis {
-		blockers = append(blockers, "strong_detection_basis_required")
-	}
+	blockers = append(blockers, riskActionProofBlockers(snapshot, evidenceItems, snapshot.EvidenceIDs, time.Now().UTC())...)
 	if snapshot.ReviewStatus == "false_positive" || snapshot.ReviewStatus == "benign" {
 		blockers = append(blockers, "manual_exception_applied")
 	}
@@ -571,13 +586,11 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 		blockers = append(blockers, "active_identity_session_required")
 	} else {
 		identityNow := time.Now().UTC()
-		profile, found, identityErr := s.reader.GetEndpointIdentity(r.Context(), snapshot.EndpointID, store.Query{From: identityNow.Add(-24 * time.Hour).Format(time.RFC3339Nano), To: identityNow.Format(time.RFC3339Nano), Limit: 50})
+		session, identityErr := s.currentRiskActionSession(r.Context(), snapshot, caseItem.AuthSessionID, identityNow)
 		if identityErr != nil {
-			blockers = append(blockers, "identity_data_unavailable")
-		} else if session, current := currentIdentitySession(profile.Sessions, snapshot.AccountID, request.IP, caseItem.AuthSessionID); !found || !current {
 			blockers = append(blockers, "active_identity_session_required")
 		} else {
-			activeSessionID = session.SessionID
+			activeSessionID = session.ID
 		}
 	}
 	if !connectorOK || !connector.Enabled {
@@ -660,16 +673,6 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, action)
 }
 
-func currentIdentitySession(sessions []store.AccountSession, accountID, ip, requiredSessionID string) (store.AccountSession, bool) {
-	for _, session := range sessions {
-		ended := session.EndedAt != "" || session.SessionStatus == "ended" || session.SessionStatus == "stop" || session.SessionStatus == "logout"
-		if !ended && session.AccountID == accountID && session.IP == ip && session.IdentityConfidence >= .8 && (requiredSessionID == "" || session.SessionID == requiredSessionID) {
-			return session, true
-		}
-	}
-	return store.AccountSession{}, false
-}
-
 func (s *Server) deliverAction(actionID string, revoke bool) {
 	if s.operations.db != nil && !s.operations.readView {
 		s.deliverActionPostgres(actionID, revoke)
@@ -681,11 +684,11 @@ func (s *Server) deliverAction(actionID string, revoke bool) {
 	s.operations.mu.Lock()
 	preview := s.operations.doc.Actions[actionID]
 	s.operations.mu.Unlock()
-	if preview.Status != "pending" {
+	if !actionDispatchDue(preview, time.Now().UTC()) {
 		return
 	}
 	if err := s.validatePolicyDelivery(preview); err != nil {
-		s.finishAction(actionID, "blocked", "", err.Error())
+		s.recordActionPrecheckFailure(preview, err)
 		return
 	}
 	s.operations.mu.Lock()
@@ -699,12 +702,20 @@ func (s *Server) deliverAction(actionID string, revoke bool) {
 		s.operations.mu.Unlock()
 		return
 	}
+	if operationFingerprint("action", action) != operationFingerprint("action", preview) {
+		s.operations.mu.Unlock()
+		return
+	}
 	if s.operations.lockErr != nil {
 		s.operations.mu.Unlock()
 		return
 	}
+	action.PrecheckRetryable = false
+	action.NextAttemptAt = ""
+	action.LastError = ""
 	if s.operations.doc.GlobalStop || !connector.Enabled || connector.Mode != "active" || (action.PolicyParameters.ExecutionID != "" && !connector.ShadowReady) {
 		action.Status = "blocked"
+		action.LastError = "连接器或紧急停止状态已变更，动作已阻塞"
 		action.Blockers = append(action.Blockers, "connector_or_global_stop_changed")
 		action.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		s.operations.doc.Actions[actionID] = action
@@ -724,14 +735,13 @@ func (s *Server) deliverAction(actionID string, revoke bool) {
 }
 
 func (s *Server) deliverActionRequest(action EnforcementAction, connector ActionConnector, revoke bool) {
-	actionID := action.ActionID
 	if connector.ConnectorType == "srun4k" {
-		s.finishAction(actionID, "blocked", "", "native runtime or action capability unavailable")
+		s.recordActionPrecheckFailure(action, errors.New("native runtime or action capability unavailable"))
 		return
 	}
 	secret, err := s.decryptConnectorSecret(connector.EncryptedSecret)
 	if err != nil {
-		s.finishAction(actionID, "failed", "", err.Error())
+		s.finishDeliveredAction(action, "failed", "", err.Error())
 		return
 	}
 	payload := map[string]any{"action_id": action.ActionID, "idempotency_key": action.IdempotencyKey, "case_id": action.CaseID, "action": action.ActionType, "revoke": revoke, "subject": map[string]any{"account_id": action.AccountID, "endpoint_id": action.EndpointID, "ip": action.IP, "campus_id": action.CampusID, "session_id": action.SessionID}, "duration_seconds": action.DurationSeconds, "evidence_ids": action.EvidenceIDs, "ruleset_version": action.RulesetVersion, "expires_at": action.ExpiresAt}
@@ -769,8 +779,9 @@ func (s *Server) deliverActionRequest(action EnforcementAction, connector Action
 	if requestErr == nil && statusCode >= 200 && statusCode < 300 {
 		remoteID, err := actionreceipt.Completed(responseBody, revoke)
 		if err == nil {
-			s.recordActionAttempt(action, data, responseBody, statusCode, "")
-			s.finishAction(actionID, map[bool]string{true: "revoked", false: "succeeded"}[revoke], remoteID, "")
+			attemptErr := s.recordActionAttempt(action, data, responseBody, statusCode, "")
+			s.finishDeliveredAction(action, map[bool]string{true: "revoked", false: "succeeded"}[revoke], remoteID, "")
+			s.auditActionAttemptWriteError(action, attemptErr)
 			return
 		}
 		requestErr = err
@@ -781,8 +792,9 @@ func (s *Server) deliverActionRequest(action EnforcementAction, connector Action
 	} else {
 		lastError = fmt.Sprintf("status=%d body=%s", statusCode, strings.TrimSpace(string(responseBody)))
 	}
-	s.recordActionAttempt(action, data, responseBody, statusCode, lastError)
-	s.scheduleActionRetry(actionID, lastError)
+	attemptErr := s.recordActionAttempt(action, data, responseBody, statusCode, lastError)
+	s.auditDeliveryResultError(action, "retry", s.scheduleActionRetryForAttempt(action, lastError))
+	s.auditActionAttemptWriteError(action, attemptErr)
 }
 
 func signActionPayload(secret, timestamp string, data []byte) string {
@@ -792,11 +804,36 @@ func signActionPayload(secret, timestamp string, data []byte) string {
 	return "sha256=" + fmt.Sprintf("%x", signature.Sum(nil))
 }
 
-func (s *Server) recordActionAttempt(action EnforcementAction, requestBody, responseBody []byte, statusCode int, errorText string) {
+func (s *Server) recordActionAttempt(action EnforcementAction, requestBody, responseBody []byte, statusCode int, errorText string) error {
 	if s.operations.db == nil {
+		return nil
+	}
+	// Receipt storage has its own budget: the HTTP deadline may already have
+	// expired, and an attempt-table lock must not hold the delivery worker.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := s.operations.db.ExecContext(ctx, `INSERT INTO enforcement_action_attempts(attempt_id,action_id,attempt_number,request_body,response_body,http_status,error_text,created_at) VALUES($1,$2,$3,$4,NULLIF($5,'null'::jsonb),NULLIF($6,0),NULLIF($7,''),now()) ON CONFLICT(attempt_id) DO NOTHING`, "attempt-"+shortToken(10), action.ActionID, action.RetryCount+1, json.RawMessage(requestBody), nullableJSON(responseBody), statusCode, errorText)
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
+func (s *Server) auditActionAttemptWriteError(action EnforcementAction, err error) {
+	if err == nil {
 		return
 	}
-	_, _ = s.operations.db.ExecContext(context.Background(), `INSERT INTO enforcement_action_attempts(attempt_id,action_id,attempt_number,request_body,response_body,http_status,error_text,created_at) VALUES($1,$2,$3,$4,NULLIF($5,'null'::jsonb),NULLIF($6,0),NULLIF($7,''),now()) ON CONFLICT(attempt_id) DO NOTHING`, "attempt-"+shortToken(10), action.ActionID, action.RetryCount+1, json.RawMessage(requestBody), nullableJSON(responseBody), statusCode, errorText)
+	outcome := "attempt_storage_failed"
+	if errors.Is(err, context.DeadlineExceeded) {
+		outcome = "attempt_storage_timeout"
+	}
+	// The actual transport outcome is already processed. Losing its diagnostic
+	// row cannot turn a confirmed recovery into another remote request.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if auditErr := s.writeAudit(ctx, "enforcement.delivery_attempt", action.ActionID, outcome); auditErr != nil {
+		log.Printf("action attempt storage audit did not complete: action=%q outcome=%q", action.ActionID, outcome)
+	}
 }
 
 func nullableJSON(value []byte) any {
@@ -812,6 +849,10 @@ func (s *Server) scheduleActionRetry(id, lastError string) error {
 	}
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
+	return s.scheduleActionRetryLocked(id, lastError)
+}
+
+func (s *Server) scheduleActionRetryLocked(id, lastError string) error {
 	action, exists := s.operations.doc.Actions[id]
 	if !exists {
 		return fmt.Errorf("action not found")
@@ -826,7 +867,7 @@ func (s *Server) scheduleActionRetry(id, lastError string) error {
 	action.RetryCount++
 	action.LastError = lastError
 	action.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	if action.RetryCount >= 3 {
+	if action.RetryCount >= actionTransportRetryLimit {
 		action.Status = "failed"
 		action.NextAttemptAt = ""
 		connector := s.operations.doc.Connectors[action.ConnectorID]
@@ -849,6 +890,10 @@ func (s *Server) finishAction(id, status, remoteID, lastError string) error {
 	}
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
+	return s.finishActionLocked(id, status, remoteID, lastError)
+}
+
+func (s *Server) finishActionLocked(id, status, remoteID, lastError string) error {
 	action, exists := s.operations.doc.Actions[id]
 	if !exists {
 		return fmt.Errorf("action not found")
@@ -908,24 +953,29 @@ func (s *Server) handleRevokeAction(w http.ResponseWriter, r *http.Request, id s
 		writeError(w, 404, "action_not_found", "action not found")
 		return
 	}
-	if action.Status != "succeeded" {
-		for _, existing := range s.operations.doc.Actions {
-			if existing.ParentActionID == id && existing.ActionType == "release" {
+	if existing, found, requeued := s.existingReleaseActionLocked(action); found {
+		if requeued {
+			if err := s.operations.saveLocked(); err != nil {
 				s.operations.mu.Unlock()
-				writeJSON(w, 200, existing)
+				writeError(w, 500, "save_revoke_failed", err.Error())
 				return
 			}
+			existing = s.operations.doc.Actions[existing.ActionID]
 		}
+		s.operations.mu.Unlock()
+		if requeued {
+			s.enqueueActionDelivery(existing.ActionID, true)
+			s.appendAudit(r.Context(), "enforcement.revoke.retry", id, "accepted:"+existing.ActionID)
+			writeJSON(w, http.StatusAccepted, existing)
+		} else {
+			writeJSON(w, http.StatusOK, existing)
+		}
+		return
+	}
+	if action.Status != "succeeded" {
 		s.operations.mu.Unlock()
 		writeError(w, 409, "action_not_revocable", "only succeeded actions can be revoked")
 		return
-	}
-	for _, existing := range s.operations.doc.Actions {
-		if existing.ParentActionID == id && existing.ActionType == "release" {
-			s.operations.mu.Unlock()
-			writeJSON(w, 200, existing)
-			return
-		}
 	}
 	reversal := s.newReleaseAction(action, "manual-revoke", time.Now().UTC())
 	s.operations.doc.Actions[reversal.ActionID] = reversal
@@ -983,6 +1033,13 @@ func (s *Server) processDueActions(now time.Time) {
 		}
 		expires, err := time.Parse(time.RFC3339Nano, action.ExpiresAt)
 		if err != nil || expires.After(now) {
+			continue
+		}
+		if connector := s.operations.doc.Connectors[action.ConnectorID]; connector.ConnectorType == "srun4k" && action.PolicyParameters.Operation == "disable_account" {
+			action.Status = "expired"
+			action.UpdatedAt = formatDBTime(now)
+			s.operations.doc.Actions[id] = action
+			changed = true
 			continue
 		}
 		hasRelease := false

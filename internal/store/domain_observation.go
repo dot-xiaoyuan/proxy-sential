@@ -91,9 +91,8 @@ func AttributeDomainObservation(ctx context.Context, observation DomainObservati
 			observation.AttributionMethod = "dhcp_lease"
 			return observation, true, nil
 		}
-		if observation.SensorID != "" {
-			return observation, false, nil
-		}
+		// Missing scope cannot authorize a fallback to an IP-only history join.
+		return observation, false, nil
 	}
 	attribution, found, err := resolver.ResolveIdentityAt(ctx, observation.IP, observation.Timestamp)
 	if err != nil {

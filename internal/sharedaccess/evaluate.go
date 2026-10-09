@@ -14,7 +14,7 @@ import (
 	"proxy-sentinel/internal/policy"
 )
 
-const RuleVersion = "shared-access/v3"
+const RuleVersion = "shared-access/v4"
 
 type Source struct {
 	SensorID     string `json:"sensor_id"`
@@ -42,6 +42,8 @@ type RecordRef struct {
 }
 
 type Window struct {
+	AssociatedClients []string `json:"associated_clients,omitempty"`
+
 	CoverageVerified bool                                `json:"coverage_verified,omitempty"`
 	Samples          map[string]map[string]FeatureSample `json:"feature_samples,omitempty"`
 	Records          []RecordRef                         `json:"records,omitempty"`
@@ -202,7 +204,7 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 	r.DeviceLowerBound = quota.Total
 	r.QuantityKnown = quota.Total > 0
 	ua := diversity(w.UAOS) > 1
-	ttl := diversity(w.TTLPaths) > 1
+	ttl := ttlHostDiversity(w.TTLPaths)
 	tls := diversity(w.TLSStacks) > 1
 	tcp := diversity(w.TCPStacks) > 1
 	device := diversity(w.DHCPProfiles) > 1
@@ -251,7 +253,7 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 		r.Reasons = append(r.Reasons, "corroborated_shared_access_basis_requires_review")
 		return r
 	}
-	if ua || ttl || device {
+	if ua || ttl || device || diversity(w.TTLPaths) > 1 {
 		return fail("insufficient_independent_shared_signals")
 	}
 	r.State = "not_matched"

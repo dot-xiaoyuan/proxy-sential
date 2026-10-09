@@ -14,6 +14,8 @@ type Options struct {
 	CaptureScope                *normalized.CaptureScope
 	Interface, Output, SensorID string
 	Bucket                      time.Duration
+	RouterProtocolsOnly         bool
+	SharedSignalsOnly           bool
 }
 
 func Run(context.Context, Options) error {

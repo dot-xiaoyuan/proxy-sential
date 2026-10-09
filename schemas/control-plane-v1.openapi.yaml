@@ -56,8 +56,9 @@ paths:
         - { name: vlan, in: query, schema: { type: string } }
         - { name: brand, in: query, schema: { type: string } }
         - { name: model, in: query, schema: { type: string } }
-        - { name: role, in: query, schema: { type: string, enum: [router, ap, switch, firewall, endpoint, unknown] } }
+        - { name: role, in: query, description: Defaults to router; pass ap explicitly to inspect access points., schema: { type: string, enum: [router, ap, switch, firewall, endpoint, unknown], default: router } }
         - { name: status, in: query, schema: { type: string, enum: [candidate, likely, confirmed] } }
+        - { name: include_candidates, in: query, description: Include low-confidence router candidates when status is not explicitly selected., schema: { type: boolean, default: false } }
         - { name: source, in: query, schema: { type: string } }
         - { name: confidence_min, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
         - { name: confidence_max, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
@@ -66,6 +67,7 @@ paths:
         - { name: last_seen_from, in: query, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, schema: { type: string, format: date-time } }
         - { name: infrastructure, in: query, schema: { type: boolean } }
+        - { name: has_auth_binding, in: query, description: Only include observations with a current authentication session linked by exact MAC or endpoint identity., schema: { type: boolean } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
         - { name: cursor, in: query, schema: { type: string } }
       responses:
@@ -285,7 +287,7 @@ paths:
                 reason: { type: string, minLength: 1, maxLength: 4096 }
       responses:
         '200': { description: Conclusion saved with enforcement_ready=false }
-        '409': { description: Evidence changed, re-review required }
+        '409': { description: 'Evidence changed, re-review required' }
   /shared-access/reviews/{id}/disconnect-preview:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -295,7 +297,7 @@ paths:
       x-performance-category: task-submission
       responses:
         '202': { description: Preview task persisted, content: { application/json: { schema: { $ref: '#/components/schemas/OperationTask' } } } }
-        '403': { description: Permission, CSRF or read-only restriction }
+        '403': { description: 'Permission, CSRF or read-only restriction' }
         '404': { description: Review does not exist }
   /shared-access/reviews/{id}/disconnect:
     parameters:
@@ -322,7 +324,7 @@ paths:
       responses:
         '202': { description: Confirmation task persisted; business validation and target outcomes are obtained from the task and linked execution records, content: { application/json: { schema: { $ref: '#/components/schemas/OperationTask' } } } }
         '400': { description: Missing idempotency key or invalid task submission }
-        '403': { description: Permission, CSRF or read-only restriction }
+        '403': { description: 'Permission, CSRF or read-only restriction' }
         '404': { description: Review does not exist }
   /actions/connectors/{id}/identity-source:
     parameters:
@@ -375,11 +377,28 @@ paths:
                   materialization: { type: object, additionalProperties: true }
                   policy: { type: object, additionalProperties: true }
                   controller: { type: object, additionalProperties: true }
+  /shared-access/devices:
+    get:
+      operationId: listSharedDeviceProfiles
+      description: Durable passive equipment identity profiles, independent of current sharing and enforcement; requires cases:read. Activity is address-scoped and does not renew identity proof.
+      parameters:
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Equipment identity archive
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedDeviceProfilePage' }
+        '503': { description: Archive read unavailable }
   /shared-access/observations:
     get:
       operationId: listSharedBehaviorObservations
       description: Passive shared-gateway behavior observations; requires cases:read. Results are shadow-only and never authorize enforcement.
       parameters:
+        - { name: view, in: query, schema: { type: string, enum: [current, history], default: current } }
+        - { name: history_basis, in: query, description: 'History only. Defaults to verified multi-device evidence; clues explicitly opens weaker legacy records.', schema: { type: string, enum: [shared, clues] } }
         - { name: keyword, in: query, schema: { type: string } }
         - { name: ip, in: query, schema: { type: string } }
         - { name: status, in: query, schema: { type: string, enum: [candidate, likely, confirmed] } }
@@ -633,6 +652,36 @@ paths:
                         updated_at: { type: string, format: date-time }
                   fingerprint_library: { type: object, additionalProperties: true }
                   fingerprint_offline_mode: { type: boolean }
+                  runtime:
+                    type: object
+                    required: [host, process, sampled_at]
+                    properties:
+                      sampled_at: { type: string, format: date-time }
+                      host:
+                        type: object
+                        required: [logical_cpus]
+                        properties:
+                          logical_cpus: { type: integer }
+                          load_1: { type: number }
+                          load_5: { type: number }
+                          load_15: { type: number }
+                          memory_total_bytes: { type: integer, format: int64 }
+                          memory_used_bytes: { type: integer, format: int64 }
+                          memory_used_percent: { type: number }
+                          root_filesystem: { $ref: "#/components/schemas/RootFilesystemStatus" }
+                          root_filesystem_error: { type: string }
+                      process:
+                        type: object
+                        required: [cpu_percent, heap_alloc_bytes, heap_in_use_bytes, goroutines, gomaxprocs, gc_cycles, uptime_seconds]
+                        properties:
+                          cpu_percent: { type: number }
+                          resident_memory_bytes: { type: integer, format: int64 }
+                          heap_alloc_bytes: { type: integer, format: int64 }
+                          heap_in_use_bytes: { type: integer, format: int64 }
+                          goroutines: { type: integer }
+                          gomaxprocs: { type: integer }
+                          gc_cycles: { type: integer }
+                          uptime_seconds: { type: integer, format: int64 }
                   global_read_only: { type: boolean }
                   checked_at: { type: string, format: date-time }
   /exports:
@@ -715,6 +764,86 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/UserMutation" } } } }
       responses:
         "200": { description: User updated., content: { application/json: { schema: { $ref: "#/components/schemas/LocalUser" } } } }
+  /whitelist:
+    get:
+      operationId: listWhitelist
+      description: Action exemptions only; requires policies:read. Detection evidence remains available.
+      parameters:
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string, enum: [ip, account, mac, network, group] } }
+        - { name: state, in: query, schema: { type: string, enum: [active, disabled, expired, scheduled] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: Whitelist page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhitelistPage' }
+        '503': { description: Whitelist configuration unavailable }
+    post:
+      operationId: createWhitelist
+      description: Requires policies:manage. Configuration and audit commit atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WhitelistMutation' }
+      responses:
+        '201':
+          description: Whitelist created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhitelistEntry' }
+        '400': { description: Invalid whitelist }
+        '409': { description: Duplicate whitelist }
+        '503': { description: Configuration or audit write failed }
+  /whitelist/{entry_id}:
+    post:
+      operationId: updateWhitelist
+      description: Requires policies:manage and the current revision.
+      parameters:
+        - { name: entry_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WhitelistMutation' }
+      responses:
+        '200':
+          description: Whitelist updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhitelistEntry' }
+        '400': { description: Invalid whitelist }
+        '404': { description: Whitelist absent }
+        '409': { description: Revision conflict or duplicate }
+        '503': { description: Configuration or audit write failed }
+  /whitelist/{entry_id}/{operation}:
+    post:
+      operationId: switchWhitelist
+      description: Requires policies:manage. Disabling retains the record and audit history.
+      parameters:
+        - { name: entry_id, in: path, required: true, schema: { type: string } }
+        - { name: operation, in: path, required: true, schema: { type: string, enum: [enable, disable] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Whitelist state updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhitelistEntry' }
+        '404': { description: Whitelist absent }
+        '409': { description: Revision conflict }
+        '503': { description: Configuration or audit write failed }
   /campus-exceptions:
     get:
       operationId: listCampusExceptions
@@ -751,6 +880,7 @@ paths:
         - { name: vlan, in: query, schema: { type: string } }
         - { name: ap, in: query, schema: { type: string } }
         - { name: nas_ip, in: query, schema: { type: string } }
+        - { name: include_router_observations, in: query, schema: { type: boolean, default: true }, description: Include current router observations alongside confirmed shared-access cases. }
         - { name: window, in: query, schema: { type: string, enum: [24h, 7d] } }
       responses:
         "200":
@@ -960,6 +1090,33 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /actions/connectors/{connector_id}/4k-sync:
+    post:
+      operationId: syncFourKInformation
+      description: Verifies saved 4K authorization and management API, requires fresh complete identity and product snapshots, and registers the connector's verified execution capabilities. It never creates a policy, policy stage or enforcement action.
+      parameters:
+        - { name: connector_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                source: { type: string, default: srun-office }
+      responses:
+        '202':
+          description: Persisted synchronization task.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationTask' }
+        '200':
+          description: Products, groups and current user identities were synchronized; connector capabilities were registered separately from policies.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FourKSyncResult' }
+        '409': { description: Complete identity or product snapshot is missing or stale. }
   /actions/emergency-stop:
     post:
       operationId: updateActionEmergencyStop
@@ -1038,10 +1195,15 @@ paths:
   /actions/{action_id}/revoke:
     post:
       operationId: revokeAction
-      description: Stops pending native disconnect dispatch or requests release for a reversible action. Native cancellation cannot recall an already sent request or restore a disconnected session.
+      description: Stops pending native disconnect dispatch or requests release for a reversible action. An explicit operator request may requeue the same blocked recovery or a recovery that exhausted its three transport failures, preserving its key, lease and cumulative failures; a subsequent transport failure remains terminal. Native cancellation cannot recall an already sent request or restore a disconnected session.
       parameters:
         - { name: action_id, in: path, required: true, schema: { type: string } }
       responses:
+        "200":
+          description: Returns the existing recovery without changing its scheduling or scope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnforcementAction" }
         "202":
           description: Revocation accepted. Native disconnect returns the original action with blocked status; this does not prove remote restoration.
           content:
@@ -1103,11 +1265,59 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IdentitySnapshotReceipt' }
-        "400": { description: Incomplete inventory, count mismatch, invalid record, scope conflict or invalid observation time. }
+        "400": { description: 'Incomplete inventory, count mismatch, invalid record, scope conflict or invalid observation time.' }
         "401": { description: Invalid identity integration token. }
         "403": { description: Global read-only mode. }
-        "409": { description: Snapshot identity or observation time already contains different content, or storage does not support reconciliation. }
+        "409": { description: 'Snapshot identity or observation time already contains different content, or storage does not support reconciliation.' }
         "503": { description: Database commit failed or its result is uncertain; retry the same immutable request and key. }
+  /integrations/identity/snapshot-uploads:
+    post:
+      operationId: createIdentitySnapshotUpload
+      description: Creates a bounded staged upload for a complete identity snapshot of up to 200000 address records.
+      security:
+        - IdentityBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentitySnapshotUploadCreate' }
+      responses:
+        '202': { description: Upload reservation created. }
+        '200': { description: Identical upload reservation already exists. }
+  /integrations/identity/snapshot-uploads/{upload_id}/chunks/{chunk_index}:
+    put:
+      operationId: putIdentitySnapshotUploadChunk
+      security:
+        - IdentityBearer: []
+      parameters:
+        - { name: upload_id, in: path, required: true, schema: { type: string } }
+        - { name: chunk_index, in: path, required: true, schema: { type: integer, minimum: 0 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              maxItems: 2000
+              items:
+                type: object
+                required: [session_id, account_id, ip]
+                additionalProperties: { type: string }
+      responses:
+        '202': { description: Immutable chunk accepted. }
+        '200': { description: Identical chunk already accepted. }
+        '409': { description: Chunk index already contains different content. }
+  /integrations/identity/snapshot-uploads/{upload_id}/commit:
+    post:
+      operationId: commitIdentitySnapshotUpload
+      security:
+        - IdentityBearer: []
+      parameters:
+        - { name: upload_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '202': { description: All chunks verified and the current identity version switched atomically. }
+        '200': { description: The same completed upload was replayed. }
+        '409': { description: 'Missing chunk, count mismatch, digest mismatch or conflicting upload.' }
   /integrations/identity/status:
     get:
       operationId: getIdentityIngestStatus
@@ -1125,6 +1335,29 @@ paths:
                   completed_batches: { type: integer }
                   failed_batches: { type: integer }
                   reconciliation_supported: { type: boolean }
+                  materializer:
+                    type: object
+                    properties:
+                      pending_snapshots: { type: integer }
+                      health:
+                        type: object
+                        properties:
+                          last_checked_at: { type: string }
+                          processed_live_batch: { type: integer }
+                          last_error: { type: string }
+                      cursors:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            sensor_id: { type: string }
+                            phase: { type: string, enum: [live, backfill] }
+                            cursor_at: { type: string }
+                            event_id: { type: string }
+                            cutover_at: { type: string }
+                            processed_events: { type: integer }
+                            last_success_at: { type: string, nullable: true }
+                            last_error: { type: string }
                   sources:
                     type: array
                     items: { $ref: '#/components/schemas/IdentitySourceStatus' }
@@ -1149,6 +1382,195 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: Batch has no retained normalized events or PostgreSQL replay is unavailable.
+  /integrations/product-policy/snapshots:
+    post:
+      operationId: commitProductPolicySnapshot
+      description: Atomically stores one immutable complete product/control catalog and updates current catalogs. Requires the dedicated product-policy integration token.
+      security:
+        - ProductPolicyBearer: []
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductPolicySnapshot' }
+      responses:
+        '202': { description: Snapshot and current catalogs committed atomically. }
+        '200': { description: Identical snapshot was already committed. }
+        '409': { description: Idempotency key refers to different content. }
+  /integrations/product-policy/status:
+    get:
+      operationId: getProductPolicyStatus
+      responses:
+        '200': { description: Current catalog counts and latest receipt time. }
+  /integrations/product-policy/catalog:
+    get:
+      operationId: listProductCatalog
+      responses:
+        '200': { description: Active and inactive product catalog rows with stable IDs and real names. }
+  /integrations/4k-directory:
+    get:
+      operationId: getFourKDirectory
+      description: Returns the product, group and current account directory used by policy scope selectors. No policy or action is imported from this directory.
+      responses:
+        '200':
+          description: Current 4K policy matching directory.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FourKDirectory' }
+  /integrations/srun4k:
+    get:
+      operationId: listSRun4KIntegrations
+      responses:
+        '200':
+          description: Configured deepin SRun 4K instances without deployment credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/SRun4KIntegration' } }
+    post:
+      operationId: createSRun4KIntegration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SRun4KIntegrationRequest' }
+      responses:
+        '200':
+          description: Simplified integration saved with generated IDs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SRun4KIntegration' }
+  /integrations/srun4k/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getSRun4KIntegration
+      responses:
+        '200':
+          description: Integration status without credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SRun4KIntegration' }
+    put:
+      operationId: updateSRun4KIntegration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SRun4KIntegrationRequest' }
+      responses:
+        '200':
+          description: Integration configuration updated atomically with its audit. A host change creates a new identity namespace and resets validation; an unchanged host preserves its namespace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SRun4KIntegration' }
+  /integrations/srun4k/{id}/test:
+    post:
+      operationId: testSRun4KIntegration
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Read-only checks completed and the matching integration result and success audit committed together. }
+        '408':
+          description: The check was cancelled. The integration health, result ordering and success timestamps are retained; cancellation is audited within a finite reporting budget.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: An online identity or catalog Redis reply exceeds its resource limits. Existing health is retained and the specific resource rejection is audited.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: The result could not be committed or the tested integration configuration changed. Retry the check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /integrations/srun4k/{id}/sync:
+    post:
+      operationId: syncSRun4KIntegration
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '408':
+          description: The synchronization was cancelled. Cancellation is audited without recording an upstream connection failure or complete synchronization; earlier completed reconciliation stages may already have committed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '200':
+          description: Complete identity and match directories reconciled; connection state reflects the latest ordered observation and can remain failed after a newer check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SRun4KSyncResult' }
+        '409':
+          description: The captured online identity projection failed atomic validation, the product catalog membership or relations changed, a newer group-directory observation already exists, or the same observation time has conflicting content. No complete synchronization is reported.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: The online identity inventory or product catalog exceeds bounded response or projection capacity. No complete rejected inventory or catalog is published; existing connection status is retained and online_resource_limit or catalog_resource_limit is audited. Earlier completed reconciliation stages may already have committed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: The check or synchronization result and success audit could not be committed, or the integration configuration changed. No successful synchronization is reported.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /integrations/srun4k/{id}/status:
+    get:
+      operationId: getSRun4KIntegrationStatus
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Channel states and last synchronization counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SRun4KIntegration' }
+  /policy-imports/preview:
+    post:
+      operationId: previewProductPolicyImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source: { type: string }
+                snapshot_id: { type: string }
+      responses:
+        '201': { description: Immutable conversion preview created. }
+  /policy-imports/{batch_id}:
+    get:
+      operationId: getPolicyImport
+      parameters:
+        - { name: batch_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Import batch and item-level conversion dispositions. }
+  /policy-imports/{batch_id}/publish:
+    post:
+      operationId: publishProductPolicyImport
+      description: Atomically publishes direct conversions as enabled observe-mode policies only.
+      parameters:
+        - { name: batch_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Imported observe-mode policies. }
+        '409': { description: Stable policy ID is occupied by a non-source policy or the preview is invalid. }
+  /policy-decisions:
+    get:
+      operationId: listPolicyDecisionRecords
+      parameters:
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: policy_id, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200': { description: Append-only policy decisions including blockers and planned shadow stages. }
   /overview:
     get:
       operationId: getOverview
@@ -1824,6 +2246,59 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+  /device-inventory:
+    get:
+      operationId: listDeviceInventory
+      description: Lightweight terminal list backed by the incrementally maintained recognition read model.
+      parameters:
+        - name: view
+          in: query
+          schema: { type: string, enum: [recent, history] }
+        - name: sensor_id
+          in: query
+          schema: { type: string }
+        - name: window
+          in: query
+          schema: { type: string, enum: [10m, 1h, 24h] }
+        - name: ip
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: brand
+          in: query
+          schema: { type: string }
+        - name: os_family
+          in: query
+          schema: { type: string }
+        - name: ecosystem
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/CampusIdQuery"
+        - $ref: "#/components/parameters/DepartmentQuery"
+        - $ref: "#/components/parameters/PersonTypeQuery"
+        - $ref: "#/components/parameters/SSIDQuery"
+        - $ref: "#/components/parameters/VLANQuery"
+        - $ref: "#/components/parameters/APQuery"
+        - $ref: "#/components/parameters/NASIPQuery"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Lightweight terminal inventory page and recognition facets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceInventoryListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /devices:
     get:
       operationId: listDevices
@@ -2287,88 +2762,6 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /shadow/runs:
-    get:
-      operationId: listShadowRuns
-      parameters:
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
-        - name: cursor
-          in: query
-          schema: { type: string }
-        - name: q
-          in: query
-          schema: { type: string }
-      responses:
-        "200":
-          description: Shadow mode run summaries.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [runs, page]
-                properties:
-                  runs:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ShadowRun"
-                  page:
-                    $ref: "#/components/schemas/Page"
-        "500":
-          $ref: "#/components/responses/InternalError"
-  /shadow/runs/{run_id}:
-    get:
-      operationId: getShadowRun
-      parameters:
-        - name: run_id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: Full shadow run.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShadowRun"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /shadow/evaluation:
-    get:
-      operationId: getShadowEvaluation
-      responses:
-        "200":
-          description: Latest seven-day shadow evaluation and review readiness report.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShadowEvaluation"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
-  /shadow/review-samples:
-    get:
-      operationId: getShadowReviewSamples
-      parameters:
-        - name: date
-          in: query
-          description: Review sample date in YYYY-MM-DD; defaults to the latest available date.
-          schema: { type: string, format: date }
-      responses:
-        "200":
-          description: Stratified shadow samples for human review.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ShadowReviewSamples"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalError"
   /audit-logs:
     get:
       operationId: listAuditLogs
@@ -2495,17 +2888,6 @@ paths:
       responses:
         "200": {description: "Actual rule reload capability", content: {application/json: {schema: {$ref: "#/components/schemas/RulesStatus"}}}}
         "403": {$ref: "#/components/responses/Forbidden"}
-  /shadow/review-samples/{sample_id}:
-    get:
-      operationId: getShadowSampleDetail
-      parameters:
-        - {name: sample_id, in: path, required: true, schema: {type: string}}
-        - {name: date, in: query, required: true, schema: {type: string, format: date}}
-      responses:
-        "200": {description: "Historical sample with its original evidence", content: {application/json: {schema: {$ref: "#/components/schemas/ShadowSampleDetail"}}}}
-        "400": {$ref: "#/components/responses/BadRequest"}
-        "404": {$ref: "#/components/responses/NotFound"}
-        "500": {$ref: "#/components/responses/InternalError"}
   /rules/reload:
     post:
       operationId: reloadRules
@@ -2550,6 +2932,10 @@ components:
       type: http
       scheme: bearer
       description: Dedicated RADIUS/Portal integration credential; never a user session token.
+    ProductPolicyBearer:
+      type: http
+      scheme: bearer
+      description: Dedicated read-only product/control snapshot integration credential.
   responses:
     BadRequest:
       description: Invalid request.
@@ -2705,6 +3091,19 @@ components:
       schema:
         type: string
   schemas:
+    RootFilesystemStatus:
+      type: object
+      description: Filesystem containing / in the control-plane process namespace; separately mounted data volumes are outside this measurement.
+      required: [path, total_bytes, used_bytes, available_bytes, used_percent]
+      properties:
+        path: { type: string, enum: ["/"] }
+        total_bytes: { type: integer, format: int64, minimum: 1 }
+        used_bytes: { type: integer, format: int64, minimum: 0 }
+        available_bytes: { type: integer, format: int64, minimum: 0, description: Bytes available to unprivileged users, excluding reserved blocks. }
+        used_percent: { type: number, minimum: 0, maximum: 100, description: Allocated bytes divided by allocated plus available bytes, matching df's usable-space ratio. }
+        inodes_total: { type: integer, format: int64, minimum: 1 }
+        inodes_free: { type: integer, format: int64, minimum: 0 }
+        inodes_used_percent: { type: number, minimum: 0, maximum: 100 }
     SharedDisconnectPreview:
       type: object
       required: [review_id, connector_id, evidence_version, identity_version, config_version, fingerprint, ready, blockers, plan]
@@ -2784,10 +3183,54 @@ components:
         observations: { type: integer, minimum: 2 }
         first_seen: { type: string, format: date-time }
         last_seen: { type: string, format: date-time }
+    SharedDeviceProfile:
+      type: object
+      required: [profile_id, identity_state, identity_current, identity_at, identity_expires_at, identity_evidence_id, identity_assessment_id, identity_basis, address_state, current_shared, address_only]
+      properties:
+        profile_id: { type: string }
+        sensor_id: { type: string }
+        endpoint_id: { type: string }
+        mac: { type: string }
+        ip: { type: string }
+        brand: { type: string }
+        model: { type: string }
+        role: { type: string, enum: [router, ap] }
+        identity_state: { type: string, enum: [supported, historical, reference] }
+        identity_current: { type: boolean }
+        identity_at: { type: string, format: date-time }
+        identity_expires_at: { type: string, format: date-time }
+        identity_evidence_id: { type: string }
+        identity_assessment_id: { type: string }
+        identity_basis: { type: string }
+        address_state: { type: string, enum: [verified, stale, reassigned, unbound] }
+        address_last_activity_at: { type: string, format: date-time, description: Address activity, attributed to archived hardware only with current verified ownership. }
+        last_shared_at: { type: string, format: date-time }
+        last_shared_observation_id: { type: string }
+        current_shared: { type: boolean }
+        address_only: { type: boolean }
+        auth_bindings: { type: array, items: { $ref: '#/components/schemas/RouterAuthBinding' }, description: Current authentication sessions linked only by exact MAC or endpoint identity. }
+    SharedDeviceProfilePage:
+      type: object
+      required: [items, page, checked_at]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/SharedDeviceProfile' } }
+        activity_state: { type: string, enum: [available, unavailable] }
+        checked_at: { type: string, format: date-time }
+        page:
+          type: object
+          required: [limit, total]
+          properties:
+            limit: { type: integer }
+            total: { type: integer }
+            next_cursor: { type: [string, 'null'] }
     SharedBehaviorAssessment:
       type: object
       required: [observation_id, sensor_id, ip, status, confidence, signal_groups, reasons, conflicts, coverage_state, rule_version, first_seen, last_seen, window_start, window_end, expires_at, router, score_components, feature_samples, event_ids, known_device_count, known_devices]
       properties:
+        current: { type: boolean, description: Whether this observation remains in the current complete discovery window. }
+        strong_anchor: { type: string, description: Current-window multi-client evidence supporting confirmation. }
+        device_lower_bound: { type: integer, minimum: 0 }
+        reference_device_count_24h: { type: integer, minimum: 0, description: Historical model references; not current concurrent device count. }
         observation_id: { type: string }
         sensor_id: { type: string }
         campus_id: { type: string }
@@ -2897,6 +3340,98 @@ components:
         password_configured: { type: boolean }
         credential_source: { type: string, enum: [4k_database] }
 
+    FourKSyncResult:
+      type: object
+      required: [connector_id, source, online_total, identity_accounts, identity_sessions, products, groups, controls, capabilities, directory_ready]
+      properties:
+        connector_id: { type: string }
+        source: { type: string }
+        online_total: { type: integer, minimum: 0 }
+        identity_accounts: { type: integer, minimum: 0 }
+        identity_sessions: { type: integer, minimum: 0 }
+        products: { type: integer, minimum: 0 }
+        groups: { type: integer, minimum: 0 }
+        controls: { type: integer, minimum: 0 }
+        capabilities: { type: array, items: { type: string, enum: [disconnect] } }
+        directory_ready: { type: boolean }
+
+    FourKDirectoryItem:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        name: { type: string }
+
+    FourKDirectory:
+      type: object
+      required: [source, products, groups, accounts, vlans, identity_sessions, controls]
+      properties:
+        source: { type: string }
+        products: { type: array, items: { $ref: '#/components/schemas/FourKDirectoryItem' } }
+        groups: { type: array, items: { $ref: '#/components/schemas/FourKDirectoryItem' } }
+        accounts: { type: array, items: { $ref: '#/components/schemas/FourKDirectoryItem' } }
+        vlans: { type: array, items: { $ref: '#/components/schemas/FourKDirectoryItem' } }
+        product_observed_at: { type: string, format: date-time }
+        identity_observed_at: { type: string, format: date-time }
+        identity_sessions: { type: integer, minimum: 0 }
+        controls: { type: integer, minimum: 0 }
+
+    SRun4KIntegrationRequest:
+      type: object
+      additionalProperties: false
+      required: [host]
+      properties:
+        host: { type: string, minLength: 1, maxLength: 253 }
+        reconcile_interval_hours: { type: integer, minimum: 1, maximum: 168, default: 6 }
+    SRun4KIntegration:
+      type: object
+      required: [connector_id, host, source, sensor_id, reconcile_interval_hours, event_channel_state, connection_state, channels, identity_accounts, identity_sessions, products, groups, controls]
+      properties:
+        connector_id: { type: string }
+        host: { type: string }
+        source: { type: string }
+        sensor_id: { type: string }
+        reconcile_interval_hours: { type: integer, minimum: 1, maximum: 168 }
+        event_channel_state: { type: string, enum: [waiting, healthy, interrupted] }
+        connection_state: { type: string, enum: [pending, healthy, failed] }
+        channels:
+          type: object
+          required: [authorization_database, redis, northbound_api, event_channel]
+          properties:
+            authorization_database: { type: string, enum: [pending, healthy, failed] }
+            redis: { type: string, enum: [pending, healthy, failed] }
+            northbound_api: { type: string, enum: [pending, healthy, failed] }
+            event_channel: { type: string, enum: [waiting, healthy, interrupted] }
+        last_error: { type: string }
+        last_tested_at: { type: string, format: date-time }
+        last_synced_at: { type: string, format: date-time }
+        last_identity_poll_at: { type: string, format: date-time }
+        last_identity_event_at: { type: string, format: date-time }
+        identity_accounts: { type: integer, minimum: 0 }
+        identity_sessions: { type: integer, minimum: 0 }
+        products: { type: integer, minimum: 0 }
+        groups: { type: integer, minimum: 0 }
+        controls: { type: integer, minimum: 0 }
+
+    SRun4KSyncResult:
+      type: object
+      required: [connector_id, source, synced_at, identity_accounts, identity_sessions, address_records, products, groups, controls, event_channel_state, connection_state, enforcement_ready]
+      properties:
+        connector_id: { type: string }
+        source: { type: string }
+        synced_at: { type: string, format: date-time }
+        identity_accounts: { type: integer, minimum: 0 }
+        identity_sessions: { type: integer, minimum: 0 }
+        address_records: { type: integer, minimum: 0 }
+        products: { type: integer, minimum: 0 }
+        groups: { type: integer, minimum: 0 }
+        controls: { type: integer, minimum: 0 }
+        event_channel_state: { type: string, enum: [waiting, healthy, interrupted] }
+        connection_state: { type: string, enum: [pending, healthy, failed] }
+        enforcement_ready:
+          type: boolean
+          description: Both observed connection and event channel are healthy. Other policy and shadow admission conditions still apply.
+
     OperationTask:
       type: object
       required: [task_id, kind, status, created_at]
@@ -2941,6 +3476,21 @@ components:
               product_id: { type: string }
               device_class: { type: string, enum: [mobile, pc, other] }
             additionalProperties: { type: string }
+    IdentitySnapshotUploadCreate:
+      type: object
+      additionalProperties: false
+      required: [upload_id, source, sensor_id, observed_at, reconcile_interval_hours, expected_count, expected_chunks, expected_sha256]
+      properties:
+        upload_id: { type: string, minLength: 1, maxLength: 200 }
+        source: { type: string, minLength: 1, maxLength: 200 }
+        sensor_id: { type: string, minLength: 1, maxLength: 200 }
+        campus_id: { type: string, maxLength: 200 }
+        access_domain: { type: string, maxLength: 200 }
+        observed_at: { type: string, format: date-time }
+        reconcile_interval_hours: { type: integer, minimum: 1, maximum: 168 }
+        expected_count: { type: integer, minimum: 0, maximum: 200000 }
+        expected_chunks: { type: integer, minimum: 1, maximum: 200 }
+        expected_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
     IdentitySnapshotReceipt:
       type: object
       required: [snapshot_id, status, observed_at, session_count, replayed]
@@ -3011,6 +3561,40 @@ components:
         role: { type: string, enum: [viewer, reviewer, operator, admin] }
         password: { type: string, minLength: 12 }
         disabled: { type: boolean }
+    WhitelistMutation:
+      type: object
+      required: [type, value, reason, enabled, revision]
+      properties:
+        type: { type: string, enum: [ip, account, mac, network, group] }
+        value: { type: string, maxLength: 256 }
+        reason: { type: string, minLength: 2, maxLength: 1000 }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        enabled: { type: boolean }
+        revision: { type: integer, minimum: 0 }
+        valid_from: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    WhitelistEntry:
+      allOf:
+        - { $ref: '#/components/schemas/WhitelistMutation' }
+        - type: object
+          required: [entry_id, valid_from, created_by, updated_by, created_at, updated_at]
+          properties:
+            entry_id: { type: string }
+            valid_from: { type: string, format: date-time }
+            created_by: { type: string }
+            updated_by: { type: string }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+    WhitelistPage:
+      type: object
+      required: [items, page, checked_at]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/WhitelistEntry' }
+        page: { $ref: '#/components/schemas/Page' }
+        checked_at: { type: string, format: date-time }
     CampusException:
       type: object
       required: [scope_type, scope_value, reason]
@@ -3034,7 +3618,8 @@ components:
         name: { type: string }
         enabled: { type: boolean, default: false }
         mode: { type: string, enum: [observe, manual, automatic], default: observe }
-        trigger: { type: string, enum: [quota_exceeded, shared_access, explicit_proxy] }
+        trigger: { type: string, enum: [quota_exceeded, session_quota_exceeded, shared_access, explicit_proxy] }
+        action_model: { type: string, enum: [dpi-strategy/v1], description: Independent action timers and execution-count dependencies compatible with dpi-analyze strategy semantics. }
         priority: { type: integer }
         revision: { type: integer }
         scope: { $ref: '#/components/schemas/AccountPolicyScope' }
@@ -3045,6 +3630,7 @@ components:
             total: { type: [integer, 'null'], minimum: 0 }
             mobile: { type: [integer, 'null'], minimum: 0 }
             pc: { type: [integer, 'null'], minimum: 0 }
+            sessions: { type: [integer, 'null'], minimum: 0, description: Stable authentication sessions; dual-stack address rows are counted once. }
         sustain_seconds: { type: integer, minimum: 0 }
         window_seconds: { type: integer, minimum: 1 }
         recovery_seconds: { type: integer, minimum: 0 }
@@ -3053,20 +3639,71 @@ components:
           type: array
           items:
             type: object
-            required: [action, connector_id]
+            required: [action]
             properties:
-              action: { type: string, enum: [notify, rate_limit, disconnect, disable_account] }
-              connector_id: { type: string }
+              action: { type: string, enum: [record, notify, rate_limit, disconnect, disable_account] }
+              connector_id: { type: string, description: Optional only for observe-mode stages. }
               after_seconds: { type: integer, minimum: 0 }
               min_episodes: { type: integer, minimum: 0 }
               duration_seconds: { type: integer, minimum: 0 }
               rate_kbps: { type: integer, minimum: 0 }
               template: { type: string }
+              depends_on: { type: array, items: { type: string, enum: [notify, rate_limit, disconnect, disable_account] } }
+              interval_seconds: { type: integer, minimum: 0 }
+              sync_notify: { type: boolean }
+              put_black: { type: boolean }
+        origin:
+          $ref: '#/components/schemas/PolicyOrigin'
+    PolicyOrigin:
+      type: object
+      required: [source, snapshot_id, conversion_version, import_batch_id]
+      properties:
+        source: { type: string }
+        snapshot_id: { type: string }
+        external_product_id: { type: string }
+        external_policy_ids: { type: array, items: { type: string } }
+        conversion_version: { type: string }
+        import_batch_id: { type: string }
+        reference_fields: { type: array, items: { type: string } }
+    ProductPolicySnapshot:
+      type: object
+      required: [schema_version, source, instance_id, observed_at, complete, products, controls, content_hash]
+      properties:
+        schema_version: { type: string, enum: [srun-business-policy/v1] }
+        source: { type: string }
+        instance_id: { type: string }
+        observed_at: { type: string, format: date-time }
+        complete: { type: boolean, enum: [true] }
+        content_hash: { type: string }
+        products:
+          type: array
+          items:
+            type: object
+            required: [product_id, name, control_ids]
+            properties:
+              product_id: { type: string }
+              name: { type: string }
+              manager: { type: string }
+              control_ids: { type: array, items: { type: string } }
+        controls:
+          type: array
+          items:
+            type: object
+            required: [control_id, name, max_online_num, disable_proxy, proxy_times, proxy_disable_time]
+            properties:
+              control_id: { type: string }
+              name: { type: string }
+              max_online_num: { type: integer, description: Only positive values are eligible for automatic session-quota conversion. }
+              disable_proxy: { type: integer, minimum: 0 }
+              proxy_times: { type: integer, minimum: 0 }
+              proxy_disable_time: { type: integer, minimum: 0 }
+              reference: { type: object, additionalProperties: { type: string }, description: Source fields retained for traceability and never converted implicitly. }
     AccountPolicyScope:
       type: object
       description: OR within a field, AND across fields, matched on the same active session; schedules use Asia/Shanghai.
       properties:
         accounts: { type: array, items: { type: string } }
+        sources: { type: array, items: { type: string } }
         groups: { type: array, items: { type: string } }
         products: { type: array, items: { type: string } }
         campuses: { type: array, items: { type: string } }
@@ -3326,12 +3963,16 @@ components:
         identity_blocker: { type: string }
         dedupe_key: { type: string }
         status: { type: string, enum: [new, assigned, investigating, waiting_data, resolved, closed, reopened] }
-        disposition: { type: string, enum: [confirmed_proxy, false_positive, benign, needs_more_data] }
+        disposition: { type: string, enum: [confirmed_proxy, confirmed_shared_access, confirmed_router, false_positive, benign, needs_more_data] }
         priority: { type: string, enum: [high, medium, low] }
         assignee_id: { type: string }
         risk_score: { type: integer, minimum: 0, maximum: 100 }
         risk_confidence: { type: number, minimum: 0, maximum: 1 }
         assessment_level: { type: string }
+        risk_kind: { type: string, enum: [shared_access, router_observation] }
+        assessment_current: { type: boolean, description: Whether the retained assessment matches an unexpired current risk snapshot. Missing or expired snapshots never imply benign behavior. }
+        assessment_updated_at: { type: string, format: date-time }
+        assessment_window: { type: string }
         due_at: { type: string, format: date-time }
         first_seen: { type: string, format: date-time }
         last_seen: { type: string, format: date-time }
@@ -3434,6 +4075,8 @@ components:
         remote_action_id: { type: string }
         parent_action_id: { type: string }
         retry_count: { type: integer }
+        precheck_retry_count: { type: integer, minimum: 0, maximum: 5, readOnly: true }
+        precheck_retryable: { type: boolean, readOnly: true }
         next_attempt_at: { type: string, format: date-time }
         cooldown_until: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
@@ -3539,6 +4182,27 @@ components:
           items:
             type: string
             enum: [protocol_rule, ttl_path, tls_client_stack, ua_os, dhcp_device_family, identity_mac, identity_access]
+    SharedAccessCaseEvidence:
+      type: object
+      required: [observation_id, generation_id, status, confidence, strong_anchor, device_lower_bound, coverage_state, window_start, window_end, signal_groups, reasons, source_event_ids, anchor_identities]
+      properties:
+        observation_id: { type: string }
+        generation_id: { type: string }
+        status: { type: string, enum: [confirmed] }
+        confidence: { type: integer, minimum: 0, maximum: 100 }
+        strong_anchor: { type: string, enum: [ieee1905_association, coexisting_device_models] }
+        device_lower_bound: { type: integer, minimum: 2 }
+        coverage_state: { type: string, enum: [verified] }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        signal_groups: { type: array, items: { type: string } }
+        reasons: { type: array, items: { type: string } }
+        source_event_ids: { type: array, items: { type: string } }
+        anchor_identities: { type: array, items: { type: string } }
+        reference_device_count_24h: { type: integer, minimum: 0 }
+        router_brand: { type: string }
+        router_model: { type: string }
+        router_confidence: { type: integer, minimum: 0, maximum: 100 }
     NegativeEvidence:
       type: object
       required: [type, source, reason, score_delta]
@@ -3838,7 +4502,7 @@ components:
           maximum: 1
         status:
           type: string
-          enum: [insufficient_signal, weak_signals_only, single_candidate, multi_candidate]
+          enum: [insufficient_signal, non_endpoint_or_weak, weak_signals_only, single_candidate, multi_candidate]
         summary:
           type: string
         devices:
@@ -3877,6 +4541,8 @@ components:
         source: { type: string }
         source_family: { type: string }
         source_event_type: { type: string }
+        sensor_id: { type: string }
+        shared_observation_id: { type: string }
         raw_value: { type: string }
         strength: { type: string, enum: [weak, medium, strong] }
         score: { type: integer }
@@ -3903,6 +4569,22 @@ components:
         evidence_id: { type: string }
         score: { type: integer }
         explanation: { type: string }
+    RouterAuthBinding:
+      type: object
+      required: [session_id, account_id, assigned_ips, source, match_basis, ambiguous]
+      properties:
+        session_id: { type: string }
+        account_id: { type: string }
+        assigned_ips: { type: array, items: { type: string } }
+        mac: { type: string }
+        vlan: { type: string }
+        nas_ip: { type: string }
+        access_id: { type: string }
+        source: { type: string }
+        match_basis: { type: string, enum: [exact_mac, exact_endpoint] }
+        ambiguous: { type: boolean }
+        started_at: { type: string, format: date-time }
+        last_confirmed_at: { type: string, format: date-time }
     RouterAssessment:
       type: object
       required: [assessment_id, role, status, confidence, independent_sources, sources, infrastructure, brand_reference_only, association_quality, ambiguous, confirmed_router, rule_version, first_seen, last_seen, expires_at, conflicts, score_components]
@@ -3932,6 +4614,7 @@ components:
         conflicts: { type: array, items: { type: string } }
         score_components: { type: array, items: { $ref: '#/components/schemas/RouterScoreComponent' } }
         evidence: { type: array, items: { $ref: '#/components/schemas/RouterEvidence' } }
+        auth_bindings: { type: array, items: { $ref: '#/components/schemas/RouterAuthBinding' }, description: Current authentication sessions linked only by exact MAC or endpoint identity. These bindings do not affect router confidence. }
         merged_records: { type: integer, minimum: 1, description: Number of active incremental assessments represented by this device row. }
     RouterAssessmentHistory:
       type: object
@@ -3946,8 +4629,9 @@ components:
       allOf:
         - { $ref: '#/components/schemas/RouterAssessment' }
         - type: object
-          required: [history]
+          required: [history, current]
           properties:
+            current: { type: boolean, description: Whether the stored verdict has unexpired supporting facts; false marks a historical observation. }
             history: { type: array, items: { $ref: '#/components/schemas/RouterAssessmentHistory' } }
     RouterAssessmentPage:
       type: object
@@ -3986,6 +4670,66 @@ components:
                 - "null"
             total:
               type: integer
+    DeviceInventoryListResponse:
+      type: object
+      required: [items, page, facets, read_model_updating]
+      properties:
+        device_names_disabled: { type: boolean }
+        read_model_updating:
+          type: boolean
+          description: True while one or more endpoint summaries are waiting to be materialized.
+        as_of:
+          type: string
+          format: date-time
+          description: Oldest materialization time among items in this page.
+        facets: { $ref: "#/components/schemas/DeviceFilterFacets" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DeviceInventoryListItem" }
+        page:
+          type: object
+          required: [limit, next_cursor, total]
+          properties:
+            limit: { type: integer }
+            next_cursor: { type: [string, "null"] }
+            total: { type: integer }
+    DeviceInventoryListItem:
+      type: object
+      required: [endpoint_id, vendor_confidence, brand_confidence, model_confidence, device_type_confidence, os_family_confidence, randomized_mac, recognition_conflict]
+      properties:
+        router_observation: { $ref: "#/components/schemas/RouterAssessment" }
+        discovery: { $ref: "#/components/schemas/DiscoveryRecognitionSummary" }
+        ip_match: { $ref: "#/components/schemas/DeviceIPMatch" }
+        device_name: { $ref: "#/components/schemas/DeviceName" }
+        brand_reference: { $ref: "#/components/schemas/BrandReference" }
+        brand_inference: { $ref: "#/components/schemas/DeviceBrandInferenceSummary" }
+        endpoint_id: { type: string }
+        primary_mac: { type: string }
+        owner_account: { type: string }
+        owner_name: { type: string }
+        current_account: { type: string }
+        current_ip: { type: string }
+        current_access_id: { type: string }
+        last_seen: { type: string, format: date-time }
+        vendor: { type: string }
+        brand: { type: string }
+        model: { type: string }
+        device_type: { type: string }
+        os_family: { type: string }
+        vendor_confidence: { type: number, minimum: 0, maximum: 1 }
+        brand_confidence: { type: number, minimum: 0, maximum: 1 }
+        model_confidence: { type: number, minimum: 0, maximum: 1 }
+        device_type_confidence: { type: number, minimum: 0, maximum: 1 }
+        os_family_confidence: { type: number, minimum: 0, maximum: 1 }
+        randomized_mac: { type: boolean }
+        recognition_conflict: { type: boolean }
+    DeviceBrandInferenceSummary:
+      type: object
+      required: [status, confidence]
+      properties:
+        status: { type: string, enum: [insufficient, inferred, conflict] }
+        brand: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 0.7 }
     DeviceFilterFacets:
       type: object
       description: All discovered endpoint recognition clues, independent of the current page and selected filters. Clues do not establish hardware identity.
@@ -4278,6 +5022,7 @@ components:
         heartbeat_interval_seconds: { type: integer }
         reconcile_interval_seconds: { type: integer }
         identity_issue: { type: string, enum: [unregistered_source] }
+        identity_snapshot_ids: { type: array, items: { type: string }, description: Complete identity snapshots contributing to the current session binding. }
     AccountSession:
       type: object
       required: [session_id, account_id, endpoint_id, entity_role, started_at, ended_at, identity_confidence, source]
@@ -4739,6 +5484,11 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+        risk_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Combined risk estimate; independent of the protocol cue confidence level.
         risk_level:
           $ref: "#/components/schemas/RiskLevel"
         review_status:
@@ -4746,6 +5496,10 @@ components:
           enum: [unreviewed, confirmed_proxy, false_positive, benign, needs_more_data]
         review_reason:
           type: string
+        shared_access:
+          $ref: "#/components/schemas/SharedAccessCaseEvidence"
+        router_observation:
+          $ref: "#/components/schemas/RouterAssessment"
     ProxyRuleMatch:
       type: object
       required: [event_id, signature, timestamp]
@@ -5168,7 +5922,6 @@ components:
       type: object
       required: [target_type, target_id, label, reason, evidence_ids]
       properties:
-        sample_date: {type: string, format: date}
         target_type:
           type: string
           enum: [ip, risk_snapshot, evidence, account, endpoint]
@@ -5283,165 +6036,6 @@ components:
         created_at:
           type: string
           format: date-time
-    ShadowReviewStats:
-      type: object
-      required: [total, reviewed, confirmed, false_positive, benign, needs_more_data, precision]
-      properties:
-        total: {type: integer}
-        reviewed: {type: integer}
-        confirmed: {type: integer}
-        false_positive: {type: integer}
-        benign: {type: integer}
-        needs_more_data: {type: integer}
-        precision: {type: number}
-    ShadowEvaluation:
-      type: object
-      required:
-        - generated_at
-        - required_days
-        - observed_days
-        - longest_continuous_days
-        - days_with_reviews
-        - run_count
-        - risk_snapshot_count
-        - evaluated_sample_count
-        - reviewed_snapshot_count
-        - review_coverage
-        - missing_review_buckets
-        - recommended_adjustments
-        - ready
-        - blockers
-      properties:
-        normalized_event_count: {type: integer}
-        evidence_count: {type: integer}
-        candidate_reviewed: {type: integer}
-        candidate_confirmed: {type: integer}
-        candidate_precision: {type: number}
-        normal_reviewed: {type: integer}
-        level_stats:
-          type: object
-          additionalProperties:
-            type: object
-            required: [total, reviewed, confirmed, false_positive, benign, needs_more_data, precision]
-            properties:
-              total: {type: integer}
-              reviewed: {type: integer}
-              confirmed: {type: integer}
-              false_positive: {type: integer}
-              benign: {type: integer}
-              needs_more_data: {type: integer}
-              precision: {type: number}
-        false_positive_reasons: {type: array, items: {type: object, required: [value, count], properties: {value: {type: string}, count: {type: integer}}}}
-        false_positive_evidence: {type: array, items: {type: object, required: [value, count], properties: {value: {type: string}, count: {type: integer}}}}
-        daily:
-          type: array
-          items:
-            type: object
-            required: [date, run_count, level_stats]
-            properties:
-              date: {type: string, format: date}
-              run_count: {type: integer}
-              level_stats:
-                type: object
-                additionalProperties:
-                  $ref: "#/components/schemas/ShadowReviewStats"
-        daily_sample_exports: {type: array, items: {type: string}}
-        generated_at:
-          type: string
-          format: date-time
-        window_from:
-          type: string
-          format: date-time
-        window_to:
-          type: string
-          format: date-time
-        required_days:
-          type: integer
-        observed_days:
-          type: integer
-        longest_continuous_days:
-          type: integer
-        days_with_reviews:
-          type: integer
-        run_count:
-          type: integer
-        truncated_run_count:
-          type: integer
-        truncated_run_rate:
-          type: number
-          format: double
-        malformed_event_count:
-          type: integer
-        malformed_event_rate:
-          type: number
-          format: double
-        risk_snapshot_count:
-          type: integer
-        evaluated_sample_count:
-          type: integer
-        reviewed_snapshot_count:
-          type: integer
-        review_coverage:
-          type: number
-          format: double
-        missing_review_buckets:
-          type: array
-          items:
-            type: string
-        recommended_adjustments:
-          type: array
-          items:
-            type: string
-        collection_warnings:
-          type: array
-          items:
-            type: string
-        ready:
-          type: boolean
-        blockers:
-          type: array
-          items:
-            type: string
-    ShadowReviewSample:
-      type: object
-      required: [sample_id, date, ip, level, score, confidence, evidence_ids, review_status, source_run_id, snapshot_time]
-      properties:
-        sample_id: {type: string}
-        review_conflict: {type: boolean}
-        date: { type: string, format: date }
-        ip: { type: string }
-        subject_type: { type: string }
-        subject_id: { type: string }
-        account_id: { type: string }
-        endpoint_id: { type: string }
-        level:
-          $ref: "#/components/schemas/RiskLevel"
-        score: { type: integer }
-        confidence: { type: number, format: double }
-        evidence_ids:
-          type: array
-          items: { type: string }
-        review_status:
-          type: string
-          enum: [unreviewed, confirmed_proxy, false_positive, benign, needs_more_data]
-        review_reason: { type: string }
-        reviewed_by: { type: string }
-        reviewed_at: { type: string, format: date-time }
-        source_run_id: { type: string }
-        snapshot_time: { type: string, format: date-time }
-    ShadowReviewSamples:
-      type: object
-      required: [date, dates, samples_per_level, samples]
-      properties:
-        date: { type: string, format: date }
-        dates:
-          type: array
-          items: { type: string, format: date }
-        samples_per_level: { type: integer }
-        samples:
-          type: array
-          items:
-            $ref: "#/components/schemas/ShadowReviewSample"
     Overview:
       type: object
       required: [level_counts, pending_reviews, latest_shadow_run, throughput, top_evidence]
@@ -5498,14 +6092,6 @@ components:
       properties:
         reload_supported: {type: boolean}
         reload_status: {type: string, enum: [disabled]}
-    ShadowSampleDetail:
-      type: object
-      required: [sample, evidence, missing_evidence_ids]
-      properties:
-        sample: {$ref: "#/components/schemas/ShadowReviewSample"}
-        snapshot: {$ref: "#/components/schemas/RiskSnapshot"}
-        evidence: {type: array, items: {$ref: "#/components/schemas/Evidence"}}
-        missing_evidence_ids: {type: array, items: {type: string}}
     RuleReloadResult:
       type: object
       required: [status, mode, requested_at]

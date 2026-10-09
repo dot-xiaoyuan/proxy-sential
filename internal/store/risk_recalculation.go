@@ -57,7 +57,8 @@ func (s *PostgresStore) RecalculateRisks(ctx context.Context, window time.Durati
 	report := RiskRecalculationReport{GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), Window: window.String(), RulesetVersion: rulesetVersion, EvidenceCount: len(items), PreviousCount: len(previous), RecalculatedCount: len(batch.Snapshots), Changes: []RiskComparison{}, Applied: apply}
 	for index := range batch.Snapshots {
 		item := &batch.Snapshots[index]
-		item.UpdatedAt = report.GeneratedAt
+		// Re-evaluating a historical observation is not a new observation. Keep
+		// its event time so rolling expiry and concurrent newer writes still win.
 		old := previous[riskKey(*item)]
 		if old.Score != item.Score || old.Level != item.Level || old.Confidence != item.Confidence {
 			report.Changes = append(report.Changes, RiskComparison{SubjectType: firstNonEmpty(item.SubjectType, "ip"), SubjectID: firstNonEmpty(item.SubjectID, item.IP), IP: item.IP, OldScore: old.Score, NewScore: item.Score, OldLevel: old.Level, NewLevel: item.Level, OldConfidence: old.Confidence, NewConfidence: item.Confidence})

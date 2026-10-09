@@ -1,0 +1,221 @@
+{
+  "source": "srun4k:conversion-replay",
+  "sensor_id": "srun4k-direct:conversion-replay",
+  "campus_id": "",
+  "access_domain": "",
+  "snapshot_id": "frozen-r65",
+  "observed_at": "2026-10-01T03:00:00.000123Z",
+  "reconcile_interval_seconds": 21600,
+  "events": [
+    {
+      "schema_version": "v1",
+      "event_id": "identity-6c12526f45ab5adccd8f",
+      "source": "srun4k:conversion-replay",
+      "source_event_type": "identity",
+      "type": "identity",
+      "timestamp": "2026-10-01T03:00:00.000123Z",
+      "observer": {
+        "sensor_id": "srun4k-direct:conversion-replay"
+      },
+      "subject": {
+        "account_id": "测试账号",
+        "department": "院系 \u003cA\u0026B\u003e\n楼层",
+        "endpoint_id": "endpoint-1",
+        "entity_role": "endpoint",
+        "identity_confidence": 0.73,
+        "ip": "192.0.2.1",
+        "mac": "02:00:00:00:00:01",
+        "user_id": "测试账号"
+      },
+      "flow": {
+        "direction": "unknown",
+        "dst_ip": "192.0.2.254",
+        "proto": "other",
+        "src_ip": "192.0.2.1"
+      },
+      "payload": {
+        "action": "reconcile",
+        "control_id": "control-1",
+        "department": "院系 \u003cA\u0026B\u003e\n楼层",
+        "group_id": "1",
+        "heartbeat_interval_seconds": "21600",
+        "nas_ip": "192.0.2.254",
+        "origin": "srun4k:conversion-replay",
+        "product_id": "1",
+        "raw_online_id": "1",
+        "reconcile_interval_seconds": "21600",
+        "session_id": "fixed-run:v2:58bc602389f77179e35ca8190b55af43063b676eb1564dbcdddf76dae52a223c",
+        "session_id_source": "derived_source_session_login",
+        "session_status": "reconcile",
+        "source_instance_id": "fixed-run",
+        "source_login_generation": "1790820000",
+        "source_session_id": "1",
+        "vlan": "7"
+      },
+      "confidence": 0.73,
+      "raw_ref": {
+        "access_domain": "",
+        "campus_id": "",
+        "sensor_id": "srun4k-direct:conversion-replay",
+        "snapshot_id": "frozen-r65",
+        "source": "srun4k:conversion-replay"
+      }
+    },
+    {
+      "schema_version": "v1",
+      "event_id": "identity-50f740f46a66fa3c8e61",
+      "source": "srun4k:conversion-replay",
+      "source_event_type": "identity",
+      "type": "identity",
+      "timestamp": "2026-10-01T03:00:00.000123Z",
+      "observer": {
+        "sensor_id": "srun4k-direct:conversion-replay"
+      },
+      "subject": {
+        "account_id": "测试账号",
+        "endpoint_id": "endpoint-1",
+        "entity_role": "endpoint",
+        "identity_confidence": 0.92,
+        "ip": "2001:db8::1",
+        "mac": "aa:bb:cc:dd:ee:ff",
+        "user_id": "测试账号"
+      },
+      "flow": {
+        "direction": "unknown",
+        "dst_ip": "192.0.2.254",
+        "proto": "other",
+        "src_ip": "2001:db8::1"
+      },
+      "payload": {
+        "action": "reconcile",
+        "control_id": "control-1",
+        "group_id": "1",
+        "heartbeat_interval_seconds": "21600",
+        "nas_ip": "192.0.2.254",
+        "origin": "srun4k:conversion-replay",
+        "product_id": "1",
+        "raw_online_id": "1",
+        "reconcile_interval_seconds": "21600",
+        "session_id": "fixed-run:v2:58bc602389f77179e35ca8190b55af43063b676eb1564dbcdddf76dae52a223c",
+        "session_id_source": "derived_source_session_login",
+        "session_status": "reconcile",
+        "source_instance_id": "fixed-run",
+        "source_login_generation": "1790820000",
+        "source_session_id": "1",
+        "vlan": "7"
+      },
+      "confidence": 0.92,
+      "raw_ref": {
+        "access_domain": "",
+        "campus_id": "",
+        "sensor_id": "srun4k-direct:conversion-replay",
+        "snapshot_id": "frozen-r65",
+        "source": "srun4k:conversion-replay"
+      }
+    },
+    {
+      "schema_version": "v1",
+      "event_id": "identity-3bbbb8a4dfeb64edde8d",
+      "source": "srun4k:conversion-replay",
+      "source_event_type": "identity",
+      "type": "identity",
+      "timestamp": "2026-10-01T03:00:00.000123Z",
+      "observer": {
+        "sensor_id": "srun4k-direct:conversion-replay"
+      },
+      "subject": {
+        "account_id": "测试账号",
+        "endpoint_id": "mac:02:00:00:00:00:01",
+        "entity_role": "endpoint",
+        "identity_confidence": 0.92,
+        "ip": "192.0.2.2",
+        "mac": "02:00:00:00:00:01",
+        "user_id": "测试账号"
+      },
+      "flow": {
+        "direction": "unknown",
+        "dst_ip": "192.0.2.254",
+        "proto": "other",
+        "src_ip": "192.0.2.2"
+      },
+      "payload": {
+        "action": "reconcile",
+        "control_id": "control-1",
+        "group_id": "1",
+        "heartbeat_interval_seconds": "21600",
+        "nas_ip": "192.0.2.254",
+        "origin": "srun4k:conversion-replay",
+        "product_id": "1",
+        "raw_online_id": "2",
+        "reconcile_interval_seconds": "21600",
+        "session_id": "fixed-run:v2:307b60c7cae87709cb9f4d98f94760e85b604132eb1ec7d00744c5b4e15f6648",
+        "session_id_source": "derived_source_session_login",
+        "session_status": "reconcile",
+        "source_instance_id": "fixed-run",
+        "source_login_generation": "1790820000",
+        "source_session_id": "2",
+        "vlan": "7"
+      },
+      "confidence": 0.92,
+      "raw_ref": {
+        "access_domain": "",
+        "campus_id": "",
+        "sensor_id": "srun4k-direct:conversion-replay",
+        "snapshot_id": "frozen-r65",
+        "source": "srun4k:conversion-replay"
+      }
+    },
+    {
+      "schema_version": "v1",
+      "event_id": "identity-e97151e3928d3ee5d9f6",
+      "source": "srun4k:conversion-replay",
+      "source_event_type": "identity",
+      "type": "identity",
+      "timestamp": "2026-10-01T03:00:00.000123Z",
+      "observer": {
+        "sensor_id": "srun4k-direct:conversion-replay"
+      },
+      "subject": {
+        "account_id": "测试账号",
+        "endpoint_id": "endpoint-1",
+        "entity_role": "endpoint",
+        "identity_confidence": 0.92,
+        "ip": "2001:db8::1",
+        "mac": "02:00:00:00:00:01",
+        "user_id": "测试账号"
+      },
+      "flow": {
+        "direction": "unknown",
+        "dst_ip": "192.0.2.254",
+        "proto": "other",
+        "src_ip": "2001:db8::1"
+      },
+      "payload": {
+        "action": "reconcile",
+        "control_id": "control-1",
+        "group_id": "1",
+        "heartbeat_interval_seconds": "21600",
+        "nas_ip": "192.0.2.254",
+        "origin": "srun4k:conversion-replay",
+        "product_id": "1",
+        "raw_online_id": "2",
+        "reconcile_interval_seconds": "21600",
+        "session_id": "fixed-run:v2:307b60c7cae87709cb9f4d98f94760e85b604132eb1ec7d00744c5b4e15f6648",
+        "session_id_source": "derived_source_session_login",
+        "session_status": "reconcile",
+        "source_instance_id": "fixed-run",
+        "source_login_generation": "1790820000",
+        "source_session_id": "2",
+        "vlan": "7"
+      },
+      "confidence": 0.92,
+      "raw_ref": {
+        "access_domain": "",
+        "campus_id": "",
+        "sensor_id": "srun4k-direct:conversion-replay",
+        "snapshot_id": "frozen-r65",
+        "source": "srun4k:conversion-replay"
+      }
+    }
+  ]
+}

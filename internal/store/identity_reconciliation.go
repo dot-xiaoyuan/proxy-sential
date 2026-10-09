@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
@@ -69,7 +70,11 @@ func reconcileIdentitySessions(facts []policy.Session, snapshots []IdentitySnaps
 		}
 		rows = foldPolicySessions(rows)
 		present := map[[3]string]bool{}
-		for _, s := range snapshot.Sessions {
+		for i := range snapshot.Sessions {
+			if snapshot.SnapshotID != "" {
+				snapshot.Sessions[i].IdentitySnapshotIDs = []string{snapshot.SnapshotID}
+			}
+			s := snapshot.Sessions[i]
 			present[[3]string{s.ID, s.IP, s.AccountID}] = true
 		}
 		for _, s := range rows {
@@ -114,7 +119,8 @@ func (s *DBStore) IdentitySources(ctx context.Context, at time.Time) ([]Identity
 // The inventory and its status become visible in one PostgreSQL commit. Raw
 // standardized events are retained with the snapshot for replay and explanation.
 func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot IdentitySnapshot) (bool, error) {
-	if snapshot.Source == "" || snapshot.SensorID == "" || snapshot.CampusID == "" || snapshot.AccessDomain == "" || snapshot.SnapshotID == "" || snapshot.ObservedAt.IsZero() || snapshot.IntervalSeconds < 1 || snapshot.IntervalSeconds > 86400 {
+	managedSRun := strings.HasPrefix(snapshot.Source, "srun4k:")
+	if snapshot.Source == "" || snapshot.SensorID == "" || (!managedSRun && (snapshot.CampusID == "" || snapshot.AccessDomain == "")) || snapshot.SnapshotID == "" || snapshot.ObservedAt.IsZero() || snapshot.IntervalSeconds < 1 || snapshot.IntervalSeconds > 604800 {
 		return false, fmt.Errorf("invalid snapshot scope, time, identity or interval")
 	}
 	snapshot.Events = append([]normalized.Event{}, snapshot.Events...)
@@ -209,6 +215,9 @@ func (s *PostgresStore) identitySnapshots(ctx context.Context, at time.Time) ([]
 			return nil, err
 		}
 		v.Sessions = policyRows(v.Events)
+		for i := range v.Sessions {
+			v.Sessions[i].IdentitySnapshotIDs = []string{v.SnapshotID}
+		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
@@ -231,6 +240,9 @@ func (s *PostgresStore) identitySnapshotsForScope(ctx context.Context, at time.T
 			return nil, err
 		}
 		v.Sessions = policyRows(v.Events)
+		for i := range v.Sessions {
+			v.Sessions[i].IdentitySnapshotIDs = []string{v.SnapshotID}
+		}
 		out = append(out, v)
 	}
 	return out, rows.Err()

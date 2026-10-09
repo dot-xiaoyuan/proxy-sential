@@ -112,8 +112,9 @@ rollback() {
   ln -sfn "$current_target" "$root/previous.next"
   mv -Tf "$root/previous.next" "$root/previous"
   systemctl daemon-reload
-  systemctl restart proxy-sentinel-control-plane.service
-  if ingest_enabled; then systemctl restart proxy-sentinel-ingest.service; fi
+  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery; do
+    if systemctl is-active --quiet "$unit.service"; then systemctl restart "$unit.service"; fi
+  done
   wait_ready || { echo "rollback health check failed" >&2; exit 1; }
   echo "rolled back to $(basename "$previous_target")"
 }
@@ -145,7 +146,6 @@ doctor() {
   if [[ "${PROXY_SENTINEL_MANAGE_DEVICE_SIGNALS:-${PROXY_SENTINEL_MANAGE_SURICATA:-true}}" == true ]]; then systemctl is-active proxy-sentinel-device-signal.service; fi
   systemctl is-active proxy-sentinel-risk-materializer.service
   timer_scheduled proxy-sentinel-shadow.timer
-  timer_scheduled proxy-sentinel-shadow-evaluation.timer
   systemctl is-active proxy-sentinel-control-plane.service
   wait_ready
   echo "doctor: all checks passed"

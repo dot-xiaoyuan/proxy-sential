@@ -29,6 +29,13 @@ func TestPostgresDiscoveryReplay(t *testing.T) {
 	if _, e = db.ExecContext(ctx, string(ddl)); e != nil {
 		t.Fatal(e)
 	}
+	ddl, e = os.ReadFile("../../migrations/postgres/083_discovery_latest.sql")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.ExecContext(ctx, string(ddl)); e != nil {
+		t.Fatal(e)
+	}
 	r := Repository{DB: db}
 	s := Source{ID: "replay", Node: "test", Site: "s", Domain: "d", ConfigVersion: 1, IntervalSeconds: 300}
 	b, _ := json.Marshal(s)

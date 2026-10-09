@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -35,16 +36,20 @@ type proxyReviewBucket struct {
 	first              time.Time
 	last               time.Time
 	hasDomainHint      bool
+	identitySeen       bool
+	identityMixed      bool
+	alertConfidence    string
 }
 
 // BuildProxyReviewResponse aggregates normalized TLS, QUIC and explicit proxy
-// alert events by account/endpoint/IP. It is intentionally downstream of the
+// alert events by IP, retaining only identity bindings shared by all events.
+// It is intentionally downstream of the
 // normalized event boundary and never consumes collector-specific raw fields.
 func BuildProxyReviewResponse(sensorID, window string, events []normalized.Event, risks map[string]risk.Snapshot) ProxyReviewResponse {
 	if window == "" {
 		window = defaultProxyReviewWindow
 	}
-	identities := latestProxyIdentities(events)
+	identities := buildProxyIdentityTimeline(events)
 	buckets := map[string]*proxyReviewBucket{}
 	acceptedEvents := 0
 	for _, event := range events {
@@ -55,16 +60,7 @@ func BuildProxyReviewResponse(sensorID, window string, events []normalized.Event
 		if ip == "" {
 			continue
 		}
-		identity := identities[ip]
-		if value := stringFromMap(event.Subject, "account_id"); value != "" {
-			identity.accountID = value
-		}
-		if value := stringFromMap(event.Subject, "endpoint_id"); value != "" {
-			identity.endpointID = value
-		}
-		if value := stringFromMap(event.Subject, "access_id"); value != "" {
-			identity.accessID = value
-		}
+		identity := identities.forEvent(event)
 		// A review case represents the observed IP. Account and endpoint bindings
 		// can be completed by older identity signals, so they must not participate
 		// in the case key or pagination samples would produce unstable detail URLs.
@@ -97,6 +93,7 @@ func BuildProxyReviewResponse(sensorID, window string, events []normalized.Event
 			}
 			buckets[key] = bucket
 		}
+		mergeProxyReviewIdentity(bucket, identity)
 		weight := proxyReviewEventWeight(event)
 		acceptedEvents += weight
 		bucket.item.EventCount += weight
@@ -113,6 +110,9 @@ func BuildProxyReviewResponse(sensorID, window string, events []normalized.Event
 		case "alert":
 			bucket.item.AlertCount += weight
 			bucket.item.RuleMatches = append(bucket.item.RuleMatches, proxyRuleMatch(event))
+			if confidence, ok := evidence.VPNAlertConfidence(event.Payload); ok && proxyConfidenceRank(confidence) > proxyConfidenceRank(bucket.alertConfidence) {
+				bucket.alertConfidence = confidence
+			}
 		}
 		if eventHasVPNDomainHint(event) {
 			bucket.hasDomainHint = true
@@ -163,33 +163,6 @@ func proxyReviewEventWeight(event normalized.Event) int {
 	return weight
 }
 
-func latestProxyIdentities(events []normalized.Event) map[string]proxyIdentity {
-	type timedIdentity struct {
-		identity proxyIdentity
-		time     string
-	}
-	latest := map[string]timedIdentity{}
-	for _, event := range events {
-		if event.Type != "identity" || isInfrastructureEntityRole(stringFromMap(event.Subject, "entity_role")) {
-			continue
-		}
-		ip := subjectIP(event)
-		if ip == "" || event.Timestamp < latest[ip].time {
-			continue
-		}
-		latest[ip] = timedIdentity{identity: proxyIdentity{
-			accountID:  stringFromMap(event.Subject, "account_id"),
-			endpointID: stringFromMap(event.Subject, "endpoint_id"),
-			accessID:   stringFromMap(event.Subject, "access_id"),
-		}, time: event.Timestamp}
-	}
-	result := map[string]proxyIdentity{}
-	for ip, item := range latest {
-		result[ip] = item.identity
-	}
-	return result
-}
-
 func isProxyReviewEvent(event normalized.Event) bool {
 	switch event.Type {
 	case "tls", "quic":
@@ -203,7 +176,7 @@ func isProxyReviewEvent(event normalized.Event) bool {
 
 func eventHasVPNDomainHint(event normalized.Event) bool {
 	for _, key := range []string{"sni", "server_name", "host", "query"} {
-		if evidence.HasVPNHint(stringFromMap(event.Payload, key)) {
+		if evidence.HasVPNDomainHint(stringFromMap(event.Payload, key)) {
 			return true
 		}
 	}
@@ -318,9 +291,9 @@ func finalizeProxyReviewBucket(bucket *proxyReviewBucket, risks map[string]risk.
 		}
 		return bucket.item.RuleMatches[i].EventID < bucket.item.RuleMatches[j].EventID
 	})
-	if len(bucket.item.RuleMatches) > 0 {
+	if bucket.alertConfidence == "high" {
 		bucket.item.ConfidenceLevel = "high"
-	} else if bucket.hasDomainHint {
+	} else if bucket.alertConfidence == "medium" || bucket.hasDomainHint {
 		bucket.item.ConfidenceLevel = "medium"
 	} else {
 		bucket.item.ConfidenceLevel = "low"
@@ -337,15 +310,23 @@ func finalizeProxyReviewBucket(bucket *proxyReviewBucket, risks map[string]risk.
 	if snapshot, ok := proxyReviewRisk(bucket.item, risks); ok {
 		bucket.item.RiskScore = snapshot.Score
 		bucket.item.RiskLevel = snapshot.Level
+		if !math.IsNaN(snapshot.Confidence) && snapshot.Confidence >= 0 && snapshot.Confidence <= 1 {
+			confidence := snapshot.Confidence
+			bucket.item.RiskConfidence = &confidence
+		}
 		bucket.item.EvidenceIDs = append([]string{}, snapshot.EvidenceIDs...)
 		bucket.item.ReviewStatus = firstNonEmpty(snapshot.ReviewStatus, ReviewStatusUnreviewed)
 		bucket.item.ReviewReason = snapshot.ReviewReason
+	}
+	if bucket.identityMixed {
+		bucket.item.ReviewStatus = "needs_more_data"
+		bucket.item.ReviewReason = "聚合流量包含不同身份或缺少身份归属，须按事件时间核验"
 	}
 }
 
 func proxyReviewRisk(item ProxyReviewCase, risks map[string]risk.Snapshot) (risk.Snapshot, bool) {
 	for _, key := range []string{"endpoint:" + item.EndpointID, "account:" + item.AccountID, "ip:" + item.IP, item.IP} {
-		if snapshot, ok := risks[key]; ok && strings.TrimSpace(key) != "endpoint:" && strings.TrimSpace(key) != "account:" {
+		if snapshot, ok := risks[key]; ok && strings.TrimSpace(key) != "endpoint:" && strings.TrimSpace(key) != "account:" && proxyRiskMatchesReview(item, snapshot) {
 			return snapshot, true
 		}
 	}
@@ -358,12 +339,36 @@ func ProxyReviewRiskMap(items []risk.Snapshot) map[string]risk.Snapshot {
 		if item.SubjectType != "" && item.SubjectID != "" {
 			result[item.SubjectType+":"+item.SubjectID] = item
 		}
-		if item.IP != "" {
+		// An account/endpoint snapshot's IP is contextual data, not another
+		// subject key. Aliasing it would lend its evidence and review to the next
+		// owner of that address (or an unattributed aggregate).
+		if item.IP != "" && (item.SubjectType == "ip" || item.SubjectType == "") {
 			result["ip:"+item.IP] = item
 			result[item.IP] = item
 		}
 	}
 	return result
+}
+
+func proxyRiskMatchesReview(item ProxyReviewCase, snapshot risk.Snapshot) bool {
+	if snapshot.IP != "" && snapshot.IP != item.IP {
+		return false
+	}
+	if snapshot.AccountID != "" && snapshot.AccountID != item.AccountID || snapshot.EndpointID != "" && snapshot.EndpointID != item.EndpointID {
+		return false
+	}
+	switch snapshot.SubjectType {
+	case "account":
+		return item.AccountID != "" && snapshot.SubjectID == item.AccountID
+	case "endpoint":
+		return item.EndpointID != "" && snapshot.SubjectID == item.EndpointID
+	case "ip":
+		return snapshot.SubjectID == item.IP
+	case "":
+		return snapshot.IP == item.IP
+	default:
+		return false
+	}
 }
 
 func proxyReviewCaseID(key string) string {

@@ -12,6 +12,8 @@ import (
 )
 
 type SharedBehaviorQuery struct {
+	View          string
+	HistoryBasis  string
 	Keyword       string
 	IP            string
 	Status        string
@@ -47,7 +49,26 @@ type SharedBehaviorReader interface {
 }
 
 func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
-	clauses := []string{"expires_at>now()"}
+	clauses := []string{"current=true", "expires_at>now()", "window_end>now()-interval '20 minutes'", "window_end<=now()"}
+	if query.View != "" && query.View != "current" && query.View != "history" {
+		return "", nil, fmt.Errorf("invalid shared behavior view")
+	}
+	if query.View == "history" {
+		clauses = []string{"NOT (current AND rule_version='" + sharedaccess.BehaviorRuleVersion + "' AND expires_at>now() AND window_end>now()-interval '20 minutes' AND window_end<=now())"}
+		// Old scores and router projections do not prove downstream devices.
+		// Filter by evidence before choosing the newest historical episode.
+		strong := `(status='confirmed' AND coverage_state='verified' AND COALESCE(observation->>'strong_anchor','') IN ('ieee1905_association','coexisting_device_models') AND CASE WHEN observation->>'device_lower_bound' ~ '^[0-9]{1,9}$' THEN (observation->>'device_lower_bound')::int ELSE 0 END>=2 AND COALESCE(NULLIF(observation->'conflicts','null'::jsonb),'[]'::jsonb)='[]'::jsonb)`
+		switch query.HistoryBasis {
+		case "", "shared":
+			clauses = append(clauses, strong)
+		case "clues":
+			clauses = append(clauses, "NOT "+strong)
+		default:
+			return "", nil, fmt.Errorf("invalid historical evidence basis")
+		}
+	} else if query.HistoryBasis != "" {
+		return "", nil, fmt.Errorf("historical evidence basis requires history view")
+	}
 	args := []any{}
 	add := func(clause string, value any) {
 		args = append(args, value)
@@ -68,6 +89,9 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 			return "", nil, fmt.Errorf("invalid shared behavior status")
 		}
 		add(`status=$%d`, value)
+		if value == "confirmed" && query.View != "history" {
+			clauses = append(clauses, "COALESCE(observation->>'strong_anchor','')<>''")
+		}
 	}
 	if value := strings.TrimSpace(query.CoverageState); value != "" {
 		if value != "verified" && value != "partial" && value != "unknown" {
@@ -97,13 +121,16 @@ func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBeha
 	}
 	args = append(args, query.Limit, query.Cursor)
 	// Observations are immutable ten-minute windows. The operational list is a
-	// gateway profile, so select the newest window for each capture scope and IP
+	// gateway profile, so select the newest current window for each capture scope and IP
 	// before applying user filters. Raw windows remain queryable through the
 	// detail history and are never deleted by this view.
-	rows, err := s.db.QueryContext(ctx, `WITH latest AS (
- SELECT DISTINCT ON(sensor_id,campus_id,access_domain,ip) *
- FROM shared_behavior_observations WHERE expires_at>now()
- ORDER BY sensor_id,campus_id,access_domain,ip,last_seen DESC,observation_id DESC)
+	latest := `SELECT DISTINCT ON(sensor_id,campus_id,access_domain,ip) *
+ FROM shared_behavior_observations WHERE current=true AND rule_version='` + sharedaccess.BehaviorRuleVersion + `' AND expires_at>now()
+ ORDER BY sensor_id,campus_id,access_domain,ip,last_seen DESC,observation_id DESC`
+	if query.View == "history" {
+		latest = `SELECT DISTINCT ON(sensor_id,campus_id,access_domain,ip,endpoint_id) * FROM shared_behavior_observations ` + where + ` ORDER BY sensor_id,campus_id,access_domain,ip,endpoint_id,last_seen DESC,observation_id DESC`
+	}
+	rows, err := s.db.QueryContext(ctx, `WITH latest AS (`+latest+`)
 SELECT observation,count(*) OVER() FROM latest `+where+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,observation_id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		return SharedBehaviorPage{}, err
@@ -119,6 +146,7 @@ SELECT observation,count(*) OVER() FROM latest `+where+fmt.Sprintf(` ORDER BY co
 		if err = json.Unmarshal(raw, &item); err != nil {
 			return page, err
 		}
+		item.Current = query.View != "history"
 		page.Items = append(page.Items, item)
 	}
 	if err = rows.Err(); err != nil {
@@ -134,7 +162,9 @@ SELECT observation,count(*) OVER() FROM latest `+where+fmt.Sprintf(` ORDER BY co
 func (s *PostgresStore) GetSharedBehavior(ctx context.Context, id string) (SharedBehaviorDetail, bool, error) {
 	var raw []byte
 	var sensorID, campusID, accessDomain, ip string
-	if err := s.db.QueryRowContext(ctx, `SELECT observation,sensor_id,campus_id,access_domain,host(ip) FROM shared_behavior_observations WHERE observation_id=$1`, id).Scan(&raw, &sensorID, &campusID, &accessDomain, &ip); err != nil {
+	var current bool
+	var windowStart, windowEnd, expires time.Time
+	if err := s.db.QueryRowContext(ctx, `SELECT observation,sensor_id,campus_id,access_domain,host(ip),current,window_start,window_end,expires_at FROM shared_behavior_observations WHERE observation_id=$1`, id).Scan(&raw, &sensorID, &campusID, &accessDomain, &ip, &current, &windowStart, &windowEnd, &expires); err != nil {
 		if err == sql.ErrNoRows {
 			return SharedBehaviorDetail{}, false, nil
 		}
@@ -144,6 +174,9 @@ func (s *PostgresStore) GetSharedBehavior(ctx context.Context, id string) (Share
 	if err := json.Unmarshal(raw, &result.BehaviorAssessment); err != nil {
 		return SharedBehaviorDetail{}, false, err
 	}
+	result.WindowStart, result.WindowEnd, result.ExpiresAt = windowStart.UTC(), windowEnd.UTC(), expires.UTC()
+	now := time.Now().UTC()
+	result.Current = current && result.RuleVersion == sharedaccess.BehaviorRuleVersion && expires.After(now) && windowEnd.After(now.Add(-20*time.Minute)) && !windowEnd.After(now)
 	rows, err := s.db.QueryContext(ctx, `SELECT h.status,h.confidence,array_to_json(h.signal_groups),h.coverage_state,h.rule_version,h.observed_at,h.created_at
 FROM shared_behavior_observation_history h
 JOIN shared_behavior_observations o ON o.observation_id=h.observation_id

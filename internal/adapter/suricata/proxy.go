@@ -5,9 +5,9 @@ import (
 	"proxy-sentinel/internal/proxyprotocol"
 )
 
-func proxyTransaction(e normalized.Event, opts Options) (normalized.Event, bool) {
+func proxyTransaction(e normalized.Event, opts Options) (normalized.Event, bool, error) {
 	if e.Type != "http" || proxyprotocol.Text(e.Payload, "method") != "CONNECT" {
-		return normalized.Event{}, false
+		return normalized.Event{}, false, nil
 	}
 	// EVE status and method belong to tx_id, but EVE timestamp is not a proven request timestamp.
 	// Keep request_at absent rather than assigning a potentially different historical account.
@@ -20,7 +20,9 @@ func proxyTransaction(e normalized.Event, opts Options) (normalized.Event, bool)
 	e.Type = "proxy_transaction"
 	e.Payload = p
 	if opts.ProxyProducer != nil {
-		proxyprotocol.Sign(&e, *opts.ProxyProducer)
+		if err := proxyprotocol.Sign(&e, *opts.ProxyProducer); err != nil {
+			return normalized.Event{}, false, err
+		}
 	}
-	return e, true
+	return e, true, nil
 }

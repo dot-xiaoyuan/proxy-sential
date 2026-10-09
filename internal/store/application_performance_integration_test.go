@@ -83,8 +83,21 @@ func TestApplicationDatabaseEndToEndCapacity(t *testing.T) {
 				t.Fatal(e)
 			}
 			rtStart := time.Now()
-			if _, e = d.Step(ctx, "realtime", time.Now().UTC(), b); e != nil {
-				t.Fatal(e)
+			// The worker intentionally advances at most one minute per step.
+			// Advance the test clock past the deliberate late-event safety lag, then
+			// drain bounded realtime slices while history remains in progress.
+			probeNow := time.Now().UTC().Add(applicationRealtimeSafetyLag + time.Second)
+			for pass := 0; ; pass++ {
+				moreRealtime, realtimeErr := d.Step(ctx, "realtime", probeNow, b)
+				if realtimeErr != nil {
+					t.Fatal(realtimeErr)
+				}
+				if !moreRealtime {
+					break
+				}
+				if pass >= 20 {
+					t.Fatal("realtime probe did not catch up within bounded slices")
+				}
 			}
 			rtDelay = time.Since(rtStart)
 			st, e := d.State(ctx)

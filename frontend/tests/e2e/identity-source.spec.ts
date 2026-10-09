@@ -1,8 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { mkdir, writeFile } from 'node:fs/promises'
-import path from 'node:path'
-
-for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) test(`managed identity scope ${width}`, async ({ page }) => {
+for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) test(`4K onboarding does not expose manual identity scope ${width}`, async ({ page }) => {
   await page.setViewportSize({ width, height })
   await page.addInitScript(() => {
     const original = window.fetch
@@ -24,18 +21,8 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) test(`mana
     }
   })
   await page.goto('/settings/actions')
-  await page.getByRole('button', { name: '身份来源与范围' }).first().click()
-  const dialog = page.getByRole('dialog')
-  await dialog.getByLabel('校区 / 测试范围').fill('office-test')
-  await dialog.getByLabel('接入域', { exact: true }).fill('office-lan')
-  await dialog.getByLabel('受控用户网段（CIDR）').fill('192.168.0.0/24')
-  const probe = await dialog.evaluate(el => ({ overflow: document.documentElement.scrollWidth > innerWidth + 2, footerBottom: el.querySelector('.ant-modal-footer')!.getBoundingClientRect().bottom, controls: [...el.querySelectorAll('.ant-btn,.ant-tag')].filter(e => getComputedStyle(e).whiteSpace !== 'nowrap' || getComputedStyle(e).flexShrink !== '0').map(e => e.textContent) }))
-  expect(probe.overflow).toBe(false); expect(probe.footerBottom).toBeLessThanOrEqual(height); expect(probe.controls).toEqual([])
-  const dir = path.resolve('test-results/identity-source'); await mkdir(dir, { recursive: true })
-  await writeFile(path.join(dir, `dom-${width}.json`), JSON.stringify(probe, null, 2))
-  await page.screenshot({ path: path.join(dir, `${width}.png`), animations: 'disabled' })
-  await dialog.getByRole('button', { name: /^保\s*存$/ }).click()
-  await expect(dialog).toHaveCount(0)
-  await page.getByRole('button', { name: '身份来源与范围' }).first().click()
-  await expect(page.getByRole('dialog').getByLabel('校区 / 测试范围')).toHaveValue('office-test')
+  await expect(page.getByRole('button', { name: '高级身份范围' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '身份来源与范围' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '配置与同步4K' }).first()).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 2)).toBe(false)
 })

@@ -157,8 +157,10 @@ type connection struct {
 	observations []Observation
 }
 
+const ClassifiedTrafficBasis = "仅汇总已被特征库识别的应用连接累计字节；未分类域名保留在观测统计中，不进入连接流量合计"
+
 func Aggregate(observations []Observation, q Query) Report {
-	r := Report{Items: []Item{}, Versions: map[string]int{}, TrafficBasis: "窗口内有观测连接的累计字节；部分缺失时仅合计已知计量，不代表精确区间增量"}
+	r := Report{Items: []Item{}, Versions: map[string]int{}, TrafficBasis: ClassifiedTrafficBasis}
 	seen := map[string]bool{}
 	cs := map[string]*connection{}
 	items := map[string]*Item{}
@@ -223,6 +225,11 @@ func Aggregate(observations []Observation, q Query) Report {
 	}
 	for _, c := range cs {
 		if !c.active {
+			continue
+		}
+		if len(c.apps) == 0 {
+			// Preserve unclassified observation counts above, while matching the
+			// database read model's application-only traffic accounting contract.
 			continue
 		}
 		if len(c.apps) != 1 {

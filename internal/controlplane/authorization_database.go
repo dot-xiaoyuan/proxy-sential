@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ func (s *Server) credentialsFrom4K(ctx context.Context, id string) (srunapi.Appl
 }
 
 func (s *Server) bind4KCredentialProviders() {
-	for id, runtime := range s.nativeActions {
+	for id, runtime := range s.nativeRuntimeSnapshot() {
 		client, ok := runtime.Client.(*srunapi.Client)
 		if !ok {
 			continue
@@ -72,7 +73,7 @@ func (s *Server) bind4KCredentialProviders() {
 		})
 		runtime.Client = bound
 		runtime.Probe = bound.OnlineTotal
-		s.nativeActions[id] = runtime
+		s.setNativeRuntime(id, runtime)
 	}
 }
 
@@ -83,12 +84,13 @@ func (s *Server) handle4KDatabase(w http.ResponseWriter, r *http.Request, id str
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	var exists bool
-	if s.operations.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM enforcement_connectors WHERE connector_id=$1)`, id).Scan(&exists) != nil {
+	var endpointURL string
+	err := s.operations.db.QueryRowContext(ctx, `SELECT endpoint_url FROM enforcement_connectors WHERE connector_id=$1`, id).Scan(&endpointURL)
+	if err != nil && err != sql.ErrNoRows {
 		writeError(w, 503, "configuration_unavailable", "连接器配置不可用")
 		return
 	}
-	if !exists {
+	if err == sql.ErrNoRows {
 		writeError(w, 404, "connector_not_found", "连接器不存在")
 		return
 	}
@@ -100,7 +102,11 @@ func (s *Server) handle4KDatabase(w http.ResponseWriter, r *http.Request, id str
 			return
 		}
 		if !configured {
-			cfg.Port = 3306
+			cfg.Port = 3506
+			cfg.Database = "srun4k"
+			if endpoint, parseErr := url.Parse(endpointURL); parseErr == nil {
+				cfg.Host = endpoint.Hostname()
+			}
 		}
 		writeJSON(w, 200, map[string]any{"configuration": cfg, "password_configured": configured, "credential_source": "4k_database"})
 	case http.MethodPut:

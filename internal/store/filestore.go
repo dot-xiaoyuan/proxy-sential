@@ -48,6 +48,7 @@ type fileRun struct {
 }
 
 type runSummary struct {
+	SensorID               string           `json:"sensor_id,omitempty"`
 	StartedAt              string           `json:"started_at"`
 	FinishedAt             string           `json:"finished_at"`
 	EVEPath                string           `json:"eve_path"`
@@ -910,6 +911,27 @@ func (s *FileStore) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return result, nil
 }
 
+func (s *FileStore) ListSensorRuns(ctx context.Context, sensorID string, limit int) ([]Run, error) {
+	if sensorID == "" {
+		return nil, fmt.Errorf("sensor id is required")
+	}
+	runs, err := s.runs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := []Run{}
+	for _, run := range runs {
+		if run.SensorID != sensorID {
+			continue
+		}
+		result = append(result, run.Run)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result, nil
+}
+
 func (s *FileStore) ListAuditLogs(ctx context.Context, limit int) ([]AuditLog, error) {
 	runs, err := s.runs(ctx)
 	if err != nil {
@@ -1145,10 +1167,12 @@ func (s *FileStore) latestRun(ctx context.Context) (fileRun, bool, error) {
 	if err != nil {
 		return fileRun{}, false, err
 	}
-	if len(runs) == 0 {
-		return fileRun{}, false, nil
+	for _, run := range runs {
+		if run.SensorID == s.sensorID {
+			return run, true, nil
+		}
 	}
-	return runs[0], true, nil
+	return fileRun{}, false, nil
 }
 
 func (s *FileStore) runs(ctx context.Context) ([]fileRun, error) {
@@ -1183,7 +1207,7 @@ func (s *FileStore) runs(ctx context.Context) ([]fileRun, error) {
 				RunID:          entry.Name(),
 				StartedAt:      summary.StartedAt,
 				FinishedAt:     summary.FinishedAt,
-				SensorID:       s.sensorID,
+				SensorID:       firstNonEmpty(summary.SensorID, s.sensorID),
 				PreviousOffset: summary.PreviousOffset,
 				NewOffset:      summary.NewOffset,
 				Truncated:      summary.Truncated,
@@ -1262,7 +1286,7 @@ func (s *FileStore) diagnosticForRun(run fileRun) ingest.Diagnostic {
 		SchemaVersion: "v1",
 		DiagnosticID:  diagnosticID(run.RunID),
 		Timestamp:     run.FinishedAt,
-		SensorID:      s.sensorID,
+		SensorID:      run.SensorID,
 		Collector:     s.collector(),
 		Stage:         "normalize",
 		Type:          "stats",

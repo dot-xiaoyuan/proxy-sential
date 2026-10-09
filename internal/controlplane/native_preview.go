@@ -17,7 +17,7 @@ func (s *Server) handleNativeAccountPreview(w http.ResponseWriter, r *http.Reque
 		s.handleManagedAccountObservation(w, r, connector)
 		return
 	}
-	runtime, configured := s.nativeActions[id]
+	runtime, configured := s.nativeRuntime(id)
 	if !exists || !configured || runtime.Read == nil {
 		writeError(w, 404, "native_connector_unavailable", "未配置该原生连接器")
 		return

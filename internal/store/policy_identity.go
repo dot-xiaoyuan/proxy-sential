@@ -70,6 +70,17 @@ func foldPolicySessions(rows []policy.Session) []policy.Session {
 			s.ProductID = firstNonEmpty(s.ProductID, old.ProductID)
 			s.DeviceClass = firstNonEmpty(s.DeviceClass, old.DeviceClass)
 			s.VLAN = firstNonEmpty(s.VLAN, old.VLAN)
+			snapshotIDs := append([]string{}, s.IdentitySnapshotIDs...)
+			if len(snapshotIDs) == 0 {
+				snapshotIDs = append(snapshotIDs, old.IdentitySnapshotIDs...)
+			}
+			sort.Strings(snapshotIDs)
+			s.IdentitySnapshotIDs = snapshotIDs[:0]
+			for _, id := range snapshotIDs {
+				if id != "" && (len(s.IdentitySnapshotIDs) == 0 || s.IdentitySnapshotIDs[len(s.IdentitySnapshotIDs)-1] != id) {
+					s.IdentitySnapshotIDs = append(s.IdentitySnapshotIDs, id)
+				}
+			}
 			if s.HeartbeatSeconds <= 0 {
 				s.HeartbeatSeconds = old.HeartbeatSeconds
 			}

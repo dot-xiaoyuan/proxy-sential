@@ -5,19 +5,13 @@ import type { ProxyProtocolEvidence } from '../shared/api/types'
 import { Descriptions, Typography } from 'antd'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 
-import { useAuditLog, useEvent, useIngestDiagnostic, useShadowRun } from '../shared/api/queries'
+import { useAuditLog, useEvent, useIngestDiagnostic } from '../shared/api/queries'
 import { AppErrorAlert, AppLoadingState, AppPageHeader } from '../shared/ui'
 
 export function EventDetailsPage() {
   const { eventId = '' } = useParams()
   const query = useEvent(eventId)
   return <RecordPage title="事件详情" back="/events" query={query} identifier={eventId} />
-}
-
-export function ShadowRunDetailsPage() {
-  const { runId = '' } = useParams()
-  const query = useShadowRun(runId)
-  return <RecordPage title="影子运行详情" back="/shadow-runs" query={query} identifier={runId} />
 }
 
 export function AuditDetailsPage() {

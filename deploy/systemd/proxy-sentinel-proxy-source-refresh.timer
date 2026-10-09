@@ -1,0 +1,9 @@
+[Unit]
+Description=Track Proxy Sentinel collector invocation changes
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=proxy-sentinel-proxy-source-refresh.service
+[Install]
+WantedBy=timers.target

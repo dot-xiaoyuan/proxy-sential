@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -174,6 +175,32 @@ func (c *Client) requestDisconnect(ctx context.Context, account, rawOnlineID, dr
 	return err
 }
 
+// RequestSafeDisableChecked disables one account for a bounded period. The
+// caller supplies a final guard so a queued decision cannot outlive its policy
+// revision or login generation. The 4K service owns expiry and recovery.
+func (c *Client) RequestSafeDisableChecked(ctx context.Context, account string, seconds int, guard func(context.Context) error) error {
+	if account == "" || strings.TrimSpace(account) != account || seconds <= 0 || guard == nil {
+		return fmt.Errorf("%w: account, duration and final guard required", ErrDispatchPrevented)
+	}
+	token, err := c.authenticate(ctx)
+	if err != nil {
+		return err
+	}
+	if err = guard(ctx); err != nil {
+		return fmt.Errorf("%w: authorization or session changed", ErrDispatchPrevented)
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("%w: context cancelled", ErrDispatchPrevented)
+	}
+	_, err = c.post(ctx, "/api/v2/safe/disable", url.Values{
+		"access_token": {token},
+		"type":         {"user_name@proxy"},
+		"value":        {account},
+		"disable_time": {strconv.Itoa(seconds)},
+	})
+	return err
+}
+
 func (c *Client) authenticate(ctx context.Context) (string, error) {
 	appID, secret := c.appID, c.secret
 	if c.credentials != nil {
@@ -214,4 +241,69 @@ func (c *Client) OnlineTotal(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("%w: invalid native online total", ErrReadOnlyQuery)
 	}
 	return *result.Total, nil
+}
+
+type Group struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	ParentID string `json:"pid,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
+// Groups reads the complete group directory through the documented paginated
+// northbound endpoint. It is a directory lookup only and never mutates 4K.
+func (c *Client) Groups(ctx context.Context) ([]Group, error) {
+	token, err := c.authenticate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrAuthentication, err)
+	}
+	result := []Group{}
+	const pageSize = 100 // 4K rejects per-page values above 100 (business code 10206).
+	for page := 1; page <= 10000; page++ {
+		data, err := c.requestBounded(ctx, http.MethodGet, "/api/v2/groups", url.Values{
+			"access_token": {token},
+			"page":         {strconv.Itoa(page)},
+			"per-page":     {strconv.Itoa(pageSize)},
+		}, 4<<20)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrReadOnlyQuery, err)
+		}
+		var items []map[string]any
+		if len(data) > 0 && string(data) != "null" {
+			if err = json.Unmarshal(data, &items); err != nil {
+				return nil, fmt.Errorf("%w: invalid group directory", ErrReadOnlyQuery)
+			}
+		}
+		for _, item := range items {
+			id := scalarString(item["id"])
+			if id == "" {
+				id = scalarString(item["group_id"])
+			}
+			name := strings.TrimSpace(scalarString(item["name"]))
+			if name == "" {
+				name = strings.TrimSpace(scalarString(item["group_name"]))
+			}
+			if id == "" || name == "" {
+				return nil, fmt.Errorf("%w: incomplete group directory item", ErrReadOnlyQuery)
+			}
+			result = append(result, Group{ID: id, Name: name, ParentID: scalarString(item["pid"]), Path: strings.TrimSpace(scalarString(item["path"]))})
+		}
+		if len(items) < pageSize {
+			return result, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: group directory exceeds page bound", ErrReadOnlyQuery)
+}
+
+func scalarString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	case json.Number:
+		return v.String()
+	default:
+		return ""
+	}
 }

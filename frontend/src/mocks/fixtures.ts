@@ -12,8 +12,6 @@ import type {
   RiskSnapshot,
   Session,
   ShadowRun,
-  ShadowEvaluation,
-  ShadowReviewSamples,
   FingerprintConflictItem,
   DpiProtocolFlowItem,
   DpiTrendPoint,
@@ -858,38 +856,6 @@ export const shadowRuns: ShadowRun[] = [
   },
 ]
 
-export const shadowEvaluation: ShadowEvaluation = {
-  generated_at: '2026-08-21T15:36:52Z',
-  window_from: '2026-08-14T00:00:00Z',
-  window_to: '2026-08-21T23:59:59Z',
-  required_days: 7,
-  observed_days: 8,
-  longest_continuous_days: 8,
-  days_with_reviews: 3,
-  run_count: 1010,
-  risk_snapshot_count: 24663,
-  evaluated_sample_count: 716,
-  reviewed_snapshot_count: 48,
-  review_coverage: 48 / 716,
-  missing_review_buckets: ['2026-08-18:high', '2026-08-19:suspicious'],
-  recommended_adjustments: ['继续补充视频会议和企业 VPN 负证据'],
-  candidate_reviewed:24,candidate_confirmed:22,candidate_precision:22/24,normal_reviewed:24,
-  level_stats:{high:{total:100,reviewed:24,confirmed:22,false_positive:2,benign:0,needs_more_data:0,precision:22/24},normal:{total:616,reviewed:24,confirmed:0,false_positive:0,benign:24,needs_more_data:0,precision:0}},
-  false_positive_reasons:[{value:'校园业务应用',count:2}],false_positive_evidence:[],
-  ready: false,
-  blockers: ['仅 3 天包含人工复核，要求至少 7 天', '存在 2 个有样本但未复核的日期/等级分桶'],
-}
-
-export const shadowReviewSamples: ShadowReviewSamples = {
-  date: '2026-08-21',
-  dates: ['2026-08-20', '2026-08-21'],
-  samples_per_level: 10,
-  samples: [
-    { sample_id:'sample-demo-high', date: '2026-08-21', ip: '10.255.0.98', subject_type: 'ip', subject_id: '10.255.0.98', level: 'high', score: 82, confidence: 0.86, evidence_ids: ['evidence-ua-98','evidence-ja3-98'], review_status: 'unreviewed', source_run_id: 'shadow-run-001', snapshot_time: '2026-08-21T14:30:00Z' },
-    { sample_id:'sample-demo-normal', date: '2026-08-21', ip: '10.255.0.42', subject_type: 'ip', subject_id: '10.255.0.42', level: 'normal', score: 24, confidence: 0.68, evidence_ids: ['expired-evidence-42'], review_status: 'benign', review_reason: '普通单终端', reviewed_by: 'ops-001', reviewed_at: '2026-08-21T15:00:00Z', source_run_id: 'shadow-run-001', snapshot_time: '2026-08-21T14:30:00Z' },
-  ],
-}
-
 export const auditLogs: AuditLog[] = [
   {
     audit_id: 'audit-001',
@@ -920,6 +886,39 @@ export const overview: Overview = {
     { type: 'port_distribution', count: 2 },
     { type: 'domain_diversity', count: 1 },
   ],
+}
+
+export const systemStatus = {
+  status: 'ready' as const,
+  components: {
+    storage: { status: 'ready' },
+    collector: { status: 'ready', updated_at: new Date().toISOString() },
+    operations: { status: 'ready' },
+    statistics_read_model: { status: 'ready' },
+  },
+  checked_at: new Date().toISOString(),
+  runtime: {
+    sampled_at: new Date().toISOString(),
+    host: {
+      logical_cpus: 8,
+      load_1: 1.72,
+      load_5: 1.38,
+      load_15: 1.16,
+      memory_total_bytes: 16 * 1024 ** 3,
+      memory_used_bytes: 8.6 * 1024 ** 3,
+      memory_used_percent: 53.8,
+    },
+    process: {
+      cpu_percent: 6.4,
+      resident_memory_bytes: 286 * 1024 ** 2,
+      heap_alloc_bytes: 118 * 1024 ** 2,
+      heap_in_use_bytes: 136 * 1024 ** 2,
+      goroutines: 74,
+      gomaxprocs: 8,
+      gc_cycles: 183,
+      uptime_seconds: 98742,
+    },
+  },
 }
 
 export const ingestStatus: IngestStatus = {

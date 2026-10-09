@@ -100,6 +100,25 @@ func TestIPv6BucketSeparatesHopLimitFromTTL(t *testing.T) {
 	}
 }
 
+func TestDedicatedSharedBucketUsesDistinctStandardEventSource(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "events.jsonl")
+	values := map[packetBucketKey]int{{IP: netip.MustParseAddr("10.1.2.3"), Version: 4, TTL: 63, TCP: tcpFingerprint{Flags: 1}}: 2}
+	if err := writePacketBucketWithSource(file, "sensor", "bond0", "boot", "shared-syn-sidecar", nil, time.Now().UTC().Truncate(time.Second), values); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event normalized.Event
+	if err = json.Unmarshal(raw, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Source != "shared-syn-sidecar" || event.Type != "device" || event.SourceEventType != "ttl" {
+		t.Fatalf("dedicated collector crossed the standard-event boundary incorrectly: %+v", event)
+	}
+}
+
 func TestParseLLDPRouterSignal(t *testing.T) {
 	frame := []byte{0x01, 0x80, 0xc2, 0, 0, 0x0e, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x88, 0xcc}
 	frame = append(frame,

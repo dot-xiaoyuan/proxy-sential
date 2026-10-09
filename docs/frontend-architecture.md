@@ -12,6 +12,10 @@ Proxy Sentinel 前端第一阶段是检测运营台，不是采集调试器或�
 - MSW 提供 mock-first 开发。
 - Vitest 与 Playwright 覆盖组件和核心流程。
 
+视觉与交互实现必须同时遵守 [前端设计系统](./frontend-design-system.md)。该规范以
+Ant Design v6 为组件和令牌基础，以 Ant Design Pro / ProComponents 的中后台模式为
+参考，但不要求将现有 Vite 路由和数据层迁移到 Umi。
+
 ## 信息架构
 
 - `/overview`：风险等级分布、待复核数量、最近影子运行、Top evidence。
@@ -25,6 +29,8 @@ Proxy Sentinel 前端第一阶段是检测运营台，不是采集调试器或�
 ## API 契约
 
 `schemas/control-plane-v1.openapi.yaml` 是前后端共同契约源。前端通过 `openapi-typescript` 生成 `frontend/src/shared/api/generated.ts`，页面和 mock 都使用生成类型。
+
+修改契约后在 `frontend` 执行 `pnpm generate:api`，检查生成差异。`pnpm check:api` 使用已安装的生成器在私有临时目录重新生成类型，与工作区文件逐字节比较；类型不同步或生成失败时返回非零状态，完成后清理临时文件。`pnpm typecheck` 和 `pnpm build` 都先执行该检查，避免生产构建遗漏新增字段或成功响应分支。
 
 第一阶段真实接口由 `proxy-sentinel control-plane serve` 提供。控制面通过
 `internal/store` 读取数据；30 机器过渡期使用 `dual` 模式兼容文件产物，生产目标
@@ -45,7 +51,7 @@ Proxy Sentinel 前端第一阶段是检测运营台，不是采集调试器或�
 - `GET /api/v1/ingest/errors`
 - `GET /api/v1/events`
 - `POST /api/v1/labels`
-- `GET /api/v1/shadow/runs`
+- `GET /api/v1/ingest/runs`
 - `GET /api/v1/audit-logs`
 - `POST /api/v1/rules/reload`
 

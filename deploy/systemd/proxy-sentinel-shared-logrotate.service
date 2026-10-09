@@ -1,0 +1,6 @@
+[Unit]
+Description=Rotate Proxy Sentinel shared-access signal log
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state /opt/proxy-sentinel/data/shared-logrotate.state /etc/logrotate.d/proxy-sentinel-shared-signals

@@ -21,7 +21,7 @@ func ValidateNativeTestListener(runtimes map[string]NativeActionRuntime, addr st
 	return nil
 }
 func (s *Server) nativeTestAccountAllowed(connector, account, campus, domain string) bool {
-	r, ok := s.nativeActions[connector]
+	r, ok := s.nativeRuntime(connector)
 	return ok && r.TestAccount != "" && r.TestAccount == account && r.CampusID == campus && r.AccessDomain == domain
 }
 func (s *Server) nativeTestStageAllowed(e policy.Execution, index int) bool {
@@ -29,6 +29,6 @@ func (s *Server) nativeTestStageAllowed(e policy.Execution, index int) bool {
 		return false
 	}
 	st := e.Definition.Stages[index]
-	r := s.nativeActions[st.ConnectorID]
+	r, _ := s.nativeRuntime(st.ConnectorID)
 	return st.Action == "disconnect" && s.nativeTestAccountAllowed(st.ConnectorID, e.AccountID, r.CampusID, r.AccessDomain)
 }

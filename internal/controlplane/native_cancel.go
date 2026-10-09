@@ -14,14 +14,21 @@ import (
 func (s *Server) handleNativeCancel(w http.ResponseWriter, r *http.Request, id string) bool {
 	s.operations.mu.Lock()
 	a, ok := s.operations.doc.Actions[id]
-	_, configured := s.nativeActions[a.ConnectorID]
+	_, configured := s.nativeRuntime(a.ConnectorID)
 	if !ok || (!configured && !a.PolicyParameters.NativeSelected && a.PolicyParameters.NativeIntent == nil) {
 		s.operations.mu.Unlock()
 		return false
 	}
 	if a.Status == "succeeded" {
 		s.operations.mu.Unlock()
-		writeError(w, http.StatusConflict, "disconnect_not_reversible", "已完成的下线无法恢复原会话；一次性下线不禁止重新登录")
+		switch a.PolicyParameters.Operation {
+		case "disable_account":
+			writeError(w, http.StatusConflict, "timed_disable_not_reversible", "4K定时禁用已提交，将按disable_time到期恢复；当前北向SDK没有提前恢复接口")
+		case "notify":
+			writeError(w, http.StatusConflict, "notification_not_retractable", "已进入发送队列的消息不能保证撤回")
+		default:
+			writeError(w, http.StatusConflict, "disconnect_not_reversible", "已完成的下线无法恢复原会话；一次性下线不禁止重新登录")
+		}
 		return true
 	}
 	if s.operations.lockErr != nil || s.operations.db == nil {

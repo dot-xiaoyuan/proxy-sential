@@ -69,7 +69,7 @@ func parseRecords(data []byte) ([]map[string]string, error) {
 
 func parseJSONL(r io.Reader) ([]map[string]string, error) {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), maxJSONLRecordBytes)
 	records := []map[string]string{}
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -180,7 +180,7 @@ func convertRecord(fields map[string]string, lineOffset int, opts Options) (norm
 	payload := map[string]any{
 		"origin": source,
 	}
-	for _, key := range []string{"group_id", "product_id", "access_domain", "heartbeat_interval_seconds", "reconcile_interval_seconds", "device_class"} {
+	for _, key := range []string{"group_id", "product_id", "control_id", "access_domain", "heartbeat_interval_seconds", "reconcile_interval_seconds", "device_class"} {
 		copyPayload(payload, fields, key, key)
 	}
 	copyPayload(payload, fields, "action", "action")

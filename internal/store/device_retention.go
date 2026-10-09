@@ -23,6 +23,25 @@ const deviceRetentionProtected = deviceRetentionReferences + `, latest_runs AS M
  SELECT DISTINCT ON (sensor_id,"window",ip) sensor_id,"window",ip,run_id
  FROM device_inventory_snapshots ORDER BY sensor_id,"window",ip,created_at DESC,run_id DESC
 )`
+
+// Reuse the small sensor/window/IP key set, then seek each latest row through
+// existing indexes. This avoids sorting all historical snapshots every batch.
+// The final delete transaction still rechecks every reference and latest row.
+const deviceRetentionCandidateProtected = deviceRetentionReferences + `, snapshot_keys AS MATERIALIZED (
+ SELECT DISTINCT sensor_id,"window",ip FROM device_inventory_snapshots
+), latest_runs AS MATERIALIZED (
+ SELECT g.sensor_id,g."window",x.run_id
+ FROM (SELECT DISTINCT sensor_id,"window" FROM snapshot_keys) g
+ CROSS JOIN LATERAL (SELECT d.run_id FROM device_inventory_snapshots d
+ WHERE d.sensor_id=g.sensor_id AND d."window"=g."window"
+ ORDER BY d.created_at DESC,d.run_id DESC LIMIT 1) x
+), latest_devices AS MATERIALIZED (
+ SELECT g.sensor_id,g."window",g.ip,x.run_id
+ FROM snapshot_keys g
+ CROSS JOIN LATERAL (SELECT d.run_id FROM device_inventory_snapshots d
+ WHERE d.sensor_id=g.sensor_id AND d."window"=g."window" AND d.ip=g.ip
+ ORDER BY d.created_at DESC,d.run_id DESC LIMIT 1) x
+)`
 const deviceRetentionEligible = `d.created_at < $1
  AND NOT EXISTS (SELECT 1 FROM protected_ips c WHERE c.ip IS NULL)
  AND NOT EXISTS (SELECT 1 FROM protected_ips c WHERE c.ip=d.ip)
@@ -41,6 +60,15 @@ type DeviceRetentionPreview struct {
 	RelationBytes int64                `json:"relation_bytes"`
 	Days          []DeviceRetentionDay `json:"days"`
 	Protection    string               `json:"protection"`
+}
+
+// Candidates existed but the final protected/SKIP LOCKED transaction made no
+// progress. It committed an empty delete, so this is distinguishable from both
+// true exhaustion and an unconfirmed transaction failure.
+type DeviceRetentionNoProgressError struct{ Candidates int }
+
+func (e *DeviceRetentionNoProgressError) Error() string {
+	return fmt.Sprintf("retention candidates changed or locked (%d candidates)", e.Candidates)
 }
 
 type DeviceRetentionBatchError struct {
@@ -103,7 +131,7 @@ func (s *PostgresStore) DeleteDeviceRetentionBatch(ctx context.Context, cutoff t
 	// rechecks every reference and latest snapshot, so this list is not authority.
 	candidateCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	rows, err := s.db.QueryContext(candidateCtx, deviceRetentionProtected+` SELECT d.run_id,d."window",host(d.ip),pg_column_size(d.inventory)::bigint FROM device_inventory_snapshots d WHERE `+deviceRetentionEligible+` ORDER BY d.created_at,d.run_id,d."window",d.ip LIMIT $2`, cutoff, limit)
+	rows, err := s.db.QueryContext(candidateCtx, deviceRetentionCandidateProtected+` SELECT d.run_id,d."window",host(d.ip),pg_column_size(d.inventory)::bigint FROM device_inventory_snapshots d WHERE `+deviceRetentionEligible+` ORDER BY d.created_at,d.run_id,d."window",d.ip LIMIT $2`, cutoff, limit)
 	if err != nil {
 		return 0, fmt.Errorf("select retention candidates: %w", err)
 	}
@@ -195,7 +223,13 @@ func (s *PostgresStore) DeleteDeviceRetentionBatch(ctx context.Context, cutoff t
 	if err != nil {
 		return 0, err
 	}
-	return n, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return n, err
+	}
+	if n == 0 {
+		return 0, &DeviceRetentionNoProgressError{Candidates: len(candidates)}
+	}
+	return n, nil
 }
 
 // TOAST storage varies from kilobytes to tens of megabytes per snapshot. Keep

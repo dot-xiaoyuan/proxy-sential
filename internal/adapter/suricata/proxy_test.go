@@ -3,6 +3,7 @@ package suricata
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/proxyprotocol"
 	"testing"
@@ -29,5 +30,19 @@ func TestConnectKeepsHTTPAndDoesNotInventRequestTime(t *testing.T) {
 	}
 	if proxyprotocol.Attribute(r, nil).Attribution.State != "unknown" {
 		t.Fatal("invented attribution")
+	}
+}
+
+func TestConnectDoesNotEmitAnUnsignedTransactionAfterSigningFailure(t *testing.T) {
+	p := proxyprotocol.Producer{ParserID: "sentinel-suricata-http", ParserVersion: "1", Key: "01234567890123456789012345678901"}
+	e := normalized.Event{Type: "http", Flow: map[string]any{"src_ip": "192.0.2.1"}, Payload: map[string]any{"method": "CONNECT", "status": 200}, RawRef: map[string]any{"tx_id": "1", "extra": math.NaN()}}
+	if transaction, ok, err := proxyTransaction(e, Options{ProxyProducer: &p}); err == nil || ok || transaction.Type != "" {
+		t.Fatal("adapter published an unsigned transaction after an encoding error")
+	}
+	// Other HTTP methods still follow their original path; no proxy signing is
+	// attempted merely because an unrelated record carries unusual metadata.
+	e.Payload["method"] = "GET"
+	if _, ok, err := proxyTransaction(e, Options{ProxyProducer: &p}); err != nil || ok {
+		t.Fatal("ordinary HTTP was routed through proxy signing")
 	}
 }

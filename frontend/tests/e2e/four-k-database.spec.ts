@@ -2,36 +2,22 @@ import { test, expect } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) test(`4K database authorization ${width}`, async ({ page }) => {
+for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) test(`4K automatic onboarding ${width}`, async ({ page }) => {
   await page.setViewportSize({ width, height })
   await page.goto('/settings/actions')
-  await expect(page.getByRole('button', { name: '4K 数据库授权' }).first()).toBeVisible()
-  await page.evaluate(() => {
-    const original = window.fetch
-    let configuration = { host: '', port: 3306, database: '', username: '', tls: false, authorization_id: undefined as number | undefined }
-    let configured = false
-    window.fetch = async (...args) => {
-      if (String(args[0]).includes('/tasks/4k-check-test')) return new Response(JSON.stringify({ task_id: '4k-check-test', kind: 'authorization-check', created_at: new Date().toISOString(), status: 'completed', response_status: 200, result: { read_only: true, authorization_id: 7, app_id: 'sentinel-app', organization: '测试授权', expires_at: 0, management_api_verified: false, checked_at: new Date().toISOString() } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      if (!String(args[0]).includes('/4k-database')) return original(...args)
-      const method = args[1]?.method ?? 'GET'
-      if (method === 'PUT') {
-        const value = JSON.parse(String(args[1]?.body))
-        configuration = { ...value, password: undefined }; configured = true
-      }
-      const result = method === 'POST' ? { task_id: '4k-check-test', kind: 'authorization-check', created_at: new Date().toISOString(), status: 'queued' } : { configuration, password_configured: configured, credential_source: '4k_database' }
-      return new Response(JSON.stringify(result), { status: method === 'POST' ? 202 : 200, headers: { 'Content-Type': 'application/json' } })
-    }
-  })
-  await page.getByRole('button', { name: '4K 数据库授权' }).first().click()
+  await expect(page.getByRole('button', { name: '配置与同步4K' }).first()).toBeVisible()
+  await page.getByRole('button', { name: '配置与同步4K' }).first().click()
   const dialog = page.getByRole('dialog')
-  await dialog.getByRole('textbox', { name: '数据库地址' }).fill('192.0.2.190')
-  await dialog.getByRole('textbox', { name: /数据库名$/ }).fill('srun')
-  await dialog.getByRole('textbox', { name: '数据库用户名' }).fill('readonly')
-  await dialog.getByLabel(/数据库密码$/).fill('isolated-secret')
-  await dialog.getByRole('button', { name: '保存并检查授权' }).click()
-  await expect(dialog.getByText('只读授权检查通过')).toBeVisible()
-  await expect(dialog.getByText('sentinel-app', { exact: true })).toBeVisible()
-  await expect(dialog.getByLabel('数据库密码（留空保持不变）')).toHaveValue('')
+  await dialog.getByRole('textbox', { name: '4K 地址' }).fill('192.0.2.190')
+  await expect(dialog.getByRole('spinbutton', { name: '全量校准周期（小时）' })).toHaveValue('6')
+  await expect(dialog.getByText('数据库用户名')).toHaveCount(0)
+  await expect(dialog.getByText('校区 / 测试范围')).toHaveCount(0)
+  await dialog.getByRole('button', { name: '保存并立即同步' }).click()
+  await expect(dialog.getByText('通道检查')).toBeVisible()
+  await expect(dialog.getByText('正常', { exact: true })).toHaveCount(3)
+  await expect(dialog.getByText('最近同步摘要')).toBeVisible()
+  await expect(dialog.getByText('12个账号 / 16个会话 / 18个地址')).toBeVisible()
+  await expect(dialog.getByText('等待事件通道接入', { exact: true }).first()).toBeVisible()
   await dialog.locator('.four-k-database-result').scrollIntoViewIfNeeded()
   const probe = await dialog.evaluate(el => {
     const result = el.querySelector('.four-k-database-result')!
@@ -56,9 +42,7 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) test(`4K d
   await writeFile(path.join(dir, `dom-${width}.json`), JSON.stringify(probe, null, 2))
   await page.screenshot({ path: path.join(dir, `${width}.png`), fullPage: false, animations: 'disabled' })
   await dialog.getByRole('button', { name: /^关\s*闭$/ }).click()
-  await page.getByRole('button', { name: '4K 数据库授权' }).first().click()
-  await expect(page.getByRole('dialog').getByRole('textbox', { name: '数据库地址' })).toHaveValue('192.0.2.190')
-  await expect(page.getByRole('dialog').getByLabel('数据库密码（留空保持不变）')).toHaveValue('')
-  await page.getByRole('dialog').getByRole('button', {name: /^保\s*存$/}).click()
-  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('button', { name: '配置与同步4K' }).first().click()
+  await expect(page.getByRole('dialog').getByRole('textbox', { name: '4K 地址' })).toHaveValue('192.0.2.190')
+  await expect(page.getByRole('dialog').getByRole('button', {name: '保存并立即同步'})).toBeVisible()
 })

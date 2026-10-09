@@ -1,4 +1,15 @@
-(arp or (ether proto 0x88cc) or (ether dst 01:00:0c:cc:cc:cc) or
- (udp and (port 53 or port 67 or port 68 or port 137 or port 161 or port 162 or port 1985 or port 5353 or port 5355 or port 1900)) or
- (ip proto 112) or
- (tcp and (port 22 or port 23 or port 80 or port 443 or port 8080 or port 8443)))
+(
+  arp or ether proto 0x88cc or ether proto 0x893a or
+  ether dst 01:00:0c:cc:cc:cc or
+  (udp and (port 67 or port 68 or port 137 or port 161 or port 162 or
+            port 1985 or port 5353 or port 5355 or port 1900)) or
+  ip proto 112
+) or (
+  vlan and (
+    arp or ether proto 0x88cc or ether proto 0x893a or
+    ether dst 01:00:0c:cc:cc:cc or
+    (udp and (port 67 or port 68 or port 137 or port 161 or port 162 or
+              port 1985 or port 5353 or port 5355 or port 1900)) or
+    ip proto 112
+  )
+)

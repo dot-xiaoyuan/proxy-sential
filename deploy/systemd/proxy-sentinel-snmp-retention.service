@@ -1,0 +1,11 @@
+[Unit]
+Description=Expire sanitized Proxy Sentinel SNMP logs after 24 hours
+ConditionPathIsDirectory=/opt/proxy-sentinel/data/zeek/logs
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/find /opt/proxy-sentinel/data/zeek/logs -type f -name snmp*.log.gz -mmin +1440 -delete
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/proxy-sentinel/data/zeek/logs

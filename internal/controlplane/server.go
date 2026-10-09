@@ -10,15 +10,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"proxy-sentinel/internal/appdomain"
 	"proxy-sentinel/internal/discovery"
-	"proxy-sentinel/internal/evaluation"
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
@@ -35,63 +33,75 @@ const (
 )
 
 type Options struct {
-	NativeActions         map[string]NativeActionRuntime
-	SharedAccessConfig    string
-	IdentitySourcesConfig string
-	ProxyProtocolConfig   string
-	ApplicationsEnabled   bool
-	ApplicationsDir       string
-	Addr                  string
-	ShadowDir             string
-	SensorID              string
-	FrontendDir           string
-	ReadOnly              bool
-	StorageMode           string
-	PostgresDSN           string
-	ClickHouseDSN         string
-	CollectorKind         string
-	CollectorVer          string
-	InterfaceName         string
-	FingerprintDir        string
-	FingerprintAutoUpdate bool
-	AuthFile              string
-	AuthCookieSecure      bool
-	OIDC                  OIDCOptions
-	ExportDir             string
-	IdentityIngestKey     string
-	OperationsFile        string
-	ActionMasterKey       string
-	PostgresMigrationsDir string
+	NativeActions          map[string]NativeActionRuntime
+	SharedAccessConfig     string
+	IdentitySourcesConfig  string
+	ProxyProtocolConfig    string
+	ApplicationsEnabled    bool
+	ApplicationsDir        string
+	Addr                   string
+	ShadowDir              string
+	SensorID               string
+	FrontendDir            string
+	ReadOnly               bool
+	AllowIdentityIngest    bool
+	StorageMode            string
+	PostgresDSN            string
+	ClickHouseDSN          string
+	CollectorKind          string
+	CollectorVer           string
+	InterfaceName          string
+	FingerprintDir         string
+	FingerprintAutoUpdate  bool
+	AuthFile               string
+	AuthCookieSecure       bool
+	OIDC                   OIDCOptions
+	ExportDir              string
+	IdentityIngestKey      string
+	ProductPolicyIngestKey string
+	SRun4K                 SRun4KDefaults
+	OperationsFile         string
+	ActionMasterKey        string
+	PostgresMigrationsDir  string
 }
 
 type Server struct {
 	managedIdentityFailures *managedIdentityFailureCache
 	sharedReviews           *sharedReviewRuntime
+	deviceInventory         *deviceInventoryPageCache
+	startedAt               time.Time
+	runtimeSampler          *runtimeSampler
 
-	actionDeliveries   *actionDeliveryQueue
-	statistics         *statisticsCache
-	tasks              *taskRuntime
-	nativeActions      map[string]NativeActionRuntime
-	identitySources    []identitySourceRegistration
-	sharedConfig       sharedaccess.Config
-	proxyConfig        proxyprotocol.Config
-	proxyResults       *proxyprotocol.Repository
-	applications       *appdomain.Service
-	shadowDir          string
-	sensorID           string
-	frontendDir        string
-	readOnly           bool
-	reader             store.Reader
-	fingerprints       *fingerprint.Manager
-	fingerprintOffline bool
-	auth               *authManager
-	oidc               *oidcManager
-	oidcError          string
-	exports            *exportManager
-	identityIngest     *identityIngestState
-	operations         *operationsState
-	actionMasterKey    []byte
-	exceptions         *exceptionManager
+	actionDeliveries    *actionDeliveryQueue
+	statistics          *statisticsCache
+	tasks               *taskRuntime
+	nativeActions       map[string]NativeActionRuntime
+	nativeActionsMu     *sync.RWMutex
+	nativeActionEpochs  map[string]uint64
+	identitySources     []identitySourceRegistration
+	sharedConfig        sharedaccess.Config
+	proxyConfig         proxyprotocol.Config
+	proxyResults        *proxyprotocol.Repository
+	applications        *appdomain.Service
+	shadowDir           string
+	sensorID            string
+	frontendDir         string
+	readOnly            bool
+	allowIdentityIngest bool
+	reader              store.Reader
+	fingerprints        *fingerprint.Manager
+	fingerprintOffline  bool
+	auth                *authManager
+	oidc                *oidcManager
+	oidcError           string
+	exports             *exportManager
+	identityIngest      *identityIngestState
+	productPolicies     *productPolicyState
+	srun4KDefaults      SRun4KDefaults
+	operations          *operationsState
+	actionMasterKey     []byte
+	exceptions          *exceptionManager
+	whitelist           *whitelistManager
 }
 
 type Session struct {
@@ -115,6 +125,15 @@ type DeviceListResponse struct {
 	DeviceNamesDisabled bool                            `json:"device_names_disabled,omitempty"`
 	FacetsAsOf          string                          `json:"facets_as_of,omitempty"`
 	Items               []store.EndpointDeviceInventory `json:"items"`
+	Page                Page                            `json:"page"`
+	Facets              store.DeviceFilterFacets        `json:"facets"`
+}
+
+type DeviceInventoryListResponse struct {
+	DeviceNamesDisabled bool                            `json:"device_names_disabled,omitempty"`
+	ReadModelUpdating   bool                            `json:"read_model_updating"`
+	AsOf                string                          `json:"as_of,omitempty"`
+	Items               []store.DeviceInventoryListItem `json:"items"`
 	Page                Page                            `json:"page"`
 	Facets              store.DeviceFilterFacets        `json:"facets"`
 }
@@ -208,7 +227,6 @@ type CreateLabelRequest struct {
 	Label       string   `json:"label"`
 	Reason      string   `json:"reason"`
 	EvidenceIDs []string `json:"evidence_ids"`
-	SampleDate  string   `json:"sample_date,omitempty"`
 }
 
 type UpdateEndpointRegistrationRequest struct {
@@ -252,6 +270,7 @@ func Serve(opts Options) error {
 	}
 	if !opts.ReadOnly {
 		go server.runProxyProtocol(ctx)
+		go server.runSRun4KScheduler(ctx)
 	}
 	if server.applications != nil && !opts.ReadOnly {
 		go server.applications.Run(ctx)
@@ -356,17 +375,26 @@ func NewServerWithError(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	nativeActions := opts.NativeActions
+	if nativeActions == nil {
+		nativeActions = map[string]NativeActionRuntime{}
+	}
 	server := &Server{
 		managedIdentityFailures: &managedIdentityFailureCache{},
 		sharedReviews:           &sharedReviewRuntime{},
+		deviceInventory:         newDeviceInventoryPageCache(time.Second),
+		startedAt:               time.Now(),
+		runtimeSampler:          &runtimeSampler{},
 		statistics:              newStatisticsCache(),
 		tasks:                   &taskRuntime{dir: filepath.Join(exportDir, "task-input"), wake: make(chan struct{}, 2)},
-		nativeActions:           opts.NativeActions,
+		nativeActions:           nativeActions,
+		nativeActionsMu:         &sync.RWMutex{},
 		identitySources:         registeredSources,
 		shadowDir:               shadowDir,
 		sensorID:                sensorID,
 		frontendDir:             opts.FrontendDir,
 		readOnly:                opts.ReadOnly,
+		allowIdentityIngest:     opts.AllowIdentityIngest,
 		reader:                  reader,
 		fingerprints:            fingerprints,
 		fingerprintOffline:      !opts.FingerprintAutoUpdate,
@@ -375,9 +403,12 @@ func NewServerWithError(opts Options) (*Server, error) {
 		oidcError:               oidcError,
 		exports:                 exports,
 		identityIngest:          identityIngest,
+		productPolicies:         newProductPolicyState(opts.ProductPolicyIngestKey, operations.db),
+		srun4KDefaults:          opts.SRun4K.normalized(),
 		operations:              operations,
 		actionMasterKey:         []byte(opts.ActionMasterKey),
 		exceptions:              newExceptionManager(operations.db),
+		whitelist:               newWhitelistManager(operations.db, filepath.Join(shadowDir, "whitelist.json")),
 	}
 	server.bind4KCredentialProviders()
 	server.actionDeliveries = newActionDeliveryQueue(server.deliverAction)
@@ -492,12 +523,24 @@ func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) bool {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+	if path == "/integrations/product-policy/snapshots" && r.Method == http.MethodPost {
+		s.handleProductPolicySnapshot(w, r)
+		return
+	}
 	if path == "/integrations/identity/snapshots" && r.Method == http.MethodPost {
 		s.handleIdentitySnapshot(w, r)
 		return
 	}
+	if path == "/integrations/identity/snapshot-uploads" && r.Method == http.MethodPost {
+		s.handleIdentitySnapshotUploadCreate(w, r)
+		return
+	}
+	if strings.HasPrefix(path, "/integrations/identity/snapshot-uploads/") {
+		s.handleIdentitySnapshotUpload(w, r, path)
+		return
+	}
 	if path == "/integrations/identity/events" && r.Method == http.MethodPost {
-		if s.readOnly {
+		if s.readOnly && !s.allowIdentityIngest {
 			writeError(w, http.StatusForbidden, "read_only", "identity ingestion is disabled by the global read-only switch")
 			return
 		}
@@ -571,8 +614,12 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 
 	session := sessionFromContext(r.Context())
 	switch {
+	case func() bool { _, _, _, ok := srun4KPath(path); return ok }():
+		s.handleSRun4K(w, r, path)
 	case r.Method == http.MethodGet && path == "/session":
 		writeJSON(w, http.StatusOK, session)
+	case r.Method == http.MethodGet && path == "/shared-access/devices":
+		s.handleSharedDeviceProfiles(w, r)
 	case r.Method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")):
 		s.handleSharedBehavior(w, r, path)
 	case (path == "/shared-access/reviews" || strings.HasPrefix(path, "/shared-access/reviews/")):
@@ -585,12 +632,22 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleOperationTasks(w, r, path)
 	case strings.HasPrefix(path, "/users"):
 		s.handleUsers(w, r)
+	case path == "/whitelist" || strings.HasPrefix(path, "/whitelist/"):
+		s.handleWhitelist(w, r, path)
 	case strings.HasPrefix(path, "/campus-exceptions"):
 		s.handleCampusExceptions(w, r)
 	case r.Method == http.MethodGet && path == "/integrations/identity/status":
 		s.handleIdentityIngestStatus(w, r)
 	case r.Method == http.MethodGet && path == "/integrations/identity/batches":
 		s.handleIdentityBatches(w, r)
+	case r.Method == http.MethodGet && (path == "/integrations/product-policy/status" || path == "/integrations/product-policy/catalog"):
+		s.handleProductPolicyCatalog(w, r)
+	case r.Method == http.MethodGet && path == "/integrations/4k-directory":
+		s.handle4KDirectory(w, r)
+	case strings.HasPrefix(path, "/policy-imports"):
+		s.handlePolicyImports(w, r, path)
+	case r.Method == http.MethodGet && path == "/policy-decisions":
+		s.handlePolicyDecisionRecords(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/integrations/identity/batches/") && strings.HasSuffix(path, "/replay"):
 		s.handleIdentityBatchReplay(w, r)
 	case strings.HasPrefix(path, "/policies") || strings.HasPrefix(path, "/policy-executions") || (strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/quota")):
@@ -641,6 +698,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleRouterObservations(w, r, path)
 	case r.Method == http.MethodGet && path == "/devices":
 		s.handleDevices(w, r)
+	case r.Method == http.MethodGet && path == "/device-inventory":
+		s.handleDeviceInventory(w, r)
 	case r.Method == http.MethodGet && path == "/device-recognition/summary":
 		s.handleDeviceRecognitionSummary(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/devices/"):
@@ -687,18 +746,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleIngestEventTypes(w, r)
 	case r.Method == http.MethodGet && path == "/ingest/errors":
 		s.handleIngestErrors(w, r)
-	case r.Method == http.MethodGet && path == "/shadow/runs":
-		s.handleShadowRuns(w, r)
-	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shadow/runs/"):
-		s.handleShadowRun(w, r, strings.TrimPrefix(path, "/shadow/runs/"))
-	case r.Method == http.MethodGet && path == "/shadow/evaluation":
-		s.handleShadowEvaluation(w, r)
-	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shadow/review-samples/"):
-		s.handleShadowSampleDetail(w, r, strings.TrimPrefix(path, "/shadow/review-samples/"))
 	case r.Method == http.MethodGet && path == "/rules/status":
 		writeJSON(w, http.StatusOK, map[string]any{"reload_supported": false, "reload_status": "disabled"})
-	case r.Method == http.MethodGet && path == "/shadow/review-samples":
-		s.handleShadowReviewSamples(w, r)
 	case r.Method == http.MethodGet && path == "/audit-logs":
 		s.handleAuditLogs(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/audit-logs/"):
@@ -873,14 +922,30 @@ func (s *Server) serveFrontend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	for _, part := range strings.Split(r.URL.Path, "/") {
+		if part == ".." {
+			http.NotFound(w, r)
+			return
+		}
+	}
 	if clean == "." {
 		clean = "index.html"
 	}
-	target := filepath.Join(s.frontendDir, clean)
-	if info, err := os.Stat(target); err == nil && !info.IsDir() {
-		http.ServeFile(w, r, target)
+	if target, ok := frontendRegularFile(s.frontendDir, clean); ok {
+		serveFrontendFile(w, r, s.frontendDir, clean, target)
 		return
 	}
+	if strings.HasPrefix(clean, "assets/") {
+		if previous, ok := previousReleaseFrontend(s.frontendDir); ok && filepath.Dir(clean) == "assets" {
+			if target, exists := frontendRegularFile(previous, clean); exists {
+				serveFrontendFile(w, r, previous, clean, target)
+				return
+			}
+		}
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, filepath.Join(s.frontendDir, "index.html"))
 }
 
@@ -966,8 +1031,17 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func requiredPermission(method, path string) string {
+	if path == "/whitelist" || strings.HasPrefix(path, "/whitelist/") {
+		if method == http.MethodGet {
+			return "policies:read"
+		}
+		return "policies:manage"
+	}
 	if method == http.MethodGet && (path == "/rules/status" || strings.HasPrefix(path, "/campus-exceptions")) {
 		return "risks:read"
+	}
+	if _, _, _, ok := srun4KPath(path); ok {
+		return "integrations:write"
 	}
 	if method == http.MethodPost && sharedDisconnectPath(path) {
 		return "actions:execute"
@@ -977,6 +1051,9 @@ func requiredPermission(method, path string) string {
 			return "cases:read"
 		}
 		return "cases:write"
+	}
+	if method == http.MethodGet && path == "/shared-access/devices" {
+		return "cases:read"
 	}
 	if method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")) {
 		return "cases:read"
@@ -988,6 +1065,9 @@ func requiredPermission(method, path string) string {
 		return "integrations:write"
 	}
 	if is4KDatabasePath(path) {
+		return "integrations:write"
+	}
+	if _, ok := fourKSyncPath(path); ok {
 		return "integrations:write"
 	}
 	if strings.HasPrefix(path, "/policy-executions/") && method == http.MethodPost {
@@ -1004,6 +1084,15 @@ func requiredPermission(method, path string) string {
 			return "policies:read"
 		}
 		return "policies:manage"
+	}
+	if strings.HasPrefix(path, "/policy-imports") {
+		if method == http.MethodGet {
+			return "policies:read"
+		}
+		return "policies:manage"
+	}
+	if path == "/policy-decisions" || path == "/integrations/4k-directory" || strings.HasPrefix(path, "/integrations/product-policy/") {
+		return "policies:read"
 	}
 	if strings.HasPrefix(path, "/application-library") || strings.HasPrefix(path, "/application-activity") {
 		if method != http.MethodGet && method != http.MethodHead {
@@ -1079,7 +1168,7 @@ func requiredPermission(method, path string) string {
 		return "actions:read"
 	case strings.HasPrefix(path, "/integrations"):
 		return "integrations:write"
-	case strings.HasPrefix(path, "/accounts") || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
+	case strings.HasPrefix(path, "/accounts") || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/device-inventory") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
 		return "identity:read"
 	default:
 		return "risks:read"
@@ -1257,12 +1346,16 @@ func readFingerprintBundle(w http.ResponseWriter, r *http.Request) ([]byte, erro
 }
 
 func (s *Server) appendAudit(ctx context.Context, action, target, outcome string) {
+	_ = s.writeAudit(ctx, action, target, outcome)
+}
+
+func (s *Server) writeAudit(ctx context.Context, action, target, outcome string) error {
 	appender, ok := s.reader.(store.AuditAppender)
 	if !ok {
-		return
+		return nil
 	}
 	now := time.Now().UTC()
-	_ = appender.AppendAuditLog(ctx, store.AuditLog{
+	return appender.AppendAuditLog(ctx, store.AuditLog{
 		AuditID:   "audit-" + strconv.FormatInt(now.UnixNano(), 10),
 		Actor:     sessionFromContext(ctx).User.ID,
 		Action:    action,
@@ -1289,21 +1382,6 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 	if err := validateLabelRequest(request); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_label_request", err.Error())
 		return
-	}
-	if request.TargetType == "risk_snapshot" && strings.HasPrefix(request.TargetID, "sample-") {
-		detail, err := s.readShadowSample(request.SampleDate, request.TargetID)
-		if detail.Sample.SampleID != request.TargetID || (err != nil && request.Label != "needs_more_data") {
-			writeError(w, 409, "historical_sample_unavailable", "historical sample evidence cannot be read")
-			return
-		}
-		if request.Label != "needs_more_data" && (len(detail.MissingEvidenceIDs) > 0 || len(detail.Evidence) == 0) {
-			writeError(w, 409, "historical_evidence_incomplete", "historical evidence is incomplete")
-			return
-		}
-		if !sameEvidenceIDs(request.EvidenceIDs, detail.Sample.EvidenceIDs) {
-			writeError(w, 409, "sample_evidence_mismatch", "review must use the historical sample evidence")
-			return
-		}
 	}
 	label := store.Label{
 		TargetType:  request.TargetType,
@@ -1464,8 +1542,8 @@ func validateLabelRequest(request CreateLabelRequest) error {
 	if strings.TrimSpace(request.TargetID) == "" {
 		return fmt.Errorf("target_id is required")
 	}
-	if targetID := strings.TrimSpace(request.TargetID); request.TargetType == "risk_snapshot" && strings.HasPrefix(targetID, "sample-") && targetID != request.TargetID {
-		return fmt.Errorf("sample target_id must not contain surrounding whitespace")
+	if request.TargetType == "risk_snapshot" && strings.HasPrefix(strings.TrimSpace(request.TargetID), "sample-") {
+		return fmt.Errorf("historical sample reviews are retired")
 	}
 	switch request.Label {
 	case "confirmed_proxy", "false_positive", "benign", "needs_more_data":
@@ -1475,7 +1553,7 @@ func validateLabelRequest(request CreateLabelRequest) error {
 	if len(strings.TrimSpace(request.Reason)) < 2 {
 		return fmt.Errorf("reason must contain at least 2 characters")
 	}
-	if len(request.EvidenceIDs) == 0 && !(request.TargetType == "risk_snapshot" && strings.HasPrefix(request.TargetID, "sample-") && request.Label == "needs_more_data") {
+	if len(request.EvidenceIDs) == 0 {
 		return fmt.Errorf("evidence_ids must contain at least one evidence id")
 	}
 	return nil
@@ -1815,6 +1893,89 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, DeviceListResponse{DeviceNamesDisabled: os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true", Items: page.Items, Facets: page.Facets, FacetsAsOf: page.FacetsAsOf, Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total}})
 }
 
+func (s *Server) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
+	view := r.URL.Query().Get("view")
+	if view != "" && view != "recent" && view != "history" {
+		writeError(w, http.StatusBadRequest, "bad_device_query", "invalid view")
+		return
+	}
+	query, err := deviceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_device_query", err.Error())
+		return
+	}
+	query.View = view
+	if query.SensorID == "" {
+		query.SensorID = s.sensorID
+	}
+	if r.URL.Query().Get("window") == "" {
+		query.Window = ""
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+
+	load := func(loadCtx context.Context) (store.DeviceInventoryListPage, error) {
+		if reader, ok := s.reader.(store.DeviceInventoryReader); ok {
+			return reader.ListDeviceInventory(loadCtx, query)
+		}
+		legacy, loadErr := s.reader.ListEndpointDevices(loadCtx, query)
+		page := store.DeviceInventoryListPage{}
+		if loadErr == nil {
+			page.Page, page.Facets, page.AsOf = legacy.Page, legacy.Facets, legacy.FacetsAsOf
+			page.Items = make([]store.DeviceInventoryListItem, 0, len(legacy.Items))
+			for _, item := range legacy.Items {
+				page.Items = append(page.Items, store.ProjectDeviceInventoryListItem(item))
+			}
+		}
+		return page, loadErr
+	}
+	cacheKey := query.SensorID + "?" + r.URL.RawQuery
+	var page store.DeviceInventoryListPage
+	if s.deviceInventory != nil {
+		page, err = s.deviceInventory.get(ctx, cacheKey, load)
+	} else {
+		page, err = load(ctx)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_device_inventory_failed", err.Error())
+		return
+	}
+	if page.Items == nil {
+		page.Items = []store.DeviceInventoryListItem{}
+	}
+	if page.Facets.Brands == nil {
+		page.Facets.Brands = []string{}
+	}
+	if page.Facets.OSFamilies == nil {
+		page.Facets.OSFamilies = []string{}
+	}
+	ids := make([]string, 0, len(page.Items))
+	for _, item := range page.Items {
+		ids = append(ids, item.EndpointID)
+	}
+	if s.operations != nil && s.operations.db != nil {
+		if summaries, summaryErr := (discovery.Repository{DB: s.operations.db}).Summaries(ctx, ids); summaryErr == nil {
+			for index := range page.Items {
+				page.Items[index].Discovery = summaries[page.Items[index].EndpointID]
+			}
+		}
+	}
+	if reader, ok := s.reader.(store.RouterObservationSummaryReader); ok {
+		if summaries, summaryErr := reader.RouterObservationSummaries(ctx, ids); summaryErr == nil {
+			for index := range page.Items {
+				if summary, found := summaries[page.Items[index].EndpointID]; found {
+					page.Items[index].RouterObservation = &summary
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, DeviceInventoryListResponse{
+		DeviceNamesDisabled: os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true",
+		ReadModelUpdating:   page.ReadModelUpdating, AsOf: page.AsOf, Items: page.Items, Facets: page.Facets,
+		Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total},
+	})
+}
+
 func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request, rawDeviceID string) {
 	deviceID, err := store.DecodePathIP(rawDeviceID)
 	if err != nil {
@@ -2102,143 +2263,6 @@ func (s *Server) handleShadowRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"runs": items, "page": page})
 }
 
-func (s *Server) handleShadowRun(w http.ResponseWriter, r *http.Request, rawRunID string) {
-	runID, err := store.DecodePathIP(rawRunID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_run_id", err.Error())
-		return
-	}
-	runs, err := s.reader.ListRuns(r.Context(), 10000)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_runs_failed", err.Error())
-		return
-	}
-	for _, run := range runs {
-		if run.RunID == runID {
-			writeJSON(w, http.StatusOK, toShadowRun(run))
-			return
-		}
-	}
-	writeError(w, http.StatusNotFound, "not_found", "shadow run not found")
-}
-
-func (s *Server) handleShadowEvaluation(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Join(s.shadowDir, "evaluation", "latest.json")
-	file, err := os.Open(path)
-	if os.IsNotExist(err) {
-		writeError(w, http.StatusNotFound, "shadow_evaluation_not_found", "shadow evaluation has not been generated yet")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_evaluation_failed", err.Error())
-		return
-	}
-	defer file.Close()
-	var report evaluation.ShadowEvaluationReport
-	if err := json.NewDecoder(file).Decode(&report); err != nil {
-		writeError(w, http.StatusInternalServerError, "decode_shadow_evaluation_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, report)
-}
-
-func (s *Server) handleShadowReviewSamples(w http.ResponseWriter, r *http.Request) {
-	exportDir := filepath.Join(s.shadowDir, "review-exports")
-	entries, err := os.ReadDir(exportDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			writeError(w, http.StatusNotFound, "shadow_review_samples_not_found", "shadow review samples have not been generated yet")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "read_shadow_review_samples_failed", err.Error())
-		return
-	}
-	dates := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, "-review-samples.json") {
-			continue
-		}
-		date := strings.TrimSuffix(name, "-review-samples.json")
-		if _, parseErr := time.Parse("2006-01-02", date); parseErr == nil {
-			dates = append(dates, date)
-		}
-	}
-	sort.Strings(dates)
-	if len(dates) == 0 {
-		writeError(w, http.StatusNotFound, "shadow_review_samples_not_found", "shadow review samples have not been generated yet")
-		return
-	}
-	selectedDate := strings.TrimSpace(r.URL.Query().Get("date"))
-	if selectedDate == "" {
-		selectedDate = dates[len(dates)-1]
-	}
-	if _, err := time.Parse("2006-01-02", selectedDate); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_shadow_review_date", "date must use YYYY-MM-DD")
-		return
-	}
-	if !slices.Contains(dates, selectedDate) {
-		writeError(w, http.StatusNotFound, "shadow_review_date_not_found", "no review samples exist for the selected date")
-		return
-	}
-	file, err := os.Open(filepath.Join(exportDir, selectedDate+"-review-samples.json"))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "read_shadow_review_samples_failed", err.Error())
-		return
-	}
-	defer file.Close()
-	var payload struct {
-		Date            string              `json:"date"`
-		SamplesPerLevel int                 `json:"samples_per_level"`
-		Samples         []evaluation.Sample `json:"samples"`
-	}
-	if err := json.NewDecoder(file).Decode(&payload); err != nil {
-		writeError(w, http.StatusInternalServerError, "decode_shadow_review_samples_failed", err.Error())
-		return
-	}
-	for index := range payload.Samples {
-		payload.Samples[index].Date = selectedDate
-		payload.Samples[index].SampleID = evaluation.SampleID(payload.Samples[index])
-	}
-	if lister, ok := s.reader.(interface {
-		ListLabels(context.Context, int) ([]store.Label, error)
-	}); ok {
-		labels, listErr := lister.ListLabels(r.Context(), 10000)
-		if listErr != nil {
-			writeError(w, http.StatusInternalServerError, "read_shadow_review_labels_failed", listErr.Error())
-			return
-		}
-		peersByRun := make(map[string][]evaluation.Sample)
-		for index := range payload.Samples {
-			runID := payload.Samples[index].SourceRunID
-			peers, found := peersByRun[runID]
-			if !found {
-				peers, _, _ = s.shadowRunSamples(runID, selectedDate)
-				peersByRun[runID] = peers
-			}
-			evaluation.ApplySampleReview(&payload.Samples[index], peers, labels)
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"date": selectedDate, "dates": dates, "samples_per_level": payload.SamplesPerLevel, "samples": payload.Samples})
-}
-
-func applyLatestSampleLabel(sample *evaluation.Sample, labels []store.Label) {
-	evaluation.ApplySampleReview(sample, []evaluation.Sample{*sample}, labels)
-}
-
-func stringSlicesOverlap(left, right []string) bool {
-	seen := make(map[string]bool, len(left))
-	for _, value := range left {
-		seen[value] = true
-	}
-	for _, value := range right {
-		if seen[value] {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
@@ -2262,7 +2286,7 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 		for _, log := range logs {
 			items = append(items, AuditLog{AuditID: log.AuditID, Actor: log.Actor, Action: log.Action, Target: log.Target, Outcome: log.Outcome, CreatedAt: log.CreatedAt})
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"audit_logs": items, "page": page})
+		writeJSON(w, http.StatusOK, map[string]any{"logs": items, "page": page})
 		return
 	}
 	logs, err := s.reader.ListAuditLogs(r.Context(), 10000)

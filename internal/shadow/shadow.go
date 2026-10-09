@@ -67,6 +67,7 @@ type SourceSummary struct {
 }
 
 type RunSummary struct {
+	SensorID                 string                   `json:"sensor_id,omitempty"`
 	StartedAt                string                   `json:"started_at"`
 	FinishedAt               string                   `json:"finished_at"`
 	EVEPath                  string                   `json:"eve_path"`
@@ -245,6 +246,7 @@ func Run(opts Options) (RunSummary, error) {
 		zeekSourceSummary[kind] = SourceSummary{Path: zeekPaths[kind], PreviousOffset: item.PreviousOffset, NewOffset: item.NewOffset, Truncated: item.Truncated, Status: item.Status, Reason: item.Reason}
 	}
 	summary := RunSummary{
+		SensorID:               opts.SensorID,
 		StartedAt:              started.Format(time.RFC3339Nano),
 		FinishedAt:             finished.Format(time.RFC3339Nano),
 		EVEPath:                opts.EVEPath,

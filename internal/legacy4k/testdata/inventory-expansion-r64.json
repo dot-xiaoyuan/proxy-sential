@@ -1,0 +1,119 @@
+{
+  "inventory": {
+    "instance_id": "golden-epoch",
+    "observed_at": "2026-10-01T03:00:00Z",
+    "rows": [
+      {
+        "add_time": "1790820000",
+        "control_id": "5",
+        "device_id": "endpoint",
+        "group_id": "9",
+        "ip": "192.0.2.7",
+        "ip6": "2001:db8::7",
+        "ipv6": "2001:db8::7",
+        "nas_ip": "192.0.2.254",
+        "products_id": "3",
+        "rad_online_id": "7",
+        "user_mac": "02:00:00:00:00:07",
+        "user_name": "alice",
+        "vlan_id": "108"
+      },
+      {
+        "ip": "::ffff:192.0.2.8",
+        "ip6": "::",
+        "ipv6": "192.0.2.8",
+        "rad_online_id": "8",
+        "session_id": "accounting-8",
+        "user_name": "bob"
+      },
+      {
+        "ip": "0.0.0.0",
+        "ip6": "2001:db8::9",
+        "ipv6": "::",
+        "mac": "02:00:00:00:00:09",
+        "rad_online_id": "9",
+        "user_name": "alice"
+      }
+    ]
+  },
+  "records": [
+    {
+      "account_id": "alice",
+      "control_id": "5",
+      "endpoint_id": "endpoint",
+      "group_id": "9",
+      "ip": "192.0.2.7",
+      "mac": "02:00:00:00:00:07",
+      "nas_ip": "192.0.2.254",
+      "product_id": "3",
+      "raw_online_id": "7",
+      "session_id": "golden-epoch:v2:8da51ae5b5e5aaf8601653c7af8e74c7f805ae53b3e1deff42e2db15f0996b57",
+      "session_id_source": "derived_source_session_login",
+      "source_instance_id": "golden-epoch",
+      "source_login_generation": "1790820000",
+      "source_session_id": "7",
+      "vlan": "108"
+    },
+    {
+      "account_id": "alice",
+      "control_id": "5",
+      "endpoint_id": "endpoint",
+      "group_id": "9",
+      "ip": "2001:db8::7",
+      "mac": "02:00:00:00:00:07",
+      "nas_ip": "192.0.2.254",
+      "product_id": "3",
+      "raw_online_id": "7",
+      "session_id": "golden-epoch:v2:8da51ae5b5e5aaf8601653c7af8e74c7f805ae53b3e1deff42e2db15f0996b57",
+      "session_id_source": "derived_source_session_login",
+      "source_instance_id": "golden-epoch",
+      "source_login_generation": "1790820000",
+      "source_session_id": "7",
+      "vlan": "108"
+    },
+    {
+      "account_id": "bob",
+      "control_id": "",
+      "endpoint_id": "",
+      "group_id": "",
+      "ip": "192.0.2.8",
+      "mac": "",
+      "nas_ip": "",
+      "product_id": "",
+      "raw_online_id": "8",
+      "session_id": "golden-epoch:accounting-8",
+      "session_id_source": "derived_source_session_login",
+      "source_instance_id": "golden-epoch",
+      "source_login_generation": "",
+      "source_session_id": "accounting-8",
+      "vlan": ""
+    },
+    {
+      "account_id": "alice",
+      "control_id": "",
+      "endpoint_id": "",
+      "group_id": "",
+      "ip": "2001:db8::9",
+      "mac": "02:00:00:00:00:09",
+      "nas_ip": "",
+      "product_id": "",
+      "raw_online_id": "9",
+      "session_id": "golden-epoch:9",
+      "session_id_source": "derived_source_session_login",
+      "source_instance_id": "golden-epoch",
+      "source_login_generation": "",
+      "source_session_id": "9",
+      "vlan": ""
+    }
+  ],
+  "stats": {
+    "accounts": 2,
+    "sessions": 3,
+    "address_records": 4,
+    "login_generation": 1,
+    "product": 1,
+    "group": 1,
+    "mac": 2,
+    "endpoint": 1
+  }
+}

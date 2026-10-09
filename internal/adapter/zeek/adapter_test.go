@@ -259,6 +259,59 @@ func TestConvertRouterProtocolLogsJSON(t *testing.T) {
 	}
 }
 
+func TestConvertSNMPIdentityLogsWithoutCommunity(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         string
+		deviceIP    string
+		peerIP      string
+		version     string
+		description string
+	}{
+		{name: "v1-response", raw: `{"ts":1785232800.25,"uid":"snmp-v1","id.orig_h":"222.204.7.64","id.orig_p":40707,"id.resp_h":"10.120.249.163","id.resp_p":161,"version":"1","community":"private-secret","get_responses":1,"display_string":"Huawei AR6140"}`, deviceIP: "10.120.249.163", peerIP: "222.204.7.64", version: "1", description: "Huawei AR6140"},
+		{name: "v2c-reverse", raw: `{"ts":1785232801.25,"uid":"snmp-v2","id.orig_h":"10.1.0.30","id.orig_p":"161/udp","id.resp_h":"222.204.7.64","id.resp_p":"50000/udp","version":"2c","community":"another-secret","get_responses":2,"display_string":"Cisco ISR4331","up_since":1785230000.0}`, deviceIP: "10.1.0.30", peerIP: "222.204.7.64", version: "2c", description: "Cisco ISR4331"},
+		{name: "v3-trap", raw: `{"ts":1785232802.25,"uid":"snmp-v3","id.orig_h":"10.2.0.40","id.orig_p":49000,"id.resp_h":"222.204.7.64","id.resp_p":162,"version":"3","display_string":"Juniper MX480"}`, deviceIP: "10.2.0.40", peerIP: "222.204.7.64", version: "3", description: "Juniper MX480"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			stats, err := Convert(strings.NewReader(tc.raw+"\n"), &output, Options{SensorID: "snmp-test", LogKind: "snmp"})
+			if err != nil || stats.Emitted != 1 || stats.Malformed != 0 {
+				t.Fatalf("convert SNMP: stats=%+v err=%v output=%s", stats, err, output.String())
+			}
+			if strings.Contains(strings.ToLower(output.String()), "community") || strings.Contains(output.String(), "private-secret") || strings.Contains(output.String(), "another-secret") {
+				t.Fatalf("SNMP credential escaped into normalized output: %s", output.String())
+			}
+			var event normalized.Event
+			if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.Type != "discovery" || event.SourceEventType != "snmp" || event.Subject["ip"] != tc.deviceIP || event.Subject["entity_role"] != "network_device" {
+				t.Fatalf("unexpected SNMP event identity: %+v", event)
+			}
+			if event.Payload["peer_ip"] != tc.peerIP || event.Payload["version"] != tc.version || event.Payload["system_description"] != tc.description {
+				t.Fatalf("unexpected SNMP payload: %+v", event.Payload)
+			}
+		})
+	}
+}
+
+func TestConvertSNMPSkipsRecordsWithoutIdentityOrResponder(t *testing.T) {
+	input := strings.Join([]string{
+		`{"ts":1785232800.25,"id.orig_h":"222.204.7.64","id.orig_p":40707,"id.resp_h":"10.120.249.163","id.resp_p":161,"version":"2c"}`,
+		`{"ts":1785232801.25,"id.orig_h":"222.204.7.64","id.orig_p":40707,"id.resp_h":"10.120.249.163","id.resp_p":9999,"version":"2c","display_string":"Huawei AR6140"}`,
+		`{"ts":"bad","id.orig_h":"222.204.7.64","id.orig_p":40707,"id.resp_h":"10.120.249.163","id.resp_p":161,"version":"2c","display_string":"Huawei AR6140"}`,
+	}, "\n") + "\n"
+	var output bytes.Buffer
+	stats, err := Convert(strings.NewReader(input), &output, Options{LogKind: "snmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Read != 3 || stats.Emitted != 0 || stats.Skipped != 3 || output.Len() != 0 {
+		t.Fatalf("unexpected invalid SNMP handling: stats=%+v output=%s", stats, output.String())
+	}
+}
+
 func TestConvertRouterHTTPLogTSV(t *testing.T) {
 	input := "#separator \\x09\n#fields\tts\tid.orig_h\tid.orig_p\tid.resp_h\tid.resp_p\tproto\thost\tserver\ttitle\tvlan\n" +
 		"1785232800.25\t10.0.0.2\t50000\t10.0.0.1\t80\ttcp\tar6140.local\tHuawei AR Web\tAR6140 Management\t120\n"

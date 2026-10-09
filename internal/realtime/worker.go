@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -109,17 +110,25 @@ func Run(ctx context.Context, backend Backend, opts Options) error {
 	lastHeartbeat := map[string]time.Time{}
 	for {
 		for _, source := range opts.Sources {
+			if ctx.Err() != nil {
+				return nil
+			}
+			key := source.Kind + "\x00" + source.Path
 			consumed, err := processOnce(ctx, backend, opts, source)
-			if err != nil && ctx.Err() == nil {
-				// A failed source must not stop healthy sources. The failed batch and
-				// unchanged checkpoint make the next poll a safe retry.
-				if time.Since(lastAlert[source.Kind+source.Path]) >= 5*time.Minute {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err != nil {
+				// A failed source must not stop healthy sources. Record failures even
+				// without a webhook; a source error is never a healthy heartbeat.
+				if time.Since(lastAlert[key]) >= 5*time.Minute {
+					log.Printf("realtime ingest source failed; retry scheduled: kind=%q path=%q", source.Kind, source.Path)
+					_ = writeSourceFailure(ctx, backend, opts, source, err)
 					sendAlert(ctx, opts.AlertWebhook, opts.SensorID, source, err)
-					lastAlert[source.Kind+source.Path] = time.Now()
+					lastAlert[key] = time.Now()
 				}
 				continue
 			}
-			key := source.Kind + "\x00" + source.Path
 			if !consumed && time.Since(lastHeartbeat[key]) >= opts.Heartbeat {
 				if err := writeHeartbeat(ctx, backend, opts, source); err != nil && time.Since(lastAlert[key]) >= 5*time.Minute {
 					sendAlert(ctx, opts.AlertWebhook, opts.SensorID, source, err)
@@ -168,14 +177,15 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 	if err != nil {
 		return false, err
 	}
-	chunk, fileID, start, end, truncated, err := readCompleteLines(source.Path, checkpoint, found, opts.MaxBatchBytes)
+	read, err := readSourceChunk(source.Path, checkpoint, found, opts.MaxBatchBytes, strings.HasPrefix(source.Kind, "zeek-"))
+	chunk, fileID, start, end, truncated := read.data, read.fileID, read.start, read.end, read.truncated
 	if err != nil {
 		return false, err
 	}
 	if len(chunk) == 0 {
 		return false, nil
 	}
-	events, stats, err := normalize(source, chunk, start, opts.SensorID)
+	events, stats, err := normalize(source, chunk, start, opts.SensorID, read.header)
 	if err != nil {
 		return false, err
 	}
@@ -188,7 +198,11 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 		return false, err
 	}
 	failed := func(cause error) error {
-		_ = backend.FailIngestBatch(context.Background(), batchID, cause)
+		// A failed/expired event-write context cannot be reused for the audit,
+		// but its detached context must still have a bounded lifetime.
+		auditCtx, auditCancel := context.WithTimeout(context.Background(), failureReportingTimeout(opts.StoreTimeout))
+		defer auditCancel()
+		_ = backend.FailIngestBatch(auditCtx, batchID, cause)
 		return cause
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, opts.StoreTimeout)
@@ -199,13 +213,13 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 	}
 	finished := time.Now().UTC()
 	eventWriteDuration := time.Since(eventWriteStarted)
-	lagBytes := fileLag(source.Path, end)
+	lagBytes := sourceLag(source.Path, fileID, end)
 	diagnostic := ingest.Diagnostic{
 		SchemaVersion: "v1", DiagnosticID: "diag-" + batchID, Timestamp: finished.Format(time.RFC3339Nano), SensorID: opts.SensorID,
 		Collector: ingest.Collector{Kind: source.Kind}, Stage: "realtime_ingest", Type: "batch", Severity: severity(stats, truncated),
 		Summary: summary(stats, truncated), Counters: map[string]int{"read": stats.Read, "emitted": stats.Emitted, "skipped": stats.Skipped, "malformed": stats.Malformed}, ByType: stats.ByType,
 		RawRef:  map[string]any{"source": source.Path, "file_id": fileID, "start_offset": start, "end_offset": end},
-		Details: map[string]any{"batch_id": batchID, "lag_bytes": lagBytes, "truncated": truncated, "clickhouse_event_write_ms": eventWriteDuration.Milliseconds(), "write_duration_ms": time.Since(now).Milliseconds()},
+		Details: map[string]any{"batch_id": batchID, "lag_bytes": lagBytes, "truncated": truncated, "archive_draining": read.archive, "clickhouse_event_write_ms": eventWriteDuration.Milliseconds(), "write_duration_ms": time.Since(now).Milliseconds()},
 	}
 	run := store.Run{RunID: batchID, StartedAt: now.Format(time.RFC3339Nano), FinishedAt: finished.Format(time.RFC3339Nano), SensorID: opts.SensorID, PreviousOffset: start, NewOffset: end, Truncated: truncated, Normalized: store.NormalizedCounts{Read: stats.Read, Emitted: stats.Emitted, Skipped: stats.Skipped, Malformed: stats.Malformed, ByType: stats.ByType}, RawRef: diagnostic.RawRef}
 	postgresWriteStarted := time.Now()
@@ -232,6 +246,28 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 	return true, nil
 }
 
+func failureReportingTimeout(storeTimeout time.Duration) time.Duration {
+	if storeTimeout <= 0 || storeTimeout > 5*time.Second {
+		return 5 * time.Second
+	}
+	return storeTimeout
+}
+
+// Failure reporting is bounded separately so unavailable diagnostic storage
+// cannot add the full event-write timeout before polling other sources.
+func writeSourceFailure(ctx context.Context, backend Backend, opts Options, source Source, cause error) error {
+	now := time.Now().UTC()
+	diagnostic := ingest.Diagnostic{
+		SchemaVersion: "v1", DiagnosticID: "diag-" + stableID(opts.SensorID, source.Kind, source.Path, "source_error", now.Format(time.RFC3339Nano)),
+		Timestamp: now.Format(time.RFC3339Nano), SensorID: opts.SensorID, Collector: ingest.Collector{Kind: source.Kind},
+		Stage: "realtime_ingest", Type: "source_error", Severity: "error", Summary: "source ingest failed; retry required",
+		RawRef: map[string]any{"source": source.Path}, Details: map[string]any{"error": cause.Error()},
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, failureReportingTimeout(opts.StoreTimeout))
+	defer cancel()
+	return backend.WriteIngestDiagnostics(writeCtx, []ingest.Diagnostic{diagnostic})
+}
+
 func writeHeartbeat(ctx context.Context, backend Backend, opts Options, source Source) error {
 	checkpoint, _, err := backend.LoadIngestCheckpoint(ctx, source.Kind, source.Path)
 	if err != nil {
@@ -239,7 +275,7 @@ func writeHeartbeat(ctx context.Context, backend Backend, opts Options, source S
 	}
 	now := time.Now().UTC()
 	id := stableID(opts.SensorID, source.Kind, source.Path, "heartbeat", now.Truncate(opts.Heartbeat).Format(time.RFC3339Nano))
-	diagnostic := ingest.Diagnostic{SchemaVersion: "v1", DiagnosticID: "diag-" + id, Timestamp: now.Format(time.RFC3339Nano), SensorID: opts.SensorID, Collector: ingest.Collector{Kind: source.Kind}, Stage: "realtime_ingest", Type: "heartbeat", Severity: "info", Summary: "source active; no complete records pending", Counters: map[string]int{"read": 0, "emitted": 0, "skipped": 0, "malformed": 0}, RawRef: map[string]any{"source": source.Path, "file_id": checkpoint.FileID, "offset": checkpoint.Offset}, Details: map[string]any{"lag_bytes": fileLag(source.Path, checkpoint.Offset)}}
+	diagnostic := ingest.Diagnostic{SchemaVersion: "v1", DiagnosticID: "diag-" + id, Timestamp: now.Format(time.RFC3339Nano), SensorID: opts.SensorID, Collector: ingest.Collector{Kind: source.Kind}, Stage: "realtime_ingest", Type: "heartbeat", Severity: "info", Summary: "source active; no complete records pending", Counters: map[string]int{"read": 0, "emitted": 0, "skipped": 0, "malformed": 0}, RawRef: map[string]any{"source": source.Path, "file_id": checkpoint.FileID, "offset": checkpoint.Offset}, Details: map[string]any{"lag_bytes": sourceLag(source.Path, checkpoint.FileID, checkpoint.Offset)}}
 	writeCtx, cancel := context.WithTimeout(ctx, opts.StoreTimeout)
 	defer cancel()
 	if err := backend.WriteIngestDiagnostics(writeCtx, []ingest.Diagnostic{diagnostic}); err != nil {
@@ -253,13 +289,9 @@ type normalizedStats struct {
 	ByType                            map[string]int
 }
 
-func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID string) ([]normalized.Event, normalizedStats, error) {
+func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID string, header []byte) ([]normalized.Event, normalizedStats, error) {
 	input := chunk
 	if strings.HasPrefix(source.Kind, "zeek-") && absoluteOffset > 0 {
-		header, err := zeekHeader(source.Path)
-		if err != nil {
-			return nil, normalizedStats{}, err
-		}
 		input = append(append(header, '\n'), chunk...)
 	}
 	var output bytes.Buffer
@@ -271,13 +303,13 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 		if err != nil {
 			return nil, stats, err
 		}
-	case "zeek-proxy", "zeek-dhcp", "zeek-software", "zeek-mdns", "zeek-nbns", "zeek-llmnr", "zeek-ttl", "zeek-conn", "zeek-dns", "zeek-http", "zeek-ssl", "zeek-x509", "zeek-lldp", "zeek-ssdp":
+	case "zeek-proxy", "zeek-dhcp", "zeek-software", "zeek-mdns", "zeek-nbns", "zeek-llmnr", "zeek-ttl", "zeek-conn", "zeek-dns", "zeek-http", "zeek-ssl", "zeek-x509", "zeek-lldp", "zeek-ssdp", "zeek-snmp":
 		value, err := zeek.Convert(bytes.NewReader(input), &output, zeek.Options{CaptureScope: source.CaptureScope, SensorID: sensorID, LogKind: strings.TrimPrefix(source.Kind, "zeek-"), CollectorInstanceID: source.CollectorInstanceID, ProxyProducer: source.ProxyProducer})
 		stats = normalizedStats{Read: value.Read, Emitted: value.Emitted, Skipped: value.Skipped, Malformed: value.Malformed, ByType: value.ByType}
 		if err != nil {
 			return nil, stats, err
 		}
-	case "device-signals":
+	case "device-signals", "shared-device-signals":
 		return normalizeDeviceSignals(input, sensorID)
 	default:
 		return nil, stats, fmt.Errorf("unsupported ingest source kind %q", source.Kind)
@@ -331,58 +363,114 @@ func normalizeDeviceSignals(input []byte, sensorID string) ([]normalized.Event, 
 	return events, stats, nil
 }
 
+// A source keeps its canonical path in the durable checkpoint even while its
+// retained, uncompressed .1 archive is drained. Only an exact file identity
+// match may supply old bytes; unrelated archives must never be replayed.
+type sourceChunk struct {
+	data, header       []byte
+	fileID             string
+	start, end         int64
+	truncated, archive bool
+}
+
 func readCompleteLines(path string, checkpoint ingest.Checkpoint, found bool, maxBytes int64) ([]byte, string, int64, int64, bool, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, "", 0, 0, false, err
+	read, err := readSourceChunk(path, checkpoint, found, maxBytes, false)
+	return read.data, read.fileID, read.start, read.end, read.truncated, err
+}
+
+func readSourceChunk(path string, checkpoint ingest.Checkpoint, found bool, maxBytes int64, withHeader bool) (sourceChunk, error) {
+	current, openErr := os.Open(path)
+	if openErr != nil && !os.IsNotExist(openErr) {
+		return sourceChunk{}, openErr
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, "", 0, 0, false, err
+	var currentInfo os.FileInfo
+	if current != nil {
+		defer current.Close()
+		var err error
+		currentInfo, err = current.Stat()
+		if err != nil {
+			return sourceChunk{}, err
+		}
 	}
-	fileID := fileIdentity(path, info)
-	start := checkpoint.Offset
-	truncated := false
-	// A changed identity means rotation even when the replacement is larger
-	// than the old offset. Size regression handles in-place truncation.
-	if found && checkpoint.FileID != "" && checkpoint.FileID != fileID {
-		start, truncated = 0, true
-	} else if found && start > info.Size() {
-		start, truncated = 0, true
+	if found && checkpoint.FileID != "" && (currentInfo == nil || fileIdentity(path, currentInfo) != checkpoint.FileID) {
+		archivePath := path + ".1"
+		info, err := os.Lstat(archivePath)
+		if err != nil && !os.IsNotExist(err) {
+			return sourceChunk{}, err
+		}
+		if err == nil && info.Mode().IsRegular() && fileIdentity(path, info) == checkpoint.FileID {
+			archive, err := os.Open(archivePath)
+			if err != nil {
+				return sourceChunk{}, err
+			}
+			defer archive.Close()
+			info, err = archive.Stat()
+			if err != nil {
+				return sourceChunk{}, err
+			}
+			if fileIdentity(path, info) == checkpoint.FileID && info.Size() > checkpoint.Offset {
+				read, err := readFileChunk(archive, path, info, checkpoint, true, maxBytes, withHeader)
+				read.archive = true
+				// An incomplete archive tail may still be completed by the producer.
+				// Leave the checkpoint in place instead of silently dropping that tail.
+				if err == nil && len(read.data) == 0 {
+					return read, fmt.Errorf("rotated source has an incomplete record pending")
+				}
+				return read, err
+			}
+		}
+	}
+	if current == nil {
+		return sourceChunk{}, openErr
+	}
+	return readFileChunk(current, path, currentInfo, checkpoint, found, maxBytes, withHeader)
+}
+
+func readFileChunk(file *os.File, path string, info os.FileInfo, checkpoint ingest.Checkpoint, found bool, maxBytes int64, withHeader bool) (sourceChunk, error) {
+	read := sourceChunk{fileID: fileIdentity(path, info), start: checkpoint.Offset}
+	if found && ((checkpoint.FileID != "" && checkpoint.FileID != read.fileID) || read.start > info.Size()) {
+		read.start, read.truncated = 0, true
 	}
 	if !found {
-		start = 0
+		read.start = 0
 	}
-	remaining := info.Size() - start
+	read.end = read.start
+	if read.start < 0 || maxBytes <= 0 {
+		return read, fmt.Errorf("invalid ingest offset or batch size")
+	}
+	remaining := info.Size() - read.start
 	if remaining <= 0 {
-		return nil, fileID, start, start, truncated, nil
+		return read, nil
 	}
 	if remaining > maxBytes {
 		remaining = maxBytes
 	}
 	data := make([]byte, remaining)
-	n, err := file.ReadAt(data, start)
+	n, err := file.ReadAt(data, read.start)
 	if err != nil && err != io.EOF {
-		return nil, fileID, start, start, truncated, err
+		return read, err
 	}
 	data = data[:n]
 	lastNewline := bytes.LastIndexByte(data, '\n')
 	if lastNewline < 0 {
-		return nil, fileID, start, start, truncated, nil
+		return read, nil
 	}
-	data = data[:lastNewline+1]
-	return data, fileID, start, start + int64(len(data)), truncated, nil
+	read.data = data[:lastNewline+1]
+	read.end = read.start + int64(len(read.data))
+	if withHeader && read.start > 0 {
+		read.header, err = zeekHeader(file)
+		if err != nil {
+			return read, err
+		}
+	}
+	return read, nil
 }
 
-func zeekHeader(path string) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
+// Header and records come from the same open descriptor, so a rename cannot
+// pair an old batch with the replacement file's field layout.
+func zeekHeader(file *os.File) ([]byte, error) {
 	data := make([]byte, 128<<10)
-	n, err := file.Read(data)
+	n, err := file.ReadAt(data, 0)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
@@ -418,13 +506,27 @@ func latestTimestamp(events []normalized.Event) string {
 	}
 	return result
 }
-func fileLag(path string, offset int64) int64 {
-	info, err := os.Stat(path)
-	if err != nil || info.Size() <= offset {
+func sourceLag(path, fileID string, offset int64) int64 {
+	current, err := os.Stat(path)
+	if err == nil && (fileID == "" || fileIdentity(path, current) == fileID) {
+		if current.Size() > offset {
+			return current.Size() - offset
+		}
 		return 0
 	}
-	return info.Size() - offset
+	var lag int64
+	// The replacement is entirely pending while the checkpoint still names
+	// the archive. Do not subtract an old file's offset from its size.
+	if err == nil {
+		lag = current.Size()
+	}
+	archive, err := os.Stat(path + ".1")
+	if err == nil && fileIdentity(path, archive) == fileID && archive.Size() > offset {
+		lag += archive.Size() - offset
+	}
+	return lag
 }
+
 func severity(stats normalizedStats, truncated bool) string {
 	if truncated || stats.Malformed > 0 {
 		return "warning"

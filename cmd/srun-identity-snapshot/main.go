@@ -76,7 +76,7 @@ func run() error {
 	sensor := flag.String("sensor-id", "", "registered sensor")
 	campus := flag.String("campus-id", "", "registered campus")
 	domain := flag.String("access-domain", "", "registered access domain")
-	interval := flag.Int("interval", 60, "registered reconciliation interval in seconds")
+	interval := flag.Int("interval", 5, "registered reconciliation interval in seconds")
 	limit := flag.Int("max-records", 1000, "atomic source read bound")
 	once := flag.Bool("once", false, "send one complete inventory")
 	preview := flag.Bool("preview", false, "validate the complete source and print counts without sending or storing identities")
@@ -97,7 +97,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	client := redis.NewClient(&redis.Options{Addr: *addr, Password: password, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second})
+	client := legacy4k.NewRedisOnlineClient(&redis.Options{Addr: *addr, Password: password, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second})
 	defer client.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -108,21 +108,11 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		seeded := 0
-		withGeneration := 0
-		for _, row := range inventory.Rows {
-			if row["add_time"] != "" {
-				withGeneration++
-			}
-			if row["seed_tag"] != "" {
-				seeded++
-			}
-		}
-		records, err := inventory.IdentityRecords()
+		stats, err := inventory.Stats()
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"address_records": len(records), "status": "preview_valid", "observed_at": inventory.ObservedAt, "sessions": len(inventory.Rows), "seeded_records": seeded, "sessions_with_login_generation": withGeneration, "sessions_without_login_generation": len(inventory.Rows) - withGeneration})
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "preview_valid", "observed_at": inventory.ObservedAt, "coverage": stats})
 	}
 	token, err := secret(*tokenFile)
 	if err != nil {
@@ -160,17 +150,11 @@ func run() error {
 		}
 		cancel()
 		if err == nil {
-			seeded := 0
-			for _, row := range pending.Rows {
-				if row["seed_tag"] != "" {
-					seeded++
-				}
-			}
-			records, recordErr := pending.IdentityRecords()
+			stats, recordErr := pending.Stats()
 			if recordErr != nil {
 				return recordErr
 			}
-			if err = enc.Encode(map[string]any{"address_records": len(records), "status": "committed", "observed_at": pending.ObservedAt, "sessions": len(pending.Rows), "seeded_records": seeded}); err != nil {
+			if err = enc.Encode(map[string]any{"status": "committed", "observed_at": pending.ObservedAt, "coverage": stats}); err != nil {
 				return err
 			}
 			if err = writePending(*stateFile, nil); err != nil {

@@ -2,6 +2,7 @@ package srunapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,47 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestGroupsUsesSupportedPaginationAndCollectsAllPages(t *testing.T) {
+	pages := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/get-access-token":
+			io.WriteString(w, `{"code":0,"data":{"access_token":"token","lifetime":60}}`)
+		case "/api/v2/groups":
+			if r.Method != http.MethodGet || r.URL.Query().Get("access_token") != "token" || r.URL.Query().Get("per-page") != "100" {
+				io.WriteString(w, `{"code":10206,"message":"分页参数错误"}`)
+				return
+			}
+			pages++
+			items := []map[string]any{}
+			if r.URL.Query().Get("page") == "1" {
+				for i := 1; i <= 100; i++ {
+					items = append(items, map[string]any{"id": i, "name": fmt.Sprintf("用户组%d", i), "pid": 0})
+				}
+			} else if r.URL.Query().Get("page") == "2" {
+				items = append(items, map[string]any{"id": 101, "name": "最后用户组", "pid": 1})
+			} else {
+				t.Errorf("unexpected page %s", r.URL.Query().Get("page"))
+			}
+			json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": items})
+		default:
+			t.Errorf("unexpected endpoint %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "app", "secret", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := client.Groups(context.Background())
+	if err != nil || len(groups) != 101 || pages != 2 {
+		t.Fatalf("incomplete directory: groups=%d pages=%d error=%v", len(groups), pages, err)
+	}
+	if groups[100].ID != "101" || groups[100].Name != "最后用户组" || groups[100].ParentID != "1" {
+		t.Fatalf("directory fields changed: %+v", groups[100])
+	}
+}
 
 func TestNativeDropResponseIsOnlyAcknowledgement(t *testing.T) {
 	for _, body := range []string{`{"code":0,"message":"ok","version":"v2"}`, `{"code":10503}`, `{}`, `{"code":null}`, `{"code":0} {}`, `<html>login</html>`} {
@@ -94,6 +136,36 @@ func TestAuthenticationFailureNeverSendsAction(t *testing.T) {
 				t.Fatal("action sent after invalid authorization")
 			}
 		})
+	}
+}
+
+func TestSafeDisableUsesBoundedAccountContractAfterFinalGuard(t *testing.T) {
+	guarded := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		switch r.URL.Path {
+		case "/api/v2/auth/get-access-token":
+			_, _ = io.WriteString(w, `{"code":0,"data":{"access_token":"token","lifetime":60}}`)
+		case "/api/v2/safe/disable":
+			if !guarded || r.Form.Get("type") != "user_name@proxy" || r.Form.Get("value") != "student" || r.Form.Get("disable_time") != "600" {
+				t.Fatalf("unexpected safe-disable request: guarded=%t form=%v", guarded, r.Form)
+			}
+			_, _ = io.WriteString(w, `{"code":0,"data":{}}`)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "app", "secret", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.RequestSafeDisableChecked(context.Background(), "student", 600, func(context.Context) error {
+		guarded = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

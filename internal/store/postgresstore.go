@@ -281,6 +281,20 @@ func (s *PostgresStore) GetAccountIdentity(ctx context.Context, accountID string
 	if err != nil {
 		return AccountIdentityProfile{}, false, err
 	}
+	projected, err := s.projectedAccountSessions(ctx, accountID, limit)
+	if err != nil {
+		return AccountIdentityProfile{}, false, err
+	}
+	seen := map[string]bool{}
+	for _, session := range projected {
+		seen[accountSessionScopeKey(session)] = true
+	}
+	for _, session := range sessions {
+		if !seen[accountSessionScopeKey(session)] {
+			projected = append(projected, session)
+		}
+	}
+	sessions = projected
 	state.Sessions = sessions
 	for _, session := range sessions {
 		if session.EndpointID != "" {
@@ -811,16 +825,22 @@ func nullTimeText(value sql.NullTime) string {
 	return ""
 }
 
+// The global top N can only contain rows from each sensor's top N. Sensors is
+// the authoritative foreign-key parent, including quiet sensors; this keeps
+// ordering and tie breaks while using the existing sensor/time index.
 func (s *PostgresStore) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	if limit == 0 {
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT run_id, sensor_id, started_at, finished_at, previous_offset, new_offset, truncated,
-       normalized_read, normalized_emitted, normalized_skipped, normalized_malformed,
-       evidence_count, risk_count, risk_list_count, summary
-FROM collector_runs
-ORDER BY started_at DESC, run_id DESC
+SELECT r.run_id, r.sensor_id, r.started_at, r.finished_at, r.previous_offset, r.new_offset, r.truncated,
+       r.normalized_read, r.normalized_emitted, r.normalized_skipped, r.normalized_malformed,
+       r.evidence_count, r.risk_count, r.risk_list_count, r.summary
+FROM sensors s CROSS JOIN LATERAL (
+ SELECT * FROM collector_runs c WHERE c.sensor_id=s.sensor_id
+ ORDER BY c.started_at DESC,c.run_id DESC LIMIT $1
+) r
+ORDER BY r.started_at DESC,r.run_id DESC
 LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
@@ -865,6 +885,28 @@ LIMIT $1`, limit)
 	return runs, rows.Err()
 }
 
+// ListSensorRuns is the local health/status path. Global history keeps its
+// separate ListRuns contract, so another collector cannot refresh this sensor.
+func (s *PostgresStore) ListSensorRuns(ctx context.Context, sensorID string, limit int) ([]Run, error) {
+	if sensorID == "" {
+		return nil, fmt.Errorf("sensor id is required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT run_id,sensor_id,started_at,finished_at,previous_offset,new_offset,truncated,
+ normalized_read,normalized_emitted,normalized_skipped,normalized_malformed,
+ evidence_count,risk_count,risk_list_count,summary
+FROM collector_runs WHERE sensor_id=$1
+ORDER BY started_at DESC,run_id DESC LIMIT $2`, sensorID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRunRows(rows)
+}
+
 func (s *PostgresStore) ListRunsPage(ctx context.Context, query Query) ([]Run, Page, error) {
 	limit := query.Limit
 	if limit <= 0 {
@@ -875,13 +917,19 @@ func (s *PostgresStore) ListRunsPage(ctx context.Context, query Query) ([]Run, P
 	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM collector_runs WHERE $1='' OR lower(run_id||' '||sensor_id||' '||COALESCE(summary::text,'')) LIKE $2`, strings.TrimSpace(query.Q), pattern).Scan(&total); err != nil {
 		return nil, Page{}, err
 	}
+	// A global page ending at offset+limit contains no row beyond that rank
+	// within its own sensor. Apply that bound using the existing sensor/time
+	// index before merging; sorting the entire history can exceed the GET timeout.
 	rows, err := s.db.QueryContext(ctx, `
-SELECT run_id, sensor_id, started_at, finished_at, previous_offset, new_offset, truncated,
-       normalized_read, normalized_emitted, normalized_skipped, normalized_malformed,
-       evidence_count, risk_count, risk_list_count, summary
-FROM collector_runs
-WHERE $1='' OR lower(run_id||' '||sensor_id||' '||COALESCE(summary::text,'')) LIKE $2
-ORDER BY started_at DESC, run_id DESC LIMIT $3 OFFSET $4`, strings.TrimSpace(query.Q), pattern, limit, max(query.Cursor, 0))
+SELECT r.run_id, r.sensor_id, r.started_at, r.finished_at, r.previous_offset, r.new_offset, r.truncated,
+       r.normalized_read, r.normalized_emitted, r.normalized_skipped, r.normalized_malformed,
+       r.evidence_count, r.risk_count, r.risk_list_count, r.summary
+FROM sensors s CROSS JOIN LATERAL (
+ SELECT c.* FROM collector_runs c WHERE c.sensor_id=s.sensor_id
+ AND ($1='' OR lower(c.run_id||' '||c.sensor_id||' '||COALESCE(c.summary::text,'')) LIKE $2)
+ ORDER BY c.started_at DESC,c.run_id DESC LIMIT ($3::bigint+$4::bigint)
+) r
+ORDER BY r.started_at DESC,r.run_id DESC LIMIT $3 OFFSET $4`, strings.TrimSpace(query.Q), pattern, limit, max(query.Cursor, 0))
 	if err != nil {
 		return nil, Page{}, err
 	}
@@ -1297,6 +1345,9 @@ ON CONFLICT(evidence_id) DO UPDATE SET score = EXCLUDED.score, confidence = EXCL
 	return tx.Commit()
 }
 
+// UpdatedAt is the latest supporting event time, not the write time. Late
+// replay remains in history but cannot replace a newer current observation.
+// Equal event times still allow a rule correction to update the interpretation.
 func (s *PostgresStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk.Snapshot) error {
 	if len(snapshots) == 0 {
 		return nil
@@ -1315,7 +1366,7 @@ func (s *PostgresStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk
 			if _, err := tx.ExecContext(ctx, `
 INSERT INTO subject_risk_snapshots(subject_type, subject_id, account_id, endpoint_id, ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers, detection_basis, independent_signal_groups)
 VALUES($1,$2,$3,$4,NULLIF($5, '')::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULLIF($15, ''),$16,$17,$18,$19)
-ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(subject_risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups`,
+ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(subject_risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups WHERE subject_risk_snapshots.updated_at <= EXCLUDED.updated_at`,
 				snapshot.SubjectType, snapshot.SubjectID, snapshot.AccountID, snapshot.EndpointID, snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers, snapshot.DetectionBasis, signalGroups); err != nil {
 				return err
 			}
@@ -1332,7 +1383,7 @@ VALUES($1, $2, $3)`, snapshot.SubjectType, snapshot.SubjectID, payload); err != 
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers, detection_basis, independent_signal_groups)
 VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11, ''),$12,$13,$14,$15)
-ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups`,
+ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups WHERE risk_snapshots.updated_at <= EXCLUDED.updated_at`,
 			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers, snapshot.DetectionBasis, signalGroups); err != nil {
 			return err
 		}
@@ -1403,7 +1454,7 @@ ON CONFLICT(sensor_id) DO UPDATE SET collector_kind = EXCLUDED.collector_kind, c
 			return err
 		}
 		for _, inventory := range inventories {
-			if err := insertDeviceInventorySnapshot(ctx, tx, run, window, inventory); err != nil {
+			if err := upsertCurrentDeviceInventory(ctx, tx, run, window, inventory); err != nil {
 				return err
 			}
 		}
@@ -1420,20 +1471,24 @@ func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normal
 		return err
 	}
 	defer tx.Rollback()
+	if err = writeIdentityEventsTx(ctx, tx, events); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func writeIdentityEventsTx(ctx context.Context, tx *sql.Tx, events []normalized.Event) error {
 	if err := writePolicyIdentityEvents(ctx, tx, events); err != nil {
 		return err
 	}
 	if err := writeDeviceLeases(ctx, tx, events); err != nil {
 		return err
 	}
-	identityState := BuildIdentityState(events)
-	if err := writeIdentityState(ctx, tx, identityState); err != nil {
+	state := BuildIdentityState(events)
+	if err := writeIdentityState(ctx, tx, state); err != nil {
 		return err
 	}
-	if err := writeEndpointDeviceProfiles(ctx, tx, identityState); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return writeEndpointDeviceProfiles(ctx, tx, state)
 }
 
 func writeEndpointDeviceProfiles(ctx context.Context, tx *sql.Tx, state IdentityState) error {
@@ -1677,7 +1732,7 @@ ON CONFLICT(endpoint_id) DO UPDATE SET
   first_seen = LEAST(endpoint_entities.first_seen, EXCLUDED.first_seen),
   last_seen = GREATEST(endpoint_entities.last_seen, EXCLUDED.last_seen),
   identity_confidence = GREATEST(endpoint_entities.identity_confidence, EXCLUDED.identity_confidence),
-  attributes = endpoint_entities.attributes || EXCLUDED.attributes,
+  attributes = CASE WHEN EXCLUDED.last_seen >= endpoint_entities.last_seen THEN endpoint_entities.attributes || EXCLUDED.attributes ELSE EXCLUDED.attributes || endpoint_entities.attributes END,
   updated_at = now()`,
 		entity.EndpointID, entity.PrimaryMAC, entity.EntityRole, firstSeen, lastSeen, entity.IdentityConfidence, attrs)
 	return err
@@ -1901,8 +1956,8 @@ func (s *PostgresStore) buildDeviceInventoriesFromFacts(ctx context.Context, tx 
 	rows, err := tx.QueryContext(ctx, `
 SELECT signal_id, host(ip), source, kind, value, normalized_value, strength, confidence, weight, first_seen, last_seen, seen_count, event_ids_sample
 FROM device_signal_facts
-WHERE sensor_id = $1 AND last_seen >= $2
-ORDER BY ip ASC, last_seen DESC, signal_id ASC`, sensorID, cutoff)
+WHERE sensor_id = $1 AND last_seen >= $2 AND last_seen <= $3
+ORDER BY ip ASC, last_seen DESC, signal_id ASC`, sensorID, cutoff, end)
 	if err != nil {
 		return nil, err
 	}
@@ -1931,15 +1986,16 @@ ORDER BY ip ASC, last_seen DESC, signal_id ASC`, sensorID, cutoff)
 	return items, nil
 }
 
-func insertDeviceInventorySnapshot(ctx context.Context, tx *sql.Tx, run Run, window string, inventory IPDeviceInventory) error {
-	payload, _ := json.Marshal(inventory)
+func upsertCurrentDeviceInventory(ctx context.Context, tx *sql.Tx, run Run, window string, inventory IPDeviceInventory) error {
+	payload, _ := json.Marshal(compactCurrentInventory(inventory))
 	firstSeen := nullableTime(inventory.FirstSeen)
 	lastSeen := nullableTime(inventory.LastSeen)
 	strong, medium, weak := inventorySignalCounts(inventory)
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO device_inventory_snapshots(run_id, sensor_id, "window", ip, suspected_device_count, confidence, status, summary, strong_signal_count, medium_signal_count, weak_signal_count, conflict_count, first_seen, last_seen, inventory)
+INSERT INTO device_inventory_current(run_id, sensor_id, "window", ip, suspected_device_count, confidence, status, summary, strong_signal_count, medium_signal_count, weak_signal_count, conflict_count, first_seen, last_seen, inventory)
 VALUES($1,$2,$3,$4::inet,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-ON CONFLICT(run_id, "window", ip) DO UPDATE SET
+ON CONFLICT(sensor_id, "window", ip) DO UPDATE SET
+  run_id = EXCLUDED.run_id,
   suspected_device_count = EXCLUDED.suspected_device_count,
   confidence = EXCLUDED.confidence,
   status = EXCLUDED.status,
@@ -1951,7 +2007,8 @@ ON CONFLICT(run_id, "window", ip) DO UPDATE SET
   first_seen = EXCLUDED.first_seen,
   last_seen = EXCLUDED.last_seen,
   inventory = EXCLUDED.inventory,
-  created_at = now()`,
+  created_at = now()
+WHERE device_inventory_current.inventory IS DISTINCT FROM EXCLUDED.inventory`,
 		run.RunID, run.SensorID, window, inventory.IP, inventory.SuspectedDeviceCount, inventory.Confidence, inventory.Status, inventory.Summary, strong, medium, weak, len(inventory.Conflicts), nullTimeValue(firstSeen), nullTimeValue(lastSeen), payload)
 	return err
 }
@@ -1998,12 +2055,7 @@ func (s *PostgresStore) ListDeviceInventories(ctx context.Context, query Query) 
 	if sensorID == "" {
 		sensorID = s.sensorID
 	}
-	where := []string{`sensor_id = $1`, `"window" = $2`, `run_id = (
-  SELECT run_id FROM device_inventory_snapshots
-  WHERE sensor_id = $1 AND "window" = $2
-  ORDER BY created_at DESC, run_id DESC
-  LIMIT 1
-)`}
+	where := []string{`sensor_id = $1`, `"window" = $2`}
 	args := []any{sensorID, window}
 	if query.SrcIP != "" {
 		args = append(args, query.SrcIP)
@@ -2018,7 +2070,7 @@ func (s *PostgresStore) ListDeviceInventories(ctx context.Context, query Query) 
 	}
 	whereSQL := " WHERE " + strings.Join(where, " AND ")
 	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM device_inventory_snapshots"+whereSQL, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM device_inventory_current"+whereSQL, args...).Scan(&total); err != nil {
 		return DevicePage{}, err
 	}
 	if limit < 0 {
@@ -2027,7 +2079,7 @@ func (s *PostgresStore) ListDeviceInventories(ctx context.Context, query Query) 
 	selectArgs := append(append([]any{}, args...), limit, query.Cursor)
 	rows, err := s.db.QueryContext(ctx, `
 SELECT inventory
-FROM device_inventory_snapshots`+whereSQL+`
+FROM device_inventory_current`+whereSQL+`
 ORDER BY suspected_device_count DESC, conflict_count DESC, strong_signal_count DESC, confidence DESC, last_seen DESC NULLS LAST, ip ASC
 LIMIT $`+strconvArg(len(selectArgs)-1)+` OFFSET $`+strconvArg(len(selectArgs)), selectArgs...)
 	if err != nil {
@@ -2057,7 +2109,7 @@ func (s *PostgresStore) GetIPDeviceInventory(ctx context.Context, ip string, que
 	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT inventory
-FROM device_inventory_snapshots
+FROM device_inventory_current
 WHERE sensor_id = $1 AND "window" = $2 AND ip = $3::inet
 ORDER BY created_at DESC, run_id DESC
 LIMIT 1`, sensorID, window, ip)
@@ -2093,10 +2145,9 @@ func (s *PostgresStore) GetDevice(ctx context.Context, deviceID string, query Qu
 		window = "1h"
 	}
 	var raw []byte
-	err := s.db.QueryRowContext(ctx, `SELECT device FROM device_inventory_snapshots s
+	err := s.db.QueryRowContext(ctx, `SELECT device FROM device_inventory_current s
  CROSS JOIN LATERAL jsonb_array_elements(coalesce(nullif(s.inventory->'devices','null'::jsonb),'[]'::jsonb)) AS d(device)
  WHERE sensor_id=$1 AND "window"=$2
- AND run_id=(SELECT run_id FROM device_inventory_snapshots WHERE sensor_id=$1 AND "window"=$2 ORDER BY created_at DESC,run_id DESC LIMIT 1)
  AND s.inventory->'devices' @> jsonb_build_array(jsonb_build_object('device_id',$3::text))
  AND device->>'device_id'=$3 LIMIT 1`, sensor, window, deviceID).Scan(&raw)
 	if err == sql.ErrNoRows {
@@ -2109,6 +2160,8 @@ func (s *PostgresStore) GetDevice(ctx context.Context, deviceID string, query Qu
 	if err = json.Unmarshal(raw, &device); err != nil {
 		return ObservedDevice{}, false, err
 	}
+	qualifyPortableDHCPProfile(&device)
+	device.Label = deviceLabel(device)
 	return device, true, nil
 }
 
@@ -2180,6 +2233,7 @@ func scanDeviceInventoryRows(rows *sql.Rows) ([]IPDeviceInventory, error) {
 		if err := json.Unmarshal(payload, &inventory); err != nil {
 			return nil, err
 		}
+		refreshDeviceInventoryConflicts(&inventory)
 		items = append(items, inventory)
 	}
 	return items, rows.Err()

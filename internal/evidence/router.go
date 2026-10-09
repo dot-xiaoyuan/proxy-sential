@@ -29,40 +29,42 @@ type RouterOptions struct {
 }
 
 type RouterEvidence struct {
-	EvidenceID         string   `json:"evidence_id"`
-	AssessmentID       string   `json:"assessment_id"`
-	Kind               string   `json:"kind"`
-	EndpointID         string   `json:"endpoint_id,omitempty"`
-	IP                 string   `json:"ip,omitempty"`
-	MAC                string   `json:"mac,omitempty"`
-	VLAN               string   `json:"vlan,omitempty"`
-	Brand              string   `json:"brand,omitempty"`
-	Series             string   `json:"series,omitempty"`
-	Model              string   `json:"model,omitempty"`
-	Role               string   `json:"role,omitempty"`
-	Source             string   `json:"source"`
-	SourceFamily       string   `json:"source_family"`
-	SourceEventType    string   `json:"source_event_type,omitempty"`
-	RawValue           string   `json:"raw_value,omitempty"`
-	Strength           string   `json:"strength"`
-	Score              int      `json:"score"`
-	RuleID             string   `json:"rule_id"`
-	RuleVersion        string   `json:"rule_version"`
-	Explanation        string   `json:"explanation"`
-	Conflict           bool     `json:"conflict"`
-	ConflictCode       string   `json:"conflict_code,omitempty"`
-	Exclusion          bool     `json:"exclusion"`
-	BrandReferenceOnly bool     `json:"brand_reference_only"`
-	BrandAttribution   bool     `json:"brand_attribution"`
-	AssociationQuality string   `json:"association_quality"`
-	AssociationReason  string   `json:"association_reason,omitempty"`
-	Ambiguous          bool     `json:"ambiguous"`
-	Infrastructure     bool     `json:"infrastructure"`
-	FirstSeen          string   `json:"first_seen"`
-	LastSeen           string   `json:"last_seen"`
-	ExpiresAt          string   `json:"expires_at"`
-	Expired            bool     `json:"expired"`
-	EventIDs           []string `json:"event_ids"`
+	EvidenceID          string   `json:"evidence_id"`
+	AssessmentID        string   `json:"assessment_id"`
+	Kind                string   `json:"kind"`
+	EndpointID          string   `json:"endpoint_id,omitempty"`
+	IP                  string   `json:"ip,omitempty"`
+	MAC                 string   `json:"mac,omitempty"`
+	VLAN                string   `json:"vlan,omitempty"`
+	Brand               string   `json:"brand,omitempty"`
+	Series              string   `json:"series,omitempty"`
+	Model               string   `json:"model,omitempty"`
+	Role                string   `json:"role,omitempty"`
+	Source              string   `json:"source"`
+	SourceFamily        string   `json:"source_family"`
+	SourceEventType     string   `json:"source_event_type,omitempty"`
+	SensorID            string   `json:"sensor_id,omitempty"`
+	SharedObservationID string   `json:"shared_observation_id,omitempty"`
+	RawValue            string   `json:"raw_value,omitempty"`
+	Strength            string   `json:"strength"`
+	Score               int      `json:"score"`
+	RuleID              string   `json:"rule_id"`
+	RuleVersion         string   `json:"rule_version"`
+	Explanation         string   `json:"explanation"`
+	Conflict            bool     `json:"conflict"`
+	ConflictCode        string   `json:"conflict_code,omitempty"`
+	Exclusion           bool     `json:"exclusion"`
+	BrandReferenceOnly  bool     `json:"brand_reference_only"`
+	BrandAttribution    bool     `json:"brand_attribution"`
+	AssociationQuality  string   `json:"association_quality"`
+	AssociationReason   string   `json:"association_reason,omitempty"`
+	Ambiguous           bool     `json:"ambiguous"`
+	Infrastructure      bool     `json:"infrastructure"`
+	FirstSeen           string   `json:"first_seen"`
+	LastSeen            string   `json:"last_seen"`
+	ExpiresAt           string   `json:"expires_at"`
+	Expired             bool     `json:"expired"`
+	EventIDs            []string `json:"event_ids"`
 }
 
 type RouterScoreComponent struct {
@@ -70,6 +72,24 @@ type RouterScoreComponent struct {
 	EvidenceID   string `json:"evidence_id"`
 	Score        int    `json:"score"`
 	Explanation  string `json:"explanation"`
+}
+
+// RouterAuthBinding is display-only identity context. It is deliberately kept
+// outside router scoring so an authenticated endpoint cannot become a router
+// without independent routing evidence.
+type RouterAuthBinding struct {
+	SessionID       string   `json:"session_id"`
+	AccountID       string   `json:"account_id"`
+	AssignedIPs     []string `json:"assigned_ips"`
+	MAC             string   `json:"mac,omitempty"`
+	VLAN            string   `json:"vlan,omitempty"`
+	NASIP           string   `json:"nas_ip,omitempty"`
+	AccessID        string   `json:"access_id,omitempty"`
+	Source          string   `json:"source"`
+	MatchBasis      string   `json:"match_basis"`
+	Ambiguous       bool     `json:"ambiguous"`
+	StartedAt       string   `json:"started_at,omitempty"`
+	LastConfirmedAt string   `json:"last_confirmed_at,omitempty"`
 }
 
 type RouterAssessment struct {
@@ -99,6 +119,7 @@ type RouterAssessment struct {
 	Conflicts          []string               `json:"conflicts"`
 	ScoreComponents    []RouterScoreComponent `json:"score_components"`
 	Evidence           []RouterEvidence       `json:"evidence,omitempty"`
+	AuthBindings       []RouterAuthBinding    `json:"auth_bindings,omitempty"`
 	// MergedRecords is populated by list queries when multiple incremental
 	// assessments resolve to the same physical device. It is presentation
 	// metadata and is not persisted in the assessment snapshot.
@@ -336,6 +357,7 @@ func routerInputs(event normalized.Event) map[string][]string {
 func appendRouterEvidence(dedup map[string]*RouterEvidence, associations map[string]routerEventAssociation, association routerEventAssociation, event normalized.Event, at time.Time, ttl time.Duration, asOf time.Time, item RouterEvidence) {
 	item.AssessmentID, item.EndpointID, item.IP, item.MAC, item.VLAN = association.id, association.endpoint, association.ip, association.mac, association.vlan
 	item.Source, item.SourceEventType = event.Source, event.SourceEventType
+	item.SensorID = routerString(event.Observer["sensor_id"])
 	item.AssociationQuality, item.AssociationReason, item.Ambiguous, item.Infrastructure = association.quality, association.reason, association.ambiguous, association.infrastructure
 	item.FirstSeen, item.LastSeen, item.ExpiresAt = at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano), at.Add(ttl).UTC().Format(time.RFC3339Nano)
 	item.Expired = !asOf.Before(at.Add(ttl))
@@ -567,6 +589,8 @@ func routerSourceFamily(event normalized.Event) string {
 		return "cdp"
 	case "ssdp":
 		return "ssdp"
+	case "snmp":
+		return "snmp_management"
 	case "vrrp", "hsrp":
 		return "first_hop_redundancy"
 	case "http":

@@ -85,17 +85,26 @@ func (s *Server) managedIdentityRegistrationsByScope(ctx context.Context, campus
 }
 
 func (s *Server) managedIdentityRegistrationsFiltered(ctx context.Context, filter string, args []any) ([]managedIdentityRegistration, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.operations == nil || s.operations.db == nil {
 		return nil, nil
 	}
 	query := `SELECT i.connector_id,i.config_version,i.public_config,i.encrypted_token,c.endpoint_url,c.certificate_pem,i.state,i.blocker,i.observed_at,i.last_success_at,i.last_attempt_at,i.record_count FROM enforcement_identity_sources i JOIN enforcement_connectors c USING(connector_id) WHERE c.connector_type='srun4k'` + filter + ` ORDER BY i.connector_id LIMIT 17`
 	rows, err := s.operations.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		if interrupted := ctx.Err(); interrupted != nil {
+			return nil, interrupted
+		}
+		return nil, identityAuthorityUnavailableError{cause: err}
 	}
 	defer rows.Close()
 	out := []managedIdentityRegistration{}
 	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var item managedIdentityRegistration
 		var raw []byte
 		if rows.Scan(&item.ID, &item.Version, &raw, &item.Token, &item.Endpoint, &item.Certificate, &item.State, &item.Blocker, &item.ObservedAt, &item.LastSuccess, &item.LastAttempt, &item.RecordCount) != nil || json.Unmarshal(raw, &item.Config) != nil {
@@ -110,7 +119,13 @@ func (s *Server) managedIdentityRegistrationsFiltered(ctx context.Context, filte
 		cache.RUnlock()
 		out = append(out, item)
 	}
-	if rows.Err() != nil || len(out) > 16 {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, identityAuthorityUnavailableError{cause: err}
+	}
+	if len(out) > 16 {
 		return nil, fmt.Errorf("identity source bound exceeded or query incomplete")
 	}
 	return out, nil

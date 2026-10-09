@@ -41,15 +41,18 @@ type sharedBehaviorGroup struct {
 }
 
 type sharedBehaviorKnownDeviceRow struct {
-	SensorID     string  `json:"sensor_id"`
-	CampusID     string  `json:"campus_id"`
-	AccessDomain string  `json:"access_domain"`
-	IP           string  `json:"ip"`
-	Value        string  `json:"value"`
-	Count        int     `json:"count"`
-	Buckets      []int64 `json:"buckets"`
-	FirstSeen    string  `json:"first_seen"`
-	LastSeen     string  `json:"last_seen"`
+	EventIDs     []string   `json:"event_ids"`
+	Sources      []string   `json:"sources"`
+	EventRefs    [][]string `json:"event_refs"`
+	SensorID     string     `json:"sensor_id"`
+	CampusID     string     `json:"campus_id"`
+	AccessDomain string     `json:"access_domain"`
+	IP           string     `json:"ip"`
+	Value        string     `json:"value"`
+	Count        int        `json:"count"`
+	Buckets      []int64    `json:"buckets"`
+	FirstSeen    string     `json:"first_seen"`
+	LastSeen     string     `json:"last_seen"`
 }
 
 type sharedBehaviorCheckpoint struct {
@@ -93,6 +96,10 @@ LIMIT 100000 SETTINGS max_threads=2,max_memory_usage=536870912,max_execution_tim
 }
 
 func (s *DBStore) sharedBehaviorKnownDeviceRows(ctx context.Context, sensorID string, subjectIPs []string, from, to time.Time) ([]sharedBehaviorKnownDeviceRow, error) {
+	return s.sharedBehaviorModelRows(ctx, sensorID, subjectIPs, from, to, 300000)
+}
+
+func (s *DBStore) sharedBehaviorModelRows(ctx context.Context, sensorID string, subjectIPs []string, from, to time.Time, bucketMillis int) ([]sharedBehaviorKnownDeviceRow, error) {
 	if len(subjectIPs) == 0 {
 		return []sharedBehaviorKnownDeviceRow{}, nil
 	}
@@ -119,7 +126,10 @@ func (s *DBStore) sharedBehaviorKnownDeviceRows(ctx context.Context, sensorID st
 		}
 		query := fmt.Sprintf(`SELECT sensor_id,campus_id,access_domain,subject_ip AS ip,feature_value AS value,
  uniqExact(event_id) AS count,
- arraySlice(arraySort(groupUniqArray(toInt64(toUnixTimestamp64Milli(timestamp)/300000))),1,288) AS buckets,
+ arraySlice(groupUniqArray(event_id),1,8) AS event_ids,
+ arraySort(groupUniqArray(source)) AS sources,
+ arraySlice(groupUniqArray(tuple(event_id,source,collector_instance_id)),1,8) AS event_refs,
+ arraySlice(arraySort(groupUniqArray(toInt64(toUnixTimestamp64Milli(timestamp)/%d))),1,288) AS buckets,
  formatDateTime(min(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS first_seen,
  formatDateTime(max(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS last_seen
 FROM shared_behavior_device_model_events_v1
@@ -128,7 +138,7 @@ WHERE feature_value!=''
 GROUP BY sensor_id,campus_id,access_domain,ip,value
 ORDER BY ip,count DESC,value
 LIMIT 100 BY ip SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`,
-			chQuote(sensorID), strings.Join(quoted, ","), chQuote(from.UTC().Format(time.RFC3339Nano)), chQuote(to.UTC().Format(time.RFC3339Nano)))
+			bucketMillis, chQuote(sensorID), strings.Join(quoted, ","), chQuote(from.UTC().Format(time.RFC3339Nano)), chQuote(to.UTC().Format(time.RFC3339Nano)))
 		raw, err := s.ch.query(ctx, query)
 		if err != nil {
 			return nil, err
@@ -209,7 +219,7 @@ func sharedBehaviorKnownDevices(rows []sharedBehaviorKnownDeviceRow) map[string]
 
 func (s *DBStore) sharedBehaviorCoverage(ctx context.Context, sensorID string, windowEnd time.Time) (bool, []string, error) {
 	rows, err := s.pg.db.QueryContext(ctx, `SELECT source_kind,max(last_event_at),max(updated_at)
-FROM ingest_checkpoints WHERE sensor_id=$1 AND source_kind IN ('zeek-http','suricata','device-signals') GROUP BY source_kind`, sensorID)
+FROM ingest_checkpoints WHERE sensor_id=$1 AND source_kind IN ('zeek-http','suricata','device-signals','shared-device-signals') GROUP BY source_kind`, sensorID)
 	if err != nil {
 		return false, nil, err
 	}
@@ -245,6 +255,14 @@ func sharedBehaviorCoverageReasons(checkpoints map[string]sharedBehaviorCheckpoi
 			reasons = append(reasons, kind+"_checkpoint_stale")
 		}
 		return len(reasons) == 0, reasons
+	}
+	// The dedicated shared-signal collector applies a kernel TCP SYN filter,
+	// truncates accepted frames before payload, and emits both TTL paths and TCP
+	// stack fingerprints. A fresh checkpoint therefore proves continuous
+	// coverage for every signal this bounded collector can produce without
+	// requiring a full HTTP/TLS collector on the mirror port.
+	if healthy, _ := health("shared-device-signals"); healthy {
+		return []string{}
 	}
 	reasons := []string{}
 	if healthy, deviceReasons := health("device-signals"); !healthy {
@@ -367,7 +385,8 @@ func buildSharedBehaviorWindows(rows []sharedBehaviorSignalRow, from, to time.Ti
 }
 
 func confirmedSharedBehaviorEvidence(window sharedaccess.Window, item sharedaccess.BehaviorAssessment) (evidence.Evidence, bool) {
-	if item.Status != "confirmed" || item.CoverageState != "verified" || !window.Complete || !window.CoverageVerified || len(window.Conflicts) > 0 || len(window.Sources) == 0 || len(window.Records) == 0 {
+	_, supported := sharedBehaviorAnchorExplanation(item.StrongAnchor)
+	if item.Status != "confirmed" || !supported || item.DeviceLowerBound < 2 || item.CoverageState != "verified" || !window.Complete || !window.CoverageVerified || len(window.Conflicts) > 0 || len(window.Sources) == 0 || len(window.Records) == 0 {
 		return evidence.Evidence{}, false
 	}
 	return evidence.Evidence{
@@ -387,12 +406,91 @@ func featureValues(values map[string]sharedaccess.FeatureSample) []string {
 	return result
 }
 
+func mergeIEEE1905AssociationWindows(windows []sharedaccess.Window, groups []ieee1905AssociationGroup, from, to time.Time, complete bool, coverageReasons []string) []sharedaccess.Window {
+	indexes := map[string]int{}
+	for index := range windows {
+		key := strings.Join([]string{windows[index].SensorID, windows[index].CampusID, windows[index].AccessDomain, windows[index].IP}, "\x00")
+		indexes[key] = index
+	}
+	for _, group := range groups {
+		if net.ParseIP(group.GatewayIP) == nil || len(group.Clients) == 0 || group.LastSeen.Before(from) || group.LastSeen.After(to) {
+			continue
+		}
+		key := strings.Join([]string{group.SensorID, group.CampusID, group.AccessDomain, group.GatewayIP}, "\x00")
+		index, found := indexes[key]
+		if !found {
+			window := sharedaccess.Window{
+				RuleVersion: sharedaccess.RuleVersion, IP: group.GatewayIP, SensorID: group.SensorID,
+				CampusID: group.CampusID, AccessDomain: group.AccessDomain, From: from, To: to,
+				LastObservedAt: group.LastSeen, Complete: complete, CoverageVerified: complete,
+				Samples: map[string]map[string]sharedaccess.FeatureSample{}, Conflicts: append([]string{}, coverageReasons...),
+				Sources: []string{"packet-sidecar"},
+			}
+			window.ID = stableSharedBehaviorID(window.SensorID, window.CampusID, window.AccessDomain, window.IP, from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+			windows = append(windows, window)
+			index = len(windows) - 1
+			indexes[key] = index
+		}
+		window := &windows[index]
+		if group.LastSeen.After(window.LastObservedAt) {
+			window.LastObservedAt = group.LastSeen
+		}
+		window.AssociatedClients = append([]string{}, group.Clients...)
+		if window.Samples == nil {
+			window.Samples = map[string]map[string]sharedaccess.FeatureSample{}
+		}
+		window.Samples["ieee1905_association"] = map[string]sharedaccess.FeatureSample{}
+		for _, client := range group.Clients {
+			at := group.ClientLastSeen[client]
+			if at.IsZero() {
+				at = group.LastSeen
+			}
+			bucket := at.UnixMilli() / 5000
+			window.Samples["ieee1905_association"][client] = sharedaccess.FeatureSample{Count: 1, Buckets: []int64{bucket}}
+		}
+		sourcePresent := false
+		for _, source := range window.Sources {
+			if source == "packet-sidecar" {
+				sourcePresent = true
+			}
+		}
+		if !sourcePresent {
+			window.Sources = append(window.Sources, "packet-sidecar")
+			sort.Strings(window.Sources)
+		}
+		seenEvents := map[string]bool{}
+		for _, eventID := range window.EventIDs {
+			seenEvents[eventID] = true
+		}
+		for _, eventID := range group.EventIDs {
+			if eventID == "" || seenEvents[eventID] || len(window.EventIDs) >= 64 {
+				continue
+			}
+			seenEvents[eventID] = true
+			window.EventIDs = append(window.EventIDs, eventID)
+			window.Records = append(window.Records, sharedaccess.RecordRef{EventID: eventID, Source: "packet-sidecar"})
+		}
+		sort.Strings(window.EventIDs)
+	}
+	sort.Slice(windows, func(i, j int) bool { return windows[i].IP < windows[j].IP })
+	return windows
+}
+
 func (s *DBStore) sharedBehaviorRouter(ctx context.Context, endpointID, ip string, at time.Time) (sharedaccess.BehaviorRouterContext, error) {
 	var raw []byte
-	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment FROM router_assessments
-WHERE expires_at>$3 AND (($1<>'' AND endpoint_id=$1) OR ip=NULLIF($2,'')::inet)
+	var independentRole bool
+	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment,EXISTS(
+ SELECT 1 FROM router_evidence_facts f
+ WHERE f.assessment_id=router_assessments.assessment_id AND f.expires_at>$3
+ AND f.source_family<>'shared_gateway_behavior' AND f.score>0 AND NOT f.conflict AND NOT f.exclusion
+ AND COALESCE(f.data->>'role','') IN('router','ap')
+ AND COALESCE(f.data->>'brand_reference_only','false')<>'true'
+) FROM router_assessments
+WHERE expires_at>$3 AND (($1<>'' AND (endpoint_id=$1
+ OR (endpoint_id='' AND $1 LIKE 'mac:%' AND mac=substring($1 from 5))))
+ OR ($1='' AND ip=NULLIF($2,'')::inet AND endpoint_id='' AND mac=''))
 ORDER BY CASE WHEN $1<>'' AND endpoint_id=$1 THEN 0 ELSE 1 END,
- CASE status WHEN 'confirmed' THEN 0 WHEN 'likely' THEN 1 ELSE 2 END,confidence DESC,last_seen DESC LIMIT 1`, endpointID, ip, at).Scan(&raw)
+	CASE status WHEN 'confirmed' THEN 0 WHEN 'likely' THEN 1 ELSE 2 END,confidence DESC,last_seen DESC LIMIT 1`, endpointID, ip, at).Scan(&raw, &independentRole)
 	if err == sql.ErrNoRows {
 		return sharedaccess.BehaviorRouterContext{}, nil
 	}
@@ -402,6 +500,9 @@ ORDER BY CASE WHEN $1<>'' AND endpoint_id=$1 THEN 0 ELSE 1 END,
 	var item evidence.RouterAssessment
 	if err = json.Unmarshal(raw, &item); err != nil {
 		return sharedaccess.BehaviorRouterContext{}, err
+	}
+	if !independentRole {
+		item.Role, item.Status, item.Confidence = "", "", 0
 	}
 	return sharedaccess.BehaviorRouterContext{AssessmentID: item.AssessmentID, Brand: item.Brand, Model: item.Model, Role: item.Role, Status: item.Status, Confidence: item.Confidence, BrandAttribution: item.BrandAttribution}, nil
 }
@@ -423,7 +524,8 @@ VALUES($1,$2,$3,$4,$5::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,router_assessment_id=EXCLUDED.router_assessment_id,
  status=EXCLUDED.status,confidence=EXCLUDED.confidence,signal_groups=EXCLUDED.signal_groups,
  rule_version=EXCLUDED.rule_version,coverage_state=EXCLUDED.coverage_state,
- last_seen=GREATEST(shared_behavior_observations.last_seen,EXCLUDED.last_seen),
+ last_seen=CASE WHEN shared_behavior_observations.last_seen>=shared_behavior_observations.window_end
+ THEN EXCLUDED.last_seen ELSE GREATEST(shared_behavior_observations.last_seen,EXCLUDED.last_seen) END,
  expires_at=EXCLUDED.expires_at,observation=EXCLUDED.observation,updated_at=now()`,
 		item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.EndpointID, item.Router.AssessmentID,
 		item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen,
@@ -453,6 +555,13 @@ SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE NOT EXISTS(
 func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string, now time.Time) (int, error) {
 	windowEnd := now.UTC().Add(-90 * time.Second).Truncate(5 * time.Minute)
 	windowStart := windowEnd.Add(-10 * time.Minute)
+	if err := s.syncIEEE1905Associations(ctx, sensorID, windowStart, now, windowEnd); err != nil {
+		return 0, err
+	}
+	associationGroups, err := s.activeIEEE1905AssociationGroups(ctx, sensorID, windowStart, windowEnd)
+	if err != nil {
+		return 0, err
+	}
 	rows, err := s.sharedBehaviorSignalRows(ctx, sensorID, windowStart, windowEnd)
 	if err != nil {
 		return 0, err
@@ -461,47 +570,100 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 	if err != nil {
 		return 0, err
 	}
+	if !complete {
+		state, _ := json.Marshal(map[string]any{"as_of": windowEnd, "window_start": windowStart, "coverage_verified": false, "coverage_blockers": coverageReasons})
+		_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
+		return 0, err
+	}
 	windows, err := buildSharedBehaviorWindows(rows, windowStart, windowEnd, complete, coverageReasons)
 	if err != nil {
 		return 0, err
 	}
+	windows = mergeIEEE1905AssociationWindows(windows, associationGroups, windowStart, windowEnd, complete, coverageReasons)
+	// The mirror can contain many thousands of ordinary one-stack endpoints.
+	// Resolve endpoint and router profiles only for windows that can already
+	// produce an observation, or that may become a strong model-backed result
+	// after the device-model join. This keeps PostgreSQL work proportional to
+	// shared-access leads instead of total campus address cardinality.
+	potential := windows[:0]
+	for _, window := range windows {
+		if sharedBehaviorPotentialWindow(window) {
+			potential = append(potential, window)
+		}
+	}
+	windows = potential
+	directItems := map[string]sharedaccess.BehaviorAssessment{}
 	windowIPs := make([]string, 0, len(windows))
 	for _, window := range windows {
+		if item, present := sharedaccess.AssessBehavior(window.ID, "", window, sharedaccess.BehaviorRouterContext{}); present && item.Status == "candidate" && len(item.SignalGroups) == 1 && item.SignalGroups[0] == "tcp_stack" {
+			directItems[window.ID] = item
+			continue
+		}
 		windowIPs = append(windowIPs, window.IP)
 	}
 	knownRows, err := s.sharedBehaviorKnownDeviceRows(ctx, sensorID, windowIPs, windowEnd.Add(-24*time.Hour), windowEnd)
 	if err != nil {
 		return 0, err
 	}
+	currentModels, err := s.sharedBehaviorModelRows(ctx, sensorID, windowIPs, windowStart, windowEnd, 5000)
+	if err != nil {
+		return 0, err
+	}
+	modelSamples := sharedBehaviorModelSamples(currentModels)
+	modelRowsByScope := map[string][]sharedBehaviorKnownDeviceRow{}
+	for _, row := range currentModels {
+		key := strings.Join([]string{row.SensorID, row.CampusID, row.AccessDomain, row.IP}, "\x00")
+		modelRowsByScope[key] = append(modelRowsByScope[key], row)
+	}
 	knownDevices := sharedBehaviorKnownDevices(knownRows)
 	written := 0
+	currentIDs := []string{}
 	for _, window := range windows {
-		attribution, found, resolveErr := s.ResolveDeviceAt(ctx, DomainObservation{IP: window.IP, Timestamp: window.LastObservedAt.Format(time.RFC3339Nano), SensorID: window.SensorID, CampusID: window.CampusID})
-		if resolveErr != nil {
-			return written, resolveErr
-		}
-		endpointID := ""
-		if found && !attribution.Conflict {
-			endpointID = attribution.EndpointID
-		} else if found && attribution.Conflict {
-			window.Complete = false
-			window.CoverageVerified = false
-			window.Conflicts = append(window.Conflicts, "ambiguous_endpoint_association")
-		}
-		router, routerErr := s.sharedBehaviorRouter(ctx, endpointID, window.IP, window.LastObservedAt)
-		if routerErr != nil {
-			return written, routerErr
-		}
-		item, present := sharedaccess.AssessBehavior(window.ID, endpointID, window, router)
-		if !present {
-			continue
-		}
 		key := strings.Join([]string{window.SensorID, window.CampusID, window.AccessDomain, window.IP}, "\x00")
+		item, present := directItems[window.ID]
+		if !present {
+			window.Samples["device_model"] = modelSamples[key]
+			appendSharedBehaviorModelRefs(&window, modelRowsByScope[key], key)
+			item, present = sharedaccess.AssessBehavior(window.ID, "", window, sharedaccess.BehaviorRouterContext{})
+			if !present {
+				continue
+			}
+		}
+		// Weak protocol candidates are intentionally independent from endpoint
+		// attribution. Resolving every ordinary campus IP made the hot pass an
+		// N+1 PostgreSQL workload. Only a strong, independently confirmed shared
+		// window pays the cost of attaching endpoint/router context.
+		if item.Status == "confirmed" {
+			attribution, found, resolveErr := s.ResolveDeviceAt(ctx, DomainObservation{IP: window.IP, Timestamp: window.LastObservedAt.Format(time.RFC3339Nano), SensorID: window.SensorID, CampusID: window.CampusID})
+			if resolveErr != nil {
+				return written, resolveErr
+			}
+			endpointID := ""
+			if found && !attribution.Conflict {
+				endpointID = attribution.EndpointID
+			} else if found && attribution.Conflict {
+				window.Complete = false
+				window.CoverageVerified = false
+				window.Conflicts = append(window.Conflicts, "ambiguous_endpoint_association")
+			}
+			router, routerErr := s.sharedBehaviorRouter(ctx, endpointID, window.IP, window.LastObservedAt)
+			if routerErr != nil {
+				return written, routerErr
+			}
+			item, present = sharedaccess.AssessBehavior(window.ID, endpointID, window, router)
+			if !present {
+				continue
+			}
+		}
 		item.KnownDevices = append([]sharedaccess.KnownDevice{}, knownDevices[key]...)
-		item.KnownDeviceCount = len(item.KnownDevices)
+		item.ReferenceDeviceCount24h = len(item.KnownDevices)
+		item.KnownDeviceCount = item.DeviceLowerBound
 		if item.KnownDeviceCount > 0 {
-			item.KnownDeviceBasis = "explicit_hardware_model_lower_bound"
-			item.KnownDeviceWindow = "24h"
+			item.KnownDeviceBasis = item.StrongAnchor
+			item.KnownDeviceWindow = "10m"
+			if item.StrongAnchor == "ieee1905_association" {
+				item.KnownDeviceWindow = "current"
+			}
 		}
 		if err = s.persistSharedBehavior(ctx, item); err != nil {
 			return written, err
@@ -514,17 +676,49 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 				return written, err
 			}
 		}
+		currentIDs = append(currentIDs, item.ObservationID)
 		written++
 	}
-	_, _ = s.pg.db.ExecContext(ctx, `DELETE FROM shared_behavior_observations WHERE expires_at<now()`)
+	// An empty complete window must retire previous hits without deleting history.
+	if complete {
+		if err = s.publishSharedBehaviorCurrent(ctx, sensorID, currentIDs); err != nil {
+			return written, err
+		}
+	}
 	state, _ := json.Marshal(map[string]any{"as_of": windowEnd, "window_start": windowStart, "rows": len(rows), "observations": written, "coverage_verified": complete, "coverage_blockers": coverageReasons})
 	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now())
 ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
 	return written, err
 }
 
+func sharedBehaviorPotentialWindow(window sharedaccess.Window) bool {
+	if _, present := sharedaccess.AssessBehavior("prefilter", "", window, sharedaccess.BehaviorRouterContext{}); present {
+		return true
+	}
+	for _, source := range window.Sources {
+		if source == "shared-syn-sidecar" {
+			return window.HasRepeatedFeature("tls_stack")
+		}
+	}
+	// Explicit device models are joined in the next stage. Preserve windows
+	// where TCP/TLS diversity could corroborate two repeated concrete models.
+	return window.HasRepeatedFeature("tcp_stack") || window.HasRepeatedFeature("tls_stack")
+}
+
+func sharedBehaviorAnchorExplanation(anchor string) (string, bool) {
+	switch anchor {
+	case "ieee1905_association":
+		return "IEEE 1905.1/EasyMesh 当前关联状态表明多个终端接入同一设备，地址租约确认关联设备的 IP 归属", true
+	case "coexisting_device_models":
+		return "当前窗口内多个明确硬件型号重复共现，并有协议栈差异佐证该设备承担共享网关角色", true
+	default:
+		return "", false
+	}
+}
+
 func (s *DBStore) writeSharedGatewayRouterEvidence(ctx context.Context, item sharedaccess.BehaviorAssessment) error {
-	if item.CoverageState != "verified" || (item.Status != "likely" && item.Status != "confirmed") || len(item.Conflicts) > 0 {
+	explanation, supported := sharedBehaviorAnchorExplanation(item.StrongAnchor)
+	if item.CoverageState != "verified" || item.Status != "confirmed" || !supported || item.DeviceLowerBound < 2 || len(item.Conflicts) > 0 {
 		return nil
 	}
 	behaviorGroups := []string{}
@@ -538,7 +732,9 @@ func (s *DBStore) writeSharedGatewayRouterEvidence(ctx context.Context, item sha
 	}
 	var raw []byte
 	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment FROM router_assessments
-WHERE ip=$1::inet
+WHERE ip=$1::inet AND (($2<>'' AND (endpoint_id=$2
+ OR (endpoint_id='' AND $2 LIKE 'mac:%' AND mac=substring($2 from 5))))
+ OR ($2='' AND endpoint_id='' AND mac=''))
 ORDER BY (endpoint_id=$2 AND $2<>'') DESC,(mac<>'') DESC,(expires_at>$3) DESC,
  infrastructure ASC,ambiguous ASC,confidence DESC,last_seen DESC LIMIT 1`, item.IP, item.EndpointID, item.LastSeen).Scan(&raw)
 	router := evidence.RouterAssessment{}
@@ -570,7 +766,7 @@ ORDER BY (endpoint_id=$2 AND $2<>'') DESC,(mac<>'') DESC,(expires_at>$3) DESC,
 		score = 85
 	}
 	ruleVersion := fingerprint.DefaultRouterRuleSet().Version
-	expiresAt := item.LastSeen.Add(24 * time.Hour)
+	expiresAt := item.WindowEnd.Add(20 * time.Minute)
 	evidenceID := stableSharedBehaviorID("router-role", router.AssessmentID, strings.Join(behaviorGroups, ","))
 	brand, series, model := router.Brand, router.Series, router.Model
 	if router.BrandReferenceOnly && !router.BrandAttribution {
@@ -582,9 +778,10 @@ ORDER BY (endpoint_id=$2 AND $2<>'') DESC,(mac<>'') DESC,(expires_at>$3) DESC,
 		Series: series, Model: model, Role: "router", Source: "shared-behavior-materializer",
 		BrandAttribution: router.BrandAttribution,
 		SourceFamily:     "shared_gateway_behavior", SourceEventType: "shared_access_window",
+		SensorID: item.SensorID, SharedObservationID: item.ObservationID,
 		RawValue: strings.Join(behaviorGroups, ","), Strength: "strong", Score: score,
 		RuleID: "verified-shared-gateway-role", RuleVersion: ruleVersion,
-		Explanation:        "重复共现的多终端协议栈与独立设备身份表明该设备承担共享网关角色",
+		Explanation:        explanation,
 		AssociationQuality: router.AssociationQuality, Ambiguous: router.Ambiguous,
 		FirstSeen: item.FirstSeen.UTC().Format(time.RFC3339Nano), LastSeen: item.LastSeen.UTC().Format(time.RFC3339Nano),
 		ExpiresAt: expiresAt.UTC().Format(time.RFC3339Nano), EventIDs: append([]string{}, item.EventIDs...),
@@ -593,4 +790,119 @@ ORDER BY (endpoint_id=$2 AND $2<>'') DESC,(mac<>'') DESC,(expires_at>$3) DESC,
 		bridge.EventIDs = bridge.EventIDs[:20]
 	}
 	return s.WriteRouterObservations(ctx, evidence.RouterResult{RuleVersion: ruleVersion, ShadowMode: true, Evidence: []evidence.RouterEvidence{bridge}})
+}
+
+func sharedBehaviorModelSamples(rows []sharedBehaviorKnownDeviceRow) map[string]map[string]sharedaccess.FeatureSample {
+	result := map[string]map[string]sharedaccess.FeatureSample{}
+	for _, row := range rows {
+		key := strings.Join([]string{row.SensorID, row.CampusID, row.AccessDomain, row.IP}, "\x00")
+		if result[key] == nil {
+			result[key] = map[string]sharedaccess.FeatureSample{}
+		}
+		result[key][row.Value] = sharedaccess.FeatureSample{Count: row.Count, Buckets: row.Buckets}
+	}
+	return result
+}
+
+func (s *DBStore) publishSharedBehaviorCurrent(ctx context.Context, sensorID string, ids []string) error {
+	if ids == nil {
+		ids = []string{}
+	}
+	tx, err := s.pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `UPDATE shared_behavior_observations SET current=(observation_id=ANY($2::text[])),observation=jsonb_set(observation,'{current}',to_jsonb(observation_id=ANY($2::text[]))),updated_at=now()
+WHERE sensor_id=$1 AND (current OR observation_id=ANY($2::text[]))`, sensorID, ids)
+	if err != nil {
+		return err
+	}
+	// A derived gateway role is eligible only while the exact supporting
+	// shared window remains current. Legacy bridges have no provenance link;
+	// retire them when this sensor publishes a complete replacement window.
+	rows, err := tx.QueryContext(ctx, `UPDATE router_evidence_facts f SET expires_at=LEAST(f.expires_at,now())
+WHERE f.source_family='shared_gateway_behavior' AND f.expires_at>now()
+AND (f.data->>'sensor_id'=$1 OR (COALESCE(f.data->>'shared_observation_id','')='' AND EXISTS(
+ SELECT 1 FROM shared_behavior_observations legacy WHERE legacy.sensor_id=$1 AND legacy.ip=f.ip
+ AND (legacy.router_assessment_id=f.assessment_id OR (legacy.endpoint_id<>'' AND legacy.endpoint_id=f.endpoint_id))
+)))
+AND NOT EXISTS(
+ SELECT 1 FROM shared_behavior_observations o
+ WHERE o.observation_id=f.data->>'shared_observation_id' AND o.sensor_id=f.data->>'sensor_id'
+ AND o.ip=f.ip AND o.current AND o.rule_version=$2 AND o.status='confirmed' AND o.coverage_state='verified'
+ AND o.window_end>now()-interval '20 minutes' AND o.expires_at>now()
+ AND COALESCE(o.observation->>'strong_anchor','')<>'' AND COALESCE((o.observation->>'device_lower_bound')::int,0)>=2
+) RETURNING f.assessment_id`, sensorID, sharedaccess.BehaviorRuleVersion)
+	if err != nil {
+		return err
+	}
+	touched := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		touched[id] = true
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for id := range touched {
+		if err = rebuildRouterAssessment(ctx, tx, id, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func appendSharedBehaviorModelRefs(w *sharedaccess.Window, rows []sharedBehaviorKnownDeviceRow, key string) {
+	events := map[string]bool{}
+	sources := map[string]bool{}
+	refs := map[string]bool{}
+	for _, id := range w.EventIDs {
+		events[id] = true
+	}
+	for _, source := range w.Sources {
+		sources[source] = true
+	}
+	for _, ref := range w.Records {
+		refs[strings.Join([]string{ref.EventID, ref.Source, ref.InstanceID}, "\x00")] = true
+	}
+	for _, row := range rows {
+		if key != strings.Join([]string{row.SensorID, row.CampusID, row.AccessDomain, row.IP}, "\x00") {
+			continue
+		}
+		for _, id := range row.EventIDs {
+			if id != "" && !events[id] && len(w.EventIDs) < 64 {
+				events[id] = true
+				w.EventIDs = append(w.EventIDs, id)
+			}
+		}
+		for _, source := range row.Sources {
+			if source != "" && !sources[source] {
+				sources[source] = true
+				w.Sources = append(w.Sources, source)
+			}
+		}
+		for _, ref := range row.EventRefs {
+			if len(ref) < 2 || ref[0] == "" || ref[1] == "" {
+				continue
+			}
+			instance := ""
+			if len(ref) > 2 {
+				instance = ref[2]
+			}
+			id := strings.Join([]string{ref[0], ref[1], instance}, "\x00")
+			if !refs[id] && len(w.Records) < 64 {
+				refs[id] = true
+				w.Records = append(w.Records, sharedaccess.RecordRef{EventID: ref[0], Source: ref[1], InstanceID: instance})
+			}
+		}
+	}
+	sort.Strings(w.EventIDs)
+	sort.Strings(w.Sources)
 }

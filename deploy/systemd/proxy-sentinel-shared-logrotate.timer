@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Proxy Sentinel shared-access signal rotation
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Persistent=true
+Unit=proxy-sentinel-shared-logrotate.service
+
+[Install]
+WantedBy=timers.target

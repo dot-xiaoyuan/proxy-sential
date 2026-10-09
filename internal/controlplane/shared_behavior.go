@@ -36,7 +36,7 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 	}
 	query := store.SharedBehaviorQuery{
 		Keyword: r.URL.Query().Get("keyword"), IP: r.URL.Query().Get("ip"), Status: r.URL.Query().Get("status"),
-		CoverageState: r.URL.Query().Get("coverage_state"), Limit: 20,
+		CoverageState: r.URL.Query().Get("coverage_state"), View: r.URL.Query().Get("view"), HistoryBasis: r.URL.Query().Get("history_basis"), Limit: 20,
 	}
 	if value := r.URL.Query().Get("limit"); value != "" {
 		parsed, err := strconv.Atoi(value)
@@ -65,6 +65,37 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 	page, err := reader.ListSharedBehavior(ctx, query)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "shared_behavior_query_invalid", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (s *Server) handleSharedDeviceProfiles(w http.ResponseWriter, r *http.Request) {
+	reader, ok := s.reader.(store.SharedDeviceProfileReader)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "shared_device_profiles_unavailable", "设备档案存储不可用")
+		return
+	}
+	q := store.SharedDeviceProfileQuery{Keyword: r.URL.Query().Get("keyword"), Limit: 20}
+	for _, param := range []string{"limit", "cursor"} {
+		if value := r.URL.Query().Get(param); value != "" {
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "bad_pagination", "分页参数必须为整数")
+				return
+			}
+			if param == "limit" {
+				q.Limit = n
+			} else {
+				q.Cursor = n
+			}
+		}
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	page, err := reader.ListSharedDeviceProfiles(ctx, q)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "shared_device_profiles_unavailable", "设备档案读取失败")
 		return
 	}
 	writeJSON(w, http.StatusOK, page)

@@ -1,0 +1,47 @@
+[Unit]
+Description=Proxy Sentinel NCU Srun 4K identity synchronization
+After=network-online.target proxy-sentinel-control-plane.service proxy-sentinel-identity-materializer.service
+Wants=network-online.target
+Conflicts=dpi-capture.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proxy-sentinel
+EnvironmentFile=/opt/proxy-sentinel/config/ncu-identity-sync.env
+ExecStart=/opt/proxy-sentinel/current/bin/legacy-4k-identity-bridge \
+  --online-redis-addr=${NCU_ONLINE_REDIS_ADDR} \
+  --online-redis-password-file=/opt/proxy-sentinel/secrets/ncu-online-redis.password \
+  --event-redis-addr=${NCU_EVENT_REDIS_ADDR} \
+  --event-redis-password-file=/opt/proxy-sentinel/secrets/ncu-event-redis.password \
+  --event-list=list:antiproxy:127.0.0.1 \
+  --online-list=list:rad_online \
+  --endpoint=http://127.0.0.1:18080 \
+  --token-file=/opt/proxy-sentinel/secrets/identity-ingest.token \
+  --source=ncu-srun4k \
+  --sensor-id=ncu-auth-redis \
+  --campus-id=ncu \
+  --access-domain=campus-auth \
+  --batch-size=500 \
+  --max-records=100000 \
+  --reconcile-interval=30m \
+  --health-addr=127.0.0.1:18082
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+CPUQuota=100%
+CPUWeight=30
+MemoryHigh=512M
+MemoryMax=768M
+OOMPolicy=stop
+Nice=8
+IOWeight=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/proxy-sentinel
+
+[Install]
+WantedBy=multi-user.target

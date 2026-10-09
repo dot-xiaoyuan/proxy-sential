@@ -7,20 +7,24 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/policy"
+	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
 )
 
 var caseStatuses = map[string]bool{"new": true, "assigned": true, "investigating": true, "waiting_data": true, "resolved": true, "closed": true, "reopened": true}
-var caseDispositions = map[string]bool{"confirmed_proxy": true, "false_positive": true, "benign": true, "needs_more_data": true}
+var caseDispositions = map[string]bool{"confirmed_proxy": true, "confirmed_shared_access": true, "confirmed_router": true, "false_positive": true, "benign": true, "needs_more_data": true}
 var casePriorities = map[string]bool{"high": true, "medium": true, "low": true}
 var caseStatusTransitions = map[string]map[string]bool{
 	"new":           {"assigned": true, "investigating": true, "waiting_data": true},
@@ -33,43 +37,47 @@ var caseStatusTransitions = map[string]map[string]bool{
 }
 
 type RiskCase struct {
-	CaseID           string                 `json:"case_id"`
-	SubjectType      string                 `json:"subject_type"`
-	SubjectID        string                 `json:"subject_id"`
-	IP               string                 `json:"ip,omitempty"`
-	AccountID        string                 `json:"account_id,omitempty"`
-	EndpointID       string                 `json:"endpoint_id,omitempty"`
-	CampusID         string                 `json:"campus_id,omitempty"`
-	Department       string                 `json:"department,omitempty"`
-	PersonType       string                 `json:"person_type,omitempty"`
-	BuildingID       string                 `json:"building_id,omitempty"`
-	NetworkZoneID    string                 `json:"network_zone_id,omitempty"`
-	SSID             string                 `json:"ssid,omitempty"`
-	VLAN             string                 `json:"vlan,omitempty"`
-	AP               string                 `json:"ap,omitempty"`
-	NASIP            string                 `json:"nas_ip,omitempty"`
-	AuthSessionID    string                 `json:"auth_session_id,omitempty"`
-	IdentityConflict bool                   `json:"identity_conflict"`
-	IdentityBlocker  string                 `json:"identity_blocker,omitempty"`
-	DedupeKey        string                 `json:"dedupe_key,omitempty"`
-	Status           string                 `json:"status"`
-	Disposition      string                 `json:"disposition,omitempty"`
-	Priority         string                 `json:"priority"`
-	AssigneeID       string                 `json:"assignee_id,omitempty"`
-	RiskScore        int                    `json:"risk_score"`
-	RiskConfidence   float64                `json:"risk_confidence"`
-	AssessmentLevel  string                 `json:"assessment_level"`
-	RulesetVersion   string                 `json:"ruleset_version,omitempty"`
-	DueAt            string                 `json:"due_at"`
-	FirstSeen        string                 `json:"first_seen"`
-	LastSeen         string                 `json:"last_seen"`
-	CreatedAt        string                 `json:"created_at"`
-	UpdatedAt        string                 `json:"updated_at"`
-	EvidenceSnapshot store.ProxyReviewCase  `json:"evidence_snapshot"`
-	EvidenceHistory  []CaseEvidenceSnapshot `json:"evidence_history,omitempty"`
-	HistoryPage      map[string]store.Page  `json:"history_page,omitempty"`
-	Comments         []CaseComment          `json:"comments,omitempty"`
-	Timeline         []CaseTimeline         `json:"timeline,omitempty"`
+	CaseID              string                 `json:"case_id"`
+	SubjectType         string                 `json:"subject_type"`
+	SubjectID           string                 `json:"subject_id"`
+	IP                  string                 `json:"ip,omitempty"`
+	AccountID           string                 `json:"account_id,omitempty"`
+	EndpointID          string                 `json:"endpoint_id,omitempty"`
+	CampusID            string                 `json:"campus_id,omitempty"`
+	Department          string                 `json:"department,omitempty"`
+	PersonType          string                 `json:"person_type,omitempty"`
+	BuildingID          string                 `json:"building_id,omitempty"`
+	NetworkZoneID       string                 `json:"network_zone_id,omitempty"`
+	SSID                string                 `json:"ssid,omitempty"`
+	VLAN                string                 `json:"vlan,omitempty"`
+	AP                  string                 `json:"ap,omitempty"`
+	NASIP               string                 `json:"nas_ip,omitempty"`
+	AuthSessionID       string                 `json:"auth_session_id,omitempty"`
+	IdentityConflict    bool                   `json:"identity_conflict"`
+	IdentityBlocker     string                 `json:"identity_blocker,omitempty"`
+	DedupeKey           string                 `json:"dedupe_key,omitempty"`
+	Status              string                 `json:"status"`
+	Disposition         string                 `json:"disposition,omitempty"`
+	Priority            string                 `json:"priority"`
+	AssigneeID          string                 `json:"assignee_id,omitempty"`
+	RiskScore           int                    `json:"risk_score"`
+	RiskConfidence      float64                `json:"risk_confidence"`
+	AssessmentLevel     string                 `json:"assessment_level"`
+	AssessmentCurrent   bool                   `json:"assessment_current"`
+	AssessmentUpdatedAt string                 `json:"assessment_updated_at,omitempty"`
+	AssessmentWindow    string                 `json:"assessment_window,omitempty"`
+	RiskKind            string                 `json:"risk_kind,omitempty"`
+	RulesetVersion      string                 `json:"ruleset_version,omitempty"`
+	DueAt               string                 `json:"due_at"`
+	FirstSeen           string                 `json:"first_seen"`
+	LastSeen            string                 `json:"last_seen"`
+	CreatedAt           string                 `json:"created_at"`
+	UpdatedAt           string                 `json:"updated_at"`
+	EvidenceSnapshot    store.ProxyReviewCase  `json:"evidence_snapshot"`
+	EvidenceHistory     []CaseEvidenceSnapshot `json:"evidence_history,omitempty"`
+	HistoryPage         map[string]store.Page  `json:"history_page,omitempty"`
+	Comments            []CaseComment          `json:"comments,omitempty"`
+	Timeline            []CaseTimeline         `json:"timeline,omitempty"`
 }
 
 type CaseEvidenceSnapshot struct {
@@ -173,6 +181,7 @@ type operationsState struct {
 	lockErr               error
 	healthMu              sync.RWMutex
 	healthErr             error
+	caseSyncHealthErr     error
 }
 
 type operationsMutex struct {
@@ -357,58 +366,71 @@ func (s *Server) syncCases(r *http.Request) error {
 }
 
 func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) error {
-	result, err := s.reader.GetProxyReviews(ctx, store.ActivityQuery{SensorID: sensorID, Window: window, SampleLimit: maxProxyReviewAggregateRows})
-	if err != nil {
-		return err
+	sharedReader, ok := s.reader.(store.SharedBehaviorReader)
+	if !ok {
+		return fmt.Errorf("shared behavior reader unavailable")
 	}
-	// A shared-device case may be driven by TTL/DHCP/UA signals without a TLS,
-	// QUIC or alert row. Merge every materialized high/confirmed IP so case
-	// creation is independent from opening the proxy-review endpoint.
-	riskPage, err := s.reader.ListRisks(ctx, store.Query{SensorID: sensorID, Window: window, Limit: 1000})
-	if err != nil {
-		return err
+	items := []store.ProxyReviewCase{}
+	closableKinds := map[string]bool{}
+	sharedQuery := store.SharedBehaviorQuery{Status: "confirmed", CoverageState: "verified", Limit: 100}
+	for {
+		page, err := sharedReader.ListSharedBehavior(ctx, sharedQuery)
+		if err != nil {
+			return err
+		}
+		for _, assessment := range page.Items {
+			if assessment.Status != "confirmed" || assessment.CoverageState != "verified" || assessment.StrongAnchor == "" || assessment.DeviceLowerBound < 2 || len(assessment.Conflicts) > 0 {
+				continue
+			}
+			items = append(items, proxyReviewCaseForSharedAssessment(assessment))
+		}
+		if page.Page.NextCursor == nil {
+			break
+		}
+		next, err := strconv.Atoi(*page.Page.NextCursor)
+		if err != nil {
+			return err
+		}
+		sharedQuery.Cursor = next
 	}
-	seenIPs := map[string]struct{}{}
-	for _, item := range result.Items {
-		seenIPs[item.IP] = struct{}{}
-	}
-	for _, snapshot := range riskPage.Items {
-		if snapshot.IP == "" || (snapshot.Level != "high" && snapshot.Level != "confirmed") {
-			continue
+	// ListSharedBehavior only exposes the atomically published current set. A
+	// successful empty read therefore represents a verified negative generation.
+	closableKinds["shared_access"] = true
+	if routerReader, available := s.reader.(store.RouterObservationReader); available {
+		routerQuery := store.RouterQuery{Role: "router", IncludeCandidates: true, Limit: 100}
+		for {
+			page, err := routerReader.ListRouterObservations(ctx, routerQuery)
+			if err != nil {
+				return err
+			}
+			for _, assessment := range page.Items {
+				if assessment.Ambiguous || assessment.BrandReferenceOnly || (assessment.Status != "candidate" && assessment.Status != "likely" && assessment.Status != "confirmed") {
+					continue
+				}
+				items = append(items, proxyReviewCaseForRouterAssessment(assessment))
+			}
+			if page.Page.NextCursor == nil {
+				break
+			}
+			next, err := strconv.Atoi(*page.Page.NextCursor)
+			if err != nil {
+				return err
+			}
+			routerQuery.Cursor = next
 		}
-		if _, ok := seenIPs[snapshot.IP]; ok {
-			continue
-		}
-		sum := sha256.Sum256([]byte("materialized-risk\x00" + snapshot.IP))
-		confidenceLevel := "low"
-		if snapshot.Confidence >= .90 {
-			confidenceLevel = "high"
-		} else if snapshot.Confidence >= .60 {
-			confidenceLevel = "medium"
-		}
-		result.Items = append(result.Items, store.ProxyReviewCase{CaseID: "proxy-" + hex.EncodeToString(sum[:])[:20], IP: snapshot.IP, AccountID: snapshot.AccountID, EndpointID: snapshot.EndpointID, AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{}, DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{}, RuleMatches: []store.ProxyRuleMatch{}, ConfidenceLevel: confidenceLevel, FirstSeen: snapshot.UpdatedAt, LastSeen: snapshot.UpdatedAt, EvidenceIDs: append([]string{}, snapshot.EvidenceIDs...), RiskScore: snapshot.Score, RiskLevel: snapshot.Level, ReviewStatus: firstNonEmptyString(snapshot.ReviewStatus, "unreviewed")})
+		closableKinds["router_observation"] = true
 	}
 	exceptions, err := s.exceptions.list(ctx, true)
 	if err != nil {
 		return err
 	}
-	attributions := map[string]store.IdentityAttribution{}
-	attributionFound := map[string]bool{}
-	resolver, canResolveIdentity := s.reader.(store.IdentityAttributionResolver)
-	if canResolveIdentity {
-		for _, item := range result.Items {
-			attribution, found, resolveErr := resolver.ResolveIdentityAt(ctx, item.IP, item.LastSeen)
-			if resolveErr != nil {
-				return fmt.Errorf("resolve case identity %s: %w", item.CaseID, resolveErr)
-			}
-			attributions[item.CaseID], attributionFound[item.CaseID] = attribution, found
-		}
-	}
 	now := time.Now().UTC()
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
-	for _, item := range result.Items {
-		if item.RiskLevel != "high" && item.RiskLevel != "confirmed" {
+	active := map[string]bool{}
+	for _, item := range items {
+		kind := caseRiskKind(item)
+		if kind == "" {
 			continue
 		}
 		matchedException := matchException(exceptions, item.IP, item.AccountID, item.EndpointID, "")
@@ -425,42 +447,49 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		if matchedException != nil {
 			continue
 		}
-		dedupeKey := caseDedupeKey(item)
+		dedupeKey := strings.ReplaceAll(kind, "_", "-") + ":" + item.CaseID
+		active[dedupeKey] = true
 		caseID := item.CaseID
-		existing, ok := s.operations.doc.Cases[caseID]
+		existing, found := s.operations.doc.Cases[caseID]
 		for candidateID, candidate := range s.operations.doc.Cases {
 			if activeCaseMatches(candidate, item, dedupeKey) {
-				caseID, existing, ok = candidateID, candidate, true
+				caseID, existing, found = candidateID, candidate, true
 				break
 			}
 		}
-		if ok && existing.Status == "closed" {
-			caseID, ok = item.CaseID+"-"+shortToken(6), false
+		if found && (existing.Status == "closed" || existing.Status == "resolved") {
+			caseID, found = item.CaseID+"-"+shortToken(6), false
 		}
-		level := item.RiskLevel
-		if level == "confirmed" {
-			level = "high"
+		level, rulesetVersion := caseAssessmentLevel(item), caseRulesetVersion(item)
+		slaLevel, priority := "medium", "medium"
+		if kind == "shared_access" {
+			slaLevel, priority = "high", "high"
+		} else if level == "candidate" || level == "likely" {
+			slaLevel, priority = "low", "low"
 		}
-		priority := "medium"
-		if level == "high" {
-			priority = "high"
-		}
-		if !ok {
-			existing = RiskCase{CaseID: caseID, DedupeKey: dedupeKey, SubjectType: "ip", SubjectID: item.IP, IP: item.IP, AccountID: item.AccountID, EndpointID: item.EndpointID, Status: "new", Priority: priority, RulesetVersion: "review-rules-v1", CreatedAt: now.Format(time.RFC3339Nano), FirstSeen: item.FirstSeen, Timeline: []CaseTimeline{}, Comments: []CaseComment{}, EvidenceHistory: []CaseEvidenceSnapshot{}}
-			existing.DueAt = caseDueAt(now, level, s.operations.doc.SLAPolicies).Format(time.RFC3339Nano)
-			existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.created", After: map[string]any{"status": "new"}, CreatedAt: now.Format(time.RFC3339Nano)})
+		if !found {
+			existing = RiskCase{CaseID: caseID, DedupeKey: dedupeKey, SubjectType: "ip", SubjectID: item.IP, IP: item.IP, EndpointID: item.EndpointID, Status: "new", Priority: priority, RulesetVersion: rulesetVersion, RiskKind: kind, CreatedAt: now.Format(time.RFC3339Nano), FirstSeen: item.FirstSeen, Timeline: []CaseTimeline{}, Comments: []CaseComment{}, EvidenceHistory: []CaseEvidenceSnapshot{}}
+			existing.DueAt = caseDueAt(now, slaLevel, s.operations.doc.SLAPolicies).Format(time.RFC3339Nano)
+			existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.created", After: map[string]any{"status": "new", "risk_kind": kind}, CreatedAt: now.Format(time.RFC3339Nano)})
 		}
 		previousScore := existing.RiskScore
 		existing.RiskScore = item.RiskScore
-		existing.RiskConfidence = confidenceLevelValue(item.ConfidenceLevel)
+		existing.RiskConfidence = caseRiskConfidence(item)
 		existing.AssessmentLevel = level
+		existing.AssessmentCurrent = true
+		existing.AssessmentUpdatedAt = item.LastSeen
+		existing.AssessmentWindow = window
+		existing.RiskKind = kind
+		existing.RulesetVersion = rulesetVersion
 		existing.LastSeen = item.LastSeen
 		existing.UpdatedAt = now.Format(time.RFC3339Nano)
 		existing.DedupeKey = dedupeKey
+		// Shared exits and router observations are IP/device investigations in
+		// this phase. Stale account-session blockers from the retired generic
+		// proxy synchronizer must not be presented as a condition of this case.
+		clearCaseIdentity(&existing)
+		existing.EndpointID = item.EndpointID
 		snapshot := newCaseEvidenceSnapshot(existing.CaseID, existing.RulesetVersion, item, now)
-		if len(existing.EvidenceHistory) == 0 && existing.EvidenceSnapshot.CaseID != "" {
-			existing.EvidenceHistory = append(existing.EvidenceHistory, newCaseEvidenceSnapshot(existing.CaseID, existing.RulesetVersion, existing.EvidenceSnapshot, parseOrNow(existing.CreatedAt)))
-		}
 		snapshotExists := caseEvidenceSnapshotExists(existing.EvidenceHistory, snapshot.SnapshotID)
 		if !snapshotExists && s.operations.tx != nil {
 			if err := s.operations.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM risk_case_evidence_snapshots WHERE snapshot_id=$1)`, snapshot.SnapshotID).Scan(&snapshotExists); err != nil {
@@ -469,35 +498,34 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		}
 		if !snapshotExists {
 			existing.EvidenceHistory = append(existing.EvidenceHistory, snapshot)
-			if existing.EvidenceSnapshot.CaseID == "" {
-				existing.EvidenceSnapshot = item
-			} else {
+			if existing.EvidenceSnapshot.CaseID != "" {
 				existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.evidence_appended", Before: map[string]any{"risk_score": previousScore}, After: map[string]any{"risk_score": item.RiskScore, "snapshot_id": snapshot.SnapshotID}, CreatedAt: now.Format(time.RFC3339Nano)})
 			}
 		}
-		if attribution, found := attributions[item.CaseID]; found {
-			existing.AccountID = attribution.AccountID
-			existing.EndpointID = attribution.EndpointID
-			existing.PersonType = attribution.PersonType
-			existing.Department = attribution.Department
-			existing.CampusID = attribution.CampusID
-			existing.BuildingID = attribution.BuildingID
-			existing.NetworkZoneID = attribution.NetworkZoneID
-			existing.SSID = attribution.SSID
-			existing.VLAN = attribution.VLAN
-			existing.AP = attribution.AP
-			existing.NASIP = attribution.NASIP
-			existing.AuthSessionID = attribution.SessionID
-			existing.IdentityConflict = attribution.Conflict
-			existing.IdentityBlocker = attribution.ConflictReason
-		} else if canResolveIdentity {
-			existing.IdentityBlocker = "风险发生时间没有可准确定位的认证会话"
-		} else {
-			existing.IdentityBlocker = "身份关联数据源不可用"
-		}
+		existing.EvidenceSnapshot = item
 		s.operations.doc.Cases[existing.CaseID] = existing
 	}
+	for caseID, existing := range s.operations.doc.Cases {
+		kind := riskKindForRuleset(existing.RulesetVersion)
+		if !closableKinds[kind] || existing.Status == "closed" || existing.Status == "resolved" || active[existing.DedupeKey] {
+			continue
+		}
+		before := existing.Status
+		existing.Status = "closed"
+		existing.AssessmentCurrent = false
+		existing.UpdatedAt = now.Format(time.RFC3339Nano)
+		existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.auto_closed_current_set", Before: map[string]any{"status": before}, After: map[string]any{"status": "closed"}, CreatedAt: now.Format(time.RFC3339Nano)})
+		s.operations.doc.Cases[caseID] = existing
+	}
 	return s.operations.saveLocked()
+}
+
+func clearCaseIdentity(item *RiskCase) {
+	item.AccountID, item.EndpointID, item.AuthSessionID = "", "", ""
+	item.PersonType, item.Department, item.CampusID = "", "", ""
+	item.BuildingID, item.NetworkZoneID, item.SSID = "", "", ""
+	item.VLAN, item.AP, item.NASIP = "", "", ""
+	item.IdentityConflict, item.IdentityBlocker = false, ""
 }
 
 func (s *Server) startCaseSynchronizer() {
@@ -511,16 +539,16 @@ func (s *Server) startCaseSynchronizer() {
 			err := s.syncCasesContext(ctx, s.sensorID, "10m")
 			cancel()
 			if err != nil {
-				s.operations.setHealthError(fmt.Errorf("automatic case synchronization: %w", err))
+				s.operations.setCaseSyncHealthError(fmt.Errorf("automatic case synchronization: %w", err))
 			} else {
-				s.operations.setHealthError(nil)
+				s.operations.setCaseSyncHealthError(nil)
 			}
 		}
 	}()
 }
 
 func activeCaseMatches(candidate RiskCase, item store.ProxyReviewCase, dedupeKey string) bool {
-	if candidate.Status == "closed" {
+	if candidate.Status == "closed" || candidate.Status == "resolved" {
 		return false
 	}
 	if candidate.DedupeKey == dedupeKey {
@@ -529,7 +557,7 @@ func activeCaseMatches(candidate RiskCase, item store.ProxyReviewCase, dedupeKey
 	// Evidence and protocol rules evolve while one investigation remains open.
 	// Keep one active case per IP subject and append evidence history instead of
 	// opening a second case merely because the evidence-derived key changed.
-	return candidate.SubjectType == "ip" && (candidate.SubjectID == item.IP || candidate.IP == item.IP)
+	return riskKindForRuleset(candidate.RulesetVersion) == caseRiskKind(item) && candidate.SubjectType == "ip" && (candidate.SubjectID == item.IP || candidate.IP == item.IP)
 }
 
 func caseDedupeKey(item store.ProxyReviewCase) string {
@@ -553,7 +581,22 @@ func legacyCaseDedupeKey(subjectType, subjectID string) string {
 }
 
 func newCaseEvidenceSnapshot(caseID, rulesetVersion string, evidence store.ProxyReviewCase, createdAt time.Time) CaseEvidenceSnapshot {
-	raw, _ := json.Marshal(evidence)
+	identity := any(evidence)
+	if evidence.RouterObservation != nil {
+		components := make([]string, 0, len(evidence.RouterObservation.ScoreComponents))
+		for _, component := range evidence.RouterObservation.ScoreComponents {
+			components = append(components, component.EvidenceID)
+		}
+		sort.Strings(components)
+		identity = struct {
+			AssessmentID string   `json:"assessment_id"`
+			Status       string   `json:"status"`
+			Confidence   int      `json:"confidence"`
+			RuleVersion  string   `json:"rule_version"`
+			EvidenceIDs  []string `json:"evidence_ids"`
+		}{evidence.RouterObservation.AssessmentID, evidence.RouterObservation.Status, evidence.RouterObservation.Confidence, evidence.RouterObservation.RuleVersion, components}
+	}
+	raw, _ := json.Marshal(identity)
 	sum := sha256.Sum256(append([]byte(caseID+"\x00"+rulesetVersion+"\x00"), raw...))
 	return CaseEvidenceSnapshot{SnapshotID: "case-evidence-" + hex.EncodeToString(sum[:12]), RulesetVersion: rulesetVersion, Evidence: evidence, CreatedAt: createdAt.UTC().Format(time.RFC3339Nano)}
 }
@@ -583,15 +626,87 @@ func caseDueAt(now time.Time, level string, policies map[string]SLAPolicy) time.
 	return now.Add(time.Duration(minutes) * time.Minute)
 }
 
-func confidenceLevelValue(level string) float64 {
-	switch strings.ToLower(level) {
-	case "high":
-		return .92
-	case "medium":
-		return .65
-	default:
-		return .35
+// Cue grades describe protocol observations, not the combined risk estimate.
+// Missing or invalid numeric estimates must never fabricate high confidence.
+func caseRiskConfidence(item store.ProxyReviewCase) float64 {
+	if item.SharedAccess != nil {
+		return float64(item.SharedAccess.Confidence) / 100
 	}
+	if item.RouterObservation != nil {
+		return float64(item.RouterObservation.Confidence) / 100
+	}
+	value := item.RiskConfidence
+	if value == nil || math.IsNaN(*value) || *value < 0 || *value > 1 {
+		return 0
+	}
+	return *value
+}
+
+func caseRiskKind(item store.ProxyReviewCase) string {
+	if item.SharedAccess != nil {
+		return "shared_access"
+	}
+	if item.RouterObservation != nil {
+		return "router_observation"
+	}
+	return ""
+}
+
+func caseAssessmentLevel(item store.ProxyReviewCase) string {
+	if item.RouterObservation != nil {
+		return item.RouterObservation.Status
+	}
+	return item.RiskLevel
+}
+
+func caseRulesetVersion(item store.ProxyReviewCase) string {
+	if item.RouterObservation != nil {
+		return "router-observation/" + item.RouterObservation.RuleVersion
+	}
+	return sharedaccess.BehaviorRuleVersion
+}
+
+func riskKindForRuleset(rulesetVersion string) string {
+	if strings.HasPrefix(rulesetVersion, "shared-behavior/") {
+		return "shared_access"
+	}
+	if strings.HasPrefix(rulesetVersion, "router-observation/") {
+		return "router_observation"
+	}
+	return ""
+}
+
+func proxyReviewCaseForSharedAssessment(assessment sharedaccess.BehaviorAssessment) store.ProxyReviewCase {
+	scope := strings.Join([]string{assessment.SensorID, assessment.CampusID, assessment.AccessDomain, assessment.IP}, "\x00")
+	sum := sha256.Sum256([]byte("shared-access-case\x00" + scope))
+	anchorIdentities := make([]string, 0)
+	for value := range assessment.FeatureSamples[assessment.StrongAnchor] {
+		anchorIdentities = append(anchorIdentities, value)
+	}
+	sort.Strings(anchorIdentities)
+	return store.ProxyReviewCase{
+		CaseID: "shared-" + hex.EncodeToString(sum[:])[:20], IP: assessment.IP, EndpointID: assessment.EndpointID,
+		AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{}, DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{}, RuleMatches: []store.ProxyRuleMatch{},
+		EventCount: len(assessment.EventIDs), ConfidenceLevel: "high", FirstSeen: assessment.FirstSeen.UTC().Format(time.RFC3339Nano), LastSeen: assessment.LastSeen.UTC().Format(time.RFC3339Nano), DurationSeconds: int64(assessment.WindowEnd.Sub(assessment.WindowStart).Seconds()), EvidenceIDs: []string{assessment.ObservationID}, RiskScore: assessment.Confidence, RiskLevel: "confirmed", ReviewStatus: "unreviewed",
+		SharedAccess: &store.SharedAccessCaseEvidence{ObservationID: assessment.ObservationID, GenerationID: assessment.GenerationID, Status: assessment.Status, Confidence: assessment.Confidence, StrongAnchor: assessment.StrongAnchor, DeviceLowerBound: assessment.DeviceLowerBound, CoverageState: assessment.CoverageState, WindowStart: assessment.WindowStart.UTC().Format(time.RFC3339Nano), WindowEnd: assessment.WindowEnd.UTC().Format(time.RFC3339Nano), SignalGroups: append([]string{}, assessment.SignalGroups...), Reasons: append([]string{}, assessment.Reasons...), SourceEventIDs: append([]string{}, assessment.EventIDs...), AnchorIdentities: anchorIdentities, ReferenceDeviceCount24h: assessment.ReferenceDeviceCount24h, RouterBrand: assessment.Router.Brand, RouterModel: assessment.Router.Model, RouterConfidence: assessment.Router.Confidence},
+	}
+}
+
+func proxyReviewCaseForRouterAssessment(assessment evidence.RouterAssessment) store.ProxyReviewCase {
+	scope := firstNonEmptyString(assessment.AssessmentID, assessment.EndpointID, assessment.MAC, assessment.IP)
+	sum := sha256.Sum256([]byte("router-observation-case\x00" + scope))
+	evidenceIDs := make([]string, 0, len(assessment.ScoreComponents))
+	for _, component := range assessment.ScoreComponents {
+		if component.EvidenceID != "" {
+			evidenceIDs = append(evidenceIDs, component.EvidenceID)
+		}
+	}
+	sort.Strings(evidenceIDs)
+	confidenceLevel, riskLevel := "medium", "suspicious"
+	if assessment.Status == "confirmed" {
+		confidenceLevel, riskLevel = "high", "confirmed"
+	}
+	return store.ProxyReviewCase{CaseID: "router-" + hex.EncodeToString(sum[:])[:20], IP: assessment.IP, EndpointID: assessment.EndpointID, AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{}, DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{}, RuleMatches: []store.ProxyRuleMatch{}, ConfidenceLevel: confidenceLevel, FirstSeen: assessment.FirstSeen, LastSeen: assessment.LastSeen, EvidenceIDs: evidenceIDs, RiskScore: assessment.Confidence, RiskLevel: riskLevel, ReviewStatus: "unreviewed", RouterObservation: &assessment}
 }
 
 func (s *Server) handleCases(w http.ResponseWriter, r *http.Request) {
@@ -650,9 +765,14 @@ func (s *Server) listCases(w http.ResponseWriter, r *http.Request) {
 	cursor, _ := cursorOffset(r.URL.Query().Get("cursor"))
 	q, status, assignee, campus := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q"))), r.URL.Query().Get("status"), r.URL.Query().Get("assignee_id"), r.URL.Query().Get("campus_id")
 	dimensions := map[string]string{"department": r.URL.Query().Get("department"), "person_type": r.URL.Query().Get("person_type"), "ssid": r.URL.Query().Get("ssid"), "vlan": r.URL.Query().Get("vlan"), "ap": r.URL.Query().Get("ap"), "nas_ip": r.URL.Query().Get("nas_ip")}
+	includeRouterObservations := !strings.EqualFold(r.URL.Query().Get("include_router_observations"), "false")
 	s.operations.mu.Lock()
 	items := []RiskCase{}
 	for _, item := range s.operations.doc.Cases {
+		kind := riskKindForRuleset(item.RulesetVersion)
+		if kind == "" || kind == "router_observation" && !includeRouterObservations || status == "" && (item.Status == "resolved" || item.Status == "closed") {
+			continue
+		}
 		if status != "" && item.Status != status || assignee != "" && item.AssigneeID != assignee || campus != "" && item.CampusID != campus {
 			continue
 		}
@@ -676,6 +796,9 @@ func (s *Server) listCases(w http.ResponseWriter, r *http.Request) {
 		return items[i].UpdatedAt > items[j].UpdatedAt
 	})
 	paged, page := paginate(items, cursor, limit)
+	for index := range paged {
+		paged[index] = s.projectFileCaseAssessment(paged[index])
+	}
 	writeJSON(w, 200, map[string]any{"items": paged, "page": page})
 }
 
@@ -687,7 +810,7 @@ func (s *Server) getCase(w http.ResponseWriter, id string) {
 		writeError(w, 404, "case_not_found", "case not found")
 		return
 	}
-	writeJSON(w, 200, item)
+	writeJSON(w, 200, s.projectFileCaseAssessment(item))
 }
 
 func (s *Server) mutateCase(w http.ResponseWriter, r *http.Request, id, operation string) {
@@ -788,7 +911,7 @@ func (s *Server) mutateCase(w http.ResponseWriter, r *http.Request, id, operatio
 		writeError(w, 500, "save_case_failed", err.Error())
 		return
 	}
-	writeJSON(w, 200, item)
+	writeJSON(w, 200, s.projectMutatedCaseAssessment(item))
 }
 
 func (s *Server) mutateCasesBatch(w http.ResponseWriter, r *http.Request) {

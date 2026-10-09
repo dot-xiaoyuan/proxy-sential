@@ -147,6 +147,8 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 		return protocolEventFromFields(raw, fields, lineOffset, opts)
 	case "lldp", "ssdp":
 		return infrastructureDiscoveryEventFromFields(raw, fields, lineOffset, opts)
+	case "snmp":
+		return snmpDiscoveryEventFromFields(fields, lineOffset, opts)
 	}
 	if isSoftwareFields(fields) {
 		return softwareEventFromFields(raw, fields, lineOffset, opts)
@@ -155,6 +157,49 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 		return discoveryEventFromFields(raw, fields, lineOffset, opts)
 	}
 	return dhcpEventFromFields(raw, fields, lineOffset, opts)
+}
+
+func snmpDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	description := first(fields, "display_string", "system_description")
+	originIP, responderIP := first(fields, "id.orig_h", "src_ip"), first(fields, "id.resp_h", "dst_ip")
+	if timestamp == "" || description == "" || originIP == "" || responderIP == "" {
+		return normalized.Event{}, fmt.Errorf("missing Zeek SNMP identity fields")
+	}
+
+	originPort, responderPort := zeekPort(fields["id.orig_p"]), zeekPort(fields["id.resp_p"])
+	deviceIP, peerIP := "", ""
+	switch {
+	case responderPort == 161:
+		deviceIP, peerIP = responderIP, originIP
+	case originPort == 161:
+		deviceIP, peerIP = originIP, responderIP
+	case responderPort == 162:
+		deviceIP, peerIP = originIP, responderIP
+	case originPort == 162:
+		deviceIP, peerIP = responderIP, originIP
+	default:
+		return normalized.Event{}, fmt.Errorf("missing Zeek SNMP responder port")
+	}
+
+	payload := map[string]any{"origin": "snmp", "system_description": description}
+	copyPayload(payload, fields, "version", "version")
+	if value := normalizeTimestamp(first(fields, "up_since")); value != "" {
+		payload["up_since"] = value
+	}
+	for _, key := range []string{"get_requests", "get_bulk_requests", "get_responses", "set_requests"} {
+		if value := intField(fields, key); value > 0 {
+			payload[key] = value
+		}
+	}
+	flow := zeekFlow(fields, originIP, responderIP)
+	event := zeekNetworkEvent(nil, fields, lineOffset, opts, "discovery", "snmp", timestamp, originIP, responderIP, flow, payload)
+	event.EventID = eventID([]byte(strings.Join([]string{timestamp, first(fields, "uid"), deviceIP, description}, "\x00")), lineOffset)
+	event.Subject = map[string]any{"ip": deviceIP, "entity_role": "network_device"}
+	event.Flow["direction"] = "management"
+	event.Payload["peer_ip"] = peerIP
+	event.Confidence = 0.9
+	return event, nil
 }
 
 func connectionEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
@@ -543,12 +588,7 @@ func versionString(fields map[string]string) string {
 }
 
 func softwareDeviceHint(payload map[string]any) string {
-	text := strings.ToLower(strings.Join([]string{
-		stringField(payload, "software_type"),
-		stringField(payload, "software_name"),
-		stringField(payload, "software_version"),
-		stringField(payload, "vendor_class"),
-	}, " "))
+	text := normalized.DeviceProfileHintText(payload)
 	switch {
 	case strings.Contains(text, "msft"), strings.Contains(text, "microsoft"), strings.Contains(text, "windows"):
 		return "windows"
@@ -556,7 +596,7 @@ func softwareDeviceHint(payload map[string]any) string {
 		return "android"
 	case strings.Contains(text, "apple"), strings.Contains(text, "iphone"), strings.Contains(text, "ipad"), strings.Contains(text, "mac"):
 		return "apple"
-	case strings.Contains(text, "udhcp"), strings.Contains(text, "dhcpcd"), strings.Contains(text, "linux"):
+	case strings.Contains(text, "linux"):
 		return "linux"
 	default:
 		return ""
@@ -588,11 +628,7 @@ func copyPayload(payload map[string]any, fields map[string]string, sourceKey, ta
 }
 
 func deviceHint(payload map[string]any) string {
-	text := strings.ToLower(strings.Join([]string{
-		stringField(payload, "hostname"),
-		stringField(payload, "vendor_class"),
-		stringField(payload, "client_fqdn"),
-	}, " "))
+	text := normalized.DeviceProfileHintText(payload)
 	switch {
 	case strings.Contains(text, "iphone"), strings.Contains(text, "ipad"), strings.Contains(text, "ios"), strings.Contains(text, "apple"), strings.Contains(text, "macbook"), strings.Contains(text, "imac"):
 		return "apple"
@@ -602,7 +638,7 @@ func deviceHint(payload map[string]any) string {
 		return "windows"
 	case strings.Contains(text, "chromebook"), strings.Contains(text, "chromeos"):
 		return "chromeos"
-	case strings.Contains(text, "linux"), strings.Contains(text, "dhcpcd"), strings.Contains(text, "ubuntu"), strings.Contains(text, "debian"):
+	case strings.Contains(text, "linux"), strings.Contains(text, "ubuntu"), strings.Contains(text, "debian"):
 		return "linux"
 	default:
 		return ""
@@ -627,6 +663,18 @@ func intField(fields map[string]string, key string) int {
 	value := strings.TrimSpace(fields[key])
 	if value == "" {
 		return 0
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func zeekPort(value string) int {
+	value = strings.TrimSpace(value)
+	if index := strings.IndexByte(value, '/'); index >= 0 {
+		value = value[:index]
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil {

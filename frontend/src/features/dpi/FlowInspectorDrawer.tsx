@@ -6,7 +6,6 @@ import {
   TagOutlined,
 } from '@ant-design/icons'
 import { Alert, Button, Card, Descriptions, Drawer, message, Space, Table, Typography } from 'antd'
-import { Link } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../../entities/risk/RiskLevelTag'
@@ -95,7 +94,7 @@ export function FlowInspectorDrawer({ ip, open, onClose, context }: FlowInspecto
     >
       <div className="drawer-stack">
         <Alert
-          description={`Flow 查询窗口：${context?.window || '1h'}。风险与复核依据为当前风险快照，历史回放请进入样本复核。`}
+          description={`Flow 查询窗口：${context?.window || '1h'}。风险与复核依据为当前风险快照。`}
           showIcon
           type="info"
         />
@@ -135,7 +134,6 @@ export function FlowInspectorDrawer({ ip, open, onClose, context }: FlowInspecto
             >
               标记误报
             </Button>
-            {permissions.includes('shadow:read') && <Link to="/shadow-runs">查看影子评估</Link>}
           </Space>
         </Card>
 

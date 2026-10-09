@@ -28,6 +28,7 @@ type packetObservation struct {
 	IP, DestinationIP netip.Addr
 	MAC               [6]byte
 	Direction         string
+	TrafficScope      string
 	Version, TTL      int
 	TCP               tcpFingerprint
 }
@@ -35,6 +36,7 @@ type packetObservation struct {
 type bucketKey struct {
 	IP, MAC, Direction string
 	TCPStack           string
+	TrafficScope       string
 	Version, TTL       int
 }
 
@@ -60,12 +62,13 @@ func (f tcpFingerprint) String() string {
 }
 
 type packetBucketKey struct {
-	IP        netip.Addr
-	MAC       [6]byte
-	Direction string
-	Version   int
-	TTL       int
-	TCP       tcpFingerprint
+	IP           netip.Addr
+	MAC          [6]byte
+	Direction    string
+	TrafficScope string
+	Version      int
+	TTL          int
+	TCP          tcpFingerprint
 }
 
 func parseFrame(frame []byte) (Observation, bool) {
@@ -107,6 +110,7 @@ func parsePacketFrame(frame []byte) (packetObservation, bool) {
 		if frame[offset+9] == 6 && (uint16(frame[offset+6])<<8|uint16(frame[offset+7]))&0x1fff == 0 {
 			value.TCP = parseTCPFingerprint(frame, offset+headerLength, frame[offset+6]&0x40 != 0)
 		}
+		value.TrafficScope = packetTTLTrafficScope(frame, value.DestinationIP, frame[offset+9], offset+headerLength, (uint16(frame[offset+6])<<8|uint16(frame[offset+7]))&0x1fff != 0)
 		return value, true
 	case 0x86dd:
 		if len(frame) < offset+40 || frame[offset]>>4 != 6 {
@@ -119,6 +123,7 @@ func parsePacketFrame(frame []byte) (packetObservation, bool) {
 		if frame[offset+6] == 6 {
 			value.TCP = parseTCPFingerprint(frame, offset+40, true)
 		}
+		value.TrafficScope = packetTTLTrafficScope(frame, value.DestinationIP, frame[offset+6], offset+40, false)
 		return value, true
 	default:
 		return packetObservation{}, false
@@ -179,19 +184,30 @@ func parseTCPFingerprint(frame []byte, offset int, df bool) tcpFingerprint {
 }
 
 func writePacketBucketWithScope(path, sensorID, interfaceName, instance string, scope *normalized.CaptureScope, bucket time.Time, values map[packetBucketKey]int) error {
+	return writePacketBucketWithSource(path, sensorID, interfaceName, instance, "packet-sidecar", scope, bucket, values)
+}
+
+func writePacketBucketWithSource(path, sensorID, interfaceName, instance, source string, scope *normalized.CaptureScope, bucket time.Time, values map[packetBucketKey]int) error {
 	converted := make(map[bucketKey]int, len(values))
 	for key, count := range values {
-		converted[bucketKey{IP: key.IP.String(), MAC: net.HardwareAddr(key.MAC[:]).String(), Direction: key.Direction, TCPStack: key.TCP.String(), Version: key.Version, TTL: key.TTL}] = count
+		converted[bucketKey{IP: key.IP.String(), MAC: net.HardwareAddr(key.MAC[:]).String(), Direction: key.Direction, TrafficScope: key.TrafficScope, TCPStack: key.TCP.String(), Version: key.Version, TTL: key.TTL}] = count
 	}
-	return writeBucketWithScope(path, sensorID, interfaceName, instance, scope, bucket, converted)
+	return writeBucketWithSource(path, sensorID, interfaceName, instance, source, scope, bucket, converted)
 }
 
 func writeBucket(path, sensorID, interfaceName string, bucket time.Time, values map[bucketKey]int) error {
 	return writeBucketWithScope(path, sensorID, interfaceName, "", nil, bucket, values)
 }
 func writeBucketWithScope(path, sensorID, interfaceName, instance string, scope *normalized.CaptureScope, bucket time.Time, values map[bucketKey]int) error {
+	return writeBucketWithSource(path, sensorID, interfaceName, instance, "packet-sidecar", scope, bucket, values)
+}
+
+func writeBucketWithSource(path, sensorID, interfaceName, instance, source string, scope *normalized.CaptureScope, bucket time.Time, values map[bucketKey]int) error {
 	if len(values) == 0 {
 		return nil
+	}
+	if source == "" {
+		source = "packet-sidecar"
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
@@ -205,9 +221,16 @@ func writeBucketWithScope(path, sensorID, interfaceName, instance string, scope 
 	sort.Slice(keys, func(i, j int) bool { return fmt.Sprint(keys[i]) < fmt.Sprint(keys[j]) })
 	encoder := json.NewEncoder(file)
 	for _, key := range keys {
-		idSum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s", sensorID, key.IP, key.Direction, key.Version, key.TTL, key.TCPStack, bucket.UTC().Format(time.RFC3339))))
-		event := normalized.Event{SchemaVersion: "v1", EventID: "device-" + hex.EncodeToString(idSum[:])[:24], Source: "packet-sidecar", SourceEventType: "ttl", Type: "device", Timestamp: bucket.UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": sensorID, "interface": interfaceName}, Subject: map[string]any{"ip": key.IP}, Flow: map[string]any{"direction": key.Direction, "ip_version": key.Version}, Payload: map[string]any{"origin": "ttl", "neighbor_mac": key.MAC, "neighbor_role": "unverified", "ttl": key.TTL, "ip_version": key.Version, "observed_count": values[key]}, Confidence: 0.72}
+		identity := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s", sensorID, key.IP, key.Direction, key.Version, key.TTL, key.TCPStack, bucket.UTC().Format(time.RFC3339), key.TrafficScope)
+		if source != "packet-sidecar" {
+			identity += "\x00" + source
+		}
+		idSum := sha256.Sum256([]byte(identity))
+		event := normalized.Event{SchemaVersion: "v1", EventID: "device-" + hex.EncodeToString(idSum[:])[:24], Source: source, SourceEventType: "ttl", Type: "device", Timestamp: bucket.UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": sensorID, "interface": interfaceName}, Subject: map[string]any{"ip": key.IP}, Flow: map[string]any{"src_ip": key.IP, "direction": key.Direction, "ip_version": key.Version}, Payload: map[string]any{"origin": "ttl", "neighbor_mac": key.MAC, "neighbor_role": "unverified", "ttl": key.TTL, "ip_version": key.Version, "observed_count": values[key]}, Confidence: 0.72}
 		event.Observer["collector_instance_id"] = instance
+		if key.TrafficScope != "" {
+			event.Flow["traffic_scope"] = key.TrafficScope
+		}
 		if key.TCPStack != "" {
 			event.Payload["tcp_stack"] = key.TCPStack
 		}

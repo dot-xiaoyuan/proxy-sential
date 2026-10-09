@@ -71,6 +71,13 @@ func (s *Server) handlePolicyApprovalPreview(w http.ResponseWriter, r *http.Requ
 		writeError(w, 404, "execution_not_found", "执行轮次不存在")
 		return
 	}
+	if entries, err := s.whitelist.list(r.Context()); err != nil {
+		writeError(w, 503, "whitelist_unavailable", "白名单读取失败")
+		return
+	} else if policy.MatchAccountWhitelist(entries, e.AccountID, ss, now) != nil {
+		writeError(w, 409, "whitelist_suppressed", "命中白名单，策略动作已禁止")
+		return
+	}
 	preview, err := buildPolicyApprovalPreview(e, ss, now)
 	if err != nil {
 		writeError(w, 409, "approval_preview_unavailable", "会话身份不完整或没有待确认阶段")

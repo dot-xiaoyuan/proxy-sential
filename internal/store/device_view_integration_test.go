@@ -34,18 +34,19 @@ func TestDeviceViewPostgresReplay(t *testing.T) {
 			at = now.Add(time.Hour)
 		}
 		e := leaseEvent("view-"+mac, mac, at.Format(time.RFC3339Nano), "ACK")
+		e.Subject["ip"] = "198.51.100.161"
 		if err = s.WriteIdentityEvents(ctx, []normalized.Event{e}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	page, err := s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "192.0.2.192", Limit: 1})
+	page, err := s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "198.51.100.161", Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if page.Page.Total != 1 || len(page.Items) != 1 || page.Items[0].IPMatch == nil || page.Items[0].PrimaryMAC != macs[0] {
 		t.Fatalf("recent %+v", page)
 	}
-	history, err := s.ListEndpointDevices(ctx, Query{Q: "192.0.2.192", Limit: 1})
+	history, err := s.ListEndpointDevices(ctx, Query{Q: "198.51.100.161", Limit: 1})
 	if err != nil || history.Page.Total != 3 || history.Page.NextCursor == nil {
 		t.Fatalf("legacy history %+v %v", history, err)
 	}
@@ -53,15 +54,15 @@ func TestDeviceViewPostgresReplay(t *testing.T) {
 	if _, err = s.db.ExecContext(ctx, `UPDATE endpoint_entities SET last_seen=now() WHERE endpoint_id=$1`, "mac:"+macs[1]); err != nil {
 		t.Fatal(err)
 	}
-	page, err = s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "192.0.2.192", Limit: 20})
+	page, err = s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "198.51.100.161", Limit: 20})
 	if err != nil || page.Page.Total != 1 {
 		t.Fatalf("old IP leaked %+v %v", page, err)
 	}
 	// A session starting before the window and ending inside it is a valid match.
-	if _, err = s.db.ExecContext(ctx, `INSERT INTO account_sessions(session_id,account_id,endpoint_id,ip,source,started_at,ended_at,identity_confidence,raw_ref) VALUES('view-session','view-account',$1,'192.0.2.192','test',$2,$3,0.9,'{}')`, "mac:"+macs[1], now.Add(-48*time.Hour), now.Add(-time.Minute)); err != nil {
+	if _, err = s.db.ExecContext(ctx, `INSERT INTO account_sessions(session_id,account_id,endpoint_id,ip,source,started_at,ended_at,identity_confidence,raw_ref) VALUES('view-session','view-account',$1,'198.51.100.161','test',$2,$3,0.9,'{}')`, "mac:"+macs[1], now.Add(-48*time.Hour), now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	page, err = s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "192.0.2.192", Limit: 20})
+	page, err = s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "198.51.100.161", Limit: 20})
 	if err != nil || page.Page.Total != 2 {
 		t.Fatalf("session missed %+v %v", page, err)
 	}
@@ -72,16 +73,16 @@ func TestDeviceViewPostgresReplay(t *testing.T) {
 	}
 	// Latest endpoint IP may differ; annotation must retain the searched historical address.
 	next := leaseEvent("view-move", macs[0], now.Add(-time.Minute).Format(time.RFC3339Nano), "ACK")
-	next.Subject["ip"] = "192.0.2.200"
+	next.Subject["ip"] = "198.51.100.200"
 	if err = s.WriteIdentityEvents(ctx, []normalized.Event{next}); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "192.0.2.192", Limit: 20})
+	moved, err := s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "198.51.100.161", Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range moved.Items {
-		if d.PrimaryMAC == macs[0] && (d.IPMatch == nil || d.IPMatch.IsRecentIP || d.IPMatch.IP != "192.0.2.192") {
+		if d.PrimaryMAC == macs[0] && (d.IPMatch == nil || d.IPMatch.IsRecentIP || d.IPMatch.IP != "198.51.100.161") {
 			t.Fatalf("historical annotation %+v", d)
 		}
 	}
@@ -96,7 +97,7 @@ func TestDeviceViewPostgresReplay(t *testing.T) {
 	if !reflect.DeepEqual(recentFacets.Facets, otherFacets.Facets) {
 		t.Fatal("facets changed with page")
 	}
-	page, err = s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "192.0.2.19", Limit: 20})
+	page, err = s.ListEndpointDevices(ctx, Query{View: "recent", Window: "24h", Q: "198.51.100.16", Limit: 20})
 	if err != nil || page.Page.Total != 0 {
 		t.Fatal("substring matched", err)
 	}

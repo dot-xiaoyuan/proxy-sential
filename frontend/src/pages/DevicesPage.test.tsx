@@ -3,13 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { DevicesPage } from './DevicesPage'
 
-const fixture = vi.hoisted(()=>({total:88}))
+const fixture = vi.hoisted(()=>({total:88,items:[] as unknown[]|null}))
 vi.mock('../shared/api/queries', () => ({
   useOrganization: () => ({ data: undefined }),
   useDeviceRecognitionSummary: () => ({ data: undefined }),
-  useDevices: () => ({ data: { items: [], page: { total: fixture.total }, facets: { brands: [], os_families: [] } }, isFetching: false, refetch: vi.fn() }),
+  useDevices: () => ({ data: { items: fixture.items, page: { total: fixture.total }, facets: { brands: [], os_families: [] } }, isFetching: false, refetch: vi.fn() }),
 }))
-afterEach(()=>{cleanup();fixture.total=88})
+afterEach(()=>{cleanup();fixture.total=88;fixture.items=[]})
 function Location() { return <output data-testid="location">{useLocation().search}</output> }
 function setup(url = '/devices') { render(<MemoryRouter initialEntries={[url]}><DevicesPage /><Location /></MemoryRouter>) }
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) }) }
@@ -48,4 +48,9 @@ it('restores search and scope from the URL', async()=>{
  expect(screen.queryByText('10 分钟')).not.toBeInTheDocument()
  await settle()
  expect(screen.getByTestId('location')).toHaveTextContent('q=office')
+})
+it('treats a legacy null items response as an empty list',()=>{
+ fixture.items=null
+ setup('/devices?view=recent&window=24h')
+ expect(screen.getAllByText('没有匹配的终端').length).toBeGreaterThan(0)
 })

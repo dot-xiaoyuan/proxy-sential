@@ -40,11 +40,15 @@ func TestPostgresIdentitySessionPersistsUniversityDimensionsAndEndTime(t *testin
 		t.Fatal(err)
 	}
 	// IP search must work before paging and must not duplicate a device for repeated observations.
-	for _, q := range []string{"192.0.2.31", "192.0.2.3"} {
+	for _, q := range []string{"192.0.2.31"} {
 		page, err := postgres.ListEndpointDevices(ctx, Query{Q: q, Limit: 1})
 		if err != nil || page.Page.Total != 1 || len(page.Items) != 1 || page.Items[0].EndpointID != endpointID {
 			t.Fatalf("IP search %q: page=%+v err=%v", q, page, err)
 		}
+	}
+	// A complete IPv4 search denotes that address, not a textual prefix of .31.
+	if page, err := postgres.ListEndpointDevices(ctx, Query{Q: "192.0.2.3", Limit: 1}); err != nil || page.Page.Total != 0 {
+		t.Fatalf("complete IP broadened into a prefix: total=%d err=%v", page.Page.Total, err)
 	}
 	updatedEndpoint, err := postgres.UpdateEndpointRegistration(ctx, EndpointRegistrationUpdate{EndpointID: endpointID, RegistrationStatus: "registered", OwnershipClass: "school_asset", AssetTag: "ASSET-INTEGRATION-31", MergeStatus: "active", RegistrationUpdatedBy: "integration-admin", RegistrationUpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
 	if err != nil || updatedEndpoint.OwnershipClass != "school_asset" {

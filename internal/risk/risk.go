@@ -269,6 +269,9 @@ func snapshotFor(ip string, selected []evidence.Evidence) Snapshot {
 	}
 
 	confidence := combinedConfidence(selected)
+	if basis == "behavioral_only" {
+		confidence = minFloat(confidence, 0.79)
+	}
 	if basis == "shared_device_divergence" && len(signalGroups) >= 2 {
 		confidence = round2(minFloat(0.96, maxFloat(confidence, maxEvidenceConfidence(selected))+0.04*float64(len(signalGroups)-1)))
 	}
@@ -417,6 +420,9 @@ func combinedScore(items []evidence.Evidence, basis string, signalGroupCount int
 	weakOnly := true
 	for _, item := range items {
 		total += item.Score
+		if item.Score <= 0 {
+			continue
+		}
 		types[item.Type] = struct{}{}
 		if !isWeakEvidence(item.Type) {
 			weakOnly = false
@@ -641,6 +647,9 @@ func summaryFor(items []evidence.Evidence, level string) string {
 	typeNames := make([]string, 0, len(items))
 	seen := map[string]struct{}{}
 	for _, item := range items {
+		if item.Score <= 0 {
+			continue
+		}
 		if _, ok := seen[item.Type]; ok {
 			continue
 		}
@@ -649,13 +658,13 @@ func summaryFor(items []evidence.Evidence, level string) string {
 	}
 	sort.Strings(typeNames)
 	if len(typeNames) == 0 {
-		return "未发现有效风险证据"
+		return "当前没有计分风险证据，保留观测线索供复核"
 	}
 	return fmt.Sprintf("%s 级别风险由 %s 证据共同贡献；当前仍为影子判断，需要结合负证据和人工复核", level, strings.Join(typeNames, "、"))
 }
 
 func isWeakEvidence(evidenceType string) bool {
-	return evidenceType == "multi_user_agent" || evidenceType == "ua_os_divergence" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior" || evidenceType == "vpn_proxy_domain_hint" || evidenceType == "vpn_proxy_rule_hint" || evidenceType == "ai_relay_domain_usage" || evidenceType == "ttl_clusters" || evidenceType == "dhcp_device_fingerprint" || evidenceType == "known_game_accelerator"
+	return evidenceType == "multi_user_agent" || evidenceType == "ua_os_divergence" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior" || evidenceType == "vpn_proxy_domain_hint" || evidenceType == "vpn_proxy_rule_hint" || evidenceType == "ai_relay_domain_usage" || evidenceType == "ttl_clusters" || evidenceType == "ttl_path_variation" || evidenceType == "dhcp_device_fingerprint" || evidenceType == "known_game_accelerator"
 }
 
 func detectionBasis(items []evidence.Evidence) (string, []string) {
@@ -672,12 +681,12 @@ func detectionBasis(items []evidence.Evidence) (string, []string) {
 			groups["tls_client_stack"] = struct{}{}
 		case "multi_user_agent", "ua_os_divergence":
 			groups["ua_os"] = struct{}{}
-		case "device_fingerprint_conflict", "device_signal_conflict":
-			groups["dhcp_device_family"] = struct{}{}
+		case "device_fingerprint_conflict":
+			groups["device_profile_reference"] = struct{}{}
 		case "account_concurrent_macs":
-			groups["identity_mac"] = struct{}{}
+			groups["identity_mac_reference"] = struct{}{}
 		case "account_concurrent_access", "account_concurrent_endpoints", "account_concurrent_ips":
-			groups["identity_access"] = struct{}{}
+			groups["identity_access_reference"] = struct{}{}
 		}
 	}
 	result := make([]string, 0, len(groups))
@@ -688,20 +697,12 @@ func detectionBasis(items []evidence.Evidence) (string, []string) {
 	if _, ok := groups["protocol_rule"]; ok {
 		return "explicit_tunnel", result
 	}
-	deviceGroups := 0
-	for _, group := range result {
-		if group != "protocol_rule" {
-			deviceGroups++
-		}
-	}
-	_, hasUAOSDivergence := groups["ua_os"]
-	_, hasDeviceFamilyConflict := groups["dhcp_device_family"]
-	_, hasIdentityAccess := groups["identity_access"]
-	_, hasIdentityMAC := groups["identity_mac"]
-	hasSharedDeviceAnchor := hasUAOSDivergence || hasDeviceFamilyConflict || hasIdentityAccess || hasIdentityMAC
-	if deviceGroups >= 2 && hasSharedDeviceAnchor {
-		return "shared_device_divergence", result
-	}
+	// OS strings and protocol stack variation can come from apps on one host.
+	// Hostname/DHCP profile sets also lack verified concurrency: successive IP
+	// leases and local broadcasts can produce different families in one window.
+	// Account MAC/access sets likewise do not establish overlapping sessions.
+	// Confirmed coexistence and account concurrency belong to current shared
+	// windows and authoritative policy sessions, not these legacy set aggregates.
 	return "behavioral_only", result
 }
 
@@ -744,7 +745,7 @@ func maxFloat(a, b float64) float64 {
 func strongEvidenceTypeCount(items []evidence.Evidence) int {
 	types := map[string]struct{}{}
 	for _, item := range items {
-		if isWeakEvidence(item.Type) {
+		if item.Score <= 0 || isWeakEvidence(item.Type) {
 			continue
 		}
 		types[item.Type] = struct{}{}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh trusted proxy source registrations after collector changes
+After=proxy-sentinel-suricata.service proxy-sentinel-zeek.service
+ConditionPathExists=/opt/proxy-sentinel/config/proxy-source-scope.json
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/proxy-sentinel/current/scripts/refresh-proxy-sources.py
+TimeoutStartSec=150
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

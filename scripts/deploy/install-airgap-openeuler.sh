@@ -149,7 +149,7 @@ fi
 
 stage "验证采集器、存储、控制面和定时任务"
 proxy-sentinelctl doctor
-for unit in proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-device-signal.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.timer proxy-sentinel-logrotate.timer; do
+for unit in proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-device-signal.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-control-plane.service proxy-sentinel-shadow.timer proxy-sentinel-logrotate.timer; do
   systemctl is-active --quiet "$unit" || { systemctl --no-pager --full status "$unit"; exit 1; }
 done
 curl -fsS "http://127.0.0.1:${control_addr##*:}/readyz"

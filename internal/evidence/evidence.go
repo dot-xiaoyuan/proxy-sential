@@ -62,6 +62,7 @@ type parsedEvent struct {
 }
 
 type ipSignals struct {
+	observedAt          signalObservationTimes
 	userAgents          map[string]struct{}
 	uaOSFamilies        map[string]struct{}
 	ja3                 map[string]struct{}
@@ -72,6 +73,7 @@ type ipSignals struct {
 	deviceFamilies      map[string]struct{}
 	vpnRuleMatches      map[string]struct{}
 	vpnRuleHints        map[string]struct{}
+	vpnRuleLowHints     map[string]struct{}
 	vpnDomainHints      map[string]struct{}
 	encryptedTransports map[string]struct{}
 	ttlClusters         map[string]struct{}
@@ -82,6 +84,7 @@ type ipSignals struct {
 }
 
 type accountSignals struct {
+	observedAt   signalObservationTimes
 	ips          map[string]struct{}
 	macs         map[string]struct{}
 	endpoints    map[string]struct{}
@@ -161,7 +164,7 @@ func Analyze(r io.Reader, opts Options) (Result, error) {
 			if parsed.Time.Before(cutoff) {
 				continue
 			}
-			signals.add(parsed.Event)
+			signals.add(parsed.Event, parsed.Time)
 		}
 		result.Evidence = append(result.Evidence, buildEvidence(ip, window, maxTime, signals)...)
 	}
@@ -172,7 +175,7 @@ func Analyze(r io.Reader, opts Options) (Result, error) {
 			if parsed.Time.Before(cutoff) {
 				continue
 			}
-			signals.add(parsed.Event)
+			signals.add(parsed.Event, parsed.Time)
 		}
 		result.Evidence = append(result.Evidence, buildAccountEvidence(accountID, window, maxTime, signals)...)
 	}
@@ -208,6 +211,7 @@ func AnalyzeFiles(inputPath, outputPath string, opts Options) (Result, error) {
 
 func newIPSignals() ipSignals {
 	return ipSignals{
+		observedAt:          signalObservationTimes{},
 		userAgents:          map[string]struct{}{},
 		uaOSFamilies:        map[string]struct{}{},
 		ja3:                 map[string]struct{}{},
@@ -218,6 +222,7 @@ func newIPSignals() ipSignals {
 		deviceFamilies:      map[string]struct{}{},
 		vpnRuleMatches:      map[string]struct{}{},
 		vpnRuleHints:        map[string]struct{}{},
+		vpnRuleLowHints:     map[string]struct{}{},
 		vpnDomainHints:      map[string]struct{}{},
 		encryptedTransports: map[string]struct{}{},
 		ttlClusters:         map[string]struct{}{},
@@ -229,6 +234,7 @@ func newIPSignals() ipSignals {
 
 func newAccountSignals() accountSignals {
 	return accountSignals{
+		observedAt:   signalObservationTimes{},
 		ips:          map[string]struct{}{},
 		macs:         map[string]struct{}{},
 		endpoints:    map[string]struct{}{},
@@ -237,31 +243,40 @@ func newAccountSignals() accountSignals {
 	}
 }
 
-func (s ipSignals) add(event normalized.Event) {
+func (s ipSignals) add(event normalized.Event, at time.Time) {
 	if isInfrastructureRole(subjectString(event, "entity_role")) {
 		return
 	}
 	addString(s.userAgents, event.Payload, "user_agent")
 	if family := userAgentOSFamily(stringValue(event.Payload, "user_agent")); family != "" {
 		s.uaOSFamilies[family] = struct{}{}
+		s.observedAt.observe("ua_os_divergence", at)
 	}
 	addString(s.ja3, event.Payload, "ja3")
 	addString(s.ja4, event.Payload, "ja4")
+	if stringValue(event.Payload, "ja3") != "" || stringValue(event.Payload, "ja4") != "" {
+		s.observedAt.observe("multi_ja3_ja4", at)
+	}
 	addString(s.domains, event.Payload, "query")
 	addString(s.domains, event.Payload, "sni")
 	addString(s.domains, event.Payload, "host")
-	addNumberString(s.dstPorts, event.Flow, "dst_port")
-	s.addVPNSignals(event)
-	s.addAIRelaySignals(event)
-	s.addApplications(event)
+	if firstString(event.Payload, "query", "sni", "host") != "" {
+		s.observedAt.observe("domain_diversity", at)
+	}
+	if addNumberString(s.dstPorts, event.Flow, "dst_port") {
+		s.observedAt.observe("port_distribution", at)
+	}
+	s.addVPNSignals(event, at)
+	s.addAIRelaySignals(event, at)
+	s.addApplications(event, at)
 	if event.Type == "device" {
-		s.addDevice(event.Payload)
-		s.addTTL(event)
+		s.addDevice(event.Payload, at)
+		s.addTTL(event, at)
 		addString(s.tcpStacks, event.Payload, "tcp_stack")
 	}
 }
 
-func (s ipSignals) addApplications(event normalized.Event) {
+func (s ipSignals) addApplications(event normalized.Event, at time.Time) {
 	values := []string{}
 	for _, key := range []string{"application", "software_name", "user_agent", "host", "query", "sni"} {
 		if value := stringValue(event.Payload, key); value != "" {
@@ -270,10 +285,14 @@ func (s ipSignals) addApplications(event normalized.Event) {
 	}
 	for _, match := range fingerprint.MatchApplication(values...) {
 		s.applications[fmt.Sprintf("%s|%s|%.2f|%s|%s", match.Name, match.Category, match.Confidence, match.Source, match.Version)] = struct{}{}
+		s.observedAt.observe("known_game_accelerator", at)
 	}
 }
 
-func (s ipSignals) addTTL(event normalized.Event) {
+func (s ipSignals) addTTL(event normalized.Event, observed ...time.Time) {
+	if !hostIPv4TTL(event) {
+		return
+	}
 	value, ok := numberValue(event.Payload["ttl"])
 	if !ok || value < 1 || value > 255 {
 		return
@@ -290,32 +309,43 @@ func (s ipSignals) addTTL(event normalized.Event) {
 	if direction == "" {
 		direction = "unknown"
 	}
-	s.ttlClusters[fmt.Sprintf("direction=%s,initial=%d,hops=%d,observed=%d", direction, initial, hops, value)] = struct{}{}
+	cluster := fmt.Sprintf("direction=%s,initial=%d,hops=%d,observed=%d", direction, initial, hops, value)
+	s.ttlClusters[cluster] = struct{}{}
+	if len(observed) > 0 {
+		s.observedAt.observe("ttl:"+cluster, observed[0])
+	}
 }
 
-func (s ipSignals) addVPNSignals(event normalized.Event) {
+func (s ipSignals) addVPNSignals(event normalized.Event, at time.Time) {
 	if event.Type == "alert" {
 		if sample, confidence, ok := vpnAlertSample(event.Payload); ok {
 			if confidence == "high" {
 				s.vpnRuleMatches[sample] = struct{}{}
+				s.observedAt.observe("vpn_proxy_rule_match", at)
+			} else if confidence == "low" {
+				s.vpnRuleLowHints[sample] = struct{}{}
+				s.observedAt.observe("vpn_proxy_rule_hint", at)
 			} else {
 				s.vpnRuleHints[sample] = struct{}{}
+				s.observedAt.observe("vpn_proxy_rule_hint", at)
 			}
 		}
 	}
 	for _, key := range []string{"query", "sni", "host", "server_name"} {
 		value := stringValue(event.Payload, key)
-		if value == "" || !hasVPNHint(value) || isInstitutionalVPNDomain(value) {
+		if !HasVPNDomainHint(value) {
 			continue
 		}
 		s.vpnDomainHints[key+":"+normalizeSample(value)] = struct{}{}
+		s.observedAt.observe("vpn_proxy_domain_hint", at)
 	}
 	if event.Type == "quic" || isUDP443(event.Flow) {
 		s.encryptedTransports[encryptedTransportSample(event)] = struct{}{}
+		s.observedAt.observe("encrypted_tunnel_behavior", at)
 	}
 }
 
-func (s ipSignals) addAIRelaySignals(event normalized.Event) {
+func (s ipSignals) addAIRelaySignals(event normalized.Event, at time.Time) {
 	matcher := airelay.Default()
 	for _, key := range []string{"query", "sni", "host", "server_name"} {
 		value := stringValue(event.Payload, key)
@@ -331,6 +361,7 @@ func (s ipSignals) addAIRelaySignals(event normalized.Event) {
 			name = indicator.Domain
 		}
 		s.aiRelayDomains[fmt.Sprintf("%s=%s|%s|%s|%.2f|%s", key, normalizeSample(value), name, indicator.Category, indicator.Confidence, indicator.Source)] = struct{}{}
+		s.observedAt.observe("ai_relay_domain_usage", at)
 		if indicator.Confidence > s.aiRelayConfidence {
 			s.aiRelayConfidence = indicator.Confidence
 		}
@@ -364,7 +395,7 @@ func userAgentOSFamily(value string) string {
 	}
 }
 
-func (s ipSignals) addDevice(payload map[string]any) {
+func (s ipSignals) addDevice(payload map[string]any, at time.Time) {
 	origin := stringValue(payload, "origin")
 	if origin != "dhcp" && origin != "mdns" && origin != "nbns" && origin != "llmnr" {
 		return
@@ -386,12 +417,14 @@ func (s ipSignals) addDevice(payload map[string]any) {
 		normalizeSample(clientMAC),
 	)
 	s.deviceProfiles[profile] = struct{}{}
+	s.observedAt.observe("dhcp_device_fingerprint", at)
 	if hint != "unknown" {
 		s.deviceFamilies[hint] = struct{}{}
+		s.observedAt.observe("device_fingerprint_conflict", at)
 	}
 }
 
-func (s accountSignals) add(event normalized.Event) {
+func (s accountSignals) add(event normalized.Event, at time.Time) {
 	role := subjectString(event, "entity_role")
 	if isInfrastructureRole(role) || role == "unknown" {
 		return
@@ -400,10 +433,20 @@ func (s accountSignals) add(event normalized.Event) {
 	addSet(s.macs, normalizeMAC(subjectString(event, "mac")))
 	addSet(s.endpoints, subjectString(event, "endpoint_id"))
 	addSet(s.accessIDs, subjectString(event, "access_id"))
+	if normalizeMAC(subjectString(event, "mac")) != "" {
+		s.observedAt.observe("account_concurrent_macs", at)
+	}
+	if subjectString(event, "endpoint_id") != "" {
+		s.observedAt.observe("account_concurrent_endpoints", at)
+	}
+	if subjectString(event, "access_id") != "" {
+		s.observedAt.observe("account_concurrent_access", at)
+	}
 	authMAC := normalizeMAC(stringValue(event.Payload, "auth_mac"))
 	observedMAC := normalizeMAC(stringValue(event.Payload, "observed_mac"))
 	if authMAC != "" && observedMAC != "" && authMAC != observedMAC {
 		s.authMismatch[authMAC+" != "+observedMAC] = struct{}{}
+		s.observedAt.observe("auth_observed_mac_mismatch", at)
 	}
 }
 
@@ -432,11 +475,16 @@ func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals
 	}
 
 	vpnRuleHints := sortedSet(signals.vpnRuleHints)
-	if len(vpnRuleHints) > 0 {
+	vpnRuleLowHints := sortedSet(signals.vpnRuleLowHints)
+	if len(vpnRuleHints) > 0 || len(vpnRuleLowHints) > 0 {
 		score := cappedScore(24+len(vpnRuleHints)*3, 40)
-		output = append(output, newEvidence(ip, "vpn_proxy_rule_hint", windowText, score, 0.65, "medium",
-			fmt.Sprintf("%s 内 Suricata 命中中置信代理线索；端口、CONNECT、SOCKS 或关键词不能单独确认代理", windowText),
-			limitSamples(vpnRuleHints, 8), createdAtText))
+		confidence, severity, description := .65, "medium", "中置信"
+		if len(vpnRuleHints) == 0 {
+			score, confidence, severity, description = cappedScore(12+len(vpnRuleLowHints)*2, 20), .4, "low", "低置信"
+		}
+		output = append(output, newEvidence(ip, "vpn_proxy_rule_hint", windowText, score, confidence, severity,
+			fmt.Sprintf("%s 内 Suricata 命中%s代理线索；端口、CONNECT、SOCKS 或关键词不能单独确认代理", windowText, description),
+			limitSamples(append(vpnRuleHints, vpnRuleLowHints...), 8), createdAtText))
 	}
 
 	vpnDomainHints := sortedSet(signals.vpnDomainHints)
@@ -486,9 +534,9 @@ func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals
 	deviceFamilies := sortedSet(signals.deviceFamilies)
 	if len(deviceFamilies) >= 2 {
 		samples := append(prefixSamples("family:", deviceFamilies), limitSamples(deviceProfiles, 5)...)
-		score := cappedScore(42+len(deviceFamilies)*6, 58)
-		output = append(output, newEvidence(ip, "device_fingerprint_conflict", windowText, score, 0.88, severity(score),
-			fmt.Sprintf("%s 内同一 IP 出现 %d 类互斥局域网设备画像，疑似共享上网或代理出口", windowText, len(deviceFamilies)),
+		score := cappedScore(15+len(deviceFamilies)*4, 30)
+		output = append(output, newEvidence(ip, "device_fingerprint_conflict", windowText, score, 0.65, severity(score),
+			fmt.Sprintf("%s 内同一 IP 出现 %d 类局域网设备画像；名称与 DHCP 画像差异不能证明多设备并发，需核验 IP 换绑及真实共享证据", windowText, len(deviceFamilies)),
 			limitSamples(samples, 8), createdAtText))
 	}
 
@@ -512,21 +560,54 @@ func buildEvidence(ip string, window time.Duration, createdAt time.Time, signals
 	if len(ttlClusters) >= 2 {
 		score := cappedScore(18+len(ttlClusters)*3, 30)
 		output = append(output, newEvidence(ip, "ttl_clusters", windowText, score, 0.68, "low",
-			fmt.Sprintf("%s 内观察到 %d 个归一化 TTL 路径簇；该信号可能受路由变化影响，不能单独确认共享上网", windowText, len(ttlClusters)),
+			fmt.Sprintf("%s 内同一方向观察到 %d 个推测初始 TTL 簇；初始值推测不能识别操作系统或确认共享上网", windowText, len(ttlClusters)),
 			limitSamples(ttlClusters, 6), createdAtText))
+	} else if variations := directionalTTLPathVariations(sortedSet(signals.ttlClusters)); len(variations) >= 2 {
+		output = append(output, newEvidence(ip, "ttl_path_variation", windowText, 0, 0.68, "low",
+			fmt.Sprintf("%s 内同一推测初始 TTL 簇出现跳数变化，仅保留路径线索，不计风险分", windowText),
+			limitSamples(variations, 6), createdAtText))
 	}
 
-	return output
+	return withSignalObservationTimes(output, signals.observedAt)
 }
 
 func repeatedDirectionTTLClusters(clusters []string) []string {
-	byDirection := map[string][]string{}
+	byDirection := map[string]map[int]string{}
 	for _, cluster := range clusters {
-		direction := strings.SplitN(cluster, ",", 2)[0]
-		byDirection[direction] = append(byDirection[direction], cluster)
+		direction, initial, valid := sharedaccess.TTLPathFamily(cluster)
+		if !valid {
+			continue
+		}
+		if byDirection[direction] == nil {
+			byDirection[direction] = map[int]string{}
+		}
+		if _, exists := byDirection[direction][initial]; !exists {
+			byDirection[direction][initial] = cluster
+		}
 	}
 	result := []string{}
 	for _, items := range byDirection {
+		if len(items) >= 2 {
+			for _, item := range items {
+				result = append(result, item)
+			}
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func directionalTTLPathVariations(clusters []string) []string {
+	groups := map[string][]string{}
+	for _, cluster := range clusters {
+		direction, initial, valid := sharedaccess.TTLPathFamily(cluster)
+		if valid {
+			key := fmt.Sprintf("%s/%d", direction, initial)
+			groups[key] = append(groups[key], cluster)
+		}
+	}
+	var result []string
+	for _, items := range groups {
 		if len(items) >= 2 {
 			result = append(result, items...)
 		}
@@ -543,20 +624,20 @@ func buildAccountEvidence(accountID string, window time.Duration, createdAt time
 	endpoints := sortedSet(signals.endpoints)
 	accessIDs := sortedSet(signals.accessIDs)
 	if len(macs) >= 2 {
-		score := cappedScore(58+len(macs)*6, 76)
-		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_macs", windowText, score, 0.92, severity(score),
-			fmt.Sprintf("%s 内同一账号关联 %d 个 endpoint MAC，属于防共享高置信证据", windowText, len(macs)),
+		score := cappedScore(15+len(macs)*4, 30)
+		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_macs", windowText, score, 0.65, severity(score),
+			fmt.Sprintf("%s 内同一账号关联 %d 个终端 MAC；窗口内关联集合不证明会话重叠，需要排除换机与随机 MAC", windowText, len(macs)),
 			limitSamples(macs, 8), createdAtText))
 	}
 	if len(endpoints) >= 2 && len(macs) < 2 {
-		score := cappedScore(52+len(endpoints)*5, 68)
-		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_endpoints", windowText, score, 0.86, severity(score),
+		score := cappedScore(15+len(endpoints)*4, 30)
+		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_endpoints", windowText, score, 0.65, severity(score),
 			fmt.Sprintf("%s 内同一账号关联 %d 个终端实体，需要复核是否账号共享或换机重认证", windowText, len(endpoints)),
 			limitSamples(endpoints, 8), createdAtText))
 	}
 	if len(accessIDs) >= 2 {
-		score := cappedScore(44+len(accessIDs)*6, 64)
-		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_access", windowText, score, 0.82, severity(score),
+		score := cappedScore(12+len(accessIDs)*4, 25)
+		output = append(output, newSubjectEvidence("account", accountID, "", "account_concurrent_access", windowText, score, 0.65, severity(score),
 			fmt.Sprintf("%s 内同一账号出现在 %d 个接入位置，需要排除漫游切换和日志延迟", windowText, len(accessIDs)),
 			limitSamples(accessIDs, 8), createdAtText))
 	}
@@ -567,7 +648,43 @@ func buildAccountEvidence(accountID string, window time.Duration, createdAt time
 			fmt.Sprintf("%s 内认证 MAC 与实际观测 MAC 不一致，属于强复核证据", windowText),
 			limitSamples(mismatches, 8), createdAtText))
 	}
-	return output
+	return withSignalObservationTimes(output, signals.observedAt)
+}
+
+type signalObservationTimes map[string]time.Time
+
+func (times signalObservationTimes) observe(kind string, at time.Time) {
+	if !at.IsZero() && at.After(times[kind]) {
+		times[kind] = at
+	}
+}
+
+// The batch watermark selects the rolling window; it cannot date an individual
+// signal. Only contributing observations may refresh its age or evidence ID.
+func withSignalObservationTimes(items []Evidence, times signalObservationTimes) []Evidence {
+	observedItems := make([]Evidence, 0, len(items))
+	for i := range items {
+		item := &items[i]
+		at := times[item.Type]
+		if item.Type == "ttl_clusters" || item.Type == "ttl_path_variation" {
+			for _, sample := range item.Samples {
+				if observed := times["ttl:"+sample]; observed.After(at) {
+					at = observed
+				}
+			}
+		}
+		if at.IsZero() {
+			continue
+		}
+		item.CreatedAt = at.UTC().Format(time.RFC3339Nano)
+		key := item.IP
+		if item.SubjectType != "ip" {
+			key = item.SubjectType + ":" + item.SubjectID
+		}
+		item.EvidenceID = evidenceID(key, item.Type, item.Window, item.CreatedAt, item.Samples)
+		observedItems = append(observedItems, *item)
+	}
+	return observedItems
 }
 
 func newEvidence(ip, evidenceType, window string, score int, conf float64, severityText, reason string, samples []string, createdAt string) Evidence {
@@ -721,14 +838,7 @@ func isInfrastructureRole(role string) bool {
 }
 
 func deviceFamily(fields map[string]any) string {
-	text := strings.ToLower(strings.Join([]string{
-		stringValue(fields, "device_hint"),
-		stringValue(fields, "hostname"),
-		stringValue(fields, "vendor_class"),
-		stringValue(fields, "client_fqdn"),
-		stringValue(fields, "device_name"),
-		stringValue(fields, "query"),
-	}, " "))
+	text := normalized.DeviceProfileHintText(fields)
 	switch {
 	case strings.Contains(text, "iphone"), strings.Contains(text, "ipad"), strings.Contains(text, "ios"), strings.Contains(text, "apple"), strings.Contains(text, "macbook"), strings.Contains(text, "imac"):
 		return "apple"
@@ -738,7 +848,7 @@ func deviceFamily(fields map[string]any) string {
 		return "windows"
 	case strings.Contains(text, "chromebook"), strings.Contains(text, "chromeos"):
 		return "chromeos"
-	case strings.Contains(text, "linux"), strings.Contains(text, "dhcpcd"), strings.Contains(text, "ubuntu"), strings.Contains(text, "debian"):
+	case strings.Contains(text, "linux"), strings.Contains(text, "ubuntu"), strings.Contains(text, "debian"):
 		return "linux"
 	default:
 		return "unknown"
@@ -753,10 +863,10 @@ func normalizeSample(value string) string {
 	return value
 }
 
-func addNumberString(set map[string]struct{}, fields map[string]any, key string) {
+func addNumberString(set map[string]struct{}, fields map[string]any, key string) bool {
 	value, ok := fields[key]
 	if !ok {
-		return
+		return false
 	}
 	switch typed := value.(type) {
 	case float64:
@@ -767,7 +877,10 @@ func addNumberString(set map[string]struct{}, fields map[string]any, key string)
 		set[fmt.Sprintf("%d", typed)] = struct{}{}
 	case json.Number:
 		set[typed.String()] = struct{}{}
+	default:
+		return false
 	}
+	return true
 }
 
 func numberString(fields map[string]any, key string) string {
@@ -794,8 +907,9 @@ func numberString(fields map[string]any, key string) string {
 func vpnAlertSample(payload map[string]any) (string, string, bool) {
 	signature := stringValue(payload, "signature")
 	category := stringValue(payload, "category")
-	action := stringValue(payload, "action")
-	text := strings.Join([]string{signature, category, action, metadataText(payload["metadata"])}, " ")
+	// Product/source names and confidence field names are provenance, not
+	// protocol indicators. Classify the actual signature and category only.
+	text := strings.Join([]string{vpnRuleSignatureText(signature), category}, " ")
 	if !HasVPNHint(text) {
 		return "", "", false
 	}
@@ -823,37 +937,20 @@ func vpnAlertSample(payload map[string]any) (string, string, bool) {
 }
 
 func ruleConfidence(metadata any) string {
-	text := strings.ToLower(metadataText(metadata))
-	for _, candidate := range []string{"high", "medium"} {
-		for _, marker := range []string{"proxy_sentinel_confidence " + candidate, "proxy_sentinel_confidence=" + candidate, "proxy-sentinel-confidence " + candidate, `proxy_sentinel_confidence":["` + candidate} {
-			if strings.Contains(text, marker) {
-				return candidate
-			}
-		}
-	}
-	return ""
+	return declaredVPNRuleConfidence(metadata)
 }
 
-// IsVPNAlert reports whether a normalized alert payload is an explicit
-// proxy/VPN/tunnel rule match.
+// IsVPNAlert includes recognized proxy/VPN/tunnel rules and weak hints.
 func IsVPNAlert(payload map[string]any) bool {
-	_, _, ok := vpnAlertSample(payload)
+	_, ok := VPNAlertConfidence(payload)
 	return ok
 }
 
-func metadataText(value any) string {
-	if value == nil {
-		return ""
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Sprint(value)
-	}
-	return string(data)
-}
-
-func hasVPNHint(value string) bool {
-	return HasVPNHint(value)
+// VPNAlertConfidence keeps presentation and evidence on the same classifier.
+// A protocol hint without an exact declaration remains medium confidence.
+func VPNAlertConfidence(payload map[string]any) (string, bool) {
+	_, confidence, ok := vpnAlertSample(payload)
+	return confidence, ok
 }
 
 // HasVPNHint reports whether normalized text contains an explicit proxy, VPN,
@@ -862,12 +959,12 @@ func hasVPNHint(value string) bool {
 func HasVPNHint(value string) bool {
 	text := strings.ToLower(value)
 	for _, keyword := range []string{
-		"proxy", "vpn", "tunnel", "tunneling", "circumvention", "tor",
+		"proxy", "proxies", "vpn", "vpns", "webvpn", "sslvpn", "tunnel", "tunnels", "tunneling", "circumvention", "tor", "torproject", "torbrowser",
 		"openvpn", "wireguard", "ipsec", "l2tp", "pptp", "gre", "teredo",
-		"socks", "shadowsocks", "v2ray", "vmess", "trojan", "clash",
+		"socks", "socks4", "socks5", "shadowsocks", "v2ray", "v2rayn", "v2rayng", "vmess", "trojan", "clash",
 		"hysteria", "sing-box", "xray", "naiveproxy",
 	} {
-		if strings.Contains(text, keyword) {
+		if containsVPNMarker(text, keyword) {
 			return true
 		}
 	}

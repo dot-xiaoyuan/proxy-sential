@@ -86,7 +86,7 @@ func (s *Server) getCasePostgres(w http.ResponseWriter, r *http.Request, id stri
 
 func readCaseWithinTransaction(ctx context.Context, tx *sql.Tx, id string, forUpdate bool) (RiskCase, error) {
 	var raw []byte
-	query := `SELECT to_jsonb(c)||jsonb_build_object('ip',coalesce(host(c.ip),''),'nas_ip',coalesce(host(c.nas_ip),'')) FROM risk_cases c WHERE case_id=$1`
+	query := `SELECT ` + caseAssessmentProjection + ` FROM risk_cases c WHERE case_id=$1`
 	if forUpdate {
 		query += " FOR UPDATE"
 	}
@@ -98,7 +98,7 @@ func readCaseWithinTransaction(ctx context.Context, tx *sql.Tx, id string, forUp
 		return RiskCase{}, err
 	}
 	var item RiskCase
-	if err = json.Unmarshal(raw, &item); err != nil {
+	if item, err = decodeCaseAssessment(raw); err != nil {
 		return RiskCase{}, err
 	}
 	item.HistoryPage = map[string]store.Page{}
@@ -130,9 +130,16 @@ func readCaseWithinTransaction(ctx context.Context, tx *sql.Tx, id string, forUp
 		}
 		item.HistoryPage[kind] = store.Page{Limit: 20, Total: total, NextCursor: next}
 	}
-	// evidence_snapshot preserves the original discovery evidence; paged history includes recent revisions.
+	// Generic legacy cases preserve their discovery snapshot. Specialized
+	// shared/router cases expose the newest snapshot of their own kind so old
+	// generic snapshots cannot replace the current decision basis.
 	var original []byte
-	err = tx.QueryRowContext(ctx, `SELECT evidence FROM risk_case_evidence_snapshots WHERE case_id=$1 ORDER BY created_at,snapshot_id LIMIT 1`, id).Scan(&original)
+	if item.RiskKind == "shared_access" || item.RiskKind == "router_observation" {
+		key := map[string]string{"shared_access": "shared_access", "router_observation": "router_observation"}[item.RiskKind]
+		err = tx.QueryRowContext(ctx, `SELECT evidence FROM risk_case_evidence_snapshots WHERE case_id=$1 AND evidence ? $2 ORDER BY created_at DESC,snapshot_id DESC LIMIT 1`, id, key).Scan(&original)
+	} else {
+		err = tx.QueryRowContext(ctx, `SELECT evidence FROM risk_case_evidence_snapshots WHERE case_id=$1 ORDER BY created_at,snapshot_id LIMIT 1`, id).Scan(&original)
+	}
 	if err != nil && err != sql.ErrNoRows {
 		return RiskCase{}, err
 	}

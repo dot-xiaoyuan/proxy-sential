@@ -4,7 +4,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
   test(`brand inference evidence and design audit ${viewport.width}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport)
     await page.goto('/devices')
-    await expect(page.getByText('推测', { exact: true }).filter({ visible: true })).toBeVisible()
+    await expect(page.getByText(/品牌推测/).filter({ visible: true })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath(`devices-${viewport.width}.png`), fullPage: false })
     if (viewport.width < 560) {
       await expect(page.locator('.device-mobile-cards')).toBeVisible()

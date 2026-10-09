@@ -82,6 +82,9 @@ func TestPostgresDeviceLeaseAttribution(t *testing.T) {
 	check("2026-09-15T23:59:59Z", "lease-test", "", false)
 
 	check("2026-09-16T00:15:00Z", "lease-test", "", false)
+	if owner, ok, err := AttributeDomainObservation(ctx, DomainObservation{IP: "192.0.2.192", Timestamp: "2026-09-16T00:05:00Z"}, s); err != nil || ok || owner.EndpointID != "" {
+		t.Fatalf("missing scope fell back to IP-only identity: %+v %v %v", owner, ok, err)
+	}
 	lib, err := fingerprint.LoadDomainLibrary("lease-replay", []byte(`[{"domain":"push.apple.test","match_type":"exact","ecosystem":"Apple","category":"push","confidence":0.55,"source":"test"}]`))
 	if err != nil {
 		t.Fatal(err)

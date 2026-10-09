@@ -14,29 +14,30 @@ type IdentityCoverage struct {
 }
 
 type Session struct {
-	IdentityIssue    string             `json:"identity_issue,omitempty"`
-	SensorID         string             `json:"sensor_id,omitempty"`
-	SourceCoverage   []IdentityCoverage `json:"source_coverage,omitempty"`
-	Status           string             `json:"session_status,omitempty"`
-	Confirmations    []time.Time        `json:"confirmations,omitempty"`
-	ID               string             `json:"session_id"`
-	AccountID        string             `json:"account_id"`
-	EndpointID       string             `json:"endpoint_id"`
-	IP               string             `json:"ip"`
-	MAC              string             `json:"mac"`
-	CampusID         string             `json:"campus_id"`
-	AccessDomain     string             `json:"access_domain"`
-	GroupID          string             `json:"group_id"`
-	ProductID        string             `json:"product_id"`
-	VLAN             string             `json:"vlan"`
-	Source           string             `json:"source"`
-	StartedAt        time.Time          `json:"started_at"`
-	EndedAt          time.Time          `json:"ended_at"`
-	ConfirmedAt      time.Time          `json:"last_confirmed_at"`
-	HeartbeatSeconds int                `json:"heartbeat_interval_seconds"`
-	ReconcileSeconds int                `json:"reconcile_interval_seconds"`
-	DeviceClass      string             `json:"device_class"`
-	BindingConflict  bool               `json:"binding_conflict"`
+	IdentityIssue       string             `json:"identity_issue,omitempty"`
+	IdentitySnapshotIDs []string           `json:"identity_snapshot_ids,omitempty"`
+	SensorID            string             `json:"sensor_id,omitempty"`
+	SourceCoverage      []IdentityCoverage `json:"source_coverage,omitempty"`
+	Status              string             `json:"session_status,omitempty"`
+	Confirmations       []time.Time        `json:"confirmations,omitempty"`
+	ID                  string             `json:"session_id"`
+	AccountID           string             `json:"account_id"`
+	EndpointID          string             `json:"endpoint_id"`
+	IP                  string             `json:"ip"`
+	MAC                 string             `json:"mac"`
+	CampusID            string             `json:"campus_id"`
+	AccessDomain        string             `json:"access_domain"`
+	GroupID             string             `json:"group_id"`
+	ProductID           string             `json:"product_id"`
+	VLAN                string             `json:"vlan"`
+	Source              string             `json:"source"`
+	StartedAt           time.Time          `json:"started_at"`
+	EndedAt             time.Time          `json:"ended_at"`
+	ConfirmedAt         time.Time          `json:"last_confirmed_at"`
+	HeartbeatSeconds    int                `json:"heartbeat_interval_seconds"`
+	ReconcileSeconds    int                `json:"reconcile_interval_seconds"`
+	DeviceClass         string             `json:"device_class"`
+	BindingConflict     bool               `json:"binding_conflict"`
 }
 
 func (s Session) State(at time.Time) string {
@@ -96,14 +97,33 @@ type Attribution struct {
 
 func Attribute(ss []Session, campus, domain, ip string, at time.Time) Attribution {
 	a := Attribution{State: "unknown", SessionIDs: []string{}, Reasons: []string{}}
-	accounts := map[string]bool{}
-	unknown := false
 	if campus == "" || domain == "" {
 		a.Reasons = append(a.Reasons, "missing_access_scope")
 		return a
 	}
+	return attributeMatching(ss, at, func(s Session) bool {
+		return s.CampusID == campus && s.AccessDomain == domain && s.IP == ip
+	})
+}
+
+// AttributeForSession resolves a managed identity binding without inventing a
+// campus or access domain. Source and sensor remain part of the attachment
+// boundary, so two 4K instances cannot claim the same address as one identity.
+func AttributeForSession(ss []Session, target Session, at time.Time) Attribution {
+	if target.Source == "" || target.IP == "" {
+		return Attribution{State: "unknown", SessionIDs: []string{}, Reasons: []string{"missing_identity_source"}}
+	}
+	return attributeMatching(ss, at, func(s Session) bool {
+		return s.Source == target.Source && s.SensorID == target.SensorID && s.CampusID == target.CampusID && s.AccessDomain == target.AccessDomain && s.IP == target.IP
+	})
+}
+
+func attributeMatching(ss []Session, at time.Time, matches func(Session) bool) Attribution {
+	a := Attribution{State: "unknown", SessionIDs: []string{}, Reasons: []string{}}
+	accounts := map[string]bool{}
+	unknown := false
 	for _, s := range ss {
-		if s.CampusID != campus || s.AccessDomain != domain || s.IP != ip {
+		if !matches(s) {
 			continue
 		}
 		state := s.State(at)
@@ -131,9 +151,10 @@ func Attribute(ss []Session, campus, domain, ip string, at time.Time) Attributio
 }
 
 type Limits struct {
-	Total  *int `json:"total"`
-	Mobile *int `json:"mobile"`
-	PC     *int `json:"pc"`
+	Total    *int `json:"total"`
+	Mobile   *int `json:"mobile"`
+	PC       *int `json:"pc"`
+	Sessions *int `json:"sessions"`
 }
 type Device struct {
 	ID         string   `json:"id"`
@@ -155,13 +176,17 @@ type Quota struct {
 }
 
 func EvaluateQuota(account string, ss []Session, limits Limits, at time.Time) Quota {
+	return EvaluateQuotaForScope(account, ss, Scope{}, limits, at)
+}
+
+func EvaluateQuotaForScope(account string, ss []Session, scope Scope, limits Limits, at time.Time) Quota {
 	q := Quota{AccountID: account, State: "compliant", CoverageComplete: true, Devices: []Device{}, Reasons: []string{}, Limits: limits}
 	devices := map[string]*Device{}
 	present := false
-	type accessKey struct{ campus, domain, ip string }
+	type accessKey struct{ source, sensor, campus, domain, ip string }
 	grouped := map[accessKey][]Session{}
 	for _, session := range ss {
-		k := accessKey{session.CampusID, session.AccessDomain, session.IP}
+		k := accessKey{session.Source, session.SensorID, session.CampusID, session.AccessDomain, session.IP}
 		grouped[k] = append(grouped[k], session)
 	}
 	attributed := map[accessKey]Attribution{}
@@ -173,16 +198,22 @@ func EvaluateQuota(account string, ss []Session, limits Limits, at time.Time) Qu
 		if state == "absent" || state == "ended" {
 			continue
 		}
+		if state == "active" && !scope.MatchSession(account, s, at) {
+			continue
+		}
+		if state != "active" && !sessionMatchesStaticScope(scope, account, s) {
+			continue
+		}
 		present = true
 		if state != "active" {
 			q.UncertainSessions++
 			q.CoverageComplete = false
 			continue
 		}
-		k := accessKey{s.CampusID, s.AccessDomain, s.IP}
+		k := accessKey{s.Source, s.SensorID, s.CampusID, s.AccessDomain, s.IP}
 		a, ok := attributed[k]
 		if !ok {
-			a = Attribute(grouped[k], s.CampusID, s.AccessDomain, s.IP, at)
+			a = AttributeForSession(grouped[k], s, at)
 			attributed[k] = a
 		}
 		if a.State != "resolved" || a.AccountID != account {
@@ -250,4 +281,77 @@ func EvaluateQuota(account string, ss []Session, limits Limits, at time.Time) Qu
 		q.State = "exceeded"
 	}
 	return q
+}
+
+type SessionQuota struct {
+	AccountID        string   `json:"account_id"`
+	State            string   `json:"state"`
+	Sessions         int      `json:"sessions"`
+	CoverageComplete bool     `json:"coverage_complete"`
+	SessionIDs       []string `json:"session_ids"`
+	Reasons          []string `json:"reasons"`
+	Limit            *int     `json:"limit"`
+}
+
+// EvaluateSessionQuota counts stable authentication session IDs, not IP rows.
+// A dual-stack login therefore contributes once. Any in-scope unresolved or
+// stale row pauses the decision instead of being silently ignored.
+func EvaluateSessionQuota(account string, ss []Session, scope Scope, limit *int, at time.Time) SessionQuota {
+	q := SessionQuota{AccountID: account, State: "compliant", CoverageComplete: true, SessionIDs: []string{}, Reasons: []string{}, Limit: limit}
+	seen := map[string]bool{}
+	present := false
+	for _, session := range ss {
+		if session.AccountID != account || !sessionMatchesStaticScope(scope, account, session) {
+			continue
+		}
+		state := session.State(at)
+		if state == "absent" || state == "ended" {
+			continue
+		}
+		present = true
+		if state != "active" || session.ID == "" || session.BindingConflict {
+			q.CoverageComplete = false
+			continue
+		}
+		seen[session.ID] = true
+	}
+	for id := range seen {
+		q.SessionIDs = append(q.SessionIDs, id)
+	}
+	sort.Strings(q.SessionIDs)
+	q.Sessions = len(q.SessionIDs)
+	if !present {
+		q.CoverageComplete = false
+		q.Reasons = append(q.Reasons, "no_fresh_online_inventory")
+	}
+	if !q.CoverageComplete {
+		q.State = "unknown"
+		q.Reasons = append(q.Reasons, "identity_coverage_incomplete")
+		return q
+	}
+	if limit != nil && q.Sessions > *limit {
+		q.State = "exceeded"
+		q.Reasons = append(q.Reasons, "session_quota_exceeded")
+	}
+	return q
+}
+
+func sessionMatchesStaticScope(scope Scope, account string, session Session) bool {
+	if !contains(scope.Accounts, account) || !contains(scope.Sources, session.Source) || !contains(scope.Groups, session.GroupID) || !contains(scope.Products, session.ProductID) || !contains(scope.Campuses, session.CampusID) || !contains(scope.VLANs, session.VLAN) {
+		return false
+	}
+	if len(scope.CIDRs) == 0 {
+		return true
+	}
+	ip := net.ParseIP(session.IP)
+	if ip == nil {
+		return false
+	}
+	for _, raw := range scope.CIDRs {
+		_, network, err := net.ParseCIDR(raw)
+		if err == nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

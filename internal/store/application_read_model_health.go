@@ -29,13 +29,14 @@ func (s *DBStore) PrepareStatisticsReadModel(ctx context.Context) error {
 
 func (s *DBStore) StatisticsReadModelHealth(ctx context.Context) error {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3")), "true") {
-		var refreshed time.Time
-		if err := s.pg.db.QueryRowContext(ctx, `SELECT updated_at FROM read_model_runtime_state WHERE name='activity-v3-5m'`).Scan(&refreshed); err != nil {
-			return fmt.Errorf("activity v3 read model is warming: %w", err)
+		lag, err := s.activityV3RealtimeLag(ctx, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("activity v3 read model is not ready: %w", err)
 		}
-		if time.Since(refreshed) > 5*time.Minute {
-			return fmt.Errorf("activity v3 statistics refresh is older than five minutes")
+		if lag > 300 {
+			return fmt.Errorf("activity v3 statistics event coverage is older than five minutes with unfinished work")
 		}
+
 		return nil
 	}
 	if err := s.activityStatisticsReadModelHealth(ctx); err != nil {

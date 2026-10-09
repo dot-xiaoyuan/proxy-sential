@@ -75,7 +75,7 @@ export function ActiveRiskIps({items}:{items:ActivityIpSummary[]}){
 return <>          <div className="activity-tab-panel">
             <div className="surface-title-row">
               <Typography.Title className="surface-title" level={4}>
-                活跃共享风险 IP
+                活跃风险 IP
               </Typography.Title>
               <Typography.Text className="surface-subtitle" type="secondary">
                 点击 DPI Flow 样本展开追查抽屉

@@ -77,6 +77,75 @@ type EndpointDevicePage struct {
 	FacetsAsOf string                    `json:"facets_as_of,omitempty"`
 }
 
+// DeviceInventoryListItem is the bounded list projection used by the terminal
+// inventory page. Complete association history and raw recognition evidence
+// remain available from the endpoint detail APIs.
+type DeviceInventoryListItem struct {
+	Discovery            *discovery.Summary           `json:"discovery,omitempty"`
+	RouterObservation    *evidence.RouterAssessment   `json:"router_observation,omitempty"`
+	IPMatch              *DeviceIPMatch               `json:"ip_match,omitempty"`
+	DeviceName           *DeviceName                  `json:"device_name,omitempty"`
+	BrandReference       *fingerprint.BrandReference  `json:"brand_reference,omitempty"`
+	BrandInference       *DeviceBrandInferenceSummary `json:"brand_inference,omitempty"`
+	EndpointID           string                       `json:"endpoint_id"`
+	PrimaryMAC           string                       `json:"primary_mac,omitempty"`
+	OwnerAccount         string                       `json:"owner_account,omitempty"`
+	OwnerName            string                       `json:"owner_name,omitempty"`
+	CurrentAccount       string                       `json:"current_account,omitempty"`
+	CurrentIP            string                       `json:"current_ip,omitempty"`
+	CurrentAccessID      string                       `json:"current_access_id,omitempty"`
+	LastSeen             string                       `json:"last_seen,omitempty"`
+	Vendor               string                       `json:"vendor,omitempty"`
+	Brand                string                       `json:"brand,omitempty"`
+	Model                string                       `json:"model,omitempty"`
+	DeviceType           string                       `json:"device_type,omitempty"`
+	OSFamily             string                       `json:"os_family,omitempty"`
+	VendorConfidence     float64                      `json:"vendor_confidence"`
+	BrandConfidence      float64                      `json:"brand_confidence"`
+	ModelConfidence      float64                      `json:"model_confidence"`
+	DeviceTypeConfidence float64                      `json:"device_type_confidence"`
+	OSFamilyConfidence   float64                      `json:"os_family_confidence"`
+	RandomizedMAC        bool                         `json:"randomized_mac"`
+	RecognitionConflict  bool                         `json:"recognition_conflict"`
+}
+
+type DeviceBrandInferenceSummary struct {
+	Status     string  `json:"status"`
+	Brand      string  `json:"brand,omitempty"`
+	Confidence float64 `json:"confidence"`
+}
+
+type DeviceInventoryListPage struct {
+	Items             []DeviceInventoryListItem `json:"items"`
+	Page              Page                      `json:"page"`
+	Facets            DeviceFilterFacets        `json:"facets"`
+	AsOf              string                    `json:"as_of,omitempty"`
+	ReadModelUpdating bool                      `json:"read_model_updating"`
+}
+
+func ProjectDeviceInventoryListItem(item EndpointDeviceInventory) DeviceInventoryListItem {
+	projected := DeviceInventoryListItem{
+		Discovery: item.Discovery, RouterObservation: item.RouterObservation, IPMatch: item.IPMatch,
+		DeviceName: item.DeviceName, BrandReference: item.BrandReference,
+		EndpointID: item.EndpointID, PrimaryMAC: item.PrimaryMAC, OwnerAccount: item.OwnerAccount,
+		OwnerName: item.OwnerName, CurrentAccount: item.CurrentAccount, CurrentIP: item.CurrentIP,
+		CurrentAccessID: item.CurrentAccessID, LastSeen: item.LastSeen, Vendor: item.Vendor,
+		Brand: item.Brand, Model: item.Model, DeviceType: item.DeviceType, OSFamily: item.OSFamily,
+		VendorConfidence: item.VendorConfidence, BrandConfidence: item.BrandConfidence,
+		ModelConfidence: item.ModelConfidence, DeviceTypeConfidence: item.DeviceTypeConfidence,
+		OSFamilyConfidence: item.OSFamilyConfidence, RandomizedMAC: item.RandomizedMAC,
+		RecognitionConflict: item.RecognitionConflict,
+	}
+	if item.BrandInference != nil {
+		projected.BrandInference = &DeviceBrandInferenceSummary{Status: item.BrandInference.Status, Brand: item.BrandInference.Brand, Confidence: item.BrandInference.Confidence}
+	}
+	return projected
+}
+
+type DeviceInventoryReader interface {
+	ListDeviceInventory(context.Context, Query) (DeviceInventoryListPage, error)
+}
+
 type EventPage struct {
 	Items []normalized.Event
 	Page  Page
@@ -316,30 +385,56 @@ type ProxyReviewResponse struct {
 }
 
 type ProxyReviewCase struct {
-	CaseID             string           `json:"case_id"`
-	IP                 string           `json:"ip"`
-	AccountID          string           `json:"account_id,omitempty"`
-	EndpointID         string           `json:"endpoint_id,omitempty"`
-	AccessIDs          []string         `json:"access_ids"`
-	Destinations       []ActivityCount  `json:"destinations"`
-	DestinationIPs     []ActivityCount  `json:"destination_ips"`
-	DestinationDomains []ActivityCount  `json:"destination_domains"`
-	TLSFingerprints    []ActivityCount  `json:"tls_fingerprints"`
-	Protocols          []ActivityCount  `json:"protocols"`
-	RuleMatches        []ProxyRuleMatch `json:"rule_matches"`
-	EventCount         int              `json:"event_count"`
-	TLSCount           int              `json:"tls_count"`
-	QUICCount          int              `json:"quic_count"`
-	AlertCount         int              `json:"alert_count"`
-	ConfidenceLevel    string           `json:"confidence_level"`
-	FirstSeen          string           `json:"first_seen"`
-	LastSeen           string           `json:"last_seen"`
-	DurationSeconds    int64            `json:"duration_seconds"`
-	EvidenceIDs        []string         `json:"evidence_ids"`
-	RiskScore          int              `json:"risk_score"`
-	RiskLevel          string           `json:"risk_level"`
-	ReviewStatus       string           `json:"review_status"`
-	ReviewReason       string           `json:"review_reason,omitempty"`
+	CaseID             string                     `json:"case_id"`
+	IP                 string                     `json:"ip"`
+	AccountID          string                     `json:"account_id,omitempty"`
+	EndpointID         string                     `json:"endpoint_id,omitempty"`
+	AccessIDs          []string                   `json:"access_ids"`
+	Destinations       []ActivityCount            `json:"destinations"`
+	DestinationIPs     []ActivityCount            `json:"destination_ips"`
+	DestinationDomains []ActivityCount            `json:"destination_domains"`
+	TLSFingerprints    []ActivityCount            `json:"tls_fingerprints"`
+	Protocols          []ActivityCount            `json:"protocols"`
+	RuleMatches        []ProxyRuleMatch           `json:"rule_matches"`
+	EventCount         int                        `json:"event_count"`
+	TLSCount           int                        `json:"tls_count"`
+	QUICCount          int                        `json:"quic_count"`
+	AlertCount         int                        `json:"alert_count"`
+	ConfidenceLevel    string                     `json:"confidence_level"`
+	FirstSeen          string                     `json:"first_seen"`
+	LastSeen           string                     `json:"last_seen"`
+	DurationSeconds    int64                      `json:"duration_seconds"`
+	EvidenceIDs        []string                   `json:"evidence_ids"`
+	RiskScore          int                        `json:"risk_score"`
+	RiskLevel          string                     `json:"risk_level"`
+	RiskConfidence     *float64                   `json:"risk_confidence,omitempty"`
+	ReviewStatus       string                     `json:"review_status"`
+	ReviewReason       string                     `json:"review_reason,omitempty"`
+	SharedAccess       *SharedAccessCaseEvidence  `json:"shared_access,omitempty"`
+	RouterObservation  *evidence.RouterAssessment `json:"router_observation,omitempty"`
+}
+
+// SharedAccessCaseEvidence records the exact strong anchor that caused a
+// shared-access case. Generic traffic counters are deliberately kept out of
+// this decision basis.
+type SharedAccessCaseEvidence struct {
+	ObservationID           string   `json:"observation_id"`
+	GenerationID            string   `json:"generation_id"`
+	Status                  string   `json:"status"`
+	Confidence              int      `json:"confidence"`
+	StrongAnchor            string   `json:"strong_anchor"`
+	DeviceLowerBound        int      `json:"device_lower_bound"`
+	CoverageState           string   `json:"coverage_state"`
+	WindowStart             string   `json:"window_start"`
+	WindowEnd               string   `json:"window_end"`
+	SignalGroups            []string `json:"signal_groups"`
+	Reasons                 []string `json:"reasons"`
+	SourceEventIDs          []string `json:"source_event_ids"`
+	AnchorIdentities        []string `json:"anchor_identities"`
+	ReferenceDeviceCount24h int      `json:"reference_device_count_24h,omitempty"`
+	RouterBrand             string   `json:"router_brand,omitempty"`
+	RouterModel             string   `json:"router_model,omitempty"`
+	RouterConfidence        int      `json:"router_confidence,omitempty"`
 }
 
 type ProxyRuleMatch struct {

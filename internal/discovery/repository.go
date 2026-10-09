@@ -148,12 +148,17 @@ func (r Repository) Devices(ctx context.Context, limit, offset int) (map[string]
 	defer tx.Rollback()
 
 	// Latest observation per source/service wins, including withdrawals; no capped evidence aggregation.
-	const cte = `WITH latest AS (SELECT DISTINCT ON (device_key,source_id,origin,coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port','')) * FROM discovery_observations WHERE observed_at<=now() ORDER BY device_key,source_id,origin,coalesce(data->'evidence'->'payload'->>'service_type',''),coalesce(data->>'port',''),observed_at DESC,id DESC), devices AS (SELECT device_key,max(observed_at) AS observed_at,jsonb_agg(data ORDER BY observed_at DESC) AS evidence FROM latest WHERE NOT withdrawn AND valid_until>now() GROUP BY device_key) `
+	const cte = `WITH latest AS (
+ SELECT device_key,observed_at,valid_until,withdrawn,data FROM discovery_observation_latest WHERE observed_at<=now()
+ UNION ALL
+ SELECT old.device_key,old.observed_at,old.valid_until,old.withdrawn,old.data FROM discovery_observation_latest future
+ CROSS JOIN LATERAL(SELECT device_key,observed_at,valid_until,withdrawn,data FROM discovery_observations o WHERE o.device_key=future.device_key AND o.source_id=future.source_id AND o.origin=future.origin AND coalesce(o.data->'evidence'->'payload'->>'service_type','')=future.service_type AND coalesce(o.data->>'port','')=future.port AND o.observed_at<=now() ORDER BY observed_at DESC,id DESC LIMIT 1) old WHERE future.observed_at>now()
+ ), active AS(SELECT * FROM latest WHERE NOT withdrawn AND valid_until>now()), devices AS(SELECT device_key,max(observed_at) AS observed_at FROM active GROUP BY device_key) `
 	var total int
 	if err := tx.QueryRowContext(ctx, cte+`SELECT count(*) FROM devices`).Scan(&total); err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, cte+`SELECT device_key,evidence FROM devices ORDER BY observed_at DESC,device_key LIMIT $1 OFFSET $2`, limit, offset)
+	rows, err := tx.QueryContext(ctx, cte+`SELECT page.device_key,(SELECT jsonb_agg(a.data ORDER BY a.observed_at DESC) FROM active a WHERE a.device_key=page.device_key) AS evidence FROM (SELECT device_key,observed_at FROM devices ORDER BY observed_at DESC,device_key LIMIT $1 OFFSET $2) page ORDER BY page.observed_at DESC,page.device_key`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

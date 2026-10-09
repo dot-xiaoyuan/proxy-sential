@@ -206,8 +206,19 @@ func TestApplicationDatabaseBatchRecoveryAndControl(t *testing.T) {
 	if err != nil || blocked != "" {
 		t.Fatal("history admitted during realtime failure")
 	}
-	if _, err = d.Step(ctx, "realtime", now, b); err != nil {
-		t.Fatal(err)
+	// Realtime scans bounded one-minute slices. Recovery is complete only when
+	// the retained scan window is drained, rather than after its first page.
+	for i := 0; ; i++ {
+		more, stepErr := d.Step(ctx, "realtime", now, b)
+		if stepErr != nil {
+			t.Fatal(stepErr)
+		}
+		if !more {
+			break
+		}
+		if i >= 10 {
+			t.Fatal("realtime recovery did not finish bounded fixture window")
+		}
 	}
 	if err = d.Control(ctx, "cancel"); err != nil {
 		t.Fatal(err)

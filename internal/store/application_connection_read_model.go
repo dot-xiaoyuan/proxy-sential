@@ -20,6 +20,16 @@ type applicationConnectionCursor struct {
 // so duplicates and reclassification cannot inflate counters or leave old app
 // associations. Only this background cursor is serialized, never HTTP reads.
 func (s *DBStore) updateApplicationConnectionReadModel(ctx context.Context) (bool, error) {
+	for limit := 256; limit >= 1; limit /= 2 {
+		more, err := s.updateApplicationConnectionBatch(ctx, limit)
+		if err == nil || ctx.Err() != nil || !strings.Contains(err.Error(), "MEMORY_LIMIT_EXCEEDED") || limit == 1 {
+			return more, err
+		}
+	}
+	return false, fmt.Errorf("application connection read model batch exhausted")
+}
+
+func (s *DBStore) updateApplicationConnectionBatch(ctx context.Context, limit int) (bool, error) {
 	tx, err := s.pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -40,7 +50,7 @@ func (s *DBStore) updateApplicationConnectionReadModel(ctx context.Context) (boo
 	if cursor.WrittenAt != "" {
 		where = "(l.written_at,l.sensor_id,l.campus_id,l.connection_id)>(parseDateTime64BestEffort(" + chQuote(cursor.WrittenAt) + ",9)," + chQuote(cursor.SensorID) + "," + chQuote(cursor.CampusID) + "," + chQuote(cursor.ConnectionID) + ")"
 	}
-	query := `SELECT concat(replaceOne(toString(l.written_at),' ','T'),'Z') AS written_at,sensor_id,campus_id,connection_id FROM application_recognized_connection_dirty_log l WHERE ` + where + ` ORDER BY l.written_at,l.sensor_id,l.campus_id,l.connection_id LIMIT 1500 SETTINGS max_threads=1 FORMAT JSONEachRow`
+	query := `SELECT concat(replaceOne(toString(l.written_at),' ','T'),'Z') AS written_at,sensor_id,campus_id,connection_id FROM application_recognized_connection_dirty_log l WHERE ` + where + ` ORDER BY l.written_at,l.sensor_id,l.campus_id,l.connection_id LIMIT ` + fmt.Sprint(limit) + ` SETTINGS max_threads=1 FORMAT JSONEachRow`
 	raw, err = s.ch.query(ctx, query)
 	if err != nil {
 		return false, err
@@ -113,22 +123,26 @@ func (s *DBStore) DrainApplicationConnectionReadModel(ctx context.Context) error
 }
 
 func (s *DBStore) RunApplicationConnectionReadModel(ctx context.Context) {
+	s.runApplicationConnectionReadModel(ctx, func(ctx context.Context, delay time.Duration) bool {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		}
+	})
+}
+
+func (s *DBStore) runApplicationConnectionReadModel(ctx context.Context, pause func(context.Context, time.Duration) bool) {
 	for ctx.Err() == nil {
 		var upstreamLagSeconds float64
 		lagErr := s.pg.db.QueryRowContext(ctx, `SELECT EXTRACT(EPOCH FROM now()-COALESCE(
  NULLIF(job->>'available_to','')::timestamptz,
  NULLIF(job->>'from','')::timestamptz,
  now())) FROM application_processing_jobs WHERE lane='realtime'`).Scan(&upstreamLagSeconds)
-		if lagErr == nil && upstreamLagSeconds > 90 {
-			timer := time.NewTimer(2 * time.Second)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-				continue
-			}
-		}
+
 		batchCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 		more, err := s.updateApplicationConnectionReadModel(batchCtx)
 		cancel()
@@ -142,12 +156,15 @@ func (s *DBStore) RunApplicationConnectionReadModel(ctx context.Context) {
 			// recovery faster than the live dirty-connection stream.
 			delay = 100 * time.Millisecond
 		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		// Recover already-classified connections even while the classifier is
+		// catching up. A longer admission gap limits contention without leaving
+		// the summary cursor permanently parked behind a continuous backlog.
+		if lagErr == nil && upstreamLagSeconds > 90 && delay < 10*time.Second {
+			delay = 10 * time.Second
+		}
+
+		if !pause(ctx, delay) {
 			return
-		case <-timer.C:
 		}
 	}
 }

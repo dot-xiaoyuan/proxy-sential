@@ -1,0 +1,28 @@
+[Unit]
+Description=Proxy Sentinel payload-free shared-access TCP SYN collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel device-signal run --interface bond0 --sensor-id ${PROXY_SENTINEL_SENSOR_ID} --output /opt/proxy-sentinel/data/device-signals/shared.jsonl --bucket 60s --collector-instance-id ${PROXY_SENTINEL_COLLECTOR_INSTANCE_ID} --capture-scope-config /opt/proxy-sentinel/config/router-capture-scope.json --shared-signals-only
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+CPUQuota=100%
+CPUWeight=45
+MemoryHigh=768M
+MemoryMax=1G
+OOMPolicy=stop
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/proxy-sentinel/data/device-signals
+
+[Install]
+WantedBy=multi-user.target

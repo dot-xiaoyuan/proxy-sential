@@ -82,19 +82,16 @@ make deploy TARGET=root@192.168.0.30 VERSION=<version> ENV_FILE=deploy/compose/s
 - `proxy-sentinel-shadow.timer` 每 10 分钟运行一次 shadow 分析。
 - `proxy-sentinel-control-plane.service` 在 `0.0.0.0:18080` 提供 API 和
   `frontend/dist` 静态页面；默认只读，只有显式传入 `--enable-review-writes` 才开放标注与登记。
-- `proxy-sentinel-shadow-evaluation.timer` 每小时第 5 分钟刷新 7 天评估报告和分级复核样本。
 - 输出目录为 `/opt/proxy-sentinel/data/shadow/runs/YYYYMMDD-HHMMSS/`。
 - 每轮输出标准事件、证据、风险快照、可疑 IP 列表和运行摘要。
 - 所有推荐动作都是影子动作，不触发降速、踢线或封禁。
-
-影子评估流程见 [影子评估与每日人工复核](shadow-evaluation.md)。
 
 控制面验收：
 
 ```bash
 curl -s http://192.168.0.30:18080/api/v1/overview | jq .
 curl -s 'http://192.168.0.30:18080/api/v1/risks?limit=10' | jq .
-curl -s http://192.168.0.30:18080/api/v1/shadow/runs | jq '.runs[:3]'
+curl -s http://192.168.0.30:18080/api/v1/ingest/runs | jq '.runs[:3]'
 ```
 
 前端本地开发直连真实 API 时，关闭 MSW：

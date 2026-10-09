@@ -133,6 +133,7 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 			"type":              event.Type,
 			"sensor_id":         stringFromMap(event.Observer, "sensor_id"),
 			"subject_ip":        stringFromMap(event.Subject, "ip"),
+			"subject_json":      jsonString(event.Subject),
 			"subject_mac":       stringFromMap(event.Subject, "mac"),
 			"account_id":        stringFromMap(event.Subject, "account_id"),
 			"endpoint_id":       stringFromMap(event.Subject, "endpoint_id"),
@@ -399,6 +400,10 @@ SELECT
   any(event_id) AS event_id,
   type,
   subject_ip,
+  sensor_id,
+  campus_id,
+  account_id,
+  endpoint_id,
   dst_ip,
   dst_port,
   proto,
@@ -416,7 +421,7 @@ SELECT
   count() AS aggregate_count
 FROM normalized_events
 PREWHERE %s
-GROUP BY type, subject_ip, dst_ip, dst_port, proto, sni, server_name, host, query, ja3, ja4, signature, category, action, severity, metadata_json
+GROUP BY type, subject_ip, sensor_id, campus_id, account_id, endpoint_id, dst_ip, dst_port, proto, sni, server_name, host, query, ja3, ja4, signature, category, action, severity, metadata_json
 ORDER BY last_seen DESC
 LIMIT %d
 FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit)
@@ -819,10 +824,25 @@ FORMAT JSONEachRow`, limit)
 }
 
 func (s *ClickHouseStore) ListIngestEventTypes(ctx context.Context) ([]ingest.EventTypeCount, error) {
+	return s.listIngestEventTypes(ctx, "")
+}
+
+func (s *ClickHouseStore) ListSensorIngestEventTypes(ctx context.Context, sensorID string) ([]ingest.EventTypeCount, error) {
+	if sensorID == "" {
+		return nil, fmt.Errorf("sensor id is required")
+	}
+	return s.listIngestEventTypes(ctx, sensorID)
+}
+
+func (s *ClickHouseStore) listIngestEventTypes(ctx context.Context, sensorID string) ([]ingest.EventTypeCount, error) {
+	sensorClause := ""
+	if sensorID != "" {
+		sensorClause = " AND sensor_id = " + chQuote(sensorID)
+	}
 	data, err := s.query(ctx, `
 SELECT type, count() AS count
 FROM normalized_events
-WHERE timestamp >= now() - INTERVAL 24 HOUR
+WHERE timestamp >= now64(9) - INTERVAL 24 HOUR AND timestamp <= now64(9)`+sensorClause+`
 GROUP BY type
 ORDER BY count DESC, type ASC
 LIMIT 50
@@ -1256,6 +1276,7 @@ func decodeEventRows(data []byte) ([]normalized.Event, error) {
 	events := []normalized.Event{}
 	seen := map[string]struct{}{}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 64<<10), 8<<20)
 	for scanner.Scan() {
 		var row struct {
 			Timestamp       string  `json:"timestamp"`
@@ -1265,6 +1286,10 @@ func decodeEventRows(data []byte) ([]normalized.Event, error) {
 			SourceEventType string  `json:"source_event_type"`
 			Type            string  `json:"type"`
 			SubjectIP       string  `json:"subject_ip"`
+			SubjectJSON     string  `json:"subject_json"`
+			SubjectMAC      string  `json:"subject_mac"`
+			AccountID       string  `json:"account_id"`
+			EndpointID      string  `json:"endpoint_id"`
 			CampusID        string  `json:"campus_id"`
 			ObserverJSON    string  `json:"observer_json"`
 			PayloadJSON     string  `json:"payload_json"`
@@ -1288,6 +1313,26 @@ func decodeEventRows(data []byte) ([]normalized.Event, error) {
 			Flow:            map[string]any{},
 			RawRef:          map[string]any{},
 			Confidence:      row.Confidence,
+		}
+		if row.SubjectJSON != "" {
+			if err := json.Unmarshal([]byte(row.SubjectJSON), &event.Subject); err != nil {
+				return nil, err
+			}
+		}
+		if event.Subject == nil {
+			event.Subject = map[string]any{}
+		}
+		if row.SubjectMAC != "" {
+			event.Subject["mac"] = row.SubjectMAC
+		}
+		if row.AccountID != "" {
+			event.Subject["account_id"] = row.AccountID
+		}
+		if row.EndpointID != "" {
+			event.Subject["endpoint_id"] = row.EndpointID
+		}
+		if row.SubjectJSON == "" && row.Type == "identity" && row.AccountID != "" {
+			event.Subject["entity_role"] = "endpoint"
 		}
 		if row.SubjectIP != "" {
 			event.Subject["ip"] = row.SubjectIP
@@ -1321,6 +1366,10 @@ func decodeProxyReviewEventRows(data []byte, sensorID string) ([]normalized.Even
 			EventID        string `json:"event_id"`
 			Type           string `json:"type"`
 			SubjectIP      string `json:"subject_ip"`
+			SensorID       string `json:"sensor_id"`
+			CampusID       string `json:"campus_id"`
+			AccountID      string `json:"account_id"`
+			EndpointID     string `json:"endpoint_id"`
 			DstIP          string `json:"dst_ip"`
 			DstPort        int    `json:"dst_port"`
 			Proto          string `json:"proto"`
@@ -1365,9 +1414,13 @@ func decodeProxyReviewEventRows(data []byte, sensorID string) ([]normalized.Even
 		if row.DstPort > 0 {
 			flow["dst_port"] = row.DstPort
 		}
+		subject := map[string]any{"ip": row.SubjectIP}
+		setMapString(subject, "campus_id", row.CampusID)
+		setMapString(subject, "account_id", row.AccountID)
+		setMapString(subject, "endpoint_id", row.EndpointID)
 		events = append(events, normalized.Event{
 			SchemaVersion: "v1", EventID: row.EventID, Timestamp: normalizeClickHouseTimestamp(row.LastSeen), Type: row.Type,
-			Source: "clickhouse-aggregate", Subject: map[string]any{"ip": row.SubjectIP}, Observer: map[string]any{"sensor_id": sensorID},
+			Source: "clickhouse-aggregate", Subject: subject, Observer: map[string]any{"sensor_id": firstNonEmpty(row.SensorID, sensorID)},
 			Payload: payload, Flow: flow, RawRef: map[string]any{"aggregate": true}, Confidence: 1,
 		})
 	}

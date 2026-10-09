@@ -22,6 +22,7 @@ func SharedWindows(events []normalized.Event, from, to time.Time, complete bool)
 		identity, digest string
 	}
 	records := []record{}
+	encodingFailed := false
 	for _, e := range events {
 		switch e.Type {
 		case "http", "tls", "quic", "device", "dns", "flow", "connection":
@@ -41,7 +42,12 @@ func SharedWindows(events []normalized.Event, from, to time.Time, complete bool)
 			continue
 		}
 		identity, _ := json.Marshal([]string{stringValue(e.Observer, "sensor_id"), e.Source, stringValue(e.Observer, "collector_instance_id"), e.EventID})
-		raw, _ := json.Marshal(e)
+		raw, encodeErr := json.Marshal(e)
+		if encodeErr != nil {
+			complete = false
+			encodingFailed = true
+			continue
+		}
 		digest := sha256.Sum256(raw)
 		records = append(records, record{e: e, at: at, identity: string(identity), digest: hex.EncodeToString(digest[:])})
 	}
@@ -111,7 +117,7 @@ func SharedWindows(events []normalized.Event, from, to time.Time, complete bool)
 			}
 			switch strings.ToLower(stringValue(e.Flow, "direction")) {
 			case "outbound", "egress", "out", "c2s", "client_to_server", "to_server":
-				if !sharedIPv4TTL(e) {
+				if !hostIPv4TTL(e) {
 					break
 				}
 				flow := map[string]any{}
@@ -130,7 +136,7 @@ func SharedWindows(events []normalized.Event, from, to time.Time, complete bool)
 		addString(observed.ja3, e.Payload, "ja3")
 		addString(observed.ja4, e.Payload, "ja4")
 		addString(observed.tcpStacks, e.Payload, "tcp_stack")
-		if e.Type == "device" && stringValue(e.Flow, "direction") == "outbound" && sharedIPv4TTL(e) {
+		if e.Type == "device" && stringValue(e.Flow, "direction") == "outbound" && hostIPv4TTL(e) {
 			observed.addTTL(e)
 		}
 		if e.Type == "device" && stringValue(e.Payload, "origin") == "dhcp" {
@@ -192,6 +198,9 @@ func SharedWindows(events []normalized.Event, from, to time.Time, complete bool)
 		}
 		delete(w.Samples, "ja3")
 		delete(w.Samples, "ja4")
+		if encodingFailed {
+			addSharedEncodingConflict(&w)
+		}
 		raw, _ := json.Marshal(w)
 		sum := sha256.Sum256(raw)
 		w.ID = "shared-" + hex.EncodeToString(sum[:16])
@@ -200,17 +209,15 @@ func SharedWindows(events []normalized.Event, from, to time.Time, complete bool)
 	return out
 }
 
-// IPv6 Hop Limit is retained by the standard event store. It is deliberately
-// excluded from the IPv4 TTL rule until a separate IPv6 rule is validated.
-func sharedIPv4TTL(e normalized.Event) bool {
-	ip, err := netip.ParseAddr(subjectString(e, "ip"))
-	if err != nil || !ip.Is4() {
-		return false
-	}
-	for _, fields := range []map[string]any{e.Flow, e.Payload} {
-		if version, ok := numberValue(fields["ip_version"]); ok && version == 6 {
-			return false
+// A failed event encoding makes the queried observation set incomplete. Keep
+// valid observations for review, but never hash failed bytes or treat the set
+// as a complete negative/positive window.
+func addSharedEncodingConflict(w *sharedaccess.Window) {
+	w.Complete = false
+	for _, reason := range w.Conflicts {
+		if reason == "standard_event_encoding_failed" {
+			return
 		}
 	}
-	return true
+	w.Conflicts = append(w.Conflicts, "standard_event_encoding_failed")
 }

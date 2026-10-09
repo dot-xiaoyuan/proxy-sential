@@ -34,10 +34,9 @@ func (t *coarseFailureTransport) RoundTrip(r *http.Request) (*http.Response, err
 	return t.next.RoundTrip(r)
 }
 
-// A partial historical batch may have committed one day and both hours when
-// another day fails. Its receipt must remain unacknowledged; retry must produce
-// exactly the same counts rather than losing or doubling either day.
-func TestActivityCoarseBackfillResumesAfterPartialFailure(t *testing.T) {
+// Coarse optimization failures must not starve the live five-minute projection.
+// Its committed receipt stays acknowledged; explicit coarse repair is idempotent.
+func TestActivityCoarseFailurePreservesLiveCursorAndSupportsRepair(t *testing.T) {
 	d := appIntegrationDB(t)
 	s := d.store
 	ctx := context.Background()
@@ -74,18 +73,34 @@ func TestActivityCoarseBackfillResumesAfterPartialFailure(t *testing.T) {
 	fault := &coarseFailureTransport{next: next, sensor: sensor}
 	client.Transport = fault
 	s.ch.client = &client
-	if err := s.DrainActivityChartReadModel(ctx); err == nil || !strings.Contains(err.Error(), "activity_chart_day_facts") {
-		t.Fatalf("missing contextual failure: %v", err)
+	if err := s.DrainActivityChartReadModel(ctx); err != nil {
+		t.Fatalf("coarse optimization starved live read model: %v", err)
+	}
+	if fault.days != 2 {
+		t.Fatal("coarse fault was not exercised")
 	}
 	if err := s.pg.db.QueryRowContext(ctx, `SELECT cursor_document FROM activity_chart_read_model_cursor_v2 WHERE id=1`).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(before, after) {
-		t.Fatalf("partial failure acknowledged receipt: before=%s after=%s", before, after)
+	if bytes.Equal(before, after) {
+		t.Fatal("successful live facts were not acknowledged")
 	}
 	s.ch.client = original
 	if err := s.DrainActivityChartReadModel(ctx); err != nil {
 		t.Fatal(err)
+	}
+	rows := []activityChartCursor{}
+	for _, event := range events {
+		rows = append(rows, activityChartCursor{WindowStart: event.Timestamp, SensorID: sensor})
+	}
+	for i := 0; i < 2; i++ {
+		var revision uint64
+		if err := s.pg.db.QueryRowContext(ctx, `SELECT nextval('application_connection_summary_revision_seq')`).Scan(&revision); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.rebuildActivityCoarseBuckets(ctx, rows, revision); err != nil {
+			t.Fatal(err)
+		}
 	}
 	raw, err := s.ch.query(ctx, "SELECT sum(event_count) AS count FROM activity_chart_day_facts FINAL WHERE sensor_id="+chQuote(sensor)+" AND dimension='type' FORMAT JSONEachRow")
 	if err != nil {

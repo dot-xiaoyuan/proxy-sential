@@ -2,6 +2,8 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"proxy-sentinel/internal/legacy4k"
 	"proxy-sentinel/internal/srunapi"
@@ -24,20 +26,26 @@ type NativeActionRuntime struct {
 }
 
 func (s *Server) nativeAuthorization(ctx context.Context, a EnforcementAction) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.operations.mu.Lock()
-	current, exists := s.operations.doc.Actions[a.ActionID]
-	connector := s.operations.doc.Connectors[a.ConnectorID]
-	stopped := s.operations.doc.GlobalStop || s.operations.lockErr != nil
-	s.operations.mu.Unlock()
+	current, connector, stopped, exists, err := s.readNativeActionAdmission(ctx, a.ActionID)
+	if err != nil {
+		return err
+	}
 	reviewManual := a.PolicyParameters.SharedReview != nil && connector.Mode == "shadow"
-	if s.readOnly || !exists || stopped || current.Status != "running" || current.Mode != "active" || !connector.Enabled || (!reviewManual && connector.Mode != "active") || (!reviewManual && !connector.ShadowReady && !s.nativeTestAccountAllowed(a.ConnectorID, a.AccountID, a.CampusID, a.PolicyParameters.AccessDomain)) {
+	if s.readOnly || !exists || stopped || current.Status != "running" || current.Mode != "active" || !connector.Enabled || (!reviewManual && connector.Mode != "active") || (!reviewManual && connector.ConnectorType != "srun4k" && !connector.ShadowReady && !s.nativeTestAccountAllowed(a.ConnectorID, a.AccountID, a.CampusID, a.PolicyParameters.AccessDomain)) {
 		return fmt.Errorf("native action admission unavailable")
 	}
 	if current.ActionType != a.ActionType || current.IP != a.IP || current.CampusID != a.CampusID || current.PolicyParameters.AccessDomain != a.PolicyParameters.AccessDomain || current.AccountID != a.AccountID || current.SessionID != a.SessionID || current.IdempotencyKey != a.IdempotencyKey || current.ConnectorID != a.ConnectorID {
 		return fmt.Errorf("native action identity changed")
+	}
+	// Authorize the exact admitted attempt. A new running generation with the
+	// same account/session cannot lend its evidence or lease to an old sender.
+	if actionReceiptFingerprint(current) != actionReceiptFingerprint(a) {
+		return errActionReceiptConflict
 	}
 	if until, err := time.Parse(time.RFC3339Nano, connector.CircuitOpenUntil); err == nil && until.After(time.Now()) {
 		return fmt.Errorf("native connector circuit is open")
@@ -46,9 +54,14 @@ func (s *Server) nativeAuthorization(ctx context.Context, a EnforcementAction) e
 		return fmt.Errorf("manual grant identity changed")
 	}
 	if reviewManual {
-		return s.validateSharedDisconnectDelivery(ctx, current)
+		err = s.validateSharedDisconnectDelivery(ctx, current)
+	} else {
+		err = s.validatePolicyDeliveryContext(ctx, current)
 	}
-	return s.validatePolicyDelivery(current)
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // deliverNativeAction participates in the existing pending/running scheduler.
@@ -57,23 +70,34 @@ func (s *Server) nativeAuthorization(ctx context.Context, a EnforcementAction) e
 func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 	s.operations.mu.Lock()
 	a, ok := s.operations.doc.Actions[id]
-	runtime, configured := s.nativeActions[a.ConnectorID]
+	runtime, configured := s.nativeRuntime(a.ConnectorID)
+	if ok && a.Status == "pending" && !actionDispatchDue(a, time.Now().UTC()) {
+		native := configured || a.PolicyParameters.NativeSelected || a.PolicyParameters.NativeIntent != nil || a.PolicyParameters.SharedReview != nil || s.operations.doc.Connectors[a.ConnectorID].ConnectorType == "srun4k"
+		s.operations.mu.Unlock()
+		return native
+	}
+	if ok && !configured && s.operations.doc.Connectors[a.ConnectorID].ConnectorType == "srun4k" {
+		s.operations.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s.refreshSRunConnector(ctx, a.ConnectorID)
+		cancel()
+		if _, refreshed := s.nativeRuntime(a.ConnectorID); refreshed {
+			return s.deliverNativeAction(id, revoke)
+		}
+		s.recordActionPrecheckFailure(a, errors.New("managed 4K runtime unavailable"))
+		return true
+	}
 	if ok && a.PolicyParameters.SharedReview != nil && !configured {
 		s.operations.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		managed, _, err := s.managedDisconnectRuntime(ctx, a.ConnectorID)
 		if err != nil {
-			s.finishAction(id, "blocked", "", "managed native runtime unavailable")
+			s.recordActionPrecheckFailure(a, errors.New("managed native runtime unavailable"))
 			return true
 		}
-		view := *s
-		view.nativeActions = map[string]NativeActionRuntime{}
-		for key, value := range s.nativeActions {
-			view.nativeActions[key] = value
-		}
-		view.nativeActions[a.ConnectorID] = managed
-		return view.deliverNativeAction(id, revoke)
+		s.setNativeRuntime(a.ConnectorID, managed)
+		return s.deliverNativeAction(id, revoke)
 	}
 	marked := a.PolicyParameters.NativeIntent != nil || s.operations.doc.Connectors[a.ConnectorID].ConnectorType == "srun4k"
 	if !ok || (!configured && !marked && !a.PolicyParameters.NativeSelected) {
@@ -84,14 +108,71 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 		s.operations.mu.Unlock()
 		return true
 	}
-	if !configured || s.operations.db == nil || runtime.Client == nil || runtime.Read == nil || runtime.CampusID == "" || runtime.AccessDomain == "" || revoke || (a.ActionType != "disconnect" && a.ActionType != "session.disconnect") {
+	connector := s.operations.doc.Connectors[a.ConnectorID]
+	if connector.ConnectorType == "srun4k" && (a.ActionType == "account.notify" || a.ActionType == "account.disable_account") {
+		if revoke || !configured || s.operations.db == nil {
+			s.operations.mu.Unlock()
+			s.recordActionPrecheckFailure(a, errors.New("native runtime or action capability unavailable"))
+			return true
+		}
+		a.Status = "running"
+		a.PrecheckRetryable = false
+		a.NextAttemptAt = ""
+		a.LastError = ""
+		a.PolicyParameters.NativeSelected = true
+		a.UpdatedAt = formatDBTime(time.Now().UTC())
+		s.operations.doc.Actions[id] = a
+		err := s.operations.saveLocked()
+		a = s.operations.doc.Actions[id]
 		s.operations.mu.Unlock()
-		s.finishAction(id, "blocked", "", "native runtime or action capability unavailable")
+		if err != nil {
+			return true
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		if err = s.nativeAuthorization(ctx, a); err != nil {
+			s.recordActionPrecheckFailure(a, err)
+			return true
+		}
+		if a.ActionType == "account.notify" {
+			parameters, _ := json.Marshal(map[string]any{"action_id": a.ActionID, "policy_execution_id": a.PolicyParameters.ExecutionID})
+			_, err = s.operations.db.ExecContext(ctx, `INSERT INTO notification_outbox(notification_id,idempotency_key,account_id,template,parameters) VALUES($1,$2,$3,$4,$5) ON CONFLICT(idempotency_key) DO NOTHING`, "notification-"+a.IdempotencyKey, a.IdempotencyKey, a.AccountID, a.PolicyParameters.Template, parameters)
+			if err != nil {
+				s.finishDeliveredAction(a, "failed", "", "notification queue unavailable")
+				return true
+			}
+			s.finishDeliveredAction(a, "succeeded", "notification-"+a.IdempotencyKey, "")
+			s.appendAudit(ctx, "enforcement.notification_queued", id, "succeeded")
+			return true
+		}
+		controller, supported := runtime.Client.(interface {
+			RequestSafeDisableChecked(context.Context, string, int, func(context.Context) error) error
+		})
+		if !supported || a.DurationSeconds <= 0 {
+			s.recordActionPrecheckFailure(a, errors.New("4K safe-disable capability unavailable"))
+			return true
+		}
+		err = controller.RequestSafeDisableChecked(ctx, a.AccountID, a.DurationSeconds, func(guard context.Context) error { return s.nativeAuthorization(guard, a) })
+		if err != nil {
+			if errors.Is(err, srunapi.ErrDispatchPrevented) {
+				s.recordActionPrecheckFailure(a, err)
+			} else {
+				s.finishDeliveredAction(a, "failed", "", "4K SafeDisable request failed")
+			}
+			return true
+		}
+		s.finishDeliveredAction(a, "succeeded", "safe-disable:"+a.IdempotencyKey, "")
+		s.appendAudit(ctx, "enforcement.srun4k_safe_disable", id, "accepted")
 		return true
 	}
-	if a.CampusID != runtime.CampusID || a.PolicyParameters.AccessDomain != runtime.AccessDomain {
+	if !configured || s.operations.db == nil || runtime.Client == nil || runtime.Read == nil || revoke || (a.ActionType != "disconnect" && a.ActionType != "session.disconnect") {
 		s.operations.mu.Unlock()
-		s.finishAction(id, "blocked", "", "native source scope mismatch")
+		s.recordActionPrecheckFailure(a, errors.New("native runtime or action capability unavailable"))
+		return true
+	}
+	if (runtime.CampusID != "" && a.CampusID != runtime.CampusID) || (runtime.AccessDomain != "" && a.PolicyParameters.AccessDomain != runtime.AccessDomain) {
+		s.operations.mu.Unlock()
+		s.recordActionPrecheckFailure(a, errors.New("native source scope mismatch"))
 		return true
 	}
 	now := runtime.Now
@@ -99,10 +180,14 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 		now = time.Now
 	}
 	a.Status = "running"
+	a.PrecheckRetryable = false
+	a.NextAttemptAt = ""
+	a.LastError = ""
 	a.PolicyParameters.NativeSelected = true
 	a.UpdatedAt = formatDBTime(time.Now().UTC())
 	s.operations.doc.Actions[id] = a
 	err := s.operations.saveLocked()
+	a = s.operations.doc.Actions[id]
 	db := s.operations.db
 	s.operations.mu.Unlock()
 	if err != nil {
@@ -110,22 +195,22 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	if !marked {
-		if err = s.nativeAuthorization(ctx, a); err != nil {
-			s.finishAction(id, "blocked", "", err.Error())
-			return true
-		}
-		if a.CampusID != runtime.CampusID || a.PolicyParameters.AccessDomain != runtime.AccessDomain {
-			s.finishAction(id, "blocked", "", "native source scope mismatch")
+	if err = s.nativeAuthorization(ctx, a); err != nil {
+		s.recordActionPrecheckFailure(a, err)
+		return true
+	}
+	if a.PolicyParameters.NativeIntent == nil {
+		if (runtime.CampusID != "" && a.CampusID != runtime.CampusID) || (runtime.AccessDomain != "" && a.PolicyParameters.AccessDomain != runtime.AccessDomain) {
+			s.recordActionPrecheckFailure(a, errors.New("native source scope mismatch"))
 			return true
 		}
 		inventory, readErr := runtime.Read(ctx)
 		if readErr != nil {
-			s.finishAction(id, "blocked", "", "native identity unavailable")
+			s.recordActionPrecheckFailure(a, errors.New("native identity unavailable"))
 			return true
 		}
 		target, bindErr := srunapi.BindDisconnect(inventory, a.AccountID, a.SessionID, now().UTC(), 30*time.Second)
-		records, recordsErr := inventory.IdentityRecords()
+		records, _, recordsErr := inventory.IdentityRecordsWithStatsContext(ctx)
 		matchesIP := false
 		for _, record := range records {
 			if record["session_id"] == a.SessionID && record["account_id"] == a.AccountID && record["ip"] == a.IP {
@@ -133,19 +218,27 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 			}
 		}
 		if bindErr != nil || recordsErr != nil || !matchesIP {
-			s.finishAction(id, "blocked", "", "native confirmed session no longer matches")
+			s.recordActionPrecheckFailure(a, errors.New("native confirmed session no longer matches"))
 			return true
 		}
 		intent := srunapi.DispatchIntent{Key: a.IdempotencyKey, ConnectorID: a.ConnectorID, Target: target, DropType: runtime.DropType}
 		s.operations.mu.Lock()
 		current := s.operations.doc.Actions[id]
-		if current.Status != "running" {
+		if s.operations.lockErr != nil {
+			err = s.operations.lockErr
 			s.operations.mu.Unlock()
+			s.auditDeliveryResultError(a, "native_binding", err)
+			return true
+		}
+		if current.Status != "running" || actionReceiptFingerprint(current) != actionReceiptFingerprint(a) {
+			s.operations.mu.Unlock()
+			s.auditDeliveryResultError(a, "native_binding", errActionReceiptConflict)
 			return true
 		}
 		current.PolicyParameters.NativeIntent = &intent
 		s.operations.doc.Actions[id] = current
 		err = s.operations.saveLocked()
+		current = s.operations.doc.Actions[id]
 		s.operations.mu.Unlock()
 		if err != nil {
 			return true
@@ -154,7 +247,7 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 	}
 	intent := *a.PolicyParameters.NativeIntent
 	if intent.Key != a.IdempotencyKey || intent.ConnectorID != a.ConnectorID || intent.Target.Account != a.AccountID || intent.Target.SessionID != a.SessionID || intent.DropType != runtime.DropType {
-		s.finishAction(id, "blocked", "", "native intent scope mismatch")
+		s.recordActionPrecheckFailure(a, errors.New("native intent scope mismatch"))
 		return true
 	}
 	executor := srunapi.Executor{Journal: srunapi.Journal{DB: db}, Native: runtime.Client, Read: runtime.Read, Now: now, MaxAge: 30 * time.Second, Authorize: func(c context.Context, _ srunapi.DispatchIntent) error { return s.nativeAuthorization(c, a) }}
@@ -163,7 +256,11 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 	// existing queue with a bounded polling interval, without incrementing sends.
 	s.operations.mu.Lock()
 	current := s.operations.doc.Actions[id]
-	if current.Status == "running" {
+	if s.operations.lockErr != nil {
+		err = s.operations.lockErr
+	} else if current.Status != "running" || actionReceiptFingerprint(current) != actionReceiptFingerprint(a) {
+		err = errActionReceiptConflict
+	} else {
 		current.Status = "pending"
 		current.NextAttemptAt = formatDBTime(time.Now().UTC().Add(10 * time.Second))
 		current.UpdatedAt = formatDBTime(time.Now().UTC())
@@ -188,7 +285,11 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 	}
 	s.operations.mu.Unlock()
 	if err == nil {
-		s.appendAudit(ctx, "enforcement.native_observed", id, result.Delivery+":"+result.Observation)
+		auditCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		s.appendAudit(auditCtx, "enforcement.native_observed", id, result.Delivery+":"+result.Observation)
+		stop()
+	} else {
+		s.auditDeliveryResultError(a, "native_observed", err)
 	}
 	return true
 }

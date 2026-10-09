@@ -24,6 +24,7 @@ func SharedWindowsBySession(events []normalized.Event, sessions []policy.Session
 	}
 	seen := map[string]seenRecord{}
 	conflicting := map[scopeKey]bool{}
+	encodingFailed := false
 	for _, event := range events {
 		switch event.Type {
 		case "http", "tls", "quic", "device", "dns", "flow", "connection":
@@ -44,7 +45,12 @@ func SharedWindowsBySession(events []normalized.Event, sessions []policy.Session
 		}
 		scope := scopeKey{ip.Unmap().String(), stringValue(event.Observer, "sensor_id"), subjectString(event, "campus_id"), stringValue(event.Payload, "access_domain")}
 		identity, _ := json.Marshal([]string{scope.Sensor, event.Source, stringValue(event.Observer, "collector_instance_id"), event.EventID})
-		raw, _ := json.Marshal(event)
+		raw, encodeErr := json.Marshal(event)
+		if encodeErr != nil {
+			complete = false
+			encodingFailed = true
+			continue
+		}
 		digest := sha256.Sum256(raw)
 		if previous, ok := seen[string(identity)]; ok && previous.Digest != digest {
 			conflicting[scope] = true
@@ -56,7 +62,11 @@ func SharedWindowsBySession(events []normalized.Event, sessions []policy.Session
 	type key struct{ IP, Campus, Domain string }
 	boundaries := map[key][]time.Time{}
 	for _, session := range sessions {
-		k := key{session.IP, session.CampusID, session.AccessDomain}
+		ip, err := netip.ParseAddr(session.IP)
+		if err != nil {
+			continue
+		}
+		k := key{ip.Unmap().String(), session.CampusID, session.AccessDomain}
 		for _, at := range []time.Time{session.StartedAt, session.EndedAt} {
 			if at.After(from) && at.Before(to) {
 				boundaries[k] = append(boundaries[k], at)
@@ -81,6 +91,9 @@ func SharedWindowsBySession(events []normalized.Event, sessions []policy.Session
 	unpartitioned := []normalized.Event{}
 	for _, event := range events {
 		ip := sharedString(event.Subject, "ip")
+		if parsed, err := netip.ParseAddr(ip); err == nil {
+			ip = parsed.Unmap().String()
+		}
 		campus := sharedString(event.Subject, "campus_id")
 		if campus == "" {
 			campus = sharedString(event.Payload, "campus_id")
@@ -118,8 +131,25 @@ func SharedWindowsBySession(events []normalized.Event, sessions []policy.Session
 	}
 	for i := range out {
 		window := &out[i]
+		changed := false
+		if encodingFailed {
+			addSharedEncodingConflict(window)
+			changed = true
+		}
 		if conflicting[scopeKey{window.IP, window.SensorID, window.CampusID, window.AccessDomain}] {
-			window.Conflicts = []string{"duplicate_event_changed"}
+			found := false
+			for _, reason := range window.Conflicts {
+				if reason == "duplicate_event_changed" {
+					found = true
+				}
+			}
+			if !found {
+				window.Conflicts = append(window.Conflicts, "duplicate_event_changed")
+			}
+			changed = true
+		}
+		if changed {
+			sort.Strings(window.Conflicts)
 			window.ID = ""
 			raw, _ := json.Marshal(window)
 			sum := sha256.Sum256(raw)

@@ -42,7 +42,7 @@ export function AppPageHeader<T extends ReportWindow = QuickWindow>({
         )}
       </div>
 
-      <Space className="page-header-actions" size="middle" wrap>
+      <Space className="page-header-actions" size="small" wrap>
         {onSensorChange && (
           <Select
             className="sensor-select"

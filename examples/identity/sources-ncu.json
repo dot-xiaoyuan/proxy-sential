@@ -1,0 +1,12 @@
+{
+  "schema_version": "identity-sources/v1",
+  "sources": [
+    {
+      "source": "ncu-srun4k",
+      "sensor_id": "ncu-auth-redis",
+      "campus_id": "ncu",
+      "access_domain": "campus-auth",
+      "reconcile_interval_seconds": 1800
+    }
+  ]
+}

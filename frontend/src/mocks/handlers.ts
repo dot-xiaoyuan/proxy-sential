@@ -25,16 +25,17 @@ import {
   mockFlowSamples,
   mockSession,
   overview,
+  systemStatus,
   proxyReviewResponse,
   riskSnapshots,
   shadowRuns,
-  shadowEvaluation,
-  shadowReviewSamples,
 } from './fixtures'
 
 function normalizeIp(value: string) {
   return decodeURIComponent(value)
 }
+
+let mockSRun4KHost = '192.168.0.190'
 
 const mockCases: RiskCase[] = proxyReviewResponse.items.map((item, index) => ({
   case_id: item.case_id,
@@ -66,12 +67,13 @@ const mockOrganization = {
   access_points: [{ access_point_id: 'ap-lib-01', campus_id: 'main', building_id: 'lib', network_zone_id: 'student-wifi', kind: 'ap', name: '图书馆一层 AP', management_ip: '10.1.1.10', enabled: true }],
 }
 
-const mockConnectors = [{ connector_id: 'portal-gateway', name: 'Portal 北向网关', endpoint_url: 'https://portal.example.edu/api/actions', action_mapping: { disconnect: 'kick' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, shadow_candidate_count: 12, shadow_reviewed_count: 10, shadow_accuracy: .9, updated_at: new Date().toISOString() }]
+const mockConnectors = [{ connector_type: 'srun4k' as const, connector_id: 'portal-gateway', name: '4K 认证系统', endpoint_url: 'https://192.0.2.190:8001', action_mapping: { 'account_policy_v1': 'supported', 'session.disconnect': 'online-drop' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, shadow_candidate_count: 12, shadow_reviewed_count: 10, shadow_accuracy: .9, updated_at: new Date().toISOString() }]
 const mockActions: Array<Record<string, unknown>> = []
 const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管理员',role:'admin',disabled:false},{user_id:'reviewer-1',username:'reviewer',display_name:'风险复核员',role:'reviewer',disabled:false}]
 const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
 
 export const handlers = [
+ http.get('/api/v1/whitelist',()=>HttpResponse.json({items:[],page:{total:0,limit:20},checked_at:new Date().toISOString()})),
  ...sharedAccessHandlers,
  ...discoveryHandlers,
  ...routerObservationHandlers,
@@ -137,6 +139,12 @@ export const handlers = [
   http.get('/api/v1/actions/connectors', () => HttpResponse.json({ items: mockConnectors, global_stop: false })),
   http.post('/api/v1/actions/connectors', async ({request}) => {const payload=await request.json() as typeof mockConnectors[number] & {secret?:string};const existing=mockConnectors.findIndex(item=>item.connector_id===payload.connector_id);const item={...payload,shadow_ready:existing>=0?mockConnectors[existing].shadow_ready:false,updated_at:new Date().toISOString()};delete item.secret;if(existing>=0)mockConnectors[existing]=item;else mockConnectors.push(item);return HttpResponse.json(item)}),
   http.post('/api/v1/actions/connectors/:connectorId/test', ({params}) => HttpResponse.json({connector_id:params.connectorId,reachable:true,checked_at:new Date().toISOString()})),
+  http.post('/api/v1/actions/connectors/:connectorId/4k-sync', ({params}) => HttpResponse.json({connector_id:params.connectorId,source:'srun-office',online_total:16,identity_accounts:12,identity_sessions:16,products:3,groups:2,controls:4,capabilities:['disconnect'],directory_ready:true})),
+  http.get('/api/v1/integrations/srun4k/:connectorId', ({params}) => HttpResponse.json({connector_id:params.connectorId,host:mockSRun4KHost,source:`srun4k:${params.connectorId}`,sensor_id:`srun4k-direct:${params.connectorId}`,reconcile_interval_hours:6,event_channel_state:'waiting',connection_state:'healthy',channels:{authorization_database:'healthy',redis:'healthy',northbound_api:'healthy',event_channel:'waiting'},last_synced_at:new Date().toISOString(),identity_accounts:12,identity_sessions:16,products:3,groups:2,controls:4})),
+  http.post('/api/v1/integrations/srun4k', async ({request}) => {const value=await request.json() as {host:string;reconcile_interval_hours?:number};return HttpResponse.json({connector_id:'srun4k-mock',host:value.host,source:'srun4k:srun4k-mock',sensor_id:'srun4k-direct:srun4k-mock',reconcile_interval_hours:value.reconcile_interval_hours??6,event_channel_state:'waiting',connection_state:'pending',channels:{authorization_database:'pending',redis:'pending',northbound_api:'pending',event_channel:'waiting'},identity_accounts:0,identity_sessions:0,products:0,groups:0,controls:0})}),
+  http.put('/api/v1/integrations/srun4k/:connectorId', async ({params,request}) => {const value=await request.json() as {host:string;reconcile_interval_hours?:number};mockSRun4KHost=value.host;return HttpResponse.json({connector_id:params.connectorId,host:value.host,source:`srun4k:${params.connectorId}`,sensor_id:`srun4k-direct:${params.connectorId}`,reconcile_interval_hours:value.reconcile_interval_hours??6,event_channel_state:'waiting',connection_state:'pending',channels:{authorization_database:'pending',redis:'pending',northbound_api:'pending',event_channel:'waiting'},identity_accounts:12,identity_sessions:16,products:3,groups:2,controls:4})}),
+  http.post('/api/v1/integrations/srun4k/:connectorId/test', ({params}) => HttpResponse.json({connector_id:params.connectorId,checked_at:new Date().toISOString(),online_total:16,channels:{authorization_database:'healthy',redis:'healthy',northbound_api:'healthy',event_channel:'waiting'},enforcement_ready:false})),
+  http.post('/api/v1/integrations/srun4k/:connectorId/sync', ({params}) => HttpResponse.json({connector_id:params.connectorId,source:`srun4k:${params.connectorId}`,synced_at:new Date().toISOString(),identity_accounts:12,identity_sessions:16,address_records:18,products:3,groups:2,controls:4,event_channel_state:'waiting',enforcement_ready:false})),
   http.get('/api/v1/actions', ({ request }) => { const result = mockPage(mockActions, new URL(request.url)); return HttpResponse.json(result) }),
   http.get('/api/v1/actions/:actionId/native-observations', ({ request }) => {
     const older = new URL(request.url).searchParams.has('before')
@@ -154,6 +162,7 @@ export const handlers = [
     await delay(160)
     return HttpResponse.json({...overview,statistics_as_of:new Date().toISOString()})
   }),
+  http.get('/api/v1/system/status', () => HttpResponse.json(systemStatus)),
   http.get('/api/v1/activity/overview', ({ request }) => {
     const url = new URL(request.url)
     const windowValue = url.searchParams.get('window') ?? '1h'
@@ -276,7 +285,7 @@ export const handlers = [
       },
     )
   }),
-  http.get('/api/v1/devices', ({ request }) => {
+  http.get(/\/api\/v1\/(?:devices|device-inventory)$/, ({ request }) => {
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()
     const ip = url.searchParams.get('ip')
@@ -352,6 +361,8 @@ export const handlers = [
     return HttpResponse.json({
       items: pageItems,
       facets,
+      as_of: new Date().toISOString(),
+      read_model_updating: false,
       page: { limit, next_cursor: nextCursor, total: filtered.length },
     })
   }),
@@ -538,10 +549,6 @@ export const handlers = [
       created_by: mockSession.user.id,
       created_at: new Date().toISOString(),
     }
-    if(payload.target_type==='risk_snapshot'){
-      const sample=shadowReviewSamples.samples.find(sample=>sample.sample_id===payload.target_id);
-      if(sample){sample.review_status=payload.label;sample.review_reason=payload.reason;sample.reviewed_by=created.created_by;sample.reviewed_at=created.created_at;}
-    }
     auditLogs.unshift({
       audit_id: `audit-${Date.now()}`,
       actor: mockSession.user.id,
@@ -552,13 +559,6 @@ export const handlers = [
     })
     return HttpResponse.json(created, { status: 201 })
   }),
-  http.get('/api/v1/shadow/runs', ({ request }) => { const result = mockPage(shadowRuns, new URL(request.url)); return HttpResponse.json({ runs: result.items, page: result.page }) }),
-  http.get('/api/v1/shadow/runs/:runId', ({ params }) => { const item = shadowRuns.find((entry) => entry.run_id === params.runId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
-  http.get('/api/v1/shadow/evaluation', () => HttpResponse.json(shadowEvaluation)),
-  http.get('/api/v1/shadow/review-samples', ({ request }) => {
-    const date = new URL(request.url).searchParams.get('date')
-    return HttpResponse.json({ ...shadowReviewSamples, date: date ?? shadowReviewSamples.date })
-  }),
   http.get('/api/v1/audit-logs', ({ request }) => { const result = mockPage(auditLogs, new URL(request.url)); return HttpResponse.json({ logs: result.items, page: result.page }) }),
   http.get('/api/v1/audit-logs/:auditId', ({ params }) => { const item = auditLogs.find((entry) => entry.audit_id === params.auditId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
   http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ domain_available:true,brand_eligible_rule_count:3,domain_sources:[{name:'Apple enterprise networks',version:'reviewed-2026-09-08',rule_count:3,brand_eligible_rule_count:3},{name:'HaGeZi',version:'mock-pinned',rule_count:100,brand_eligible_rule_count:0}],version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,domain_rule_count:128,domain_ecosystem_count:8,domain_source_version:'abcdef123456',domain_backfill_status:'completed',domain_backfill_processed:3200,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0','MIT (NextDNS)'],backfill_status:'completed',backfill_processed:110 })),
@@ -566,7 +566,6 @@ export const handlers = [
   http.post('/api/v1/device-fingerprint-library/validate', () => HttpResponse.json({schema_version:'device-fingerprint-bundle/v1',version:'offline-20260831-mock',created_at:new Date().toISOString(),sources:[{name:'IEEE MA-L/MA-M/MA-S',version:'2026-08-31',url:'https://standards-oui.ieee.org/',license:'IEEE public registry'},{name:'uap-core',version:'mocksha',url:'https://github.com/ua-parser/uap-core',license:'Apache-2.0'},{name:'Fingerbank public snapshot',version:'6.8.2-20140609',url:'https://github.com/karottc/fingerbank',license:'ODbL-1.0/DbCL-1.0'}],files:{}})),
   http.post('/api/v1/device-fingerprint-library/import', () => HttpResponse.json({version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0'],backfill_status:'pending',backfill_processed:0})),
   http.get('/api/v1/rules/status', () => HttpResponse.json({reload_supported:false,reload_status:'disabled'})),
-  http.get('/api/v1/shadow/review-samples/:sampleId', ({params}) => { const sample=shadowReviewSamples.samples.find(s=>s.sample_id===params.sampleId); if(!sample)return new HttpResponse(null,{status:404}); const evidence=(evidenceByIp[sample.ip]??[]).filter(e=>sample.evidence_ids.includes(e.evidence_id)); return HttpResponse.json({sample,snapshot:{ip:sample.ip,level:sample.level,score:sample.score,confidence:sample.confidence,window:"24h",updated_at:sample.snapshot_time,evidence_ids:sample.evidence_ids,summary:"历史回放快照"},evidence,missing_evidence_ids:sample.evidence_ids.filter(id=>!evidence.some(e=>e.evidence_id===id))}); }),
   http.post('/api/v1/rules/reload', () =>
     HttpResponse.json(
       { status: 'disabled', mode: 'shadow', requested_at: new Date().toISOString() },

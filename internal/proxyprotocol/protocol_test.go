@@ -13,6 +13,33 @@ func fixture() (normalized.Event, Producer) {
 	e := normalized.Event{SchemaVersion: "v1", EventID: "e", Type: "proxy_transaction", Source: "test", Timestamp: "2026-09-11T01:00:01Z", Observer: map[string]any{"sensor_id": "s", "collector_instance_id": "boot"}, Subject: map[string]any{"ip": "192.0.2.1"}, Flow: map[string]any{"connection_id": normalized.ConnectionID("s", "test", "boot", "conn")}, Payload: map[string]any{"protocol": "http_connect", "transaction_id": "1", "request_at": "2026-09-11T01:00:00Z", "response_at": "2026-09-11T01:00:01Z", "method": "CONNECT", "status": 200}}
 	return e, p
 }
+
+func TestProducerEpochCannotTrustEarlierOrLaterLogs(t *testing.T) {
+	for _, tc := range []struct {
+		name, from, until, request string
+		trusted                    bool
+	}{
+		{"current epoch", "2026-09-11T01:00:00Z", "2026-09-11T01:01:00Z", "2026-09-11T01:00:00Z", true},
+		{"old log signed after restart", "2026-09-11T01:00:02Z", "2026-09-11T01:01:00Z", "2026-09-11T01:00:00Z", false},
+		{"request before epoch", "2026-09-11T01:00:00Z", "2026-09-11T01:01:00Z", "2026-09-11T00:59:59Z", false},
+		{"response at retired boundary", "2026-09-11T01:00:00Z", "2026-09-11T01:00:01Z", "2026-09-11T01:00:00Z", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, p := fixture()
+			p.ValidFrom, _ = time.Parse(time.RFC3339Nano, tc.from)
+			p.ValidUntil, _ = time.Parse(time.RFC3339Nano, tc.until)
+			e.Payload["request_at"] = tc.request
+			Sign(&e, p)
+			r := Evaluate(e, Config{Version: "bounded", Producers: []Producer{p}})
+			if r.Trusted != tc.trusted {
+				t.Fatalf("trusted=%t expected=%t: %+v", r.Trusted, tc.trusted, r)
+			}
+			if !tc.trusted && (r.Confidence != 0 || r.CampusID != "" || r.AccessDomain != "") {
+				t.Fatal("stale source received attribution", r)
+			}
+		})
+	}
+}
 func TestProtocolOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		name, protocol   string

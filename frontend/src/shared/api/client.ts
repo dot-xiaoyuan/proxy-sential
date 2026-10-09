@@ -1,4 +1,4 @@
-import type { ManagedIdentityConfiguration, ManagedIdentitySource } from "./types"
+import type { FourKSyncResult, ManagedIdentityConfiguration, ManagedIdentitySource, SRun4KIntegration, SRun4KSyncResult, SRun4KTestResult } from "./types"
 import { awaitOperationTask, clearOperationTasks, isOperationTask, type OperationTask } from './operationTasks'
 import type {
  FourKDatabaseConfig, FourKDatabaseResponse, FourKAuthorizationCheck,
@@ -18,6 +18,7 @@ import type {
   DpiProtocolFlowItem,
   DpiTrendPoint,
   DeviceConflict,
+  DeviceInventoryListResponse,
   DeviceListResponse,
   DeviceQuery,
   DeviceSignal,
@@ -39,6 +40,7 @@ import type {
   NormalizedEventSummary,
   ObservedDevice,
   Overview,
+  SystemStatus,
   ProxyReviewQuery,
   ProxyReviewResponse,
   RiskListResponse,
@@ -46,10 +48,7 @@ import type {
   RiskSnapshot,
   RuleReloadResult,
   Session,
-  ShadowRun,
   ShadowRunListResponse,
-  ShadowEvaluation,
-  ShadowReviewSamples,
   UpdateEndpointRegistrationRequest,
   ListQuery,
   DeviceFingerprintLibraryStatus,
@@ -133,6 +132,7 @@ export const api = {
   login: async (payload:LoginRequest) => { const session=await request<Session>('/auth/login',{method:'POST',body:JSON.stringify(payload)});csrfToken=session.csrf_token??'';return session },
   logout: async () => { await request<void>('/auth/logout',{method:'POST'});csrfToken='';clearOperationTasks() },
   overview: (query: ActivityOverviewQuery = {}) => request<Overview>(`/overview${search(query)}`),
+  systemStatus: () => request<SystemStatus>('/system/status'),
   activityOverview: (query: ActivityOverviewQuery) =>
     request<ActivityOverview>(`/activity/overview${search(query)}`),
   activityReport: (query:ActivityOverviewQuery & {dimension:string;limit?:number}) => request<ActivityReport>(`/activity/reports${search(query)}`),
@@ -154,6 +154,7 @@ export const api = {
   dpiFlow: (flowId: string) =>
     request<DpiFlowDetail>(`/dpi/flows/${encodeURIComponent(flowId)}`),
   devices: (query: DeviceQuery) => request<DeviceListResponse>(`/devices${search(query)}`),
+  deviceInventory: (query: DeviceQuery) => request<DeviceInventoryListResponse>(`/device-inventory${search(query)}`),
   deviceRecognitionSummary: () => request<DeviceRecognitionSummary>('/device-recognition/summary'),
   routerObservations: (query: RouterObservationQuery = {}) =>
     request<RouterAssessmentPage>(`/router-observations${search(query)}`),
@@ -205,10 +206,6 @@ export const api = {
     request<IngestDiagnosticListResponse>(`/ingest/errors${search(query)}`),
   createLabel: (payload: CreateLabelRequest) =>
     request<Label>('/labels', { method: 'POST', body: JSON.stringify(payload) }),
-  shadowRuns: (query: ListQuery = {}) => request<ShadowRunListResponse>(`/shadow/runs${search(query)}`),
-  shadowRun: (runId: string) => request<ShadowRun>(`/shadow/runs/${encodeURIComponent(runId)}`),
-  shadowEvaluation: () => request<ShadowEvaluation>('/shadow/evaluation'),
-  shadowReviewSamples: (date?: string) => request<ShadowReviewSamples>(`/shadow/review-samples${search({ date })}`),
   auditLogs: (query: ListQuery = {}) => request<AuditLogListResponse>(`/audit-logs${search(query)}`),
   auditLog: (auditId: string) => request<AuditLog>(`/audit-logs/${encodeURIComponent(auditId)}`),
   deviceFingerprintLibrary: () => request<DeviceFingerprintLibraryStatus>('/device-fingerprint-library'),
@@ -216,7 +213,7 @@ export const api = {
   validateDeviceFingerprintBundle: (file: File) => { const body=new FormData();body.append('bundle',file);return request<DeviceFingerprintBundleManifest>('/device-fingerprint-library/validate',{method:'POST',body}) },
   importDeviceFingerprintBundle: (file: File) => { const body=new FormData();body.append('bundle',file);return request<DeviceFingerprintLibraryStatus>('/device-fingerprint-library/import',{method:'POST',body}) },
   reloadRules: () => request<RuleReloadResult>('/rules/reload', { method: 'POST' }),
-  cases: (query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;department?:string;person_type?:string;ssid?:string;vlan?:string;ap?:string;nas_ip?:string;window?:string} = {}) => request<RiskCaseListResponse>(`/cases${search(query)}`),
+  cases: (query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;department?:string;person_type?:string;ssid?:string;vlan?:string;ap?:string;nas_ip?:string;window?:string;include_router_observations?:boolean} = {}) => request<RiskCaseListResponse>(`/cases${search(query)}`),
   caseHistory: (caseId:string,kind:CaseHistoryKind,cursor="0") => request<CaseHistoryResponse>(`/cases/${encodeURIComponent(caseId)}/history/${kind}${search({limit:20,cursor})}`),
   caseDetail: (caseId:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}`),
   assignCase: (caseId:string,assignee_id:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/assign`,{method:'POST',body:JSON.stringify({assignee_id})}),
@@ -235,6 +232,13 @@ export const api = {
   fourKDatabase: (id: string) => request<FourKDatabaseResponse>(`/actions/connectors/${encodeURIComponent(id)}/4k-database`),
   saveFourKDatabase: (id: string, value: FourKDatabaseConfig) => request<FourKDatabaseResponse>(`/actions/connectors/${encodeURIComponent(id)}/4k-database`, { method: 'PUT', body: JSON.stringify(value) }),
   checkFourKDatabase: (id: string) => request<FourKAuthorizationCheck>(`/actions/connectors/${encodeURIComponent(id)}/4k-database`, { method: 'POST' }),
+  syncFourK: (id: string, source = 'srun-office') => request<FourKSyncResult>(`/actions/connectors/${encodeURIComponent(id)}/4k-sync`, { method: 'POST', body: JSON.stringify({ source }) }),
+  srun4KIntegrations: () => request<{items:SRun4KIntegration[]}>('/integrations/srun4k'),
+  srun4KIntegration: (id: string) => request<SRun4KIntegration>(`/integrations/srun4k/${encodeURIComponent(id)}`),
+  createSRun4KIntegration: (value: {host:string;reconcile_interval_hours?:number}) => request<SRun4KIntegration>('/integrations/srun4k', {method:'POST',body:JSON.stringify(value)}),
+  updateSRun4KIntegration: (id: string, value: {host:string;reconcile_interval_hours?:number}) => request<SRun4KIntegration>(`/integrations/srun4k/${encodeURIComponent(id)}`, {method:'PUT',body:JSON.stringify(value)}),
+  testSRun4KIntegration: (id: string) => request<SRun4KTestResult>(`/integrations/srun4k/${encodeURIComponent(id)}/test`, {method:'POST'}),
+  syncSRun4KIntegration: (id: string) => request<SRun4KSyncResult>(`/integrations/srun4k/${encodeURIComponent(id)}/sync`, {method:'POST'}),
   testActionConnector: (connectorId:string) => request<{connector_id:string;reachable:boolean;checked_at:string;identity_verified?:boolean}>(`/actions/connectors/${encodeURIComponent(connectorId)}/test`,{method:'POST'}),
   actions: (query:ListQuery={}) => request<{items:EnforcementAction[];page:Page}>(`/actions${search(query)}`),
   executeAction: (payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number},idempotencyKey:string) => request<EnforcementAction>('/actions/execute',{method:'POST',headers:{'Idempotency-Key':idempotencyKey},body:JSON.stringify(payload)}),

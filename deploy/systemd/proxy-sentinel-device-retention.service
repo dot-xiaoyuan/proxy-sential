@@ -7,9 +7,10 @@ Type=oneshot
 WorkingDirectory=/opt/proxy-sentinel
 Environment=RETENTION_BATCH_SIZE=500
 Environment=RETENTION_MAX_BATCHES=120
+Environment=RETENTION_MAX_DURATION=13m
 EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
 EnvironmentFile=-/opt/proxy-sentinel/config/device-retention.env
-ExecStart=/opt/proxy-sentinel/current/bin/device-retention --apply --batch-size ${RETENTION_BATCH_SIZE} --max-batches ${RETENTION_MAX_BATCHES}
+ExecStart=/opt/proxy-sentinel/current/bin/device-retention --apply --batch-size ${RETENTION_BATCH_SIZE} --max-batches ${RETENTION_MAX_BATCHES} --max-duration ${RETENTION_MAX_DURATION}
 TimeoutStartSec=15min
 TimeoutStopSec=30s
 KillSignal=SIGTERM

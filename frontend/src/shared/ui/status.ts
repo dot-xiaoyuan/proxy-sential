@@ -1,5 +1,6 @@
 // Unmapped execution states remain visible verbatim for troubleshooting.
 export const statusLabels: Record<string,string> = {
+ whitelist_suppressed:'白名单豁免，动作已停止',
  normal:'正常', suspicious:'可疑', high:'高风险', confirmed:'极高风险',
  confirmed_proxy:'确认代理', false_positive:'误报', benign:'良性', needs_more_data:'需补数据', unreviewed:'未复核',
  shadow:'影子模式', active:'真实模式', observe:'仅观测', manual:'人工确认', automatic:'自动执行',
@@ -11,6 +12,7 @@ export const statusLabels: Record<string,string> = {
  new:'新建', assigned:'已分派', investigating:'调查中', waiting_data:'等待数据', resolved:'已解决', closed:'已关闭', reopened:'重新打开',
  error:'错误', warning:'警告', info:'提示', success:'成功', skipped:'已跳过',
  disconnect:'强制下线', rate_limit:'带宽降速', disable_account:'用户封禁', notify:'消息提醒', record:'仅记录',
+ shadow_watch:'影子观察', shadow_manual_review:'人工复核（影子）', shadow_confirm_review:'重点复核（影子）',
 }
 export function statusText(value?: string | null) { return value ? statusLabels[value] ?? value : '' }
 const severityLabels:Record<string,string>={critical:'严重',high:'高',medium:'中',low:'低',info:'提示',warning:'警告',error:'错误'}

@@ -91,6 +91,7 @@ func (r *Repository) Commit(ctx context.Context, results []Result, state ScanSta
 			return err
 		}
 		for _, item := range results {
+			item = normalizeResult(item)
 			var raw []byte
 			err = tx.QueryRowContext(ctx, `SELECT document FROM proxy_protocol_results WHERE evidence_id=$1`, item.ID).Scan(&raw)
 			if err != nil && err != sql.ErrNoRows {
@@ -125,6 +126,7 @@ func (r *Repository) Commit(ctx context.Context, results []Result, state ScanSta
 		return tx.Commit()
 	}
 	for _, item := range results {
+		item = normalizeResult(item)
 		path := filepath.Join(r.dir, "results", item.ID+".json")
 		raw, err := os.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
@@ -175,7 +177,7 @@ func (r *Repository) Query(ctx context.Context, ip string, since time.Time, limi
 			if err = json.Unmarshal(raw, &v); err != nil {
 				return nil, err
 			}
-			out = append(out, v)
+			out = append(out, normalizeResult(v))
 		}
 		return out, rows.Err()
 	}
@@ -196,7 +198,7 @@ func (r *Repository) Query(ctx context.Context, ip string, since time.Time, limi
 			return nil, fmt.Errorf("read proxy result: %w", err)
 		}
 		if !v.ObservedAt.Before(since) && (ip == "" || ip == v.IP) {
-			out = append(out, v)
+			out = append(out, normalizeResult(v))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

@@ -705,10 +705,18 @@ func mergeInfrastructureEntity(current InfrastructureEntity, fact identityFact) 
 }
 
 func accountSessionFromFact(fact identityFact) AccountSession {
+	domain := stringFromMap(fact.Payload, "access_domain")
+	maxInterval := 86400
+	if strings.HasPrefix(fact.Source, "srun4k:") {
+		// A NAS address is source evidence, not an upstream access-domain attribute.
+		maxInterval = 604800
+	} else {
+		domain = firstNonEmpty(domain, stringFromMap(fact.Payload, "nas_ip"))
+	}
 	session := AccountSession{
 		GroupID: stringFromMap(fact.Payload, "group_id"), ProductID: stringFromMap(fact.Payload, "product_id"),
-		AccessDomain:    firstNonEmpty(stringFromMap(fact.Payload, "access_domain"), stringFromMap(fact.Payload, "nas_ip")),
-		LastConfirmedAt: fact.Timestamp, HeartbeatSeconds: policyInterval(fact.Payload, "heartbeat_interval_seconds"), ReconcileSeconds: policyInterval(fact.Payload, "reconcile_interval_seconds"), DeviceClass: stringFromMap(fact.Payload, "device_class"),
+		AccessDomain:    domain,
+		LastConfirmedAt: fact.Timestamp, HeartbeatSeconds: policyInterval(fact.Payload, "heartbeat_interval_seconds", maxInterval), ReconcileSeconds: policyInterval(fact.Payload, "reconcile_interval_seconds", maxInterval), DeviceClass: stringFromMap(fact.Payload, "device_class"),
 		SessionID:          fact.SessionID(),
 		AccountID:          fact.AccountID,
 		EndpointID:         fact.EndpointID,
@@ -902,9 +910,9 @@ func stableIdentityID(parts ...string) string {
 	return hex.EncodeToString(sum[:])[:20]
 }
 
-func policyInterval(m map[string]any, k string) int {
+func policyInterval(m map[string]any, k string, maxInterval int) int {
 	n, _ := strconv.Atoi(fmt.Sprint(m[k]))
-	if n < 0 || n > 86400 {
+	if n < 0 || n > maxInterval {
 		return 0
 	}
 	return n

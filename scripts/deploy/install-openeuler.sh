@@ -64,8 +64,9 @@ if [[ "$manage_zeek" == true ]]; then
   : "${PROXY_SENTINEL_ZEEK_X509_PATH:=$zeek_log_dir/x509.log}"
   : "${PROXY_SENTINEL_ZEEK_LLDP_PATH:=$zeek_log_dir/lldp.log}"
   : "${PROXY_SENTINEL_ZEEK_SSDP_PATH:=$zeek_log_dir/ssdp.log}"
+  : "${PROXY_SENTINEL_ZEEK_SNMP_PATH:=$zeek_log_dir/snmp.log}"
   export PROXY_SENTINEL_ZEEK_DHCP_PATH PROXY_SENTINEL_ZEEK_SOFTWARE_PATH PROXY_SENTINEL_ZEEK_MDNS_PATH PROXY_SENTINEL_ZEEK_NBNS_PATH PROXY_SENTINEL_ZEEK_LLMNR_PATH
-  export PROXY_SENTINEL_ZEEK_CONN_PATH PROXY_SENTINEL_ZEEK_DNS_PATH PROXY_SENTINEL_ZEEK_HTTP_PATH PROXY_SENTINEL_ZEEK_SSL_PATH PROXY_SENTINEL_ZEEK_X509_PATH PROXY_SENTINEL_ZEEK_LLDP_PATH PROXY_SENTINEL_ZEEK_SSDP_PATH
+  export PROXY_SENTINEL_ZEEK_CONN_PATH PROXY_SENTINEL_ZEEK_DNS_PATH PROXY_SENTINEL_ZEEK_HTTP_PATH PROXY_SENTINEL_ZEEK_SSL_PATH PROXY_SENTINEL_ZEEK_X509_PATH PROXY_SENTINEL_ZEEK_LLDP_PATH PROXY_SENTINEL_ZEEK_SSDP_PATH PROXY_SENTINEL_ZEEK_SNMP_PATH
 fi
 ingest_source_args="--eve $eve_path"
 shadow_zeek_args=""
@@ -107,6 +108,7 @@ preflight() {
   [[ "$(uname -m)" == "x86_64" ]] || die "only x86_64 is supported"
   for command in docker systemctl curl ip ss tar gzip sha256sum flock; do command -v "$command" >/dev/null || die "missing command: $command"; done
   docker info >/dev/null || die "Docker daemon is unavailable"
+  if [[ -f "$root/config/proxy-source-scope.json" ]]; then command -v python3 >/dev/null || die "managed proxy sources require Python3"; fi
   systemctl --version >/dev/null || die "systemd is unavailable"
   if [[ "$manage_suricata" == true ]]; then
     ip link show "$interface" >/dev/null || die "mirror interface does not exist: $interface"
@@ -160,6 +162,7 @@ preflight() {
   append_ingest_source PROXY_SENTINEL_ZEEK_X509_PATH --zeek-x509
   append_ingest_source PROXY_SENTINEL_ZEEK_LLDP_PATH --zeek-lldp
   append_ingest_source PROXY_SENTINEL_ZEEK_SSDP_PATH --zeek-ssdp
+  append_ingest_source PROXY_SENTINEL_ZEEK_SNMP_PATH --zeek-snmp
   if [[ "$manage_device_signals" == true ]]; then
     PROXY_SENTINEL_DEVICE_SIGNAL_PATH="$device_signal_path"
     export PROXY_SENTINEL_DEVICE_SIGNAL_PATH
@@ -174,6 +177,7 @@ preflight() {
   if [[ -n "${PROXY_SENTINEL_ZEEK_X509_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-x509 $PROXY_SENTINEL_ZEEK_X509_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_LLDP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-lldp $PROXY_SENTINEL_ZEEK_LLDP_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_SSDP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-ssdp $PROXY_SENTINEL_ZEEK_SSDP_PATH"; fi
+  if [[ -n "${PROXY_SENTINEL_ZEEK_SNMP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-snmp $PROXY_SENTINEL_ZEEK_SNMP_PATH"; fi
   (cd "$(dirname "$archive")" && sha256sum -c "$(basename "$checksum")")
   tar -tzf "$archive" >/dev/null
   [[ ! -e "$release_dir" && ! -e "$stage_dir" ]] || die "release version already exists: $version"
@@ -208,13 +212,15 @@ start_storage_direct() {
   done
   docker run -d --name proxy-sentinel-postgres --restart unless-stopped \
     --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
+    --cpus "${POSTGRES_CPUS:-2.0}" --memory "${POSTGRES_MEMORY:-3g}" \
     -e POSTGRES_DB -e POSTGRES_USER -e POSTGRES_PASSWORD -e PGDATA=/var/lib/postgresql/data/pgdata \
     -p "127.0.0.1:${POSTGRES_HOST_PORT:-25432}:5432" \
-    -v "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/postgres:/var/lib/postgresql/data" \
+    -v "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/postgres:/var/lib/postgresql" \
     --health-cmd='pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' --health-interval=10s --health-timeout=5s --health-retries=12 \
     "$POSTGRES_IMAGE" >/dev/null
   docker run -d --name proxy-sentinel-clickhouse --restart unless-stopped \
     --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
+    --cpus "${CLICKHOUSE_CPUS:-8.0}" --memory "${CLICKHOUSE_MEMORY:-12g}" \
     -e CLICKHOUSE_DB -e CLICKHOUSE_USER -e CLICKHOUSE_PASSWORD -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
     -p "127.0.0.1:${CLICKHOUSE_HTTP_HOST_PORT:-28123}:8123" \
     -p "127.0.0.1:${CLICKHOUSE_NATIVE_HOST_PORT:-29000}:9000" \
@@ -274,7 +280,7 @@ if [[ "$preflight_only" == true ]]; then
   log "preflight completed; current release was not modified"
   exit 0
 fi
-mkdir -p "$root/releases" "$root/config" "$root/data/shadow/evaluation" "$root/data/device-fingerprints" "$root/data/device-signals" "$root/data/applications" "$root/backups"
+mkdir -p "$root/releases" "$root/config" "$root/data/device-fingerprints" "$root/data/device-signals" "$root/data/applications" "$root/backups"
 chmod 0700 "$root/config" "$root/backups"
 mkdir "$stage_dir"
 trap 'rm -rf "$stage_dir"' EXIT
@@ -340,7 +346,7 @@ old_target="$(readlink -f "$root/current" 2>/dev/null || true)"
 if [[ "$old_target" == "$root/current" || "$old_target" != "$root/releases/"* || ! -d "$old_target" ]]; then
   old_target=""
 fi
-for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.service proxy-sentinel-shadow-evaluation.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-application-materializer.service; do
+for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
   [[ -f "/etc/systemd/system/$unit" ]] && cp -a "/etc/systemd/system/$unit" "$unit_backup/$unit"
 done
 rollback_install() {
@@ -348,9 +354,9 @@ rollback_install() {
   systemctl stop proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service \
     proxy-sentinel-device-signal.service proxy-sentinel-suricata.service proxy-sentinel-zeek.service \
     proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service \
-    proxy-sentinel-recognition-materializer.service proxy-sentinel-application-materializer.service >/dev/null 2>&1 || true
+    proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.timer proxy-sentinel-proxy-source-refresh.service >/dev/null 2>&1 || true
   if [[ -n "$old_target" ]]; then ln -sfn "$old_target" "$root/current.next"; mv -Tf "$root/current.next" "$root/current"; else rm -f "$root/current"; fi
-  for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.service proxy-sentinel-shadow-evaluation.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-application-materializer.service; do
+  for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
     if [[ -f "$unit_backup/$unit" ]]; then cp -a "$unit_backup/$unit" "/etc/systemd/system/$unit"; else rm -f "/etc/systemd/system/$unit"; fi
   done
   systemctl daemon-reload
@@ -358,7 +364,7 @@ rollback_install() {
   if [[ "$manage_zeek" == true ]]; then systemctl start proxy-sentinel-zeek.service >/dev/null 2>&1 || true; fi
   if [[ "$manage_device_signals" == true ]]; then systemctl start proxy-sentinel-device-signal.service >/dev/null 2>&1 || true; fi
   if [[ "$ingest_enabled" == true ]]; then systemctl restart proxy-sentinel-ingest.service >/dev/null 2>&1 || true; fi
-  systemctl start proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.timer >/dev/null 2>&1 || true
+  systemctl start proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true
   systemctl restart proxy-sentinel-control-plane.service >/dev/null 2>&1 || true
 }
 trap rollback_install ERR
@@ -376,6 +382,7 @@ Wants=network-online.target docker.service
 Type=simple
 WorkingDirectory=$root/current
 EnvironmentFile=$runtime_env
+EnvironmentFile=-$root/config/proxy-source.env
 ExecStart=$root/current/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $root/data/shadow --sensor-id $sensor_id --frontend-dir $root/current/frontend/dist --storage-mode db --read-only=$read_only --applications-dir $root/data/applications --device-fingerprint-dir $root/data/device-fingerprints --device-fingerprint-auto-update=false --postgres-migrations-dir $root/current/migrations/postgres
 Restart=always
 RestartSec=5
@@ -385,7 +392,7 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
-for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-application-materializer.service; do
+for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
   sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
 done
 
@@ -401,6 +408,7 @@ Wants=network-online.target docker.service
 Type=simple
 WorkingDirectory=$root/current
 EnvironmentFile=$runtime_env
+EnvironmentFile=-$root/config/proxy-source.env
 ExecStart=$root/current/bin/proxy-sentinel ingest run --sensor-id $sensor_id $ingest_source_args --poll-interval ${PROXY_SENTINEL_INGEST_POLL_INTERVAL:-2s} --max-batch-bytes ${PROXY_SENTINEL_INGEST_MAX_BATCH_BYTES:-8388608} --store-timeout ${PROXY_SENTINEL_INGEST_STORE_TIMEOUT:-2m} --heartbeat-interval ${PROXY_SENTINEL_INGEST_HEARTBEAT_INTERVAL:-30s}
 Restart=on-failure
 RestartSec=5
@@ -455,26 +463,8 @@ Unit=proxy-sentinel-shadow.service
 [Install]
 WantedBy=timers.target
 EOF
-cat > /etc/systemd/system/proxy-sentinel-shadow-evaluation.service <<EOF
-[Unit]
-Description=Proxy Sentinel shadow validation report
-After=proxy-sentinel-shadow.service
-[Service]
-Type=oneshot
-WorkingDirectory=$root/current
-EnvironmentFile=$runtime_env
-ExecStart=$root/current/bin/proxy-sentinel evaluate shadow --shadow-dir $root/data/shadow --required-days 7 --samples-per-level 10 --daily-export-dir $root/data/shadow/review-exports --output $root/data/shadow/evaluation/latest.json
-EOF
-cat > /etc/systemd/system/proxy-sentinel-shadow-evaluation.timer <<EOF
-[Unit]
-Description=Refresh Proxy Sentinel shadow validation hourly
-[Timer]
-OnCalendar=*-*-* *:05:00
-Persistent=true
-Unit=proxy-sentinel-shadow-evaluation.service
-[Install]
-WantedBy=timers.target
-EOF
+systemctl disable --now proxy-sentinel-shadow-evaluation.timer proxy-sentinel-shadow-evaluation.service >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/proxy-sentinel-shadow-evaluation.timer /etc/systemd/system/proxy-sentinel-shadow-evaluation.service
 
 if [[ "$manage_suricata" == true ]]; then
   command -v suricata >/dev/null || die "Suricata is required when PROXY_SENTINEL_MANAGE_SURICATA=true"
@@ -505,8 +495,22 @@ EOF
   cat > /etc/logrotate.d/proxy-sentinel-suricata <<EOF
 $eve_path {
   hourly
-  size ${PROXY_SENTINEL_EVE_ROTATE_SIZE:-1G}
-  rotate ${PROXY_SENTINEL_EVE_ROTATE_COUNT:-4}
+  size ${PROXY_SENTINEL_EVE_ROTATE_SIZE:-512M}
+  rotate ${PROXY_SENTINEL_EVE_ROTATE_COUNT:-8}
+  missingok
+  compress
+  delaycompress
+  notifempty
+  create 0640 root root
+  sharedscripts
+  postrotate
+    /usr/bin/systemctl kill -s HUP proxy-sentinel-suricata.service >/dev/null 2>&1 || true
+  endscript
+}
+$(dirname "$eve_path")/stats.log $(dirname "$eve_path")/fast.log $(dirname "$eve_path")/suricata.log {
+  hourly
+  size ${PROXY_SENTINEL_SURICATA_AUX_ROTATE_SIZE:-64M}
+  rotate ${PROXY_SENTINEL_SURICATA_AUX_ROTATE_COUNT:-4}
   missingok
   compress
   delaycompress
@@ -593,7 +597,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$zeek_log_dir
 ExecStartPre=/usr/bin/test -w $zeek_log_dir
-ExecStart=/usr/local/bin/zeek -i $interface $root/current/assets/zeek/local-device-signals.zeek policy/protocols/dhcp/software.zeek
+ExecStart=/usr/local/bin/zeek -i $interface $root/current/assets/zeek/local-device-signals.zeek policy/protocols/dhcp/software.zeek $root/current/assets/zeek/proxy-transactions.zeek
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
@@ -606,12 +610,16 @@ install -m 0755 "$release_dir/scripts/proxy-sentinelctl" /usr/local/bin/proxy-se
 mkdir -p /usr/local/lib/proxy-sentinel
 install -m 0700 "$0" /usr/local/lib/proxy-sentinel/install-openeuler.sh
 systemctl daemon-reload
+if [[ -f "$root/config/proxy-source-scope.json" ]]; then
+  command -v python3 >/dev/null || die "managed proxy sources require Python3"
+  systemctl enable --now proxy-sentinel-proxy-source-refresh.timer
+fi
 if [[ "$manage_suricata" == true ]]; then systemctl enable --now proxy-sentinel-suricata.service proxy-sentinel-logrotate.timer; else systemctl disable --now proxy-sentinel-suricata.service proxy-sentinel-logrotate.timer >/dev/null 2>&1 || true; fi
 if [[ "$manage_zeek" == true ]]; then systemctl enable --now proxy-sentinel-zeek.service; else systemctl disable --now proxy-sentinel-zeek.service >/dev/null 2>&1 || true; fi
 if [[ "$manage_device_signals" == true ]]; then systemctl enable --now proxy-sentinel-device-signal.service; else systemctl disable --now proxy-sentinel-device-signal.service >/dev/null 2>&1 || true; fi
 if [[ "$ingest_enabled" == true ]]; then systemctl enable --now proxy-sentinel-ingest.service; else systemctl disable --now proxy-sentinel-ingest.service >/dev/null 2>&1 || true; fi
-systemctl disable --now proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer proxy-sentinel-shadow-evaluation.timer >/dev/null 2>&1 || true
-systemctl enable --now proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-control-plane.service
+systemctl disable --now proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true
+systemctl enable --now proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-control-plane.service
 # `enable --now` does not restart an already running service during an
 # in-place upgrade. Restart each enabled long-running worker so no process
 # keeps executing the binary from the previous release symlink.
@@ -619,7 +627,7 @@ if [[ "$manage_suricata" == true ]]; then systemctl restart proxy-sentinel-suric
 if [[ "$manage_zeek" == true ]]; then systemctl restart proxy-sentinel-zeek.service; fi
 if [[ "$manage_device_signals" == true ]]; then systemctl restart proxy-sentinel-device-signal.service; fi
 if [[ "$ingest_enabled" == true ]]; then systemctl restart proxy-sentinel-ingest.service; fi
-systemctl restart proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-application-materializer.service
+systemctl restart proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service
 systemctl restart proxy-sentinel-control-plane.service
 
 for _ in $(seq 1 20); do

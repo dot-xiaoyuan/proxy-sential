@@ -42,8 +42,14 @@ VALUES($1,jsonb_build_object('cutover',$2::text,'available_from',$2::text)) ON C
 	if err != nil {
 		return time.Time{}, err
 	}
+	return s.readActivityV3Cutover(ctx)
+}
+
+// GET requests only read worker-owned state. Initialization belongs to workers
+// and must never turn a statistics read into an INSERT or wait on a writer.
+func (s *DBStore) readActivityV3Cutover(ctx context.Context) (time.Time, error) {
 	var raw string
-	if err = s.pg.db.QueryRowContext(ctx, `SELECT state->>'cutover' FROM read_model_runtime_state WHERE name=$1`, activityV3CutoverState).Scan(&raw); err != nil {
+	if err := s.pg.db.QueryRowContext(ctx, `SELECT state->>'cutover' FROM read_model_runtime_state WHERE name=$1`, activityV3CutoverState).Scan(&raw); err != nil {
 		return time.Time{}, err
 	}
 	return parseReadModelTime(raw)
@@ -75,6 +81,9 @@ func parseReadModelTime(raw string) (time.Time, error) {
 func (s *DBStore) dispatchActivityV3Jobs(ctx context.Context) (int, error) {
 	cutover, err := s.ensureActivityV3Cutover(ctx)
 	if err != nil {
+		return 0, err
+	}
+	if _, err = s.repairActivityV3Finalization(ctx); err != nil {
 		return 0, err
 	}
 	tx, err := s.pg.db.BeginTx(ctx, nil)
@@ -242,6 +251,10 @@ func (s *DBStore) publishActivityV3Version(ctx context.Context, granularity stri
 }
 
 func (s *DBStore) materializeActivityV3FiveMinute(ctx context.Context, job readModelJob) error {
+	return s.materializeActivityV3FiveMinuteAt(ctx, job, time.Now().UTC())
+}
+
+func (s *DBStore) materializeActivityV3FiveMinuteAt(ctx context.Context, job readModelJob, now time.Time) error {
 	revision, err := s.nextReadModelRevision(ctx)
 	if err != nil {
 		return err
@@ -260,17 +273,25 @@ func (s *DBStore) materializeActivityV3FiveMinute(ctx context.Context, job readM
 	if err = s.ch.exec(ctx, query); err != nil {
 		return err
 	}
-	finalized := !time.Now().UTC().Before(to.Add(90 * time.Second))
+	finalized := !now.Before(to.Add(90 * time.Second))
 	if err = s.publishActivityV3Version(ctx, "5m", from, job.SensorID, job.CampusID, revision, finalized); err != nil {
 		return err
 	}
-	if finalized {
+	if !finalized {
+		// A quiet bucket receives no more dirty receipts. Keep one pending
+		// generation so the final publication and parent job cannot be skipped.
+		_, err = s.pg.db.ExecContext(ctx, `UPDATE read_model_jobs SET dirty_generation=GREATEST(dirty_generation,$5+1),not_before=GREATEST(not_before,$6),updated_at=now()
+WHERE model=$1 AND bucket_start=$2 AND sensor_id=$3 AND campus_id=$4`, job.Model, job.BucketStart, job.SensorID, job.CampusID, job.DirtyGeneration, to.Add(90*time.Second))
+		if err != nil {
+			return err
+		}
+	} else {
 		hour := from.Truncate(time.Hour)
 		// Late and replayed receipts can finalize several child buckets for the
 		// same hour in quick succession. Push the parent job out after every
 		// child publication so the hour is rebuilt once after the stream is
 		// quiet, rather than once per child generation.
-		notBefore := activityParentNotBefore(hour.Add(time.Hour+5*time.Minute), time.Now().UTC(), 90*time.Second)
+		notBefore := activityParentNotBefore(hour.Add(time.Hour+5*time.Minute), now, 90*time.Second)
 		_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
 VALUES($1,$2,$3,$4,$5) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
 dirty_generation=CASE
@@ -284,10 +305,49 @@ not_before=GREATEST(read_model_jobs.not_before,EXCLUDED.not_before),updated_at=n
 		}
 	}
 	asOf := to
-	if now := time.Now().UTC(); asOf.After(now) {
+	if asOf.After(now) {
 		asOf = now
 	}
 	return s.updateActivityV3State(ctx, "5m", asOf)
+}
+
+// Finalize legacy completed children once, including partially published
+// children whose hour already has a parent from another child. This is a
+// one-time bounded PostgreSQL queue operation; the realtime worker still owns
+// all ClickHouse publication, leases, retries, and live-first priority.
+func (s *DBStore) repairActivityV3Finalization(ctx context.Context) (int, error) {
+	const name = "activity-v3-finalization-repair-v1"
+	tx, err := s.pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state) VALUES($1,'{}') ON CONFLICT(name) DO NOTHING`, name); err != nil {
+		return 0, err
+	}
+	var done bool
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE((state->>'complete')::boolean,false) FROM read_model_runtime_state WHERE name=$1 FOR UPDATE`, name).Scan(&done); err != nil {
+		return 0, err
+	}
+	if done {
+		return 0, tx.Commit()
+	}
+	var count int
+	if err = tx.QueryRowContext(ctx, `WITH picked AS (
+ SELECT j.model,j.bucket_start,j.sensor_id,j.campus_id FROM read_model_jobs j
+ WHERE j.model=$1 AND j.status='completed' AND j.processed_generation>=j.dirty_generation
+ AND j.bucket_start+interval '6 minutes 30 seconds'<=now()
+ ORDER BY j.bucket_start,j.sensor_id,j.campus_id FOR UPDATE OF j LIMIT 100
+), repaired AS (
+ UPDATE read_model_jobs j SET dirty_generation=j.processed_generation+1,status='pending',not_before=LEAST(j.not_before,now()),updated_at=now()
+ FROM picked p WHERE j.model=p.model AND j.bucket_start=p.bucket_start AND j.sensor_id=p.sensor_id AND j.campus_id=p.campus_id RETURNING j.model
+) SELECT count(*) FROM repaired`, activityV3FiveMinuteModel).Scan(&count); err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE read_model_runtime_state SET state=jsonb_build_object('complete',$2::boolean,'queued',COALESCE((state->>'queued')::int,0)+$3::int),updated_at=now() WHERE name=$1`, name, count < 100, count); err != nil {
+		return 0, err
+	}
+	return count, tx.Commit()
 }
 
 func (s *DBStore) materializeActivityV3Coarse(ctx context.Context, job readModelJob) error {
@@ -358,25 +418,66 @@ state=jsonb_build_object('as_of',GREATEST(
 	return err
 }
 
+// A successful loop proves that receipt dispatch and the ready job queue were
+// checked even if no packet arrived. This checkpoint never advances event as_of.
+func (s *DBStore) recordActivityV3RealtimeHealth(ctx context.Context, runErr error, at time.Time) error {
+	state := map[string]any{"status": "ready", "last_error": ""}
+	if runErr != nil {
+		state["status"] = "failed"
+		state["last_error"] = runErr.Error()
+	} else {
+		state["last_success_at"] = at.UTC().Format(time.RFC3339Nano)
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('activity-v3-realtime-health',$1,$2) ON CONFLICT(name) DO UPDATE SET state=read_model_runtime_state.state||EXCLUDED.state,updated_at=EXCLUDED.updated_at`, raw, at)
+	return err
+}
+
 func (s *DBStore) RunActivityV3Realtime(ctx context.Context) {
 	worker := fmt.Sprintf("realtime-%d", os.Getpid())
 	for ctx.Err() == nil {
 		workCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		if _, dispatchErr := s.dispatchActivityV3Jobs(workCtx); dispatchErr != nil {
+		_, dispatchErr := s.dispatchActivityV3Jobs(workCtx)
+		if dispatchErr != nil {
 			fmt.Fprintf(os.Stderr, "activity v3 dispatch failed: %v\n", dispatchErr)
 		}
-		job, found, err := s.claimReadModelJob(workCtx, []string{activityV3FiveMinuteModel}, worker)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "activity v3 realtime claim failed: %v\n", err)
+		job, found, claimErr := s.claimReadModelJob(workCtx, []string{activityV3FiveMinuteModel}, worker)
+		if claimErr != nil {
+			fmt.Fprintf(os.Stderr, "activity v3 realtime claim failed: %v\n", claimErr)
 		}
-		if err == nil && found {
-			err = s.materializeActivityV3FiveMinute(workCtx, job)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "activity v3 realtime materialize failed: %v\n", err)
+		runErr := dispatchErr
+		if runErr == nil {
+			runErr = claimErr
+		}
+		if claimErr == nil && found {
+			materializeErr := s.materializeActivityV3FiveMinute(workCtx, job)
+			if materializeErr != nil {
+				fmt.Fprintf(os.Stderr, "activity v3 realtime materialize failed: %v\n", materializeErr)
 			}
-			_ = s.finishReadModelJob(context.WithoutCancel(workCtx), job, err)
+			finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(workCtx), 5*time.Second)
+			finishErr := s.finishReadModelJob(finishCtx, job, materializeErr)
+			finishCancel()
+			if finishErr != nil {
+				fmt.Fprintf(os.Stderr, "activity v3 realtime finish failed: %v\n", finishErr)
+			}
+			if runErr == nil {
+				runErr = materializeErr
+			}
+			if runErr == nil {
+				runErr = finishErr
+			}
 		}
 		cancel()
+		if ctx.Err() == nil {
+			healthCtx, healthCancel := context.WithTimeout(ctx, 5*time.Second)
+			if err := s.recordActivityV3RealtimeHealth(healthCtx, runErr, time.Now().UTC()); err != nil {
+				fmt.Fprintf(os.Stderr, "activity v3 realtime checkpoint failed: %v\n", err)
+			}
+			healthCancel()
+		}
 		delay := time.Second
 		if !found {
 			delay = 5 * time.Second
@@ -391,15 +492,43 @@ func (s *DBStore) RunActivityV3Realtime(ctx context.Context) {
 	}
 }
 
+// Fresh source data keeps the existing lag thresholds. A verified quiet worker
+// may process coarser windows only while there is no actionable five-minute
+// backlog. Missing heartbeat state falls back to the pre-upgrade lag guard.
+func (s *DBStore) activityV3RealtimeLag(ctx context.Context, now time.Time) (float64, error) {
+	var lag float64
+	var heartbeat sql.NullTime
+	var status, lastError string
+	var backlog bool
+	err := s.pg.db.QueryRowContext(ctx, `SELECT EXTRACT(EPOCH FROM $1::timestamptz-(live.state->>'as_of')::timestamptz),health.updated_at,COALESCE(health.state->>'status',''),COALESCE(health.state->>'last_error',''),
+ EXISTS(SELECT 1 FROM read_model_jobs j WHERE j.model='activity-5m-v3' AND j.processed_generation<j.dirty_generation
+ AND (j.not_before<=$1::timestamptz OR j.attempts>0 OR j.bucket_start+interval '6 minutes 30 seconds'<=$1::timestamptz))
+ FROM read_model_runtime_state live LEFT JOIN read_model_runtime_state health ON health.name='activity-v3-realtime-health' WHERE live.name='activity-v3-5m'`, now).Scan(&lag, &heartbeat, &status, &lastError, &backlog)
+	if err != nil {
+		return 0, err
+	}
+	if heartbeat.Valid {
+		age := now.Sub(heartbeat.Time)
+		if age > 30*time.Second || age < -time.Second {
+			return lag, fmt.Errorf("activity v3 realtime checkpoint is not current")
+		}
+		if status != "ready" || lastError != "" {
+			return lag, fmt.Errorf("activity v3 realtime checkpoint failed: %s", lastError)
+		}
+		if !backlog {
+			return 0, nil
+		}
+	}
+	return max(0, lag), nil
+}
+
 func (s *DBStore) RunActivityV3Coarse(ctx context.Context) {
 	worker := fmt.Sprintf("coarse-%d", os.Getpid())
 	healthySince := time.Time{}
 	paused := true
 	for ctx.Err() == nil {
 		// Realtime lag pauses all coarse work without consuming a job lease.
-		var lagSeconds float64
-		lagErr := s.pg.db.QueryRowContext(ctx, `SELECT EXTRACT(EPOCH FROM now()-(state->>'as_of')::timestamptz)
-FROM read_model_runtime_state WHERE name='activity-v3-5m'`).Scan(&lagSeconds)
+		lagSeconds, lagErr := s.activityV3RealtimeLag(ctx, time.Now().UTC())
 		if lagErr != nil || lagSeconds > 90 {
 			paused = true
 			healthySince = time.Time{}

@@ -73,6 +73,7 @@ function usePagedQuery<
 export const queryKeys = {
   session: ["session"] as const,
   overview: (query: ActivityOverviewQuery) => ["overview", query] as const,
+  systemStatus: ["system-status"] as const,
   activityOverview: (query: ActivityOverviewQuery) =>
     ["activity-overview", query] as const,
   activityReport: (
@@ -115,10 +116,6 @@ export const queryKeys = {
     ["ingest-diagnostics", query] as const,
   ingestEventTypes: ["ingest-event-types"] as const,
   ingestErrors: (query: ListQuery) => ["ingest-errors", query] as const,
-  shadowRuns: (query: ListQuery) => ["shadow-runs", query] as const,
-  shadowRun: (runId: string) => ["shadow-run", runId] as const,
-  shadowEvaluation: ["shadow-evaluation"] as const,
-  shadowReviewSamples: (date?: string) => ["shadow-review-samples", date ?? "latest"] as const,
   auditLogs: (query: ListQuery) => ["audit-logs", query] as const,
   auditLog: (auditId: string) => ["audit-log", auditId] as const,
   proxyReview: (caseId: string, window: string) =>
@@ -145,6 +142,14 @@ export function useOverview(query: ActivityOverviewQuery = {}) {
   return useQuery({
     queryKey: queryKeys.overview(query),
     queryFn: () => api.overview(query),
+  });
+}
+
+export function useSystemStatus() {
+  return useQuery({
+    queryKey: queryKeys.systemStatus,
+    queryFn: api.systemStatus,
+    refetchInterval: 5000,
   });
 }
 
@@ -258,7 +263,27 @@ export function useDpiFlow(flowId: string) {
 }
 
 export function useDevices(query: DeviceQuery, enabled = true) {
-  return usePagedQuery(query, queryKeys.devices, api.devices, enabled, 15000);
+  return useQuery({
+    queryKey: queryKeys.devices(query),
+    queryFn: () => api.deviceInventory(query),
+    enabled,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+  });
+}
+
+export function useLegacyDevices(query: DeviceQuery, enabled = true) {
+  return useQuery({
+    queryKey: ["legacy-devices", query],
+    queryFn: () => api.devices(query),
+    enabled,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
 }
 
 export function useDevice(deviceId: string, query: DeviceQuery) {
@@ -444,40 +469,12 @@ export function useCreateLabel() {
       void client.invalidateQueries({ queryKey: ["overview"] });
       void client.invalidateQueries({ queryKey: ["risks"] });
       void client.invalidateQueries({ queryKey: ["proxy-reviews"] });
-      void client.invalidateQueries({ queryKey: queryKeys.shadowEvaluation });
-      void client.invalidateQueries({ queryKey: ["shadow-review-samples"] });
       if (variables.target_type === "ip") {
         void client.invalidateQueries({
           queryKey: queryKeys.ipRisk(variables.target_id),
         });
       }
     },
-  });
-}
-
-export function useShadowRuns(query: ListQuery = { limit: 20 }) {
-  return usePagedQuery(query, queryKeys.shadowRuns, api.shadowRuns);
-}
-
-export function useShadowRun(runId: string) {
-  return useQuery({
-    queryKey: queryKeys.shadowRun(runId),
-    queryFn: () => api.shadowRun(runId),
-    enabled: !!runId,
-  });
-}
-
-export function useShadowEvaluation() {
-  return useQuery({
-    queryKey: queryKeys.shadowEvaluation,
-    queryFn: api.shadowEvaluation,
-  });
-}
-
-export function useShadowReviewSamples(date?: string) {
-  return useQuery({
-    queryKey: queryKeys.shadowReviewSamples(date),
-    queryFn: () => api.shadowReviewSamples(date),
   });
 }
 
@@ -509,11 +506,13 @@ export function useDeviceFingerprintLibrary(enabled = true) {
   });
 }
 
-export function useDeviceRecognitionSummary() {
+export function useDeviceRecognitionSummary(enabled = true) {
   return useQuery({
     queryKey: queryKeys.deviceRecognitionSummary,
     queryFn: api.deviceRecognitionSummary,
+    enabled,
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -568,6 +567,7 @@ export function useCases(
     ap?: string;
     nas_ip?: string;
     window?: string;
+    include_router_observations?: boolean;
   } = {},
 ) {
   return usePagedQuery(query, queryKeys.cases, api.cases);

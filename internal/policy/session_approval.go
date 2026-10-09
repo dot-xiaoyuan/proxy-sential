@@ -17,8 +17,8 @@ func SessionApprovalBindings(account string, sessions []Session, now time.Time) 
 		if s.AccountID != account || s.State(now) == "ended" || s.State(now) == "absent" {
 			continue
 		}
-		attr := Attribute(sessions, s.CampusID, s.AccessDomain, s.IP, now)
-		if s.State(now) != "active" || attr.State != "resolved" || attr.AccountID != account || s.ID == "" || s.CampusID == "" || s.AccessDomain == "" {
+		attr := AttributeForSession(sessions, s, now)
+		if s.State(now) != "active" || attr.State != "resolved" || attr.AccountID != account || s.ID == "" {
 			return nil, fmt.Errorf("account session identity uncertain")
 		}
 		bindings[StableID(account, s.Source, s.SensorID, s.CampusID, s.AccessDomain, s.ID, s.StartedAt.UTC().Format(time.RFC3339Nano), s.IP, s.MAC, s.EndpointID)] = true

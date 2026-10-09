@@ -1,0 +1,10 @@
+/opt/proxy-sentinel/data/device-signals/shared.jsonl {
+  size 256M
+  rotate 4
+  missingok
+  compress
+  delaycompress
+  copytruncate
+  notifempty
+  create 0640 root root
+}

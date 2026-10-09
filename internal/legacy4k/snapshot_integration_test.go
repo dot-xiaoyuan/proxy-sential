@@ -17,7 +17,7 @@ func TestAtomicOnlineInventoryRedis(t *testing.T) {
 		t.Skip("dedicated Redis not configured")
 	}
 	ctx := context.Background()
-	c := redis.NewClient(&redis.Options{Addr: addr, DB: 15})
+	c := NewRedisOnlineClient(&redis.Options{Addr: addr, DB: 15})
 	defer c.Close()
 	prefix := fmt.Sprintf("snapshot-test-%d", time.Now().UnixNano())
 	list, ready, id := prefix+":list", prefix+":ready", prefix+":1"

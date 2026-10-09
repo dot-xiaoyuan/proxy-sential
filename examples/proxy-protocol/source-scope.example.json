@@ -1,0 +1,6 @@
+{
+  "sensor_id": "office-30",
+  "campus_id": "REPLACE_WITH_CONTROLLED_CAMPUS",
+  "access_domain": "REPLACE_WITH_CONTROLLED_ACCESS_DOMAIN",
+  "sources": ["suricata", "zeek"]
+}

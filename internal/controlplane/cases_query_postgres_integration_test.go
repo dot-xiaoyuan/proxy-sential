@@ -31,7 +31,7 @@ func TestPostgresCaseQueueIsIndependentOfSynchronization(t *testing.T) {
 	defer db.Close()
 	prefix := fmt.Sprintf("queue-test-%d", time.Now().UnixNano())
 	defer db.ExecContext(context.Background(), `DELETE FROM risk_cases WHERE campus_id=$1`, prefix)
-	_, err = db.ExecContext(ctx, `INSERT INTO risk_cases(case_id,dedupe_key,subject_type,subject_id,ip,campus_id,department,person_type,ssid,vlan,ap,nas_ip,status,priority,assignee_id,risk_score,risk_confidence,assessment_level,first_seen,last_seen,created_at,updated_at) SELECT $1||'-'||lpad(n::text,5,'0'),$1||'-'||n,'ip',$1||'-'||n,'192.0.2.1'::inet,$1,'computing','student','wifi','310','ap-1','192.0.2.254'::inet,CASE WHEN n%2=0 THEN 'assigned' ELSE 'new' END,'high','operator',90,0.9,'high',now(),now(),now(),now() FROM generate_series(1,10000) n`, prefix)
+	_, err = db.ExecContext(ctx, `INSERT INTO risk_cases(case_id,dedupe_key,subject_type,subject_id,ip,campus_id,department,person_type,ssid,vlan,ap,nas_ip,status,priority,assignee_id,risk_score,risk_confidence,assessment_level,ruleset_version,first_seen,last_seen,created_at,updated_at) SELECT $1||'-'||lpad(n::text,5,'0'),$1||'-'||n,'ip',$1||'-'||n,'192.0.2.1'::inet,$1,'computing','student','wifi','310','ap-1','192.0.2.254'::inet,CASE WHEN n%2=0 THEN 'assigned' ELSE 'new' END,'high','operator',90,0.9,'confirmed',CASE WHEN n%2=0 THEN 'shared-behavior/v12' ELSE 'router-observation/router-identification/v1' END,now(),now(),now(),now() FROM generate_series(1,10000) n`, prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +79,10 @@ func TestPostgresCaseQueueIsIndependentOfSynchronization(t *testing.T) {
 	second, _ := fetch("&limit=20&cursor=20")
 	if second[0].CaseID == items[0].CaseID {
 		t.Fatal("unstable pagination")
+	}
+	sharedOnly, sharedOnlyPage := fetch("&limit=20&include_router_observations=false")
+	if len(sharedOnly) != 20 || sharedOnlyPage.Total != 5000 || sharedOnly[0].RiskKind != "shared_access" {
+		t.Fatalf("router toggle changed shared queue %+v", sharedOnlyPage)
 	}
 	filtered, filteredPage := fetch("&status=assigned&department=computing&person_type=student&ssid=wifi&vlan=310&ap=ap-1&nas_ip=192.0.2.254&assignee_id=operator&q=" + url.QueryEscape(prefix))
 	if len(filtered) != 20 || filteredPage.Total != 5000 {

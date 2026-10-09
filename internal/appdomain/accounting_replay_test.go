@@ -18,7 +18,7 @@ func TestAccountingReplayBaseline(t *testing.T) {
 	}
 	q := Query{From: time.Date(2026, 9, 8, 9, 0, 0, 0, time.UTC), To: time.Date(2026, 9, 8, 11, 0, 0, 0, time.UTC), CampusID: "a"}
 	r := Aggregate(rows, q)
-	if r.ObservationCount != 7 || r.DNSObservations != 1 || r.MissingConnectionObservations != 1 || r.MultiApplication.ConnectionCount != 1 || *r.MultiApplication.UploadBytes != 50 || r.Unknown.ConnectionCount != 2 || *r.Unknown.UploadBytes != 16 || r.Unknown.MissingMeterConnections != 1 || r.Versions["v1"] != 7 {
+	if r.ObservationCount != 7 || r.DNSObservations != 1 || r.UnknownObservations != 2 || r.MissingConnectionObservations != 1 || r.MultiApplication.ConnectionCount != 1 || *r.MultiApplication.UploadBytes != 50 || r.Unknown.ConnectionCount != 0 || r.Unknown.UploadBytes != nil || r.Unknown.MissingMeterConnections != 0 || r.Versions["v1"] != 7 {
 		t.Fatalf("bad replay: %+v", r)
 	}
 	if len(r.Items) != 2 || r.Items[0].ApplicationID != "wx" || r.Items[0].ConnectionCount != 1 || *r.Items[0].UploadBytes != 30 || r.Items[0].TerminalCount != 1 || r.Items[1].UploadBytes != nil {

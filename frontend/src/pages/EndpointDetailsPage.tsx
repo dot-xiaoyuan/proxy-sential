@@ -24,7 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 
 import {
-  useDevices,
+  useLegacyDevices,
   useDeviceSignals,
   useEndpointIdentity,
   useSession,
@@ -127,7 +127,7 @@ export function EndpointDetailsPage() {
     },
     activeTab === "signals",
   );
-  const inventory = useDevices(
+  const inventory = useLegacyDevices(
     { window: "24h", q: endpointId, limit: 1 },
     activeTab === "recognition",
   );

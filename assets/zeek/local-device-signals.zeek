@@ -1,4 +1,5 @@
 @load ./device-dhcp
+@load ./snmp-device-signals
 @load base/protocols/dns
 
 module ProxySentinel;

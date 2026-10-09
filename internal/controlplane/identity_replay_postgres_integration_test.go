@@ -39,7 +39,8 @@ func TestIdentityBatchReplayUsesRetainedNormalizedEvents(t *testing.T) {
 	}
 	defer state.db.Close()
 	const batchID = "integration-replay-batch"
-	events := []normalized.Event{{SchemaVersion: "v1", EventID: "integration-replay-event", Source: "radius", Type: "identity", Timestamp: "2026-08-31T10:00:00Z"}}
+	scope := store.IdentityScope{Source: "radius", SensorID: "integration", CampusID: "east", AccessDomain: "wifi"}
+	events := []normalized.Event{{SchemaVersion: "v1", EventID: "integration-replay-event", Source: "radius", Type: "identity", Timestamp: "2026-08-31T10:00:00Z", Observer: map[string]any{"sensor_id": scope.SensorID}, Subject: map[string]any{"campus_id": scope.CampusID}, Payload: map[string]any{"access_domain": scope.AccessDomain}}}
 	eventsJSON, _ := json.Marshal(events)
 	_, _ = state.db.ExecContext(ctx, `DELETE FROM identity_ingest_batches WHERE batch_id=$1`, batchID)
 	_, err = state.db.ExecContext(ctx, `INSERT INTO identity_ingest_batches(batch_id,source,sensor_id,status,records_read,records_emitted,records_skipped,records_malformed,error_message,received_at,normalized_events) VALUES($1,'radius','integration','failed',1,1,0,0,'temporary failure',now(),$2)`, batchID, eventsJSON)
@@ -47,7 +48,7 @@ func TestIdentityBatchReplayUsesRetainedNormalizedEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := &replayIdentityReader{}
-	server := &Server{reader: reader, identityIngest: state}
+	server := &Server{reader: reader, identityIngest: state, identitySources: []identitySourceRegistration{{IdentityScope: scope, IntervalSeconds: 60}}}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/integrations/identity/batches/"+batchID+"/replay", nil)
 	recorder := httptest.NewRecorder()
 	server.handleIdentityBatchReplay(recorder, request)

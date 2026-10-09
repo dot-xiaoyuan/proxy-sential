@@ -2,7 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { domainOnlyDevice, domainOnlyInference } from '../../mocks/brandInference'
-import { DeviceBrandSummary, DeviceMAC, virtualPlatform } from './DeviceInventoryCells'
+import { DeviceBrandSummary, DeviceIdentityCell, DeviceMAC, virtualPlatform } from './DeviceInventoryCells'
 
 afterEach(cleanup)
 
@@ -79,4 +79,12 @@ it('shows VMware independently from hardware brand and rejects weak or randomize
  expect(screen.getByText('虚拟机线索')).toBeVisible()
  expect(screen.getByText('苹果')).toBeVisible()
  for(const candidate of [{...device,primary_mac:'02:0c:29:2f:fe:f6'},{...device,vendor_confidence:.5},{...device,randomized_mac:true},{...device,vendor:'Intel Corporation'}]) expect(virtualPlatform(candidate)).toBeUndefined()
+})
+it('uses a uniform semantic glyph and text-only VMware clue in the list identity', () => {
+ const device={...domainOnlyDevice,primary_mac:'00:0c:29:2f:fe:f6',vendor:'VMware, Inc.',vendor_confidence:.9,randomized_mac:false}
+ render(<MemoryRouter><DeviceIdentityCell device={device}/></MemoryRouter>)
+ expect(document.querySelector('.device-semantic-icon')).not.toBeNull()
+ expect(screen.getByText('VMware 虚拟平台线索')).toBeVisible()
+ expect(document.querySelector('.brand-logo-vmware')).toBeNull()
+ expect(screen.getByText(/品牌推测/)).toBeVisible()
 })

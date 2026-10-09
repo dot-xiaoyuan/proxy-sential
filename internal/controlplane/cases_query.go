@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -39,7 +38,14 @@ func (s *Server) listCasesPostgres(w http.ResponseWriter, r *http.Request) {
 }
 func queryCaseQueue(ctx context.Context, db *sql.DB, r *http.Request, limit, offset int) ([]RiskCase, int, error) {
 	args := []any{}
-	conditions := []string{"true"}
+	riskKinds := "(c.ruleset_version LIKE 'shared-behavior/%' OR c.ruleset_version LIKE 'router-observation/%')"
+	if strings.EqualFold(r.URL.Query().Get("include_router_observations"), "false") {
+		riskKinds = "c.ruleset_version LIKE 'shared-behavior/%'"
+	}
+	conditions := []string{riskKinds}
+	if r.URL.Query().Get("status") == "" {
+		conditions = append(conditions, "c.status NOT IN ('resolved','closed')")
+	}
 	for _, column := range []string{"status", "assignee_id", "campus_id", "department", "person_type", "ssid", "vlan", "ap"} {
 		if value := r.URL.Query().Get(column); value != "" {
 			args = append(args, value)
@@ -65,7 +71,7 @@ func queryCaseQueue(ctx context.Context, db *sql.DB, r *http.Request, limit, off
 		return nil, 0, err
 	}
 	args = append(args, limit, offset)
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT to_jsonb(c) || jsonb_build_object('ip',coalesce(host(c.ip),''),'nas_ip',coalesce(host(c.nas_ip),'')) FROM risk_cases c WHERE %s ORDER BY c.priority,c.updated_at DESC,c.case_id LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args)), args...)
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT `+caseAssessmentProjection+` FROM risk_cases c WHERE %s ORDER BY c.priority,c.updated_at DESC,c.case_id LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -77,7 +83,7 @@ func queryCaseQueue(ctx context.Context, db *sql.DB, r *http.Request, limit, off
 			rows.Close()
 			return nil, 0, err
 		}
-		if err = json.Unmarshal(raw, &item); err != nil {
+		if item, err = decodeCaseAssessment(raw); err != nil {
 			rows.Close()
 			return nil, 0, err
 		}

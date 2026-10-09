@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func TestGetSharedBehaviorCombinesWindowHistoryByGateway(t *testing.T) {
 	raw := `{"observation_id":"shared-behavior-current","sensor_id":"sensor-a","campus_id":"ncu","access_domain":"mirror","ip":"192.0.2.1","status":"confirmed","confidence":95,"signal_groups":["tcp_stack","ttl_path","ua_os"],"reasons":[],"conflicts":[],"coverage_state":"verified","rule_version":"shared-behavior/v3","first_seen":"2026-09-28T10:50:00Z","last_seen":"2026-09-28T11:00:00Z","window_start":"2026-09-28T10:50:00Z","window_end":"2026-09-28T11:00:00Z","expires_at":"2026-10-28T11:00:00Z","router":{},"score_components":[],"feature_samples":{},"event_ids":[]}`
 	mock.ExpectQuery("SELECT observation,sensor_id,campus_id,access_domain,host\\(ip\\)").
 		WithArgs("shared-behavior-current").
-		WillReturnRows(sqlmock.NewRows([]string{"observation", "sensor_id", "campus_id", "access_domain", "ip"}).AddRow([]byte(raw), "sensor-a", "ncu", "mirror", "192.0.2.1"))
+		WillReturnRows(sqlmock.NewRows([]string{"observation", "sensor_id", "campus_id", "access_domain", "ip", "current", "window_start", "window_end", "expires_at"}).AddRow([]byte(raw), "sensor-a", "ncu", "mirror", "192.0.2.1", false, time.Date(2026, 9, 28, 10, 50, 0, 0, time.UTC), time.Date(2026, 9, 28, 11, 0, 0, 0, time.UTC), time.Date(2026, 10, 28, 11, 0, 0, 0, time.UTC)))
 	mock.ExpectQuery("FROM shared_behavior_observation_history h").
 		WithArgs("sensor-a", "ncu", "mirror", "192.0.2.1").
 		WillReturnRows(sqlmock.NewRows([]string{"status", "confidence", "signal_groups", "coverage_state", "rule_version", "observed_at", "created_at"}).
@@ -58,5 +59,24 @@ func TestGetSharedBehaviorCombinesWindowHistoryByGateway(t *testing.T) {
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSharedBehaviorDefaultIncludesCurrentCandidatesForOperations(t *testing.T) {
+	where, _, err := sharedBehaviorWhere(SharedBehaviorQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range []string{"current=true", "window_end>now()-interval '20 minutes'"} {
+		if !strings.Contains(where, part) {
+			t.Fatalf("missing discovery gate %q in %s", part, where)
+		}
+	}
+	if strings.Contains(where, "status='confirmed'") || strings.Contains(where, "strong_anchor") {
+		t.Fatalf("default current view hid operational candidates: %s", where)
+	}
+	where, _, err = sharedBehaviorWhere(SharedBehaviorQuery{Status: "candidate"})
+	if err != nil || strings.Contains(where, "status='confirmed'") {
+		t.Fatalf("explicit candidate review unavailable: %s %v", where, err)
 	}
 }

@@ -1,4 +1,4 @@
-import type { components } from './generated'
+import type { components, operations } from './generated'
 
 export type NativeObservationPage = components['schemas']['NativeObservationPage']
 
@@ -27,12 +27,16 @@ export type RiskCase = {
   identity_conflict?: boolean
   identity_blocker?: string
   status: 'new' | 'assigned' | 'investigating' | 'waiting_data' | 'resolved' | 'closed' | 'reopened'
-  disposition?: 'confirmed_proxy' | 'false_positive' | 'benign' | 'needs_more_data'
+  disposition?: 'confirmed_proxy' | 'confirmed_shared_access' | 'confirmed_router' | 'false_positive' | 'benign' | 'needs_more_data'
   priority: 'high' | 'medium' | 'low'
   assignee_id?: string
   risk_score: number
   risk_confidence: number
   assessment_level: string
+  risk_kind?: 'shared_access' | 'router_observation'
+  assessment_current?: boolean
+  assessment_updated_at?: string
+  assessment_window?: string
   due_at: string
   first_seen: string
   last_seen: string
@@ -58,6 +62,10 @@ export type Organization = {
 export type OrganizationKind = keyof Organization
 export type OrganizationListResponse<K extends OrganizationKind = OrganizationKind> = { items: Organization[K]; page: Page }
 export type ActionConnector = { certificate_pem?: string; connector_type?: "hmac"|"srun4k"; connector_id: string; name: string; endpoint_url: string; action_mapping: Record<string,string>; mode: 'shadow'|'active'; enabled: boolean; shadow_ready: boolean; circuit_open_until?:string; consecutive_failures?:number; shadow_started_at?:string; shadow_validation_since?:string; shadow_candidate_count?:number; shadow_reviewed_count?:number; shadow_accuracy?:number; updated_at: string }
+export type FourKSyncResult = { connector_id:string;source:string;online_total:number;identity_accounts:number;identity_sessions:number;products:number;groups:number;controls:number;capabilities:string[];directory_ready:boolean }
+export type SRun4KIntegration = { connector_id:string;host:string;source:string;sensor_id:string;reconcile_interval_hours:number;event_channel_state:string;connection_state:string;channels:Record<string,string>;last_error?:string;last_tested_at?:string;last_synced_at?:string;last_identity_poll_at?:string;last_identity_event_at?:string;identity_accounts:number;identity_sessions:number;products:number;groups:number;controls:number }
+export type SRun4KTestResult = { connector_id:string;checked_at:string;online_total:number;channels:Record<string,string>;enforcement_ready:boolean }
+export type SRun4KSyncResult = { connector_id:string;source:string;synced_at:string;identity_accounts:number;identity_sessions:number;address_records:number;products:number;groups:number;controls:number;event_channel_state:string;connection_state:string;enforcement_ready:boolean }
 export type EnforcementAction = { action_id:string; idempotency_key:string; case_id?:string; connector_id:string; action_type:string; subject_id:string; ip?:string; account_id?:string; endpoint_id?:string; campus_id?:string; session_id?:string; ruleset_version?:string; remote_action_id?:string; parent_action_id?:string; retry_count?:number; next_attempt_at?:string; cooldown_until?:string; expires_at?:string; status:string; mode:string; blockers?:string[]; last_error?:string; created_at:string; updated_at:string }
 export type LocalUser = components['schemas']['LocalUser']
 export type UserMutation = components['schemas']['UserMutation']
@@ -87,11 +95,10 @@ export type LabelKind = components['schemas']['LabelKind']
 export type CreateLabelRequest = components['schemas']['CreateLabelRequest']
 export type Label = components['schemas']['Label']
 export type ShadowRun = components['schemas']['ShadowRun']
-export type ShadowEvaluation = components['schemas']['ShadowEvaluation']
-export type ShadowReviewSample = components['schemas']['ShadowReviewSample']
-export type ShadowReviewSamples = components['schemas']['ShadowReviewSamples']
 export type AuditLog = components['schemas']['AuditLog']
 export type Overview = components['schemas']['Overview'] & { window?:string; sensor_id?:string; as_of?:string; first_seen?:string; last_seen?:string; data_source?:string; active_ip_count?:number; open_case_count?:number; overdue_case_count?:number }
+export type SystemStatus = operations['getSystemStatus']['responses'][200]['content']['application/json']
+export type RootFilesystemStatus = components['schemas']['RootFilesystemStatus']
 export type RuleReloadResult = components['schemas']['RuleReloadResult']
 export type DpiOverview = components['schemas']['DpiOverview']
 export type DpiTrendPoint = components['schemas']['DpiTrendPoint']
@@ -105,9 +112,12 @@ export type ObservedDevice = components['schemas']['ObservedDevice']
 export type DeviceConflict = components['schemas']['DeviceConflict']
 export type IpDeviceInventory = components['schemas']['IpDeviceInventory']
 export type DeviceListResponse = components['schemas']['DeviceListResponse']
+export type DeviceInventoryListItem = components['schemas']['DeviceInventoryListItem']
+export type DeviceInventoryListResponse = components['schemas']['DeviceInventoryListResponse']
 export type BrandInference = components['schemas']['BrandInference']
 export type EndpointDeviceInventory = components['schemas']['EndpointDeviceInventory']
 export type RouterEvidence = components['schemas']['RouterEvidence']
+export type RouterAuthBinding = components['schemas']['RouterAuthBinding']
 export type RouterAssessment = components['schemas']['RouterAssessment']
 export type RouterObservationDetail = components['schemas']['RouterObservationDetail']
 export type RouterAssessmentPage = components['schemas']['RouterAssessmentPage']
@@ -254,6 +264,7 @@ export type RouterObservationQuery = {
   model?: string
   role?: string
   status?: 'candidate' | 'likely' | 'confirmed'
+  include_candidates?: boolean
   source?: string
   confidence_min?: number
   confidence_max?: number
@@ -262,6 +273,7 @@ export type RouterObservationQuery = {
   last_seen_from?: string
   last_seen_to?: string
   infrastructure?: boolean
+  has_auth_binding?: boolean
   limit?: number
   cursor?: string
 }
@@ -294,5 +306,4 @@ export type ManagedIdentityConfiguration = {
 }
 export type ManagedIdentitySource = { configuration: ManagedIdentityConfiguration; config_version: number; token_configured: boolean; state: string; blocker: string }
 
-export type ShadowSampleDetail = components['schemas']['ShadowSampleDetail']
 export type RulesStatus = components['schemas']['RulesStatus']

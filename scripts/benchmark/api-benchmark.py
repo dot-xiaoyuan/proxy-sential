@@ -51,7 +51,7 @@ def normal_result(template,method,payload):
         elif method=='get' and template in ('/activity/overview','/dpi/overview'):checks=[{'field':'event_count','op':'gt','value':0}]
         elif method=='get' and template=='/application-activity':checks=[{'field':'observation_count','op':'gt','value':0},{'field':'items','op':'nonempty'}]
         elif method=='get' and template=='/events':checks=[{'field':'events','op':'nonempty'}]
-        elif method=='get' and template in ('/devices','/application-activity/observations'):checks=[{'field':'items','op':'nonempty'}]
+        elif method=='get' and template in ('/devices','/device-inventory','/application-activity/observations'):checks=[{'field':'items','op':'nonempty'}]
         elif method=='get' and template=='/device-recognition/summary':checks=[{'field':'total_endpoints','op':'gt','value':0},{'field':'event_count','op':'gt','value':0}]
         else:return 'unverified'
     checks=list(checks)
@@ -261,8 +261,10 @@ for path,item in spec['paths'].items():
             sql_metrics['clickhouse']=json.loads(raw_metrics)
 
         timings=sorted(s['ms'] for s in samples)
-        result={**entry,'path':actual,'category':category,'samples':samples,'successes':len(ok),'normal_business_successes':verified,'business_failure_rate':1-verified/len(samples),'sql_metrics':sql_metrics,'p50_ms':statistics.median(timings),'p95_ms':timings[max(0,math.ceil(len(timings)*.95)-1)],'p99_ms':timings[max(0,math.ceil(len(timings)*.99)-1)],'error_rate':1-len(ok)/len(samples),'response_bytes_p50':statistics.median(s['bytes'] for s in samples),'max_ms':max(timings),'success_mean_ms':statistics.mean(ok) if ok else None}
-        result['latency_gate_pass']=category=='business_success' and result['p95_ms']<=args.p95_limit_ms and result['p99_ms']<args.p99_limit_ms
+        result={**entry,'path':actual,'category':category,'samples':samples,'successes':len(ok),'normal_business_successes':verified,'business_failure_rate':1-verified/len(samples),'sql_metrics':sql_metrics,'p50_ms':statistics.median(timings),'p95_ms':timings[max(0,math.ceil(len(timings)*.95)-1)],'p99_ms':timings[max(0,math.ceil(len(timings)*.99)-1)],'error_rate':1-len(ok)/len(samples),'response_bytes_p50':statistics.median(s['bytes'] for s in samples),'response_bytes_max':max(s['bytes'] for s in samples),'max_ms':max(timings),'success_mean_ms':statistics.mean(ok) if ok else None}
+        result['payload_gate_pass']=path!='/device-inventory' or result['response_bytes_max']<=80*1024
+        result['cold_gate_pass']=path!='/device-inventory' or args.concurrency!=1 or samples[0]['ms']<=1000
+        result['latency_gate_pass']=category=='business_success' and result['p95_ms']<=args.p95_limit_ms and result['p99_ms']<args.p99_limit_ms and result['payload_gate_pass'] and result['cold_gate_pass']
         result['concurrent_sample_requirement_met']=args.samples>=200 and args.concurrency==20 and verified==args.samples
         result['concurrent_scenario_pass']=result['latency_gate_pass'] and result['concurrent_sample_requirement_met']
         results.append(result)

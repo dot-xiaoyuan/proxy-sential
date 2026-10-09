@@ -441,14 +441,19 @@ func buildObservedDevices(ip string, signals []DeviceSignal) []ObservedDevice {
 		}
 	}
 	if len(groups) == 0 {
+		// TLS fingerprints identify software stacks, not physical endpoints.
+		// Keep all protocol clues in inventory.Signals without copying them into
+		// thousands of invented device entities in every historical snapshot.
+		weak := []DeviceSignal{}
 		for _, signal := range signals {
-			if signal.Strength == "medium" && (signal.Kind == "ja3" || signal.Kind == "ja4") {
-				groups["medium:"+signal.Kind+":"+signal.NormalizedValue] = append(groups["medium:"+signal.Kind+":"+signal.NormalizedValue], signal)
+			if signal.Strength == "weak" {
+				weak = append(weak, signal)
 			}
 		}
-	}
-	if len(groups) == 0 {
-		groups["weak:bundle"] = weakSignals(signals)
+		if len(weak) == 0 {
+			return []ObservedDevice{}
+		}
+		groups["weak:bundle"] = weak
 	}
 	keys := make([]string, 0, len(groups))
 	for key := range groups {
@@ -457,7 +462,10 @@ func buildObservedDevices(ip string, signals []DeviceSignal) []ObservedDevice {
 	sort.Strings(keys)
 	devices := make([]ObservedDevice, 0, len(keys))
 	for _, key := range keys {
-		groupSignals := attachDeviceContext(groups[key], signals)
+		groupSignals := groups[key]
+		if key != "weak:bundle" {
+			groupSignals = attachDeviceContext(groupSignals, signals)
+		}
 		devices = append(devices, observedDevice(ip, key, groupSignals))
 	}
 	sort.Slice(devices, func(i, j int) bool {
@@ -508,6 +516,7 @@ func observedDevice(ip string, groupKey string, signals []DeviceSignal) Observed
 		device.EntityRole = "endpoint"
 	}
 	sort.Strings(device.Fingerprints)
+	qualifyPortableDHCPProfile(&device)
 	device.Confidence = deviceConfidence(device)
 	device.Label = deviceLabel(device)
 	device.Summary = deviceSummary(device)
@@ -593,9 +602,20 @@ func buildDeviceConflicts(ip string, signals []DeviceSignal, devices []ObservedD
 	}
 	byKind := signalsByKind(signals)
 	lastSeen := latestSignalTime(signals)
-	addConflict("dhcp_stack_conflict", "strong", "同一 IP 的 DHCP 设备画像出现互斥系统或客户端栈，疑似共享上网或代理出口", append(signalValues(byKind["device_hint"]), signalValues(byKind["dhcp_vendor_class"])...), 0.84, lastSeen)
-	addConflict("tls_stack_conflict", "medium", "同一 IP 出现多个 TLS JA3/JA4 指纹，提示可能存在多客户端栈", append(signalValues(byKind["ja3"]), signalValues(byKind["ja4"])...), 0.62, lastSeen)
-	addConflict("tcp_stack_conflict", "medium", "同一 IP 出现多个 TCP 栈侧信号，需结合采集完整性复核", append(signalValues(byKind["ttl"]), signalValues(byKind["ipid"])...), 0.58, lastSeen)
+	addConflict("dhcp_stack_conflict", "medium", "DHCP 系统家族线索存在分歧；客户端软件、系统升级或先后租约均可能造成差异，不能据此确认共享", dhcpFamilyConflictSamples(signals), 0.62, lastSeen)
+	tlsSamples := []string{}
+	for _, kind := range []string{"ja3", "ja4"} {
+		values := signalValues(byKind[kind])
+		if len(values) < 2 {
+			continue
+		}
+		for _, value := range values {
+			tlsSamples = append(tlsSamples, kind+":"+value)
+		}
+	}
+	addConflict("tls_stack_conflict", "medium", "同类 TLS 指纹存在差异，可能来自同一设备的不同应用；此线索不表示设备数量或共享行为", tlsSamples, 0.62, lastSeen)
+	// TTL and IPID are different packet fields. Route changes and ordinary
+	// counters are not TCP stack fingerprints; retain their raw signals only.
 	if strongCount(devices) >= 2 {
 		addConflict("multi_observed_device", "strong", "同一 IP 下存在多个强信号设备候选", deviceLabels(devices), 0.86, lastSeen)
 	}
@@ -606,6 +626,86 @@ func buildDeviceConflicts(ip string, signals []DeviceSignal, devices []ObservedD
 		return conflicts[i].ConflictID < conflicts[j].ConflictID
 	})
 	return conflicts
+}
+
+func dhcpFamilyConflictSamples(signals []DeviceSignal) []string {
+	families := map[string]struct{}{}
+	for _, signal := range signals {
+		if signal.Source != "dhcp" {
+			continue
+		}
+		var fields map[string]any
+		switch signal.Kind {
+		case "device_hint":
+			fields = map[string]any{"device_hint": signal.Value}
+		case "dhcp_vendor_class":
+			fields = map[string]any{"vendor_class": signal.Value}
+		default:
+			continue
+		}
+		inferred := inferDeviceFromDHCP(fields)
+		family := inferred.osFamily
+		switch family {
+		case "":
+			continue
+		case "Android", "ChromeOS", "Linux":
+			family = "Linux 系客户端"
+		case "iOS", "iPadOS", "macOS":
+			family = "Apple 系客户端"
+		}
+		families[family] = struct{}{}
+	}
+	result := make([]string, 0, len(families))
+	for family := range families {
+		result = append(result, family)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// Re-evaluate explanations on read so an immutable historical snapshot does
+// not keep presenting an obsolete conflict rule as current physical proof.
+// The stored source signals and candidate identities remain untouched.
+func refreshDeviceInventoryConflicts(inventory *IPDeviceInventory) {
+	for i := range inventory.Devices {
+		qualifyPortableDHCPProfile(&inventory.Devices[i])
+		inventory.Devices[i].Label = deviceLabel(inventory.Devices[i])
+	}
+	inventory.Conflicts = buildDeviceConflicts(inventory.IP, inventory.Signals, inventory.Devices)
+	inventory.Confidence = inventoryConfidence(inventory.Devices, inventory.Signals, inventory.Conflicts, risk.Snapshot{})
+}
+
+func qualifyPortableDHCPProfile(device *ObservedDevice) {
+	if device.OSFamily != "Linux" {
+		return
+	}
+	portable := false
+	independentDesktop := false
+	for _, signal := range device.Signals {
+		if signal.Kind == "device_type" && signal.Value == "desktop" && signal.Source != "dhcp" && signal.Source != "software" {
+			independentDesktop = true
+		}
+		if (signal.Kind == "dhcp_vendor_class" || signal.Kind == "software_name" || signal.Kind == "software_version") && normalized.IsPortableDHCPClient(signal.Value) {
+			portable = true
+		}
+		// An independent explicit OS source must remain available.
+		if signal.Kind == "os_family" && signal.Value == "Linux" && signal.Source != "dhcp" && signal.Source != "software" {
+			return
+		}
+		if signal.Kind == "device_name" {
+			inferred := inferDeviceFromDHCP(map[string]any{"hostname": signal.Value})
+			if inferred.osFamily == "Linux" {
+				return
+			}
+		}
+	}
+	if !portable {
+		return
+	}
+	device.OSFamily = "unknown"
+	if device.DeviceType == "desktop" && !independentDesktop {
+		device.DeviceType = "unknown"
+	}
 }
 
 func inferDeviceFromUA(ua string) deviceInference {
@@ -636,14 +736,7 @@ func inferDeviceFromUA(ua string) deviceInference {
 }
 
 func inferDeviceFromDHCP(payload map[string]any) deviceInference {
-	text := strings.ToLower(strings.Join([]string{
-		stringFromMap(payload, "device_hint"),
-		stringFromMap(payload, "vendor_class"),
-		stringFromMap(payload, "hostname"),
-		stringFromMap(payload, "client_fqdn"),
-		stringFromMap(payload, "software_name"),
-		stringFromMap(payload, "software_version"),
-	}, " "))
+	text := normalized.DeviceProfileHintText(payload)
 	out := deviceInference{brand: "", vendor: "", osFamily: "", deviceType: "", model: ""}
 	switch {
 	case strings.Contains(text, "iphone"):
@@ -658,7 +751,7 @@ func inferDeviceFromDHCP(payload map[string]any) deviceInference {
 		out.osFamily, out.deviceType = "Windows", "desktop"
 	case strings.Contains(text, "chromeos"), strings.Contains(text, "chromebook"):
 		out.osFamily, out.deviceType, out.brand = "ChromeOS", "laptop", "Google"
-	case strings.Contains(text, "linux"), strings.Contains(text, "dhcpcd"), strings.Contains(text, "ubuntu"), strings.Contains(text, "debian"):
+	case strings.Contains(text, "linux"), strings.Contains(text, "ubuntu"), strings.Contains(text, "debian"):
 		out.osFamily, out.deviceType = "Linux", "desktop"
 	}
 	if out.brand != "" && out.vendor == "" {
@@ -853,7 +946,7 @@ func inventorySummary(inventory IPDeviceInventory) string {
 	case "weak_signals_only":
 		return "当前仅有 UA/访问行为等弱信号；UA 可伪造，不能据此确认品牌或多设备"
 	case "non_endpoint_or_weak":
-		return "当前没有高置信 endpoint 终端；基础设施、未知角色或弱信号不计入普通设备并发"
+		return "当前信号不足以确认终端身份；协议差异与基础设施不计入普通设备并发"
 	case "multi_candidate":
 		return fmt.Sprintf("当前观测到 %d 个设备候选；需优先查看强/中信号来源确认是否共享上网", inventory.SuspectedDeviceCount)
 	default:

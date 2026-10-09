@@ -723,6 +723,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shared-access/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Durable passive equipment identity profiles, independent of current sharing and enforcement; requires cases:read. Activity is address-scoped and does not renew identity proof. */
+        get: operations["listSharedDeviceProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/shared-access/observations": {
         parameters: {
             query?: never;
@@ -1093,6 +1110,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/whitelist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Action exemptions only; requires policies:read. Detection evidence remains available. */
+        get: operations["listWhitelist"];
+        put?: never;
+        /** @description Requires policies:manage. Configuration and audit commit atomically. */
+        post: operations["createWhitelist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/whitelist/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires policies:manage and the current revision. */
+        post: operations["updateWhitelist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/whitelist/{entry_id}/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires policies:manage. Disabling retains the record and audit history. */
+        post: operations["switchWhitelist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/campus-exceptions": {
         parameters: {
             query?: never;
@@ -1307,6 +1376,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/actions/connectors/{connector_id}/4k-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Verifies saved 4K authorization and management API, requires fresh complete identity and product snapshots, and registers the connector's verified execution capabilities. It never creates a policy, policy stage or enforcement action. */
+        post: operations["syncFourKInformation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/actions/emergency-stop": {
         parameters: {
             query?: never;
@@ -1397,7 +1483,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Stops pending native disconnect dispatch or requests release for a reversible action. Native cancellation cannot recall an already sent request or restore a disconnected session. */
+        /** @description Stops pending native disconnect dispatch or requests release for a reversible action. An explicit operator request may requeue the same blocked recovery or a recovery that exhausted its three transport failures, preserving its key, lease and cumulative failures; a subsequent transport failure remains terminal. Native cancellation cannot recall an already sent request or restore a disconnected session. */
         post: operations["revokeAction"];
         delete?: never;
         options?: never;
@@ -1454,6 +1540,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/identity/snapshot-uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Creates a bounded staged upload for a complete identity snapshot of up to 200000 address records. */
+        post: operations["createIdentitySnapshotUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/snapshot-uploads/{upload_id}/chunks/{chunk_index}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putIdentitySnapshotUploadChunk"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/snapshot-uploads/{upload_id}/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["commitIdentitySnapshotUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/identity/status": {
         parameters: {
             query?: never;
@@ -1496,6 +1631,219 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["replayIdentityBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/product-policy/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Atomically stores one immutable complete product/control catalog and updates current catalogs. Requires the dedicated product-policy integration token. */
+        post: operations["commitProductPolicySnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/product-policy/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getProductPolicyStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/product-policy/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listProductCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/4k-directory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Returns the product, group and current account directory used by policy scope selectors. No policy or action is imported from this directory. */
+        get: operations["getFourKDirectory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/srun4k": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listSRun4KIntegrations"];
+        put?: never;
+        post: operations["createSRun4KIntegration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/srun4k/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getSRun4KIntegration"];
+        put: operations["updateSRun4KIntegration"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/srun4k/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["testSRun4KIntegration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/srun4k/{id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["syncSRun4KIntegration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/srun4k/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSRun4KIntegrationStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-imports/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["previewProductPolicyImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-imports/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPolicyImport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-imports/{batch_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Atomically publishes direct conversions as enabled observe-mode policies only. */
+        post: operations["publishProductPolicyImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listPolicyDecisionRecords"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1870,6 +2218,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/device-inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Lightweight terminal list backed by the incrementally maintained recognition read model. */
+        get: operations["listDeviceInventory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/devices": {
         parameters: {
             query?: never;
@@ -2094,70 +2459,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/shadow/runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listShadowRuns"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/shadow/runs/{run_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getShadowRun"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/shadow/evaluation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getShadowEvaluation"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/shadow/review-samples": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getShadowReviewSamples"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/audit-logs": {
         parameters: {
             query?: never;
@@ -2262,22 +2563,6 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getRulesStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/shadow/review-samples/{sample_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getShadowSampleDetail"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2822,6 +3107,27 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Filesystem containing / in the control-plane process namespace; separately mounted data volumes are outside this measurement. */
+        RootFilesystemStatus: {
+            /** @enum {string} */
+            path: "/";
+            /** Format: int64 */
+            total_bytes: number;
+            /** Format: int64 */
+            used_bytes: number;
+            /**
+             * Format: int64
+             * @description Bytes available to unprivileged users
+             */
+            available_bytes: number;
+            /** @description Allocated bytes divided by allocated plus available bytes */
+            used_percent: number;
+            /** Format: int64 */
+            inodes_total?: number;
+            /** Format: int64 */
+            inodes_free?: number;
+            inodes_used_percent?: number;
+        };
         SharedDisconnectPreview: {
             review_id: string;
             connector_id: string;
@@ -2895,7 +3201,61 @@ export interface components {
             /** Format: date-time */
             last_seen: string;
         };
+        SharedDeviceProfile: {
+            profile_id: string;
+            sensor_id?: string;
+            endpoint_id?: string;
+            mac?: string;
+            ip?: string;
+            brand?: string;
+            model?: string;
+            /** @enum {string} */
+            role?: "router" | "ap";
+            /** @enum {string} */
+            identity_state: "supported" | "historical" | "reference";
+            identity_current: boolean;
+            /** Format: date-time */
+            identity_at: string;
+            /** Format: date-time */
+            identity_expires_at: string;
+            identity_evidence_id: string;
+            identity_assessment_id: string;
+            identity_basis: string;
+            /** @enum {string} */
+            address_state: "verified" | "stale" | "reassigned" | "unbound";
+            /**
+             * Format: date-time
+             * @description Address activity
+             */
+            address_last_activity_at?: string;
+            /** Format: date-time */
+            last_shared_at?: string;
+            last_shared_observation_id?: string;
+            current_shared: boolean;
+            address_only: boolean;
+            /** @description Current authentication sessions linked only by exact MAC or endpoint identity. */
+            auth_bindings?: components["schemas"]["RouterAuthBinding"][];
+        };
+        SharedDeviceProfilePage: {
+            items: components["schemas"]["SharedDeviceProfile"][];
+            /** @enum {string} */
+            activity_state?: "available" | "unavailable";
+            /** Format: date-time */
+            checked_at: string;
+            page: {
+                limit: number;
+                total: number;
+                next_cursor?: string | null;
+            };
+        };
         SharedBehaviorAssessment: {
+            /** @description Whether this observation remains in the current complete discovery window. */
+            current?: boolean;
+            /** @description Current-window multi-client evidence supporting confirmation. */
+            strong_anchor?: string;
+            device_lower_bound?: number;
+            /** @description Historical model references; not current concurrent device count. */
+            reference_device_count_24h?: number;
             observation_id: string;
             sensor_id: string;
             campus_id?: string;
@@ -3002,6 +3362,93 @@ export interface components {
             /** @enum {string} */
             credential_source: "4k_database";
         };
+        FourKSyncResult: {
+            connector_id: string;
+            source: string;
+            online_total: number;
+            identity_accounts: number;
+            identity_sessions: number;
+            products: number;
+            groups: number;
+            controls: number;
+            capabilities: "disconnect"[];
+            directory_ready: boolean;
+        };
+        FourKDirectoryItem: {
+            id: string;
+            name?: string;
+        };
+        FourKDirectory: {
+            source: string;
+            products: components["schemas"]["FourKDirectoryItem"][];
+            groups: components["schemas"]["FourKDirectoryItem"][];
+            accounts: components["schemas"]["FourKDirectoryItem"][];
+            vlans: components["schemas"]["FourKDirectoryItem"][];
+            /** Format: date-time */
+            product_observed_at?: string;
+            /** Format: date-time */
+            identity_observed_at?: string;
+            identity_sessions: number;
+            controls: number;
+        };
+        SRun4KIntegrationRequest: {
+            host: string;
+            /** @default 6 */
+            reconcile_interval_hours: number;
+        };
+        SRun4KIntegration: {
+            connector_id: string;
+            host: string;
+            source: string;
+            sensor_id: string;
+            reconcile_interval_hours: number;
+            /** @enum {string} */
+            event_channel_state: "waiting" | "healthy" | "interrupted";
+            /** @enum {string} */
+            connection_state: "pending" | "healthy" | "failed";
+            channels: {
+                /** @enum {string} */
+                authorization_database: "pending" | "healthy" | "failed";
+                /** @enum {string} */
+                redis: "pending" | "healthy" | "failed";
+                /** @enum {string} */
+                northbound_api: "pending" | "healthy" | "failed";
+                /** @enum {string} */
+                event_channel: "waiting" | "healthy" | "interrupted";
+            };
+            last_error?: string;
+            /** Format: date-time */
+            last_tested_at?: string;
+            /** Format: date-time */
+            last_synced_at?: string;
+            /** Format: date-time */
+            last_identity_poll_at?: string;
+            /** Format: date-time */
+            last_identity_event_at?: string;
+            identity_accounts: number;
+            identity_sessions: number;
+            products: number;
+            groups: number;
+            controls: number;
+        };
+        SRun4KSyncResult: {
+            connector_id: string;
+            source: string;
+            /** Format: date-time */
+            synced_at: string;
+            identity_accounts: number;
+            identity_sessions: number;
+            address_records: number;
+            products: number;
+            groups: number;
+            controls: number;
+            /** @enum {string} */
+            event_channel_state: "waiting" | "healthy" | "interrupted";
+            /** @enum {string} */
+            connection_state: "pending" | "healthy" | "failed";
+            /** @description Both observed connection and event channel are healthy. Other policy and shadow admission conditions still apply. */
+            enforcement_ready: boolean;
+        };
         OperationTask: {
             task_id: string;
             kind: string;
@@ -3044,6 +3491,19 @@ export interface components {
             } & {
                 [key: string]: string;
             })[];
+        };
+        IdentitySnapshotUploadCreate: {
+            upload_id: string;
+            source: string;
+            sensor_id: string;
+            campus_id?: string;
+            access_domain?: string;
+            /** Format: date-time */
+            observed_at: string;
+            reconcile_interval_hours: number;
+            expected_count: number;
+            expected_chunks: number;
+            expected_sha256: string;
         };
         IdentitySnapshotReceipt: {
             snapshot_id: string;
@@ -3252,6 +3712,37 @@ export interface components {
             password?: string;
             disabled?: boolean;
         };
+        WhitelistMutation: {
+            /** @enum {string} */
+            type: "ip" | "account" | "mac" | "network" | "group";
+            value: string;
+            reason: string;
+            campus_id?: string;
+            access_domain?: string;
+            enabled: boolean;
+            revision: number;
+            /** Format: date-time */
+            valid_from?: string;
+            /** Format: date-time */
+            expires_at?: string;
+        };
+        WhitelistEntry: components["schemas"]["WhitelistMutation"] & {
+            entry_id: string;
+            /** Format: date-time */
+            valid_from: string;
+            created_by: string;
+            updated_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        WhitelistPage: {
+            items: components["schemas"]["WhitelistEntry"][];
+            page: components["schemas"]["Page"];
+            /** Format: date-time */
+            checked_at: string;
+        };
         CampusException: {
             exception_id?: string;
             /** @enum {string} */
@@ -3280,7 +3771,12 @@ export interface components {
              */
             mode: "observe" | "manual" | "automatic";
             /** @enum {string} */
-            trigger: "quota_exceeded" | "shared_access" | "explicit_proxy";
+            trigger: "quota_exceeded" | "session_quota_exceeded" | "shared_access" | "explicit_proxy";
+            /**
+             * @description Independent action timers and execution-count dependencies compatible with dpi-analyze strategy semantics.
+             * @enum {string}
+             */
+            action_model?: "dpi-strategy/v1";
             priority?: number;
             revision?: number;
             scope?: components["schemas"]["AccountPolicyScope"];
@@ -3289,6 +3785,8 @@ export interface components {
                 total?: number | null;
                 mobile?: number | null;
                 pc?: number | null;
+                /** @description Stable authentication sessions; dual-stack address rows are counted once. */
+                sessions?: number | null;
             };
             sustain_seconds?: number;
             window_seconds?: number;
@@ -3296,18 +3794,64 @@ export interface components {
             cooldown_seconds?: number;
             stages?: {
                 /** @enum {string} */
-                action: "notify" | "rate_limit" | "disconnect" | "disable_account";
-                connector_id: string;
+                action: "record" | "notify" | "rate_limit" | "disconnect" | "disable_account";
+                /** @description Optional only for observe-mode stages. */
+                connector_id?: string;
                 after_seconds?: number;
                 min_episodes?: number;
                 duration_seconds?: number;
                 rate_kbps?: number;
                 template?: string;
+                depends_on?: ("notify" | "rate_limit" | "disconnect" | "disable_account")[];
+                interval_seconds?: number;
+                sync_notify?: boolean;
+                put_black?: boolean;
+            }[];
+            origin?: components["schemas"]["PolicyOrigin"];
+        };
+        PolicyOrigin: {
+            source: string;
+            snapshot_id: string;
+            external_product_id?: string;
+            external_policy_ids?: string[];
+            conversion_version: string;
+            import_batch_id: string;
+            reference_fields?: string[];
+        };
+        ProductPolicySnapshot: {
+            /** @enum {string} */
+            schema_version: "srun-business-policy/v1";
+            source: string;
+            instance_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            /** @enum {boolean} */
+            complete: true;
+            content_hash: string;
+            products: {
+                product_id: string;
+                name: string;
+                manager?: string;
+                control_ids: string[];
+            }[];
+            controls: {
+                control_id: string;
+                name: string;
+                /** @description Only positive values are eligible for automatic session-quota conversion. */
+                max_online_num: number;
+                disable_proxy: number;
+                proxy_times: number;
+                proxy_disable_time: number;
+                /** @description Source fields retained for traceability and never converted implicitly. */
+                reference?: {
+                    [key: string]: string;
+                };
             }[];
         };
         /** @description OR within a field, AND across fields, matched on the same active session; schedules use Asia/Shanghai. */
         AccountPolicyScope: {
             accounts?: string[];
+            sources?: string[];
             groups?: string[];
             products?: string[];
             campuses?: string[];
@@ -3491,13 +4035,20 @@ export interface components {
             /** @enum {string} */
             status: "new" | "assigned" | "investigating" | "waiting_data" | "resolved" | "closed" | "reopened";
             /** @enum {string} */
-            disposition?: "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
+            disposition?: "confirmed_proxy" | "confirmed_shared_access" | "confirmed_router" | "false_positive" | "benign" | "needs_more_data";
             /** @enum {string} */
             priority: "high" | "medium" | "low";
             assignee_id?: string;
             risk_score: number;
             risk_confidence: number;
             assessment_level: string;
+            /** @enum {string} */
+            risk_kind?: "shared_access" | "router_observation";
+            /** @description Whether the retained assessment matches an unexpired current risk snapshot. Missing or expired snapshots never imply benign behavior. */
+            assessment_current?: boolean;
+            /** Format: date-time */
+            assessment_updated_at?: string;
+            assessment_window?: string;
             /** Format: date-time */
             due_at: string;
             /** Format: date-time */
@@ -3617,6 +4168,8 @@ export interface components {
             remote_action_id?: string;
             parent_action_id?: string;
             retry_count?: number;
+            readonly precheck_retry_count?: number;
+            readonly precheck_retryable?: boolean;
             /** Format: date-time */
             next_attempt_at?: string;
             /** Format: date-time */
@@ -3676,6 +4229,30 @@ export interface components {
             /** @enum {string} */
             detection_basis?: "explicit_tunnel" | "shared_device_divergence" | "behavioral_only";
             independent_signal_groups?: ("protocol_rule" | "ttl_path" | "tls_client_stack" | "ua_os" | "dhcp_device_family" | "identity_mac" | "identity_access")[];
+        };
+        SharedAccessCaseEvidence: {
+            observation_id: string;
+            generation_id: string;
+            /** @enum {string} */
+            status: "confirmed";
+            confidence: number;
+            /** @enum {string} */
+            strong_anchor: "ieee1905_association" | "coexisting_device_models";
+            device_lower_bound: number;
+            /** @enum {string} */
+            coverage_state: "verified";
+            /** Format: date-time */
+            window_start: string;
+            /** Format: date-time */
+            window_end: string;
+            signal_groups: string[];
+            reasons: string[];
+            source_event_ids: string[];
+            anchor_identities: string[];
+            reference_device_count_24h?: number;
+            router_brand?: string;
+            router_model?: string;
+            router_confidence?: number;
         };
         NegativeEvidence: {
             /** @enum {string} */
@@ -3837,7 +4414,7 @@ export interface components {
             suspected_device_count: number;
             confidence: number;
             /** @enum {string} */
-            status: "insufficient_signal" | "weak_signals_only" | "single_candidate" | "multi_candidate";
+            status: "insufficient_signal" | "non_endpoint_or_weak" | "weak_signals_only" | "single_candidate" | "multi_candidate";
             summary: string;
             devices: components["schemas"]["ObservedDevice"][];
             signals: components["schemas"]["DeviceSignal"][];
@@ -3863,6 +4440,8 @@ export interface components {
             source: string;
             source_family: string;
             source_event_type?: string;
+            sensor_id?: string;
+            shared_observation_id?: string;
             raw_value?: string;
             /** @enum {string} */
             strength: "weak" | "medium" | "strong";
@@ -3891,6 +4470,23 @@ export interface components {
             evidence_id: string;
             score: number;
             explanation: string;
+        };
+        RouterAuthBinding: {
+            session_id: string;
+            account_id: string;
+            assigned_ips: string[];
+            mac?: string;
+            vlan?: string;
+            nas_ip?: string;
+            access_id?: string;
+            source: string;
+            /** @enum {string} */
+            match_basis: "exact_mac" | "exact_endpoint";
+            ambiguous: boolean;
+            /** Format: date-time */
+            started_at?: string;
+            /** Format: date-time */
+            last_confirmed_at?: string;
         };
         RouterAssessment: {
             assessment_id: string;
@@ -3923,6 +4519,8 @@ export interface components {
             conflicts: string[];
             score_components: components["schemas"]["RouterScoreComponent"][];
             evidence?: components["schemas"]["RouterEvidence"][];
+            /** @description Current authentication sessions linked only by exact MAC or endpoint identity. These bindings do not affect router confidence. */
+            auth_bindings?: components["schemas"]["RouterAuthBinding"][];
             /** @description Number of active incremental assessments represented by this device row. */
             merged_records?: number;
         };
@@ -3936,6 +4534,8 @@ export interface components {
             conflicts: string[];
         };
         RouterObservationDetail: components["schemas"]["RouterAssessment"] & {
+            /** @description Whether the stored verdict has unexpired supporting facts; false marks a historical observation. */
+            current: boolean;
             history: components["schemas"]["RouterAssessmentHistory"][];
         };
         RouterAssessmentPage: {
@@ -3960,6 +4560,58 @@ export interface components {
                 next_cursor: string | null;
                 total: number;
             };
+        };
+        DeviceInventoryListResponse: {
+            device_names_disabled?: boolean;
+            /** @description True while one or more endpoint summaries are waiting to be materialized. */
+            read_model_updating: boolean;
+            /**
+             * Format: date-time
+             * @description Oldest materialization time among items in this page.
+             */
+            as_of?: string;
+            facets: components["schemas"]["DeviceFilterFacets"];
+            items: components["schemas"]["DeviceInventoryListItem"][];
+            page: {
+                limit: number;
+                next_cursor: string | null;
+                total: number;
+            };
+        };
+        DeviceInventoryListItem: {
+            router_observation?: components["schemas"]["RouterAssessment"];
+            discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
+            ip_match?: components["schemas"]["DeviceIPMatch"];
+            device_name?: components["schemas"]["DeviceName"];
+            brand_reference?: components["schemas"]["BrandReference"];
+            brand_inference?: components["schemas"]["DeviceBrandInferenceSummary"];
+            endpoint_id: string;
+            primary_mac?: string;
+            owner_account?: string;
+            owner_name?: string;
+            current_account?: string;
+            current_ip?: string;
+            current_access_id?: string;
+            /** Format: date-time */
+            last_seen?: string;
+            vendor?: string;
+            brand?: string;
+            model?: string;
+            device_type?: string;
+            os_family?: string;
+            vendor_confidence: number;
+            brand_confidence: number;
+            model_confidence: number;
+            device_type_confidence: number;
+            os_family_confidence: number;
+            randomized_mac: boolean;
+            recognition_conflict: boolean;
+        };
+        DeviceBrandInferenceSummary: {
+            /** @enum {string} */
+            status: "insufficient" | "inferred" | "conflict";
+            brand?: string;
+            confidence: number;
         };
         /** @description All discovered endpoint recognition clues, independent of the current page and selected filters. Clues do not establish hardware identity. */
         DeviceFilterFacets: {
@@ -4151,6 +4803,8 @@ export interface components {
             reconcile_interval_seconds?: number;
             /** @enum {string} */
             identity_issue?: "unregistered_source";
+            /** @description Complete identity snapshots contributing to the current session binding. */
+            identity_snapshot_ids?: string[];
         } & {
             [key: string]: unknown;
         };
@@ -4383,10 +5037,14 @@ export interface components {
             duration_seconds: number;
             evidence_ids: string[];
             risk_score: number;
+            /** @description Combined risk estimate; independent of the protocol cue confidence level. */
+            risk_confidence?: number;
             risk_level: components["schemas"]["RiskLevel"];
             /** @enum {string} */
             review_status: "unreviewed" | "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
             review_reason?: string;
+            shared_access?: components["schemas"]["SharedAccessCaseEvidence"];
+            router_observation?: components["schemas"]["RouterAssessment"];
         };
         ProxyRuleMatch: {
             event_id: string;
@@ -4592,8 +5250,6 @@ export interface components {
         /** @enum {string} */
         LabelKind: "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
         CreateLabelRequest: {
-            /** Format: date */
-            sample_date?: string;
             /** @enum {string} */
             target_type: "ip" | "risk_snapshot" | "evidence" | "account" | "endpoint";
             target_id: string;
@@ -4654,110 +5310,6 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
-        ShadowReviewStats: {
-            total: number;
-            reviewed: number;
-            confirmed: number;
-            false_positive: number;
-            benign: number;
-            needs_more_data: number;
-            precision: number;
-        };
-        ShadowEvaluation: {
-            normalized_event_count?: number;
-            evidence_count?: number;
-            candidate_reviewed?: number;
-            candidate_confirmed?: number;
-            candidate_precision?: number;
-            normal_reviewed?: number;
-            level_stats?: {
-                [key: string]: {
-                    total: number;
-                    reviewed: number;
-                    confirmed: number;
-                    false_positive: number;
-                    benign: number;
-                    needs_more_data: number;
-                    precision: number;
-                };
-            };
-            false_positive_reasons?: {
-                value: string;
-                count: number;
-            }[];
-            false_positive_evidence?: {
-                value: string;
-                count: number;
-            }[];
-            daily?: {
-                /** Format: date */
-                date: string;
-                run_count: number;
-                level_stats: {
-                    [key: string]: components["schemas"]["ShadowReviewStats"];
-                };
-            }[];
-            daily_sample_exports?: string[];
-            /** Format: date-time */
-            generated_at: string;
-            /** Format: date-time */
-            window_from?: string;
-            /** Format: date-time */
-            window_to?: string;
-            required_days: number;
-            observed_days: number;
-            longest_continuous_days: number;
-            days_with_reviews: number;
-            run_count: number;
-            truncated_run_count?: number;
-            /** Format: double */
-            truncated_run_rate?: number;
-            malformed_event_count?: number;
-            /** Format: double */
-            malformed_event_rate?: number;
-            risk_snapshot_count: number;
-            evaluated_sample_count: number;
-            reviewed_snapshot_count: number;
-            /** Format: double */
-            review_coverage: number;
-            missing_review_buckets: string[];
-            recommended_adjustments: string[];
-            collection_warnings?: string[];
-            ready: boolean;
-            blockers: string[];
-        };
-        ShadowReviewSample: {
-            sample_id: string;
-            review_conflict?: boolean;
-            /** Format: date */
-            date: string;
-            ip: string;
-            subject_type?: string;
-            subject_id?: string;
-            account_id?: string;
-            endpoint_id?: string;
-            level: components["schemas"]["RiskLevel"];
-            score: number;
-            /** Format: double */
-            confidence: number;
-            evidence_ids: string[];
-            /** @enum {string} */
-            review_status: "unreviewed" | "confirmed_proxy" | "false_positive" | "benign" | "needs_more_data";
-            review_reason?: string;
-            reviewed_by?: string;
-            /** Format: date-time */
-            reviewed_at?: string;
-            source_run_id: string;
-            /** Format: date-time */
-            snapshot_time: string;
-        };
-        ShadowReviewSamples: {
-            /** Format: date */
-            date: string;
-            dates: string[];
-            samples_per_level: number;
-            samples: components["schemas"]["ShadowReviewSample"][];
-        };
         Overview: {
             /**
              * Format: date-time
@@ -4789,12 +5341,6 @@ export interface components {
             reload_supported: boolean;
             /** @enum {string} */
             reload_status: "disabled";
-        };
-        ShadowSampleDetail: {
-            sample: components["schemas"]["ShadowReviewSample"];
-            snapshot?: components["schemas"]["RiskSnapshot"];
-            evidence: components["schemas"]["Evidence"][];
-            missing_evidence_ids: string[];
         };
         RuleReloadResult: {
             /** @enum {string} */
@@ -4934,8 +5480,11 @@ export interface operations {
                 vlan?: string;
                 brand?: string;
                 model?: string;
+                /** @description Defaults to router; pass ap explicitly to inspect access points. */
                 role?: "router" | "ap" | "switch" | "firewall" | "endpoint" | "unknown";
                 status?: "candidate" | "likely" | "confirmed";
+                /** @description Include low-confidence router candidates when status is not explicitly selected. */
+                include_candidates?: boolean;
                 source?: string;
                 confidence_min?: number;
                 confidence_max?: number;
@@ -4944,6 +5493,8 @@ export interface operations {
                 last_seen_from?: string;
                 last_seen_to?: string;
                 infrastructure?: boolean;
+                /** @description Only include observations with a current authentication session linked by exact MAC or endpoint identity. */
+                has_auth_binding?: boolean;
                 limit?: number;
                 cursor?: string;
             };
@@ -5214,7 +5765,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Evidence changed */
+            /** @description Evidence changed, re-review required */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5243,7 +5794,7 @@ export interface operations {
                     "application/json": components["schemas"]["OperationTask"];
                 };
             };
-            /** @description Permission */
+            /** @description Permission, CSRF or read-only restriction */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -5299,7 +5850,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Permission */
+            /** @description Permission, CSRF or read-only restriction */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -5411,9 +5962,43 @@ export interface operations {
             };
         };
     };
+    listSharedDeviceProfiles: {
+        parameters: {
+            query?: {
+                keyword?: string;
+                limit?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Equipment identity archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDeviceProfilePage"];
+                };
+            };
+            /** @description Archive read unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listSharedBehaviorObservations: {
         parameters: {
             query?: {
+                view?: "current" | "history";
+                /** @description History only. Defaults to verified multi-device evidence; clues explicitly opens weaker legacy records. */
+                history_basis?: "shared" | "clues";
                 keyword?: string;
                 ip?: string;
                 status?: "candidate" | "likely" | "confirmed";
@@ -5870,6 +6455,37 @@ export interface operations {
                             [key: string]: unknown;
                         };
                         fingerprint_offline_mode?: boolean;
+                        runtime?: {
+                            /** Format: date-time */
+                            sampled_at: string;
+                            host: {
+                                logical_cpus: number;
+                                load_1?: number;
+                                load_5?: number;
+                                load_15?: number;
+                                /** Format: int64 */
+                                memory_total_bytes?: number;
+                                /** Format: int64 */
+                                memory_used_bytes?: number;
+                                memory_used_percent?: number;
+                                root_filesystem?: components["schemas"]["RootFilesystemStatus"];
+                                root_filesystem_error?: string;
+                            };
+                            process: {
+                                cpu_percent: number;
+                                /** Format: int64 */
+                                resident_memory_bytes?: number;
+                                /** Format: int64 */
+                                heap_alloc_bytes: number;
+                                /** Format: int64 */
+                                heap_in_use_bytes: number;
+                                goroutines: number;
+                                gomaxprocs: number;
+                                gc_cycles: number;
+                                /** Format: int64 */
+                                uptime_seconds: number;
+                            };
+                        };
                         global_read_only?: boolean;
                         /** Format: date-time */
                         checked_at: string;
@@ -6101,6 +6717,188 @@ export interface operations {
             };
         };
     };
+    listWhitelist: {
+        parameters: {
+            query?: {
+                keyword?: string;
+                type?: "ip" | "account" | "mac" | "network" | "group";
+                state?: "active" | "disabled" | "expired" | "scheduled";
+                limit?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whitelist page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhitelistPage"];
+                };
+            };
+            /** @description Whitelist configuration unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createWhitelist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhitelistMutation"];
+            };
+        };
+        responses: {
+            /** @description Whitelist created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhitelistEntry"];
+                };
+            };
+            /** @description Invalid whitelist */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Duplicate whitelist */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Configuration or audit write failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateWhitelist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhitelistMutation"];
+            };
+        };
+        responses: {
+            /** @description Whitelist updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhitelistEntry"];
+                };
+            };
+            /** @description Invalid whitelist */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Whitelist absent */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Revision conflict or duplicate */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Configuration or audit write failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    switchWhitelist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+                operation: "enable" | "disable";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    revision: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Whitelist state updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhitelistEntry"];
+                };
+            };
+            /** @description Whitelist absent */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Configuration or audit write failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listCampusExceptions: {
         parameters: {
             query?: {
@@ -6188,6 +6986,8 @@ export interface operations {
                 vlan?: string;
                 ap?: string;
                 nas_ip?: string;
+                /** @description Include current router observations alongside confirmed shared-access cases. */
+                include_router_observations?: boolean;
                 window?: "24h" | "7d";
             };
             header?: never;
@@ -6594,6 +7394,51 @@ export interface operations {
             };
         };
     };
+    syncFourKInformation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connector_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @default srun-office */
+                    source?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Products, groups and current user identities were synchronized; connector capabilities were registered separately from policies. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FourKSyncResult"];
+                };
+            };
+            /** @description Persisted synchronization task. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationTask"];
+                };
+            };
+            /** @description Complete identity or product snapshot is missing or stale. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     updateActionEmergencyStop: {
         parameters: {
             query?: never;
@@ -6746,6 +7591,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Returns the existing recovery without changing its scheduling or scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnforcementAction"];
+                };
+            };
             /** @description Revocation accepted. Native disconnect returns the original action with blocked status; this does not prove remote restoration. */
             202: {
                 headers: {
@@ -6864,7 +7718,7 @@ export interface operations {
                     "application/json": components["schemas"]["IdentitySnapshotReceipt"];
                 };
             };
-            /** @description Incomplete inventory */
+            /** @description Incomplete inventory, count mismatch, invalid record, scope conflict or invalid observation time. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6885,7 +7739,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Snapshot identity or observation time already contains different content */
+            /** @description Snapshot identity or observation time already contains different content, or storage does not support reconciliation. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -6894,6 +7748,110 @@ export interface operations {
             };
             /** @description Database commit failed or its result is uncertain; retry the same immutable request and key. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createIdentitySnapshotUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentitySnapshotUploadCreate"];
+            };
+        };
+        responses: {
+            /** @description Identical upload reservation already exists. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Upload reservation created. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    putIdentitySnapshotUploadChunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: string;
+                chunk_index: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: string;
+                }[];
+            };
+        };
+        responses: {
+            /** @description Identical chunk already accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Immutable chunk accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Chunk index already contains different content. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    commitIdentitySnapshotUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upload_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The same completed upload was replayed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description All chunks verified and the current identity version switched atomically. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing chunk, count mismatch, digest mismatch or conflicting upload. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6922,6 +7880,25 @@ export interface operations {
                         completed_batches: number;
                         failed_batches: number;
                         reconciliation_supported: boolean;
+                        materializer?: {
+                            pending_snapshots?: number;
+                            health?: {
+                                last_checked_at?: string;
+                                processed_live_batch?: number;
+                                last_error?: string;
+                            };
+                            cursors?: {
+                                sensor_id?: string;
+                                /** @enum {string} */
+                                phase?: "live" | "backfill";
+                                cursor_at?: string;
+                                event_id?: string;
+                                cutover_at?: string;
+                                processed_events?: number;
+                                last_success_at?: string | null;
+                                last_error?: string;
+                            }[];
+                        };
                         sources: components["schemas"]["IdentitySourceStatus"][];
                     };
                 };
@@ -6970,6 +7947,415 @@ export interface operations {
             404: components["responses"]["NotFound"];
             /** @description Batch has no retained normalized events or PostgreSQL replay is unavailable. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    commitProductPolicySnapshot: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductPolicySnapshot"];
+            };
+        };
+        responses: {
+            /** @description Identical snapshot was already committed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Snapshot and current catalogs committed atomically. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Idempotency key refers to different content. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getProductPolicyStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current catalog counts and latest receipt time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listProductCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active and inactive product catalog rows with stable IDs and real names. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getFourKDirectory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current 4K policy matching directory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FourKDirectory"];
+                };
+            };
+        };
+    };
+    listSRun4KIntegrations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Configured deepin SRun 4K instances without deployment credentials. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: components["schemas"]["SRun4KIntegration"][];
+                    };
+                };
+            };
+        };
+    };
+    createSRun4KIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SRun4KIntegrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Simplified integration saved with generated IDs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SRun4KIntegration"];
+                };
+            };
+        };
+    };
+    getSRun4KIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Integration status without credentials. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SRun4KIntegration"];
+                };
+            };
+        };
+    };
+    updateSRun4KIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SRun4KIntegrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Integration configuration updated atomically with its audit. A host change creates a new identity namespace and resets validation; an unchanged host preserves its namespace. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SRun4KIntegration"];
+                };
+            };
+        };
+    };
+    testSRun4KIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Read-only checks completed and the matching integration result and success audit committed together. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The check was cancelled. The integration health, result ordering and success timestamps are retained; cancellation is audited within a finite reporting budget. */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An online identity or catalog Redis reply exceeds its resource limits. Existing health is retained and the specific resource rejection is audited. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The result could not be committed or the tested integration configuration changed. Retry the check. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    syncSRun4KIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Complete identity and match directories reconciled; connection state reflects the latest ordered observation and can remain failed after a newer check. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SRun4KSyncResult"];
+                };
+            };
+            /** @description The synchronization was cancelled. Cancellation is audited without recording an upstream connection failure or complete synchronization; earlier completed reconciliation stages may already have committed. */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The captured online identity projection failed atomic validation, the product catalog membership or relations changed, a newer group-directory observation already exists, or the same observation time has conflicting content. No complete synchronization is reported. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The online identity inventory or product catalog exceeds bounded response or projection capacity. No complete rejected inventory or catalog is published; existing connection status is retained and online_resource_limit or catalog_resource_limit is audited. Earlier completed reconciliation stages may already have committed. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The check or synchronization result and success audit could not be committed, or the integration configuration changed. No successful synchronization is reported. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSRun4KIntegrationStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Channel states and last synchronization counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SRun4KIntegration"];
+                };
+            };
+        };
+    };
+    previewProductPolicyImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    source?: string;
+                    snapshot_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Immutable conversion preview created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getPolicyImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Import batch and item-level conversion dispositions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    publishProductPolicyImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Imported observe-mode policies. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stable policy ID is occupied by a non-source policy or the preview is invalid. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listPolicyDecisionRecords: {
+        parameters: {
+            query?: {
+                account_id?: string;
+                policy_id?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Append-only policy decisions including blockers and planned shadow stages. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7681,6 +9067,46 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    listDeviceInventory: {
+        parameters: {
+            query?: {
+                view?: "recent" | "history";
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h";
+                ip?: string;
+                q?: string;
+                brand?: string;
+                os_family?: string;
+                ecosystem?: string;
+                campus_id?: components["parameters"]["CampusIdQuery"];
+                department?: components["parameters"]["DepartmentQuery"];
+                person_type?: components["parameters"]["PersonTypeQuery"];
+                ssid?: components["parameters"]["SSIDQuery"];
+                vlan?: components["parameters"]["VLANQuery"];
+                ap?: components["parameters"]["APQuery"];
+                nas_ip?: components["parameters"]["NASIPQuery"];
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lightweight terminal inventory page and recognition facets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceInventoryListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listDevices: {
         parameters: {
             query?: {
@@ -8078,105 +9504,6 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
-    listShadowRuns: {
-        parameters: {
-            query?: {
-                limit?: number;
-                cursor?: string;
-                q?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Shadow mode run summaries. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        runs: components["schemas"]["ShadowRun"][];
-                        page: components["schemas"]["Page"];
-                    };
-                };
-            };
-            500: components["responses"]["InternalError"];
-        };
-    };
-    getShadowRun: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Full shadow run. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ShadowRun"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-        };
-    };
-    getShadowEvaluation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Latest seven-day shadow evaluation and review readiness report. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ShadowEvaluation"];
-                };
-            };
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
-    getShadowReviewSamples: {
-        parameters: {
-            query?: {
-                /** @description Review sample date in YYYY-MM-DD; defaults to the latest available date. */
-                date?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Stratified shadow samples for human review. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ShadowReviewSamples"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
-        };
-    };
     listAuditLogs: {
         parameters: {
             query?: {
@@ -8393,33 +9720,6 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
-        };
-    };
-    getShadowSampleDetail: {
-        parameters: {
-            query: {
-                date: string;
-            };
-            header?: never;
-            path: {
-                sample_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Historical sample with its original evidence */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ShadowSampleDetail"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
-            500: components["responses"]["InternalError"];
         };
     };
     reloadRules: {

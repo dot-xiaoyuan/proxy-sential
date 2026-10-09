@@ -99,7 +99,7 @@ func runConfiguredNativeTransport(t *testing.T, rejectSecond bool) {
 	if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tlsServer.Certificate().Raw}), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config := []nativeConfigEntry{{ConnectorID: prefix, CampusID: "lab", AccessDomain: "nas", Endpoint: tlsServer.URL, AppID: "lab-app", AppSecret: "lab-secret", CertificateFile: cert, RedisURL: "redis://" + addr + "/15", OnlineList: list, ReadyKey: ready, MaxRecords: 10, DropType: "radius"}}
+	config := []nativeConfigEntry{{AllowLegacyRedisReplay: true, ConnectorID: prefix, CampusID: "lab", AccessDomain: "nas", Endpoint: tlsServer.URL, AppID: "lab-app", AppSecret: "lab-secret", CertificateFile: cert, RedisURL: "redis://" + addr + "/15", OnlineList: list, ReadyKey: ready, MaxRecords: 10, DropType: "radius"}}
 	raw, _ := json.Marshal(config)
 	file := filepath.Join(dir, "native.json")
 	if err := os.WriteFile(file, raw, 0600); err != nil {
@@ -169,10 +169,12 @@ func runConfiguredNativeTransport(t *testing.T, rejectSecond bool) {
 		s.deliverAction(id, false)
 		expected := "succeeded"
 		if rejectSecond && id == actionIDs[1] {
-			expected = "pending"
+			// Explicit rejection is a terminal failure, not an uncertain send
+			// awaiting reconciliation or permission to retry after restart.
+			expected = "failed"
 		}
 		if reopened.doc.Actions[id].Status != expected {
-			t.Fatal("lost completed result")
+			t.Fatalf("persisted result: status=%s expected=%s error=%s", reopened.doc.Actions[id].Status, expected, reopened.doc.Actions[id].LastError)
 		}
 	}
 	if drops.Load() != 2 {

@@ -78,40 +78,11 @@ proxy-sentinel-probe --mode account --account yuantong \
 
 **通过标准**：身份源 ready，最近观测 ≤5 秒，指定账号只读关联可复现；失败时系统按既有设计停止身份准入。
 
-## 二、关口 2：检测准确率与人工真值
+## 二、关口 2：检测结果人工核对
 
-工具链已具备（`ShadowReviewSamplesPage` + `POST /api/v1/labels` + `evaluate shadow`）。本关口只缺人工真值。
+在「风险案件」和「账号复核」中查看标准事件、证据、评分与解释，针对真实业务样本记录人工结论和证据 ID。准确率与误报情况由验收人员依据这些记录统计，并在现场验收材料中说明样本范围、统计方法和结论。
 
-### 2.1 每日复核
-
-在「影子分层复核」按日期对 `confirmed/high/suspicious/normal` 逐条打标签：`确认代理`、`误报`、`良性`、`需补数据`。每条必须带证据 ID（后端强制）。
-
-### 2.2 判定
-
-```bash
-proxy-sentinel evaluate shadow \
-  --shadow-dir data/shadow \
-  --postgres-dsn "$PROXY_SENTINEL_POSTGRES_DSN" \
-  --strict \
-  --output artifacts/shadow-eval-$(date +%Y%m%d).json
-```
-
-门槛（可用 flag 覆盖，0 表示不启用该检查）：
-
-| 门槛 | 默认 | 说明 |
-|---|---|---|
-| `--required-days` | 7 | 连续影子运行且有复核的天数 |
-| `--min-normal-ground-truth` | 200 | 已复核的正常样本数 |
-| `--min-candidate-reviews` | 200 | 已复核的候选样本数（confirmed/high/suspicious） |
-| `--min-precision` | 0.95 | 候选准确率 = confirmed / (confirmed + false_positive + benign) |
-
-报告字段：`candidate_reviewed`、`candidate_confirmed`、`candidate_precision`、`normal_reviewed`、`blockers`、`false_positive_reasons`、`false_positive_evidence`、`recommended_adjustments`。
-
-**`needs_more_data` 计入复核覆盖但不计入准确率分母。**
-
-**通过标准**：`--strict` 退出码 0，`blockers=[]`，并产出误报 Top10 与规则调整建议。未达标不得进入自动处置讨论。
-
-### 2.3 设备发现人工标准答案（并行）
+### 2.1 设备发现人工标准答案（并行）
 
 ```bash
 go run ./cmd/proxy-sentinel validate known-devices \

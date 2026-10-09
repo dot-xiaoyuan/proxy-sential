@@ -103,3 +103,5 @@ Zeek 和 Suricata 只能读取交换机镜像流量。控制面保持 `--read-on
 ```
 
 采样目录包含 Zeek 原始日志、标准事件、`router-evidence.json`、`router-assessments.json` 和统计摘要。命令到期后自动停止临时 Zeek 进程。完整规则、查询、回放和验收说明见 [Huawei/H3C 路由器被动识别](router-passive-identification.md)。
+
+应用热升级的就绪检查还会核对所选 systemd 单元的实际 MainPID：每个 `/proc/<pid>/exe` 必须指向候选版本下相应二进制，并与候选文件具有相同设备号和 inode；读取前后 MainPID 必须稳定。服务活跃、HTTP 就绪但仍执行旧版本时，不接受升级，并恢复原版本后再次核验进程。所有工作服务的重启错误均保留，回滚进程核验失败时明确报告，不能仅凭版本指针恢复宣称完整回滚。Zeek 和 Suricata 不属于应用热升级重启列表。

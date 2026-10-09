@@ -92,7 +92,11 @@ func Convert(r io.Reader, w io.Writer, opts Options) (Stats, error) {
 		}
 		stats.Emitted++
 		stats.ByType[event.Type]++
-		if proxy, ok := proxyTransaction(event, opts); ok {
+		proxy, ok, err := proxyTransaction(event, opts)
+		if err != nil {
+			return stats, fmt.Errorf("sign proxy transaction: %w", err)
+		}
+		if ok {
 			if err := encoder.Encode(proxy); err != nil {
 				return stats, err
 			}

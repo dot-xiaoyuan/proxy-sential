@@ -101,7 +101,7 @@ func TestAnalyzeEmitsDHCPDeviceFingerprintEvidence(t *testing.T) {
 		if expected == "dhcp_device_fingerprint" && (ev.Score != 0 || ev.Severity != "info") {
 			t.Fatalf("DHCP profile must remain explanatory: %+v", ev)
 		}
-		if expected != "dhcp_device_fingerprint" && ev.Score == 0 || ev.Confidence < 0.8 || len(ev.Samples) == 0 || ev.Reason == "" {
+		if (expected != "dhcp_device_fingerprint" && (ev.Score == 0 || ev.Score > 30 || ev.Confidence > .65)) || len(ev.Samples) == 0 || ev.Reason == "" {
 			t.Fatalf("unexpected device evidence: %+v", ev)
 		}
 	}
@@ -128,8 +128,8 @@ func TestAnalyzeCombinesLocalDeviceProtocolsIntoConflictEvidence(t *testing.T) {
 		t.Fatalf("local device profile must remain explanatory: %+v", profile)
 	}
 	conflict, ok := byType["device_fingerprint_conflict"]
-	if !ok || conflict.Score < 50 || conflict.Confidence < .8 {
-		t.Fatalf("expected independent device-family conflict: %+v", conflict)
+	if !ok || conflict.Score > 30 || conflict.Confidence > .65 {
+		t.Fatalf("local profile names must remain unverified concurrency clues: %+v", conflict)
 	}
 }
 
@@ -204,7 +204,7 @@ func TestAnalyzeEmitsAccountSharingEvidence(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing account_concurrent_macs in %+v", byType)
 	}
-	if ev.SubjectType != "account" || ev.SubjectID != "2026000123" || ev.AccountID != "2026000123" || ev.Score < 60 {
+	if ev.SubjectType != "account" || ev.SubjectID != "2026000123" || ev.AccountID != "2026000123" || ev.Score > 30 || ev.Confidence > .65 {
 		t.Fatalf("unexpected account evidence: %+v", ev)
 	}
 	if _, ok := byType["account_concurrent_access"]; !ok {

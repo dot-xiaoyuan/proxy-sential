@@ -56,7 +56,7 @@ func asynchronousOperation(method, path string) bool {
 	case "/application-library/pull", "/application-library/import", "/device-fingerprint-library/update", "/device-fingerprint-library/import", "/device-fingerprint-library/validate":
 		return true
 	}
-	return strings.HasPrefix(path, "/actions/connectors/") && (strings.HasSuffix(path, "/test") || strings.HasSuffix(path, "/4k-database"))
+	return strings.HasPrefix(path, "/actions/connectors/") && (strings.HasSuffix(path, "/test") || strings.HasSuffix(path, "/4k-database") || strings.HasSuffix(path, "/4k-sync"))
 }
 
 // Uploads are streamed to durable private files; transmission is measured
@@ -117,7 +117,7 @@ func (s *Server) submitOperationTask(w http.ResponseWriter, r *http.Request, pat
 			return
 		}
 		if strings.HasSuffix(path, "/account-preview") {
-			if _, ok := s.nativeActions[parts[0]]; !ok {
+			if _, ok := s.nativeRuntime(parts[0]); !ok {
 				writeError(w, 409, "native_preview_unavailable", "native source is not configured")
 				return
 			}

@@ -7,7 +7,7 @@ const item = (key: string, title: string, to: string, permission?: Permission, p
 export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
   { key: 'risk', title: '风险运营', items: [
-    {...item('observations','共享发现','/shared-access?tab=observations','cases:read'), owns: (p,q) => p.startsWith('/shared-access/observations') || p === '/shared-access' && q.get('tab') !== 'reviews'},
+    {...item('observations','共享发现','/shared-access?tab=devices','cases:read'), owns: (p,q) => p.startsWith('/shared-access/observations') || p === '/shared-access' && q.get('tab') !== 'reviews'},
     {...item('reviews','账号复核','/shared-access?tab=reviews','cases:read'), owns: (p,q) => p.startsWith('/shared-access/reviews') || p === '/shared-access' && q.get('tab') === 'reviews'},
     item('cases','风险案件','/cases','cases:read'), {...item('actions','处置记录','/actions?tab=actions','actions:read'),readAlternatives:[{permission:'policies:read',to:'/actions?tab=executions'}]},
   ] },
@@ -16,11 +16,11 @@ export const navigation: NavigationGroup[] = [
     ...(['applications','access','technical'] as const).map((section,index) => ({...item(section,['应用访问','访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['applications','access','technical'].includes(q.get('section')||'')?q.get('section'):'applications') === section})),
     item('events','事件检索','/events','events:read'),
   ] },
-  { key: 'strategy', title: '策略与验证', items: [item('policies','防代理策略','/policies','policies:read'),item('exceptions','校园例外','/policies/exceptions','risks:read'),{...item('rules','规则与特征库','/settings/rules','risks:read'),readAlternatives:[{permission:'dpi:read',to:'/settings/rules?tab=application-domains'},{permission:'identity:read',to:'/settings/rules?tab=fingerprints'}]},item('shadow','影子评估','/shadow-runs','shadow:read'),item('samples','样本复核','/review-samples','shadow:read')] },
+  { key: 'strategy', title: '策略与验证', items: [item('policies','防代理策略','/policies','policies:read'),item('whitelist','白名单','/policies/whitelist','policies:read'),item('exceptions','校园例外','/policies/exceptions','risks:read'),{...item('rules','规则与特征库','/settings/rules','risks:read'),readAlternatives:[{permission:'dpi:read',to:'/settings/rules?tab=application-domains'},{permission:'identity:read',to:'/settings/rules?tab=fingerprints'}]}] },
   { key: 'system', title: '系统管理', items: [{...item('sources','数据源与采集','/settings/sources','ingest:read'),readAlternatives:[{permission:'identity:read',to:'/settings/sources?tab=sources'}]},item('integrations','认证与处置接入','/settings/actions','actions:read'),item('organization','校区与网络区域','/settings/organization','organization:read'),item('users','用户权限','/settings/security','users:manage'),item('audit','审计日志','/audit','audit:read')] },
 ]
 
-const registeredRoutes=[/^\/(overview|activity|devices|discovery|events|cases|actions|shadow-runs|review-samples|audit|policies|shared-access)$/, /^\/(devices|events|cases|shadow-runs|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/exceptions$/, /^\/settings\/(sources|rules|organization|actions|security)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
+const registeredRoutes=[/^\/(overview|activity|devices|discovery|events|cases|actions|audit|policies|shared-access)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist)$/, /^\/settings\/(sources|rules|organization|actions|security)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
 export function safeReturnTo(value: string | null | undefined, fallback = '/events', depth=0): string {
   if (!value || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f]/.test(value)) return fallback
   try {

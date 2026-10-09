@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -142,11 +143,11 @@ func runApplicationLibrary(args []string) error {
 
 func runReadModel(args []string) error {
 	if len(args) < 1 || args[0] != "run" {
-		return fmt.Errorf("usage: proxy-sentinel read-model run --lane realtime|coarse|recognition|application --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
+		return fmt.Errorf("usage: proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
 	}
 	fs := flag.NewFlagSet("read-model run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	lane := fs.String("lane", "", "worker lane: realtime, coarse, recognition, or application")
+	lane := fs.String("lane", "", "worker lane: realtime, coarse, recognition, application, or identity")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
@@ -155,8 +156,8 @@ func runReadModel(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if *lane != "realtime" && *lane != "coarse" && *lane != "recognition" && *lane != "application" {
-		return fmt.Errorf("--lane must be realtime, coarse, recognition, or application")
+	if *lane != "realtime" && *lane != "coarse" && *lane != "recognition" && *lane != "application" && *lane != "identity" {
+		return fmt.Errorf("--lane must be realtime, coarse, recognition, application, or identity")
 	}
 	if strings.TrimSpace(*postgresDSN) == "" || strings.TrimSpace(*clickhouseDSN) == "" {
 		return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
@@ -173,6 +174,8 @@ func runReadModel(args []string) error {
 		backend.RunRealtimeReadModels(ctx)
 	case "coarse":
 		backend.RunActivityV3Coarse(ctx)
+	case "identity":
+		backend.RunIdentityMaterializer(ctx)
 	case "recognition":
 		backend.RunRecognitionMaterializer(ctx)
 	case "application":
@@ -271,7 +274,7 @@ func runRouter(args []string) error {
 		return err
 	}
 	zeekLogs := map[string]string{}
-	for _, kind := range []string{"dhcp", "software", "conn", "dns", "http", "ssl", "x509", "mdns", "nbns", "llmnr", "lldp", "ssdp", "ttl"} {
+	for _, kind := range []string{"dhcp", "software", "conn", "dns", "http", "ssl", "x509", "mdns", "nbns", "llmnr", "lldp", "ssdp", "snmp", "ttl"} {
 		path := filepath.Join(zeekDir, kind+".log")
 		if _, statErr := os.Stat(path); statErr == nil {
 			zeekLogs[kind] = path
@@ -291,10 +294,11 @@ func runIngest(args []string) error {
 	fs := flag.NewFlagSet("ingest run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
-	proxyConfigFile := fs.String("proxy-protocol-config", "", "trusted proxy producer registration file")
-	zeekProxy := fs.String("zeek-proxy", "", "Zeek proxy_transactions.log path")
+	proxyConfigFile := fs.String("proxy-protocol-config", os.Getenv("PROXY_SENTINEL_PROXY_PROTOCOL_CONFIG"), "trusted proxy producer registration file")
+	zeekProxy := fs.String("zeek-proxy", os.Getenv("PROXY_SENTINEL_ZEEK_PROXY_PATH"), "Zeek proxy_transactions.log path")
 	scopeFile := fs.String("capture-scope-config", "", "controlled capture scope and validity interval")
-	collectorInstanceID := fs.String("collector-instance-id", "", "Suricata boot identifier; change on collector restart")
+	collectorInstanceID := fs.String("collector-instance-id", os.Getenv("PROXY_SENTINEL_SURICATA_INSTANCE_ID"), "Suricata boot identifier; change on collector restart")
+	zeekInstanceID := fs.String("zeek-collector-instance-id", os.Getenv("PROXY_SENTINEL_ZEEK_INSTANCE_ID"), "Zeek boot identifier; defaults to collector-instance-id")
 	evePath := fs.String("eve", "", "Suricata EVE JSON path")
 	zeekDHCP := fs.String("zeek-dhcp", "", "Zeek DHCP log path")
 	zeekSoftware := fs.String("zeek-software", "", "Zeek software log path")
@@ -309,7 +313,9 @@ func runIngest(args []string) error {
 	zeekX509 := fs.String("zeek-x509", "", "Zeek x509.log path")
 	zeekLLDP := fs.String("zeek-lldp", "", "Zeek lldp.log path")
 	zeekSSDP := fs.String("zeek-ssdp", "", "Zeek ssdp.log path")
+	zeekSNMP := fs.String("zeek-snmp", "", "Zeek sanitized snmp.log path")
 	deviceSignals := fs.String("device-signals", "", "normalized TTL/device signal JSONL path")
+	sharedDeviceSignals := fs.String("shared-device-signals", "", "payload-free TCP SYN/TTL shared-access signal JSONL path")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	interval := fs.Duration("poll-interval", 5*time.Second, "source polling interval")
@@ -333,10 +339,13 @@ func runIngest(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *zeekInstanceID == "" {
+		*zeekInstanceID = *collectorInstanceID
+	}
 	sources := []realtime.Source{}
 	for _, source := range []realtime.Source{
 		{Kind: "suricata", Path: *evePath, CollectorInstanceID: *collectorInstanceID, ProxyProducer: proxyConfig.Producer(*sensorID, "suricata", *collectorInstanceID)},
-		{Kind: "zeek-proxy", Path: *zeekProxy, CollectorInstanceID: *collectorInstanceID, ProxyProducer: proxyConfig.Producer(*sensorID, "zeek", *collectorInstanceID)},
+		{Kind: "zeek-proxy", Path: *zeekProxy, CollectorInstanceID: *zeekInstanceID, ProxyProducer: proxyConfig.Producer(*sensorID, "zeek", *zeekInstanceID)},
 		{Kind: "zeek-dhcp", Path: *zeekDHCP},
 		{Kind: "zeek-software", Path: *zeekSoftware},
 		{Kind: "zeek-mdns", Path: *zeekMDNS},
@@ -350,12 +359,14 @@ func runIngest(args []string) error {
 		{Kind: "zeek-x509", Path: *zeekX509},
 		{Kind: "zeek-lldp", Path: *zeekLLDP},
 		{Kind: "zeek-ssdp", Path: *zeekSSDP},
+		{Kind: "zeek-snmp", Path: *zeekSNMP},
 		{Kind: "device-signals", Path: *deviceSignals},
+		{Kind: "shared-device-signals", Path: *sharedDeviceSignals},
 	} {
 		if source.Path != "" {
 			source.CaptureScope = captureScope
 			if strings.HasPrefix(source.Kind, "zeek-") {
-				source.CollectorInstanceID = *collectorInstanceID
+				source.CollectorInstanceID = *zeekInstanceID
 			}
 			sources = append(sources, source)
 		}
@@ -385,6 +396,8 @@ func runDeviceSignal(args []string) error {
 	output := fs.String("output", "", "normalized device signal JSONL output")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
 	bucket := fs.Duration("bucket", 5*time.Second, "aggregation bucket")
+	routerProtocolsOnly := fs.Bool("router-protocols-only", false, "attach the bounded router/discovery protocol BPF before capture")
+	sharedSignalsOnly := fs.Bool("shared-signals-only", false, "capture only payload-free initial TCP SYN metadata for shared-access analysis")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -394,7 +407,7 @@ func runDeviceSignal(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket})
+	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly})
 }
 
 func runMigrate(args []string) error {
@@ -618,7 +631,7 @@ func runZeekAdapter(args []string) error {
 	sensorID := fs.String("sensor-id", "", "optional sensor identifier")
 	proxyConfigFile := fs.String("proxy-protocol-config", "", "trusted proxy producer registration file")
 	instanceID := fs.String("collector-instance-id", "", "collector boot identifier")
-	logKind := fs.String("log-kind", "", "optional dhcp, software, conn, dns, http, ssl, x509, lldp, ssdp, mdns, nbns, llmnr or ttl log kind")
+	logKind := fs.String("log-kind", "", "optional dhcp, software, conn, dns, http, ssl, x509, lldp, ssdp, snmp, mdns, nbns, llmnr or ttl log kind")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -943,6 +956,7 @@ func runShadowRun(args []string) error {
 	zeekLLMNR := fs.String("zeek-llmnr", "", "optional Zeek LLMNR log path")
 	zeekLLDP := fs.String("zeek-lldp", "", "optional Zeek lldp.log path")
 	zeekSSDP := fs.String("zeek-ssdp", "", "optional Zeek ssdp.log path")
+	zeekSNMP := fs.String("zeek-snmp", "", "optional sanitized Zeek snmp.log path")
 	zeekTTL := fs.String("zeek-ttl", "", "optional Zeek TTL signal log path")
 	state := fs.String("state", "data/shadow/state.json", "shadow offset state path")
 	outDir := fs.String("out-dir", "data/shadow", "shadow output directory")
@@ -964,7 +978,7 @@ func runShadowRun(args []string) error {
 		EVEPath:             *eve,
 		ZeekDHCPPath:        *zeekDHCP,
 		ZeekSoftwarePath:    *zeekSoftware,
-		ZeekLogs:            map[string]string{"conn": *zeekConn, "dns": *zeekDNS, "http": *zeekHTTP, "ssl": *zeekSSL, "x509": *zeekX509, "mdns": *zeekMDNS, "nbns": *zeekNBNS, "llmnr": *zeekLLMNR, "lldp": *zeekLLDP, "ssdp": *zeekSSDP, "ttl": *zeekTTL},
+		ZeekLogs:            map[string]string{"conn": *zeekConn, "dns": *zeekDNS, "http": *zeekHTTP, "ssl": *zeekSSL, "x509": *zeekX509, "mdns": *zeekMDNS, "nbns": *zeekNBNS, "llmnr": *zeekLLMNR, "lldp": *zeekLLDP, "ssdp": *zeekSSDP, "snmp": *zeekSNMP, "ttl": *zeekTTL},
 		StatePath:           *state,
 		OutDir:              *outDir,
 		SensorID:            *sensorID,
@@ -1053,8 +1067,6 @@ func runEvaluate(args []string) error {
 		return fmt.Errorf("missing evaluate command")
 	}
 	switch args[0] {
-	case "shadow":
-		return runEvaluateShadow(args[1:])
 	case "compare":
 		return runEvaluateCompare(args[1:])
 	case "routers":
@@ -1127,80 +1139,6 @@ func runEvaluateCompare(args []string) error {
 	}
 	defer closeOutput()
 	return json.NewEncoder(output).Encode(evaluation.Compare(current, legacy))
-}
-
-func runEvaluateShadow(args []string) error {
-	fs := flag.NewFlagSet("evaluate shadow", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	shadowDir := fs.String("shadow-dir", "data/shadow", "shadow run and label directory")
-	fromRaw := fs.String("from", "", "optional RFC3339 or YYYY-MM-DD window start")
-	toRaw := fs.String("to", "", "optional RFC3339 or YYYY-MM-DD window end")
-	requiredDays := fs.Int("required-days", 7, "minimum continuous run and reviewed days")
-	samplesPerDay := fs.Int("samples-per-level", 10, "daily exported samples per risk level")
-	exportDir := fs.String("daily-export-dir", "", "optional directory for stratified daily review samples")
-	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "optional PostgreSQL DSN for labels written by DB/dual control planes")
-	minPrecision := fs.Float64("min-precision", 0.95, "minimum candidate precision; 0 disables the check")
-	minNormalGroundTruth := fs.Int("min-normal-ground-truth", 200, "minimum reviewed normal samples; 0 disables the check")
-	minCandidateReviews := fs.Int("min-candidate-reviews", 200, "minimum reviewed candidate samples; 0 disables the check")
-	output := fs.String("output", "-", "evaluation report JSON path, or - for stdout")
-	strict := fs.Bool("strict", false, "return an error unless the shadow evaluation is ready")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *minPrecision < 0 || *minPrecision > 1 || *minNormalGroundTruth < 0 || *minCandidateReviews < 0 {
-		return fmt.Errorf("accuracy thresholds must be within [0,1] for precision and non-negative for counts")
-	}
-	from, err := parseEvaluationTime(*fromRaw, false)
-	if err != nil {
-		return fmt.Errorf("parse --from: %w", err)
-	}
-	to, err := parseEvaluationTime(*toRaw, true)
-	if err != nil {
-		return fmt.Errorf("parse --to: %w", err)
-	}
-	report, err := evaluation.EvaluateShadow(evaluation.ShadowOptions{
-		ShadowDir: *shadowDir, From: from, To: to, RequiredDays: *requiredDays,
-		SamplesPerDay: *samplesPerDay, ExportDir: *exportDir, PostgresDSN: *postgresDSN,
-		MinPrecision: *minPrecision, MinNormalGroundTruth: *minNormalGroundTruth,
-		MinCandidateReviews: *minCandidateReviews,
-	})
-	if err != nil {
-		return err
-	}
-	out, closeOutput, err := openOutputWithParents(*output)
-	if err != nil {
-		return err
-	}
-	defer closeOutput()
-	if err := writeJSON(out, report); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "evaluate shadow: ready=%t runs=%d days=%d continuous=%d reviewed_days=%d snapshots=%d reviewed=%d candidates=%d normal=%d precision=%.2f blockers=%d\n",
-		report.Ready, report.RunCount, report.ObservedDays, report.LongestContinuousDays, report.DaysWithReviews,
-		report.RiskSnapshotCount, report.ReviewedSnapshotCount, report.CandidateReviewed, report.NormalReviewed,
-		report.CandidatePrecision, len(report.Blockers))
-	if *strict && !report.Ready {
-		return fmt.Errorf("shadow evaluation is not ready: %s", strings.Join(report.Blockers, "; "))
-	}
-	return nil
-}
-
-func parseEvaluationTime(raw string, endOfDay bool) (time.Time, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return time.Time{}, nil
-	}
-	if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-		return parsed, nil
-	}
-	parsed, err := time.Parse("2006-01-02", raw)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("expected RFC3339 or YYYY-MM-DD")
-	}
-	if endOfDay {
-		return parsed.Add(24*time.Hour - time.Nanosecond), nil
-	}
-	return parsed, nil
 }
 
 func runValidateKnownDevices(args []string) error {
@@ -1303,12 +1241,13 @@ func runControlPlaneServe(args []string) error {
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
 	frontendDir := fs.String("frontend-dir", "", "optional frontend dist directory to serve")
 	readOnly := fs.Bool("read-only", true, "disable mutating review and reload endpoints")
+	allowIdentityIngest := fs.Bool("allow-identity-ingest", envBool("PROXY_SENTINEL_ALLOW_IDENTITY_INGEST_IN_READ_ONLY", false), "allow authenticated identity events and snapshots while the global control plane remains read-only")
 	storageMode := fs.String("storage-mode", firstEnv("PROXY_SENTINEL_STORAGE_MODE", "file"), "storage mode: file, db, or dual")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN for production business storage")
 	clickHouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP URL for production event and diagnostic storage")
 	eventRetention := fs.Duration("event-retention", 7*24*time.Hour, "normalized event retention target, documented for DB deployments")
 	diagnosticRetention := fs.Duration("diagnostic-retention", 30*24*time.Hour, "diagnostic retention target, documented for DB deployments")
-	proxyConfigFile := fs.String("proxy-protocol-config", "", "trusted proxy evidence registration file")
+	proxyConfigFile := fs.String("proxy-protocol-config", os.Getenv("PROXY_SENTINEL_PROXY_PROTOCOL_CONFIG"), "trusted proxy evidence registration file")
 	applicationsEnabled := fs.Bool("applications-enabled", false, "enable independent application observations")
 	applicationsDir := fs.String("applications-dir", "", "durable application library and observations directory")
 	fingerprintDir := fs.String("device-fingerprint-dir", "/opt/proxy-sentinel/data/device-fingerprints", "device fingerprint library directory")
@@ -1325,6 +1264,20 @@ func runControlPlaneServe(args []string) error {
 	sharedAccessConfig := fs.String("shared-access-config", os.Getenv("PROXY_SENTINEL_SHARED_ACCESS_CONFIG"), "controlled shared evidence source registration")
 	identitySourcesConfig := fs.String("identity-sources-config", os.Getenv("PROXY_SENTINEL_IDENTITY_SOURCES_CONFIG"), "registered identity source scopes and reconciliation intervals")
 	identityIngestKey := fs.String("identity-ingest-key", os.Getenv("PROXY_SENTINEL_IDENTITY_INGEST_KEY"), "bearer token for RADIUS/Portal identity event batches (defaults to PROXY_SENTINEL_IDENTITY_INGEST_KEY)")
+	productPolicyIngestKey := fs.String("product-policy-ingest-key", os.Getenv("PROXY_SENTINEL_PRODUCT_POLICY_INGEST_KEY"), "bearer token for product-policy snapshots")
+	srunDatabasePort := fs.Int("srun4k-database-port", envInt("PROXY_SENTINEL_SRUN4K_DATABASE_PORT", 3506), "deployment-provided 4K authorization database port")
+	srunDatabaseName := fs.String("srun4k-database-name", firstEnv("PROXY_SENTINEL_SRUN4K_DATABASE_NAME", "srun4k"), "deployment-provided 4K authorization database name")
+	srunDatabaseUsername := fs.String("srun4k-database-username", os.Getenv("PROXY_SENTINEL_SRUN4K_DATABASE_USERNAME"), "deployment-provided read-only 4K database username")
+	srunDatabasePassword := fs.String("srun4k-database-password", os.Getenv("PROXY_SENTINEL_SRUN4K_DATABASE_PASSWORD"), "deployment-provided read-only 4K database password")
+	srunDatabaseTLS := fs.Bool("srun4k-database-tls", envBool("PROXY_SENTINEL_SRUN4K_DATABASE_TLS", false), "require TLS for the 4K authorization database")
+	srunRedisPort := fs.Int("srun4k-redis-port", envInt("PROXY_SENTINEL_SRUN4K_REDIS_PORT", 16380), "deployment-provided 4K Redis port")
+	srunRedisCatalogPort := fs.Int("srun4k-redis-catalog-port", envInt("PROXY_SENTINEL_SRUN4K_REDIS_CATALOG_PORT", 16382), "deployment-provided 4K product and control catalog Redis port")
+	srunRedisPassword := fs.String("srun4k-redis-password", os.Getenv("PROXY_SENTINEL_SRUN4K_REDIS_PASSWORD"), "deployment-provided read-only 4K Redis password")
+	srunRedisTLS := fs.Bool("srun4k-redis-tls", envBool("PROXY_SENTINEL_SRUN4K_REDIS_TLS", false), "require TLS for the 4K Redis connection")
+	srunAPIScheme := fs.String("srun4k-api-scheme", firstEnv("PROXY_SENTINEL_SRUN4K_API_SCHEME", "https"), "4K northbound API scheme")
+	srunAPIPort := fs.Int("srun4k-api-port", envInt("PROXY_SENTINEL_SRUN4K_API_PORT", 8001), "4K northbound API port")
+	srunAPICertificateFile := fs.String("srun4k-api-certificate-file", os.Getenv("PROXY_SENTINEL_SRUN4K_API_CERTIFICATE_FILE"), "deployment-provided trusted 4K northbound certificate PEM file")
+	srunMaxSessions := fs.Int("srun4k-max-sessions", envInt("PROXY_SENTINEL_SRUN4K_MAX_SESSIONS", 100000), "maximum authoritative 4K online sessions")
 	operationsFile := fs.String("operations-file", "", "persistent cases, organization and action state file")
 	nativeConfig := fs.String("native-actions-config", os.Getenv("PROXY_SENTINEL_NATIVE_ACTIONS_CONFIG"), "private native controller and authoritative inventory configuration")
 	actionMasterKey := fs.String("action-master-key", os.Getenv("PROXY_SENTINEL_ACTION_MASTER_KEY"), "base secret used to encrypt northbound connector credentials (defaults to PROXY_SENTINEL_ACTION_MASTER_KEY)")
@@ -1347,8 +1300,16 @@ func runControlPlaneServe(args []string) error {
 		}
 		oidcSecret = strings.TrimSpace(string(secret))
 	}
+	srunAPICertificatePEM := ""
+	if strings.TrimSpace(*srunAPICertificateFile) != "" {
+		certificate, readErr := os.ReadFile(*srunAPICertificateFile)
+		if readErr != nil {
+			return fmt.Errorf("read 4K northbound certificate file: %w", readErr)
+		}
+		srunAPICertificatePEM = string(certificate)
+	}
 
-	fmt.Fprintf(os.Stderr, "control-plane: addr=%s shadow_dir=%s sensor_id=%s storage_mode=%s read_only=%t event_retention=%s diagnostic_retention=%s\n", *addr, *shadowDir, *sensorID, *storageMode, *readOnly, eventRetention.String(), diagnosticRetention.String())
+	fmt.Fprintf(os.Stderr, "control-plane: addr=%s shadow_dir=%s sensor_id=%s storage_mode=%s read_only=%t identity_ingest=%t event_retention=%s diagnostic_retention=%s\n", *addr, *shadowDir, *sensorID, *storageMode, *readOnly, *allowIdentityIngest, eventRetention.String(), diagnosticRetention.String())
 	if *nativeConfig != "" && strings.TrimSpace(*postgresDSN) == "" {
 		return fmt.Errorf("native actions require PostgreSQL persistence")
 	}
@@ -1370,6 +1331,7 @@ func runControlPlaneServe(args []string) error {
 		SensorID:              *sensorID,
 		FrontendDir:           *frontendDir,
 		ReadOnly:              *readOnly,
+		AllowIdentityIngest:   *allowIdentityIngest,
 		StorageMode:           *storageMode,
 		PostgresDSN:           *postgresDSN,
 		ClickHouseDSN:         *clickHouseDSN,
@@ -1383,8 +1345,17 @@ func runControlPlaneServe(args []string) error {
 			Issuer: *oidcIssuer, ClientID: *oidcClientID, ClientSecret: oidcSecret,
 			RedirectURL: *oidcRedirectURL, RoleMapping: roleMapping, DefaultRole: *oidcDefaultRole,
 		},
-		ExportDir:             *exportDir,
-		IdentityIngestKey:     *identityIngestKey,
+		ExportDir:              *exportDir,
+		IdentityIngestKey:      *identityIngestKey,
+		ProductPolicyIngestKey: *productPolicyIngestKey,
+		SRun4K: controlplane.SRun4KDefaults{
+			DatabasePort: *srunDatabasePort, DatabaseName: *srunDatabaseName,
+			DatabaseUsername: *srunDatabaseUsername, DatabasePassword: *srunDatabasePassword,
+			DatabaseTLS: *srunDatabaseTLS, RedisPort: *srunRedisPort, RedisCatalogPort: *srunRedisCatalogPort, RedisTLS: *srunRedisTLS,
+			RedisPassword: *srunRedisPassword, APIScheme: *srunAPIScheme,
+			APIPort: *srunAPIPort, APICertificatePEM: srunAPICertificatePEM,
+			MaxSessions: *srunMaxSessions, PageSize: 1000,
+		},
 		IdentitySourcesConfig: *identitySourcesConfig,
 		SharedAccessConfig:    *sharedAccessConfig,
 		OperationsFile:        *operationsFile,
@@ -1394,7 +1365,7 @@ func runControlPlaneServe(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|application --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate shadow --shadow-dir data/shadow [--daily-export-dir data/shadow/review-exports] --output report.json\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
+	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
 }
 
 func firstEnv(name, fallback string) string {
@@ -1402,6 +1373,30 @@ func firstEnv(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envInt(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envBool(name string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func openInput(path string) (*os.File, func() error, error) {

@@ -1,11 +1,38 @@
 package store
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/risk"
 )
+
+func TestTLSFingerprintDiversityDoesNotCreatePhysicalDeviceCandidates(t *testing.T) {
+	// Field snapshots contained almost 5,000 TLS variants on one IPv6 address.
+	// A client stack is an application clue, not an endpoint identity.
+	const count = 5000
+	signals := make([]DeviceSignal, count)
+	for i := range signals {
+		signals[i] = DeviceSignal{SignalID: fmt.Sprintf("tls-%d", i), IP: "192.0.2.1", Kind: "ja3", Strength: "medium", Value: fmt.Sprintf("fingerprint-%d", i), NormalizedValue: fmt.Sprintf("fingerprint-%d", i), EventIDs: []string{fmt.Sprintf("event-%d", i)}}
+	}
+	inventory := BuildDeviceInventoryFromSignals("192.0.2.1", "24h", signals, risk.Snapshot{})
+	if inventory.SuspectedDeviceCount != 0 || len(inventory.Devices) != 0 {
+		t.Fatalf("application variants became %d physical device candidates", len(inventory.Devices))
+	}
+	if len(inventory.Signals) != count {
+		t.Fatal("raw protocol clues were discarded")
+	}
+	mixed := append(signals, DeviceSignal{SignalID: "http", IP: "192.0.2.1", Kind: "user_agent", Strength: "weak", Value: "Mozilla/5.0", EventIDs: []string{"event-1"}})
+	if got := BuildDeviceInventoryFromSignals("192.0.2.1", "24h", mixed, risk.Snapshot{}); got.SuspectedDeviceCount != 0 {
+		t.Fatalf("weak UA bundled the protocol clues into an endpoint: count=%d", got.SuspectedDeviceCount)
+	}
+	raw, err := json.Marshal(inventory)
+	if err != nil || len(raw) > 2<<20 {
+		t.Fatalf("protocol-only snapshot expanded instead of retaining one copy of each clue: bytes=%d err=%v", len(raw), err)
+	}
+}
 
 func TestBuildDeviceInventoryUsesDHCPStrongSignals(t *testing.T) {
 	ip := "192.168.10.55"

@@ -20,7 +20,9 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-25432}:5432"
     volumes:
-      - ${PROXY_SENTINEL_DATA_DIR:-/opt/proxy-sentinel/data/db}/postgres:/var/lib/postgresql/data
+      # PostgreSQL 18 declares /var/lib/postgresql as its volume. Mounting a
+      # child path is shadowed by an anonymous parent volume on Docker 18.09.
+      - ${PROXY_SENTINEL_DATA_DIR:-/opt/proxy-sentinel/data/db}/postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s

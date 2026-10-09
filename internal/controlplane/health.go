@@ -28,6 +28,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		readyValue = 1
 	}
 	fmt.Fprintf(w, "# HELP proxy_sentinel_ready Whether required control-plane components are ready.\n# TYPE proxy_sentinel_ready gauge\nproxy_sentinel_ready %d\n", readyValue)
+	rootFilesystem, rootErr := readRootFilesystemStatus()
+	writeRootFilesystemMetrics(w, rootFilesystem, errorString(rootErr))
 	healthy := 0
 	if err == nil && status.Healthy {
 		healthy = 1
@@ -79,74 +81,139 @@ func metricNumber(value any) float64 {
 	return 0
 }
 
+// Independent health probes share the request deadline, but never wait behind
+// optional read-model work before checking mandatory storage or authentication.
 func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth, bool) {
 	components := map[string]componentHealth{}
 	ready := true
-	check := func(name string, err error) {
-		item := componentHealth{Status: "ready"}
-		if err != nil {
-			item.Status = "unavailable"
-			item.Error = err.Error()
-			ready = false
-		}
-		components[name] = item
+	type probeResult struct {
+		name   string
+		health componentHealth
 	}
-	observe := func(name string, err error) {
-		item := componentHealth{Status: "ready"}
-		if err != nil {
-			item.Status = "delayed"
-			item.Error = err.Error()
-		}
-		components[name] = item
+	results := make(chan probeResult, 8)
+	pending := map[string]bool{}
+	launch := func(name string, required bool, probe func() componentHealth) {
+		pending[name] = required
+		go func() { results <- probeResult{name: name, health: probe()} }()
 	}
-	check("operations", s.operations.health(ctx))
+	check := func(name string, required bool, probe func() error) {
+		launch(name, required, func() componentHealth {
+			item := componentHealth{Status: "ready"}
+			if err := probe(); err != nil {
+				item.Status = "delayed"
+				if required {
+					item.Status = "unavailable"
+				}
+				item.Error = err.Error()
+			}
+			return item
+		})
+	}
+	check("operations", true, func() error { return s.operations.health(ctx) })
 	if models, ok := s.reader.(interface{ StatisticsReadModelHealth(context.Context) error }); ok {
-		observe("statistics_read_model", models.StatisticsReadModelHealth(ctx))
+		check("statistics_read_model", false, func() error { return models.StatisticsReadModelHealth(ctx) })
 	}
 	if checker, ok := s.reader.(interface{ Health(context.Context) error }); ok {
-		check("storage", checker.Health(ctx))
+		check("storage", true, func() error { return checker.Health(ctx) })
 	} else {
 		components["storage"] = componentHealth{Status: "file_mode"}
 	}
 	if s.applications != nil && s.applications.Status().Enabled {
 		if models, ok := s.reader.(interface{ ApplicationReadModelHealth(context.Context) error }); ok {
-			observe("application_read_model", models.ApplicationReadModelHealth(ctx))
+			check("application_read_model", false, func() error { return models.ApplicationReadModelHealth(ctx) })
 		}
 	}
-
 	if s.auth != nil && s.auth.db != nil {
-		check("authentication", s.auth.db.PingContext(ctx))
+		check("authentication", true, func() error { return s.auth.db.PingContext(ctx) })
 	} else if s.auth != nil && s.auth.enabled {
 		components["authentication"] = componentHealth{Status: "file_mode"}
 	} else {
 		components["authentication"] = componentHealth{Status: "disabled"}
 	}
 	if s.oidcError != "" {
-		check("authentication_oidc", fmt.Errorf("%s", s.oidcError))
+		components["authentication_oidc"] = componentHealth{Status: "unavailable", Error: s.oidcError}
+		ready = false
 	} else if s.oidc != nil {
 		components["authentication_oidc"] = componentHealth{Status: "ready"}
 	} else {
 		components["authentication_oidc"] = componentHealth{Status: "disabled"}
 	}
 	if s.identityIngest != nil && s.identityIngest.db != nil {
-		check("identity_ingest", s.identityIngest.db.PingContext(ctx))
+		check("identity_ingest", true, func() error { return s.identityIngest.db.PingContext(ctx) })
 	} else {
 		components["identity_ingest"] = componentHealth{Status: "memory_mode"}
 	}
-	runs, err := s.reader.ListRuns(ctx, 1)
-	if err != nil {
-		check("collector", err)
-	} else if len(runs) == 0 {
-		components["collector"] = componentHealth{Status: "no_data"}
-	} else {
+	launch("collector", true, func() componentHealth {
+		var runs []store.Run
+		var err error
+		if scoped, ok := s.reader.(interface {
+			ListSensorRuns(context.Context, string, int) ([]store.Run, error)
+		}); ok {
+			runs, err = scoped.ListSensorRuns(ctx, s.sensorID, 1)
+		} else {
+			runs, err = s.reader.ListRuns(ctx, 1)
+			// Legacy readers may lack a scoped path. An unrelated latest run
+			// is not evidence that the configured sensor is active.
+			if len(runs) > 0 && runs[0].SensorID != s.sensorID {
+				runs = nil
+			}
+		}
+		if err != nil {
+			return componentHealth{Status: "unavailable", Error: err.Error()}
+		}
+		if len(runs) == 0 {
+			return componentHealth{Status: "no_data"}
+		}
 		status := "ready"
 		finished, parseErr := time.Parse(time.RFC3339Nano, runs[0].FinishedAt)
-		if parseErr == nil && time.Since(finished) > 30*time.Minute {
+		if parseErr != nil {
+			return componentHealth{Status: "unavailable", Error: "collector completion timestamp is invalid"}
+		}
+		if finished.After(time.Now().Add(5 * time.Second)) {
+			return componentHealth{Status: "unavailable", Error: "collector completion timestamp is in the future", UpdatedAt: runs[0].FinishedAt}
+		}
+		if time.Since(finished) > 30*time.Minute {
 			status = "stale"
 		} else if runs[0].Normalized.Read == 0 {
 			status = "idle"
 		}
-		components["collector"] = componentHealth{Status: status, UpdatedAt: runs[0].FinishedAt}
+		return componentHealth{Status: status, UpdatedAt: runs[0].FinishedAt}
+	})
+	accept := func(result probeResult) {
+		required, exists := pending[result.name]
+		if !exists {
+			return
+		}
+		if required && result.health.Status == "unavailable" {
+			ready = false
+		}
+		components[result.name] = result.health
+		delete(pending, result.name)
+	}
+	for len(pending) > 0 {
+		select {
+		case result := <-results:
+			accept(result)
+		case <-ctx.Done():
+			// Results completed before the deadline can already be buffered. Preserve
+			// those successes before marking only unfinished probes as timed out.
+			for {
+				select {
+				case result := <-results:
+					accept(result)
+				default:
+					for name, required := range pending {
+						status := "delayed"
+						if required {
+							status = "unavailable"
+							ready = false
+						}
+						components[name] = componentHealth{Status: status, Error: ctx.Err().Error()}
+					}
+					return components, ready
+				}
+			}
+		}
 	}
 	return components, ready
 }
@@ -192,6 +259,7 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		"ingest":                   ingestStatus,
 		"ingest_error":             errorString(ingestErr),
 		"read_models":              readModels,
+		"runtime":                  captureRuntimeStatus(s.runtimeSampler, s.startedAt),
 		"checked_at":               time.Now().UTC().Format(time.RFC3339Nano),
 	})
 }

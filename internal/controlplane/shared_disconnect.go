@@ -169,6 +169,11 @@ func (s *Server) buildSharedDisconnectPreview(ctx context.Context, id string) (s
 	if err != nil {
 		return p, err
 	}
+	if entries, err := s.whitelist.list(ctx); err != nil {
+		return p, err
+	} else if m := policy.MatchAccountWhitelist(entries, account, sessions, time.Now().UTC()); m != nil {
+		p.Blockers = appendUnique(p.Blockers, "whitelist_suppressed")
+	}
 	if reviewGeneration(result, sessions) != generation {
 		p.Blockers = append(p.Blockers, "session_generation_changed")
 	}
@@ -349,6 +354,9 @@ func (s *Server) handleSharedDisconnect(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, 200, map[string]any{"grant_id": grantID, "action_ids": actions, "status": "pending", "accepted_is_not_offline": true})
 }
 func (s *Server) validateSharedDisconnectDelivery(ctx context.Context, a EnforcementAction) error {
+	if err := s.checkActionWhitelist(ctx, a); err != nil {
+		return err
+	}
 	var review, actor, connector, config string
 	var version, evidence int64
 	var planRaw []byte

@@ -19,16 +19,11 @@ const OverviewPage = lazy(() =>
 )
 const ReviewPage = lazy(() => import('../pages/ReviewPage').then((module) => ({ default: module.ReviewPage })))
 const ReviewDetailsPage = lazy(() => import('../pages/ReviewDetailsPage').then((module) => ({ default: module.ReviewDetailsPage })))
-const ShadowReviewSamplesPage = lazy(() => import('../pages/ShadowReviewSamplesPage').then((module) => ({ default: module.ShadowReviewSamplesPage })))
 const EventDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.EventDetailsPage })))
-const ShadowRunDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.ShadowRunDetailsPage })))
 const AuditDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.AuditDetailsPage })))
 const IngestDiagnosticDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.IngestDiagnosticDetailsPage })))
 const RisksPage = lazy(() => import('../pages/RisksPage').then((module) => ({ default: module.RisksPage })))
 const RulesPage = lazy(() => import('../pages/RulesPage').then((module) => ({ default: module.RulesPage })))
-const ShadowRunsPage = lazy(() =>
-  import('../pages/ShadowRunsPage').then((module) => ({ default: module.ShadowRunsPage })),
-)
 const CasesPage = lazy(() => import('../pages/CasesPage').then(module=>({default:module.CasesPage})))
 const CaseDetailsPage = lazy(() => import('../pages/CaseDetailsPage').then(module=>({default:module.CaseDetailsPage})))
 const OrganizationPage = lazy(() => import('../pages/OrganizationPage').then(module=>({default:module.OrganizationPage})))
@@ -122,9 +117,7 @@ export function ReviewRoute() {
 }
 
 export function ReviewDetailsRoute() { return <RouteSuspense><ReviewDetailsPage /></RouteSuspense> }
-export function ShadowReviewSamplesRoute() { return <RouteSuspense><ShadowReviewSamplesPage /></RouteSuspense> }
 export function EventDetailsRoute() { return <RouteSuspense><EventDetailsPage /></RouteSuspense> }
-export function ShadowRunDetailsRoute() { return <RouteSuspense><ShadowRunDetailsPage /></RouteSuspense> }
 export function AuditDetailsRoute() { return <RouteSuspense><AuditDetailsPage /></RouteSuspense> }
 export function IngestDiagnosticDetailsRoute() { return <RouteSuspense><IngestDiagnosticDetailsPage /></RouteSuspense> }
 
@@ -144,13 +137,6 @@ export function RulesRoute() {
   )
 }
 
-export function ShadowRunsRoute() {
-  return (
-    <RouteSuspense>
-      <ShadowRunsPage />
-    </RouteSuspense>
-  )
-}
 export function CasesRoute(){return <RouteSuspense><CasesPage/></RouteSuspense>}
 export function CaseDetailsRoute(){return <RouteSuspense><CaseDetailsPage/></RouteSuspense>}
 export function OrganizationRoute(){return <RouteSuspense><OrganizationPage/></RouteSuspense>}
@@ -178,3 +164,6 @@ const SourcesPage=lazy(()=>import('../pages/SourcesPage').then(m=>({default:m.So
 export function ActionRecordsRoute(){return <RouteSuspense><ActionRecordsPage/></RouteSuspense>}
 export function CampusExceptionsRoute(){return <RouteSuspense><CampusExceptionsPage/></RouteSuspense>}
 export function SourcesRoute(){return <RouteSuspense><SourcesPage/></RouteSuspense>}
+
+const WhitelistPage=lazy(()=>import('../pages/WhitelistPage').then(m=>({default:m.WhitelistPage})))
+export function WhitelistRoute(){return <RouteSuspense><WhitelistPage/></RouteSuspense>}

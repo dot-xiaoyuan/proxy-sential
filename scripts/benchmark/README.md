@@ -9,6 +9,13 @@ python3 scripts/benchmark/api-benchmark.py --spec /tmp/sentinel-openapi.json --b
 
 Cookie 文件使用 Mozilla/Netscape 格式，必须是自己创建的已登录管理员测试会话，设置权限 600。脚本先读取 session 的 CSRF，再通过只读列表寻找资源 ID。测试结束后注销测试会话并删除 Cookie 文件。默认仅测 GET。`--only` 按 `METHOD /OpenAPI路径` 正则选择，但资源发现仍执行。不要使用生产转发地址运行任何写入测试。
 
+终端画像轻量列表需在读模型追平后单独执行串行冷/暖请求和 20 并发验收；报告会额外校验首个串行样本不超过 1 秒、暖请求 p95 不超过 500ms，以及响应最大值不超过 80KB：
+
+```sh
+python3 scripts/benchmark/api-benchmark.py --spec /tmp/sentinel-openapi.json --base http://127.0.0.1:28081/api/v1 --cookies /tmp/local-benchmark.cookies --output /tmp/device-inventory-serial --only '^GET /device-inventory$' --samples 20
+python3 scripts/benchmark/api-benchmark.py --spec /tmp/sentinel-openapi.json --base http://127.0.0.1:28081/api/v1 --cookies /tmp/local-benchmark.cookies --output /tmp/device-inventory-c20 --only '^GET /device-inventory$' --samples 200 --concurrency 20
+```
+
 `report.json` 包含完整 OpenAPI 操作清单及统计，`samples.jsonl` 增量保存已完成的请求。每次使用新输出目录，避免 JSONL 混入旧运行。默认串行、每接口 3 次；这里的 p95 等于三次中的最大值，仅用于初步定位，不能作为稳定 SLA、最大吞吐量或持续压测结论。HTTP 2xx 也只代表请求成功，不代表空数据列表覆盖了生产数据量。
 
 `business_success` 表示全部样本为 2xx 且通过正常业务断言；仅有 2xx 而未验证业务结果归为未验证。它不等于性能达标。报告分别记录 `latency_gate_pass`（默认 p95 ≤500ms、p99 <1000ms）、`concurrent_sample_requirement_met`（至少 200 个有效正常样本、20 并发）和 `concurrent_scenario_pass`，场景通过也不代表完整接口验收。`mixed_or_error` 表示存在 HTTP 失败，其时间包括失败响应，不能当作成功业务性能。未启用 OIDC、缺少历史执行/事件样本、外部连接器、离线包上传、集成鉴权等必须补齐夹具才能测正常业务路径。当前自动生成的请求不能覆盖所有校验条件；400/401/404/409 需对照原始错误码检查，不能直接归因接口故障。登录和注销需使用独立测试会话单测，避免影响后续测试。
