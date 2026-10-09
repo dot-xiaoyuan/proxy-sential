@@ -304,11 +304,24 @@ func (s *DBStore) latestSharedProfileAccount(ctx context.Context, endpoint, mac 
   coalesce(src.observed_at,p.confirmed_at)+make_interval(secs=>GREATEST(60,LEAST(86400,coalesce(nullif(p.document->>'reconcile_interval_seconds','')::int,1800)))*3)
   ELSE p.confirmed_at END active_until FROM account_identity_session_projection p
  LEFT JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
- WHERE (($1<>'' AND document->>'endpoint_id'=$1) OR ($2<>'' AND regexp_replace(lower(coalesce(document->>'mac','')),'[^0-9a-f]','','g')=$2))
+ WHERE $1<>'' AND coalesce(p.document->>'endpoint_id','')<>'' AND p.document->>'endpoint_id'=$1
+ UNION ALL
+ SELECT p.document,p.confirmed_at,CASE WHEN coalesce(p.document->>'ended_at','')='' THEN
+  coalesce(src.observed_at,p.confirmed_at)+make_interval(secs=>GREATEST(60,LEAST(86400,coalesce(nullif(p.document->>'reconcile_interval_seconds','')::int,1800)))*3)
+  ELSE p.confirmed_at END active_until FROM account_identity_session_projection p
+ LEFT JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
+ WHERE $2<>'' AND coalesce(p.document->>'mac','')<>''
+  AND regexp_replace(lower(coalesce(p.document->>'mac','')),'[^0-9a-f]','','g')=$2
+  AND ($1='' OR coalesce(p.document->>'endpoint_id','')<>$1)
  UNION ALL
  SELECT to_jsonb(s)||coalesce(s.policy_metadata,'{}'::jsonb),s.updated_at,
   CASE WHEN s.ended_at IS NULL THEN s.updated_at+interval '90 minutes' ELSE s.updated_at END FROM account_sessions s
- WHERE (($1<>'' AND s.endpoint_id=$1) OR ($2<>'' AND regexp_replace(lower(coalesce(s.mac,'')),'[^0-9a-f]','','g')=$2))
+ WHERE $1<>'' AND coalesce(s.endpoint_id,'')<>'' AND s.endpoint_id=$1
+ UNION ALL
+ SELECT to_jsonb(s)||coalesce(s.policy_metadata,'{}'::jsonb),s.updated_at,
+  CASE WHEN s.ended_at IS NULL THEN s.updated_at+interval '90 minutes' ELSE s.updated_at END FROM account_sessions s
+ WHERE $2<>'' AND coalesce(s.mac,'')<>'' AND regexp_replace(lower(coalesce(s.mac,'')),'[^0-9a-f]','','g')=$2
+  AND ($1='' OR coalesce(s.endpoint_id,'')<>$1)
 ) SELECT document,confirmed_at,active_until FROM candidates ORDER BY confirmed_at DESC,document->>'account_id',document->>'session_id' LIMIT 16`, endpoint, mac)
 	if err != nil {
 		return sharedProfileAccount{}, err
