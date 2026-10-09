@@ -65,3 +65,23 @@ test('loads only the current list query and defers recognition diagnostics',asyn
  await page.getByRole('button',{name:'刷新数据'}).click()
  await expect.poll(()=>inventoryRequests).toBe(2)
 })
+
+test('long campus access identifiers wrap instead of being silently clipped',async({page})=>{
+ await page.setViewportSize({width:1280,height:800})
+ await page.addInitScript(()=>{
+  const original=window.fetch.bind(window)
+  window.fetch=async(input,init)=>{
+   const response=await original(input,init)
+   const url=new URL(typeof input==='string'?input:input instanceof Request?input.url:input.href,location.href)
+   if(url.pathname!=='/api/v1/device-inventory')return response
+   const data=await response.json()
+   data.items[0].current_access_id='slot=0;subslot=0;port=1;vlanid=3112;campus=Qianhu;building=Teaching-Building-03;'
+   return new Response(JSON.stringify(data),{status:response.status,headers:response.headers})
+  }
+ })
+ await page.goto('/devices?view=history')
+ const location=page.locator('.device-desktop-table .device-context-cell .brand-evidence-wrap[title]').first()
+ await expect(location).toContainText('Teaching-Building-03')
+ const probe=await location.evaluate(element=>({whiteSpace:getComputedStyle(element).whiteSpace,wrap:getComputedStyle(element).overflowWrap,overflow:element.scrollWidth>element.clientWidth+1,height:element.getBoundingClientRect().height,lineHeight:parseFloat(getComputedStyle(element).lineHeight)}))
+ expect(probe.whiteSpace).toBe('normal');expect(probe.wrap).toBe('anywhere');expect(probe.overflow).toBe(false);expect(probe.height).toBeGreaterThan(probe.lineHeight)
+})
