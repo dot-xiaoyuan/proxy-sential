@@ -213,3 +213,27 @@ VALUES($1,'','random-mac-lease',$2::inet,$3,'ack',$4,$5)`, s.sensorID, ip, endpo
 		t.Fatalf("DHCP-confirmed random MAC did not upgrade the weak profile: %+v %v", page, err)
 	}
 }
+
+func TestSharedDeviceProfileAuxiliarySourcesOnlyWakeExistingProfiles(t *testing.T) {
+	s, ctx := ownedRiskFreshnessReplayStore(t)
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	endpoint, mac := "mac:00:11:22:99:88:77", "00:11:22:99:88:77"
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen) VALUES($1,$2,'endpoint',$3,$3)`, endpoint, mac, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO account_sessions(session_id,account_id,endpoint_id,ip,mac,source,started_at,identity_confidence,raw_ref,updated_at)
+VALUES('ordinary-auth-only','ordinary-account',$1,'192.0.2.177',$2,'ncu-srun4k',$3,.99,'{}',$3)`, endpoint, mac, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,action,observed_at,valid_until)
+VALUES('auxiliary-office','','ordinary-lease','192.0.2.177',$1,'ack',$2,$3)`, endpoint, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var jobs int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM shared_device_profile_jobs WHERE endpoint_id=$1 OR mac=$2`, endpoint, mac).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("ordinary authentication/address sources created %d shared-device jobs", jobs)
+	}
+}
