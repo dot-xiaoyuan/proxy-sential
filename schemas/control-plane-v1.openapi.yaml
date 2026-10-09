@@ -380,9 +380,13 @@ paths:
   /shared-access/devices:
     get:
       operationId: listSharedDeviceProfiles
-      description: Durable passive equipment identity profiles, independent of current sharing and enforcement; requires cases:read. Activity is address-scoped and does not renew identity proof.
+      description: Materialized shared/network device profiles; requires cases:read. The request reads only the durable PostgreSQL projection and never performs identity joins or traffic aggregation.
       parameters:
         - { name: keyword, in: query, schema: { type: string } }
+        - { name: role, in: query, schema: { type: string } }
+        - { name: identity_state, in: query, schema: { type: string, enum: [supported, historical, reference] } }
+        - { name: current_shared, in: query, schema: { type: boolean } }
+        - { name: account_conflict, in: query, schema: { type: boolean } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
         - { name: cursor, in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses:
@@ -391,6 +395,20 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SharedDeviceProfilePage' }
+        '503': { description: Archive read unavailable }
+  /shared-access/devices/{profile_id}:
+    get:
+      operationId: getSharedDeviceProfile
+      description: Materialized current profile and its retained account, address, identity and sharing transitions; requires cases:read.
+      parameters:
+        - { name: profile_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Equipment profile detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SharedDeviceProfileDetail' }
+        '404': { description: Equipment profile not found }
         '503': { description: Archive read unavailable }
   /shared-access/observations:
     get:
@@ -3248,16 +3266,22 @@ components:
         last_seen: { type: string, format: date-time }
     SharedDeviceProfile:
       type: object
-      required: [profile_id, identity_state, identity_current, identity_at, identity_expires_at, identity_evidence_id, identity_assessment_id, identity_basis, address_state, current_shared, address_only]
+      required: [profile_id, identity_state, identity_current, identity_at, identity_expires_at, identity_evidence_id, identity_assessment_id, identity_basis, address_state, current_shared, address_only, confidence, identity_conflict, shared_confidence, latest_account_active, account_conflict, first_seen, last_observed_at, materialized_at]
       properties:
         profile_id: { type: string }
         sensor_id: { type: string }
+        campus_id: { type: string }
         endpoint_id: { type: string }
         mac: { type: string }
         ip: { type: string }
+        vlan: { type: string }
+        addresses: { type: array, items: { type: string } }
+        display_name: { type: string }
         brand: { type: string }
         model: { type: string }
-        role: { type: string, enum: [router, ap] }
+        role: { type: string }
+        confidence: { type: integer, minimum: 0, maximum: 100 }
+        identity_conflict: { type: boolean }
         identity_state: { type: string, enum: [supported, historical, reference] }
         identity_current: { type: boolean }
         identity_at: { type: string, format: date-time }
@@ -3270,15 +3294,30 @@ components:
         last_shared_at: { type: string, format: date-time }
         last_shared_observation_id: { type: string }
         current_shared: { type: boolean }
+        shared_confidence: { type: integer, minimum: 0, maximum: 100 }
         address_only: { type: boolean }
-        auth_bindings: { type: array, items: { $ref: '#/components/schemas/RouterAuthBinding' }, description: Current authentication sessions linked only by exact MAC or endpoint identity. }
+        auth_bindings: { type: array, items: { $ref: '#/components/schemas/RouterAuthBinding' }, description: Latest reliable authentication binding materialized by exact MAC or endpoint identity. }
+        latest_account_id: { type: string }
+        latest_account_at: { type: string, format: date-time }
+        latest_account_active: { type: boolean }
+        latest_account_match_basis: { type: string, enum: [exact_endpoint, exact_mac] }
+        account_conflict: { type: boolean }
+        first_seen: { type: string, format: date-time }
+        last_observed_at: { type: string, format: date-time }
+        materialized_at: { type: string, format: date-time }
+        rule_version: { type: string }
     SharedDeviceProfilePage:
       type: object
-      required: [items, page, checked_at]
+      required: [items, page, checked_at, as_of, freshness_state, pending_jobs]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/SharedDeviceProfile' } }
-        activity_state: { type: string, enum: [available, unavailable] }
         checked_at: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        freshness_state: { type: string, enum: [fresh, stale, initializing] }
+        materialized_at: { type: string, format: date-time }
+        pending_jobs: { type: integer, minimum: 0 }
+        oldest_pending_at: { type: string, format: date-time }
+        materializer_error: { type: string }
         page:
           type: object
           required: [limit, total]
@@ -3286,6 +3325,20 @@ components:
             limit: { type: integer }
             total: { type: integer }
             next_cursor: { type: [string, 'null'] }
+    SharedDeviceProfileHistory:
+      type: object
+      required: [kind, observed_at, snapshot]
+      properties:
+        kind: { type: string }
+        observed_at: { type: string, format: date-time }
+        source_id: { type: string }
+        snapshot: { $ref: '#/components/schemas/SharedDeviceProfile' }
+    SharedDeviceProfileDetail:
+      type: object
+      required: [profile, history]
+      properties:
+        profile: { $ref: '#/components/schemas/SharedDeviceProfile' }
+        history: { type: array, items: { $ref: '#/components/schemas/SharedDeviceProfileHistory' } }
     SharedBehaviorAssessment:
       type: object
       required: [observation_id, sensor_id, ip, status, confidence, signal_groups, reasons, conflicts, coverage_state, rule_version, first_seen, last_seen, window_start, window_end, expires_at, router, score_components, feature_samples, event_ids, known_device_count, known_devices]

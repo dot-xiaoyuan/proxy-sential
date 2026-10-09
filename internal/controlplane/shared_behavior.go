@@ -70,13 +70,49 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 	writeJSON(w, http.StatusOK, page)
 }
 
-func (s *Server) handleSharedDeviceProfiles(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSharedDeviceProfiles(w http.ResponseWriter, r *http.Request, path string) {
+	if id := strings.Trim(strings.TrimPrefix(path, "/shared-access/devices"), "/"); id != "" {
+		reader, ok := s.reader.(store.SharedDeviceProfileDetailReader)
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "shared_device_profiles_unavailable", "设备档案存储不可用")
+			return
+		}
+		ctx, cancel := contextWithRequestTimeout(r.Context())
+		defer cancel()
+		detail, found, err := reader.GetSharedDeviceProfile(ctx, id)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "shared_device_profiles_unavailable", "设备档案读取失败")
+			return
+		}
+		if !found {
+			writeError(w, http.StatusNotFound, "shared_device_profile_not_found", "设备档案不存在")
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+		return
+	}
 	reader, ok := s.reader.(store.SharedDeviceProfileReader)
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "shared_device_profiles_unavailable", "设备档案存储不可用")
 		return
 	}
-	q := store.SharedDeviceProfileQuery{Keyword: r.URL.Query().Get("keyword"), Limit: 20}
+	q := store.SharedDeviceProfileQuery{
+		Keyword: r.URL.Query().Get("keyword"), Role: r.URL.Query().Get("role"),
+		IdentityState: r.URL.Query().Get("identity_state"), Limit: 20,
+	}
+	for _, param := range []struct {
+		name   string
+		target **bool
+	}{{"current_shared", &q.CurrentShared}, {"account_conflict", &q.AccountConflict}} {
+		if value := r.URL.Query().Get(param.name); value != "" {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "bad_filter", param.name+" 必须为布尔值")
+				return
+			}
+			*param.target = &parsed
+		}
+	}
 	for _, param := range []string{"limit", "cursor"} {
 		if value := r.URL.Query().Get(param); value != "" {
 			n, err := strconv.Atoi(value)

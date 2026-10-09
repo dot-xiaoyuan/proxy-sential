@@ -655,8 +655,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleSRun4K(w, r, path)
 	case r.Method == http.MethodGet && path == "/session":
 		writeJSON(w, http.StatusOK, session)
-	case r.Method == http.MethodGet && path == "/shared-access/devices":
-		s.handleSharedDeviceProfiles(w, r)
+	case r.Method == http.MethodGet && (path == "/shared-access/devices" || strings.HasPrefix(path, "/shared-access/devices/")):
+		s.handleSharedDeviceProfiles(w, r, path)
 	case r.Method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")):
 		s.handleSharedBehavior(w, r, path)
 	case (path == "/shared-access/reviews" || strings.HasPrefix(path, "/shared-access/reviews/")):
@@ -1099,7 +1099,7 @@ func requiredPermission(method, path string) string {
 		}
 		return "cases:write"
 	}
-	if method == http.MethodGet && path == "/shared-access/devices" {
+	if method == http.MethodGet && (path == "/shared-access/devices" || strings.HasPrefix(path, "/shared-access/devices/")) {
 		return "cases:read"
 	}
 	if method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")) {

@@ -730,8 +730,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Durable passive equipment identity profiles, independent of current sharing and enforcement; requires cases:read. Activity is address-scoped and does not renew identity proof. */
+        /** @description Materialized shared/network device profiles; requires cases:read. The request reads only the durable PostgreSQL projection and never performs identity joins or traffic aggregation. */
         get: operations["listSharedDeviceProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/devices/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Materialized current profile and its retained account, address, identity and sharing transitions; requires cases:read. */
+        get: operations["getSharedDeviceProfile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3256,13 +3273,18 @@ export interface components {
         SharedDeviceProfile: {
             profile_id: string;
             sensor_id?: string;
+            campus_id?: string;
             endpoint_id?: string;
             mac?: string;
             ip?: string;
+            vlan?: string;
+            addresses?: string[];
+            display_name?: string;
             brand?: string;
             model?: string;
-            /** @enum {string} */
-            role?: "router" | "ap";
+            role?: string;
+            confidence: number;
+            identity_conflict: boolean;
             /** @enum {string} */
             identity_state: "supported" | "historical" | "reference";
             identity_current: boolean;
@@ -3284,21 +3306,55 @@ export interface components {
             last_shared_at?: string;
             last_shared_observation_id?: string;
             current_shared: boolean;
+            shared_confidence: number;
             address_only: boolean;
-            /** @description Current authentication sessions linked only by exact MAC or endpoint identity. */
+            /** @description Latest reliable authentication binding materialized by exact MAC or endpoint identity. */
             auth_bindings?: components["schemas"]["RouterAuthBinding"][];
+            latest_account_id?: string;
+            /** Format: date-time */
+            latest_account_at?: string;
+            latest_account_active: boolean;
+            /** @enum {string} */
+            latest_account_match_basis?: "exact_endpoint" | "exact_mac";
+            account_conflict: boolean;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_observed_at: string;
+            /** Format: date-time */
+            materialized_at: string;
+            rule_version?: string;
         };
         SharedDeviceProfilePage: {
             items: components["schemas"]["SharedDeviceProfile"][];
-            /** @enum {string} */
-            activity_state?: "available" | "unavailable";
             /** Format: date-time */
             checked_at: string;
+            /** Format: date-time */
+            as_of: string;
+            /** @enum {string} */
+            freshness_state: "fresh" | "stale" | "initializing";
+            /** Format: date-time */
+            materialized_at?: string;
+            pending_jobs: number;
+            /** Format: date-time */
+            oldest_pending_at?: string;
+            materializer_error?: string;
             page: {
                 limit: number;
                 total: number;
                 next_cursor?: string | null;
             };
+        };
+        SharedDeviceProfileHistory: {
+            kind: string;
+            /** Format: date-time */
+            observed_at: string;
+            source_id?: string;
+            snapshot: components["schemas"]["SharedDeviceProfile"];
+        };
+        SharedDeviceProfileDetail: {
+            profile: components["schemas"]["SharedDeviceProfile"];
+            history: components["schemas"]["SharedDeviceProfileHistory"][];
         };
         SharedBehaviorAssessment: {
             /** @description Whether this observation remains in the current complete discovery window. */
@@ -6109,6 +6165,10 @@ export interface operations {
         parameters: {
             query?: {
                 keyword?: string;
+                role?: string;
+                identity_state?: "supported" | "historical" | "reference";
+                current_shared?: boolean;
+                account_conflict?: boolean;
                 limit?: number;
                 cursor?: number;
             };
@@ -6126,6 +6186,42 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SharedDeviceProfilePage"];
                 };
+            };
+            /** @description Archive read unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSharedDeviceProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Equipment profile detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDeviceProfileDetail"];
+                };
+            };
+            /** @description Equipment profile not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Archive read unavailable */
             503: {

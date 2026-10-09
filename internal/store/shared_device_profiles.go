@@ -4,14 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"proxy-sentinel/internal/evidence"
-	"proxy-sentinel/internal/sharedaccess"
 )
 
 // Profiles preserve passive identity evidence. They never participate in scoring
@@ -19,12 +17,18 @@ import (
 type SharedDeviceProfile struct {
 	ProfileID               string                       `json:"profile_id"`
 	SensorID                string                       `json:"sensor_id,omitempty"`
+	CampusID                string                       `json:"campus_id,omitempty"`
 	EndpointID              string                       `json:"endpoint_id,omitempty"`
 	MAC                     string                       `json:"mac,omitempty"`
 	IP                      string                       `json:"ip,omitempty"`
+	VLAN                    string                       `json:"vlan,omitempty"`
+	Addresses               []string                     `json:"addresses,omitempty"`
+	DisplayName             string                       `json:"display_name,omitempty"`
 	Brand                   string                       `json:"brand,omitempty"`
 	Model                   string                       `json:"model,omitempty"`
 	Role                    string                       `json:"role,omitempty"`
+	Confidence              int                          `json:"confidence"`
+	IdentityConflict        bool                         `json:"identity_conflict"`
 	IdentityState           string                       `json:"identity_state"`
 	IdentityCurrent         bool                         `json:"identity_current"`
 	IdentityAt              time.Time                    `json:"identity_at"`
@@ -37,22 +41,58 @@ type SharedDeviceProfile struct {
 	LastSharedAt            *time.Time                   `json:"last_shared_at,omitempty"`
 	LastSharedObservationID string                       `json:"last_shared_observation_id,omitempty"`
 	CurrentShared           bool                         `json:"current_shared"`
+	SharedConfidence        int                          `json:"shared_confidence"`
 	AddressOnly             bool                         `json:"address_only"`
 	AuthBindings            []evidence.RouterAuthBinding `json:"auth_bindings,omitempty"`
+	LatestAccountID         string                       `json:"latest_account_id,omitempty"`
+	LatestAccountAt         *time.Time                   `json:"latest_account_at,omitempty"`
+	LatestAccountActive     bool                         `json:"latest_account_active"`
+	LatestAccountMatchBasis string                       `json:"latest_account_match_basis,omitempty"`
+	AccountConflict         bool                         `json:"account_conflict"`
+	FirstSeen               time.Time                    `json:"first_seen"`
+	LastObservedAt          time.Time                    `json:"last_observed_at"`
+	MaterializedAt          time.Time                    `json:"materialized_at"`
+	RuleVersion             string                       `json:"rule_version,omitempty"`
 }
 
 type SharedDeviceProfileQuery struct {
-	Keyword       string
-	Limit, Cursor int
+	Keyword         string
+	Role            string
+	IdentityState   string
+	CurrentShared   *bool
+	AccountConflict *bool
+	Limit, Cursor   int
 }
 type SharedDeviceProfilePage struct {
-	Items         []SharedDeviceProfile `json:"items"`
-	Page          Page                  `json:"page"`
-	ActivityState string                `json:"activity_state,omitempty"`
-	CheckedAt     time.Time             `json:"checked_at"`
+	Items             []SharedDeviceProfile `json:"items"`
+	Page              Page                  `json:"page"`
+	ActivityState     string                `json:"activity_state,omitempty"`
+	CheckedAt         time.Time             `json:"checked_at"`
+	AsOf              time.Time             `json:"as_of"`
+	FreshnessState    string                `json:"freshness_state"`
+	MaterializedAt    *time.Time            `json:"materialized_at,omitempty"`
+	PendingJobs       int                   `json:"pending_jobs"`
+	OldestPendingAt   *time.Time            `json:"oldest_pending_at,omitempty"`
+	MaterializerError string                `json:"materializer_error,omitempty"`
 }
 type SharedDeviceProfileReader interface {
 	ListSharedDeviceProfiles(context.Context, SharedDeviceProfileQuery) (SharedDeviceProfilePage, error)
+}
+
+type SharedDeviceProfileHistory struct {
+	Kind       string          `json:"kind"`
+	ObservedAt time.Time       `json:"observed_at"`
+	SourceID   string          `json:"source_id,omitempty"`
+	Snapshot   json.RawMessage `json:"snapshot"`
+}
+
+type SharedDeviceProfileDetail struct {
+	Profile SharedDeviceProfile          `json:"profile"`
+	History []SharedDeviceProfileHistory `json:"history"`
+}
+
+type SharedDeviceProfileDetailReader interface {
+	GetSharedDeviceProfile(context.Context, string) (SharedDeviceProfileDetail, bool, error)
 }
 
 func independentDeviceRole(f evidence.RouterEvidence) bool {
@@ -209,231 +249,105 @@ func (s *PostgresStore) ListSharedDeviceProfiles(ctx context.Context, q SharedDe
 		return SharedDeviceProfilePage{}, fmt.Errorf("invalid device profile pagination")
 	}
 	now := time.Now().UTC()
-	rows, err := s.db.QueryContext(ctx, `SELECT data,host(ip),endpoint_id,mac,first_seen,last_seen,expires_at FROM router_evidence_facts
-WHERE ip IS NOT NULL AND kind<>'confirmed_router' AND source_family NOT IN ('shared_gateway_behavior','derived','weak_stack')
- AND (data->>'role' IN ('router','ap') OR COALESCE(data->>'brand_attribution','false')='true' OR exclusion OR conflict)
- AND COALESCE(NULLIF(data->>'sensor_id',''),$1)=$1
-ORDER BY last_seen DESC,evidence_id LIMIT 10001`, s.sensorID)
-	if err != nil {
+	where := []string{"p.merged_into_profile_id IS NULL", "p.sensor_id=$1"}
+	args := []any{s.sensorID}
+	add := func(clause string, value any) {
+		args = append(args, value)
+		where = append(where, strings.ReplaceAll(clause, "$N", fmt.Sprintf("$%d", len(args))))
+	}
+	if keyword := strings.ToLower(strings.TrimSpace(q.Keyword)); keyword != "" {
+		add(`lower(concat_ws(' ',p.display_name,p.endpoint_id,p.mac,coalesce(host(p.primary_ip),''),p.brand,p.model,p.role,p.latest_account_id)) LIKE $N`, "%"+keyword+"%")
+	}
+	if q.Role != "" {
+		add("p.role=$N", q.Role)
+	}
+	if q.IdentityState != "" {
+		add("p.recognition_status=$N", q.IdentityState)
+	}
+	if q.CurrentShared != nil {
+		add("p.current_shared=$N", *q.CurrentShared)
+	}
+	if q.AccountConflict != nil {
+		add("p.account_conflict=$N", *q.AccountConflict)
+	}
+	args = append(args, q.Limit, q.Cursor)
+	limitArg, cursorArg := len(args)-1, len(args)
+	query := `WITH runtime AS (
+ SELECT r.last_success_at,r.last_error,r.updated_at,
+  (SELECT count(*) FROM shared_device_profile_jobs j WHERE j.processed_generation<j.dirty_generation OR j.next_run_at<=now()) pending_jobs,
+  (SELECT min(j.dirty_since) FROM shared_device_profile_jobs j WHERE j.processed_generation<j.dirty_generation) oldest_pending_at
+ FROM shared_device_profile_runtime r WHERE singleton
+), filtered AS NOT MATERIALIZED (
+ SELECT p.profile_id,p.list_item,p.last_observed_at,p.materialized_at FROM shared_device_profiles p WHERE ` + strings.Join(where, " AND ") + `
+), page AS (
+ SELECT list_item,last_observed_at,profile_id,materialized_at FROM filtered
+ ORDER BY last_observed_at DESC,profile_id LIMIT $` + fmt.Sprint(limitArg) + ` OFFSET $` + fmt.Sprint(cursorArg) + `
+)
+SELECT coalesce(jsonb_agg(page.list_item ORDER BY page.last_observed_at DESC,page.profile_id) FILTER(WHERE page.profile_id IS NOT NULL),'[]'::jsonb),
+ (SELECT count(*) FROM filtered),runtime.last_success_at,runtime.last_error,coalesce(max(page.materialized_at),runtime.last_success_at),
+ runtime.pending_jobs,runtime.oldest_pending_at,clock_timestamp()
+FROM runtime LEFT JOIN page ON true GROUP BY runtime.last_success_at,runtime.last_error,runtime.pending_jobs,runtime.oldest_pending_at`
+	var raw []byte
+	var total int
+	var lastSuccess, materialized sql.NullTime
+	var lastError string
+	var oldestPending sql.NullTime
+	var pendingJobs int
+	var checkedAt time.Time
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&raw, &total, &lastSuccess, &lastError, &materialized, &pendingJobs, &oldestPending, &checkedAt); err != nil {
 		return SharedDeviceProfilePage{}, err
 	}
-	facts := []evidence.RouterEvidence{}
-	for rows.Next() {
-		var raw []byte
-		var f evidence.RouterEvidence
-		var first, last, expires time.Time
-		if err = rows.Scan(&raw, &f.IP, &f.EndpointID, &f.MAC, &first, &last, &expires); err != nil {
-			rows.Close()
-			return SharedDeviceProfilePage{}, err
-		}
-		ip, endpoint, mac := f.IP, f.EndpointID, f.MAC
-		if err = json.Unmarshal(raw, &f); err != nil {
-			rows.Close()
-			return SharedDeviceProfilePage{}, err
-		}
-		f.IP, f.EndpointID, f.MAC = ip, endpoint, mac
-		f.SensorID = s.sensorID // legacy facts predate the per-fact sensor field on this node
-		f.FirstSeen, f.LastSeen, f.ExpiresAt = first.UTC().Format(time.RFC3339Nano), last.UTC().Format(time.RFC3339Nano), expires.UTC().Format(time.RFC3339Nano)
-		facts = append(facts, f)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
+	items := []SharedDeviceProfile{}
+	if err := json.Unmarshal(raw, &items); err != nil {
 		return SharedDeviceProfilePage{}, err
 	}
-	if len(facts) > 10000 {
-		return SharedDeviceProfilePage{}, fmt.Errorf("device profile archive exceeded safety limit")
+	page := SharedDeviceProfilePage{Items: items, Page: Page{Limit: q.Limit, Total: total}, CheckedAt: checkedAt.UTC(), AsOf: checkedAt.UTC(), FreshnessState: "fresh", PendingJobs: pendingJobs, MaterializerError: lastError}
+	if materialized.Valid {
+		stamp := materialized.Time.UTC()
+		page.MaterializedAt = &stamp
 	}
-	profiles := buildSharedDeviceProfiles(facts, now)
-	existing := make(map[string]bool, len(profiles))
-	for _, profile := range profiles {
-		existing[profile.ProfileID] = true
+	if oldestPending.Valid {
+		stamp := oldestPending.Time.UTC()
+		page.OldestPendingAt = &stamp
 	}
-	authCandidates := buildAuthBackedRouterCandidates(facts, now)
-	if err = s.attachSharedDeviceAuthBindings(ctx, authCandidates); err != nil {
-		return SharedDeviceProfilePage{}, err
+	if !lastSuccess.Valid {
+		page.FreshnessState = "initializing"
+	} else if lastError != "" || now.Sub(lastSuccess.Time) > 45*time.Second || oldestPending.Valid && now.Sub(oldestPending.Time) > 45*time.Second {
+		page.FreshnessState = "stale"
 	}
-	for _, candidate := range authCandidates {
-		if !existing[candidate.ProfileID] && len(candidate.AuthBindings) > 0 {
-			profiles = append(profiles, candidate)
-			existing[candidate.ProfileID] = true
-		}
-	}
-	sortSharedDeviceProfiles(profiles)
-	filtered := []SharedDeviceProfile{}
-	keyword := strings.ToLower(strings.TrimSpace(q.Keyword))
-	for _, p := range profiles {
-		if keyword == "" || strings.Contains(strings.ToLower(strings.Join([]string{p.IP, p.MAC, p.EndpointID, p.Brand, p.Model, p.Role}, " ")), keyword) {
-			filtered = append(filtered, p)
-		}
-	}
-	page := SharedDeviceProfilePage{Items: []SharedDeviceProfile{}, Page: Page{Limit: q.Limit, Total: len(filtered)}, CheckedAt: now}
-	if q.Cursor >= len(filtered) {
-		return page, nil
-	}
-	end := q.Cursor + q.Limit
-	if end > len(filtered) {
-		end = len(filtered)
-	}
-	page.Items = append(page.Items, filtered[q.Cursor:end]...)
-	if end < len(filtered) {
-		next := fmt.Sprint(end)
+	if q.Cursor+len(items) < total {
+		next := fmt.Sprint(q.Cursor + len(items))
 		page.Page.NextCursor = &next
 	}
-	for i := range page.Items {
-		if err = s.enrichSharedDeviceProfile(ctx, &page.Items[i], now); err != nil {
-			return page, err
-		}
-	}
-	if err = s.attachSharedDeviceAuthBindings(ctx, page.Items); err != nil {
-		return page, err
-	}
 	return page, nil
-}
-
-func (s *PostgresStore) attachSharedDeviceAuthBindings(ctx context.Context, items []SharedDeviceProfile) error {
-	macs, endpoints := []string{}, []string{}
-	seenMAC, seenEndpoint := map[string]bool{}, map[string]bool{}
-	for _, item := range items {
-		if mac := normalizedRouterAuthMAC(item.MAC); mac != "" && !seenMAC[mac] {
-			seenMAC[mac], macs = true, append(macs, mac)
-		}
-		if endpoint := strings.TrimSpace(item.EndpointID); endpoint != "" && !seenEndpoint[endpoint] {
-			seenEndpoint[endpoint], endpoints = true, append(endpoints, endpoint)
-		}
-	}
-	if len(macs) == 0 && len(endpoints) == 0 {
-		return nil
-	}
-	sessions, err := s.currentAuthSessionsForIdentities(ctx, macs, endpoints)
-	if err != nil {
-		return err
-	}
-	for i := range items {
-		items[i].AuthBindings = routerBindingsForAssessment(evidence.RouterAssessment{MAC: items[i].MAC, EndpointID: items[i].EndpointID}, sessions)
-	}
-	return nil
-}
-
-func (s *PostgresStore) enrichSharedDeviceProfile(ctx context.Context, p *SharedDeviceProfile, now time.Time) error {
-	// An IP is not a permanent device identity. The latest lease is checked before
-	// attributing current address activity or sharing to the archived hardware.
-	rows, err := s.db.QueryContext(ctx, `SELECT endpoint_id,action,valid_until,observed_at,campus_id FROM device_address_leases
-WHERE sensor_id=$1 AND ip=$2::inet AND observed_at<=$3 ORDER BY observed_at DESC,event_id DESC LIMIT 2`, p.SensorID, p.IP, now)
-	if err != nil {
-		return err
-	}
-	type lease struct {
-		endpoint, action string
-		until, at        time.Time
-		campus           string
-	}
-	leases := []lease{}
-	for rows.Next() {
-		var l lease
-		if err = rows.Scan(&l.endpoint, &l.action, &l.until, &l.at, &l.campus); err != nil {
-			rows.Close()
-			return err
-		}
-		leases = append(leases, l)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	owner := p.EndpointID
-	if owner == "" && p.MAC != "" {
-		owner = "mac:" + strings.ToLower(p.MAC)
-	}
-	if len(leases) > 0 {
-		l := leases[0]
-		p.AddressState = "stale"
-		if owner != "" && l.endpoint != owner {
-			p.AddressState = "reassigned"
-		}
-		if owner != "" && l.endpoint == owner && l.action == "ack" && l.until.After(now) {
-			p.AddressState = "verified"
-			if len(leases) > 1 && leases[1].at.Equal(l.at) && (leases[1].endpoint != l.endpoint || leases[1].campus != l.campus) {
-				p.AddressState = "unbound"
-			}
-			var moved bool
-			if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM device_address_leases WHERE sensor_id=$1 AND campus_id=$2 AND endpoint_id=$3 AND observed_at>$4 AND observed_at<=$5)`, p.SensorID, l.campus, owner, l.at, now).Scan(&moved); err != nil {
-				return err
-			}
-			if moved {
-				p.AddressState = "stale"
-			}
-		}
-	}
-	// Historical sharing is identity-scoped when an endpoint is known. Old rules
-	// without a physical strong anchor remain in the separate historical view.
-	var at time.Time
-	var id string
-	var current bool
-	err = s.db.QueryRowContext(ctx, `SELECT last_seen,observation_id,
- current AND rule_version=$4 AND expires_at>$5 AND window_end>$5-interval '20 minutes' AND window_end<=$5
-FROM shared_behavior_observations WHERE sensor_id=$1 AND status='confirmed' AND coverage_state='verified'
- AND COALESCE(observation->>'strong_anchor','') IN ('ieee1905_association','coexisting_device_models')
- AND COALESCE((observation->>'device_lower_bound')::int,0)>=2
- AND ((NULLIF($2,'') IS NOT NULL AND endpoint_id=$2) OR ($2='' AND ip=$3::inet AND router_assessment_id=$6))
-ORDER BY last_seen DESC,observation_id DESC LIMIT 1`, p.SensorID, owner, p.IP, sharedaccess.BehaviorRuleVersion, now, p.IdentityAssessmentID).Scan(&at, &id, &current)
-	if err == nil {
-		p.LastSharedAt = &at
-		p.LastSharedObservationID = id
-		p.CurrentShared = current && p.AddressState == "verified"
-		return nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	return err
 }
 
 func (s *DBStore) ListSharedDeviceProfiles(ctx context.Context, q SharedDeviceProfileQuery) (SharedDeviceProfilePage, error) {
-	page, err := s.pg.ListSharedDeviceProfiles(ctx, q)
-	page.ActivityState = "available"
-	if err != nil || len(page.Items) == 0 {
-		return page, err
+	return s.pg.ListSharedDeviceProfiles(ctx, q)
+}
+
+func (s *PostgresStore) GetSharedDeviceProfile(ctx context.Context, id string) (SharedDeviceProfileDetail, bool, error) {
+	var profileRaw, historyRaw []byte
+	err := s.db.QueryRowContext(ctx, `SELECT p.list_item,coalesce((SELECT jsonb_agg(jsonb_build_object(
+ 'kind',h.change_kind,'observed_at',h.observed_at,'source_id',h.source_id,'snapshot',h.payload)
+ ORDER BY h.observed_at DESC,h.history_id DESC) FROM shared_device_profile_history h WHERE h.profile_id=p.profile_id),'[]'::jsonb)
+FROM shared_device_profiles p WHERE p.profile_id=$1 AND p.merged_into_profile_id IS NULL`, id).Scan(&profileRaw, &historyRaw)
+	if err == sql.ErrNoRows {
+		return SharedDeviceProfileDetail{}, false, nil
 	}
-	// Bounded standard-event read, outside ingest/risk hot paths. Activity is named
-	// as address activity even where ownership cannot currently be verified.
-	ips := map[string]bool{}
-	quoted := []string{}
-	for _, p := range page.Items {
-		if p.IP != "" && !ips[p.IP] {
-			ips[p.IP] = true
-			quoted = append(quoted, chQuote(p.IP))
-		}
-	}
-	if len(quoted) == 0 {
-		return page, nil
-	}
-	raw, err := s.ch.query(ctx, fmt.Sprintf(`SELECT subject_ip AS ip,formatDateTime(max(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS last_seen
-FROM normalized_events PREWHERE sensor_id=%s AND subject_ip IN (%s) AND timestamp>=now()-INTERVAL 7 DAY
-GROUP BY subject_ip SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow`, chQuote(s.pg.sensorID), strings.Join(quoted, ",")))
 	if err != nil {
-		page.ActivityState = "unavailable"
-		return page, nil
+		return SharedDeviceProfileDetail{}, false, err
 	}
-	var activity []struct {
-		IP       string `json:"ip"`
-		LastSeen string `json:"last_seen"`
+	detail := SharedDeviceProfileDetail{History: []SharedDeviceProfileHistory{}}
+	if err = json.Unmarshal(profileRaw, &detail.Profile); err != nil {
+		return SharedDeviceProfileDetail{}, false, err
 	}
-	if err = decodeJSONEachRow(raw, &activity); err != nil {
-		page.ActivityState = "unavailable"
-		return page, nil
+	if err = json.Unmarshal(historyRaw, &detail.History); err != nil {
+		return SharedDeviceProfileDetail{}, false, err
 	}
-	byIP := map[string]time.Time{}
-	for _, a := range activity {
-		if at, e := time.Parse(time.RFC3339Nano, normalizeClickHouseTimestamp(a.LastSeen)); e == nil {
-			byIP[a.IP] = at
-		}
-	}
-	for i := range page.Items {
-		if at, ok := byIP[page.Items[i].IP]; ok {
-			page.Items[i].AddressLastActivityAt = &at
-		}
-	}
-	return page, nil
+	return detail, true, nil
+}
+
+func (s *DBStore) GetSharedDeviceProfile(ctx context.Context, id string) (SharedDeviceProfileDetail, bool, error) {
+	return s.pg.GetSharedDeviceProfile(ctx, id)
 }

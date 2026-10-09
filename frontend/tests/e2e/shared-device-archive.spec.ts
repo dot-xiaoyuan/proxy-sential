@@ -7,14 +7,15 @@ for(const [width,height] of [[390,844],[743,774],[1280,800],[1440,900]]) test(`h
  await page.addInitScript(()=>{
   const original=window.fetch
   const checked='2026-10-05T15:30:00Z'
-  const identity={profile_id:'router-22',sensor_id:'office',endpoint_id:'mac:20:3a:eb:e9:de:10',mac:'20:3a:eb:e9:de:10',ip:'192.168.0.22',brand:'ZTE',model:'SR7410-20',role:'router',identity_state:'historical',identity_current:false,identity_at:'2026-09-30T09:00:00Z',identity_expires_at:'2026-10-01T09:00:00Z',identity_evidence_id:'proof-'+'a'.repeat(100),identity_assessment_id:'router-22',identity_basis:'DHCP 明确型号提供身份依据',address_state:'verified',address_last_activity_at:'2026-10-05T15:29:00Z',last_shared_at:'2026-09-30T09:00:00Z',last_shared_observation_id:'old-share-22',current_shared:false,address_only:false,auth_bindings:[{session_id:'auth-22',account_id:'20260022',assigned_ips:['222.204.10.22','2001:db8::22'],mac:'20:3a:eb:e9:de:10',source:'ncu-srun4k',match_basis:'exact_mac',ambiguous:false}]}
+  const identity={profile_id:'router-22',sensor_id:'office',endpoint_id:'mac:20:3a:eb:e9:de:10',mac:'20:3a:eb:e9:de:10',ip:'192.168.0.22',brand:'ZTE',model:'SR7410-20',role:'router',confidence:88,identity_conflict:false,identity_state:'historical',identity_current:false,identity_at:'2026-09-30T09:00:00Z',identity_expires_at:'2026-10-01T09:00:00Z',identity_evidence_id:'proof-'+'a'.repeat(100),identity_assessment_id:'router-22',identity_basis:'DHCP 明确型号提供身份依据',address_state:'verified',address_last_activity_at:'2026-10-05T15:29:00Z',last_shared_at:'2026-09-30T09:00:00Z',last_shared_observation_id:'old-share-22',current_shared:false,shared_confidence:0,address_only:false,auth_bindings:[{session_id:'auth-22',account_id:'20260022',assigned_ips:['222.204.10.22','2001:db8::22'],mac:'20:3a:eb:e9:de:10',source:'ncu-srun4k',match_basis:'exact_mac',ambiguous:false}],latest_account_id:'20260022',latest_account_at:'2026-10-05T15:29:00Z',latest_account_active:false,latest_account_match_basis:'exact_mac',account_conflict:false,first_seen:'2026-09-30T08:30:00Z',last_observed_at:'2026-10-05T15:29:00Z',materialized_at:'2026-10-05T15:29:02Z'}
   const vendor={...identity,profile_id:'vendor-63',endpoint_id:'mac:20:3a:eb:e9:de:63',mac:'20:3a:eb:e9:de:63',ip:'192.168.0.63',brand:'TP-Link',model:'',role:'',identity_state:'reference',identity_basis:'TP-Link 云证书关联，仅作为厂商线索',last_shared_at:undefined,last_shared_observation_id:undefined,auth_bindings:[]}
   const second={...identity,profile_id:'router-page-2',ip:'192.168.0.99',brand:'Ruijie',model:'RG-EG',auth_bindings:[]}
   const legacy={observation_id:'old-share-82',sensor_id:'office',ip:'192.168.0.82',endpoint_id:'mac:42:59:38:7a:fc:b3',status:'confirmed',confidence:100,signal_groups:['tcp_stack','tls_stack','ua_os'],reasons:['旧规则协议差异判断'],conflicts:[],coverage_state:'verified',rule_version:'shared-behavior/v8',current:false,first_seen:'2026-09-30T09:30:00Z',last_seen:'2026-09-30T09:39:29Z',window_start:'2026-09-30T09:30:00Z',window_end:'2026-09-30T09:40:00Z',router:{},score_components:[],feature_samples:{},event_ids:['legacy-proof'],known_devices:[]}
   const strong={...legacy,observation_id:'old-share-22',ip:'192.168.0.22',strong_anchor:'ieee1905_association',device_lower_bound:8,signal_groups:['ieee1905_association'],confidence:90,rule_version:'shared-behavior/v10'}
   window.fetch=async(...args)=>{
    const url=String(args[0]);let value:unknown
-   if(url.includes('/shared-access/devices?')) {if(url.includes('cursor=20')) await new Promise(resolve=>setTimeout(resolve,500));value={items:url.includes('cursor=20')?[second]:[identity,vendor],page:{total:21,limit:20},checked_at:checked}}
+   if(url.includes('/shared-access/devices?')) {if(url.includes('cursor=20')) await new Promise(resolve=>setTimeout(resolve,500));value={items:url.includes('cursor=20')?[second]:[identity,vendor],page:{total:21,limit:20},checked_at:checked,as_of:checked,freshness_state:'fresh',materialized_at:checked,pending_jobs:0}}
+   else if(url.includes('/shared-access/devices/router-22')) value={profile:identity,history:[{kind:'projection',observed_at:'2026-10-05T15:29:00Z',source_id:'router-evidence',snapshot:identity}]}
    else if(url.includes('/shared-access/observations/')) value={...legacy,history:[{status:'confirmed',confidence:100,signal_groups:['tcp_stack'],coverage_state:'verified',rule_version:'shared-behavior/v8',observed_at:legacy.last_seen,created_at:legacy.last_seen}]}
    else if(url.includes('/shared-access/observations?')) value={items:url.includes('view=history')?(url.includes('history_basis=clues')?[legacy]:[strong]):[],page:{total:url.includes('view=history')?1:0,limit:20}}
    else return original(...args)
@@ -49,6 +50,10 @@ for(const [width,height] of [[390,844],[743,774],[1280,800],[1440,900]]) test(`h
   await writeFile(path.join(dir,`${name}-dom-${width}.json`),JSON.stringify(probe,null,2));await page.screenshot({path:path.join(dir,`${name}-${width}.png`),fullPage:true,animations:'disabled'})
  }
  await audit('devices')
+ await deviceList.getByRole('button',{name:'档案历史'}).first().click()
+ await expect(page.getByText('设备档案历史',{exact:true})).toBeVisible()
+ await expect(page.getByText('账号 20260022',{exact:true})).toBeVisible()
+ await page.locator('.ant-drawer-close').click()
  await page.locator('.app-server-pagination .ant-pagination-next').click()
  await expect(page.getByText('正在加载第 2 页',{exact:true})).toBeVisible()
  await expect(deviceList.getByText('ZTE SR7410-20',{exact:true})).toHaveCount(0)

@@ -1,113 +1,215 @@
 package store
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"proxy-sentinel/internal/evidence"
-	"proxy-sentinel/internal/sharedaccess"
 	"testing"
 	"time"
 )
 
-func TestSharedDeviceArchiveHolidayAndIPReassignmentReplay(t *testing.T) {
+func TestSharedDeviceProfileMaterializesIdentityAccountAndAddressChanges(t *testing.T) {
 	s, ctx := ownedRiskFreshnessReplayStore(t)
 	s.sensorID = "archive-office"
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
 	mac := "00:11:22:33:44:22"
 	owner := "mac:" + mac
 	ip := "192.0.2.122"
-	fact := evidence.RouterEvidence{EvidenceID: "archive-router-dhcp", AssessmentID: "archive-router", EndpointID: owner, SensorID: s.sensorID, IP: ip, MAC: mac, Brand: "ZTE", Model: "SR7410-20", Role: "router", Kind: "router_signal", Source: "zeek", SourceFamily: "dhcp", Strength: "strong", Score: 60, RuleID: "model", RuleVersion: "fixture", FirstSeen: now.Add(-7 * 24 * time.Hour).Format(time.RFC3339Nano), LastSeen: now.Add(-7 * 24 * time.Hour).Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen) VALUES($1,$2,'endpoint',$3,$3)`, owner, mac, now); err != nil {
+		t.Fatal(err)
+	}
+	fact := evidence.RouterEvidence{EvidenceID: "archive-router-dhcp", AssessmentID: "archive-router", EndpointID: owner, SensorID: s.sensorID, IP: ip, MAC: mac, Brand: "ZTE", Model: "SR7410-20", Role: "router", Kind: "router_signal", Source: "zeek", SourceFamily: "dhcp", Strength: "strong", Score: 70, RuleID: "model", RuleVersion: "fixture", FirstSeen: now.Format(time.RFC3339Nano), LastSeen: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)}
 	if err := s.WriteRouterObservations(ctx, evidence.RouterResult{Evidence: []evidence.RouterEvidence{fact}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE router_evidence_facts SET expires_at=$2 WHERE evidence_id=$1`, fact.EvidenceID, now.Add(-6*24*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	behavior := sharedaccess.BehaviorAssessment{ObservationID: "archive-shared-old", SensorID: s.sensorID, EndpointID: owner, IP: ip, RuleVersion: sharedaccess.BehaviorRuleVersion, SignalGroups: []string{"coexisting_device_models"}, Status: "confirmed", Confidence: 90, CoverageState: "verified", StrongAnchor: "coexisting_device_models", DeviceLowerBound: 2, FirstSeen: now.Add(-7 * 24 * time.Hour), LastSeen: now.Add(-7 * 24 * time.Hour), WindowStart: now.Add(-7*24*time.Hour - time.Minute*10), WindowEnd: now.Add(-7 * 24 * time.Hour), ExpiresAt: now.Add(-6 * 24 * time.Hour)}
-	dbs := &DBStore{pg: s}
-	if err := dbs.persistSharedBehavior(ctx, behavior); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,action,observed_at,valid_until) VALUES($1,'','archive-lease',$2::inet,$3,'ack',$4,$5)`, s.sensorID, ip, owner, now.Add(-time.Minute), now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO account_sessions(session_id,account_id,endpoint_id,ip,mac,source,started_at,identity_confidence,raw_ref,vlan,nas_ip)
-VALUES('archive-auth-exact','archive-account',$1,'198.51.100.122',$2,'ncu-srun4k',$3,.99,'{}','120','192.0.2.1'),
-('archive-auth-ip-only','must-not-bind','mac:00:11:22:33:44:99',$4::inet,'00:11:22:33:44:99','ncu-srun4k',$3,.99,'{}','120','192.0.2.1')`, owner, mac, now.Add(-time.Minute), ip); err != nil {
+VALUES('archive-auth-exact','archive-account',$1,'198.51.100.122',$2,'ncu-srun4k',$3,.99,'{}','120','192.0.2.1')`, owner, mac, now); err != nil {
 		t.Fatal(err)
+	}
+	dbs := &DBStore{pg: s}
+	for index := 0; index < 20; index++ {
+		found, err := dbs.processSharedDeviceProfileJob(ctx, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			break
+		}
 	}
 	page, err := s.ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: ip})
 	if err != nil || len(page.Items) != 1 {
-		t.Fatalf("archive page: %+v %v", page, err)
+		t.Fatalf("materialized page: %+v %v", page, err)
 	}
 	p := page.Items[0]
-	if p.IdentityCurrent || p.IdentityState != "historical" || p.Role != "router" || p.AddressState != "verified" || p.CurrentShared || p.LastSharedAt == nil || !p.LastSharedAt.Equal(behavior.LastSeen) {
-		t.Fatalf("holiday conflated identity, activity or sharing: %+v", p)
+	if !p.IdentityCurrent || p.IdentityState != "supported" || p.Role != "router" || p.AddressState != "verified" {
+		t.Fatalf("identity or address projection missing: %+v", p)
 	}
 	if len(p.AuthBindings) != 1 || p.AuthBindings[0].AccountID != "archive-account" || p.AuthBindings[0].MatchBasis != "exact_endpoint" || len(p.AuthBindings[0].AssignedIPs) != 1 || p.AuthBindings[0].AssignedIPs[0] != "198.51.100.122" {
-		t.Fatalf("shared device profile did not preserve exact authentication binding: %+v", p.AuthBindings)
+		t.Fatalf("exact authentication binding missing: %+v", p.AuthBindings)
 	}
-	weakMAC := "00:11:22:33:44:77"
-	weakOwner := "mac:" + weakMAC
-	weakFact := evidence.RouterEvidence{EvidenceID: "archive-router-ssdp", AssessmentID: "archive-router-weak", EndpointID: weakOwner, SensorID: s.sensorID, IP: "192.168.1.1", MAC: weakMAC, Role: "router", Kind: "router_signal", Source: "zeek", SourceFamily: "ssdp_upnp", Strength: "weak", Score: 20, RuleID: "ssdp", RuleVersion: "fixture", Explanation: "UPnP gateway advertisement", FirstSeen: now.Add(-time.Minute).Format(time.RFC3339Nano), LastSeen: now.Add(-time.Minute).Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)}
-	if err = s.WriteRouterObservations(ctx, evidence.RouterResult{Evidence: []evidence.RouterEvidence{weakFact}}); err != nil {
+	profileID := p.ProfileID
+	if _, err = s.db.ExecContext(ctx, `UPDATE account_sessions SET ended_at=$1,updated_at=$1 WHERE session_id='archive-auth-exact'`, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.ExecContext(ctx, `INSERT INTO account_sessions(session_id,account_id,endpoint_id,ip,mac,source,started_at,identity_confidence,raw_ref)
-VALUES('archive-auth-weak','archive-weak-account',$1,'198.51.100.177',$2,'ncu-srun4k',$3,.99,'{}')`, weakOwner, weakMAC, now.Add(-time.Minute)); err != nil {
+	if _, err = s.db.ExecContext(ctx, `INSERT INTO account_sessions(session_id,account_id,endpoint_id,ip,mac,source,started_at,identity_confidence,raw_ref,updated_at)
+VALUES('archive-auth-new','archive-account-new',$1,'198.51.100.123',$2,'ncu-srun4k',$3,.99,'{}',$3)`, owner, mac, now.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	weakPage, err := s.ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: weakMAC})
-	if err != nil || len(weakPage.Items) != 1 || weakPage.Items[0].IdentityState != "reference" || weakPage.Items[0].IdentityCurrent || len(weakPage.Items[0].AuthBindings) != 1 || weakPage.Items[0].AuthBindings[0].AccountID != "archive-weak-account" {
-		t.Fatalf("auth-backed router lead missing or promoted: %+v %v", weakPage, err)
+	for index := 0; index < 20; index++ {
+		found, processErr := dbs.processSharedDeviceProfileJob(ctx, "test-update")
+		if processErr != nil {
+			t.Fatal(processErr)
+		}
+		if !found {
+			break
+		}
 	}
-	current, err := s.ListSharedBehavior(ctx, SharedBehaviorQuery{IP: ip})
-	if err != nil || len(current.Items) != 0 {
-		t.Fatalf("historical sharing revived: %+v %v", current, err)
+	page, err = (&DBStore{pg: s}).ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: mac})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ProfileID != profileID || page.Items[0].LatestAccountID != "archive-account-new" || page.Items[0].AccountConflict {
+		t.Fatalf("latest account did not replace display while retaining profile: %+v %v", page, err)
 	}
-	history, err := s.ListSharedBehavior(ctx, SharedBehaviorQuery{IP: ip, View: "history"})
-	if err != nil || len(history.Items) != 1 || history.Items[0].Current {
-		t.Fatalf("historical archive missing or promoted: %+v %v", history, err)
-	}
-	behavior.ObservationID = "archive-shared-current"
-	behavior.LastSeen = now
-	behavior.WindowStart = now.Add(-10 * time.Minute)
-	behavior.WindowEnd = now
-	behavior.ExpiresAt = now.Add(time.Hour)
-	if err = dbs.persistSharedBehavior(ctx, behavior); err != nil {
+	if _, err = s.db.ExecContext(ctx, `UPDATE account_sessions SET ended_at=$1,updated_at=$1 WHERE session_id='archive-auth-new'`, now.Add(150*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err = dbs.publishSharedBehaviorCurrent(ctx, s.sensorID, []string{behavior.ObservationID}); err != nil {
+	for index := 0; index < 10; index++ {
+		found, processErr := dbs.processSharedDeviceProfileJob(ctx, "test-session-ended")
+		if processErr != nil {
+			t.Fatal(processErr)
+		}
+		if !found {
+			break
+		}
+	}
+	page, err = s.ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: mac})
+	if err != nil || len(page.Items) != 1 || page.Items[0].LatestAccountID != "archive-account-new" || page.Items[0].LatestAccountActive {
+		t.Fatalf("ended session did not retain the latest reliable account: %+v %v", page, err)
+	}
+	if _, err = s.db.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,action,observed_at,valid_until)
+VALUES($1,'','archive-lease-new','192.0.2.123',$2,'ack',$3,$4)`, s.sensorID, owner, now.Add(3*time.Minute), now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
+	}
+	for index := 0; index < 10; index++ {
+		found, processErr := dbs.processSharedDeviceProfileJob(ctx, "test-address")
+		if processErr != nil {
+			t.Fatal(processErr)
+		}
+		if !found {
+			break
+		}
+	}
+	page, err = s.ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: mac})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ProfileID != profileID || page.Items[0].IP != "192.0.2.123" {
+		t.Fatalf("address change did not update the same physical profile: %+v %v", page, err)
+	}
+	newOwner := "mac:00:11:22:33:44:99"
+	if _, err = s.db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen) VALUES($1,'00:11:22:33:44:99','endpoint',$2,$2)`, newOwner, now.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,action,observed_at,valid_until)
+VALUES($1,'','archive-lease-reused','192.0.2.123',$2,'ack',$3,$4)`, s.sensorID, newOwner, now.Add(4*time.Minute), now.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 10; index++ {
+		found, processErr := dbs.processSharedDeviceProfileJob(ctx, "test-reuse")
+		if processErr != nil {
+			t.Fatal(processErr)
+		}
+		if !found {
+			break
+		}
+	}
+	page, err = s.ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: mac})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ProfileID != profileID || page.Items[0].AddressState != "reassigned" {
+		t.Fatalf("IP reuse merged hardware or kept stale ownership: %+v %v", page, err)
+	}
+	var history int
+	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM shared_device_profile_history WHERE profile_id=$1`, profileID).Scan(&history); err != nil || history < 2 {
+		t.Fatalf("profile history missing: %d %v", history, err)
+	}
+	if _, err = s.db.ExecContext(ctx, `SELECT enqueue_shared_device_profile_job($1,'',$2,$3,$4::inet,'',$5)`, s.sensorID, owner, mac, "192.0.2.123", now.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 5; index++ {
+		found, processErr := dbs.processSharedDeviceProfileJob(ctx, "test-idempotent-restart")
+		if processErr != nil {
+			t.Fatal(processErr)
+		}
+		if !found {
+			break
+		}
+	}
+	var afterReplay int
+	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM shared_device_profile_history WHERE profile_id=$1`, profileID).Scan(&afterReplay); err != nil || afterReplay != history {
+		t.Fatalf("idempotent replay appended duplicate history: before=%d after=%d err=%v", history, afterReplay, err)
+	}
+}
+
+func TestSharedDeviceProfileDoesNotBackfillPreCutoverEvidence(t *testing.T) {
+	s, ctx := ownedRiskFreshnessReplayStore(t)
+	s.sensorID = "cutover-office"
+	var cutover time.Time
+	if err := s.db.QueryRowContext(ctx, `SELECT cutover_at FROM shared_device_profile_runtime WHERE singleton`).Scan(&cutover); err != nil {
+		t.Fatal(err)
+	}
+	mac := "00:11:22:33:55:66"
+	endpoint := "mac:" + mac
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen) VALUES($1,$2,'endpoint',$3,$3) ON CONFLICT DO NOTHING`, endpoint, mac, cutover.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	fact := evidence.RouterEvidence{EvidenceID: "pre-cutover-router", AssessmentID: "pre-cutover-assessment", EndpointID: endpoint, SensorID: s.sensorID, IP: "192.0.2.166", MAC: mac, Brand: "Example", Model: "Old", Role: "router", Kind: "router_signal", Source: "zeek", SourceFamily: "dhcp", Strength: "strong", Score: 70, RuleID: "model", RuleVersion: "fixture", FirstSeen: cutover.Add(-time.Hour).Format(time.RFC3339Nano), LastSeen: cutover.Add(-time.Hour).Format(time.RFC3339Nano), ExpiresAt: cutover.Add(time.Hour).Format(time.RFC3339Nano)}
+	if err := s.WriteRouterObservations(ctx, evidence.RouterResult{Evidence: []evidence.RouterEvidence{fact}}); err != nil {
+		t.Fatal(err)
+	}
+	var jobs int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM shared_device_profile_jobs WHERE endpoint_id=$1`, endpoint).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("pre-cutover evidence unexpectedly enqueued %d profile jobs", jobs)
+	}
+}
+
+func TestSharedDeviceProfileRandomMACRequiresEventTimeDHCPBinding(t *testing.T) {
+	s, ctx := ownedRiskFreshnessReplayStore(t)
+	s.sensorID = "random-mac-office"
+	now := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
+	mac, endpoint, ip := "02:11:22:33:44:88", "mac:02:11:22:33:44:88", "192.0.2.188"
+	fact := evidence.RouterEvidence{EvidenceID: "random-mac-router", AssessmentID: "random-mac-assessment", EndpointID: endpoint, SensorID: s.sensorID, IP: ip, MAC: mac, Brand: "Example", Model: "Router", Role: "router", Kind: "router_signal", Source: "zeek", SourceFamily: "dhcp", Strength: "strong", Score: 70, RuleID: "model", RuleVersion: "fixture", FirstSeen: now.Format(time.RFC3339Nano), LastSeen: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)}
+	if err := s.WriteRouterObservations(ctx, evidence.RouterResult{Evidence: []evidence.RouterEvidence{fact}}); err != nil {
+		t.Fatal(err)
+	}
+	dbs := &DBStore{pg: s}
+	for index := 0; index < 10; index++ {
+		found, err := dbs.processSharedDeviceProfileJob(ctx, "random-without-dhcp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			break
+		}
+	}
+	page, err := s.ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: ip})
+	if err != nil || len(page.Items) != 1 || page.Items[0].EndpointID != "" || page.Items[0].MAC != "" || !page.Items[0].AddressOnly {
+		t.Fatalf("random MAC was treated as reliable without DHCP: %+v %v", page, err)
+	}
+	profileID := page.Items[0].ProfileID
+	dhcpAt := now.Add(time.Second)
+	if _, err = s.db.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,action,observed_at,valid_until)
+VALUES($1,'','random-mac-lease',$2::inet,$3,'ack',$4,$5)`, s.sensorID, ip, endpoint, dhcpAt, dhcpAt.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 10; index++ {
+		found, processErr := dbs.processSharedDeviceProfileJob(ctx, "random-with-dhcp")
+		if processErr != nil {
+			t.Fatal(processErr)
+		}
+		if !found {
+			break
+		}
 	}
 	page, err = s.ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: ip})
-	if err != nil || !page.Items[0].CurrentShared {
-		t.Fatalf("fresh independent sharing not shown: %+v %v", page, err)
-	}
-	if _, err = s.db.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,action,observed_at,valid_until) VALUES($1,'','archive-reassigned',$2::inet,'mac:00:11:22:33:44:99','ack',$3,$4)`, s.sensorID, ip, now.Add(-30*time.Second), now.Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	page, err = s.ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: ip})
-	if err != nil || page.Items[0].AddressState != "reassigned" || page.Items[0].CurrentShared {
-		t.Fatalf("reassigned IP attributed fresh sharing to old hardware: %+v %v", page, err)
-	}
-	if _, err = s.db.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,action,observed_at,valid_until) VALUES($1,'','archive-moved','192.0.2.123',$2,'ack',$3,$4)`, s.sensorID, owner, now.Add(-15*time.Second), now.Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "collection unavailable", http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	degraded, err := (&DBStore{pg: s, ch: ch}).ListSharedDeviceProfiles(ctx, SharedDeviceProfileQuery{Keyword: ip})
-	if err != nil || len(degraded.Items) != 1 || degraded.ActivityState != "unavailable" || degraded.Items[0].Role != "router" {
-		t.Fatalf("activity failure hid durable identity: %+v %v", degraded, err)
-	}
-	var factsCount int
-	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM router_evidence_facts WHERE evidence_id=$1`, fact.EvidenceID).Scan(&factsCount); err != nil || factsCount != 1 {
-		t.Fatal("archive reads changed original evidence", factsCount, err)
+	if err != nil || len(page.Items) != 1 || page.Items[0].ProfileID != profileID || page.Items[0].EndpointID != endpoint || page.Items[0].MAC != mac || page.Items[0].AddressOnly {
+		t.Fatalf("DHCP-confirmed random MAC did not upgrade the weak profile: %+v %v", page, err)
 	}
 }
