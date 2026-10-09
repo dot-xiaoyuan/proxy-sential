@@ -102,7 +102,8 @@ func (s *DBStore) claimSharedDeviceProfileJob(ctx context.Context, worker string
 	row := s.pg.db.QueryRowContext(ctx, `WITH picked AS (
  SELECT subject_key FROM shared_device_profile_jobs
  WHERE ((processed_generation<dirty_generation AND not_before<=now()) OR next_run_at<=now())
- AND lease_until<now() ORDER BY CASE WHEN processed_generation<dirty_generation THEN 0 ELSE 1 END,updated_at,subject_key
+ AND lease_until<now() ORDER BY CASE WHEN processed_generation<dirty_generation THEN 0 ELSE 1 END,
+ CASE WHEN processed_generation<dirty_generation THEN dirty_since ELSE next_run_at END,subject_key
  FOR UPDATE SKIP LOCKED LIMIT 1)
 UPDATE shared_device_profile_jobs j SET lease_owner=$1,lease_until=now()+interval '1 minute',
  dirty_generation=CASE WHEN j.next_run_at<=now() AND j.processed_generation>=j.dirty_generation THEN j.dirty_generation+1 ELSE j.dirty_generation END,
