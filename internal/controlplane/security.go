@@ -54,15 +54,17 @@ type loginAttempt struct {
 }
 
 type authManager struct {
-	mu       sync.Mutex
-	enabled  bool
-	users    map[string]localUser
-	sessions map[string]authSession
-	attempts map[string]loginAttempt
-	secure   bool
-	now      func() time.Time
-	db       *sql.DB
-	path     string
+	mu             sync.Mutex
+	enabled        bool
+	users          map[string]localUser
+	sessions       map[string]authSession
+	attempts       map[string]loginAttempt
+	secure         bool
+	now            func() time.Time
+	db             *sql.DB
+	path           string
+	activityOnce   sync.Once
+	activityWrites chan struct{}
 }
 
 type loginRequest struct {
@@ -347,12 +349,34 @@ func (a *authManager) currentPostgres(token string) (authSession, bool) {
 	defer cancel()
 	var user localUser
 	var expiresAt time.Time
-	err := a.db.QueryRowContext(ctx, `SELECT u.user_id,u.username,u.display_name,u.role,u.password_hash,u.disabled,s.expires_at FROM local_auth_sessions s JOIN local_users u ON u.user_id=s.user_id WHERE s.session_hash=$1 AND s.expires_at>now() AND u.disabled=false`, tokenHash(token)).Scan(&user.ID, &user.Username, &user.Name, &user.Role, &user.PasswordHash, &user.Disabled, &expiresAt)
+	var touchDue bool
+	err := a.db.QueryRowContext(ctx, `SELECT u.user_id,u.username,u.display_name,u.role,u.password_hash,u.disabled,s.expires_at,s.last_seen_at < now()-interval '1 minute' FROM local_auth_sessions s JOIN local_users u ON u.user_id=s.user_id WHERE s.session_hash=$1 AND s.expires_at>now() AND u.disabled=false`, tokenHash(token)).Scan(&user.ID, &user.Username, &user.Name, &user.Role, &user.PasswordHash, &user.Disabled, &expiresAt, &touchDue)
 	if err != nil {
 		return authSession{}, false
 	}
-	_, _ = a.db.ExecContext(ctx, `UPDATE local_auth_sessions SET last_seen_at=now() WHERE session_hash=$1`, tokenHash(token))
+	// Activity timestamps are diagnostic, not a sliding expiry or authorization
+	// cache. Keep revocation/role checks on every request, without serializing all
+	// concurrent reads behind a WAL flush and row lock on the same session.
+	if touchDue {
+		a.touchSessionActivity(tokenHash(token))
+	}
 	return authSession{User: user, CSRFToken: csrfForToken(token), ExpiresAt: expiresAt}, true
+}
+
+func (a *authManager) touchSessionActivity(hash string) {
+	a.activityOnce.Do(func() { a.activityWrites = make(chan struct{}, 1) })
+	select {
+	case a.activityWrites <- struct{}{}:
+		go func() {
+			defer func() { <-a.activityWrites }()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_, _ = a.db.ExecContext(ctx, `UPDATE local_auth_sessions SET last_seen_at=now() WHERE session_hash=$1 AND expires_at>now() AND last_seen_at < now()-interval '1 minute'`, hash)
+		}()
+	default:
+		// A diagnostic update is already in flight. Retry on a later request;
+		// never create an unbounded queue or delay the authorization decision.
+	}
 }
 
 func tokenHash(value string) string {
