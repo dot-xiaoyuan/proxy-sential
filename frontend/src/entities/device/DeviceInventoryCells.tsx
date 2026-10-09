@@ -1,6 +1,6 @@
 import { Tag, Tooltip, Typography } from 'antd'
 import { Link } from 'react-router-dom'
-import { CloudServerOutlined, DesktopOutlined, HddOutlined, LaptopOutlined, MobileOutlined, PrinterOutlined, TabletOutlined } from '@ant-design/icons'
+import { CloudServerOutlined, DeploymentUnitOutlined, DesktopOutlined, HddOutlined, LaptopOutlined, MobileOutlined, PrinterOutlined, TabletOutlined } from '@ant-design/icons'
 import type { DeviceInventoryListItem, EndpointDeviceInventory } from '../../shared/api/types'
 import { BrandLogo } from './BrandLogo'
 import { DeviceNameView } from './DeviceNameView'
@@ -96,8 +96,51 @@ export function DeviceSemanticIcon({ device }: { device: DeviceDisplayItem }) {
     : /virtual|vm|虚拟/.test(confidentType) ? CloudServerOutlined
     : /desktop|workstation|computer|pc|终端|电脑/.test(confidentType) ? DesktopOutlined
     : /android|ios/.test(confidentOS) ? MobileOutlined
-    : DesktopOutlined
+    : /windows|macos|linux/.test(confidentOS) ? DesktopOutlined : DeploymentUnitOutlined
   return <span className="device-semantic-icon" aria-hidden="true"><Icon /></span>
+}
+
+export function DeviceLedgerIdentity({device,href,showName=true}:{device:DeviceDisplayItem;href:string;showName?:boolean}) {
+ const name=showName?device.device_name?.value:undefined
+ const primary=name||device.current_ip||device.primary_mac||device.endpoint_id
+ return <div className="device-identity-cell">
+  <DeviceSemanticIcon device={device}/>
+  <div className="device-identity-content">
+   <div className="device-ledger-ip"><Link className={`device-ledger-primary${!name?' mono':''}`} to={href} title={name?[primary,device.device_name?.manual?'人工备注':'观测名称',device.device_name?.status==='historical'?'历史观测，尚未重新确认':'',device.device_name?.multiple_names?'其他名称可在详情查看':''].filter(Boolean).join(' · '):primary}>{primary}</Link>{name&&device.device_name?.status==='historical'&&<span className="device-name-caption">历史名称</span>}{!name&&device.current_ip&&<Typography.Text className="device-copy-control" copyable={{text:device.current_ip}}/>}</div>
+   {name&&device.current_ip&&<Typography.Text className="mono device-ledger-address" copyable={{text:device.current_ip}}>{device.current_ip}</Typography.Text>}
+   {device.primary_mac&&<DeviceMAC device={device} href={href}/>}
+   {device.ip_match&&<Typography.Text className="device-match-caption" title={`${device.ip_match.ip} · ${device.ip_match.matched_at} · ${device.ip_match.source==='account_session'?'账号会话':'IP 观测'}`}>{device.ip_match.is_recent_ip?'最近 IP 命中':'历史 IP 命中'}</Typography.Text>}
+  </div>
+ </div>
+}
+
+export function DeviceLedgerRecognition({device}:{device:DeviceDisplayItem}) {
+ const safe=!device.recognition_conflict
+ const platform=virtualPlatform(device)||(/^vmware(?:[\s,.]|$)/i.test(device.brand||'')?'VMware':undefined)
+ const type=safe&&(device.device_type_confidence??0)>=.8&&!isEmptyRecognition(device.device_type)?deviceTypeLabel(device.device_type!):''
+ const brand=safe&&!platform&&(device.brand_confidence??0)>=.8&&!isEmptyRecognition(device.brand)?resolveDeviceBrand({brand:device.brand}).name:''
+ const model=safe&&(device.model_confidence??0)>=.8&&!isEmptyRecognition(device.model)?device.model:''
+ const clues=[
+  device.brand_inference?.status==='inferred'&&!isEmptyRecognition(device.brand_inference.brand)?`${device.brand_inference.brand} · 品牌推测（${Math.round(device.brand_inference.confidence*100)}%）`:'',
+  device.brand_reference&&!isEmptyRecognition(device.brand_reference.brand)?`${device.brand_reference.brand} · MAC 厂商线索：${device.brand_reference.explanation}`:'',
+  safe&&(device.os_family_confidence??0)<.8&&!isEmptyRecognition(device.os_family)?`${device.os_family} · 系统线索（${Math.round((device.os_family_confidence??0)*100)}%）`:'',
+  safe&&(device.device_type_confidence??0)<.8&&!isEmptyRecognition(device.device_type)?`${deviceTypeLabel(device.device_type!)} · 类型线索`:'',
+ ].filter(Boolean)
+ return <div className="device-ledger-recognition">
+  {type&&<Typography.Text>{type}</Typography.Text>}
+  {(brand||model)&&<Typography.Text className="device-brand-model">{[brand,model].filter(Boolean).join(' · ')}</Typography.Text>}
+  <div className="device-identity-clues">
+   {platform&&<Tooltip title="虚拟网卡或虚拟化平台线索，不确认宿主机品牌。"><Tag className="device-platform-tag"><CloudServerOutlined/>VMware 虚拟平台线索</Tag></Tooltip>}
+   {(device.recognition_conflict||device.brand_inference?.status==='conflict')&&<Tag className="device-conflict-tag">线索冲突</Tag>}
+   {device.discovery?.conflict&&<Tag className="device-conflict-tag">发现线索冲突</Tag>}
+   {clues.length>0&&<Tooltip title={<div>{clues.map(clue=><div key={clue}>{clue}</div>)}</div>}><Typography.Text className="device-ledger-clues" tabIndex={0}>识别依据</Typography.Text></Tooltip>}
+  </div>
+  {device.router_observation&&<Link className="router-device-summary" to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}>路由观察 · {routerStatusLabel(device.router_observation.status)}</Link>}
+ </div>
+}
+
+export function DeviceLedgerOS({device}:{device:DeviceDisplayItem}) {
+ return !device.recognition_conflict&&(device.os_family_confidence??0)>=.8&&!isEmptyRecognition(device.os_family)?<OperatingSystemLabel family={device.os_family!} confirmed/>:null
 }
 
 function isEmptyRecognition(value?: string) {

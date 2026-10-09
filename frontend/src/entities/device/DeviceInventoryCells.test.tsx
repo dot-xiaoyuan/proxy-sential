@@ -2,9 +2,40 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { domainOnlyDevice, domainOnlyInference } from '../../mocks/brandInference'
-import { DeviceBrandSummary, DeviceIdentityCell, DeviceMAC, virtualPlatform } from './DeviceInventoryCells'
+import { DeviceBrandSummary, DeviceIdentityCell, DeviceLedgerIdentity, DeviceLedgerRecognition, DeviceLedgerOS, DeviceSemanticIcon, DeviceMAC, virtualPlatform } from './DeviceInventoryCells'
 
 afterEach(cleanup)
+
+it('ledger identity always locates an unnamed device by IP and MAC',()=>{
+ render(<MemoryRouter><DeviceLedgerIdentity device={domainOnlyDevice} href="/devices/test?return_to=inventory"/></MemoryRouter>)
+ expect(screen.getByRole('link',{name:'198.18.90.8'})).toHaveAttribute('href','/devices/test?return_to=inventory')
+ expect(screen.getByRole('link',{name:'02:00:00:00:90:08'})).toBeVisible()
+})
+it('ledger prioritizes confident recognition and keeps weak OS out of the OS column',()=>{
+ const device={...domainOnlyDevice,device_type:'laptop',device_type_confidence:.95,brand:'Dell',brand_confidence:.95,model:'Latitude',model_confidence:.9,os_family:'Windows',os_family_confidence:.6}
+ render(<><DeviceLedgerRecognition device={device}/><DeviceLedgerOS device={device}/></>)
+ expect(screen.getByText('笔记本电脑')).toBeVisible()
+ expect(screen.getByText('戴尔 · Latitude')).toBeVisible()
+ expect(screen.queryByText('Windows')).not.toBeInTheDocument()
+ expect(screen.getByText('识别依据')).toBeVisible()
+})
+it('ledger keeps VMware as a virtual clue and does not render its logo or hardware brand',()=>{
+ const device={...domainOnlyDevice,primary_mac:'00:0c:29:2f:fe:f6',vendor:'VMware, Inc.',vendor_confidence:.9,randomized_mac:false,brand:'VMware',brand_confidence:.9}
+ render(<DeviceLedgerRecognition device={device}/>)
+ expect(screen.getByText('VMware 虚拟平台线索')).toBeVisible()
+ expect(document.querySelector('.brand-logo-vmware')).toBeNull()
+ expect(screen.queryByText('VMware',{exact:true})).not.toBeInTheDocument()
+})
+it('neutral icon does not promote low-confidence desktop recognition',()=>{
+ render(<DeviceSemanticIcon device={{...domainOnlyDevice,device_type:'desktop',device_type_confidence:.5,os_family:'Windows',os_family_confidence:.5}}/>)
+ expect(document.querySelector('[data-icon="deployment-unit"]')).not.toBeNull()
+ expect(document.querySelector('[data-icon="desktop"]')).toBeNull()
+})
+it('ledger suppresses empty recognition placeholders and preserves conflicts',()=>{
+ render(<DeviceLedgerRecognition device={{...domainOnlyDevice,brand:'unknown',device_type:'unknown',os_family:'unknown',model:'unknown',brand_confidence:1,model_confidence:1,device_type_confidence:1,os_family_confidence:1,brand_inference:undefined,recognition_conflict:true}}/>)
+ expect(screen.getByText('线索冲突')).toBeVisible()
+ expect(screen.queryByText(/unknown|未知|未识别|—/)).not.toBeInTheDocument()
+})
 
 describe('terminal recognition summary', () => {
   it('shows a confirmed brand and only a sufficiently supported model', () => {

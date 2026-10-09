@@ -1,4 +1,4 @@
-import type { FourKSyncResult, ManagedIdentityConfiguration, ManagedIdentitySource, SRun4KIntegration, SRun4KSyncResult, SRun4KTestResult } from "./types"
+import type { FourKSyncResult, IdentityBridge, IdentityBridgeRunPage, ManagedIdentityConfiguration, ManagedIdentitySource, SRun4KIntegration, SRun4KSyncResult, SRun4KTestResult } from "./types"
 import { awaitOperationTask, clearOperationTasks, isOperationTask, type OperationTask } from './operationTasks'
 import type {
  FourKDatabaseConfig, FourKDatabaseResponse, FourKAuthorizationCheck,
@@ -19,6 +19,7 @@ import type {
   DpiTrendPoint,
   DeviceConflict,
   DeviceInventoryListResponse,
+  DeviceInventoryMetadataResponse,
   DeviceListResponse,
   DeviceQuery,
   DeviceSignal,
@@ -154,7 +155,8 @@ export const api = {
   dpiFlow: (flowId: string) =>
     request<DpiFlowDetail>(`/dpi/flows/${encodeURIComponent(flowId)}`),
   devices: (query: DeviceQuery) => request<DeviceListResponse>(`/devices${search(query)}`),
-  deviceInventory: (query: DeviceQuery) => request<DeviceInventoryListResponse>(`/device-inventory${search(query)}`),
+  deviceInventory: (query: DeviceQuery, signal?: AbortSignal) => request<DeviceInventoryListResponse>(`/device-inventory${search(query)}`, { signal }),
+  deviceInventoryMetadata: (query: DeviceQuery, signal?: AbortSignal) => request<DeviceInventoryMetadataResponse>(`/device-inventory/metadata${search(query)}`, { signal }),
   deviceRecognitionSummary: () => request<DeviceRecognitionSummary>('/device-recognition/summary'),
   routerObservations: (query: RouterObservationQuery = {}) =>
     request<RouterAssessmentPage>(`/router-observations${search(query)}`),
@@ -239,6 +241,9 @@ export const api = {
   updateSRun4KIntegration: (id: string, value: {host:string;reconcile_interval_hours?:number}) => request<SRun4KIntegration>(`/integrations/srun4k/${encodeURIComponent(id)}`, {method:'PUT',body:JSON.stringify(value)}),
   testSRun4KIntegration: (id: string) => request<SRun4KTestResult>(`/integrations/srun4k/${encodeURIComponent(id)}/test`, {method:'POST'}),
   syncSRun4KIntegration: (id: string) => request<SRun4KSyncResult>(`/integrations/srun4k/${encodeURIComponent(id)}/sync`, {method:'POST'}),
+  identityBridge: () => request<IdentityBridge>('/integrations/identity/bridge'),
+  updateIdentityBridge: (host:string) => request<{bridge_id:string;host:string;config_version:number;state:string}>('/integrations/identity/bridge',{method:'PUT',body:JSON.stringify({host})}),
+  identityBridgeRuns: (query:{kind?:string;status?:string;limit?:number;cursor?:string}={}) => request<IdentityBridgeRunPage>(`/integrations/identity/bridge/runs${search(query)}`),
   testActionConnector: (connectorId:string) => request<{connector_id:string;reachable:boolean;checked_at:string;identity_verified?:boolean}>(`/actions/connectors/${encodeURIComponent(connectorId)}/test`,{method:'POST'}),
   actions: (query:ListQuery={}) => request<{items:EnforcementAction[];page:Page}>(`/actions${search(query)}`),
   executeAction: (payload:{case_id?:string;connector_id:string;action_type:string;ip:string;campus_id?:string;duration_seconds?:number},idempotencyKey:string) => request<EnforcementAction>('/actions/execute',{method:'POST',headers:{'Idempotency-Key':idempotencyKey},body:JSON.stringify(payload)}),

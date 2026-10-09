@@ -87,6 +87,14 @@ func TestDeviceInventoryReadModelFiltersAndIncrementalDirtyTriggers(t *testing.T
 	if !slices.Contains(page.Facets.Brands, "Dell") || !slices.Contains(page.Facets.OSFamilies, "Windows 11") {
 		t.Fatalf("missing global facets: %+v", page.Facets)
 	}
+	light, err := store.ListDeviceInventory(ctx, Query{Q: endpointID, Limit: 1, InventorySkipMetadata: true})
+	if err != nil || len(light.Items) != 1 || light.Page.Total != 0 || len(light.Facets.Brands) != 0 {
+		t.Fatalf("light page: %+v %v", light, err)
+	}
+	metadata, err := store.ListDeviceInventory(ctx, Query{Q: endpointID, InventoryMetadataOnly: true})
+	if err != nil || metadata.Page.Total != 1 || len(metadata.Items) != 0 {
+		t.Fatalf("metadata: %+v %v", metadata, err)
+	}
 	var dirty, processed int64
 	if err = store.db.QueryRowContext(ctx, `SELECT dirty_generation,processed_generation FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, endpointID).Scan(&dirty, &processed); err != nil {
 		t.Fatal(err)

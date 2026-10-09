@@ -66,6 +66,9 @@ export type FourKSyncResult = { connector_id:string;source:string;online_total:n
 export type SRun4KIntegration = { connector_id:string;host:string;source:string;sensor_id:string;reconcile_interval_hours:number;event_channel_state:string;connection_state:string;channels:Record<string,string>;last_error?:string;last_tested_at?:string;last_synced_at?:string;last_identity_poll_at?:string;last_identity_event_at?:string;identity_accounts:number;identity_sessions:number;products:number;groups:number;controls:number }
 export type SRun4KTestResult = { connector_id:string;checked_at:string;online_total:number;channels:Record<string,string>;enforcement_ready:boolean }
 export type SRun4KSyncResult = { connector_id:string;source:string;synced_at:string;identity_accounts:number;identity_sessions:number;address_records:number;products:number;groups:number;controls:number;event_channel_state:string;connection_state:string;enforcement_ready:boolean }
+export type IdentityBridge = components['schemas']['IdentityBridge']
+export type IdentityBridgeRun = components['schemas']['IdentityBridgeRun']
+export type IdentityBridgeRunPage = components['schemas']['IdentityBridgeRunPage']
 export type EnforcementAction = { action_id:string; idempotency_key:string; case_id?:string; connector_id:string; action_type:string; subject_id:string; ip?:string; account_id?:string; endpoint_id?:string; campus_id?:string; session_id?:string; ruleset_version?:string; remote_action_id?:string; parent_action_id?:string; retry_count?:number; next_attempt_at?:string; cooldown_until?:string; expires_at?:string; status:string; mode:string; blockers?:string[]; last_error?:string; created_at:string; updated_at:string }
 export type LocalUser = components['schemas']['LocalUser']
 export type UserMutation = components['schemas']['UserMutation']
@@ -114,6 +117,7 @@ export type IpDeviceInventory = components['schemas']['IpDeviceInventory']
 export type DeviceListResponse = components['schemas']['DeviceListResponse']
 export type DeviceInventoryListItem = components['schemas']['DeviceInventoryListItem']
 export type DeviceInventoryListResponse = components['schemas']['DeviceInventoryListResponse']
+export type DeviceInventoryMetadataResponse = components['schemas']['DeviceInventoryMetadataResponse']
 export type BrandInference = components['schemas']['BrandInference']
 export type EndpointDeviceInventory = components['schemas']['EndpointDeviceInventory']
 export type RouterEvidence = components['schemas']['RouterEvidence']
@@ -235,6 +239,8 @@ export type DeviceFingerprintBundleManifest = { schema_version: string; version:
 export type DeviceRecognitionSummary = components['schemas']['DeviceRecognitionSummary']
 
 export type DeviceQuery = {
+  include_metadata?: boolean
+  refresh?: boolean
   view?: 'recent' | 'history'
   brand?: string
   os_family?: string

@@ -60,6 +60,7 @@ type Options struct {
 	IdentityIngestKey      string
 	ProductPolicyIngestKey string
 	SRun4K                 SRun4KDefaults
+	IdentityBridge         IdentityBridgeDefaults
 	OperationsFile         string
 	ActionMasterKey        string
 	PostgresMigrationsDir  string
@@ -69,6 +70,7 @@ type Server struct {
 	managedIdentityFailures *managedIdentityFailureCache
 	sharedReviews           *sharedReviewRuntime
 	deviceInventory         *deviceInventoryPageCache
+	deviceInventoryMetadata *deviceInventoryPageCache
 	startedAt               time.Time
 	runtimeSampler          *runtimeSampler
 
@@ -98,6 +100,7 @@ type Server struct {
 	identityIngest      *identityIngestState
 	productPolicies     *productPolicyState
 	srun4KDefaults      SRun4KDefaults
+	identityBridge      IdentityBridgeDefaults
 	operations          *operationsState
 	actionMasterKey     []byte
 	exceptions          *exceptionManager
@@ -136,6 +139,22 @@ type DeviceInventoryListResponse struct {
 	Items               []store.DeviceInventoryListItem `json:"items"`
 	Page                Page                            `json:"page"`
 	Facets              store.DeviceFilterFacets        `json:"facets"`
+}
+
+type DeviceInventoryLightPagination struct {
+	Limit      int     `json:"limit"`
+	NextCursor *string `json:"next_cursor"`
+}
+
+type DeviceInventoryLightResponse struct {
+	DeviceInventoryListResponse
+	Page DeviceInventoryLightPagination `json:"page"`
+}
+
+type DeviceInventoryMetadataResponse struct {
+	Total  int                      `json:"total"`
+	Facets store.DeviceFilterFacets `json:"facets"`
+	AsOf   string                   `json:"as_of,omitempty"`
 }
 
 type EventListResponse struct {
@@ -382,7 +401,8 @@ func NewServerWithError(opts Options) (*Server, error) {
 	server := &Server{
 		managedIdentityFailures: &managedIdentityFailureCache{},
 		sharedReviews:           &sharedReviewRuntime{},
-		deviceInventory:         newDeviceInventoryPageCache(time.Second),
+		deviceInventory:         newDeviceInventoryPageCache(5 * time.Second),
+		deviceInventoryMetadata: newDeviceInventoryPageCache(30 * time.Second),
 		startedAt:               time.Now(),
 		runtimeSampler:          &runtimeSampler{},
 		statistics:              newStatisticsCache(),
@@ -405,6 +425,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 		identityIngest:          identityIngest,
 		productPolicies:         newProductPolicyState(opts.ProductPolicyIngestKey, operations.db),
 		srun4KDefaults:          opts.SRun4K.normalized(),
+		identityBridge:          opts.IdentityBridge.normalized(),
 		operations:              operations,
 		actionMasterKey:         []byte(opts.ActionMasterKey),
 		exceptions:              newExceptionManager(operations.db),
@@ -506,7 +527,7 @@ func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) bool {
 	if allowed {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key")
 		w.Header().Set("Access-Control-Max-Age", "600")
 	}
@@ -547,6 +568,18 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleIdentityIngest(w, r)
 		return
 	}
+	if path == "/integrations/identity/bridge/runtime-config" && r.Method == http.MethodGet {
+		s.handleIdentityBridgeRuntimeConfig(w, r)
+		return
+	}
+	if path == "/integrations/identity/bridge/heartbeat" && r.Method == http.MethodPost {
+		s.handleIdentityBridgeHeartbeat(w, r)
+		return
+	}
+	if path == "/integrations/identity/bridge/runs" && r.Method == http.MethodPost {
+		s.handleIdentityBridgeRunReport(w, r)
+		return
+	}
 	if path == "/actions/callback" && r.Method == http.MethodPost {
 		s.handleActionCallback(w, r)
 		return
@@ -578,7 +611,11 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	authStarted := time.Now()
 	session, ok := s.authenticate(r)
+	if strings.HasPrefix(path, "/device-inventory") {
+		w.Header().Add("Server-Timing", fmt.Sprintf("auth;dur=%.2f", float64(time.Since(authStarted).Microseconds())/1000))
+	}
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "login is required")
 		return
@@ -587,7 +624,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "permission_denied", "required permission: "+permission)
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") {
 		writeError(w, http.StatusForbidden, "read_only", "mutating operations are disabled by the global read-only switch")
 		return
 	}
@@ -638,6 +675,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleCampusExceptions(w, r)
 	case r.Method == http.MethodGet && path == "/integrations/identity/status":
 		s.handleIdentityIngestStatus(w, r)
+	case strings.HasPrefix(path, "/integrations/identity/bridge"):
+		s.handleIdentityBridge(w, r, path)
 	case r.Method == http.MethodGet && path == "/integrations/identity/batches":
 		s.handleIdentityBatches(w, r)
 	case r.Method == http.MethodGet && (path == "/integrations/product-policy/status" || path == "/integrations/product-policy/catalog"):
@@ -700,6 +739,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDevices(w, r)
 	case r.Method == http.MethodGet && path == "/device-inventory":
 		s.handleDeviceInventory(w, r)
+	case r.Method == http.MethodGet && path == "/device-inventory/metadata":
+		s.handleDeviceInventoryRequest(w, r, true)
 	case r.Method == http.MethodGet && path == "/device-recognition/summary":
 		s.handleDeviceRecognitionSummary(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/devices/"):
@@ -1031,6 +1072,12 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func requiredPermission(method, path string) string {
+	if strings.HasPrefix(path, "/integrations/identity/bridge") {
+		if method == http.MethodGet {
+			return "actions:read"
+		}
+		return "integrations:write"
+	}
 	if path == "/whitelist" || strings.HasPrefix(path, "/whitelist/") {
 		if method == http.MethodGet {
 			return "policies:read"
@@ -1894,6 +1941,11 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
+	s.handleDeviceInventoryRequest(w, r, false)
+}
+
+func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Request, metadataOnly bool) {
+	started := time.Now()
 	view := r.URL.Query().Get("view")
 	if view != "" && view != "recent" && view != "history" {
 		writeError(w, http.StatusBadRequest, "bad_device_query", "invalid view")
@@ -1911,28 +1963,70 @@ func (s *Server) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("window") == "" {
 		query.Window = ""
 	}
+	if query.View == "recent" && query.Window == "" {
+		query.Window = "24h"
+	}
+	if query.View != "recent" {
+		query.Window = ""
+	}
+	query.Q = strings.TrimSpace(query.Q)
+	query.Brand = strings.ToLower(query.Brand)
+	query.OSFamily = strings.ToLower(query.OSFamily)
+	query.Ecosystem = strings.ToLower(strings.TrimSpace(query.Ecosystem))
+	query.InventorySkipMetadata = r.URL.Query().Get("include_metadata") == "false" && !metadataOnly
+	query.InventoryMetadataOnly = metadataOnly
+	if value := r.URL.Query().Get("include_metadata"); value != "" && value != "true" && value != "false" {
+		writeError(w, 400, "bad_device_query", "invalid include_metadata")
+		return
+	}
+	if value := r.URL.Query().Get("refresh"); value != "" && value != "true" && value != "false" {
+		writeError(w, 400, "bad_device_query", "invalid refresh")
+		return
+	}
+	if metadataOnly {
+		query.Limit = 0
+		query.Cursor = 0
+	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
+	ctx = store.WithDeviceInventoryTiming(ctx, func(stage string, d time.Duration) {
+		w.Header().Add("Server-Timing", fmt.Sprintf("%s;dur=%.2f", stage, float64(d.Microseconds())/1000))
+	})
 
+	loaded := false
 	load := func(loadCtx context.Context) (store.DeviceInventoryListPage, error) {
+		loaded = true
+		var result store.DeviceInventoryListPage
+		var loadErr error
 		if reader, ok := s.reader.(store.DeviceInventoryReader); ok {
-			return reader.ListDeviceInventory(loadCtx, query)
-		}
-		legacy, loadErr := s.reader.ListEndpointDevices(loadCtx, query)
-		page := store.DeviceInventoryListPage{}
-		if loadErr == nil {
-			page.Page, page.Facets, page.AsOf = legacy.Page, legacy.Facets, legacy.FacetsAsOf
-			page.Items = make([]store.DeviceInventoryListItem, 0, len(legacy.Items))
-			for _, item := range legacy.Items {
-				page.Items = append(page.Items, store.ProjectDeviceInventoryListItem(item))
+			result, loadErr = reader.ListDeviceInventory(loadCtx, query)
+		} else {
+			legacy, err := s.reader.ListEndpointDevices(loadCtx, query)
+			loadErr = err
+			if loadErr == nil {
+				result.Page, result.Facets, result.AsOf = legacy.Page, legacy.Facets, legacy.FacetsAsOf
+				result.Items = make([]store.DeviceInventoryListItem, 0, len(legacy.Items))
+				for _, item := range legacy.Items {
+					result.Items = append(result.Items, store.ProjectDeviceInventoryListItem(item))
+				}
 			}
 		}
-		return page, loadErr
+		if loadErr == nil && !metadataOnly {
+			enrichmentStarted := time.Now()
+			s.enrichDeviceInventory(loadCtx, &result)
+			w.Header().Add("Server-Timing", fmt.Sprintf("enrichment;dur=%.2f", float64(time.Since(enrichmentStarted).Microseconds())/1000))
+		}
+		return result, loadErr
 	}
-	cacheKey := query.SensorID + "?" + r.URL.RawQuery
+	keyJSON, _ := json.Marshal(query)
+	cacheKey := string(keyJSON)
 	var page store.DeviceInventoryListPage
-	if s.deviceInventory != nil {
-		page, err = s.deviceInventory.get(ctx, cacheKey, load)
+	cache := s.deviceInventory
+	if metadataOnly {
+		cache = s.deviceInventoryMetadata
+	}
+	if cache != nil {
+		page, err = cache.getMode(ctx, cacheKey, r.URL.Query().Get("refresh") == "true", load)
 	} else {
 		page, err = load(ctx)
 	}
@@ -1940,6 +2034,11 @@ func (s *Server) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "read_device_inventory_failed", err.Error())
 		return
 	}
+	cacheState := "reused"
+	if loaded {
+		cacheState = "miss"
+	}
+	w.Header().Add("Server-Timing", fmt.Sprintf("cache;desc=%q", cacheState))
 	if page.Items == nil {
 		page.Items = []store.DeviceInventoryListItem{}
 	}
@@ -1949,18 +2048,49 @@ func (s *Server) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
 	if page.Facets.OSFamilies == nil {
 		page.Facets.OSFamilies = []string{}
 	}
+	var response any
+	if metadataOnly {
+		response = DeviceInventoryMetadataResponse{Total: page.Page.Total, Facets: page.Facets, AsOf: page.AsOf}
+	} else {
+		full := DeviceInventoryListResponse{
+			DeviceNamesDisabled: os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true",
+			ReadModelUpdating:   page.ReadModelUpdating, AsOf: page.AsOf, Items: page.Items, Facets: page.Facets,
+			Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total},
+		}
+		response = full
+		if query.InventorySkipMetadata {
+			response = DeviceInventoryLightResponse{DeviceInventoryListResponse: full, Page: DeviceInventoryLightPagination{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor}}
+		}
+	}
+	encodeStarted := time.Now()
+	raw, encodeErr := json.Marshal(response)
+	if encodeErr != nil {
+		writeError(w, 500, "encode_device_inventory_failed", "inventory encoding failed")
+		return
+	}
+	w.Header().Add("Server-Timing", fmt.Sprintf("encode;dur=%.2f, inventory;dur=%.2f", float64(time.Since(encodeStarted).Microseconds())/1000, float64(time.Since(started).Microseconds())/1000))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.WriteHeader(200)
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) enrichDeviceInventory(ctx context.Context, page *store.DeviceInventoryListPage) {
 	ids := make([]string, 0, len(page.Items))
 	for _, item := range page.Items {
 		ids = append(ids, item.EndpointID)
 	}
 	if s.operations != nil && s.operations.db != nil {
+		started := time.Now()
 		if summaries, summaryErr := (discovery.Repository{DB: s.operations.db}).Summaries(ctx, ids); summaryErr == nil {
 			for index := range page.Items {
 				page.Items[index].Discovery = summaries[page.Items[index].EndpointID]
 			}
 		}
+		store.RecordDeviceInventoryTiming(ctx, "discovery", time.Since(started))
 	}
 	if reader, ok := s.reader.(store.RouterObservationSummaryReader); ok {
+		started := time.Now()
 		if summaries, summaryErr := reader.RouterObservationSummaries(ctx, ids); summaryErr == nil {
 			for index := range page.Items {
 				if summary, found := summaries[page.Items[index].EndpointID]; found {
@@ -1968,12 +2098,8 @@ func (s *Server) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		store.RecordDeviceInventoryTiming(ctx, "router", time.Since(started))
 	}
-	writeJSON(w, http.StatusOK, DeviceInventoryListResponse{
-		DeviceNamesDisabled: os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true",
-		ReadModelUpdating:   page.ReadModelUpdating, AsOf: page.AsOf, Items: page.Items, Facets: page.Facets,
-		Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total},
-	})
 }
 
 func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request, rawDeviceID string) {

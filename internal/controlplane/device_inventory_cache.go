@@ -36,8 +36,15 @@ func newDeviceInventoryPageCache(ttl time.Duration) *deviceInventoryPageCache {
 }
 
 func (c *deviceInventoryPageCache) get(ctx context.Context, key string, load func(context.Context) (store.DeviceInventoryListPage, error)) (store.DeviceInventoryListPage, error) {
+	return c.getMode(ctx, key, false, load)
+}
+
+func (c *deviceInventoryPageCache) getMode(ctx context.Context, key string, refresh bool, load func(context.Context) (store.DeviceInventoryListPage, error)) (store.DeviceInventoryListPage, error) {
 	now := time.Now()
 	c.mu.Lock()
+	if refresh {
+		delete(c.entries, key)
+	}
 	if entry, ok := c.entries[key]; ok && now.Before(entry.expiresAt) {
 		c.mu.Unlock()
 		return cloneDeviceInventoryPage(entry.page), nil
@@ -68,6 +75,16 @@ func (c *deviceInventoryPageCache) get(ctx context.Context, key string, load fun
 			if time.Now().After(entry.expiresAt) {
 				delete(c.entries, cacheKey)
 			}
+		}
+		for len(c.entries) > 128 {
+			var oldestKey string
+			var oldest time.Time
+			for k, entry := range c.entries {
+				if oldest.IsZero() || entry.expiresAt.Before(oldest) {
+					oldestKey, oldest = k, entry.expiresAt
+				}
+			}
+			delete(c.entries, oldestKey)
 		}
 	}
 	c.mu.Unlock()

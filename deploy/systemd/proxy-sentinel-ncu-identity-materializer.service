@@ -1,0 +1,35 @@
+[Unit]
+Description=Proxy Sentinel NCU authentication identity materializer
+After=network-online.target docker.service proxy-sentinel-control-plane.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proxy-sentinel
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel read-model run \
+  --lane identity \
+  --sensor-id ncu-auth-redis \
+  --identity-health-name identity-materializer:ncu-auth-redis \
+  --identity-backfill=false \
+  --identity-project-snapshots=false \
+  --identity-refresh-device-inventory=false
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+CPUQuota=100%
+CPUWeight=40
+MemoryHigh=768M
+MemoryMax=1G
+OOMPolicy=stop
+Nice=8
+IOWeight=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

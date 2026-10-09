@@ -12,7 +12,7 @@ source_list=list:antiproxy:127.0.0.1
 source "$env_file"
 [[ -n "${NCU_EVENT_REDIS_ADDR:-}" ]] || { echo "NCU_EVENT_REDIS_ADDR is required" >&2; exit 1; }
 
-systemctl stop proxy-sentinel-ncu-identity-sync.service
+systemctl stop proxy-sentinel-ncu-identity-sync.service proxy-sentinel-ncu-identity-materializer.service
 "$root/current/bin/legacy-4k-identity-bridge" \
   --event-redis-addr="$NCU_EVENT_REDIS_ADDR" \
   --event-redis-password-file="$password_file" \

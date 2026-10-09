@@ -151,6 +151,10 @@ func runReadModel(args []string) error {
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
+	identityHealthName := fs.String("identity-health-name", "identity-materializer", "identity lane runtime health record name")
+	identityBackfill := fs.Bool("identity-backfill", true, "replay identity events before the worker cutover")
+	identityProjectSnapshots := fs.Bool("identity-project-snapshots", true, "project completed authoritative identity snapshots")
+	identityRefreshDeviceInventory := fs.Bool("identity-refresh-device-inventory", true, "refresh current device inventory from identity evidence")
 	applicationsDir := fs.String("applications-dir", "/opt/proxy-sentinel/data/applications", "durable application library directory")
 	applicationsBootstrap := fs.String("applications-bootstrap", "", "optional reviewed bootstrap application bundle used only when the library is empty")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -175,7 +179,12 @@ func runReadModel(args []string) error {
 	case "coarse":
 		backend.RunActivityV3Coarse(ctx)
 	case "identity":
-		backend.RunIdentityMaterializer(ctx)
+		backend.RunIdentityMaterializerWithOptions(ctx, store.IdentityMaterializerOptions{
+			HealthName:             *identityHealthName,
+			Backfill:               *identityBackfill,
+			ProjectSnapshots:       *identityProjectSnapshots,
+			RefreshDeviceInventory: *identityRefreshDeviceInventory,
+		})
 	case "recognition":
 		backend.RunRecognitionMaterializer(ctx)
 	case "application":
@@ -1278,6 +1287,11 @@ func runControlPlaneServe(args []string) error {
 	srunAPIPort := fs.Int("srun4k-api-port", envInt("PROXY_SENTINEL_SRUN4K_API_PORT", 8001), "4K northbound API port")
 	srunAPICertificateFile := fs.String("srun4k-api-certificate-file", os.Getenv("PROXY_SENTINEL_SRUN4K_API_CERTIFICATE_FILE"), "deployment-provided trusted 4K northbound certificate PEM file")
 	srunMaxSessions := fs.Int("srun4k-max-sessions", envInt("PROXY_SENTINEL_SRUN4K_MAX_SESSIONS", 100000), "maximum authoritative 4K online sessions")
+	identityBridgeEventAddr := fs.String("identity-bridge-event-redis-addr", firstEnv("PROXY_SENTINEL_IDENTITY_BRIDGE_EVENT_REDIS_ADDR", "222.204.3.227:16384"), "deployment-provided legacy 4K notification Redis address")
+	identityBridgeOnlinePort := fs.Int("identity-bridge-online-port", envInt("PROXY_SENTINEL_IDENTITY_BRIDGE_ONLINE_PORT", 16380), "deployment-provided legacy 4K online Redis port")
+	identityBridgeOnlineList := fs.String("identity-bridge-online-list", firstEnv("PROXY_SENTINEL_IDENTITY_BRIDGE_ONLINE_LIST", "list:rad_online"), "legacy 4K authoritative online list")
+	identityBridgeEventList := fs.String("identity-bridge-event-list", firstEnv("PROXY_SENTINEL_IDENTITY_BRIDGE_EVENT_LIST", "list:antiproxy:127.0.0.1"), "legacy 4K online/offline notification list")
+	identityBridgeReconcile := fs.Int("identity-bridge-reconcile-seconds", envInt("PROXY_SENTINEL_IDENTITY_BRIDGE_RECONCILE_SECONDS", 1800), "legacy 4K complete inventory reconciliation interval")
 	operationsFile := fs.String("operations-file", "", "persistent cases, organization and action state file")
 	nativeConfig := fs.String("native-actions-config", os.Getenv("PROXY_SENTINEL_NATIVE_ACTIONS_CONFIG"), "private native controller and authoritative inventory configuration")
 	actionMasterKey := fs.String("action-master-key", os.Getenv("PROXY_SENTINEL_ACTION_MASTER_KEY"), "base secret used to encrypt northbound connector credentials (defaults to PROXY_SENTINEL_ACTION_MASTER_KEY)")
@@ -1355,6 +1369,12 @@ func runControlPlaneServe(args []string) error {
 			RedisPassword: *srunRedisPassword, APIScheme: *srunAPIScheme,
 			APIPort: *srunAPIPort, APICertificatePEM: srunAPICertificatePEM,
 			MaxSessions: *srunMaxSessions, PageSize: 1000,
+		},
+		IdentityBridge: controlplane.IdentityBridgeDefaults{
+			EventRedisAddr: *identityBridgeEventAddr, OnlinePort: *identityBridgeOnlinePort,
+			OnlineList: *identityBridgeOnlineList, EventList: *identityBridgeEventList,
+			Source: "ncu-srun4k", SensorID: "ncu-auth-redis", CampusID: "ncu", AccessDomain: "campus-auth",
+			BatchSize: 500, ReconcileIntervalSeconds: *identityBridgeReconcile,
 		},
 		IdentitySourcesConfig: *identitySourcesConfig,
 		SharedAccessConfig:    *sharedAccessConfig,

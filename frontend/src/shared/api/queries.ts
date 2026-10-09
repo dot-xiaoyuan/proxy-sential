@@ -263,17 +263,38 @@ export function useDpiFlow(flowId: string) {
 }
 
 export function useDevices(query: DeviceQuery, enabled = true) {
-  return useQuery({
+  const refresh = useRef(false)
+  const result = useQuery({
     queryKey: queryKeys.devices(query),
-    queryFn: () => api.deviceInventory(query),
+    queryFn: async ({signal}) => {
+      const bypass=refresh.current;refresh.current=false
+      const start=performance.now()
+      const data=await api.deviceInventory({...query,include_metadata:false,refresh:bypass||undefined},signal)
+      performance.clearMeasures('device-inventory-api')
+      performance.measure('device-inventory-api',{start,end:performance.now()})
+      return data
+    },
     enabled,
     placeholderData: keepPreviousData,
-    staleTime: Infinity,
+    staleTime: 30_000,
     gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
   });
+  return {...result,refresh:()=>{refresh.current=true;return result.refetch()}}
+}
+
+export function useDeviceInventoryMetadata(query:DeviceQuery, enabled=true) {
+  const {cursor:_cursor,limit:_limit,include_metadata:_include,refresh:_refresh,...scope}=query
+  const refresh=useRef(false)
+  const result=useQuery({
+    queryKey:['device-inventory-metadata',scope],
+    queryFn:({signal})=>{const bypass=refresh.current;refresh.current=false;return api.deviceInventoryMetadata({...scope,refresh:bypass||undefined},signal)},
+    enabled, retry:false, staleTime:30_000,gcTime:30*60_000,
+    refetchOnMount:false,refetchOnWindowFocus:false,refetchOnReconnect:false,
+  })
+  return {...result,refresh:()=>{refresh.current=true;return result.refetch()}}
 }
 
 export function useLegacyDevices(query: DeviceQuery, enabled = true) {

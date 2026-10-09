@@ -1361,6 +1361,46 @@ paths:
                   sources:
                     type: array
                     items: { $ref: '#/components/schemas/IdentitySourceStatus' }
+  /integrations/identity/bridge:
+    get:
+      operationId: getIdentityBridge
+      description: Returns the public NCU legacy 4K bridge configuration and current runtime status; requires actions:read.
+      responses:
+        '200':
+          description: Identity bridge configuration and status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentityBridge' }
+    put:
+      operationId: updateIdentityBridge
+      description: Updates only the authoritative 4K host and starts a safe background switch; requires integrations:write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [host]
+              properties:
+                host: { type: string, minLength: 1, maxLength: 253 }
+      responses:
+        '202': { description: Configuration accepted and switch scheduled. }
+  /integrations/identity/bridge/runs:
+    get:
+      operationId: listIdentityBridgeRuns
+      description: Lists realtime event batches, complete snapshots and configuration switches; requires actions:read.
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [event_batch, snapshot, config_switch] } }
+        - { name: status, in: query, schema: { type: string, enum: [running, completed, failed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Paginated synchronization history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentityBridgeRunPage' }
   /integrations/identity/batches:
     get:
       operationId: listIdentityBatches
@@ -2250,7 +2290,15 @@ paths:
     get:
       operationId: listDeviceInventory
       description: Lightweight terminal list backed by the incrementally maintained recognition read model.
-      parameters:
+      parameters: &deviceInventoryParameters
+        - name: include_metadata
+          in: query
+          description: False skips facets and exact count; page.total is omitted.
+          schema: { type: boolean, default: true }
+        - name: refresh
+          in: query
+          description: Bypass the current query cache.
+          schema: { type: boolean, default: false }
         - name: view
           in: query
           schema: { type: string, enum: [recent, history] }
@@ -2259,7 +2307,7 @@ paths:
           schema: { type: string }
         - name: window
           in: query
-          schema: { type: string, enum: [10m, 1h, 24h] }
+          schema: { type: string, enum: [10m, 1h, 24h, 7d, 30d] }
         - name: ip
           in: query
           schema: { type: string }
@@ -2295,6 +2343,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeviceInventoryListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /device-inventory/metadata:
+    get:
+      operationId: getDeviceInventoryMetadata
+      description: Exact filtered count and scope facets, independent of list pagination. Pagination and include_metadata parameters are ignored.
+      parameters: *deviceInventoryParameters
+      responses:
+        "200":
+          description: Exact terminal identity count and recognition facets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceInventoryMetadataResponse" }
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
@@ -3479,7 +3542,7 @@ components:
     IdentitySnapshotUploadCreate:
       type: object
       additionalProperties: false
-      required: [upload_id, source, sensor_id, observed_at, reconcile_interval_hours, expected_count, expected_chunks, expected_sha256]
+      required: [upload_id, source, sensor_id, observed_at, expected_count, expected_chunks, expected_sha256]
       properties:
         upload_id: { type: string, minLength: 1, maxLength: 200 }
         source: { type: string, minLength: 1, maxLength: 200 }
@@ -3488,9 +3551,91 @@ components:
         access_domain: { type: string, maxLength: 200 }
         observed_at: { type: string, format: date-time }
         reconcile_interval_hours: { type: integer, minimum: 1, maximum: 168 }
+        reconcile_interval_seconds: { type: integer, minimum: 1, maximum: 604800 }
         expected_count: { type: integer, minimum: 0, maximum: 200000 }
         expected_chunks: { type: integer, minimum: 1, maximum: 200 }
         expected_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+      anyOf:
+        - required: [reconcile_interval_seconds]
+        - required: [reconcile_interval_hours]
+    IdentityBridge:
+      type: object
+      required: [config, runtime, checked_at]
+      properties:
+        config: { $ref: '#/components/schemas/IdentityBridgeConfig' }
+        runtime: { $ref: '#/components/schemas/IdentityBridgeRuntime' }
+        checked_at: { type: string, format: date-time }
+    IdentityBridgeConfig:
+      type: object
+      required: [bridge_id, host, config_version, online_redis_addr, event_redis_addr, online_list, event_list, processing_list, source, sensor_id, campus_id, access_domain, batch_size, reconcile_interval_seconds]
+      properties:
+        bridge_id: { type: string }
+        host: { type: string }
+        config_version: { type: integer }
+        online_redis_addr: { type: string }
+        event_redis_addr: { type: string }
+        online_list: { type: string }
+        event_list: { type: string }
+        processing_list: { type: string }
+        source: { type: string }
+        sensor_id: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        batch_size: { type: integer }
+        reconcile_interval_seconds: { type: integer }
+        updated_by: { type: string }
+        updated_at: { type: string, format: date-time }
+    IdentityBridgeRuntime:
+      type: object
+      required: [state, active_host, active_config_version, online_channel_state, event_channel_state, snapshot_state, source_queue, processing_queue, online_members, online_sessions, committed_messages, bad_messages, event_consecutive_failures, snapshot_consecutive_failures, accounts, sessions]
+      properties:
+        state: { type: string, enum: [starting, healthy, degraded, switching, switch_failed, failed] }
+        active_host: { type: string }
+        active_config_version: { type: integer }
+        active_online_redis_addr: { type: string }
+        online_channel_state: { type: string, enum: [pending, healthy, failed] }
+        event_channel_state: { type: string, enum: [pending, healthy, failed] }
+        snapshot_state: { type: string, enum: [pending, healthy, stale, failed] }
+        source_queue: { type: integer }
+        processing_queue: { type: integer }
+        online_members: { type: integer }
+        online_sessions: { type: integer }
+        committed_messages: { type: integer }
+        bad_messages: { type: integer }
+        event_consecutive_failures: { type: integer }
+        snapshot_consecutive_failures: { type: integer }
+        accounts: { type: integer }
+        sessions: { type: integer }
+        last_event_at: { type: string, format: date-time }
+        last_snapshot_attempt_at: { type: string, format: date-time }
+        last_snapshot_at: { type: string, format: date-time }
+        heartbeat_at: { type: string, format: date-time }
+        projection_at: { type: string, format: date-time }
+        last_error_type: { type: string }
+    IdentityBridgeRun:
+      type: object
+      required: [run_id, kind, status, records_read, records_emitted, records_skipped, records_malformed, retry_count, duration_ms, started_at]
+      properties:
+        run_id: { type: string }
+        kind: { type: string, enum: [event_batch, snapshot, config_switch] }
+        status: { type: string, enum: [running, completed, failed] }
+        records_read: { type: integer }
+        records_emitted: { type: integer }
+        records_skipped: { type: integer }
+        records_malformed: { type: integer }
+        retry_count: { type: integer }
+        duration_ms: { type: integer }
+        error_type: { type: string }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    IdentityBridgeRunPage:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/IdentityBridgeRun' }
+        page: { $ref: '#/components/schemas/Page' }
     IdentitySnapshotReceipt:
       type: object
       required: [snapshot_id, status, observed_at, session_count, replayed]
@@ -4688,11 +4833,18 @@ components:
           items: { $ref: "#/components/schemas/DeviceInventoryListItem" }
         page:
           type: object
-          required: [limit, next_cursor, total]
+          required: [limit, next_cursor]
           properties:
             limit: { type: integer }
             next_cursor: { type: [string, "null"] }
             total: { type: integer }
+    DeviceInventoryMetadataResponse:
+      type: object
+      required: [total, facets]
+      properties:
+        total: { type: integer }
+        facets: { $ref: "#/components/schemas/DeviceFilterFacets" }
+        as_of: { type: string, format: date-time, description: Statistics query time, not an observation time. }
     DeviceInventoryListItem:
       type: object
       required: [endpoint_id, vendor_confidence, brand_confidence, model_confidence, device_type_confidence, os_family_confidence, randomized_mac, recognition_conflict]

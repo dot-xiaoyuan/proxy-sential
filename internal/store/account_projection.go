@@ -66,15 +66,29 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 	if err != nil {
 		return err
 	}
-	state := BuildIdentityState(snapshot.Events)
-	state.Sessions = nil // snapshot membership is a projection, not accounting facts
-	if err = writeIdentityState(ctx, tx, state); err != nil {
-		return err
+	// Complete snapshots are authoritative membership projections, not a second
+	// copy of the realtime accounting/device-fact stream. Keeping them in the
+	// dedicated table avoids duplicate device evidence and lock contention with
+	// live event materialization while preserving account and router bindings.
+	keys := make([]string, 0, len(snapshot.Events))
+	sessionIDs := make([]string, 0, 2000)
+	ips := make([]string, 0, 2000)
+	accountIDs := make([]string, 0, 2000)
+	documents := make([]string, 0, 2000)
+	flush := func() error {
+		if len(sessionIDs) == 0 {
+			return nil
+		}
+		_, execErr := tx.ExecContext(ctx, `INSERT INTO account_identity_session_projection(source,sensor_id,campus_id,access_domain,session_id,ip,account_id,confirmed_at,document)
+SELECT $1,$2,$3,$4,rows.session_id,rows.ip,rows.account_id,$5::timestamptz,rows.document::jsonb
+FROM unnest($6::text[],$7::text[],$8::text[],$9::text[]) AS rows(session_id,ip,account_id,document)
+ON CONFLICT(source,sensor_id,campus_id,access_domain,session_id,ip) DO UPDATE SET account_id=EXCLUDED.account_id,confirmed_at=EXCLUDED.confirmed_at,document=jsonb_set(EXCLUDED.document,'{started_at}',CASE WHEN (account_identity_session_projection.document->>'started_at')::timestamptz <= (EXCLUDED.document->>'started_at')::timestamptz THEN account_identity_session_projection.document->'started_at' ELSE EXCLUDED.document->'started_at' END) WHERE account_identity_session_projection.confirmed_at<=EXCLUDED.confirmed_at`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, sessionIDs, ips, accountIDs, documents)
+		sessionIDs = sessionIDs[:0]
+		ips = ips[:0]
+		accountIDs = accountIDs[:0]
+		documents = documents[:0]
+		return execErr
 	}
-	if err = writeEndpointDeviceProfiles(ctx, tx, state); err != nil {
-		return err
-	}
-	keys := []string{}
 	for _, event := range snapshot.Events {
 		state := BuildIdentityState([]normalized.Event{event})
 		if len(state.Sessions) != 1 {
@@ -92,10 +106,18 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 			return e
 		}
 		keys = append(keys, session.SessionID+"\x1f"+session.IP)
-		_, err = tx.ExecContext(ctx, `INSERT INTO account_identity_session_projection VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(source,sensor_id,campus_id,access_domain,session_id,ip) DO UPDATE SET account_id=EXCLUDED.account_id,confirmed_at=EXCLUDED.confirmed_at,document=jsonb_set(EXCLUDED.document,'{started_at}',CASE WHEN (account_identity_session_projection.document->>'started_at')::timestamptz <= (EXCLUDED.document->>'started_at')::timestamptz THEN account_identity_session_projection.document->'started_at' ELSE EXCLUDED.document->'started_at' END) WHERE account_identity_session_projection.confirmed_at<=EXCLUDED.confirmed_at`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, session.SessionID, session.IP, session.AccountID, snapshot.ObservedAt, raw)
-		if err != nil {
-			return err
+		sessionIDs = append(sessionIDs, session.SessionID)
+		ips = append(ips, session.IP)
+		accountIDs = append(accountIDs, session.AccountID)
+		documents = append(documents, string(raw))
+		if len(sessionIDs) == cap(sessionIDs) {
+			if err = flush(); err != nil {
+				return err
+			}
 		}
+	}
+	if err = flush(); err != nil {
+		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE account_identity_session_projection SET document=jsonb_set(jsonb_set(document,'{ended_at}',to_jsonb($7::text)), '{session_status}','"stop"'::jsonb),confirmed_at=$5::timestamptz WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND confirmed_at<=$5::timestamptz AND COALESCE(document->>'ended_at','')='' AND NOT(session_id||chr(31)||ip=ANY($6::text[]))`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, keys, snapshot.ObservedAt.UTC().Format(time.RFC3339Nano))
 	return err

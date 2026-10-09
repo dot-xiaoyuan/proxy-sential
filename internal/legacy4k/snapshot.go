@@ -3,6 +3,8 @@ package legacy4k
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,12 @@ import (
 )
 
 const MaxIdentityAddressRecords = 200000
+
+const (
+	legacySnapshotRecordLimit = 10000
+	snapshotChunkRecordLimit  = 2000
+	snapshotChunkByteLimit    = 3 << 20
+)
 
 type OnlineInventory struct {
 	InstanceID     string              `json:"instance_id"`
@@ -683,6 +691,9 @@ func (s Sender) SendSnapshot(ctx context.Context, in OnlineInventory, source, ca
 	if err != nil {
 		return err
 	}
+	if len(records) > legacySnapshotRecordLimit || len(body) > 12<<20 {
+		return s.sendSnapshotUpload(ctx, records, in.ObservedAt, source, campus, domain, interval)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.Endpoint, "/")+"/api/v1/integrations/identity/snapshots", bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -719,6 +730,128 @@ func (s Sender) SendSnapshot(ctx context.Context, in OnlineInventory, source, ca
 	}
 	if ack.Status != "completed" || ack.ID != StableID(string(body)) || ack.Count != len(records) {
 		return fmt.Errorf("inventory acknowledgement mismatch")
+	}
+	return nil
+}
+
+func encodeSnapshotChunks(records []map[string]string) ([][]byte, string, error) {
+	chunks := make([][]byte, 0, max(1, (len(records)+snapshotChunkRecordLimit-1)/snapshotChunkRecordLimit))
+	current := make([][]byte, 0, snapshotChunkRecordLimit)
+	currentBytes := 2
+	flush := func() {
+		raw := make([]byte, 0, currentBytes)
+		raw = append(raw, '[')
+		for i, record := range current {
+			if i > 0 {
+				raw = append(raw, ',')
+			}
+			raw = append(raw, record...)
+		}
+		raw = append(raw, ']')
+		chunks = append(chunks, raw)
+		current = current[:0]
+		currentBytes = 2
+	}
+	for _, record := range records {
+		raw, err := json.Marshal(record)
+		if err != nil {
+			return nil, "", err
+		}
+		added := len(raw)
+		if len(current) > 0 {
+			added++
+		}
+		if len(current) > 0 && (len(current) >= snapshotChunkRecordLimit || currentBytes+added > snapshotChunkByteLimit) {
+			flush()
+			added = len(raw)
+		}
+		if currentBytes+added > snapshotChunkByteLimit {
+			return nil, "", ErrOnlineResourceLimit
+		}
+		current = append(current, raw)
+		currentBytes += added
+	}
+	if len(current) > 0 || len(chunks) == 0 {
+		flush()
+	}
+	if len(chunks) > 200 {
+		return nil, "", ErrOnlineResourceLimit
+	}
+	hash := sha256.New()
+	for _, chunk := range chunks {
+		_, _ = hash.Write(chunk)
+	}
+	return chunks, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func (s Sender) sendSnapshotUpload(ctx context.Context, records []map[string]string, observed time.Time, source, campus, domain string, interval int) error {
+	chunks, digest, err := encodeSnapshotChunks(records)
+	if err != nil {
+		return err
+	}
+	uploadID := StableID(strings.Join([]string{source, s.SensorID, campus, domain, observed.UTC().Format(time.RFC3339Nano), digest}, "\x00"))
+	manifest, err := json.Marshal(map[string]any{
+		"upload_id": uploadID, "source": source, "sensor_id": s.SensorID, "campus_id": campus, "access_domain": domain,
+		"observed_at": observed.UTC(), "reconcile_interval_seconds": interval, "expected_count": len(records),
+		"expected_chunks": len(chunks), "expected_sha256": digest,
+	})
+	if err != nil {
+		return err
+	}
+	base := strings.TrimRight(s.Endpoint, "/") + "/api/v1/integrations/identity/snapshot-uploads"
+	var created struct {
+		Status string `json:"status"`
+	}
+	if err = s.snapshotJSONRequest(ctx, http.MethodPost, base, manifest, "", &created); err != nil {
+		return err
+	}
+	if created.Status != "completed" {
+		for index, chunk := range chunks {
+			if err = s.snapshotJSONRequest(ctx, http.MethodPut, fmt.Sprintf("%s/%s/chunks/%d", base, uploadID, index), chunk, "", nil); err != nil {
+				return err
+			}
+		}
+	}
+	var receipt struct {
+		Status string `json:"status"`
+	}
+	if err = s.snapshotJSONRequest(ctx, http.MethodPost, base+"/"+uploadID+"/commit", nil, StableID(string(manifest)), &receipt); err != nil {
+		return err
+	}
+	if receipt.Status != "completed" {
+		return fmt.Errorf("identity snapshot upload acknowledgement mismatch")
+	}
+	return nil
+}
+
+func (s Sender) snapshotJSONRequest(ctx context.Context, method, endpoint string, body []byte, idempotency string, out any) error {
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+s.Token)
+	request.Header.Set("Content-Type", "application/json")
+	if idempotency != "" {
+		request.Header.Set("Idempotency-Key", idempotency)
+	}
+	client := s.Client
+	if client == nil {
+		client = &http.Client{Timeout: 120 * time.Second}
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("identity snapshot upload endpoint returned %s", response.Status)
+	}
+	if out == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+		return nil
+	}
+	if err = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(out); err != nil {
+		return fmt.Errorf("invalid identity snapshot upload acknowledgement")
 	}
 	return nil
 }

@@ -30,6 +30,7 @@ type PostgresOptions struct {
 }
 
 type PostgresStore struct {
+	inventoryStatus    inventoryStatusCache
 	recognitionCatalog recognitionCatalogCache
 	db                 *sql.DB
 	dsn                string

@@ -18,6 +18,7 @@ import {
 import { api } from "../shared/api/client";
 import { NativeAccountPreview } from "../entities/evidence/NativeAccountPreview";
 import { FourKDatabaseModal } from "../features/integrations/FourKDatabaseModal";
+import { IdentityBridgePanel } from "../features/integrations/IdentityBridgePanel";
 import {
   useActionConnectors,
   useSession,
@@ -141,10 +142,11 @@ export function ActionsPage() {
           ) : undefined
         }
       />
-        <section className="details-grid margin-top-md">
+      <IdentityBridgePanel />
+      <section className="details-grid margin-top-md">
           <Card
             className="actions-connectors"
-            title="认证与处置连接器"
+            title="通用认证与处置连接器"
             extra={
               canManage ? (
                 <Space wrap><Button type="primary" onClick={() => setFourKConnector({})}>配置 4K 接入</Button><Button onClick={() => openEditor()}>新增通用连接器</Button></Space>
@@ -152,7 +154,7 @@ export function ActionsPage() {
             }
           >
             <List
-              locale={{ emptyText: "尚未配置连接器，请点击「配置 4K 接入」填写认证系统地址" }}
+              locale={{ emptyText: "尚未配置通用处置连接器；南昌 4K 认证同步由上方独立服务运行" }}
               dataSource={connectors.data.items}
               renderItem={(item) => (
                 <List.Item
@@ -246,7 +248,7 @@ export function ActionsPage() {
               renderItem={(item) => <List.Item>{item}</List.Item>}
             />
           </Card>
-        </section>
+      </section>
       {fourKConnector && <FourKDatabaseModal key={fourKConnector.id || "new"} connectorId={fourKConnector.id} initialHost={fourKConnector.host} onSaved={() => void connectors.refetch()} onClose={() => setFourKConnector(undefined)} />}
       <Modal title="账号会话预览" open={Boolean(previewConnector)} footer={null} onCancel={() => setPreviewConnector(undefined)} destroyOnHidden>
         {previewConnector && <NativeAccountPreview key={previewConnector} connectorId={previewConnector} />}

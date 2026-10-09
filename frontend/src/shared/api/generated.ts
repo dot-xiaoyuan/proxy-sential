@@ -1605,6 +1605,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/identity/bridge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Returns the public NCU legacy 4K bridge configuration and current runtime status; requires actions:read. */
+        get: operations["getIdentityBridge"];
+        /** @description Updates only the authoritative 4K host and starts a safe background switch; requires integrations:write. */
+        put: operations["updateIdentityBridge"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/bridge/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Lists realtime event batches, complete snapshots and configuration switches; requires actions:read. */
+        get: operations["listIdentityBridgeRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/identity/batches": {
         parameters: {
             query?: never;
@@ -2227,6 +2262,23 @@ export interface paths {
         };
         /** @description Lightweight terminal list backed by the incrementally maintained recognition read model. */
         get: operations["listDeviceInventory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-inventory/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Exact filtered count and scope facets, independent of list pagination. Pagination and include_metadata parameters are ignored. */
+        get: operations["getDeviceInventoryMetadata"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3500,10 +3552,92 @@ export interface components {
             access_domain?: string;
             /** Format: date-time */
             observed_at: string;
-            reconcile_interval_hours: number;
+            reconcile_interval_hours?: number;
+            reconcile_interval_seconds?: number;
             expected_count: number;
             expected_chunks: number;
             expected_sha256: string;
+        } | unknown | unknown;
+        IdentityBridge: {
+            config: components["schemas"]["IdentityBridgeConfig"];
+            runtime: components["schemas"]["IdentityBridgeRuntime"];
+            /** Format: date-time */
+            checked_at: string;
+        };
+        IdentityBridgeConfig: {
+            bridge_id: string;
+            host: string;
+            config_version: number;
+            online_redis_addr: string;
+            event_redis_addr: string;
+            online_list: string;
+            event_list: string;
+            processing_list: string;
+            source: string;
+            sensor_id: string;
+            campus_id: string;
+            access_domain: string;
+            batch_size: number;
+            reconcile_interval_seconds: number;
+            updated_by?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        IdentityBridgeRuntime: {
+            /** @enum {string} */
+            state: "starting" | "healthy" | "degraded" | "switching" | "switch_failed" | "failed";
+            active_host: string;
+            active_config_version: number;
+            active_online_redis_addr?: string;
+            /** @enum {string} */
+            online_channel_state: "pending" | "healthy" | "failed";
+            /** @enum {string} */
+            event_channel_state: "pending" | "healthy" | "failed";
+            /** @enum {string} */
+            snapshot_state: "pending" | "healthy" | "stale" | "failed";
+            source_queue: number;
+            processing_queue: number;
+            online_members: number;
+            online_sessions: number;
+            committed_messages: number;
+            bad_messages: number;
+            event_consecutive_failures: number;
+            snapshot_consecutive_failures: number;
+            accounts: number;
+            sessions: number;
+            /** Format: date-time */
+            last_event_at?: string;
+            /** Format: date-time */
+            last_snapshot_attempt_at?: string;
+            /** Format: date-time */
+            last_snapshot_at?: string;
+            /** Format: date-time */
+            heartbeat_at?: string;
+            /** Format: date-time */
+            projection_at?: string;
+            last_error_type?: string;
+        };
+        IdentityBridgeRun: {
+            run_id: string;
+            /** @enum {string} */
+            kind: "event_batch" | "snapshot" | "config_switch";
+            /** @enum {string} */
+            status: "running" | "completed" | "failed";
+            records_read: number;
+            records_emitted: number;
+            records_skipped: number;
+            records_malformed: number;
+            retry_count: number;
+            duration_ms: number;
+            error_type?: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            completed_at?: string;
+        };
+        IdentityBridgeRunPage: {
+            items: components["schemas"]["IdentityBridgeRun"][];
+            page: components["schemas"]["Page"];
         };
         IdentitySnapshotReceipt: {
             snapshot_id: string;
@@ -4575,8 +4709,17 @@ export interface components {
             page: {
                 limit: number;
                 next_cursor: string | null;
-                total: number;
+                total?: number;
             };
+        };
+        DeviceInventoryMetadataResponse: {
+            total: number;
+            facets: components["schemas"]["DeviceFilterFacets"];
+            /**
+             * Format: date-time
+             * @description Statistics query time
+             */
+            as_of?: string;
         };
         DeviceInventoryListItem: {
             router_observation?: components["schemas"]["RouterAssessment"];
@@ -7905,6 +8048,75 @@ export interface operations {
             };
         };
     };
+    getIdentityBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Identity bridge configuration and status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityBridge"];
+                };
+            };
+        };
+    };
+    updateIdentityBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    host: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Configuration accepted and switch scheduled. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listIdentityBridgeRuns: {
+        parameters: {
+            query?: {
+                kind?: "event_batch" | "snapshot" | "config_switch";
+                status?: "running" | "completed" | "failed";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated synchronization history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityBridgeRunPage"];
+                };
+            };
+        };
+    };
     listIdentityBatches: {
         parameters: {
             query?: {
@@ -9070,9 +9282,13 @@ export interface operations {
     listDeviceInventory: {
         parameters: {
             query?: {
+                /** @description False skips facets and exact count; page.total is omitted. */
+                include_metadata?: boolean;
+                /** @description Bypass the current query cache. */
+                refresh?: boolean;
                 view?: "recent" | "history";
                 sensor_id?: string;
-                window?: "10m" | "1h" | "24h";
+                window?: "10m" | "1h" | "24h" | "7d" | "30d";
                 ip?: string;
                 q?: string;
                 brand?: string;
@@ -9101,6 +9317,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceInventoryListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDeviceInventoryMetadata: {
+        parameters: {
+            query?: {
+                /** @description False skips facets and exact count; page.total is omitted. */
+                include_metadata?: boolean;
+                /** @description Bypass the current query cache. */
+                refresh?: boolean;
+                view?: "recent" | "history";
+                sensor_id?: string;
+                window?: "10m" | "1h" | "24h" | "7d" | "30d";
+                ip?: string;
+                q?: string;
+                brand?: string;
+                os_family?: string;
+                ecosystem?: string;
+                campus_id?: components["parameters"]["CampusIdQuery"];
+                department?: components["parameters"]["DepartmentQuery"];
+                person_type?: components["parameters"]["PersonTypeQuery"];
+                ssid?: components["parameters"]["SSIDQuery"];
+                vlan?: components["parameters"]["VLANQuery"];
+                ap?: components["parameters"]["APQuery"];
+                nas_ip?: components["parameters"]["NASIPQuery"];
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact terminal identity count and recognition facets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceInventoryMetadataResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

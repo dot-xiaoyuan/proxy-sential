@@ -4,7 +4,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
  test(`device names ${viewport.width}`,async({page},info)=>{
   await page.setViewportSize(viewport)
   await page.goto('/devices')
-  await expect(page.locator('.device-name-view').filter({visible:true}).first()).toBeVisible()
+  await expect(page.locator('.device-ledger-primary').filter({visible:true,hasText:'office-mac41.local'}).first()).toBeVisible()
   await page.screenshot({path:info.outputPath('names-list.png'),fullPage:true})
   await page.goto('/devices/mac%3A00%3A1b%3A21%3A00%3A00%3A41')
   await page.getByRole('tab',{name:'设备识别',exact:true}).click()

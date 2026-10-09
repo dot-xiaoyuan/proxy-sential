@@ -22,36 +22,38 @@ const (
 )
 
 type Query struct {
-	View            string
-	DiagnosticStage string
-	DiagnosticType  string
-	Level           string
-	Q               string
-	SensorID        string
-	CampusID        string
-	Department      string
-	PersonType      string
-	SSID            string
-	VLAN            string
-	AP              string
-	NASIP           string
-	Ecosystem       string
-	Brand           string
-	OSFamily        string
-	From            string
-	To              string
-	Window          string
-	SrcIP           string
-	DstIP           string
-	Domain          string
-	UserAgent       string
-	Fingerprint     string
-	Port            int
-	Proto           string
-	AppProtocol     string
-	Limit           int
-	Cursor          int
-	IncludeWeak     bool
+	View                  string
+	DiagnosticStage       string
+	DiagnosticType        string
+	Level                 string
+	Q                     string
+	SensorID              string
+	CampusID              string
+	Department            string
+	PersonType            string
+	SSID                  string
+	VLAN                  string
+	AP                    string
+	NASIP                 string
+	Ecosystem             string
+	Brand                 string
+	OSFamily              string
+	From                  string
+	To                    string
+	Window                string
+	SrcIP                 string
+	DstIP                 string
+	Domain                string
+	UserAgent             string
+	Fingerprint           string
+	Port                  int
+	Proto                 string
+	AppProtocol           string
+	Limit                 int
+	Cursor                int
+	IncludeWeak           bool
+	InventorySkipMetadata bool
+	InventoryMetadataOnly bool
 }
 
 type Page struct {

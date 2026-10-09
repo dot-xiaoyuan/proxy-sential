@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"net"
 	"strings"
 	"time"
@@ -29,6 +30,9 @@ func deviceExactIP(q Query) string {
 	if ip := net.ParseIP(strings.TrimSpace(q.Q)); ip != nil {
 		return ip.String()
 	}
+	if ip := net.ParseIP(strings.TrimSpace(q.SrcIP)); ip != nil {
+		return ip.String()
+	}
 	return ""
 }
 
@@ -37,12 +41,20 @@ const deviceIPMatchRelation = `SELECT endpoint_id,host(ip) AS ip,'ip_observation
  UNION ALL SELECT endpoint_id,host(ip),'account_session',coalesce(ended_at,started_at),session_id FROM account_sessions WHERE ip=$1::inet AND ($2::boolean=false OR (started_at <= $4 AND (ended_at IS NULL OR ended_at >= $3)))`
 
 func (s *PostgresStore) deviceIPMatches(ctx context.Context, ids []string, q Query, now time.Time) (map[string]*DeviceIPMatch, error) {
+	return s.deviceIPMatchesWith(ctx, s.db, ids, q, now)
+}
+
+type deviceInventoryQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func (s *PostgresStore) deviceIPMatchesWith(ctx context.Context, db deviceInventoryQueryer, ids []string, q Query, now time.Time) (map[string]*DeviceIPMatch, error) {
 	out := map[string]*DeviceIPMatch{}
 	ip := deviceExactIP(q)
 	if ip == "" || len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT ON(endpoint_id) endpoint_id,ip,source,matched_at FROM (`+deviceIPMatchRelation+`) m WHERE endpoint_id=ANY($5::text[]) ORDER BY endpoint_id,matched_at DESC,source,tie DESC`, ip, q.View == "recent", deviceViewStart(q, now), now, ids)
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT ON(endpoint_id) endpoint_id,ip,source,matched_at FROM (`+deviceIPMatchRelation+`) m WHERE endpoint_id=ANY($5::text[]) ORDER BY endpoint_id,matched_at DESC,source,tie DESC`, ip, q.View == "recent", deviceViewStart(q, now), now, ids)
 	if err != nil {
 		return nil, err
 	}

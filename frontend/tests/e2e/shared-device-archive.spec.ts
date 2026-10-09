@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-for(const [width,height] of [[390,844],[1280,800],[1440,900]]) test(`holiday equipment archive ${width}`,async({page})=>{
+for(const [width,height] of [[390,844],[743,774],[1280,800],[1440,900]]) test(`holiday equipment archive ${width}`,async({page})=>{
  await page.setViewportSize({width,height})
  await page.addInitScript(()=>{
   const original=window.fetch
@@ -23,7 +23,7 @@ for(const [width,height] of [[390,844],[1280,800],[1440,900]]) test(`holiday equ
  })
  await page.goto('/shared-access')
  await expect(page.getByRole('tab',{name:'设备档案',exact:true})).toHaveAttribute('aria-selected','true')
- const deviceList=width<=1599?page.locator('.shared-profile-mobile-list'):page.locator('.shared-profile-desktop-list')
+ const deviceList=page.locator('.shared-profile-mobile-list')
  await expect(deviceList.getByText('ZTE SR7410-20',{exact:true})).toBeVisible()
  await expect(deviceList.getByText('历史身份依据',{exact:true})).toBeVisible()
  await expect(deviceList.getByText('20260022',{exact:true})).toBeVisible()
@@ -33,7 +33,12 @@ for(const [width,height] of [[390,844],[1280,800],[1440,900]]) test(`holiday equ
  await expect(vendor).not.toContainText('路由器画像')
  if(width>=1280){
   const adaptiveRow=await vendor.evaluate(element=>{const row=element.getBoundingClientRect();const blocks=[...element.querySelectorAll('.shared-profile-mobile-block')].filter(child=>child.getBoundingClientRect().width>0);const last=blocks.at(-1)?.getBoundingClientRect();return {blockCount:blocks.length,rightGap:last?Math.round(row.right-last.right):-1}})
-  expect(adaptiveRow.blockCount).toBe(3);expect(adaptiveRow.rightGap).toBeLessThanOrEqual(2)
+  expect(adaptiveRow.blockCount).toBe(4);expect(adaptiveRow.rightGap).toBe(12)
+  const alignment=await deviceList.locator('.shared-profile-mobile-row').evaluateAll(rows=>rows.map(row=>[...row.querySelectorAll('.shared-profile-mobile-block')].map(block=>Math.round(block.getBoundingClientRect().left))))
+  expect(alignment[0]).toEqual(alignment[1])
+  const header=await page.locator('.shared-profile-column-heading>span').evaluateAll(columns=>columns.map(column=>Math.round(column.getBoundingClientRect().left)))
+  expect(alignment[0]).toEqual(header)
+  await expect(vendor.locator('.shared-profile-block-auth')).toHaveText('')
  }
  await expect(page.getByText('已确认当前共享',{exact:true})).toHaveCount(0)
  await expect(page.locator('.shared-profile-card')).toHaveCount(0)

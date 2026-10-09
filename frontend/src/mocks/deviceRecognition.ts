@@ -4,6 +4,7 @@ const seen = new Date().toISOString()
 
 // Separate OS evidence and an interface manufacturer; neither establishes brand.
 export const macOSDevice: EndpointDeviceInventory = {
+  current_account: '2026000123', current_access_id: '前湖校区 / 教学楼 AP-03',
   device_name: {value:'office-mac41.local',source:'dhcp_hostname',manual:false,status:'current',multiple_names:false},
   endpoint_id: 'mac:00:1b:21:00:00:41', primary_mac: '00:1b:21:00:00:41', entity_role: 'endpoint', registration_status: 'unregistered', merge_status: 'active',
   accounts: [], ips: ['198.18.90.41'], access_ids: [], current_ip: '198.18.90.41', identity_confidence: .9, recognition_confidence: .9,

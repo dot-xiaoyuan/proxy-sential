@@ -122,22 +122,51 @@ func (s *PostgresStore) refreshCurrentDeviceInventory(ctx context.Context) error
 	return tx.Commit()
 }
 
+type IdentityMaterializerOptions struct {
+	HealthName             string
+	Backfill               bool
+	ProjectSnapshots       bool
+	RefreshDeviceInventory bool
+}
+
 func (s *DBStore) RunIdentityMaterializer(ctx context.Context) {
-	lastRefresh := time.Time{}
+	s.RunIdentityMaterializerWithOptions(ctx, IdentityMaterializerOptions{
+		HealthName:             "identity-materializer",
+		Backfill:               true,
+		ProjectSnapshots:       true,
+		RefreshDeviceInventory: true,
+	})
+}
+
+func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, options IdentityMaterializerOptions) {
+	if options.HealthName == "" {
+		options.HealthName = "identity-materializer"
+	}
+	done := []<-chan struct{}{}
+	start := func(run func(context.Context)) {
+		finished := make(chan struct{})
+		done = append(done, finished)
+		go func() {
+			defer close(finished)
+			run(ctx)
+		}()
+	}
+	if options.ProjectSnapshots {
+		start(s.runIdentitySnapshotMaterializer)
+	}
+	if options.RefreshDeviceInventory {
+		start(s.runCurrentDeviceInventoryRefresh)
+	}
+	defer func() {
+		for _, finished := range done {
+			<-finished
+		}
+	}()
 	for ctx.Err() == nil {
 		work, cancel := context.WithTimeout(ctx, 25*time.Second)
 		processed, err := s.processIdentitySignalBatch(work, "live")
-		if err == nil {
-			err = s.pg.projectPendingIdentitySnapshots(work, 2)
-		}
-		if err == nil && processed < 200 {
+		if err == nil && options.Backfill && processed < 200 {
 			_, err = s.processIdentitySignalBatch(work, "backfill")
-		}
-		if err == nil && time.Since(lastRefresh) >= 30*time.Second {
-			err = s.pg.refreshCurrentDeviceInventory(work)
-			if err == nil {
-				lastRefresh = time.Now()
-			}
 		}
 		cancel()
 		status := map[string]any{"last_checked_at": time.Now().UTC().Format(time.RFC3339Nano), "processed_live_batch": processed, "last_error": ""}
@@ -147,10 +176,52 @@ func (s *DBStore) RunIdentityMaterializer(ctx context.Context) {
 		}
 		raw, _ := json.Marshal(status)
 		health, c := context.WithTimeout(ctx, 5*time.Second)
-		_, healthErr := s.pg.db.ExecContext(health, `INSERT INTO read_model_runtime_state(name,state) VALUES('identity-materializer',$1) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, raw)
+		_, healthErr := s.pg.db.ExecContext(health, `INSERT INTO read_model_runtime_state(name,state) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, options.HealthName, raw)
 		c()
 		if healthErr != nil && ctx.Err() == nil {
 			fmt.Fprintln(os.Stderr, "identity health:", healthErr)
+		}
+		delay := time.Second
+		if err != nil {
+			delay = 5 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+	}
+}
+
+// Device inventory refreshes scan a much broader evidence window than the
+// realtime identity cursor. Keep that work outside the identity loop so a busy
+// campus cannot delay newly arrived online/offline events.
+func (s *DBStore) runCurrentDeviceInventoryRefresh(ctx context.Context) {
+	for ctx.Err() == nil {
+		work, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		err := s.pg.refreshCurrentDeviceInventory(work)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			fmt.Fprintln(os.Stderr, "identity device inventory refresh:", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(30 * time.Second):
+		}
+	}
+}
+
+// Complete inventories are intentionally projected outside the realtime signal
+// loop. A large campus snapshot must not delay new online/offline events, and a
+// failed projection remains queued for an idempotent retry.
+func (s *DBStore) runIdentitySnapshotMaterializer(ctx context.Context) {
+	for ctx.Err() == nil {
+		work, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		err := s.pg.projectPendingIdentitySnapshots(work, 1)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			fmt.Fprintln(os.Stderr, "identity snapshot materializer:", err)
 		}
 		delay := time.Second
 		if err != nil {

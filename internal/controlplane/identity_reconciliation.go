@@ -121,16 +121,33 @@ func prepareIdentitySnapshotContext(ctx context.Context, request identitySnapsho
 
 type identitySnapshotUploadCreate struct {
 	store.IdentityScope
-	UploadID       string    `json:"upload_id"`
-	ObservedAt     time.Time `json:"observed_at"`
-	IntervalHours  int       `json:"reconcile_interval_hours"`
-	ExpectedCount  int       `json:"expected_count"`
-	ExpectedChunks int       `json:"expected_chunks"`
-	ExpectedSHA256 string    `json:"expected_sha256"`
+	UploadID        string    `json:"upload_id"`
+	ObservedAt      time.Time `json:"observed_at"`
+	IntervalHours   int       `json:"reconcile_interval_hours,omitempty"`
+	IntervalSeconds int       `json:"reconcile_interval_seconds,omitempty"`
+	ExpectedCount   int       `json:"expected_count"`
+	ExpectedChunks  int       `json:"expected_chunks"`
+	ExpectedSHA256  string    `json:"expected_sha256"`
+}
+
+func (r identitySnapshotUploadCreate) intervalSeconds() (int, error) {
+	seconds := r.IntervalSeconds
+	if r.IntervalHours > 0 {
+		hourSeconds := r.IntervalHours * 3600
+		if seconds > 0 && seconds != hourSeconds {
+			return 0, fmt.Errorf("reconciliation interval fields disagree")
+		}
+		seconds = hourSeconds
+	}
+	if seconds < 1 || seconds > 7*24*3600 {
+		return 0, fmt.Errorf("invalid reconciliation interval")
+	}
+	return seconds, nil
 }
 
 func identitySnapshotUploadPath(path string) (id string, chunk *int, commit bool, ok bool) {
-	parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/api/v1/integrations/identity/snapshot-uploads"), "/"), "/")
+	path = strings.TrimPrefix(path, "/api/v1")
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/integrations/identity/snapshot-uploads"), "/"), "/")
 	if len(parts) == 1 && parts[0] != "" {
 		return parts[0], nil, false, true
 	}
@@ -151,7 +168,7 @@ func (s *Server) handleIdentitySnapshotUploadCreate(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusUnauthorized, "integration_auth_failed", "valid integration bearer token required")
 		return
 	}
-	if s.readOnly || s.operations.db == nil {
+	if (s.readOnly && !s.allowIdentityIngest) || s.operations.db == nil {
 		writeError(w, http.StatusConflict, "identity_upload_unavailable", "database identity ingestion is unavailable")
 		return
 	}
@@ -164,7 +181,8 @@ func (s *Server) handleIdentitySnapshotUploadCreate(w http.ResponseWriter, r *ht
 	}
 	request.UploadID = strings.TrimSpace(request.UploadID)
 	request.ExpectedSHA256 = strings.ToLower(strings.TrimSpace(request.ExpectedSHA256))
-	if request.UploadID == "" || len(request.UploadID) > 200 || request.Source == "" || request.SensorID == "" || request.IntervalHours < 1 || request.IntervalHours > 168 || request.ExpectedCount < 0 || request.ExpectedCount > legacy4k.MaxIdentityAddressRecords || request.ExpectedChunks < 1 || request.ExpectedChunks > 200 || len(request.ExpectedSHA256) != 64 {
+	intervalSeconds, intervalErr := request.intervalSeconds()
+	if request.UploadID == "" || len(request.UploadID) > 200 || request.Source == "" || request.SensorID == "" || intervalErr != nil || request.ExpectedCount < 0 || request.ExpectedCount > legacy4k.MaxIdentityAddressRecords || request.ExpectedChunks < 1 || request.ExpectedChunks > 200 || len(request.ExpectedSHA256) != 64 {
 		writeError(w, http.StatusBadRequest, "bad_identity_upload", "invalid upload identity, size, digest or reconciliation interval")
 		return
 	}
@@ -180,12 +198,22 @@ func (s *Server) handleIdentitySnapshotUploadCreate(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, "bad_identity_upload", "invalid observation time")
 		return
 	}
-	_, err := s.operations.db.ExecContext(r.Context(), `INSERT INTO identity_snapshot_uploads(upload_id,source,sensor_id,campus_id,access_domain,observed_at,interval_seconds,expected_count,expected_chunks,expected_sha256) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(upload_id) DO NOTHING`, request.UploadID, request.Source, request.SensorID, request.CampusID, request.AccessDomain, request.ObservedAt.UTC(), request.IntervalHours*3600, request.ExpectedCount, request.ExpectedChunks, request.ExpectedSHA256)
+	_, err := s.operations.db.ExecContext(r.Context(), `INSERT INTO identity_snapshot_uploads(upload_id,source,sensor_id,campus_id,access_domain,observed_at,interval_seconds,expected_count,expected_chunks,expected_sha256) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(upload_id) DO NOTHING`, request.UploadID, request.Source, request.SensorID, request.CampusID, request.AccessDomain, request.ObservedAt.UTC(), intervalSeconds, request.ExpectedCount, request.ExpectedChunks, request.ExpectedSHA256)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "identity_upload_create_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"upload_id": request.UploadID, "status": "uploading"})
+	var status string
+	err = s.operations.db.QueryRowContext(r.Context(), `SELECT status FROM identity_snapshot_uploads WHERE upload_id=$1 AND source=$2 AND sensor_id=$3 AND campus_id=$4 AND access_domain=$5 AND observed_at=$6 AND interval_seconds=$7 AND expected_count=$8 AND expected_chunks=$9 AND expected_sha256=$10`, request.UploadID, request.Source, request.SensorID, request.CampusID, request.AccessDomain, request.ObservedAt.UTC(), intervalSeconds, request.ExpectedCount, request.ExpectedChunks, request.ExpectedSHA256).Scan(&status)
+	if err != nil {
+		writeError(w, http.StatusConflict, "identity_upload_conflict", "upload identity already belongs to different immutable content")
+		return
+	}
+	code := http.StatusAccepted
+	if status == "completed" {
+		code = http.StatusOK
+	}
+	writeJSON(w, code, map[string]any{"upload_id": request.UploadID, "status": status})
 }
 
 func (s *Server) handleIdentitySnapshotUpload(w http.ResponseWriter, r *http.Request, path string) {
@@ -193,7 +221,7 @@ func (s *Server) handleIdentitySnapshotUpload(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnauthorized, "integration_auth_failed", "valid integration bearer token required")
 		return
 	}
-	if s.readOnly || s.operations.db == nil {
+	if (s.readOnly && !s.allowIdentityIngest) || s.operations.db == nil {
 		writeError(w, http.StatusConflict, "identity_upload_unavailable", "database identity ingestion is unavailable")
 		return
 	}
@@ -317,6 +345,10 @@ func (s *Server) handleIdentitySnapshotCommit(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "bad_identity_snapshot", err.Error())
 		return
 	}
+	if err = s.validateIdentitySourceContext(ctx, snapshot.IdentityScope, snapshot.IntervalSeconds); err != nil {
+		writeIdentityAuthorityError(w, err)
+		return
+	}
 	if _, err = backend.CommitIdentitySnapshot(ctx, snapshot); err != nil && !errors.Is(err, store.ErrIdentitySnapshotConflict) {
 		writeError(w, http.StatusServiceUnavailable, "identity_snapshot_commit_failed", err.Error())
 		return
@@ -325,6 +357,7 @@ func (s *Server) handleIdentitySnapshotCommit(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusServiceUnavailable, "identity_upload_commit_failed", "identity upload completion could not be persisted")
 		return
 	}
+	_, _ = s.operations.db.ExecContext(context.Background(), `DELETE FROM identity_snapshot_upload_chunks WHERE upload_id=$1`, uploadID)
 	writeJSON(w, http.StatusAccepted, map[string]any{"upload_id": uploadID, "snapshot_id": snapshotID, "status": "completed", "session_count": len(snapshot.Events)})
 }
 

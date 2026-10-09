@@ -13,8 +13,10 @@ UNIT_BINARIES={
  'proxy-sentinel-read-model-coarse.service':'proxy-sentinel',
  'proxy-sentinel-recognition-materializer.service':'proxy-sentinel',
  'proxy-sentinel-identity-materializer.service':'proxy-sentinel',
+ 'proxy-sentinel-ncu-identity-materializer.service':'proxy-sentinel',
  'proxy-sentinel-application-materializer.service':'proxy-sentinel',
  'proxy-sentinel-discovery.service':'discovery-worker',
+ 'proxy-sentinel-ncu-identity-sync.service':'legacy-4k-identity-bridge',
 }
 
 def verify(root,release,units):

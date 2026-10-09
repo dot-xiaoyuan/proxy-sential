@@ -4,7 +4,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
   test(`brand inference evidence and design audit ${viewport.width}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport)
     await page.goto('/devices')
-    await expect(page.getByText(/品牌推测/).filter({ visible: true })).toBeVisible()
+    const list=viewport.width<992?'.device-mobile-cards':'.device-desktop-table'
+    await page.locator(`${list} .device-ledger-clues`).first().hover()
+    await expect(page.getByRole('tooltip')).toContainText(/品牌推测|MAC 厂商线索/)
     await page.screenshot({ path: testInfo.outputPath(`devices-${viewport.width}.png`), fullPage: false })
     if (viewport.width < 560) {
       await expect(page.locator('.device-mobile-cards')).toBeVisible()

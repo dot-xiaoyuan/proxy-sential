@@ -8,6 +8,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,19 +37,44 @@ type config struct {
 }
 
 type runtimeState struct {
-	mu                 sync.RWMutex
-	startedAt          time.Time
-	lastEventAt        time.Time
-	lastSnapshotAt     time.Time
-	lastErrorAt        time.Time
-	lastErrorType      string
-	sourceQueue        int64
-	processingQueue    int64
-	badMessages        uint64
-	committedMessages  uint64
-	onlineSessions     int
-	invalidOnlineRows  int
-	consecutiveFailure int
+	mu                          sync.RWMutex
+	startedAt                   time.Time
+	lastEventAt                 time.Time
+	lastSnapshotAttemptAt       time.Time
+	lastSnapshotAt              time.Time
+	lastErrorAt                 time.Time
+	lastErrorType               string
+	activeHost                  string
+	activeConfigVersion         int64
+	instanceID                  string
+	overallState                string
+	onlineChannelState          string
+	eventChannelState           string
+	snapshotState               string
+	sourceQueue                 int64
+	processingQueue             int64
+	onlineMembers               int64
+	badMessages                 uint64
+	committedMessages           uint64
+	onlineSessions              int
+	invalidOnlineRows           int
+	eventConsecutiveFailures    int
+	snapshotConsecutiveFailures int
+}
+
+type bridgeRuntimeConfig struct {
+	Host                     string `json:"host"`
+	ConfigVersion            int64  `json:"config_version"`
+	OnlineRedisAddr          string `json:"online_redis_addr"`
+	EventRedisAddr           string `json:"event_redis_addr"`
+	OnlineList               string `json:"online_list"`
+	EventList                string `json:"event_list"`
+	Source                   string `json:"source"`
+	SensorID                 string `json:"sensor_id"`
+	CampusID                 string `json:"campus_id"`
+	AccessDomain             string `json:"access_domain"`
+	BatchSize                int    `json:"batch_size"`
+	ReconcileIntervalSeconds int    `json:"reconcile_interval_seconds"`
 }
 
 func main() {
@@ -86,8 +113,6 @@ func run() error {
 	}
 	onlineRaw := redis.NewClient(&redis.Options{Addr: cfg.onlineAddr, Password: onlinePassword, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second})
 	defer onlineRaw.Close()
-	onlineClient := legacy4k.NewRedisOnlineClient(&redis.Options{Addr: cfg.onlineAddr, Password: onlinePassword, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second})
-	defer onlineClient.Close()
 	if err = onlineRaw.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("online Redis unavailable: %w", err)
 	}
@@ -100,66 +125,135 @@ func run() error {
 		return fmt.Errorf("online Redis instance id unavailable")
 	}
 	sender := legacy4k.Sender{Endpoint: cfg.endpoint, Token: token, SensorID: cfg.sensor, Source: cfg.source, CampusID: cfg.campus, AccessDomain: cfg.domain}
-	state := &runtimeState{startedAt: time.Now().UTC()}
+	activeHost, _, _ := net.SplitHostPort(cfg.onlineAddr)
+	state := &runtimeState{startedAt: time.Now().UTC(), activeHost: activeHost, instanceID: instanceID, overallState: "starting", onlineChannelState: "healthy", eventChannelState: "healthy", snapshotState: "pending"}
 	server := startHealthServer(cfg.healthAddr, state)
 	defer server.Shutdown(context.Background())
 	logStatus("starting", map[string]any{"source": cfg.source, "sensor_id": cfg.sensor, "event_list": cfg.eventList})
 
-	// Recover processing before moving source messages. This preserves FIFO and
-	// guarantees at-least-once delivery across crashes.
-	for {
-		processed, processErr := processBatch(ctx, eventClient, sender, cfg, instanceID, state)
-		if processErr != nil {
-			markFailure(state, processErr)
-			if !waitContext(ctx, 2*time.Second) {
-				return nil
-			}
-			continue
-		}
-		if !processed {
-			break
-		}
-	}
-	snapshotDelay := cfg.reconcile
-	if err = submitSnapshot(ctx, onlineClient, sender, cfg, state); err != nil {
-		markFailure(state, err)
-		logStatus("snapshot_failed", map[string]any{"error_type": errorType(err)})
-		snapshotDelay = 10 * time.Second
-	} else {
-		logStatus("snapshot_committed", map[string]any{"source": cfg.source})
-	}
+	var workers sync.WaitGroup
+	workers.Add(3)
+	go func() {
+		defer workers.Done()
+		runEventWorker(ctx, eventClient, sender, cfg, state)
+	}()
+	go func() {
+		defer workers.Done()
+		runSnapshotWorker(ctx, sender, cfg, onlinePassword, token, state)
+	}()
+	go func() {
+		defer workers.Done()
+		runHeartbeatWorker(ctx, cfg, token, state)
+	}()
+	<-ctx.Done()
+	workers.Wait()
+	return nil
+}
 
-	snapshotTimer := time.NewTimer(snapshotDelay)
-	defer snapshotTimer.Stop()
+func runEventWorker(ctx context.Context, client *redis.Client, sender legacy4k.Sender, cfg config, state *runtimeState) {
 	for {
-		processed, processErr := processBatch(ctx, eventClient, sender, cfg, instanceID, state)
-		if processErr != nil {
-			markFailure(state, processErr)
+		state.mu.RLock()
+		instanceID := state.instanceID
+		state.mu.RUnlock()
+		processed, err := processBatch(ctx, client, sender, cfg, instanceID, state)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			markEventFailure(state, err)
 			if !waitContext(ctx, 2*time.Second) {
-				return nil
+				return
 			}
 			continue
 		}
 		if processed {
 			continue
 		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-snapshotTimer.C:
-			if snapshotErr := submitSnapshot(ctx, onlineClient, sender, cfg, state); snapshotErr != nil {
-				markFailure(state, snapshotErr)
-				logStatus("snapshot_failed", map[string]any{"error_type": errorType(snapshotErr)})
-				snapshotTimer.Reset(10 * time.Second)
+		_, err = client.BLMove(ctx, cfg.eventList, cfg.processingList, "LEFT", "RIGHT", 5*time.Second).Result()
+		if err != nil && err != redis.Nil && !errors.Is(err, context.Canceled) {
+			markEventFailure(state, err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+func runSnapshotWorker(ctx context.Context, sender legacy4k.Sender, base config, password, token string, state *runtimeState) {
+	activeAddr := base.onlineAddr
+	activeVersion := int64(0)
+	desired := bridgeRuntimeConfig{Host: state.activeHost, OnlineRedisAddr: activeAddr, ConfigVersion: activeVersion, OnlineList: base.onlineList, Source: base.source, SensorID: base.sensor, CampusID: base.campus, AccessDomain: base.domain, ReconcileIntervalSeconds: int(base.reconcile / time.Second)}
+	nextActiveSnapshot := time.Now()
+	nextSwitchAttempt := time.Now()
+	nextConfig := time.Time{}
+	for ctx.Err() == nil {
+		now := time.Now()
+		if !now.Before(nextConfig) {
+			if fetched, err := fetchBridgeRuntimeConfig(ctx, base.endpoint, token); err == nil && fetched.OnlineRedisAddr != "" {
+				desired = fetched
+			}
+			nextConfig = now.Add(5 * time.Second)
+		}
+		isSwitch := desired.OnlineRedisAddr != activeAddr || desired.ConfigVersion != activeVersion
+		attemptSwitch := isSwitch && !now.Before(nextSwitchAttempt)
+		attemptActiveSnapshot := !now.Before(nextActiveSnapshot)
+		if attemptSwitch || attemptActiveSnapshot {
+			targetAddr := activeAddr
+			targetVersion := activeVersion
+			if attemptSwitch {
+				targetAddr, targetVersion = desired.OnlineRedisAddr, desired.ConfigVersion
+				state.mu.Lock()
+				state.overallState = "switching"
+				state.mu.Unlock()
+			}
+			attemptCfg := base
+			attemptCfg.onlineAddr = targetAddr
+			if desired.OnlineList != "" {
+				attemptCfg.onlineList = desired.OnlineList
+			}
+			if desired.ReconcileIntervalSeconds > 0 {
+				attemptCfg.reconcile = time.Duration(desired.ReconcileIntervalSeconds) * time.Second
+			}
+			started := time.Now().UTC()
+			runID := legacy4k.StableID(strings.Join([]string{"snapshot", targetAddr, started.Format(time.RFC3339Nano)}, "\x00"))
+			runKind := "snapshot"
+			if attemptSwitch {
+				runKind = "config_switch"
+			}
+			reportBridgeRun(ctx, base.endpoint, token, map[string]any{"run_id": runID, "kind": runKind, "status": "running", "started_at": started})
+			result, err := submitSnapshotAt(ctx, targetAddr, password, sender, attemptCfg)
+			completed := time.Now().UTC()
+			report := map[string]any{"run_id": runID, "kind": runKind, "started_at": started, "completed_at": completed, "duration_ms": completed.Sub(started).Milliseconds(), "records_read": result.members, "records_emitted": result.records, "records_skipped": result.skipped}
+			if err != nil {
+				report["status"], report["error_type"] = "failed", errorType(err)
+				reportBridgeRun(ctx, base.endpoint, token, report)
+				state.mu.RLock()
+				hasActiveSnapshot := !state.lastSnapshotAt.IsZero()
+				state.mu.RUnlock()
+				if attemptSwitch && hasActiveSnapshot {
+					markSwitchFailure(state, err)
+				} else {
+					markSnapshotFailure(state, err)
+				}
+				if attemptSwitch {
+					nextSwitchAttempt = time.Now().Add(30 * time.Second)
+				} else {
+					nextActiveSnapshot = time.Now().Add(10 * time.Second)
+				}
 			} else {
-				logStatus("snapshot_committed", map[string]any{"source": cfg.source})
-				snapshotTimer.Reset(cfg.reconcile)
+				report["status"] = "completed"
+				reportBridgeRun(ctx, base.endpoint, token, report)
+				activeAddr, activeVersion = targetAddr, targetVersion
+				markSnapshotSuccess(state, targetAddr, targetVersion, result)
+				nextActiveSnapshot = time.Now().Add(attemptCfg.reconcile)
+				if attemptSwitch {
+					nextSwitchAttempt = nextActiveSnapshot
+				}
+				logStatus("snapshot_committed", map[string]any{"source": base.source, "records": result.records})
 			}
-		default:
-			_, moveErr := eventClient.BLMove(ctx, cfg.eventList, cfg.processingList, "LEFT", "RIGHT", 5*time.Second).Result()
-			if moveErr != nil && moveErr != redis.Nil && !errors.Is(moveErr, context.Canceled) {
-				markFailure(state, moveErr)
-			}
+		}
+		if !waitContext(ctx, time.Second) {
+			return
 		}
 	}
 }
@@ -237,6 +331,7 @@ func processBatch(ctx context.Context, client *redis.Client, sender legacy4k.Sen
 	}
 	if pending == 0 {
 		updateQueueMetrics(ctx, client, cfg, state)
+		markEventHealthy(state)
 		return false, nil
 	}
 	limit := int64(cfg.batchSize - 1)
@@ -281,35 +376,161 @@ func processBatch(ctx context.Context, client *redis.Client, sender legacy4k.Sen
 	state.committedMessages += uint64(len(records))
 	state.badMessages += uint64(len(badMetadata))
 	state.lastEventAt = time.Now().UTC()
-	state.consecutiveFailure = 0
 	state.mu.Unlock()
+	markEventHealthy(state)
 	updateQueueMetrics(ctx, client, cfg, state)
 	return true, nil
 }
 
-func submitSnapshot(ctx context.Context, client *legacy4k.RedisOnlineClient, sender legacy4k.Sender, cfg config, state *runtimeState) error {
+type snapshotResult struct {
+	observedAt time.Time
+	instanceID string
+	members    int
+	records    int
+	skipped    int
+}
+
+func submitSnapshotAt(ctx context.Context, addr, password string, sender legacy4k.Sender, cfg config) (snapshotResult, error) {
+	result := snapshotResult{}
+	raw := redis.NewClient(&redis.Options{Addr: addr, Password: password, ReadTimeout: 8 * time.Second, WriteTimeout: 5 * time.Second})
+	defer raw.Close()
+	if err := raw.Ping(ctx).Err(); err != nil {
+		return result, err
+	}
+	info, err := raw.Info(ctx, "server").Result()
+	if err != nil {
+		return result, err
+	}
+	result.instanceID = runID(info)
+	if result.instanceID == "" {
+		return result, fmt.Errorf("online Redis instance id unavailable")
+	}
+	members, err := raw.LLen(ctx, cfg.onlineList).Result()
+	if err != nil {
+		return result, err
+	}
+	result.members = int(members)
+	client := legacy4k.NewRedisOnlineClient(&redis.Options{Addr: addr, Password: password, ReadTimeout: 8 * time.Second, WriteTimeout: 5 * time.Second})
+	defer client.Close()
 	inventory, err := legacy4k.ReadOnlineInventoryStabilized(ctx, client, cfg.onlineList, cfg.maxRecords, 500, 3)
 	if err != nil {
-		return err
+		return result, err
 	}
+	stats, err := inventory.Stats()
+	if err != nil {
+		return result, err
+	}
+	result.records = stats.AddressRecords
+	result.skipped = inventory.SkippedInvalid
+	result.observedAt = inventory.ObservedAt
 	if err = sender.SendSnapshot(ctx, inventory, cfg.source, cfg.campus, cfg.domain, int(cfg.reconcile/time.Second)); err != nil {
-		return err
+		return result, err
 	}
-	state.mu.Lock()
-	state.lastSnapshotAt = inventory.ObservedAt
-	state.onlineSessions = len(inventory.Rows)
-	state.invalidOnlineRows = inventory.SkippedInvalid
-	state.consecutiveFailure = 0
-	state.mu.Unlock()
-	return nil
+	if stats.Sessions != len(inventory.Rows) {
+		return result, fmt.Errorf("snapshot session acknowledgement mismatch")
+	}
+	return result, nil
+}
+
+func fetchBridgeRuntimeConfig(ctx context.Context, endpoint, token string) (bridgeRuntimeConfig, error) {
+	var value bridgeRuntimeConfig
+	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, strings.TrimRight(endpoint, "/")+"/api/v1/integrations/identity/bridge/runtime-config", nil)
+	if err != nil {
+		return value, err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		return value, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return value, fmt.Errorf("identity bridge config endpoint returned %s", response.Status)
+	}
+	if err = json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&value); err != nil {
+		return value, err
+	}
+	if value.ConfigVersion < 1 || value.Host == "" || value.OnlineRedisAddr == "" || value.ReconcileIntervalSeconds < 60 || value.ReconcileIntervalSeconds > 86400 {
+		return bridgeRuntimeConfig{}, fmt.Errorf("identity bridge config is invalid")
+	}
+	return value, nil
+}
+
+func reportBridgeRun(ctx context.Context, endpoint, token string, value map[string]any) {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, strings.TrimRight(endpoint, "/")+"/api/v1/integrations/identity/bridge/runs", strings.NewReader(string(body)))
+	if err != nil {
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err == nil {
+		response.Body.Close()
+	}
+}
+
+func runHeartbeatWorker(ctx context.Context, cfg config, token string, state *runtimeState) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		sendBridgeHeartbeat(ctx, cfg, token, state)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func sendBridgeHeartbeat(ctx context.Context, cfg config, token string, state *runtimeState) {
+	state.mu.RLock()
+	overall := deriveOverallState(state, cfg.reconcile)
+	body, _ := json.Marshal(map[string]any{
+		"active_host": state.activeHost, "active_config_version": state.activeConfigVersion, "state": overall,
+		"online_channel_state": state.onlineChannelState, "event_channel_state": state.eventChannelState,
+		"snapshot_state": state.snapshotState, "source_queue": state.sourceQueue, "processing_queue": state.processingQueue,
+		"online_members": state.onlineMembers, "online_sessions": state.onlineSessions,
+		"committed_messages": state.committedMessages, "bad_messages": state.badMessages,
+		"event_consecutive_failures": state.eventConsecutiveFailures, "snapshot_consecutive_failures": state.snapshotConsecutiveFailures,
+		"last_event_at": optionalTime(state.lastEventAt), "last_snapshot_attempt_at": optionalTime(state.lastSnapshotAttemptAt),
+		"last_snapshot_at": optionalTime(state.lastSnapshotAt), "last_error_type": state.lastErrorType, "started_at": state.startedAt,
+	})
+	state.mu.RUnlock()
+	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, strings.TrimRight(cfg.endpoint, "/")+"/api/v1/integrations/identity/bridge/heartbeat", strings.NewReader(string(body)))
+	if err != nil {
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err == nil {
+		response.Body.Close()
+	}
+}
+
+func optionalTime(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value
 }
 
 func startHealthServer(addr string, state *runtimeState) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		state.mu.RLock()
-		ready := state.consecutiveFailure < 5
-		body := map[string]any{"ready": ready, "source_queue": state.sourceQueue, "processing_queue": state.processingQueue, "online_sessions": state.onlineSessions, "invalid_online_rows": state.invalidOnlineRows, "last_event_at": state.lastEventAt, "last_snapshot_at": state.lastSnapshotAt, "consecutive_failures": state.consecutiveFailure}
+		ready := state.eventConsecutiveFailures < 5 && !state.lastSnapshotAt.IsZero() && time.Since(state.lastSnapshotAt) <= 90*time.Minute
+		body := map[string]any{"ready": ready, "state": deriveOverallState(state, 30*time.Minute), "source_queue": state.sourceQueue, "processing_queue": state.processingQueue, "online_sessions": state.onlineSessions, "online_members": state.onlineMembers, "invalid_online_rows": state.invalidOnlineRows, "last_event_at": state.lastEventAt, "last_snapshot_attempt_at": state.lastSnapshotAttemptAt, "last_snapshot_at": state.lastSnapshotAt, "event_consecutive_failures": state.eventConsecutiveFailures, "snapshot_consecutive_failures": state.snapshotConsecutiveFailures}
 		state.mu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
 		if !ready {
@@ -321,12 +542,12 @@ func startHealthServer(addr string, state *runtimeState) *http.Server {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		fmt.Fprintf(w, "proxy_sentinel_ncu_auth_source_queue %d\nproxy_sentinel_ncu_auth_processing_queue %d\nproxy_sentinel_ncu_auth_bad_messages_total %d\nproxy_sentinel_ncu_auth_committed_messages_total %d\nproxy_sentinel_ncu_auth_online_sessions %d\nproxy_sentinel_ncu_auth_invalid_online_rows %d\nproxy_sentinel_ncu_auth_consecutive_failures %d\nproxy_sentinel_ncu_auth_snapshot_age_seconds %.0f\n", state.sourceQueue, state.processingQueue, state.badMessages, state.committedMessages, state.onlineSessions, state.invalidOnlineRows, state.consecutiveFailure, ageSeconds(state.lastSnapshotAt))
+		fmt.Fprintf(w, "proxy_sentinel_ncu_auth_source_queue %d\nproxy_sentinel_ncu_auth_processing_queue %d\nproxy_sentinel_ncu_auth_bad_messages_total %d\nproxy_sentinel_ncu_auth_committed_messages_total %d\nproxy_sentinel_ncu_auth_online_members %d\nproxy_sentinel_ncu_auth_online_sessions %d\nproxy_sentinel_ncu_auth_invalid_online_rows %d\nproxy_sentinel_ncu_auth_event_consecutive_failures %d\nproxy_sentinel_ncu_auth_snapshot_consecutive_failures %d\nproxy_sentinel_ncu_auth_snapshot_age_seconds %.0f\n", state.sourceQueue, state.processingQueue, state.badMessages, state.committedMessages, state.onlineMembers, state.onlineSessions, state.invalidOnlineRows, state.eventConsecutiveFailures, state.snapshotConsecutiveFailures, ageSeconds(state.lastSnapshotAt))
 	})
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			markFailure(state, err)
+			markEventFailure(state, err)
 		}
 	}()
 	return server
@@ -350,13 +571,85 @@ func updateQueueMetrics(ctx context.Context, client *redis.Client, cfg config, s
 	}
 }
 
-func markFailure(state *runtimeState, err error) {
+func markEventFailure(state *runtimeState, err error) {
 	state.mu.Lock()
 	state.lastErrorAt = time.Now().UTC()
 	state.lastErrorType = errorType(err)
-	state.consecutiveFailure++
+	state.eventConsecutiveFailures++
+	state.eventChannelState = "failed"
+	state.overallState = "degraded"
 	state.mu.Unlock()
 	logStatus("operation_failed", map[string]any{"error_type": errorType(err)})
+}
+
+func markEventHealthy(state *runtimeState) {
+	state.mu.Lock()
+	state.eventConsecutiveFailures = 0
+	state.eventChannelState = "healthy"
+	if state.snapshotState == "healthy" && state.overallState != "switching" && state.overallState != "switch_failed" {
+		state.overallState = "healthy"
+		state.lastErrorType = ""
+	}
+	state.mu.Unlock()
+}
+
+func markSnapshotFailure(state *runtimeState, err error) {
+	state.mu.Lock()
+	state.lastSnapshotAttemptAt = time.Now().UTC()
+	state.lastErrorAt = state.lastSnapshotAttemptAt
+	state.lastErrorType = errorType(err)
+	state.snapshotConsecutiveFailures++
+	state.snapshotState = "failed"
+	state.onlineChannelState = "failed"
+	state.overallState = "degraded"
+	state.mu.Unlock()
+	logStatus("snapshot_failed", map[string]any{"error_type": errorType(err)})
+}
+
+func markSwitchFailure(state *runtimeState, err error) {
+	state.mu.Lock()
+	state.lastSnapshotAttemptAt = time.Now().UTC()
+	state.lastErrorAt = state.lastSnapshotAttemptAt
+	state.lastErrorType = errorType(err)
+	state.overallState = "switch_failed"
+	state.mu.Unlock()
+	logStatus("config_switch_failed", map[string]any{"error_type": errorType(err)})
+}
+
+func markSnapshotSuccess(state *runtimeState, addr string, version int64, result snapshotResult) {
+	host, _, _ := net.SplitHostPort(addr)
+	state.mu.Lock()
+	state.activeHost = host
+	state.activeConfigVersion = version
+	state.instanceID = result.instanceID
+	state.lastSnapshotAttemptAt = time.Now().UTC()
+	state.lastSnapshotAt = result.observedAt
+	state.onlineMembers = int64(result.members)
+	state.onlineSessions = result.members - result.skipped
+	state.invalidOnlineRows = result.skipped
+	state.snapshotConsecutiveFailures = 0
+	state.snapshotState = "healthy"
+	state.onlineChannelState = "healthy"
+	if state.eventConsecutiveFailures == 0 {
+		state.overallState = "healthy"
+		state.lastErrorType = ""
+	} else {
+		state.overallState = "degraded"
+	}
+	state.mu.Unlock()
+}
+
+func deriveOverallState(state *runtimeState, reconcile time.Duration) string {
+	if state.eventConsecutiveFailures >= 5 || state.lastSnapshotAt.IsZero() {
+		return "failed"
+	}
+	if time.Since(state.lastSnapshotAt) > 3*reconcile || state.snapshotConsecutiveFailures >= 5 {
+		return "degraded"
+	}
+	if state.overallState == "switching" || state.overallState == "switch_failed" {
+		return state.overallState
+	}
+	return "healthy"
 }
 
 func errorType(err error) string {

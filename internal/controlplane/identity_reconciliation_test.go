@@ -94,3 +94,37 @@ func TestIdentityMetricsInterruptedSource(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+func TestIdentitySnapshotUploadIntervalCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		request identitySnapshotUploadCreate
+		want    int
+		wantErr bool
+	}{
+		{name: "seconds", request: identitySnapshotUploadCreate{IntervalSeconds: 1800}, want: 1800},
+		{name: "legacy hours", request: identitySnapshotUploadCreate{IntervalHours: 6}, want: 21600},
+		{name: "matching forms", request: identitySnapshotUploadCreate{IntervalSeconds: 3600, IntervalHours: 1}, want: 3600},
+		{name: "conflicting forms", request: identitySnapshotUploadCreate{IntervalSeconds: 1800, IntervalHours: 1}, wantErr: true},
+		{name: "missing interval", request: identitySnapshotUploadCreate{}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.request.intervalSeconds()
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("interval=%d err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestIdentitySnapshotUploadPathAcceptsAPIDispatchPath(t *testing.T) {
+	for _, path := range []string{
+		"/integrations/identity/snapshot-uploads/upload-1/chunks/7",
+		"/api/v1/integrations/identity/snapshot-uploads/upload-1/chunks/7",
+	} {
+		id, chunk, commit, ok := identitySnapshotUploadPath(path)
+		if !ok || id != "upload-1" || chunk == nil || *chunk != 7 || commit {
+			t.Fatalf("path %q parsed as id=%q chunk=%v commit=%t ok=%t", path, id, chunk, commit, ok)
+		}
+	}
+}

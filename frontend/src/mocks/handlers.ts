@@ -145,6 +145,9 @@ export const handlers = [
   http.put('/api/v1/integrations/srun4k/:connectorId', async ({params,request}) => {const value=await request.json() as {host:string;reconcile_interval_hours?:number};mockSRun4KHost=value.host;return HttpResponse.json({connector_id:params.connectorId,host:value.host,source:`srun4k:${params.connectorId}`,sensor_id:`srun4k-direct:${params.connectorId}`,reconcile_interval_hours:value.reconcile_interval_hours??6,event_channel_state:'waiting',connection_state:'pending',channels:{authorization_database:'pending',redis:'pending',northbound_api:'pending',event_channel:'waiting'},identity_accounts:12,identity_sessions:16,products:3,groups:2,controls:4})}),
   http.post('/api/v1/integrations/srun4k/:connectorId/test', ({params}) => HttpResponse.json({connector_id:params.connectorId,checked_at:new Date().toISOString(),online_total:16,channels:{authorization_database:'healthy',redis:'healthy',northbound_api:'healthy',event_channel:'waiting'},enforcement_ready:false})),
   http.post('/api/v1/integrations/srun4k/:connectorId/sync', ({params}) => HttpResponse.json({connector_id:params.connectorId,source:`srun4k:${params.connectorId}`,synced_at:new Date().toISOString(),identity_accounts:12,identity_sessions:16,address_records:18,products:3,groups:2,controls:4,event_channel_state:'waiting',enforcement_ready:false})),
+  http.get('/api/v1/integrations/identity/bridge', () => HttpResponse.json({config:{bridge_id:'ncu-legacy-4k',host:'222.204.3.224',config_version:1,online_redis_addr:'222.204.3.224:16380',event_redis_addr:'222.204.3.227:16384',online_list:'list:rad_online',event_list:'list:antiproxy:127.0.0.1',processing_list:'list:antiproxy:127.0.0.1:proxy-sentinel-processing',source:'ncu-srun4k',sensor_id:'ncu-auth-redis',campus_id:'ncu',access_domain:'campus-auth',batch_size:500,reconcile_interval_seconds:1800},runtime:{state:'healthy',active_host:'222.204.3.224',active_config_version:1,active_online_redis_addr:'222.204.3.224:16380',online_channel_state:'healthy',event_channel_state:'healthy',snapshot_state:'healthy',source_queue:0,processing_queue:0,online_members:16266,online_sessions:16266,committed_messages:4468,bad_messages:0,event_consecutive_failures:0,snapshot_consecutive_failures:0,accounts:4476,sessions:8088,last_event_at:new Date().toISOString(),last_snapshot_at:new Date().toISOString()},checked_at:new Date().toISOString()})),
+  http.put('/api/v1/integrations/identity/bridge', async ({request}) => {const value=await request.json() as {host:string};return HttpResponse.json({bridge_id:'ncu-legacy-4k',host:value.host,config_version:2,state:'switching'},{status:202})}),
+  http.get('/api/v1/integrations/identity/bridge/runs', () => HttpResponse.json({items:[{run_id:'snapshot-1',kind:'snapshot',status:'completed',records_read:16266,records_emitted:16266,records_skipped:0,records_malformed:0,retry_count:0,duration_ms:2300,started_at:new Date().toISOString(),completed_at:new Date().toISOString()}],page:{limit:20,next_cursor:null,total:1}})),
   http.get('/api/v1/actions', ({ request }) => { const result = mockPage(mockActions, new URL(request.url)); return HttpResponse.json(result) }),
   http.get('/api/v1/actions/:actionId/native-observations', ({ request }) => {
     const older = new URL(request.url).searchParams.has('before')
@@ -285,7 +288,7 @@ export const handlers = [
       },
     )
   }),
-  http.get(/\/api\/v1\/(?:devices|device-inventory)$/, ({ request }) => {
+  http.get(/\/api\/v1\/(?:devices|device-inventory(?:\/metadata)?)$/, ({ request }) => {
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()
     const ip = url.searchParams.get('ip')
@@ -358,12 +361,14 @@ export const handlers = [
     const pageItems = filtered.slice(cursor, cursor + limit).map(item=>({...item,...(q&&/^\d+\.\d+\.\d+\.\d+$/.test(q)?{ip_match:{ip:q,source:'ip_observation',matched_at:item.last_seen,is_recent_ip:item.current_ip===q}}:{})}))
     const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
 
+    if(url.pathname.endsWith('/metadata')) return HttpResponse.json({total:filtered.length,facets,as_of:new Date().toISOString()})
+
     return HttpResponse.json({
       items: pageItems,
       facets,
       as_of: new Date().toISOString(),
       read_model_updating: false,
-      page: { limit, next_cursor: nextCursor, total: filtered.length },
+      page: { limit, next_cursor: nextCursor, ...(url.searchParams.get('include_metadata')==='false'?{}:{total: filtered.length}) },
     })
   }),
   http.get('/api/v1/device-recognition/summary', () => HttpResponse.json({
