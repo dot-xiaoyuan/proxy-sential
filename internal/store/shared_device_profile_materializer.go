@@ -33,6 +33,8 @@ type sharedProfileSource struct {
 	Shared     *sharedaccess.BehaviorAssessment
 }
 
+const sharedDeviceProfileWorkerCount = 8
+
 func normalizedSharedProfileMAC(value string) string {
 	parsed, err := net.ParseMAC(strings.TrimSpace(value))
 	if err != nil || len(parsed) != 6 || parsed[0]&1 != 0 {
@@ -726,7 +728,7 @@ func (s *DBStore) runSharedDeviceProfileMaterializer(ctx context.Context) {
 			}
 		}
 	}()
-	for index := 0; index < 2; index++ {
+	for index := 0; index < sharedDeviceProfileWorkerCount; index++ {
 		workers.Add(1)
 		go func(workerIndex int) {
 			defer workers.Done()
