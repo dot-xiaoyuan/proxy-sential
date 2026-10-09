@@ -12,4 +12,9 @@ describe('AppServerPagination', () => {
 		fireEvent.click(screen.getByTitle('3'))
 		expect(onChange).toHaveBeenCalledWith(3, 20)
 	})
+
+	it('服务端分页加载期间禁用翻页操作', () => {
+		render(<AppServerPagination disabled page={2} pageSize={20} total={88} onChange={() => undefined} />)
+		expect(document.querySelector('.app-server-pagination')).toHaveClass('ant-pagination-disabled')
+	})
 })

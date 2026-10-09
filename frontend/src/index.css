@@ -3768,6 +3768,9 @@ pre.wrap-code {
 .shared-profile-mobile-label{color:#94a3b8;font-size:11px;font-weight:600;line-height:1.3}
 .shared-profile-mobile-block>.shared-profile-auth{margin-top:1px}
 .shared-profile-panel>.app-server-pagination{position:static;z-index:auto}
+.shared-profile-page-loading{display:grid;gap:8px;min-height:260px}
+.shared-profile-page-loading>.ant-typography{font-size:12px}
+.shared-profile-page-loading>.app-loading-state{border:0;padding-inline:0}
 @media(max-width:1599px){
   .shared-profile-desktop-list{display:none}
   .shared-profile-mobile-list{display:block}

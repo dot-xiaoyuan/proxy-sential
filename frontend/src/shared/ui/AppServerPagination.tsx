@@ -3,16 +3,18 @@ import { useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 type AppServerPaginationProps = {
+	disabled?: boolean
 	page: number
 	pageSize: number
 	total: number
 	onChange: (page: number, pageSize: number) => void
 }
 
-export function AppServerPagination({ page, pageSize, total, onChange }: AppServerPaginationProps) {
+export function AppServerPagination({ disabled = false, page, pageSize, total, onChange }: AppServerPaginationProps) {
 	return <Pagination
 		className="list-pagination app-server-pagination"
 		current={page}
+		disabled={disabled}
 		pageSize={pageSize}
 		pageSizeOptions={[20, 50]}
 		showQuickJumper

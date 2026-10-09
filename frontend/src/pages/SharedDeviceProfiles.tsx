@@ -1,7 +1,7 @@
 import { Alert, Empty, Input, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { request } from '../shared/api/client'
 import { AppErrorAlert, AppLoadingState, AppServerPagination, useServerPagination } from '../shared/ui'
@@ -23,11 +23,16 @@ export function SharedDeviceProfiles() {
   const profiles = useQuery({
     queryKey: ['shared-device-profiles', query],
     queryFn: () => request<ProfilePage>(`/shared-access/devices?limit=${query.limit}&cursor=${query.cursor}&keyword=${encodeURIComponent(keyword)}`),
-    refetchInterval: 30000,
+    placeholderData: () => undefined,
+    staleTime: 5 * 60_000,
   })
+  const [knownTotal, setKnownTotal] = useState(0)
   useEffect(() => {
     if (profiles.data && profiles.data.items.length === 0 && pagination.page > 1) pagination.reset()
   }, [pagination, profiles.data])
+  useEffect(() => {
+    if (profiles.data) setKnownTotal(profiles.data.page.total)
+  }, [profiles.data])
   const search = (value: string) => setParams(current => {
     const next = new URLSearchParams(current)
     const normalized = value.trim()
@@ -38,7 +43,7 @@ export function SharedDeviceProfiles() {
     return next
   }, { replace: true })
   const items = profiles.data?.items || []
-  const total = profiles.data?.page.total || 0
+  const total = profiles.data?.page.total ?? knownTotal
   const columns: ColumnsType<Profile> = [
     { title: '设备', key: 'device', width: 230, render: (_, item) => <DeviceIdentity item={item} /> },
     { title: '网络身份', key: 'network', width: 265, render: (_, item) => <NetworkIdentity item={item} /> },
@@ -51,7 +56,7 @@ export function SharedDeviceProfiles() {
     <div className="shared-profile-heading"><Typography.Title level={4}>设备档案</Typography.Title><Typography.Text type="secondary">共 {total} 条</Typography.Text></div>
     {profiles.data?.activity_state === 'unavailable' && <Alert className="shared-profile-activity-alert" type="warning" showIcon title="最近流量暂时读取失败" description="设备身份档案继续保留，在线情况请稍后核对。" />}
     <Input.Search key={keyword} className="shared-profile-search" defaultValue={keyword} placeholder="IP、MAC、品牌或型号" allowClear onSearch={search} />
-    {profiles.isError ? <AppErrorAlert title="设备档案读取失败" /> : profiles.isLoading ? <AppLoadingState rows={6} /> : items.length ? <>
+    {profiles.isError ? <AppErrorAlert title="设备档案读取失败" /> : profiles.isFetching ? <div className="shared-profile-page-loading" aria-live="polite"><Typography.Text type="secondary">正在加载第 {pagination.page} 页</Typography.Text><AppLoadingState rows={6} /></div> : items.length ? <>
       <div className="shared-profile-desktop-list"><Table rowKey="profile_id" size="small" columns={columns} dataSource={items} pagination={false} scroll={{ x: 1295 }} rowClassName={item => item.identity_state === 'reference' ? 'shared-profile-reference' : ''} /></div>
       <div className="shared-profile-mobile-list" role="list">{items.map(item => <article className={`shared-profile-mobile-row ${item.identity_state === 'reference' ? 'shared-profile-reference' : ''}`} key={item.profile_id} role="listitem">
         <div className="shared-profile-mobile-block">
@@ -73,8 +78,8 @@ export function SharedDeviceProfiles() {
           <ProfileActions item={item} />
         </div>
       </article>)}</div>
-      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={pagination.update} />
     </> : <Empty description="暂无设备身份档案" />}
+    {total > 0 && <AppServerPagination disabled={profiles.isFetching} page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={pagination.update} />}
     <details className="shared-profile-help"><summary>数据口径</summary><p className="shared-access-muted">设备身份依据和历史记录持续保留。最近流量、地址归属与当前共享分别核验；设备静默不会删除档案，历史身份不直接证明当前共享。</p></details>
   </section>
 }

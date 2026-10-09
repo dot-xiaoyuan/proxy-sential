@@ -14,7 +14,7 @@ for(const [width,height] of [[390,844],[1280,800],[1440,900]]) test(`holiday equ
   const strong={...legacy,observation_id:'old-share-22',ip:'192.168.0.22',strong_anchor:'ieee1905_association',device_lower_bound:8,signal_groups:['ieee1905_association'],confidence:90,rule_version:'shared-behavior/v10'}
   window.fetch=async(...args)=>{
    const url=String(args[0]);let value:unknown
-   if(url.includes('/shared-access/devices?')) value={items:url.includes('cursor=20')?[second]:[identity,vendor],page:{total:21,limit:20},checked_at:checked}
+   if(url.includes('/shared-access/devices?')) {if(url.includes('cursor=20')) await new Promise(resolve=>setTimeout(resolve,500));value={items:url.includes('cursor=20')?[second]:[identity,vendor],page:{total:21,limit:20},checked_at:checked}}
    else if(url.includes('/shared-access/observations/')) value={...legacy,history:[{status:'confirmed',confidence:100,signal_groups:['tcp_stack'],coverage_state:'verified',rule_version:'shared-behavior/v8',observed_at:legacy.last_seen,created_at:legacy.last_seen}]}
    else if(url.includes('/shared-access/observations?')) value={items:url.includes('view=history')?(url.includes('history_basis=clues')?[legacy]:[strong]):[],page:{total:url.includes('view=history')?1:0,limit:20}}
    else return original(...args)
@@ -45,6 +45,17 @@ for(const [width,height] of [[390,844],[1280,800],[1440,900]]) test(`holiday equ
  }
  await audit('devices')
  await page.locator('.app-server-pagination .ant-pagination-next').click()
+ await expect(page.getByText('正在加载第 2 页',{exact:true})).toBeVisible()
+ await expect(deviceList.getByText('ZTE SR7410-20',{exact:true})).toHaveCount(0)
+ await expect(page.locator('.app-server-pagination')).toHaveClass(/ant-pagination-disabled/)
+ const loadingProbe=await page.evaluate(()=>({
+  oldPageRows:[...document.querySelectorAll('.shared-profile-desktop-list tbody tr,.shared-profile-mobile-row')].filter(element=>element.getBoundingClientRect().width>0).length,
+  paginationDisabled:document.querySelector('.app-server-pagination')?.classList.contains('ant-pagination-disabled')||false,
+  loadingText:document.querySelector('.shared-profile-page-loading')?.textContent||'',
+ }))
+ expect(loadingProbe.oldPageRows).toBe(0);expect(loadingProbe.paginationDisabled).toBe(true);expect(loadingProbe.loadingText).toContain('正在加载第 2 页')
+ await writeFile(path.join(dir,`devices-loading-dom-${width}.json`),JSON.stringify(loadingProbe,null,2))
+ await page.screenshot({path:path.join(dir,`devices-loading-${width}.png`),fullPage:true,animations:'disabled'})
  await expect(deviceList.getByText('Ruijie RG-EG',{exact:true})).toBeVisible()
  await page.getByRole('tab',{name:'当前共享',exact:true}).click()
  await expect(page.getByText('当前没有可确认的共享记录',{exact:true})).toBeVisible()
