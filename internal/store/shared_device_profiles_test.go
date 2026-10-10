@@ -8,60 +8,78 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/sharedaccess"
 )
 
-func TestSharedDeviceArchiveRetainsIdentityAfterHoliday(t *testing.T) {
+func profileAssessment(now time.Time, status string, expiresIn time.Duration) *evidence.RouterAssessment {
+	return &evidence.RouterAssessment{AssessmentID: "router-" + status, IP: "192.0.2.22", MAC: "00:11:22:33:44:55", Brand: "ZTE", Model: "SR7410-20", Role: "router", Status: status, Confidence: 70,
+		FirstSeen: now.Add(-time.Hour).Format(time.RFC3339Nano), LastSeen: now.Add(-time.Minute).Format(time.RFC3339Nano), ExpiresAt: now.Add(expiresIn).Format(time.RFC3339Nano),
+		Evidence: []evidence.RouterEvidence{{Explanation: "OUI 厂商参考", Score: 5}, {Explanation: "DHCP 型号匹配", Score: 60}}}
+}
+
+func applyProfile(now time.Time, profile SharedDeviceProfile, sources sharedProfileSource) SharedDeviceProfile {
+	profile, _, _, _ = applySharedProfileSources(profile, sources, sharedDeviceProfileJob{}, now, now, now)
+	return profile
+}
+
+func TestSharedProfileCandidateStaysCurrentWithRouterStatus(t *testing.T) {
 	now := time.Now().UTC()
-	old := evidence.RouterEvidence{EvidenceID: "dhcp-role", AssessmentID: "router", EndpointID: "mac:00:11:22:33:44:55", IP: "192.0.2.22", MAC: "00:11:22:33:44:55", Brand: "ZTE", Model: "SR7410-20", Role: "router", SourceFamily: "dhcp", Score: 60, LastSeen: now.Add(-7 * 24 * time.Hour).Format(time.RFC3339Nano), ExpiresAt: now.Add(-6 * 24 * time.Hour).Format(time.RFC3339Nano)}
-	profiles := buildSharedDeviceProfiles([]evidence.RouterEvidence{old}, now)
-	if len(profiles) != 1 || profiles[0].Role != "router" || profiles[0].IdentityCurrent || profiles[0].Model != "SR7410-20" {
-		t.Fatalf("holiday identity disappeared or became current: %+v", profiles)
+	profile := applyProfile(now, SharedDeviceProfile{}, sharedProfileSource{Assessment: profileAssessment(now, "candidate", time.Hour)})
+	if profile.IdentityState != "supported" || !profile.IdentityCurrent || profile.RouterStatus != "candidate" || profile.RoleSource != "assessment" {
+		t.Fatalf("current candidate was relabelled as history: %+v", profile)
 	}
-	if profiles[0].CurrentShared {
+	if profile.IdentityBasis != "DHCP 型号匹配" {
+		t.Fatalf("identity basis is not the strongest evidence: %q", profile.IdentityBasis)
+	}
+}
+
+func TestSharedProfileExpiredIdentityIsHistoricalAfterHoliday(t *testing.T) {
+	now := time.Now().UTC()
+	profile := applyProfile(now, SharedDeviceProfile{}, sharedProfileSource{Assessment: profileAssessment(now, "likely", -6*24*time.Hour)})
+	if profile.IdentityState != "historical" || profile.IdentityCurrent || profile.Role != "router" || profile.Model != "SR7410-20" || profile.RouterStatus != "likely" {
+		t.Fatalf("holiday identity disappeared or stayed current: %+v", profile)
+	}
+	if profile.CurrentShared {
 		t.Fatal("router identity promoted to sharing")
 	}
 }
 
-func TestSharedDeviceArchiveVendorAndDerivedFactsCannotConfirmRole(t *testing.T) {
+func TestSharedProfileBrandReferenceIsNotDisplayedAsDeviceName(t *testing.T) {
 	now := time.Now().UTC()
-	facts := []evidence.RouterEvidence{
-		{EvidenceID: "cloud", AssessmentID: "vendor", IP: "192.0.2.63", MAC: "00:11:22:33:44:63", Brand: "TP-Link", Role: "unknown", SourceFamily: "tls_management", Score: 10, BrandReferenceOnly: true, BrandAttribution: true, LastSeen: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)},
-		{EvidenceID: "circular", AssessmentID: "derived", IP: "192.0.2.82", Role: "router", SourceFamily: "shared_gateway_behavior", Score: 85, LastSeen: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)},
-	}
-	profiles := buildSharedDeviceProfiles(facts, now)
-	if len(profiles) != 1 || profiles[0].Role != "" || profiles[0].IdentityState != "reference" {
-		t.Fatalf("vendor or circular fact became device identity: %+v", profiles)
+	vendor := profileAssessment(now, "candidate", time.Hour)
+	vendor.Model, vendor.BrandReferenceOnly = "", true
+	stale := SharedDeviceProfile{DisplayName: "ZTE", Brand: "ZTE"}
+	profile := applyProfile(now, stale, sharedProfileSource{Assessment: vendor})
+	if profile.DisplayName != "192.0.2.22" || !profile.BrandReferenceOnly || profile.Brand != "ZTE" {
+		t.Fatalf("vendor reference became device name: %+v", profile)
 	}
 }
 
-func TestSharedDeviceArchiveKeepsMACIdentitySeparateAcrossIPReuse(t *testing.T) {
+func TestSharedProfileDiscoveryRoleIsHintAndNeverCurrent(t *testing.T) {
 	now := time.Now().UTC()
-	facts := []evidence.RouterEvidence{}
-	for _, mac := range []string{"00:11:22:33:44:01", "00:11:22:33:44:02"} {
-		facts = append(facts, evidence.RouterEvidence{EvidenceID: mac, AssessmentID: mac, IP: "192.0.2.22", MAC: mac, Brand: "Example", Model: mac, Role: "router", SourceFamily: "dhcp", Score: 60, LastSeen: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)})
+	hint := &discovery.Observation{IP: "192.168.1.1", MAC: "00:11:22:33:44:77", DeviceType: "gateway", Explanation: "SSDP 设备自报信息，不确认整机类型", ObservedAt: now, ValidUntil: now.Add(time.Hour)}
+	profile := applyProfile(now, SharedDeviceProfile{IdentityState: "supported", IdentityCurrent: true, Role: "gateway"}, sharedProfileSource{Discovery: hint})
+	if profile.Role != "gateway" || profile.RoleSource != "discovery_hint" || profile.IdentityState != "reference" || profile.IdentityCurrent {
+		t.Fatalf("self-reported discovery role became current identity: %+v", profile)
 	}
-	profiles := buildSharedDeviceProfiles(facts, now)
-	if len(profiles) != 2 || profiles[0].ProfileID == profiles[1].ProfileID {
-		t.Fatalf("IP reuse merged hardware identity: %+v", profiles)
+	shared := &sharedaccess.BehaviorAssessment{ObservationID: "window", FirstSeen: now.Add(-time.Hour), LastSeen: now, ExpiresAt: now.Add(time.Hour), WindowEnd: now}
+	inferred := applyProfile(now, SharedDeviceProfile{}, sharedProfileSource{Shared: shared})
+	if inferred.Role != "shared_gateway" || inferred.RoleSource != "inferred_shared_gateway" || !inferred.CurrentShared {
+		t.Fatalf("sharing window role not marked as inferred: %+v", inferred)
 	}
 }
 
-func TestSharedDeviceArchiveKeepsLowScoreRouterAsAuthenticationCandidateOnly(t *testing.T) {
-	now := time.Now().UTC()
-	fact := evidence.RouterEvidence{EvidenceID: "ssdp-router", AssessmentID: "candidate", EndpointID: "mac:00:11:22:33:44:77", IP: "192.168.1.1", MAC: "00:11:22:33:44:77", Role: "router", SourceFamily: "ssdp_upnp", Score: 20, Explanation: "UPnP gateway advertisement", LastSeen: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano)}
-	if profiles := buildSharedDeviceProfiles([]evidence.RouterEvidence{fact}, now); len(profiles) != 0 {
-		t.Fatalf("low-score router became durable identity: %+v", profiles)
+func TestSharedProfileAddressOnlyDiscoveryDoesNotQualify(t *testing.T) {
+	addressOnly := discovery.Observation{IP: "192.168.1.1", DeviceType: "gateway"}
+	if qualifyingSharedProfileSource(sharedProfileSource{Discovery: &addressOnly}) {
+		t.Fatal("SSDP announcement without hardware identity created a profile")
 	}
-	candidates := buildAuthBackedRouterCandidates([]evidence.RouterEvidence{fact}, now)
-	if len(candidates) != 1 || candidates[0].Role != "router" || candidates[0].IdentityState != "reference" || candidates[0].IdentityCurrent {
-		t.Fatalf("authentication candidate not preserved as a weak lead: %+v", candidates)
-	}
-	conflict := fact
-	conflict.EvidenceID = "conflict"
-	conflict.Conflict = true
-	if candidates = buildAuthBackedRouterCandidates([]evidence.RouterEvidence{conflict}, now); len(candidates) != 0 {
-		t.Fatalf("conflicting router observation became authentication candidate: %+v", candidates)
+	withMAC := addressOnly
+	withMAC.MAC = "00:11:22:33:44:77"
+	if !qualifyingSharedProfileSource(sharedProfileSource{Discovery: &withMAC}) {
+		t.Fatal("discovery record with hardware identity was rejected")
 	}
 }
 

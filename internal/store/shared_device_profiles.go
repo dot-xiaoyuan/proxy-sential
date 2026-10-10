@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +26,9 @@ type SharedDeviceProfile struct {
 	Brand                   string                       `json:"brand,omitempty"`
 	Model                   string                       `json:"model,omitempty"`
 	Role                    string                       `json:"role,omitempty"`
+	RoleSource              string                       `json:"role_source,omitempty"`
+	RouterStatus            string                       `json:"router_status,omitempty"`
+	BrandReferenceOnly      bool                         `json:"brand_reference_only"`
 	Confidence              int                          `json:"confidence"`
 	IdentityConflict        bool                         `json:"identity_conflict"`
 	IdentityState           string                       `json:"identity_state"`
@@ -58,6 +60,7 @@ type SharedDeviceProfile struct {
 type SharedDeviceProfileQuery struct {
 	Keyword         string
 	Role            string
+	RouterStatus    string
 	IdentityState   string
 	CurrentShared   *bool
 	AccountConflict *bool
@@ -95,152 +98,6 @@ type SharedDeviceProfileDetailReader interface {
 	GetSharedDeviceProfile(context.Context, string) (SharedDeviceProfileDetail, bool, error)
 }
 
-func independentDeviceRole(f evidence.RouterEvidence) bool {
-	return (f.Role == "router" || f.Role == "ap") && !f.BrandReferenceOnly && !f.Conflict && !f.Exclusion && f.Score >= 30 && f.SourceFamily != "shared_gateway_behavior" && f.SourceFamily != "derived" && f.SourceFamily != "weak_stack" && f.Kind != "confirmed_router"
-}
-func buildSharedDeviceProfiles(facts []evidence.RouterEvidence, now time.Time) []SharedDeviceProfile {
-	selected := map[string]evidence.RouterEvidence{}
-	exclusions := map[string]time.Time{}
-	keyFor := func(f evidence.RouterEvidence) string {
-		identity := "address:" + f.IP + ":" + f.VLAN
-		if f.MAC != "" {
-			identity = "mac:" + strings.ToLower(f.MAC)
-		} else if f.EndpointID != "" {
-			identity = "endpoint:" + f.EndpointID
-		}
-		return f.SensorID + "|" + identity
-	}
-	for _, f := range facts {
-		at, err := time.Parse(time.RFC3339Nano, f.LastSeen)
-		if err != nil || at.After(now) {
-			continue
-		}
-		key := keyFor(f)
-		if f.Exclusion || f.Conflict {
-			if at.After(exclusions[key]) {
-				exclusions[key] = at
-			}
-			continue
-		}
-		if !independentDeviceRole(f) && !(f.BrandAttribution && f.BrandReferenceOnly && f.Brand != "" && f.SourceFamily != "shared_gateway_behavior") {
-			continue
-		}
-		old, exists := selected[key]
-		oldAt, _ := time.Parse(time.RFC3339Nano, old.LastSeen)
-		if !exists || independentDeviceRole(f) && !independentDeviceRole(old) || independentDeviceRole(f) == independentDeviceRole(old) && (at.After(oldAt) || at.Equal(oldAt) && f.EvidenceID < old.EvidenceID) {
-			selected[key] = f
-		}
-	}
-	profiles := []SharedDeviceProfile{}
-	for key, f := range selected {
-		at, _ := time.Parse(time.RFC3339Nano, f.LastSeen)
-		expires, _ := time.Parse(time.RFC3339Nano, f.ExpiresAt)
-		role := ""
-		state := "reference"
-		current := independentDeviceRole(f) && expires.After(now) && exclusions[key].Before(at)
-		if independentDeviceRole(f) {
-			role = f.Role
-			state = "historical"
-			if current {
-				state = "supported"
-			}
-		}
-		profiles = append(profiles, SharedDeviceProfile{ProfileID: stableSharedBehaviorID("device-profile", key), SensorID: f.SensorID, EndpointID: f.EndpointID, MAC: f.MAC, IP: f.IP, Brand: f.Brand, Model: f.Model, Role: role, IdentityState: state, IdentityCurrent: current, IdentityAt: at, IdentityExpiresAt: expires, IdentityEvidenceID: f.EvidenceID, IdentityAssessmentID: f.AssessmentID, IdentityBasis: f.Explanation, AddressState: "unbound", AddressOnly: f.MAC == "" && f.EndpointID == ""})
-	}
-	// Do not merge unowned IP observations into a physical device. Suppress a
-	// duplicate address reference only when its role/model matches a stable profile.
-	result := []SharedDeviceProfile{}
-	for _, p := range profiles {
-		duplicate := false
-		if p.AddressOnly {
-			for _, known := range profiles {
-				if !known.AddressOnly && p.SensorID == known.SensorID && p.IP == known.IP && p.Brand == known.Brand && p.Model == known.Model && p.Role == known.Role {
-					duplicate = true
-					break
-				}
-			}
-		}
-		if !duplicate {
-			result = append(result, p)
-		}
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if (result[i].Role != "") != (result[j].Role != "") {
-			return result[i].Role != ""
-		}
-		if !result[i].IdentityAt.Equal(result[j].IdentityAt) {
-			return result[i].IdentityAt.After(result[j].IdentityAt)
-		}
-		return result[i].ProfileID < result[j].ProfileID
-	})
-	return result
-}
-
-// Authentication can make a low-confidence router observation operationally useful
-// without making the router role itself more certain. Keep these observations out of
-// the durable identity archive unless a current session matches the same MAC or
-// endpoint exactly; the caller performs that exact-session check before publishing.
-func buildAuthBackedRouterCandidates(facts []evidence.RouterEvidence, now time.Time) []SharedDeviceProfile {
-	selected := map[string]evidence.RouterEvidence{}
-	for _, f := range facts {
-		at, err := time.Parse(time.RFC3339Nano, f.LastSeen)
-		if err != nil || at.After(now) || f.Role != "router" || independentDeviceRole(f) || f.BrandReferenceOnly || f.Conflict || f.Exclusion || f.Score <= 0 || f.SourceFamily == "shared_gateway_behavior" || f.SourceFamily == "derived" || f.SourceFamily == "weak_stack" {
-			continue
-		}
-		identity := ""
-		if f.MAC != "" {
-			identity = "mac:" + strings.ToLower(f.MAC)
-		} else if f.EndpointID != "" {
-			identity = "endpoint:" + f.EndpointID
-		}
-		if identity == "" {
-			continue
-		}
-		key := f.SensorID + "|" + identity
-		old, exists := selected[key]
-		oldAt, _ := time.Parse(time.RFC3339Nano, old.LastSeen)
-		if !exists || at.After(oldAt) || at.Equal(oldAt) && f.EvidenceID < old.EvidenceID {
-			selected[key] = f
-		}
-	}
-	profiles := make([]SharedDeviceProfile, 0, len(selected))
-	for key, f := range selected {
-		at, _ := time.Parse(time.RFC3339Nano, f.LastSeen)
-		expires, _ := time.Parse(time.RFC3339Nano, f.ExpiresAt)
-		profiles = append(profiles, SharedDeviceProfile{
-			ProfileID:            stableSharedBehaviorID("device-profile", key),
-			SensorID:             f.SensorID,
-			EndpointID:           f.EndpointID,
-			MAC:                  f.MAC,
-			IP:                   f.IP,
-			Brand:                f.Brand,
-			Model:                f.Model,
-			Role:                 "router",
-			IdentityState:        "reference",
-			IdentityCurrent:      false,
-			IdentityAt:           at,
-			IdentityExpiresAt:    expires,
-			IdentityEvidenceID:   f.EvidenceID,
-			IdentityAssessmentID: f.AssessmentID,
-			IdentityBasis:        f.Explanation,
-			AddressState:         "unbound",
-		})
-	}
-	return profiles
-}
-
-func sortSharedDeviceProfiles(profiles []SharedDeviceProfile) {
-	sort.Slice(profiles, func(i, j int) bool {
-		if (profiles[i].Role != "") != (profiles[j].Role != "") {
-			return profiles[i].Role != ""
-		}
-		if !profiles[i].IdentityAt.Equal(profiles[j].IdentityAt) {
-			return profiles[i].IdentityAt.After(profiles[j].IdentityAt)
-		}
-		return profiles[i].ProfileID < profiles[j].ProfileID
-	})
-}
-
 func (s *PostgresStore) ListSharedDeviceProfiles(ctx context.Context, q SharedDeviceProfileQuery) (SharedDeviceProfilePage, error) {
 	if q.Limit == 0 {
 		q.Limit = 20
@@ -249,7 +106,10 @@ func (s *PostgresStore) ListSharedDeviceProfiles(ctx context.Context, q SharedDe
 		return SharedDeviceProfilePage{}, fmt.Errorf("invalid device profile pagination")
 	}
 	now := time.Now().UTC()
-	where := []string{"p.merged_into_profile_id IS NULL", "p.sensor_id=$1"}
+	// Address-only discovery announcements carry no device identity; profiles
+	// created from them before the qualification rule tightened stay stored but hidden.
+	where := []string{"p.merged_into_profile_id IS NULL", "p.sensor_id=$1",
+		"NOT (p.address_only AND coalesce(p.source_assessment_id,'')='' AND coalesce(p.source_shared_observation_id,'')='')"}
 	args := []any{s.sensorID}
 	add := func(clause string, value any) {
 		args = append(args, value)
@@ -260,6 +120,9 @@ func (s *PostgresStore) ListSharedDeviceProfiles(ctx context.Context, q SharedDe
 	}
 	if q.Role != "" {
 		add("p.role=$N", q.Role)
+	}
+	if q.RouterStatus != "" {
+		add("p.list_item->>'router_status'=$N", q.RouterStatus)
 	}
 	if q.IdentityState != "" {
 		add("p.recognition_status=$N", q.IdentityState)

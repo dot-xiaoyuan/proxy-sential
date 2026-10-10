@@ -402,16 +402,27 @@ func (s *PostgresStore) attachRouterAuthBindings(ctx context.Context, items []ev
 }
 
 func (s *PostgresStore) currentAuthSessionsForIdentities(ctx context.Context, macs, endpoints []string) ([]routerAuthSession, error) {
-	rows, err := s.db.QueryContext(ctx, `
-SELECT document,confirmed_at FROM account_identity_session_projection p
+	// Branches mirror the current-session partial indexes from migration 086;
+	// duplicates collapse in routerBindingsForAssessment by session key.
+	rows, err := s.db.QueryContext(ctx, `WITH projection AS (
+ SELECT p.* FROM account_identity_session_projection p
+ WHERE COALESCE(p.document->>'ended_at','')='' AND COALESCE(p.document->>'endpoint_id','')<>'' AND p.document->>'endpoint_id'=ANY($2::text[])
+ UNION ALL
+ SELECT p.* FROM account_identity_session_projection p
+ WHERE COALESCE(p.document->>'ended_at','')='' AND COALESCE(p.document->>'mac','')<>''
+  AND regexp_replace(lower(COALESCE(p.document->>'mac','')),'[^0-9a-f]','','g')=ANY($1::text[])
+  AND NOT COALESCE(p.document->>'endpoint_id','')=ANY($2::text[])
+)
+SELECT document,confirmed_at FROM projection p
 JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
-WHERE COALESCE(document->>'ended_at','')=''
-AND src.observed_at >= now()-make_interval(secs=>GREATEST(60,LEAST(86400,COALESCE(NULLIF(document->>'reconcile_interval_seconds','')::int,1800)))*3)
-AND ((document->>'endpoint_id'=ANY($2::text[]) AND document->>'endpoint_id'<>'') OR regexp_replace(lower(COALESCE(document->>'mac','')),'[^0-9a-f]','','g')=ANY($1::text[]))
+WHERE src.observed_at >= now()-make_interval(secs=>GREATEST(60,LEAST(86400,COALESCE(NULLIF(document->>'reconcile_interval_seconds','')::int,1800)))*3)
 UNION ALL
 SELECT to_jsonb(s)||COALESCE(s.policy_metadata,'{}'::jsonb),s.updated_at FROM account_sessions s
-WHERE s.ended_at IS NULL AND s.updated_at>=now()-interval '90 minutes'
-AND ((s.endpoint_id=ANY($2::text[]) AND s.endpoint_id<>'') OR regexp_replace(lower(COALESCE(s.mac,'')),'[^0-9a-f]','','g')=ANY($1::text[]))`, macs, endpoints)
+WHERE s.ended_at IS NULL AND s.endpoint_id IS NOT NULL AND s.endpoint_id<>'' AND s.endpoint_id=ANY($2::text[]) AND s.updated_at>=now()-interval '90 minutes'
+UNION ALL
+SELECT to_jsonb(s)||COALESCE(s.policy_metadata,'{}'::jsonb),s.updated_at FROM account_sessions s
+WHERE s.ended_at IS NULL AND s.mac IS NOT NULL AND s.mac<>'' AND regexp_replace(lower(COALESCE(s.mac,'')),'[^0-9a-f]','','g')=ANY($1::text[])
+ AND NOT COALESCE(s.endpoint_id,'')=ANY($2::text[]) AND s.updated_at>=now()-interval '90 minutes'`, macs, endpoints)
 	if err != nil {
 		return nil, err
 	}

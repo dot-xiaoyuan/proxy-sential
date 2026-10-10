@@ -100,6 +100,13 @@ func (s *Server) handleSharedDeviceProfiles(w http.ResponseWriter, r *http.Reque
 		Keyword: r.URL.Query().Get("keyword"), Role: r.URL.Query().Get("role"),
 		IdentityState: r.URL.Query().Get("identity_state"), Limit: 20,
 	}
+	switch status := r.URL.Query().Get("router_status"); status {
+	case "", "candidate", "likely", "confirmed":
+		q.RouterStatus = status
+	default:
+		writeError(w, http.StatusBadRequest, "bad_filter", "router_status 仅支持 candidate、likely、confirmed")
+		return
+	}
 	for _, param := range []struct {
 		name   string
 		target **bool

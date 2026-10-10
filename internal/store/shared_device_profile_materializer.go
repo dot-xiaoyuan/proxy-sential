@@ -215,8 +215,16 @@ func (s *DBStore) loadSharedProfileSources(ctx context.Context, job sharedDevice
 	mac := normalizedSharedProfileMAC(job.MAC)
 	var raw []byte
 	var first, last, expires time.Time
-	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment,first_seen,last_seen,expires_at FROM router_assessments
-	WHERE ($1<>'' AND endpoint_id=$1) OR ($2<>'' AND regexp_replace(lower(mac),'[^0-9a-f]','','g')=$2) OR ($1='' AND $2='' AND $3<>'' AND ip=$3::inet)
+	// Each identity arm stays a separate branch whose predicate matches a partial
+	// expression index from migration 088; an OR across them, or a missing
+	// mac<>'' guard, makes PostgreSQL scan the whole table for every job.
+	err := s.pg.db.QueryRowContext(ctx, `SELECT assessment,first_seen,last_seen,expires_at FROM (
+ SELECT * FROM router_assessments WHERE $1<>'' AND endpoint_id=$1
+ UNION ALL
+ SELECT * FROM router_assessments WHERE $2<>'' AND mac<>'' AND regexp_replace(lower(mac),'[^0-9a-f]','','g')=$2 AND NOT ($1<>'' AND endpoint_id=$1)
+ UNION ALL
+ SELECT * FROM router_assessments WHERE $1='' AND $2='' AND $3<>'' AND ip=nullif($3,'')::inet
+) r
 ORDER BY CASE status WHEN 'confirmed' THEN 0 WHEN 'likely' THEN 1 ELSE 2 END,
  CASE WHEN brand_reference_only THEN 1 ELSE 0 END,confidence DESC,last_seen DESC,assessment_id LIMIT 1`, job.EndpointID, mac, job.IP).Scan(&raw, &first, &last, &expires)
 	if err == nil {
@@ -283,7 +291,7 @@ func qualifyingSharedProfileSource(source sharedProfileSource) bool {
 			return true
 		}
 	}
-	return source.Discovery != nil || source.Shared != nil
+	return source.Discovery != nil && source.Discovery.MAC != "" || source.Shared != nil
 }
 
 type sharedProfileAccount struct {
@@ -296,16 +304,28 @@ type sharedProfileAccount struct {
 
 func (s *DBStore) latestSharedProfileAccount(ctx context.Context, endpoint, mac string) (sharedProfileAccount, error) {
 	mac = normalizedSharedProfileMAC(mac)
-	rows, err := s.pg.db.QueryContext(ctx, `WITH candidates AS (
+	// The four lookups mirror the 088 history indexes exactly (expression and
+	// partial predicate); folding them into OR conditions scans both session tables.
+	rows, err := s.pg.db.QueryContext(ctx, `WITH projection AS (
+ SELECT p.* FROM account_identity_session_projection p
+ WHERE $1<>'' AND coalesce(p.document->>'endpoint_id','')<>'' AND p.document->>'endpoint_id'=$1
+ UNION ALL
+ SELECT p.* FROM account_identity_session_projection p
+ WHERE $2<>'' AND coalesce(p.document->>'mac','')<>'' AND regexp_replace(lower(coalesce(p.document->>'mac','')),'[^0-9a-f]','','g')=$2
+  AND NOT ($1<>'' AND coalesce(p.document->>'endpoint_id','')=$1)
+), sessions AS (
+ SELECT s.* FROM account_sessions s WHERE $1<>'' AND s.endpoint_id<>'' AND s.endpoint_id=$1
+ UNION ALL
+ SELECT s.* FROM account_sessions s WHERE $2<>'' AND s.mac<>'' AND regexp_replace(lower(s.mac),'[^0-9a-f]','','g')=$2
+  AND NOT ($1<>'' AND coalesce(s.endpoint_id,'')=$1)
+), candidates AS (
  SELECT p.document,p.confirmed_at,CASE WHEN coalesce(p.document->>'ended_at','')='' THEN
   coalesce(src.observed_at,p.confirmed_at)+make_interval(secs=>GREATEST(60,LEAST(86400,coalesce(nullif(p.document->>'reconcile_interval_seconds','')::int,1800)))*3)
-  ELSE p.confirmed_at END active_until FROM account_identity_session_projection p
+  ELSE p.confirmed_at END active_until FROM projection p
  LEFT JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
- WHERE (($1<>'' AND document->>'endpoint_id'=$1) OR ($2<>'' AND regexp_replace(lower(coalesce(document->>'mac','')),'[^0-9a-f]','','g')=$2))
  UNION ALL
  SELECT to_jsonb(s)||coalesce(s.policy_metadata,'{}'::jsonb),s.updated_at,
-  CASE WHEN s.ended_at IS NULL THEN s.updated_at+interval '90 minutes' ELSE s.updated_at END FROM account_sessions s
- WHERE (($1<>'' AND s.endpoint_id=$1) OR ($2<>'' AND regexp_replace(lower(coalesce(s.mac,'')),'[^0-9a-f]','','g')=$2))
+  CASE WHEN s.ended_at IS NULL THEN s.updated_at+interval '90 minutes' ELSE s.updated_at END FROM sessions s
 ) SELECT document,confirmed_at,active_until FROM candidates ORDER BY confirmed_at DESC,document->>'account_id',document->>'session_id' LIMIT 16`, endpoint, mac)
 	if err != nil {
 		return sharedProfileAccount{}, err
@@ -453,75 +473,7 @@ func (s *DBStore) buildSharedDeviceProfile(ctx context.Context, job sharedDevice
 	now := time.Now().UTC()
 	firstSeen := earliestProfileTime(job.ObservedAt, profile.FirstSeen)
 	lastObserved := latestProfileTime(job.ObservedAt, profile.LastObservedAt)
-	nextTransition := time.Time{}
-	if a := sources.Assessment; a != nil {
-		first, last, expires := parseProfileTime(a.FirstSeen), parseProfileTime(a.LastSeen), parseProfileTime(a.ExpiresAt)
-		firstSeen, lastObserved = earliestProfileTime(firstSeen, first), latestProfileTime(lastObserved, last)
-		profile.EndpointID, profile.IP = firstNonEmpty(job.EndpointID, profile.EndpointID), firstNonEmpty(a.IP, profile.IP)
-		profile.MAC = firstNonEmpty(sharedProfileMACDisplay(job.MAC), profile.MAC)
-		profile.Brand, profile.Model, profile.Role = a.Brand, a.Model, a.Role
-		profile.Confidence, profile.IdentityConflict = a.Confidence, profile.IdentityConflict || a.Ambiguous || len(a.Conflicts) > 0
-		profile.IdentityAssessmentID, profile.IdentityEvidenceID = a.AssessmentID, ""
-		if len(a.Evidence) > 0 {
-			profile.IdentityBasis = a.Evidence[0].Explanation
-		}
-		profile.RuleVersion = a.RuleVersion
-		profile.IdentityAt, profile.IdentityExpiresAt = last, expires
-		profile.IdentityCurrent = expires.After(now) && !a.Ambiguous && !a.BrandReferenceOnly && (a.Status == "likely" || a.Status == "confirmed")
-		profile.IdentityState = "historical"
-		if profile.IdentityCurrent {
-			profile.IdentityState = "supported"
-		}
-		if expires.After(now) {
-			nextTransition = earliestProfileTime(nextTransition, expires)
-		}
-	}
-	if d := sources.Discovery; d != nil {
-		firstSeen, lastObserved = earliestProfileTime(firstSeen, d.ObservedAt), latestProfileTime(lastObserved, d.ObservedAt)
-		profile.EndpointID, profile.IP = firstNonEmpty(profile.EndpointID, job.EndpointID), firstNonEmpty(profile.IP, d.IP)
-		profile.MAC = firstNonEmpty(profile.MAC, sharedProfileMACDisplay(job.MAC))
-		if profile.Role == "" {
-			profile.Role = d.DeviceType
-		}
-		if profile.DisplayName == "" {
-			profile.DisplayName = d.Name
-		}
-		if profile.IdentityAt.IsZero() || d.ObservedAt.After(profile.IdentityAt) {
-			profile.IdentityAt, profile.IdentityExpiresAt = d.ObservedAt, d.ValidUntil
-			profile.IdentityBasis = d.Explanation
-		}
-		if d.ValidUntil.After(now) {
-			profile.IdentityCurrent = true
-			if profile.IdentityState == "reference" {
-				profile.IdentityState = "supported"
-			}
-			nextTransition = earliestProfileTime(nextTransition, d.ValidUntil)
-		}
-	}
-	if shared := sources.Shared; shared != nil {
-		firstSeen, lastObserved = earliestProfileTime(firstSeen, shared.FirstSeen), latestProfileTime(lastObserved, shared.LastSeen)
-		profile.LastSharedAt, profile.LastSharedObservationID = &shared.LastSeen, shared.ObservationID
-		profile.CurrentShared = shared.ExpiresAt.After(now) && shared.WindowEnd.After(now.Add(-20*time.Minute))
-		profile.SharedConfidence = shared.Confidence
-		if profile.Role == "" {
-			profile.Role = "shared_gateway"
-		}
-		if shared.ExpiresAt.After(now) {
-			nextTransition = earliestProfileTime(nextTransition, shared.ExpiresAt)
-		}
-	}
-	if profile.IdentityAt.IsZero() {
-		profile.IdentityAt = lastObserved
-	}
-	if profile.IdentityExpiresAt.IsZero() {
-		profile.IdentityExpiresAt = profile.IdentityAt
-	}
-	if profile.Brand != "" || profile.Model != "" {
-		profile.DisplayName = strings.TrimSpace(strings.Join([]string{profile.Brand, profile.Model}, " "))
-	}
-	if profile.DisplayName == "" {
-		profile.DisplayName = firstNonEmpty(profile.IP, profile.MAC)
-	}
+	profile, firstSeen, lastObserved, nextTransition := applySharedProfileSources(profile, sources, job, firstSeen, lastObserved, now)
 	account, err := s.latestSharedProfileAccount(ctx, profile.EndpointID, profile.MAC)
 	if err != nil {
 		return profile, keys, time.Time{}, false, err
@@ -573,6 +525,114 @@ WHERE sensor_id=$1 AND ip=$2::inet ORDER BY observed_at DESC,event_id DESC LIMIT
 	keys = sharedProfileKeyValues(sensor, profile.CampusID, profile.EndpointID, profile.MAC, profile.IP, profile.VLAN)
 	sort.Slice(keys, func(i, j int) bool { return keys[i][0]+keys[i][1] < keys[j][0]+keys[j][1] })
 	return profile, keys, nextTransition, true, nil
+}
+
+// applySharedProfileSources keeps three meanings apart: IdentityState only says
+// whether the identity evidence is still in force, RouterStatus carries the router
+// confidence, and RoleSource says whether the role was assessed, self-reported by
+// discovery or inferred from a sharing window. Discovery announcements never make an
+// identity current on their own.
+func applySharedProfileSources(profile SharedDeviceProfile, sources sharedProfileSource, job sharedDeviceProfileJob, firstSeen, lastObserved, now time.Time) (SharedDeviceProfile, time.Time, time.Time, time.Time) {
+	nextTransition := time.Time{}
+	if name := sharedProfileName(profile.Brand, profile.Model); name != "" && profile.DisplayName == name {
+		profile.DisplayName = ""
+	}
+	if a := sources.Assessment; a != nil {
+		first, last, expires := parseProfileTime(a.FirstSeen), parseProfileTime(a.LastSeen), parseProfileTime(a.ExpiresAt)
+		firstSeen, lastObserved = earliestProfileTime(firstSeen, first), latestProfileTime(lastObserved, last)
+		profile.EndpointID, profile.IP = firstNonEmpty(job.EndpointID, profile.EndpointID), firstNonEmpty(a.IP, profile.IP)
+		profile.MAC = firstNonEmpty(sharedProfileMACDisplay(job.MAC), profile.MAC)
+		profile.Brand, profile.Model, profile.Role, profile.RoleSource = a.Brand, a.Model, a.Role, ""
+		if a.Role != "" {
+			profile.RoleSource = "assessment"
+		}
+		profile.RouterStatus, profile.BrandReferenceOnly = a.Status, a.BrandReferenceOnly
+		profile.Confidence, profile.IdentityConflict = a.Confidence, profile.IdentityConflict || a.Ambiguous || len(a.Conflicts) > 0
+		profile.IdentityAssessmentID, profile.IdentityEvidenceID = a.AssessmentID, ""
+		if basis := strongestRouterExplanation(a.Evidence); basis != "" {
+			profile.IdentityBasis = basis
+		}
+		profile.RuleVersion = a.RuleVersion
+		profile.IdentityAt, profile.IdentityExpiresAt = last, expires
+		profile.IdentityCurrent = expires.After(now) && !a.Ambiguous
+		profile.IdentityState = "historical"
+		if profile.IdentityCurrent {
+			profile.IdentityState = "supported"
+		}
+		if expires.After(now) {
+			nextTransition = earliestProfileTime(nextTransition, expires)
+		}
+	} else {
+		if profile.RoleSource != "assessment" {
+			profile.Role, profile.RoleSource = "", ""
+		}
+		profile.IdentityCurrent = false
+		profile.IdentityState = "reference"
+		if profile.IdentityAssessmentID != "" {
+			profile.IdentityState = "historical"
+		}
+	}
+	if d := sources.Discovery; d != nil {
+		firstSeen, lastObserved = earliestProfileTime(firstSeen, d.ObservedAt), latestProfileTime(lastObserved, d.ObservedAt)
+		profile.EndpointID, profile.IP = firstNonEmpty(profile.EndpointID, job.EndpointID), firstNonEmpty(profile.IP, d.IP)
+		profile.MAC = firstNonEmpty(profile.MAC, sharedProfileMACDisplay(job.MAC))
+		if profile.Role == "" && d.DeviceType != "" {
+			profile.Role, profile.RoleSource = d.DeviceType, "discovery_hint"
+		}
+		if profile.DisplayName == "" {
+			profile.DisplayName = firstNonEmpty(sharedProfileName(d.Manufacturer, d.ModelName), d.Name)
+		}
+		if profile.IdentityAssessmentID == "" && (profile.IdentityAt.IsZero() || d.ObservedAt.After(profile.IdentityAt)) {
+			profile.IdentityAt, profile.IdentityExpiresAt = d.ObservedAt, d.ValidUntil
+			profile.IdentityBasis = d.Explanation
+		}
+		if d.ValidUntil.After(now) {
+			nextTransition = earliestProfileTime(nextTransition, d.ValidUntil)
+		}
+	}
+	if shared := sources.Shared; shared != nil {
+		firstSeen, lastObserved = earliestProfileTime(firstSeen, shared.FirstSeen), latestProfileTime(lastObserved, shared.LastSeen)
+		profile.LastSharedAt, profile.LastSharedObservationID = &shared.LastSeen, shared.ObservationID
+		profile.CurrentShared = shared.ExpiresAt.After(now) && shared.WindowEnd.After(now.Add(-20*time.Minute))
+		profile.SharedConfidence = shared.Confidence
+		if profile.Role == "" {
+			profile.Role, profile.RoleSource = "shared_gateway", "inferred_shared_gateway"
+		}
+		if shared.ExpiresAt.After(now) {
+			nextTransition = earliestProfileTime(nextTransition, shared.ExpiresAt)
+		}
+	}
+	if profile.IdentityAt.IsZero() {
+		profile.IdentityAt = lastObserved
+	}
+	if profile.IdentityExpiresAt.IsZero() {
+		profile.IdentityExpiresAt = profile.IdentityAt
+	}
+	brand := profile.Brand
+	if profile.BrandReferenceOnly {
+		brand = ""
+	}
+	if name := sharedProfileName(brand, profile.Model); name != "" {
+		profile.DisplayName = name
+	}
+	if profile.DisplayName == "" {
+		profile.DisplayName = firstNonEmpty(profile.IP, profile.MAC)
+	}
+	return profile, firstSeen, lastObserved, nextTransition
+}
+
+func sharedProfileName(brand, model string) string {
+	return strings.TrimSpace(strings.Join([]string{brand, model}, " "))
+}
+
+func strongestRouterExplanation(items []evidence.RouterEvidence) string {
+	best, score := "", -1
+	for _, item := range items {
+		if item.Explanation != "" && item.Score > score {
+			best, score = item.Explanation, item.Score
+		}
+	}
+	return best
 }
 
 func (s *DBStore) publishSharedDeviceProfile(ctx context.Context, job sharedDeviceProfileJob, profile SharedDeviceProfile, keys [][2]string, nextTransition time.Time) error {

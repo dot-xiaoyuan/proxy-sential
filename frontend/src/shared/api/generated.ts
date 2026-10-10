@@ -3305,6 +3305,11 @@ export interface components {
             /** Format: date-time */
             last_shared_at?: string;
             last_shared_observation_id?: string;
+            /** @enum {string} */
+            role_source?: "assessment" | "discovery_hint" | "inferred_shared_gateway";
+            /** @enum {string} */
+            router_status?: "candidate" | "likely" | "confirmed";
+            brand_reference_only: boolean;
             current_shared: boolean;
             shared_confidence: number;
             address_only: boolean;
@@ -6167,6 +6172,7 @@ export interface operations {
                 keyword?: string;
                 role?: string;
                 identity_state?: "supported" | "historical" | "reference";
+                router_status?: "candidate" | "likely" | "confirmed";
                 current_shared?: boolean;
                 account_conflict?: boolean;
                 limit?: number;

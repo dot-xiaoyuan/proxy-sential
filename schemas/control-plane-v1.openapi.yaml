@@ -385,6 +385,7 @@ paths:
         - { name: keyword, in: query, schema: { type: string } }
         - { name: role, in: query, schema: { type: string } }
         - { name: identity_state, in: query, schema: { type: string, enum: [supported, historical, reference] } }
+        - { name: router_status, in: query, schema: { type: string, enum: [candidate, likely, confirmed] } }
         - { name: current_shared, in: query, schema: { type: boolean } }
         - { name: account_conflict, in: query, schema: { type: boolean } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
@@ -3266,7 +3267,7 @@ components:
         last_seen: { type: string, format: date-time }
     SharedDeviceProfile:
       type: object
-      required: [profile_id, identity_state, identity_current, identity_at, identity_expires_at, identity_evidence_id, identity_assessment_id, identity_basis, address_state, current_shared, address_only, confidence, identity_conflict, shared_confidence, latest_account_active, account_conflict, first_seen, last_observed_at, materialized_at]
+      required: [profile_id, brand_reference_only, identity_state, identity_current, identity_at, identity_expires_at, identity_evidence_id, identity_assessment_id, identity_basis, address_state, current_shared, address_only, confidence, identity_conflict, shared_confidence, latest_account_active, account_conflict, first_seen, last_observed_at, materialized_at]
       properties:
         profile_id: { type: string }
         sensor_id: { type: string }
@@ -3293,6 +3294,9 @@ components:
         address_last_activity_at: { type: string, format: date-time, description: Address activity, attributed to archived hardware only with current verified ownership. }
         last_shared_at: { type: string, format: date-time }
         last_shared_observation_id: { type: string }
+        role_source: { type: string, enum: [assessment, discovery_hint, inferred_shared_gateway] }
+        router_status: { type: string, enum: [candidate, likely, confirmed] }
+        brand_reference_only: { type: boolean }
         current_shared: { type: boolean }
         shared_confidence: { type: integer, minimum: 0, maximum: 100 }
         address_only: { type: boolean }
