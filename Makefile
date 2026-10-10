@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-ui deploy-backend deploy-dev package package-airgap deploy-airgap status doctor logs backup rollback
+.PHONY: deploy deploy-ui deploy-backend deploy-dev package package-airgap deploy-airgap status doctor logs backup rollback local-doctor local-pull local-up local-down local-status local-logs local-reset local-test
 
 VERSION ?= $(shell git rev-parse --short HEAD)
 
@@ -35,3 +35,28 @@ deploy-airgap:
 status doctor logs backup rollback:
 	@test -n "$(TARGET)" || (echo "TARGET is required" >&2; exit 2)
 	@ssh -t "$(TARGET)" sudo proxy-sentinelctl $@
+
+# 本地 Zeek 回放工作流：只操作本机 OrbStack，不接触现场。
+local-doctor:
+	@./scripts/local/local-stack.sh doctor
+
+local-pull:
+	@./scripts/local/pull-zeek-30.sh $(PULL_ARGS)
+
+local-up:
+	@./scripts/local/local-stack.sh up $(LOCAL_ARGS)
+
+local-down:
+	@./scripts/local/local-stack.sh down
+
+local-status:
+	@./scripts/local/local-stack.sh status
+
+local-logs:
+	@./scripts/local/local-stack.sh logs $(LOG)
+
+local-reset:
+	@./scripts/local/local-stack.sh reset
+
+local-test:
+	@python3 -m unittest discover -s scripts/local -p 'test_*.py' -v

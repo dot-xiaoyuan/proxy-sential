@@ -1,0 +1,10 @@
+# 本地开发资源覆写：只由 scripts/local/local-stack.sh 使用，不参与现场部署。
+# OrbStack 默认 VM 是 8 vCPU / 8GB，而 storage.yml 给 ClickHouse 预留 8 CPU / 12GB，
+# 这里按本机可承受的范围收敛，避免回放时把 Docker VM 打爆。
+services:
+  postgres:
+    cpus: "2.0"
+    mem_limit: 2g
+  clickhouse:
+    cpus: "6.0"
+    mem_limit: 6g

@@ -1,0 +1,204 @@
+# 本地 Zeek 回放（方案 B）
+
+## 目标
+
+把 `192.168.0.30` 上 Zeek 实采的日志只读拉到本机，灌进本地 PostgreSQL + ClickHouse，
+跑通 `ingest -> 风险物化 -> 读模型 -> 控制面`，让前后端逻辑可以对着真实数据调整。
+
+本流程**只服务本机开发**：
+
+- 对 0.30 只做 `stat` / `tail -c` / `rsync` 读操作，不写它的任何文件、配置、数据库或服务。
+- 不改 `deploy/compose/storage.yml`、不改业务代码；本地镜像与资源限制单独放在
+  `scripts/local/` 与 `deploy/compose/local.yml`。
+- `192.168.0.30` 是开发影子节点，不是现场 `root@222.204.3.184`；本流程不授权、也不执行任何部署。
+
+## 前置条件
+
+| 项 | 要求 |
+| --- | --- |
+| Docker | OrbStack 已启动（`docker context` = `orbstack`） |
+| 内存 | 建议把 OrbStack VM 提到 12GB；默认 8GB 时 `local.yml` 会把 ClickHouse 限制到 6GB |
+| 工具 | `python3`、`jq`、`rsync`、`ssh`、`curl`、`go`、`pnpm` |
+| 磁盘 | `data/` 余量 ≥ 5GB（一次全量快照约 61MB，数据库按事件量增长） |
+| SSH | `ssh root@192.168.0.30` 免密可用（只读账号即可） |
+| 端口 | `25432`、`28123`、`18080` 同一时刻只能有一套本地栈占用 |
+
+先做环境自检：
+
+```sh
+make local-doctor
+```
+
+## 快速开始
+
+```sh
+# 1. 从 0.30 拉一份 Zeek 快照（约 50 秒 / 61MB）
+make local-pull
+
+# 2. 起完整本地栈（首次会构建 Go 二进制与前端产物）
+make local-up
+
+# 3. 查看状态与日志
+make local-status
+make local-logs LOG=ingest
+
+# 4. 停止 / 重置
+make local-down
+make local-reset
+```
+
+浏览器打开 <http://127.0.0.1:18080> 登录。初始管理员账号在
+`deploy/compose/storage.env` 的 `PROXY_SENTINEL_ADMIN_USERNAME` /
+`PROXY_SENTINEL_ADMIN_PASSWORD`（首次 `up` 随机生成，文件已被 gitignore）。
+
+前端热更新调试走本地 API：
+
+```sh
+cd frontend
+VITE_ENABLE_MOCKS=false pnpm dev
+```
+
+## 数据流与目录
+
+```text
+0.30: /opt/proxy-sentinel/data/zeek/logs/current/*.log   (LogAscii::use_json=T，逐行 JSON)
+        | rsync 只读（--append 可对 raw/ 做增量续拉）
+        v
+data/zeek/<sensor>/raw/        原始镜像，跨次拉取累积
+        | 复制，或 zeek_replay.py 按单一全局偏移量平移时间
+        v
+data/zeek/<sensor>/replay/     ingest 输入，每次 pull 重建
+        +-- manifest.json      文件清单、时间范围、平移量、总行数、异常行数
+        | proxy-sentinel ingest run --sensor-id <sensor> --zeek-* / --device-signals
+        v
+ClickHouse normalized_events（7 天 TTL）+ normalized_event_features
+        | risk materialize --once --window=<跨度>   （历史校准）
+        | read-model run --lane realtime|coarse|recognition|identity
+        v
+PostgreSQL 读模型 / 风险快照 / 运行账本
+        v
+control-plane serve --sensor-id <sensor> --frontend-dir frontend/dist
+```
+
+`raw/` 始终是原始数据；`replay/` 才是 ingest 的输入，因此时间平移不会污染原始镜像。
+
+## 命令参考
+
+### scripts/local/pull-zeek-30.sh
+
+| 参数 | 说明 |
+| --- | --- |
+| `--target USER@HOST` | 远端地址，默认 `root@192.168.0.30` |
+| `--remote-dir DIR` | 远端日志目录，默认 `/opt/proxy-sentinel/data/zeek/logs/current` |
+| `--source-dir DIR` | 离线模式：从本地目录取文件，不走 SSH（测试与离线回放） |
+| `--dest DIR` | 本地目标目录，默认 `<repo>/data/zeek/<sensor-id>` |
+| `--sensor-id ID` | 传感器标识，默认 `office-30`，必须与本地栈一致 |
+| `--files "a.log b.log"` | 覆盖默认清单 |
+| `--with-ttl` | 额外拉 `device-signals/ttl.jsonl`（默认关闭，该文件约 234MB） |
+| `--ttl-bytes N` | 拉 TTL 流时只取尾部 N 字节，例如 `50M` |
+| `--shift-to-now` | 生成时间平移到"当前"的 `replay/` |
+| `--append` | `raw/` 使用 `rsync --append` 增量续拉 |
+| `--dry-run` | 只打印将要拉取的文件与字节数 |
+
+默认文件清单：`dhcp software mdns nbns llmnr conn dns http ssl x509 snmp lldp ssdp proxy_transactions`。
+不存在的文件与 0 字节文件（例如当前为空的 `proxy_transactions.log`）会记入 manifest 的 `skipped`。
+
+### scripts/local/local-stack.sh
+
+| 子命令 | 说明 |
+| --- | --- |
+| `doctor` | 自检 Docker、工具、磁盘、端口、0.30 可达性、前端产物 |
+| `up` | 生成配置 -> 存储 -> 迁移 -> 统计回填 -> 管理员 -> ingest -> 风险 -> 4 条读模型 lane -> 控制面 |
+| `down` | 逆序停止进程并关闭容器，保留 `data/db` |
+| `status` | 容器、进程、`/readyz`、事件/风险/运行账本计数 |
+| `logs [名]` | 查看 `data/logs/<名>.log`，不带名字则列出全部日志 |
+| `reset` | 停栈、删除 `data/db`、重新拉起 |
+| `purge --yes` | 删除 `data/db`、`data/zeek`、`data/run`、`data/logs` 与运行时配置 |
+
+选项：`--force`（up/reset 无条件重建数据库）、`--frontend-dir DIR`（复用已有前端产物）、
+`--no-build`（跳过 Go 二进制重建）。
+
+## 时间戳策略
+
+30 的 Zeek 日志时间戳是采集时的真实时间，默认**不平移**（faithful 回放）。为保证读模型能覆盖历史数据，
+`local-up` 会把 `PROXY_SENTINEL_ACTIVITY_V3_CUTOVER` 设为快照最早事件时间前 1 小时
+（`internal/store/activity_v3_read_model.go` 只在首次插入该状态，必须在 realtime lane 首次启动前设置）。
+
+如果快照跨度超过 6 天，或希望页面数据看起来"新鲜"，使用：
+
+```sh
+make local-pull PULL_ARGS="--shift-to-now"
+```
+
+时间平移使用**单一全局偏移量**（不是逐文件），保留跨文件相对顺序与文件内先后关系。
+注意：平移后的时间轴与 0.30 不再对应，跨系统比对必须用未平移的快照。
+
+## 已知约束
+
+1. **7 天 TTL**。`normalized_events` 是 `TTL toDateTime(timestamp) + INTERVAL 7 DAY`
+   （`migrations/clickhouse/001_production_schema.sql`），比 7 天更早的事件插入后仍会被删除。
+   回放窗口只能取近 7 天。
+2. **重新灌库必须 reset**。`normalized_events` 是纯 `MergeTree`，没有按 `event_id` 去重；
+   ingest 的检查点按 `(路径, dev, inode)` 记录。因此同一份快照重复 ingest 会产生重复事件。
+   `up` 会比对 `replay/manifest.json` 的 sha256 与 `data/run/last-ingest.json`：
+   不一致时直接报错，要求先 `reset` 或加 `--force`。
+3. **sensor_id 必须一致**。0.30 是 `office-30`，本地 ingest、风险物化、4 条 lane、控制面与页面过滤
+   都使用同一个 `PROXY_SENTINEL_SENSOR_ID`，否则页面查不到数据。
+4. **风险窗口本地放大**。`risk materialize` 只接受 `10m` / `1h` / `24h` / `7d` 四档
+   （`internal/materialize.queryWindow`），且 `--window` 是 Go duration，7 天要写成 `168h`；
+   生产 unit 用 `10m`，用它回放历史数据会被 `ExpireRiskSnapshots(now-window-1m)` 立刻清掉。
+   `local-up` 因此按快照跨度选取能覆盖整段数据的最大档位
+   （≤10 分钟取 `10m`，≤1 小时取 `1h`，≤24 小时取 `24h`，否则取 `168h`）。
+   这是对生产语义的有意偏离，只影响本地。
+5. **同一时刻只能跑一套栈**。容器名与端口固定，切换检出（例如主检出与 worktree）前先 `local-down`。
+6. **统计读模型回填**。空库必须执行 `migrate --backfill-application-read-model`，否则
+   `/api/v1/overview` 会返回 `normalized event feature historical backfill is not completed`。
+7. **数据合规**。Zeek 日志含 MAC、主机名、SNI、内网 IP；`data/` 已被 gitignore，
+   不要把快照、日志或本地口令提交到仓库，也不要复制到受管环境。
+8. **读模型开关必须与现场一致**。现场 realtime/coarse 单元带
+   `PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3=true`，control-plane 由 systemd drop-in 追加
+   `PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3=true` 与 `PROXY_SENTINEL_RECOGNITION_SUMMARY_V1=true`。
+   `local-up` 已按同样方式设置；漏掉会让 `/api/v1/overview` 一直返回
+   `activity statistics refresh is older than three minutes`（旧的 V2 图表游标不再更新）。
+   `local-up` 还会等 `read_model_jobs` 排空后再起控制面，避免读模型追平期间总览不可用。
+9. **回放快照会随时间变旧**。V3 健康检查在 worker 无积压且心跳新鲜时按 lag=0 判定，
+   因此快照排空后总览可用；但 `collector` 等新鲜度指标会显示 `no_data`/`idle`，
+   这是静态快照的正常表现，不是故障。
+
+## 验收
+
+离线自动化：
+
+```sh
+make local-test
+```
+
+端到端（需要真实拉取）：
+
+1. `make local-doctor` 通过，`0.30 SSH` 显示可达。
+2. `make local-pull` 输出的 `异常行=0`，`replay/manifest.json` 文件数与行数合理。
+3. `make local-up` 后 `/readyz` 返回 200。
+4. `make local-status` 中 `normalized_events` 大于 0，`risk_snapshots` 大于 0。
+5. 登录后检查 `/api/v1/overview`、`/api/v1/events`、`/api/v1/activity/overview`、
+   `/api/v1/dpi/overview`、设备相关页面有 office-30 的数据。
+6. 对 0.30 无副作用：拉取前后 `data/zeek/logs/current` 只增不减，`proxy-sentinel*` 服务状态不变。
+
+## 回滚
+
+```sh
+make local-down                       # 停本地栈
+./scripts/local/local-stack.sh purge --yes   # 删本地数据库、快照与配置
+```
+
+代码层面直接丢弃本分支或 worktree 即可；本流程不触碰 0.30 与现场 184。
+
+## 常见故障
+
+| 现象 | 处理 |
+| --- | --- |
+| `Docker 守护进程不可用` | `open -a OrbStack` 后重试 |
+| `本地库已有 N 条事件，但回放快照已变化` | `make local-reset`，或 `local-up LOCAL_ARGS=--force` |
+| 端口被占 | 另一套检出还在跑，先在其目录执行 `make local-down` |
+| `未发现回放快照，跳过 ingest` | 先执行 `make local-pull`，再 `make local-up` |
+| 总览接口返回非 200 | 读模型仍在构建，稍后 `make local-status` 复查；必要时 `make local-logs LOG=lane-realtime` |
+| 快照跨度超过 6 天 | 加 `PULL_ARGS="--shift-to-now"` 重新拉取 |
