@@ -1,4 +1,4 @@
-import type { FourKSyncResult, IdentityBridge, IdentityBridgeRunPage, ManagedIdentityConfiguration, ManagedIdentitySource, SRun4KIntegration, SRun4KSyncResult, SRun4KTestResult } from "./types"
+import type { FourKSyncResult, IdentityBridge, IdentityBridgeRunPage, ManagedIdentityConfiguration, ManagedIdentitySource, SRun4KIntegration, SRun4KIntegrationRequest, SRun4KSyncResult, SRun4KTestResult } from "./types"
 import { awaitOperationTask, clearOperationTasks, isOperationTask, type OperationTask } from './operationTasks'
 import type {
  FourKDatabaseConfig, FourKDatabaseResponse, FourKAuthorizationCheck,
@@ -227,7 +227,7 @@ export const api = {
   organization: () => request<Organization>('/organization'),
   organizationList: <K extends OrganizationKind>(kind:K,query:ListQuery={}) => request<OrganizationListResponse<K>>(`/organization${search({...query,kind})}`),
   saveOrganization: <T>(kind:string,payload:T) => request<T>(`/organization/${kind}`,{method:'POST',body:JSON.stringify(payload)}),
-  actionConnectors: () => request<{items:ActionConnector[];global_stop:boolean}>('/actions/connectors'),
+  actionConnectors: () => request<{items:ActionConnector[];global_stop:boolean;read_only:boolean}>('/actions/connectors'),
   saveActionConnector: (payload:ActionConnector & {secret?:string}) => request<ActionConnector>('/actions/connectors',{method:'POST',body:JSON.stringify(payload)}),
   identitySource: (id: string) => request<ManagedIdentitySource>(`/actions/connectors/${encodeURIComponent(id)}/identity-source`),
   saveIdentitySource: (id: string, value: {configuration: ManagedIdentityConfiguration; config_version: number}) => request<ManagedIdentitySource>(`/actions/connectors/${encodeURIComponent(id)}/identity-source`, {method: 'PUT', body: JSON.stringify(value)}),
@@ -237,9 +237,10 @@ export const api = {
   syncFourK: (id: string, source = 'srun-office') => request<FourKSyncResult>(`/actions/connectors/${encodeURIComponent(id)}/4k-sync`, { method: 'POST', body: JSON.stringify({ source }) }),
   srun4KIntegrations: () => request<{items:SRun4KIntegration[]}>('/integrations/srun4k'),
   srun4KIntegration: (id: string) => request<SRun4KIntegration>(`/integrations/srun4k/${encodeURIComponent(id)}`),
-  createSRun4KIntegration: (value: {host:string;reconcile_interval_hours?:number}) => request<SRun4KIntegration>('/integrations/srun4k', {method:'POST',body:JSON.stringify(value)}),
-  updateSRun4KIntegration: (id: string, value: {host:string;reconcile_interval_hours?:number}) => request<SRun4KIntegration>(`/integrations/srun4k/${encodeURIComponent(id)}`, {method:'PUT',body:JSON.stringify(value)}),
+  createSRun4KIntegration: (value: SRun4KIntegrationRequest) => request<SRun4KIntegration>('/integrations/srun4k', {method:'POST',body:JSON.stringify(value)}),
+  updateSRun4KIntegration: (id: string, value: SRun4KIntegrationRequest) => request<SRun4KIntegration>(`/integrations/srun4k/${encodeURIComponent(id)}`, {method:'PUT',body:JSON.stringify(value)}),
   testSRun4KIntegration: (id: string) => request<SRun4KTestResult>(`/integrations/srun4k/${encodeURIComponent(id)}/test`, {method:'POST'}),
+  refreshSRun4KAuthorization: (id: string) => request<SRun4KIntegration>(`/integrations/srun4k/${encodeURIComponent(id)}/authorization`, {method:'POST'}),
   syncSRun4KIntegration: (id: string) => request<SRun4KSyncResult>(`/integrations/srun4k/${encodeURIComponent(id)}/sync`, {method:'POST'}),
   identityBridge: () => request<IdentityBridge>('/integrations/identity/bridge'),
   updateIdentityBridge: (host:string) => request<{bridge_id:string;host:string;config_version:number;state:string}>('/integrations/identity/bridge',{method:'PUT',body:JSON.stringify({host})}),

@@ -80,6 +80,34 @@ func ReadApplicationCredentials(ctx context.Context, c AuthorizationDatabase) (A
 	return result, nil
 }
 
+// PingAuthorizationDatabase verifies that the deployment-provisioned read-only
+// account can reach the configured database without querying authorization.
+func PingAuthorizationDatabase(ctx context.Context, c AuthorizationDatabase) error {
+	if c.Validate() != nil || c.Password == "" {
+		return fmt.Errorf("4K database configuration incomplete")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	cfg := mysql.NewConfig()
+	cfg.User = c.Username
+	cfg.Passwd = c.Password
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+	cfg.DBName = c.Database
+	cfg.Timeout = 2 * time.Second
+	cfg.ReadTimeout = 2 * time.Second
+	cfg.WriteTimeout = 2 * time.Second
+	if c.TLS {
+		cfg.TLSConfig = "true"
+	}
+	db, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		return fmt.Errorf("4K database unavailable")
+	}
+	defer db.Close()
+	return db.PingContext(ctx)
+}
+
 type credentialQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }

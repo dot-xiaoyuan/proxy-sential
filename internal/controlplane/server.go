@@ -291,6 +291,12 @@ func Serve(opts Options) error {
 		go server.runProxyProtocol(ctx)
 		go server.runSRun4KScheduler(ctx)
 	}
+	if server.operations != nil && server.operations.db != nil {
+		// The read-only control plane may refresh reference directories from the
+		// committed 4K identity host. This only performs read-only northbound
+		// requests and writes a local directory snapshot plus audit record.
+		go server.runManagedSRunGroupScheduler(ctx)
+	}
 	if server.applications != nil && !opts.ReadOnly {
 		go server.applications.Run(ctx)
 	}
@@ -544,6 +550,10 @@ func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) bool {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+	if path == "/integrations/identity/bridge/catalog-snapshots" && r.Method == http.MethodPost {
+		s.handleIdentityBridgeCatalogSnapshot(w, r)
+		return
+	}
 	if path == "/integrations/product-policy/snapshots" && r.Method == http.MethodPost {
 		s.handleProductPolicySnapshot(w, r)
 		return
@@ -624,7 +634,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "permission_denied", "required permission: "+permission)
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) {
 		writeError(w, http.StatusForbidden, "read_only", "mutating operations are disabled by the global read-only switch")
 		return
 	}

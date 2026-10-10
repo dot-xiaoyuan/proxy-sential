@@ -128,7 +128,7 @@ func (s *Server) actionReadPostgres(w http.ResponseWriter, r *http.Request) {
 				fail(err)
 				return
 			}
-			writeJSON(w, 200, map[string]any{"items": items, "global_stop": stop})
+			writeJSON(w, 200, map[string]any{"items": items, "global_stop": stop, "read_only": s.readOnly})
 			return
 		}
 	} else {

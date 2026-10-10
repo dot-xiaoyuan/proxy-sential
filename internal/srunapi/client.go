@@ -29,6 +29,12 @@ type Client struct {
 	credentials         func(context.Context) (string, string, error)
 }
 
+func (c *Client) CloseIdleConnections() {
+	if c != nil && c.http != nil {
+		c.http.CloseIdleConnections()
+	}
+}
+
 func New(base, appID, secret string, client *http.Client) (*Client, error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {

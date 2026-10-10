@@ -1821,6 +1821,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/srun4k/{id}/authorization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["refreshSRun4KAuthorization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/srun4k/{id}/status": {
         parameters: {
             query?: never;
@@ -3283,6 +3299,11 @@ export interface components {
             brand?: string;
             model?: string;
             role?: string;
+            /** @enum {string} */
+            role_source?: "assessment" | "discovery_hint" | "inferred_shared_gateway";
+            /** @enum {string} */
+            router_status?: "candidate" | "likely" | "confirmed";
+            brand_reference_only: boolean;
             confidence: number;
             identity_conflict: boolean;
             /** @enum {string} */
@@ -3305,11 +3326,6 @@ export interface components {
             /** Format: date-time */
             last_shared_at?: string;
             last_shared_observation_id?: string;
-            /** @enum {string} */
-            role_source?: "assessment" | "discovery_hint" | "inferred_shared_gateway";
-            /** @enum {string} */
-            router_status?: "candidate" | "likely" | "confirmed";
-            brand_reference_only: boolean;
             current_shared: boolean;
             shared_confidence: number;
             address_only: boolean;
@@ -3505,13 +3521,31 @@ export interface components {
             controls: number;
         };
         SRun4KIntegrationRequest: {
-            host: string;
+            /**
+             * @deprecated
+             * @description Legacy single-host input; maps to all data/API endpoints.
+             */
+            host?: string;
+            authorization_database_host: string;
+            online_redis_host: string;
+            catalog_redis_host: string;
+            /** @description Optional until the event transport has been connected and accepted. */
+            event_redis_host?: string;
+            northbound_api_host: string;
             /** @default 6 */
             reconcile_interval_hours: number;
         };
         SRun4KIntegration: {
             connector_id: string;
             host: string;
+            authorization_database_host?: string;
+            online_redis_host?: string;
+            catalog_redis_host?: string;
+            event_redis_host?: string;
+            northbound_api_host?: string;
+            authorization_ready?: boolean;
+            /** Format: date-time */
+            authorization_refreshed_at?: string;
             source: string;
             sensor_id: string;
             reconcile_interval_hours: number;
@@ -3523,7 +3557,11 @@ export interface components {
                 /** @enum {string} */
                 authorization_database: "pending" | "healthy" | "failed";
                 /** @enum {string} */
-                redis: "pending" | "healthy" | "failed";
+                online_redis: "pending" | "healthy" | "failed";
+                /** @enum {string} */
+                catalog_redis: "pending" | "healthy" | "failed";
+                /** @enum {string} */
+                event_redis: "pending" | "healthy" | "failed" | "interrupted" | "waiting";
                 /** @enum {string} */
                 northbound_api: "pending" | "healthy" | "failed";
                 /** @enum {string} */
@@ -3624,6 +3662,17 @@ export interface components {
             runtime: components["schemas"]["IdentityBridgeRuntime"];
             /** Format: date-time */
             checked_at: string;
+            read_only: boolean;
+            four_k_address?: components["schemas"]["FourKIdentityAddress"];
+        };
+        /** @description Single address owner for a running identity bridge. Only a committed active host is published; desired hosts and event-queue hosts are not substituted. */
+        FourKIdentityAddress: {
+            host: string;
+            config_version: number;
+            source: string;
+            sensor_id: string;
+            /** @enum {string} */
+            configuration_path: "/integrations/identity/bridge";
         };
         IdentityBridgeConfig: {
             bridge_id: string;
@@ -7435,6 +7484,8 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["ActionConnector"][];
                         global_stop: boolean;
+                        /** @description Global application write protection; does not disable the authenticated identity-bridge host update. */
+                        read_only: boolean;
                     };
                 };
             };
@@ -8558,6 +8609,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
+            };
+        };
+    };
+    refreshSRun4KAuthorization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Northbound authorization re-read from the read-only authorization table, verified against the configured API, and stored encrypted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SRun4KIntegration"];
+                };
+            };
+            /** @description Authorization refresh failed without replacing the existing credential. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

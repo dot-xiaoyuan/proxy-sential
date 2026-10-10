@@ -187,15 +187,23 @@ func (s *Server) handleProductPolicySnapshot(w http.ResponseWriter, r *http.Requ
 var errProductPolicySnapshotConflict = errors.New("snapshot identity or observation time already refers to different content")
 
 func commitProductPolicySnapshot(ctx context.Context, db *sql.DB, snapshotID string, snapshot productpolicy.Snapshot) (bool, string, error) {
-	document, err := json.Marshal(snapshot)
-	if err != nil {
-		return false, "", err
-	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, "", err
 	}
 	defer tx.Rollback()
+	created, resolvedID, err := commitProductPolicySnapshotTx(ctx, tx, snapshotID, snapshot)
+	if err != nil {
+		return false, "", err
+	}
+	return created, resolvedID, tx.Commit()
+}
+
+func commitProductPolicySnapshotTx(ctx context.Context, tx *sql.Tx, snapshotID string, snapshot productpolicy.Snapshot) (bool, string, error) {
+	document, err := json.Marshal(snapshot)
+	if err != nil {
+		return false, "", err
+	}
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0)),pg_advisory_xact_lock(hashtextextended($2,0)),pg_advisory_xact_lock(hashtextextended($3,0))`, "product-policy-source:"+snapshot.Source, "product-policy-id:"+snapshot.Source+":"+snapshotID, "product-policy-hash:"+snapshot.Source+":"+snapshot.ContentHash); err != nil {
 		return false, "", err
 	}
@@ -205,7 +213,7 @@ func commitProductPolicySnapshot(ctx context.Context, db *sql.DB, snapshotID str
 		if existingHash != snapshot.ContentHash {
 			return false, "", errProductPolicySnapshotConflict
 		}
-		return false, snapshotID, tx.Commit()
+		return false, snapshotID, nil
 	}
 	if err != sql.ErrNoRows {
 		return false, "", err
@@ -216,7 +224,7 @@ func commitProductPolicySnapshot(ctx context.Context, db *sql.DB, snapshotID str
 		if observedHash != snapshot.ContentHash {
 			return false, "", errProductPolicySnapshotConflict
 		}
-		return false, observedID, tx.Commit()
+		return false, observedID, nil
 	}
 	if err != sql.ErrNoRows {
 		return false, "", err
@@ -224,7 +232,7 @@ func commitProductPolicySnapshot(ctx context.Context, db *sql.DB, snapshotID str
 	var duplicateID string
 	err = tx.QueryRowContext(ctx, `SELECT snapshot_id FROM product_policy_snapshots WHERE source=$1 AND content_hash=$2`, snapshot.Source, snapshot.ContentHash).Scan(&duplicateID)
 	if err == nil {
-		return false, duplicateID, tx.Commit()
+		return false, duplicateID, nil
 	}
 	if err != sql.ErrNoRows {
 		return false, "", err
@@ -237,7 +245,7 @@ func commitProductPolicySnapshot(ctx context.Context, db *sql.DB, snapshotID str
 		return false, "", err
 	}
 	if newerExists {
-		return true, snapshotID, tx.Commit()
+		return true, snapshotID, nil
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE product_catalog SET active=false,updated_at=now(),snapshot_id=$2 WHERE source=$1`, snapshot.Source, snapshotID); err != nil {
 		return false, "", err
@@ -257,7 +265,7 @@ func commitProductPolicySnapshot(ctx context.Context, db *sql.DB, snapshotID str
 			return false, "", err
 		}
 	}
-	return true, snapshotID, tx.Commit()
+	return true, snapshotID, nil
 }
 
 func (s *Server) handleProductPolicyCatalog(w http.ResponseWriter, r *http.Request) {

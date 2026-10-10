@@ -51,13 +51,17 @@ func TestSRunReadProbeCancellationRetainsCause(t *testing.T) {
 	defer db.Close()
 	reader := &srunFailureAudit{}
 	s := &Server{operations: &operationsState{db: db}, reader: reader}
-	columns := []string{"connector_id", "host", "source", "sensor_id", "reconcile_interval_hours", "event_channel_state", "connection_state", "last_error", "last_tested_at", "last_synced_at", "identity_accounts", "identity_sessions", "products", "groups_count", "controls", "last_identity_poll_at", "last_identity_event_at"}
-	mock.ExpectQuery(`SELECT connector_id,host,source,sensor_id`).WithArgs("one").WillReturnRows(sqlmock.NewRows(columns).AddRow("one", "192.0.2.1", "srun4k:one", "one", 6, "waiting", "healthy", "", nil, nil, 0, 0, 0, 0, 0, nil, nil))
+	mock.ExpectQuery(`SELECT connector_id,host,authorization_database_host`).WithArgs("one").WillReturnRows(srun4KTestIntegrationRow(false))
 	mock.ExpectQuery(`SELECT nextval`).WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(7)))
+	mock.ExpectQuery(`SELECT connector_id,host,authorization_database_host`).WithArgs("one").WillReturnRows(srun4KTestIntegrationRow(false))
 	mock.ExpectQuery(`SELECT public_config,encrypted_password`).WithArgs("192.0.2.1").WillReturnError(fmt.Errorf("authorization read: %w", context.Canceled))
 	result, err := s.testSRun4K(context.Background(), "one")
 	if result != nil || !errors.Is(err, context.Canceled) || err.Error() != "4K操作已取消，请重试" {
-		t.Fatalf("cancellation cause/public message lost: %v %v", result, err)
+		var cause error
+		if readErr, ok := err.(*srun4KReadTestError); ok {
+			cause = readErr.cause
+		}
+		t.Fatalf("cancellation cause/public message lost: %v %T %#v cause=%v (isCanceled=%t; pending=%v)", result, err, err, cause, errors.Is(err, context.Canceled), mock.ExpectationsWereMet())
 	}
 	if len(reader.entries) != 1 || reader.entries[0].Outcome != "cancelled" || reader.entries[0].Action != "integration.srun4k.test" {
 		t.Fatalf("probe cancellation audit=%+v", reader.entries)

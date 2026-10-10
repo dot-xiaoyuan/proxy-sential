@@ -17,7 +17,8 @@ func TestIdentityBridgeRuntimeConfigIsTemplateBoundAndSecretFree(t *testing.T) {
 	}
 	defer db.Close()
 	now := time.Now().UTC()
-	mock.ExpectQuery(`SELECT desired_host,config_version,updated_by,updated_at`).WithArgs(ncuIdentityBridgeID).WillReturnRows(sqlmock.NewRows([]string{"desired_host", "config_version", "updated_by", "updated_at"}).AddRow("222.204.3.224", 3, "operator", now))
+	mock.ExpectQuery(`SELECT desired_host,desired_event_redis_addr,config_version,updated_by,updated_at`).WithArgs(ncuIdentityBridgeID).WillReturnRows(sqlmock.NewRows([]string{"desired_host", "desired_event_redis_addr", "config_version", "updated_by", "updated_at"}).AddRow("222.204.3.224", "222.204.3.227:16384", 3, "operator", now))
+	mock.ExpectQuery(`SELECT catalog_redis_host FROM srun4k_integrations`).WithArgs("222.204.3.224").WillReturnRows(sqlmock.NewRows([]string{"catalog_redis_host"}).AddRow("192.0.2.222"))
 	server := &Server{
 		identityBridge: IdentityBridgeDefaults{},
 		identityIngest: &identityIngestState{key: "identity-token"},
@@ -31,7 +32,7 @@ func TestIdentityBridgeRuntimeConfigIsTemplateBoundAndSecretFree(t *testing.T) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	body := recorder.Body.String()
-	for _, expected := range []string{"222.204.3.224:16380", "222.204.3.227:16384", "list:rad_online", "proxy-sentinel-processing", `"reconcile_interval_seconds":1800`} {
+	for _, expected := range []string{"222.204.3.224:16380", "192.0.2.222:16382", "222.204.3.227:16384", "list:rad_online", "proxy-sentinel-processing", `"reconcile_interval_seconds":1800`} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("missing %q in %s", expected, body)
 		}

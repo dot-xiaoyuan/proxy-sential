@@ -78,22 +78,21 @@ func TestManualSRunSyncFailureIsAuditedAsSync(t *testing.T) {
 	defer db.Close()
 	reader := &srunFailureAudit{}
 	s := &Server{operations: &operationsState{db: db}, reader: reader}
-	columns := []string{"connector_id", "host", "source", "sensor_id", "reconcile_interval_hours", "event_channel_state", "connection_state", "last_error", "last_tested_at", "last_synced_at", "identity_accounts", "identity_sessions", "products", "groups_count", "controls", "last_identity_poll_at", "last_identity_event_at"}
 	for i := 0; i < 2; i++ {
-		mock.ExpectQuery(`SELECT connector_id,host,source,sensor_id`).WithArgs("one").WillReturnRows(sqlmock.NewRows(columns).AddRow("one", "192.0.2.1", "srun4k:one", "one", 6, "waiting", "healthy", "", nil, nil, 0, 0, 0, 0, 0, nil, nil))
+		mock.ExpectQuery(`SELECT connector_id,host,authorization_database_host`).WithArgs("one").WillReturnRows(srun4KTestIntegrationRow(true))
 		if i == 0 {
 			mock.ExpectQuery(`SELECT nextval`).WillReturnRows(sqlmock.NewRows([]string{"nextval"}).AddRow(int64(1)))
 		}
 	}
-	mock.ExpectQuery(`SELECT public_config,encrypted_password`).WithArgs("192.0.2.1").WillReturnError(errors.New("isolated authorization read failed"))
+	mock.ExpectQuery(`SELECT northbound_app_id,encrypted_northbound_app_secret`).WithArgs("one").WillReturnError(errors.New("stored credential unavailable"))
 	mock.ExpectExec(`UPDATE srun4k_integrations SET connection_state='failed',last_error=\$2,last_tested_at=now\(\)`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE srun4k_integrations SET connection_state='failed',last_error=\$2,last_health_result_order=\$3,updated_at=now\(\)`).WithArgs("one", "authorization_database: isolated authorization read failed", int64(1), "192.0.2.1", "srun4k:one", "one", 6).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE srun4k_integrations SET connection_state='failed',last_error=\$2,last_health_result_order=\$3,updated_at=now\(\)`).WillReturnResult(sqlmock.NewResult(0, 1))
 	result, err := s.syncSRun4K(context.Background(), "one")
-	if err == nil || result != nil || err.Error() != "4K授权库只读检查失败" {
+	if err == nil || result != nil || err.Error() != "4K北向授权不可用" {
 		t.Fatalf("original sync error changed: result=%v err=%v", result, err)
 	}
 	if len(reader.entries) != 2 || reader.entries[0].Action != "integration.srun4k.test" || reader.entries[1].Action != "integration.srun4k.sync" || reader.entries[1].Outcome != "failed" {
-		t.Fatalf("manual sync failure audit=%+v", reader.entries)
+		t.Fatalf("manual sync failure audit=%+v pending=%v", reader.entries, mock.ExpectationsWereMet())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

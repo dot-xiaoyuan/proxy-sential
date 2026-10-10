@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -47,6 +48,7 @@ func stringValue(values map[string]any, key string) string {
 }
 
 func fourKIdentityDirectory(snapshot store.IdentitySnapshot) (accounts, groups, vlans []fourKDirectoryItem) {
+	accounts, groups, vlans = []fourKDirectoryItem{}, []fourKDirectoryItem{}, []fourKDirectoryItem{}
 	accountSet, groupSet, vlanSet := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, event := range snapshot.Events {
 		if value := stringValue(event.Subject, "account_id"); value != "" {
@@ -78,8 +80,23 @@ func fourKIdentityDirectory(snapshot store.IdentitySnapshot) (accounts, groups, 
 // not translate product control rows into Sentinel strategies or actions: just
 // like dpi-analyze, those snapshots only supply match-directory information.
 func loadFourKDirectory(ctx context.Context, db *sql.DB, source string) (fourKDirectory, error) {
+	return loadFourKDirectoryCatalogScope(ctx, db, source, "")
+}
+
+func loadFourKDirectoryCatalogScope(ctx context.Context, db *sql.DB, source, catalogPrefix string) (fourKDirectory, error) {
+	return loadFourKDirectoryWithGroupSource(ctx, db, source, catalogPrefix, source)
+}
+
+func managedGroupCatalogSource(source string, version int64) string {
+	if source == "" || version < 1 {
+		return ""
+	}
+	return fmt.Sprintf("%s:bridge-v%d", source, version)
+}
+
+func loadFourKDirectoryWithGroupSource(ctx context.Context, db *sql.DB, source, catalogPrefix, groupSource string) (fourKDirectory, error) {
 	directory := fourKDirectory{Source: source, Products: []fourKDirectoryItem{}, Groups: []fourKDirectoryItem{}, Accounts: []fourKDirectoryItem{}, VLANs: []fourKDirectoryItem{}}
-	rows, err := db.QueryContext(ctx, `SELECT product_id,name FROM product_catalog WHERE source=$1 AND active ORDER BY name,product_id`, source)
+	rows, err := db.QueryContext(ctx, `SELECT product_id,name FROM product_catalog WHERE source=$1 AND active AND ($2='' OR snapshot_id LIKE $2) ORDER BY name,product_id`, source, catalogPrefix)
 	if err != nil {
 		return directory, err
 	}
@@ -98,7 +115,7 @@ func loadFourKDirectory(ctx context.Context, db *sql.DB, source string) (fourKDi
 	rows.Close()
 
 	var productObserved time.Time
-	err = db.QueryRowContext(ctx, `SELECT observed_at,(SELECT count(*) FROM product_control_catalog WHERE source=$1 AND active) FROM product_policy_snapshots WHERE source=$1 ORDER BY observed_at DESC,received_at DESC LIMIT 1`, source).Scan(&productObserved, &directory.Controls)
+	err = db.QueryRowContext(ctx, `SELECT observed_at,(SELECT count(*) FROM product_control_catalog WHERE source=$1 AND active AND ($2='' OR snapshot_id LIKE $2)) FROM product_policy_snapshots WHERE source=$1 AND ($2='' OR snapshot_id LIKE $2) ORDER BY observed_at DESC,received_at DESC LIMIT 1`, source, catalogPrefix).Scan(&productObserved, &directory.Controls)
 	if err != nil && err != sql.ErrNoRows {
 		return directory, err
 	}
@@ -121,7 +138,12 @@ func loadFourKDirectory(ctx context.Context, db *sql.DB, source string) (fourKDi
 		return directory, err
 	}
 	directory.Accounts, directory.Groups, directory.VLANs = fourKIdentityDirectory(snapshot)
-	groupRows, groupErr := db.QueryContext(ctx, `SELECT group_id,name FROM srun4k_group_catalog WHERE source=$1 AND active`, source)
+	// The identity snapshot tells us which groups are currently online, but it
+	// is not a directory.  Load the complete active northbound group catalog so
+	// an operator can choose a real group before any member of that group happens
+	// to be online.  Merge the snapshot IDs as a fallback for a just-arrived
+	// identity event whose catalog refresh has not completed yet.
+	groupRows, groupErr := db.QueryContext(ctx, `SELECT group_id,name FROM srun4k_group_catalog WHERE source=$1 AND active ORDER BY group_id`, groupSource)
 	if groupErr == nil {
 		names := map[string]string{}
 		for groupRows.Next() {
@@ -134,6 +156,21 @@ func loadFourKDirectory(ctx context.Context, db *sql.DB, source string) (fourKDi
 		for i := range directory.Groups {
 			directory.Groups[i].Name = names[directory.Groups[i].ID]
 		}
+		known := map[string]bool{}
+		for _, item := range directory.Groups {
+			known[item.ID] = true
+		}
+		for id, name := range names {
+			if !known[id] {
+				directory.Groups = append(directory.Groups, fourKDirectoryItem{ID: id, Name: name})
+			}
+		}
+		sort.Slice(directory.Groups, func(i, j int) bool {
+			if directory.Groups[i].Name != directory.Groups[j].Name {
+				return directory.Groups[i].Name < directory.Groups[j].Name
+			}
+			return directory.Groups[i].ID < directory.Groups[j].ID
+		})
 	}
 	return directory, nil
 }
@@ -145,16 +182,50 @@ func (s *Server) handle4KDirectory(w http.ResponseWriter, r *http.Request) {
 	}
 	source := strings.TrimSpace(r.URL.Query().Get("source"))
 	if source == "" {
-		if err := s.productPolicies.db.QueryRowContext(r.Context(), `SELECT source FROM srun4k_integrations ORDER BY updated_at DESC LIMIT 1`).Scan(&source); err != nil {
-			source = defaultFourKSource
+		var err error
+		source, err = s.fourKDirectorySource(r.Context())
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "four_k_source_unavailable", "4K目录来源读取失败")
+			return
 		}
 	}
-	directory, err := loadFourKDirectory(r.Context(), s.productPolicies.db, source)
+	catalogPrefix := ""
+	groupSource := source
+	if source == s.identityBridge.normalized().Source {
+		var version int64
+		err := s.operations.db.QueryRowContext(r.Context(), `SELECT active_config_version FROM identity_bridge_runtime WHERE bridge_id=$1 AND active_config_version>0`, s.identityBridge.normalized().BridgeID).Scan(&version)
+		if err != nil && err != sql.ErrNoRows {
+			writeError(w, http.StatusServiceUnavailable, "four_k_source_unavailable", "4K目录来源读取失败")
+			return
+		}
+		if err == nil {
+			catalogPrefix = fmt.Sprintf("bridge-catalog-v%d-%%", version)
+			groupSource = managedGroupCatalogSource(source, version)
+		}
+	}
+	directory, err := loadFourKDirectoryWithGroupSource(r.Context(), s.productPolicies.db, source, catalogPrefix, groupSource)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "four_k_directory_failed", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, directory)
+}
+
+func (s *Server) fourKDirectorySource(ctx context.Context) (string, error) {
+	var managed bool
+	defaults := s.identityBridge.normalized()
+	if err := s.operations.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_bridge_runtime WHERE bridge_id=$1 AND active_config_version>0 AND active_host<>'')`, defaults.BridgeID).Scan(&managed); err != nil {
+		return "", err
+	}
+	if managed {
+		return defaults.Source, nil
+	}
+	var source string
+	err := s.operations.db.QueryRowContext(ctx, `SELECT source FROM srun4k_integrations ORDER BY updated_at DESC LIMIT 1`).Scan(&source)
+	if err == sql.ErrNoRows {
+		return defaultFourKSource, nil
+	}
+	return source, err
 }
 
 // handle4KSync validates the configured 4K execution channel and confirms that
@@ -230,7 +301,11 @@ func (s *Server) handle4KSync(w http.ResponseWriter, r *http.Request, connectorI
 	}
 	// This is capability registration, not an imported policy action. The only
 	// native operation currently implemented with session revalidation is drop.
-	if _, err = s.productPolicies.db.ExecContext(r.Context(), `UPDATE enforcement_connectors SET action_mapping=$2,updated_at=clock_timestamp() WHERE connector_id=$1`, connectorID, []byte(`{"account_policy_v1":"supported","session.disconnect":"online-drop"}`)); err != nil {
+	// Keep the native capabilities registered by the managed integration.  A
+	// directory sync must not narrow the connector back to disconnect-only,
+	// otherwise the policy editor cannot bind the built-in notification and
+	// SafeDisable actions after the next sync.
+	if _, err = s.productPolicies.db.ExecContext(r.Context(), `UPDATE enforcement_connectors SET action_mapping=$2,updated_at=clock_timestamp() WHERE connector_id=$1`, connectorID, []byte(`{"account_policy_v1":"supported","session.disconnect":"online-drop","account.notify":"notification-outbox","account.disable_account":"safe-disable"}`)); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "four_k_capability_save_failed", err.Error())
 		return
 	}

@@ -1281,6 +1281,7 @@ func runControlPlaneServe(args []string) error {
 	srunDatabaseTLS := fs.Bool("srun4k-database-tls", envBool("PROXY_SENTINEL_SRUN4K_DATABASE_TLS", false), "require TLS for the 4K authorization database")
 	srunRedisPort := fs.Int("srun4k-redis-port", envInt("PROXY_SENTINEL_SRUN4K_REDIS_PORT", 16380), "deployment-provided 4K Redis port")
 	srunRedisCatalogPort := fs.Int("srun4k-redis-catalog-port", envInt("PROXY_SENTINEL_SRUN4K_REDIS_CATALOG_PORT", 16382), "deployment-provided 4K product and control catalog Redis port")
+	srunRedisEventPort := fs.Int("srun4k-redis-event-port", envInt("PROXY_SENTINEL_SRUN4K_REDIS_EVENT_PORT", 16384), "deployment-provided 4K event Redis port")
 	srunRedisPassword := fs.String("srun4k-redis-password", os.Getenv("PROXY_SENTINEL_SRUN4K_REDIS_PASSWORD"), "deployment-provided read-only 4K Redis password")
 	srunRedisTLS := fs.Bool("srun4k-redis-tls", envBool("PROXY_SENTINEL_SRUN4K_REDIS_TLS", false), "require TLS for the 4K Redis connection")
 	srunAPIScheme := fs.String("srun4k-api-scheme", firstEnv("PROXY_SENTINEL_SRUN4K_API_SCHEME", "https"), "4K northbound API scheme")
@@ -1365,13 +1366,13 @@ func runControlPlaneServe(args []string) error {
 		SRun4K: controlplane.SRun4KDefaults{
 			DatabasePort: *srunDatabasePort, DatabaseName: *srunDatabaseName,
 			DatabaseUsername: *srunDatabaseUsername, DatabasePassword: *srunDatabasePassword,
-			DatabaseTLS: *srunDatabaseTLS, RedisPort: *srunRedisPort, RedisCatalogPort: *srunRedisCatalogPort, RedisTLS: *srunRedisTLS,
+			DatabaseTLS: *srunDatabaseTLS, RedisPort: *srunRedisPort, RedisCatalogPort: *srunRedisCatalogPort, EventRedisPort: *srunRedisEventPort, RedisTLS: *srunRedisTLS,
 			RedisPassword: *srunRedisPassword, APIScheme: *srunAPIScheme,
 			APIPort: *srunAPIPort, APICertificatePEM: srunAPICertificatePEM,
 			MaxSessions: *srunMaxSessions, PageSize: 1000,
 		},
 		IdentityBridge: controlplane.IdentityBridgeDefaults{
-			EventRedisAddr: *identityBridgeEventAddr, OnlinePort: *identityBridgeOnlinePort,
+			EventRedisAddr: *identityBridgeEventAddr, OnlinePort: *identityBridgeOnlinePort, CatalogRedisPort: *srunRedisCatalogPort, EventRedisPort: *srunRedisEventPort,
 			OnlineList: *identityBridgeOnlineList, EventList: *identityBridgeEventList,
 			Source: "ncu-srun4k", SensorID: "ncu-auth-redis", CampusID: "ncu", AccessDomain: "campus-auth",
 			BatchSize: 500, ReconcileIntervalSeconds: *identityBridgeReconcile,

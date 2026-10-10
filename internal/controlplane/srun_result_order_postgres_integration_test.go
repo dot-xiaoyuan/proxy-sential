@@ -77,7 +77,7 @@ func TestSRunNativeResultObservationOrder(t *testing.T) {
 				if tc == "clock_regression_with_newer_order" {
 					checked = base
 				}
-				result, err := s.completeSRun4KTest(callCtx, item, 81, checked)
+				result, err := s.completeSRun4KTest(callCtx, item, 81, checked, true, false)
 				if tc == "newer_test_preserves_sync_summary" || tc == "clock_regression_with_newer_order" {
 					if err != nil || result == nil {
 						t.Errorf("fresh check rejected: %v", err)

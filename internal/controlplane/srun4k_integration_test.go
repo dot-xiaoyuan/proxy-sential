@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -13,6 +14,34 @@ import (
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/store"
 )
+
+func TestSRun4KReadOnlyMutationAllowlist(t *testing.T) {
+	for _, tc := range []struct {
+		method string
+		path   string
+		allow  bool
+	}{
+		{http.MethodPost, "/integrations/srun4k", true},
+		{http.MethodPut, "/integrations/srun4k/one", true},
+		{http.MethodPost, "/integrations/srun4k/one/test", true},
+		{http.MethodPost, "/integrations/srun4k/one/sync", true},
+		{http.MethodPost, "/integrations/srun4k/one/authorization", true},
+		{http.MethodDelete, "/integrations/srun4k/one", false},
+		{http.MethodPost, "/integrations/srun4k/one/other", false},
+		{http.MethodPost, "/actions", false},
+		{http.MethodPut, "/integrations/identity/bridge", false},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			if got := srun4KReadOnlyMutationAllowed(tc.method, tc.path); got != tc.allow {
+				t.Fatalf("allow=%v, want %v", got, tc.allow)
+			}
+		})
+	}
+}
+
+func srun4KTestIntegrationRow(authorizationReady bool) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"connector_id", "host", "authorization_database_host", "online_redis_host", "catalog_redis_host", "event_redis_host", "northbound_api_host", "source", "sensor_id", "reconcile_interval_hours", "event_channel_state", "connection_state", "last_error", "last_tested_at", "last_synced_at", "identity_accounts", "identity_sessions", "products", "groups_count", "controls", "last_identity_poll_at", "last_identity_event_at", "authorization_refreshed_at", "authorization_ready", "authorization_database_state", "online_redis_state", "catalog_redis_state", "event_redis_state", "northbound_api_state"}).AddRow("one", "192.0.2.1", "192.0.2.1", "192.0.2.1", "192.0.2.1", "192.0.2.1", "192.0.2.1", "srun4k:one", "one", 6, "waiting", "healthy", "", nil, nil, 0, 0, 0, 0, 0, nil, nil, nil, authorizationReady, "healthy", "healthy", "healthy", "pending", "healthy")
+}
 
 func TestSRun4KRepeatedHostKeepsExistingConnectorAndSource(t *testing.T) {
 	for _, requested := range []string{"", "existing", "different"} {
@@ -173,8 +202,8 @@ func TestSRun4KHostAndRouteValidation(t *testing.T) {
 }
 
 func TestSRun4KStatusKeepsPerChannelProgress(t *testing.T) {
-	channels := srun4KChannelStates("failed", "waiting", "redis: connection refused")
-	if channels["authorization_database"] != "healthy" || channels["redis"] != "failed" || channels["northbound_api"] != "pending" || channels["event_channel"] != "waiting" {
+	channels := srun4KChannelStates("failed", "waiting", "online_redis: connection refused")
+	if channels["authorization_database"] != "healthy" || channels["online_redis"] != "failed" || channels["northbound_api"] != "pending" || channels["event_channel"] != "waiting" {
 		t.Fatalf("unexpected channel status: %#v", channels)
 	}
 }

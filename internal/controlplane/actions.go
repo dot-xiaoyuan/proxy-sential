@@ -200,7 +200,7 @@ func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		}
 		items := mapValues(s.operations.doc.Connectors)
 		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-		writeJSON(w, 200, map[string]any{"items": items, "global_stop": s.operations.doc.GlobalStop})
+		writeJSON(w, 200, map[string]any{"items": items, "global_stop": s.operations.doc.GlobalStop, "read_only": s.readOnly})
 		return
 	}
 	var request connectorRequest

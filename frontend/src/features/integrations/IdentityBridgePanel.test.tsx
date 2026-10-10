@@ -20,7 +20,7 @@ const requests = vi.hoisted(() => ({
       event_channel_state: 'healthy', snapshot_state: 'healthy', source_queue: 4, processing_queue: 2,
       online_members: 16266, online_sessions: 16260, committed_messages: 800, bad_messages: 1,
       event_consecutive_failures: 0, snapshot_consecutive_failures: 0, accounts: 4908, sessions: 16260,
-      last_snapshot_at: '2026-10-09T10:00:00Z',
+      last_snapshot_at: '2026-10-09T10:00:00Z', last_event_at: '2026-10-09T10:01:00Z',
     },
     checked_at: '2026-10-09T10:01:00Z',
   }),
@@ -39,6 +39,8 @@ vi.mock('../../shared/auth/permissions', () => ({ can: () => true }))
 
 afterEach(() => {
   cleanup()
+  requests.bridge.mockClear()
+  requests.runs.mockClear()
   requests.update.mockClear()
 })
 
@@ -48,25 +50,47 @@ function renderPanel() {
 }
 
 describe('南昌4K认证同步', () => {
-  it('同时展示期望地址、当前实际通道和服务端分页记录', async () => {
+  it('只展示同步状态、通道和数量摘要，不读取逐批同步记录', async () => {
     renderPanel()
-    expect(await screen.findByText('南昌 4K 认证同步')).toBeInTheDocument()
-    expect(screen.getByText(/配置地址 222\.204\.3\.225，当前生效 222\.204\.3\.224/)).toBeInTheDocument()
+    expect(await screen.findByText('深澜 4K 认证同步')).toBeInTheDocument()
     expect(screen.getByText('222.204.3.224:16380')).toBeInTheDocument()
     expect(screen.getAllByText('222.204.3.227:16384')).toHaveLength(2)
     expect(screen.getByText('16,266')).toBeInTheDocument()
-    const recordCounts = await screen.findAllByText(/16,266 读取/)
-    expect(recordCounts).toHaveLength(2)
-    expect(recordCounts[1]).toHaveTextContent('16,266 读取 · 16,260 写入')
+    expect(screen.getAllByText('正常')).toHaveLength(2)
+    expect(screen.getByText('队列积压')).toBeInTheDocument()
+    expect(screen.getByText(/最近事件/)).toHaveTextContent(new Date('2026-10-09T10:01:00Z').toLocaleString())
+    expect(screen.getByText(/最近全量/)).toHaveTextContent(new Date('2026-10-09T10:00:00Z').toLocaleString())
+    expect(screen.queryByText('同步记录')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(requests.runs).not.toHaveBeenCalled()
   })
 
-  it('只提交管理员填写的4K主机地址', async () => {
+  it('刷新只更新同步状态，不请求同步记录', async () => {
     renderPanel()
-    fireEvent.click(await screen.findByRole('button', { name: '修改4K地址' }))
-    const input = await screen.findByRole('textbox', { name: /4K 地址/ })
-    expect(input).toHaveValue('222.204.3.225')
-    fireEvent.change(input, { target: { value: '222.204.3.226' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存并平滑切换' }))
-    await waitFor(() => expect(requests.update).toHaveBeenCalledWith('222.204.3.226'))
+    fireEvent.click(await screen.findByRole('button', { name: /刷\s*新/ }))
+    await waitFor(() => expect(requests.bridge).toHaveBeenCalledTimes(2))
+    expect(requests.runs).not.toHaveBeenCalled()
+  })
+
+  it('同步异常仍展示阻塞原因，不引导用户查看已隐藏的记录', async () => {
+    const data = await requests.bridge()
+    requests.bridge.mockResolvedValueOnce({
+      ...data,
+      runtime: { ...data.runtime, snapshot_state: 'failed', last_error_type: 'unrecognized_error' },
+    })
+    renderPanel()
+    expect(await screen.findByText('全量在线清单同步异常')).toBeInTheDocument()
+    expect(screen.getByText('请检查认证同步服务')).toBeInTheDocument()
+    expect(screen.queryByText(/全量校准记录/)).not.toBeInTheDocument()
+    expect(requests.runs).not.toHaveBeenCalled()
+  })
+
+  it('只展示接入状态，由4K接入配置维护地址', async () => {
+    renderPanel()
+    expect(await screen.findByText('深澜 4K 认证同步')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '修改4K地址' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(requests.update).not.toHaveBeenCalled()
   })
 })

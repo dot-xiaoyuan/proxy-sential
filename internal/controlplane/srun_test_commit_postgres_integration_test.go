@@ -115,7 +115,7 @@ func TestSRunTestResultNativeAtomicCommit(t *testing.T) {
 				}
 			}
 			started := time.Now()
-			result, callErr := s.completeSRun4KTest(testCtx, item, 81, checked)
+			result, callErr := s.completeSRun4KTest(testCtx, item, 81, checked, true, false)
 			if held != nil {
 				if err = held.Rollback(); err != nil {
 					t.Fatal(err)

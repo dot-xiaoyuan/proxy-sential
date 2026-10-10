@@ -15,9 +15,28 @@ import (
 
 const ncuIdentityBridgeID = "ncu-legacy-4k"
 
+// A shared 4K address is published only after the identity bridge has committed
+// its full inventory. A pending (or failed) desired host is never authoritative.
+type fourKIdentityAddress struct {
+	Host              string `json:"host"`
+	ConfigVersion     int64  `json:"config_version"`
+	Source            string `json:"source"`
+	SensorID          string `json:"sensor_id"`
+	ConfigurationPath string `json:"configuration_path"`
+}
+
+func identityBridgeFourKAddress(defaults IdentityBridgeDefaults, activeHost string, activeVersion int64) *fourKIdentityAddress {
+	if activeVersion <= 0 || !validSRunHost(activeHost) {
+		return nil
+	}
+	return &fourKIdentityAddress{Host: activeHost, ConfigVersion: activeVersion, Source: defaults.Source, SensorID: defaults.SensorID, ConfigurationPath: "/integrations/identity/bridge"}
+}
+
 type IdentityBridgeDefaults struct {
 	BridgeID                 string
 	OnlinePort               int
+	CatalogRedisPort         int
+	EventRedisPort           int
 	EventRedisAddr           string
 	OnlineList               string
 	EventList                string
@@ -35,6 +54,12 @@ func (c IdentityBridgeDefaults) normalized() IdentityBridgeDefaults {
 	}
 	if c.OnlinePort == 0 {
 		c.OnlinePort = 16380
+	}
+	if c.CatalogRedisPort == 0 {
+		c.CatalogRedisPort = 16382
+	}
+	if c.EventRedisPort == 0 {
+		c.EventRedisPort = 16384
 	}
 	if c.EventRedisAddr == "" {
 		c.EventRedisAddr = "222.204.3.227:16384"
@@ -119,18 +144,24 @@ func (s *Server) authorizeIdentityBridge(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) identityBridgeRuntimeConfig(ctx context.Context) (map[string]any, error) {
 	defaults := s.identityBridge.normalized()
-	var host, updatedBy string
+	var host, eventRedisAddr, updatedBy string
 	var version int64
 	var updatedAt time.Time
-	err := s.operations.db.QueryRowContext(ctx, `SELECT desired_host,config_version,updated_by,updated_at FROM identity_bridge_configs WHERE bridge_id=$1`, defaults.BridgeID).Scan(&host, &version, &updatedBy, &updatedAt)
+	err := s.operations.db.QueryRowContext(ctx, `SELECT desired_host,desired_event_redis_addr,config_version,updated_by,updated_at FROM identity_bridge_configs WHERE bridge_id=$1`, defaults.BridgeID).Scan(&host, &eventRedisAddr, &version, &updatedBy, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 	host = normalizeIdentityBridgeHost(host)
+	if strings.TrimSpace(eventRedisAddr) == "" {
+		eventRedisAddr = defaults.EventRedisAddr
+	}
+	catalogHost := host
+	_ = s.operations.db.QueryRowContext(ctx, `SELECT catalog_redis_host FROM srun4k_integrations WHERE online_redis_host=$1 ORDER BY updated_at DESC LIMIT 1`, host).Scan(&catalogHost)
 	return map[string]any{
 		"bridge_id": defaults.BridgeID, "host": host, "config_version": version,
-		"online_redis_addr": net.JoinHostPort(host, fmt.Sprintf("%d", defaults.OnlinePort)),
-		"event_redis_addr":  defaults.EventRedisAddr, "online_list": defaults.OnlineList,
+		"online_redis_addr":  net.JoinHostPort(host, fmt.Sprintf("%d", defaults.OnlinePort)),
+		"catalog_redis_addr": net.JoinHostPort(catalogHost, fmt.Sprintf("%d", defaults.CatalogRedisPort)),
+		"event_redis_addr":   eventRedisAddr, "online_list": defaults.OnlineList,
 		"event_list": defaults.EventList, "processing_list": defaults.EventList + ":proxy-sentinel-processing",
 		"source": defaults.Source, "sensor_id": defaults.SensorID, "campus_id": defaults.CampusID,
 		"access_domain": defaults.AccessDomain, "batch_size": defaults.BatchSize,
@@ -306,7 +337,11 @@ func (s *Server) getIdentityBridge(w http.ResponseWriter, r *http.Request) {
 	putOptionalTime(runtime, "started_at", started)
 	putOptionalTime(runtime, "heartbeat_at", heartbeat)
 	putOptionalTime(runtime, "projection_at", latestProjection)
-	writeJSON(w, http.StatusOK, map[string]any{"config": config, "runtime": runtime, "checked_at": now})
+	response := map[string]any{"config": config, "runtime": runtime, "checked_at": now, "read_only": s.readOnly}
+	if address := identityBridgeFourKAddress(defaults, activeHost, activeVersion); address != nil {
+		response["four_k_address"] = address
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func putOptionalTime(target map[string]any, key string, value sql.NullTime) {

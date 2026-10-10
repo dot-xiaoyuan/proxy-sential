@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   App as AntApp,
@@ -44,6 +45,7 @@ type ConnectorForm = {
 
 export function ActionsPage() {
   const connectors = useActionConnectors();
+  const fourKIntegrations = useQuery({ queryKey: ['srun4k-integrations'], queryFn: api.srun4KIntegrations });
   const session = useSession();
   const canManage = can(session.data, "integrations:write");
   const { message } = AntApp.useApp();
@@ -59,6 +61,10 @@ export function ActionsPage() {
     !connectors.data
   )
     return <AppErrorAlert title="认证与处置接入加载失败" />;
+  const readOnly = connectors.data.read_only !== false;
+  const canWrite = canManage && !readOnly;
+  const canConfigureSRun4K = canManage;
+  const fourKIntegration = fourKIntegrations.data?.items[0];
   const openEditor = (item?: ActionConnector) => {
     setEditing(item ?? null);
     form.setFieldsValue({
@@ -122,12 +128,15 @@ export function ActionsPage() {
         showIcon
         type={connectors.data.global_stop ? "error" : "info"}
         title={
-          connectors.data.global_stop
+          readOnly
+            ? "全局只读保护已开启，真实动作与连接器写入被阻断"
+            : connectors.data.global_stop
             ? "全局紧急停止已启用，所有真实动作均被阻断"
             : "真实动作受策略模式、当前身份、登录代次、事件通道、冷却与熔断共同保护"
         }
+        description={readOnly ? "4K地址仍可在下方认证同步卡片中统一修改；保存地址不会启用真实处置。" : undefined}
         action={
-          canManage ? (
+          canWrite ? (
             <Space>
               <Typography.Text>紧急停止</Typography.Text>
               <Switch
@@ -143,13 +152,30 @@ export function ActionsPage() {
         }
       />
       <IdentityBridgePanel />
+      <Card className="four-k-authority-card margin-top-md" title="深澜 4K 通道接入" extra={canConfigureSRun4K ? <Button type="primary" onClick={() => {
+        const legacyConnector = connectors.data.items.find((item) => item.connector_type === "srun4k");
+        setFourKConnector(fourKIntegration ? { id: fourKIntegration.connector_id } : legacyConnector ? { id: legacyConnector.connector_id } : {});
+      }}>{fourKIntegration ? "配置接入" : "新增接入"}</Button> : undefined}>
+        {fourKIntegration ? <div className="four-k-endpoint-summary">
+          <span>授权数据库 <Typography.Text className="four-k-endpoint-value">{fourKIntegration.authorization_database_host}</Typography.Text></span>
+          <span>在线清单 Redis <Typography.Text className="four-k-endpoint-value">{fourKIntegration.online_redis_host}</Typography.Text></span>
+          <span>产品/控制目录 Redis <Typography.Text className="four-k-endpoint-value">{fourKIntegration.catalog_redis_host}</Typography.Text></span>
+          {fourKIntegration.event_redis_host && <span>上下线事件 Redis <Typography.Text className="four-k-endpoint-value">{fourKIntegration.event_redis_host}</Typography.Text></span>}
+          <span>北向 API <Typography.Text className="four-k-endpoint-value">{fourKIntegration.northbound_api_host}</Typography.Text></span>
+          <span>北向授权 {fourKIntegration.authorization_ready ? "已验证" : "待验证"} · 校准周期 {fourKIntegration.reconcile_interval_hours} 小时</span>
+          <span>上下线事件状态 {fourKIntegration.event_channel_state === "healthy" ? "正常" : "等待验收"}</span>
+        </div> : <div className="connector-summary">
+          <span>分别配置授权数据库、在线清单、产品目录、上下线事件和北向 API 的主机地址；端口、协议及凭据由部署配置提供。</span>
+          <span>事件通道验收前可以读取身份与匹配目录，但服务端会阻断真实动作。</span>
+        </div>}
+      </Card>
       <section className="details-grid margin-top-md">
           <Card
             className="actions-connectors"
             title="通用认证与处置连接器"
             extra={
-              canManage ? (
-                <Space wrap><Button type="primary" onClick={() => setFourKConnector({})}>配置 4K 接入</Button><Button onClick={() => openEditor()}>新增通用连接器</Button></Space>
+              canWrite ? (
+                <Space wrap><Button onClick={() => openEditor()}>新增通用连接器</Button></Space>
               ) : undefined
             }
           >
@@ -161,13 +187,9 @@ export function ActionsPage() {
                   actions={
                     canManage
                       ? [
-                          item.connector_type === "srun4k" ? <Button key="4k" onClick={() => {
-                            let host = "";
-                            try { host = new URL(item.endpoint_url).hostname; } catch { host = ""; }
-                            setFourKConnector({ id: item.connector_id, host });
-                          }}>配置与同步4K</Button> : null,
+                          item.connector_type === "srun4k" && canConfigureSRun4K ? <Button key="4k" onClick={() => setFourKConnector({ id: item.connector_id })}>配置接入通道</Button> : null,
                           <Button key="preview" onClick={() => setPreviewConnector(item.connector_id)}>账号会话预览</Button>,
-                          <Button
+                          canWrite ? <Button
                             key="test"
                             onClick={async () => {
                               try {
@@ -185,18 +207,18 @@ export function ActionsPage() {
                             }}
                           >
                             连通测试
-                          </Button>,
-                          item.connector_type !== "srun4k" ? <Button key="edit" onClick={() => openEditor(item)}>
+                          </Button> : null,
+                          canWrite && item.connector_type !== "srun4k" ? <Button key="edit" onClick={() => openEditor(item)}>
                             配置
                           </Button> : null,
-                          item.connector_type !== "srun4k" ? <Switch
+                          canWrite && item.connector_type !== "srun4k" ? <Switch
                             aria-label={`${item.name}启用状态`}
                             key="enabled"
                             checked={item.enabled}
                             onChange={(value) =>
                               void toggleConnector(item, value)
                             }
-                          /> : <Tag key="managed" color={item.enabled ? "green" : "default"}>托管接入</Tag>,
+                          /> : <Tag key="managed" color={item.enabled ? "green" : "default"}>{item.enabled ? "启用" : "停用"}</Tag>,
                         ]
                       : [
                           <Tag

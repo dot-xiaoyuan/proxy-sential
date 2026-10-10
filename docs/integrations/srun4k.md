@@ -2,13 +2,15 @@
 
 ## 使用方式
 
-在“旁路处置网关”选择“配置 4K 接入”，只填写 4K 地址。全量校准周期可选，默认 6 小时，范围为 1–168 小时。连接器 ID、身份来源 ID 和采集标识由 Sentinel 生成。
+在“旁路处置网关”选择“配置 4K 接入”，分别填写授权数据库、在线清单 Redis、产品/控制目录 Redis、上下线事件 Redis和北向 API 的主机地址。生产环境可以是不同主机；All-in-One 环境可以填写同一主机。事件 Redis 在事件通道接入前可留空，但 Sentinel 会继续阻断真实动作。全量校准周期可选，默认 6 小时，范围为 1–168 小时。连接器 ID、身份来源 ID 和采集标识由 Sentinel 生成。
 
-保存后服务端依次只读检查授权库、Redis 与北向 API。首次启动及到达校准周期时自动执行完整同步，也可以在页面立即同步。上线、下线事件采用独立标准事件契约；具体传输渠道完成对接前，页面显示“等待事件通道接入”，服务端阻断真实动作。
+保存后通过“保存并测试”检查各数据通道。首次测试时，或管理员手动点击“刷新北向授权”时，Sentinel 使用部署侧的 MySQL 只读账号读取唯一有效授权，向已配置的北向 API 申请并验证权限，然后用应用级加密能力保存 AppID/AppSecret。日常目录和身份同步只使用已加密保存的 API 授权，不再查询 MySQL。授权读取、北向验证或加密存储失败时不会覆盖已有凭据。
+
+首次授权验证成功后，启动时执行一次完整同步，此后按校准周期运行，也可从页面立即同步。在线清单与产品目录分别读取各自 Redis；事件 Redis 地址供独立事件适配器使用。事件通道完成对接和验收前，页面显示等待接入状态，服务端阻断真实动作。
 
 ## 部署配置
 
-页面不接收端口、协议、库名、数据库账号、Redis 密码或证书。它们由 30 侧服务部署配置提供：
+页面只保存各服务的主机地址和校准周期，不接收端口、协议、库名、数据库账号、Redis 密码或证书。它们由 Sentinel 部署配置提供：
 
 - `PROXY_SENTINEL_SRUN4K_DATABASE_PORT`，默认 `3506`
 - `PROXY_SENTINEL_SRUN4K_DATABASE_NAME`，默认 `srun4k`
@@ -17,6 +19,7 @@
 - `PROXY_SENTINEL_SRUN4K_DATABASE_TLS`
 - `PROXY_SENTINEL_SRUN4K_REDIS_PORT`，在线会话 Redis，默认 `16380`
 - `PROXY_SENTINEL_SRUN4K_REDIS_CATALOG_PORT`，产品与控制关系 Redis，默认 `16382`
+- `PROXY_SENTINEL_SRUN4K_REDIS_EVENT_PORT`，上下线事件 Redis，默认 `16384`
 - `PROXY_SENTINEL_SRUN4K_REDIS_PASSWORD`
 - `PROXY_SENTINEL_SRUN4K_REDIS_TLS`
 - `PROXY_SENTINEL_SRUN4K_API_SCHEME`，默认 `https`
@@ -24,15 +27,23 @@
 - `PROXY_SENTINEL_SRUN4K_API_CERTIFICATE_FILE`，可选的北向服务器信任证书
 - `PROXY_SENTINEL_SRUN4K_MAX_SESSIONS`，默认 `100000`
 
-MySQL 账号只需读取 `authorization`；Redis 账号只需读取在线会话、产品和控制关系。Sentinel 不向 4K Redis 或 MySQL 写入数据。
+MySQL 账号只需读取 `authorization` 所需字段；不应使用长期 root 账号。Redis 账号只需读取在线会话、产品和控制关系。Sentinel 不向 4K Redis 或 MySQL 写入数据。
 
-与旧 `dpi-analyze` 一致，在线清单和产品目录读取不同的 4K Redis 实例；不是从在线实例的空产品清单判定产品全部停用。两个端口均可由部署侧覆盖，使用部署侧 Redis 密码。用户组通过北向 API 按每页 100 条查询，避免 4K 拒绝超出上限的分页参数。
+在线清单和产品目录可使用不同的 4K Redis 实例；不是从在线实例的空产品清单判定产品全部停用。三个 Redis 通道共用受保护的部署凭据，但主机和端口互相独立，端口可由部署侧覆盖。用户组通过已验证的北向 API 按每页 100 条查询，避免 4K 拒绝超出上限的分页参数。
 
 Redis 密码通过 `PROXY_SENTINEL_SRUN4K_REDIS_PASSWORD` 注入，不硬编码到程序、前端或公开配置。30 当前使用独立的 `/opt/proxy-sentinel/config/srun4k-secrets.env`（权限 `0600`），由 control-plane 的 systemd `EnvironmentFile` 加载；更新程序不会覆盖此文件。修改密码后重启 control-plane 即可生效。北向 API 的证书也在部署侧提供，不跳过 TLS 校验。
 
-已配置过 4K 数据库的实例可继续复用相同主机的加密配置；部署预置的完整数据库凭据优先。新接入页面仍只管理地址与校准周期，不返回任何密码。
+旧版单地址接入迁移时，该地址回填到授权数据库、在线 Redis、目录 Redis 和北向 API 主机；事件 Redis 保留原有部署配置。旧的加密数据库配置仅作为兼容回退，新的授权数据库账号优先由部署侧提供。新增和读取接口、通道状态、审计与服务日志均不返回 MySQL 密码、AppSecret 或令牌。
 
 ## 数据与策略边界
+
+### 184 托管认证同步
+
+现场使用 `legacy-4k-identity-bridge` 时，产品目录会沿用已完成在线清单提交的生效 4K 地址，不读取待切换地址，也不使用通知队列的地址。目录 Redis 默认端口 `16382`，密码复用受保护的在线 Redis 密码文件；可通过部署参数 `--catalog-redis-port`、`--catalog-redis-password-file` 覆盖。初次启动和成功切换地址后立即同步，默认每 6 小时校准；`--catalog-reconcile-interval` 可设为 1–168 小时。
+
+目录使用 `POST /api/v1/integrations/identity/bridge/catalog-snapshots` 提交，复用认证同步 Bearer 凭据，携带生效主机、配置版本、完整产品/控制目录和稳定幂等键。服务端在同一事务中核对生效来源与提交目录，拒绝旧主机回执和来源不符的数据。发送失败保留当前快照重试；读取和提交不会修改 4K 数据，不会创建连接器、防代理策略或动作。全局只读下须显式启用现有身份接入许可；通用产品导入和业务写入仍被阻断。
+
+策略页面自动选择托管身份来源，并且只展示当前在线 Redis 来源版本的产品目录。目录仅提供真实产品名称及绑定控制策略的来源信息，不把控制策略转换为防代理条件。用户组名称由已配置北向 API 读取；接入配置或 API 地址变化不会导致每次目录刷新都重新读取授权数据库。授权库只在首次接入或管理员主动刷新授权时访问。查询失败只记录安全错误类别并重试，不输出凭据或上游响应。
 
 - Redis 在线清单形成账号、IP、登录代次、会话、产品、用户组、VLAN、MAC、设备和 NAS 关联。
 - Redis 产品、控制策略及绑定关系仅形成策略匹配目录和来源证据，不生成防代理条件或动作。

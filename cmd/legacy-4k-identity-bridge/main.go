@@ -26,6 +26,7 @@ import (
 type config struct {
 	onlineAddr, onlinePasswordFile string
 	eventAddr, eventPasswordFile   string
+	catalogAddr                    string
 	eventList, onlineList          string
 	endpoint, tokenFile            string
 	source, sensor, campus, domain string
@@ -33,6 +34,9 @@ type config struct {
 	healthAddr                     string
 	batchSize, maxRecords          int
 	reconcile                      time.Duration
+	catalogPort                    int
+	catalogPasswordFile            string
+	catalogInterval                time.Duration
 	restoreProcessing              bool
 }
 
@@ -46,6 +50,7 @@ type runtimeState struct {
 	lastErrorType               string
 	activeHost                  string
 	activeConfigVersion         int64
+	activeCatalogRedisAddr      string
 	instanceID                  string
 	overallState                string
 	onlineChannelState          string
@@ -60,15 +65,22 @@ type runtimeState struct {
 	invalidOnlineRows           int
 	eventConsecutiveFailures    int
 	snapshotConsecutiveFailures int
+	catalogState                string
+	lastCatalogAt               time.Time
+	catalogProducts             int
+	catalogControls             int
+	catalogErrorType            string
 }
 
 type bridgeRuntimeConfig struct {
 	Host                     string `json:"host"`
 	ConfigVersion            int64  `json:"config_version"`
 	OnlineRedisAddr          string `json:"online_redis_addr"`
+	CatalogRedisAddr         string `json:"catalog_redis_addr"`
 	EventRedisAddr           string `json:"event_redis_addr"`
 	OnlineList               string `json:"online_list"`
 	EventList                string `json:"event_list"`
+	ProcessingList           string `json:"processing_list"`
 	Source                   string `json:"source"`
 	SensorID                 string `json:"sensor_id"`
 	CampusID                 string `json:"campus_id"`
@@ -89,27 +101,55 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	eventPassword, err := readSecret(cfg.eventPasswordFile, true)
 	if err != nil {
 		return fmt.Errorf("read notification Redis credential: %w", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	eventClient := redis.NewClient(&redis.Options{Addr: cfg.eventAddr, Password: eventPassword, ReadTimeout: 35 * time.Second, WriteTimeout: 5 * time.Second})
-	defer eventClient.Close()
-	if err = eventClient.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("notification Redis unavailable: %w", err)
-	}
 	if cfg.restoreProcessing {
+		eventClient := redis.NewClient(&redis.Options{Addr: cfg.eventAddr, Password: eventPassword, ReadTimeout: 35 * time.Second, WriteTimeout: 5 * time.Second})
+		defer eventClient.Close()
+		if err = eventClient.Ping(ctx).Err(); err != nil {
+			return fmt.Errorf("notification Redis unavailable: %w", err)
+		}
 		return restoreProcessing(ctx, eventClient, cfg.eventList, cfg.processingList)
 	}
 	onlinePassword, err := readSecret(cfg.onlinePasswordFile, true)
 	if err != nil {
 		return fmt.Errorf("read online Redis credential: %w", err)
 	}
+	catalogPassword, err := readSecret(cfg.catalogPasswordFile, true)
+	if err != nil {
+		return fmt.Errorf("read catalog Redis credential: %w", err)
+	}
 	token, err := readSecret(cfg.tokenFile, true)
 	if err != nil {
 		return fmt.Errorf("read identity token: %w", err)
+	}
+	if remote, fetchErr := fetchBridgeRuntimeConfig(ctx, cfg.endpoint, token); fetchErr == nil {
+		if remote.OnlineRedisAddr != "" {
+			cfg.onlineAddr = remote.OnlineRedisAddr
+		}
+		if remote.CatalogRedisAddr != "" {
+			cfg.catalogAddr = remote.CatalogRedisAddr
+		}
+		if remote.EventRedisAddr != "" {
+			cfg.eventAddr = remote.EventRedisAddr
+		}
+		if remote.OnlineList != "" {
+			cfg.onlineList = remote.OnlineList
+		}
+		if remote.EventList != "" {
+			cfg.eventList = remote.EventList
+		}
+		cfg.processingList = remote.ProcessingList
+		cfg.deadList = cfg.eventList + ":proxy-sentinel-dead-meta"
+	}
+	eventClient := redis.NewClient(&redis.Options{Addr: cfg.eventAddr, Password: eventPassword, ReadTimeout: 35 * time.Second, WriteTimeout: 5 * time.Second})
+	defer eventClient.Close()
+	if err = eventClient.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("notification Redis unavailable: %w", err)
 	}
 	onlineRaw := redis.NewClient(&redis.Options{Addr: cfg.onlineAddr, Password: onlinePassword, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second})
 	defer onlineRaw.Close()
@@ -126,16 +166,20 @@ func run() error {
 	}
 	sender := legacy4k.Sender{Endpoint: cfg.endpoint, Token: token, SensorID: cfg.sensor, Source: cfg.source, CampusID: cfg.campus, AccessDomain: cfg.domain}
 	activeHost, _, _ := net.SplitHostPort(cfg.onlineAddr)
-	state := &runtimeState{startedAt: time.Now().UTC(), activeHost: activeHost, instanceID: instanceID, overallState: "starting", onlineChannelState: "healthy", eventChannelState: "healthy", snapshotState: "pending"}
+	state := &runtimeState{startedAt: time.Now().UTC(), activeHost: activeHost, activeCatalogRedisAddr: cfg.catalogAddr, instanceID: instanceID, overallState: "starting", onlineChannelState: "healthy", eventChannelState: "healthy", snapshotState: "pending"}
 	server := startHealthServer(cfg.healthAddr, state)
 	defer server.Shutdown(context.Background())
 	logStatus("starting", map[string]any{"source": cfg.source, "sensor_id": cfg.sensor, "event_list": cfg.eventList})
 
 	var workers sync.WaitGroup
-	workers.Add(3)
+	workers.Add(4)
 	go func() {
 		defer workers.Done()
-		runEventWorker(ctx, eventClient, sender, cfg, state)
+		runCatalogWorker(ctx, cfg, catalogPassword, token, state)
+	}()
+	go func() {
+		defer workers.Done()
+		runEventWorker(ctx, eventClient, eventPassword, sender, cfg, token, state)
 	}()
 	go func() {
 		defer workers.Done()
@@ -150,12 +194,41 @@ func run() error {
 	return nil
 }
 
-func runEventWorker(ctx context.Context, client *redis.Client, sender legacy4k.Sender, cfg config, state *runtimeState) {
+func runEventWorker(ctx context.Context, client *redis.Client, password string, sender legacy4k.Sender, cfg config, token string, state *runtimeState) {
+	activeClient, activeCfg, activeAddr := client, cfg, cfg.eventAddr
+	defer func() {
+		if activeClient != client {
+			_ = activeClient.Close()
+		}
+	}()
+	nextConfig := time.Time{}
 	for {
+		if !time.Now().Before(nextConfig) {
+			if remote, err := fetchBridgeRuntimeConfig(ctx, cfg.endpoint, token); err == nil {
+				if remote.EventRedisAddr != "" && remote.EventRedisAddr != activeAddr {
+					candidate := redis.NewClient(&redis.Options{Addr: remote.EventRedisAddr, Password: password, ReadTimeout: 35 * time.Second, WriteTimeout: 5 * time.Second})
+					if candidate.Ping(ctx).Err() == nil {
+						if activeClient != client {
+							_ = activeClient.Close()
+						}
+						activeClient, activeAddr = candidate, remote.EventRedisAddr
+						markEventHealthy(state)
+					} else {
+						_ = candidate.Close()
+					}
+				}
+				if remote.EventList != "" {
+					activeCfg.eventList = remote.EventList
+					activeCfg.processingList = remote.ProcessingList
+					activeCfg.deadList = remote.EventList + ":proxy-sentinel-dead-meta"
+				}
+			}
+			nextConfig = time.Now().Add(5 * time.Second)
+		}
 		state.mu.RLock()
 		instanceID := state.instanceID
 		state.mu.RUnlock()
-		processed, err := processBatch(ctx, client, sender, cfg, instanceID, state)
+		processed, err := processBatch(ctx, activeClient, sender, activeCfg, instanceID, state)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
@@ -169,7 +242,7 @@ func runEventWorker(ctx context.Context, client *redis.Client, sender legacy4k.S
 		if processed {
 			continue
 		}
-		_, err = client.BLMove(ctx, cfg.eventList, cfg.processingList, "LEFT", "RIGHT", 5*time.Second).Result()
+		_, err = activeClient.BLMove(ctx, activeCfg.eventList, activeCfg.processingList, "LEFT", "RIGHT", 5*time.Second).Result()
 		if err != nil && err != redis.Nil && !errors.Is(err, context.Canceled) {
 			markEventFailure(state, err)
 		}
@@ -245,6 +318,11 @@ func runSnapshotWorker(ctx context.Context, sender legacy4k.Sender, base config,
 				reportBridgeRun(ctx, base.endpoint, token, report)
 				activeAddr, activeVersion = targetAddr, targetVersion
 				markSnapshotSuccess(state, targetAddr, targetVersion, result)
+				state.mu.Lock()
+				if desired.CatalogRedisAddr != "" {
+					state.activeCatalogRedisAddr = desired.CatalogRedisAddr
+				}
+				state.mu.Unlock()
 				nextActiveSnapshot = time.Now().Add(attemptCfg.reconcile)
 				if attemptSwitch {
 					nextSwitchAttempt = nextActiveSnapshot
@@ -262,6 +340,17 @@ func parseConfig() (config, error) {
 	legacyAddr := os.Getenv("LEGACY_4K_REDIS_ADDR")
 	legacyPassword := os.Getenv("LEGACY_4K_REDIS_PASSWORD_FILE")
 	cfg := config{}
+	catalogPort := 16382
+	if value := os.Getenv("NCU_CATALOG_REDIS_PORT"); value != "" {
+		var err error
+		catalogPort, err = strconv.Atoi(value)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid catalog Redis port")
+		}
+	}
+	flag.IntVar(&cfg.catalogPort, "catalog-redis-port", catalogPort, "read-only product catalog port on the committed 4K host")
+	flag.StringVar(&cfg.catalogPasswordFile, "catalog-redis-password-file", os.Getenv("NCU_CATALOG_REDIS_PASSWORD_FILE"), "catalog Redis secret file; defaults to the online Redis credential")
+	flag.DurationVar(&cfg.catalogInterval, "catalog-reconcile-interval", 6*time.Hour, "read-only catalog calibration interval")
 	flag.StringVar(&cfg.onlineAddr, "online-redis-addr", firstEnv(os.Getenv("NCU_ONLINE_REDIS_ADDR"), legacyAddr), "authoritative online Redis address")
 	flag.StringVar(&cfg.onlinePasswordFile, "online-redis-password-file", firstEnv(os.Getenv("NCU_ONLINE_REDIS_PASSWORD_FILE"), legacyPassword), "0600 file containing the online Redis password")
 	flag.StringVar(&cfg.eventAddr, "event-redis-addr", firstEnv(os.Getenv("NCU_EVENT_REDIS_ADDR"), legacyAddr), "notification Redis address")
@@ -280,6 +369,9 @@ func parseConfig() (config, error) {
 	flag.DurationVar(&cfg.reconcile, "reconcile-interval", 30*time.Minute, "complete inventory calibration interval")
 	flag.BoolVar(&cfg.restoreProcessing, "restore-processing", false, "move unacknowledged processing messages back before the source FIFO and exit")
 	flag.Parse()
+	if cfg.catalogPasswordFile == "" {
+		cfg.catalogPasswordFile = cfg.onlinePasswordFile
+	}
 	required := map[string]string{"event-redis-addr": cfg.eventAddr, "event-redis-password-file": cfg.eventPasswordFile, "event-list": cfg.eventList}
 	if !cfg.restoreProcessing {
 		for name, value := range map[string]string{"online-redis-addr": cfg.onlineAddr, "online-redis-password-file": cfg.onlinePasswordFile, "endpoint": cfg.endpoint, "token-file": cfg.tokenFile, "source": cfg.source, "sensor-id": cfg.sensor, "campus-id": cfg.campus, "access-domain": cfg.domain} {
@@ -293,6 +385,9 @@ func parseConfig() (config, error) {
 	}
 	if cfg.batchSize < 1 || cfg.batchSize > 500 || cfg.maxRecords < 1 || cfg.maxRecords > 100000 || cfg.reconcile < time.Minute || cfg.reconcile > 24*time.Hour {
 		return cfg, fmt.Errorf("invalid batch, inventory or reconciliation bound")
+	}
+	if cfg.catalogPort < 1 || cfg.catalogPort > 65535 || cfg.catalogInterval < time.Hour || cfg.catalogInterval > 168*time.Hour {
+		return cfg, fmt.Errorf("invalid catalog port or reconciliation interval")
 	}
 	cfg.processingList = cfg.eventList + ":proxy-sentinel-processing"
 	cfg.deadList = cfg.eventList + ":proxy-sentinel-dead-meta"
@@ -452,7 +547,7 @@ func fetchBridgeRuntimeConfig(ctx context.Context, endpoint, token string) (brid
 	if err = json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&value); err != nil {
 		return value, err
 	}
-	if value.ConfigVersion < 1 || value.Host == "" || value.OnlineRedisAddr == "" || value.ReconcileIntervalSeconds < 60 || value.ReconcileIntervalSeconds > 86400 {
+	if value.ConfigVersion < 1 || value.Host == "" || value.OnlineRedisAddr == "" || value.EventRedisAddr == "" || value.EventList == "" || value.ReconcileIntervalSeconds < 60 || value.ReconcileIntervalSeconds > 86400 {
 		return bridgeRuntimeConfig{}, fmt.Errorf("identity bridge config is invalid")
 	}
 	return value, nil
@@ -530,7 +625,7 @@ func startHealthServer(addr string, state *runtimeState) *http.Server {
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		state.mu.RLock()
 		ready := state.eventConsecutiveFailures < 5 && !state.lastSnapshotAt.IsZero() && time.Since(state.lastSnapshotAt) <= 90*time.Minute
-		body := map[string]any{"ready": ready, "state": deriveOverallState(state, 30*time.Minute), "source_queue": state.sourceQueue, "processing_queue": state.processingQueue, "online_sessions": state.onlineSessions, "online_members": state.onlineMembers, "invalid_online_rows": state.invalidOnlineRows, "last_event_at": state.lastEventAt, "last_snapshot_attempt_at": state.lastSnapshotAttemptAt, "last_snapshot_at": state.lastSnapshotAt, "event_consecutive_failures": state.eventConsecutiveFailures, "snapshot_consecutive_failures": state.snapshotConsecutiveFailures}
+		body := map[string]any{"ready": ready, "state": deriveOverallState(state, 30*time.Minute), "source_queue": state.sourceQueue, "processing_queue": state.processingQueue, "online_sessions": state.onlineSessions, "online_members": state.onlineMembers, "invalid_online_rows": state.invalidOnlineRows, "last_event_at": state.lastEventAt, "last_snapshot_attempt_at": state.lastSnapshotAttemptAt, "last_snapshot_at": state.lastSnapshotAt, "event_consecutive_failures": state.eventConsecutiveFailures, "snapshot_consecutive_failures": state.snapshotConsecutiveFailures, "catalog_state": state.catalogState, "last_catalog_at": optionalTime(state.lastCatalogAt), "catalog_products": state.catalogProducts, "catalog_controls": state.catalogControls, "catalog_error_type": state.catalogErrorType}
 		state.mu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
 		if !ready {
@@ -619,6 +714,11 @@ func markSwitchFailure(state *runtimeState, err error) {
 func markSnapshotSuccess(state *runtimeState, addr string, version int64, result snapshotResult) {
 	host, _, _ := net.SplitHostPort(addr)
 	state.mu.Lock()
+	if state.activeHost != host || state.activeConfigVersion != version {
+		state.catalogState, state.catalogErrorType = "pending", ""
+		state.lastCatalogAt = time.Time{}
+		state.catalogProducts, state.catalogControls = 0, 0
+	}
 	state.activeHost = host
 	state.activeConfigVersion = version
 	state.instanceID = result.instanceID

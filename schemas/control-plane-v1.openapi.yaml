@@ -1011,10 +1011,11 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, global_stop]
+                required: [items, global_stop, read_only]
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/ActionConnector" } }
                   global_stop: { type: boolean }
+                  read_only: { type: boolean, description: Global application write protection; does not disable the authenticated identity-bridge host update. }
     post:
       operationId: saveActionConnector
       requestBody:
@@ -1555,16 +1556,16 @@ paths:
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
-        '408':
-          description: The synchronization was cancelled. Cancellation is audited without recording an upstream connection failure or complete synchronization; earlier completed reconciliation stages may already have committed.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '200':
           description: Complete identity and match directories reconciled; connection state reflects the latest ordered observation and can remain failed after a newer check.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SRun4KSyncResult' }
+        '408':
+          description: The synchronization was cancelled. Cancellation is audited without recording an upstream connection failure or complete synchronization; earlier completed reconciliation stages may already have committed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '409':
           description: The captured online identity projection failed atomic validation, the product catalog membership or relations changed, a newer group-directory observation already exists, or the same observation time has conflicting content. No complete synchronization is reported.
           content:
@@ -1580,6 +1581,18 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /integrations/srun4k/{id}/authorization:
+    post:
+      operationId: refreshSRun4KAuthorization
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Northbound authorization re-read from the read-only authorization table, verified against the configured API, and stored encrypted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SRun4KIntegration' }
+        '503': { description: Authorization refresh failed without replacing the existing credential. }
   /integrations/srun4k/{id}/status:
     get:
       operationId: getSRun4KIntegrationStatus
@@ -3281,6 +3294,9 @@ components:
         brand: { type: string }
         model: { type: string }
         role: { type: string }
+        role_source: { type: string, enum: [assessment, discovery_hint, inferred_shared_gateway] }
+        router_status: { type: string, enum: [candidate, likely, confirmed] }
+        brand_reference_only: { type: boolean }
         confidence: { type: integer, minimum: 0, maximum: 100 }
         identity_conflict: { type: boolean }
         identity_state: { type: string, enum: [supported, historical, reference] }
@@ -3294,9 +3310,6 @@ components:
         address_last_activity_at: { type: string, format: date-time, description: Address activity, attributed to archived hardware only with current verified ownership. }
         last_shared_at: { type: string, format: date-time }
         last_shared_observation_id: { type: string }
-        role_source: { type: string, enum: [assessment, discovery_hint, inferred_shared_gateway] }
-        router_status: { type: string, enum: [candidate, likely, confirmed] }
-        brand_reference_only: { type: boolean }
         current_shared: { type: boolean }
         shared_confidence: { type: integer, minimum: 0, maximum: 100 }
         address_only: { type: boolean }
@@ -3499,9 +3512,14 @@ components:
     SRun4KIntegrationRequest:
       type: object
       additionalProperties: false
-      required: [host]
+      required: [authorization_database_host, online_redis_host, catalog_redis_host, northbound_api_host]
       properties:
-        host: { type: string, minLength: 1, maxLength: 253 }
+        host: { type: string, minLength: 1, maxLength: 253, deprecated: true, description: Legacy single-host input; maps to all data/API endpoints. }
+        authorization_database_host: { type: string, minLength: 1, maxLength: 253 }
+        online_redis_host: { type: string, minLength: 1, maxLength: 253 }
+        catalog_redis_host: { type: string, minLength: 1, maxLength: 253 }
+        event_redis_host: { type: string, minLength: 1, maxLength: 253, description: Optional until the event transport has been connected and accepted. }
+        northbound_api_host: { type: string, minLength: 1, maxLength: 253 }
         reconcile_interval_hours: { type: integer, minimum: 1, maximum: 168, default: 6 }
     SRun4KIntegration:
       type: object
@@ -3509,6 +3527,13 @@ components:
       properties:
         connector_id: { type: string }
         host: { type: string }
+        authorization_database_host: { type: string }
+        online_redis_host: { type: string }
+        catalog_redis_host: { type: string }
+        event_redis_host: { type: string }
+        northbound_api_host: { type: string }
+        authorization_ready: { type: boolean }
+        authorization_refreshed_at: { type: string, format: date-time }
         source: { type: string }
         sensor_id: { type: string }
         reconcile_interval_hours: { type: integer, minimum: 1, maximum: 168 }
@@ -3516,10 +3541,12 @@ components:
         connection_state: { type: string, enum: [pending, healthy, failed] }
         channels:
           type: object
-          required: [authorization_database, redis, northbound_api, event_channel]
+          required: [authorization_database, online_redis, catalog_redis, event_redis, northbound_api, event_channel]
           properties:
             authorization_database: { type: string, enum: [pending, healthy, failed] }
-            redis: { type: string, enum: [pending, healthy, failed] }
+            online_redis: { type: string, enum: [pending, healthy, failed] }
+            catalog_redis: { type: string, enum: [pending, healthy, failed] }
+            event_redis: { type: string, enum: [pending, healthy, failed, interrupted, waiting] }
             northbound_api: { type: string, enum: [pending, healthy, failed] }
             event_channel: { type: string, enum: [waiting, healthy, interrupted] }
         last_error: { type: string }
@@ -3617,11 +3644,23 @@ components:
         - required: [reconcile_interval_hours]
     IdentityBridge:
       type: object
-      required: [config, runtime, checked_at]
+      required: [config, runtime, checked_at, read_only]
       properties:
         config: { $ref: '#/components/schemas/IdentityBridgeConfig' }
         runtime: { $ref: '#/components/schemas/IdentityBridgeRuntime' }
         checked_at: { type: string, format: date-time }
+        read_only: { type: boolean }
+        four_k_address: { $ref: '#/components/schemas/FourKIdentityAddress' }
+    FourKIdentityAddress:
+      type: object
+      description: Single address owner for a running identity bridge. Only a committed active host is published; desired hosts and event-queue hosts are not substituted.
+      required: [host, config_version, source, sensor_id, configuration_path]
+      properties:
+        host: { type: string }
+        config_version: { type: integer, minimum: 1 }
+        source: { type: string }
+        sensor_id: { type: string }
+        configuration_path: { type: string, enum: ['/integrations/identity/bridge'] }
     IdentityBridgeConfig:
       type: object
       required: [bridge_id, host, config_version, online_redis_addr, event_redis_addr, online_list, event_list, processing_list, source, sensor_id, campus_id, access_domain, batch_size, reconcile_interval_seconds]
