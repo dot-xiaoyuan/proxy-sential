@@ -3871,6 +3871,7 @@ components:
             total: { type: [integer, 'null'], minimum: 0 }
             mobile: { type: [integer, 'null'], minimum: 0 }
             pc: { type: [integer, 'null'], minimum: 0 }
+            router: { type: [integer, 'null'], minimum: 0, description: Current discovered routers with an exact, unambiguous account binding. }
             sessions: { type: [integer, 'null'], minimum: 0, description: Stable authentication sessions; dual-stack address rows are counted once. }
         sustain_seconds: { type: integer, minimum: 0 }
         window_seconds: { type: integer, minimum: 1 }

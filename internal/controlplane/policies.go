@@ -10,12 +10,74 @@ import (
 	"proxy-sentinel/internal/sharedaccess"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/store"
 )
+
+// evaluatePolicyQuota augments the identity-derived device quota with current
+// router observations.  Router evidence is only attributable when the
+// observation carries an exact, unambiguous authentication binding in the
+// policy scope; an IP-only correlation is deliberately not enough.
+func (s *Server) evaluatePolicyQuota(ctx context.Context, account string, sessions []policy.Session, scope policy.Scope, limits policy.Limits, at time.Time) policy.Quota {
+	quota := policy.EvaluateQuotaForScope(account, sessions, scope, limits, at)
+	if limits.Router == nil {
+		return quota
+	}
+	reader, ok := s.reader.(store.RouterObservationReader)
+	if !ok {
+		quota.CoverageComplete = false
+		quota.State = "unknown"
+		quota.Reasons = append(quota.Reasons, "router_observation_unavailable")
+		return quota
+	}
+	matchedSessions := map[string]bool{}
+	for _, session := range sessions {
+		if session.AccountID == account && session.State(at) == "active" && scope.MatchSession(account, session, at) {
+			matchedSessions[session.ID] = true
+		}
+	}
+	seen := map[string]bool{}
+	cursor := 0
+	for {
+		hasBinding := true
+		page, err := reader.ListRouterObservations(ctx, store.RouterQuery{Role: "router", HasAuthBinding: &hasBinding, Limit: 100, Cursor: cursor})
+		if err != nil {
+			quota.CoverageComplete = false
+			quota.State = "unknown"
+			quota.Reasons = append(quota.Reasons, "router_observation_unavailable")
+			return quota
+		}
+		for _, item := range page.Items {
+			if item.AssessmentID == "" || seen[item.AssessmentID] || item.Ambiguous || item.Infrastructure || item.Status != "likely" && item.Status != "confirmed" {
+				continue
+			}
+			for _, binding := range item.AuthBindings {
+				if binding.AccountID == account && !binding.Ambiguous && matchedSessions[binding.SessionID] {
+					seen[item.AssessmentID] = true
+					break
+				}
+			}
+		}
+		if page.Page.NextCursor == nil || *page.Page.NextCursor == "" {
+			break
+		}
+		next, err := strconv.Atoi(*page.Page.NextCursor)
+		if err != nil || next <= cursor {
+			break
+		}
+		cursor = next
+	}
+	quota.Router = len(seen)
+	if quota.CoverageComplete && quota.Router > *limits.Router {
+		quota.State = "exceeded"
+		quota.Reasons = append(quota.Reasons, "router_exceeded")
+	}
+	return quota
+}
 
 func (s *Server) handlePolicies(w http.ResponseWriter, r *http.Request, path string) {
 	if s.operations == nil {
@@ -286,12 +348,12 @@ func (s *Server) policySimulation(w http.ResponseWriter, r *http.Request, accoun
 		input := policy.Input{AccountID: account, Reasons: []string{"risk_evidence_not_evaluated"}}
 		item := map[string]any{"policy_id": p.ID}
 		if p.Trigger == "quota_exceeded" {
-			q := policy.EvaluateQuotaForScope(account, sessions, p.Scope, p.Limits, at)
+			q := s.evaluatePolicyQuota(r.Context(), account, sessions, p.Scope, p.Limits, at)
 			item["quota"] = q
 			input.Known = q.CoverageComplete
 			input.Violated = q.CoverageComplete && q.State == "exceeded"
 			input.Reasons = q.Reasons
-			input.DeviceCount, input.MobileCount, input.PCCount, input.CoverageComplete = &q.Total, &q.Mobile, &q.PC, &q.CoverageComplete
+			input.DeviceCount, input.MobileCount, input.PCCount, input.RouterCount, input.CoverageComplete = &q.Total, &q.Mobile, &q.PC, &q.Router, &q.CoverageComplete
 		}
 		if p.Trigger == "session_quota_exceeded" {
 			q := policy.EvaluateSessionQuota(account, sessions, p.Scope, p.Limits.Sessions, at)
@@ -419,7 +481,7 @@ func (s *Server) handlePolicyExecutionMutation(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if e.Definition.Trigger == "quota_exceeded" {
-			q := policy.EvaluateQuotaForScope(e.AccountID, approvalSessions, e.Definition.Scope, e.Definition.Limits, now)
+			q := s.evaluatePolicyQuota(r.Context(), e.AccountID, approvalSessions, e.Definition.Scope, e.Definition.Limits, now)
 			if !q.CoverageComplete || q.State != "exceeded" {
 				s.operations.mu.Unlock()
 				writeError(w, 409, "quota_review_invalid", "当前配额违规无法确认")

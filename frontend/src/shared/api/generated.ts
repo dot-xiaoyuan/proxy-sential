@@ -4029,6 +4029,8 @@ export interface components {
                 total?: number | null;
                 mobile?: number | null;
                 pc?: number | null;
+                /** @description Current discovered routers with an exact */
+                router?: number | null;
                 /** @description Stable authentication sessions; dual-stack address rows are counted once. */
                 sessions?: number | null;
             };

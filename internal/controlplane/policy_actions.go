@@ -85,11 +85,11 @@ func (s *Server) processAccountPolicies(now time.Time) {
 			s.preparePolicyStagesLocked(&e, ss, now)
 			in := policy.Input{AccountID: account, Reasons: []string{"risk_evidence_not_evaluated"}}
 			if p.Trigger == "quota_exceeded" {
-				q := policy.EvaluateQuotaForScope(account, ss, p.Scope, p.Limits, now)
+				q := s.evaluatePolicyQuota(ctx, account, ss, p.Scope, p.Limits, now)
 				in.Known = q.CoverageComplete
 				in.Violated = q.CoverageComplete && q.State == "exceeded"
 				in.Reasons = q.Reasons
-				in.DeviceCount, in.MobileCount, in.PCCount, in.CoverageComplete = &q.Total, &q.Mobile, &q.PC, &q.CoverageComplete
+				in.DeviceCount, in.MobileCount, in.PCCount, in.RouterCount, in.CoverageComplete = &q.Total, &q.Mobile, &q.PC, &q.Router, &q.CoverageComplete
 			}
 			if p.Trigger == "session_quota_exceeded" {
 				q := policy.EvaluateSessionQuota(account, ss, p.Scope, p.Limits.Sessions, now)
@@ -475,7 +475,7 @@ func (s *Server) validatePolicyDeliveryContext(parent context.Context, a Enforce
 		return err
 	}
 	if ex.Definition.Trigger == "quota_exceeded" {
-		q := policy.EvaluateQuotaForScope(a.AccountID, ss, ex.Definition.Scope, ex.Definition.Limits, now)
+		q := s.evaluatePolicyQuota(ctx, a.AccountID, ss, ex.Definition.Scope, ex.Definition.Limits, now)
 		if !q.CoverageComplete || q.State != "exceeded" {
 			return fmt.Errorf("quota violation no longer confirmed")
 		}

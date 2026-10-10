@@ -86,7 +86,7 @@ func (p *Definition) Validate() error {
 	if p.Trigger == "session_quota_exceeded" && p.Limits.Sessions == nil {
 		return fmt.Errorf("session quota required")
 	}
-	if p.Trigger == "quota_exceeded" && p.Limits.Total == nil && p.Limits.Mobile == nil && p.Limits.PC == nil {
+	if p.Trigger == "quota_exceeded" && p.Limits.Total == nil && p.Limits.Mobile == nil && p.Limits.PC == nil && p.Limits.Router == nil {
 		return fmt.Errorf("at least one device quota required")
 	}
 	if p.ActionModel != "" && p.ActionModel != "dpi-strategy/v1" {
@@ -100,7 +100,7 @@ func (p *Definition) Validate() error {
 			return fmt.Errorf("imported policy origin supports observe mode only")
 		}
 	}
-	for _, v := range []*int{p.Limits.Total, p.Limits.Mobile, p.Limits.PC, p.Limits.Sessions} {
+	for _, v := range []*int{p.Limits.Total, p.Limits.Mobile, p.Limits.PC, p.Limits.Router, p.Limits.Sessions} {
 		if v != nil && *v < 0 {
 			return fmt.Errorf("negative quota")
 		}
@@ -305,6 +305,7 @@ type Input struct {
 	DeviceCount      *int     `json:"device_count,omitempty"`
 	MobileCount      *int     `json:"mobile_count,omitempty"`
 	PCCount          *int     `json:"pc_count,omitempty"`
+	RouterCount      *int     `json:"router_count,omitempty"`
 	CoverageComplete *bool    `json:"coverage_complete,omitempty"`
 }
 type StageState struct {

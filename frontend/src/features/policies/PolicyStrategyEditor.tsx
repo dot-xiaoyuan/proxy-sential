@@ -120,7 +120,7 @@ function buildPolicy(original: Policy, values: StrategyForm): Policy {
     action_model: 'dpi-strategy/v1',
     scope: { accounts: values.scope?.accounts || [], sources: directorySource(values, original), products: values.scope?.products || [], groups: values.scope?.groups || [], vlans: values.scope?.vlans || [] },
     exempt: original.exempt || {},
-    limits: { total: values.limits?.total ?? null, mobile: values.limits?.mobile ?? null, pc: values.limits?.pc ?? null, sessions: null },
+    limits: { total: values.limits?.total ?? null, mobile: values.limits?.mobile ?? null, pc: values.limits?.pc ?? null, router: values.limits?.router ?? null, sessions: null },
     stages,
   }
 }
@@ -137,12 +137,17 @@ function connectorSupports(connector: ActionConnector, action: string) {
 
 function ActionDevice({ name, action, connectors, managedConnectorId }: { name: (string | number)[]; action: string; connectors: ActionConnector[]; managedConnectorId?: string }) {
   const options = connectors.filter(connector => connectorSupports(connector, action)).map(connector => ({ value: connector.connector_id, label: connector.name }))
-  const managed = managedConnectorId && connectors.find(connector => connector.connector_id === managedConnectorId && connector.connector_type === 'srun4k' && connectorSupports(connector, action))
+  // A managed 4K source can advance its identity epoch when the online Redis
+  // address changes, so the source suffix is not always the connector ID. The
+  // native connector remains the authoritative executor; do not force an
+  // operator to select an empty generic-device list for a 4K policy.
+  const managed = connectors.find(connector => connector.connector_type === 'srun4k' && connector.enabled && (!managedConnectorId || connector.connector_id === managedConnectorId) && (connectorSupports(connector, action) || ['notify', 'disconnect', 'disable_account'].includes(action)))
+    || connectors.find(connector => connector.connector_type === 'srun4k' && connector.enabled && (connectorSupports(connector, action) || ['notify', 'disconnect', 'disable_account'].includes(action)))
   if (managed) {
     return <Form.Item name={name} hidden><Input /></Form.Item>
   }
   return <Form.Item name={name} label={`${actionLabel[action]}执行设备`} rules={[{ required: true, message: `请选择${actionLabel[action]}执行设备` }]}>
-    <Select options={options} placeholder={options.length ? '请选择执行设备' : '尚无已验证的执行设备'} />
+    <Select options={options} placeholder={options.length ? '请选择执行设备' : '请先在认证与处置接入配置执行设备'} />
   </Form.Item>
 }
 
@@ -192,15 +197,15 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
   }, [connectors, directory?.source, form, managedConnectorId, policy])
 
   const next = async () => {
-    const fields = step === 0 ? [['name'], ['scope', 'products'], ['scope', 'groups'], ['scope', 'vlans']] : [['limits', 'total'], ['limits', 'mobile'], ['limits', 'pc']]
+    const fields = step === 0 ? [['name'], ['scope', 'products'], ['scope', 'groups'], ['scope', 'vlans']] : [['limits', 'total'], ['limits', 'mobile'], ['limits', 'pc'], ['limits', 'router']]
     await form.validateFields(fields)
     setStep(current => Math.min(current + 1, 2))
   }
   const finish = async () => {
     const values = await form.validateFields()
-    if (values.limits?.total == null && values.limits?.mobile == null && values.limits?.pc == null) {
+    if (values.limits?.total == null && values.limits?.mobile == null && values.limits?.pc == null && values.limits?.router == null) {
       setStep(1)
-      form.setFields([{name:['limits','total'],errors:['至少填写一项设备阈值']}])
+      form.setFields([{name:['limits','total'],errors:['至少填写一项认定条件']}])
       return
     }
     if (!values.actions?.notify_enabled && !values.actions?.disconnect_enabled && !values.actions?.disable_enabled) {
@@ -234,15 +239,17 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
       </section>
       <section className={step === 1 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 1}>
         <Typography.Title level={5}>配额超限认定条件</Typography.Title>
-        <Typography.Paragraph type="secondary">设备数量满足任意一项就会触发</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">设备数量或已绑定的路由器证据满足任意一项就会触发</Typography.Paragraph>
         <div className="policy-condition-grid">
           <Form.Item name={['limits', 'total']} label="全部设备数大于"><InputNumber min={0} precision={0} /></Form.Item>
           <span className="policy-condition-or">或者</span>
           <Form.Item name={['limits', 'pc']} label="电脑数量大于"><InputNumber min={0} precision={0} /></Form.Item>
           <span className="policy-condition-or">或者</span>
           <Form.Item name={['limits', 'mobile']} label="移动设备数量大于"><InputNumber min={0} precision={0} /></Form.Item>
+          <span className="policy-condition-or">或者</span>
+          <Form.Item name={['limits', 'router']} label="发现路由器数量大于"><InputNumber min={0} precision={0} /></Form.Item>
         </div>
-        <Alert type="warning" showIcon title="至少填写一项设备阈值" description="只统计身份覆盖完整且具有独立设备证据的在线终端；双栈地址不会重复计数。" />
+        <Alert type="warning" showIcon title="至少填写一项认定条件" description="设备阈值只统计身份覆盖完整且具有独立设备证据的在线终端；路由器阈值只统计当前路由观察中与该账号有明确 MAC 或端点绑定的路由器，双栈地址不会重复计数。" />
       </section>
       <section className={step === 2 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 2}>
         <Typography.Title level={5}>配额超限处理动作</Typography.Title>

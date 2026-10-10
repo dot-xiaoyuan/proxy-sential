@@ -282,3 +282,16 @@ func TestDPIActionModelDoesNotSerializeIndependentActions(t *testing.T) {
 		t.Fatalf("later action was serialized behind notification: %+v", disconnect)
 	}
 }
+
+func TestQuotaCanUseRouterDeviceClassAsIndependentCondition(t *testing.T) {
+	now := time.Now().UTC()
+	limit := 0
+	session := Session{ID: "router-session", AccountID: "a", Source: "srun4k:test", EndpointID: "router-1", IP: "192.0.2.1", DeviceClass: "router", StartedAt: now.Add(-time.Minute), ConfirmedAt: now, HeartbeatSeconds: 30, Confirmations: []time.Time{now}}
+	q := EvaluateQuotaForScope("a", []Session{session}, Scope{}, Limits{Router: &limit}, now)
+	if q.State != "exceeded" || q.Router != 1 {
+		t.Fatalf("router quota was not evaluated: %+v", q)
+	}
+	if len(q.Reasons) != 1 || q.Reasons[0] != "router_exceeded" {
+		t.Fatalf("unexpected router reasons: %+v", q.Reasons)
+	}
+}

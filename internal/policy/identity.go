@@ -154,6 +154,7 @@ type Limits struct {
 	Total    *int `json:"total"`
 	Mobile   *int `json:"mobile"`
 	PC       *int `json:"pc"`
+	Router   *int `json:"router"`
 	Sessions *int `json:"sessions"`
 }
 type Device struct {
@@ -167,6 +168,7 @@ type Quota struct {
 	Total             int      `json:"total"`
 	Mobile            int      `json:"mobile"`
 	PC                int      `json:"pc"`
+	Router            int      `json:"router"`
 	Other             int      `json:"other"`
 	UncertainSessions int      `json:"uncertain_sessions"`
 	CoverageComplete  bool     `json:"coverage_complete"`
@@ -233,7 +235,7 @@ func EvaluateQuotaForScope(account string, ss []Session, scope Scope, limits Lim
 			continue
 		}
 		class := s.DeviceClass
-		if class != "mobile" && class != "pc" {
+		if class != "mobile" && class != "pc" && class != "router" {
 			class = "other"
 		}
 		d := devices[key]
@@ -257,6 +259,8 @@ func EvaluateQuotaForScope(account string, ss []Session, scope Scope, limits Lim
 			q.Mobile++
 		case "pc":
 			q.PC++
+		case "router":
+			q.Router++
 		default:
 			q.Other++
 		}
@@ -278,6 +282,10 @@ func EvaluateQuotaForScope(account string, ss []Session, scope Scope, limits Lim
 	}
 	if limits.PC != nil && q.PC > *limits.PC {
 		q.Reasons = append(q.Reasons, "pc_exceeded")
+		q.State = "exceeded"
+	}
+	if limits.Router != nil && q.Router > *limits.Router {
+		q.Reasons = append(q.Reasons, "router_exceeded")
 		q.State = "exceeded"
 	}
 	return q

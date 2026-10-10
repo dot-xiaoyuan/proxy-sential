@@ -3309,7 +3309,7 @@ pre.wrap-code {
 .policy-editor-step { display: none; min-width: 0; }
 .policy-editor-step.is-active { display: grid; gap: 16px; }
 .policy-editor-step .ant-alert { margin-bottom: 4px; }
-.policy-condition-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: center; }
+.policy-condition-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: center; }
 .policy-condition-or { color: #64748b; white-space: nowrap; flex-shrink: 0; padding-top: 4px; }
 .policy-action-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; min-width: 0; }
 .policy-action-card > .ant-form-item:first-child { margin-bottom: 12px; }
