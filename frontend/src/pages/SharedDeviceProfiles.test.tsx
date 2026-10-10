@@ -60,4 +60,27 @@ describe('共享设备持久化档案', () => {
     await waitFor(() => expect(request.mock.calls.some(([url]) => String(url).includes('/profile-1'))).toBe(true))
     expect(screen.getByText('账号 student-1')).toBeInTheDocument()
   })
+
+  it('分开展示时间有效性与路由可信度，线索角色和厂商参考弱化呈现', async () => {
+    const candidate = { ...profile, profile_id: 'candidate', display_name: '', brand: 'Huawei', model: '', brand_reference_only: true, role_source: 'assessment', router_status: 'candidate', ip: '192.0.2.9' }
+    const hint = { ...profile, profile_id: 'hint', display_name: '192.168.1.1', brand: '', model: '', role: 'gateway', role_source: 'discovery_hint', identity_state: 'reference', identity_current: false, identity_assessment_id: '', ip: '192.168.1.1' }
+    const inferred = { ...profile, profile_id: 'inferred', display_name: '198.51.100.20', brand: '', model: '', role: 'shared_gateway', role_source: 'inferred_shared_gateway', identity_assessment_id: '', ip: '198.51.100.20' }
+    request.mockResolvedValue({ items: [candidate, hint, inferred], page: { limit: 20, total: 3 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', pending_jobs: 0 })
+    setup()
+    expect(await screen.findByText('候选')).toBeInTheDocument()
+    expect(screen.getAllByText('身份当前有效').length).toBe(2)
+    expect(screen.queryByText(/历史身份依据|身份已过期/)).not.toBeInTheDocument()
+    expect(screen.getByText('厂商线索：Huawei')).toHaveClass('shared-profile-role-hint')
+    expect(screen.queryByText('Huawei')).not.toBeInTheDocument()
+    expect(screen.getByText('网关线索')).toHaveClass('shared-profile-role-hint')
+    expect(screen.getByText('共享网关（推断）')).toHaveClass('shared-profile-role-hint')
+    expect(screen.getByText('路由器')).toHaveClass('shared-profile-role-assessed')
+  })
+
+  it('按路由可信度筛选时传给接口', async () => {
+    request.mockResolvedValue({ items: [], page: { limit: 20, total: 0 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', pending_jobs: 0 })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/shared-access?tab=devices&device_router_status=likely']}><SharedDeviceProfiles /></MemoryRouter></QueryClientProvider>)
+    await waitFor(() => expect(request.mock.calls.some(([url]) => String(url).includes('router_status=likely'))).toBe(true))
+  })
 })

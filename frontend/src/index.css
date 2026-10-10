@@ -3601,6 +3601,8 @@ pre.wrap-code {
 .discovery-page .ant-btn, .discovery-page .ant-tag { white-space: nowrap; flex-shrink: 0; }
 .discovery-mobile { display: none; }
 @media(max-width:559px) { .discovery-desktop { display: none; } .discovery-mobile { display: grid; gap: 12px; } .discovery-card { padding: 14px; } }
+.discovery-identifier { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+.discovery-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 
 .router-observations-panel { min-width: 0; }
 .router-filter-form { padding: 16px 0; border-bottom: 1px solid #e2e8f0; }
@@ -3638,6 +3640,8 @@ pre.wrap-code {
 .router-status { font-weight: 600; }
 .router-status-candidate { color: #475569; background: #f8fafc; border-color: #cbd5e1; }
 .router-status-likely { color: #854d0e; background: #fefce8; border-color: #fde68a; }
+.router-identity .router-identity-reference { font-weight: 500; color: #475569; }
+.router-score-muted { color: #64748b; font-weight: 400; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
 .router-status-confirmed { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
 .router-mobile-list { display: none; }
 .router-observation-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; display: grid; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
@@ -3669,7 +3673,7 @@ pre.wrap-code {
 .router-auth-binding-ambiguous { border-color: #fde68a; background: #fffbeb; }
 .router-evidence-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
 .router-evidence-item .ant-typography { overflow-wrap: anywhere; }
-.router-evidence-value { padding: 6px 8px; border-radius: 6px; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.router-evidence-value { padding: 6px 8px; border-radius: 6px; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; overflow-wrap: anywhere; }
 .router-evidence-events summary { width: fit-content; cursor: pointer; color: #2563eb; font-size: 12px; }
 .router-evidence-events div { margin-top: 6px; color: #64748b; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; overflow-wrap: anywhere; }
 .router-observations-panel .ant-btn, .router-observations-panel .ant-tag, .router-detail-page .ant-tag { white-space: nowrap; flex-shrink: 0; }
@@ -3790,6 +3794,8 @@ pre.wrap-code {
 .shared-profile-column-heading{display:grid;grid-template-columns:var(--shared-profile-columns);gap:20px;padding:10px 12px;background:#f8fafc;border-block:1px solid #e2e8f0;color:#475569;font-size:12px;font-weight:600}
 .shared-profile-mobile-list{display:block}
 .shared-profile-mobile-row{display:grid;grid-template-columns:var(--shared-profile-columns);gap:20px;padding:16px 12px;border-bottom:1px solid #e2e8f0;min-width:0;align-items:start}
+.shared-profile-device .shared-profile-role-assessed{color:#334155;font-weight:500}
+.shared-profile-device .shared-profile-role-hint{color:#64748b;font-weight:400}
 .shared-profile-mobile-row:hover{background:#f8fafc}
 .shared-profile-mobile-row:last-child{border-bottom:0}
 .shared-profile-mobile-block{display:grid;align-content:start;gap:7px;min-width:0}

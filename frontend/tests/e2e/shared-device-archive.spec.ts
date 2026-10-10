@@ -26,11 +26,11 @@ for(const [width,height] of [[390,844],[743,774],[1280,800],[1440,900]]) test(`h
  await expect(page.getByRole('tab',{name:'设备档案',exact:true})).toHaveAttribute('aria-selected','true')
  const deviceList=page.locator('.shared-profile-mobile-list')
  await expect(deviceList.getByText('ZTE SR7410-20',{exact:true})).toBeVisible()
- await expect(deviceList.getByText('历史身份依据',{exact:true})).toBeVisible()
+ await expect(deviceList.getByText('身份已过期',{exact:true})).toBeVisible()
  await expect(deviceList.getByText('20260022',{exact:true})).toBeVisible()
  await expect(deviceList.getByText('MAC 精确匹配',{exact:true})).toBeVisible()
  const vendor=deviceList.locator('.shared-profile-reference')
-  await expect(vendor).toContainText('辅助识别线索')
+  await expect(vendor).toContainText('辅助线索')
  await expect(vendor).not.toContainText('路由器画像')
  if(width>=1280){
   const adaptiveRow=await vendor.evaluate(element=>{const row=element.getBoundingClientRect();const blocks=[...element.querySelectorAll('.shared-profile-mobile-block')].filter(child=>child.getBoundingClientRect().width>0);const last=blocks.at(-1)?.getBoundingClientRect();return {blockCount:blocks.length,rightGap:last?Math.round(row.right-last.right):-1}})

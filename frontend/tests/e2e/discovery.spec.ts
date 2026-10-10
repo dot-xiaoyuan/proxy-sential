@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test'
 import {writeFile} from 'node:fs/promises'
 for(const width of [390,1280,1440])test(`discovery layout ${width}`,async({page},info)=>{
  await page.setViewportSize({width,height:width===390?844:width===1280?800:900})
- await page.goto('/discovery')
+ await page.goto('/discovery?router_include_candidates=true&router_role=')
  await expect(page.getByRole('heading',{name:'网络设备发现'})).toBeVisible()
  await expect(page.getByText('192.0.2.10',{exact:true}).filter({visible:true})).toBeVisible()
  await expect(page.getByText('当前仅有厂商线索').filter({visible:true})).toBeVisible()

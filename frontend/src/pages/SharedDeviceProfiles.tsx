@@ -2,11 +2,13 @@ import { ReloadOutlined } from '@ant-design/icons'
 import { Alert, Button, Drawer, Empty, Input, Select, Space, Tag, Typography } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { detailPath } from '../app/navigation'
 import { request } from '../shared/api/client'
 import { AppErrorAlert, AppLoadingState, AppServerPagination, useServerPagination } from '../shared/ui'
 import type { components } from '../shared/api/generated'
 import { formatDeviceName } from './sharedDeviceProfileFormat'
+import { routerRoleLabels, routerStatusLabels } from './routerLabels'
 
 type Profile = components['schemas']['SharedDeviceProfile']
 type ProfilePage = components['schemas']['SharedDeviceProfilePage']
@@ -14,21 +16,24 @@ type AuthBinding = components['schemas']['RouterAuthBinding']
 type ProfileDetail = components['schemas']['SharedDeviceProfileDetail']
 
 const time = (value?: string) => value && !value.startsWith('0001-') ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : ''
-const identityStates: Record<string, string> = { supported: '当前身份依据', historical: '历史身份依据', reference: '辅助识别线索' }
+const identityStates: Record<string, string> = { supported: '身份当前有效', historical: '身份已过期', reference: '辅助线索' }
+const profileRoles: Record<string, string> = { ...routerRoleLabels, gateway: '网关' }
 
 export function SharedDeviceProfiles() {
+  const location = useLocation()
   const [params, setParams] = useSearchParams()
   const [selectedProfile, setSelectedProfile] = useState<string | null>(null)
   const pagination = useServerPagination('shared_devices_')
   const keyword = params.get('device_keyword') || ''
   const role = params.get('device_role') || ''
   const identityState = params.get('device_identity_state') || ''
+  const routerStatus = params.get('device_router_status') || ''
   const currentShared = params.get('device_current_shared') || ''
   const accountConflict = params.get('device_account_conflict') || ''
-  const query = { keyword, role, identityState, currentShared, accountConflict, limit: pagination.pageSize, cursor: pagination.cursor }
+  const query = { keyword, role, identityState, routerStatus, currentShared, accountConflict, limit: pagination.pageSize, cursor: pagination.cursor }
   const profiles = useQuery({
     queryKey: ['shared-device-profiles', query],
-    queryFn: () => request<ProfilePage>(`/shared-access/devices?limit=${query.limit}&cursor=${query.cursor}&keyword=${encodeURIComponent(keyword)}&role=${encodeURIComponent(role)}&identity_state=${encodeURIComponent(identityState)}&current_shared=${encodeURIComponent(currentShared)}&account_conflict=${encodeURIComponent(accountConflict)}`),
+    queryFn: () => request<ProfilePage>(`/shared-access/devices?limit=${query.limit}&cursor=${query.cursor}&keyword=${encodeURIComponent(keyword)}&role=${encodeURIComponent(role)}&identity_state=${encodeURIComponent(identityState)}&router_status=${encodeURIComponent(routerStatus)}&current_shared=${encodeURIComponent(currentShared)}&account_conflict=${encodeURIComponent(accountConflict)}`),
     placeholderData: () => undefined,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -74,8 +79,9 @@ export function SharedDeviceProfiles() {
     {profiles.data?.freshness_state === 'initializing' && <Alert className="shared-profile-activity-alert" type="info" showIcon title="正在建立新的设备档案" description="本次上线不回填旧记录，新设备证据到达后会逐步出现。" />}
     <div className="shared-profile-toolbar">
       <Input.Search key={keyword} className="shared-profile-search" defaultValue={keyword} placeholder="IP、MAC、账号、品牌或型号" allowClear onSearch={search} />
-      <Select className="shared-profile-filter" value={role || undefined} allowClear placeholder="设备角色" onChange={value => filter('device_role', value)} options={[{ value: 'router', label: '路由器' }, { value: 'ap', label: '无线接入点' }, { value: 'gateway', label: '网关' }, { value: 'switch', label: '交换机' }, { value: 'shared_gateway', label: '共享网关' }]} />
-      <Select className="shared-profile-filter" value={identityState || undefined} allowClear placeholder="身份状态" onChange={value => filter('device_identity_state', value)} options={[{ value: 'supported', label: '当前身份依据' }, { value: 'historical', label: '历史身份依据' }, { value: 'reference', label: '辅助识别线索' }]} />
+      <Select className="shared-profile-filter" value={role || undefined} allowClear placeholder="设备角色" onChange={value => filter('device_role', value)} options={[{ value: 'router', label: '路由器' }, { value: 'ap', label: '接入点' }, { value: 'gateway', label: '网关' }, { value: 'switch', label: '交换机' }, { value: 'firewall', label: '防火墙' }, { value: 'shared_gateway', label: '共享网关' }]} />
+      <Select className="shared-profile-filter" value={identityState || undefined} allowClear placeholder="身份状态" onChange={value => filter('device_identity_state', value)} options={Object.entries(identityStates).map(([value, label]) => ({ value, label }))} />
+      <Select className="shared-profile-filter" value={routerStatus || undefined} allowClear placeholder="路由可信度" onChange={value => filter('device_router_status', value)} options={Object.entries(routerStatusLabels).map(([value, label]) => ({ value, label }))} />
       <Select className="shared-profile-filter" value={currentShared || undefined} allowClear placeholder="共享状态" onChange={value => filter('device_current_shared', value)} options={[{ value: 'true', label: '当前共享' }, { value: 'false', label: '非当前共享' }]} />
       <Select className="shared-profile-filter" value={accountConflict || undefined} allowClear placeholder="账号状态" onChange={value => filter('device_account_conflict', value)} options={[{ value: 'true', label: '账号冲突' }, { value: 'false', label: '账号无冲突' }]} />
     </div>
@@ -97,7 +103,7 @@ export function SharedDeviceProfiles() {
         <div className="shared-profile-mobile-block shared-profile-block-records">
           <span className="shared-profile-mobile-label">最近记录</span>
           <ProfileTimes item={item} />
-          <ProfileActions item={item} onHistory={() => setSelectedProfile(item.profile_id)} />
+          <ProfileActions item={item} locationPath={location.pathname + location.search} onHistory={() => setSelectedProfile(item.profile_id)} />
         </div>
       </article>)}</div>
     </> : <Empty description="暂无设备身份档案" />}
@@ -107,7 +113,7 @@ export function SharedDeviceProfiles() {
       {detail.isError ? <AppErrorAlert title="档案历史读取失败" /> : detail.isPending ? <AppLoadingState rows={5} /> : <div className="shared-profile-history">
         {(detail.data?.history || []).map((entry, index) => <article key={`${entry.observed_at}-${index}`} className="shared-profile-history-item">
           <div className="shared-profile-history-head"><strong>{time(entry.observed_at)}</strong><Tag>{entry.kind === 'projection' ? '档案变化' : entry.kind}</Tag></div>
-          <div className="shared-profile-history-content"><span>{entry.snapshot.display_name}</span>{entry.snapshot.latest_account_id && <span>账号 {entry.snapshot.latest_account_id}</span>}{entry.snapshot.ip && <span>地址 {entry.snapshot.ip}</span>}{entry.snapshot.role && <span>角色 {entry.snapshot.role}</span>}</div>
+          <div className="shared-profile-history-content"><span>{entry.snapshot.display_name}</span>{entry.snapshot.latest_account_id && <span>账号 {entry.snapshot.latest_account_id}</span>}{entry.snapshot.ip && <span>地址 {entry.snapshot.ip}</span>}{profileRoles[entry.snapshot.role || ''] && <span>角色 {profileRoles[entry.snapshot.role || '']}</span>}</div>
         </article>)}
         {!detail.data?.history.length && <Empty description="暂无档案变化记录" />}
       </div>}
@@ -115,10 +121,13 @@ export function SharedDeviceProfiles() {
   </section>
 }
 
+const roleSourceSuffix: Record<string, string> = { discovery_hint: '线索', inferred_shared_gateway: '（推断）' }
+
 function DeviceIdentity({ item }: { item: Profile }) {
-  const title = item.display_name || formatDeviceName(item.brand, item.model, item.ip || item.mac)
-  const roles: Record<string, string> = { router: '路由器', ap: '无线接入点', access_point: '无线接入点', gateway: '网关', switch: '交换机', shared_gateway: '共享网关' }
-  return <div className="shared-profile-device"><strong>{title}</strong>{roles[item.role || ''] && <span>{roles[item.role || '']}</span>}{item.identity_basis && <Typography.Text ellipsis={{ tooltip: item.identity_basis }}>{item.identity_basis}</Typography.Text>}</div>
+  const title = item.display_name || formatDeviceName(item.brand_reference_only ? '' : item.brand, item.model, item.ip || item.mac)
+  const role = profileRoles[item.role || '']
+  const suffix = roleSourceSuffix[item.role_source || '']
+  return <div className="shared-profile-device"><strong>{title}</strong>{role && <span className={suffix ? 'shared-profile-role-hint' : 'shared-profile-role-assessed'}>{role}{suffix}</span>}{item.brand_reference_only && item.brand && <span className="shared-profile-role-hint">厂商线索：{item.brand}</span>}{item.identity_basis && <Typography.Text ellipsis={{ tooltip: item.identity_basis }}>{item.identity_basis}</Typography.Text>}</div>
 }
 
 function NetworkIdentity({ item }: { item: Profile }) {
@@ -134,7 +143,7 @@ function AuthIdentity({ item }: { item: Profile }) {
 }
 
 function ProfileState({ item }: { item: Profile }) {
-  return <Space wrap size={[4, 4]}><Tag color={item.identity_current ? 'blue' : undefined}>{identityStates[item.identity_state] || ''}</Tag>{item.identity_conflict && <Tag color="error">身份冲突</Tag>}{item.current_shared && <Tag color="green">已确认当前共享</Tag>}</Space>
+  return <Space wrap size={[4, 4]}>{routerStatusLabels[item.router_status || ''] && <Tag className={`router-status router-status-${item.router_status}`}>{routerStatusLabels[item.router_status || '']}</Tag>}{identityStates[item.identity_state] && <Tag color={item.identity_current ? 'blue' : undefined}>{identityStates[item.identity_state]}</Tag>}{item.identity_conflict && <Tag color="error">身份冲突</Tag>}{item.current_shared && <Tag color="green">已确认当前共享</Tag>}</Space>
 }
 
 function ProfileTimes({ item }: { item: Profile }) {
@@ -142,6 +151,6 @@ function ProfileTimes({ item }: { item: Profile }) {
   return <div className="shared-profile-times">{records.map(([label, value]) => time(value) && <div className="shared-profile-time" key={label}><span>{label}</span><time dateTime={value}>{time(value)}</time></div>)}</div>
 }
 
-function ProfileActions({ item, onHistory }: { item: Profile; onHistory: () => void }) {
-  return <div className="shared-profile-actions"><Button type="link" className="shared-profile-history-button" onClick={onHistory}>档案历史</Button>{item.identity_assessment_id && <Link to={`/discovery/routers/${encodeURIComponent(item.identity_assessment_id)}`}>身份记录</Link>}{item.last_shared_observation_id && <Link to={`/shared-access/observations/${encodeURIComponent(item.last_shared_observation_id)}`}>共享记录</Link>}</div>
+function ProfileActions({ item, locationPath, onHistory }: { item: Profile; locationPath: string; onHistory: () => void }) {
+  return <div className="shared-profile-actions"><Button type="link" className="shared-profile-history-button" onClick={onHistory}>档案历史</Button>{item.identity_assessment_id && <Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.identity_assessment_id)}`, locationPath)}>身份记录</Link>}{item.last_shared_observation_id && <Link to={detailPath(`/shared-access/observations/${encodeURIComponent(item.last_shared_observation_id)}`, locationPath)}>共享记录</Link>}</div>
 }

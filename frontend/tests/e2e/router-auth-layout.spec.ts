@@ -10,14 +10,14 @@ test('router authentication bindings pass responsive visual and DOM probes', asy
   test.setTimeout(90_000)
   for (const viewport of viewports) {
     await page.setViewportSize(viewport)
-    await page.goto('/discovery?tab=routers')
+    await page.goto('/discovery?tab=routers&router_include_candidates=true')
     await expect(page.locator('.router-auth-identity:visible').getByText('20260001')).toBeVisible()
     const authOnly = page.getByRole('checkbox', { name: '只看有认证身份' })
     await expect(authOnly).toBeVisible()
     await authOnly.check()
     await page.getByRole('button', { name: /查\s*询/ }).click()
     await expect(page).toHaveURL(/router_has_auth_binding=true/)
-    await expect(page.getByText(/1 条当前路由候选/)).toBeVisible()
+    await expect(page.getByText(/1 条路由记录/)).toBeVisible()
     const probe = await page.evaluate(() => {
       const overflow = document.documentElement.scrollWidth > window.innerWidth + 2
       const vertical = [...document.querySelectorAll('.ant-btn, .ant-tag')].filter(element => {
