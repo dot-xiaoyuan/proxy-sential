@@ -49,6 +49,11 @@ func (r Repository) DrainSpool(ctx context.Context, dir string) error {
 		if e = os.Remove(path); e != nil {
 			return e
 		}
+		if r.Describe != nil {
+			for _, event := range events {
+				r.Describe(event)
+			}
+		}
 	}
 	return nil
 }

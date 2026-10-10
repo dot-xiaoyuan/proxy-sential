@@ -12,6 +12,8 @@ import (
 type Repository struct {
 	DB      *sql.DB
 	Archive func(context.Context, []normalized.Event) error
+	// Describe receives persisted SSDP announcements; nil disables description reads.
+	Describe func(normalized.Event)
 }
 type Task struct {
 	ID              string          `json:"id"`

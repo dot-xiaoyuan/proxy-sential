@@ -81,3 +81,45 @@ func TestSSDPNotifyWithdrawalUsesSameService(t *testing.T) {
 		t.Fatal("withdrawal active")
 	}
 }
+
+func TestSSDPCarriesSenderMACForIdentityAssociation(t *testing.T) {
+	body := "NOTIFY * HTTP/1.1\r\nNT: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\nUSN: uuid:gw\r\nCACHE-CONTROL: max-age=120\r\nLOCATION: http://192.168.1.1:1900/igd.xml\r\n\r\n"
+	packet := func(mac []byte, vlan bool) []byte {
+		head := 14
+		if vlan {
+			head = 18
+		}
+		f := make([]byte, head+28+len(body))
+		copy(f[6:12], mac)
+		if vlan {
+			binary.BigEndian.PutUint16(f[12:14], 0x8100)
+			binary.BigEndian.PutUint16(f[14:16], 120)
+		}
+		binary.BigEndian.PutUint16(f[head-2:head], 0x0800)
+		ip := f[head:]
+		ip[0] = 0x45
+		binary.BigEndian.PutUint16(ip[2:4], uint16(28+len(body)))
+		ip[9] = 17
+		copy(ip[12:16], []byte{192, 168, 1, 1})
+		binary.BigEndian.PutUint16(ip[20:22], 1900)
+		binary.BigEndian.PutUint16(ip[22:24], 1900)
+		binary.BigEndian.PutUint16(ip[24:26], uint16(8+len(body)))
+		copy(ip[28:], body)
+		return f
+	}
+	s := Source{ID: "p", Site: "s", Domain: "d"}
+	for _, vlan := range []bool{false, true} {
+		events := DecodeFrame(packet([]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x77}, vlan), s, time.Now())
+		if len(events) != 1 {
+			t.Fatalf("vlan=%v: ssdp not decoded", vlan)
+		}
+		o, err := FromEvent(events[0])
+		if err != nil || o.MAC != "00:11:22:33:44:77" || o.IP != "192.168.1.1" || o.DeviceType != "gateway" {
+			t.Fatalf("vlan=%v: sender identity missing: %+v %v", vlan, o, err)
+		}
+	}
+	events := DecodeFrame(packet(make([]byte, 6), false), s, time.Now())
+	if len(events) != 1 || events[0].Subject["mac"] != "" {
+		t.Fatalf("zero source MAC attributed: %+v", events)
+	}
+}

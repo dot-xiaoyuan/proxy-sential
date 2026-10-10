@@ -20,6 +20,7 @@ func main() {
 	domain := flag.String("domain", "", "passive capture layer-2 scope")
 	spool := flag.String("spool", "/var/lib/proxy-sentinel/discovery-spool", "durable passive spool")
 	node := flag.String("node", "", "configured discovery node ID")
+	describe := flag.Bool("ssdp-describe", true, "read UPnP descriptions of on-link SSDP announcers whose neighbor MAC matches")
 	flag.Parse()
 	db, err := sql.Open("pgx", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"))
 	if err != nil {
@@ -40,6 +41,11 @@ func main() {
 	if *iface != "" {
 		if *site == "" || *domain == "" {
 			log.Fatal("passive site and domain required")
+		}
+		if *describe {
+			describer := discovery.NewDescriber(*spool)
+			repo.Describe = describer.Offer
+			go describer.Run(ctx)
 		}
 		go func() {
 			if e := discovery.Capture(ctx, *iface, *spool, discovery.Source{ID: "passive-" + *node, Address: *iface, Node: *node, Site: *site, Domain: *domain, ConfigVersion: 1}); e != nil && ctx.Err() == nil {

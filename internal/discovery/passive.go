@@ -33,6 +33,10 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 	}
 	ether := binary.BigEndian.Uint16(frame[12:14])
 	offset := 14
+	senderMAC := ""
+	if mac := net.HardwareAddr(frame[6:12]); mac[0]&1 == 0 && !bytes.Equal(mac, make([]byte, 6)) {
+		senderMAC = mac.String()
+	}
 	vlan := ""
 	for ether == 0x8100 || ether == 0x88a8 {
 		if len(frame) < offset+4 {
@@ -153,7 +157,7 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 		if ttl > 604800 {
 			ttl = 604800
 		}
-		return []normalized.Event{emit("ssdp", h.Get("Usn"), src.String(), "", map[string]any{"is_response": true, "ttl": ttl, "withdrawn": withdraw, "usn": h.Get("Usn"), "service_type": firstText(h.Get("St"), h.Get("Nt")), "device_type": h.Get("Nt"), "location": h.Get("Location")})}
+		return []normalized.Event{emit("ssdp", h.Get("Usn"), src.String(), senderMAC, map[string]any{"is_response": true, "ttl": ttl, "withdrawn": withdraw, "usn": h.Get("Usn"), "service_type": firstText(h.Get("St"), h.Get("Nt")), "device_type": h.Get("Nt"), "location": h.Get("Location")})}
 	}
 	if sport != 5353 && dport != 5353 {
 		return nil
@@ -252,6 +256,11 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 			ips = []string{""}
 		}
 		for _, ip := range ips {
+			// Cached or proxied records may describe another host; only the sender's own address gets its MAC.
+			mac := ""
+			if ip != "" && ip == src.String() {
+				mac = senderMAC
+			}
 			ttl := r.Header.TTL
 			if a, ok := addressTTL[strings.ToLower(srv.Target.String())+"|"+ip]; ok && a < ttl {
 				ttl = a
@@ -259,7 +268,7 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 			if ttl > 604800 {
 				ttl = 604800
 			}
-			result = append(result, emit("dns_sd", fmt.Sprint(i, ":", ip), ip, "", map[string]any{"is_response": true, "ttl": int(ttl), "service_type": service, "service_instance": r.Header.Name.String(), "service_target": srv.Target.String(), "service_port": int(srv.Port), "txt": txt[name]}))
+			result = append(result, emit("dns_sd", fmt.Sprint(i, ":", ip), ip, mac, map[string]any{"is_response": true, "ttl": int(ttl), "service_type": service, "service_instance": r.Header.Name.String(), "service_target": srv.Target.String(), "service_port": int(srv.Port), "txt": txt[name]}))
 		}
 	}
 	return result

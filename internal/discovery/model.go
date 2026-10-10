@@ -31,6 +31,8 @@ type Observation struct {
 	IP            string           `json:"ip,omitempty"`
 	MAC           string           `json:"mac,omitempty"`
 	Name          string           `json:"name,omitempty"`
+	Manufacturer  string           `json:"manufacturer,omitempty"`
+	ModelName     string           `json:"model_name,omitempty"`
 	Origin        string           `json:"origin"`
 	Port          string           `json:"port,omitempty"`
 	Interface     string           `json:"interface,omitempty"`
@@ -178,6 +180,11 @@ func FromEvent(e normalized.Event) (Observation, error) {
 			return o, errors.New("SSDP search is not evidence")
 		}
 		o.Explanation = "SSDP 设备自报信息，不确认整机类型"
+		if desc, ok := e.Payload["description"].(map[string]any); ok {
+			o.Manufacturer = cleanDescriptionText(str(desc, "manufacturer"))
+			o.ModelName = cleanDescriptionText(strings.TrimSpace(str(desc, "model_name") + " " + str(desc, "model_number")))
+			o.Explanation = "SSDP 设备描述自报型号，不确认整机类型"
+		}
 		service := strings.ToLower(str(e.Payload, "device_type") + " " + str(e.Payload, "service_type"))
 		if strings.Contains(service, "mediarenderer") {
 			o.Capabilities = []string{"media_rendering"}
