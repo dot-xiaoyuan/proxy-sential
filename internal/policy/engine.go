@@ -30,6 +30,7 @@ type Stage struct {
 	DurationSeconds int      `json:"duration_seconds"`
 	RateKbps        int      `json:"rate_kbps"`
 	Template        string   `json:"template"`
+	ChannelID       string   `json:"channel_id,omitempty"`
 	DependsOn       []string `json:"depends_on,omitempty"`
 	IntervalSeconds int      `json:"interval_seconds,omitempty"`
 	SyncNotify      bool     `json:"sync_notify,omitempty"`
@@ -74,7 +75,10 @@ func (p *Definition) Validate() error {
 	if p.Mode != "observe" && p.Mode != "manual" && p.Mode != "automatic" {
 		return fmt.Errorf("invalid mode")
 	}
-	if p.Trigger != "quota_exceeded" && p.Trigger != "session_quota_exceeded" && p.Trigger != "shared_access" && p.Trigger != "explicit_proxy" {
+	// blacklist_hit is an explicit operator decision rather than an inferred
+	// signal, so it may run in automatic mode; the connected enforcement gates
+	// (shadow mode, cooldown, approval, whitelist precedence) still apply.
+	if p.Trigger != "quota_exceeded" && p.Trigger != "session_quota_exceeded" && p.Trigger != "shared_access" && p.Trigger != "explicit_proxy" && p.Trigger != "blacklist_hit" {
 		return fmt.Errorf("invalid trigger")
 	}
 	if p.Trigger == "explicit_proxy" && p.Mode == "automatic" {

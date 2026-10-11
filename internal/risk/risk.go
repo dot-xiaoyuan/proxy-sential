@@ -664,7 +664,7 @@ func summaryFor(items []evidence.Evidence, level string) string {
 }
 
 func isWeakEvidence(evidenceType string) bool {
-	return evidenceType == "multi_user_agent" || evidenceType == "ua_os_divergence" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior" || evidenceType == "vpn_proxy_domain_hint" || evidenceType == "vpn_proxy_rule_hint" || evidenceType == "ai_relay_domain_usage" || evidenceType == "ttl_clusters" || evidenceType == "ttl_path_variation" || evidenceType == "dhcp_device_fingerprint" || evidenceType == "known_game_accelerator"
+	return evidenceType == "multi_user_agent" || evidenceType == "ua_os_divergence" || evidenceType == "domain_diversity" || evidenceType == "port_distribution" || evidenceType == "encrypted_tunnel_behavior" || evidenceType == "vpn_proxy_domain_hint" || evidenceType == "vpn_proxy_rule_hint" || evidenceType == "ai_relay_domain_usage" || evidenceType == "ttl_clusters" || evidenceType == "ttl_path_variation" || evidenceType == "dhcp_device_fingerprint" || evidenceType == "known_game_accelerator" || evidenceType == "internal_target_access"
 }
 
 func detectionBasis(items []evidence.Evidence) (string, []string) {

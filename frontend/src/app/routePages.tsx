@@ -167,3 +167,15 @@ export function SourcesRoute(){return <RouteSuspense><SourcesPage/></RouteSuspen
 
 const WhitelistPage=lazy(()=>import('../pages/WhitelistPage').then(m=>({default:m.WhitelistPage})))
 export function WhitelistRoute(){return <RouteSuspense><WhitelistPage/></RouteSuspense>}
+
+const NotificationsPage=lazy(()=>import('../pages/NotificationsPage').then(m=>({default:m.NotificationsPage})))
+export function NotificationsRoute(){return <RouteSuspense><NotificationsPage/></RouteSuspense>}
+
+const BlacklistPage=lazy(()=>import('../pages/BlacklistPage').then(m=>({default:m.BlacklistPage})))
+export function BlacklistRoute(){return <RouteSuspense><BlacklistPage/></RouteSuspense>}
+
+const DestinationTargetsPage=lazy(()=>import('../pages/DestinationTargetsPage').then(m=>({default:m.DestinationTargetsPage})))
+export function DestinationTargetsRoute(){return <RouteSuspense><DestinationTargetsPage/></RouteSuspense>}
+
+const BehaviorReportsPage=lazy(()=>import('../pages/BehaviorReportsPage').then(m=>({default:m.BehaviorReportsPage})))
+export function BehaviorReportsRoute(){return <RouteSuspense><BehaviorReportsPage/></RouteSuspense>}

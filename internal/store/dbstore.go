@@ -9,10 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"proxy-sentinel/internal/behaviorreport"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/poison"
 	"proxy-sentinel/internal/risk"
 )
 
@@ -628,6 +630,98 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		progress(result)
 	}
 	return result, nil
+}
+
+// --- destination target access detection ---
+
+func (s *DBStore) ListDestinationTargetRules(ctx context.Context) ([]DestinationTargetRule, error) {
+	return s.pg.ListDestinationTargetRules(ctx)
+}
+
+func (s *DBStore) GetDestinationTargetRule(ctx context.Context, id string) (DestinationTargetRule, error) {
+	return s.pg.GetDestinationTargetRule(ctx, id)
+}
+
+func (s *DBStore) UpsertDestinationTargetRule(ctx context.Context, rule poison.Rule, pushEnabled, pushWithoutAccount bool, actor string, creating bool) (DestinationTargetRule, error) {
+	return s.pg.UpsertDestinationTargetRule(ctx, rule, pushEnabled, pushWithoutAccount, actor, creating)
+}
+
+func (s *DBStore) DeleteDestinationTargetRule(ctx context.Context, id string) error {
+	return s.pg.DeleteDestinationTargetRule(ctx, id)
+}
+
+func (s *DBStore) WriteDestinationTargetFindings(ctx context.Context, findings []DestinationTargetFinding) error {
+	return s.pg.WriteDestinationTargetFindings(ctx, findings)
+}
+
+func (s *DBStore) ListDestinationTargetFindings(ctx context.Context, ruleID, subjectIP string, limit, offset int) ([]DestinationTargetFinding, int, error) {
+	return s.pg.ListDestinationTargetFindings(ctx, ruleID, subjectIP, limit, offset)
+}
+
+func (s *DBStore) ExpireDestinationTargetFindings(ctx context.Context, before time.Time) error {
+	return s.pg.ExpireDestinationTargetFindings(ctx, before)
+}
+
+func (s *DBStore) ListDestinationObservations(ctx context.Context, since time.Time, limit int) ([]poison.Observation, error) {
+	return s.ch.ListDestinationObservations(ctx, since, limit)
+}
+
+// --- northbound behaviour reporting ---
+
+func (s *DBStore) ListBehaviorReportChannels(ctx context.Context) ([]BehaviorReportChannel, error) {
+	return s.pg.ListBehaviorReportChannels(ctx)
+}
+
+func (s *DBStore) GetBehaviorReportChannel(ctx context.Context, id string) (BehaviorReportChannel, error) {
+	return s.pg.GetBehaviorReportChannel(ctx, id)
+}
+
+func (s *DBStore) UpsertBehaviorReportChannel(ctx context.Context, channel behaviorreport.Channel, encryptedSecret, actor string, creating bool) (BehaviorReportChannel, error) {
+	return s.pg.UpsertBehaviorReportChannel(ctx, channel, encryptedSecret, actor, creating)
+}
+
+func (s *DBStore) DeleteBehaviorReportChannel(ctx context.Context, id string) error {
+	return s.pg.DeleteBehaviorReportChannel(ctx, id)
+}
+
+func (s *DBStore) ListBehaviorReportCandidates(ctx context.Context, since time.Time, limit int) ([]BehaviorReportCandidate, error) {
+	return s.pg.ListBehaviorReportCandidates(ctx, since, limit)
+}
+
+func (s *DBStore) EnqueueBehaviorReport(ctx context.Context, row BehaviorReportOutboxRow) error {
+	return s.pg.EnqueueBehaviorReport(ctx, row)
+}
+
+func (s *DBStore) ClaimBehaviorReportBatch(ctx context.Context, channelID string, batchSize int) ([]BehaviorReportOutboxRow, error) {
+	return s.pg.ClaimBehaviorReportBatch(ctx, channelID, batchSize)
+}
+
+func (s *DBStore) MarkBehaviorReportSent(ctx context.Context, row BehaviorReportOutboxRow, httpStatus int, remoteID string) error {
+	return s.pg.MarkBehaviorReportSent(ctx, row, httpStatus, remoteID)
+}
+
+func (s *DBStore) MarkBehaviorReportFailed(ctx context.Context, row BehaviorReportOutboxRow, httpStatus int, message string) error {
+	return s.pg.MarkBehaviorReportFailed(ctx, row, httpStatus, message)
+}
+
+func (s *DBStore) MarkBehaviorReportRetry(ctx context.Context, row BehaviorReportOutboxRow, httpStatus int, message string) error {
+	return s.pg.MarkBehaviorReportRetry(ctx, row, httpStatus, message)
+}
+
+func (s *DBStore) ListBehaviorReportOutbox(ctx context.Context, status string, limit, offset int) ([]BehaviorReportOutboxRow, int, error) {
+	return s.pg.ListBehaviorReportOutbox(ctx, status, limit, offset)
+}
+
+func (s *DBStore) GetBehaviorReportOutbox(ctx context.Context, id string) (BehaviorReportOutboxRow, []BehaviorReportAttempt, error) {
+	return s.pg.GetBehaviorReportOutbox(ctx, id)
+}
+
+func (s *DBStore) RequeueBehaviorReport(ctx context.Context, id string) error {
+	return s.pg.RequeueBehaviorReport(ctx, id)
+}
+
+func (s *DBStore) CancelBehaviorReport(ctx context.Context, id string) error {
+	return s.pg.CancelBehaviorReport(ctx, id)
 }
 
 func dbRequired(name string, value string) error {

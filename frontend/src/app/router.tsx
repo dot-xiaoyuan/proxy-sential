@@ -27,6 +27,10 @@ import {
 	OrganizationRoute,
 	ActionsRoute,
 	SecuritySettingsRoute,
+	NotificationsRoute,
+	BlacklistRoute,
+	DestinationTargetsRoute,
+	BehaviorReportsRoute,
 } from './routePages'
 
 export const router = createBrowserRouter([
@@ -61,11 +65,15 @@ export const router = createBrowserRouter([
 	  { path: 'settings/organization', element: <OrganizationRoute /> },
 	  { path: 'actions', element: <ActionRecordsRoute /> },
       { path: 'policies/whitelist', element: <WhitelistRoute /> },
+      { path: 'policies/blacklist', element: <BlacklistRoute /> },
+      { path: 'policies/destination-targets', element: <DestinationTargetsRoute /> },
       { path: 'policies/exceptions', element: <CampusExceptionsRoute /> },
       { path: 'settings/sources', element: <SourcesRoute /> },
       { path: 'settings/sources/diagnostics/:diagnosticId', element: <IngestDiagnosticDetailsRoute /> },
       { path: 'settings/actions', element: <LegacySettingsEntry kind="actions"><ActionsRoute /></LegacySettingsEntry> },
 	  { path: 'settings/security', element: <LegacySettingsEntry kind="security"><SecuritySettingsRoute /></LegacySettingsEntry> },
+      { path: 'settings/notifications', element: <NotificationsRoute /> },
+      { path: 'settings/behavior-reports', element: <BehaviorReportsRoute /> },
     ],
   },
 ])

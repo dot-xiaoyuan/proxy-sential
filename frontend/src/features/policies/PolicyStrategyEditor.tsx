@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Steps, Switch, Typography } from 'antd'
 
+import { request } from '../../shared/api/client'
+import type { components } from '../../shared/api/generated'
 import type { ActionConnector } from '../../shared/api/types'
 import type { FourKDirectory, Policy, Stage } from './api'
 
@@ -11,6 +14,7 @@ interface ActionEditor {
   notify_after_seconds?: number
   notify_interval_seconds?: number
   notify_template?: string
+  notify_channel_id?: string
   notify_connector_id?: string
   disconnect_enabled?: boolean
   disconnect_basis?: TriggerBasis
@@ -57,6 +61,7 @@ function actionValues(policy: Policy): ActionEditor {
     notify_after_seconds: notify?.after_seconds || 60,
     notify_interval_seconds: notify?.interval_seconds || 300,
     notify_template: notify?.template || '',
+    notify_channel_id: notify?.channel_id || '',
     notify_connector_id: notify?.connector_id || '',
     disconnect_enabled: Boolean(disconnect),
     disconnect_basis: basis(disconnect),
@@ -103,6 +108,7 @@ function buildPolicy(original: Policy, values: StrategyForm): Policy {
   const stages: Stage[] = [
     ...toStage('notify', action.notify_enabled, 'duration', action.notify_after_seconds, action.notify_connector_id, {
       template: action.notify_template || '',
+      channel_id: action.notify_channel_id || '',
       interval_seconds: action.notify_interval_seconds || 0,
     }),
     ...toStage('disconnect', action.disconnect_enabled, action.disconnect_basis, action.disconnect_value, action.disconnect_connector_id, {
@@ -176,6 +182,7 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
   const [form] = Form.useForm<StrategyForm>()
   const [step, setStep] = useState(0)
   const actions = Form.useWatch('actions', form) as ActionEditor | undefined
+  const channels = useQuery({ queryKey: ['notifications', 'channels'], queryFn: () => request<components['schemas']['NotificationChannelPage']>('/notifications/channels') })
   const products = useMemo(() => (directory?.products || []).map(item => ({ value: item.id, label: item.name ? `${item.name} (${item.id})` : item.id })), [directory])
   const groups = useMemo(() => (directory?.groups || []).map(item => ({ value: item.id, label: item.name ? `${item.name} (${item.id})` : item.id })), [directory])
   const accounts = useMemo(() => (directory?.accounts || []).map(item => ({ value: item.id, label: item.name || item.id })), [directory])
@@ -257,7 +264,8 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
         <article className="policy-action-card">
           <Form.Item name={['actions', 'notify_enabled']} label="消息提醒" valuePropName="checked"><Switch aria-label="消息提醒" /></Form.Item>
           {actions?.notify_enabled && <div className="policy-action-fields">
-            <Form.Item name={['actions', 'notify_template']} label="消息内容" rules={[{ required: true }]}><Input.TextArea rows={3} /></Form.Item>
+            <Form.Item name={['actions', 'notify_channel_id']} label="发送通道" extra="留空时使用默认通道；未配置通道时消息会明确记为失败"><Select allowClear placeholder="默认通知通道" options={(channels.data?.items || []).map(item => ({ value: item.channel_id, label: item.name }))} /></Form.Item>
+            <Form.Item name={['actions', 'notify_template']} label="消息内容或模板标识" rules={[{ required: true }]}><Input.TextArea rows={3} placeholder="填写通知模板标识，或直接填写消息正文" /></Form.Item>
             <ActionDevice name={['actions', 'notify_connector_id']} action="notify" connectors={connectors} managedConnectorId={managedConnectorId}/>
             <Form.Item name={['actions', 'notify_after_seconds']} label="配额超限持续秒数" rules={[{ required: true }]}><InputNumber min={1} precision={0} /></Form.Item>
             <Form.Item name={['actions', 'notify_interval_seconds']} label="执行间隔秒数" rules={[{ required: true }]}><InputNumber min={1} precision={0} /></Form.Item>

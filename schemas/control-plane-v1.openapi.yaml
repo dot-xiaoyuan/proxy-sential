@@ -863,6 +863,246 @@ paths:
         '404': { description: Whitelist absent }
         '409': { description: Revision conflict }
         '503': { description: Configuration or audit write failed }
+  /blacklist:
+    get:
+      operationId: listBlacklist
+      description: Admission list; requires policies:read. An active match makes the account eligible for a blacklist_hit policy.
+      parameters:
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string, enum: [ip, account, mac, network, group] } }
+        - { name: state, in: query, schema: { type: string, enum: [active, disabled, expired, scheduled] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: Blacklist page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhitelistPage' }
+        '503': { description: Blacklist configuration unavailable }
+    post:
+      operationId: createBlacklist
+      description: Requires policies:manage. Configuration and audit commit atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WhitelistMutation' }
+      responses:
+        '201':
+          description: Blacklist entry created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhitelistEntry' }
+        '400': { description: Invalid blacklist entry }
+        '409': { description: Duplicate blacklist entry }
+        '503': { description: Configuration or audit write failed }
+  /blacklist/{entry_id}:
+    post:
+      operationId: updateBlacklist
+      description: Requires policies:manage and the current revision.
+      parameters:
+        - { name: entry_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WhitelistMutation' }
+      responses:
+        '200':
+          description: Blacklist entry updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhitelistEntry' }
+        '400': { description: Invalid blacklist entry }
+        '404': { description: Blacklist entry absent }
+        '409': { description: Revision conflict or duplicate }
+        '503': { description: Configuration or audit write failed }
+  /blacklist/{entry_id}/{operation}:
+    post:
+      operationId: operateBlacklist
+      description: Requires policies:manage. operation is enable or disable.
+      parameters:
+        - { name: entry_id, in: path, required: true, schema: { type: string } }
+        - { name: operation, in: path, required: true, schema: { type: string, enum: [enable, disable] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WhitelistMutation' }
+      responses:
+        '200':
+          description: Blacklist entry updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WhitelistEntry' }
+        '404': { description: Blacklist entry absent }
+        '409': { description: Revision conflict }
+  /destination-targets/rules:
+    get:
+      operationId: listDestinationTargetRules
+      description: Requires destination-targets:read. Rules ship disabled; enabling one is an explicit site decision.
+      responses:
+        "200": {description: "Detection rules", content: {application/json: {schema: {$ref: "#/components/schemas/DestinationTargetRulePage"}}}}
+        "503": {description: "Detection storage unavailable"}
+    post:
+      operationId: createDestinationTargetRule
+      description: Requires destination-targets:manage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DestinationTargetRuleMutation"}
+      responses:
+        "200": {description: "Rule created", content: {application/json: {schema: {$ref: "#/components/schemas/DestinationTargetRule"}}}}
+        "400": {description: "Invalid rule"}
+        "409": {description: "Rule already exists"}
+  /destination-targets/rules/{rule_id}:
+    get:
+      operationId: getDestinationTargetRule
+      parameters:
+        - {name: rule_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Detection rule", content: {application/json: {schema: {$ref: "#/components/schemas/DestinationTargetRule"}}}}
+        "404": {description: "Rule not found"}
+    put:
+      operationId: updateDestinationTargetRule
+      description: Requires destination-targets:manage.
+      parameters:
+        - {name: rule_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DestinationTargetRuleMutation"}
+      responses:
+        "200": {description: "Rule updated", content: {application/json: {schema: {$ref: "#/components/schemas/DestinationTargetRule"}}}}
+        "400": {description: "Invalid rule"}
+        "404": {description: "Rule not found"}
+    delete:
+      operationId: deleteDestinationTargetRule
+      parameters:
+        - {name: rule_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Rule deleted"}
+        "404": {description: "Rule not found"}
+  /destination-targets/rules/{rule_id}/preview:
+    post:
+      operationId: previewDestinationTargetRule
+      description: Requires destination-targets:write. Evaluates the rule over the trailing window without persisting findings.
+      parameters:
+        - {name: rule_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "What the rule would match right now", content: {application/json: {schema: {$ref: "#/components/schemas/DestinationTargetPreview"}}}}
+        "404": {description: "Rule not found"}
+        "503": {description: "Observation data unavailable"}
+  /destination-targets/findings:
+    get:
+      operationId: listDestinationTargetFindings
+      description: Requires destination-targets:read.
+      parameters:
+        - {name: rule_id, in: query, schema: {type: string}}
+        - {name: subject_ip, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: cursor, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        "200": {description: "Findings page", content: {application/json: {schema: {$ref: "#/components/schemas/DestinationTargetFindingPage"}}}}
+        "503": {description: "Detection storage unavailable"}
+  /behavior-reports/channels:
+    get:
+      operationId: listBehaviorReportChannels
+      description: Requires behavior-reports:read. Channels ship disabled; the external platform contract is a site fact.
+      responses:
+        "200": {description: "Reporting channels", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportChannelPage"}}}}
+        "503": {description: "Reporting storage unavailable"}
+    post:
+      operationId: createBehaviorReportChannel
+      description: Requires behavior-reports:manage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BehaviorReportChannelMutation"}
+      responses:
+        "200": {description: "Channel created", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportChannel"}}}}
+        "400": {description: "Invalid channel"}
+        "409": {description: "Channel already exists"}
+  /behavior-reports/channels/{channel_id}:
+    get:
+      operationId: getBehaviorReportChannel
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Reporting channel", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportChannel"}}}}
+        "404": {description: "Channel not found"}
+    put:
+      operationId: updateBehaviorReportChannel
+      description: Requires behavior-reports:manage. An omitted secret keeps the stored one; "-" clears it.
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BehaviorReportChannelMutation"}
+      responses:
+        "200": {description: "Channel updated", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportChannel"}}}}
+        "400": {description: "Invalid channel"}
+        "404": {description: "Channel not found"}
+    delete:
+      operationId: deleteBehaviorReportChannel
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Channel deleted"}
+        "404": {description: "Channel not found"}
+  /behavior-reports/channels/{channel_id}/test:
+    post:
+      operationId: testBehaviorReportChannel
+      description: Requires behavior-reports:manage. Sends one synthetic event and returns the real result.
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Delivery result", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportTestResult"}}}}
+        "400": {description: "Channel unavailable"}
+  /behavior-reports/channels/{channel_id}/preview:
+    post:
+      operationId: previewBehaviorReportChannel
+      description: Requires behavior-reports:manage. Renders the payload without sending it.
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Rendered payload", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportPreview"}}}}
+        "400": {description: "Channel unavailable"}
+  /behavior-reports/outbox:
+    get:
+      operationId: listBehaviorReportOutbox
+      description: Requires behavior-reports:read.
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [queued, sending, sent, failed, cancelled]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: cursor, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        "200": {description: "Reporting queue page", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportOutboxPage"}}}}
+        "503": {description: "Reporting storage unavailable"}
+  /behavior-reports/outbox/{report_id}:
+    get:
+      operationId: getBehaviorReportOutbox
+      parameters:
+        - {name: report_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Report with its delivery attempts", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportOutboxDetail"}}}}
+        "404": {description: "Report not found"}
+  /behavior-reports/outbox/{report_id}/{operation}:
+    post:
+      operationId: operateBehaviorReportOutbox
+      description: Requires behavior-reports:manage.
+      parameters:
+        - {name: report_id, in: path, required: true, schema: {type: string}}
+        - {name: operation, in: path, required: true, schema: {type: string, enum: [retry, cancel]}}
+      responses:
+        "200": {description: "Report state after the operation", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportOperationResult"}}}}
+        "409": {description: "Report is not in a state that allows this operation"}
   /campus-exceptions:
     get:
       operationId: listCampusExceptions
@@ -3021,6 +3261,159 @@ paths:
         "200": {description: "Task cancelled", content: {application/json: {schema: {$ref: "#/components/schemas/OperationTask"}}}}
         "409": {description: "Task already terminal"}
 
+  /notifications/templates:
+    get:
+      operationId: listNotificationTemplates
+      description: Requires notifications:read.
+      responses:
+        "200": {description: "Notification templates and the allowed variable vocabulary", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationTemplatePage"}}}}
+        "503": {description: "Notification storage unavailable"}
+    post:
+      operationId: createNotificationTemplate
+      description: Requires notifications:manage. Template bodies may only reference whitelisted variables.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationTemplateMutation"}
+      responses:
+        "200": {description: "Template created", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationTemplate"}}}}
+        "400": {description: "Invalid template"}
+        "403": {description: "Read-only mode"}
+  /notifications/templates/{template_id}:
+    get:
+      operationId: getNotificationTemplate
+      parameters:
+        - {name: template_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Template", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationTemplate"}}}}
+        "404": {description: "Template not found"}
+    put:
+      operationId: updateNotificationTemplate
+      description: Requires notifications:manage. Omitted fields keep their stored values.
+      parameters:
+        - {name: template_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationTemplateMutation"}
+      responses:
+        "200": {description: "Template updated", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationTemplate"}}}}
+        "400": {description: "Invalid template"}
+        "404": {description: "Template not found"}
+    delete:
+      operationId: deleteNotificationTemplate
+      parameters:
+        - {name: template_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Template deleted"}
+        "403": {description: "Read-only mode"}
+        "404": {description: "Template not found"}
+  /notifications/channels:
+    get:
+      operationId: listNotificationChannels
+      description: Requires notifications:read. Sealed secrets are never returned; only has_secret is exposed.
+      responses:
+        "200": {description: "Notification channels", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationChannelPage"}}}}
+        "503": {description: "Notification storage unavailable"}
+    post:
+      operationId: createNotificationChannel
+      description: Requires notifications:manage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationChannelMutation"}
+      responses:
+        "200": {description: "Channel created", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationChannel"}}}}
+        "400": {description: "Invalid channel"}
+        "409": {description: "Channel already exists"}
+  /notifications/channels/{channel_id}:
+    get:
+      operationId: getNotificationChannel
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Channel", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationChannel"}}}}
+        "404": {description: "Channel not found"}
+    put:
+      operationId: updateNotificationChannel
+      description: Requires notifications:manage. An omitted secret keeps the stored one; "-" clears it.
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationChannelMutation"}
+      responses:
+        "200": {description: "Channel updated", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationChannel"}}}}
+        "400": {description: "Invalid channel"}
+        "404": {description: "Channel not found"}
+    delete:
+      operationId: deleteNotificationChannel
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Channel deleted"}
+        "404": {description: "Channel not found"}
+  /notifications/channels/{channel_id}/test:
+    post:
+      operationId: testNotificationChannel
+      description: Requires notifications:manage. Sends one message synchronously and returns the real delivery result.
+      parameters:
+        - {name: channel_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationTestRequest"}
+      responses:
+        "200": {description: "Delivery attempt result", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationTestResult"}}}}
+        "400": {description: "Channel unavailable or request invalid"}
+  /notifications/test:
+    post:
+      operationId: testNotificationDelivery
+      description: Requires notifications:manage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationTestRequest"}
+      responses:
+        "200": {description: "Delivery attempt result", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationTestResult"}}}}
+        "400": {description: "Channel unavailable or request invalid"}
+  /notifications/outbox:
+    get:
+      operationId: listNotificationOutbox
+      description: Requires notifications:read. Delivery state only; an enforcement action succeeding means queued, not delivered.
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [queued, sending, sent, failed, cancelled]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: cursor, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        "200": {description: "Notification delivery page", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationOutboxPage"}}}}
+        "503": {description: "Notification storage unavailable"}
+  /notifications/outbox/{notification_id}:
+    get:
+      operationId: getNotificationOutbox
+      parameters:
+        - {name: notification_id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "Notification with its delivery attempts", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationOutboxDetail"}}}}
+        "404": {description: "Notification not found"}
+  /notifications/outbox/{notification_id}/{operation}:
+    post:
+      operationId: operateNotificationOutbox
+      description: Requires notifications:manage. retry requeues a failed or cancelled notification; cancel stops a pending one.
+      parameters:
+        - {name: notification_id, in: path, required: true, schema: {type: string}}
+        - {name: operation, in: path, required: true, schema: {type: string, enum: [retry, cancel]}}
+      responses:
+        "200": {description: "Notification state after the operation", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationOperationResult"}}}}
+        "409": {description: "Notification is not in a state that allows this operation"}
+
 components:
   securitySchemes:
     IdentityBearer:
@@ -3836,6 +4229,347 @@ components:
           items: { $ref: '#/components/schemas/WhitelistEntry' }
         page: { $ref: '#/components/schemas/Page' }
         checked_at: { type: string, format: date-time }
+    BehaviorReportChannelMutation:
+      type: object
+      required: [name, endpoint_url, auth_type, enabled]
+      properties:
+        channel_id: { type: string, maxLength: 128 }
+        name: { type: string, maxLength: 128 }
+        endpoint_url: { type: string }
+        token_endpoint: { type: string }
+        token_method: { type: string, enum: [GET, POST] }
+        token_scope: { type: string }
+        auth_type: { type: string, enum: [none, bearer, oauth2_client_credentials] }
+        secret: { type: string, description: Omit to keep the stored secret; "-" clears it. }
+        source_system_ip: { type: string }
+        source_system_name: { type: string }
+        batch_size: { type: integer, minimum: 1, maximum: 500 }
+        flush_interval_seconds: { type: integer, minimum: 1, maximum: 300 }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 120 }
+        tls_skip_verify: { type: boolean }
+        field_mapping: { type: object, additionalProperties: { type: string } }
+        success_status_codes: { type: array, items: { type: integer } }
+        enabled: { type: boolean }
+    BehaviorReportChannel:
+      allOf:
+        - { $ref: '#/components/schemas/BehaviorReportChannelMutation' }
+        - type: object
+          required: [channel_id, revision, has_secret]
+          properties:
+            channel_id: { type: string }
+            secret: { type: string, description: Never returned by the API. }
+            revision: { type: integer, minimum: 1 }
+            has_secret: { type: boolean }
+            updated_by: { type: string }
+            updated_at: { type: string, format: date-time }
+    BehaviorReportChannelPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BehaviorReportChannel' }
+        event_types: { type: array, items: { type: string } }
+    BehaviorReportOutboxRow:
+      type: object
+      required: [report_id, channel_id, event_type, status, attempts, occurred_at, created_at, updated_at]
+      properties:
+        report_id: { type: string }
+        idempotency_key: { type: string }
+        channel_id: { type: string }
+        event_type: { type: string, enum: [poison_behavior, proxy_behavior, ai_relay_audit] }
+        subject_type: { type: string }
+        subject_id: { type: string }
+        account_id: { type: string }
+        ip: { type: string }
+        target: { type: string }
+        target_type: { type: string }
+        occurred_at: { type: string, format: date-time }
+        status: { type: string, enum: [queued, sending, sent, failed, cancelled] }
+        attempts: { type: integer }
+        next_attempt_at: { type: string, format: date-time }
+        last_error: { type: string }
+        http_status: { type: integer }
+        remote_id: { type: string }
+        sent_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    BehaviorReportAttempt:
+      type: object
+      required: [attempt_id, report_id, attempt, status, http_status, started_at, finished_at]
+      properties:
+        attempt_id: { type: string }
+        report_id: { type: string }
+        attempt: { type: integer }
+        status: { type: string, enum: [sent, failed] }
+        http_status: { type: integer }
+        remote_id: { type: string }
+        error: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+    BehaviorReportOutboxPage:
+      type: object
+      required: [items, total, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BehaviorReportOutboxRow' }
+        total: { type: integer }
+        page: { $ref: '#/components/schemas/Page' }
+    BehaviorReportOutboxDetail:
+      type: object
+      required: [report, attempts]
+      properties:
+        report: { $ref: '#/components/schemas/BehaviorReportOutboxRow' }
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/BehaviorReportAttempt' }
+    BehaviorReportTestResult:
+      type: object
+      required: [channel_id, status]
+      properties:
+        channel_id: { type: string }
+        status: { type: string, enum: [succeeded, failed] }
+        http_status: { type: integer }
+        remote_id: { type: string }
+        error: { type: string }
+    BehaviorReportPreview:
+      type: object
+      required: [channel_id, payload]
+      properties:
+        channel_id: { type: string }
+        payload: { type: object, additionalProperties: true }
+    BehaviorReportOperationResult:
+      type: object
+      required: [report_id, status]
+      properties:
+        report_id: { type: string }
+        status: { type: string, enum: [queued, cancelled] }
+    DestinationTargetRuleMutation:
+      type: object
+      required: [name, behavior_type, target_type, window_seconds, threshold, direction]
+      properties:
+        rule_id: { type: string, maxLength: 128 }
+        name: { type: string, maxLength: 128 }
+        enabled: { type: boolean }
+        behavior_type: { type: string, enum: [configured_ip_range, high_frequency_internal] }
+        target_type: { type: string, enum: [ip, cidr, domain] }
+        targets: { type: array, items: { type: string } }
+        window_seconds: { type: integer, minimum: 60, maximum: 86400 }
+        threshold: { type: integer, minimum: 1 }
+        direction: { type: string, enum: [any, up, down] }
+        push_enabled: { type: boolean }
+        push_without_account: { type: boolean }
+    DestinationTargetRule:
+      allOf:
+        - { $ref: '#/components/schemas/DestinationTargetRuleMutation' }
+        - type: object
+          required: [rule_id, created_at, updated_at]
+          properties:
+            rule_id: { type: string }
+            created_by: { type: string }
+            updated_by: { type: string }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+    DestinationTargetRulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DestinationTargetRule' }
+        behavior_types: { type: array, items: { type: string } }
+    DestinationTargetFinding:
+      type: object
+      required: [finding_id, rule_id, subject_ip, behavior_type, matched_targets, unique_destinations, hit_count, window_start, window_end, first_seen, last_seen, pushed, created_at]
+      properties:
+        finding_id: { type: string }
+        rule_id: { type: string }
+        rule_name: { type: string }
+        subject_ip: { type: string }
+        account_id: { type: string }
+        behavior_type: { type: string }
+        matched_targets: { type: array, items: { type: string } }
+        unique_destinations: { type: integer }
+        hit_count: { type: integer }
+        direction: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        pushed: { type: boolean }
+        push_error: { type: string }
+        created_at: { type: string, format: date-time }
+    DestinationTargetFindingPage:
+      type: object
+      required: [items, total, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DestinationTargetFinding' }
+        total: { type: integer }
+        page: { $ref: '#/components/schemas/Page' }
+    DestinationTargetPreviewItem:
+      type: object
+      required: [subject_ip, matched_targets, unique_destinations, hit_count]
+      properties:
+        subject_ip: { type: string }
+        matched_targets: { type: array, items: { type: string } }
+        unique_destinations: { type: integer }
+        hit_count: { type: integer }
+        direction: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+    DestinationTargetPreview:
+      type: object
+      required: [rule_id, rule_enabled, observations, window_seconds, items]
+      properties:
+        rule_id: { type: string }
+        rule_enabled: { type: boolean }
+        observations: { type: integer }
+        window_seconds: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DestinationTargetPreviewItem' }
+    NotificationTemplateMutation:
+      type: object
+      required: [name, body]
+      properties:
+        template_id: { type: string, maxLength: 128 }
+        name: { type: string, maxLength: 128 }
+        channel_type: { type: string }
+        subject: { type: string, maxLength: 512 }
+        body: { type: string, maxLength: 8192 }
+        enabled: { type: boolean }
+    NotificationTemplate:
+      allOf:
+        - { $ref: '#/components/schemas/NotificationTemplateMutation' }
+        - type: object
+          required: [template_id, variables, enabled, revision]
+          properties:
+            variables: { type: array, items: { type: string } }
+            enabled: { type: boolean }
+            revision: { type: integer, minimum: 1 }
+    NotificationTemplatePage:
+      type: object
+      required: [items, allowed_variables]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationTemplate' }
+        allowed_variables: { type: array, items: { type: string } }
+    NotificationChannelConfig:
+      type: object
+      properties:
+        headers: { type: object, additionalProperties: { type: string } }
+        client_id: { type: string }
+        message_type_code: { type: string }
+        send_types: { type: array, items: { type: string } }
+        tls_skip_verify: { type: boolean }
+        timeout_seconds: { type: integer, minimum: 0, maximum: 120 }
+    NotificationChannelMutation:
+      type: object
+      required: [name, channel_type, endpoint_url, auth_type, enabled]
+      properties:
+        channel_id: { type: string, maxLength: 128 }
+        name: { type: string, maxLength: 128 }
+        channel_type: { type: string, enum: [http, srun_sms] }
+        endpoint_url: { type: string }
+        token_endpoint: { type: string }
+        token_scope: { type: string }
+        auth_type: { type: string, enum: [none, bearer, basic, oauth2_client_credentials] }
+        secret: { type: string, description: Omit to keep the stored secret; "-" clears it. }
+        config: { $ref: '#/components/schemas/NotificationChannelConfig' }
+        is_default: { type: boolean }
+        enabled: { type: boolean }
+    NotificationChannel:
+      allOf:
+        - { $ref: '#/components/schemas/NotificationChannelMutation' }
+        - type: object
+          required: [channel_id, revision, has_secret]
+          properties:
+            channel_id: { type: string }
+            secret: { type: string, description: Never returned by the API. }
+            revision: { type: integer, minimum: 1 }
+            has_secret: { type: boolean }
+    NotificationChannelPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationChannel' }
+    NotificationAttempt:
+      type: object
+      required: [attempt_id, notification_id, attempt, status, http_status, started_at, finished_at]
+      properties:
+        attempt_id: { type: string }
+        notification_id: { type: string }
+        attempt: { type: integer }
+        status: { type: string, enum: [sent, failed] }
+        http_status: { type: integer }
+        remote_id: { type: string }
+        error: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+    NotificationOutboxRow:
+      type: object
+      required: [notification_id, account_id, template, status, attempts, created_at, updated_at]
+      properties:
+        notification_id: { type: string }
+        idempotency_key: { type: string }
+        account_id: { type: string }
+        template: { type: string }
+        parameters: { type: object, additionalProperties: { type: string } }
+        status: { type: string, enum: [queued, sending, sent, failed, cancelled] }
+        channel_id: { type: string }
+        attempts: { type: integer }
+        next_attempt_at: { type: string, format: date-time }
+        last_error: { type: string }
+        remote_id: { type: string }
+        sent_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    NotificationOutboxPage:
+      type: object
+      required: [items, total, page]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationOutboxRow' }
+        total: { type: integer }
+        page: { $ref: '#/components/schemas/Page' }
+    NotificationOutboxDetail:
+      type: object
+      required: [notification, attempts]
+      properties:
+        notification: { $ref: '#/components/schemas/NotificationOutboxRow' }
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationAttempt' }
+    NotificationTestRequest:
+      type: object
+      properties:
+        channel_id: { type: string }
+        template_id: { type: string }
+        variables: { type: object, additionalProperties: { type: string } }
+    NotificationTestResult:
+      type: object
+      required: [channel_id, status]
+      properties:
+        channel_id: { type: string }
+        template_id: { type: string }
+        status: { type: string, enum: [succeeded, failed] }
+        http_status: { type: integer }
+        remote_id: { type: string }
+        error: { type: string }
+    NotificationOperationResult:
+      type: object
+      required: [notification_id, status]
+      properties:
+        notification_id: { type: string }
+        status: { type: string, enum: [queued, cancelled] }
+        deleted: { type: boolean }
     CampusException:
       type: object
       required: [scope_type, scope_value, reason]
@@ -3982,6 +4716,12 @@ components:
         - actions:revoke
         - integrations:write
         - users:manage
+        - notifications:read
+        - notifications:manage
+        - destination-targets:read
+        - destination-targets:manage
+        - behavior-reports:read
+        - behavior-reports:manage
     Page:
       type: object
       required: [limit, next_cursor, total]
@@ -4101,6 +4841,14 @@ components:
       properties:
         known: { type: integer }
         rate: { type: number, minimum: 0, maximum: 1 }
+    SourceObservability:
+      type: object
+      description: Per collector log kind, how many events were ingested in the last 24 hours and how many already carry a link-layer address.
+      required: [source_event_type, event_count, mac_attributed_count]
+      properties:
+        source_event_type: { type: string }
+        event_count: { type: integer }
+        mac_attributed_count: { type: integer }
     DeviceRecognitionSummary:
       type: object
       required: [total_endpoints, coverage, event_count, attributed_event_count, event_attribution_rate, ecosystem_matched, ecosystem_attributed, ecosystem_unattributed, ecosystem_conflicts, backfill_processed, as_of, window]
@@ -4116,6 +4864,11 @@ components:
         event_count: { type: integer }
         attributed_event_count: { type: integer }
         event_attribution_rate: { type: number, minimum: 0, maximum: 1 }
+        mac_attributed_event_count: { type: integer }
+        mac_attribution_rate: { type: number, minimum: 0, maximum: 1 }
+        observability:
+          type: array
+          items: { $ref: "#/components/schemas/SourceObservability" }
         ecosystem_matched: { type: integer }
         ecosystem_attributed: { type: integer }
         ecosystem_unattributed: { type: integer }

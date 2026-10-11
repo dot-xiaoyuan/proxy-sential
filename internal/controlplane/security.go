@@ -211,14 +211,14 @@ func validRole(role string) bool {
 }
 
 func rolePermissions(role string) []string {
-	read := []string{"policies:read", "risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read", "cases:read", "identity:read", "organization:read", "actions:read", "exports:read"}
+	read := []string{"policies:read", "risks:read", "evidence:read", "events:read", "shadow:read", "audit:read", "ingest:read", "dpi:read", "cases:read", "identity:read", "organization:read", "actions:read", "exports:read", "notifications:read", "destination-targets:read", "behavior-reports:read"}
 	switch role {
 	case "reviewer":
 		return append(read, "labels:create", "cases:write", "exports:create")
 	case "operator":
 		return append(read, "labels:create", "cases:write", "endpoints:write", "actions:execute", "actions:revoke", "exports:create")
 	case "admin":
-		return append(read, "labels:create", "cases:write", "endpoints:write", "actions:execute", "actions:revoke", "rules:reload", "device-fingerprint-library:update", "organization:write", "integrations:write", "users:manage", "policies:manage", "policies:authorize", "exports:create")
+		return append(read, "labels:create", "cases:write", "endpoints:write", "actions:execute", "actions:revoke", "rules:reload", "device-fingerprint-library:update", "organization:write", "integrations:write", "users:manage", "policies:manage", "policies:authorize", "exports:create", "notifications:manage", "destination-targets:manage", "behavior-reports:manage")
 	default:
 		return read
 	}

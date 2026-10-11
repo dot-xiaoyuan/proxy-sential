@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"proxy-sentinel/internal/legacy4k"
@@ -122,6 +121,7 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 		a.PolicyParameters.NativeSelected = true
 		a.UpdatedAt = formatDBTime(time.Now().UTC())
 		s.operations.doc.Actions[id] = a
+		notificationVariables := s.notificationVariablesLocked(a)
 		err := s.operations.saveLocked()
 		a = s.operations.doc.Actions[id]
 		s.operations.mu.Unlock()
@@ -135,13 +135,24 @@ func (s *Server) deliverNativeAction(id string, revoke bool) bool {
 			return true
 		}
 		if a.ActionType == "account.notify" {
-			parameters, _ := json.Marshal(map[string]any{"action_id": a.ActionID, "policy_execution_id": a.PolicyParameters.ExecutionID})
-			_, err = s.operations.db.ExecContext(ctx, `INSERT INTO notification_outbox(notification_id,idempotency_key,account_id,template,parameters) VALUES($1,$2,$3,$4,$5) ON CONFLICT(idempotency_key) DO NOTHING`, "notification-"+a.IdempotencyKey, a.IdempotencyKey, a.AccountID, a.PolicyParameters.Template, parameters)
-			if err != nil {
+			notificationID := "notification-" + a.IdempotencyKey
+			channel, channelErr := s.resolveNotificationChannel(ctx, s.notifications, a.PolicyParameters.ChannelID)
+			if channelErr != nil {
+				// No channel resolves: record the notification as failed rather than
+				// leaving a queued row that would read as "will be delivered".
+				if queueErr := s.notifications.failUnroutable(ctx, notificationID, a.IdempotencyKey, a.AccountID, a.PolicyParameters.Template, notificationVariables, channelErr.Error()); queueErr != nil {
+					s.finishDeliveredAction(a, "failed", "", "notification queue unavailable")
+					return true
+				}
+				s.appendAudit(ctx, "enforcement.notification_failed", id, "failed")
+				s.finishDeliveredAction(a, "failed", "", channelErr.Error())
+				return true
+			}
+			if err = s.notifications.enqueue(ctx, notificationID, a.IdempotencyKey, a.AccountID, a.PolicyParameters.Template, notificationVariables, channel.ChannelID); err != nil {
 				s.finishDeliveredAction(a, "failed", "", "notification queue unavailable")
 				return true
 			}
-			s.finishDeliveredAction(a, "succeeded", "notification-"+a.IdempotencyKey, "")
+			s.finishDeliveredAction(a, "succeeded", notificationID, "")
 			s.appendAudit(ctx, "enforcement.notification_queued", id, "succeeded")
 			return true
 		}

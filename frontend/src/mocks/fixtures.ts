@@ -47,6 +47,12 @@ export const mockSession: Session = {
     'actions:revoke',
     'integrations:write',
     'users:manage',
+    'notifications:read',
+    'notifications:manage',
+    'destination-targets:read',
+    'destination-targets:manage',
+    'behavior-reports:read',
+    'behavior-reports:manage',
   ],
 }
 
