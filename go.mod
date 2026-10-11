@@ -10,6 +10,7 @@ require (
 	github.com/redis/go-redis/v9 v9.7.3
 	golang.org/x/net v0.37.0
 	golang.org/x/oauth2 v0.30.0
+	golang.org/x/text v0.30.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -26,5 +27,4 @@ require (
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
 )

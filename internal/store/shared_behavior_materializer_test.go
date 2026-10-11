@@ -251,3 +251,59 @@ func TestIEEE1905MergeKeepsEachClientSourceBucket(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeIEEE1905AssociationWindowsCreatesPassiveGatewayWindow(t *testing.T) {
+	from := time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
+	to := from.Add(10 * time.Minute)
+	groups := []ieee1905AssociationGroup{{
+		SensorID: "sensor", CampusID: "ncu", AccessDomain: "campus-mirror",
+		GatewayIP: "192.168.0.22", GatewayMAC: "20:3a:eb:e9:de:10",
+		Clients: []string{"10:20:30:40:50:60", "10:20:30:40:50:61"}, EventIDs: []string{"event-1", "event-2"},
+		FirstSeen: from, LastSeen: to.Add(-time.Minute),
+	}}
+	windows := mergeIEEE1905AssociationWindows(nil, groups, from, to, true, nil)
+	if len(windows) != 1 {
+		t.Fatalf("windows=%d", len(windows))
+	}
+	window := windows[0]
+	if window.IP != "192.168.0.22" || len(window.AssociatedClients) != 2 || len(window.Records) != 2 {
+		t.Fatalf("unexpected passive gateway window: %+v", window)
+	}
+	if len(window.Samples["ieee1905_association"]) != 2 || window.Sources[0] != "packet-sidecar" {
+		t.Fatalf("association evidence was not retained: %+v", window)
+	}
+}
+
+func TestConstrainUnanchoredSharedBehaviorKeepsSingleDeviceAsCandidate(t *testing.T) {
+	item := sharedaccess.BehaviorAssessment{
+		Status: "confirmed", Confidence: 100, KnownDeviceCount: 1,
+		SignalGroups: []string{"tcp_stack", "tls_stack", "ua_os"},
+		Reasons:      []string{"满足高置信度共享网关确认条件"},
+	}
+	got := constrainUnanchoredSharedBehavior(item)
+	if got.Status != "candidate" || got.Confidence != 59 || len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "至少两台独立设备") {
+		t.Fatalf("single-device protocol diversity was promoted: %+v", got)
+	}
+}
+
+func TestConstrainUnanchoredSharedBehaviorKeepsIndependentDeviceAnchors(t *testing.T) {
+	base := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 90, SignalGroups: []string{"tcp_stack", "tls_stack"}}
+
+	withDevices := base
+	withDevices.KnownDeviceCount = 2
+	if got := constrainUnanchoredSharedBehavior(withDevices); got.Status != "confirmed" || got.Confidence != 90 {
+		t.Fatalf("two explicit devices were downgraded: %+v", got)
+	}
+
+	withAssociation := base
+	withAssociation.SignalGroups = append(withAssociation.SignalGroups, "ieee1905_association")
+	if got := constrainUnanchoredSharedBehavior(withAssociation); got.Status != "confirmed" || got.Confidence != 90 {
+		t.Fatalf("IEEE 1905 association was downgraded: %+v", got)
+	}
+
+	withRouter := base
+	withRouter.Router = sharedaccess.BehaviorRouterContext{Role: "router", Status: "confirmed"}
+	if got := constrainUnanchoredSharedBehavior(withRouter); got.Status != "confirmed" || got.Confidence != 90 {
+		t.Fatalf("independent confirmed router role was downgraded: %+v", got)
+	}
+}

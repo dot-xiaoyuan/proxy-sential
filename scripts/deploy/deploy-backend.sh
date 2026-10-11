@@ -12,6 +12,8 @@ mkdir -p "$work_dir/systemd"
 for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service; do
   cp "$repo_root/deploy/systemd/$unit" "$work_dir/systemd/$unit"
 done
+mkdir -p "$work_dir/assets"
+cp -R "$repo_root/assets/zeek" "$work_dir/assets/zeek"
 
 echo "构建 Linux amd64 后端"
 (
@@ -21,7 +23,7 @@ echo "构建 Linux amd64 后端"
 )
 
 echo "更新后端到 $target"
-COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations systemd | ssh "$target" '
+COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations systemd assets | ssh "$target" '
   set -eu
   live=/opt/proxy-sentinel/current/bin/proxy-sentinel
   test -f "$live"
@@ -48,6 +50,8 @@ COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations systemd 
   fi
   mkdir -p /opt/proxy-sentinel/current/migrations
   cp -R "$stage/migrations/postgres" "$stage/migrations/clickhouse" /opt/proxy-sentinel/current/migrations/
+  mkdir -p /opt/proxy-sentinel/current/assets
+  cp -R "$stage/assets/zeek" /opt/proxy-sentinel/current/assets/
   # 替换文件而非覆盖运行中进程正在使用的二进制。
   install -m 0755 "$stage/bin/proxy-sentinel" "$live.new"
   mv -f "$live.new" "$live"
@@ -64,7 +68,7 @@ COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations systemd 
   systemctl daemon-reload
   systemctl enable --now proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service
   # 重启常驻后端服务；定时任务下次运行自动使用新程序。
-  for unit in proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-device-signal; do
+  for unit in proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-zeek; do
     if systemctl is-active --quiet "$unit.service"; then
       systemctl restart "$unit.service"
       systemctl is-active --quiet "$unit.service"

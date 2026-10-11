@@ -1,0 +1,11 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	dhcp
+#fields	ts	uids	client_addr	server_addr	client_port	server_port	mac	host_name	client_fqdn	domain	requested_addr	assigned_addr	lease_time	client_message	server_message	msg_types	duration	client_software	requested_options
+#types	time	set[string]	addr	addr	port	port	string	string	string	string	addr	addr	interval	string	string	vector[string]	interval	string	string
+1785232800.125	C1	0.0.0.0	192.168.10.1	68	67	aa:bb:cc:dd:ee:01	Yuan-iPhone	-	lan	192.168.10.21	192.168.10.21	86400.0	-	-	DISCOVER,OFFER,REQUEST,ACK	0.40	Apple iOS DHCP	1,3,6,15,119,252
+1785232810.250	C2	192.168.10.21	192.168.10.1	68	67	aa:bb:cc:dd:ee:01	Yuan-iPhone	-	lan	192.168.10.21	192.168.10.21	86400.0	-	-	REQUEST,ACK	0.10	Apple iOS DHCP	1,3,6,15,119,252
+1785232820.500	C3	0.0.0.0	192.168.10.1	68	67	aa:bb:cc:dd:ee:02	DESKTOP-9NQ1	-	lan	192.168.10.21	192.168.10.21	86400.0	-	-	DISCOVER,OFFER,REQUEST,ACK	0.50	MSFT 5.0	1,3,6,15,31,33,43,44,46,47,119,121,249,252
+1785232830.750	C4	0.0.0.0	192.168.10.1	68	67	aa:bb:cc:dd:ee:03	android-phone	-	lan	192.168.10.22	192.168.10.22	86400.0	-	-	DISCOVER,OFFER,REQUEST,ACK	0.55	android-dhcp-13	1,3,6,15,26,28,51,58,59

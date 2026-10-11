@@ -97,7 +97,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Scoped discovery data; requires identity:read. Does not change terminal last_seen or risk identity. */
+        /** @description Windowed passive, infrastructure, or active discovery read model; requires identity:read. Does not claim online state or create terminal identities. */
         get: operations["getDiscoveryDevices"];
         put?: never;
         post?: never;
@@ -3814,9 +3814,9 @@ export interface components {
             event_ids: string[];
             known_device_count: number;
             /** @enum {string} */
-            known_device_basis?: "explicit_hardware_model_lower_bound";
+            known_device_basis?: "explicit_hardware_model_lower_bound" | "ieee1905_association_current";
             /** @enum {string} */
-            known_device_window?: "24h";
+            known_device_window?: "24h" | "current";
             known_devices: components["schemas"]["SharedBehaviorKnownDevice"][];
         };
         SharedBehaviorHistory: {
@@ -6415,7 +6415,16 @@ export interface operations {
     };
     getDiscoveryDevices: {
         parameters: {
-            query?: never;
+            query?: {
+                mode?: "passive" | "infrastructure" | "active" | "all";
+                window?: string;
+                search?: string;
+                type?: string;
+                category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
+                capability?: string;
+                limit?: number;
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;

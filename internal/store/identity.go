@@ -155,6 +155,16 @@ type EndpointIdentityProfile struct {
 	FirstSeen           string                      `json:"first_seen,omitempty"`
 	LastSeen            string                      `json:"last_seen,omitempty"`
 	EcosystemEvidence   []EndpointDomainEvidence    `json:"ecosystem_evidence,omitempty"`
+	// DiscoveryRecognitionHints are current, event-time-linked passive observations.
+	// They enrich the read model only and never rewrite the terminal's source attributes.
+	DiscoveryRecognitionHints []DiscoveryRecognitionHint `json:"-"`
+}
+
+type DiscoveryRecognitionHint struct {
+	Value         string
+	Origin        string
+	ObservationID string
+	ObservedAt    time.Time
 }
 
 func BuildIdentityState(events []normalized.Event) IdentityState {
@@ -398,7 +408,26 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 		LastSeen:           profile.LastSeen,
 		IdentityConfidence: endpoint.IdentityConfidence,
 	}
-	recognition := fingerprint.Default().IdentifySignals(endpointRecognitionSignals(endpoint.PrimaryMAC, endpoint.Attributes))
+	baseSignals := endpointRecognitionSignals(endpoint.PrimaryMAC, endpoint.Attributes)
+	recognition := fingerprint.Default().IdentifySignals(baseSignals)
+	if len(profile.DiscoveryRecognitionHints) > 0 {
+		enrichedSignals := baseSignals
+		for _, hint := range profile.DiscoveryRecognitionHints {
+			enrichedSignals.Hints = append(enrichedSignals.Hints, hint.Value)
+		}
+		enriched := fingerprint.Default().IdentifySignals(enrichedSignals)
+		if passiveRecognitionChanged(recognition, enriched) {
+			recognition = enriched
+			recognition.Source = "passive_discovery"
+			for _, hint := range profile.DiscoveryRecognitionHints {
+				label := map[string]string{"dns_sd": "DNS-SD", "dhcp": "DHCP"}[hint.Origin]
+				if label == "" {
+					label = hint.Origin
+				}
+				recognition.Evidence = append(recognition.Evidence, "被动发现 "+label+": "+hint.Value)
+			}
+		}
+	}
 	item.Vendor = firstNonEmpty(stringFromMap(endpoint.Attributes, "vendor"), stringFromMap(endpoint.Attributes, "oui_vendor"), recognition.Vendor)
 	item.Brand = firstNonEmpty(stringFromMap(endpoint.Attributes, "brand"), recognition.Brand)
 	item.Model = firstNonEmpty(stringFromMap(endpoint.Attributes, "model"), recognition.Model)
@@ -415,6 +444,11 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	item.RandomizedMAC = recognition.RandomizedMAC
 	item.RecognitionConflict = recognition.Conflict
 	item.RecognitionEvidence = recognition.Evidence
+	explicitOS := firstNonEmpty(stringFromMap(endpoint.Attributes, "os_family"), stringFromMap(endpoint.Attributes, "os"))
+	if explicitOS != "" && recognition.OSFamily != "" && !strings.EqualFold(explicitOS, recognition.OSFamily) {
+		item.RecognitionConflict = true
+		item.RecognitionEvidence = append(item.RecognitionEvidence, "设备识别规则与终端操作系统字段冲突")
+	}
 	if stringFromMap(endpoint.Attributes, "brand") != "" || stringFromMap(endpoint.Attributes, "model") != "" || stringFromMap(endpoint.Attributes, "device_type") != "" {
 		item.RecognitionConfidence = 1
 		item.RecognitionSource = "explicit_standard_field"
@@ -443,6 +477,10 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	item.BrandReference = fingerprint.MACVendorBrandReference(item.PrimaryMAC, item.Vendor, item.VendorConfidence)
 	item.Summary = endpointDeviceSummary(item)
 	return item
+}
+
+func passiveRecognitionChanged(before, after fingerprint.Result) bool {
+	return before.Brand != after.Brand || before.Model != after.Model || before.DeviceType != after.DeviceType || before.OSFamily != after.OSFamily || before.Conflict != after.Conflict
 }
 
 func BuildEndpointDeviceInventories(state IdentityState, query Query) []EndpointDeviceInventory {

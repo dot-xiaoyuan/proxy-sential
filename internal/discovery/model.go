@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"proxy-sentinel/internal/devicename"
 	"proxy-sentinel/internal/normalized"
 	"regexp"
 	"sort"
@@ -33,6 +34,8 @@ type Observation struct {
 	Name          string           `json:"name,omitempty"`
 	Manufacturer  string           `json:"manufacturer,omitempty"`
 	ModelName     string           `json:"model_name,omitempty"`
+	OriginalName  string           `json:"original_name,omitempty"`
+	NameEncoding  string           `json:"name_encoding,omitempty"`
 	Origin        string           `json:"origin"`
 	Port          string           `json:"port,omitempty"`
 	Interface     string           `json:"interface,omitempty"`
@@ -52,8 +55,15 @@ type Observation struct {
 
 func (o Observation) Key() string {
 	identity := o.MAC
+	linkLocalIdentity := false
+	if identity == "" && o.Origin == "dns_sd" {
+		if target := str(o.Evidence.Payload, "service_target"); target != "" {
+			identity = o.SourceID + ":dns:" + strings.ToLower(strings.TrimSuffix(target, "."))
+		}
+	}
 	if identity == "" {
 		identity = o.IP
+		linkLocalIdentity = strings.HasPrefix(o.IP, "fe80:")
 	}
 	if identity == "" {
 		identity = str(o.Evidence.Payload, "chassis_id")
@@ -65,7 +75,7 @@ func (o Observation) Key() string {
 		}
 		identity = o.SourceID + ":" + identity
 	}
-	if strings.HasPrefix(o.IP, "fe80:") {
+	if linkLocalIdentity {
 		identity += ":" + o.Interface
 	}
 	if o.Site == "" || o.Domain == "" {
@@ -77,6 +87,30 @@ func (o Observation) Key() string {
 }
 func (o Observation) Current(now time.Time) bool {
 	return !o.Withdrawn && !o.ObservedAt.After(now) && o.ValidUntil.After(now)
+}
+
+// NormalizeObservationClassification applies only explicit product or operating
+// system evidence. It is also run while reading older observations so a rule
+// improvement does not require rewriting the immutable evidence payload.
+func NormalizeObservationClassification(o *Observation) {
+	if o == nil {
+		return
+	}
+	switch o.Origin {
+	case "dhcp":
+		identity := strings.ToLower(strings.Join([]string{o.Name, str(o.Evidence.Payload, "hostname"), str(o.Evidence.Payload, "device_hint"), str(o.Evidence.Payload, "vendor_class")}, " "))
+		if o.DeviceType == "" && (strings.Contains(identity, "android") || strings.Contains(identity, "vivo-")) {
+			o.DeviceType = "mobile"
+		}
+	case "lldp", "cdp":
+		identity := strings.ToLower(strings.Join([]string{o.Name, str(o.Evidence.Payload, "system_name"), str(o.Evidence.Payload, "system_description")}, " "))
+		if strings.Contains(identity, "ikuai") {
+			o.DeviceType = "router"
+			if !containsString(o.Capabilities, "routing") {
+				o.Capabilities = append(o.Capabilities, "routing")
+			}
+		}
+	}
 }
 func str(m map[string]any, k string) string { v, _ := m[k].(string); return strings.TrimSpace(v) }
 func number(m map[string]any, k string) int {
@@ -133,6 +167,7 @@ func FromEvent(e normalized.Event) (Observation, error) {
 	}
 	o.LocationKind = str(e.Payload, "location_kind")
 	o.Name = str(e.Payload, "name")
+	NormalizeObservationName(&o)
 	label := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(o.Name), "."), ".local")
 	if len(o.Name) > 253 || label == "localhost" || label == "unknown" || label == "android" || label == "iphone" || regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{16,}$|^[0-9]+$`).MatchString(label) || strings.ContainsAny(o.Name, "\n\r\x00") {
 		o.Name = ""
@@ -207,6 +242,21 @@ func FromEvent(e normalized.Event) (Observation, error) {
 		return o, fmt.Errorf("unsupported discovery origin %q", o.Origin)
 	}
 	return o, nil
+}
+
+// NormalizeObservationName cleans the display name without altering the raw
+// normalized event retained in Evidence.
+func NormalizeObservationName(o *Observation) {
+	if o == nil || o.Name == "" {
+		return
+	}
+	original := o.Name
+	normalized, encoding := devicename.Normalize(original)
+	o.Name = normalized
+	if strings.TrimSpace(original) != normalized {
+		o.OriginalName = original
+		o.NameEncoding = encoding
+	}
 }
 
 type ScanConfig struct {

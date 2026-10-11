@@ -665,6 +665,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 				item.KnownDeviceWindow = "current"
 			}
 		}
+		item = constrainUnanchoredSharedBehavior(item)
 		if err = s.persistSharedBehavior(ctx, item); err != nil {
 			return written, err
 		}
@@ -703,6 +704,30 @@ func sharedBehaviorPotentialWindow(window sharedaccess.Window) bool {
 	// Explicit device models are joined in the next stage. Preserve windows
 	// where TCP/TLS diversity could corroborate two repeated concrete models.
 	return window.HasRepeatedFeature("tcp_stack") || window.HasRepeatedFeature("tls_stack")
+}
+
+// constrainUnanchoredSharedBehavior keeps protocol-stack diversity from being
+// promoted to a confirmed shared gateway unless an independent device anchor
+// (two known devices, a confirmed router role, or an IEEE 1905 association)
+// supports it.
+func constrainUnanchoredSharedBehavior(item sharedaccess.BehaviorAssessment) sharedaccess.BehaviorAssessment {
+	if item.KnownDeviceCount >= 2 || (item.Router.Role == "router" && item.Router.Status == "confirmed") {
+		return item
+	}
+	for _, group := range item.SignalGroups {
+		if group == "ieee1905_association" {
+			return item
+		}
+	}
+	if item.Status != "likely" && item.Status != "confirmed" {
+		return item
+	}
+	item.Status = "candidate"
+	if item.Confidence > 59 {
+		item.Confidence = 59
+	}
+	item.Reasons = []string{"协议栈差异尚未对应至少两台独立设备，仅保留共享候选"}
+	return item
 }
 
 func sharedBehaviorAnchorExplanation(anchor string) (string, bool) {

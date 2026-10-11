@@ -164,6 +164,7 @@ func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 	go func() {
 		defer workers.Done()
 		s.runSharedDeviceProfileMaterializer(ctx)
+		s.runPassiveDiscoveryMaterializer(ctx, s.pg.sensorID)
 	}()
 	workers.Add(1)
 	go func() {

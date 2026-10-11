@@ -33,6 +33,8 @@ func TestStandardDeviceRecognitionReplay(t *testing.T) {
 		{name: "Windows", signals: Signals{Hints: []string{"Windows NT explicit device field"}}, brand: "Microsoft", deviceType: "desktop", osFamily: "Windows"},
 		{name: "Android exact model", signals: Signals{Hostnames: []string{"MI9SE-campus"}}, brand: "Xiaomi", model: "Mi 9 SE", deviceType: "mobile", osFamily: "Android"},
 		{name: "iOS", signals: Signals{Hostnames: []string{"iPhone-campus"}}, brand: "Apple", deviceType: "mobile", osFamily: "iOS"},
+		{name: "Mac mini discovery name", signals: Signals{Hints: []string{"刘璐的mac mini"}}, brand: "Apple", model: "Mac mini", deviceType: "desktop", osFamily: "macOS"},
+		{name: "Mac mini M4 hostname", signals: Signals{Hostnames: []string{"Mac-mini-M4"}}, brand: "Apple", model: "Mac mini M4", deviceType: "desktop", osFamily: "macOS"},
 		{name: "printer", signals: Signals{DHCPVendorClass: "Hewlett-Packard JetDirect", Hints: []string{"Hewlett-Packard JetDirect"}}, brand: "HP", deviceType: "printer"},
 		{name: "unknown", signals: Signals{MAC: "12:34:56:78:9a:bc", Hostnames: []string{"campus-device"}}},
 	}
@@ -43,6 +45,13 @@ func TestStandardDeviceRecognitionReplay(t *testing.T) {
 				t.Fatalf("unexpected recognition: %+v", result)
 			}
 		})
+	}
+}
+
+func TestMacMiniRuleDoesNotPromoteGenericMacLabel(t *testing.T) {
+	result := Default().IdentifySignals(Signals{Hostnames: []string{"Mac"}})
+	if result.Brand != "" || result.Model != "" || result.DeviceType != "" || result.OSFamily != "" {
+		t.Fatalf("generic Mac label must not identify a physical model: %+v", result)
 	}
 }
 

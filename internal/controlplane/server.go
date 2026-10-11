@@ -107,6 +107,7 @@ type Server struct {
 	whitelist           *whitelistManager
 	blacklist           *whitelistManager
 	notifications       *notificationManager
+	discoveryDevices   *discovery.DeviceCache
 }
 
 type Session struct {
@@ -413,6 +414,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 		deviceInventoryMetadata: newDeviceInventoryPageCache(30 * time.Second),
 		startedAt:               time.Now(),
 		runtimeSampler:          &runtimeSampler{},
+		discoveryDevices:        discovery.NewDeviceCache(time.Minute),
 		statistics:              newStatisticsCache(),
 		tasks:                   &taskRuntime{dir: filepath.Join(exportDir, "task-input"), wake: make(chan struct{}, 2)},
 		nativeActions:           nativeActions,
