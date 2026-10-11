@@ -147,3 +147,61 @@
 - 集成后 `internal/discovery` 的可见性口径需与前端发现页的窗口/分类筛选做一次一致性核对。
 - `codex/shared-risk-only` 的提交谱系已并入，但其代次模型与风险审计/重置能力未采用；
   如需采用，按第五节"若要真正采用其设计"单独立项并做设计确认。
+
+## 八、收尾：合并为一个工作区（2026-10-11 晚）
+
+按"先把改动合并到一起，再删除多余工作区与分支"的要求完成收尾。**顺序是先合并、后删除**，删除前逐个校验提交已并入。
+
+### 8.1 合并进来的后续改动
+
+集成分支原先只覆盖到第一批集成为止。此后主工作区又产生了 4 个提交，本次一并并入（合并提交 `691caaf`，无冲突）：
+
+| 提交 | 内容 |
+|------|------|
+| `610fcdd` | 页面布局与文案修复：操作列 `fixed:right`、`StackList` 替代 antd 6 已弃用的 `List`、`Drawer`/`Descriptions` 修正、14 处模板化文案收紧 |
+| `aa8c936` | `vite.config.ts` 增加 `VITE_DEV_PROXY_TARGET` 驱动的 `/api` 反向代理 |
+| `b2b01de` | 全页面遍历测试规格与测试报告 |
+| `e5402a2` | 终端识别归因的 TLS 证书与主机字段（原先以未提交状态留在工作区） |
+
+此外，主工作区中另有 16 个文件当时显示为"未提交"，经逐文件 blob 比对**与集成分支已提交内容完全一致**，
+说明它们早已被第一批集成吸收，只是所在分支落后于集成分支；切分支后自动转为已跟踪且干净，无内容损失。
+
+### 8.2 删除结果
+
+- 工作区：删除 5 个（`.worktrees/` 下 2 个、`~/.codex/worktrees/` 下 3 个），仅保留主工作区。
+  `zeek-local-replay` 当时承载本地栈（18080 服务 + Postgres/ClickHouse 的 bind-mount 数据目录），
+  已按选择优雅清理：先停服务与容器，备份其 `storage.env` 后删除。
+- 分支：删除 `codex/local-zeek-replay`、`codex/ieee1905-passive`、`codex/shared-device-profile`、
+  `codex/shared-risk-only`、`codex/menu-function-repair-20260930`，全部经 `merge-base --is-ancestor` 校验已并入。
+  保留 `codex/integration-all-20261011`（唯一工作分支）与 `main`。
+
+### 8.3 收尾后复验
+
+| 项目 | 结果 |
+|------|------|
+| `git worktree list` | 仅主工作区 |
+| 已删分支提交是否遗漏 | 5 条分支 tip 相对 HEAD 独有提交均为 0 |
+| Go `build` / `vet` | 通过 |
+| 前端 `typecheck` + API 契约 / 86 项单测 / 生产构建 | 通过 |
+| e2e：`all-pages-audit`（141 次页面访问）、`ui-audit`、`menu-repair` | 全部通过 |
+| e2e：`discovery.spec.ts` 的 `discovery layout`（3 视口） | **失败，但为合并前既有问题**，见 8.4 |
+
+### 8.4 既有失败（不是本次合并引入）
+
+`frontend/tests/e2e/discovery.spec.ts:7` 断言 `/discovery` 上存在并默认选中名为「被动发现设备」的 tab。
+该字符串在合并前的集成分支 `f5b2150` 的 `frontend/src` 中**已经不存在**（只在测试文件里），
+即该用例在集成分支上一直是红的：页面的 tab 结构在后续提交中被重构为
+`路由识别 / 发现记录 / 基础设施接入 / 主动发现 / 任务与诊断`，测试未同步。
+
+已实测确认：把断言改为现存 tab「发现记录」后该 tab 存在但 `aria-selected=false`
+（默认选中项也不再是被动发现视图），因此**这不是简单改名**，需要先确认当时重构是否有意改变默认视图，
+再决定是修测试还是修页面。该判断属于产品语义，未擅自处理。
+
+### 8.5 备份与风险提示
+
+- `zeek-local-replay` 的 `storage.env` 备份在 `deploy/compose/.env.zeek-local-replay`
+  （被 `.gitignore` 的 `.env.*` 规则忽略，不会误入版本控制）。
+- `src/pages/Local.yml` 等同名于分支的本地栈脚本只存在于已删分支上；文件本身已被提交在
+  `codex/local-zeek-replay` 的提交里，可用 `git show <commit>:<path>` 取回，不会丢失。
+- **集成分支目前只在本地，未推送到任何远端。** 删除的 5 条分支中，有 3 条在 `origin` 上留有旧版副本，
+  但 `codex/integration-all-20261011` 本身没有远端副本；如需异地备份，应先推送该分支再清理本地临时资源。
