@@ -20,8 +20,17 @@ ttl_bytes=""
 shift_to_now=false
 append=false
 dry_run=false
+live=false
+daemon=false
+interval=60
+with_eve=false
+remote_eve="/var/log/suricata/eve.json"
+eve_name="eve.json"
+eve_bytes=""
 
-ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10 -q)
+# 直连 ssh 一律 -n：这些调用只需要 stdout，否则会吞掉调用方的 stdin
+# （增量镜像的 while read 循环就是这样被截断的）。rsync 的 -e 不能带 -n。
+ssh_opts=(-n -o BatchMode=yes -o ConnectTimeout=10 -q)
 rsh="ssh -o BatchMode=yes -o ConnectTimeout=10 -q"
 # 超过该跨度就应该启用 --shift-to-now：ClickHouse normalized_events 只有 7 天 TTL。
 ttl_warn_seconds=518400
@@ -42,6 +51,15 @@ usage() {
   --append               对 raw/ 使用 rsync --append 做增量续拉
   --dry-run              只打印将要拉取的文件与字节数
   -h, --help             显示帮助
+
+增量镜像（--live，供 local-stack.sh sync 使用）:
+  --live                 增量镜像到 <dest>/live，按远端 inode 与偏移量续读
+  --daemon               常驻循环执行增量镜像
+  --interval N           常驻循环间隔秒数，默认 60
+  --with-eve             额外镜像 /var/log/suricata/eve.json
+  --remote-eve PATH      远端 EVE 路径，默认 /var/log/suricata/eve.json
+  --eve-name NAME        本地 EVE 文件名，默认 eve.json
+  --eve-bytes N          EVE 首次只取尾部 N 字节，例如 50M
 EOF
 }
 
@@ -61,6 +79,13 @@ while [ $# -gt 0 ]; do
     --shift-to-now) shift_to_now=true; shift ;;
     --append) append=true; shift ;;
     --dry-run) dry_run=true; shift ;;
+    --live) live=true; shift ;;
+    --daemon) daemon=true; shift ;;
+    --interval) interval="${2:-}"; shift 2 ;;
+    --with-eve) with_eve=true; shift ;;
+    --remote-eve) remote_eve="${2:-}"; shift 2 ;;
+    --eve-name) eve_name="${2:-}"; shift 2 ;;
+    --eve-bytes) eve_bytes="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "未知参数: $1" ;;
   esac
@@ -69,6 +94,17 @@ done
 [[ "$sensor_id" =~ ^[A-Za-z0-9._-]+$ ]] || die "非法 sensor-id: $sensor_id"
 if [ -n "$ttl_bytes" ]; then
   [[ "$ttl_bytes" =~ ^[0-9]+[KMG]?$ ]] || die "非法 --ttl-bytes: $ttl_bytes"
+fi
+if [ -n "$eve_bytes" ]; then
+  [[ "$eve_bytes" =~ ^[0-9]+[KMG]?$ ]] || die "非法 --eve-bytes: $eve_bytes"
+fi
+[[ "$interval" =~ ^[0-9]+$ ]] && [ "$interval" -gt 0 ] || die "非法 --interval: $interval"
+[[ "$eve_name" =~ ^[A-Za-z0-9._-]+$ ]] || die "非法 --eve-name: $eve_name"
+if [ "$live" = true ]; then
+  [ -z "$local_source" ] || die "--live 不支持 --source-dir 离线模式"
+fi
+if [ "$daemon" = true ] && [ "$live" = false ]; then
+  die "--daemon 只能配合 --live 使用"
 fi
 command -v python3 >/dev/null || die "缺少 python3"
 command -v jq >/dev/null || die "缺少 jq"
@@ -112,6 +148,224 @@ portable_copy() {
   fi
   cp "$1" "$2"
 }
+
+# ---------------------------------------------------------------------------
+# 增量镜像（--live）
+#
+# ingest 的检查点按 (路径, dev, inode) 识别文件：同 inode 追加只会读新增字节，
+# 换 inode 或 offset 超过文件大小则从 0 重读。因此增量镜像的做法是：
+#   - 远端 inode 未变且变大：按远端偏移量追加增量字节，本地 inode 保持不变；
+#   - 远端 inode 变了（logrotate 改名轮转）：先从远端 <路径>.1 补齐旧文件尾部，
+#     把它保留为 <名>.1（正好对上 realtime worker 的轮转续读约定），再重新拉新文件；
+#   - 远端变小（copytruncate）：直接重建本地文件。
+# 远端偏移量记在 live/.sync-state.tsv，与本地文件大小无关（首次可用尾字节播种）。
+# ---------------------------------------------------------------------------
+live_dir="$dest/live"
+live_state="$live_dir/.sync-state.tsv"
+live_sources_file="$live_dir/.sources.tsv"
+
+remote_stat() {
+  ssh "${ssh_opts[@]}" "$target" "stat -c '%i %s' '$1' 2>/dev/null" 2>/dev/null || true
+}
+
+# --ttl-bytes/--eve-bytes 用 tail 风格后缀（如 50M），比较前先换算成字节数。
+to_bytes() {
+  case "${1:-}" in
+    "") printf '0' ;;
+    *[Kk]) printf '%s' "$(( ${1%[Kk]} * 1024 ))" ;;
+    *[Mm]) printf '%s' "$(( ${1%[Mm]} * 1024 * 1024 ))" ;;
+    *[Gg]) printf '%s' "$(( ${1%[Gg]} * 1024 * 1024 * 1024 ))" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+state_get() {
+  [ -f "$live_state" ] || return 0
+  awk -F'\t' -v n="$1" -v f="$2" '$1==n {print $f; exit}' "$live_state" 2>/dev/null || true
+}
+
+state_set() {
+  local name="$1" inode="$2" offset="$3" tmp="$live_state.tmp"
+  [ -f "$live_state" ] || : > "$live_state"
+  awk -F'\t' -v n="$name" '$1!=n' "$live_state" > "$tmp" 2>/dev/null || : > "$tmp"
+  printf '%s\t%s\t%s\n' "$name" "$inode" "$offset" >> "$tmp"
+  mv -f "$tmp" "$live_state"
+}
+
+append_from_remote() {
+  local remote_path="$1" offset="$2" out="$3"
+  ssh "${ssh_opts[@]}" "$target" "tail -c +$((offset + 1)) '$remote_path'" >> "$out"
+}
+
+write_from_remote() {
+  local remote_path="$1" out="$2" tmp="$out.new"
+  if ! ssh "${ssh_opts[@]}" "$target" "cat '$remote_path'" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$out"
+}
+
+live_sources() {
+  local name
+  for name in $files; do
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "非法文件名: $name"
+    printf '%s\t%s\t\n' "$name" "$remote_dir/$name"
+  done
+  if [ "$with_eve" = true ]; then
+    printf '%s\t%s\t%s\n' "$eve_name" "$remote_eve" "$eve_bytes"
+  fi
+  if [ "$with_ttl" = true ]; then
+    printf '%s\t%s\t%s\n' "ttl.jsonl" "$remote_ttl" "$ttl_bytes"
+  fi
+}
+
+sync_live_one() {
+  local name="$1" remote_path="$2" seed_bytes="$3"
+  local out="$live_dir/$name" stat inode rsize prev_inode prev_offset
+  stat="$(remote_stat "$remote_path")"
+  if [ -z "$stat" ]; then
+    # 只提示一次，否则常驻镜像每轮都会刷同样的缺失日志。
+    if [ ! -f "$out" ] && ! grep -qxF "$name" "$live_dir/.missing" 2>/dev/null; then
+      log "远端缺失，跳过: $remote_path"
+      mkdir -p "$live_dir"
+      printf '%s\n' "$name" >> "$live_dir/.missing"
+    fi
+    return 0
+  fi
+  inode="${stat%% *}"
+  rsize="${stat##* }"
+  prev_inode="$(state_get "$name" 2)"
+  prev_offset="$(state_get "$name" 3)"
+
+  if [ "$dry_run" = true ]; then
+    printf '[local-zeek] %-22s 远端 %s bytes 已读 %s\n' "$name" "$rsize" "${prev_offset:-0}"
+    return 0
+  fi
+
+  mkdir -p "$live_dir"
+  if [ ! -f "$out" ]; then
+    fetch_live_base "$name" "$remote_path" "$rsize" "$seed_bytes" "$out"
+    state_set "$name" "$inode" "$rsize"
+    return 0
+  fi
+
+  if [ "$inode" != "$prev_inode" ] || [ "$rsize" -lt "$prev_offset" ]; then
+    local completed=false arch_stat arch_size
+    if [ "$inode" != "$prev_inode" ]; then
+      arch_stat="$(remote_stat "$remote_path.1")"
+      if [ -n "$arch_stat" ]; then
+        arch_size="${arch_stat##* }"
+        if [ "$arch_size" -gt "$prev_offset" ]; then
+          append_from_remote "$remote_path.1" "$prev_offset" "$out" || die "轮转补尾失败: $name"
+          completed=true
+        fi
+      fi
+    fi
+    if [ "$completed" = true ]; then
+      mv -f "$out" "$out.1"
+      log "$name 检测到轮转，上一份完整文件保留为 $name.1"
+    else
+      log "$name 检测到截断，重建本地文件"
+    fi
+    fetch_live_base "$name" "$remote_path" "$rsize" "$seed_bytes" "$out"
+    state_set "$name" "$inode" "$rsize"
+    return 0
+  fi
+
+  if [ "$rsize" -gt "$prev_offset" ]; then
+    local before after expected consumed
+    before="$(wc -c < "$out" | tr -d ' ')"
+    append_from_remote "$remote_path" "$prev_offset" "$out" || die "增量拉取失败: $name"
+    after="$(wc -c < "$out" | tr -d ' ')"
+    expected=$((before + rsize - prev_offset))
+    consumed=$((after - before))
+    # 远端是被持续写入的文件，stat 之后到 tail 之间还会增长，所以实际消费的字节数
+    # 通常略大于 rsize-prev_offset；只有"读少了"才说明传输被截断。
+    if [ "$after" -lt "$expected" ]; then
+      log "$name 增量传输不完整（$after < ${expected}），按上限播种重建"
+      fetch_live_base "$name" "$remote_path" "$rsize" "$seed_bytes" "$out"
+      state_set "$name" "$inode" "$rsize"
+      return 0
+    fi
+    if [ "$consumed" -le 0 ]; then
+      return 0
+    fi
+    state_set "$name" "$inode" "$((prev_offset + consumed))"
+    log "$name 增量 +${consumed}B"
+  fi
+  return 0
+}
+
+# 建立本地基线：远端比播种上限大就只取尾部（丢掉落在中途的残行），否则整文件拉取。
+fetch_live_base() {
+  local name="$1" remote_path="$2" rsize="$3" seed_bytes="$4" out="$5" seed_num
+  seed_num="$(to_bytes "$seed_bytes")"
+  if [ "$seed_num" -gt 0 ] && [ "$rsize" -gt "$seed_num" ]; then
+    if ! ssh "${ssh_opts[@]}" "$target" "tail -c $seed_bytes '$remote_path'" | tail -n +2 > "$out"; then
+      rm -f "$out"
+      die "种子拉取失败: $name"
+    fi
+    log "$name 播种 ${seed_bytes}B（远端 ${rsize}B）"
+  else
+    if ! write_from_remote "$remote_path" "$out"; then
+      die "拉取失败: $name"
+    fi
+    log "$name 全量 ${rsize}B"
+  fi
+}
+
+# 手动 sync 与常驻镜像会同时跑，并发追加同一个文件必然写坏，
+# 所以用目录锁串行化；持有者已退出的陈旧锁会被自动清理。
+acquire_live_lock() {
+  local lock="$live_dir/.sync-lock" attempt holder
+  for attempt in $(seq 1 120); do
+    if mkdir "$lock" 2>/dev/null; then
+      printf '%s\n' "$$" > "$lock/pid"
+      return 0
+    fi
+    holder="$(cat "$lock/pid" 2>/dev/null || true)"
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      log "清理陈旧的增量镜像锁（pid ${holder} 已退出）"
+      rm -rf "$lock"
+      continue
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+release_live_lock() { rm -rf "$live_dir/.sync-lock" 2>/dev/null || true; }
+
+sync_live_once() {
+  mkdir -p "$live_dir"
+  if ! acquire_live_lock; then
+    log "已有增量镜像在运行，本轮跳过"
+    return 0
+  fi
+  trap 'release_live_lock' EXIT INT TERM
+  live_sources > "$live_sources_file"
+  local name remote_path seed
+  while IFS="$(printf '\t')" read -r name remote_path seed; do
+    [ -n "$name" ] || continue
+    sync_live_one "$name" "$remote_path" "$seed"
+  done < "$live_sources_file"
+  release_live_lock
+  trap - EXIT INT TERM
+}
+
+if [ "$live" = true ]; then
+  if [ "$daemon" = true ]; then
+    log "增量镜像常驻启动：间隔 ${interval}s，目标 $live_dir"
+    while true; do
+      ( sync_live_once ) || log "本轮同步失败，等待下一轮"
+      sleep "$interval"
+    done
+  fi
+  sync_live_once
+  log "增量镜像目录: $live_dir"
+  exit 0
+fi
 
 fetched=""
 skipped=""

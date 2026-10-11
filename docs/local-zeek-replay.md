@@ -47,6 +47,21 @@ make local-down
 make local-reset
 ```
 
+一次性快照适合复现某个时间点；如果需要让实时窗口（共享行为、风险滚动窗口）持续有新数据，
+用增量镜像模式：
+
+```sh
+# 1. 建增量镜像（首次可用尾部播种控制体量），并保存配置
+./scripts/local/local-stack.sh sync --with-eve --eve-bytes 50M --with-ttl --ttl-bytes 50M
+
+# 2. 重建本地栈：up 会发现 live/ 目录，ingest 改读增量镜像并启动常驻镜像进程
+./scripts/local/local-stack.sh reset
+
+# 3. 之后随时手工补一轮，或让常驻进程按间隔自动补
+./scripts/local/local-stack.sh sync
+make local-status          # sync 进程应显示"运行中"
+```
+
 浏览器打开 <http://127.0.0.1:18080> 登录。初始管理员账号在
 `deploy/compose/storage.env` 的 `PROXY_SENTINEL_ADMIN_USERNAME` /
 `PROXY_SENTINEL_ADMIN_PASSWORD`（首次 `up` 随机生成，文件已被 gitignore）。
@@ -62,6 +77,8 @@ VITE_ENABLE_MOCKS=false pnpm dev
 
 ```text
 0.30: /opt/proxy-sentinel/data/zeek/logs/current/*.log   (LogAscii::use_json=T，逐行 JSON)
+0.30: /var/log/suricata/eve.json                        (Suricata EVE，默认不拉)
+0.30: /opt/proxy-sentinel/data/device-signals/ttl.jsonl (packet-sidecar 设备信号，默认不拉)
         | rsync 只读（--append 可对 raw/ 做增量续拉）
         v
 data/zeek/<sensor>/raw/        原始镜像，跨次拉取累积
@@ -69,10 +86,13 @@ data/zeek/<sensor>/raw/        原始镜像，跨次拉取累积
         v
 data/zeek/<sensor>/replay/     ingest 输入，每次 pull 重建
         +-- manifest.json      文件清单、时间范围、平移量、总行数、异常行数
-        | proxy-sentinel ingest run --sensor-id <sensor> --zeek-* / --device-signals
+        | 增量镜像（sync）：按远端 inode/偏移量续读，轮转时用 <名>.1 续尾
+        v
+data/zeek/<sensor>/live/       ingest 输入，持续追加；存在时优先于 replay/
+        | proxy-sentinel ingest run --sensor-id <sensor> --zeek-* / --device-signals / --eve
         v
 ClickHouse normalized_events（7 天 TTL）+ normalized_event_features
-        | risk materialize --once --window=<跨度>   （历史校准）
+        | risk materialize --once --window=<跨度>   （历史校准，仅快照模式）
         | read-model run --lane realtime|coarse|recognition|identity
         v
 PostgreSQL 读模型 / 风险快照 / 运行账本
@@ -81,6 +101,35 @@ control-plane serve --sensor-id <sensor> --frontend-dir frontend/dist
 ```
 
 `raw/` 始终是原始数据；`replay/` 才是 ingest 的输入，因此时间平移不会污染原始镜像。
+
+## 增量镜像（实时模式）
+
+一次性快照的问题是快照会随时间变旧：风险滚动窗口、共享行为物化器都只看 `now` 附近的窗口
+（共享行为是 `now-90s` 往前 10 分钟），静态数据几分钟后就落空。增量镜像解决这一点。
+
+工作方式（`pull-zeek-30.sh --live`）：
+
+- 每个文件在 `live/.sync-state.tsv` 记录**远端 inode + 已消费的远端偏移量**，与本地文件大小解耦。
+- 远端 inode 未变且变大：`tail -c +<偏移>` 追加增量，本地 inode 保持不变，
+  ingest 检查点按 (路径, inode) 只读新增字节。
+- 远端 inode 变了（logrotate 改名轮转，例如 Suricata `eve.json`）：先从远端 `<路径>.1`
+  补齐旧文件尾部，再把补齐后的本地文件改名为 `<名>.1`。这正好对上 realtime worker 的轮转续读约定
+  （`internal/realtime/worker.go` 在文件标识变化时会去找 `<path>.1`），最后拉取新文件。
+- 远端变小（copytruncate）：直接重建本地文件，检查点按 `truncated` 从 0 重读。
+- 首次可用 `--eve-bytes` / `--ttl-bytes` 只取尾部若干字节播种（`tail -c` 会切开行，
+  脚本会丢掉第一行残行），避免为了一个 234MB 的文件先跑几分钟。
+- 每次追加后会校验本地新增字节数与远端增量是否一致，不一致就重建，避免静默错位。
+
+配置保存在 `data/run/sync.conf`，`local-up` 与常驻进程复用它；命令行参数优先于保存值。
+
+| 选项 | 说明 |
+| --- | --- |
+| `--daemon` | 常驻进程运行（pidfile `data/run/sync.pid`，日志 `data/logs/sync.log`） |
+| `--interval N` | 常驻间隔秒数，默认 60 |
+| `--with-eve` / `--eve-bytes N` | 镜像 Suricata `eve.json`，可只播种尾部 N 字节 |
+| `--with-ttl` / `--ttl-bytes N` | 镜像 packet-sidecar `ttl.jsonl`，可只播种尾部 N 字节 |
+| `--files "..."` | 覆盖 Zeek 文件清单 |
+| `--no-eve` / `--no-ttl` | 关闭对应来源 |
 
 ## 命令参考
 
@@ -112,17 +161,23 @@ control-plane serve --sensor-id <sensor> --frontend-dir frontend/dist
 | `down` | 逆序停止进程并关闭容器，保留 `data/db` |
 | `status` | 容器、进程、`/readyz`、事件/风险/运行账本计数 |
 | `logs [名]` | 查看 `data/logs/<名>.log`，不带名字则列出全部日志 |
+| `sync` | 增量镜像到 `live/`；`--daemon` 常驻，详见上一节 |
 | `reset` | 停栈、删除 `data/db`、重新拉起 |
 | `purge --yes` | 删除 `data/db`、`data/zeek`、`data/run`、`data/logs` 与运行时配置 |
 
-选项：`--force`（up/reset 无条件重建数据库）、`--frontend-dir DIR`（复用已有前端产物）、
-`--no-build`（跳过 Go 二进制重建）。
+选项：`--force`（up/reset 无条件重建数据库）、`--sync`（up 前先同步一轮并启动常驻镜像）、
+`--frontend-dir DIR`（复用已有前端产物）、`--no-build`（跳过 Go 二进制重建），
+以及增量镜像选项（见上一节）。
+
+`live/` 目录存在且非空时，`up` 自动按增量镜像模式运行：ingest 读 `live/`，跳过快照一致性校验，
+并在 `data/run/sync.conf` 存在时拉起常驻镜像进程。
 
 ## 时间戳策略
 
 30 的 Zeek 日志时间戳是采集时的真实时间，默认**不平移**（faithful 回放）。为保证读模型能覆盖历史数据，
 `local-up` 会把 `PROXY_SENTINEL_ACTIVITY_V3_CUTOVER` 设为快照最早事件时间前 1 小时
-（`internal/store/activity_v3_read_model.go` 只在首次插入该状态，必须在 realtime lane 首次启动前设置）。
+（`internal/store/activity_v3_read_model.go` 只在首次插入该状态，必须在 realtime lane 首次启动前设置）；
+增量镜像模式下数据本身是新鲜的，`risk materialize` 回落到生产的 `10m` 窗口，无需时间平移。
 
 如果快照跨度超过 6 天，或希望页面数据看起来"新鲜"，使用：
 
@@ -167,7 +222,8 @@ make local-pull PULL_ARGS="--shift-to-now"
 10. **共享设备档案（设备档案页）需要合格来源，可能长期为空**。
     - 入库闸门：`migrations/postgres/088` 的 `enqueue_shared_device_profile_job` 会丢弃
       `observed_at < shared_device_profile_runtime.cutover_at` 的证据，而 `cutover_at` 默认是迁移执行时刻。
-      `local-up` 会在 ingest 之前把它对齐到快照最早事件前 1 小时，否则任务永远为 0。
+      `local-up` 会在 ingest 之前把它对齐到数据起点（快照模式取最早事件前 1 小时，
+      增量镜像模式取 `now-7d`），否则任务永远为 0。
     - 建档条件：`qualifyingSharedProfileSource` 只接受三类来源——路由器评估达到
       `role=router|ap` 且 `status=likely|confirmed` 且非 `brand_reference_only`/非 `ambiguous`（或
       `infrastructure=true`）；`discovery_observation_latest` 中 `device_type` 为
@@ -178,8 +234,17 @@ make local-pull PULL_ARGS="--shift-to-now"
       `proxy-transactions.zeek`，没有 `lldp.log`/`ssdp.log`，因此回放数据通常只能得到
       `role=unknown`、`status=candidate`、`brand_reference_only=true` 的路由器候选；
       TTL/UA 只能给弱线索（`internal/evidence/router.go` 明确"不从 TTL/UA 单独建立路由器记录"），
-      所以补拉 `--with-ttl` 也不足以建档。discovery worker 需要现场 LAN，共享行为需要身份会话，
-     本地都拿不到。此时页面停留在"正在建立新的设备档案"是预期行为。
+      所以单独补 `--with-ttl` 也不足以建档。discovery worker 需要现场 LAN，本地拿不到。
+    - 第三条来源（共享行为）具备**实时前提**：物化器只看 `now-90s` 往前 10 分钟的窗口，
+      覆盖门还要求 `device-signals` 检查点存在、`suricata` 或 `zeek-http` 检查点新鲜
+      （`last_event_at` 距窗口结束 90 秒内、`updated_at` 2 分钟内）。因此静态快照必然不满足；
+      用增量镜像 + `--with-eve` + `--with-ttl` 让检查点保持新鲜，才有机会产生共享行为观察。
+      30 的 `http.log` 自 10-09 起没有新增，所以覆盖门实际依赖 Suricata EVE 那一路。
+    - **实测结论**：用 `sync --with-eve --eve-bytes 5M --with-ttl --ttl-bytes 5M` + 增量镜像后，
+      覆盖门变为 `coverage_verified: true`、`coverage_blockers: []`；设备档案从 0 变成有数据
+      （网关与交换机，来源是 `router-rules` 认定）。同一批数据在**一次性快照**模式下只有
+      `role=unknown` 的路由器候选，因此设备档案要出数据必须走增量镜像并补 EVE/TTL。
+      共享行为观察仍可能为 0：夜间园区没有出现"同一出口多机型并存"这类窗口就不建观察，这是正常结果。
     - 参考：30 当前迁移账本停在 `086_ncu_identity_router_bindings.sql`，**并未部署**共享设备档案
       （088–090 来自本分支的 `ff5b184`/`3bf0842`），所以现场也没有可比对的档案数据。
 
@@ -220,5 +285,8 @@ make local-down                       # 停本地栈
 | `未发现回放快照，跳过 ingest` | 先执行 `make local-pull`，再 `make local-up` |
 | 总览接口返回非 200 | 读模型仍在构建，稍后 `make local-status` 复查；必要时 `make local-logs LOG=lane-realtime` |
 | 快照跨度超过 6 天 | 加 `PULL_ARGS="--shift-to-now"` 重新拉取 |
-| 设备档案页一直空 / 显示"正在建立新的设备档案" | 见约束 10：先确认 `shared_device_profile_jobs` 有行（`local-up` 已对齐闸门），再确认是否存在合格来源；只用 Zeek 设备信号通常无法建档 |
+| 设备档案页一直空 / 显示"正在建立新的设备档案" | 见约束 10：先确认 `shared_device_profile_jobs` 有行（`local-up` 已对齐闸门），再确认是否存在合格来源；只用 Zeek 设备信号通常无法建档，需要增量镜像 + `--with-eve` + `--with-ttl` |
 | 机器负载飙高、docker 命令卡住 | 全量快照 + 5 天读模型回填会吃满 7GB VM；提高 OrbStack 内存，或先用 `--files` 只拉最近需要的那几类日志 |
+| `已有增量镜像在运行，本轮跳过` | 常驻镜像与手动 `sync` 互斥（并发追加会写坏文件），等这一轮结束再执行 |
+| `清理陈旧的增量镜像锁` | 上一轮异常退出，脚本已自动接管；若反复出现检查 `data/logs/sync.log` |
+| 增量镜像文件疑似错位 | 删掉 `data/zeek/<sensor>/live/` 整个目录重新 `sync`，再 `reset` 重建数据库（本地 inode 变化会让 ingest 从头重读同一批数据，不 reset 会产生重复事件） |

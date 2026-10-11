@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-ui deploy-backend deploy-dev package package-airgap deploy-airgap status doctor logs backup rollback local-doctor local-pull local-up local-down local-status local-logs local-reset local-test
+.PHONY: deploy deploy-ui deploy-backend deploy-dev package package-airgap deploy-airgap status doctor logs backup rollback local-doctor local-pull local-sync local-up local-down local-status local-logs local-reset local-test
 
 VERSION ?= $(shell git rev-parse --short HEAD)
 
@@ -42,6 +42,10 @@ local-doctor:
 
 local-pull:
 	@./scripts/local/pull-zeek-30.sh $(PULL_ARGS)
+
+# 增量镜像 0.30 的 Zeek/Suricata 日志，例如 SYNC_ARGS="--daemon --with-eve --with-ttl"
+local-sync:
+	@./scripts/local/local-stack.sh sync $(SYNC_ARGS)
 
 local-up:
 	@./scripts/local/local-stack.sh up $(LOCAL_ARGS)

@@ -18,6 +18,26 @@ frontend_dir=""
 force=false
 confirmed=false
 do_build=true
+use_sync=false
+sync_daemon=false
+sync_configured=false
+# 命令行给出的增量镜像覆盖值；先读 sync.conf，再用这些值覆盖，最后回写。
+CLI_SYNC_FILES=""
+CLI_SYNC_WITH_EVE=""
+CLI_SYNC_WITH_TTL=""
+CLI_SYNC_TTL_BYTES=""
+CLI_SYNC_EVE_BYTES=""
+CLI_SYNC_INTERVAL=""
+
+# 增量镜像选项默认值；local-stack.sh sync 会把最终值写进 data/run/sync.conf。
+sync_conf_defaults() {
+  SYNC_FILES="dhcp.log software.log mdns.log nbns.log llmnr.log conn.log dns.log http.log ssl.log x509.log snmp.log lldp.log ssdp.log proxy_transactions.log"
+  SYNC_WITH_EVE=false
+  SYNC_WITH_TTL=false
+  SYNC_TTL_BYTES=""
+  SYNC_EVE_BYTES=""
+  SYNC_INTERVAL=60
+}
 
 usage() {
   cat <<'EOF'
@@ -28,15 +48,27 @@ usage() {
   down      逆序停止进程并关闭存储容器（保留 data/db）
   status    容器、进程、/readyz、事件与风险计数
   logs [名] 查看某个进程日志，默认列出全部日志文件
+  sync      增量镜像 0.30 的 Zeek/Suricata 日志到 live/，配合常驻 ingest 保持数据新鲜
   reset     停栈并删除本地数据库后重新拉起
   purge     删除 data/db、data/zeek、data/run、data/logs 与本地运行时配置
 
 选项:
   --force             up/reset 时无条件重建本地数据库
+  --sync              up 前先做一轮增量镜像，并按 sync.conf 启动常驻镜像
   --frontend-dir DIR  使用指定前端产物，跳过 pnpm 构建
   --no-build          up 时跳过 Go 二进制重建
   --yes               purge 确认
   -h, --help          显示帮助
+
+sync 选项（会写入 data/run/sync.conf 供 up 与常驻进程复用）:
+  --daemon            以常驻进程运行增量镜像
+  --interval N        常驻镜像间隔秒数，默认 60
+  --files "a.log ..." 覆盖镜像的 Zeek 文件清单
+  --with-eve          额外镜像 /var/log/suricata/eve.json
+  --eve-bytes N       EVE 首次只取尾部 N 字节（如 50M）
+  --with-ttl          额外镜像 device-signals/ttl.jsonl
+  --ttl-bytes N       TTL 首次只取尾部 N 字节（如 50M）
+  --no-eve/--no-ttl   关闭对应来源
 EOF
 }
 
@@ -196,28 +228,65 @@ ensure_admin() {
 
 replay_manifest() { printf '%s' "$data_dir/zeek/${PROXY_SENTINEL_SENSOR_ID:-office-30}/replay/manifest.json"; }
 
+live_dir_of() { printf '%s' "$data_dir/zeek/${PROXY_SENTINEL_SENSOR_ID:-office-30}/live"; }
+
+replay_dir_of() { printf '%s' "$data_dir/zeek/${PROXY_SENTINEL_SENSOR_ID:-office-30}/replay"; }
+
+# ingest 支持的来源文件名；顺序即命令参数顺序。
+ingest_file_names() {
+  printf '%s' "dhcp.log software.log mdns.log nbns.log llmnr.log conn.log dns.log http.log ssl.log x509.log snmp.log lldp.log ssdp.log proxy_transactions.log ttl.jsonl eve.json"
+}
+
+has_ingest_files() {
+  local dir="$1" name
+  for name in $(ingest_file_names); do
+    [ -s "$dir/$name" ] && return 0
+  done
+  return 1
+}
+
+# 增量镜像目录存在就优先使用，否则回落到一次性快照目录。
+resolve_ingest_dir() {
+  local live
+  live="$(live_dir_of)"
+  if has_ingest_files "$live"; then
+    printf '%s' "$live"
+  else
+    printf '%s' "$(replay_dir_of)"
+  fi
+}
+
 manifest_sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 
 # 共享设备档案读模型自带“上线不回填”闸门：migrations/postgres/088 的
 # enqueue_shared_device_profile_job 会丢弃 observed_at < shared_device_profile_runtime.cutover_at
-# 的证据，而 cutover_at 默认是迁移执行时刻。回放的是历史快照，不把闸门推回数据起点就
+# 的证据，而 cutover_at 默认是迁移执行时刻。回放的是历史数据，不把闸门推回数据起点就
 # 永远建不出设备档案（页面会一直停在“正在建立新的设备档案”）。
 # 该闸门没有环境变量开关，只能在本地库里直接调整，且必须在 ingest / 风险物化写入
 # router_assessments 等触发源之前完成。
+#   快照模式：对齐到快照最早事件前 1 小时；
+#   增量镜像模式：对齐到 now-7d（normalized_events 的 TTL 上界），覆盖所有可入库事件。
 align_shared_profile_cutover() {
-  local manifest oldest current
-  manifest="$(replay_manifest)"
-  if [ ! -f "$manifest" ]; then
-    return 0
-  fi
-  oldest="$(jq -r '.oldest_ts // empty' "$manifest")"
-  if [ -z "$oldest" ]; then
-    log "manifest 缺少 oldest_ts，跳过共享设备档案闸门调整"
-    return 0
+  local dir="$1" value current oldest manifest
+  if [ "$dir" = "$(live_dir_of)" ]; then
+    value="now() - interval '7 days'"
+    oldest="now-7d"
+  else
+    manifest="$dir/manifest.json"
+    if [ ! -f "$manifest" ]; then
+      return 0
+    fi
+    oldest="$(jq -r '.oldest_ts // empty' "$manifest")"
+    if [ -z "$oldest" ]; then
+      log "manifest 缺少 oldest_ts，跳过共享设备档案闸门调整"
+      return 0
+    fi
+    value="'$oldest'::timestamptz - interval '1 hour'"
+    oldest="${oldest} 前 1 小时"
   fi
   current="$(pg_query 'SELECT cutover_at FROM shared_device_profile_runtime WHERE singleton')"
-  pg_query "UPDATE shared_device_profile_runtime SET cutover_at='$oldest'::timestamptz - interval '1 hour', updated_at=now() WHERE singleton" >/dev/null
-  log "共享设备档案闸门 cutover_at: ${current:-未知} -> ${oldest} 前 1 小时"
+  pg_query "UPDATE shared_device_profile_runtime SET cutover_at=$value, updated_at=now() WHERE singleton" >/dev/null
+  log "共享设备档案闸门 cutover_at: ${current:-未知} -> ${oldest}"
 }
 
 guard_replay() {
@@ -244,7 +313,7 @@ guard_replay() {
 
 ingest_source_args() {
   local dir="$1" args="" name
-  for name in dhcp.log software.log mdns.log nbns.log llmnr.log conn.log dns.log http.log ssl.log x509.log snmp.log lldp.log ssdp.log proxy_transactions.log ttl.jsonl; do
+  for name in $(ingest_file_names); do
     [ -s "$dir/$name" ] || continue
     case "$name" in
       dhcp.log) args="$args --zeek-dhcp $dir/$name" ;;
@@ -262,6 +331,7 @@ ingest_source_args() {
       ssdp.log) args="$args --zeek-ssdp $dir/$name" ;;
       proxy_transactions.log) args="$args --zeek-proxy $dir/$name" ;;
       ttl.jsonl) args="$args --device-signals $dir/$name" ;;
+      eve.json) args="$args --eve $dir/$name" ;;
     esac
   done
   printf '%s' "$args"
@@ -351,7 +421,7 @@ stop_proc() {
 }
 
 process_names() {
-  printf '%s' "control-plane risk lane-realtime lane-coarse lane-recognition lane-identity ingest"
+  printf '%s' "sync control-plane risk lane-realtime lane-coarse lane-recognition lane-identity ingest"
 }
 
 stop_all_procs() {
@@ -362,16 +432,97 @@ stop_all_procs() {
 }
 
 start_ingest() {
-  local dir args
-  dir="$data_dir/zeek/${PROXY_SENTINEL_SENSOR_ID:-office-30}/replay"
+  local dir="$1" args
   args="$(ingest_source_args "$dir")"
   if [ -z "${args// /}" ]; then
-    log "回放目录没有可消费的日志，跳过 ingest"
+    log "目录没有可消费的日志，跳过 ingest: $dir"
     return 0
   fi
   # shellcheck disable=SC2086
   spawn ingest "$bin" ingest run --sensor-id "${PROXY_SENTINEL_SENSOR_ID:-office-30}" $args \
     --poll-interval 2s --max-batch-bytes 8388608 --store-timeout 2m --heartbeat-interval 30s
+}
+
+sync_conf() { printf '%s' "$run_dir/sync.conf"; }
+
+load_sync_conf() {
+  sync_conf_defaults
+  local conf
+  conf="$(sync_conf)"
+  if [ -f "$conf" ]; then
+    # shellcheck disable=SC1090
+    . "$conf"
+  fi
+}
+
+save_sync_conf() {
+  mkdir -p "$run_dir"
+  cat > "$(sync_conf)" <<EOF
+# 由 local-stack.sh sync 写入；local-up 与常驻镜像进程复用这份配置。
+SYNC_FILES="$SYNC_FILES"
+SYNC_WITH_EVE=$SYNC_WITH_EVE
+SYNC_WITH_TTL=$SYNC_WITH_TTL
+SYNC_TTL_BYTES="$SYNC_TTL_BYTES"
+SYNC_EVE_BYTES="$SYNC_EVE_BYTES"
+SYNC_INTERVAL=$SYNC_INTERVAL
+EOF
+}
+
+# 命令行参数优先于 sync.conf 里保存的历史配置。
+apply_sync_overrides() {
+  if [ -n "$CLI_SYNC_FILES" ]; then SYNC_FILES="$CLI_SYNC_FILES"; fi
+  if [ -n "$CLI_SYNC_WITH_EVE" ]; then SYNC_WITH_EVE="$CLI_SYNC_WITH_EVE"; fi
+  if [ -n "$CLI_SYNC_WITH_TTL" ]; then SYNC_WITH_TTL="$CLI_SYNC_WITH_TTL"; fi
+  if [ -n "$CLI_SYNC_TTL_BYTES" ]; then SYNC_TTL_BYTES="$CLI_SYNC_TTL_BYTES"; fi
+  if [ -n "$CLI_SYNC_EVE_BYTES" ]; then SYNC_EVE_BYTES="$CLI_SYNC_EVE_BYTES"; fi
+  if [ -n "$CLI_SYNC_INTERVAL" ]; then SYNC_INTERVAL="$CLI_SYNC_INTERVAL"; fi
+  return 0
+}
+
+run_sync_once() {
+  # --files 只接受一个参数（内部按空格拆分），所以必须整体作为一个词传入，
+  # 不能用字符串拼接后再做 word splitting。
+  set -- --live --files "$SYNC_FILES"
+  if [ "$SYNC_WITH_EVE" = true ]; then
+    set -- "$@" --with-eve
+  fi
+  if [ -n "$SYNC_EVE_BYTES" ]; then
+    set -- "$@" --eve-bytes "$SYNC_EVE_BYTES"
+  fi
+  if [ "$SYNC_WITH_TTL" = true ]; then
+    set -- "$@" --with-ttl
+  fi
+  if [ -n "$SYNC_TTL_BYTES" ]; then
+    set -- "$@" --ttl-bytes "$SYNC_TTL_BYTES"
+  fi
+  "$root/scripts/local/pull-zeek-30.sh" "$@" --dest "$data_dir/zeek/${PROXY_SENTINEL_SENSOR_ID:-office-30}"
+}
+
+cmd_sync_daemon() {
+  load_sync_conf
+  log "增量镜像常驻启动：间隔 ${SYNC_INTERVAL}s，目标 $(live_dir_of)"
+  while true; do
+    ( run_sync_once ) || log "本轮同步失败，等待下一轮"
+    sleep "$SYNC_INTERVAL"
+  done
+}
+
+cmd_sync() {
+  require_docker
+  gen_env
+  load_env
+  load_sync_conf
+  apply_sync_overrides
+  if [ "$sync_configured" = true ]; then
+    save_sync_conf
+    log "已保存增量镜像配置: $(sync_conf)"
+  fi
+  if [ "$sync_daemon" = true ]; then
+    spawn sync "$root/scripts/local/local-stack.sh" __sync-daemon
+    return 0
+  fi
+  run_sync_once
+  cmd_status
 }
 
 wait_ingest_drain() {
@@ -519,16 +670,42 @@ cmd_up() {
   wait_storage
   apply_migrations
   ensure_admin
-  align_shared_profile_cutover
-  local have_replay=false
-  if guard_replay; then
-    have_replay=true
+
+  load_sync_conf
+  apply_sync_overrides
+  if [ "$use_sync" = true ]; then
+    if [ "$sync_configured" = true ] || [ ! -f "$(sync_conf)" ]; then
+      save_sync_conf
+    fi
+    log "增量镜像：先同步一轮（EVE=${SYNC_WITH_EVE} TTL=${SYNC_WITH_TTL}）"
+    run_sync_once
   fi
-  if [ "$have_replay" = true ]; then
-    start_ingest
+
+  local ingest_dir
+  ingest_dir="$(resolve_ingest_dir)"
+  align_shared_profile_cutover "$ingest_dir"
+
+  if [ "$ingest_dir" = "$(live_dir_of)" ]; then
+    log "增量镜像模式：ingest 读取 ${ingest_dir}，跳过快照一致性校验"
+    start_ingest "$ingest_dir"
     wait_ingest_drain
-    write_ingest_marker
     start_risk
+    if [ -f "$(sync_conf)" ]; then
+      spawn sync "$root/scripts/local/local-stack.sh" __sync-daemon
+    else
+      log "live 目录存在但缺少 sync.conf，未启动常驻镜像；执行 local-stack.sh sync --daemon 可启用"
+    fi
+  else
+    local have_replay=false
+    if guard_replay; then
+      have_replay=true
+    fi
+    if [ "$have_replay" = true ]; then
+      start_ingest "$ingest_dir"
+      wait_ingest_drain
+      write_ingest_marker
+      start_risk
+    fi
   fi
   start_lanes
   wait_read_models
@@ -659,15 +836,30 @@ cmd_doctor() {
 }
 
 command_name="${1:-}"
+if [ "$command_name" = "-h" ] || [ "$command_name" = "--help" ]; then
+  usage
+  exit 0
+fi
 if [ $# -gt 0 ]; then
   shift
 fi
+sync_conf_defaults
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) force=true; shift ;;
     --frontend-dir) frontend_dir="${2:-}"; shift 2 ;;
     --no-build) do_build=false; shift ;;
     --yes) confirmed=true; shift ;;
+    --sync) use_sync=true; shift ;;
+    --daemon) sync_daemon=true; shift ;;
+    --interval) CLI_SYNC_INTERVAL="${2:-}"; sync_configured=true; shift 2 ;;
+    --files) CLI_SYNC_FILES="${2:-}"; sync_configured=true; shift 2 ;;
+    --with-eve) CLI_SYNC_WITH_EVE=true; sync_configured=true; shift ;;
+    --no-eve) CLI_SYNC_WITH_EVE=false; sync_configured=true; shift ;;
+    --eve-bytes) CLI_SYNC_EVE_BYTES="${2:-}"; sync_configured=true; shift 2 ;;
+    --with-ttl) CLI_SYNC_WITH_TTL=true; sync_configured=true; shift ;;
+    --no-ttl) CLI_SYNC_WITH_TTL=false; sync_configured=true; shift ;;
+    --ttl-bytes) CLI_SYNC_TTL_BYTES="${2:-}"; sync_configured=true; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) usage >&2; die "未知参数: $1" ;;
     *) break ;;
@@ -680,6 +872,8 @@ case "$command_name" in
   down) cmd_down ;;
   status) cmd_status ;;
   logs) cmd_logs "$@" ;;
+  sync) cmd_sync ;;
+  __sync-daemon) cmd_sync_daemon ;;
   reset) cmd_reset ;;
   purge) cmd_purge ;;
   "") usage; exit 2 ;;
