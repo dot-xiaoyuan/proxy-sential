@@ -164,6 +164,24 @@ make local-pull PULL_ARGS="--shift-to-now"
 9. **回放快照会随时间变旧**。V3 健康检查在 worker 无积压且心跳新鲜时按 lag=0 判定，
    因此快照排空后总览可用；但 `collector` 等新鲜度指标会显示 `no_data`/`idle`，
    这是静态快照的正常表现，不是故障。
+10. **共享设备档案（设备档案页）需要合格来源，可能长期为空**。
+    - 入库闸门：`migrations/postgres/088` 的 `enqueue_shared_device_profile_job` 会丢弃
+      `observed_at < shared_device_profile_runtime.cutover_at` 的证据，而 `cutover_at` 默认是迁移执行时刻。
+      `local-up` 会在 ingest 之前把它对齐到快照最早事件前 1 小时，否则任务永远为 0。
+    - 建档条件：`qualifyingSharedProfileSource` 只接受三类来源——路由器评估达到
+      `role=router|ap` 且 `status=likely|confirmed` 且非 `brand_reference_only`/非 `ambiguous`（或
+      `infrastructure=true`）；`discovery_observation_latest` 中 `device_type` 为
+      router/gateway/access_point/switch/network_device 且有 MAC；或
+      `shared_behavior_observations` 中 `status=confirmed` 且 `coverage_state=verified` 且
+      `strong_anchor` 为 `ieee1905_association`/`coexisting_device_models` 且设备数下界 ≥ 2。
+    - 现实情况：30 的 Zeek 只加载 `local-device-signals.zeek`、`software.zeek`、
+      `proxy-transactions.zeek`，没有 `lldp.log`/`ssdp.log`，因此回放数据通常只能得到
+      `role=unknown`、`status=candidate`、`brand_reference_only=true` 的路由器候选；
+      TTL/UA 只能给弱线索（`internal/evidence/router.go` 明确"不从 TTL/UA 单独建立路由器记录"），
+      所以补拉 `--with-ttl` 也不足以建档。discovery worker 需要现场 LAN，共享行为需要身份会话，
+     本地都拿不到。此时页面停留在"正在建立新的设备档案"是预期行为。
+    - 参考：30 当前迁移账本停在 `086_ncu_identity_router_bindings.sql`，**并未部署**共享设备档案
+      （088–090 来自本分支的 `ff5b184`/`3bf0842`），所以现场也没有可比对的档案数据。
 
 ## 验收
 
@@ -202,3 +220,5 @@ make local-down                       # 停本地栈
 | `未发现回放快照，跳过 ingest` | 先执行 `make local-pull`，再 `make local-up` |
 | 总览接口返回非 200 | 读模型仍在构建，稍后 `make local-status` 复查；必要时 `make local-logs LOG=lane-realtime` |
 | 快照跨度超过 6 天 | 加 `PULL_ARGS="--shift-to-now"` 重新拉取 |
+| 设备档案页一直空 / 显示"正在建立新的设备档案" | 见约束 10：先确认 `shared_device_profile_jobs` 有行（`local-up` 已对齐闸门），再确认是否存在合格来源；只用 Zeek 设备信号通常无法建档 |
+| 机器负载飙高、docker 命令卡住 | 全量快照 + 5 天读模型回填会吃满 7GB VM；提高 OrbStack 内存，或先用 `--files` 只拉最近需要的那几类日志 |

@@ -198,6 +198,28 @@ replay_manifest() { printf '%s' "$data_dir/zeek/${PROXY_SENTINEL_SENSOR_ID:-offi
 
 manifest_sha() { shasum -a 256 "$1" | awk '{print $1}'; }
 
+# 共享设备档案读模型自带“上线不回填”闸门：migrations/postgres/088 的
+# enqueue_shared_device_profile_job 会丢弃 observed_at < shared_device_profile_runtime.cutover_at
+# 的证据，而 cutover_at 默认是迁移执行时刻。回放的是历史快照，不把闸门推回数据起点就
+# 永远建不出设备档案（页面会一直停在“正在建立新的设备档案”）。
+# 该闸门没有环境变量开关，只能在本地库里直接调整，且必须在 ingest / 风险物化写入
+# router_assessments 等触发源之前完成。
+align_shared_profile_cutover() {
+  local manifest oldest current
+  manifest="$(replay_manifest)"
+  if [ ! -f "$manifest" ]; then
+    return 0
+  fi
+  oldest="$(jq -r '.oldest_ts // empty' "$manifest")"
+  if [ -z "$oldest" ]; then
+    log "manifest 缺少 oldest_ts，跳过共享设备档案闸门调整"
+    return 0
+  fi
+  current="$(pg_query 'SELECT cutover_at FROM shared_device_profile_runtime WHERE singleton')"
+  pg_query "UPDATE shared_device_profile_runtime SET cutover_at='$oldest'::timestamptz - interval '1 hour', updated_at=now() WHERE singleton" >/dev/null
+  log "共享设备档案闸门 cutover_at: ${current:-未知} -> ${oldest} 前 1 小时"
+}
+
 guard_replay() {
   local manifest count sha recorded
   manifest="$(replay_manifest)"
@@ -497,6 +519,7 @@ cmd_up() {
   wait_storage
   apply_migrations
   ensure_admin
+  align_shared_profile_cutover
   local have_replay=false
   if guard_replay; then
     have_replay=true
