@@ -12,7 +12,7 @@ interface EChartsSankeyFlowProps {
 export function EChartsSankeyFlow({
   items,
   loading = false,
-  title = 'DPI L7 协议与应用流量流向桑基拓扑 (Sankey Flow Topology)',
+  title = 'DPI L7 协议与应用流量桑基图',
 }: EChartsSankeyFlowProps) {
   const nodes = new Map<string, { name: string; value?: number }>()
   const links: { source: string; target: string; value: number }[] = []
@@ -39,7 +39,7 @@ export function EChartsSankeyFlow({
       triggerOn: 'mousemove',
       formatter: (params: any) => {
         if (params.dataType === 'edge') {
-          return `${params.data.source} ➔ ${params.data.target}<br/><b>标准事件数:</b> ${params.data.value}`
+          return `${params.data.source} → ${params.data.target}<br/><b>标准事件数:</b> ${params.data.value}`
         }
         return `<b>节点:</b> ${params.name}<br/><b>聚合事件:</b> ${params.value ?? ''}`
       },

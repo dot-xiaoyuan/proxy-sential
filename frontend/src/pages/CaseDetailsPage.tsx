@@ -49,7 +49,7 @@ export function CaseDetailsPage() {
     <main className="page">
       <AppPageHeader
         title={`案件 ${data.case_id}`}
-        subtitle="风险、身份、证据、复核结论与处置动作统一留痕"
+        subtitle="查看风险依据、关联身份、证据与处置记录"
         extra={<Link to={safeReturnTo(params.get('return_to'),'/cases')}>返回案件队列</Link>}
       />
       {!writable && <Alert showIcon title="当前角色只有查看权限" type="info" />}

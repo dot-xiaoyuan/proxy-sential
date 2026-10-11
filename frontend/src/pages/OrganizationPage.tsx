@@ -12,7 +12,6 @@ import {
   Empty,
   Form,
   Input,
-  List,
   Modal,
   Row,
   Select,
@@ -36,6 +35,9 @@ import {
   AppLoadingState,
   AppPageHeader,
   AppServerPagination,
+  StackList,
+  StackListItem,
+  StackListItemMeta,
   useServerPagination,
 } from "../shared/ui";
 
@@ -94,7 +96,7 @@ export function OrganizationPage() {
     <main className="page">
       <AppPageHeader
         title="校区与网络区域"
-        subtitle="维护单校多校区、楼宇、网络区域和接入设备映射"
+        subtitle="维护校区与楼宇、网络区域与接入点"
         loading={query.isFetching}
         onRefresh={() => void query.refetch()}
         extra={
@@ -153,11 +155,12 @@ export function OrganizationPage() {
                   {(campusList.data?.items.length ?? 0) === 0 ? (
                     <Empty description="尚未导入校园组织数据" />
                   ) : (
-                    <List
-                      dataSource={campusList.data?.items ?? []}
+                    <StackList
+                      items={campusList.data?.items ?? []}
+                      itemKey={(campus) => campus.campus_id}
                       renderItem={(campus) => (
-                        <List.Item>
-                          <List.Item.Meta
+                        <StackListItem>
+                          <StackListItemMeta
                             title={
                               <span className="nowrap-cell">
                                 {campus.name} <Tag>{campus.code}</Tag>
@@ -165,7 +168,7 @@ export function OrganizationPage() {
                             }
                             description={`${data.buildings.filter((item) => item.campus_id === campus.campus_id).length} 栋楼宇`}
                           />
-                        </List.Item>
+                        </StackListItem>
                       )}
                     />
                   )}
@@ -186,11 +189,12 @@ export function OrganizationPage() {
                   {(zoneList.data?.items.length ?? 0) === 0 ? (
                     <Empty description="尚未配置 VLAN、SSID 或网段映射" />
                   ) : (
-                    <List
-                      dataSource={zoneList.data?.items ?? []}
+                    <StackList
+                      items={zoneList.data?.items ?? []}
+                      itemKey={(zone) => zone.network_zone_id}
                       renderItem={(zone) => (
-                        <List.Item>
-                          <List.Item.Meta
+                        <StackListItem>
+                          <StackListItemMeta
                             title={
                               <span className="list-cell-nowrap">
                                 {zone.name}
@@ -206,7 +210,7 @@ export function OrganizationPage() {
                               </Typography.Text>
                             }
                           />
-                        </List.Item>
+                        </StackListItem>
                       )}
                     />
                   )}

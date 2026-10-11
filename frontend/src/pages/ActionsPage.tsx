@@ -7,7 +7,6 @@ import {
   Card,
   Form,
   Input,
-  List,
   Modal,
   Select,
   Space,
@@ -30,6 +29,10 @@ import {
   AppErrorAlert,
   AppLoadingState,
   AppPageHeader,
+  StackList,
+  StackListActions,
+  StackListItem,
+  StackListItemMeta,
 } from "../shared/ui";
 
 type ConnectorForm = {
@@ -119,7 +122,7 @@ export function ActionsPage() {
     <main className="page">
       <AppPageHeader
         title="认证与处置接入"
-        subtitle="通过北向接口执行隔离、限速、踢线与解除；真实动作受硬门槛、冷却和熔断保护"
+        subtitle="通过北向接口执行隔离、限速、踢线与解除；真实动作需通过策略与身份检查"
         onRefresh={() => {
           void connectors.refetch();
         }}
@@ -179,87 +182,91 @@ export function ActionsPage() {
               ) : undefined
             }
           >
-            <List
-              locale={{ emptyText: "尚未配置通用处置连接器；南昌 4K 认证同步由上方独立服务运行" }}
-              dataSource={connectors.data.items}
+            <StackList
+              items={connectors.data.items}
+              itemKey={(item) => item.connector_id}
+              empty="尚未配置通用处置连接器；南昌 4K 认证同步由上方独立服务运行"
               renderItem={(item) => (
-                <List.Item
+                <StackListItem
                   actions={
-                    canManage
-                      ? [
-                          item.connector_type === "srun4k" && canConfigureSRun4K ? <Button key="4k" onClick={() => setFourKConnector({ id: item.connector_id })}>配置接入通道</Button> : null,
-                          <Button key="preview" onClick={() => setPreviewConnector(item.connector_id)}>账号会话预览</Button>,
-                          canWrite ? <Button
-                            key="test"
-                            onClick={async () => {
-                              try {
-                                const result = await api.testActionConnector(
-                                  item.connector_id,
-                                );
-                                void message.success(result.identity_verified === false ? "管理 API 连通与授权检查通过；完整身份清单尚未接通，暂不能处置" : "连接检查通过，处置能力仍需单独验收");
-                              } catch (error) {
-                                void message.error(
-                                  error instanceof Error
-                                    ? error.message
-                                    : "连通性测试失败",
-                                );
+                    <StackListActions>
+                      {canManage
+                        ? [
+                            item.connector_type === "srun4k" && canConfigureSRun4K ? <Button key="4k" onClick={() => setFourKConnector({ id: item.connector_id })}>配置接入通道</Button> : null,
+                            <Button key="preview" onClick={() => setPreviewConnector(item.connector_id)}>账号会话预览</Button>,
+                            canWrite ? <Button
+                              key="test"
+                              onClick={async () => {
+                                try {
+                                  const result = await api.testActionConnector(
+                                    item.connector_id,
+                                  );
+                                  void message.success(result.identity_verified === false ? "管理 API 连通与授权检查通过；完整身份清单尚未接通，暂不能处置" : "连接检查通过，处置能力仍需单独验收");
+                                } catch (error) {
+                                  void message.error(
+                                    error instanceof Error
+                                      ? error.message
+                                      : "连通性测试失败",
+                                  );
+                                }
+                              }}
+                            >
+                              连通测试
+                            </Button> : null,
+                            canWrite && item.connector_type !== "srun4k" ? <Button key="edit" onClick={() => openEditor(item)}>
+                              配置
+                            </Button> : null,
+                            canWrite && item.connector_type !== "srun4k" ? <Switch
+                              aria-label={`${item.name}启用状态`}
+                              key="enabled"
+                              checked={item.enabled}
+                              onChange={(value) =>
+                                void toggleConnector(item, value)
                               }
-                            }}
-                          >
-                            连通测试
-                          </Button> : null,
-                          canWrite && item.connector_type !== "srun4k" ? <Button key="edit" onClick={() => openEditor(item)}>
-                            配置
-                          </Button> : null,
-                          canWrite && item.connector_type !== "srun4k" ? <Switch
-                            aria-label={`${item.name}启用状态`}
-                            key="enabled"
-                            checked={item.enabled}
-                            onChange={(value) =>
-                              void toggleConnector(item, value)
-                            }
-                          /> : <Tag key="managed" color={item.enabled ? "green" : "default"}>{item.enabled ? "启用" : "停用"}</Tag>,
-                        ]
-                      : [
-                          <Tag
-                            color={item.enabled ? "green" : "default"}
-                            key="enabled"
-                          >
-                            {item.enabled ? "启用" : "停用"}
-                          </Tag>,
-                        ]
+                            /> : <Tag key="managed" color={item.enabled ? "green" : "default"}>{item.enabled ? "启用" : "停用"}</Tag>,
+                          ]
+                        : [
+                            <Tag
+                              color={item.enabled ? "green" : "default"}
+                              key="enabled"
+                            >
+                              {item.enabled ? "启用" : "停用"}
+                            </Tag>,
+                          ]}
+                    </StackListActions>
                   }
-                >
-                  <List.Item.Meta
-                    title={item.name}
-                    description={
-                      <div className="connector-summary">
-                        <span className="nowrap-cell" title={item.endpoint_url}>
-                          {item.endpoint_url}
-                        </span>
-                        {item.connector_type === "srun4k" ? <span>身份与匹配目录由4K同步，动作由本地防代理策略配置</span> : <span>
-                          {item.mode === "active" ? "真实模式" : "影子模式"} ·{" "}
-                          {item.shadow_ready ? "影子验收通过" : "等待影子验收"}{" "}
-                          · 已复核 {item.shadow_reviewed_count ?? 0}/
-                          {item.shadow_candidate_count ?? 0} · 准确率{" "}
-                          {Math.round((item.shadow_accuracy ?? 0) * 100)}%
-                        </span>}
-                        {item.circuit_open_until && (
-                          <Tag color="red">
-                            熔断至{" "}
-                            {new Date(item.circuit_open_until).toLocaleString()}
-                          </Tag>
-                        )}
-                      </div>
-                    }
-                  />
-                </List.Item>
+                  meta={
+                    <StackListItemMeta
+                      title={item.name}
+                      description={
+                        <div className="connector-summary">
+                          <span className="nowrap-cell" title={item.endpoint_url}>
+                            {item.endpoint_url}
+                          </span>
+                          {item.connector_type === "srun4k" ? <span>身份与匹配目录由4K同步，动作由本地防代理策略配置</span> : <span>
+                            {item.mode === "active" ? "真实模式" : "影子模式"} ·{" "}
+                            {item.shadow_ready ? "影子验收通过" : "等待影子验收"}{" "}
+                            · 已复核 {item.shadow_reviewed_count ?? 0}/
+                            {item.shadow_candidate_count ?? 0} · 准确率{" "}
+                            {Math.round((item.shadow_accuracy ?? 0) * 100)}%
+                          </span>}
+                          {item.circuit_open_until && (
+                            <Tag color="red">
+                              熔断至{" "}
+                              {new Date(item.circuit_open_until).toLocaleString()}
+                            </Tag>
+                          )}
+                        </div>
+                      }
+                    />
+                  }
+                />
               )}
             />
           </Card>
           <Card title="安全门槛">
-            <List
-              dataSource={[
+            <StackList
+              items={[
                 "按触发类型检查设备配额、会话配额或可归责的风险证据",
                 "核验当前账号、在线会话与登录代次",
                 "检查策略范围、校园例外与人工复核结论",
@@ -267,7 +274,8 @@ export function ActionsPage() {
                 "通用外部连接器需完成影子验收；4K 托管接入按事件通道状态准入",
                 "全局紧急停止阻断真实动作；所有操作保留审计和撤销入口",
               ]}
-              renderItem={(item) => <List.Item>{item}</List.Item>}
+              itemKey={(item) => item}
+              renderItem={(item) => <StackListItem>{item}</StackListItem>}
             />
           </Card>
       </section>

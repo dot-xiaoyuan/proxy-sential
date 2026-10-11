@@ -82,7 +82,7 @@ function RulesPanel({ rules, writable, invalidate }: { rules: ReturnType<typeof 
     { title: '方向', dataIndex: 'direction', width: 100, render: (value: string) => directions[value] ?? value },
     { title: '状态', dataIndex: 'enabled', width: 90, render: (value: boolean) => <Tag color={value ? 'blue' : undefined}>{value ? '已启用' : '未启用'}</Tag> },
     {
-      title: '操作', width: 220,
+      title: '操作', width: 220, fixed: 'right',
       render: (_value, row) => (
         <Space wrap>
           <Button size="small" loading={runPreview.isPending && runPreview.variables === row.rule_id} onClick={() => { setPreview(undefined); runPreview.mutate(row.rule_id) }}>试算</Button>

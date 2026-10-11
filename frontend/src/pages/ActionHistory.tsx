@@ -1,11 +1,11 @@
 import { statusText } from '../shared/ui/status'
 import { useState } from 'react'
-import { App as AntApp, Button, Card, List, Modal, Space, Table, Tag, Typography } from 'antd'
+import { App as AntApp, Button, Card, Modal, Space, Table, Tag, Typography } from 'antd'
 import { api } from '../shared/api/client'
 import { useActions, useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
 import { NativeObservations } from '../entities/evidence/NativeObservations'
-import { AppErrorAlert, AppLoadingState, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppLoadingState, AppServerPagination, StackList, StackListItem, useServerPagination } from '../shared/ui'
 export function ActionHistory(){
   const pagination=useServerPagination('actions_')
   const actions=useActions({limit:pagination.pageSize,cursor:pagination.cursor})
@@ -95,12 +95,13 @@ export function ActionHistory(){
               ]}
             />
           </div>
-          <List
+          <StackList
             className="mobile-only"
-            dataSource={actions.data.items}
-            locale={{ emptyText: "暂无处置动作" }}
+            items={actions.data.items}
+            itemKey={(item) => item.action_id}
+            empty="暂无处置动作"
             renderItem={(item) => (
-              <List.Item>
+              <StackListItem>
                 <Card className="mobile-case-card" size="small">
                   <div className="mobile-case-head">
                     <Typography.Text className="nowrap-cell" strong>
@@ -120,7 +121,7 @@ export function ActionHistory(){
                   </div>
                   <Button onClick={() => setSelectedAction(item.action_id)}>执行记录</Button>
                 </Card>
-              </List.Item>
+              </StackListItem>
             )}
           />
           <AppServerPagination

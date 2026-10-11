@@ -41,7 +41,7 @@ export function NotificationsPage() {
 
   return (
     <section className="notifications-page">
-      <AppPageHeader title="通知模板与通道" subtitle="策略提醒的模板、发送通道与真实投递状态" onRefresh={invalidate} />
+      <AppPageHeader title="通知模板与通道" subtitle="策略提醒的模板、发送通道与投递状态" onRefresh={invalidate} />
       <Alert
         type="info"
         showIcon

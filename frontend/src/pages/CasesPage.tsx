@@ -1,12 +1,12 @@
 import { detailPath } from '../app/navigation'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { Link,useLocation,useSearchParams } from 'react-router-dom'
-import { App as AntApp, Button, Card, Checkbox, Input, List, Select, Space, Switch, Table, Tag, Typography } from 'antd'
+import { App as AntApp, Button, Card, Checkbox, Input, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { useMemo, useState } from 'react'
 
 import { useCases, useCasesBatchMutation, useSession } from '../shared/api/queries'
 import type { RiskCase } from '../shared/api/types'
-import { AppErrorAlert, AppLoadingState, AppPageHeader, AppServerPagination, AppTableBar, UniversityDimensionFilters, useServerPagination, type UniversityDimensions } from '../shared/ui'
+import { AppErrorAlert, AppLoadingState, AppPageHeader, AppServerPagination, AppTableBar, StackList, StackListItem, UniversityDimensionFilters, useServerPagination, type UniversityDimensions } from '../shared/ui'
 import { CaseAssessment } from '../entities/risk/CaseAssessment'
 import { can } from '../shared/auth/permissions'
 
@@ -36,12 +36,12 @@ export function CasesPage() {
   if(query.isLoading)return <AppLoadingState rows={8}/>
   if(query.isError||!query.data)return <AppErrorAlert title="风险处置队列加载失败"/>
   return <main className="page">
-    <AppPageHeader title="风险案件" subtitle="按案件完成分派、调查、复核、处置与审计闭环" loading={query.isFetching} onRefresh={()=>void query.refetch()} />
+    <AppPageHeader title="风险案件" subtitle="按状态、负责人与校区筛选，批量分派或关闭案件" loading={query.isFetching} onRefresh={()=>void query.refetch()} />
     <AppTableBar searchPlaceholder="搜索 IP、账号、终端或院系" searchValue={q} onSearchChange={value=>{setQ(value)}} totalCount={query.data.page.total} extra={<Space wrap><span className="case-router-toggle"><Switch aria-label="显示路由器观察" checked={includeRouterObservations} onChange={setIncludeRouterObservations}/><Typography.Text>显示路由器观察</Typography.Text></span><Select aria-label="案件状态" value={status} onChange={value=>{setStatus(value)}} options={[{value:'',label:'全部状态'},...Object.entries(statusNames).map(([value,label])=>({value,label}))]} /></Space>} />
     {writable&&<section className="surface case-batch-toolbar"><Typography.Text>已选 {selected.length} 项</Typography.Text><Input aria-label="批量负责人" placeholder="负责人账号" value={assignee} onChange={event=>setAssignee(event.target.value)}/><Button disabled={selected.length===0||!assignee.trim()} loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'assign',assigneeId:assignee.trim()},{onSuccess:()=>{setSelected([]);void message.success('案件已批量分派')}})}>批量分派</Button><Button danger disabled={selected.length===0} loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'close'},{onSuccess:()=>{setSelected([]);void message.success('已批量关闭符合条件的案件')}})}>批量关闭</Button></section>}
     <details className="surface filter-disclosure"><summary>高校维度筛选</summary><div className="filter-disclosure-content"><UniversityDimensionFilters value={dimensions} onChange={(next)=>{setDimensions(next)}} /></div></details>
     <div className="desktop-only"><Table className="compact-list-table" columns={columns} dataSource={query.data.items} pagination={false} rowKey="case_id" rowSelection={writable?{selectedRowKeys:selected,onChange:(keys)=>setSelected(keys.map(String))}:undefined} tableLayout="fixed" /></div>
-    <List className="mobile-only mobile-case-list" dataSource={query.data.items} renderItem={item=><List.Item><Card className="mobile-case-card" size="small"><div className="mobile-case-head">{writable&&<Checkbox aria-label={`选择案件 ${item.case_id}`} checked={selected.includes(item.case_id)} onChange={event=>setSelected(current=>event.target.checked?[...current,item.case_id]:current.filter(id=>id!==item.case_id))}/>}<Link to={detailPath(`/cases/${encodeURIComponent(item.case_id)}`,location.pathname+location.search)}>{item.ip||item.subject_id}</Link><CaseAssessment item={item}/></div><div className="mobile-case-row"><span>{item.account_id||''}</span><span>{statusNames[item.status]}</span></div><div className="mobile-case-row"><span>{item.campus_id||''}</span><span>{item.assignee_id||''}</span></div></Card></List.Item>} />
+    <StackList className="mobile-only mobile-case-list" items={query.data.items} itemKey={item=>item.case_id} renderItem={item=><StackListItem><Card className="mobile-case-card" size="small"><div className="mobile-case-head">{writable&&<Checkbox aria-label={`选择案件 ${item.case_id}`} checked={selected.includes(item.case_id)} onChange={event=>setSelected(current=>event.target.checked?[...current,item.case_id]:current.filter(id=>id!==item.case_id))}/>}<Link to={detailPath(`/cases/${encodeURIComponent(item.case_id)}`,location.pathname+location.search)}>{item.ip||item.subject_id}</Link><CaseAssessment item={item}/></div><div className="mobile-case-row"><span>{item.account_id||''}</span><span>{statusNames[item.status]}</span></div><div className="mobile-case-row"><span>{item.campus_id||''}</span><span>{item.assignee_id||''}</span></div></Card></StackListItem>} />
     <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={query.data.page.total} onChange={pagination.update} />
   </main>
 }

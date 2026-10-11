@@ -3103,7 +3103,25 @@ pre.wrap-code {
   width: 180px;
 }
 
-.mobile-case-list .ant-list-item {
+/* 项目自有列表组件（StackList，替代 antd 6 已弃用的 List） */
+/* display 用 :where() 保持 0 特异性，避免覆盖 .mobile-only / .desktop-only 的可见性约束 */
+:where(.ps-list) { display: flex; flex-direction: column; }
+.ps-list-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--ps-border-color); }
+.ps-list-item:last-child { border-bottom: 0; }
+.ps-list-item-main { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; gap: 4px; }
+.ps-list-item-meta { display: flex; flex: 1 1 auto; min-width: 0; gap: 16px; }
+.ps-list-item-meta-content { flex: 1 1 auto; min-width: 0; }
+.ps-list-item-meta-title { margin: 0 0 4px; color: var(--ps-text-primary); font-size: 14px; font-weight: 500; }
+.ps-list-item-meta-description { color: var(--ps-text-secondary); font-size: 14px; }
+.ps-list-item-action { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ps-list-item-action > * { white-space: nowrap; flex-shrink: 0; }
+.ps-list-empty { padding: 20px 0; color: var(--ps-text-secondary); text-align: center; }
+@media (max-width: 560px) {
+  .ps-list-item { flex-wrap: wrap; }
+  .ps-list-item-meta { flex-direction: column; gap: 2px; }
+}
+
+.mobile-case-list .ps-list-item {
   padding: 6px 0;
   border: 0;
 }
@@ -3535,28 +3553,28 @@ pre.wrap-code {
 .four-k-authorization-state strong { color: #15803d; }
 .four-k-authorization-state small { color: #64748b; }
 @media (max-width: 560px) { .four-k-database-result, .four-k-sync-summary { padding: 14px; } }
-.actions-connectors .ant-list-item { flex-wrap: wrap; gap: 12px; }
-.actions-connectors .ant-list-item-meta { min-width: 0; }
-.actions-connectors .ant-list-item-meta-description { overflow-wrap: anywhere; }
-.actions-connectors .ant-list-item-action { display: flex; flex-wrap: wrap; gap: 8px; margin-inline-start: 0; }
-.actions-connectors .ant-list-item-action > li { padding: 0; white-space: nowrap; flex-shrink: 0; }
+.actions-connectors .ps-list-item { flex-wrap: wrap; gap: 12px; }
+.actions-connectors .ps-list-item-meta { min-width: 0; }
+.actions-connectors .ps-list-item-meta-description { overflow-wrap: anywhere; }
+.actions-connectors .ps-list-item-action { display: flex; flex-wrap: wrap; gap: 8px; margin-inline-start: 0; }
+.actions-connectors .ps-list-item-action > * { padding: 0; white-space: nowrap; flex-shrink: 0; }
 @media (max-width: 560px) {
-  .actions-connectors .ant-list-item { flex-direction: column; align-items: stretch; }
-  .actions-connectors .ant-list-item-action { width: 100%; }
+  .actions-connectors .ps-list-item { flex-direction: column; align-items: stretch; }
+  .actions-connectors .ps-list-item-action { width: 100%; }
 }
 .four-k-database-modal { top: 24px; padding-bottom: 0; }
 .four-k-database-modal .ant-modal-body { max-height: calc(100dvh - 180px); overflow-y: auto; scrollbar-gutter: stable; }
 .four-k-database-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; }
 .four-k-database-form.is-loading { display: none; }
 .four-k-database-form .ant-form-item { margin-bottom: 14px; min-width: 0; }
-.actions-connectors .ant-list-item-action { flex-basis: 100%; }
+.actions-connectors .ps-list-item-action { flex-basis: 100%; }
 @media (max-width: 560px) {
   .four-k-database-form { grid-template-columns: minmax(0, 1fr); }
   .four-k-database-modal { top: 14px; }
 }
-.actions-connectors .ant-list-item-main { width: 100%; flex-wrap: wrap; gap: 12px; }
-.actions-connectors .ant-list-item-meta { flex: 1 0 100%; width: 100%; }
-.actions-connectors .ant-list-item-meta-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.actions-connectors .ps-list-item-main { width: 100%; flex-wrap: wrap; gap: 12px; }
+.actions-connectors .ps-list-item-meta { flex: 1 0 100%; width: 100%; }
+.actions-connectors .ps-list-item-meta-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .connector-editor-modal .ant-modal-body { max-height: calc(100dvh - 180px); overflow-y: auto; scrollbar-gutter: stable; }
 .connector-editor-modal { top: 24px; padding-bottom: 0; }
@@ -3790,7 +3808,7 @@ pre.wrap-code {
 
 .ant-tabs .ant-tabs-tab-active .ant-tabs-tab-btn { color: #1d4ed8; }
 .ant-tag-checkable-checked { color: #1d4ed8; background: #eff6ff; border-color: #93c5fd; }
-.actions-connectors .ant-list .ant-list-item-action { margin: 0; min-width: 0; max-width: 100%; }
+.actions-connectors .ps-list-item-action { margin: 0; min-width: 0; max-width: 100%; }
 @media (max-width: 560px) {
   .actions-connectors .ant-card-head-wrapper { flex-wrap: wrap; gap: 8px; min-width: 0; }
   .actions-connectors .ant-card-head-title { flex-basis: 100%; }
