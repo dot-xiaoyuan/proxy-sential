@@ -202,7 +202,7 @@ export function IngestPage() {
           void diagnostics.refetch();
           void errors.refetch();
         }}
-        subtitle="检查采集节点、标准事件、丢包与异常记录"
+        subtitle="查看采集节点状态、标准事件与异常记录"
         title="采集诊断与节点性能"
       />
 
@@ -295,7 +295,7 @@ export function IngestPage() {
                         ? "是"
                         : "否"}
                     </Descriptions.Item>
-                    <Descriptions.Item label="采集说明" span={3}>
+                    <Descriptions.Item label="采集说明">
                       {stringDetail(latestDiagnostic, "zeek_reason") ||
                         zeekStatusDescription(zeekStatus)}
                     </Descriptions.Item>
@@ -398,7 +398,7 @@ export function IngestPage() {
         onClose={() => setInspectJson(null)}
         open={!!inspectJson}
         title={inspectJson?.title ?? "原始元数据 JSON"}
-        width={640}
+        size={640}
       >
         {Boolean(inspectJson?.data) && (
           <pre className="ingest-drawer-pre">

@@ -91,7 +91,7 @@ export function EventsPage() {
         }}
         quickWindow={quickWindow}
         quickWindows={['10m','1h','24h','7d','30d']}
-        subtitle="按时间、源/目的 IP、L7 访问对象与协议快速检索解耦后的标准事件流"
+        subtitle="按时间、IP、访问对象与协议检索标准事件"
         title="DPI 标准事件检索"
       />
 

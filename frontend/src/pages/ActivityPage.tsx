@@ -288,7 +288,7 @@ export function ActivityPage() {
         }}
         quickWindow={quickWindow}
         quickWindows={['10m', '1h', '24h', '7d', '30d']}
-        subtitle="基于标准事件元数据呈现 L7 协议流向、终端指纹碰撞与访问对象排行"
+        subtitle="从标准事件查看 L7 协议流向、终端指纹碰撞与访问对象排行"
         title={section==='technical'?'技术指纹':'访问分析'}
       />
 

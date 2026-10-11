@@ -1,24 +1,21 @@
 import { expect, test } from '@playwright/test'
-import path from 'node:path'
-
-const artifactDir = '/Users/yuantong/.gemini/antigravity-ide/brain/e6a8c8d0-1e8f-4b59-996f-0c4e9e39d20a'
 
 test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow Checks', () => {
-  test('capture 1440x900 overview page', async ({ page }) => {
+  test('capture 1440x900 overview page', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/overview')
     await expect(page.getByRole('heading', { name: '高校网络风险运营工作台' })).toBeVisible()
-    await page.screenshot({ path: path.join(artifactDir, 'overview-1440x900.png'), fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath('overview-1440x900.png'), fullPage: true })
   })
 
-  test('capture 1280x800 cases page', async ({ page }) => {
+  test('capture 1280x800 cases page', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await page.goto('/cases')
     await expect(page.getByRole('heading', { name: '风险案件' })).toBeVisible()
-    await page.screenshot({ path: path.join(artifactDir, 'cases-1280x800.png'), fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath('cases-1280x800.png'), fullPage: true })
   })
 
-  test('capture 390x844 ip detail page with strict DOM internal container overflow checks', async ({ page }) => {
+  test('capture 390x844 ip detail page with strict DOM internal container overflow checks', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/ips/10.255.0.59')
     await expect(page.getByRole('heading', { name: '10.255.0.59' })).toBeVisible()
@@ -56,10 +53,10 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
 
     expect(overflowingContainers).toEqual([])
 
-    await page.screenshot({ path: path.join(artifactDir, 'ip-detail-390x844.png'), fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath('ip-detail-390x844.png'), fullPage: true })
   })
 
-  test('capture 390x844 rules page with strict DOM internal container overflow checks', async ({ page }) => {
+  test('capture 390x844 rules page with strict DOM internal container overflow checks', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/settings/rules')
     await expect(page.getByRole('heading', { name: '规则与特征库' })).toBeVisible()
@@ -95,6 +92,6 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
 
     expect(overflowingContainers).toEqual([])
 
-    await page.screenshot({ path: path.join(artifactDir, 'rules-390x844.png'), fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath('rules-390x844.png'), fullPage: true })
   })
 })
