@@ -25,6 +25,7 @@ type PolicyActionParameters struct {
 	AccessDomain    string                   `json:"access_domain"`
 	RateKbps        int                      `json:"rate_kbps"`
 	Template        string                   `json:"template"`
+	ChannelID       string                   `json:"channel_id,omitempty"`
 	Operation       string                   `json:"operation"`
 	DependsOn       []string                 `json:"depends_on,omitempty"`
 	IntervalSeconds int                      `json:"interval_seconds,omitempty"`
@@ -47,6 +48,11 @@ func (s *Server) processAccountPolicies(now time.Time) {
 	if whitelistErr != nil {
 		return
 	}
+	// A blacklist read failure must not be mistaken for "nothing is listed": the
+	// trigger input is marked unknown so no action is created and no prior action
+	// is released by a false recovery.
+	blacklistEntries, blacklistErr := s.blacklist.list(ctx)
+	blacklistAvailable := blacklistErr == nil
 	proxyRows, proxyErr := s.proxyRows(ctx)
 	sharedRows, sharedErr := s.sharedWindows(ctx, now)
 	productCoverage, productCoverageErr := s.productPolicies.coverage(ctx)
@@ -106,6 +112,19 @@ func (s *Server) processAccountPolicies(now time.Time) {
 				in = policy.Input{AccountID: account, Reasons: []string{"shared_evidence_unavailable"}}
 				if sharedErr == nil {
 					in = sharedaccess.Input(account, sharedaccess.AccountResults(account, sharedRows, s.sharedConfig, ss, now, time.Duration(p.WindowSeconds)*time.Second), p.Mode)
+				}
+			}
+			if p.Trigger == "blacklist_hit" {
+				in = policy.Input{AccountID: account, Reasons: []string{"blacklist_unavailable"}}
+				if blacklistAvailable {
+					in.Known = true
+					if match := policy.MatchAccountBlacklist(blacklistEntries, account, ss, now); match != nil {
+						in.Violated = true
+						in.Reasons = []string{"blacklist_hit"}
+						in.EvidenceIDs = []string{match.ID}
+					} else {
+						in.Reasons = []string{"blacklist_no_match"}
+					}
 				}
 			}
 			in = constrainProductPolicyInput(p, in, productCoverage, productCoverageErr, now)
@@ -341,7 +360,7 @@ func (s *Server) createPolicyActionsLocked(e *policy.Execution, index int, ss []
 		if native {
 			scope = "account"
 		}
-		action := EnforcementAction{ActionID: id, IdempotencyKey: key, ConnectorID: stage.ConnectorID, ActionType: scope + "." + stage.Action, SubjectType: scope, SubjectID: e.AccountID, AccountID: e.AccountID, SessionID: target.ID, CampusID: target.CampusID, IP: target.IP, EndpointID: target.EndpointID, Status: "pending", Mode: "active", DurationSeconds: duration, EvidenceIDs: e.EvidenceIDs, CreatedBy: "policy-engine", CreatedAt: formatDBTime(now), UpdatedAt: formatDBTime(now), PolicyParameters: PolicyActionParameters{ExecutionID: e.ID, LeaseID: st.Key, AccessDomain: target.AccessDomain, RateKbps: stage.RateKbps, Template: stage.Template, Operation: stage.Action, DependsOn: append([]string{}, stage.DependsOn...), IntervalSeconds: stage.IntervalSeconds, SyncNotify: stage.SyncNotify, PutBlack: stage.PutBlack}}
+		action := EnforcementAction{ActionID: id, IdempotencyKey: key, ConnectorID: stage.ConnectorID, ActionType: scope + "." + stage.Action, SubjectType: scope, SubjectID: e.AccountID, AccountID: e.AccountID, SessionID: target.ID, CampusID: target.CampusID, IP: target.IP, EndpointID: target.EndpointID, Status: "pending", Mode: "active", DurationSeconds: duration, EvidenceIDs: e.EvidenceIDs, CreatedBy: "policy-engine", CreatedAt: formatDBTime(now), UpdatedAt: formatDBTime(now), PolicyParameters: PolicyActionParameters{ExecutionID: e.ID, LeaseID: st.Key, AccessDomain: target.AccessDomain, RateKbps: stage.RateKbps, Template: stage.Template, ChannelID: stage.ChannelID, Operation: stage.Action, DependsOn: append([]string{}, stage.DependsOn...), IntervalSeconds: stage.IntervalSeconds, SyncNotify: stage.SyncNotify, PutBlack: stage.PutBlack}}
 		if stage.DurationSeconds > 0 {
 			action.ExpiresAt = formatDBTime(now.Add(time.Duration(duration) * time.Second))
 		}

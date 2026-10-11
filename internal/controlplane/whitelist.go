@@ -20,33 +20,78 @@ import (
 )
 
 const whitelistSettingKey = "policy_whitelist_v1"
+const blacklistSettingKey = "policy_blacklist_v1"
 
 type whitelistValidationError struct{ message string }
 
 func (e whitelistValidationError) Error() string { return e.message }
 
-var errWhitelistConflict = errors.New("白名单已被更新，请刷新后重试")
-var errWhitelistDuplicate = errors.New("相同类型、匹配值和范围的白名单已存在，请编辑原记录")
+var errWhitelistConflict = errors.New("名单已被更新，请刷新后重试")
+var errWhitelistDuplicate = errors.New("相同类型、匹配值和范围的记录已存在，请编辑原记录")
 
 type whitelistDocument struct {
 	Entries []policy.WhitelistEntry `json:"entries"`
 	History []json.RawMessage       `json:"history,omitempty"`
 }
+
+// whitelistManager stores one policy list document. It is shared by the
+// whitelist and the blacklist so that revision handling, audit and validation
+// cannot drift between the two lists; the zero value behaves as the whitelist.
 type whitelistManager struct {
-	db   *sql.DB
-	path string
-	mu   sync.Mutex
-	doc  whitelistDocument
+	db        *sql.DB
+	path      string
+	key       string
+	idPrefix  string
+	auditName string
+	lockName  string
+	label     string
+	normalize func(*policy.WhitelistEntry) error
+	mu        sync.Mutex
+	doc       whitelistDocument
+}
+
+func (m *whitelistManager) settings() (key, idPrefix, auditName, lockName, label string) {
+	key, idPrefix, auditName, lockName, label = m.key, m.idPrefix, m.auditName, m.lockName, m.label
+	if key == "" {
+		key = whitelistSettingKey
+	}
+	if idPrefix == "" {
+		idPrefix = "whitelist-"
+	}
+	if auditName == "" {
+		auditName = "policy.whitelist."
+	}
+	if lockName == "" {
+		lockName = "policy-whitelist-write"
+	}
+	if label == "" {
+		label = "白名单"
+	}
+	return
+}
+
+func (m *whitelistManager) normalizeEntry(entry *policy.WhitelistEntry) error {
+	if m.normalize != nil {
+		return m.normalize(entry)
+	}
+	return policy.NormalizeWhitelist(entry)
 }
 
 func newWhitelistManager(db *sql.DB, path string) *whitelistManager {
 	return &whitelistManager{db: db, path: path, doc: whitelistDocument{Entries: []policy.WhitelistEntry{}}}
 }
 
-func decodeWhitelist(raw []byte) (whitelistDocument, error) {
+// newBlacklistManager reuses the whitelist storage contract with its own
+// settings document, identifiers, audit namespace and advisory lock.
+func newBlacklistManager(db *sql.DB) *whitelistManager {
+	return &whitelistManager{db: db, key: blacklistSettingKey, idPrefix: "blacklist-", auditName: "policy.blacklist.", lockName: "policy-blacklist-write", label: "黑名单", normalize: policy.NormalizeBlacklist, doc: whitelistDocument{Entries: []policy.WhitelistEntry{}}}
+}
+
+func (m *whitelistManager) decode(raw []byte) (whitelistDocument, error) {
+	_, _, _, _, label := m.settings()
 	d := whitelistDocument{Entries: []policy.WhitelistEntry{}}
 	if len(raw) > 8<<20 {
-		return d, fmt.Errorf("白名单配置超出大小限制")
+		return d, fmt.Errorf("%s配置超出大小限制", label)
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &d); err != nil {
@@ -54,7 +99,7 @@ func decodeWhitelist(raw []byte) (whitelistDocument, error) {
 		}
 	}
 	if len(d.Entries) > 10000 {
-		return d, fmt.Errorf("白名单记录超出数量限制")
+		return d, fmt.Errorf("%s记录超出数量限制", label)
 	}
 	seen := map[string]bool{}
 	for i := range d.Entries {
@@ -63,28 +108,29 @@ func decodeWhitelist(raw []byte) (whitelistDocument, error) {
 			return d, fmt.Errorf("白名单配置损坏")
 		}
 		seen[e.ID] = true
-		if err := policy.NormalizeWhitelist(e); err != nil {
+		if err := m.normalizeEntry(e); err != nil {
 			return d, err
 		}
 	}
 	return d, nil
 }
 func (m *whitelistManager) read(ctx context.Context, q operationsQuerier) (whitelistDocument, error) {
+	key, _, _, _, _ := m.settings()
 	if m.db != nil {
 		var raw []byte
-		err := q.QueryRowContext(ctx, `SELECT setting_value FROM control_plane_settings WHERE setting_key=$1`, whitelistSettingKey).Scan(&raw)
+		err := q.QueryRowContext(ctx, `SELECT setting_value FROM control_plane_settings WHERE setting_key=$1`, key).Scan(&raw)
 		if errors.Is(err, sql.ErrNoRows) {
-			return decodeWhitelist(nil)
+			return m.decode(nil)
 		}
 		if err != nil {
 			return whitelistDocument{}, err
 		}
-		return decodeWhitelist(raw)
+		return m.decode(raw)
 	}
 	if m.path != "" {
 		f, err := os.Open(m.path)
 		if errors.Is(err, os.ErrNotExist) {
-			return decodeWhitelist(nil)
+			return m.decode(nil)
 		}
 		if err != nil {
 			return whitelistDocument{}, err
@@ -94,10 +140,10 @@ func (m *whitelistManager) read(ctx context.Context, q operationsQuerier) (white
 		if err != nil {
 			return whitelistDocument{}, err
 		}
-		return decodeWhitelist(raw)
+		return m.decode(raw)
 	}
 	raw, _ := json.Marshal(m.doc)
-	return decodeWhitelist(raw)
+	return m.decode(raw)
 }
 func (m *whitelistManager) list(ctx context.Context) ([]policy.WhitelistEntry, error) {
 	if m == nil {
@@ -122,6 +168,7 @@ func (m *whitelistManager) list(ctx context.Context) ([]policy.WhitelistEntry, e
 	return d.Entries, nil
 }
 func (m *whitelistManager) save(ctx context.Context, request policy.WhitelistEntry, id, op, actor string) (policy.WhitelistEntry, error) {
+	key, idPrefix, auditName, lockName, label := m.settings()
 	if m.db == nil {
 		if err := m.lock(ctx); err != nil {
 			return request, err
@@ -138,7 +185,7 @@ func (m *whitelistManager) save(ctx context.Context, request policy.WhitelistEnt
 		}
 		defer tx.Rollback()
 		q = tx
-		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('policy-whitelist-write',0))`); err != nil {
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, lockName); err != nil {
 			return request, err
 		}
 	}
@@ -173,9 +220,9 @@ func (m *whitelistManager) save(ctx context.Context, request policy.WhitelistEnt
 		item.Revision = old.Revision + 1
 	} else {
 		if len(d.Entries) >= 10000 {
-			return item, whitelistValidationError{"白名单最多保存 10000 条记录"}
+			return item, whitelistValidationError{label + "最多保存 10000 条记录"}
 		}
-		item.ID = "whitelist-" + shortToken(16)
+		item.ID = idPrefix + shortToken(16)
 		item.CreatedBy = actor
 		item.CreatedAt = now
 		item.Revision = 1
@@ -185,7 +232,7 @@ func (m *whitelistManager) save(ctx context.Context, request policy.WhitelistEnt
 		item.Revision++
 		item.Enabled = op == "enable"
 		if item.Enabled && item.ExpiresAt != nil && !item.ExpiresAt.After(now) {
-			return item, whitelistValidationError{"该白名单已过期，请先编辑有效期"}
+			return item, whitelistValidationError{"该" + label + "已过期，请先编辑有效期"}
 		}
 	}
 	item.UpdatedBy = actor
@@ -193,7 +240,7 @@ func (m *whitelistManager) save(ctx context.Context, request policy.WhitelistEnt
 	if item.ValidFrom.IsZero() {
 		item.ValidFrom = now
 	}
-	if err = policy.NormalizeWhitelist(&item); err != nil {
+	if err = m.normalizeEntry(&item); err != nil {
 		return item, whitelistValidationError{err.Error()}
 	}
 	for _, e := range d.Entries {
@@ -207,16 +254,16 @@ func (m *whitelistManager) save(ctx context.Context, request policy.WhitelistEnt
 		d.Entries[index] = item
 	}
 	change, _ := json.Marshal(map[string]any{"previous": old, "next": item})
-	action := "policy.whitelist." + op
+	action := auditName + op
 	if tx != nil {
 		raw, _ := json.Marshal(d)
 		if len(raw) > 8<<20 {
-			return item, whitelistValidationError{"白名单配置超出大小限制"}
+			return item, whitelistValidationError{label + "配置超出大小限制"}
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO control_plane_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value,updated_at=now()`, whitelistSettingKey, raw); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO control_plane_settings(setting_key,setting_value) VALUES($1,$2::jsonb) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value,updated_at=now()`, key, raw); err != nil {
 			return item, err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,$3,$4,$5,$6)`, "audit-whitelist-"+shortToken(16), actor, action, item.ID, string(change), now); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,$3,$4,$5,$6)`, "audit-"+idPrefix+shortToken(16), actor, action, item.ID, string(change), now); err != nil {
 			return item, err
 		}
 		return item, tx.Commit()
@@ -226,7 +273,7 @@ func (m *whitelistManager) save(ctx context.Context, request policy.WhitelistEnt
 	if m.path != "" {
 		raw, _ := json.Marshal(d)
 		if len(raw) > 8<<20 {
-			return item, whitelistValidationError{"白名单配置超出大小限制"}
+			return item, whitelistValidationError{label + "配置超出大小限制"}
 		}
 		if err = os.MkdirAll(filepath.Dir(m.path), 0700); err != nil {
 			return item, err
@@ -267,10 +314,32 @@ func whitelistState(e policy.WhitelistEntry, now time.Time) string {
 	}
 	return "active"
 }
+
+type policyListCodes struct {
+	unavailable string
+	bad         string
+	notFound    string
+	conflict    string
+	label       string
+}
+
+var whitelistCodes = policyListCodes{unavailable: "whitelist_unavailable", bad: "bad_whitelist", notFound: "whitelist_not_found", conflict: "whitelist_conflict", label: "白名单"}
+var blacklistCodes = policyListCodes{unavailable: "blacklist_unavailable", bad: "bad_blacklist", notFound: "blacklist_not_found", conflict: "blacklist_conflict", label: "黑名单"}
+
 func (s *Server) handleWhitelist(w http.ResponseWriter, r *http.Request, path string) {
+	s.handlePolicyList(w, r, path, "/whitelist", s.whitelist, whitelistCodes)
+}
+
+func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request, path string) {
+	s.handlePolicyList(w, r, path, "/blacklist", s.blacklist, blacklistCodes)
+}
+
+// handlePolicyList serves both lists through the same contract so revision,
+// filtering and error semantics stay identical.
+func (s *Server) handlePolicyList(w http.ResponseWriter, r *http.Request, path, prefix string, manager *whitelistManager, codes policyListCodes) {
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	rest := strings.Trim(strings.TrimPrefix(path, "/whitelist"), "/")
+	rest := strings.Trim(strings.TrimPrefix(path, prefix), "/")
 	if r.Method == http.MethodGet && rest == "" {
 		limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 100)
 		if err != nil {
@@ -282,9 +351,9 @@ func (s *Server) handleWhitelist(w http.ResponseWriter, r *http.Request, path st
 			writeError(w, 400, "bad_page", "分页参数不正确")
 			return
 		}
-		items, err := s.whitelist.list(ctx)
+		items, err := manager.list(ctx)
 		if err != nil {
-			writeError(w, 503, "whitelist_unavailable", "白名单读取失败")
+			writeError(w, 503, codes.unavailable, codes.label+"读取失败")
 			return
 		}
 		now := time.Now().UTC()
@@ -313,33 +382,33 @@ func (s *Server) handleWhitelist(w http.ResponseWriter, r *http.Request, path st
 		if len(parts) == 2 && (parts[1] == "enable" || parts[1] == "disable") {
 			op = parts[1]
 		} else if len(parts) != 1 {
-			writeError(w, 404, "whitelist_not_found", "白名单接口不存在")
+			writeError(w, 404, codes.notFound, codes.label+"接口不存在")
 			return
 		}
 	}
 	var req policy.WhitelistEntry
 	raw, readErr := io.ReadAll(io.LimitReader(r.Body, 8193))
 	if readErr != nil || len(raw) > 8192 || json.Unmarshal(raw, &req) != nil {
-		writeError(w, 400, "bad_whitelist", "请提交有效的白名单配置")
+		writeError(w, 400, codes.bad, "请提交有效的"+codes.label+"配置")
 		return
 	}
 	if op == "create" && req.Revision != 0 {
-		writeError(w, 400, "bad_whitelist", "新增记录不能带有旧版本")
+		writeError(w, 400, codes.bad, "新增记录不能带有旧版本")
 		return
 	}
-	item, err := s.whitelist.save(ctx, req, id, op, sessionFromContext(ctx).User.ID)
+	item, err := manager.save(ctx, req, id, op, sessionFromContext(ctx).User.ID)
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			writeError(w, 404, "whitelist_not_found", "白名单不存在")
+			writeError(w, 404, codes.notFound, codes.label+"不存在")
 		case errors.Is(err, errWhitelistConflict), errors.Is(err, errWhitelistDuplicate):
-			writeError(w, 409, "whitelist_conflict", err.Error())
+			writeError(w, 409, codes.conflict, err.Error())
 		default:
 			var validation whitelistValidationError
 			if errors.As(err, &validation) {
-				writeError(w, 400, "bad_whitelist", validation.Error())
+				writeError(w, 400, codes.bad, validation.Error())
 			} else {
-				writeError(w, 503, "whitelist_unavailable", "白名单保存失败，请稍后重试")
+				writeError(w, 503, codes.unavailable, codes.label+"保存失败，请稍后重试")
 			}
 		}
 		return

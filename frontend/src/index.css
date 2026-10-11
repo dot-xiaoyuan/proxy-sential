@@ -75,6 +75,42 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.device-attribution-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.device-attribution-summary > * {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.device-observability-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.device-observability-list > li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--ps-border-color);
+  border-radius: 8px;
+  background: var(--ps-bg-body);
+}
+.device-observability-list > li > * {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.device-observability-source {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 700px) {
   .recognition-coverage-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3993,3 +4029,24 @@ pre.wrap-code {
     font-size: 21px;
   }
 }
+
+.notifications-page { display:flex; flex-direction:column; gap:16px; }
+.notifications-page .ant-card-body { padding:20px; }
+.notifications-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-bottom:16px; }
+.notifications-toolbar .ant-select { min-width:160px; }
+.notifications-muted { color:#64748b; font-size:12px; overflow-wrap:anywhere; }
+.notifications-wrap { overflow-wrap:anywhere; }
+.notifications-test { max-width:560px; }
+.notifications-test-result { margin-top:16px; }
+.notifications-page .ant-tag { white-space:nowrap; flex-shrink:0; }
+.notifications-page .ant-btn { white-space:nowrap; flex-shrink:0; }
+.notifications-page .ant-table-cell { overflow-wrap:anywhere; }
+@media(max-width:560px){.notifications-page .ant-card-body{padding:14px}.notifications-toolbar{align-items:stretch}.notifications-toolbar .ant-select{flex:1 1 140px;min-width:0}.notifications-test{max-width:none}}
+
+.blacklist-page { display:flex; flex-direction:column; gap:16px; }
+@media(max-width:560px){.blacklist-page>.ant-card>.ant-card-body{padding:14px}}
+
+.destination-targets-page { display:flex; flex-direction:column; gap:16px; }
+
+.behavior-reports-page { display:flex; flex-direction:column; gap:16px; }
+.behavior-report-preview { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }

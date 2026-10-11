@@ -6,6 +6,7 @@ export const statusLabels: Record<string,string> = {
  shadow:'影子模式', active:'真实模式', observe:'仅观测', manual:'人工确认', automatic:'自动执行',
  pending:'等待执行', queued:'等待执行', running:'执行中', succeeded:'成功', failed:'失败', blocked:'已阻断',
  complete:'已完成', completed:'已完成', partial:'部分完成', cancelled:'已停止', revoked:'已撤销',
+ sent:'已送达', sending:'投递中',
  awaiting_approval:'等待审批', approved:'已批准', cooldown:'冷却中', observing:'观测中', recovered:'已恢复',
  disabled:'已停用', enabled:'已启用', ready:'就绪', degraded:'存在异常', healthy:'正常',
  ok:'正常', unavailable:'不可用', stale:'已过期', not_configured:'未配置', no_dhcp_events:'无 DHCP 事件', log_truncated:'日志轮转',

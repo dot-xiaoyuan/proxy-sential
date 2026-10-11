@@ -105,6 +105,8 @@ type Server struct {
 	actionMasterKey     []byte
 	exceptions          *exceptionManager
 	whitelist           *whitelistManager
+	blacklist           *whitelistManager
+	notifications       *notificationManager
 }
 
 type Session struct {
@@ -436,6 +438,8 @@ func NewServerWithError(opts Options) (*Server, error) {
 		actionMasterKey:         []byte(opts.ActionMasterKey),
 		exceptions:              newExceptionManager(operations.db),
 		whitelist:               newWhitelistManager(operations.db, filepath.Join(shadowDir, "whitelist.json")),
+		blacklist:               newBlacklistManager(operations.db),
+		notifications:           newNotificationManager(operations.db),
 	}
 	server.bind4KCredentialProviders()
 	server.actionDeliveries = newActionDeliveryQueue(server.deliverAction)
@@ -490,6 +494,9 @@ func NewServerWithError(opts Options) (*Server, error) {
 		server.startOperationWorkers()
 		server.startManagedIdentityWorker()
 		server.startSharedReviewWorker()
+		server.startNotificationWorker()
+		server.startDestinationTargetWorker()
+		server.startBehaviorReportWorker()
 	}
 	return server, nil
 }
@@ -681,6 +688,14 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleUsers(w, r)
 	case path == "/whitelist" || strings.HasPrefix(path, "/whitelist/"):
 		s.handleWhitelist(w, r, path)
+	case path == "/blacklist" || strings.HasPrefix(path, "/blacklist/"):
+		s.handleBlacklist(w, r, path)
+	case path == "/destination-targets" || strings.HasPrefix(path, "/destination-targets/"):
+		s.handleDestinationTargets(w, r, path)
+	case path == "/behavior-reports" || strings.HasPrefix(path, "/behavior-reports/"):
+		s.handleBehaviorReports(w, r, path)
+	case path == "/notifications" || strings.HasPrefix(path, "/notifications/"):
+		s.handleNotifications(w, r, path)
 	case strings.HasPrefix(path, "/campus-exceptions"):
 		s.handleCampusExceptions(w, r)
 	case r.Method == http.MethodGet && path == "/integrations/identity/status":
@@ -1093,6 +1108,30 @@ func requiredPermission(method, path string) string {
 			return "policies:read"
 		}
 		return "policies:manage"
+	}
+	if path == "/blacklist" || strings.HasPrefix(path, "/blacklist/") {
+		if method == http.MethodGet {
+			return "policies:read"
+		}
+		return "policies:manage"
+	}
+	if path == "/destination-targets" || strings.HasPrefix(path, "/destination-targets/") {
+		if method == http.MethodGet {
+			return "destination-targets:read"
+		}
+		return "destination-targets:manage"
+	}
+	if path == "/behavior-reports" || strings.HasPrefix(path, "/behavior-reports/") {
+		if method == http.MethodGet {
+			return "behavior-reports:read"
+		}
+		return "behavior-reports:manage"
+	}
+	if path == "/notifications" || strings.HasPrefix(path, "/notifications/") {
+		if method == http.MethodGet {
+			return "notifications:read"
+		}
+		return "notifications:manage"
 	}
 	if method == http.MethodGet && (path == "/rules/status" || strings.HasPrefix(path, "/campus-exceptions")) {
 		return "risks:read"

@@ -1,5 +1,11 @@
 # 旧系统能力补齐清单（按优先级）
 
+> **⚠️ 本文已过时（2026-10 标注），仅保留历史参考。**
+> 请以 `docs/legacy-feature-gap-ncu-backlog.md` 为准，原因：
+> 1. 本文基于**基础版** `dpi-analyze` 分析，不是南昌定制分支；`docs/legacy-feature-gap.md` 的"不可达"判断对南昌分支的 `whitelist` / `blacklist` / `iprange` / `northbound` / `behavior` 已失效。
+> 2. **R01（路由器置信度 + routed 策略条件）已实现**：`internal/evidence/router.go` 的 `confirmed_router`，以及 `internal/policy/engine.go:308` `RouterCount` 与 `internal/policy/identity.go:157,287`（提交 `364ec17`）。
+> 3. **N01 的迁移号 `059` 已被占用**（现为 `059_router_observations.sql`），通知部分改由 `legacy-feature-gap-ncu-backlog.md` 的 G01 承接，迁移从 `092` 起。
+
 基于 `docs/legacy-feature-gap.md` 的差距分析，把待补功能整理成可执行清单。每条包含**验收标准、落点、依赖与风险**，并遵守项目既有约束：先写回放测试再接真实流量；新增风险规则必须返回证据/分数/置信度/窗口/解释；处罚动作必须支持影子模式、冷却、审计与人工撤销；不在热路径做阻塞落库。
 
 ## 汇总

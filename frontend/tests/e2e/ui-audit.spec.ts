@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
-	const routes = ['/overview', '/shared-access?tab=devices', '/shared-access?tab=reviews', '/cases', '/actions?tab=actions', '/devices', '/discovery', '/activity?section=applications', '/activity?section=access', '/activity?section=technical', '/events', '/policies', '/policies/whitelist', '/policies/exceptions', '/settings/rules', '/settings/sources', '/settings/actions', '/settings/organization', '/settings/security', '/audit']
+	const routes = ['/overview', '/shared-access?tab=devices', '/shared-access?tab=reviews', '/cases', '/actions?tab=actions', '/devices', '/discovery', '/activity?section=applications', '/activity?section=access', '/activity?section=technical', '/events', '/policies', '/policies/whitelist', '/policies/exceptions', '/policies/blacklist', '/policies/destination-targets', '/settings/notifications', '/settings/behavior-reports', '/settings/rules', '/settings/sources', '/settings/actions', '/settings/organization', '/settings/security', '/audit']
 	const viewports = [{ width: 390, height: 844 }, { width: 743, height: 774 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]
 
   test('audit responsive 3-viewport anti-overflow and element inline-style purity', async ({ page }) => {

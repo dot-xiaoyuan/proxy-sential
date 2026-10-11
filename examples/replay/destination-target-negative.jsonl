@@ -1,0 +1,8 @@
+{"rule_id":"ncu-sensitive-range","name":"敏感网段访问","enabled":true,"behavior_type":"configured_ip_range","target_type":"cidr","targets":["10.155.32.0/24","10.155.40.10"],"window_seconds":3600,"threshold":3,"direction":"up"}
+{"subject_ip":"10.155.32.11","dst_ip":"10.155.32.11","direction":"outbound","proto":"tcp","at":"2026-10-01T12:00:00Z","count":5}
+{"subject_ip":"10.155.9.10","dst_ip":"224.0.0.1","direction":"outbound","proto":"udp","at":"2026-10-01T12:00:10Z","count":5}
+{"subject_ip":"10.155.9.10","dst_ip":"255.255.255.255","direction":"outbound","proto":"udp","at":"2026-10-01T12:00:20Z","count":5}
+{"subject_ip":"10.155.9.11","dst_ip":"127.0.0.1","direction":"outbound","proto":"tcp","at":"2026-10-01T12:00:30Z","count":5}
+{"subject_ip":"10.155.9.12","dst_ip":"169.254.10.1","direction":"outbound","proto":"tcp","at":"2026-10-01T12:00:40Z","count":5}
+{"subject_ip":"10.155.9.13","dst_ip":"10.155.33.1","direction":"outbound","proto":"tcp","at":"2026-10-01T12:01:00Z","count":5}
+{"subject_ip":"10.155.9.14","dst_ip":"10.155.32.11","direction":"inbound","proto":"tcp","at":"2026-10-01T12:02:00Z","count":5}

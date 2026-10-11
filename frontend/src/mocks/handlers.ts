@@ -4,6 +4,7 @@ import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './devic
 import { proxyProof } from './proxyProtocol'
 import { domainOnlyDevice, domainOnlyProfile } from './brandInference'
 import { policyHandlers } from './policies'
+import { behaviorReportHandlers, blacklistHandlers, destinationTargetHandlers, notificationHandlers } from './notifications'
 import { applicationHandlers } from './applications'
 import { routerObservationHandlers } from './routerObservations'
 import { delay, http, HttpResponse } from 'msw'
@@ -81,6 +82,10 @@ const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domai
 
 export const handlers = [
  http.get('/api/v1/whitelist',()=>HttpResponse.json({items:[],page:{total:0,limit:20},checked_at:new Date().toISOString()})),
+ ...notificationHandlers,
+ ...blacklistHandlers,
+ ...destinationTargetHandlers,
+ ...behaviorReportHandlers,
  ...sharedAccessHandlers,
  ...discoveryHandlers,
  ...routerObservationHandlers,
@@ -387,6 +392,19 @@ export const handlers = [
     event_count: 3_795_418,
     attributed_event_count: 0,
     event_attribution_rate: 0,
+    mac_attributed_event_count: 285_518,
+    mac_attribution_rate: 285_518 / 3_795_418,
+    observability: [
+      { source_event_type: 'mdns', event_count: 1_402_118, mac_attributed_count: 0 },
+      { source_event_type: 'dns', event_count: 964_230, mac_attributed_count: 0 },
+      { source_event_type: 'conn', event_count: 821_004, mac_attributed_count: 0 },
+      { source_event_type: 'ssdp', event_count: 268_744, mac_attributed_count: 268_744 },
+      { source_event_type: 'ttl', event_count: 154_902, mac_attributed_count: 0 },
+      { source_event_type: 'llmnr', event_count: 96_411, mac_attributed_count: 0 },
+      { source_event_type: 'nbns', event_count: 71_233, mac_attributed_count: 0 },
+      { source_event_type: 'ieee1905_topology', event_count: 12_006, mac_attributed_count: 12_006 },
+      { source_event_type: 'dhcp', event_count: 4_768, mac_attributed_count: 4_768 },
+    ],
     ecosystem_matched: 27_124,
     ecosystem_attributed: 0,
     ecosystem_unattributed: 27_124,

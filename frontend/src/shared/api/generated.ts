@@ -1179,6 +1179,246 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/blacklist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Admission list; requires policies:read. An active match makes the account eligible for a blacklist_hit policy. */
+        get: operations["listBlacklist"];
+        put?: never;
+        /** @description Requires policies:manage. Configuration and audit commit atomically. */
+        post: operations["createBlacklist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/blacklist/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires policies:manage and the current revision. */
+        post: operations["updateBlacklist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/blacklist/{entry_id}/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires policies:manage. operation is enable or disable. */
+        post: operations["operateBlacklist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/destination-targets/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires destination-targets:read. Rules ship disabled; enabling one is an explicit site decision. */
+        get: operations["listDestinationTargetRules"];
+        put?: never;
+        /** @description Requires destination-targets:manage. */
+        post: operations["createDestinationTargetRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/destination-targets/rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getDestinationTargetRule"];
+        /** @description Requires destination-targets:manage. */
+        put: operations["updateDestinationTargetRule"];
+        post?: never;
+        delete: operations["deleteDestinationTargetRule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/destination-targets/rules/{rule_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires destination-targets:write. Evaluates the rule over the trailing window without persisting findings. */
+        post: operations["previewDestinationTargetRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/destination-targets/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires destination-targets:read. */
+        get: operations["listDestinationTargetFindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/behavior-reports/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires behavior-reports:read. Channels ship disabled; the external platform contract is a site fact. */
+        get: operations["listBehaviorReportChannels"];
+        put?: never;
+        /** @description Requires behavior-reports:manage. */
+        post: operations["createBehaviorReportChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/behavior-reports/channels/{channel_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getBehaviorReportChannel"];
+        /** @description Requires behavior-reports:manage. An omitted secret keeps the stored one; "-" clears it. */
+        put: operations["updateBehaviorReportChannel"];
+        post?: never;
+        delete: operations["deleteBehaviorReportChannel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/behavior-reports/channels/{channel_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires behavior-reports:manage. Sends one synthetic event and returns the real result. */
+        post: operations["testBehaviorReportChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/behavior-reports/channels/{channel_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires behavior-reports:manage. Renders the payload without sending it. */
+        post: operations["previewBehaviorReportChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/behavior-reports/outbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires behavior-reports:read. */
+        get: operations["listBehaviorReportOutbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/behavior-reports/outbox/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getBehaviorReportOutbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/behavior-reports/outbox/{report_id}/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires behavior-reports:manage. */
+        post: operations["operateBehaviorReportOutbox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/campus-exceptions": {
         parameters: {
             query?: never;
@@ -3188,6 +3428,160 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notifications/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires notifications:read. */
+        get: operations["listNotificationTemplates"];
+        put?: never;
+        /** @description Requires notifications:manage. Template bodies may only reference whitelisted variables. */
+        post: operations["createNotificationTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNotificationTemplate"];
+        /** @description Requires notifications:manage. Omitted fields keep their stored values. */
+        put: operations["updateNotificationTemplate"];
+        post?: never;
+        delete: operations["deleteNotificationTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires notifications:read. Sealed secrets are never returned; only has_secret is exposed. */
+        get: operations["listNotificationChannels"];
+        put?: never;
+        /** @description Requires notifications:manage. */
+        post: operations["createNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/channels/{channel_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNotificationChannel"];
+        /** @description Requires notifications:manage. An omitted secret keeps the stored one; "-" clears it. */
+        put: operations["updateNotificationChannel"];
+        post?: never;
+        delete: operations["deleteNotificationChannel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/channels/{channel_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires notifications:manage. Sends one message synchronously and returns the real delivery result. */
+        post: operations["testNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires notifications:manage. */
+        post: operations["testNotificationDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/outbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires notifications:read. Delivery state only; an enforcement action succeeding means queued, not delivered. */
+        get: operations["listNotificationOutbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/outbox/{notification_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNotificationOutbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/outbox/{notification_id}/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires notifications:manage. retry requeues a failed or cancelled notification; cancel stops a pending one. */
+        post: operations["operateNotificationOutbox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3987,6 +4381,312 @@ export interface components {
             /** Format: date-time */
             checked_at: string;
         };
+        BehaviorReportChannelMutation: {
+            channel_id?: string;
+            name: string;
+            endpoint_url: string;
+            token_endpoint?: string;
+            /** @enum {string} */
+            token_method?: "GET" | "POST";
+            token_scope?: string;
+            /** @enum {string} */
+            auth_type: "none" | "bearer" | "oauth2_client_credentials";
+            /** @description Omit to keep the stored secret; "-" clears it. */
+            secret?: string;
+            source_system_ip?: string;
+            source_system_name?: string;
+            batch_size?: number;
+            flush_interval_seconds?: number;
+            timeout_seconds?: number;
+            tls_skip_verify?: boolean;
+            field_mapping?: {
+                [key: string]: string;
+            };
+            success_status_codes?: number[];
+            enabled: boolean;
+        };
+        BehaviorReportChannel: components["schemas"]["BehaviorReportChannelMutation"] & {
+            channel_id: string;
+            /** @description Never returned by the API. */
+            secret?: string;
+            revision: number;
+            has_secret: boolean;
+            updated_by?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        BehaviorReportChannelPage: {
+            items: components["schemas"]["BehaviorReportChannel"][];
+            event_types?: string[];
+        };
+        BehaviorReportOutboxRow: {
+            report_id: string;
+            idempotency_key?: string;
+            channel_id: string;
+            /** @enum {string} */
+            event_type: "poison_behavior" | "proxy_behavior" | "ai_relay_audit";
+            subject_type?: string;
+            subject_id?: string;
+            account_id?: string;
+            ip?: string;
+            target?: string;
+            target_type?: string;
+            /** Format: date-time */
+            occurred_at: string;
+            /** @enum {string} */
+            status: "queued" | "sending" | "sent" | "failed" | "cancelled";
+            attempts: number;
+            /** Format: date-time */
+            next_attempt_at?: string;
+            last_error?: string;
+            http_status?: number;
+            remote_id?: string;
+            /** Format: date-time */
+            sent_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        BehaviorReportAttempt: {
+            attempt_id: string;
+            report_id: string;
+            attempt: number;
+            /** @enum {string} */
+            status: "sent" | "failed";
+            http_status: number;
+            remote_id?: string;
+            error?: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at: string;
+        };
+        BehaviorReportOutboxPage: {
+            items: components["schemas"]["BehaviorReportOutboxRow"][];
+            total: number;
+            page: components["schemas"]["Page"];
+        };
+        BehaviorReportOutboxDetail: {
+            report: components["schemas"]["BehaviorReportOutboxRow"];
+            attempts: components["schemas"]["BehaviorReportAttempt"][];
+        };
+        BehaviorReportTestResult: {
+            channel_id: string;
+            /** @enum {string} */
+            status: "succeeded" | "failed";
+            http_status?: number;
+            remote_id?: string;
+            error?: string;
+        };
+        BehaviorReportPreview: {
+            channel_id: string;
+            payload: {
+                [key: string]: unknown;
+            };
+        };
+        BehaviorReportOperationResult: {
+            report_id: string;
+            /** @enum {string} */
+            status: "queued" | "cancelled";
+        };
+        DestinationTargetRuleMutation: {
+            rule_id?: string;
+            name: string;
+            enabled?: boolean;
+            /** @enum {string} */
+            behavior_type: "configured_ip_range" | "high_frequency_internal";
+            /** @enum {string} */
+            target_type: "ip" | "cidr" | "domain";
+            targets?: string[];
+            window_seconds: number;
+            threshold: number;
+            /** @enum {string} */
+            direction: "any" | "up" | "down";
+            push_enabled?: boolean;
+            push_without_account?: boolean;
+        };
+        DestinationTargetRule: components["schemas"]["DestinationTargetRuleMutation"] & {
+            rule_id: string;
+            created_by?: string;
+            updated_by?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        DestinationTargetRulePage: {
+            items: components["schemas"]["DestinationTargetRule"][];
+            behavior_types?: string[];
+        };
+        DestinationTargetFinding: {
+            finding_id: string;
+            rule_id: string;
+            rule_name?: string;
+            subject_ip: string;
+            account_id?: string;
+            behavior_type: string;
+            matched_targets: string[];
+            unique_destinations: number;
+            hit_count: number;
+            direction?: string;
+            /** Format: date-time */
+            window_start: string;
+            /** Format: date-time */
+            window_end: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            pushed: boolean;
+            push_error?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        DestinationTargetFindingPage: {
+            items: components["schemas"]["DestinationTargetFinding"][];
+            total: number;
+            page: components["schemas"]["Page"];
+        };
+        DestinationTargetPreviewItem: {
+            subject_ip: string;
+            matched_targets: string[];
+            unique_destinations: number;
+            hit_count: number;
+            direction?: string;
+            /** Format: date-time */
+            first_seen?: string;
+            /** Format: date-time */
+            last_seen?: string;
+        };
+        DestinationTargetPreview: {
+            rule_id: string;
+            rule_enabled: boolean;
+            observations: number;
+            window_seconds: number;
+            items: components["schemas"]["DestinationTargetPreviewItem"][];
+        };
+        NotificationTemplateMutation: {
+            template_id?: string;
+            name: string;
+            channel_type?: string;
+            subject?: string;
+            body: string;
+            enabled?: boolean;
+        };
+        NotificationTemplate: components["schemas"]["NotificationTemplateMutation"] & {
+            variables: string[];
+            enabled: boolean;
+            revision: number;
+        };
+        NotificationTemplatePage: {
+            items: components["schemas"]["NotificationTemplate"][];
+            allowed_variables: string[];
+        };
+        NotificationChannelConfig: {
+            headers?: {
+                [key: string]: string;
+            };
+            client_id?: string;
+            message_type_code?: string;
+            send_types?: string[];
+            tls_skip_verify?: boolean;
+            timeout_seconds?: number;
+        };
+        NotificationChannelMutation: {
+            channel_id?: string;
+            name: string;
+            /** @enum {string} */
+            channel_type: "http" | "srun_sms";
+            endpoint_url: string;
+            token_endpoint?: string;
+            token_scope?: string;
+            /** @enum {string} */
+            auth_type: "none" | "bearer" | "basic" | "oauth2_client_credentials";
+            /** @description Omit to keep the stored secret; "-" clears it. */
+            secret?: string;
+            config?: components["schemas"]["NotificationChannelConfig"];
+            is_default?: boolean;
+            enabled: boolean;
+        };
+        NotificationChannel: components["schemas"]["NotificationChannelMutation"] & {
+            channel_id: string;
+            /** @description Never returned by the API. */
+            secret?: string;
+            revision: number;
+            has_secret: boolean;
+        };
+        NotificationChannelPage: {
+            items: components["schemas"]["NotificationChannel"][];
+        };
+        NotificationAttempt: {
+            attempt_id: string;
+            notification_id: string;
+            attempt: number;
+            /** @enum {string} */
+            status: "sent" | "failed";
+            http_status: number;
+            remote_id?: string;
+            error?: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at: string;
+        };
+        NotificationOutboxRow: {
+            notification_id: string;
+            idempotency_key?: string;
+            account_id: string;
+            template: string;
+            parameters?: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            status: "queued" | "sending" | "sent" | "failed" | "cancelled";
+            channel_id?: string;
+            attempts: number;
+            /** Format: date-time */
+            next_attempt_at?: string;
+            last_error?: string;
+            remote_id?: string;
+            /** Format: date-time */
+            sent_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        NotificationOutboxPage: {
+            items: components["schemas"]["NotificationOutboxRow"][];
+            total: number;
+            page: components["schemas"]["Page"];
+        };
+        NotificationOutboxDetail: {
+            notification: components["schemas"]["NotificationOutboxRow"];
+            attempts: components["schemas"]["NotificationAttempt"][];
+        };
+        NotificationTestRequest: {
+            channel_id?: string;
+            template_id?: string;
+            variables?: {
+                [key: string]: string;
+            };
+        };
+        NotificationTestResult: {
+            channel_id: string;
+            template_id?: string;
+            /** @enum {string} */
+            status: "succeeded" | "failed";
+            http_status?: number;
+            remote_id?: string;
+            error?: string;
+        };
+        NotificationOperationResult: {
+            notification_id: string;
+            /** @enum {string} */
+            status: "queued" | "cancelled";
+            deleted?: boolean;
+        };
         CampusException: {
             exception_id?: string;
             /** @enum {string} */
@@ -4108,7 +4808,7 @@ export interface components {
             end_minute?: number | null;
         };
         /** @enum {string} */
-        Permission: "policies:read" | "policies:manage" | "policies:authorize" | "risks:read" | "evidence:read" | "events:read" | "labels:create" | "endpoints:write" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read" | "device-fingerprint-library:update" | "exports:read" | "cases:read" | "cases:write" | "identity:read" | "organization:read" | "organization:write" | "actions:read" | "actions:execute" | "actions:revoke" | "integrations:write" | "users:manage";
+        Permission: "policies:read" | "policies:manage" | "policies:authorize" | "risks:read" | "evidence:read" | "events:read" | "labels:create" | "endpoints:write" | "shadow:read" | "audit:read" | "rules:reload" | "ingest:read" | "dpi:read" | "device-fingerprint-library:update" | "exports:read" | "cases:read" | "cases:write" | "identity:read" | "organization:read" | "organization:write" | "actions:read" | "actions:execute" | "actions:revoke" | "integrations:write" | "users:manage" | "notifications:read" | "notifications:manage" | "destination-targets:read" | "destination-targets:manage" | "behavior-reports:read" | "behavior-reports:manage";
         Page: {
             limit: number;
             next_cursor: string | null;
@@ -4199,6 +4899,12 @@ export interface components {
             known: number;
             rate: number;
         };
+        /** @description Per collector log kind, how many events were ingested in the last 24 hours and how many already carry a link-layer address. */
+        SourceObservability: {
+            source_event_type: string;
+            event_count: number;
+            mac_attributed_count: number;
+        };
         DeviceRecognitionSummary: {
             brand_inference_conflicts?: number;
             brand_inference_enabled?: boolean;
@@ -4211,6 +4917,9 @@ export interface components {
             event_count: number;
             attributed_event_count: number;
             event_attribution_rate: number;
+            mac_attributed_event_count?: number;
+            mac_attribution_rate?: number;
+            observability?: components["schemas"]["SourceObservability"][];
             ecosystem_matched: number;
             ecosystem_attributed: number;
             ecosystem_unattributed: number;
@@ -7188,6 +7897,717 @@ export interface operations {
             };
             /** @description Configuration or audit write failed */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listBlacklist: {
+        parameters: {
+            query?: {
+                keyword?: string;
+                type?: "ip" | "account" | "mac" | "network" | "group";
+                state?: "active" | "disabled" | "expired" | "scheduled";
+                limit?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Blacklist page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhitelistPage"];
+                };
+            };
+            /** @description Blacklist configuration unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createBlacklist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhitelistMutation"];
+            };
+        };
+        responses: {
+            /** @description Blacklist entry created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhitelistEntry"];
+                };
+            };
+            /** @description Invalid blacklist entry */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Duplicate blacklist entry */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Configuration or audit write failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateBlacklist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhitelistMutation"];
+            };
+        };
+        responses: {
+            /** @description Blacklist entry updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhitelistEntry"];
+                };
+            };
+            /** @description Invalid blacklist entry */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Blacklist entry absent */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Revision conflict or duplicate */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Configuration or audit write failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    operateBlacklist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+                operation: "enable" | "disable";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhitelistMutation"];
+            };
+        };
+        responses: {
+            /** @description Blacklist entry updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhitelistEntry"];
+                };
+            };
+            /** @description Blacklist entry absent */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Revision conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listDestinationTargetRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detection rules */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationTargetRulePage"];
+                };
+            };
+            /** @description Detection storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createDestinationTargetRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DestinationTargetRuleMutation"];
+            };
+        };
+        responses: {
+            /** @description Rule created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationTargetRule"];
+                };
+            };
+            /** @description Invalid rule */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rule already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDestinationTargetRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detection rule */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationTargetRule"];
+                };
+            };
+            /** @description Rule not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateDestinationTargetRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DestinationTargetRuleMutation"];
+            };
+        };
+        responses: {
+            /** @description Rule updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationTargetRule"];
+                };
+            };
+            /** @description Invalid rule */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rule not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteDestinationTargetRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rule deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rule not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    previewDestinationTargetRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the rule would match right now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationTargetPreview"];
+                };
+            };
+            /** @description Rule not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Observation data unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listDestinationTargetFindings: {
+        parameters: {
+            query?: {
+                rule_id?: string;
+                subject_ip?: string;
+                limit?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Findings page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationTargetFindingPage"];
+                };
+            };
+            /** @description Detection storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listBehaviorReportChannels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reporting channels */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportChannelPage"];
+                };
+            };
+            /** @description Reporting storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createBehaviorReportChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BehaviorReportChannelMutation"];
+            };
+        };
+        responses: {
+            /** @description Channel created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportChannel"];
+                };
+            };
+            /** @description Invalid channel */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Channel already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getBehaviorReportChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reporting channel */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportChannel"];
+                };
+            };
+            /** @description Channel not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateBehaviorReportChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BehaviorReportChannelMutation"];
+            };
+        };
+        responses: {
+            /** @description Channel updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportChannel"];
+                };
+            };
+            /** @description Invalid channel */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Channel not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteBehaviorReportChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Channel deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Channel not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    testBehaviorReportChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportTestResult"];
+                };
+            };
+            /** @description Channel unavailable */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    previewBehaviorReportChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rendered payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportPreview"];
+                };
+            };
+            /** @description Channel unavailable */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listBehaviorReportOutbox: {
+        parameters: {
+            query?: {
+                status?: "queued" | "sending" | "sent" | "failed" | "cancelled";
+                limit?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reporting queue page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportOutboxPage"];
+                };
+            };
+            /** @description Reporting storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getBehaviorReportOutbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Report with its delivery attempts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportOutboxDetail"];
+                };
+            };
+            /** @description Report not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    operateBehaviorReportOutbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+                operation: "retry" | "cancel";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Report state after the operation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BehaviorReportOperationResult"];
+                };
+            };
+            /** @description Report is not in a state that allows this operation */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10230,6 +11650,489 @@ export interface operations {
                 };
             };
             /** @description Task already terminal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listNotificationTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notification templates and the allowed variable vocabulary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTemplatePage"];
+                };
+            };
+            /** @description Notification storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createNotificationTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationTemplateMutation"];
+            };
+        };
+        responses: {
+            /** @description Template created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTemplate"];
+                };
+            };
+            /** @description Invalid template */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Read-only mode */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getNotificationTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Template */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTemplate"];
+                };
+            };
+            /** @description Template not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateNotificationTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationTemplateMutation"];
+            };
+        };
+        responses: {
+            /** @description Template updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTemplate"];
+                };
+            };
+            /** @description Invalid template */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Template not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteNotificationTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Template deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Read-only mode */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Template not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listNotificationChannels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notification channels */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannelPage"];
+                };
+            };
+            /** @description Notification storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationChannelMutation"];
+            };
+        };
+        responses: {
+            /** @description Channel created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            /** @description Invalid channel */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Channel already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Channel */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            /** @description Channel not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationChannelMutation"];
+            };
+        };
+        responses: {
+            /** @description Channel updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            /** @description Invalid channel */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Channel not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Channel deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Channel not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    testNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["NotificationTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Delivery attempt result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTestResult"];
+                };
+            };
+            /** @description Channel unavailable or request invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    testNotificationDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Delivery attempt result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTestResult"];
+                };
+            };
+            /** @description Channel unavailable or request invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listNotificationOutbox: {
+        parameters: {
+            query?: {
+                status?: "queued" | "sending" | "sent" | "failed" | "cancelled";
+                limit?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notification delivery page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationOutboxPage"];
+                };
+            };
+            /** @description Notification storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getNotificationOutbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notification_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notification with its delivery attempts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationOutboxDetail"];
+                };
+            };
+            /** @description Notification not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    operateNotificationOutbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notification_id: string;
+                operation: "retry" | "cancel";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Notification state after the operation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationOperationResult"];
+                };
+            };
+            /** @description Notification is not in a state that allows this operation */
             409: {
                 headers: {
                     [name: string]: unknown;

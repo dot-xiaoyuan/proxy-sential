@@ -2,7 +2,7 @@ import type { components, operations } from './generated'
 
 export type NativeObservationPage = components['schemas']['NativeObservationPage']
 
-export type Permission = 'policies:read' | 'policies:manage' | 'policies:authorize' | components['schemas']['Permission'] | 'exports:read' | 'cases:read' | 'cases:write' | 'identity:read' | 'organization:read' | 'organization:write' | 'actions:read' | 'actions:execute' | 'actions:revoke' | 'integrations:write' | 'users:manage'
+export type Permission = 'policies:read' | 'policies:manage' | 'policies:authorize' | components['schemas']['Permission'] | 'exports:read' | 'cases:read' | 'cases:write' | 'identity:read' | 'organization:read' | 'organization:write' | 'actions:read' | 'actions:execute' | 'actions:revoke' | 'integrations:write' | 'users:manage' | 'notifications:read' | 'notifications:manage'
 export type Role = components['schemas']['Role']
 export type Session = Omit<components['schemas']['Session'],'permissions'> & { permissions: Permission[]; csrf_token?: string }
 
