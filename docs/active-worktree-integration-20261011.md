@@ -5,19 +5,21 @@
 - **集成分支**：`codex/integration-all-20261011`
 - **worktree**：`.worktrees/integration-all-20261011`
 - **基线**：`main`（`a2d43a4`）
-- **规模**：相对 `main` 共 54 个提交、674 个文件、+71133 / −9300
+- **规模**：相对 `main` 共 60 个提交、676 个文件、+71354 / −9289
 - **原则**：现有 5 条分支与各自工作区保持不动；集成只发生在新分支上，可整条丢弃重来
 
 ## 一、合并状态
 
-| 来源 | 提交数 | 状态 |
+四条目标分支与主工作区未提交改动**均已并入**，各来源分支相对集成分支的"落后"计数均为 0。
+
+| 来源 | 状态 | 落地方式 |
 |---|---|---|
-| `codex/menu-function-repair-20260930`（含本轮 NCU 缺口 P0） | 16 | 已并入 |
-| 主工作区另一会话未提交的「链路层 MAC 归属」工作区状态 | 1 笔（`dcc5acc`） | 已并入 |
-| `codex/local-zeek-replay` | 21 | 已并入 |
-| `codex/shared-device-profile` | 15 | 已并入 |
-| `codex/ieee1905-passive` | 24 | 已并入 |
-| `codex/shared-risk-only` | 3 个独有提交 | **未并入**，理由见第五节 |
+| `codex/menu-function-repair-20260930`（含本轮 NCU 缺口 P0） | 已并入 | 内容合并 |
+| 主工作区另一会话未提交的「链路层 MAC 归属」工作区状态 | 已并入 | 单独一笔提交 `dcc5acc` |
+| `codex/local-zeek-replay` | 已并入 | 内容合并（零冲突） |
+| `codex/shared-device-profile` | 已并入 | 内容合并（1 处冲突） |
+| `codex/ieee1905-passive` | 已并入 | 内容合并（15 个冲突文件） |
+| `codex/shared-risk-only` | 已并入 | **保留提交谱系；冲突与其模型相关的内容解析到集成分支的更新实现**，见第五节 |
 
 ## 二、功能改动清单
 
@@ -81,31 +83,52 @@
 | `scripts/deploy/deploy-backend.sh` | 取并集 | systemd 单元与 `assets/zeek` 两侧都需要；重启单元列表也取并集 |
 | `internal/store/recognition_materializer.go` | 取分支 | 分支为更新的失败处理（2 分钟预算 + 专用失败状态写入） |
 
-## 五、`codex/shared-risk-only` 未并入的依据
+## 五、`codex/shared-risk-only` 的处理：谱系已合并，内容解析到更新实现
 
-该分支不是增量，而是**与已并入实现相互竞争的方案**，且其能力已被更新实现覆盖：
+该分支与集成分支是**共享风险子系统的两套并行实现**，而非增量：
 
-| 维度 | 集成分支（HEAD / ieee1905 线） | `shared-risk-only` |
+| 维度 | 集成分支 | `shared-risk-only` |
 |---|---|---|
 | 规则版本 | `shared-behavior/v12` | `shared-behavior/v10` |
 | 确认锚点 | `coexisting_device_models`（型号共现 + 协议栈佐证） | `coexisting_device_identities`（仅稳定物理设备身份或 EasyMesh） |
 | 当前/历史口径 | `current=true` + `expires_at` + 每作用域最新窗口 | `shared_behavior_generations` 代次模型 |
 | 建案同步 | 合并已物化的 high/confirmed IP（较新重写） | `SharedBehaviorReader` + `closableKinds`（较早实现） |
 
-支撑判断的证据：
+其用户可见能力在集成分支中均已存在：新增的 API/UI 字段（`risk_kind`、`disposition` 的
+`confirmed_shared_access`/`confirmed_router`、`anchor_identities`、`device_lower_bound`、
+`router_brand`/`router_model`/`router_confidence`、`coverage_state`、`generation_id`、
+`known_device_basis`）全部已存在；其 e2e 用例断言的界面文案（`较可信路由器观察`、
+`独立证据源`、`较可信路由设备观察`、`共享行为已确认`）在集成分支前端中 0 命中。
 
-1. **API/UI 增量已被覆盖**：该分支新增的字段（`risk_kind`、`disposition` 的 `confirmed_shared_access`/`confirmed_router`、`anchor_identities`、`device_lower_bound`、`router_brand`/`router_model`/`router_confidence`、`coverage_state`、`generation_id`、`known_device_basis`）在集成分支中**全部已存在**。
-2. **独有文件依赖被替换的数据模型**：`shared_risk_audit.go`、`shared_risk_reset.go` 依赖 `shared_behavior_generations` / `shared_behavior_observation_history`，而 HEAD 无 `shared_behavior_generations` 表（自建表仅存在于该分支的 `072_shared_behavior_current_generations.sql`）。
-3. **e2e 用例不可移植**：其断言的界面文案（`较可信路由器观察`、`独立证据源`、`较可信路由设备观察`、`共享行为已确认`）在集成分支的前端中 0 命中。
-4. **强行合并会回退更新实现**：其 `operations.go` 变更替换了 HEAD 较新的建案同步逻辑。
+因此本次合并**保留其提交谱系，但把冲突语义一律解析到集成分支的更新实现**：
 
-因此可选处理：
+- **19 个冲突文件**全部解析为集成分支内容。
+- **自动合并且携带该分支模型的改动已回退**到集成分支：`internal/risk/risk.go`、
+  `internal/evidence/evidence.go`、`internal/materialize/materialize.go`、
+  `internal/store/risk_recalculation.go` 及其集成测试、`internal/store/shared_behavior_test.go`、
+  `internal/replay/golden_legacy_test.go`、`internal/controlplane/cases_query.go` 及其测试、
+  `cmd/proxy-sentinel/main.go`。
+  关键原因：`risk.go` 的 `confirmedSharedEvidence` 会要求 `StrongAnchor` 属于该分支的两个锚点
+  且 `GenerationID` 非空，从而**静默排除集成分支现有的 `coexisting_device_models` 确认路径**，
+  属于隐性检测回归，不能在无评审的情况下落地。
+- **移除该分支独有、在当前模型下成为孤儿的文件**：`internal/store/shared_risk_audit.go`、
+  `internal/store/shared_risk_reset.go` 及其测试、迁移
+  `072_shared_behavior_current_generations.sql`。原因：合并后无任何代码写入
+  `shared_behavior_generations`，审计会恒报 `unknown`、重置只作用于空表；且其编号 `072`
+  与既有 `072_srun4k_simplified_integration.sql` 冲突。
+- **保留可兼容的增量**：前端案件历史新增共享/路由观察证据展示（同时移除"未记录规则版本"
+  占位，符合缺省展示规范）、对应 mock 数据与样式。
 
-1. 以现有集成分支语义为准，仅评估是否补充「代次模型 + 风险审计/重置」这套诊断能力（需同时移植其迁移，并确认与 HEAD 的 `current`/`expires_at` 口径如何共存）；
-2. 以其风险通道设计为准，回退集成中采用的 HEAD 语义（需重做第四节的取舍）；
-3. 不并入，由该分支作者 rebase 到集成分支后自行解决。
+### 若要真正采用其设计
 
-**这三项属于检测口径与数据模型的设计决策，需由该分支作者或现场负责人确认后执行。**
+该分支的三项能力（代次模型、风险审计、风险重置）已被移除或解析掉，如需采用需单独立项：
+
+1. 把「代次台账 + 风险审计/重置」移植到集成分支的 `current`/`expires_at` 口径之上（需补写入方，
+   否则台账恒空、审计恒报 `unknown`）；
+2. 或以其风险通道设计为准，回退集成分支中采用的 HEAD 语义（需重做第四节的逐文件取舍）；
+3. 或由该分支作者 rebase 到集成分支后重新提交。
+
+**这三项涉及检测口径与数据模型，属设计决策，需由该分支作者或现场负责人确认。**
 
 ## 六、验证结论
 
@@ -122,4 +145,5 @@
 - 集成分支**未部署现场**，也未跑真实流量验收。
 - `internal/discovery` 现有 `Devices`（投影表实现）与 `DevicesFiltered`（分支管线）两条语义相近但实现不同的路径，建议后续收敛为一条。
 - 集成后 `internal/discovery` 的可见性口径需与前端发现页的窗口/分类筛选做一次一致性核对。
-- 第五节的三选一决策未决。
+- `codex/shared-risk-only` 的提交谱系已并入，但其代次模型与风险审计/重置能力未采用；
+  如需采用，按第五节"若要真正采用其设计"单独立项并做设计确认。
