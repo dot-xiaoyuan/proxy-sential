@@ -68,6 +68,48 @@ const mockCases: RiskCase[] = proxyReviewResponse.items.map((item, index) => ({
   evidence_snapshot: item,
 }))
 
+mockCases.unshift({
+  case_id: 'router-e2e-current', subject_type: 'ip', subject_id: '192.0.2.63', ip: '192.0.2.63',
+  endpoint_id: 'mac:d0:76:e7:fc:03:38', risk_kind: 'router_observation', status: 'new', priority: 'low',
+  risk_score: 82, risk_confidence: .82, assessment_level: 'likely', due_at: '2026-09-30T12:23:35Z',
+  first_seen: '2026-09-30T07:40:00Z', last_seen: '2026-09-30T07:55:00Z', created_at: '2026-09-30T07:40:00Z', updated_at: '2026-09-30T07:55:00Z',
+  comments: [], timeline: [{event_id:'router-timeline-created',actor_id:'system',type:'case.created',created_at:'2026-09-30T07:40:00Z'}],
+  evidence_snapshot: {
+    case_id: 'router-e2e-current', ip: '192.0.2.63', endpoint_id: 'mac:d0:76:e7:fc:03:38', access_ids: [], destinations: [], destination_ips: [], destination_domains: [],
+    tls_fingerprints: [], protocols: [], rule_matches: [], event_count: 0, tls_count: 0, quic_count: 0, alert_count: 0, confidence_level: 'medium',
+    first_seen: '2026-09-30T07:40:00Z', last_seen: '2026-09-30T07:55:00Z', duration_seconds: 0, evidence_ids: ['router-evidence-dhcp','router-evidence-tls'], risk_score: 82,
+    risk_level: 'suspicious', review_status: 'unreviewed', router_observation: {
+      assessment_id: 'router-assessment-tplink', endpoint_id: 'mac:d0:76:e7:fc:03:38', ip: '192.0.2.63', mac: 'd0:76:e7:fc:03:38',
+      brand: 'TP-Link', model: 'Archer', role: 'router', status: 'likely', confidence: 82, independent_sources: 2,
+      sources: ['dhcp','tls'], infrastructure: false, brand_reference_only: false, association_quality: 'stable', ambiguous: false,
+      confirmed_router: false, rule_version: 'router-v3', first_seen: '2026-09-30T07:40:00Z', last_seen: '2026-09-30T07:55:00Z', expires_at: '2026-09-30T08:55:00Z', conflicts: [],
+      score_components: [
+        {source_family:'dhcp',evidence_id:'router-evidence-dhcp',score:45,explanation:'DHCP 厂商类标识与路由设备特征一致'},
+        {source_family:'tls',evidence_id:'router-evidence-tls',score:37,explanation:'TLS 管理面证据与设备身份一致'},
+      ],
+    },
+  },
+})
+
+mockCases.unshift({
+  case_id: 'shared-e2e-current', subject_type: 'ip', subject_id: '192.0.2.22', ip: '192.0.2.22',
+  endpoint_id: 'mac:20:3a:eb:e9:de:10', risk_kind: 'shared_access', status: 'new', priority: 'high',
+  risk_score: 90, risk_confidence: .9, assessment_level: 'confirmed', due_at: '2026-09-30T11:23:35Z',
+  first_seen: '2026-09-30T07:45:00Z', last_seen: '2026-09-30T07:55:00Z', created_at: '2026-09-30T07:45:00Z', updated_at: '2026-09-30T07:55:00Z',
+  comments: [], timeline: [{event_id:'shared-timeline-created',actor_id:'system',type:'case.created',created_at:'2026-09-30T07:45:00Z'}],
+  evidence_snapshot: {
+    case_id: 'shared-e2e-current', ip: '192.0.2.22', endpoint_id: 'mac:20:3a:eb:e9:de:10', access_ids: [], destinations: [], destination_ips: [], destination_domains: [],
+    tls_fingerprints: [], protocols: [], rule_matches: [], event_count: 2, tls_count: 0, quic_count: 0, alert_count: 0, confidence_level: 'high',
+    first_seen: '2026-09-30T07:45:00Z', last_seen: '2026-09-30T07:55:00Z', duration_seconds: 600, evidence_ids: ['shared-observation'], risk_score: 90,
+    risk_level: 'confirmed', review_status: 'unreviewed', shared_access: {
+      observation_id: 'shared-observation', generation_id: 'shared-generation', status: 'confirmed', confidence: 90,
+      strong_anchor: 'ieee1905_association', device_lower_bound: 2, coverage_state: 'verified', window_start: '2026-09-30T07:45:00Z', window_end: '2026-09-30T07:55:00Z',
+      signal_groups: ['confirmed_same_exit_endpoints','ieee1905_association'], reasons: ['被动 EasyMesh 关联状态确认多个终端同时接入'],
+      source_event_ids: ['control-a','control-b'], anchor_identities: ['aa:aa:aa:aa:aa:aa','bb:bb:bb:bb:bb:bb'], reference_device_count_24h: 1,
+    },
+  },
+})
+
 const mockOrganization = {
   campuses: [{ campus_id: 'main', code: 'MAIN', name: '主校区', enabled: true }, { campus_id: 'north', code: 'NORTH', name: '北校区', enabled: true }],
   buildings: [{ building_id: 'lib', campus_id: 'main', code: 'LIB', name: '图书馆', enabled: true }],
@@ -106,7 +148,8 @@ export const handlers = [
   http.post('/api/v1/campus-exceptions/:exceptionId/disable', ({params}) => {const item=mockCampusExceptions.find(entry=>entry.exception_id===params.exceptionId);if(!item)return new HttpResponse(null,{status:404});item.enabled=false;return HttpResponse.json(item)}),
   http.get('/api/v1/cases', ({ request }) => {
     const url = new URL(request.url)
-    const result = mockPage(mockCases.filter((item) => !url.searchParams.get('status') || item.status === url.searchParams.get('status')), url)
+    const includeRouterObservations = url.searchParams.get('include_router_observations') !== 'false'
+    const result = mockPage(mockCases.filter((item) => (includeRouterObservations || item.risk_kind !== 'router_observation') && (!url.searchParams.get('status') || item.status === url.searchParams.get('status'))), url)
     return HttpResponse.json(result)
   }),
   http.get('/api/v1/cases/:caseId/history/:kind', ({params,request}) => {

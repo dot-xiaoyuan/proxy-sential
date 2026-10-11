@@ -485,6 +485,15 @@ a:hover {
   box-sizing: border-box;
 }
 
+.surface-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.surface-card > .ant-card-head {
+  border-bottom-color: #e2e8f0;
+}
+
 .page-header {
   display: flex;
   gap: 8px 12px;
@@ -3763,6 +3772,47 @@ pre.wrap-code {
 @media(max-width:560px){.shared-behavior-desktop-list{display:none}.shared-behavior-mobile-list{display:block}.shared-behavior-list-row-heading>.ant-tag{margin-inline-end:0}.shared-behavior-row-actions{justify-content:flex-start}.shared-behavior-evidence{padding-top:8px;border-top:1px solid #e2e8f0}.shared-access-page .app-server-pagination{justify-content:flex-start}}
 .shared-health-disclosure { margin-top: 2px; }
 .shared-health-disclosure .filter-disclosure-content { display: grid; gap: 12px; }
+
+.case-queue-filters,
+.case-queue-filters > .ant-space-item,
+.case-queue-filters .ant-space {
+  min-width: 0;
+}
+
+.case-queue-filters .ant-typography,
+.case-queue-filters .ant-switch {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.case-assessment-cell .ant-typography {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.router-observation-evidence {
+  display: grid;
+  gap: 12px;
+}
+
+.router-score-components {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 12px;
+}
+
+.router-score-components .ant-typography {
+  margin-bottom: 8px;
+}
+
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  .case-queue-filters {
+    width: 100%;
+  }
+}
 .shared-health-card .ant-card-body { padding: 14px; }
 
 /* Navigation repair: constrain children as well as the document viewport. */
