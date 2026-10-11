@@ -41,6 +41,15 @@ archive="$work_dir/proxy-sentinel-$version.tar.gz"
 "$repo_root/scripts/deploy/build-release.sh" --version "$version" --output "$archive"
 
 ssh -o BatchMode=yes "$target" 'set -eu; test "$(uname -s)" = Linux; test "$(uname -m)" = x86_64; . /etc/os-release; test "$ID" = openEuler'
+# Some field pilots intentionally keep their custom capture units unmanaged by
+# the generic installer while still running them. A full install stops units
+# whose management flags are false, so remember the live state and restore it
+# after a successful release instead of silently cutting off new evidence.
+active_field_units="$(ssh -o BatchMode=yes "$target" '
+  for unit in proxy-sentinel-device-signal.service proxy-sentinel-ingest.service; do
+    if systemctl is-active --quiet "$unit"; then printf "%s\n" "$unit"; fi
+  done
+')"
 remote_tmp="$(ssh -o BatchMode=yes "$target" 'mktemp -d /tmp/proxy-sentinel-deploy.XXXXXX')"
 [[ "$remote_tmp" == /tmp/proxy-sentinel-deploy.* ]] || { echo "unsafe remote temporary path" >&2; exit 1; }
 
@@ -66,4 +75,11 @@ if [[ -n "$admin_secret" ]]; then
   scp -q "$admin_secret" "$target:$remote_tmp/admin-password"
 fi
 ssh -tt -o BatchMode=yes "$target" "chmod 0700 '$remote_tmp/install-openeuler.sh'; '$remote_tmp/install-openeuler.sh' --version '$version' --archive '$remote_tmp/$(basename "$archive")' --checksum '$remote_tmp/$(basename "$archive").sha256' --env-file '$installer_env' --admin-secret '$remote_tmp/admin-password'"
+if [[ -n "$active_field_units" ]]; then
+  while IFS= read -r unit; do
+    [[ "$unit" == proxy-sentinel-device-signal.service || "$unit" == proxy-sentinel-ingest.service ]] || continue
+    ssh -o BatchMode=yes "$target" "systemctl start '$unit'; systemctl is-active --quiet '$unit'"
+    echo "restored pre-deployment field service: $unit"
+  done <<< "$active_field_units"
+fi
 echo "deployment completed: target=$target version=$version"
