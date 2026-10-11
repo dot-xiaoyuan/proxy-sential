@@ -18,9 +18,12 @@ frontend_dir=""
 force=false
 confirmed=false
 do_build=true
-use_sync=false
+use_sync=true
 sync_daemon=false
 sync_configured=false
+# 增量镜像默认打开 EVE 与 TTL：共享行为覆盖门与路由器认定都依赖这两路，
+# 只镜像 Zeek 设备日志时设备档案与共享接入页长时间为空。首次用 50M 尾字节播种控制体量。
+SYNC_TARGET="${PROXY_SENTINEL_SYNC_TARGET:-root@192.168.0.30}"
 # 命令行给出的增量镜像覆盖值；先读 sync.conf，再用这些值覆盖，最后回写。
 CLI_SYNC_FILES=""
 CLI_SYNC_WITH_EVE=""
@@ -32,10 +35,10 @@ CLI_SYNC_INTERVAL=""
 # 增量镜像选项默认值；local-stack.sh sync 会把最终值写进 data/run/sync.conf。
 sync_conf_defaults() {
   SYNC_FILES="dhcp.log software.log mdns.log nbns.log llmnr.log conn.log dns.log http.log ssl.log x509.log snmp.log lldp.log ssdp.log proxy_transactions.log"
-  SYNC_WITH_EVE=false
-  SYNC_WITH_TTL=false
-  SYNC_TTL_BYTES=""
-  SYNC_EVE_BYTES=""
+  SYNC_WITH_EVE=true
+  SYNC_WITH_TTL=true
+  SYNC_TTL_BYTES="50M"
+  SYNC_EVE_BYTES="50M"
   SYNC_INTERVAL=60
 }
 
@@ -44,7 +47,7 @@ usage() {
 用法: scripts/local/local-stack.sh <子命令> [选项]
 
   doctor    环境自检：Docker/OrbStack、端口、工具、磁盘、0.30 可达性、前端产物
-  up        起完整本地栈（生成配置 -> 存储 -> 迁移 -> 管理员 -> ingest -> 风险 -> 读模型 -> 控制面）
+  up        起完整本地栈（默认先增量镜像 0.30 -> 存储 -> 迁移 -> 管理员 -> ingest -> 风险 -> 读模型 -> 控制面）
   down      逆序停止进程并关闭存储容器（保留 data/db）
   status    容器、进程、/readyz、事件与风险计数
   logs [名] 查看某个进程日志，默认列出全部日志文件
@@ -54,7 +57,7 @@ usage() {
 
 选项:
   --force             up/reset 时无条件重建本地数据库
-  --sync              up 前先做一轮增量镜像，并按 sync.conf 启动常驻镜像
+  --no-sync           up 时不做增量镜像，只使用已有的 live/ 或 replay/ 数据
   --frontend-dir DIR  使用指定前端产物，跳过 pnpm 构建
   --no-build          up 时跳过 Go 二进制重建
   --yes               purge 确认
@@ -445,6 +448,10 @@ start_ingest() {
 
 sync_conf() { printf '%s' "$run_dir/sync.conf"; }
 
+remote_reachable() {
+  ssh -n -o BatchMode=yes -o ConnectTimeout=8 -q "$SYNC_TARGET" 'echo ok' >/dev/null 2>&1
+}
+
 load_sync_conf() {
   sync_conf_defaults
   local conf
@@ -482,7 +489,7 @@ apply_sync_overrides() {
 run_sync_once() {
   # --files 只接受一个参数（内部按空格拆分），所以必须整体作为一个词传入，
   # 不能用字符串拼接后再做 word splitting。
-  set -- --live --files "$SYNC_FILES"
+  set -- --target "$SYNC_TARGET" --live --files "$SYNC_FILES"
   if [ "$SYNC_WITH_EVE" = true ]; then
     set -- "$@" --with-eve
   fi
@@ -677,8 +684,13 @@ cmd_up() {
     if [ "$sync_configured" = true ] || [ ! -f "$(sync_conf)" ]; then
       save_sync_conf
     fi
-    log "增量镜像：先同步一轮（EVE=${SYNC_WITH_EVE} TTL=${SYNC_WITH_TTL}）"
-    run_sync_once
+    if remote_reachable; then
+      log "增量镜像：先同步一轮（EVE=${SYNC_WITH_EVE} TTL=${SYNC_WITH_TTL} 目标=${SYNC_TARGET}）"
+      # 同步失败不应该拦住整个栈：已有 live/ 或 replay/ 数据照常使用。
+      run_sync_once || log "本轮增量镜像失败，继续使用现有数据"
+    else
+      log "增量镜像目标不可达（${SYNC_TARGET}），跳过同步，继续使用现有数据"
+    fi
   fi
 
   local ingest_dir
@@ -851,6 +863,7 @@ while [ $# -gt 0 ]; do
     --no-build) do_build=false; shift ;;
     --yes) confirmed=true; shift ;;
     --sync) use_sync=true; shift ;;
+    --no-sync) use_sync=false; shift ;;
     --daemon) sync_daemon=true; shift ;;
     --interval) CLI_SYNC_INTERVAL="${2:-}"; sync_configured=true; shift 2 ;;
     --files) CLI_SYNC_FILES="${2:-}"; sync_configured=true; shift 2 ;;

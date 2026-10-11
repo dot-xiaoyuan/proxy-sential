@@ -32,34 +32,38 @@ make local-doctor
 ## 快速开始
 
 ```sh
-# 1. 从 0.30 拉一份 Zeek 快照（约 50 秒 / 61MB）
-make local-pull
-
-# 2. 起完整本地栈（首次会构建 Go 二进制与前端产物）
+# 默认路径：一条命令增量镜像 0.30 并起完整本地栈
 make local-up
 
-# 3. 查看状态与日志
+# 查看状态与日志
 make local-status
 make local-logs LOG=ingest
 
-# 4. 停止 / 重置
+# 停止 / 重置
 make local-down
 make local-reset
 ```
 
-一次性快照适合复现某个时间点；如果需要让实时窗口（共享行为、风险滚动窗口）持续有新数据，
-用增量镜像模式：
+`local-up` 默认先做一轮增量镜像（EVE 与 TTL 各自尾部 50M 播种），再启动存储、ingest、
+风险物化、四条读模型 lane 与控制面，并在最后拉起常驻镜像进程保持数据新鲜。
+加 `--no-sync` 可以只用已有的 `live/` 或 `replay/` 数据、不访问 30。
+
+如果需要复现某个固定时间点、或不想让数据随时间变化，走一次性快照：
 
 ```sh
-# 1. 建增量镜像（首次可用尾部播种控制体量），并保存配置
-./scripts/local/local-stack.sh sync --with-eve --eve-bytes 50M --with-ttl --ttl-bytes 50M
+make local-pull                       # 或 PULL_ARGS="--shift-to-now"
+./scripts/local/local-stack.sh up --no-sync
+```
 
-# 2. 重建本地栈：up 会发现 live/ 目录，ingest 改读增量镜像并启动常驻镜像进程
-./scripts/local/local-stack.sh reset
+只调整增量镜像本身时：
 
-# 3. 之后随时手工补一轮，或让常驻进程按间隔自动补
-./scripts/local/local-stack.sh sync
-make local-status          # sync 进程应显示"运行中"
+```sh
+# 换播种大小/间隔/关闭某一路来源，并保存配置
+./scripts/local/local-stack.sh sync --eve-bytes 200M --interval 30
+./scripts/local/local-stack.sh sync --no-ttl
+
+# 让常驻镜像用新配置重启
+./scripts/local/local-stack.sh down && make local-up
 ```
 
 浏览器打开 <http://127.0.0.1:18080> 登录。初始管理员账号在
@@ -165,7 +169,7 @@ control-plane serve --sensor-id <sensor> --frontend-dir frontend/dist
 | `reset` | 停栈、删除 `data/db`、重新拉起 |
 | `purge --yes` | 删除 `data/db`、`data/zeek`、`data/run`、`data/logs` 与运行时配置 |
 
-选项：`--force`（up/reset 无条件重建数据库）、`--sync`（up 前先同步一轮并启动常驻镜像）、
+选项：`--force`（up/reset 无条件重建数据库）、`--no-sync`（up 时不访问 0.30，只用已有数据）、
 `--frontend-dir DIR`（复用已有前端产物）、`--no-build`（跳过 Go 二进制重建），
 以及增量镜像选项（见上一节）。
 
