@@ -1,0 +1,132 @@
+{
+  "schema_version": "ai-relay-indicators/v1",
+  "version": "2026.09.21",
+  "updated_at": "2026-09-21",
+  "sources": [
+    {
+      "id": "awesome-ai-api-proxy",
+      "name": "awesome-ai-api-proxy（中轉站/閘道目錄）",
+      "url": "https://github.com/howardpen9/awesome-ai-api-proxy",
+      "version": "reviewed-2026-07-12"
+    },
+    {
+      "id": "awesome-ai-proxy",
+      "name": "awesome-ai-proxy（mn-api，已停更的历史清单）",
+      "url": "https://github.com/mn-api/awesome-ai-proxy",
+      "version": "archived-listing"
+    },
+    {
+      "id": "chatanywhere",
+      "name": "chatanywhere/GPT_API_free（免费共享 API 中转）",
+      "url": "https://github.com/chatanywhere/GPT_API_free"
+    },
+    {
+      "id": "api2d-site",
+      "name": "api2d 官网",
+      "url": "https://api2d.com"
+    },
+    {
+      "id": "ohmygpt-site",
+      "name": "OhMyGPT 官网",
+      "url": "https://ohmygpt.com"
+    },
+    {
+      "id": "aiproxy-site",
+      "name": "AIProxy 官网",
+      "url": "https://aiproxy.io"
+    },
+    {
+      "id": "openai-hk-site",
+      "name": "OpenAI-HK 官网",
+      "url": "https://openai-hk.com"
+    },
+    {
+      "id": "gptsapi-site",
+      "name": "GPTSAPI 官网",
+      "url": "https://gptsapi.net"
+    }
+  ],
+  "official_domains": [
+    "api.openai.com",
+    "chatgpt.com",
+    "api.anthropic.com",
+    "claude.ai",
+    "generativelanguage.googleapis.com",
+    "aiplatform.googleapis.com",
+    "api.deepseek.com",
+    "dashscope.aliyuncs.com",
+    "api.moonshot.cn",
+    "open.bigmodel.cn",
+    "ark.cn-beijing.volces.com",
+    "api.x.ai",
+    "api.mistral.ai",
+    "api.cohere.com",
+    "api.groq.com",
+    "api.together.xyz",
+    "api.perplexity.ai"
+  ],
+  "indicators": [
+    {"domain": "yunwu.ai", "match_type": "subdomain", "category": "relay", "name": "云雾 API", "confidence": 0.80, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "uiuiapi.com", "match_type": "subdomain", "category": "relay", "name": "UiUiAPI", "confidence": 0.80, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "dmxapi.cn", "match_type": "subdomain", "category": "relay", "name": "DMXAPI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "mkeai.com", "match_type": "subdomain", "category": "relay", "name": "MKEAI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "gptgod.online", "match_type": "subdomain", "category": "relay", "name": "GPTGOD", "confidence": 0.75, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "gptgod.cloud", "match_type": "subdomain", "category": "relay", "name": "GPTGOD", "confidence": 0.75, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "xuanshuapi.com", "match_type": "subdomain", "category": "relay", "name": "玄枢 API", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "teamorouter.com", "match_type": "subdomain", "category": "relay", "name": "TeamoRouter", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "wawazz.xyz", "match_type": "subdomain", "category": "relay", "name": "wawazz", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "wappkit.com", "match_type": "subdomain", "category": "relay", "name": "Wappkit API", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "relaydance.com", "match_type": "subdomain", "category": "relay", "name": "Relaydance", "confidence": 0.75, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "ai-router.dev", "match_type": "subdomain", "category": "relay", "name": "AI Router", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "coderplan.ai", "match_type": "subdomain", "category": "relay", "name": "CoderPlan", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "mnapi.com", "match_type": "subdomain", "category": "relay", "name": "MN API 聚合", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "bltcy.ai", "match_type": "subdomain", "category": "relay", "name": "柏拉图 AI", "confidence": 0.75, "status": "unresolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "rcouyi.com", "match_type": "subdomain", "category": "relay", "name": "No.1-API", "confidence": 0.75, "status": "unresolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "closeai-asia.com", "match_type": "subdomain", "category": "relay", "name": "CloseAI", "confidence": 0.75, "status": "unresolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "aigcbest.top", "match_type": "subdomain", "category": "relay", "name": "AIGCBest", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "xjai.cc", "match_type": "subdomain", "category": "relay", "name": "XJAI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "gptapi.us", "match_type": "subdomain", "category": "relay", "name": "GPTAPI", "confidence": 0.80, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "xeduapi.com", "match_type": "subdomain", "category": "relay", "name": "XEDUAPI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "tomchat.fun", "match_type": "subdomain", "category": "relay", "name": "TomChat", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "v3.cm", "match_type": "subdomain", "category": "relay", "name": "V3 API", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "ephone.ai", "match_type": "subdomain", "category": "relay", "name": "ePhone API", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "nekoapi.com", "match_type": "subdomain", "category": "relay", "name": "NekoAPI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "openai-ch.top", "match_type": "subdomain", "category": "relay", "name": "GalaxyAPI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "paintbot.top", "match_type": "subdomain", "category": "relay", "name": "PaintBot", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "chatfire.cn", "match_type": "subdomain", "category": "relay", "name": "ChatFire", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "gu28.top", "match_type": "subdomain", "category": "relay", "name": "BoneAPI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "gptoai.cc", "match_type": "subdomain", "category": "relay", "name": "ShawnAPI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "kfcv50.link", "match_type": "subdomain", "category": "relay", "name": "KFCV50API", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "gueai.com", "match_type": "subdomain", "category": "relay", "name": "GueAi", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "maynor1024.live", "match_type": "subdomain", "category": "relay", "name": "MaynorAPI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "azapi.com.cn", "match_type": "subdomain", "category": "relay", "name": "AZAPI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "openai-labs.com", "match_type": "subdomain", "category": "relay", "name": "OpenAILabs", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-proxy"},
+    {"domain": "zhtec.xyz", "match_type": "subdomain", "category": "relay", "name": "ZHTEC", "confidence": 0.70, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "chienapi.top", "match_type": "subdomain", "category": "relay", "name": "ChienAPI", "confidence": 0.70, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "sbgpt.site", "match_type": "subdomain", "category": "relay", "name": "SBGPT", "confidence": 0.65, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "ggwk1.online", "match_type": "subdomain", "category": "relay", "name": "GGWK1", "confidence": 0.65, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "aabao.top", "match_type": "subdomain", "category": "relay", "name": "AABao", "confidence": 0.65, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "gptuu.com", "match_type": "subdomain", "category": "relay", "name": "GPTUU", "confidence": 0.65, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "yuegle.com", "match_type": "subdomain", "category": "relay", "name": "YuegleAPI", "confidence": 0.65, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "kksj.org", "match_type": "subdomain", "category": "relay", "name": "KKSJ", "confidence": 0.65, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "nio.gs", "match_type": "subdomain", "category": "relay", "name": "Nio API", "confidence": 0.65, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "onechats.top", "match_type": "subdomain", "category": "relay", "name": "OneChats", "confidence": 0.65, "status": "unresolved", "source": "awesome-ai-proxy"},
+    {"domain": "api2d.com", "match_type": "subdomain", "category": "relay", "name": "API2D", "confidence": 0.80, "status": "resolved", "source": "api2d-site"},
+    {"domain": "ohmygpt.com", "match_type": "subdomain", "category": "relay", "name": "OhMyGPT", "confidence": 0.80, "status": "resolved", "source": "ohmygpt-site"},
+    {"domain": "aiproxy.io", "match_type": "subdomain", "category": "relay", "name": "AIProxy", "confidence": 0.75, "status": "resolved", "source": "aiproxy-site"},
+    {"domain": "openai-hk.com", "match_type": "subdomain", "category": "relay", "name": "OpenAI-HK", "confidence": 0.70, "status": "resolved", "source": "openai-hk-site"},
+    {"domain": "gptsapi.net", "match_type": "subdomain", "category": "relay", "name": "GPTSAPI", "confidence": 0.70, "status": "resolved", "source": "gptsapi-site"},
+    {"domain": "chatanywhere.tech", "match_type": "subdomain", "category": "relay", "name": "ChatAnywhere", "confidence": 0.75, "status": "resolved", "source": "chatanywhere"},
+    {"domain": "chatanywhere.com.cn", "match_type": "subdomain", "category": "relay", "name": "ChatAnywhere", "confidence": 0.70, "status": "unresolved", "source": "chatanywhere"},
+    {"domain": "openrouter.ai", "match_type": "subdomain", "category": "aggregator", "name": "OpenRouter", "confidence": 0.80, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "atlascloud.ai", "match_type": "subdomain", "category": "aggregator", "name": "Atlas Cloud", "confidence": 0.75, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "aimlapi.com", "match_type": "subdomain", "category": "aggregator", "name": "AIMLAPI", "confidence": 0.75, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "routescope.ai", "match_type": "subdomain", "category": "aggregator", "name": "RouteScope", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "unorouter.ai", "match_type": "subdomain", "category": "aggregator", "name": "UnoRouter", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "quicksilverpro.io", "match_type": "subdomain", "category": "aggregator", "name": "QuickSilver Pro", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "aiapi-pro.com", "match_type": "subdomain", "category": "aggregator", "name": "NovAI", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "sandbase.ai", "match_type": "subdomain", "category": "aggregator", "name": "SandBase", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "allrouter.ai", "match_type": "subdomain", "category": "aggregator", "name": "AllRouter", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"},
+    {"domain": "tokens-forge.com", "match_type": "subdomain", "category": "aggregator", "name": "Tokens Forge", "confidence": 0.70, "status": "resolved", "source": "awesome-ai-api-proxy"}
+  ]
+}
