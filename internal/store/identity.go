@@ -522,7 +522,7 @@ func endpointDeviceSummary(item EndpointDeviceInventory) string {
 }
 
 func endpointRecognitionValues(attributes map[string]any) []string {
-	keys := []string{"user_agent", "hostname", "client_fqdn", "vendor_class", "requested_options", "software_name", "device_hint", "model", "os", "os_family"}
+	keys := []string{"user_agent", "hostname", "client_fqdn", "vendor_class", "requested_options", "software_name", "device_hint", "model", "os", "os_family", "server", "title", "certificate_subject", "certificate_issuer", "certificate_san"}
 	values := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if value := stringFromMap(attributes, key); value != "" {
@@ -540,7 +540,7 @@ func endpointRecognitionSignals(mac string, attributes map[string]any) fingerpri
 		DHCPRequestedOptions: stringFromMap(attributes, "requested_options"),
 		Hostnames:            []string{stringFromMap(attributes, "hostname"), stringFromMap(attributes, "client_fqdn")},
 		Software:             []string{stringFromMap(attributes, "software_name")},
-		Hints:                []string{stringFromMap(attributes, "device_hint"), stringFromMap(attributes, "model"), stringFromMap(attributes, "os"), stringFromMap(attributes, "os_family")},
+		Hints:                []string{stringFromMap(attributes, "device_hint"), stringFromMap(attributes, "model"), stringFromMap(attributes, "os"), stringFromMap(attributes, "os_family"), stringFromMap(attributes, "server"), stringFromMap(attributes, "certificate_subject")},
 	}
 }
 
@@ -794,7 +794,7 @@ func mergeAccountSession(current, incoming AccountSession) AccountSession {
 
 func identityAttributes(fact identityFact) map[string]any {
 	attrs := map[string]any{}
-	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class", "requested_options", "user_agent", "software_name", "device_hint", "vendor", "oui_vendor", "brand", "model", "device_type", "os", "os_family", "person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type"} {
+	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class", "requested_options", "user_agent", "software_name", "device_hint", "vendor", "oui_vendor", "brand", "model", "device_type", "os", "os_family", "server", "title", "certificate_subject", "certificate_issuer", "certificate_san", "person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type"} {
 		if value := stringFromMap(fact.Payload, key); value != "" {
 			attrs[key] = value
 		}

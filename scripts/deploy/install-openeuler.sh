@@ -349,6 +349,12 @@ fi
 for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
   [[ -f "/etc/systemd/system/$unit" ]] && cp -a "/etc/systemd/system/$unit" "$unit_backup/$unit"
 done
+site_units=()
+for unit in proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-device-signal.service proxy-sentinel-ingest.service; do
+  if systemctl is-active --quiet "$unit" 2>/dev/null && ! grep -qxF '# Managed by proxy-sentinel install-openeuler.sh' "/etc/systemd/system/$unit" 2>/dev/null; then
+    site_units+=("$unit")
+  fi
+done
 rollback_install() {
   log "health check failed; rolling application and systemd units back"
   systemctl stop proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service \
@@ -364,6 +370,7 @@ rollback_install() {
   if [[ "$manage_zeek" == true ]]; then systemctl start proxy-sentinel-zeek.service >/dev/null 2>&1 || true; fi
   if [[ "$manage_device_signals" == true ]]; then systemctl start proxy-sentinel-device-signal.service >/dev/null 2>&1 || true; fi
   if [[ "$ingest_enabled" == true ]]; then systemctl restart proxy-sentinel-ingest.service >/dev/null 2>&1 || true; fi
+  for unit in ${site_units[@]+"${site_units[@]}"}; do systemctl start "$unit" >/dev/null 2>&1 || true; done
   systemctl start proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true
   systemctl restart proxy-sentinel-control-plane.service >/dev/null 2>&1 || true
 }
@@ -400,6 +407,7 @@ if [[ "$ingest_enabled" == true ]]; then
   mkdir -p "$(dirname "$eve_path")"
   [[ -e "$eve_path" ]] || install -m 0640 /dev/null "$eve_path"
   cat > /etc/systemd/system/proxy-sentinel-ingest.service <<EOF
+# Managed by proxy-sentinel install-openeuler.sh
 [Unit]
 Description=Proxy Sentinel realtime normalized-event ingest
 After=network-online.target docker.service proxy-sentinel-suricata.service proxy-sentinel-zeek.service
@@ -480,6 +488,7 @@ if [[ "$manage_suricata" == true ]]; then
   sed -ri 's/^  checksum-validation:[[:space:]]*yes([[:space:]]*#.*)?$/  checksum-validation: no\1/' /etc/suricata/suricata.yaml
   suricata -T -c /etc/suricata/suricata.yaml >/tmp/proxy-sentinel-suricata-test.log 2>&1 || { cat /tmp/proxy-sentinel-suricata-test.log >&2; die "Suricata configuration or bundled rules failed validation"; }
   cat > /etc/systemd/system/proxy-sentinel-suricata.service <<EOF
+# Managed by proxy-sentinel install-openeuler.sh
 [Unit]
 Description=Proxy Sentinel Suricata mirror capture
 After=network-online.target
@@ -523,6 +532,7 @@ $(dirname "$eve_path")/stats.log $(dirname "$eve_path")/fast.log $(dirname "$eve
 }
 EOF
   cat > /etc/systemd/system/proxy-sentinel-logrotate.service <<EOF
+# Managed by proxy-sentinel install-openeuler.sh
 [Unit]
 Description=Rotate Proxy Sentinel Suricata EVE log
 [Service]
@@ -530,6 +540,7 @@ Type=oneshot
 ExecStart=/usr/sbin/logrotate --state $root/data/logrotate.state /etc/logrotate.d/proxy-sentinel-suricata /etc/logrotate.d/proxy-sentinel-device-signals
 EOF
   cat > /etc/systemd/system/proxy-sentinel-logrotate.timer <<EOF
+# Managed by proxy-sentinel install-openeuler.sh
 [Unit]
 Description=Check Proxy Sentinel EVE rotation hourly
 [Timer]
@@ -562,6 +573,7 @@ $device_signal_path {
 }
 EOF
   cat > /etc/systemd/system/proxy-sentinel-device-signal.service <<EOF
+# Managed by proxy-sentinel install-openeuler.sh
 [Unit]
 Description=Proxy Sentinel lightweight TTL and Hop-Limit collector
 After=network-online.target
@@ -589,6 +601,7 @@ if [[ "$manage_zeek" == true ]]; then
   command -v zeek >/dev/null || die "Zeek is required when PROXY_SENTINEL_MANAGE_ZEEK=true"
   mkdir -p "$zeek_log_dir"
   cat > /etc/systemd/system/proxy-sentinel-zeek.service <<EOF
+# Managed by proxy-sentinel install-openeuler.sh
 [Unit]
 Description=Proxy Sentinel Zeek device-signal capture
 After=network-online.target
@@ -597,7 +610,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$zeek_log_dir
 ExecStartPre=/usr/bin/test -w $zeek_log_dir
-ExecStart=/usr/local/bin/zeek -i $interface $root/current/assets/zeek/local-device-signals.zeek policy/protocols/dhcp/software.zeek $root/current/assets/zeek/proxy-transactions.zeek
+ExecStart=/usr/local/bin/zeek -i $interface $root/current/assets/zeek/local-device-signals.zeek policy/protocols/dhcp/software.zeek policy/protocols/conn/mac-logging.zeek $root/current/assets/zeek/proxy-transactions.zeek
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
@@ -614,10 +627,23 @@ if [[ -f "$root/config/proxy-source-scope.json" ]]; then
   command -v python3 >/dev/null || die "managed proxy sources require Python3"
   systemctl enable --now proxy-sentinel-proxy-source-refresh.timer
 fi
-if [[ "$manage_suricata" == true ]]; then systemctl enable --now proxy-sentinel-suricata.service proxy-sentinel-logrotate.timer; else systemctl disable --now proxy-sentinel-suricata.service proxy-sentinel-logrotate.timer >/dev/null 2>&1 || true; fi
-if [[ "$manage_zeek" == true ]]; then systemctl enable --now proxy-sentinel-zeek.service; else systemctl disable --now proxy-sentinel-zeek.service >/dev/null 2>&1 || true; fi
-if [[ "$manage_device_signals" == true ]]; then systemctl enable --now proxy-sentinel-device-signal.service; else systemctl disable --now proxy-sentinel-device-signal.service >/dev/null 2>&1 || true; fi
-if [[ "$ingest_enabled" == true ]]; then systemctl enable --now proxy-sentinel-ingest.service; else systemctl disable --now proxy-sentinel-ingest.service >/dev/null 2>&1 || true; fi
+# A disabled flag only retires units this installer generated. Sites may run
+# hand-maintained collector or ingest units (custom capture filters, drop-ins);
+# stopping those during a schema upgrade silently cuts the event pipeline.
+disable_installer_units() {
+  local unit
+  for unit in "$@"; do
+    if grep -qxF '# Managed by proxy-sentinel install-openeuler.sh' "/etc/systemd/system/$unit" 2>/dev/null; then
+      systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    elif systemctl is-enabled --quiet "$unit" 2>/dev/null || systemctl is-active --quiet "$unit" 2>/dev/null; then
+      log "keeping site-managed $unit unchanged; it was not generated by this installer"
+    fi
+  done
+}
+if [[ "$manage_suricata" == true ]]; then systemctl enable --now proxy-sentinel-suricata.service proxy-sentinel-logrotate.timer; else disable_installer_units proxy-sentinel-suricata.service proxy-sentinel-logrotate.timer; fi
+if [[ "$manage_zeek" == true ]]; then systemctl enable --now proxy-sentinel-zeek.service; else disable_installer_units proxy-sentinel-zeek.service; fi
+if [[ "$manage_device_signals" == true ]]; then systemctl enable --now proxy-sentinel-device-signal.service; else disable_installer_units proxy-sentinel-device-signal.service; fi
+if [[ "$ingest_enabled" == true ]]; then systemctl enable --now proxy-sentinel-ingest.service; else disable_installer_units proxy-sentinel-ingest.service; fi
 systemctl disable --now proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true
 systemctl enable --now proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-control-plane.service
 # `enable --now` does not restart an already running service during an
@@ -627,6 +653,7 @@ if [[ "$manage_suricata" == true ]]; then systemctl restart proxy-sentinel-suric
 if [[ "$manage_zeek" == true ]]; then systemctl restart proxy-sentinel-zeek.service; fi
 if [[ "$manage_device_signals" == true ]]; then systemctl restart proxy-sentinel-device-signal.service; fi
 if [[ "$ingest_enabled" == true ]]; then systemctl restart proxy-sentinel-ingest.service; fi
+for unit in ${site_units[@]+"${site_units[@]}"}; do systemctl restart "$unit"; done
 systemctl restart proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service
 systemctl restart proxy-sentinel-control-plane.service
 

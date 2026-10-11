@@ -358,6 +358,13 @@ func signalDrafts(event normalized.Event) []deviceSignalDraft {
 		add(source, "brand", inferred.brand, "strong", 0.78, 62)
 		add(source, "device_type", inferred.deviceType, "strong", 0.76, 60)
 		add(source, "model", inferred.model, "strong", 0.76, 60)
+		// Protocol self-report attributed through a unique DHCP lease. These
+		// fields come from derived device events only; the lease requirement is
+		// enforced before the event is written.
+		add(source, "http_server", stringFromMap(event.Payload, "server"), "strong", 0.86, 76)
+		add(source, "http_title", stringFromMap(event.Payload, "title"), "medium", 0.6, 44)
+		add(source, "tls_subject", stringFromMap(event.Payload, "certificate_subject"), "medium", 0.62, 46)
+		add(source, "tls_issuer", stringFromMap(event.Payload, "certificate_issuer"), "medium", 0.58, 42)
 	}
 
 	ua := stringFromMap(event.Payload, "user_agent")

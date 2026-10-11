@@ -3,14 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { DevicesPage } from './DevicesPage'
 
-const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,metadataError:false,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnostics:vi.fn(()=>({data:undefined}))}))
+const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,metadataError:false,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnosticsData:undefined as unknown,diagnostics:vi.fn((_enabled?:boolean)=>({data:undefined as unknown}))}))
 vi.mock('../shared/api/queries', () => ({
   useOrganization: fixture.organization,
-  useDeviceRecognitionSummary: fixture.diagnostics,
+  useDeviceRecognitionSummary: (enabled?:boolean)=>{fixture.diagnostics(enabled);return {data:fixture.diagnosticsData}},
   useDevices: () => ({ data: { items: fixture.items, page: {next_cursor:'20'}, facets: { brands: [], os_families: [] } },dataUpdatedAt:Date.now(), isFetching: false,isPlaceholderData:false,refresh:fixture.refresh }),
   useDeviceInventoryMetadata:()=>({data:fixture.total===undefined?undefined:{total:fixture.total,facets:{brands:[],os_families:[]}},isError:fixture.metadataError,refresh:fixture.metadataRefresh}),
 }))
-afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.metadataError=false;localStorage.clear();vi.clearAllMocks()})
+afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.metadataError=false;fixture.diagnosticsData=undefined;localStorage.clear();vi.clearAllMocks()})
 function Location() { return <output data-testid="location">{useLocation().search}</output> }
 function setup(url = '/devices') { render(<MemoryRouter initialEntries={[url]}><DevicesPage /><Location /></MemoryRouter>) }
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) }) }
@@ -91,4 +91,23 @@ it('mounts campus filters only when expanded and enables diagnostics separately'
  const diagnostics=document.querySelector('.device-diagnostics') as HTMLDetailsElement
  diagnostics.open=true;fireEvent(diagnostics,new Event('toggle'))
  await waitFor(()=>expect(fixture.diagnostics).toHaveBeenLastCalledWith(true))
+})
+function openDiagnostics(){const diagnostics=document.querySelector('.device-diagnostics') as HTMLDetailsElement;diagnostics.open=true;fireEvent(diagnostics,new Event('toggle'))}
+it('reports link-layer attribution and per-source visibility',async()=>{
+ fixture.diagnosticsData={total_endpoints:36,coverage:{},event_count:100,mac_attributed_event_count:6,mac_attribution_rate:.06,event_attribution_rate:0,observability:[{source_event_type:'conn',event_count:60,mac_attributed_count:0},{source_event_type:'ssdp',event_count:40,mac_attributed_count:40}]}
+ setup('/devices?view=recent&window=24h')
+ openDiagnostics()
+ await waitFor(()=>expect(document.querySelector('.device-attribution-summary')).toBeTruthy())
+ expect(screen.getByText(/6 \/ 100 事件带 MAC/)).toBeInTheDocument()
+ const rows=document.querySelectorAll('.device-observability-list > li')
+ expect(rows).toHaveLength(2)
+ expect(rows[0]).toHaveTextContent('conn')
+ expect(rows[1]).toHaveTextContent('ssdp')
+ expect(screen.queryByText('镜像事件尚未带链路层地址')).not.toBeInTheDocument()
+})
+it('warns when no mirrored event carries a link-layer address',async()=>{
+ fixture.diagnosticsData={total_endpoints:1,coverage:{},event_count:100,mac_attributed_event_count:0,mac_attribution_rate:0,event_attribution_rate:0,observability:[{source_event_type:'conn',event_count:100,mac_attributed_count:0}]}
+ setup('/devices?view=recent&window=24h')
+ openDiagnostics()
+ await waitFor(()=>expect(screen.getByText('镜像事件尚未带链路层地址')).toBeInTheDocument())
 })

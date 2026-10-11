@@ -11,6 +11,16 @@ type RecognitionCoverage struct {
 	Rate  float64 `json:"rate"`
 }
 
+// SourceObservability reports, per collector log kind, how many events were
+// ingested and how many of them already carry a link-layer address. The
+// denominator for device identification is the number of distinct devices the
+// mirror can actually observe, not the number of recognised profiles.
+type SourceObservability struct {
+	SourceEventType    string `json:"source_event_type"`
+	EventCount         int    `json:"event_count"`
+	MACAttributedCount int    `json:"mac_attributed_count"`
+}
+
 type DeviceRecognitionSummary struct {
 	BrandInferenceConflicts int                            `json:"brand_inference_conflicts"`
 	BrandInferenceEnabled   bool                           `json:"brand_inference_enabled"`
@@ -21,6 +31,9 @@ type DeviceRecognitionSummary struct {
 	EventCount              int                            `json:"event_count"`
 	AttributedEventCount    int                            `json:"attributed_event_count"`
 	EventAttributionRate    float64                        `json:"event_attribution_rate"`
+	MACAttributedEventCount int                            `json:"mac_attributed_event_count"`
+	MACAttributionRate      float64                        `json:"mac_attribution_rate"`
+	Observability           []SourceObservability          `json:"observability"`
 	EcosystemMatched        int                            `json:"ecosystem_matched"`
 	EcosystemAttributed     int                            `json:"ecosystem_attributed"`
 	EcosystemUnattributed   int                            `json:"ecosystem_unattributed"`
@@ -112,6 +125,32 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 		result.EventCount, result.AttributedEventCount = eventRows[0].EventCount, eventRows[0].Attributed
 		if result.EventCount > 0 {
 			result.EventAttributionRate = float64(result.AttributedEventCount) / float64(result.EventCount)
+		}
+	}
+	// Per-source observability answers "how much of the mirror can identify a
+	// device at all": a device identification rate is only meaningful once
+	// link-layer attribution and self-report visibility are known separately.
+	// A failed breakdown degrades to an empty list instead of failing the page.
+	data, err = s.ch.query(ctx, `SELECT source_event_type,count() AS event_count,countIf(subject_mac!='') AS mac_attributed_count FROM normalized_events PREWHERE timestamp>=now()-INTERVAL 24 HOUR GROUP BY source_event_type ORDER BY event_count DESC LIMIT 32 FORMAT JSONEachRow`)
+	if err == nil {
+		var rows []struct {
+			SourceEventType    string `json:"source_event_type"`
+			EventCount         int    `json:"event_count"`
+			MACAttributedCount int    `json:"mac_attributed_count"`
+		}
+		if decodeJSONEachRow(data, &rows) == nil {
+			result.Observability = make([]SourceObservability, 0, len(rows))
+			for _, row := range rows {
+				result.Observability = append(result.Observability, SourceObservability{
+					SourceEventType:    row.SourceEventType,
+					EventCount:         row.EventCount,
+					MACAttributedCount: row.MACAttributedCount,
+				})
+				result.MACAttributedEventCount += row.MACAttributedCount
+			}
+			if result.EventCount > 0 {
+				result.MACAttributionRate = float64(result.MACAttributedEventCount) / float64(result.EventCount)
+			}
 		}
 	}
 	if version != "" {

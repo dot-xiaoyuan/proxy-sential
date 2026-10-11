@@ -120,6 +120,20 @@ export function DevicesPage() {
 			<RecognitionCoverage label="生态线索" value={recognitionSummary.data.coverage.ecosystem} total={recognitionSummary.data.total_endpoints} />
 		</div>
 		<div className="recognition-summary-meta">近 7 天 · 品牌线索冲突 {recognitionSummary.data.brand_inference_conflicts ?? 0} · 生态匹配 {recognitionSummary.data.ecosystem_matched} · 已归属 {recognitionSummary.data.ecosystem_attributed} · 未归属 {recognitionSummary.data.ecosystem_unattributed} · 规则 {recognitionSummary.data.domain_rule_version || ''}</div>
+		{recognitionSummary.data.event_count > 0 && <>
+			<div className="device-attribution-summary">
+				<Typography.Text type="secondary">链路层归属（近 24 小时）</Typography.Text>
+				<Typography.Text strong>{recognitionSummary.data.mac_attributed_event_count ?? 0} / {recognitionSummary.data.event_count} 事件带 MAC · {Math.round((recognitionSummary.data.mac_attribution_rate ?? 0) * 100)}%</Typography.Text>
+			</div>
+			{(recognitionSummary.data.observability?.length ?? 0) > 0 && <ul className="device-observability-list" aria-label="按来源可见性">
+				{[...(recognitionSummary.data.observability ?? [])].sort((left,right)=>right.event_count-left.event_count).slice(0,12).map(item=><li key={item.source_event_type}>
+					<Typography.Text className="device-observability-source">{item.source_event_type}</Typography.Text>
+					<Typography.Text type="secondary">{item.event_count} 事件</Typography.Text>
+					<Typography.Text strong={item.mac_attributed_count>0}>{item.mac_attributed_count} 带 MAC</Typography.Text>
+				</li>)}
+			</ul>}
+			{(recognitionSummary.data.mac_attributed_event_count ?? 0) === 0 && <Alert showIcon type="warning" title="镜像事件尚未带链路层地址" description="Zeek 需要加载 mac-logging 才能给连接日志附加 MAC，按来源可见性可以看出是哪些日志缺少归属。" />}
+		</>}
 		{recognitionSummary.data.event_count > 0 && recognitionSummary.data.event_attribution_rate < 0.2 && <Alert showIcon type="warning" title={`最近 24 小时终端归属率 ${Math.round(recognitionSummary.data.event_attribution_rate * 100)}%，生态命中暂无法完整写入终端画像`} description={<Link to="/ingest">检查身份接入与标准事件 endpoint_id</Link>} />}
 		</>}
 	</div>}</details>

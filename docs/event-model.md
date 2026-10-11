@@ -188,6 +188,24 @@ IPv6 使用 `source_event_type = hop_limit`、`payload.origin = hop_limit` 和
 原始观测仍保留。缺少范围的历史事件沿用兼容读取，按自然窗口过期；不为历史数据补造上下文。
 示例见 `examples/device/ttl-scope/protocol-ttl.jsonl`。
 
+### 协议自报归属事件
+
+Zeek 无法给 `dns`/`http`/`ssl` 日志附加链路层地址，因此 HTTP `Server` 头、
+页面标题和 TLS 证书字段虽然能识别设备，却无法直接落到物理终端。域名识别
+worker 对这些事件按“同一传感器、园区、地址与事件时刻的唯一有效 DHCP 租约”
+归属，并派生 `type = device` 的标准事件：
+
+- `payload.origin = "http"` 或 `"tls"`，`payload.derived = "protocol-self-report"`
+- `payload` 只保留白名单自报字段：`server`、`title`、`certificate_subject`、
+  `certificate_issuer`、`certificate_san`、`ja3`、`ja4`
+- `subject.mac` 来自唯一租约；缺失租约、租约冲突或非 `mac:` 归属一律跳过，
+  不按地址猜测
+- `event_id` 由原事件 ID 与类型稳定哈希得到，重复批次幂等
+- `raw_ref.derived_from` 指向原始事件 ID
+
+派生事件只写入 PostgreSQL 的终端画像与设备信号，不回写 ClickHouse 标准事件，
+因此证据聚合、风险评分、共享判定与路由识别不受影响。
+
 ### identity
 
 账号、终端、IP 和接入位置的身份关联事件，来自 RADIUS、Portal、802.1X、

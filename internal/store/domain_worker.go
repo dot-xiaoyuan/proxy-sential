@@ -153,6 +153,20 @@ func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) err
 			return err
 		}
 	}
+	// Protocol self-report such as HTTP Server headers and TLS certificate
+	// fields identifies a device but arrives without a link-layer address.
+	// Attribute it through the same unique-lease rule as software
+	// announcements. Derived events stay inside the device profile path and are
+	// never written back to ClickHouse evidence or risk scoring.
+	protocol, err := s.pg.protocolDeviceEvents(ctx, batch.events)
+	if err != nil {
+		return err
+	}
+	if len(protocol) > 0 {
+		if err := s.pg.WriteProtocolDeviceEvents(ctx, protocol); err != nil {
+			return err
+		}
+	}
 	if err := s.pg.processDeviceNamesReceived(ctx, batch.events, batch.enqueuedAt); err != nil {
 		return err
 	}

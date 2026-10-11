@@ -226,7 +226,7 @@ def main():
             env = os.environ.copy()
             env['ZEEK_PLUGIN_PATH'] = str(private/PREFIX.rstrip('/'))
             with (private/'preflight.log').open('wb') as log:
-                run([str(binary),str(release/'assets/zeek/local-device-signals.zeek'),'policy/protocols/dhcp/software.zeek',str(release/'assets/zeek/proxy-transactions.zeek'),'LogAscii::use_json=T'],cwd=private,env=env,stdout=log,stderr=log)
+                run([str(binary),str(release/'assets/zeek/local-device-signals.zeek'),'policy/protocols/dhcp/software.zeek','policy/protocols/conn/mac-logging.zeek',str(release/'assets/zeek/proxy-transactions.zeek'),'LogAscii::use_json=T'],cwd=private,env=env,stdout=log,stderr=log)
             active()
             if not args.activate:
                 print(json.dumps({'preflight':'passed','activated':False,'zeek_version':version,'archive_sha256':manifest['archive_sha256']}))

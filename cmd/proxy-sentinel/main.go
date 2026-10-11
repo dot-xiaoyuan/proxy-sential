@@ -80,6 +80,8 @@ func run(args []string) error {
 		return runDeviceFingerprint(args[1:])
 	case "device-signal":
 		return runDeviceSignal(args[1:])
+	case "device-census":
+		return runDeviceCensus(args[1:])
 	case "router":
 		return runRouter(args[1:])
 	case "application-library":
@@ -417,6 +419,61 @@ func runDeviceSignal(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly})
+}
+
+// runDeviceCensus prints the passive device census for one sensor. It is
+// read-only: it never writes events, profiles or actions, so it can run
+// repeatedly during field sampling.
+func runDeviceCensus(args []string) error {
+	fs := flag.NewFlagSet("device-census", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
+	window := fs.Duration("window", 24*time.Hour, "observation window")
+	asJSON := fs.Bool("json", false, "print the report as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*postgresDSN) == "" || strings.TrimSpace(*clickhouseDSN) == "" {
+		return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
+	}
+	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, CollectorKind: "device-census", PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: 2 * time.Minute})
+	if err != nil {
+		return err
+	}
+	defer backend.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	census, err := backend.GetDeviceCensus(ctx, *window)
+	if err != nil {
+		return err
+	}
+	for _, item := range census.Errors {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", item)
+	}
+	if *asJSON {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(census)
+	}
+	recognition := census.Recognition
+	fmt.Printf("传感器 %s · 窗口 %d 秒 · %s\n", census.SensorID, census.WindowSeconds, census.AsOf)
+	fmt.Printf("镜像可见设备：MAC %d · 源地址 %d · 持有效租约 %d\n", census.ObservedMACs, census.ObservedIPs, census.LeasedDevices)
+	fmt.Printf("终端画像 %d · MAC 归属率 %.1f%% · 事件 endpoint_id 归属率 %.1f%%\n",
+		recognition.TotalEndpoints, recognition.MACAttributionRate*100, recognition.EventAttributionRate*100)
+	keys := []string{"vendor", "brand", "model", "device_type", "os_family"}
+	for _, key := range keys {
+		item := recognition.Coverage[key]
+		fmt.Printf("  %-11s %5d / %d (%.1f%%)\n", key, item.Known, recognition.TotalEndpoints, item.Rate*100)
+	}
+	if len(recognition.Observability) > 0 {
+		fmt.Println("按来源可见性（近 24 小时）：")
+		for _, item := range recognition.Observability {
+			fmt.Printf("  %-16s 事件 %9d · 带 MAC %9d\n", item.SourceEventType, item.EventCount, item.MACAttributedCount)
+		}
+	}
+	return nil
 }
 
 func runMigrate(args []string) error {
@@ -1386,7 +1443,8 @@ func runControlPlaneServe(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
+	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n" +
+		"       proxy-sentinel device-census --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--sensor-id office-30] [--window 24h] [--json]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
 }
 
 func firstEnv(name, fallback string) string {
