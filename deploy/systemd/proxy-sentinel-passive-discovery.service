@@ -1,0 +1,24 @@
+[Unit]
+Description=Proxy Sentinel scoped passive DHCP discovery materializer
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+EnvironmentFile=/opt/proxy-sentinel/config/discovery.env
+Environment=PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY=true
+ExecStart=/opt/proxy-sentinel/current/bin/passive-discovery-worker --sensor-id ${PROXY_SENTINEL_SENSOR_ID}
+Restart=on-failure
+RestartSec=10
+CPUQuota=100%
+MemoryHigh=384M
+MemoryMax=768M
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

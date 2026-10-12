@@ -16,6 +16,7 @@ UNIT_BINARIES={
  'proxy-sentinel-ncu-identity-materializer.service':'proxy-sentinel',
  'proxy-sentinel-application-materializer.service':'proxy-sentinel',
  'proxy-sentinel-discovery.service':'discovery-worker',
+ 'proxy-sentinel-passive-discovery.service':'passive-discovery-worker',
  'proxy-sentinel-ncu-identity-sync.service':'legacy-4k-identity-bridge',
 }
 
