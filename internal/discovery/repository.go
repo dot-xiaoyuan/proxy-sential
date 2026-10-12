@@ -678,7 +678,7 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 // hostname or endpoint profile alone cannot establish an IoT device type.
 func iotServiceCategory(item DeviceView) string {
 	for _, o := range item.Observations {
-		if o.Withdrawn || confidenceRank(o.Confidence) < confidenceRank("strong") {
+		if o.Withdrawn || confidenceRank(o.Confidence) == 0 || (o.Confidence == "clue" && o.MAC == "") {
 			continue
 		}
 		switch o.Origin {
