@@ -203,13 +203,32 @@ has_compose() {
 }
 
 start_storage_direct() {
+  local container
   log "Docker Compose v2 is unavailable; using the compatible single-host Docker runtime"
   mkdir -p "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/postgres" \
     "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/clickhouse/data" \
     "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/clickhouse/logs"
+  # A running container on the pinned image is kept: recreating it is never
+  # needed for an application upgrade, and "docker rm -f" kills PostgreSQL
+  # without a checkpoint, forcing crash recovery that on large databases
+  # outlasts the health wait. Replacement stops the server cleanly first.
+  local postgres_keep=false clickhouse_keep=false
+  storage_container_current proxy-sentinel-postgres "$POSTGRES_IMAGE" && postgres_keep=true
+  storage_container_current proxy-sentinel-clickhouse "$CLICKHOUSE_IMAGE" && clickhouse_keep=true
+  if [[ "$postgres_keep" == true && "$clickhouse_keep" == true ]]; then
+    log "storage containers already run the pinned images; keeping them"
+    return
+  fi
   for container in proxy-sentinel-postgres proxy-sentinel-clickhouse; do
-    if docker inspect "$container" >/dev/null 2>&1; then docker rm -f "$container" >/dev/null; fi
+    [[ "$container" == proxy-sentinel-postgres && "$postgres_keep" == true ]] && continue
+    [[ "$container" == proxy-sentinel-clickhouse && "$clickhouse_keep" == true ]] && continue
+    if docker inspect "$container" >/dev/null 2>&1; then
+      log "replacing $container after a clean stop"
+      docker stop --time 300 "$container" >/dev/null 2>&1 || true
+      docker rm "$container" >/dev/null
+    fi
   done
+  if [[ "$postgres_keep" != true ]]; then
   docker run -d --name proxy-sentinel-postgres --restart unless-stopped \
     --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
     --cpus "${POSTGRES_CPUS:-2.0}" --memory "${POSTGRES_MEMORY:-3g}" \
@@ -218,6 +237,8 @@ start_storage_direct() {
     -v "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/postgres:/var/lib/postgresql" \
     --health-cmd='pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' --health-interval=10s --health-timeout=5s --health-retries=12 \
     "$POSTGRES_IMAGE" >/dev/null
+  fi
+  if [[ "$clickhouse_keep" != true ]]; then
   docker run -d --name proxy-sentinel-clickhouse --restart unless-stopped \
     --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
     --cpus "${CLICKHOUSE_CPUS:-8.0}" --memory "${CLICKHOUSE_MEMORY:-12g}" \
@@ -230,6 +251,14 @@ start_storage_direct() {
     --health-cmd='clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SELECT 1"' \
     --health-interval=10s --health-timeout=5s --health-retries=18 \
     "$CLICKHOUSE_IMAGE" >/dev/null
+  fi
+}
+
+storage_container_current() {
+  local container="$1" image="$2" running configured
+  running="$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)"
+  configured="$(docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null || true)"
+  [[ "$running" == true && "$configured" == "$image" ]]
 }
 
 start_storage() {
@@ -264,7 +293,9 @@ pull_images() {
 
 wait_storage() {
   for container in proxy-sentinel-postgres proxy-sentinel-clickhouse; do
-    for _ in $(seq 1 45); do
+    # Crash or archive recovery of a large PostgreSQL cluster can take several
+    # minutes before it accepts connections.
+    for _ in $(seq 1 "${PROXY_SENTINEL_STORAGE_HEALTH_WAIT_STEPS:-450}"); do
       status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
       [[ "$status" == healthy || "$status" == running ]] && break
       sleep 2
