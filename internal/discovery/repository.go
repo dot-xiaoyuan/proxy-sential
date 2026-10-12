@@ -608,7 +608,10 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 		return nil, err
 	}
 	needle := strings.ToLower(strings.TrimSpace(query.Search))
-	filtered := items[:0]
+	// Copy instead of aliasing the cached slice: filtering must not rewrite the
+	// cache, and an empty result has to stay a non-nil slice so the JSON
+	// contract is [] rather than null.
+	filtered := make([]DeviceView, 0, len(items))
 	for _, item := range items {
 		if query.DeviceType != "" && item.DeviceType != query.DeviceType {
 			continue
@@ -627,7 +630,7 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 		filtered = append(filtered, item)
 	}
 	facets := deviceFacets(filtered)
-	items = filtered[:0]
+	items = make([]DeviceView, 0, len(filtered))
 	for _, item := range filtered {
 		if query.Category != "" && item.Category != query.Category {
 			continue

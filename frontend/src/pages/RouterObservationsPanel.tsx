@@ -52,7 +52,7 @@ export function RouterObservationsPanel() {
     { title: '操作', key: 'action', width: 90, fixed: 'right', render: (_, item) => <Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link> },
   ]
   const items = observations.data?.items || []
-  const total = observations.data?.page.total || 0
+  const total = observations.data?.page?.total ?? 0
   return <div className="router-observations-panel">
     <Form form={form} className="router-filter-form" layout="vertical" onFinish={submit}>
       <div className="router-filter-primary"><Form.Item name="keyword"><Input allowClear prefix={<SearchOutlined />} placeholder="搜索品牌、型号、IP 或 MAC" /></Form.Item><Form.Item className="router-auth-filter" name="has_auth_binding" valuePropName="checked"><Checkbox>只看有认证身份</Checkbox></Form.Item><div className="router-filter-actions"><Button type="primary" htmlType="submit">查询</Button><Button onClick={() => { form.resetFields(); submit({}) }}>重置</Button><Button icon={<ReloadOutlined />} loading={observations.isFetching} onClick={() => void observations.refetch()}>刷新</Button></div></div>
