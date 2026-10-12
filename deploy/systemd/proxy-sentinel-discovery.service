@@ -7,10 +7,13 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
 EnvironmentFile=-/opt/proxy-sentinel/config/discovery.env
-ExecStart=/opt/proxy-sentinel/current/bin/discovery-worker --node ${PROXY_SENTINEL_SENSOR_ID}
+ExecStart=/opt/proxy-sentinel/current/bin/discovery-worker --node ${PROXY_SENTINEL_SENSOR_ID} --interface ${PROXY_SENTINEL_DISCOVERY_INTERFACE} --site ${PROXY_SENTINEL_DISCOVERY_SITE} --domain ${PROXY_SENTINEL_DISCOVERY_DOMAIN} --allow-cidrs ${PROXY_SENTINEL_DISCOVERY_CIDRS} --ssdp-describe=false
 Restart=on-failure
 RestartSec=10
 UMask=0077
+StateDirectory=proxy-sentinel
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/proxy-sentinel
