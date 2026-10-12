@@ -24,7 +24,7 @@ var embeddedBrandAliases []byte
 //go:embed data/domain_signatures.json
 var embeddedDomainSignatures []byte
 
-const EmbeddedVersion = "embedded-2026-09"
+const EmbeddedVersion = "embedded-2026-10.1"
 
 var macHostnameClue = regexp.MustCompile(`(?i)(^|[-_. ])(mac(book|intosh)?|imac)($|[-_. 0-9])`)
 
@@ -183,7 +183,9 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			}
 		}
 	}
-	joined := strings.Join(append(append([]string{}, signals.Hostnames...), append(signals.Software, signals.Hints...)...), " ")
+	// The DHCP vendor class is self-reported like the hostname (for example
+	// "HP LaserJet" or "HUAWEI:openharmony:<model>"), so rules see it too.
+	joined := strings.Join(append(append(append([]string{}, signals.Hostnames...), append(signals.Software, signals.Hints...)...), signals.DHCPVendorClass), " ")
 	for _, rule := range l.rules {
 		input := joined
 		if rule.Input == "user_agent" {

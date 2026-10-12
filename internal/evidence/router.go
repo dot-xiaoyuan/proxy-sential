@@ -625,6 +625,12 @@ func routerMatchScore(family string, match fingerprint.RouterRuleMatch) int {
 	case "lldp", "cdp":
 		return 55
 	case "ssdp":
+		// A SERVER header naming the product model ("TPOS/1.0.0 UPnP/1.0
+		// TL-WDR5620") is a self-report as strong as a DHCP hostname. Service
+		// types and generic UPnP stacks stay a weak hint.
+		if match.Rule.Strength == "strong" && match.Model != "" && match.Rule.Score > 0 {
+			return 55
+		}
 		return 20
 	case "http_management", "tls_management":
 		return 30

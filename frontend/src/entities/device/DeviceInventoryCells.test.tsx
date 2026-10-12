@@ -119,3 +119,12 @@ it('uses a uniform semantic glyph and text-only VMware clue in the list identity
  expect(document.querySelector('.brand-logo-vmware')).toBeNull()
  expect(screen.getByText(/品牌推测/)).toBeVisible()
 })
+it('ledger names network devices and dumb terminals instead of raw type codes',()=>{
+ const cases:[string,string,string,string][]=[['router','TP-Link','TL-WDR7666','路由器'],['access_point','Huawei','AirEngine5762','无线接入点'],['iot','Midea','美的家电(ac)','物联网设备'],['media_device','Xiaomi','小米电视','电视/媒体设备'],['camera','Xiaomi','智能摄像机','摄像头']]
+ for(const [type,brand,model,label] of cases){
+  render(<DeviceLedgerRecognition device={{...domainOnlyDevice,device_type:type,device_type_confidence:.9,brand,brand_confidence:.9,model,model_confidence:.9}}/>)
+  expect(screen.getByText(label)).toBeVisible()
+  expect(screen.queryByText(type,{exact:true})).not.toBeInTheDocument()
+  cleanup()
+ }
+})

@@ -1,6 +1,6 @@
 import { Tag, Tooltip, Typography } from 'antd'
 import { Link } from 'react-router-dom'
-import { CloudServerOutlined, DeploymentUnitOutlined, DesktopOutlined, HddOutlined, LaptopOutlined, MobileOutlined, PrinterOutlined, TabletOutlined } from '@ant-design/icons'
+import { ApartmentOutlined, ApiOutlined, CloudServerOutlined, DeploymentUnitOutlined, DesktopOutlined, HddOutlined, LaptopOutlined, MobileOutlined, PlaySquareOutlined, PrinterOutlined, TabletOutlined, VideoCameraOutlined, WifiOutlined } from '@ant-design/icons'
 import type { DeviceInventoryListItem, EndpointDeviceInventory } from '../../shared/api/types'
 import { BrandLogo } from './BrandLogo'
 import { DeviceNameView } from './DeviceNameView'
@@ -89,6 +89,11 @@ export function DeviceSemanticIcon({ device }: { device: DeviceDisplayItem }) {
   const confidentType = !device.recognition_conflict && (device.device_type_confidence ?? 0) >= .8 ? (device.device_type || '').toLowerCase() : ''
   const confidentOS = !device.recognition_conflict && (device.os_family_confidence ?? 0) >= .8 ? (device.os_family || '').toLowerCase() : ''
   const Icon = /printer|打印/.test(confidentType) ? PrinterOutlined
+    : /router|switch|gateway|路由|交换/.test(confidentType) ? ApartmentOutlined
+    : /access_point|接入点/.test(confidentType) ? WifiOutlined
+    : /camera|摄像/.test(confidentType) ? VideoCameraOutlined
+    : /media_device|电视|媒体/.test(confidentType) ? PlaySquareOutlined
+    : /\biot\b|物联网/.test(confidentType) ? ApiOutlined
     : /phone|mobile|手机/.test(confidentType) ? MobileOutlined
     : /tablet|平板/.test(confidentType) ? TabletOutlined
     : /laptop|notebook|笔记本/.test(confidentType) ? LaptopOutlined
@@ -150,6 +155,12 @@ function isEmptyRecognition(value?: string) {
 function deviceTypeLabel(value: string) {
   const normalized = value.toLowerCase()
   if (/printer/.test(normalized)) return '打印机'
+  if (/router/.test(normalized)) return '路由器'
+  if (/access_point/.test(normalized)) return '无线接入点'
+  if (/switch/.test(normalized)) return '交换机'
+  if (/camera/.test(normalized)) return '摄像头'
+  if (/media_device/.test(normalized)) return '电视/媒体设备'
+  if (/^iot$/.test(normalized)) return '物联网设备'
   if (/phone|mobile/.test(normalized)) return '手机'
   if (/tablet/.test(normalized)) return '平板设备'
   if (/laptop|notebook/.test(normalized)) return '笔记本电脑'

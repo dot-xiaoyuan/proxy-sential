@@ -1,5 +1,5 @@
 {
-  "version": "router-rules-2026-09-30.12",
+  "version": "router-rules-2026-10-12.1",
   "thresholds": {
     "likely_min": 60,
     "confirmed_min": 80,
@@ -40,6 +40,12 @@
     {"id":"open-router-os","version":"2026-09-29","inputs":["vendor_class","software","lldp_system_description","http_server","http_title","tls_subject","tls_san"],"match":"regex","pattern":"\\b(OpenWrt|VyOS|DD[- _]?WRT|FreshTomato)\\b","brand":"$1","series":"router-os","model":"$1","role":"router","strength":"strong","score":45,"exclude":false,"explanation":"开源路由操作系统线索，需要独立角色证据确认"},
     {"id":"huawei-brand-reference","version":"2026-09-24","inputs":["oui_vendor","hostname","vendor_class","software","http_server","http_title","tls_subject","tls_san"],"match":"regex","pattern":"\\b(Huawei|Honor)\\b","brand":"Huawei","role":"unknown","strength":"weak","score":10,"exclude":false,"explanation":"Huawei 厂商参考，不能单独确认设备角色"},
     {"id":"h3c-brand-reference","version":"2026-09-24","inputs":["oui_vendor","hostname","vendor_class","software","http_server","http_title","tls_subject","tls_san"],"match":"regex","pattern":"\\b(H3C|Hewlett Packard Enterprise|New H3C)\\b","brand":"H3C","role":"unknown","strength":"weak","score":10,"exclude":false,"explanation":"H3C 厂商参考，不能单独确认设备角色"},
+    {"id":"tplink-switch-model","version":"2026-10-12","inputs":["hostname","vendor_class","software","http_server","http_title"],"match":"regex","pattern":"\\b(TL[- _]?(SG|SF|SL|SH)[0-9]{3,5}[A-Za-z0-9-]*)","brand":"TP-Link","series":"$2","model":"$1","role":"switch","strength":"strong","score":-60,"exclude":true,"conflict_code":"infrastructure_switch","explanation":"TP-Link TL-SG/SF 等交换机自报型号"},
+    {"id":"tplink-ap-model","version":"2026-10-12","inputs":["hostname","vendor_class","software","http_server","http_title"],"match":"regex","pattern":"\\b(TL[- _]?X?AP[0-9]{3,5}[A-Za-z0-9-]*)","brand":"TP-Link","series":"AP","model":"$1","role":"ap","strength":"strong","score":-60,"exclude":true,"conflict_code":"infrastructure_ap","explanation":"TP-Link 无线接入点自报型号"},
+    {"id":"tplink-router-model","version":"2026-10-12","inputs":["hostname","vendor_class","software","http_server","http_title"],"match":"regex","pattern":"\\b(TL[- _]?(WDR|XDR|WR|WTR|ER|MR)[0-9]{3,5}[A-Z]{0,4})","brand":"TP-Link","series":"$2","model":"$1","role":"router","strength":"strong","score":60,"exclude":false,"explanation":"TP-Link 家用/小企业路由器在 DHCP 主机名或 SSDP SERVER 头中自报型号（含易展版）"},
+    {"id":"tplink-wireless-n-router","version":"2026-10-12","inputs":["http_server","http_title"],"match":"regex","pattern":"\\bWireless N Router (WR[0-9]{3,4}[A-Z]{0,2})\\b","brand":"TP-Link","series":"WR","model":"TL-$1","role":"router","strength":"strong","score":60,"exclude":false,"explanation":"TP-Link 旧款 Wireless N Router 的 SSDP SERVER 自报型号"},
+    {"id":"xiaomi-miwifi-model","version":"2026-10-12","inputs":["hostname","vendor_class","software"],"match":"regex","pattern":"\\bMiWiFi[- _]?([A-Za-z0-9]{2,8})\\b","brand":"Xiaomi","series":"MiWiFi","model":"$1","role":"router","strength":"strong","score":60,"exclude":false,"explanation":"小米路由器 DHCP 默认主机名 MiWiFi-<型号>"},
+    {"id":"huawei-atp-gateway","version":"2026-10-12","inputs":["http_server"],"match":"regex","pattern":"\\bHuawei-ATP-IGD\\b","brand":"Huawei","series":"ATP","model":"ATP 家庭网关","role":"router","strength":"strong","score":55,"exclude":false,"explanation":"华为 ATP 家庭网关（光猫/路由一体机）SSDP SERVER 自报平台"},
     {"id":"router-vendor-reference","version":"2026-09-29","inputs":["oui_vendor","hostname","vendor_class","software","lldp_system_description","cdp_platform","http_server","http_title","tls_subject","tls_san"],"match":"regex","pattern":"\\b(Cisco|TP[- _]?Link|Ruijie|Reyee|MikroTik|Juniper|ZTE|Xiaomi|Tenda|NETGEAR|ASUS|Ubiquiti)\\b","brand":"$1","role":"unknown","strength":"weak","score":10,"exclude":false,"explanation":"网络设备厂商参考，不能单独确认路由器角色"}
   ]
 }
