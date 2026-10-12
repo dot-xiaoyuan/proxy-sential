@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "usage: install-openeuler.sh --version VERSION --archive FILE --checksum FILE --env-file FILE [--admin-secret FILE]" >&2
+  echo "usage: install-openeuler.sh --version VERSION --archive FILE --checksum FILE --env-file FILE [--admin-secret FILE] [--skip-backup]" >&2
 }
 
-version=""; archive=""; checksum=""; env_file=""; admin_secret=""; preflight_only=false
+version=""; archive=""; checksum=""; env_file=""; admin_secret=""; preflight_only=false; skip_backup=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version="${2:-}"; shift 2 ;;
@@ -14,6 +14,7 @@ while [[ $# -gt 0 ]]; do
     --env-file) env_file="${2:-}"; shift 2 ;;
     --admin-secret) admin_secret="${2:-}"; shift 2 ;;
     --preflight-only) preflight_only=true; shift ;;
+    --skip-backup) skip_backup=true; shift ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -321,7 +322,9 @@ chmod 0755 "$stage_dir/bin/proxy-sentinel" "$stage_dir/scripts/proxy-sentinelctl
 
 had_storage=false
 if docker inspect proxy-sentinel-postgres proxy-sentinel-clickhouse >/dev/null 2>&1; then had_storage=true; fi
-if [[ "$had_storage" == true ]]; then
+if [[ "$had_storage" == true && "$skip_backup" == true ]]; then
+  log "skipping logical database backup as requested; migrations are forward-only and cannot be undone"
+elif [[ "$had_storage" == true ]]; then
   log "creating logical database backup before migration"
   PROXY_SENTINEL_ROOT="$root" PROXY_SENTINEL_ENV_FILE="$env_file" PROXY_SENTINEL_COMPOSE_FILE="$stage_dir/deploy/compose/storage.yml" "$stage_dir/scripts/proxy-sentinelctl" backup >/dev/null
 fi
