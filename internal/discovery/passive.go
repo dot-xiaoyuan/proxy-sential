@@ -51,22 +51,6 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 		payload["origin"] = kind
 		return normalized.Event{SchemaVersion: "v1", EventID: "passive-" + hex.EncodeToString(h[:16]), Type: "discovery", Confidence: 0.5, Flow: map[string]any{"src_ip": "", "dst_ip": "", "proto": "other", "direction": "unknown"}, Source: "passive", Timestamp: at.Format(time.RFC3339Nano), Observer: map[string]any{"source_id": source.ID, "sensor_id": source.Node, "config_version": source.ConfigVersion, "interface": source.Address}, Subject: map[string]any{"site": source.Site, "domain": source.Domain, "vlan": vlan, "ip": ip, "mac": mac}, Payload: payload}
 	}
-	if ether == 0x0806 {
-		arp := frame[offset:]
-		if len(arp) < 28 || binary.BigEndian.Uint16(arp[0:2]) != 1 ||
-			binary.BigEndian.Uint16(arp[2:4]) != 0x0800 ||
-			arp[4] != 6 || arp[5] != 4 ||
-			binary.BigEndian.Uint16(arp[6:8]) != 2 {
-			return nil
-		}
-		mac := net.HardwareAddr(arp[8:14])
-		if mac[0]&1 != 0 || bytes.Equal(mac, make([]byte, 6)) ||
-			(senderMAC != "" && senderMAC != mac.String()) {
-			return nil
-		}
-		ip := net.IP(arp[14:18]).String()
-		return []normalized.Event{emit("arp", ip+":"+mac.String(), ip, mac.String(), map[string]any{"ttl": 600, "is_response": true})}
-	}
 	if ether == 0x88cc {
 		data := frame[offset:]
 		p := map[string]any{"location_kind": "neighbor"}
