@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { runtimeFindings } from './support/runtime-findings'
 
 /**
  * 全页面遍历测试：router.tsx 中登记的每一个页面路由 + tab/section 变体 + 遗留重定向，
@@ -312,8 +313,9 @@ for (const viewport of viewports) {
 		})
 		page.on('requestfailed', (request) => requestFailures.push(`${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`))
 		page.on('response', (response) => {
-			if (response.status() < 400) return
-			if (!response.url().includes('/api/')) return
+			if (!new URL(response.url()).pathname.startsWith('/api/')) return
+			// Mock 审查不应访问真实 API，即使未被拦截的请求返回 200。
+			if (response.status() < 400 && response.fromServiceWorker()) return
 			httpErrors.push({ url: `${response.request().method()} ${response.url()}`, status: response.status(), mock: response.fromServiceWorker() })
 		})
 
@@ -414,8 +416,7 @@ for (const viewport of viewports) {
 			record.requestFailures = [...requestFailures]
 			record.mockErrors = httpErrors.filter((item) => item.mock).map((item) => ({ url: item.url, status: item.status }))
 			record.unmockedRequests = httpErrors.filter((item) => !item.mock).map((item) => ({ url: item.url, status: item.status }))
-			for (const error of record.pageErrors) push('js-error', error.split('\n')[0])
-			for (const item of record.mockErrors) push('api-error', `mock 接口 ${item.status} ${item.url}`)
+			for (const finding of runtimeFindings(record)) push(finding.kind, finding.detail)
 			// 导航导致的请求取消（ERR_ABORTED）属于页面切换的正常行为，仅作信息记录，不计为缺陷
 			for (const item of record.requestFailures) {
 				if (item.includes('ERR_ABORTED')) record.abortedRequests.push(item)
