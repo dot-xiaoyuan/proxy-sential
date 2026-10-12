@@ -39,6 +39,7 @@ func Capture(ctx context.Context, iface, spool string, source Source, allow []ne
 		return e
 	}
 	queue := make(chan []byte, 256)
+	arpSeen := make(map[string]time.Time)
 	done := make(chan error, 1)
 	go func() {
 		for b := range queue {
@@ -71,7 +72,18 @@ func Capture(ctx context.Context, iface, spool string, source Source, allow []ne
 		if err != nil {
 			return err
 		}
-		events := filterCaptureEvents(decodeFrame(buffer[:n], source, time.Now().UTC(), cache), allow)
+		now := time.Now().UTC()
+		events := filterCaptureEvents(decodeFrame(buffer[:n], source, now, cache), allow)
+		if len(events) > 0 && events[0].Payload["origin"] == "arp" {
+			key := str(events[0].Subject, "ip") + "|" + str(events[0].Subject, "mac") + "|" + str(events[0].Subject, "vlan")
+			if seen, ok := arpSeen[key]; ok && now.Sub(seen) < 3*time.Minute {
+				continue
+			}
+			if len(arpSeen) >= 100000 {
+				arpSeen = make(map[string]time.Time)
+			}
+			arpSeen[key] = now
+		}
 		if len(events) == 0 {
 			continue
 		}

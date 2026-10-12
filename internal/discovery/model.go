@@ -180,6 +180,11 @@ func FromEvent(e normalized.Event) (Observation, error) {
 	o.ValidUntil = o.ObservedAt.Add(time.Duration(ttl) * time.Second)
 	o.Withdrawn = ttl == 0 || e.Payload["withdrawn"] == true
 	switch o.Origin {
+	case "arp":
+		if e.Payload["is_response"] != true || o.IP == "" || o.MAC == "" {
+			return o, errors.New("ARP response with IP and MAC required")
+		}
+		o.Explanation = "ARP 应答声明的 IP 与 MAC，设备类型仍需其他证据"
 	case "fdb", "neighbor", "lldp":
 		o.Explanation = "基础设施表项或邻居公告；读取时间不代表终端流量观测时间"
 		if o.Origin == "lldp" {

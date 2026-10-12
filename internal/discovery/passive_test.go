@@ -55,6 +55,45 @@ func TestLLDPTruncatedDoesNotAttribute(t *testing.T) {
 	}
 }
 
+func TestARPReplyCreatesAddressClaimOnly(t *testing.T) {
+	frame := make([]byte, 14+28)
+	copy(frame[6:12], []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55})
+	binary.BigEndian.PutUint16(frame[12:14], 0x0806)
+	arp := frame[14:]
+	binary.BigEndian.PutUint16(arp[0:2], 1)
+	binary.BigEndian.PutUint16(arp[2:4], 0x0800)
+	arp[4], arp[5] = 6, 4
+	binary.BigEndian.PutUint16(arp[6:8], 2)
+	copy(arp[8:14], frame[6:12])
+	copy(arp[14:18], []byte{10, 152, 42, 13})
+	source := Source{ID: "pilot", Node: "ncu", Site: "ncu", Domain: "bond0"}
+	events := DecodeFrame(frame, source, time.Now())
+	if len(events) != 1 {
+		t.Fatalf("ARP reply was not decoded: %+v", events)
+	}
+	allow, err := ParseCaptureCIDRs("10.152.40.0/22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filterCaptureEvents(events, allow)) != 1 {
+		t.Fatal("in-scope ARP reply was filtered")
+	}
+	observation, err := FromEvent(events[0])
+	if err != nil || observation.IP != "10.152.42.13" ||
+		observation.MAC != "00:11:22:33:44:55" || observation.DeviceType != "" {
+		t.Fatalf("unexpected ARP observation: %+v, %v", observation, err)
+	}
+	arp[7] = 1
+	if len(DecodeFrame(frame, source, time.Now())) != 0 {
+		t.Fatal("ARP request attributed as device evidence")
+	}
+	arp[7] = 2
+	arp[8] = 0x66
+	if len(DecodeFrame(frame, source, time.Now())) != 0 {
+		t.Fatal("mismatched ARP sender MAC attributed as device evidence")
+	}
+}
+
 func TestSSDPNotifyWithdrawalUsesSameService(t *testing.T) {
 	packet := func(body string) []byte {
 		f := make([]byte, 42+len(body))
