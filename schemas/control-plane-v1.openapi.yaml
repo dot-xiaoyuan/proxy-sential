@@ -662,7 +662,7 @@ paths:
       operationId: getSystemStatus
       responses:
         "200":
-          description: Readiness of storage, authentication, identity ingestion, collector freshness, and the offline fingerprint library.
+          description: Readiness of storage, authentication, identity ingestion, collector freshness, expected signal arrival, and the offline fingerprint library. Stale expected signals report degraded here but never fail /readyz.
           content:
             application/json:
               schema:
@@ -678,6 +678,18 @@ paths:
                         status: { type: string }
                         error: { type: string }
                         updated_at: { type: string, format: date-time }
+                        signals:
+                          type: array
+                          description: Present on the signals component when PROXY_SENTINEL_SIGNAL_FRESHNESS is configured.
+                          items:
+                            type: object
+                            required: [signal, status, max_age_seconds]
+                            properties:
+                              signal: { type: string, description: 'event type, or source:event type' }
+                              status: { type: string, enum: [ready, stale, missing] }
+                              max_age_seconds: { type: integer }
+                              age_seconds: { type: integer }
+                              last_seen: { type: string, format: date-time }
                   fingerprint_library: { type: object, additionalProperties: true }
                   fingerprint_offline_mode: { type: boolean }
                   runtime:

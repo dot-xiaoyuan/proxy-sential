@@ -64,6 +64,7 @@ type Options struct {
 	OperationsFile         string
 	ActionMasterKey        string
 	PostgresMigrationsDir  string
+	SignalFreshness        []SignalExpectation
 }
 
 type Server struct {
@@ -73,6 +74,7 @@ type Server struct {
 	deviceInventoryMetadata *deviceInventoryPageCache
 	startedAt               time.Time
 	runtimeSampler          *runtimeSampler
+	signalFreshness         *signalFreshnessMonitor
 
 	actionDeliveries    *actionDeliveryQueue
 	statistics          *statisticsCache
@@ -107,7 +109,7 @@ type Server struct {
 	whitelist           *whitelistManager
 	blacklist           *whitelistManager
 	notifications       *notificationManager
-	discoveryDevices   *discovery.DeviceCache
+	discoveryDevices    *discovery.DeviceCache
 }
 
 type Session struct {
@@ -302,6 +304,9 @@ func Serve(opts Options) error {
 	}
 	if server.applications != nil && !opts.ReadOnly {
 		go server.applications.Run(ctx)
+	}
+	if server.signalFreshness != nil {
+		go server.signalFreshness.run(ctx)
 	}
 	return http.ListenAndServe(addr, server.Handler())
 }
@@ -499,6 +504,9 @@ func NewServerWithError(opts Options) (*Server, error) {
 		server.startNotificationWorker()
 		server.startDestinationTargetWorker()
 		server.startBehaviorReportWorker()
+	}
+	if arrivals, ok := reader.(store.SignalArrivalReader); ok {
+		server.signalFreshness = newSignalFreshnessMonitor(arrivals, opts.SignalFreshness)
 	}
 	return server, nil
 }

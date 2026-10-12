@@ -12,9 +12,10 @@ import (
 )
 
 type componentHealth struct {
-	Status    string `json:"status"`
-	Error     string `json:"error,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
+	Status    string            `json:"status"`
+	Error     string            `json:"error,omitempty"`
+	UpdatedAt string            `json:"updated_at,omitempty"`
+	Signals   []signalFreshness `json:"signals,omitempty"`
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -62,8 +63,33 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "proxy_sentinel_ingest_malformed_ratio{%s} %g\n", labels, badRate)
 		}
 	}
+	s.signalMetrics(w)
 	s.applicationMetrics(ctx, w)
 	s.identityMetrics(ctx, w)
+}
+
+func (s *Server) signalMetrics(w http.ResponseWriter) {
+	if s.signalFreshness == nil {
+		return
+	}
+	snapshot := s.signalFreshness.current()
+	if len(snapshot.signals) == 0 {
+		return
+	}
+	fmt.Fprint(w, "# HELP proxy_sentinel_signal_age_seconds Seconds since the newest normalized event of an expected signal; absent when none arrived in the lookback window.\n# TYPE proxy_sentinel_signal_age_seconds gauge\n")
+	for _, item := range snapshot.signals {
+		if item.AgeSeconds != nil {
+			fmt.Fprintf(w, "proxy_sentinel_signal_age_seconds{signal=%s} %d\n", strconv.Quote(item.Signal), *item.AgeSeconds)
+		}
+	}
+	fmt.Fprint(w, "# HELP proxy_sentinel_signal_stale Whether an expected signal is older than its configured maximum age or missing.\n# TYPE proxy_sentinel_signal_stale gauge\n")
+	for _, item := range snapshot.signals {
+		stale := 0
+		if item.Status != "ready" {
+			stale = 1
+		}
+		fmt.Fprintf(w, "proxy_sentinel_signal_stale{signal=%s} %d\n", strconv.Quote(item.Signal), stale)
+	}
 }
 
 func metricNumber(value any) float64 {
@@ -142,6 +168,15 @@ func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth
 		check("identity_ingest", true, func() error { return s.identityIngest.db.PingContext(ctx) })
 	} else {
 		components["identity_ingest"] = componentHealth{Status: "memory_mode"}
+	}
+	// Signal arrival is reported but never required: readiness gates release
+	// switches, and an intentionally disabled collector or a quiet campus must
+	// not roll a healthy release back. The system status reports it as degraded.
+	if s.signalFreshness != nil {
+		snapshot := s.signalFreshness.current()
+		health := snapshot.health
+		health.Signals = snapshot.signals
+		components["signals"] = health
 	}
 	launch("collector", true, func() componentHealth {
 		var runs []store.Run
@@ -236,7 +271,7 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	components, ready := s.healthSnapshot(ctx)
 	status := "ready"
-	if !ready {
+	if !ready || components["signals"].Status == "stale" {
 		status = "degraded"
 	}
 	ingestStatus, ingestErr := s.reader.IngestStatus(ctx)

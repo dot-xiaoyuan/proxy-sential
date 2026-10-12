@@ -7448,7 +7448,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Readiness of storage, authentication, identity ingestion, collector freshness, and the offline fingerprint library. */
+            /** @description Readiness of storage, authentication, identity ingestion, collector freshness, expected signal arrival, and the offline fingerprint library. Stale expected signals report degraded here but never fail /readyz. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7463,6 +7463,17 @@ export interface operations {
                                 error?: string;
                                 /** Format: date-time */
                                 updated_at?: string;
+                                /** @description Present on the signals component when PROXY_SENTINEL_SIGNAL_FRESHNESS is configured. */
+                                signals?: {
+                                    /** @description event type, or source:event type */
+                                    signal: string;
+                                    /** @enum {string} */
+                                    status: "ready" | "stale" | "missing";
+                                    max_age_seconds: number;
+                                    age_seconds?: number;
+                                    /** Format: date-time */
+                                    last_seen?: string;
+                                }[];
                             };
                         };
                         fingerprint_library?: {

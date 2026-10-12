@@ -1354,7 +1354,12 @@ func runControlPlaneServe(args []string) error {
 	nativeConfig := fs.String("native-actions-config", os.Getenv("PROXY_SENTINEL_NATIVE_ACTIONS_CONFIG"), "private native controller and authoritative inventory configuration")
 	actionMasterKey := fs.String("action-master-key", os.Getenv("PROXY_SENTINEL_ACTION_MASTER_KEY"), "base secret used to encrypt northbound connector credentials (defaults to PROXY_SENTINEL_ACTION_MASTER_KEY)")
 	postgresMigrationsDir := fs.String("postgres-migrations-dir", "migrations/postgres", "PostgreSQL migrations directory applied transactionally before startup")
+	signalFreshness := fs.String("signal-freshness", os.Getenv("PROXY_SENTINEL_SIGNAL_FRESHNESS"), "expected signals as type=maxAge or source:type=maxAge, comma separated (e.g. ttl=10m,dhcp=20m,identity=10m); reported in status and metrics, never fails readiness")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	signalExpectations, err := controlplane.ParseSignalExpectations(*signalFreshness)
+	if err != nil {
 		return err
 	}
 	roleMapping, err := controlplane.ParseOIDCRoleMapping(*oidcRoleMapping)
@@ -1439,6 +1444,7 @@ func runControlPlaneServe(args []string) error {
 		OperationsFile:        *operationsFile,
 		ActionMasterKey:       *actionMasterKey,
 		PostgresMigrationsDir: *postgresMigrationsDir,
+		SignalFreshness:       signalExpectations,
 	})
 }
 

@@ -75,6 +75,20 @@ PROXY_SENTINEL_ACTION_MASTER_KEY=<至少 32 字节随机主密钥>
 
 `readyz` 并行执行各个独立检查。统计读模型仍是可选组件，超时会显示 `delayed` 与错误原因；存储、身份库、认证库等必需组件失败仍返回 503。每次请求保持五秒整体截止时间，不允许可选检查先耗尽等待时间再把健康存储误报不可用。
 
+### 信号到达检查
+
+进程存活不代表检测有输入。2026-10-08 起 184 的共享 SYN 采集和 Suricata 停用、10-10 完整安装又停掉设备信号与入库约 70 分钟，期间 `readyz` 一直返回 ready，共享检测因此两天没有任何新观察。控制面可声明“必须持续到达”的信号：
+
+```dotenv
+PROXY_SENTINEL_SIGNAL_FRESHNESS='ttl=10m,dhcp=20m,ssdp=30m,identity=10m'
+```
+
+写入 `config/runtime.env`（完整安装保留未列入过滤的变量），或用 `control-plane serve --signal-freshness` 传入。格式为 `事件类型=最长间隔` 或 `来源:事件类型=最长间隔`，间隔 1 分钟到 24 小时；来源限定用于区分同类型的不同采集器，例如重新启用共享 SYN 采集后追加 `shared-syn-sidecar:ttl=10m`，避免路由 TTL 正常时掩盖共享 SYN 已停止。
+
+控制面每分钟在后台查询一次 ClickHouse 标准事件，回溯最长间隔的两倍，请求路径只读缓存。结果作为可选组件 `signals` 出现在 `readyz`：全部正常为 `ready`，有信号超时或回溯期内没有到达为 `stale`，查询失败为 `delayed` 并保留上次结果。它不会让 `readyz` 返回 503，避免夜间安静网络或有意停用某个采集器时让应用更新误回退；系统状态接口此时显示 `degraded`，指标输出 `proxy_sentinel_signal_age_seconds` 与 `proxy_sentinel_signal_stale`。年龄由 ClickHouse 按自身时钟计算，不受控制面时区影响。184 实测该查询在 40 分钟回溯下约 0.05 秒。
+
+未配置时不运行该检查。数值应按现场夜间低谷的实际间隔设定，新增或停用采集器时同步调整，否则会持续误报或漏报。
+
 采集回执的最近 N 条查询按传感器使用现有 `(sensor_id, started_at DESC)` 索引取各自最近 N 条，再按 `started_at DESC, run_id DESC` 合并并截取全局 N 条。`sensors` 是回执的外键父表，空闲传感器不产生虚假回执；相同时间用 run_id 保持稳定排序。它不缩短回执保留期、不使用缓存伪造最近时间，也不忽略查询错误。避免健康检查、概览与采集状态为了读取最近一条记录重复排序全部历史。
 
 ## 路由观察时间与判定历史
