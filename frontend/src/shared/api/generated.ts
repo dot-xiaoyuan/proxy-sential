@@ -97,7 +97,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Windowed passive, infrastructure, or active discovery read model; requires identity:read. Does not claim online state or create terminal identities. */
+        /** @description Windowed passive, infrastructure, or active discovery read model; view=iot requires explicit service capability evidence. Requires identity:read. Does not claim online state or create terminal identities. */
         get: operations["getDiscoveryDevices"];
         put?: never;
         post?: never;
@@ -6417,6 +6417,7 @@ export interface operations {
         parameters: {
             query?: {
                 mode?: "passive" | "infrastructure" | "active" | "all";
+                view?: "iot";
                 window?: string;
                 search?: string;
                 type?: string;

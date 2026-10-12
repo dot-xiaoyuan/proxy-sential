@@ -170,6 +170,19 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		s.appendAudit(ctx, "discovery.poll", source, "queued")
 		writeJSON(w, 202, map[string]string{"id": id, "status": "pending"})
 	case path == "/discovery/devices" && r.Method == "GET":
+		view := r.URL.Query().Get("view")
+		if view != "" && view != "iot" {
+			writeError(w, 400, "bad_view", "发现视图无效")
+			return
+		}
+		mode := r.URL.Query().Get("mode")
+		if view == "iot" {
+			if mode != "" && mode != "passive" {
+				writeError(w, 400, "bad_view", "哑终端视图仅支持被动发现")
+				return
+			}
+			mode = "passive"
+		}
 		window := 24 * time.Hour
 		if value := r.URL.Query().Get("window"); value != "" {
 			parsed, parseErr := time.ParseDuration(value)
@@ -179,7 +192,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			}
 			window = parsed
 		}
-		page, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset})
+		page, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: mode, View: view, Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset})
 		if err != nil {
 			writeError(w, 500, "discovery_read", "读取发现结果失败")
 			return
@@ -250,6 +263,12 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			return
 		}
 		passive, _ = passivePage["total"].(int)
+		iotPage, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: "passive", View: "iot", Window: 24 * time.Hour, Limit: 1})
+		if err != nil {
+			writeError(w, 500, "summary_read", "读取哑终端汇总失败")
+			return
+		}
+		iot, _ := iotPage["total"].(int)
 		services, _ = passivePage["service_devices"].(int)
 		linked, _ = passivePage["linked_endpoints"].(int)
 		var enabled bool
@@ -262,7 +281,36 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		var protocolCounts, skipCounts json.RawMessage
 		var processed, emitted, skipped int64
 		_ = repo.DB.QueryRowContext(ctx, `SELECT last_success_at,CASE WHEN last_error<>'' THEN 'error' WHEN last_success_at IS NULL THEN 'waiting' WHEN last_success_at<now()-interval '2 minutes' THEN 'lagging' ELSE 'ready' END,last_error,protocol_counts,skip_counts,processed_events,emitted_observations,skipped_events FROM passive_discovery_state ORDER BY updated_at DESC LIMIT 1`).Scan(&lastSuccess, &materializerStatus, &materializerError, &protocolCounts, &skipCounts, &processed, &emitted, &skipped)
-		response := map[string]any{"window": "24h", "infrastructure": infrastructure, "active_responses": active, "pending_association": pending, "passive_devices": passive, "service_devices": services, "linked_endpoints": linked, "active_enabled": enabled, "materializer_status": materializerStatus, "materializer_error": materializerError}
+		response := map[string]any{"window": "24h", "infrastructure": infrastructure, "active_responses": active, "pending_association": pending, "passive_devices": passive, "iot_devices": iot, "service_devices": services, "linked_endpoints": linked, "active_enabled": enabled, "materializer_status": materializerStatus, "materializer_error": materializerError}
+		var captureReady bool
+		if err = repo.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM discovery_nodes WHERE last_seen>now()-interval '30 seconds')`).Scan(&captureReady); err != nil {
+			writeError(w, 500, "summary_read", "读取采集状态失败")
+			return
+		}
+		protocols := map[string]any{}
+		for _, origin := range []string{"dhcp", "dns_sd", "ssdp"} {
+			var count int
+			var latest sql.NullTime
+			if err = repo.DB.QueryRowContext(ctx, `SELECT count(DISTINCT device_key),max(observed_at) FROM discovery_observations WHERE origin=$1 AND observed_at<=now() AND observed_at>=now()-interval '24 hours' AND NOT withdrawn`, origin).Scan(&count, &latest); err != nil {
+				writeError(w, 500, "summary_read", "读取协议统计失败")
+				return
+			}
+			status := "ready"
+			if origin == "dhcp" {
+				status = materializerStatus
+				if status == "" {
+					status = "waiting"
+				}
+			} else if !captureReady {
+				status = "lagging"
+			}
+			entry := map[string]any{"devices": count, "status": status}
+			if latest.Valid {
+				entry["last_observed_at"] = latest.Time
+			}
+			protocols[origin] = entry
+		}
+		response["protocols"] = protocols
 		if len(protocolCounts) > 0 {
 			response["protocol_counts"] = protocolCounts
 		}

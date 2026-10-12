@@ -192,6 +192,7 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 
 type DeviceQuery struct {
 	Mode       string
+	View       string
 	Window     time.Duration
 	Search     string
 	DeviceType string
@@ -613,6 +614,16 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 	// contract is [] rather than null.
 	filtered := make([]DeviceView, 0, len(items))
 	for _, item := range items {
+		if query.View == "iot" {
+			if item.Category == "mobile" || item.Category == "tablet" || item.Category == "desktop" || item.Category == "network" {
+				continue
+			}
+			category := iotServiceCategory(item)
+			if category == "" {
+				continue
+			}
+			item.Category = category
+		}
 		if query.DeviceType != "" && item.DeviceType != query.DeviceType {
 			continue
 		}
@@ -661,6 +672,30 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 		}
 	}
 	return map[string]any{"items": items[start:end], "total": total, "facets": facets, "service_devices": serviceDevices, "linked_endpoints": linkedEndpoints, "limit": query.Limit, "offset": query.Offset, "window": query.Window.String()}, nil
+}
+
+// The IoT view requires a device's own service announcement. A DHCP lease,
+// hostname or endpoint profile alone cannot establish an IoT device type.
+func iotServiceCategory(item DeviceView) string {
+	for _, o := range item.Observations {
+		if o.Withdrawn || confidenceRank(o.Confidence) < confidenceRank("strong") {
+			continue
+		}
+		switch o.Origin {
+		case "dns_sd", "ssdp", "ws_discovery":
+			for _, capability := range o.Capabilities {
+				switch capability {
+				case "printing", "scanning":
+					return "printer"
+				case "network_video":
+					return "camera"
+				case "casting", "media_rendering":
+					return "media"
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (r Repository) loadDeviceViews(ctx context.Context, window time.Duration, origins []string) ([]DeviceView, error) {

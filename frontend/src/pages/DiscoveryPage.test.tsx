@@ -36,6 +36,7 @@ describe('网络设备发现', () => {
         return Promise.resolve({
           items: [{
             id: 'device-1',
+            primary_ip: '198.18.90.8', category: 'printer', capabilities: ['printing'], protocols: ['dns_sd'], confidence: 'strong', last_seen: '2026-10-12T00:00:00Z', current: true,
             observations: [{ id: 'obs-1', ip: '198.18.90.8', mac: '02:00:00:00:90:08', name: 'office-printer.local', origin: 'dns_sd', observed_at: '2026-10-12T00:00:00Z', valid_until: '2026-10-13T00:00:00Z', explanation: '服务能力公告', device_type: 'printer', capabilities: ['printing'] }],
             association: '',
           }],
@@ -47,6 +48,6 @@ describe('网络设备发现', () => {
     setup()
     fireEvent.click(await screen.findByText('发现记录'))
     await waitFor(() => expect(screen.getAllByText('198.18.90.8').length).toBeGreaterThan(0))
-    expect(screen.getAllByText('打印服务').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('打印').length).toBeGreaterThan(0)
   })
 })

@@ -4150,3 +4150,16 @@ pre.wrap-code {
 
 .behavior-reports-page { display:flex; flex-direction:column; gap:16px; }
 .behavior-report-preview { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.passive-protocol-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.passive-protocol-card { display: grid; gap: 8px; min-width: 0; padding: 16px 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.passive-protocol-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.passive-protocol-heading strong { font-size: 14px; color: #334155; }
+.passive-protocol-count { font-size: 26px; font-weight: 650; line-height: 1.1; color: #0f172a; }
+.passive-protocol-count span { margin-left: 8px; font-size: 12px; font-weight: 400; color: #64748b; }
+.passive-discovery-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0 16px; }
+.passive-discovery-controls .ant-input-search { width: min(100%,320px); }
+.passive-discovery-controls .ant-select { min-width: 140px; }
+.passive-device-name { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.passive-device-name strong { color: #0f172a; }
+.passive-validity { display: block; font-size: 12px; }
+@media(max-width:559px) { .passive-protocol-grid { grid-template-columns: 1fr; } .passive-protocol-card { padding: 14px; } .passive-discovery-controls .ant-input-search, .passive-discovery-controls .ant-select { width: 100%; } }

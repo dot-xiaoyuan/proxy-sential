@@ -38,9 +38,10 @@ paths:
   /discovery/devices:
     get:
       operationId: getDiscoveryDevices
-      description: Windowed passive, infrastructure, or active discovery read model; requires identity:read. Does not claim online state or create terminal identities.
+      description: Windowed passive, infrastructure, or active discovery read model; view=iot requires explicit service capability evidence. Requires identity:read. Does not claim online state or create terminal identities.
       parameters:
         - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
+        - { name: view, in: query, schema: { type: string, enum: [iot] } }
         - { name: window, in: query, schema: { type: string, default: 24h } }
         - { name: search, in: query, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
