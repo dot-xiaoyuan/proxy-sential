@@ -1,0 +1,14 @@
+# Router/TTL packet-sidecar output. The collector reopens this path with
+# O_APPEND|O_CREATE for every bucket, and realtime ingest drains <path>.1 by
+# file identity before following the new file, so plain rename rotation loses
+# no records and needs neither copytruncate nor a collector restart.
+# delaycompress keeps .1 readable for ingest until the next rotation.
+/opt/proxy-sentinel/data/device-signals/ttl.jsonl {
+  size 1G
+  rotate 4
+  missingok
+  notifempty
+  nocreate
+  compress
+  delaycompress
+}

@@ -55,6 +55,7 @@ JS
   cp examples/application-domain/contract-fixture.tar.gz "$release_dir/assets/applications/bootstrap.tar.gz"
   cp deploy/compose/storage.yml "$release_dir/deploy/compose/storage.yml"
   cp deploy/logrotate/proxy-sentinel-shared-signals "$release_dir/deploy/logrotate/proxy-sentinel-shared-signals"
+  cp deploy/logrotate/proxy-sentinel-router-signals "$release_dir/deploy/logrotate/proxy-sentinel-router-signals"
   cp -R deploy/systemd "$release_dir/deploy/systemd"
   cp scripts/deploy/proxy-sentinelctl "$release_dir/scripts/proxy-sentinelctl"
   cp scripts/deploy/refresh-proxy-sources.py "$release_dir/scripts/refresh-proxy-sources.py"
