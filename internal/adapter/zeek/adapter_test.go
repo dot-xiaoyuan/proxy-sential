@@ -270,6 +270,9 @@ func TestConvertRouterProtocolLogsJSON(t *testing.T) {
 			if payload[tc.payloadKey] != tc.payloadValue {
 				t.Fatalf("missing normalized %s=%q in %+v", tc.payloadKey, tc.payloadValue, payload)
 			}
+			if tc.kind == "x509" && payload["certificate_owner_ip"] != "10.0.0.1" {
+				t.Fatalf("host-scoped certificate owner lost: %+v", payload)
+			}
 			if tc.kind == "conn" {
 				subject := event["subject"].(map[string]any)
 				if subject["mac"] != "00:46:4b:12:34:56" {
@@ -368,5 +371,21 @@ func requireNestedString(t *testing.T, event map[string]any, objectKey, fieldKey
 	value, ok := object[fieldKey].(string)
 	if !ok || value == "" {
 		t.Fatalf("expected non-empty string %s.%s, got %#v", objectKey, fieldKey, object[fieldKey])
+	}
+}
+
+func TestX509RequesterIsNotAnExplicitCertificateOwner(t *testing.T) {
+	var output bytes.Buffer
+	raw := `{"ts":1785232800.25,"id.orig_h":"10.0.0.2","subject":"CN=Printer"}`
+	stats, err := Convert(strings.NewReader(raw+"\n"), &output, Options{SensorID: "direction-test", LogKind: "x509"})
+	if err != nil || stats.Emitted != 1 {
+		t.Fatalf("convert: %+v %v", stats, err)
+	}
+	var event map[string]any
+	if err = json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil {
+		t.Fatal(err)
+	}
+	if event["payload"].(map[string]any)["certificate_owner_ip"] != nil {
+		t.Fatal("requester incorrectly declared certificate owner")
 	}
 }

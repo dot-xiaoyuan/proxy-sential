@@ -253,6 +253,11 @@ func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset in
 			copyPayload(payload, fields, pair[0], pair[1])
 		}
 	}
+	// A host-scoped certificate observation has an explicit owner. Keep that
+	// ownership in the standard event instead of guessing from a missing peer.
+	if kind == "x509" && first(fields, "id.orig_h", "src_ip") == "" && first(fields, "host") != "" {
+		payload["certificate_owner_ip"] = first(fields, "host")
+	}
 	copyPayload(payload, fields, "vlan", "vlan")
 	return zeekNetworkEvent(raw, fields, lineOffset, opts, eventType, kind, timestamp, srcIP, dstIP, zeekFlow(fields, srcIP, dstIP), payload), nil
 }

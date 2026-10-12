@@ -35,3 +35,6 @@ deploy/compose/storage.env
 # The AI relay indicator asset is compiled in through //go:embed, so the generic
 # data/ rule must not hide it from a fresh clone or worktree.
 !internal/airelay/data/
+
+# Package manager store
+.pnpm-store/

@@ -7,10 +7,9 @@ import (
 	"proxy-sentinel/internal/normalized"
 )
 
-// Protocol self-report (HTTP Server headers, TLS certificate subjects, JA3/JA4)
-// identifies a device, but Zeek cannot attach link-layer addresses to those
-// logs. Attribute them through the same unique-lease rule already used for
-// software announcements.
+// Protocol evidence is directional: HTTP server headers and certificates
+// identify the responder; JA3/JA4 identify the client. Each side must have its
+// own unique lease before it can become device evidence.
 //
 // Derived events are written to PostgreSQL only. They are never written back to
 // ClickHouse normalized_events, so evidence aggregation, risk scoring,
@@ -29,6 +28,49 @@ var protocolAttributionPayloadKeys = map[string][]string{
 	"tls":  {"certificate_subject", "certificate_issuer", "certificate_san", "ja3", "ja4"},
 }
 
+// protocolAttributionObservations splits protocol evidence before lease lookup.
+// Subject.ip in network events is usually the requester, never proof of a
+// certificate's owner. A host-scoped x509 event is the only single-host case.
+func protocolAttributionObservations(event normalized.Event) []normalized.Event {
+	serverKeys := map[string][]string{
+		"http": {"server", "title"},
+		"tls":  {"certificate_subject", "certificate_issuer", "certificate_san"},
+	}
+	keys, ok := serverKeys[event.Type]
+	if !ok {
+		return nil
+	}
+	observations := make([]normalized.Event, 0, 2)
+	add := func(ip, side string, keys []string) {
+		if net.ParseIP(ip) == nil {
+			return
+		}
+		payload := protocolAttributionPayload(event, keys)
+		if payload == nil {
+			return
+		}
+		payload["attribution_side"] = side
+		observation := event
+		observation.Subject = map[string]any{"ip": ip}
+		observation.Payload = payload
+		observations = append(observations, observation)
+	}
+	serverIP := stringFromMap(event.Flow, "dst_ip")
+	if owner := stringFromMap(event.Payload, "certificate_owner_ip"); owner != "" {
+		serverIP = owner
+	} else if event.SourceEventType == "x509" && serverIP == stringFromMap(event.Flow, "src_ip") {
+		// Legacy x509 normalization duplicated the requester into dst_ip when
+		// no responder existed. That alone cannot establish certificate ownership.
+		serverIP = ""
+	}
+	add(serverIP, "server", keys)
+	if event.Type == "tls" && event.SourceEventType != "x509" {
+		clientIP := firstNonEmpty(stringFromMap(event.Flow, "src_ip"), stringFromMap(event.Subject, "ip"))
+		add(clientIP, "client", []string{"ja3", "ja4"})
+	}
+	return observations
+}
+
 // protocolDeviceEvents resolves a unique DHCP lease for source events that lack
 // a link-layer address and returns derived device events. Unresolved and
 // ambiguous observations are dropped; they are never guessed from the IP alone.
@@ -41,7 +83,11 @@ func (s *PostgresStore) protocolDeviceEvents(ctx context.Context, events []norma
 	attempts := 0
 	type resolveKey struct{ sensor, campus, ip, timestamp string }
 	cache := map[resolveKey]IdentityAttribution{}
+	observations := make([]normalized.Event, 0, len(events))
 	for _, event := range events {
+		observations = append(observations, protocolAttributionObservations(event)...)
+	}
+	for _, event := range observations {
 		if attempts >= protocolAttributionResolveMax {
 			break
 		}
@@ -53,6 +99,7 @@ func (s *PostgresStore) protocolDeviceEvents(ctx context.Context, events []norma
 		if payload == nil {
 			continue
 		}
+		payload["attribution_side"] = event.Payload["attribution_side"]
 		sensor := stringFromMap(event.Observer, "sensor_id")
 		ip := stringFromMap(event.Subject, "ip")
 		// An empty or unparsable address would fail the inet cast and abort the
@@ -136,7 +183,7 @@ func protocolDeviceEvent(event normalized.Event, mac string, payload map[string]
 	}
 	return normalized.Event{
 		SchemaVersion:   "v1",
-		EventID:         protocolAttributionEventPref + shortHash(event.Type+"|"+event.EventID),
+		EventID:         protocolAttributionEventPref + shortHash("v2|"+event.Type+"|"+event.EventID+"|"+stringFromMap(payload, "attribution_side")),
 		Source:          event.Source,
 		SourceEventType: event.SourceEventType,
 		Type:            "device",

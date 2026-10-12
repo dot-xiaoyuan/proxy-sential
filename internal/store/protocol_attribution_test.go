@@ -35,7 +35,7 @@ func protocolAttributionTLSEvent(id, ip, at string) normalized.Event {
 		Timestamp:       at,
 		Observer:        map[string]any{"sensor_id": "protocol-test"},
 		Subject:         map[string]any{"ip": ip, "campus_id": "campus-a"},
-		Flow:            map[string]any{"src_ip": ip, "proto": "tcp", "direction": "outbound"},
+		Flow:            map[string]any{"src_ip": ip, "dst_ip": "198.18.91.1", "proto": "tcp", "direction": "outbound"},
 		Payload:         map[string]any{"certificate_subject": "CN=HP LaserJet M426fdw", "certificate_issuer": "CN=HP", "certificate_san": "printer.local", "ja3": "abcdef0123456789", "sni": "printer.local"},
 		Confidence:      0.9,
 	}
@@ -86,9 +86,10 @@ func TestProtocolAttributionPayloadKeepsWhitelistedFieldsOnly(t *testing.T) {
 // The derived identifier must be stable and traceable to the source event.
 func TestProtocolDeviceEventIsStableAndTraceable(t *testing.T) {
 	event := protocolAttributionTLSEvent("tls-1", "198.18.91.10", "2026-10-11T10:00:00Z")
-	payload := protocolAttributionPayload(event, protocolAttributionPayloadKeys["tls"])
-	first := protocolDeviceEvent(event, "02:00:00:00:91:10", payload)
-	second := protocolDeviceEvent(event, "02:00:00:00:91:10", protocolAttributionPayload(event, protocolAttributionPayloadKeys["tls"]))
+	observation := protocolAttributionObservations(event)[0]
+	payload := observation.Payload
+	first := protocolDeviceEvent(observation, "02:00:00:00:91:10", payload)
+	second := protocolDeviceEvent(observation, "02:00:00:00:91:10", payload)
 	if first.EventID != second.EventID || first.EventID == "" {
 		t.Fatalf("unstable identifier: %q vs %q", first.EventID, second.EventID)
 	}
@@ -107,7 +108,8 @@ func TestProtocolDeviceEventIsStableAndTraceable(t *testing.T) {
 // mistaken for a hostname, model or DHCP-derived hint.
 func TestProtocolAttributionSignalKinds(t *testing.T) {
 	event := protocolAttributionHTTPEvent("http-1", "198.18.91.10", "2026-10-11T10:00:00Z")
-	derived := protocolDeviceEvent(event, "02:00:00:00:91:10", protocolAttributionPayload(event, protocolAttributionPayloadKeys["http"]))
+	httpObservation := protocolAttributionObservations(event)[0]
+	derived := protocolDeviceEvent(httpObservation, "02:00:00:00:91:10", httpObservation.Payload)
 	kinds := map[string]string{}
 	for _, draft := range signalDrafts(derived) {
 		kinds[draft.kind] = draft.value
@@ -125,7 +127,8 @@ func TestProtocolAttributionSignalKinds(t *testing.T) {
 		t.Fatalf("protocol self-report produced an OS guess: %+v", kinds)
 	}
 
-	tlsDerived := protocolDeviceEvent(protocolAttributionTLSEvent("tls-1", "198.18.91.10", "2026-10-11T10:00:00Z"), "02:00:00:00:91:10", protocolAttributionPayload(protocolAttributionTLSEvent("tls-1", "198.18.91.10", "2026-10-11T10:00:00Z"), protocolAttributionPayloadKeys["tls"]))
+	tlsObservations := protocolAttributionObservations(protocolAttributionTLSEvent("tls-1", "198.18.91.10", "2026-10-11T10:00:00Z"))
+	tlsDerived := protocolDeviceEvent(tlsObservations[0], "02:00:00:00:91:01", tlsObservations[0].Payload)
 	tlsKinds := map[string]string{}
 	for _, draft := range signalDrafts(tlsDerived) {
 		tlsKinds[draft.kind] = draft.value
@@ -133,8 +136,16 @@ func TestProtocolAttributionSignalKinds(t *testing.T) {
 	if tlsKinds["tls_subject"] != "CN=HP LaserJet M426fdw" || tlsKinds["tls_issuer"] != "CN=HP" {
 		t.Fatalf("missing TLS signals: %+v", tlsKinds)
 	}
-	if tlsKinds["ja3"] != "abcdef0123456789" {
-		t.Fatalf("missing ja3 signal: %+v", tlsKinds)
+	if tlsKinds["ja3"] != "" {
+		t.Fatalf("client JA3 leaked into server signals: %+v", tlsKinds)
+	}
+	client := protocolDeviceEvent(tlsObservations[1], "02:00:00:00:91:10", tlsObservations[1].Payload)
+	clientKinds := map[string]string{}
+	for _, draft := range signalDrafts(client) {
+		clientKinds[draft.kind] = draft.value
+	}
+	if clientKinds["ja3"] != "abcdef0123456789" || clientKinds["tls_subject"] != "" {
+		t.Fatalf("client fingerprint missing or polluted: %+v", clientKinds)
 	}
 }
 
@@ -144,9 +155,12 @@ func TestProtocolAttributionSkipsUnusableAddresses(t *testing.T) {
 	s := &PostgresStore{}
 	missingSensor := protocolAttributionHTTPEvent("no-sensor", "198.18.91.10", "2026-10-11T10:01:00Z")
 	missingSensor.Observer = nil
+	noIP := protocolAttributionHTTPEvent("no-ip", "", "2026-10-11T10:01:00Z")
+	noIP.Flow["dst_ip"] = ""
+	badIP := protocolAttributionHTTPEvent("bad-ip", "not-an-address", "2026-10-11T10:01:00Z")
+	badIP.Flow["dst_ip"] = "not-an-address"
 	derived, err := s.protocolDeviceEvents(context.Background(), []normalized.Event{
-		protocolAttributionHTTPEvent("no-ip", "", "2026-10-11T10:01:00Z"),
-		protocolAttributionHTTPEvent("bad-ip", "not-an-address", "2026-10-11T10:01:00Z"),
+		noIP, badIP,
 		missingSensor,
 	})
 	if err != nil {
@@ -196,19 +210,32 @@ func TestPostgresProtocolLeaseAttribution(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err = s.WriteIdentityEvents(ctx, []normalized.Event{protocolAttributionLease("lease-client", "198.18.91.50", "02:00:00:00:91:50", "2026-10-11T10:00:00Z", "ACK")}); err != nil {
+		t.Fatal(err)
+	}
 	http := protocolAttributionHTTPEvent("http-1", leasedIP, "2026-10-11T10:01:00Z")
 	tls := protocolAttributionTLSEvent("tls-1", leasedIP, "2026-10-11T10:02:00Z")
-	orphan := protocolAttributionHTTPEvent("http-orphan", "198.18.91.99", "2026-10-11T10:01:00Z")
+	orphan := protocolAttributionHTTPEvent("http-orphan", "198.18.91.50", "2026-10-11T10:01:00Z")
+	orphan.Flow["dst_ip"] = "198.18.91.99"
+	for _, event := range []*normalized.Event{&http, &tls} {
+		event.Subject["ip"] = "198.18.91.50"
+		event.Flow["src_ip"] = "198.18.91.50"
+		event.Flow["dst_ip"] = leasedIP
+	}
 
 	derived, err := s.pgProtocolDeviceEventsForTest(t, ctx, []normalized.Event{http, tls, orphan})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(derived) != 2 {
-		t.Fatalf("expected two attributed events, got %d: %+v", len(derived), derived)
+	if len(derived) != 3 {
+		t.Fatalf("expected two server events and one client fingerprint, got %d: %+v", len(derived), derived)
 	}
 	for _, event := range derived {
-		if event.Subject["mac"] != mac {
+		expectedMAC := mac
+		if event.Payload["attribution_side"] == "client" {
+			expectedMAC = "02:00:00:00:91:50"
+		}
+		if event.Subject["mac"] != expectedMAC {
 			t.Fatalf("unexpected attribution: %+v", event.Subject)
 		}
 	}
@@ -228,6 +255,13 @@ func TestPostgresProtocolLeaseAttribution(t *testing.T) {
 		t.Fatalf("expected HP printer from protocol self-report, got brand=%q type=%q", brand, deviceType)
 	}
 
+	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(brand,''),COALESCE(device_type,'') FROM endpoint_device_profiles WHERE endpoint_id='mac:02:00:00:00:91:50'`).Scan(&brand, &deviceType); err != nil {
+		t.Fatal(err)
+	}
+	if brand == "HP" || deviceType == "printer" {
+		t.Fatalf("client inherited server profile: brand=%q type=%q", brand, deviceType)
+	}
+
 	var serverSignals, tlsSignals int
 	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE kind='http_server'),count(*) FILTER(WHERE kind='tls_subject') FROM device_signal_facts WHERE sensor_id='protocol-test' AND host(ip)=$1`, leasedIP).Scan(&serverSignals, &tlsSignals); err != nil {
 		t.Fatal(err)
@@ -242,7 +276,9 @@ func TestPostgresProtocolLeaseAttribution(t *testing.T) {
 	if err = s.WriteIdentityEvents(ctx, []normalized.Event{other}); err != nil {
 		t.Fatal(err)
 	}
-	afterConflict, err := s.pgProtocolDeviceEventsForTest(t, ctx, []normalized.Event{protocolAttributionHTTPEvent("http-2", leasedIP, "2026-10-11T10:04:00Z")})
+	conflictingHTTP := protocolAttributionHTTPEvent("http-2", "198.18.91.50", "2026-10-11T10:04:00Z")
+	conflictingHTTP.Flow["dst_ip"] = leasedIP
+	afterConflict, err := s.pgProtocolDeviceEventsForTest(t, ctx, []normalized.Event{conflictingHTTP})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,4 +294,89 @@ func (s *PostgresStore) pgProtocolDeviceEventsForTest(t *testing.T, ctx context.
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return s.protocolDeviceEvents(ctx, events)
+}
+
+// A request's subject is its client. Server headers and certificates must never
+// identify that client; only client fingerprints belong to the source address.
+func TestProtocolAttributionSeparatesClientAndServer(t *testing.T) {
+	http := protocolAttributionHTTPEvent("http-direction", "198.18.91.10", "2026-10-12T00:00:00Z")
+	tls := protocolAttributionTLSEvent("tls-direction", "198.18.91.10", http.Timestamp)
+	tls.Flow["dst_ip"] = "198.18.91.1"
+	for _, event := range []normalized.Event{http, tls} {
+		observations := protocolAttributionObservations(event)
+		for _, observation := range observations {
+			ip := stringFromMap(observation.Subject, "ip")
+			if stringFromMap(observation.Payload, "server") != "" || stringFromMap(observation.Payload, "certificate_subject") != "" {
+				if ip != "198.18.91.1" {
+					t.Fatalf("server evidence attributed to client: %+v", observation)
+				}
+				if stringFromMap(observation.Payload, "ja3") != "" {
+					t.Fatal("client fingerprint leaked into server evidence")
+				}
+			}
+			if stringFromMap(observation.Payload, "ja3") != "" && ip != "198.18.91.10" {
+				t.Fatal("client fingerprint attributed to server")
+			}
+		}
+		if len(observations) == 0 {
+			t.Fatal("expected attributed observations")
+		}
+	}
+}
+
+func TestProtocolAttributionDropsUnlocatedServer(t *testing.T) {
+	event := protocolAttributionTLSEvent("missing-peer", "198.18.91.10", "2026-10-12T00:00:00Z")
+	delete(event.Payload, "ja3")
+	delete(event.Flow, "dst_ip")
+	if got := protocolAttributionObservations(event); len(got) != 0 {
+		t.Fatalf("guessed certificate owner from client: %+v", got)
+	}
+	event.SourceEventType = "x509"
+	event.Flow["dst_ip"] = event.Subject["ip"]
+	if got := protocolAttributionObservations(event); len(got) != 0 {
+		t.Fatal("legacy duplicated client address cannot prove certificate ownership")
+	}
+	event.Payload["certificate_owner_ip"] = event.Subject["ip"]
+	if got := protocolAttributionObservations(event); len(got) != 1 || got[0].Subject["ip"] != "198.18.91.10" {
+		t.Fatalf("host-scoped certificate lost: %+v", got)
+	}
+}
+
+func TestProtocolDerivedIDsDistinguishSides(t *testing.T) {
+	event := protocolAttributionTLSEvent("same-event", "198.18.91.10", "2026-10-12T00:00:00Z")
+	event.Flow["dst_ip"] = "198.18.91.1"
+	observations := protocolAttributionObservations(event)
+	if len(observations) != 2 {
+		t.Fatalf("expected two sides, got %d", len(observations))
+	}
+	a := protocolDeviceEvent(observations[0], "02:00:00:00:91:10", observations[0].Payload)
+	b := protocolDeviceEvent(observations[1], "02:00:00:00:91:01", observations[1].Payload)
+	if a.EventID == b.EventID {
+		t.Fatal("client and server observations collide")
+	}
+}
+
+func TestProtocolAttributionDoesNotTurnRequesterIntoPrinter(t *testing.T) {
+	event := protocolAttributionTLSEvent("printer-access", "198.18.91.10", "2026-10-12T00:00:00Z")
+	event.Flow["dst_ip"] = "198.18.91.1"
+	var derived []normalized.Event
+	for _, observation := range protocolAttributionObservations(event) {
+		mac := "02:00:00:00:91:10"
+		if observation.Subject["ip"] == "198.18.91.1" {
+			mac = "02:00:00:00:91:01"
+		}
+		derived = append(derived, protocolDeviceEvent(observation, mac, observation.Payload))
+	}
+	inventories := BuildEndpointDeviceInventories(BuildIdentityState(derived), Query{})
+	if len(inventories) != 2 {
+		t.Fatalf("expected two endpoints, got %+v", inventories)
+	}
+	for _, item := range inventories {
+		if item.CurrentIP == "198.18.91.10" && (item.Brand == "HP" || item.DeviceType == "printer") {
+			t.Fatalf("requester became a printer: %+v", item)
+		}
+		if item.CurrentIP == "198.18.91.1" && (item.Brand != "HP" || item.DeviceType != "printer") {
+			t.Fatalf("responder lost its certificate evidence: %+v", item)
+		}
+	}
 }
