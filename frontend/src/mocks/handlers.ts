@@ -1,3 +1,4 @@
+import { deviceHistoryHandlers } from './deviceHistory'
 import { sharedAccessHandlers } from './sharedAccess'
 import { discoveryHandlers } from './discovery'
 import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './deviceRecognition'
@@ -123,6 +124,7 @@ const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管�
 const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
 
 export const handlers = [
+ ...deviceHistoryHandlers,
  http.get('/api/v1/whitelist',()=>HttpResponse.json({items:[],page:{total:0,limit:20},checked_at:new Date().toISOString()})),
  ...notificationHandlers,
  ...blacklistHandlers,

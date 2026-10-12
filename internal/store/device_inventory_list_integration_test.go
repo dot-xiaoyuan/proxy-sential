@@ -103,3 +103,58 @@ func TestDeviceInventoryReadModelFiltersAndIncrementalDirtyTriggers(t *testing.T
 		t.Fatalf("name, session, IP and access changes must dirty the read model: dirty=%d processed=%d", dirty, processed)
 	}
 }
+
+func TestDeviceCenterInventoryValidityBeforePagination(t *testing.T) {
+	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("isolated PostgreSQL required")
+	}
+	ctx := context.Background()
+	if _, err := ApplyPostgresMigrations(ctx, dsn, "../../migrations/postgres"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewPostgresStore(PostgresOptions{DSN: dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	now := time.Now().UTC()
+	prefix := "center-test-" + now.Format("150405.000000")
+	for i := 0; i < 3; i++ {
+		id := prefix + string(rune('a'+i))
+		_, err = s.db.Exec(`INSERT INTO endpoint_entities(endpoint_id,entity_role) VALUES($1,'endpoint')`, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(EndpointDeviceInventory{EndpointID: id, CurrentIP: "192.0.2.8", IPs: []string{"192.0.2.8"}})
+		_, err = s.db.Exec(`INSERT INTO endpoint_recognition_summary(endpoint_id,summary,list_item,last_seen,current_ip) VALUES($1,'{}',$2,$3,'192.0.2.8')`, id, raw, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			_, err = s.db.Exec(`INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,observed_at,valid_until,action) VALUES($1,'',$1,'192.0.2.8',$2,$3,$4,'ack')`, prefix, id, now.Add(-time.Minute), now.Add(time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Cleanup(func() {
+		s.db.Exec(`DELETE FROM endpoint_recognition_summary WHERE endpoint_id LIKE $1`, prefix+"%")
+		s.db.Exec(`DELETE FROM device_address_leases WHERE sensor_id=$1`, prefix)
+		s.db.Exec(`DELETE FROM endpoint_entities WHERE endpoint_id LIKE $1`, prefix+"%")
+	})
+	page, err := s.ListDeviceInventory(ctx, Query{AddressState: "current", Q: prefix, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Page.Total != 1 || len(page.Items) != 1 || page.Items[0].CurrentIP != "192.0.2.8" {
+		t.Fatalf("%+v", page)
+	}
+	page, err = s.ListDeviceInventory(ctx, Query{AddressState: "history", Q: prefix, Limit: 1, Cursor: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Page.Total != 2 || len(page.Items) != 1 || page.Items[0].CurrentIP != "" {
+		t.Fatalf("invalid history pagination: %+v", page)
+	}
+}

@@ -1,3 +1,5 @@
+import { DeviceAddress } from '../entities/device/DeviceAddress'
+import { DeviceHistoryPanel } from './DeviceHistoryPanel'
 import { detailPath,safeReturnTo } from '../app/navigation'
 import { DiscoveryEvidence } from "../entities/device/DiscoveryEvidence"
 import { DeviceBrandSummary } from '../entities/device/DeviceInventoryCells'
@@ -35,8 +37,6 @@ import type {
   DeviceSignal,
   EndpointDomainEvidence,
   EndpointIdentityProfile,
-  IdentityAccessHistory,
-  IdentityIPMACHistory,
   UpdateEndpointRegistrationRequest,
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
@@ -117,7 +117,7 @@ export function EndpointDetailsPage() {
   const [registrationForm] = Form.useForm<UpdateEndpointRegistrationRequest>();
   const activeTab = params.get("tab") || "overview";
   const setActiveTab=(tab:string)=>setParams(current=>{const next=new URLSearchParams(current);next.set("tab",tab);return next},{replace:true});
-  const identity = useEndpointIdentity(endpointId, { limit: 500 });
+  const identity = useEndpointIdentity(endpointId, { limit: 20 });
   const signals = useDeviceSignals(
     {
       window: "24h",
@@ -137,7 +137,7 @@ export function EndpointDetailsPage() {
   const profile = identity.data ?? fallbackEndpointProfile(endpointId);
   const canUpdateRegistration = can(session.data, "endpoints:write");
   const mergeStatus = Form.useWatch("merge_status", registrationForm);
-  const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? "";
+  const latestIP = profile?.primary_ip ?? "";
   const latestAccess = profile?.access_history?.[0]?.access_id ?? "";
   const signalItems = signals.data?.items ?? [];
   const recognition = profile.recognition ?? inventory.data?.items.find(
@@ -183,8 +183,9 @@ export function EndpointDetailsPage() {
       <div className="page-header">
         <div>
           <Typography.Title className="page-title mono" level={3}>
-            {[profile.device_names_disabled ? '' : profile.device_name?.value,latestIP].filter(Boolean).join(' · ') || profile.endpoint.primary_mac || '终端详情'}
+            终端详情
           </Typography.Title>
+          <DeviceAddress ip={latestIP} name={profile.device_names_disabled?undefined:profile.device_name?.value} mac={profile.endpoint.primary_mac} addresses={profile.current_addresses}/>
           <Typography.Text type="secondary">
             终端登记、账号历史、IP 历史、接入位置和设备信号。
           </Typography.Text>
@@ -235,16 +236,15 @@ export function EndpointDetailsPage() {
 
       <section className="surface details-tab-shell">
         <Tabs
-          activeKey={activeTab}
+          activeKey={['identity','recognition'].includes(activeTab)?activeTab:'overview'}
           onChange={setActiveTab}
           items={[
-            { key: "overview", label: "概览" },
-            { key: "identity", label: "身份与位置" },
-            { key: "recognition", label: "设备识别" },
-            { key: "registration", label: "登记管理" },
-            { key: "signals", label: "技术信号" },
+            { key: "overview", label: "概况" },
+            { key: "identity", label: "变化历史" },
+            { key: "recognition", label: "发现证据" },
           ]}
         />
+        <Space wrap><Button type="link" onClick={()=>setActiveTab('registration')}>登记管理</Button><Button type="link" onClick={()=>setActiveTab('signals')}>技术信号</Button></Space>
       </section>
 
       {activeTab === "overview" && (
@@ -577,24 +577,8 @@ export function EndpointDetailsPage() {
                 动态 IP 不再被当成终端身份
               </Typography.Text>
             </div>
-            <div className="endpoint-detail-history-grid">
-              <Table<IdentityIPMACHistory>
-                columns={ipColumns}
-                dataSource={profile.ip_history}
-                pagination={{ pageSize: 8, showSizeChanger: false }}
-                rowKey="event_id"
-                scroll={{ x: 680 }}
-                size="small"
-              />
-              <Table<IdentityAccessHistory>
-                columns={accessColumns}
-                dataSource={profile.access_history}
-                pagination={{ pageSize: 8, showSizeChanger: false }}
-                rowKey="event_id"
-                scroll={{ x: 760 }}
-                size="small"
-              />
-            </div>
+            <DeviceHistoryPanel kind="endpoint" id={endpointId}/><h4>接入位置变化</h4><DeviceHistoryPanel kind="access" id={endpointId}/>
+
           </section>
         </>
       )}
@@ -672,69 +656,6 @@ const sessionColumns: ColumnsType<AccountSession> = [
       <Progress percent={Math.round(value * 100)} size="small" />
     ),
   },
-];
-
-const ipColumns: ColumnsType<IdentityIPMACHistory> = [
-  {
-    title: "IP",
-    dataIndex: "ip",
-    width: 150,
-    render: (value?: string) =>
-      value ? (
-        <Link className="mono" to={detailPath(`/ips/${encodeURIComponent(value)}`,window.location.pathname+window.location.search)}>
-          {value}
-        </Link>
-      ) : (
-        ""
-      ),
-  },
-  {
-    title: "MAC",
-    dataIndex: "mac",
-    width: 170,
-    render: (value?: string) => (
-      <Typography.Text className="mono">{value || ""}</Typography.Text>
-    ),
-  },
-  {
-    title: "账号",
-    dataIndex: "account_id",
-    width: 150,
-    render: (value?: string) => (
-      <Typography.Text className="mono">{value || ""}</Typography.Text>
-    ),
-  },
-  { title: "来源", dataIndex: "source", width: 120 },
-  { title: "最近出现", dataIndex: "last_seen", width: 180, render: formatTime },
-];
-
-const accessColumns: ColumnsType<IdentityAccessHistory> = [
-  { title: "接入 ID", dataIndex: "access_id", width: 180 },
-  {
-    title: "AP",
-    dataIndex: "ap",
-    width: 150,
-    render: (value?: string) => value || "",
-  },
-  {
-    title: "交换机",
-    dataIndex: "switch_id",
-    width: 150,
-    render: (value?: string) => value || "",
-  },
-  {
-    title: "端口",
-    dataIndex: "switch_port",
-    width: 120,
-    render: (value?: string) => value || "",
-  },
-  {
-    title: "VLAN",
-    dataIndex: "vlan",
-    width: 100,
-    render: (value?: string) => value || "",
-  },
-  { title: "最近出现", dataIndex: "last_seen", width: 180, render: formatTime },
 ];
 
 const signalColumns: ColumnsType<DeviceSignal> = [

@@ -22,6 +22,7 @@ const (
 )
 
 type Query struct {
+	AddressState          string
 	View                  string
 	DiagnosticStage       string
 	DiagnosticType        string
@@ -83,6 +84,9 @@ type EndpointDevicePage struct {
 // inventory page. Complete association history and raw recognition evidence
 // remain available from the endpoint detail APIs.
 type DeviceInventoryListItem struct {
+	CurrentAddresses     []string                     `json:"current_addresses,omitempty"`
+	HistoricalIP         string                       `json:"historical_ip,omitempty"`
+	DeviceURL            string                       `json:"device_url,omitempty"`
 	Discovery            *discovery.Summary           `json:"discovery,omitempty"`
 	RouterObservation    *evidence.RouterAssessment   `json:"router_observation,omitempty"`
 	IPMatch              *DeviceIPMatch               `json:"ip_match,omitempty"`

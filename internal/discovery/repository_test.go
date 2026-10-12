@@ -194,3 +194,28 @@ func TestAggregateDeviceRowsDoesNotMergeAmbiguousIPReuse(t *testing.T) {
 		t.Fatalf("conflicting MAC identities were merged: %+v", items)
 	}
 }
+
+func TestDevicePrimaryAddressValidity(t *testing.T) {
+	at := time.Now().UTC()
+	base := Observation{MAC: "00:11:22:33:44:55", Node: "a", Site: "campus", Domain: "lan", Origin: "dhcp", ObservedAt: at, ValidUntil: at.Add(time.Hour)}
+	v4 := base
+	v4.IP = "192.0.2.8"
+	v6 := base
+	v6.IP = "2001:db8::8"
+	expired := base
+	expired.IP = "192.0.2.7"
+	expired.ValidUntil = at.Add(-time.Second)
+	rows := []deviceObservationRow{{DeviceKey: "one", Observation: v6}, {DeviceKey: "one", Observation: v4}, {DeviceKey: "one", Observation: expired}}
+	items := aggregateDeviceRows(rows, at)
+	if len(items) != 1 || items[0].PrimaryIP != v4.IP || len(items[0].Addresses) != 2 {
+		t.Fatalf("bad address order/validity: %+v", items)
+	}
+	items = aggregateDeviceRows(rows[:1], at)
+	if items[0].PrimaryIP != v6.IP {
+		t.Fatal("IPv6-only lost")
+	}
+	items = aggregateDeviceRows(rows[2:], at)
+	if items[0].PrimaryIP != "" || len(items[0].HistoricalAddresses) != 1 {
+		t.Fatal("expired address promoted")
+	}
+}

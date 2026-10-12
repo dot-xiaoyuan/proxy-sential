@@ -48,7 +48,7 @@ describe('共享设备持久化档案', () => {
 
   it('只在用户点击时刷新，并按需读取档案历史', async () => {
     request.mockImplementation((url: string) => Promise.resolve(url.includes('/profile-1')
-      ? { profile, history: [{ kind: 'projection', observed_at: '2026-10-09T06:01:00Z', snapshot: profile }] }
+      ? { items:[{id:'run-1',stream:'profile-1',first_seen:'2026-10-09T06:01:00Z',last_seen:'2026-10-09T06:01:00Z',count:12,content:profile}],total:1,as_of:'2026-10-09T06:02:00Z' }
       : { items: [profile], page: { limit: 20, total: 1 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', pending_jobs: 0 }))
     setup()
     await screen.findAllByText('TP-Link AX3000')
@@ -58,7 +58,7 @@ describe('共享设备持久化档案', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '档案历史' })[0])
     await screen.findByText('设备档案历史')
     await waitFor(() => expect(request.mock.calls.some(([url]) => String(url).includes('/profile-1'))).toBe(true))
-    expect(screen.getByText('账号 student-1')).toBeInTheDocument()
+    expect(screen.getByText('12 次观测')).toBeInTheDocument()
   })
 
   it('分开展示时间有效性与路由可信度，线索角色和厂商参考弱化呈现', async () => {

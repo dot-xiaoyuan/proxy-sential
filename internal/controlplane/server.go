@@ -682,6 +682,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleSRun4K(w, r, path)
 	case r.Method == http.MethodGet && path == "/session":
 		writeJSON(w, http.StatusOK, session)
+	case r.Method == http.MethodGet && path == "/shared-access/network-context":
+		s.handleNetworkContext(w, r)
 	case r.Method == http.MethodGet && (path == "/shared-access/devices" || strings.HasPrefix(path, "/shared-access/devices/")):
 		s.handleSharedDeviceProfiles(w, r, path)
 	case r.Method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")):
@@ -768,6 +770,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleEndpointRegistration(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case strings.HasPrefix(path, "/discovery/"):
 		s.handleDiscovery(w, r, path)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/device-history/"):
+		s.handleDeviceHistory(w, r, path)
 	case r.Method == http.MethodGet && (path == "/router-observations" || strings.HasPrefix(path, "/router-observations/")):
 		s.handleRouterObservations(w, r, path)
 	case r.Method == http.MethodGet && path == "/devices":
@@ -1107,6 +1111,16 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func requiredPermission(method, path string) string {
+	if strings.HasPrefix(path, "/device-history/profile/") || strings.HasPrefix(path, "/device-history/shared/") {
+		return "cases:read"
+	}
+	if strings.HasPrefix(path, "/device-history/") {
+		return "identity:read"
+	}
+
+	if path == "/shared-access/network-context" {
+		return "cases:read"
+	}
 	if strings.HasPrefix(path, "/integrations/identity/bridge") {
 		if method == http.MethodGet {
 			return "actions:read"
@@ -1580,6 +1594,16 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 	}
 	profile.DeviceNamesDisabled = os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true"
 	if s.operations != nil && s.operations.db != nil {
+		addresses, addressErr := store.ReadCurrentEndpointAddresses(ctx, s.operations.db, endpointID)
+		if addressErr != nil {
+			writeError(w, 500, "address_read", "读取有效地址失败")
+			return
+		}
+		profile.CurrentAddresses = addresses
+		if len(addresses) > 0 {
+			profile.PrimaryIP = addresses[0]
+		}
+
 		if summaries, err := (discovery.Repository{DB: s.operations.db}).Summaries(ctx, []string{endpointID}); err == nil {
 			profile.Discovery = summaries[endpointID]
 		}
@@ -2726,23 +2750,24 @@ func deviceQuery(values url.Values) (store.Query, error) {
 		return store.Query{}, fmt.Errorf("bad window: %w", err)
 	}
 	return store.Query{
-		Q:           values.Get("q"),
-		SensorID:    values.Get("sensor_id"),
-		CampusID:    values.Get("campus_id"),
-		Department:  values.Get("department"),
-		PersonType:  values.Get("person_type"),
-		SSID:        values.Get("ssid"),
-		VLAN:        values.Get("vlan"),
-		AP:          values.Get("ap"),
-		NASIP:       values.Get("nas_ip"),
-		Ecosystem:   values.Get("ecosystem"),
-		Brand:       strings.TrimSpace(values.Get("brand")),
-		OSFamily:    strings.TrimSpace(values.Get("os_family")),
-		Window:      window,
-		SrcIP:       values.Get("ip"),
-		Limit:       limit,
-		Cursor:      cursor,
-		IncludeWeak: values.Get("include_weak") == "true" || values.Get("include_weak") == "1",
+		AddressState: values.Get("address_state"),
+		Q:            values.Get("q"),
+		SensorID:     values.Get("sensor_id"),
+		CampusID:     values.Get("campus_id"),
+		Department:   values.Get("department"),
+		PersonType:   values.Get("person_type"),
+		SSID:         values.Get("ssid"),
+		VLAN:         values.Get("vlan"),
+		AP:           values.Get("ap"),
+		NASIP:        values.Get("nas_ip"),
+		Ecosystem:    values.Get("ecosystem"),
+		Brand:        strings.TrimSpace(values.Get("brand")),
+		OSFamily:     strings.TrimSpace(values.Get("os_family")),
+		Window:       window,
+		SrcIP:        values.Get("ip"),
+		Limit:        limit,
+		Cursor:       cursor,
+		IncludeWeak:  values.Get("include_weak") == "true" || values.Get("include_weak") == "1",
 	}, nil
 }
 
@@ -2819,29 +2844,30 @@ func eventQuery(values url.Values) (store.Query, error) {
 		return store.Query{}, fmt.Errorf("bad port: %w", err)
 	}
 	return store.Query{
-		Q:           values.Get("q"),
-		Level:       values.Get("type"),
-		SensorID:    values.Get("sensor_id"),
-		CampusID:    values.Get("campus_id"),
-		Department:  values.Get("department"),
-		PersonType:  values.Get("person_type"),
-		SSID:        values.Get("ssid"),
-		VLAN:        values.Get("vlan"),
-		AP:          values.Get("ap"),
-		NASIP:       values.Get("nas_ip"),
-		From:        values.Get("from"),
-		To:          values.Get("to"),
-		Window:      values.Get("window"),
-		SrcIP:       values.Get("src_ip"),
-		DstIP:       values.Get("dst_ip"),
-		Domain:      values.Get("domain"),
-		UserAgent:   values.Get("user_agent"),
-		Fingerprint: values.Get("fingerprint"),
-		Port:        port,
-		Proto:       values.Get("proto"),
-		AppProtocol: values.Get("app_protocol"),
-		Limit:       limit,
-		Cursor:      cursor,
+		AddressState: values.Get("address_state"),
+		Q:            values.Get("q"),
+		Level:        values.Get("type"),
+		SensorID:     values.Get("sensor_id"),
+		CampusID:     values.Get("campus_id"),
+		Department:   values.Get("department"),
+		PersonType:   values.Get("person_type"),
+		SSID:         values.Get("ssid"),
+		VLAN:         values.Get("vlan"),
+		AP:           values.Get("ap"),
+		NASIP:        values.Get("nas_ip"),
+		From:         values.Get("from"),
+		To:           values.Get("to"),
+		Window:       values.Get("window"),
+		SrcIP:        values.Get("src_ip"),
+		DstIP:        values.Get("dst_ip"),
+		Domain:       values.Get("domain"),
+		UserAgent:    values.Get("user_agent"),
+		Fingerprint:  values.Get("fingerprint"),
+		Port:         port,
+		Proto:        values.Get("proto"),
+		AppProtocol:  values.Get("app_protocol"),
+		Limit:        limit,
+		Cursor:       cursor,
 	}, nil
 }
 

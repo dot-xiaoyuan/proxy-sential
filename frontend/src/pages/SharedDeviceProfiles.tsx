@@ -1,3 +1,4 @@
+import { DeviceHistoryPanel } from './DeviceHistoryPanel'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Alert, Button, Drawer, Empty, Input, Select, Space, Tag, Typography } from 'antd'
 import { useQuery } from '@tanstack/react-query'
@@ -13,7 +14,6 @@ import { routerRoleLabels, routerStatusLabels } from './routerLabels'
 type Profile = components['schemas']['SharedDeviceProfile']
 type ProfilePage = components['schemas']['SharedDeviceProfilePage']
 type AuthBinding = components['schemas']['RouterAuthBinding']
-type ProfileDetail = components['schemas']['SharedDeviceProfileDetail']
 
 const time = (value?: string) => value && !value.startsWith('0001-') ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : ''
 const identityStates: Record<string, string> = { supported: '身份当前有效', historical: '身份已过期', reference: '辅助线索' }
@@ -40,13 +40,7 @@ export function SharedDeviceProfiles() {
     refetchOnReconnect: false,
     refetchInterval: false,
   })
-  const detail = useQuery({
-    queryKey: ['shared-device-profile-detail', selectedProfile],
-    queryFn: () => request<ProfileDetail>(`/shared-access/devices/${encodeURIComponent(selectedProfile || '')}`),
-    enabled: Boolean(selectedProfile),
-    staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
-  })
+
   const [knownTotal, setKnownTotal] = useState(0)
   useEffect(() => {
     if (profiles.data && profiles.data.items.length === 0 && pagination.page > 1) pagination.reset()
@@ -110,13 +104,7 @@ export function SharedDeviceProfiles() {
     {total > 0 && <AppServerPagination disabled={profiles.isFetching} page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={pagination.update} />}
     <details className="shared-profile-help"><summary>数据口径</summary><p className="shared-access-muted">列表直接读取持久化设备档案，不在页面请求时临时关联。最后观测来自身份、地址、认证、发现或共享证据，不代表设备当前在线。</p></details>
     <Drawer title="设备档案历史" rootClassName="shared-profile-history-drawer" open={Boolean(selectedProfile)} onClose={() => setSelectedProfile(null)}>
-      {detail.isError ? <AppErrorAlert title="档案历史读取失败" /> : detail.isPending ? <AppLoadingState rows={5} /> : <div className="shared-profile-history">
-        {(detail.data?.history || []).map((entry, index) => <article key={`${entry.observed_at}-${index}`} className="shared-profile-history-item">
-          <div className="shared-profile-history-head"><strong>{time(entry.observed_at)}</strong><Tag>{entry.kind === 'projection' ? '档案变化' : entry.kind}</Tag></div>
-          <div className="shared-profile-history-content"><span>{entry.snapshot.display_name}</span>{entry.snapshot.latest_account_id && <span>账号 {entry.snapshot.latest_account_id}</span>}{entry.snapshot.ip && <span>地址 {entry.snapshot.ip}</span>}{profileRoles[entry.snapshot.role || ''] && <span>角色 {profileRoles[entry.snapshot.role || '']}</span>}</div>
-        </article>)}
-        {!detail.data?.history.length && <Empty description="暂无档案变化记录" />}
-      </div>}
+      {selectedProfile&&<DeviceHistoryPanel kind="profile" id={selectedProfile}/> }
     </Drawer>
   </section>
 }
@@ -152,5 +140,5 @@ function ProfileTimes({ item }: { item: Profile }) {
 }
 
 function ProfileActions({ item, locationPath, onHistory }: { item: Profile; locationPath: string; onHistory: () => void }) {
-  return <div className="shared-profile-actions"><Button type="link" className="shared-profile-history-button" onClick={onHistory}>档案历史</Button>{item.identity_assessment_id && <Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.identity_assessment_id)}`, locationPath)}>身份记录</Link>}{item.last_shared_observation_id && <Link to={detailPath(`/shared-access/observations/${encodeURIComponent(item.last_shared_observation_id)}`, locationPath)}>共享记录</Link>}</div>
+  return <div className="shared-profile-actions"><Button type="link" className="shared-profile-history-button" onClick={onHistory}>档案历史</Button>{item.identity_assessment_id && <Link to={detailPath(`/devices/network/${encodeURIComponent(item.identity_assessment_id)}`, locationPath)}>身份记录</Link>}{item.last_shared_observation_id && <Link to={detailPath(`/shared-access/observations/${encodeURIComponent(item.last_shared_observation_id)}`, locationPath)}>共享记录</Link>}</div>
 }

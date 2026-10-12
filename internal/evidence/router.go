@@ -93,6 +93,9 @@ type RouterAuthBinding struct {
 }
 
 type RouterAssessment struct {
+	PrimaryIP          string                 `json:"primary_ip,omitempty"`
+	CurrentAddresses   []string               `json:"current_addresses,omitempty"`
+	DeviceURL          string                 `json:"device_url,omitempty"`
 	AssessmentID       string                 `json:"assessment_id"`
 	EndpointID         string                 `json:"endpoint_id,omitempty"`
 	IP                 string                 `json:"ip,omitempty"`

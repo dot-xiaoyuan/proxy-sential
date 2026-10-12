@@ -4,6 +4,115 @@
  */
 
 export interface paths {
+    "/device-history/{kind}/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 连续变化摘要或指定摘要的原始证据分页
+         * @description 后端按设备、来源和有效内容生成连续变化段；profile/shared 需要 cases:read，其余需要 identity:read。as_of 在后续页复用，原始记录通过 group 参数按需查询。
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    offset?: number;
+                    group?: string;
+                    as_of?: string;
+                };
+                header?: never;
+                path: {
+                    kind: "router" | "router_evidence" | "profile" | "shared" | "discovery" | "endpoint_discovery" | "endpoint" | "access";
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 聚合后分页，空页也返回完整总数 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            total: number;
+                            limit: number;
+                            offset: number;
+                            /** Format: date-time */
+                            as_of: string;
+                            items: {
+                                id: string;
+                                stream: string;
+                                /** Format: date-time */
+                                first_seen: string;
+                                /** Format: date-time */
+                                last_seen: string;
+                                count: number;
+                                content: {
+                                    [key: string]: unknown;
+                                };
+                            }[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/network-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 通过判定来源精确读取网络设备档案上下文
+         * @description 需要 cases:read；返回每个 assessment_id 的档案数组，不按 IP 关联，也不自动选择存在范围冲突的档案。
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description 至多 100 个逗号分隔的判定标识 */
+                    ids: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 按判定标识索引的档案 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: components["schemas"]["SharedDeviceProfile"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/nodes": {
         parameters: {
             query?: never;
@@ -5444,6 +5553,9 @@ export interface components {
             last_confirmed_at?: string;
         };
         RouterAssessment: {
+            primary_ip?: string;
+            current_addresses?: string[];
+            device_url?: string;
             assessment_id: string;
             endpoint_id?: string;
             ip?: string;
@@ -5543,6 +5655,9 @@ export interface components {
             as_of?: string;
         };
         DeviceInventoryListItem: {
+            current_addresses?: string[];
+            historical_ip?: string;
+            device_url?: string;
             router_observation?: components["schemas"]["RouterAssessment"];
             discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
             ip_match?: components["schemas"]["DeviceIPMatch"];
@@ -5824,6 +5939,8 @@ export interface components {
             last_seen?: string;
         };
         EndpointIdentityProfile: {
+            primary_ip?: string;
+            current_addresses?: string[];
             discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
             device_names_disabled?: boolean;
             device_name?: components["schemas"]["DeviceName"];

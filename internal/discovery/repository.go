@@ -191,15 +191,16 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 }
 
 type DeviceQuery struct {
-	Mode       string
-	View       string
-	Window     time.Duration
-	Search     string
-	DeviceType string
-	Category   string
-	Capability string
-	Limit      int
-	Offset     int
+	AddressState string
+	Mode         string
+	View         string
+	Window       time.Duration
+	Search       string
+	DeviceType   string
+	Category     string
+	Capability   string
+	Limit        int
+	Offset       int
 }
 
 type AddressDetail struct {
@@ -215,6 +216,8 @@ type HistoricalAddress struct {
 }
 
 type DeviceView struct {
+	DeviceURL           string              `json:"device_url"`
+	HistoryKeys         []string            `json:"-"`
 	ID                  string              `json:"id"`
 	PrimaryIP           string              `json:"primary_ip,omitempty"`
 	Addresses           []string            `json:"addresses"`
@@ -415,8 +418,12 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		if o.Current(now) {
 			group.view.Current = true
 		}
-		if o.IP != "" {
-			group.addresses[o.IP] = true
+		if ip, err := netip.ParseAddr(o.IP); err == nil && !ip.IsUnspecified() && !ip.IsMulticast() {
+			if o.Current(now) {
+				group.addresses[ip.Unmap().String()] = true
+			} else {
+				group.view.HistoricalAddresses = append(group.view.HistoricalAddresses, HistoricalAddress{Value: ip.Unmap().String(), LastSeen: o.ObservedAt})
+			}
 		}
 		if group.view.MAC == "" && o.MAC != "" {
 			group.view.MAC = o.MAC
@@ -449,6 +456,8 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		}
 		sort.Strings(keys)
 		group.view.ID = keys[0]
+		group.view.DeviceURL = "/devices?tab=iot&device=" + keys[0]
+		group.view.HistoryKeys = keys
 		for value := range group.addresses {
 			group.view.Addresses = append(group.view.Addresses, value)
 		}
@@ -614,6 +623,15 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 	// contract is [] rather than null.
 	filtered := make([]DeviceView, 0, len(items))
 	for _, item := range items {
+		if query.AddressState == "current" && item.PrimaryIP == "" {
+			continue
+		}
+		if query.AddressState == "link" && (item.PrimaryIP != "" || len(item.HistoricalAddresses) > 0) {
+			continue
+		}
+		if query.AddressState == "history" && (item.PrimaryIP != "" || len(item.HistoricalAddresses) == 0) {
+			continue
+		}
 		if query.View == "iot" {
 			if item.Category == "mobile" || item.Category == "tablet" || item.Category == "desktop" || item.Category == "network" {
 				continue
@@ -857,4 +875,35 @@ func confidenceRank(value string) int {
 		return 1
 	}
 	return 0
+}
+
+// Resolve the same scoped identity group used by the list. Never join history on IP.
+func (r Repository) HistoryKeys(ctx context.Context, id string) ([]string, error) {
+	items, err := r.DeviceCache.load("all:720h0m0s", func() ([]DeviceView, error) { return r.loadDeviceViews(ctx, 30*24*time.Hour, nil) })
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		for _, key := range item.HistoryKeys {
+			if key == id {
+				return item.HistoryKeys, nil
+			}
+		}
+	}
+	return []string{id}, nil
+}
+
+func (r Repository) DeviceByID(ctx context.Context, id string) (DeviceView, bool, error) {
+	items, err := r.DeviceCache.load("all:720h0m0s", func() ([]DeviceView, error) { return r.loadDeviceViews(ctx, 30*24*time.Hour, nil) })
+	if err != nil {
+		return DeviceView{}, false, err
+	}
+	for _, item := range items {
+		for _, key := range item.HistoryKeys {
+			if key == id {
+				return item, true, nil
+			}
+		}
+	}
+	return DeviceView{}, false, nil
 }

@@ -1,20 +1,21 @@
+import { DeviceAddress } from '../entities/device/DeviceAddress'
+import { useNetworkContexts, NetworkSharing } from './NetworkDeviceContext'
 import { detailPath } from '../app/navigation'
 import { useServerPagination } from '../shared/ui'
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Button, Checkbox, Form, Input, InputNumber, Progress, Select, Space, Switch, Table, Tag, Typography } from 'antd'
+import { Button, Checkbox, Form, Input, InputNumber, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { Link,useLocation,useSearchParams } from 'react-router-dom'
-import { ApartmentOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { api } from '../shared/api/client'
 import type { RouterAssessment, RouterObservationQuery } from '../shared/api/types'
 import { AppErrorAlert, AppLoadingState } from '../shared/ui'
-import { routerConflictLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
+import { routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
 
 const statusLabels = routerStatusLabels
 const roleLabels = routerRoleLabels
 const sourceLabels = routerSourceLabels
-const conflictLabels = routerConflictLabels
 const filterRoles = ['router', 'ap', 'switch', 'firewall', 'endpoint']
 const brandOptions = ['Huawei', 'H3C', 'Cisco', 'TP-Link', 'Ruijie', 'MikroTik', 'Juniper', 'ZTE', 'Xiaomi', 'Tenda', 'NETGEAR', 'ASUS', 'Ubiquiti', 'OpenWrt', 'VyOS']
 
@@ -25,33 +26,32 @@ function iso(value?: string) {
 }
 
 export function routerObservationQueryFromParams(params: URLSearchParams): RouterObservationQuery {
-  return { role: 'router', include_candidates: false, ...Object.fromEntries([...params.entries()].filter(([key]) => key.startsWith('router_')).map(([key, value]) => [key.slice(7), ['confidence_min', 'confidence_max'].includes(key.slice(7)) ? Number(value) : ['router_infrastructure','router_include_candidates','router_has_auth_binding'].includes(key) ? value === 'true' : value])) } as RouterObservationQuery
+  return { role: 'network', include_candidates: false, ...Object.fromEntries([...params.entries()].filter(([key]) => key.startsWith('router_')).map(([key, value]) => [key.slice(7), ['confidence_min', 'confidence_max'].includes(key.slice(7)) ? Number(value) : ['router_infrastructure','router_include_candidates','router_has_auth_binding'].includes(key) ? value === 'true' : value])) } as RouterObservationQuery
 }
 
-export function RouterObservationsPanel() {
+export function RouterObservationsPanel({addressState='current'}:{addressState?:'current'|'link'|'history'}) {
   const [form] = Form.useForm()
   const location=useLocation();const [params,setParams]=useSearchParams();const pagination=useServerPagination('routers_');const page=pagination.page;const setPage=(value:number)=>pagination.update(value,pagination.pageSize)
   const query=routerObservationQueryFromParams(params)
   query.limit=20
   useEffect(()=>{form.setFieldsValue(query)},[params,form])
-  const requestQuery = { ...query, cursor: String((page - 1) * (query.limit || 20)) }
+  const requestQuery = { ...query, address_state:addressState, cursor: String((page - 1) * (query.limit || 20)) }
   const observations = useQuery({ queryKey: ['router-observations', requestQuery], queryFn: () => api.routerObservations(requestQuery) })
   useEffect(() => { if (observations.data && observations.data.items.length === 0 && page > 1) setPage(1) }, [observations.data, page])
   const submit = (values: Record<string, string | number | boolean | undefined>) => {
     const query={ ...values, include_candidates: values.status === 'candidate' || Boolean(values.include_candidates), first_seen_from: iso(values.first_seen_from as string), first_seen_to: iso(values.first_seen_to as string), last_seen_from: iso(values.last_seen_from as string), last_seen_to: iso(values.last_seen_to as string) }
     setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith('router_')||key==='routers_page')next.delete(key);for(const [key,value]of Object.entries(query))if(value!==undefined&&value!=='')next.set(`router_${key}`,String(value));return next})
   }
-  const columns: ColumnsType<RouterAssessment> = [
-    { title: '设备', key: 'identity', width: 270, render: (_, item) => <DeviceIdentity item={item} /> },
-    { title: '网络身份', key: 'address', width: 220, render: (_, item) => <div className="router-address"><strong>{item.ip || ''}</strong><span className="router-monospace">{item.mac || ''}</span>{item.vlans?.length ? <span>VLAN {item.vlans.join(', ')}</span> : null}</div> },
-    { title: '认证身份', key: 'auth', width: 230, render: (_, item) => <AuthIdentity item={item} /> },
-    { title: '识别判定', key: 'status', width: 185, render: (_, item) => <Verdict item={item} /> },
-    { title: '关键依据', key: 'sources', width: 250, render: (_, item) => <EvidenceTags sources={item.sources} /> },
-    { title: '校验情况', key: 'constraints', width: 190, render: (_, item) => <ConstraintTags item={item} /> },
-    { title: '最近发现', dataIndex: 'last_seen', width: 170, render: value => formatTime(value) },
-    { title: '操作', key: 'action', width: 90, fixed: 'right', render: (_, item) => <Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link> },
-  ]
   const items = observations.data?.items || []
+  const contexts=useNetworkContexts(items.map(item=>item.assessment_id))
+  const columns: ColumnsType<RouterAssessment> = [
+    { title:'IP / 名称 / MAC',key:'identity',width:270,render:(_,item)=><DeviceIdentity item={item} name={contexts.data?.[item.assessment_id]?.length===1?contexts.data[item.assessment_id][0].display_name:undefined} historical={addressState==='history'}/> },
+    { title:'类型 / 品牌',key:'type',render:(_,item)=><div className="center-two-lines"><span>{roleLabels[item.role]}</span><span>{item.brand_reference_only?'':item.brand}</span></div> },
+    { title:'关联账号',key:'auth',render:(_,item)=><AuthIdentity item={item}/> },
+    { title:'路由 / 共享状态',key:'status',render:(_,item)=><><Verdict item={item}/><NetworkSharing profiles={contexts.data?.[item.assessment_id]}/></> },
+    { title:'最近观测',dataIndex:'last_seen',width:155,render:formatTime },
+    { title:'操作',key:'action',width:90,render:(_,item)=><Link to={detailPath(`/devices/network/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link> },
+  ]
   const total = observations.data?.page?.total ?? 0
   return <div className="router-observations-panel">
     <Form form={form} className="router-filter-form" layout="vertical" onFinish={submit}>
@@ -75,10 +75,11 @@ export function RouterObservationsPanel() {
         <Form.Item name="include_candidates" label="包含候选记录" valuePropName="checked"><Switch /></Form.Item>
       </div></details>
     </Form>
-    <div className="router-list-heading"><Typography.Title level={4}>路由设备识别</Typography.Title><Typography.Text type="secondary">{total} 条路由记录 · 已自动合并重复观察 · 候选不代表已确认设备</Typography.Text></div>
+    <div className="router-list-heading"><Typography.Title level={4}>网络设备</Typography.Title><Typography.Text type="secondary">{total} 台设备 · 依据路由身份聚合</Typography.Text></div>
     {observations.isLoading ? <AppLoadingState rows={6} /> : observations.isError ? <AppErrorAlert title="路由观察加载失败" message={observations.error.message} /> : <>
-      <div className="router-desktop-list"><Table rowKey="assessment_id" size="small" columns={columns} dataSource={items} pagination={{ current: page, pageSize: query.limit || 20, total, showSizeChanger: false, onChange: setPage }} scroll={{ x: 1550 }} locale={{ emptyText: '没有匹配的路由设备' }} /></div>
-      <div className="router-mobile-list">{items.map(item => <article className="router-observation-card" key={item.assessment_id}><div className="router-card-heading"><DeviceIdentity item={item} /><Verdict item={item} /></div><div className="router-address"><strong>{item.ip || ''}</strong><span className="router-monospace">{item.mac || ''}</span>{item.vlans?.length ? <span>VLAN {item.vlans.join(', ')}</span> : null}</div><AuthIdentity item={item} /><EvidenceTags sources={item.sources} /><ConstraintTags item={item} /><div className="router-card-footer"><span>最近发现 {formatTime(item.last_seen)}</span><Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link></div></article>)}</div>
+      <div className="router-desktop-list"><Table rowKey="assessment_id" size="small" columns={columns} dataSource={items} pagination={{ current: page, pageSize: query.limit || 20, total, showSizeChanger: false, onChange: setPage }} tableLayout="fixed" locale={{ emptyText: '没有匹配的路由设备' }} /></div>
+      <div className="router-mobile-list">{items.map(item=><article className="router-observation-card" key={item.assessment_id}><DeviceIdentity item={item} name={contexts.data?.[item.assessment_id]?.length===1?contexts.data[item.assessment_id][0].display_name:undefined} historical={addressState==='history'}/><span>{[roleLabels[item.role],item.brand_reference_only?'':item.brand].filter(Boolean).join(' · ')}</span><AuthIdentity item={item}/><Verdict item={item}/><NetworkSharing profiles={contexts.data?.[item.assessment_id]}/><div className="router-card-footer"><span>{formatTime(item.last_seen)}</span><Link to={detailPath(`/devices/network/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link></div></article>)}<Space wrap><Button disabled={page===1} onClick={()=>setPage(page-1)}>上一页</Button><span>{page} / {Math.max(1,Math.ceil(total/20))}</span><Button disabled={page*20>=total} onClick={()=>setPage(page+1)}>下一页</Button></Space></div>
+
     </>}
   </div>
 }
@@ -89,30 +90,14 @@ function AuthIdentity({ item }: { item: RouterAssessment }) {
   const certain = bindings.filter(binding => !binding.ambiguous)
   if (!certain.length) return <div className="router-auth-identity router-auth-identity-ambiguous"><Tag color="warning">多会话精确命中</Tag><span>{bindings.length} 个当前认证会话</span></div>
   const binding = certain[0]
-  return <div className="router-auth-identity"><strong>{binding.account_id}</strong><span className="router-auth-addresses">{binding.assigned_ips.join('、')}</span><span>{binding.match_basis === 'exact_endpoint' ? '终端标识精确匹配' : 'MAC 精确匹配'}</span></div>
+  return <div className="router-auth-identity"><strong>{binding.account_id}</strong><span>{binding.match_basis === 'exact_endpoint' ? '终端标识精确匹配' : 'MAC 精确匹配'}</span></div>
 }
 
 function Verdict({ item }: { item: RouterAssessment }) {
-  const candidate = item.status === 'candidate'
-  return <div className="router-verdict"><div><Tag className={`router-status router-status-${item.status}`}>{statusLabels[item.status]}</Tag>{candidate ? <span className="router-score-muted">{item.confidence} 分</span> : <strong>{item.confidence} 分</strong>}</div>{!candidate && <Progress percent={item.confidence} showInfo={false} size="small" status={item.status === 'confirmed' ? 'success' : 'normal'} />}{item.independent_sources > 0 && <span>{item.independent_sources} 类独立证据</span>}</div>
+ return <div className="center-verdict"><Tag className={`router-status router-status-${item.status}`}>{statusLabels[item.status]}</Tag><span>{item.confidence} 分</span>{item.ambiguous&&<Tag color="warning">关联不唯一</Tag>}{item.conflicts.length>0&&<Tag color="error">证据冲突</Tag>}</div>
 }
-
-function DeviceIdentity({ item }: { item: RouterAssessment }) {
-  const model = [item.brand, item.model || item.series].filter(Boolean).join(' ')
-  const role = roleLabels[item.role] || ''
-  return <div className="router-device-cell"><span className="router-device-icon"><ApartmentOutlined /></span><div className="router-identity"><strong className={item.brand_reference_only ? 'router-identity-reference' : undefined}>{model || role}</strong>{model && role && <span>{role}</span>}{item.brand_reference_only && <Typography.Text type="secondary">当前仅有厂商线索</Typography.Text>}{(item.merged_records || 1) > 1 && <Typography.Text className="router-merged-hint">已合并 {item.merged_records} 条重复观察</Typography.Text>}</div></div>
-}
-
-function EvidenceTags({ sources }: { sources: string[] }) {
-  if (!sources.length) return null
-  const visible = sources.slice(0, 3)
-  return <Space wrap size={[4, 4]}>{visible.map(source => <Tag key={source}>{sourceLabels[source] || source}</Tag>)}{sources.length > visible.length && <Tag>+{sources.length - visible.length}</Tag>}</Space>
-}
-
-function ConstraintTags({ item }: { item: RouterAssessment }) {
-  const hasConstraints = item.infrastructure || item.ambiguous || item.conflicts.length > 0
-  if (!hasConstraints) return null
-  return <Space wrap size={[4, 4]}>{item.infrastructure && <Tag>基础设施</Tag>}{item.ambiguous && <Tag color="warning">关联不唯一</Tag>}{item.conflicts.slice(0, 2).map(value => <Tag color="error" key={value}>{conflictLabels[value] || value}</Tag>)}{item.conflicts.length > 2 && <Tag color="error">+{item.conflicts.length - 2}</Tag>}</Space>
+function DeviceIdentity({item,historical=false,name}:{item:RouterAssessment;historical?:boolean;name?:string}){
+ return <DeviceAddress ip={historical?undefined:item.primary_ip??item.ip} historicalIP={historical?item.ip:undefined} mac={item.mac} name={name} addresses={item.current_addresses}/>
 }
 
 function formatTime(value?: string) {

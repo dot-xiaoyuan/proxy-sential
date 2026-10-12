@@ -240,6 +240,7 @@ export type DeviceFingerprintBundleManifest = { schema_version: string; version:
 export type DeviceRecognitionSummary = components['schemas']['DeviceRecognitionSummary']
 
 export type DeviceQuery = {
+ address_state?: 'current' | 'link' | 'history' | 'all'
   include_metadata?: boolean
   refresh?: boolean
   view?: 'recent' | 'history'

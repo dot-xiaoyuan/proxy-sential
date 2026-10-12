@@ -10,10 +10,10 @@ import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices } f
 import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
 import { AppErrorAlert, AppLoadingState, AppServerPagination, UniversityDimensionFilters, useServerPagination, type ReportWindow, type UniversityDimensions } from '../shared/ui'
 
-export function DevicesPage() {
+export function DevicesPage({embedded=false,addressState}:{embedded?:boolean;addressState?:'current'|'link'|'history'}) {
   const [params, setParams] = useSearchParams()
   const pagination = useServerPagination()
-  const view = params.get('view') === 'history' ? 'history' : 'recent'
+  const view = addressState==='history'||addressState==='link'||params.get('view') === 'history' ? 'history' : 'recent'
   const quickWindow = (['10m','1h','24h','7d','30d'].includes(params.get('window') || '') ? params.get('window') : '24h') as ReportWindow
   const query = params.get('q') || ''
   const [searchInput, setSearchInput] = useState(query)
@@ -25,9 +25,9 @@ export function DevicesPage() {
   const columnOptions=[{label:'类型 / 品牌',value:'recognition'},{label:'操作系统',value:'os'},{label:'关联账号 / 接入',value:'context'},{label:'最近观测',value:'observed'}]
   const [visibleColumns, setVisibleColumns] = useState<string[]>(()=>{try {const value=JSON.parse(localStorage.getItem('device-ledger-columns') || 'null');return Array.isArray(value)?value.filter(v=>['recognition','os','context','observed'].includes(v)):['recognition','os','context','observed']}catch{return ['recognition','os','context','observed']}})
   const [filtersOpen,setFiltersOpen]=useState(false)
-  const [compact,setCompact]=useState(()=>window.matchMedia('(max-width: 991px)').matches)
+  const [compact,setCompact]=useState(()=>window.matchMedia('(max-width: 559px)').matches)
   useEffect(()=>{
-    const media=window.matchMedia('(max-width: 991px)')
+    const media=window.matchMedia('(max-width: 559px)')
     const change=(event:MediaQueryListEvent)=>setCompact(event.matches)
     setCompact(media.matches);media.addEventListener('change',change)
     return ()=>media.removeEventListener('change',change)
@@ -45,7 +45,7 @@ export function DevicesPage() {
   },[searchInput,query,change])
   useEffect(()=>{if(!params.has('view')||!params.has('window'))setParams(current=>{const next=new URLSearchParams(current);if(!next.has('view'))next.set('view','recent');if(!next.has('window'))next.set('window','24h');return next},{replace:true})},[params,setParams])
   const recognitionSummary = useDeviceRecognitionSummary(diagnosticsOpen)
-  const listQuery: DeviceQuery={ view, window: quickWindow, q: query, ecosystem, brand, os_family: osFamily, sensor_id:params.get('sensor_id')||undefined, ...dimensions, limit: pagination.pageSize, cursor: pagination.cursor }
+  const listQuery: DeviceQuery={ address_state:addressState, view, window: quickWindow, q: query, ecosystem, brand, os_family: osFamily, sensor_id:params.get('sensor_id')||undefined, ...dimensions, limit: pagination.pageSize, cursor: pagination.cursor }
   const devices = useDevices(listQuery)
   const metadata=useDeviceInventoryMetadata(listQuery,Boolean(devices.data)&&!devices.isPlaceholderData)
   const total=metadata.data?.total
@@ -65,16 +65,17 @@ export function DevicesPage() {
   const matchSearch=items.some(row=>row.ip_match)
 
   const columns: ColumnsType<DeviceInventoryListItem> = [
-    { title: '终端身份', key: 'identity', render: (_, row) => <DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/> },
+    { title: 'IP / 名称 / MAC', key: 'identity', width: 280, render: (_, row) => <DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/> },
     { title: '类型 / 品牌', key: 'recognition', render: (_,row)=><DeviceLedgerRecognition device={row}/> },
     { title: '操作系统', key: 'os', render: (_,row)=><DeviceLedgerOS device={row}/> },
     { title: '关联账号 / 接入', key: 'context', render: (_, row) => <OwnershipAccess device={row} /> },
     { title: '最近观测', key:'observed', dataIndex: 'last_seen', width: 110, render: (value?: string) => <ObservedTime value={value} /> },
   ]
-  return <main className="page device-inventory-page">
-    <header className="device-page-header"><Typography.Title level={3}>终端画像</Typography.Title><div className="device-header-actions"><Link to="/discovery">网络设备发现</Link><Segmented aria-label="终端范围" value={view} options={[{label:'近期观测',value:'recent'},{label:'全部历史',value:'history'}]} onChange={value=>change({view:String(value)})}/><Button icon={<ReloadOutlined/>} loading={devices.isFetching} onClick={()=>{void devices.refresh();void metadata.refresh()}}>刷新数据</Button></div></header>
+  return <main className={embedded?"device-inventory-page center-embedded":"page device-inventory-page"}>
+    {!embedded&&<header className="device-page-header">{!embedded&&<Typography.Title level={3}>终端画像</Typography.Title>}<div className="device-header-actions"><Segmented aria-label="终端范围" value={view} options={[{label:'近期观测',value:'recent'},{label:'全部历史',value:'history'}]} onChange={value=>change({view:String(value)})}/><Button icon={<ReloadOutlined/>} loading={devices.isFetching} onClick={()=>{void devices.refresh();void metadata.refresh()}}>刷新数据</Button></div></header>}
     <section className="surface device-filter-bar device-filter-compact" aria-label="终端筛选">
       <div className="device-filter-primary"><Input.Search className="device-search" allowClear placeholder="搜索设备名称、MAC、IP 或账号" value={searchInput} onChange={event=>setSearchInput(event.target.value)} onSearch={value=>change({q:value.trim()})}/>{view==='recent'&&<Segmented aria-label="观测时间范围" value={quickWindow} options={[{label:'10 分钟',value:'10m'},{label:'1 小时',value:'1h'},{label:'24 小时',value:'24h'},{label:'7 天',value:'7d'},{label:'30 天',value:'30d'}]} onChange={value=>change({window:String(value)})}/>}</div>
+      {embedded&&<Button className="center-refresh" icon={<ReloadOutlined/>} loading={devices.isFetching} onClick={()=>{void devices.refresh();void metadata.refresh()}}>刷新数据</Button>}
       <details className="filter-disclosure device-filter-disclosure" onToggle={event=>setFiltersOpen(event.currentTarget.open)}><summary>更多筛选{[osFamily,brand,ecosystem,...Object.values(dimensions)].filter(Boolean).length ? `（已启用 ${[osFamily,brand,ecosystem,...Object.values(dimensions)].filter(Boolean).length} 项）` : ''}</summary>{filtersOpen&&<div className="filter-disclosure-content device-more-filters"><Select aria-label="操作系统筛选" allowClear showSearch optionFilterProp="label" placeholder="全部操作系统" value={osFamily} options={(metadata.data?.facets?.os_families??[]).map(value=>({value,label:value==='unknown'?'空值':value}))} onChange={value=>change({os_family:value})}/><Select aria-label="品牌筛选" allowClear showSearch optionFilterProp="label" placeholder="全部品牌" value={brand} options={(metadata.data?.facets?.brands??[]).map(value=>({value,label:brandFilterLabel(value)}))} onChange={value=>change({brand:value})}/><Select allowClear className="ecosystem-filter" placeholder="生态线索" value={ecosystem} options={['Apple','Huawei','Samsung','Xiaomi','Microsoft Windows','Amazon Alexa','Roku','Sonos','Vivo','OPPO/Realme'].map(value=>({label:value,value}))} onChange={value=>change({ecosystem:value})}/><UniversityDimensionFilters value={dimensions} onChange={next=>change(Object.fromEntries(dimensionKeys.map(key=>[key,next[key]])))}/></div>}</details>
     </section>
     <section className="surface device-inventory-surface">
@@ -141,11 +142,9 @@ export function DevicesPage() {
 }
 
 function OwnershipAccess({ device }: { device: DeviceInventoryListItem }) {
-  return <div className="device-context-cell">
-    {device.current_account&&<div><Typography.Text type="secondary">关联账号</Typography.Text><Typography.Text className="brand-evidence-wrap">{device.current_account}</Typography.Text></div>}
-    {(device.owner_name||device.owner_account)&&<div><Typography.Text type="secondary">登记归属</Typography.Text><Typography.Text className="brand-evidence-wrap">{[device.owner_name,device.owner_account].filter(Boolean).join(' · ')}</Typography.Text></div>}
-    {device.current_access_id&&<div><Typography.Text type="secondary">接入位置</Typography.Text><Typography.Text className="brand-evidence-wrap" title={device.current_access_id}>{device.current_access_id}</Typography.Text></div>}
-  </div>
+  const account=device.current_account||[device.owner_name,device.owner_account].filter(Boolean).join(' · ')
+  return <div className="center-ownership">{account&&<span title={account}>{account}</span>}{device.current_access_id&&<span className="center-access" title={device.current_access_id}>{device.current_access_id}</span>}</div>
+
 }
 
 function ObservedTime({ value }: { value?: string }) {

@@ -4163,3 +4163,78 @@ pre.wrap-code {
 .passive-device-name strong { color: #0f172a; }
 .passive-validity { display: block; font-size: 12px; }
 @media(max-width:559px) { .passive-protocol-grid { grid-template-columns: 1fr; } .passive-protocol-card { padding: 14px; } .passive-discovery-controls .ant-input-search, .passive-discovery-controls .ant-select { width: 100%; } }
+
+/* Device center: one address hierarchy and compact, predictable rows. */
+.device-center-page { min-width:0; }
+.center-header,.center-history-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.center-header h3 { margin:0 0 4px; }
+.center-header > div:first-child { min-width:0; flex:1 1 300px; }
+.center-header .ant-select { min-width:160px; }
+.center-embedded { padding:0; display:grid; gap:12px; }
+.center-device-identity { min-width:0; display:grid; gap:3px; }
+.center-address-line { display:flex; align-items:center; gap:6px; min-width:0; }
+.center-primary-ip { font-size:14px; font-weight:600; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; line-height:22px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; display:block; }
+.center-device-secondary { display:flex; align-items:center; gap:8px; min-width:0; font-size:12px; color:#64748b; }
+.center-device-secondary > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.center-device-secondary > .mono { flex-shrink:0; }
+.center-historical-ip { color:#64748b; font-size:12px; overflow-wrap:anywhere; }
+.center-more-addresses { border:1px solid #e2e8f0; border-radius:4px; background:#f8fafc; color:#334155; cursor:pointer; white-space:nowrap; flex-shrink:0; }
+.center-addresses { display:grid; gap:6px; max-width:320px; overflow-wrap:anywhere; }
+.center-two-lines,.center-network-sharing { display:grid; gap:3px; font-size:12px; }
+.center-verdict { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.center-history { display:grid; gap:12px; min-width:0; }
+.center-history-row,.center-network-profile { border:1px solid #e2e8f0; border-radius:8px; padding:14px; display:grid; gap:6px; min-width:0; }
+.center-history-meta,.center-history-content { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; overflow-wrap:anywhere; }
+.center-history-content b { color:#64748b; font-weight:400; }
+.center-history-row > .ant-btn { justify-self:start; padding-inline:0; }
+.center-raw-history { min-width:0; background:#f8fafc; border-radius:8px; padding:10px; display:grid; gap:8px; }
+.center-raw-history summary { overflow-wrap:anywhere; cursor:pointer; }
+.center-raw-history pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:360px; overflow:auto; font-size:12px; }
+.device-center-page .device-desktop-table .ant-table-cell,.device-center-page .ant-table-cell { padding:8px 10px; vertical-align:middle; }
+.device-center-page .device-ledger-recognition { gap:2px; }
+.device-center-page .device-page-header { justify-content:flex-end; }
+.device-center-page .device-list-freshness { flex-wrap:wrap; gap:8px; }
+.device-center-page .device-identity-cell { display:block; }
+.device-center-page .router-list-heading h4 { font-size:15px; }
+.device-center-page .router-list-heading { margin:12px 0; }
+.device-center-page .router-auth-identity { gap:2px; overflow-wrap:anywhere; font-size:12px; }
+.device-center-page .router-desktop-list,.device-center-page .discovery-desktop { display:block; }
+.device-center-page .router-mobile-list,.device-center-page .discovery-mobile { display:none; }
+.device-center-page .ant-btn,.device-center-page .ant-tag,.center-history .ant-btn,.center-history .ant-tag { white-space:nowrap; flex-shrink:0; }
+.device-center-page .router-filter-actions,.device-center-page .device-header-actions { display:flex; flex-wrap:wrap; gap:8px; }
+@media(min-width:560px) {
+ .device-center-page .device-desktop-table { display:block; }
+ .device-center-page .device-mobile-cards { display:none; }
+}
+@media(max-width:559px) {
+ .device-center-page .router-desktop-list,.device-center-page .discovery-desktop,.device-center-page .device-desktop-table { display:none; }
+ .device-center-page .router-mobile-list,.device-center-page .discovery-mobile,.device-center-page .device-mobile-cards { display:grid; gap:10px; }
+ .device-center-page .router-observation-card,.device-center-page .discovery-card,.device-center-page .device-mobile-card { padding:14px; gap:6px; border-radius:8px; border:1px solid #e2e8f0; min-width:0; }
+ .device-center-page .router-filter-primary { display:flex; flex-wrap:wrap; gap:8px; }
+ .device-center-page .router-filter-primary > * { min-width:0; flex-basis:100%; }
+ .device-center-page .router-filter-actions { flex-basis:100%; }
+ .device-center-page .device-filter-primary { flex-wrap:wrap; }
+ .device-center-page .device-filter-primary .ant-segmented { max-width:100%; overflow:auto; }
+ .center-device-secondary > .mono { flex-shrink:1; }
+ .center-header .ant-select { width:100%; }
+ .device-center-page .device-list-heading { flex-wrap:wrap; }
+}
+.center-ownership { display:grid; gap:3px; min-width:0; }
+.center-ownership span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.center-ownership .center-access { color:#64748b; font-size:12px; }
+.center-recognition-main { display:flex; flex-wrap:wrap; gap:2px 6px; }
+.device-center-page .device-header-actions .ant-segmented { display:none; }
+.center-embedded .device-filter-bar { position:relative; padding-right:132px; }
+.center-refresh { position:absolute; right:20px; top:16px; }
+@media(max-width:559px){
+ .center-embedded .device-filter-bar { padding-right:14px; }
+ .center-refresh { position:static; justify-self:start; margin:8px 0; }
+ .device-center-page .passive-protocol-grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+ .device-center-page .passive-protocol-card { padding:10px; min-width:0; }
+ .device-center-page .passive-protocol-heading { flex-wrap:wrap; gap:4px; }
+ .device-center-page .passive-protocol-heading strong { font-size:13px; }
+ .device-center-page .passive-protocol-heading .ant-tag { margin:0; font-size:11px; }
+ .device-center-page .passive-protocol-count { font-size:22px; flex-wrap:wrap; }
+ .device-center-page .passive-protocol-count span { font-size:11px; }
+ .device-center-page .passive-protocol-card > .ant-typography { font-size:11px; overflow-wrap:anywhere; }
+}

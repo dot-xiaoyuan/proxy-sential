@@ -110,11 +110,11 @@ func routerObservationQuery(values url.Values) (store.RouterQuery, error) {
 	if role == "" {
 		role = "router"
 	}
-	if role != "router" && role != "ap" && role != "switch" && role != "firewall" && role != "endpoint" && role != "unknown" {
+	if role != "network" && role != "router" && role != "ap" && role != "switch" && role != "firewall" && role != "endpoint" && role != "unknown" {
 		return store.RouterQuery{}, &routerQueryError{message: "role 无效"}
 	}
 	return store.RouterQuery{
-		Keyword: strings.TrimSpace(values.Get("keyword")), IP: strings.TrimSpace(values.Get("ip")), MAC: strings.TrimSpace(values.Get("mac")), VLAN: strings.TrimSpace(values.Get("vlan")), Brand: strings.TrimSpace(values.Get("brand")), Model: strings.TrimSpace(values.Get("model")), Role: role, Status: status, IncludeCandidates: includeCandidates, Source: strings.TrimSpace(values.Get("source")), ConfidenceMin: minimum, ConfidenceMax: maximum, FirstSeenFrom: strings.TrimSpace(values.Get("first_seen_from")), FirstSeenTo: strings.TrimSpace(values.Get("first_seen_to")), LastSeenFrom: strings.TrimSpace(values.Get("last_seen_from")), LastSeenTo: strings.TrimSpace(values.Get("last_seen_to")), Infrastructure: infrastructure, HasAuthBinding: hasAuthBinding, Limit: limit, Cursor: cursor,
+		AddressState: values.Get("address_state"), Keyword: strings.TrimSpace(values.Get("keyword")), IP: strings.TrimSpace(values.Get("ip")), MAC: strings.TrimSpace(values.Get("mac")), VLAN: strings.TrimSpace(values.Get("vlan")), Brand: strings.TrimSpace(values.Get("brand")), Model: strings.TrimSpace(values.Get("model")), Role: role, Status: status, IncludeCandidates: includeCandidates, Source: strings.TrimSpace(values.Get("source")), ConfidenceMin: minimum, ConfidenceMax: maximum, FirstSeenFrom: strings.TrimSpace(values.Get("first_seen_from")), FirstSeenTo: strings.TrimSpace(values.Get("first_seen_to")), LastSeenFrom: strings.TrimSpace(values.Get("last_seen_from")), LastSeenTo: strings.TrimSpace(values.Get("last_seen_to")), Infrastructure: infrastructure, HasAuthBinding: hasAuthBinding, Limit: limit, Cursor: cursor,
 	}, nil
 }
 

@@ -190,11 +190,8 @@ func (s *DBStore) ListSharedDeviceProfiles(ctx context.Context, q SharedDevicePr
 }
 
 func (s *PostgresStore) GetSharedDeviceProfile(ctx context.Context, id string) (SharedDeviceProfileDetail, bool, error) {
-	var profileRaw, historyRaw []byte
-	err := s.db.QueryRowContext(ctx, `SELECT p.list_item,coalesce((SELECT jsonb_agg(jsonb_build_object(
- 'kind',h.change_kind,'observed_at',h.observed_at,'source_id',h.source_id,'snapshot',h.payload)
- ORDER BY h.observed_at DESC,h.history_id DESC) FROM shared_device_profile_history h WHERE h.profile_id=p.profile_id),'[]'::jsonb)
-FROM shared_device_profiles p WHERE p.profile_id=$1 AND p.merged_into_profile_id IS NULL`, id).Scan(&profileRaw, &historyRaw)
+	var profileRaw []byte
+	err := s.db.QueryRowContext(ctx, `SELECT list_item FROM shared_device_profiles WHERE profile_id=$1 AND merged_into_profile_id IS NULL`, id).Scan(&profileRaw)
 	if err == sql.ErrNoRows {
 		return SharedDeviceProfileDetail{}, false, nil
 	}
@@ -203,9 +200,6 @@ FROM shared_device_profiles p WHERE p.profile_id=$1 AND p.merged_into_profile_id
 	}
 	detail := SharedDeviceProfileDetail{History: []SharedDeviceProfileHistory{}}
 	if err = json.Unmarshal(profileRaw, &detail.Profile); err != nil {
-		return SharedDeviceProfileDetail{}, false, err
-	}
-	if err = json.Unmarshal(historyRaw, &detail.History); err != nil {
 		return SharedDeviceProfileDetail{}, false, err
 	}
 	return detail, true, nil

@@ -177,28 +177,8 @@ func (s *PostgresStore) GetSharedBehavior(ctx context.Context, id string) (Share
 	result.WindowStart, result.WindowEnd, result.ExpiresAt = windowStart.UTC(), windowEnd.UTC(), expires.UTC()
 	now := time.Now().UTC()
 	result.Current = current && result.RuleVersion == sharedaccess.BehaviorRuleVersion && expires.After(now) && windowEnd.After(now.Add(-20*time.Minute)) && !windowEnd.After(now)
-	rows, err := s.db.QueryContext(ctx, `SELECT h.status,h.confidence,array_to_json(h.signal_groups),h.coverage_state,h.rule_version,h.observed_at,h.created_at
-FROM shared_behavior_observation_history h
-JOIN shared_behavior_observations o ON o.observation_id=h.observation_id
-WHERE o.sensor_id=$1 AND o.campus_id=$2 AND o.access_domain=$3 AND o.ip=$4::inet
-ORDER BY h.observed_at DESC,h.history_id DESC LIMIT 200`, sensorID, campusID, accessDomain, ip)
-	if err != nil {
-		return SharedBehaviorDetail{}, false, err
-	}
-	defer rows.Close()
 	result.History = []SharedBehaviorHistory{}
-	for rows.Next() {
-		var item SharedBehaviorHistory
-		var signalGroups []byte
-		if err = rows.Scan(&item.Status, &item.Confidence, &signalGroups, &item.CoverageState, &item.RuleVersion, &item.ObservedAt, &item.CreatedAt); err != nil {
-			return SharedBehaviorDetail{}, false, err
-		}
-		if err = json.Unmarshal(signalGroups, &item.SignalGroups); err != nil {
-			return SharedBehaviorDetail{}, false, err
-		}
-		result.History = append(result.History, item)
-	}
-	return result, true, rows.Err()
+	return result, true, nil
 }
 
 func (s *DBStore) ListSharedBehavior(ctx context.Context, query SharedBehaviorQuery) (SharedBehaviorPage, error) {

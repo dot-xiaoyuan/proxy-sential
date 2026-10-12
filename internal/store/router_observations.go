@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 )
 
 type RouterQuery struct {
+	AddressState      string
 	Keyword           string
 	IP                string
 	MAC               string
@@ -246,14 +250,13 @@ func (s *PostgresStore) ListRouterObservations(ctx context.Context, query Router
 	// A device may first be observed by MAC and later gain an endpoint identity.
 	// Keep both durable assessments for auditability, but expose one current row
 	// per physical device so the operator does not see the same router twice.
-	rows, err := s.db.QueryContext(ctx, `WITH filtered AS (
+	deviceCTE := `WITH filtered AS (
  SELECT *,CASE
-  WHEN mac<>'' THEN 'mac:'||lower(mac)
+  WHEN mac<>'' THEN 'mac:'||lower(mac)||':vlans:'||array_to_string(vlans,',')||':scope:'||coalesce((SELECT string_agg(DISTINCT f.data->>'sensor_id',',' ORDER BY f.data->>'sensor_id') FROM router_evidence_facts f WHERE f.assessment_id=router_assessments.assessment_id AND coalesce(f.data->>'sensor_id','')<>''),assessment_id)
   WHEN endpoint_id<>'' THEN 'endpoint:'||endpoint_id
-  WHEN ip IS NOT NULL THEN 'ip:'||host(ip)||':vlans:'||array_to_string(vlans,',')
-  ELSE 'assessment:'||assessment_id
+    ELSE 'assessment:'||assessment_id
  END AS device_key
- FROM router_assessments `+where+`
+ FROM router_assessments ` + where + `
 ), ranked AS (
  SELECT assessment,confidence,first_seen,last_seen,expires_at,assessment_id,
   count(*) OVER(PARTITION BY device_key) AS merged_records,
@@ -264,7 +267,8 @@ func (s *PostgresStore) ListRouterObservations(ctx context.Context, query Router
 ), devices AS (
  SELECT assessment,confidence,first_seen,last_seen,expires_at,assessment_id,merged_records FROM ranked WHERE device_rank=1
 )
-SELECT assessment,merged_records,count(*) OVER(),first_seen,last_seen,expires_at FROM devices`+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,assessment_id LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+`
+	rows, err := s.db.QueryContext(ctx, deviceCTE+`SELECT assessment,merged_records,count(*) OVER(),first_seen,last_seen,expires_at FROM devices`+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,assessment_id LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		return RouterAssessmentPage{}, err
 	}
@@ -289,9 +293,20 @@ SELECT assessment,merged_records,count(*) OVER(),first_seen,last_seen,expires_at
 	if err = rows.Err(); err != nil {
 		return page, err
 	}
+	rows.Close()
+	if len(page.Items) == 0 {
+		if err = s.db.QueryRowContext(ctx, deviceCTE+`SELECT count(*) FROM devices`, args[:len(args)-2]...).Scan(&page.Page.Total); err != nil {
+			return page, err
+		}
+	}
+
 	if err = s.attachRouterAuthBindings(ctx, page.Items); err != nil {
 		return page, err
 	}
+	for i := range page.Items {
+		routerDisplayAddresses(&page.Items[i])
+	}
+
 	if query.Cursor+len(page.Items) < page.Page.Total {
 		next := fmt.Sprint(query.Cursor + len(page.Items))
 		page.Page.NextCursor = &next
@@ -316,7 +331,7 @@ func (s *PostgresStore) GetRouterObservation(ctx context.Context, id string) (Ro
 	result.Current = times.expires.After(time.Now().UTC())
 	// Historical and expired facts remain durable, but the current device page
 	// should not repeat evidence from every previous ruleset replay.
-	rows, err := s.db.QueryContext(ctx, `SELECT data,first_seen,last_seen,expires_at FROM router_evidence_facts WHERE assessment_id=$1 AND expires_at>now() ORDER BY last_seen DESC,evidence_id`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT data,first_seen,last_seen,expires_at FROM router_evidence_facts WHERE assessment_id=$1 AND expires_at>now() ORDER BY last_seen DESC,evidence_id LIMIT 50`, id)
 	if err != nil {
 		return RouterObservationDetail{}, false, err
 	}
@@ -349,23 +364,9 @@ func (s *PostgresStore) GetRouterObservation(ctx context.Context, id string) (Ro
 		}
 		result.AuthBindings = items[0].AuthBindings
 	}
-	historyRows, err := s.db.QueryContext(ctx, `SELECT status,confidence,rule_version,changed_at,conflicts FROM router_assessment_history WHERE assessment_id=$1 ORDER BY history_id`, id)
-	if err != nil {
-		return RouterObservationDetail{}, false, err
-	}
-	defer historyRows.Close()
-	for historyRows.Next() {
-		var item RouterAssessmentHistory
-		var at time.Time
-		var conflicts []byte
-		if err = historyRows.Scan(&item.Status, &item.Confidence, &item.RuleVersion, &at, &conflicts); err != nil {
-			return RouterObservationDetail{}, false, err
-		}
-		item.ChangedAt = at.UTC().Format(time.RFC3339Nano)
-		_ = json.Unmarshal(conflicts, &item.Conflicts)
-		result.History = append(result.History, item)
-	}
-	return result, true, historyRows.Err()
+	routerDisplayAddresses(&result.RouterAssessment)
+	result.History = []RouterAssessmentHistory{}
+	return result, true, nil
 }
 
 type routerAuthSession struct {
@@ -555,7 +556,16 @@ func routerWhere(query RouterQuery) (string, []any, error) {
 	// The operator-facing router list is not a generic vendor/device inventory.
 	// Keep raw and excluded observations durable for audit, but surface only
 	// addressed routing or wireless-access devices backed by current role facts.
-	clauses, args := []string{"expires_at>now()", "ip IS NOT NULL", "brand_reference_only=false"}, []any{}
+	clauses, args := []string{"brand_reference_only=false"}, []any{}
+	switch query.AddressState {
+	case "history":
+		clauses = append(clauses, "expires_at<=now()")
+	case "link":
+		clauses = append(clauses, "expires_at>now()", "ip IS NULL")
+	default:
+		clauses = append(clauses, "expires_at>now()", "ip IS NOT NULL")
+	}
+
 	add := func(clause string, value any) {
 		args = append(args, value)
 		clauses = append(clauses, fmt.Sprintf(clause, len(args)))
@@ -567,10 +577,17 @@ func routerWhere(query RouterQuery) (string, []any, error) {
 		clauses = append(clauses, `(assessment_id ILIKE '%'||`+placeholder+`||'%' OR endpoint_id ILIKE '%'||`+placeholder+`||'%' OR host(ip) ILIKE '%'||`+placeholder+`||'%' OR mac ILIKE '%'||`+placeholder+`||'%' OR brand ILIKE '%'||`+placeholder+`||'%' OR series ILIKE '%'||`+placeholder+`||'%' OR model ILIKE '%'||`+placeholder+`||'%')`)
 	}
 	role := strings.TrimSpace(query.Role)
-	if role == "" {
+	if role == "network" {
+		clauses = append(clauses, "role IN('router','ap','switch','firewall')")
+		query.Role = ""
+		if query.AddressState != "history" {
+			clauses = append(clauses, "EXISTS(SELECT 1 FROM router_evidence_facts f WHERE f.assessment_id=router_assessments.assessment_id AND f.expires_at>now() AND NOT f.conflict AND NOT f.exclusion AND coalesce(f.data->>'brand_reference_only','false')='false' AND f.data->>'role'=router_assessments.role)")
+		}
+
+	} else if role == "" {
 		clauses = append(clauses, "role='router'")
 		clauses = append(clauses, "EXISTS(SELECT 1 FROM router_evidence_facts active_router_fact WHERE active_router_fact.assessment_id=router_assessments.assessment_id AND active_router_fact.expires_at>now() AND active_router_fact.conflict=false AND active_router_fact.exclusion=false AND COALESCE(active_router_fact.data->>'brand_reference_only','false')='false' AND active_router_fact.data->>'role'='router')")
-	} else if role == "router" || role == "ap" {
+	} else if (role == "router" || role == "ap") && query.AddressState != "history" {
 		factRole := "router"
 		if role == "ap" {
 			factRole = "ap"
@@ -650,4 +667,46 @@ func (s *DBStore) RouterObservationSummaries(ctx context.Context, endpointIDs []
 
 func (s *DBStore) ResolveDeviceAt(ctx context.Context, observation DomainObservation) (IdentityAttribution, bool, error) {
 	return s.pg.ResolveDeviceAt(ctx, observation)
+}
+
+// Display metadata only; changing a primary address never changes identity.
+func routerDisplayAddresses(item *evidence.RouterAssessment) {
+	item.DeviceURL = "/devices/network/" + url.PathEscape(item.AssessmentID)
+	item.PrimaryIP = ""
+	item.CurrentAddresses = []string{}
+	until, err := time.Parse(time.RFC3339Nano, item.ExpiresAt)
+	if err != nil || !until.After(time.Now()) {
+		return
+	}
+	values := []string{item.IP}
+	for _, binding := range item.AuthBindings {
+		if !binding.Ambiguous {
+			values = append(values, binding.AssignedIPs...)
+		}
+	}
+	seen := map[netip.Addr]bool{}
+	ips := []netip.Addr{}
+	for _, value := range values {
+		ip, e := netip.ParseAddr(value)
+		if e != nil || ip.IsUnspecified() || ip.IsMulticast() {
+			continue
+		}
+		ip = ip.Unmap()
+		if !seen[ip] {
+			seen[ip] = true
+			ips = append(ips, ip)
+		}
+	}
+	sort.Slice(ips, func(i, j int) bool {
+		if ips[i].Is4() != ips[j].Is4() {
+			return ips[i].Is4()
+		}
+		return ips[i].Less(ips[j])
+	})
+	for _, ip := range ips {
+		item.CurrentAddresses = append(item.CurrentAddresses, ip.String())
+	}
+	if len(ips) > 0 {
+		item.PrimaryIP = ips[0].String()
+	}
 }

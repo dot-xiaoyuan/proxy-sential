@@ -33,12 +33,26 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		baseArgs = append(baseArgs, deviceViewStart(query, now), now)
 		baseWhere = append(baseWhere, "r.last_seen >= $1 AND r.last_seen <= $2")
 	}
-	baseSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) WHERE " + strings.Join(baseWhere, " AND ")
+	prefix, join := "", ""
+	if query.AddressState != "" {
+		prefix = deviceCenterAddressCTE
+		join = " LEFT JOIN current_addresses ca USING(endpoint_id) "
+		switch query.AddressState {
+		case "current":
+			baseWhere = append(baseWhere, "cardinality(ca.addresses)>0")
+		case "link":
+			baseWhere = append(baseWhere, "coalesce(cardinality(ca.addresses),0)=0 AND coalesce(r.current_ip,'')='' AND NOT EXISTS(SELECT 1 FROM identity_ip_mac_history h WHERE h.endpoint_id=r.endpoint_id AND h.ip IS NOT NULL)")
+		case "history":
+			baseWhere = append(baseWhere, "coalesce(cardinality(ca.addresses),0)=0 AND (coalesce(r.current_ip,'')<>'' OR EXISTS(SELECT 1 FROM identity_ip_mac_history h WHERE h.endpoint_id=r.endpoint_id AND h.ip IS NOT NULL))")
+		}
+	}
+
+	baseSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) " + join + " WHERE " + strings.Join(baseWhere, " AND ")
 
 	facets := DeviceFilterFacets{Brands: []string{}, OSFamilies: []string{}}
 	if !query.InventorySkipMetadata {
 		started = time.Now()
-		facetRows, err := conn.QueryContext(ctx, "SELECT DISTINCT r.filter_brand,r.filter_os_family"+baseSQL, baseArgs...)
+		facetRows, err := conn.QueryContext(ctx, prefix+"SELECT DISTINCT r.filter_brand,r.filter_os_family"+baseSQL, baseArgs...)
 		if err != nil {
 			return DeviceInventoryListPage{}, err
 		}
@@ -121,11 +135,11 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		add("EXISTS(SELECT 1 FROM account_sessions s WHERE s.endpoint_id=r.endpoint_id AND s."+dimension.column+"::text=$N AND (s.ended_at IS NULL OR s.ended_at>=now()))", dimension.value)
 	}
 
-	whereSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) WHERE " + strings.Join(where, " AND ")
+	whereSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) " + join + " WHERE " + strings.Join(where, " AND ")
 	var total int
 	if !query.InventorySkipMetadata {
 		started = time.Now()
-		if err = conn.QueryRowContext(ctx, "SELECT count(*)"+whereSQL, args...).Scan(&total); err != nil {
+		if err = conn.QueryRowContext(ctx, prefix+"SELECT count(*)"+whereSQL, args...).Scan(&total); err != nil {
 			return DeviceInventoryListPage{}, err
 		}
 		inventoryTiming(ctx, "count", started)
@@ -139,7 +153,11 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 	}
 	pageArgs := append(append([]any{}, args...), pageLimit, query.Cursor)
 	started = time.Now()
-	rows, err := conn.QueryContext(ctx, `SELECT r.list_item,r.updated_at`+whereSQL+`
+	projection := "r.list_item"
+	if query.AddressState != "" {
+		projection = "r.list_item || jsonb_build_object('current_ip',coalesce(ca.addresses[1],''),'current_addresses',coalesce(to_jsonb(ca.addresses),'[]'::jsonb),'historical_ip',CASE WHEN coalesce(cardinality(ca.addresses),0)=0 THEN r.current_ip ELSE '' END)"
+	}
+	rows, err := conn.QueryContext(ctx, prefix+`SELECT `+projection+`,r.updated_at`+whereSQL+`
 ORDER BY r.last_seen DESC NULLS LAST,r.endpoint_id
 LIMIT $`+strconvArg(len(pageArgs)-1)+` OFFSET $`+strconvArg(len(pageArgs)), pageArgs...)
 	if err != nil {
@@ -164,7 +182,20 @@ LIMIT $`+strconvArg(len(pageArgs)-1)+` OFFSET $`+strconvArg(len(pageArgs)), page
 		if err = json.Unmarshal(raw, &item); err != nil {
 			return DeviceInventoryListPage{}, err
 		}
-		items = append(items, ProjectDeviceInventoryListItem(item))
+		projected := ProjectDeviceInventoryListItem(item)
+		if query.AddressState != "" {
+			var address struct {
+				CurrentAddresses []string `json:"current_addresses"`
+				HistoricalIP     string   `json:"historical_ip"`
+			}
+			if err = json.Unmarshal(raw, &address); err != nil {
+				return DeviceInventoryListPage{}, err
+			}
+			projected.CurrentAddresses = address.CurrentAddresses
+			projected.HistoricalIP = address.HistoricalIP
+		}
+		projected.DeviceURL = "/devices/" + item.EndpointID
+		items = append(items, projected)
 		endpointIDs = append(endpointIDs, item.EndpointID)
 		if asOf.IsZero() || updatedAt.Before(asOf) {
 			asOf = updatedAt

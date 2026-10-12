@@ -140,6 +140,8 @@ type AccountIdentityProfile struct {
 }
 
 type EndpointIdentityProfile struct {
+	CurrentAddresses    []string                    `json:"current_addresses,omitempty"`
+	PrimaryIP           string                      `json:"primary_ip,omitempty"`
 	Discovery           *discovery.Summary          `json:"discovery,omitempty"`
 	DeviceNamesDisabled bool                        `json:"device_names_disabled,omitempty"`
 	DeviceName          *DeviceName                 `json:"device_name,omitempty"`

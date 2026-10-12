@@ -34,7 +34,7 @@ func TestListSharedBehaviorReturnsLatestGatewayProfile(t *testing.T) {
 	}
 }
 
-func TestGetSharedBehaviorCombinesWindowHistoryByGateway(t *testing.T) {
+func TestGetSharedBehaviorLeavesHistoryForPaginatedEndpoint(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -45,16 +45,11 @@ func TestGetSharedBehaviorCombinesWindowHistoryByGateway(t *testing.T) {
 	mock.ExpectQuery("SELECT observation,sensor_id,campus_id,access_domain,host\\(ip\\)").
 		WithArgs("shared-behavior-current").
 		WillReturnRows(sqlmock.NewRows([]string{"observation", "sensor_id", "campus_id", "access_domain", "ip", "current", "window_start", "window_end", "expires_at"}).AddRow([]byte(raw), "sensor-a", "ncu", "mirror", "192.0.2.1", false, time.Date(2026, 9, 28, 10, 50, 0, 0, time.UTC), time.Date(2026, 9, 28, 11, 0, 0, 0, time.UTC), time.Date(2026, 10, 28, 11, 0, 0, 0, time.UTC)))
-	mock.ExpectQuery("FROM shared_behavior_observation_history h").
-		WithArgs("sensor-a", "ncu", "mirror", "192.0.2.1").
-		WillReturnRows(sqlmock.NewRows([]string{"status", "confidence", "signal_groups", "coverage_state", "rule_version", "observed_at", "created_at"}).
-			AddRow("confirmed", 95, []byte(`["tcp_stack","ttl_path","ua_os"]`), "verified", "shared-behavior/v3", time.Date(2026, 9, 28, 11, 0, 0, 0, time.UTC), time.Date(2026, 9, 28, 11, 0, 1, 0, time.UTC)).
-			AddRow("likely", 65, []byte(`["tcp_stack","ttl_path"]`), "verified", "shared-behavior/v3", time.Date(2026, 9, 28, 10, 55, 0, 0, time.UTC), time.Date(2026, 9, 28, 10, 55, 1, 0, time.UTC)))
 	detail, found, err := store.GetSharedBehavior(context.Background(), "shared-behavior-current")
 	if err != nil || !found {
 		t.Fatalf("detail found=%t err=%v", found, err)
 	}
-	if len(detail.History) != 2 || detail.History[0].Status != "confirmed" || detail.History[1].Status != "likely" {
+	if len(detail.History) != 0 {
 		t.Fatalf("unexpected gateway history: %+v", detail.History)
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {

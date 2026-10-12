@@ -6,6 +6,59 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /device-history/{kind}/{id}:
+    get:
+      summary: 连续变化摘要或指定摘要的原始证据分页
+      description: 后端按设备、来源和有效内容生成连续变化段；profile/shared 需要 cases:read，其余需要 identity:read。as_of 在后续页复用，原始记录通过 group 参数按需查询。
+      parameters:
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [router, router_evidence, profile, shared, discovery, endpoint_discovery, endpoint, access] } }
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: group, in: query, schema: { type: string } }
+        - { name: as_of, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: 聚合后分页，空页也返回完整总数
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, limit, offset, as_of]
+                properties:
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  as_of: { type: string, format: date-time }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, stream, first_seen, last_seen, count, content]
+                      properties:
+                        id: { type: string }
+                        stream: { type: string }
+                        first_seen: { type: string, format: date-time }
+                        last_seen: { type: string, format: date-time }
+                        count: { type: integer }
+                        content: { type: object, additionalProperties: true }
+  /shared-access/network-context:
+    get:
+      summary: 通过判定来源精确读取网络设备档案上下文
+      description: 需要 cases:read；返回每个 assessment_id 的档案数组，不按 IP 关联，也不自动选择存在范围冲突的档案。
+      parameters:
+        - { name: ids, in: query, required: true, schema: { type: string }, description: 至多 100 个逗号分隔的判定标识 }
+      responses:
+        '200':
+          description: 按判定标识索引的档案
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items: { $ref: '#/components/schemas/SharedDeviceProfile' }
+
   /discovery/nodes:
     get:
       description: Discovery worker heartbeat; requires identity:read.
@@ -5606,6 +5659,10 @@ components:
       type: object
       required: [assessment_id, role, status, confidence, independent_sources, sources, infrastructure, brand_reference_only, association_quality, ambiguous, confirmed_router, rule_version, first_seen, last_seen, expires_at, conflicts, score_components]
       properties:
+        primary_ip: { type: string }
+        current_addresses: { type: array, items: { type: string } }
+        device_url: { type: string }
+
         assessment_id: { type: string }
         endpoint_id: { type: string }
         ip: { type: string }
@@ -5721,6 +5778,10 @@ components:
       type: object
       required: [endpoint_id, vendor_confidence, brand_confidence, model_confidence, device_type_confidence, os_family_confidence, randomized_mac, recognition_conflict]
       properties:
+        current_addresses: { type: array, items: { type: string } }
+        historical_ip: { type: string }
+        device_url: { type: string }
+
         router_observation: { $ref: "#/components/schemas/RouterAssessment" }
         discovery: { $ref: "#/components/schemas/DiscoveryRecognitionSummary" }
         ip_match: { $ref: "#/components/schemas/DeviceIPMatch" }
@@ -6155,6 +6216,9 @@ components:
       type: object
       required: [endpoint_id, summary, endpoint, accounts, sessions, ip_history, access_history]
       properties:
+        primary_ip: { type: string }
+        current_addresses: { type: array, items: { type: string } }
+
         discovery:
           $ref: '#/components/schemas/DiscoveryRecognitionSummary'
         device_names_disabled:

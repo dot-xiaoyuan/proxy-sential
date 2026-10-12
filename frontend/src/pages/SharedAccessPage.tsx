@@ -1,6 +1,6 @@
+import { DeviceHistoryPanel } from './DeviceHistoryPanel'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { detailPath,safeReturnTo } from '../app/navigation'
-import { SharedDeviceProfiles } from './SharedDeviceProfiles'
 import { SharedDisconnectPanel } from './SharedDisconnectPanel'
 import { routerStatusLabels } from './routerLabels'
 import { useEffect, useState } from 'react'
@@ -53,7 +53,7 @@ function useCursor(prefix='detail') {
 function SharedBehaviorEvidence({item,historical,locationPath}:{item:SharedBehavior;historical:boolean;locationPath:string}) {
  return <div className="shared-behavior-evidence">
   {historical&&<p className="shared-access-muted">当时规则评分：{item.confidence} 分，不作为当前风险分数。</p>}
-  {item.router?.assessment_id&&<p>{historical?'当时关联画像：':'关联路由画像：'}<Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.router.assessment_id)}`,locationPath)}>{routerProfileLabel(item.router,!historical&&item.current!==false)||'查看画像记录'}</Link></p>}
+  {item.router?.assessment_id&&<p>{historical?'当时关联画像：':'关联路由画像：'}<Link to={detailPath(`/devices/network/${encodeURIComponent(item.router.assessment_id)}`,locationPath)}>{routerProfileLabel(item.router,!historical&&item.current!==false)||'查看画像记录'}</Link></p>}
   {timeRange(item.window_start,item.window_end)&&<p className="shared-access-muted">观察窗口：{timeRange(item.window_start,item.window_end)}{time(item.last_seen)&&` · 最近证据：${time(item.last_seen)}`}</p>}
   {item.score_components.map(component=><p key={component.signal}><strong>{behaviorSignals[component.signal]||component.signal} +{component.score}</strong><span>{component.explanation}</span></p>)}
   {item.reasons.map(reason=><p key={reason}>{reason}</p>)}
@@ -70,7 +70,7 @@ function useCompactSharedList() {
 }
 
 export function SharedAccessPage() {
-  const [tab,setTab]=useUrlState('tab','devices',['devices','observations','history','reviews'],['status','history_basis','observations_cursors','observations_page','observations_limit']);
+  const [tab,setTab]=useUrlState('tab','observations',['observations','history','reviews'],['status','history_basis','observations_cursors','observations_page','observations_limit']);
   const location=useLocation();const session=useSession();const [healthOpen,setHealthOpen]=useState(false);
   const cursor = useCursor('reviews')
   const behaviorPagination = useServerPagination('observations_')
@@ -94,8 +94,7 @@ export function SharedAccessPage() {
   ]
   return <section className="shared-access-page">
     <AppPageHeader title={tab==='reviews'?'账号复核':'共享发现'} />
-    <Tabs className="page-section-tabs" activeKey={tab} onChange={setTab} items={[{key:'devices',label:'设备档案'},{key:'observations',label:'当前共享'},{key:'history',label:'历史观察'},{key:'reviews',label:'账号复核'}]}/>
-    {tab==='devices'&&<SharedDeviceProfiles/>}
+    <Tabs className="page-section-tabs" activeKey={tab} onChange={setTab} items={[{key:'observations',label:'当前共享'},{key:'history',label:'历史观察'},{key:'reviews',label:'账号复核'}]}/>
     {(tab==='observations'||tab==='history')&&<Card title={tab==='history'?(historyBasis==='clues'?'旧规则线索复核':'历史多终端观察'):behaviorStatus === 'candidate' ? '待复核协议线索' : '当前共享发现'} extra={<span className="shared-access-muted">行为识别与账号处置严格分离</span>}>
       <p className="shared-access-muted">{tab==='history'?(historyBasis==='clues'?'这些旧规则线索缺少可靠的多终端证据，不表示曾经确认共享。原始评分和解释仅供追溯。':'仅展示当时有明确多终端证据且采集覆盖已验证的记录，不代表设备现在仍有共享行为。'):'优先展示当前完整窗口中的共享候选；协议栈差异只用于筛选，明确多终端证据才会标记为已确认。'}</p>
       <div className="shared-behavior-filters"><Input.Search defaultValue={behaviorKeyword} allowClear placeholder="IP、终端、品牌或型号" onSearch={value => setBehaviorKeyword(value.trim())} /><Select aria-label={tab==='history'?'历史证据范围':'判定状态'} allowClear={tab!=='history'} placeholder="全部判定状态" value={tab==='history'?historyBasis:behaviorStatus || undefined} onChange={value => tab==='history'?setHistoryBasis(value):setBehaviorStatus(value || '')} options={tab==='history'?[{value:'shared',label:'历史多终端证据'},{value:'clues',label:'旧规则线索复核'}]:Object.entries(behaviorStates).map(([value, label]) => ({ value, label }))} /></div>
@@ -134,7 +133,7 @@ export function SharedBehaviorDetailsPage() {
       {timeRange(item.window_start,item.window_end)&&<p>观察窗口：{timeRange(item.window_start,item.window_end)}</p>}
       <p>最近证据：{time(item.last_seen)} · 规则：{item.rule_version}</p>
       {item.endpoint_id && <p className="shared-access-id">终端：{item.endpoint_id}</p>}
-      {item.router?.assessment_id && <p className={item.current===false?'shared-access-muted':''}>{item.current===false?'当时关联画像：':'关联路由画像：'}<Link to={detailPath(`/discovery/routers/${encodeURIComponent(item.router.assessment_id)}`,location.pathname+location.search)}>{routerProfileLabel(item.router,item.current!==false)||'查看画像记录'}</Link></p>}
+      {item.router?.assessment_id && <p className={item.current===false?'shared-access-muted':''}>{item.current===false?'当时关联画像：':'关联路由画像：'}<Link to={detailPath(`/devices/network/${encodeURIComponent(item.router.assessment_id)}`,location.pathname+location.search)}>{routerProfileLabel(item.router,item.current!==false)||'查看画像记录'}</Link></p>}
     </Card>
     {item.strong_anchor && item.device_lower_bound! > 1 && <Card title={`${item.current===false?'历史窗口':'当前窗口'}设备下界：${item.device_lower_bound} 台`}><p className="shared-access-muted">{item.strong_anchor === 'ieee1905_association' ? '多终端接入状态提供设备下界。' : '明确硬件型号在当前窗口重复共现，且有协议栈差异佐证。'}历史型号、操作系统和应用指纹数量不直接计为当前设备数。</p></Card>}
     {item.known_devices.length > 0 && <details className="surface filter-disclosure"><summary>近 24 小时型号参考（不计入当前共享判定）</summary><div className="filter-disclosure-content shared-access-grid">{item.known_devices.map(device => <article className="shared-access-item" key={device.identity_id}><strong>{[device.brand, device.model].filter(Boolean).join(' ')}</strong><p className="shared-access-muted">观测 {device.observations} 次 · 最近：{time(device.last_seen)}</p></article>)}</div></details>}
@@ -145,7 +144,8 @@ export function SharedBehaviorDetailsPage() {
       <div className="shared-behavior-evidence">{Object.entries(item.feature_samples).map(([family, values]) => <section key={family}><strong>{behaviorSignals[family] || family}</strong>{Object.entries(values).map(([value, sample]) => <p className="shared-access-id" key={value}>{value} · {sample.count} 个去重观测 · {sample.buckets.length} 个共现桶</p>)}</section>)}<EventReferences ids={item.event_ids} /></div>
     </Card>
     <Card title={item.current===false?'当时规则判定历史':'判定历史'}>
-      <div className="shared-behavior-list">{item.history.map((entry, index) => <article className={`shared-behavior-card shared-behavior-card-${item.current===false?'history':entry.status}`} key={`${entry.rule_version}-${entry.observed_at}-${index}`}><Space wrap><Tag color={item.current===false?undefined:entry.status === 'confirmed' ? 'green' : entry.status === 'likely' ? 'gold' : 'default'}>{item.current===false?'当时规则状态：'+behaviorStates[entry.status]:behaviorStates[entry.status]}</Tag><span className={item.current===false?'shared-access-muted':''}>{item.current===false?'当时评分：':''}{entry.confidence} 分</span>{entry.signal_groups.map(signal => <Tag key={signal}>{behaviorSignals[signal] || signal}</Tag>)}</Space><p>{time(entry.observed_at)} · {entry.rule_version}</p></article>)}</div>
+      <DeviceHistoryPanel kind="shared" id={item.observation_id}/>
+
     </Card>
   </section>
 }

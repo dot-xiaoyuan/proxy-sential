@@ -32,7 +32,7 @@ function matches(item: RouterAssessment, url: URL) {
   const equal = (name: string, value?: string) => !url.searchParams.get(name) || value?.toLowerCase() === url.searchParams.get(name)?.toLowerCase()
   const minimum = Number(url.searchParams.get('confidence_min') || 0)
   const maximum = Number(url.searchParams.get('confidence_max') || 100)
-  return (!keyword || text.includes(keyword)) && equal('ip', item.ip) && equal('mac', item.mac) && equal('brand', item.brand) && equal('model', item.model) && equal('role', item.role) && equal('status', item.status) && (!url.searchParams.get('vlan') || item.vlans?.includes(url.searchParams.get('vlan') || '')) && (!url.searchParams.get('source') || item.sources.includes(url.searchParams.get('source') || '')) && (!url.searchParams.has('infrastructure') || item.infrastructure === (url.searchParams.get('infrastructure') === 'true')) && (!url.searchParams.has('has_auth_binding') || Boolean(item.auth_bindings?.length) === (url.searchParams.get('has_auth_binding') === 'true')) && item.confidence >= minimum && item.confidence <= maximum
+  return (!keyword || text.includes(keyword)) && equal('ip', item.ip) && equal('mac', item.mac) && equal('brand', item.brand) && equal('model', item.model) && (url.searchParams.get('role')==='network'?['router','ap','switch','firewall'].includes(item.role):equal('role', item.role)) && equal('status', item.status) && (!url.searchParams.get('vlan') || item.vlans?.includes(url.searchParams.get('vlan') || '')) && (!url.searchParams.get('source') || item.sources.includes(url.searchParams.get('source') || '')) && (!url.searchParams.has('infrastructure') || item.infrastructure === (url.searchParams.get('infrastructure') === 'true')) && (!url.searchParams.has('has_auth_binding') || Boolean(item.auth_bindings?.length) === (url.searchParams.get('has_auth_binding') === 'true')) && item.confidence >= minimum && item.confidence <= maximum
 }
 
 export const routerObservationHandlers = [
@@ -40,7 +40,7 @@ export const routerObservationHandlers = [
     const url = new URL(request.url)
     const limit = Number(url.searchParams.get('limit') || 20)
     const offset = Number(url.searchParams.get('cursor') || 0)
-    const filtered = routerObservations.filter(item => item.current && matches(item, url))
+    const filtered = routerObservations.filter(item => (url.searchParams.get('address_state')==='history'?!item.current:item.current)&&matches(item,url))
     const items = filtered.slice(offset, offset + limit).map(({ evidence: _evidence, history: _history, ...item }) => item)
     return HttpResponse.json({ items, page: { limit, next_cursor: offset + items.length < filtered.length ? String(offset + items.length) : null, total: filtered.length } })
   }),

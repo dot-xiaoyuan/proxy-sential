@@ -1,6 +1,6 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom'
 
-import { LegacyRedirect,LegacySettingsEntry,ActivityEntry } from './LegacyRedirect'
+import { LegacyRedirect,LegacySettingsEntry,ActivityEntry,DiscoveryEntry,SharedAccessEntry,RouterDetailEntry } from './LegacyRedirect'
 import { AppShell } from './AppShell'
 import {
   ActionRecordsRoute,CampusExceptionsRoute,WhitelistRoute,SourcesRoute,
@@ -12,7 +12,6 @@ import {
   AuditRoute,
   AuditDetailsRoute,
   DevicesRoute,
-  DiscoveryRoute,
   RouterObservationDetailsRoute,
   EndpointDetailsRoute,
   EventsRoute,
@@ -42,8 +41,9 @@ export const router = createBrowserRouter([
       { path: 'overview', element: <OverviewRoute /> },
       { path: 'activity', element: <ActivityEntry><ActivityRoute /></ActivityEntry> },
       { path: 'devices', element: <DevicesRoute /> },
-      { path: 'discovery', element: <DiscoveryRoute /> },
-      { path: 'discovery/routers/:assessmentId', element: <RouterObservationDetailsRoute /> },
+      { path: 'discovery', element: <DiscoveryEntry /> },
+      { path: 'discovery/routers/:assessmentId', element: <RouterDetailEntry /> },
+      { path: 'devices/network/:assessmentId', element: <RouterObservationDetailsRoute /> },
       { path: 'devices/:endpointId', element: <EndpointDetailsRoute /> },
       { path: 'events', element: <EventsRoute /> },
       { path: 'events/:eventId', element: <EventDetailsRoute /> },
@@ -57,7 +57,7 @@ export const router = createBrowserRouter([
 	  { path: 'cases/:caseId', element: <CaseDetailsRoute /> },
       { path: 'audit', element: <AuditRoute /> },
       { path: 'audit/:auditId', element: <AuditDetailsRoute /> },
-      { path: 'shared-access', element: <SharedAccessRoute /> },
+      { path: 'shared-access', element: <SharedAccessEntry><SharedAccessRoute /></SharedAccessEntry> },
       { path: 'shared-access/observations/:observationId', element: <SharedBehaviorDetailsRoute /> },
       { path: 'shared-access/reviews/:id', element: <SharedReviewDetailsRoute /> },
       { path: 'policies', element: <PoliciesRoute /> },

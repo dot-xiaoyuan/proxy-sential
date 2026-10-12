@@ -9,7 +9,7 @@ afterEach(cleanup)
 it('ledger identity always locates an unnamed device by IP and MAC',()=>{
  render(<MemoryRouter><DeviceLedgerIdentity device={domainOnlyDevice} href="/devices/test?return_to=inventory"/></MemoryRouter>)
  expect(screen.getByRole('link',{name:'198.18.90.8'})).toHaveAttribute('href','/devices/test?return_to=inventory')
- expect(screen.getByRole('link',{name:'02:00:00:00:90:08'})).toBeVisible()
+ expect(screen.getByText('02:00:00:00:90:08')).toBeVisible()
 })
 it('ledger prioritizes confident recognition and keeps weak OS out of the OS column',()=>{
  const device={...domainOnlyDevice,device_type:'laptop',device_type_confidence:.95,brand:'Dell',brand_confidence:.95,model:'Latitude',model_confidence:.9,os_family:'Windows',os_family_confidence:.6}
@@ -93,7 +93,7 @@ describe('terminal recognition summary', () => {
   it('links an associated router observation without changing the endpoint identity', () => {
     render(<MemoryRouter><DeviceBrandSummary device={{ ...domainOnlyDevice, router_observation: { assessment_id: 'router-huawei-ar-001', role: 'router', status: 'confirmed', confidence: 95, independent_sources: 2, sources: ['dhcp', 'lldp'], infrastructure: false, brand_reference_only: false, association_quality: 'mac', ambiguous: false, confirmed_router: true, rule_version: 'router-rules-2026.09.1', first_seen: '2026-09-24T08:00:00Z', last_seen: '2026-09-24T09:00:00Z', expires_at: '2026-09-25T09:00:00Z', conflicts: [], score_components: [] } }} /></MemoryRouter>)
     const link = screen.getByRole('link', { name: '路由观察 · 已确认 · 95' })
-    expect(link).toHaveAttribute('href', '/discovery/routers/router-huawei-ar-001')
+    expect(link).toHaveAttribute('href', '/devices/network/router-huawei-ar-001')
   })
 })
 

@@ -192,12 +192,24 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			}
 			window = parsed
 		}
-		page, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: mode, View: view, Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset})
+		page, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{AddressState: r.URL.Query().Get("address_state"), Mode: mode, View: view, Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset})
 		if err != nil {
 			writeError(w, 500, "discovery_read", "读取发现结果失败")
 			return
 		}
 		writeJSON(w, 200, page)
+	case strings.HasPrefix(path, "/discovery/devices/") && r.Method == "GET":
+		item, found, err := repo.DeviceByID(ctx, strings.TrimPrefix(path, "/discovery/devices/"))
+		if err != nil {
+			writeError(w, 500, "discovery_read", "读取发现设备失败")
+			return
+		}
+		if !found {
+			writeError(w, 404, "device_not_found", "发现设备不存在或已超出保留窗口")
+			return
+		}
+		writeJSON(w, 200, item)
+
 	case path == "/discovery/tasks" && r.Method == "GET":
 		rows, err := repo.DB.QueryContext(ctx, `SELECT id,coalesce(source_id,''),node,kind,status,config_version,created_at,result,error,cancel_requested FROM discovery_tasks ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
 		if err != nil {
