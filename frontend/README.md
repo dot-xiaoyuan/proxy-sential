@@ -15,6 +15,10 @@ pnpm e2e
 pnpm build
 ```
 
+## 使用 184 数据在本地联调
+
+在仓库根目录执行 `make dev184-snapshot` 和 `make dev184-up`。前端使用 `http://127.0.0.1:5173`，通过同源代理连接本地后端 `http://127.0.0.1:18084`。前端热更新，后端修改后执行 `make dev184-restart`。完整操作和快照范围见 [本地 184 快照联调](../docs/local-184-snapshot.md)。
+
 ## Notes
 
 开发阶段更新 30 的前端，在项目根目录执行 `make deploy-ui`。
@@ -26,5 +30,5 @@ pnpm build
 
 - API types are generated from `../schemas/control-plane-v1.openapi.yaml`.
 - MSW is enabled by default in development and tests. Set `VITE_ENABLE_MOCKS=false` to call a real backend.
-- For the 30-machine shadow environment, set `VITE_API_BASE=http://192.168.0.30:18080/api/v1`; `localhost:8080` may point to an old local shadow directory without Zeek device events.
+- Real backend development uses `VITE_API_BASE=/api/v1` and `VITE_DEV_PROXY_TARGET` for a same-origin proxy. The 184 snapshot workflow configures these automatically.
 - UI must not depend on Suricata raw fields; use Normalized Event, Evidence, RiskSnapshot, Label, ShadowRun, AuditLog, and Session.

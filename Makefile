@@ -64,3 +64,20 @@ local-reset:
 
 local-test:
 	@python3 -m unittest discover -s scripts/local -p 'test_*.py' -v
+
+# 184 快照 + 本地前后端联调；capture 只读访问现场，其余命令只操作本机。
+.PHONY: dev184-snapshot dev184-up dev184-restart dev184-down dev184-status
+dev184-snapshot:
+	@python3 scripts/local/dev184.py capture
+
+dev184-up:
+	@python3 scripts/local/dev184.py up
+
+dev184-restart:
+	@python3 scripts/local/dev184.py restart
+
+dev184-down:
+	@python3 scripts/local/dev184.py down
+
+dev184-status:
+	@python3 scripts/local/dev184.py status
