@@ -33,21 +33,22 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		baseArgs = append(baseArgs, deviceViewStart(query, now), now)
 		baseWhere = append(baseWhere, "r.last_seen >= $1 AND r.last_seen <= $2")
 	}
-	prefix, join := "", ""
+	prefix := ""
 	if query.AddressState != "" {
 		prefix = deviceCenterAddressCTE
-		join = " LEFT JOIN current_addresses ca USING(endpoint_id) "
+		// Boolean membership preserves the ordered summary scan and avoids fetching
+		// every matching JSON document before LIMIT on large installations.
 		switch query.AddressState {
 		case "current":
-			baseWhere = append(baseWhere, "cardinality(ca.addresses)>0")
+			baseWhere = append(baseWhere, "(r.endpoint_id IN (SELECT endpoint_id FROM current_addresses)) IS TRUE")
 		case "link":
-			baseWhere = append(baseWhere, "coalesce(cardinality(ca.addresses),0)=0 AND coalesce(r.current_ip,'')='' AND NOT EXISTS(SELECT 1 FROM identity_ip_mac_history h WHERE h.endpoint_id=r.endpoint_id AND h.ip IS NOT NULL)")
+			baseWhere = append(baseWhere, "(r.endpoint_id IN (SELECT endpoint_id FROM current_addresses)) IS NOT TRUE AND coalesce(r.current_ip,'')='' AND NOT EXISTS(SELECT 1 FROM identity_ip_mac_history h WHERE h.endpoint_id=r.endpoint_id AND h.ip IS NOT NULL)")
 		case "history":
-			baseWhere = append(baseWhere, "coalesce(cardinality(ca.addresses),0)=0 AND (coalesce(r.current_ip,'')<>'' OR EXISTS(SELECT 1 FROM identity_ip_mac_history h WHERE h.endpoint_id=r.endpoint_id AND h.ip IS NOT NULL))")
+			baseWhere = append(baseWhere, "(r.endpoint_id IN (SELECT endpoint_id FROM current_addresses)) IS NOT TRUE AND (coalesce(r.current_ip,'')<>'' OR EXISTS(SELECT 1 FROM identity_ip_mac_history h WHERE h.endpoint_id=r.endpoint_id AND h.ip IS NOT NULL))")
 		}
 	}
 
-	baseSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) " + join + " WHERE " + strings.Join(baseWhere, " AND ")
+	baseSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) WHERE " + strings.Join(baseWhere, " AND ")
 
 	facets := DeviceFilterFacets{Brands: []string{}, OSFamilies: []string{}}
 	if !query.InventorySkipMetadata {
@@ -135,7 +136,7 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		add("EXISTS(SELECT 1 FROM account_sessions s WHERE s.endpoint_id=r.endpoint_id AND s."+dimension.column+"::text=$N AND (s.ended_at IS NULL OR s.ended_at>=now()))", dimension.value)
 	}
 
-	whereSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) " + join + " WHERE " + strings.Join(where, " AND ")
+	whereSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) WHERE " + strings.Join(where, " AND ")
 	var total int
 	if !query.InventorySkipMetadata {
 		started = time.Now()
@@ -155,7 +156,7 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 	started = time.Now()
 	projection := "r.list_item"
 	if query.AddressState != "" {
-		projection = "r.list_item || jsonb_build_object('current_ip',coalesce(ca.addresses[1],''),'current_addresses',coalesce(to_jsonb(ca.addresses),'[]'::jsonb),'historical_ip',CASE WHEN coalesce(cardinality(ca.addresses),0)=0 THEN r.current_ip ELSE '' END)"
+		projection = `r.list_item || coalesce((SELECT jsonb_build_object('current_ip',ca.addresses[1],'current_addresses',to_jsonb(ca.addresses),'historical_ip','') FROM current_addresses ca WHERE ca.endpoint_id=r.endpoint_id),jsonb_build_object('current_ip','','current_addresses','[]'::jsonb,'historical_ip',r.current_ip))`
 	}
 	rows, err := conn.QueryContext(ctx, prefix+`SELECT `+projection+`,r.updated_at`+whereSQL+`
 ORDER BY r.last_seen DESC NULLS LAST,r.endpoint_id
