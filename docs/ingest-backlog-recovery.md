@@ -38,3 +38,17 @@
 2. **事件量**：`device-signal run --bucket 30s` 是主要音量来源。在物化路径达到约 2,000 行/秒之前，需要更粗的 bucket、更窄的 scope，或先完成物化路径重构；否则积压会立即重建。
 3. **按序恢复**：identity 桥 → discovery/passive-discovery → device-signal → zeek 集群。每步之后核对 ingest 的 read/emit 计数、`collector_runs` 滞后与 `endpoint_entities.last_seen`。
 4. **验收标准**：恢复 30 分钟后，`endpoint_entities.last_seen` 与 `now()` 的差应稳定在秒级；`domain recognition queue full` 应趋近 0；`endpoint_inventory_projection_jobs` 积压不再单调增长。
+
+### 实验记录：多 worker 不能解决物化覆盖率（2026-10-14）
+
+为提升覆盖率，为域名识别队列消费增加了并发度开关 `PROXY_SENTINEL_DOMAIN_WORKERS`（默认 1）。现场以 4 个 worker 实测 10 分钟：
+
+| 指标 | 1 worker（基线） | 4 workers |
+|---|---|---|
+| `queue full` 丢弃 | 121 次/10 分钟 | 113 次/10 分钟（噪声范围内） |
+| >5 秒 Lock 等待（60 秒采样） | 基本 0–2 | 0–7 |
+| `domain recognition failed` | 约 2 次/10 分钟 | 43 次/10 分钟 |
+
+结论：身份写入由事务级 advisory lock 串行，增加 worker 只增加争用而不提升吞吐。现场已回退为 1；并发开关保留在代码中（默认 1），但在这套硬件上不应开启。
+
+真正的天花板是**串行身份写路径的单位事件成本**：实测单 worker 10 分钟完成约 34 个批次、丢弃 121 个（覆盖率约 22%），单 batch（约 6,500 事件）约 17 秒，即约 2.7 毫秒/事件；期间没有任何批次超过 20 秒，说明问题不是"个别批次卡死"，而是稳定的吞吐上限。要提升只能减少每事件的语句数/索引数，或降低事件产生量（见上文检查清单第 2 项）。
