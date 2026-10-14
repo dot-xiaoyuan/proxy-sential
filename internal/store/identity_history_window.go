@@ -356,6 +356,25 @@ func pickAccessRows(rows []IdentityAccessHistory, indexes []int) []IdentityAcces
 	return out
 }
 
+// bindingAnchor 是批内最新的观测时间，作为窗口判定与头部有效期的共同基准。
+// 观测总是滞后 now，用 now 作基准会与“延长一个窗口”的条件互斥，详见 bindingHeadCutoff。
+func bindingAnchor[T any](rows []T, lastSeen func(T) string) time.Time {
+	anchor := time.Time{}
+	for _, row := range rows {
+		at, ok := parseTime(lastSeen(row))
+		if !ok {
+			continue
+		}
+		if at.UTC().After(anchor) {
+			anchor = at.UTC()
+		}
+	}
+	if anchor.IsZero() {
+		return time.Now().UTC()
+	}
+	return anchor
+}
+
 // storedIPMACWindows probes one compact head per complete binding key. It never
 // scans the evidence history while an entity write lock is held. History remains
 // available for evidence and detail pages; heads only drive window coalescing.
@@ -364,7 +383,8 @@ func storedIPMACWindows(ctx context.Context, tx *sql.Tx, rows []IdentityIPMACHis
 	for _, row := range rows {
 		keys = append(keys, bindingKey(row.EndpointID, row.AccountID, row.IP, row.MAC))
 	}
-	return readBindingHeads(ctx, tx, "ip_mac", keys, window)
+	anchor := bindingAnchor(rows, func(row IdentityIPMACHistory) string { return row.LastSeen })
+	return readBindingHeads(ctx, tx, "ip_mac", keys, window, anchor)
 }
 
 // distinctValues collects the non-empty values of one key part, without duplicates.
@@ -406,7 +426,8 @@ func storedAccessWindows(ctx context.Context, tx *sql.Tx, rows []IdentityAccessH
 	for _, row := range rows {
 		keys = append(keys, bindingKey(row.EndpointID, row.AccountID, row.AccessID, ""))
 	}
-	return readBindingHeads(ctx, tx, "access", keys, window)
+	anchor := bindingAnchor(rows, func(row IdentityAccessHistory) string { return row.LastSeen })
+	return readBindingHeads(ctx, tx, "access", keys, window, anchor)
 }
 
 func collectStoredAccessWindows(rows *sql.Rows, stored map[string]storedWindow) error {

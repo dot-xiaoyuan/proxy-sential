@@ -57,6 +57,47 @@ func observationKey(endpointID, ip, mac string) string {
 	return bindingKey(endpointID, "", ip, mac)
 }
 
+// A continuously present binding must be able to extend its stored window. The head
+// horizon used to be measured from time.Now() while the extend test measures from the
+// observation, and observations always lag now, so no head could ever satisfy both and
+// every window re-inserted a row instead of extending it.
+func TestBindingHeadCutoffKeepsHeadOneWindowOld(t *testing.T) {
+	window := 30 * time.Minute
+	observed := time.Date(2026, 10, 14, 20, 0, 0, 0, time.UTC)
+	rows := []IdentityIPMACHistory{
+		{LastSeen: observed.Format(time.RFC3339Nano)},
+		{LastSeen: observed.Add(-5 * time.Minute).Format(time.RFC3339Nano)},
+	}
+	if anchor := bindingAnchor(rows, func(row IdentityIPMACHistory) string { return row.LastSeen }); !anchor.Equal(observed) {
+		t.Fatalf("anchor=%s, want the newest observation %s", anchor, observed)
+	}
+	cutoff := bindingHeadCutoff(observed, window)
+	head := storedWindow{EventID: "window-a", LastSeen: observed.Add(-window)}
+	stored := map[string]storedWindow{}
+	if !head.LastSeen.Before(cutoff) {
+		stored[observationKey("mac:aa", "10.0.0.1", "aa")] = head
+	}
+	plan := planBindingWindows(stored, []bindingObservation{
+		{Key: observationKey("mac:aa", "10.0.0.1", "aa"), LastSeen: observed.Format(time.RFC3339Nano)},
+	}, window)
+	if len(plan.ExtendEventID) != 1 || plan.ExtendEventID[0] != "window-a" || len(plan.InsertIndexes) != 0 {
+		t.Fatalf("continuous binding did not extend its window: %+v", plan)
+	}
+	// A gap older than the window still opens a new row, which is what makes the history
+	// readable as a sequence of presence windows.
+	gap := map[string]storedWindow{}
+	old := storedWindow{EventID: "window-old", LastSeen: observed.Add(-window - time.Minute)}
+	if !old.LastSeen.Before(cutoff) {
+		gap[observationKey("mac:bb", "10.0.0.2", "bb")] = old
+	}
+	plan = planBindingWindows(gap, []bindingObservation{
+		{Key: observationKey("mac:bb", "10.0.0.2", "bb"), LastSeen: observed.Format(time.RFC3339Nano)},
+	}, window)
+	if len(plan.InsertIndexes) != 1 || len(plan.ExtendEventID) != 0 {
+		t.Fatalf("gap did not open a new window: %+v", plan)
+	}
+}
+
 func TestPlanBindingWindowsSplitsNewExtendAndUnchanged(t *testing.T) {
 	window := 30 * time.Minute
 	now := time.Now().UTC()

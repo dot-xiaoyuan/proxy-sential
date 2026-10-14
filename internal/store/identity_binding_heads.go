@@ -12,7 +12,16 @@ func bindingHeadID(key string) string {
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])
 }
-func readBindingHeads(ctx context.Context, tx *sql.Tx, kind string, keys []string, window time.Duration) (map[string]storedWindow, error) {
+
+// bindingHeadCutoff 是仍可作为“同一个存在窗口”锚点的最老 last_seen。
+// 基准必须取批内最新观测时间，不能取 now：观测天生滞后 now 若干秒，而延长条件要求
+// 头部恰好早于观测一个窗口，用 now 作基准会把两个区间压成空集，于是“延长已有窗口”
+// 永远不成立，连续在线的绑定只能每个窗口插入一条新行（现场表现为 upd=0、每分钟两千条新行）。
+func bindingHeadCutoff(anchor time.Time, window time.Duration) time.Time {
+	return anchor.UTC().Add(-window)
+}
+
+func readBindingHeads(ctx context.Context, tx *sql.Tx, kind string, keys []string, window time.Duration, anchor time.Time) (map[string]storedWindow, error) {
 	hashes := make([]string, len(keys))
 	original := map[string]string{}
 	for i, key := range keys {
@@ -25,7 +34,7 @@ func readBindingHeads(ctx context.Context, tx *sql.Tx, kind string, keys []strin
 	}
 	defer rows.Close()
 	out := map[string]storedWindow{}
-	cutoff := time.Now().UTC().Add(-window)
+	cutoff := bindingHeadCutoff(anchor, window)
 	for rows.Next() {
 		var key string
 		var value storedWindow
