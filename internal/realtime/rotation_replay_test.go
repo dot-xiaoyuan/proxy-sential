@@ -239,3 +239,28 @@ func TestRotationLagIncludesUnreadArchiveAndReplacement(t *testing.T) {
 		t.Fatalf("completed source replayed unrelated archive: %d", got)
 	}
 }
+
+// 现场场景：日志轮转后生产进程已停（nocreate 不产生替换文件），重启的 ingest
+// 必须排空残留归档，而不是报 "no such file or directory" 卡住整条链路。
+func TestRotationDrainsArchiveWhenReplacementIsMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ttl.jsonl")
+	first, pending := rotationDNS("10.0.0.1"), rotationDNS("10.0.0.2")
+	if err := os.WriteFile(path, []byte(first+pending), 0600); err != nil {
+		t.Fatal(err)
+	}
+	backend := &fakeBackend{}
+	opts := Options{SensorID: "rotation", MaxBatchBytes: int64(len(first)), StoreTimeout: time.Second}
+	source := Source{Kind: "suricata", Path: path}
+	if err := ProcessOnce(context.Background(), backend, opts, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ProcessOnce(context.Background(), backend, opts, source); err != nil {
+		t.Fatalf("archive without replacement must still drain: %v", err)
+	}
+	if len(backend.events) != 2 || backend.events[1].Subject["ip"] != "10.0.0.2" {
+		t.Fatalf("unread archive skipped when the producer stopped: %+v", backend.events)
+	}
+}
