@@ -1,0 +1,15 @@
+-- 删除 identity_ip_mac_history 上从未被使用、且与在用索引重复的覆盖索引。
+--
+-- 现场实测（pg_stat_user_indexes，stats_reset=never，计数覆盖容器整个生命周期）：
+--   idx_ip_history_endpoint_observed      idx_scan = 0      2,127 MB
+--   idx_ip_history_endpoint_list_cover    idx_scan = 12512  2,932 MB
+--   idx_ip_history_endpoint_has_ip        idx_scan = 0         89 MB
+--
+-- 该表堆只有 2.7 GB，索引却占 8.5 GB；每写入一行都要维护全部索引，而这条路径正是
+-- 设备事件物化的写放大来源。endpoint_observed 与 endpoint_list_cover 的前导列同为
+-- (endpoint_id, last_seen DESC, first_seen DESC)，后者被 per-endpoint 历史读取实际使用，
+-- 前者从未被任何计划选中，因此删除它不改变可用能力，只减少写放大。
+--
+-- 现场执行时先用 DROP INDEX CONCURRENTLY 手工删除（避免大表 ACCESS EXCLUSIVE 长锁等待），
+-- 本迁移文件在事务内执行同样的幂等删除并记录账本。
+DROP INDEX IF EXISTS idx_ip_history_endpoint_observed;
