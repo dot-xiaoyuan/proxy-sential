@@ -113,6 +113,36 @@ func (s *DBStore) runDomainWorker(parent context.Context) {
 	}
 }
 
+// writeIdentityEventsChunked 把一批设备/软件事件切成有界事务写入。
+//
+// 身份写入全部串行在同一个事务级 advisory lock 上（见 writeIdentityEventsTx 的说明），
+// 因此 ingest 的整批设备事件（可达数千条）会独占该锁上百秒：现场实测
+// INSERT INTO endpoint_entities 等锁 48–53 秒，identity_ip_mac_history 自身单批插入跑了
+// 100 秒以上，身份车道与设备实体写入被整条饿死。按身份车道相同的批大小分块后，单次持锁
+// 降到数百行，其它写入可以在块与块之间插入。
+func (s *DBStore) writeIdentityEventsChunked(ctx context.Context, events []normalized.Event) error {
+	return writeInChunks(events, identitySignalBatchSize, func(chunk []normalized.Event) error {
+		return s.pg.WriteIdentityEvents(ctx, chunk)
+	})
+}
+
+// writeInChunks 按大小切分并顺序写出，任一块失败立即返回该错误。
+func writeInChunks(events []normalized.Event, chunk int, write func([]normalized.Event) error) error {
+	if chunk < 1 {
+		chunk = 1
+	}
+	for start := 0; start < len(events); start += chunk {
+		end := start + chunk
+		if end > len(events) {
+			end = len(events)
+		}
+		if err := write(events[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) error {
 	// Materialize new DHCP observations before attributing application signals.
 	devices := []normalized.Event{}
@@ -122,7 +152,7 @@ func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) err
 		}
 	}
 	if len(devices) > 0 {
-		if err := s.pg.WriteIdentityEvents(ctx, devices); err != nil {
+		if err := s.writeIdentityEventsChunked(ctx, devices); err != nil {
 			return err
 		}
 	}
@@ -149,7 +179,7 @@ func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) err
 		software = append(software, e)
 	}
 	if len(software) > 0 {
-		if err := s.pg.WriteIdentityEvents(ctx, software); err != nil {
+		if err := s.writeIdentityEventsChunked(ctx, software); err != nil {
 			return err
 		}
 	}
