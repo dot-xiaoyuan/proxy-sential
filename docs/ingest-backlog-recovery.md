@@ -39,6 +39,8 @@
 
 | 18 | `identity_access_history`、`account_sessions` 同样带投影触发器却没有 no-op 守卫；且 `account_sessions` 后面那条按 `confirmed_at` 无条件更新 `policy_metadata` 的语句会抵消守卫 | 两条 upsert 补精确镜像守卫，`policy_metadata` 语句补 `IS DISTINCT FROM` 判断；新增 `xmin` 集成测试覆盖三张表 | 慢插入持续低位；但积压仍涨——查明**不是脏标记问题**，而是投影 lane 反复 `projection_failed`（见第 22 轮一节） |
 
+| 19 | 设备清单投影的 realtime 车道**顺序**处理任务，吞吐被单个 endpoint 的处理时间钉死在约 0.67 任务/秒 | 改为按 `inventoryRealtimeWorkers()` 并发（环境变量 `PROXY_SENTINEL_INVENTORY_REALTIME_WORKERS`，默认 2、范围 1..8，=1 恢复原行为），连接池相应放大 | 吞吐 **40–52 → 102–169 次/分钟（约 3×）**；积压由"每分钟 +93 稳定增长"变为围绕 61,000 震荡 |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -415,6 +417,54 @@ PG 容器内存上限 16 → 24 GB（`docker update`）。实测 `endpoint_entit
 **没有任何应用日志**，而代码在写 `projection_failed` 前会 `Fprintf(os.Stderr, "inventory
 projection batch failed …")`。下一轮需要先解决"失败日志为何没进 journal"，再定位真正的错误
 （很可能是一个具体的 SQLSTATE）。在此之前，不要再用"提高消费速度"的思路去猜这条积压。
+
+### 第 22 轮结论的更正与实际修复（2026-10-14，第 23 轮）
+
+**更正**：第 22 轮把 `endpoint_inventory_projection_state.last_error='projection_failed'`
+当成"lane 正在反复失败"是错的。查日志才发现 3 小时内只有 5 条失败记录，且全部是
+`sqlstate:57P01`（`admin_shutdown`，即我自己重启 PostgreSQL 的时刻）。该状态字是
+`inventory_projection.go:343` **派生**出来的——
+
+```sql
+UPDATE endpoint_inventory_projection_state
+SET last_error = CASE WHEN EXISTS(SELECT 1 FROM endpoint_inventory_projection_jobs
+                 WHERE last_error<>'' AND processed_generation<dirty_generation)
+                 THEN 'projection_failed' ELSE '' END,
+    updated_at = now()
+WHERE singleton
+```
+
+它每次运行都刷新 `updated_at`，所以看起来像"每 6 秒失败一次"。教训：**派生状态字不能当作
+失败证据**，要看原始日志与 SQLSTATE。
+
+**本轮把四个猜测逐一排除**：
+
+| 猜测 | 实测 | 结论 |
+|---|---|---|
+| 任务领不到（门控） | 60,034 个待处理任务**全部** `contributions_ready=true`，60,033 个立即可领 | ✗ |
+| 任务表规模 | 80,343 行 / 21 MB，`never_processed` 仅 46 | ✗ |
+| 该 lane 的 SQL 慢 | 60 秒慢语句窗口内**一条都没有**（成本摊在大量小语句上） | ✗ |
+| 陈旧错误标记被优先重试（`ORDER BY (last_error<>'')` 把它排在首位） | 清掉 92 个陈旧错误后吞吐**没有变化**（40–52 → 37–41/分钟） | ✗ |
+
+**真正的限制是车道本身是顺序的**：`inventory_projection.go` 的 realtime 车道一次只处理一个
+endpoint，吞吐被单 endpoint 的处理时间钉死在约 0.67 任务/秒，而脏标记以约 133/分钟产生。
+
+**修复**：realtime 车道改为并发处理（`inventoryRealtimeWorkers()`，环境变量
+`PROXY_SENTINEL_INVENTORY_REALTIME_WORKERS`，默认 2、范围 1..8，=1 可恢复原顺序行为），
+连接池按 `2×workers+2` 放大（每个并发 endpoint 可能同时占用认领连接与事务连接）。
+
+**实测**（发布 `2026.10.14-inventory-parallel1`）：
+
+| 配置 | 吞吐 | 积压趋势 |
+|---|---|---|
+| 顺序（基线） | 40–52/分钟 | +93/分钟（稳定增长） |
+| 2 workers | 63–102/分钟 | +26/分钟 |
+| **4 workers** | **102–169/分钟** | 围绕 61,000 **震荡**（7 分钟净 +66，此前同长度窗口 +650） |
+
+死锁 0、`/readyz=200`。**注意**：上游身份车道同步提速（`ncu-auth-redis` 650,453 → 868,204），
+脏标记产生速率随之上升，因此积压没有单调下降。这条积压至此已从"吞吐上限问题"变成
+"产生速率 ≈ 消费速率的速率问题"——下一步要减少每次变化的脏标记量（例如一次投影一个
+endpoint 批次而不是单个 endpoint，或对短时间内的重复标脏做去抖），而不是再提高并发。
 
 ## 恢复采集前的检查清单
 
