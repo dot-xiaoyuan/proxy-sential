@@ -373,6 +373,7 @@ func runIngest(args []string) error {
 	collectorInstanceID := fs.String("collector-instance-id", os.Getenv("PROXY_SENTINEL_SURICATA_INSTANCE_ID"), "Suricata boot identifier; change on collector restart")
 	zeekInstanceID := fs.String("zeek-collector-instance-id", os.Getenv("PROXY_SENTINEL_ZEEK_INSTANCE_ID"), "Zeek boot identifier; defaults to collector-instance-id")
 	evePath := fs.String("eve", "", "Suricata EVE JSON path")
+	zeekIoT := fs.String("zeek-iot", os.Getenv("PROXY_SENTINEL_ZEEK_IOT_PATH"), "candidate-scoped Zeek iot_metadata.log")
 	zeekDHCP := fs.String("zeek-dhcp", "", "Zeek DHCP log path")
 	zeekSoftware := fs.String("zeek-software", "", "Zeek software log path")
 	zeekMDNS := fs.String("zeek-mdns", "", "Zeek mDNS device-signal log path")
@@ -422,6 +423,7 @@ func runIngest(args []string) error {
 	for _, source := range []realtime.Source{
 		{Kind: "suricata", Path: *evePath, CollectorInstanceID: *collectorInstanceID, ProxyProducer: proxyConfig.Producer(*sensorID, "suricata", *collectorInstanceID)},
 		{Kind: "zeek-proxy", Path: *zeekProxy, CollectorInstanceID: *zeekInstanceID, ProxyProducer: proxyConfig.Producer(*sensorID, "zeek", *zeekInstanceID)},
+		{Kind: "zeek-iot", Path: *zeekIoT},
 		{Kind: "zeek-dhcp", Path: *zeekDHCP},
 		{Kind: "zeek-software", Path: *zeekSoftware},
 		{Kind: "zeek-mdns", Path: *zeekMDNS},
@@ -487,6 +489,7 @@ func runDeviceSignal(args []string) error {
 	output := fs.String("output", "", "normalized device signal JSONL output")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
 	bucket := fs.Duration("bucket", 5*time.Second, "aggregation bucket")
+	stateLiveness := fs.Duration("state-liveness", 5*time.Minute, "rewrite an unchanged device state at most this often; 0 rewrites every key every bucket")
 	routerProtocolsOnly := fs.Bool("router-protocols-only", false, "attach the bounded router/discovery protocol BPF before capture")
 	sharedSignalsOnly := fs.Bool("shared-signals-only", false, "capture only payload-free initial TCP SYN metadata for shared-access analysis")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -498,7 +501,7 @@ func runDeviceSignal(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly})
+	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, StateLiveness: *stateLiveness, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly})
 }
 
 // runDeviceCensus prints the passive device census for one sensor. It is

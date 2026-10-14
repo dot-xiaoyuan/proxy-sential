@@ -14,6 +14,7 @@ type Options struct {
 	CaptureScope                *normalized.CaptureScope
 	Interface, Output, SensorID string
 	Bucket                      time.Duration
+	StateLiveness               time.Duration
 	RouterProtocolsOnly         bool
 	SharedSignalsOnly           bool
 }

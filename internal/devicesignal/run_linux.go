@@ -19,6 +19,9 @@ type Options struct {
 	Output              string
 	SensorID            string
 	Bucket              time.Duration
+	// StateLiveness bounds how often an unchanged device state is rewritten. Zero keeps the
+	// historical behaviour of writing every key every bucket.
+	StateLiveness       time.Duration
 	RouterProtocolsOnly bool
 	SharedSignalsOnly   bool
 }
@@ -60,6 +63,20 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.SharedSignalsOnly {
 		packetSource = "shared-syn-sidecar"
 	}
+	tracker := newStateChangeTracker(opts.StateLiveness)
+	// A device state that has not changed carries no information: write new keys at once,
+	// rewrite a still-present key once per liveness interval, and fold the rest into it.
+	flushPackets := func(at time.Time, packets map[packetBucketKey]int) error {
+		return writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, at, tracker.filter(at, packets))
+	}
+	// Shutdown writes the state the tracker still holds.
+	flushHeld := func(at time.Time) error {
+		held := tracker.pending()
+		if len(held) == 0 {
+			return nil
+		}
+		return writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, at, held)
+	}
 	bucket := time.Now().UTC().Truncate(opts.Bucket)
 	ticker := time.NewTicker(opts.Bucket)
 	defer ticker.Stop()
@@ -85,7 +102,10 @@ func Run(ctx context.Context, opts Options) error {
 			if state.droppedPacketKeys > 0 {
 				log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
 			}
-			if err := writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, bucket, state.packets); err != nil {
+			if err := flushPackets(bucket, state.packets); err != nil {
+				return err
+			}
+			if err := flushHeld(bucket); err != nil {
 				return err
 			}
 			return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls)
@@ -93,7 +113,7 @@ func Run(ctx context.Context, opts Options) error {
 			if state.droppedPacketKeys > 0 {
 				log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
 			}
-			if err := writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, bucket, state.packets); err != nil {
+			if err := flushPackets(bucket, state.packets); err != nil {
 				return err
 			}
 			if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls); err != nil {
@@ -110,7 +130,10 @@ func Run(ctx context.Context, opts Options) error {
 					if state.droppedPacketKeys > 0 {
 						log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
 					}
-					if err := writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, bucket, state.packets); err != nil {
+					if err := flushPackets(bucket, state.packets); err != nil {
+						return err
+					}
+					if err := flushHeld(bucket); err != nil {
 						return err
 					}
 					return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls)
@@ -118,7 +141,7 @@ func Run(ctx context.Context, opts Options) error {
 					if state.droppedPacketKeys > 0 {
 						log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
 					}
-					if err := writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, bucket, state.packets); err != nil {
+					if err := flushPackets(bucket, state.packets); err != nil {
 						return err
 					}
 					if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls); err != nil {
