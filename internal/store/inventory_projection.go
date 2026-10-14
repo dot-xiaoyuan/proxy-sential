@@ -368,10 +368,21 @@ func (s *PostgresStore) materializeNextInventoryLane(ctx context.Context, lane s
 	if err != nil {
 		return false, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE endpoint_inventory_projection_state SET last_error=CASE WHEN EXISTS(SELECT 1 FROM endpoint_inventory_projection_jobs WHERE last_error<>'' AND processed_generation<dirty_generation) THEN 'projection_failed' ELSE '' END,updated_at=now() WHERE singleton`); err != nil {
+	if err = tx.Commit(); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	// 单例状态行只承载派生的 last_error 与读取侧 AsOf（inventory_read_state 用它做结果版本），
+	// 而任务事实此时已经提交。该更新原先写在任务事务内，行锁必须一直持有到任务提交时的 WAL fsync，
+	// 8 路实时加上回填 worker 排队后，实测这条语句耗时 2.2 秒，而其内部的 EXISTS 只要 0.075 毫秒。
+	// 改为提交后的独立短事务并关闭同步提交，行锁只持有毫秒级。
+	stateCtx, cancelState := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	stateErr := s.writeAdvisoryState(stateCtx, `UPDATE endpoint_inventory_projection_state SET last_error=CASE WHEN EXISTS(SELECT 1 FROM endpoint_inventory_projection_jobs WHERE last_error<>'' AND processed_generation<dirty_generation) THEN 'projection_failed' ELSE '' END,updated_at=now() WHERE singleton`)
+	cancelState()
+	if stateErr != nil {
+		// 任务结果已提交，这里失败只影响派生展示状态，下一个成功任务会立刻重写该行。
+		fmt.Fprintf(os.Stderr, "inventory projection state refresh failed cause=%s\n", inventoryProjectionErrorCode(stateErr))
+	}
+	return true, nil
 }
 
 func (s *PostgresStore) materializeInventoryTx(ctx context.Context, tx *sql.Tx, id string) error {
