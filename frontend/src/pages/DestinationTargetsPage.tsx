@@ -5,7 +5,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppFactBar, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
 
@@ -31,12 +31,7 @@ export function DestinationTargetsPage() {
   return (
     <section className="page destination-targets-page">
       <AppPageHeader title="内网目标访问检测" subtitle="识别访问敏感网段或高频访问内网目标的终端" onRefresh={invalidate} />
-      <Alert
-        type="info"
-        showIcon
-        title="默认关闭，且只作为弱线索"
-        description="规则默认不启用。命中会生成风险证据，但该线索单独不足以认定代理或共享；请先用试算核对命中范围，再决定是否启用。"
-      />
+      <AppFactBar label="内网目标访问检测规则" items={['规则默认关闭，启用前先用试算核对命中范围','命中生成风险证据，该线索单独不足以认定代理或共享']} />
       <Card>
         <Tabs activeKey={tab} onChange={setTab} items={[
           { key: 'rules', label: '检测规则', children: <RulesPanel rules={rules} writable={writable} invalidate={invalidate} /> },

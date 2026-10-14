@@ -5,7 +5,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppFactBar, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
 import { statusText } from '../shared/ui/status'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
@@ -42,12 +42,7 @@ export function NotificationsPage() {
   return (
     <section className="notifications-page">
       <AppPageHeader title="通知模板与通道" subtitle="策略提醒的模板、发送通道与投递状态" onRefresh={invalidate} />
-      <Alert
-        type="info"
-        showIcon
-        title="入队不等于送达"
-        description="策略执行成功只表示通知已受理。实际送达状态以投递记录为准；未配置通道时会明确记为失败，不会停留在等待状态。"
-      />
+      <AppFactBar label="通知投递规则" items={['入队只表示通知已受理，送达状态以投递记录为准','未配置通道时明确记为失败，不停留在等待状态']} />
       <Card>
         <Tabs
           activeKey={tab}

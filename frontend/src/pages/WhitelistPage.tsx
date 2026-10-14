@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Switch, Tag, message } from 'antd'
+import { Button, Card, Empty, Form, Input, Modal, Select, Switch, Tag, message } from 'antd'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppErrorAlert, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
 
@@ -30,7 +30,7 @@ export function WhitelistPage(){
  const save=async()=>{try{const value=await form.validateFields();const entry={...value,revision:editing?.revision??0,valid_from:value.valid_from?new Date(value.valid_from).toISOString():undefined,expires_at:value.expires_at?new Date(value.expires_at).toISOString():undefined};await mutation.mutateAsync({entry,id:editing?.entry_id});setOpen(false);message.success('白名单已保存')}catch{/* Validation and request failures are shown by the form or mutation. */}}
  const now=Date.parse(entries.data?.checked_at || new Date().toISOString())
  return <section className="whitelist-page"><AppPageHeader title="白名单" subtitle="按账号、IP、MAC 与网段维护动作豁免" onRefresh={()=>void entries.refetch()}/>
-  <Alert type="info" showIcon title="保留检测证据，命中后禁止策略动作" description="支持 IP、账号、MAC、网段和用户组；同账号任一当前认证会话命中时，该账号的处置停止。已发出的动作不会自动撤回，可通过处置记录人工撤销。"/>
+  <AppFactBar label="白名单规则" items={['命中后禁止策略动作，检测证据照常保留','同一账号任一当前会话命中即停止处置','已发出动作不自动撤回，可在处置记录中撤销']}/>
   <Card><div className="whitelist-toolbar"><Input.Search aria-label="搜索白名单" placeholder="匹配值、原因或校区" defaultValue={keyword} onSearch={value=>setKeyword(value.trim())} allowClear/><Select aria-label="白名单类型筛选" placeholder="全部类型" allowClear value={kind||undefined} onChange={value=>setKind(value||'')} options={Object.entries(types).map(([value,label])=>({value,label}))}/><Select aria-label="白名单状态筛选" placeholder="全部状态" allowClear value={stateFilter||undefined} onChange={value=>setStateFilter(value||'')} options={Object.entries(stateNames).map(([value,label])=>({value,label}))}/><Button type="primary" disabled={!writable} onClick={()=>edit()}>新增白名单</Button></div>
    {entries.isError?<AppErrorAlert title="白名单读取失败"/>:entries.isLoading?<AppLoadingState rows={4}/>:entries.data?.items.length?<div className="whitelist-list">{entries.data.items.map(e=><article className="whitelist-card" key={e.entry_id}><div className="whitelist-heading"><div><Tag>{types[e.type]}</Tag><strong className="whitelist-value">{e.value}</strong></div><Tag color={state(e,now)==='active'?'blue':undefined}>{stateNames[state(e,now)]}</Tag></div><p>{e.reason}</p><div className="whitelist-facts"><span>生效时间：{when(e.valid_from)}</span><span>有效期：{e.expires_at?when(e.expires_at):'长期'}</span>{e.campus_id&&<span>校区：{e.campus_id}</span>}{e.access_domain&&<span>接入域：{e.access_domain}</span>}</div><div className="whitelist-footer"><span>版本 {e.revision}{e.updated_by&&` · 操作人：${e.updated_by}`}</span><div className="whitelist-actions"><Button disabled={!writable||mutation.isPending} onClick={()=>edit(e)}>编辑</Button><Button disabled={!writable||mutation.isPending||!e.enabled&&!!e.expires_at&&Date.parse(e.expires_at)<=now} onClick={()=>mutation.mutate({id:e.entry_id,op:e.enabled?'disable':'enable',entry:{revision:e.revision}})}>{e.enabled?'停用':'启用'}</Button></div></div></article>)}</div>:<Empty description="暂无白名单"/>}
    <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={entries.data?.page.total??0} onChange={pagination.update}/>

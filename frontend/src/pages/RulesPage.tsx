@@ -28,6 +28,7 @@ import {
 import type { DeviceFingerprintBundleManifest } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
 import { statusText } from '../shared/ui/status';
+import { AppFactBar } from '../shared/ui'
 
 
 
@@ -74,7 +75,7 @@ export function RulesPage() {
               key: "risk",
               label: "风险规则",
               disabled:!can(session.data,'risks:read'),
-              children: ruleStatus.isLoading ? <Skeleton active/> : ruleStatus.isError ? <Alert type="error" showIcon title="规则能力读取失败" description={ruleStatus.error.message}/> : <Alert type="info" showIcon title="风险规则热重载尚未开放" description="当前服务未开放风险规则在线热重载。应用和设备特征库分别展示各自实际生效版本。"/>,
+              children: ruleStatus.isLoading ? <Skeleton active/> : ruleStatus.isError ? <Alert type="error" showIcon title="规则能力读取失败" description={ruleStatus.error.message}/> : <AppFactBar items={['风险规则在线热重载尚未开放','应用与设备特征库分别展示各自实际生效版本']}/>,
             },
             {
               key: "fingerprints",

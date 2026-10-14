@@ -18,6 +18,7 @@ import {
 } from "antd";
 import { request } from "../../shared/api/client";
 import type { components } from "../../shared/api/generated";
+import { AppFactBar } from '../../shared/ui'
 
 type Source = components["schemas"]["FingerprintSource"];
 type Rule = components["schemas"]["FingerprintSourceRule"];
@@ -306,12 +307,7 @@ export function FingerprintCatalog() {
                     {coverage.data.rebuild.enqueued ?? 0}
                   </Typography.Paragraph>
                 )}
-                <Alert
-                  type="info"
-                  showIcon
-                  title="统计口径"
-                  description="来源条目、匹配条件、去重规则和型号分别计数；不将上游全部数据或待适配条目计入可执行规则。"
-                />
+                <AppFactBar label="统计口径" items={['来源条目、匹配条件、去重规则和型号分别计数','上游全部数据与待适配条目不计入可执行规则']}/>
                 <div className="fingerprint-source-grid">
                   {list.filter((s) => s.status === "loaded").map(sourceCard)}
                 </div>
@@ -420,12 +416,7 @@ export function FingerprintCatalog() {
               failure(coverage.error)
             ) : (
               <>
-                <Alert
-                  type="info"
-                  showIcon
-                  title="近 24 小时活跃终端的当前识别结果"
-                  description="统计每分钟异步更新；匹配次数按成功的画像计算累计，区分实时与历史重算，不是报文次数。异常退出可能丢失尚未刷新的一分钟计数。"
-                />
+                <AppFactBar label="识别结果统计口径" items={['统计每分钟异步更新','匹配次数按成功画像累计，区分实时与历史重算，不是报文次数','异常退出可能丢失尚未刷新的一分钟计数']}/>
                 {coverage.data?.as_of && (
                   <Typography.Paragraph type="secondary">
                     统计时间 {new Date(coverage.data.as_of).toLocaleString()}

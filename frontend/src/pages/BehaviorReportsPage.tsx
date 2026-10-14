@@ -5,7 +5,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppFactBar, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
 import { statusText } from '../shared/ui/status'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
@@ -39,12 +39,7 @@ export function BehaviorReportsPage() {
   return (
     <section className="page behavior-reports-page">
       <AppPageHeader title="网络安全行为上报" subtitle="向外部安全平台上报投毒、代理与 AI 中转站行为" onRefresh={invalidate} />
-      <Alert
-        type="info"
-        showIcon
-        title="通道默认关闭，上报只读不改判定"
-        description="上报不产生任何策略动作；通道未启用时不会有任何外发。字段映射支持“=常量”写固定值，或填写证据字段名取值。"
-      />
+      <AppFactBar label="行为上报规则" items={['通道默认关闭，未启用时不会有任何外发','上报只写外部平台，不产生策略动作','字段映射可填“=常量”写固定值，或填证据字段名取值']} />
       <Card>
         <Tabs activeKey={tab} onChange={setTab} items={[
           { key: 'channels', label: '上报通道', children: <ChannelsPanel channels={channels} writable={writable} invalidate={invalidate} /> },

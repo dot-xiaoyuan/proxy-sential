@@ -6,6 +6,7 @@ import { request } from '../../shared/api/client'
 import type { components } from '../../shared/api/generated'
 import type { ActionConnector } from '../../shared/api/types'
 import type { FourKDirectory, Policy, Stage } from './api'
+import { AppFactBar } from '../../shared/ui'
 
 type TriggerBasis = 'duration' | 'notify' | 'rate_limit'
 
@@ -234,7 +235,7 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
       <section className={step === 0 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 0}>
         <Typography.Title level={5}>策略信息</Typography.Title>
         <Form.Item name="name" label="策略名称" rules={[{ required: true, message: '请输入策略名称' }]}><Input placeholder="请输入名称" /></Form.Item>
-        <Alert type="info" showIcon title={creating ? '新策略保存后默认为停用' : '策略开关在列表中管理'} description="4K只同步身份和匹配目录；认定条件与处理动作由当前策略配置。" />
+        <AppFactBar items={[creating ? '新策略保存后默认为停用' : '策略开关在列表中管理','4K 只同步身份与匹配目录','认定条件与处理动作由当前策略配置']} />
         <Form.Item name="mode" label="运行模式" rules={[{required:true}]}><Select options={[{value:'automatic',label:'真实执行'},{value:'observe',label:'仅记录'},{value:'manual',label:'人工确认'}]} /></Form.Item>
         <Typography.Title level={5}>管控目标</Typography.Title>
         <div className="policy-form-grid">
@@ -260,7 +261,7 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
       </section>
       <section className={step === 2 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 2}>
         <Typography.Title level={5}>配额超限处理动作</Typography.Title>
-        <Alert type="info" showIcon title="动作由策略建立" description="同步4K信息不会生成动作。只有策略满足认定条件后，启用的动作才进入影子判定或执行流程。" />
+        <AppFactBar items={['同步 4K 信息不会生成动作','策略满足认定条件后，启用的动作才进入影子判定或执行流程']} />
         <article className="policy-action-card">
           <Form.Item name={['actions', 'notify_enabled']} label="消息提醒" valuePropName="checked"><Switch aria-label="消息提醒" /></Form.Item>
           {actions?.notify_enabled && <div className="policy-action-fields">

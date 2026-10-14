@@ -38,6 +38,7 @@ import type {
   UpdateEndpointRegistrationRequest,
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
+import { AppFactBar } from '../shared/ui'
 
 const ecosystemColumns: ColumnsType<EndpointDomainEvidence> = [
   {
@@ -316,12 +317,7 @@ export function EndpointDetailsPage() {
           {!!recognition?.source_matches?.length && <section className="surface"><Typography.Title level={4}>多来源指纹依据</Typography.Title><Typography.Paragraph type="secondary">同一协议证据的跨库命中不重复增加置信度；辅助线索不单独确认设备类型。</Typography.Paragraph>{recognition.source_matches.map(m=><details key={`${m.source_id}:${m.rule_id}`} className="fingerprint-evidence"><summary>{m.name} · {m.source_id}{m.strength==='auxiliary'?' · 辅助线索':''}</summary><Descriptions column={1} items={[{key:'rule',label:'规则',children:<span className="fingerprint-ident">{m.rule_id}</span>},{key:'version',label:'版本',children:<span className="fingerprint-ident">{m.version}</span>},{key:'fields',label:'依据字段',children:m.fields.join('、')},{key:'observed',label:'匹配内容节选',children:Object.entries(m.observed??{}).map(([field,value])=><div key={field} className="fingerprint-ident">{field}：{value}</div>)},{key:'side',label:'归属',children:m.direction==='server'?'服务端':m.direction==='client'?'客户端':'设备'}]}/></details>)}</section>}
           <section className="surface">
             <Typography.Title level={4}>设备识别</Typography.Title>
-            <Alert
-              className="ecosystem-disclaimer"
-              showIcon
-              type="info"
-              title="生态线索表示终端访问过相关厂商服务，不等于硬件品牌、型号或设备类型已经确认。"
-            />
+            <AppFactBar label="生态线索口径" items={['生态线索表示终端访问过相关厂商服务','不代表硬件品牌、型号或设备类型已确认']}/>
             <Descriptions column={{ xs: 1, md: 2 }} size="small">
               <Descriptions.Item label="识别摘要">{recognition&&<DeviceBrandSummary device={recognition}/>}</Descriptions.Item>
               {recognition?.vendor&&<Descriptions.Item label="MAC 注册厂商">{recognition.vendor}</Descriptions.Item>}

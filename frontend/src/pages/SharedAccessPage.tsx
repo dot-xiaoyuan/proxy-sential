@@ -11,7 +11,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppErrorAlert, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
 
 type SharedResult = { state: string; reasons: string[]; signal_groups: string[]; quantity_known: boolean; device_lower_bound: number; confidence: number; from: string; to: string }
 type SharedBehavior = {
@@ -109,7 +109,7 @@ export function SharedAccessPage() {
       {reviews.isError ? <AppErrorAlert title="复核队列读取失败" /> : reviews.isLoading ? <AppLoadingState rows={3} /> : reviews.data?.items.length ? <div className="shared-access-grid">{reviews.data.items.map(review => <article className="shared-access-item" key={review.review_id}><Link to={detailPath(`/shared-access/reviews/${review.review_id}`,location.pathname+location.search)}><strong>{review.account_id}</strong></Link>{states[review.latest_result.state] && <Tag>{states[review.latest_result.state]}</Tag>}<p>{review.campus_id} / {review.access_domain}</p><p>独立轮次 {review.episode} · 依据版本 {review.latest_version}</p>{coverageLabels[review.coverage_state] && <p className="shared-access-muted">覆盖状态：{coverageLabels[review.coverage_state]}</p>}</article>)}</div> : <Empty description="暂无复核记录；空队列不表示已证明不存在共享行为" />}
       <CursorButtons next={reviews.data?.next_cursor} previous={cursor.previous} onNext={() => cursor.next(reviews.data?.next_cursor ?? '')} onPrevious={cursor.back} />
     </Card>}
-    <details onToggle={e=>setHealthOpen(e.currentTarget.open)} className="surface filter-disclosure shared-health-disclosure"><summary>链路与处置说明</summary><div className="filter-disclosure-content"><Alert type="info" showIcon title="默认仅观测；未验收的下线能力保持阻断" description="认证管理接口连通不代表权威身份完整，也不代表共享检测已通过验收。真实操作仅限当轮指定的测试账号。" />
+    <details onToggle={e=>setHealthOpen(e.currentTarget.open)} className="surface filter-disclosure shared-health-disclosure"><summary>链路与处置说明</summary><div className="filter-disclosure-content"><AppFactBar items={['默认仅观测，未验收的下线能力保持阻断','认证管理接口连通不代表权威身份完整，也不代表共享检测已通过验收','真实操作仅限当轮指定的测试账号']} />
     {status.isError ? <AppErrorAlert title="链路状态读取失败" /> : status.isLoading ? <AppLoadingState rows={2} /> : status.data && <Card className="shared-health-card" title="链路状态" extra={<span className="shared-access-muted">检查时间：{time(status.data.checked_at)}</span>}>
       <div className="shared-access-grid">{(['collection', 'materialization', 'policy', 'controller'] as const).map((key, index) => <article className="shared-access-item" key={key}><strong>{['采集覆盖', '共享物化', '策略准入', '控制器'][index]}</strong>{states[status.data![key].state] && <Tag>{states[status.data![key].state]}</Tag>}{blockers[status.data![key].blocker] && <p>{blockers[status.data![key].blocker]}</p>}</article>)}</div>
       <h3>认证身份</h3>{status.data.identity.length === 0 ? <Empty description="尚未配置身份来源，请在处置网关设置身份来源与范围" /> : status.data.identity.map(source => <article className="shared-access-item" key={source.connector_id}><strong>{source.scope.campus_id} / {source.scope.access_domain}</strong>{states[source.state] && <Tag color={source.fresh ? 'green' : 'orange'}>{states[source.state]}</Tag>}<p>最近源观测：{time(source.observed_at)} · {source.record_count} 条地址关联</p>{blockers[source.blocker] && <p>{blockers[source.blocker]}</p>}</article>)}
@@ -128,7 +128,7 @@ export function SharedBehaviorDetailsPage() {
   return <section className="shared-access-page">
     <AppPageHeader title={`${item.current===false?'历史共享观察':'共享网关识别记录'}：${item.ip}`} subtitle={item.current===false?historicalBehaviorLabel(item):`${behaviorStates[item.status]} · ${item.confidence} 分`} extra={<Link to={safeReturnTo(params.get('return_to'),'/shared-access?tab=observations')}>返回共享发现</Link>} />
     {item.current === false && <Alert type="warning" showIcon title="历史记录，当前判定已失效" description="下方保留当时规则的判定与原始证据，仅供追溯，不作为当前共享状态。" />}
-    <Alert type="info" showIcon title="识别记录不等于处置授权" description="只有权威认证身份、完整采集覆盖、当前会话和人工复核同时通过，记录才可能进入后续策略流程。" />
+    <AppFactBar label="识别记录与处置授权" items={['识别记录不等于处置授权','需权威认证身份、完整采集覆盖、当前会话与人工复核同时通过，才进入后续策略流程']} />
     <Card title="判定摘要">
       <Space wrap><Tag color={item.current===false?undefined:item.status === 'confirmed' ? 'green' : item.status === 'likely' ? 'gold' : 'default'}>{item.current===false?historicalBehaviorLabel(item):behaviorStates[item.status]}</Tag>{item.current!==false&&<strong>{item.confidence} 分</strong>}{item.signal_groups.map(signal => <Tag key={signal}>{item.current===false&&signal==='router_identity'?'历史路由画像':behaviorSignals[signal] || signal}</Tag>)}<Tag color={item.current===false?undefined:item.coverage_state === 'verified' ? 'green' : 'orange'}>{item.coverage_state === 'verified' ? '采集覆盖已验证' : '采集覆盖待完善'}</Tag></Space>
       {timeRange(item.window_start,item.window_end)&&<p>观察窗口：{timeRange(item.window_start,item.window_end)}</p>}

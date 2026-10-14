@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom'
 import { useSession } from '../../shared/api/queries'
 import { can } from '../../shared/auth/permissions'
 import { applicationAPI, formatBytes, type AppItem } from './api'
+import { AppFactBar } from '../../shared/ui'
 export function ApplicationActivity({ip,window='24h'}:{ip?:string;window?:string}) {
  const session=useSession();const location=useLocation();const [sensor,setSensor]=useUrlState('sensor_id','');const [campus,setCampus]=useUrlState('campus_id','');const [filterIP,setFilterIP]=useUrlState('ip',ip||'');const [app,setApp]=useUrlState('application_id','');const [inspect,setInspect]=useState<string>();const [page,setPage]=useState(1);const [exportError,setExportError]=useState('')
  const [reportPage,setReportPage]=useUrlState('application_page','1');
@@ -21,7 +22,7 @@ export function ApplicationActivity({ip,window='24h'}:{ip?:string;window?:string
  const details=useQuery({queryKey:['application-observations',detailQuery.toString()],queryFn:()=>applicationAPI.observations(detailQuery.toString()),enabled:!!inspect})
  if(status.isError) return <Alert type="error" title="应用观测状态加载失败" />
  if(status.isPending) return <Typography.Text>加载应用观测…</Typography.Text>
- if(!status.data.enabled) return <Alert type="info" title="应用观测尚未启用" description="应用协议报表仍可使用。启用应用观测并导入离线特征包后，此处展示具体应用访问。" />
+ if(!status.data.enabled) return <AppFactBar items={['应用观测尚未启用','应用协议报表仍可使用','启用应用观测并导入离线特征包后，此处展示具体应用访问']}/>
  const openInspection=(id:string)=>{const pinned=new URLSearchParams(query);pinned.set('to',new Date().toISOString());setDetailBase(pinned.toString());setCursors(['']);setInspect(id);setPage(1)}
  const data=report.data;const reportAsOf=data?.statistics_as_of||data?.as_of;const reportLag=reportAsOf?Math.max(0,(Date.now()-new Date(reportAsOf).getTime())/1000):0;const columns=[{title:'应用',dataIndex:'name',render:(_:string,row:AppItem)=><Button type="link" onClick={()=>openInspection(row.application_id)}>{row.name}</Button>},{title:'识别观测',dataIndex:'observation_count'},{title:'关联 IP',dataIndex:'terminal_count'},{title:'已识别连接',dataIndex:'connection_count'},{title:'上行累计',dataIndex:'upload_bytes',render:formatBytes},{title:'下行累计',dataIndex:'download_bytes',render:formatBytes},{title:'计量缺失连接',dataIndex:'missing_meter_connections'},{title:'最近观测',dataIndex:'last_seen',render:(v:string)=>new Date(v).toLocaleString()}]
  return <section className="application-panel">
@@ -45,7 +46,7 @@ export function ApplicationActivity({ip,window='24h'}:{ip?:string;window?:string
  <Typography.Text type="secondary">最近成功处理：{status.data.last_scan?new Date(status.data.last_scan).toLocaleString():'等待首轮同步'}</Typography.Text>
  {data&&<>
  <dl className="application-metrics"><div><dt>待补特征观测</dt><dd>{data.unknown_observations}</dd></div><div><dt>多应用连接</dt><dd>{data.multi_application.connection_count}</dd></div><div><dt>缺少连接标识</dt><dd>{data.missing_connection_observations}</dd></div><div><dt>DNS 观测</dt><dd>{data.dns_observations}</dd></div></dl>
- <Alert type="info" title="流量统计口径" description={data.traffic_basis}/>
+ <AppFactBar label="流量统计口径" items={[data.traffic_basis]}/>
  <div className="application-toolbar"><Typography.Text>识别版本：</Typography.Text>{Object.entries(data.versions).map(([v,n])=><Tag key={v}>{v} · {n}</Tag>)}</div>
  <div className="application-desktop-table"><Table rowKey="application_id" columns={columns} dataSource={data.items} pagination={{current:Math.max(1,Number(reportPage)||1),pageSize:10,showSizeChanger:false,onChange:value=>setReportPage(String(value))}} loading={report.isFetching}/></div>
  <div className="application-mobile-cards">{data.items.length===0?<Typography.Text>暂无应用观测</Typography.Text>:data.items.map(row=><article className="application-card" key={row.application_id}><Button type="link" onClick={()=>openInspection(row.application_id)}>{row.name}</Button><dl><div><dt>关联 IP / 连接</dt><dd>{row.terminal_count} / {row.connection_count}</dd></div><div><dt>上行 / 下行累计</dt><dd>{formatBytes(row.upload_bytes)} / {formatBytes(row.download_bytes)}</dd></div><div><dt>计量缺失连接</dt><dd>{row.missing_meter_connections}</dd></div><div><dt>最近观测</dt><dd>{new Date(row.last_seen).toLocaleString()}</dd></div></dl></article>)}</div>

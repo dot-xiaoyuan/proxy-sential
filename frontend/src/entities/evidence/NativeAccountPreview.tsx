@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Empty, Input, Spin, Tag } from 'antd'
 import { request } from '../../shared/api/client'
+import { AppFactBar } from '../../shared/ui'
 
 type Preview = {
   coverage: 'configured_source_only' | 'account_observation_only'; observed_at: string; complete?: boolean; absence_verified?: boolean
@@ -14,7 +15,7 @@ export function NativeAccountPreview({ connectorId }: { connectorId: string }) {
   const query = useQuery({ queryKey: ['native-account-preview', connectorId, account], enabled: Boolean(account), retry: false, queryFn: () => request<Preview>(`/actions/connectors/${encodeURIComponent(connectorId)}/account-preview?account_id=${encodeURIComponent(account)}`) })
   const load = () => { if (input.trim() === account) void query.refetch(); else setAccount(input.trim()) }
   return <section className="native-observations" aria-label="账号会话预览">
-    <Alert type="info" showIcon title="仅预览当前认证源，不会执行下线" description="其他认证源可能还有在线会话；清单不能证明已覆盖全部会话，也不代表账号违规。" />
+    <AppFactBar label="账号会话预览口径" items={['仅预览当前认证源，不会执行下线','其他认证源可能还有在线会话','清单不能证明已覆盖全部会话，也不代表账号违规']} />
     <div className="native-observation-controls">
       <Input className="native-preview-account" aria-label="预览账号" value={input} maxLength={256} onChange={event => setInput(event.target.value)} onPressEnter={() => { if (input.trim()) load() }} placeholder="输入认证账号" />
       <Button disabled={!input.trim() || query.isFetching} onClick={load}>查询会话</Button>

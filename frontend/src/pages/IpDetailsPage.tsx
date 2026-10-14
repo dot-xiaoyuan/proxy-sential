@@ -42,6 +42,7 @@ import type {
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
 import { displayField, statusText } from "../shared/ui/status";
+import { AppFactBar } from '../shared/ui'
 
 export function IpDetailsPage() {
   const rawIp = useParams().ip ?? "";
@@ -558,13 +559,7 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
       </div>
 
       {!hasDHCPStrongSignal && (
-        <Alert
-          className="zeek-status-alert"
-          description="当前设备候选主要来自 UA、TLS 或 TCP 栈推断，UA 可伪造，建议等待 Zeek DHCP、mDNS、NBNS 等局域网强信号后再确认。"
-          showIcon
-          title="缺少 DHCP 强设备信号"
-          type="info"
-        />
+        <AppFactBar label="设备识别信号" items={['设备候选主要来自 UA、TLS 或 TCP 栈推断','UA 可伪造，建议等待 Zeek DHCP、mDNS、NBNS 等局域网强信号后再确认']}/>
       )}
 
       {inventory.devices.length === 0 ? (

@@ -1931,6 +1931,45 @@ pre.wrap-code {
   background: #ffffff;
 }
 
+/* Page-level fact strip. Replaces the prose Alert banner: each item states one
+   fact an operator acts on, in the same muted register as the connector cards
+   on the integrations page. Real errors, risk conflicts and execution state
+   keep using Alert so they stay visually louder than this strip. */
+.app-fact-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 0 0 14px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid #e2e8f0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #475569;
+}
+
+.app-fact-bar-item {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.app-fact-bar-item::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: none;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.app-fact-bar-item > b {
+  color: #0f172a;
+  font-weight: 600;
+}
+
 .section-toolbar-spaced {
   margin-top: 16px;
 }
@@ -2689,10 +2728,6 @@ pre.wrap-code {
   }
 }
 
-.zeek-status-alert {
-  margin-bottom: 16px;
-}
-
 .ingest-status-alert {
   margin-bottom: 16px;
 }
@@ -3007,10 +3042,6 @@ pre.wrap-code {
 .ecosystem-filter {
   min-width: 150px;
 }
-.ecosystem-disclaimer {
-  margin-bottom: 14px;
-}
-
 .nowrap-cell,
 .ellipsis-cell {
   min-width: 0;

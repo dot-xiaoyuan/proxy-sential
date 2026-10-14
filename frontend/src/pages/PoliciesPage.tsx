@@ -8,7 +8,7 @@ import { Alert, Button, Card, Empty, Input, Switch, Tag, Typography, message } f
 import { policiesAPI, type Policy, type Simulation } from '../features/policies/api'
 import { useActionConnectors, useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppPageHeader, AppLoadingState, AppErrorAlert } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppLoadingState, AppPageHeader } from '../shared/ui'
 
 const triggerNames: Record<string,string> = {quota_exceeded:'设备配额',session_quota_exceeded:'认证会话配额',shared_access:'共享上网风险',explicit_proxy:'明确代理风险'}
 const modeNames: Record<string,string> = {observe:'仅观测',manual:'人工确认',automatic:'自动执行'}
@@ -31,7 +31,7 @@ export function PoliciesPage(){
  return <div className="policies-page">
  <AppPageHeader title="防代理策略" subtitle="设备配额、共享上网和明确代理分别评估，处置范围为账号全部在线会话。"/>
  <div className="policy-toolbar"><Input aria-label="试算账号" placeholder="输入认证账号进行试算" value={account} onChange={e=>setAccount(e.target.value)}/><Button type="primary" disabled={!writable} onClick={()=>edit(emptyPolicy(),true)}>新建设备配额策略</Button></div>
- <Alert type="info" showIcon title="新建策略默认停用" description="保存时选择真实执行或仅记录；打开策略开关后才生效。身份或事件通道不完整时，真实动作由服务端阻断并记录原因。"/>
+ <AppFactBar label="策略规则" items={['新建策略默认停用，打开开关后才生效','保存时选择真实执行或仅记录','身份或事件通道不完整时，服务端阻断真实动作并记录原因']}/>
  <div className="policy-cards">{query.data?.items.map(p=><Card key={p.policy_id} title={p.name} extra={<Switch aria-label={`${p.name}策略开关`} checked={p.enabled} disabled={!writable||toggle.isPending||Boolean(p.origin)} onChange={enabled=>toggle.mutate({...p,enabled})}/>}>
  <div className="policy-tags"><Tag>{triggerNames[p.trigger]}</Tag><Tag>{modeNames[p.mode]}</Tag><Tag>{p.enabled?'已启用':'已停用'}</Tag></div>
  {p.trigger==='quota_exceeded'&&<Typography.Paragraph>认定条件：{[p.limits.total!=null&&`全部设备数 > ${p.limits.total}`,p.limits.pc!=null&&`电脑数量 > ${p.limits.pc}`,p.limits.mobile!=null&&`移动设备数量 > ${p.limits.mobile}`,p.limits.router!=null&&`发现路由器数量 > ${p.limits.router}`].filter(Boolean).join('，')}</Typography.Paragraph>}

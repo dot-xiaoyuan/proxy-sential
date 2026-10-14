@@ -17,6 +17,7 @@ import {
   useSession,
 } from '../../shared/api/queries'
 import type { CreateLabelRequest, DpiFlowSample, EventQuery } from '../../shared/api/types'
+import { AppFactBar } from '../../shared/ui'
 
 interface FlowInspectorDrawerProps {
   ip: string | null
@@ -93,11 +94,7 @@ export function FlowInspectorDrawer({ ip, open, onClose, context }: FlowInspecto
       }
     >
       <div className="drawer-stack">
-        <Alert
-          description={`Flow 查询窗口：${context?.window || '1h'}。风险与复核依据为当前风险快照。`}
-          showIcon
-          type="info"
-        />
+        <AppFactBar items={[`Flow 查询窗口：${context?.window || '1h'}`, '风险与复核依据为当前风险快照']} />
         {risk.isError && <Alert type="error" showIcon title="当前风险快照读取失败" />}
         {evidence.isError && <Alert type="error" showIcon title="复核证据读取失败" />}
         {flowSamples.isError && <Alert type="error" showIcon title="Flow 样本读取失败" />}
