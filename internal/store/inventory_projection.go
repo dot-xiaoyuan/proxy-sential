@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +24,8 @@ func (s *DBStore) RunDeviceInventoryProjection(ctx context.Context, backfill boo
 	if backfill {
 		lane = "backfill"
 	}
-	poolSize := 4
+	// Each concurrent endpoint may hold a claim connection and a transaction connection.
+	poolSize := 2*inventoryRealtimeWorkers() + 2
 	if backfill {
 		poolSize = 12
 	}
@@ -63,7 +65,7 @@ func (s *DBStore) runDeviceInventoryProjectionWork(ctx context.Context, guard *s
 	var workers sync.WaitGroup
 	defer func() { stop(); workers.Wait() }()
 	if backfill {
-		for n := 0; n < 4; n++ {
+		for n := 0; n < inventoryBackfillWorkers(); n++ {
 			workers.Add(1)
 			go func() { defer workers.Done(); s.runInventoryBackfillEndpoints(ctx) }()
 		}
@@ -97,16 +99,43 @@ func (s *DBStore) runDeviceInventoryProjectionWork(ctx context.Context, guard *s
 		cancel()
 		// Each endpoint has its own budget. A contended snapshot or seed batch
 		// must not consume every endpoint's processing time or starve that lane.
-		for n := 0; !backfill && n < 25; n++ {
-			item, stop := context.WithTimeout(ctx, 30*time.Second)
-			done, itemErr := s.pg.materializeNextInventoryLane(item, map[bool]string{true: "backfill", false: "realtime"}[backfill])
-			stop()
-			if itemErr != nil {
-				err = itemErr
-				break
+		//
+		// The realtime lane used to run these sequentially, so one endpoint at a time set
+		// the ceiling: the field measured ~0.67 jobs/s while roughly 133 real changes/min
+		// arrived, and the backlog grew even though no single statement took 300 ms — the
+		// cost is spread over many small statements. Endpoints are independent and the
+		// claim uses FOR UPDATE SKIP LOCKED, so the work parallelises across workers.
+		// PROXY_SENTINEL_INVENTORY_REALTIME_WORKERS=1 restores the sequential shape.
+		if !backfill {
+			workers := inventoryRealtimeWorkers()
+			var running sync.WaitGroup
+			var firstErr error
+			var errMu sync.Mutex
+			for w := 0; w < workers; w++ {
+				running.Add(1)
+				go func() {
+					defer running.Done()
+					for n := 0; n < 25; n++ {
+						item, stop := context.WithTimeout(ctx, 30*time.Second)
+						done, itemErr := s.pg.materializeNextInventoryLane(item, "realtime")
+						stop()
+						if itemErr != nil {
+							errMu.Lock()
+							if firstErr == nil {
+								firstErr = itemErr
+							}
+							errMu.Unlock()
+							return
+						}
+						if !done {
+							return
+						}
+					}
+				}()
 			}
-			if !done {
-				break
+			running.Wait()
+			if firstErr != nil {
+				err = firstErr
 			}
 		}
 		work, cancel = context.WithTimeout(ctx, 30*time.Second)
@@ -133,7 +162,11 @@ func (s *DBStore) runDeviceInventoryProjectionWork(ctx context.Context, guard *s
 			_, _ = s.pg.db.ExecContext(status, `UPDATE endpoint_inventory_projection_state SET last_error=$1,updated_at=now()`, stateError)
 			cancel()
 		}
-		timer := time.NewTimer(100 * time.Millisecond)
+		delay := 100 * time.Millisecond
+		if backfill {
+			delay = inventoryBackfillDelay()
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -152,8 +185,9 @@ func (s *DBStore) runInventoryBackfillEndpoints(ctx context.Context) {
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "inventory endpoint backfill failed cause=%s\n", inventoryProjectionErrorCode(err))
 		}
-		if !done || err != nil {
-			timer := time.NewTimer(100 * time.Millisecond)
+		delay := inventoryBackfillDelay()
+		if !done || err != nil || delay > 0 {
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -593,4 +627,32 @@ func initializeInventorySessions(ctx context.Context, tx *sql.Tx, id string) err
 		}
 	}
 	return nil
+}
+
+// Limit database work in the producer; service CPU/I/O weights cannot throttle
+// SQL executed inside the separate PostgreSQL container.
+// inventoryRealtimeWorkers bounds how many endpoints the realtime lane projects at once.
+// Endpoint projections are independent and claimed with FOR UPDATE SKIP LOCKED; the knob
+// exists so the field can be measured without a redeploy (1 restores sequential behaviour).
+func inventoryRealtimeWorkers() int {
+	n, err := strconv.Atoi(os.Getenv("PROXY_SENTINEL_INVENTORY_REALTIME_WORKERS"))
+	if err != nil || n < 1 || n > 8 {
+		return 2
+	}
+	return n
+}
+
+func inventoryBackfillWorkers() int {
+	n, err := strconv.Atoi(os.Getenv("PROXY_SENTINEL_INVENTORY_BACKFILL_WORKERS"))
+	if err != nil || n < 1 || n > 4 {
+		return 4
+	}
+	return n
+}
+func inventoryBackfillDelay() time.Duration {
+	n, err := strconv.Atoi(os.Getenv("PROXY_SENTINEL_INVENTORY_BACKFILL_DELAY_MS"))
+	if err != nil || n < 100 || n > 60000 {
+		return 100 * time.Millisecond
+	}
+	return time.Duration(n) * time.Millisecond
 }
