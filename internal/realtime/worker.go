@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -207,6 +208,13 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 	}
 	writeCtx, cancel := context.WithTimeout(ctx, opts.StoreTimeout)
 	defer cancel()
+	if staging, ok := backend.(interface {
+		StageDiscoveryBatch(context.Context, ingest.Batch, []normalized.Event) error
+	}); ok {
+		if err := staging.StageDiscoveryBatch(writeCtx, batch, events); err != nil {
+			return false, failed(err)
+		}
+	}
 	eventWriteStarted := time.Now()
 	if err := backend.WriteNormalizedEvents(writeCtx, events); err != nil {
 		return false, failed(err)
@@ -303,7 +311,7 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 		if err != nil {
 			return nil, stats, err
 		}
-	case "zeek-proxy", "zeek-dhcp", "zeek-software", "zeek-mdns", "zeek-nbns", "zeek-llmnr", "zeek-ttl", "zeek-conn", "zeek-dns", "zeek-http", "zeek-ssl", "zeek-x509", "zeek-lldp", "zeek-ssdp", "zeek-snmp":
+	case "zeek-iot", "zeek-proxy", "zeek-dhcp", "zeek-software", "zeek-mdns", "zeek-nbns", "zeek-llmnr", "zeek-ttl", "zeek-conn", "zeek-dns", "zeek-http", "zeek-ssl", "zeek-x509", "zeek-lldp", "zeek-ssdp", "zeek-snmp":
 		value, err := zeek.Convert(bytes.NewReader(input), &output, zeek.Options{CaptureScope: source.CaptureScope, SensorID: sensorID, LogKind: strings.TrimPrefix(source.Kind, "zeek-"), CollectorInstanceID: source.CollectorInstanceID, ProxyProducer: source.ProxyProducer})
 		stats = normalizedStats{Read: value.Read, Emitted: value.Emitted, Skipped: value.Skipped, Malformed: value.Malformed, ByType: value.ByType}
 		if err != nil {
@@ -364,8 +372,8 @@ func normalizeDeviceSignals(input []byte, sensorID string) ([]normalized.Event, 
 }
 
 // A source keeps its canonical path in the durable checkpoint even while its
-// retained, uncompressed .1 archive is drained. Only an exact file identity
-// match may supply old bytes; unrelated archives must never be replayed.
+// retained, uncompressed rotation is drained. Only an exact file identity match
+// may supply old bytes; unrelated archives must never be replayed.
 type sourceChunk struct {
 	data, header       []byte
 	fileID             string
@@ -376,6 +384,46 @@ type sourceChunk struct {
 func readCompleteLines(path string, checkpoint ingest.Checkpoint, found bool, maxBytes int64) ([]byte, string, int64, int64, bool, error) {
 	read, err := readSourceChunk(path, checkpoint, found, maxBytes, false)
 	return read.data, read.fileID, read.start, read.end, read.truncated, err
+}
+
+// rotatedSourceCandidates 列出同一目录下可能仍承载未读字节的轮转文件，最近的排在前面。
+// logrotate 既可能产出 <path>.1，也可能在全局开启 dateext 时产出 <path>-20261015；
+// 只认 <path>.1 会在后一种命名下把未读尾部当作新文件丢弃。调用方仍必须用文件身份
+// （设备号加 inode）精确匹配检查点，绝不重放无关归档。
+func rotatedSourceCandidates(path string) []string {
+	matches, err := filepath.Glob(path + "*")
+	if err != nil {
+		return nil
+	}
+	type candidate struct {
+		path    string
+		modTime time.Time
+	}
+	candidates := make([]candidate, 0, len(matches))
+	for _, match := range matches {
+		if match == path {
+			continue
+		}
+		info, err := os.Lstat(match)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		candidates = append(candidates, candidate{path: match, modTime: info.ModTime()})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].modTime.Equal(candidates[j].modTime) {
+			return candidates[i].path < candidates[j].path
+		}
+		return candidates[i].modTime.After(candidates[j].modTime)
+	})
+	if len(candidates) > 50 {
+		candidates = candidates[:50]
+	}
+	out := make([]string, 0, len(candidates))
+	for _, item := range candidates {
+		out = append(out, item.path)
+	}
+	return out
 }
 
 func readSourceChunk(path string, checkpoint ingest.Checkpoint, found bool, maxBytes int64, withHeader bool) (sourceChunk, error) {
@@ -393,12 +441,17 @@ func readSourceChunk(path string, checkpoint ingest.Checkpoint, found bool, maxB
 		}
 	}
 	if found && checkpoint.FileID != "" && (currentInfo == nil || fileIdentity(path, currentInfo) != checkpoint.FileID) {
-		archivePath := path + ".1"
-		info, err := os.Lstat(archivePath)
-		if err != nil && !os.IsNotExist(err) {
-			return sourceChunk{}, err
-		}
-		if err == nil && info.Mode().IsRegular() && fileIdentity(path, info) == checkpoint.FileID {
+		for _, archivePath := range rotatedSourceCandidates(path) {
+			info, err := os.Lstat(archivePath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return sourceChunk{}, err
+			}
+			if !info.Mode().IsRegular() || fileIdentity(path, info) != checkpoint.FileID {
+				continue
+			}
 			archive, err := os.Open(archivePath)
 			if err != nil {
 				return sourceChunk{}, err

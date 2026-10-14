@@ -2,8 +2,12 @@
 Description=Check Proxy Sentinel shared-access signal rotation
 
 [Timer]
+# A wall-clock schedule keeps the timer armed across daemon-reload. The previous
+# OnUnitActiveSec form lost its next elapse when the installer rewrote the unit
+# and reloaded systemd, so rotation silently stopped and the signal file grew
+# without bound until the disk filled.
+OnCalendar=*:0/15
 OnBootSec=5min
-OnUnitActiveSec=15min
 AccuracySec=30s
 Persistent=true
 Unit=proxy-sentinel-shared-logrotate.service

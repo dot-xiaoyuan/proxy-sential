@@ -160,6 +160,50 @@ func TestReadCompleteLinesResetsOffsetAfterRotation(t *testing.T) {
 	}
 }
 
+func TestReadSourceChunkDrainsDateExtRotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ttl.jsonl")
+	old := "{\"bucket\":\"a\"}\n{\"bucket\":\"b\"}\n"
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The reader already consumed the first record and logrotate renamed the file
+	// with a date suffix instead of the plain ".1" name.
+	checkpoint := ingest.Checkpoint{FileID: fileIdentity(path, info), Offset: int64(len("{\"bucket\":\"a\"}\n"))}
+	rotated := filepath.Join(dir, "ttl.jsonl-20261015")
+	if err := os.Rename(path, rotated); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{\"bucket\":\"c\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	read, err := readSourceChunk(path, checkpoint, true, 1<<20, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !read.archive {
+		t.Fatalf("dateext rotation was not drained: archive=%t data=%q", read.archive, read.data)
+	}
+	if string(read.data) != "{\"bucket\":\"b\"}\n" || read.start != checkpoint.Offset {
+		t.Fatalf("unexpected archive read: start=%d data=%q", read.start, read.data)
+	}
+	if err := os.Remove(rotated); err != nil {
+		t.Fatal(err)
+	}
+	read, err = readSourceChunk(path, checkpoint, true, 1<<20, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !read.truncated || read.start != 0 || string(read.data) != "{\"bucket\":\"c\"}\n" {
+		t.Fatalf("missing archive did not fall back to a fresh file: truncated=%t start=%d data=%q", read.truncated, read.start, read.data)
+	}
+}
+
 func TestProcessOnceRetriesStableBatchAfterPostEventFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "eve.json")
 	line := `{"timestamp":"2026-07-22T10:00:00Z","event_type":"dns","src_ip":"10.0.0.2","dest_ip":"1.1.1.1","proto":"UDP","dns":{"rrname":"example.test"}}` + "\n"

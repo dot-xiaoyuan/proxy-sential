@@ -1,8 +1,11 @@
 # Router/TTL packet-sidecar output. The collector reopens this path with
-# O_APPEND|O_CREATE for every bucket, and realtime ingest drains <path>.1 by
-# file identity before following the new file, so plain rename rotation loses
+# O_APPEND|O_CREATE for every bucket, and realtime ingest drains the rotated file
+# by file identity before following the new one, so plain rename rotation loses
 # no records and needs neither copytruncate nor a collector restart.
-# delaycompress keeps .1 readable for ingest until the next rotation.
+# delaycompress keeps the newest rotation readable for ingest until the next one.
+# The distribution enables dateext globally, so an explicit clock-level
+# dateformat is required: with the plain date stamp a second rotation on the same
+# day would collide and be skipped, which is how this file grew to 125 GB.
 /opt/proxy-sentinel/data/device-signals/ttl.jsonl {
   size 1G
   rotate 4
@@ -11,4 +14,5 @@
   nocreate
   compress
   delaycompress
+  dateformat -%Y%m%d-%H%M%S
 }

@@ -626,7 +626,11 @@ for unit in proxy-sentinel-shared-logrotate.service proxy-sentinel-shared-logrot
   sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
-systemctl enable --now proxy-sentinel-shared-logrotate.timer >/dev/null 2>&1 || true
+systemctl enable proxy-sentinel-shared-logrotate.timer >/dev/null 2>&1 || true
+# enable --now leaves an already active timer running with its stale schedule, and
+# the reload above would clear the next elapse of a monotonic timer. Restart it so
+# the shipped schedule actually takes effect on an in-place upgrade.
+systemctl restart proxy-sentinel-shared-logrotate.timer >/dev/null 2>&1 || true
 
 if [[ "$manage_device_signals" == true ]]; then
   mkdir -p "$(dirname "$device_signal_path")"
