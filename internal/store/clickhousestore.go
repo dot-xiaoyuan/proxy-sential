@@ -106,17 +106,19 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 		return nil
 	}
 	events = uniqueEventsByID(events)
-	existing, err := s.existingEventIDs(ctx, events)
-	if err != nil {
-		return fmt.Errorf("check normalized event idempotency: %w", err)
-	}
-	pending := events[:0]
-	for _, event := range events {
-		if _, found := existing[event.EventID]; !found {
-			pending = append(pending, event)
+	if !eventIDScanDisabled() {
+		existing, err := s.existingEventIDs(ctx, events)
+		if err != nil {
+			return fmt.Errorf("check normalized event idempotency: %w", err)
 		}
+		pending := events[:0]
+		for _, event := range events {
+			if _, found := existing[event.EventID]; !found {
+				pending = append(pending, event)
+			}
+		}
+		events = pending
 	}
-	events = pending
 	if len(events) == 0 {
 		return nil
 	}
@@ -164,6 +166,19 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 		}
 	}
 	return s.exec(ctx, body.String())
+}
+
+// eventIDScanDisabled 报告重放批次是否改由 ClickHouse 插入级去重兜底。
+//
+// 现场实测每批事件的存在性扫描是 ingest 的吞吐上限：索引表 normalized_event_ids_v2
+// 按 64 行/granule 细分了 57 个 part，单个 id 就要碰 31–57 个 granule，500 个 id 的
+// 一批要几十秒；而 normalized_events 上的时间范围扫描同样在 60 秒超时。
+//
+// 当 normalized_events 打开 non_replicated_deduplication_window 时，重放的整块插入
+// 会按内容哈希被 ClickHouse 丢弃，逐 id 扫描因此可以跳过。默认仍走扫描，只有现场显式
+// 设置 PROXY_SENTINEL_EVENT_ID_IDEMPOTENCY=clickhouse 才跳过。
+func eventIDScanDisabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EVENT_ID_IDEMPOTENCY")), "clickhouse")
 }
 
 func (s *ClickHouseStore) existingEventIDs(ctx context.Context, events []normalized.Event) (map[string]struct{}, error) {
