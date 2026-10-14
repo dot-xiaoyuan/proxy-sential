@@ -717,8 +717,38 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(sensor_id,campus_id,key_type,key_val
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE shared_device_profile_runtime SET last_success_at=now(),last_error='',processed_jobs=processed_jobs+1,updated_at=now() WHERE singleton`)
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	// The runtime row is a singleton. Updating it inside this transaction held its tuple
+	// lock for the whole projection, and a projection transaction can run for tens of
+	// seconds: the field measured four backends queued on that lock at once and 431 ms per
+	// update, which serialised every lane that touches the materializer. Commit first, then
+	// write the beacon in its own short transaction. The counter is advisory, so a failed
+	// beacon must not undo a projection that already committed — report it instead.
+	beacon, cancelBeacon := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelBeacon()
+	if err = s.pg.writeAdvisoryState(beacon, `UPDATE shared_device_profile_runtime SET last_success_at=now(),last_error='',processed_jobs=processed_jobs+1,updated_at=now() WHERE singleton`); err != nil {
+		fmt.Fprintln(os.Stderr, "shared device profile beacon:", err)
+	}
+	return nil
+}
+
+// writeAdvisoryState runs one statement in a transaction that does not wait for the WAL
+// flush. Reserve it for advisory state — heartbeats and monitoring counters — where losing
+// the last commit in a crash costs nothing. On the field every autocommit waited 228 ms for
+// a WAL fsync, so a beacon written once per processed job cost about 400 ms; the same
+// statement skips the flush here.
+func (s *PostgresStore) writeAdvisoryState(ctx context.Context, statement string, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, statement, args...); err != nil {
 		return err
 	}
 	return tx.Commit()
