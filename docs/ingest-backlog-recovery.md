@@ -20,6 +20,8 @@
 | 6 | `ttl.jsonl` 无轮转配置（安装器不分发），涨到 124 GB | 补齐 `/etc/logrotate.d/proxy-sentinel-router-signals`、修正 shared-logrotate 单元并恢复定时器；安装器补分发 | 文件已轮转，ingest 按 file identity 排空归档 |
 | 7 | 身份快照投影与身份写入用两把互不排斥的 advisory lock，行级触发器使二者以相反顺序锁同一批任务行，形成死锁自锁死 | `projectIdentitySnapshot` 并入身份写入锁，busy 时不写入也不删队列行（详见下节） | 死锁 **42–45 次/小时 → 0**；`endpoint_entities` 恢复提交，5 分钟 1394 次更新 |
 
+| 8 | `normalized_events` 上挂着 12 个物化视图，其中 `passive_discovery_events_v1_mv` 的目标表自 035 起已被 v2 取代，属纯死写 | ClickHouse 迁移 038 删除该死物化视图（保留目标表与历史数据） | 扇出 12 → 11；part 速率 **184–202 → 174 次/分钟**；目标表 180 秒内 0 个新 part |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -97,7 +99,32 @@ upsert `endpoint_inventory_projection_jobs`。身份写入路径按 `endpoint_id
      另有 `passive_discovery_events_v1`/`v2` 各 104.5M/6.5GiB 双写），
      叠加 4 MiB 批（每 part 仅约 5,900 行）造成的 part 碎片化。
      PostgreSQL 只需约 0.5 MB/s 写入却因此被饿死，身份语句单条耗时 0.5–4.4 秒。
-     方向：加大 ingest 批大小 / 打开 `async_insert` 合并 part、清理 v1/v2 重复表。
+     方向：**不能靠单纯加快 drain 解决**（见下节负结果），需要减少扇出目标表、
+     降低事件量或重构分析路径。
+
+### 实验记录（负结果）：放大 ingest 批次不能解决设备滞后（2026-10-14，第 15 轮）
+
+思路：ClickHouse 的 part 数 = 插入次数 × 扇出目标数（实测 11–13），因此把 ingest 的
+`--max-batch-bytes` 从 4 MiB 放大到 32 MiB（同时把该单元的 `MemoryMax` 由 2G 抬到 4G），
+期望 part 与合并量按比例下降。现场实测约 4 分钟：
+
+| 指标 | 4 MiB（基线） | 32 MiB | 结论 |
+|---|---|---|---|
+| drain 吞吐 | 42–66 MiB/min | **152 MiB/min** | 排空确实快了 2.3–3.6 倍 |
+| `normalized_events` 新 part | 16–18 次/分钟 | **近 0** | part 碎片化被消掉 |
+| 总 part 速率 | 174–191 次/分钟 | 约 2 次/分钟 | 同上 |
+| `endpoint_entities` 5 分钟更新 | 2,280 | **991** | 设备物化反而减半 |
+| domain 识别 | 偶发 `queue full` | 持续 `timeout: context deadline exceeded` | 分析路径被打垮 |
+| ingest 内存 | 1.95 GB | **4.29 GB（顶到 cgroup 上限）** | 触及容量上限 |
+
+**已回退**到 4 MiB（保留 `MemoryMax=4G` 作为余量），回退后实测：part 191 次/分钟、
+内存 1.40 GB、死锁 0、`endpoint_entities` 5 分钟更新回升到 1,589、
+identity-materializer 零错误。
+
+结论：**瓶颈不在 drain，而在 domain/身份分析路径的消费能力。** 提高 ingest 速率只会把
+压力推到下游，让设备状态更差；`domain recognition queue full` 的持续出现说明 4 MiB
+时分析路径本身也已到容量上限。这也解释了为何"事件量决定"是本问题的前置条件：
+在分析路径吞吐提升之前，任何提高采集或排空速率的手段都不会改善设备中心。
 
 ## 恢复采集前的检查清单
 

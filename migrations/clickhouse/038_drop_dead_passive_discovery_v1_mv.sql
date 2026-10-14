@@ -1,0 +1,14 @@
+-- 034 建立 passive_discovery_events_v1 作为被动发现的第一版窄流，035 随即以
+-- passive_discovery_events_v2（响应流）取代了它：读取路径
+-- （internal/store/passive_discovery_materializer.go）只查 v2。
+--
+-- 但 v1 的物化视图一直挂在 normalized_events 上，于是每次源插入都多写一个目标表。
+-- 现场 184 在 2026-10-14 实测：24 小时内 normalized_events 上 12 个物化视图各自被写入
+-- 29,390 次，而 passive_discovery_events_v1 在 system.query_log 的全部留存期内
+-- （2026-10-08 起，642 万条日志）被读取 0 次，对照 v2 被读取 38,759 次。
+-- 该表已积累 1.05 亿行 / 6.56 GiB，纯属死写，并贡献约 1/13 的 ClickHouse 部件与合并放大。
+--
+-- 只删除物化视图，保留目标表：历史数据仍可查询，且目标表自带
+-- TTL toDateTime(timestamp)+INTERVAL 30 DAY DELETE，会自行过期收缩。
+-- 删除物化视图是可逆的（可用 034 中同一段定义重建），重建后仅缺少停写期间的窗口。
+DROP TABLE IF EXISTS passive_discovery_events_v1_mv;
