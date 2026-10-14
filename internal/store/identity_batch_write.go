@@ -739,6 +739,40 @@ func lockIdentityWrite(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
+// identityLockWaitStep is the pause between attempts while a live lane waits for the
+// identity write lock.
+const identityLockWaitStep = 250 * time.Millisecond
+
+// awaitIdentityWriteLock waits up to budget for the identity write lock and reports
+// whether this transaction now holds it.
+//
+// tryIdentityWriteLock alone starves the live lane. The domain worker holds the same lock
+// across the identity phase of every batch — one measured batch spent 49.045s of its
+// 49.058s total in that phase — and it re-acquires immediately, so sampling the lock on
+// the field returned "held" on 10 of 10 attempts across 20 seconds. A lane that skips
+// instead of waiting therefore never runs: the identity materializer's live cursor sat
+// frozen at 2026-10-13 15:20:45 for tens of minutes with an empty last_error, and
+// endpoint_entities stopped advancing, which is the device center going stale. Waiting a
+// bounded time turns that silent starvation into a delay.
+func awaitIdentityWriteLock(ctx context.Context, tx *sql.Tx, budget time.Duration) (bool, error) {
+	deadline := time.Now().Add(budget)
+	for {
+		locked, err := tryIdentityWriteLock(ctx, tx)
+		if err != nil || locked {
+			return locked, err
+		}
+		if !time.Now().After(deadline) {
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(identityLockWaitStep):
+				continue
+			}
+		}
+		return false, nil
+	}
+}
+
 // Client cancellation alone can leave a disconnected backend doing expensive
 // history I/O while retaining its advisory lock. Enforce the remaining budget
 // inside PostgreSQL as well; SET LOCAL never changes other connections.

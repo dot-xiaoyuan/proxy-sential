@@ -29,6 +29,11 @@ const (
 // (server-side limit 15s) plus the PostgreSQL writes for the whole batch.
 const identityWorkBudget = 60 * time.Second
 
+// identityLockWaitBudget bounds how long one live/backfill batch waits for the identity
+// write lock before giving the loop back. It stays well inside identityWorkBudget so a
+// contended lock still leaves time to read ClickHouse and write the batch.
+const identityLockWaitBudget = 8 * time.Second
+
 // nextIdentityBatchSize shrinks the batch after a timeout and grows it after a full batch.
 // Other failures keep the size: they are data errors, and shrinking would only make the
 // worker retry the same broken row more often.
@@ -174,9 +179,12 @@ func (s *DBStore) processIdentitySignalBatch(ctx context.Context, phase string, 
 	if !lockedCursor.Equal(cursor) || lockedEventID != eventID {
 		return 0, identityHistoryStats{}, nil
 	}
-	// Another identity writer holds the lock: skip this batch instead of queueing on its
-	// row locks. The cursor does not move, so the work is retried on the next loop.
-	if locked, lockErr := tryIdentityWriteLock(ctx, tx); lockErr != nil {
+	// Another identity writer holds the lock. Wait a bounded time for it instead of
+	// skipping: the domain worker re-acquires this lock continuously, so an instant skip
+	// starves this lane permanently. The field measured the live cursor frozen while
+	// endpoint_entities stopped advancing, with no error recorded anywhere. The cursor
+	// still does not move when the wait expires, so the work is retried on the next loop.
+	if locked, lockErr := awaitIdentityWriteLock(ctx, tx, identityLockWaitBudget); lockErr != nil {
 		return 0, identityHistoryStats{}, lockErr
 	} else if !locked {
 		return 0, identityHistoryStats{}, nil

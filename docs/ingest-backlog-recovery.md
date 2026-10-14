@@ -22,6 +22,9 @@
 
 | 8 | `normalized_events` 上挂着 12 个物化视图，其中 `passive_discovery_events_v1_mv` 的目标表自 035 起已被 v2 取代，属纯死写 | ClickHouse 迁移 038 删除该死物化视图（保留目标表与历史数据） | 扇出 12 → 11；part 速率 **184–202 → 174 次/分钟**；目标表 180 秒内 0 个新 part |
 
+| 9 | 身份物化器用非阻塞 try-lock 抢身份写锁，而 domain worker 几乎 100% 占用该锁 → 静默跳过、游标永久冻结（无任何错误） | `awaitIdentityWriteLock`：有界等待（8s）后再放弃，把饿死变成延迟 | 锁占空比实测 10/10 被持有；`ncu-auth-redis` lane 恢复推进（processed 560,403 → 561,003，`last_success` 回到当前） |
+| 10 | `enqueue_existing_shared_device_profile_identity_jobs` 的 MAC 分支把 `regexp_replace` 用在列上，无法走索引，每次调用全表扫 939 行（约 7 ms/行），行级触发器每批调用约 2,500 次 | PG 迁移 125 补匹配表达式的索引，现场以 `CONCURRENTLY` 创建 | 单次查询 **7.113 ms / 433 buffers → 0.159 ms / 2 buffers**；函数 **7.26 → 4.39 ms/行**，索引实测被使用 889 次 |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -102,6 +105,13 @@ upsert `endpoint_inventory_projection_jobs`。身份写入路径按 `endpoint_id
      方向：**不能靠单纯加快 drain 解决**（见下节负结果），需要减少扇出目标表、
      降低事件量或重构分析路径。
 
+4. **分析路径的成本是"逐行触发器"而非数据量。** identity 相位占 domain 批次的 99.97%，
+   而其中每次调用约 7 ms 的共享设备画像触发器要占一半以上（见第 16 轮归因）。
+   补表达式索引后单次查询快了 44 倍，但**逐行调用**带来的计划与 SPI 开销使得整体吞吐
+   只从约 51 提升到约 55 设备/秒。下一步应把 `shared_device_profile_endpoint_dirty`、
+   `_session_dirty`、`_account_projection_dirty` 改为语句级 transition table + 集合式唤醒
+   （一条语句对整批变更行做一次 join），预计能把这部分从每批约 50–100 秒降到秒级。
+
 ### 实验记录（负结果）：放大 ingest 批次不能解决设备滞后（2026-10-14，第 15 轮）
 
 思路：ClickHouse 的 part 数 = 插入次数 × 扇出目标数（实测 11–13），因此把 ingest 的
@@ -125,6 +135,51 @@ identity-materializer 零错误。
 压力推到下游，让设备状态更差；`domain recognition queue full` 的持续出现说明 4 MiB
 时分析路径本身也已到容量上限。这也解释了为何"事件量决定"是本问题的前置条件：
 在分析路径吞吐提升之前，任何提高采集或排空速率的手段都不会改善设备中心。
+
+### 分析路径耗时归因：逐行触发器（2026-10-14，第 16 轮）
+
+device worker 的相位计时把范围缩到极小：
+
+```
+domain batch timing: events=5965 devices=2494 identity=49.045s total=49.058s
+```
+
+**identity 相位占 99.97%**。开启 `track_functions='pl'`（`ALTER SYSTEM` + `pg_reload_conf`，
+无需重启）后按触发器函数归因（150 秒窗口）：
+
+| 触发器函数 | 调用次数 | 总耗时 | 每次 |
+|---|---|---|---|
+| `enqueue_existing_shared_device_profile_identity_jobs` | 1,054 | 7,653 ms | **7.26 ms** |
+| `shared_device_profile_session_dirty` | 550 | 3,856 ms | **7.01 ms** |
+| `shared_device_profile_endpoint_dirty` | 504 | 3,816 ms | **7.57 ms** |
+| `record_inventory_projection_delta` | 8,466 | 2,558 ms | 0.30 ms |
+| `enqueue_inventory_projection_id` | 14,655 | 790 ms | **0.054 ms** |
+
+原先怀疑的 `enqueue_inventory_projection_id` 每次只要 0.054 ms，**不是瓶颈**；真正贵的是共享
+设备画像的三个行级触发器，每个约 7 ms。按每批 2,494 台设备 × 3 个触发器估算约 52 秒，
+与实测 49 秒吻合。
+
+`EXPLAIN (ANALYZE, BUFFERS)` 给出根因：MAC 分支的正则作用在列上，索引不可用——
+
+```
+Seq Scan on shared_device_profiles  (actual time=0.028..7.028 rows=1 loops=1)
+  Filter: ... regexp_replace(lower(mac),'[^0-9a-f]','','g') = '9844ced758e0'
+  Rows Removed by Filter: 938   Buffers: shared hit=433   Execution Time: 7.113 ms
+```
+
+补上表达式索引后降为 `Bitmap Index Scan ... Execution Time: 0.159 ms`（433 → 2 buffers）。
+
+**但要诚实记录效果边界**：函数耗时只从 7.26 降到 4.39 ms/行，整体吞吐仅由约 51 提升到
+约 55 设备/秒（49s/2,494 设备 → 1m47s/5,940 设备）。原因是这些触发器**逐行**调用函数，
+每行仍要付出约 1.6 ms 的计划开销与 SPI 开销。因此还剩一个数量级的空间，方向是把
+`shared_device_profile_endpoint_dirty`、`_session_dirty`、`_account_projection_dirty`
+改为**语句级（transition table）+ 集合式**唤醒：一条语句对整批变更行做一次 join，
+而不是每行一次。
+
+同时确认：`normalized_events` 上剩余 11 个物化视图的目标表在 6 天 query_log 窗口内
+**全部被读取**（`identity_signal_events_v1` 75.8 万、`router_signal_events_v1` 69.9 万、
+`normalized_event_ids_v1` 42.8 万…），已无更多死写可删——第 15 轮删掉的
+`passive_discovery_events_v1` 在同一窗口内确为 0 读，结论不受影响。
 
 ## 恢复采集前的检查清单
 
