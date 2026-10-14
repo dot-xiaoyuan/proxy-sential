@@ -11,6 +11,9 @@ import (
 )
 
 const (
+	// openBucketRebuildDelay debounces rebuilds of the still-open five-minute bucket.
+	openBucketRebuildDelay = 2 * time.Minute
+
 	activityV3FiveMinuteModel = "activity-5m-v3"
 	activityV3HourModel       = "activity-hour-v3"
 	activityV3DayModel        = "activity-day-v3"
@@ -141,7 +144,12 @@ func (s *DBStore) dispatchActivityV3Jobs(ctx context.Context) (int, error) {
 		}
 		seen[key] = true
 		now := time.Now().UTC()
-		notBefore := now.Add(30 * time.Second)
+		// A five-minute bucket stays open for its own width, and every dirty receipt used to
+		// schedule another rebuild, so one bucket was written ~10-13 times (field: closed
+		// buckets carry 20-30 revisions, and only the newest is ever read). Each rebuild
+		// appends a full copy of the bucket's facts under a new revision. Two minutes keeps
+		// the in-progress bar reasonably fresh while cutting those writes several-fold.
+		notBefore := now.Add(openBucketRebuildDelay)
 		historical := bucket.Add(5*time.Minute + 90*time.Second).Before(now)
 		if historical {
 			// Old buckets are normally produced while ingest catches up. Debounce
