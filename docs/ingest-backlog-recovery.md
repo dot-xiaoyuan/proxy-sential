@@ -25,6 +25,9 @@
 | 9 | 身份物化器用非阻塞 try-lock 抢身份写锁，而 domain worker 几乎 100% 占用该锁 → 静默跳过、游标永久冻结（无任何错误） | `awaitIdentityWriteLock`：有界等待（8s）后再放弃，把饿死变成延迟 | 锁占空比实测 10/10 被持有；`ncu-auth-redis` lane 恢复推进（processed 560,403 → 561,003，`last_success` 回到当前） |
 | 10 | `enqueue_existing_shared_device_profile_identity_jobs` 的 MAC 分支把 `regexp_replace` 用在列上，无法走索引，每次调用全表扫 939 行（约 7 ms/行），行级触发器每批调用约 2,500 次 | PG 迁移 125 补匹配表达式的索引，现场以 `CONCURRENTLY` 创建 | 单次查询 **7.113 ms / 433 buffers → 0.159 ms / 2 buffers**；函数 **7.26 → 4.39 ms/行**，索引实测被使用 889 次 |
 
+| 11 | `shared_buffers` 仅 1 GB（容器 16 GB），而热表约 20 GB：`identity_ip_mac_history` 堆未命中 23.7%、`identity_access_history` 71.3%，identity 写入几乎都在盘上随机 I/O | `ALTER SYSTEM SET shared_buffers='4GB'`、`effective_cache_size='16GB'`（持久化在容器 PGDATA 的 `postgresql.auto.conf`，需重启生效） | 触发器单次 7.26 → **0.348 ms**（21×）；`endpoint_entities` 5 分钟更新 2,300 → **4,105**（1.7×）；冻结 1 小时的 `ncu-184-router-pilot` lane **恢复推进** |
+| 12 | `idx_ip_history_endpoint_has_ip`（90 MB，`idx_scan=0`）前导列与 `idx_ip_history_endpoint_list_cover` 相同且被其完全覆盖 | PG 迁移 126 删除（现场以 `CONCURRENTLY` 先删） | 该表索引 6 → 5 个，每次写入少维护一个盘上索引 |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -186,6 +189,51 @@ Seq Scan on shared_device_profiles  (actual time=0.028..7.028 rows=1 loops=1)
 **全部被读取**（`identity_signal_events_v1` 75.8 万、`router_signal_events_v1` 69.9 万、
 `normalized_event_ids_v1` 42.8 万…），已无更多死写可删——第 15 轮删掉的
 `passive_discovery_events_v1` 在同一窗口内确为 0 读，结论不受影响。
+
+### 缓存与 I/O 归因：`shared_buffers` 只有 1 GB（2026-10-14，第 17 轮）
+
+第 16 轮把 identity 相位归因到三个共享设备画像触发器，但重新核算后发现：那三个触发器在
+150 秒窗口内合计约 15 秒，**不足以解释单批 107 秒**。回到第 16 轮抓到的阻塞现场：
+
+```
+61541 | 47s | IO/DataFileRead | INSERT INTO identity_access_history(...)   ← 持锁者
+60852 |     | IO/DataFileRead | INSERT INTO endpoint_inventory_contributions VALUES($1,...)
+```
+
+单条 INSERT 就停在 `IO/DataFileRead` 上 47 秒——瓶颈是大表上的随机 I/O。量缓存才发现：
+
+| 配置 | 值 |
+|---|---|
+| `shared_buffers` | **1 GB**（容器内存 16 GB） |
+| `effective_cache_size` | 6 GB |
+| 热表合计 | 约 20 GB（`identity_ip_mac_history` 堆 9.1 GB + 索引 6.4 GB，`identity_current_addresses` 4.3 GB…） |
+
+命中率印证：`identity_ip_mac_history` 堆未命中 **23.7%**、索引未命中 18.4%；
+`identity_access_history` 堆未命中 **71.3%**。写入要维护 6 个索引，而索引页大多在盘上。
+
+**改动**：
+1. `ALTER SYSTEM SET shared_buffers='4GB'`、`effective_cache_size='16GB'`（写入容器 PGDATA 的
+   `postgresql.auto.conf`，随卷持久化；`shared_buffers` 需重启生效）。
+2. 删除冗余索引 `idx_ip_history_endpoint_has_ip`（迁移 126）。
+
+**效果（重启后约 4 分钟实测）**：
+
+| 指标 | 之前 | 之后 |
+|---|---|---|
+| `enqueue_existing_shared_device_profile_identity_jobs` | 7.26 ms/次 | **0.348 ms/次** |
+| `shared_device_profile_endpoint_dirty` | 7.57 ms/次 | **0.398 ms/次** |
+| `endpoint_entities` 5 分钟更新 | 约 2,300 | **4,105** |
+| `ncu-184-router-pilot` live lane | 冻结 1 小时以上（processed 21,298,212，succ 12:57:31） | **恢复推进**（21,300,462，succ 14:15:03） |
+
+**运维记录**：本机 `docker restart proxy-sentinel-postgres` 走的是崩溃恢复，日志实测
+`checkpoint complete: wrote 297474 buffers (56.7%) ... write=85.749 s, total=88.084 s`，
+**约 150 秒才 ready**（期间 `/readyz` 返回 503）。在这台磁盘上重启 PostgreSQL 的代价很高，
+后续调整 `shared_buffers` 一类需重启的参数要预留这个时间窗。
+
+**仍未达标**：identity 相位仍是约 17–26 ms/设备（`identity=1m0s/3,558 设备`），
+因为每次写入仍要维护 5 个盘上索引并产生 WAL；缓存未命中仍偏高
+（`account_identity_session_projection` 堆未命中 93%）。这条路径距离 AGENTS.md 要求的
+容量基线仍有数量级差距，主要受事件量与磁盘带宽约束。
 
 ## 恢复采集前的检查清单
 

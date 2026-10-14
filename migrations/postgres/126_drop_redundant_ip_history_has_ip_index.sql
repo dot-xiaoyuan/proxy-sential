@@ -1,0 +1,16 @@
+-- 继续 123 的索引清理：删除 identity_ip_mac_history 上仍未使用且被覆盖索引完全包含的
+-- 局部索引 idx_ip_history_endpoint_has_ip。
+--
+-- 现场实测（pg_stat_user_indexes，stats_reset=never，覆盖容器整个生命周期）：
+--   idx_ip_history_endpoint_list_cover  (endpoint_id,last_seen DESC,first_seen DESC,host(ip),event_id)
+--                                      INCLUDE (account_id,ip)             2,938 MB  scans=33,216
+--   idx_ip_history_endpoint_has_ip      (endpoint_id) WHERE ip IS NOT NULL    90 MB  scans=0
+--
+-- has_ip 的前导列 (endpoint_id) 与 list_cover 的前导列相同，且 list_cover 额外覆盖
+-- host(ip)/event_id 并 INCLUDE 了 ip，任何本来能走 has_ip 的计划都可以走 list_cover，
+-- 因此删除它不减少可用能力。该表堆约 9.1 GB、索引约 6.4 GB，而 shared_buffers 仅 1 GB，
+-- 每写入一行都要在盘上随机维护全部索引——这正是 identity 写入相位慢的原因之一。
+--
+-- 现场执行时先用 DROP INDEX CONCURRENTLY 手工删除（避免大表长锁等待），
+-- 本迁移文件在事务内执行同样的幂等删除并记录账本。
+DROP INDEX IF EXISTS idx_ip_history_endpoint_has_ip;
