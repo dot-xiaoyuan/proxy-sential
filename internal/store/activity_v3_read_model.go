@@ -113,7 +113,12 @@ func (s *DBStore) dispatchActivityV3Jobs(ctx context.Context) (int, error) {
 	// A high-throughput insert stream can emit hundreds of receipts for the same
 	// five-minute bucket. Collapse them before they reach PostgreSQL; the job row
 	// represents dirty state, not the number of ClickHouse insert blocks.
-	data, err := s.ch.query(ctx, `SELECT concat(replaceOne(toString(max(l.written_at)),' ','T'),'Z') written_at,formatDateTime(l.window_start,'%Y-%m-%dT%H:%i:%SZ','UTC') window_start,l.sensor_id sensor_id,l.campus_id campus_id FROM activity_chart_dirty_log l WHERE `+where+` GROUP BY l.window_start,l.sensor_id,l.campus_id ORDER BY max(l.written_at),l.window_start,l.sensor_id,l.campus_id LIMIT 10000 SETTINGS max_threads=1,max_memory_usage=268435456,max_bytes_before_external_group_by=67108864 FORMAT JSONEachRow`)
+	// The published revision carries the instant its build began reading, so a receipt that is
+	// comfortably older than that is already included: rebuilding would append an identical
+	// copy under a new revision, and the read path only ever reads the published one. The five
+	// second margin covers the gap between a source row becoming visible and the receipt that
+	// timestamps it.
+	data, err := s.ch.query(ctx, `SELECT concat(replaceOne(toString(d.written_at),' ','T'),'Z') written_at,formatDateTime(d.window_start,'%Y-%m-%dT%H:%i:%SZ','UTC') window_start,d.sensor_id sensor_id,d.campus_id campus_id,toUInt8(v.source_as_of IS NOT NULL AND v.source_as_of>=d.written_at+INTERVAL 5 SECOND) covered FROM(SELECT max(l.written_at) written_at,l.window_start window_start,l.sensor_id sensor_id,l.campus_id campus_id FROM activity_chart_dirty_log l WHERE `+where+` GROUP BY l.window_start,l.sensor_id,l.campus_id) d LEFT JOIN (SELECT bucket_start,sensor_id,campus_id,argMax(source_as_of,published_at) source_as_of FROM activity_chart_bucket_versions_v3 WHERE granularity='5m' GROUP BY bucket_start,sensor_id,campus_id) v ON v.bucket_start=d.window_start AND v.sensor_id=d.sensor_id AND v.campus_id=d.campus_id ORDER BY d.written_at,d.window_start,d.sensor_id,d.campus_id LIMIT 10000 SETTINGS max_threads=1,max_memory_usage=268435456,max_bytes_before_external_group_by=67108864 FORMAT JSONEachRow`)
 	if err != nil {
 		return 0, err
 	}
@@ -143,6 +148,11 @@ func (s *DBStore) dispatchActivityV3Jobs(ctx context.Context) (int, error) {
 			continue
 		}
 		seen[key] = true
+		if row.Covered == 1 {
+			// Already published: skip the rebuild but keep walking, because the cursor below is
+			// taken from the last row of this result set and must still advance past it.
+			continue
+		}
 		now := time.Now().UTC()
 		// A five-minute bucket stays open for its own width, and every dirty receipt used to
 		// schedule another rebuild, so one bucket was written ~10-13 times (field: closed
@@ -253,12 +263,17 @@ func activityV3AliasedScope(alias, sensorID, campusID string) string {
 	return alias + "sensor_id=" + chQuote(sensorID) + " AND " + alias + "campus_id=" + chQuote(campusID)
 }
 
-func (s *DBStore) publishActivityV3Version(ctx context.Context, granularity string, bucket time.Time, sensorID, campusID string, revision uint64, finalized bool) error {
+// publishActivityV3Version records which revision readers should use. sourceAsOf is the
+// moment the build began reading its source: every receipt written before it is necessarily
+// part of this revision, which is what lets the dispatch skip rebuilds that would only append
+// an identical copy. It used to be the publish time, which is later than the read and
+// therefore cannot prove coverage.
+func (s *DBStore) publishActivityV3Version(ctx context.Context, granularity string, bucket time.Time, sensorID, campusID string, revision uint64, sourceAsOf time.Time, finalized bool) error {
 	final := 0
 	if finalized {
 		final = 1
 	}
-	query := fmt.Sprintf(`INSERT INTO activity_chart_bucket_versions_v3(granularity,bucket_start,sensor_id,campus_id,revision,source_as_of,published_at,finalized) VALUES(%s,parseDateTimeBestEffort(%s),%s,%s,toUInt64(%d),now64(9),now64(9),toUInt8(%d))`, chQuote(granularity), chQuote(bucket.UTC().Format(time.RFC3339Nano)), chQuote(sensorID), chQuote(campusID), revision, final)
+	query := fmt.Sprintf(`INSERT INTO activity_chart_bucket_versions_v3(granularity,bucket_start,sensor_id,campus_id,revision,source_as_of,published_at,finalized) VALUES(%s,parseDateTimeBestEffort(%s),%s,%s,toUInt64(%d),parseDateTime64BestEffort(%s,9),now64(9),toUInt8(%d))`, chQuote(granularity), chQuote(bucket.UTC().Format(time.RFC3339Nano)), chQuote(sensorID), chQuote(campusID), revision, chQuote(sourceAsOf.UTC().Format(time.RFC3339Nano)), final)
 	return s.ch.exec(ctx, query)
 }
 
@@ -281,12 +296,15 @@ func (s *DBStore) materializeActivityV3FiveMinuteAt(ctx context.Context, job rea
 		sourceFrom = cutover
 	}
 	sourceWhere := "timestamp>=parseDateTime64BestEffort(" + chQuote(sourceFrom.Format(time.RFC3339Nano)) + ",6) AND timestamp<parseDateTime64BestEffort(" + chQuote(to.Format(time.RFC3339Nano)) + ",6) AND " + activityV3Scope(job.SensorID, job.CampusID)
+	// The read starts here: any receipt written before this instant is in the source table and
+	// therefore in the revision this build publishes.
+	sourceAsOf := time.Now().UTC()
 	query := fmt.Sprintf(`INSERT INTO activity_chart_facts_5m_v3 SELECT toStartOfFiveMinutes(timestamp) bucket_start,sensor_id,campus_id,toUInt64(%d) revision,t.1 dimension,t.2 value,count() event_count,min(timestamp) first_seen,max(timestamp) last_seen FROM(SELECT timestamp,sensor_id,campus_id,arrayJoin(%s) t FROM normalized_event_features WHERE %s) GROUP BY bucket_start,sensor_id,campus_id,dimension,value SETTINGS max_threads=1,max_memory_usage=536870912,max_bytes_before_external_group_by=134217728,max_execution_time=15`, revision, activityChartArray, sourceWhere)
 	if err = s.ch.exec(ctx, query); err != nil {
 		return err
 	}
 	finalized := !now.Before(to.Add(90 * time.Second))
-	if err = s.publishActivityV3Version(ctx, "5m", from, job.SensorID, job.CampusID, revision, finalized); err != nil {
+	if err = s.publishActivityV3Version(ctx, "5m", from, job.SensorID, job.CampusID, revision, sourceAsOf, finalized); err != nil {
 		return err
 	}
 	if !finalized {
@@ -371,10 +389,11 @@ func (s *DBStore) materializeActivityV3Coarse(ctx context.Context, job readModel
 	if err != nil {
 		return err
 	}
+	sourceAsOf := time.Now().UTC()
 	if err = s.ch.exec(ctx, query); err != nil {
 		return err
 	}
-	if err = s.publishActivityV3Version(ctx, granularity, from, job.SensorID, job.CampusID, revision, true); err != nil {
+	if err = s.publishActivityV3Version(ctx, granularity, from, job.SensorID, job.CampusID, revision, sourceAsOf, true); err != nil {
 		return err
 	}
 	if granularity == "hour" {

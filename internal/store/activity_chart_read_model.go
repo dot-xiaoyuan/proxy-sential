@@ -16,6 +16,8 @@ type activityChartCursor struct {
 	WindowStart string `json:"window_start"`
 	SensorID    string `json:"sensor_id"`
 	CampusID    string `json:"campus_id"`
+	// Covered marks a receipt whose data is already part of the published revision.
+	Covered uint8 `json:"covered"`
 }
 
 // Keep a contiguous receipt prefix so acknowledging its last row never skips
