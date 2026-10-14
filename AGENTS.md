@@ -37,6 +37,13 @@ Proxy Sentinel 是防代理/共享上网检测系统。任何实现都应围绕�
 
 ## 现场开发、部署与验收流程
 
+### 不再做本地 Docker/OrbStack 快照栈测试（用户明确要求，2026-10-14）
+
+- 本机磁盘空间不足，用户已明确不再做本地快照栈测试。禁止执行 `make dev184-snapshot`、`make dev184-up`、`make dev184-restart`（`scripts/local/dev184.py`），也不要为了验证另行启动本地 PostgreSQL、ClickHouse 或其他快照容器；`docs/local-184-snapshot.md`、`docs/local-zeek-replay.md` 中的 OrbStack 流程仅作历史资料保留，不再作为验证手段。
+- 本地验证只使用不依赖本地栈的方式：Go 单元与回放测试、`go build`、`go vet` 等，前端 `vitest`、`npx tsc --noEmit`、生产构建和 Playwright（含 mock 模式，Vite 可通过 `VITE_ENABLE_MOCKS=true` 直接起）。
+- 需要真实数据或端到端确认时，在 `222.204.3.184` 现场做只读核对，或经授权部署后按现场验收流程在页面上确认；不得用本地快照栈代替现场验收，也不得因为无法起本地栈而跳过单元测试与构建校验。
+- 若确有必要恢复本地快照栈，必须先取得用户明确授权，并先确认可用磁盘空间。
+
 ### 184 测试联调：默认不备份（用户明确要求，2026-10-13）
 
 - `222.204.3.184` 当前用于测试联调，优先保证修改、部署和验证速度。所有线程在此环境更新时默认跳过数据库备份，禁止每个小任务发布前执行 PostgreSQL dump、ClickHouse 全量导出或其他耗时数据备份，也不要反复询问是否备份。
