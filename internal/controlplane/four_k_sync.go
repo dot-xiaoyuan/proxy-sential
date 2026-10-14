@@ -240,27 +240,37 @@ func (s *Server) handle4KDirectory(w http.ResponseWriter, r *http.Request) {
 // dropdown, so it must never hold a request open.
 const fourKDirectoryTimeout = 3 * time.Second
 
-// directoryWarnings turns an empty selector into an actionable statement.
+// directoryWarnings turns an empty selector into an actionable statement. The
+// resolved source is always named, because "empty" is otherwise
+// indistinguishable from "we looked somewhere that never had a catalog".
 // Accounts and VLANs are free-text inputs, so their empty option lists are
 // expected and are not reported.
 func directoryWarnings(directory fourKDirectory) []string {
 	warnings := []string{}
 	if len(directory.Products) == 0 {
-		warnings = append(warnings, "产品目录为空，请到「认证与处置接入」检查 4K 接入与目录同步")
+		warnings = append(warnings, fmt.Sprintf("来源 %s 没有可用产品目录，请到「认证与处置接入」执行 4K 目录同步", directory.Source))
 	}
 	if len(directory.Groups) == 0 {
-		warnings = append(warnings, "用户组目录为空，可在策略中直接填写用户组标识")
+		warnings = append(warnings, fmt.Sprintf("来源 %s 没有可用用户组目录，请在「认证与处置接入」执行 4K 目录同步；也可直接填写用户组标识", directory.Source))
 	}
 	return warnings
 }
 
+// fourKDirectorySource names the source whose product and group directory the
+// scope selectors must show.
+//
+// Selection order matters. A configured identity bridge always wins, including
+// while its runtime version is still 0 because no identity snapshot has
+// completed yet: the bridge is what the site actually syncs from, and falling
+// through to the placeholder source in that state rendered both selectors empty
+// with no explanation, because the placeholder has no catalog at all.
 func (s *Server) fourKDirectorySource(ctx context.Context) (string, error) {
-	var managed bool
 	defaults := s.identityBridge.normalized()
-	if err := s.operations.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_bridge_runtime WHERE bridge_id=$1 AND active_config_version>0 AND active_host<>'')`, defaults.BridgeID).Scan(&managed); err != nil {
+	var configured bool
+	if err := s.operations.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_bridge_configs WHERE bridge_id=$1) OR EXISTS(SELECT 1 FROM identity_bridge_runtime WHERE bridge_id=$1 AND active_host<>'')`, defaults.BridgeID).Scan(&configured); err != nil {
 		return "", err
 	}
-	if managed {
+	if configured {
 		return defaults.Source, nil
 	}
 	var source string

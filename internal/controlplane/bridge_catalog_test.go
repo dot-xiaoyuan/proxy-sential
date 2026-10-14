@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +45,112 @@ func TestFourKDirectorySourceQueryFailureDoesNotFallBack(t *testing.T) {
 	mock.ExpectQuery(`SELECT EXISTS`).WillReturnError(errors.New("database unavailable"))
 	if source, err := s.fourKDirectorySource(context.Background()); err == nil || source != "" {
 		t.Fatalf("source=%q err=%v", source, err)
+	}
+}
+
+// A configured bridge whose runtime version is still 0 — no identity snapshot
+// has completed yet — must still resolve to the bridge source. Falling through
+// to the placeholder source in that state left both scope selectors empty.
+func TestFourKDirectorySourcePrefersConfiguredBridgeOverPlaceholder(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &Server{operations: &operationsState{db: db}, identityBridge: IdentityBridgeDefaults{}}
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(SELECT 1 FROM identity_bridge_configs WHERE bridge_id=$1) OR EXISTS(SELECT 1 FROM identity_bridge_runtime WHERE bridge_id=$1 AND active_host<>'')`)).
+		WithArgs(ncuIdentityBridgeID).
+		WillReturnRows(sqlmock.NewRows([]string{"configured"}).AddRow(true))
+	source, err := s.fourKDirectorySource(context.Background())
+	if err != nil || source != "ncu-srun4k" {
+		t.Fatalf("source=%q err=%v", source, err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Only a site with neither a bridge nor a 4K integration falls back to the
+// placeholder source, and that state must be reportable rather than silent.
+func TestFourKDirectorySourceFallsBackOnlyWhenNothingIsConfigured(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &Server{operations: &operationsState{db: db}}
+	mock.ExpectQuery(`SELECT EXISTS`).WithArgs(ncuIdentityBridgeID).
+		WillReturnRows(sqlmock.NewRows([]string{"configured"}).AddRow(false))
+	mock.ExpectQuery(`SELECT source FROM srun4k_integrations ORDER BY updated_at DESC LIMIT 1`).
+		WillReturnError(sql.ErrNoRows)
+	source, err := s.fourKDirectorySource(context.Background())
+	if err != nil || source != defaultFourKSource {
+		t.Fatalf("source=%q err=%v", source, err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An empty selector must name the source it looked at.
+func TestDirectoryWarningsNameTheResolvedSource(t *testing.T) {
+	warnings := directoryWarnings(fourKDirectory{Source: "ncu-srun4k"})
+	if len(warnings) != 2 {
+		t.Fatalf("warnings=%v", warnings)
+	}
+	for _, warning := range warnings {
+		if !strings.Contains(warning, "ncu-srun4k") {
+			t.Fatalf("warning does not name the source: %q", warning)
+		}
+	}
+}
+
+// Reproduces the production failure: the bridge is configured and its products
+// and identity-observed groups exist under the bridge source, but the runtime
+// version is still 0 because no identity snapshot has completed. The directory
+// must still return both lists instead of resolving to an empty placeholder.
+func TestFourKDirectoryReturnsCatalogWhileBridgeVersionIsZero(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &Server{operations: &operationsState{db: db}, identityBridge: IdentityBridgeDefaults{}}
+	mock.ExpectQuery(`SELECT EXISTS`).WithArgs(ncuIdentityBridgeID).
+		WillReturnRows(sqlmock.NewRows([]string{"configured"}).AddRow(true))
+	source, err := s.fourKDirectorySource(context.Background())
+	if err != nil || source != "ncu-srun4k" {
+		t.Fatalf("source=%q err=%v", source, err)
+	}
+	// With active_config_version = 0 the handler scopes the directory without a
+	// snapshot prefix and without the managed group key.
+	mock.ExpectQuery(`SELECT product_id,name FROM product_catalog`).
+		WithArgs("ncu-srun4k", "").
+		WillReturnRows(sqlmock.NewRows([]string{"product_id", "name"}).
+			AddRow("3", "教职工").
+			AddRow("12", "学生包月40"))
+	mock.ExpectQuery(`SELECT observed_at,\(SELECT count\(\*\) FROM product_control_catalog`).
+		WithArgs("ncu-srun4k", "").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT observed_at,session_count FROM identity_full_snapshots`)).
+		WithArgs("ncu-srun4k").
+		WillReturnRows(sqlmock.NewRows([]string{"observed_at", "session_count"}).AddRow(time.Now().UTC(), 24932))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
+		WithArgs("ncu-srun4k:identity-observed", "ncu-srun4k", "ncu-srun4k").
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name"}).AddRow("208", ""))
+
+	directory, err := loadFourKDirectoryWithGroupSource(context.Background(), db, source, "", source)
+	if err != nil {
+		t.Fatalf("directory failed: %v", err)
+	}
+	if len(directory.Products) != 2 || len(directory.Groups) != 1 {
+		t.Fatalf("directory returned products=%d groups=%d", len(directory.Products), len(directory.Groups))
+	}
+	if len(directoryWarnings(directory)) != 0 {
+		t.Fatalf("populated directory still warns: %v", directoryWarnings(directory))
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
