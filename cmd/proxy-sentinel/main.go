@@ -332,6 +332,34 @@ func runRouter(args []string) error {
 	return writeJSON(os.Stdout, map[string]any{"mode": "sample_only", "shadow_mode": true, "interface": *interfaceName, "duration": duration.String(), "work_dir": runDir, "zeek_logs": zeekLogs, "router_candidates": summary.RouterAssessmentCount, "router_evidence": summary.RouterEvidenceCount, "source_distribution": summary.RouterSourceDistribution, "shadow_run": summary})
 }
 
+// deriveCollectorKind names the collector that produced the configured input.
+// The ingest service itself is not a capture framework, so reporting the name
+// of the framework it happens to depend on would be wrong; it reports the
+// dominant producer instead and leaves the caller free to override it.
+func deriveCollectorKind(sources []realtime.Source) string {
+	deviceSignal, suricataInput, zeekInput := false, false, false
+	for _, source := range sources {
+		switch {
+		case source.Kind == "device-signals" || source.Kind == "shared-device-signals":
+			deviceSignal = true
+		case source.Kind == "suricata":
+			suricataInput = true
+		case strings.HasPrefix(source.Kind, "zeek-"):
+			zeekInput = true
+		}
+	}
+	switch {
+	case deviceSignal:
+		return "device-signal"
+	case suricataInput:
+		return "suricata"
+	case zeekInput:
+		return "zeek"
+	default:
+		return ""
+	}
+}
+
 func runIngest(args []string) error {
 	if len(args) < 1 || args[0] != "run" {
 		return fmt.Errorf("usage: proxy-sentinel ingest run --eve <path> --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
@@ -370,6 +398,9 @@ func runIngest(args []string) error {
 	alertLagBytes := fs.Int64("alert-lag-bytes", 64<<20, "webhook threshold for source lag bytes")
 	alertBadRate := fs.Float64("alert-bad-line-rate", 0.01, "webhook threshold for malformed line ratio")
 	alertWebhook := fs.String("alert-webhook", os.Getenv("PROXY_SENTINEL_INGEST_ALERT_WEBHOOK"), "optional generic ingest alert webhook")
+	collectorKind := fs.String("collector-kind", os.Getenv("PROXY_SENTINEL_COLLECTOR_KIND"), "collector that produced the ingested input; derived from the enabled sources when empty")
+	collectorInterface := fs.String("collector-interface", os.Getenv("PROXY_SENTINEL_COLLECTOR_INTERFACE"), "capture interface registered for this sensor; empty when this process does not own a NIC")
+	collectorVersion := fs.String("collector-version", firstEnv("PROXY_SENTINEL_COLLECTOR_VERSION", version), "collector build version registered for this sensor")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -419,7 +450,11 @@ func runIngest(args []string) error {
 	if len(sources) == 0 {
 		return fmt.Errorf("at least one of --eve, --zeek-dhcp or --zeek-software is required")
 	}
-	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, CollectorKind: "realtime", PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: *storeTimeout})
+	kind := strings.TrimSpace(*collectorKind)
+	if kind == "" {
+		kind = deriveCollectorKind(sources)
+	}
+	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, CollectorKind: kind, CollectorVer: *collectorVersion, InterfaceName: *collectorInterface, PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: *storeTimeout})
 	if err != nil {
 		return err
 	}
@@ -1386,6 +1421,9 @@ func runControlPlaneServe(args []string) error {
 	identitySourcesConfig := fs.String("identity-sources-config", os.Getenv("PROXY_SENTINEL_IDENTITY_SOURCES_CONFIG"), "registered identity source scopes and reconciliation intervals")
 	identityIngestKey := fs.String("identity-ingest-key", os.Getenv("PROXY_SENTINEL_IDENTITY_INGEST_KEY"), "bearer token for RADIUS/Portal identity event batches (defaults to PROXY_SENTINEL_IDENTITY_INGEST_KEY)")
 	productPolicyIngestKey := fs.String("product-policy-ingest-key", os.Getenv("PROXY_SENTINEL_PRODUCT_POLICY_INGEST_KEY"), "bearer token for product-policy snapshots")
+	collectorKind := fs.String("collector-kind", os.Getenv("PROXY_SENTINEL_COLLECTOR_KIND"), "collector reported for a sensor that never registered one; the registered sensors row wins")
+	collectorInterface := fs.String("collector-interface", os.Getenv("PROXY_SENTINEL_COLLECTOR_INTERFACE"), "capture interface reported for a sensor that never registered one")
+	collectorVersion := fs.String("collector-version", firstEnv("PROXY_SENTINEL_COLLECTOR_VERSION", version), "collector version reported for a sensor that never registered one")
 	srunDatabasePort := fs.Int("srun4k-database-port", envInt("PROXY_SENTINEL_SRUN4K_DATABASE_PORT", 3506), "deployment-provided 4K authorization database port")
 	srunDatabaseName := fs.String("srun4k-database-name", firstEnv("PROXY_SENTINEL_SRUN4K_DATABASE_NAME", "srun4k"), "deployment-provided 4K authorization database name")
 	srunDatabaseUsername := fs.String("srun4k-database-username", os.Getenv("PROXY_SENTINEL_SRUN4K_DATABASE_USERNAME"), "deployment-provided read-only 4K database username")
@@ -1467,8 +1505,9 @@ func runControlPlaneServe(args []string) error {
 		StorageMode:           *storageMode,
 		PostgresDSN:           *postgresDSN,
 		ClickHouseDSN:         *clickHouseDSN,
-		CollectorKind:         "suricata",
-		InterfaceName:         "ens1f1",
+		CollectorKind:         *collectorKind,
+		CollectorVer:          *collectorVersion,
+		InterfaceName:         *collectorInterface,
 		FingerprintDir:        *fingerprintDir,
 		FingerprintAutoUpdate: *fingerprintAutoUpdate,
 		AuthFile:              *authFile,

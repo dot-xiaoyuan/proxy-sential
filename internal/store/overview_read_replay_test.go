@@ -81,7 +81,9 @@ func TestIngestStatusUsesLatestBatchWithoutRawScan(t *testing.T) {
 			defer db.Close()
 			at := time.Now().UTC()
 			rows := sqlmock.NewRows([]string{"run_id", "sensor_id", "started_at", "finished_at", "previous_offset", "new_offset", "truncated", "normalized_read", "normalized_emitted", "normalized_skipped", "normalized_malformed", "evidence_count", "risk_count", "risk_list_count", "summary"}).AddRow("local-run", "local", at, at, 0, 3, tc.truncated, 3, 3, 0, tc.malformed, 0, 0, 0, fmt.Sprintf(`{"normalized":{"by_type":%s},"zeek_status":"ready"}`, tc.byType))
-			mock.ExpectQuery(`FROM collector_runs WHERE sensor_id=\$1`).WithArgs("local", 1).WillReturnRows(rows)
+			mock.ExpectQuery(`FROM collector_runs WHERE sensor_id=\$1`).WithArgs("local", ingestStatusRunWindow).WillReturnRows(rows)
+			mock.ExpectQuery(`FROM sensors WHERE sensor_id=\$1`).WithArgs("local").
+				WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "display_name", "collector_kind", "collector_version", "interface_name"}))
 			var scans atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				scans.Add(1)

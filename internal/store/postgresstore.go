@@ -56,22 +56,49 @@ func NewPostgresStore(opts PostgresOptions) (*PostgresStore, error) {
 	if sensorID == "" {
 		sensorID = "office-30"
 	}
-	collectorKind := opts.CollectorKind
-	if collectorKind == "" {
-		collectorKind = "suricata"
-	}
-	interfaceName := opts.InterfaceName
-	if interfaceName == "" {
-		interfaceName = "ens1f1"
-	}
+	// Collector kind, version and interface stay empty unless the caller
+	// declares them. Defaulting them to suricata/ens1f1 made every deployment
+	// report a collector and a NIC it never ran; status reads prefer the
+	// registered sensors row, and an undeclared field is left blank.
 	return &PostgresStore{
 		db:            db,
 		dsn:           opts.DSN,
 		sensorID:      sensorID,
-		collectorKind: collectorKind,
-		collectorVer:  opts.CollectorVer,
-		interfaceName: interfaceName,
+		collectorKind: strings.TrimSpace(opts.CollectorKind),
+		collectorVer:  strings.TrimSpace(opts.CollectorVer),
+		interfaceName: strings.TrimSpace(opts.InterfaceName),
 	}, nil
+}
+
+// SensorMetadata is the collector identity registered for a sensor. Only the
+// process that owns the capture path should declare it, so status reads prefer
+// this row over the reader's own process options.
+type SensorMetadata struct {
+	SensorID      string
+	DisplayName   string
+	CollectorKind string
+	CollectorVer  string
+	InterfaceName string
+}
+
+// SensorMetadata returns the registered collector identity for one sensor. A
+// sensor that never registered is reported as zero metadata, not as an error.
+func (s *PostgresStore) SensorMetadata(ctx context.Context, sensorID string) (SensorMetadata, error) {
+	if strings.TrimSpace(sensorID) == "" {
+		return SensorMetadata{}, nil
+	}
+	var metadata SensorMetadata
+	err := s.db.QueryRowContext(ctx, `
+SELECT sensor_id,display_name,collector_kind,COALESCE(collector_version,''),COALESCE(interface_name,'')
+FROM sensors WHERE sensor_id=$1`, sensorID).
+		Scan(&metadata.SensorID, &metadata.DisplayName, &metadata.CollectorKind, &metadata.CollectorVer, &metadata.InterfaceName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SensorMetadata{}, nil
+	}
+	if err != nil {
+		return SensorMetadata{}, err
+	}
+	return metadata, nil
 }
 
 func (s *PostgresStore) DSN() string {
@@ -991,7 +1018,11 @@ func legacyStoredRunSummary(summaryJSON []byte, stored storedRunSummary) storedR
 	stored.ZeekSoftwarePrevOffset = legacy.ZeekSoftwarePrevOffset
 	stored.ZeekSoftwareNewOffset = legacy.ZeekSoftwareNewOffset
 	stored.ZeekSoftwareTruncated = legacy.ZeekSoftwareTruncated
-	stored.RawRef = legacy.RawRef
+	// The legacy struct is untagged, so it never matches the raw_ref key and
+	// would erase a reference the modern summary already carried.
+	if legacy.RawRef != nil {
+		stored.RawRef = legacy.RawRef
+	}
 	return stored
 }
 
@@ -1278,7 +1309,11 @@ func (s *PostgresStore) WriteCollectorRun(ctx context.Context, run Run) error {
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO sensors(sensor_id, display_name, collector_kind, collector_version, interface_name)
 VALUES($1, $1, $2, $3, $4)
-ON CONFLICT(sensor_id) DO UPDATE SET collector_kind = EXCLUDED.collector_kind, collector_version = EXCLUDED.collector_version, interface_name = EXCLUDED.interface_name, updated_at = now()`,
+ON CONFLICT(sensor_id) DO UPDATE SET
+  collector_kind = COALESCE(NULLIF(EXCLUDED.collector_kind, ''), sensors.collector_kind),
+  collector_version = COALESCE(NULLIF(EXCLUDED.collector_version, ''), sensors.collector_version),
+  interface_name = COALESCE(NULLIF(EXCLUDED.interface_name, ''), sensors.interface_name),
+  updated_at = now()`,
 		run.SensorID, s.collectorKind, s.collectorVer, s.interfaceName); err != nil {
 		return err
 	}
@@ -1430,7 +1465,11 @@ func (s *PostgresStore) WriteDeviceState(ctx context.Context, run Run, events []
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO sensors(sensor_id, display_name, collector_kind, collector_version, interface_name)
 VALUES($1, $1, $2, $3, $4)
-ON CONFLICT(sensor_id) DO UPDATE SET collector_kind = EXCLUDED.collector_kind, collector_version = EXCLUDED.collector_version, interface_name = EXCLUDED.interface_name, updated_at = now()`,
+ON CONFLICT(sensor_id) DO UPDATE SET
+  collector_kind = COALESCE(NULLIF(EXCLUDED.collector_kind, ''), sensors.collector_kind),
+  collector_version = COALESCE(NULLIF(EXCLUDED.collector_version, ''), sensors.collector_version),
+  interface_name = COALESCE(NULLIF(EXCLUDED.interface_name, ''), sensors.interface_name),
+  updated_at = now()`,
 		run.SensorID, s.collectorKind, s.collectorVer, s.interfaceName); err != nil {
 		return err
 	}

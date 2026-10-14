@@ -82,24 +82,17 @@ func NewFileStore(opts FileOptions) *FileStore {
 	if sensorID == "" {
 		sensorID = "office-30"
 	}
-	collectorKind := opts.CollectorKind
-	if collectorKind == "" {
-		collectorKind = "suricata"
-	}
-	interfaceName := opts.InterfaceName
-	if interfaceName == "" {
-		interfaceName = "ens1f1"
-	}
 	storageMode := opts.StorageMode
 	if storageMode == "" {
 		storageMode = string(ModeFile)
 	}
+	// Undeclared collector metadata stays blank; see NewPostgresStore.
 	return &FileStore{
 		shadowDir:     shadowDir,
 		sensorID:      sensorID,
-		collectorKind: collectorKind,
-		collectorVer:  opts.CollectorVer,
-		interfaceName: interfaceName,
+		collectorKind: strings.TrimSpace(opts.CollectorKind),
+		collectorVer:  strings.TrimSpace(opts.CollectorVer),
+		interfaceName: strings.TrimSpace(opts.InterfaceName),
 		storageMode:   storageMode,
 	}
 }

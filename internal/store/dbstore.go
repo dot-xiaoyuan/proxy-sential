@@ -387,14 +387,97 @@ func (s *DBStore) UpdateEndpointRegistration(ctx context.Context, update Endpoin
 	return s.pg.UpdateEndpointRegistration(ctx, update)
 }
 
+// ingestStatusRunWindow bounds how many recent runs the status read may
+// inspect while it summarizes the latest batch of every ingest source. It is a
+// collector_runs lookup, never a raw event scan.
+const ingestStatusRunWindow = 50
+
+// runIsIdle reports a run that processed no input. The ingest service records
+// one such heartbeat run per idle source every heartbeat interval, so these
+// runs describe liveness, not throughput.
+func runIsIdle(run Run) bool {
+	return run.Normalized.Read == 0 && run.Normalized.Malformed == 0 && !run.Truncated
+}
+
+// runSourceKey groups runs of one input. Runs written before the raw reference
+// was readable fall back to their sensor, which keeps one unlabelled batch from
+// being counted once per run.
+func runSourceKey(run Run) string {
+	if source, ok := run.RawRef["source"].(string); ok && strings.TrimSpace(source) != "" {
+		return source
+	}
+	if strings.TrimSpace(run.SensorID) != "" {
+		return "sensor:" + run.SensorID
+	}
+	return run.RunID
+}
+
+// latestRunsPerSource picks the newest run of every ingest source, because one
+// ingest service commits a separate run per configured input. Reporting only
+// the newest run made the collector cards alternate between the busiest and the
+// quietest source, and let an idle heartbeat report zero while events kept
+// flowing. A source that never processed input inside the window still
+// contributes its heartbeat, so a genuinely quiet sensor keeps showing zero.
+// runs must be ordered newest first.
+func latestRunsPerSource(runs []Run) []Run {
+	order := make([]string, 0, len(runs))
+	productive := map[string]Run{}
+	idle := map[string]Run{}
+	for _, run := range runs {
+		key := runSourceKey(run)
+		if _, known := productive[key]; !known {
+			if _, seen := idle[key]; !seen {
+				order = append(order, key)
+			}
+		}
+		if runIsIdle(run) {
+			if _, seen := idle[key]; !seen {
+				idle[key] = run
+			}
+			continue
+		}
+		if _, known := productive[key]; !known {
+			productive[key] = run
+		}
+	}
+	selected := make([]Run, 0, len(order))
+	for _, key := range order {
+		if run, ok := productive[key]; ok {
+			selected = append(selected, run)
+			continue
+		}
+		if run, ok := idle[key]; ok {
+			selected = append(selected, run)
+		}
+	}
+	return selected
+}
+
 func (s *DBStore) IngestStatus(ctx context.Context) (ingest.Status, error) {
-	runs, err := s.pg.ListSensorRuns(ctx, s.pg.sensorID, 1)
+	runs, err := s.pg.ListSensorRuns(ctx, s.pg.sensorID, ingestStatusRunWindow)
 	if err != nil {
 		return ingest.Status{}, err
 	}
+	// The sensors row is the durable collector identity. The reader's own
+	// process options only fill in what the sensor never declared, so the
+	// control plane cannot advertise a collector or NIC it does not run.
+	collector := s.pg.collector()
+	metadata, err := s.pg.SensorMetadata(ctx, s.pg.sensorID)
+	if err != nil {
+		return ingest.Status{}, err
+	}
+	if metadata.CollectorKind != "" {
+		collector.Kind = metadata.CollectorKind
+	}
+	if metadata.CollectorVer != "" {
+		collector.Version = metadata.CollectorVer
+	}
+	if metadata.InterfaceName != "" {
+		collector.Interface = metadata.InterfaceName
+	}
 	status := ingest.Status{
 		SensorID:          s.pg.sensorID,
-		Collector:         s.pg.collector(),
+		Collector:         collector,
 		StorageMode:       string(s.storageMode),
 		Healthy:           len(runs) > 0,
 		Severity:          "warning",
@@ -405,27 +488,32 @@ func (s *DBStore) IngestStatus(ctx context.Context) (ingest.Status, error) {
 	if len(runs) == 0 {
 		return status, nil
 	}
-	run := runs[0]
-	status.LatestRunID = run.RunID
-	status.LatestRunAt = run.FinishedAt
-	status.LastCounters = map[string]int{
-		"read":      run.Normalized.Read,
-		"emitted":   run.Normalized.Emitted,
-		"skipped":   run.Normalized.Skipped,
-		"malformed": run.Normalized.Malformed,
+	// LatestRunID/LatestRunAt keep their meaning: the newest committed run, so
+	// callers can still judge freshness. The counters below summarize the
+	// newest run of every source instead.
+	status.LatestRunID = runs[0].RunID
+	status.LatestRunAt = runs[0].FinishedAt
+	malformed, truncated := 0, false
+	for _, run := range latestRunsPerSource(runs) {
+		status.LastCounters["read"] += run.Normalized.Read
+		status.LastCounters["emitted"] += run.Normalized.Emitted
+		status.LastCounters["skipped"] += run.Normalized.Skipped
+		status.LastCounters["malformed"] += run.Normalized.Malformed
+		// This is the latest batch distribution, matching LastCounters and the
+		// file reader. Health/status requests must not aggregate 24h of raw events.
+		for eventType, count := range run.Normalized.ByType {
+			status.LastEventTypeDist[eventType] += count
+		}
+		malformed += run.Normalized.Malformed
+		truncated = truncated || run.Truncated
 	}
-	// This is the latest batch distribution, matching LastCounters and the
-	// file reader. Health/status requests must not aggregate 24h of raw events.
-	for eventType, count := range run.Normalized.ByType {
-		status.LastEventTypeDist[eventType] = count
-	}
-	status.Healthy = run.Normalized.Malformed == 0 && !run.Truncated
+	status.Healthy = malformed == 0 && !truncated
 	status.Severity = "info"
 	status.Summary = "collector and normalization pipeline are producing standard events"
-	if run.Truncated {
+	if truncated {
 		status.Severity = "warning"
 		status.Summary = "input log was truncated or rotated during the latest run"
-	} else if run.Normalized.Malformed > 0 {
+	} else if malformed > 0 {
 		status.Severity = "warning"
 		status.Summary = "latest run contains malformed input records"
 	}
