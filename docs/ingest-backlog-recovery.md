@@ -30,6 +30,9 @@
 
 | 13 | 缓存仍不足以覆盖工作集：`shared_buffers` 4 GB vs `identity_ip_mac_history` 堆 9.1 GB + 索引 6.4 GB（工作集约 15.5 GB） | `shared_buffers` 4 → **8 GB**、`effective_cache_size` 16 → 32 GB；PG 容器内存上限 16 → 24 GB | `endpoint_entities` 5 分钟更新 785 → **1,362/分钟**（再 1.7×）；`readyz=200`、无新增失败单元 |
 
+| 14 | 身份物化循环每秒写一次 `read_model_runtime_state` 健康心跳，等于每秒一个 autocommit（245 ms/次），叠加在 228 ms 的 `commit` 之上 | 新增 `identityHealthInterval=10s` 节流，出错时仍立即写（`internal/store/identity_materializer.go`） | 心跳写入 90/100s → 约 66/100s（−27%）；`commit` 112/100s → 约 67/100s（−40%） |
+| 15 | 缓存仍不足：`shared_buffers` 8 GB vs 工作集约 15.5 GB，导致批量插入 `identity_ip_mac_history` 每次 1.4 s（最慢 4.0 s） | `shared_buffers` 8 → **12 GB**（容器已是 24 GB） | 该插入**降到 300 ms 以下**（>5×）；`endpoint_entities` 更新 → **1,104/分钟**；**两条 identity live lane 全部解冻** |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -279,6 +282,39 @@ PG 容器内存上限 16 → 24 GB（`docker update`）。实测 `endpoint_entit
    这是这类追加型历史表的教科书解法，但需要一次性重建（约 9 GB 堆 + 6.4 GB 索引）。
 2. `shared_buffers` 再提到 12 GB（容器已是 24 GB），工作集 15.5 GB 可覆盖大部分。
 3. 给 `shared_device_profile_runtime` 的按 job 更新加节流，去掉单行热点。
+
+### 缓存提到 12 GB 与心跳节流：主瓶颈消失（2026-10-14，第 19 轮）
+
+上面三项的第 2 项与另一项更便宜的改动已落地，效果合并如下（发布
+`2026.10.14-health-throttle1`，previous=`shared-profile-idx1`）：
+
+改动 A（代码，`internal/store/identity_materializer.go`）：身份物化循环每次迭代都写
+`read_model_runtime_state`，而循环间隔只有 1 秒——等于每秒一个 autocommit。逐语句归因测得
+该写入 90 次/100 秒 × 245 ms ≈ 22 秒，另加 `commit` 112 次 × 228 ms。改为最多每 10 秒写
+一次、出错时立即写。
+
+改动 B（配置）：`shared_buffers` 8 → **12 GB**（`ALTER SYSTEM`，干净关机后重启；
+容器上限 24 GB）。工作集 15.5 GB 由此可覆盖大部分。
+
+合并实测：
+
+| 指标 | 之前 | 之后 |
+|---|---|---|
+| `INSERT INTO identity_ip_mac_history`（批量插入） | 1,364 ms/次，最慢 4,033 ms | **90 秒窗口内无一条 >300 ms** |
+| `read_model_runtime_state` 写入 | 90/100s | 约 66/100s |
+| `commit` | 112/100s | 约 38–67/100s |
+| `identity_ip_mac_history` 堆/索引未命中 | 26–28% / — | 23.9% / 8.7% |
+| `identity_access_history` 堆未命中 | 58–71% | 51.5% |
+| `endpoint_entities` 更新 | 约 460/分钟 | **1,104/分钟** |
+| `ncu-184-router-pilot` live lane | 冻结（21,304,962 / 14:41:23） | **持续推进**（21,305,037 / 14:54:36） |
+| `ncu-auth-redis` live lane | 562,953 | **563,553**，持续推进 |
+
+死锁仍为 0，`/readyz=200`，无新增失败单元。**两条身份 live lane 至此全部解冻**，
+这是第 14 轮以来第一次两车道同时推进。
+
+仍然偏高：`account_identity_session_projection` 堆未命中 93.1%（1.4 GB 表，读取密集），
+以及 `endpoint_inventory_projection_jobs` 积压仍在增长——后者与设备中心的列表页无关，
+但会影响设备详情的清单完整度。
 
 ## 恢复采集前的检查清单
 
