@@ -18,6 +18,58 @@
 | 4 | 投影增量队列把整行 `to_jsonb` 存进 `endpoint_inventory_projection_deltas`，而唯一消费方只读 `{source,event_id,session_id}` | PostgreSQL 迁移 122 收窄 payload | delta payload 1499 B → **5 B**、472 B → **74 B**；最慢语句 40s → ≤18s |
 | 5 | 容器内存与维护参数、统计信息 | CH 12 → 24 GiB、PG 8 → 16 GiB（含 runtime.env 持久化）；`maintenance_work_mem` 64 MB → 1 GB、`autovacuum_naptime` 30s、`cost_limit` 2000；重建热点表统计 | `identity_ip_mac_history` 估算 832 → **11,848,847**；`ANALYZE` 不再需要分钟级 |
 | 6 | `ttl.jsonl` 无轮转配置（安装器不分发），涨到 124 GB | 补齐 `/etc/logrotate.d/proxy-sentinel-router-signals`、修正 shared-logrotate 单元并恢复定时器；安装器补分发 | 文件已轮转，ingest 按 file identity 排空归档 |
+| 7 | 身份快照投影与身份写入用两把互不排斥的 advisory lock，行级触发器使二者以相反顺序锁同一批任务行，形成死锁自锁死 | `projectIdentitySnapshot` 并入身份写入锁，busy 时不写入也不删队列行（详见下节） | 死锁 **42–45 次/小时 → 0**；`endpoint_entities` 恢复提交，5 分钟 1394 次更新 |
+
+### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
+
+这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
+
+**现象**：`identity_applied_events` 停在 `09:42`；`identity_materializer_cursors.live` 长时间
+不再推进；`identity-materializer` 每小时打印 42–45 次
+`identity snapshot materializer: ERROR: deadlock detected (SQLSTATE 40P01)`。每条都是整事务回滚，
+下一轮重新读到同一批数据再次成环——**反复重试却永不提交**，因此不产生任何"卡住"的错误页面，
+只表现为设备状态停止推进。
+
+**PostgreSQL 死锁图（12:39:06 UTC）** 的环两端固定为：
+
+```
+Process 52768: INSERT INTO endpoint_entities(...)            -- writeIdentityEventsTx 路径
+Process 50140: INSERT INTO account_identity_session_projection(...)  -- projectIdentitySnapshot
+Process 52768 waits for ShareLock on transaction ...; blocked by process 50140.
+Process 50140 waits for ShareLock on transaction ...; blocked by process 52768.
+CONTEXT: while inserting index tuple (2022,1) in relation "endpoint_inventory_projection_jobs"
+  ← enqueue_inventory_projection() → enqueue_inventory_projection_id()
+```
+
+**机制**：`endpoint_entities`、`account_identity_session_projection` 等 7 张表都带
+`inventory_projection_change AFTER ... FOR EACH ROW` 触发器（迁移 103），每行写入都会
+upsert `endpoint_inventory_projection_jobs`。身份写入路径按 `endpoint_id` 排序入队，
+而快照投影按快照事件顺序入队；两者并发时对同一批任务行以相反顺序加锁，必然成环。
+
+**根因**是两把不同的 advisory lock，彼此不排斥：
+
+- 身份写入路径 `writeIdentityEventsTx`：`hashtextextended('proxy-sentinel-identity-write',7137)`；
+- 快照投影 `projectIdentitySnapshot`：只用 `hashtextextended(scope,7136)`。
+
+**修复**（`internal/store/account_projection.go`）：投影在持有 scope 锁后并入身份写入锁，
+用 `tryIdentityWriteLock` 非阻塞尝试；失败返回新增的 `errIdentityWriteBusy`，
+`projectPendingIdentitySnapshots` 收到后回滚且**不删除队列行**（快照留待下一轮重试，
+不静默丢任务）。回归测试 `TestAccountSnapshotProjectionDefersToIdentityWriter`
+验证"持锁期间不启动、不写入、不丢队列，释放后正常投影并清空队列"。
+
+**验收（发布 `2026.10.14-identity-projection-lock1`，previous=`2026.10.14-domain-failfast1`，
+`/readyz=200`，9 个应用服务全部切到新二进制）**：
+
+- 切换后 12 分钟：PG 日志与各单元**死锁 0 次**（此前每 20 分钟 7 次），
+  `identity-materializer` ERROR 0 条；
+- 恢复 drain 满负荷后 5 分钟：83 个批次、**82 提交、0 失败**；
+  `endpoint_entities` 近 5 分钟提交 1394 次更新，设备状态重新开始推进。
+
+排查中同时排除的项：`recognition_materializer`（每个 lease 只处理一个 endpoint，单行事务
+不可能成环）、`device_names_postgres`（`device_name_notes` 只在单 endpoint 的改名事务里写）。
+`identity_applied_events` 停在 `09:42` 经核实**不是缺陷**：inbox
+`identity_pipeline_scopes` 的 `pending=0`（accepted=56911 已全部 applied），
+生产端停采后本就无新输入。
 
 ## 未解决的结构性问题
 
@@ -30,7 +82,22 @@
 
 2. **采集授权窗口已过期。** `config/router-capture-scope.json` 的 `valid_until=2026-10-09T05:26:00Z`（已过期 5 天），`access_domain` 仍是最初的 `bond0-router-minimal-overnight`。现场核查：`ttl.jsonl` 尾部 200 条事件全部带 `capture_scope_issue=capture_scope_outside_validity`，ClickHouse 中最近一小时 36,387 条 device 事件 **100%** 带该标记。需要按现场授权流程续期，或按原窗口停止采集。
 
-3. 设备中心解冻依赖 ingest 排空指针走过 `07:10:19` 对应的文件位置；排空完成后才会自然推进，尚未恢复生产。
+3. 设备中心的推进现在受两条互相独立的链路限制，都不再是死锁：
+   - **投影积压**：`endpoint_inventory_projection_jobs` 仍有约 5.0 万条
+     `processed_generation<dirty_generation`；投影车道的消费速度与身份写入新产生的脏标记
+     大致相当，积压不降。同一张任务表上每 20 分钟约 830 次 `FOR UPDATE NOWAIT`
+     失败（`could not obtain lock on row in relation "endpoint_inventory_projection_jobs"`），
+     说明争用仍集中在"每行触发器 upsert 同一张任务表"这一形状上。
+   - **ClickHouse 合并放大**：`system.part_log` 实测每分钟新增约 200 个 part、
+     合并重写约 190 MiB；`pidstat -d` 显示 clickhouse-server 单进程写 31 MB/s（峰值），
+     而 `iostat` 显示磁盘 **util 100%、aqu-sz 7–14、r_await 71–107 ms**，
+     整机可持续读写合计仅约 9 MB/s。同批事件被写入约 5 张表
+     （`normalized_events` 177.6M/24.8GiB、`identity_signal_events_v1` 177.3M/13.7GiB、
+     `normalized_event_ids_v1`+`v2` 各 177.6M/13.5GiB、`normalized_event_features` 177.6M/7.1GiB，
+     另有 `passive_discovery_events_v1`/`v2` 各 104.5M/6.5GiB 双写），
+     叠加 4 MiB 批（每 part 仅约 5,900 行）造成的 part 碎片化。
+     PostgreSQL 只需约 0.5 MB/s 写入却因此被饿死，身份语句单条耗时 0.5–4.4 秒。
+     方向：加大 ingest 批大小 / 打开 `async_insert` 合并 part、清理 v1/v2 重复表。
 
 ## 恢复采集前的检查清单
 
