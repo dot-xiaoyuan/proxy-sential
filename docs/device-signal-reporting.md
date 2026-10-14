@@ -88,3 +88,53 @@
 2. 身份物化器仍在追赶 `ncu-184-router-pilot` 约 25 小时的历史积压
    （已查明其中 **100% 是 device 事件**、且设备状态早已由实时路径写到前沿，属冗余重算）。
 3. `--bucket` 是否仍需从 30s 放宽，取决于存活间隔确定后的实际速率与磁盘余量。
+
+## 七、"其他模块同理"的审计结果（2026-10-14，第 2 轮）
+
+### 端到端效果（第一轮改动之后）
+
+ClickHouse `normalized_events` 近 10 分钟新增 **130,493 行**（约 18.8M/天），
+而改动前仅 device 事件就是 **66.8M/天**。各物化视图目标表同步下降（同一扇出量）。
+
+### PG 逐表写入速率（60 秒增量）
+
+| 表 | 速率 | 判定 |
+|---|---|---|
+| `endpoint_inventory_projection_deltas` | ins 135.7/s + del 357.1/s | **变更队列**：每个真实变更一行，消费后按 `delta_id` 删除；删除快于插入是在消化积压。语义必要 |
+| `endpoint_inventory_contributions` | ins 203.6/s | 投影事实，随真实变更写 |
+| `endpoint_inventory_projection_jobs` | upd 156.7/s | 触发器逐次 `dirty_generation+1` |
+| `identity_current_addresses` | del 89.1/s（ins 0） | **代际清理**（`identity_calibration.go:260` 删除被取代的 generation）。因 `ncu-identity-sync` 已停、无新快照插入，表现为只删不增，属有限排空 |
+| `endpoint_entities` | upd 76.1/s | 已有 no-op 守卫 |
+| `identity_ip_mac_history` | ins 34.7/s | 已有 no-op 守卫 |
+
+**关于 `dirty_generation+1` 不能简单合并**：消费端的完成判定
+（`inventory_projection.go:365`）是"该 endpoint 是否还有剩余差分行或到期计时器"，
+看起来生成号只是脏标志；但**生成号单调递增正是"处理期间又到达变更"的竞态保护**——
+若在处理期间到达的变更不 +1，worker 可能先提交"已处理"，随后差分行残留而无人消费。
+要安全合并必须引入显式的加锁协议，本轮**不做**这个改动。
+
+### 真正的"只有时间戳变化"：lane 心跳
+
+`read_model_runtime_state` 现场实测 **249 次更新/分钟（4.15 次/秒）**，且每次都是独立
+autocommit（本机约 230 ms 的 WAL fsync），等于持续付磁盘税。按 lane 看：
+`endpoint-recognition` 每 2 秒、`activity-v3-realtime-health` 每 5 秒、
+`activity-v3-dispatch` 每 6 秒各写一次。
+
+最纯粹的一例在 `activity_v3_read_model.go`：ClickHouse 脏日志**没有行**时（大多数周期）
+执行 `UPDATE read_model_runtime_state SET updated_at=now() WHERE name=$1`——
+这条语句唯一的效果就是改时间戳。
+
+修复沿用代码库已有写法（`shared_device_profile_runtime` 的
+`AND updated_at<now()-interval`）：给上述四个心跳（含 `shared-behavior`）加
+`AND updated_at < now() - interval '10 seconds'`。其中 activity-v3 的 as_of 水位是
+monotonic（`GREATEST` 取最大），抑制中间写入不丢信息。
+
+**实测：心跳写入 249/分钟 → 36/分钟（约 7× 减少）**，各 lane 心跳仍保持 0–7 秒新鲜；
+同期 `/readyz=200`、死锁 0、`queue full` 0、投影积压继续下降（53,705 → 53,444）。
+
+### 结论
+
+"只有时间戳变化"的记录已经清掉了两处最大的来源：**采集端的重复上报**（第一轮，
+device 事件量降约 4–5×）与**lane 心跳的每周期时间戳更新**（本轮，约 7×）。
+剩余的高频写入（差分队列表、投影事实、脏标记计数、代际清理）都对应真实变更或有限排空，
+不属于该模式；其中脏标记计数的合并需要先设计加锁协议，留待后续单独评估。
