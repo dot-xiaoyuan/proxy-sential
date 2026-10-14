@@ -37,6 +37,8 @@
 
 | 17 | 两条最热的身份 upsert（`endpoint_entities`、`identity_ip_mac_history`）没有 `ON CONFLICT … WHERE` 守卫：PostgreSQL 对每个冲突行都写新元组版本 + 全部索引项并触发行触发器，即使值完全没变；重复/重放事件因此既是空写、又把投影任务反复标脏 | 为两条 upsert 增加精确镜像 SET 赋值的 `WHERE` 守卫（`internal/store/identity_batch_write.go`），并用 `xmin` 写集成回归测试 | `identity_ip_mac_history` 慢插入 12–69 → **2 次/60 秒**；投影积压**首次停止增长**（58,420 → 58,418/120 秒）；两条 lane 大幅推进（21,305,112 → 21,329,612 等） |
 
+| 18 | `identity_access_history`、`account_sessions` 同样带投影触发器却没有 no-op 守卫；且 `account_sessions` 后面那条按 `confirmed_at` 无条件更新 `policy_metadata` 的语句会抵消守卫 | 两条 upsert 补精确镜像守卫，`policy_metadata` 语句补 `IS DISTINCT FROM` 判断；新增 `xmin` 集成测试覆盖三张表 | 慢插入持续低位；但积压仍涨——查明**不是脏标记问题**，而是投影 lane 反复 `projection_failed`（见第 22 轮一节） |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -391,6 +393,28 @@ PG 容器内存上限 16 → 24 GB（`docker update`）。实测 `endpoint_entit
 **口径提醒**：`endpoint_entities.updated_at` 的语义变了——no-op 不再推进它，所以
 `entities_updated10min` 由"被触碰"变为"真的发生变化"（8,728/10 分钟）。数值下降是预期的，
 不是回退；今后比较覆盖度请用 `last_seen` 分布，不要用 `updated_at`。
+
+### 投影积压的真实原因：lane 反复失败，不是脏标记速率（2026-10-14，第 22 轮）
+
+第 21 轮把积压从"单调上升"降到"持平"后，本轮把 no-op 守卫扩展到
+`identity_access_history`、`account_sessions`（并修掉 `account_sessions` 后面那条会抵消守卫的
+`policy_metadata` 更新）。但实测积压**又恢复增长**（+180/分钟），于是逐项排除了所有猜测：
+
+| 猜测 | 实测 | 结论 |
+|---|---|---|
+| 脏标记产生太快 | 两条 lane 确实推进更快（ncu-auth-redis 576,203 → 650,453） | 是放大因素，但不是根因 |
+| 任务领不到（门控） | 60,034 个待处理任务**全部** `contributions_ready=true`，60,033 个立即可领 | **不是** |
+| 任务表太大/太慢 | 80,343 行 / 21 MB，`never_processed` 仅 46 | **不是** |
+| 该 lane 的 SQL 慢 | 60 秒慢语句窗口内**没有一条**属于该 lane 的工作 | **不是** |
+| **lane 正在失败** | `endpoint_inventory_projection_state.last_error='projection_failed'`，且每约 6 秒被重写一次（15:42:02 / 15:42:08 / 15:42:14）；92 个任务行带该错误 | **是** |
+
+即：`endpoint_inventory_projection_jobs` 有 6 万个**立即可领**的任务，lane 的 SQL 也都不慢，
+但它的吞吐只有约 0.8 任务/秒——因为它在反复失败。这解释了为什么"提高写入效率"无法让积压下降。
+
+尚未解开的一点：该单元（`proxy-sentinel-inventory` / `-backfill`）的 journal 里近 30 分钟
+**没有任何应用日志**，而代码在写 `projection_failed` 前会 `Fprintf(os.Stderr, "inventory
+projection batch failed …")`。下一轮需要先解决"失败日志为何没进 journal"，再定位真正的错误
+（很可能是一个具体的 SQLSTATE）。在此之前，不要再用"提高消费速度"的思路去猜这条积压。
 
 ## 恢复采集前的检查清单
 
