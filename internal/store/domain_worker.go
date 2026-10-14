@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"proxy-sentinel/internal/fingerprint"
@@ -32,8 +34,33 @@ func (s *DBStore) StartDomainRecognition() {
 		s.domainCancel = cancel
 		s.domainDone = make(chan struct{})
 		s.domainQueue = make(chan domainBatch, 32)
-		go func() { defer close(s.domainDone); s.runDomainWorker(ctx) }()
+		workers := domainWorkerCount()
+		go func() {
+			var group sync.WaitGroup
+			// 维护任务（对账与设备名重试）只跑一份，队列消费可以多份。
+			group.Add(1)
+			go func() { defer group.Done(); s.runDomainMaintenance(ctx) }()
+			for index := 0; index < workers; index++ {
+				group.Add(1)
+				go func() { defer group.Done(); s.runDomainQueueWorker(ctx) }()
+			}
+			group.Wait()
+			close(s.domainDone)
+		}()
 	})
+}
+
+// domainWorkerCount 决定域名识别队列的并发度。
+//
+// 现场设备事件约 1,700 条/秒，单个 worker 只能完成约 20% 的批次（10 分钟 155 批里丢弃 121 批），
+// 其余由对账窗口补齐。身份写入本身由事务级 advisory lock 串行，多 worker 主要让域名处理、
+// ClickHouse 观测写入与锁等待彼此重叠。默认 1 保持原行为。
+func domainWorkerCount() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_DOMAIN_WORKERS")))
+	if err != nil || n < 1 || n > 16 {
+		return 1
+	}
+	return n
 }
 func (s *DBStore) enqueueDomainEvents(events []normalized.Event) {
 	if os.Getenv("PROXY_SENTINEL_DOMAIN_RECOGNITION_DISABLED") == "true" {
@@ -65,7 +92,7 @@ func (s *DBStore) enqueueDomainEvents(events []normalized.Event) {
 	}
 }
 
-func (s *DBStore) runDomainWorker(parent context.Context) {
+func (s *DBStore) runDomainMaintenance(parent context.Context) {
 	initial := time.NewTimer(0)
 	defer initial.Stop()
 	nameTicker := time.NewTicker(15 * time.Second)
@@ -81,6 +108,27 @@ func (s *DBStore) runDomainWorker(parent context.Context) {
 			err := s.reconcileDomainWindow(ctx)
 			cancel()
 			s.recordDomainError(err)
+		case <-nameTicker.C:
+			ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+			err := s.pg.RetryDeviceNames(ctx, nil)
+			cancel()
+			s.recordDomainError(err)
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(parent, 4*time.Minute)
+			err := s.reconcileDomainWindow(ctx)
+			cancel()
+			s.recordDomainError(err)
+		}
+	}
+}
+
+// runDomainQueueWorker 消费域名识别队列。多个 worker 共享同一队列，身份写入由
+// advisory lock 串行，其余工作（域名处理、ClickHouse 观测写入）可以并行重叠。
+func (s *DBStore) runDomainQueueWorker(parent context.Context) {
+	for {
+		select {
+		case <-parent.Done():
+			return
 		case batch := <-s.domainQueue:
 			var err error
 			for attempt := 0; attempt < 3; attempt++ {
@@ -98,16 +146,6 @@ func (s *DBStore) runDomainWorker(parent context.Context) {
 					return
 				}
 			}
-			s.recordDomainError(err)
-		case <-nameTicker.C:
-			ctx, cancel := context.WithTimeout(parent, 10*time.Second)
-			err := s.pg.RetryDeviceNames(ctx, nil)
-			cancel()
-			s.recordDomainError(err)
-		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(parent, 4*time.Minute)
-			err := s.reconcileDomainWindow(ctx)
-			cancel()
 			s.recordDomainError(err)
 		}
 	}

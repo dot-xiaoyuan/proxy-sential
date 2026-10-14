@@ -68,3 +68,18 @@ func TestWriteInChunksHandlesEmptyAndDegenerateSizes(t *testing.T) {
 		t.Fatalf("chunk<1 must degrade to one event per call, got %v", sizes)
 	}
 }
+
+// 站点用环境变量提高域名识别并发度；越界或非法值必须退回单 worker 的默认行为。
+func TestDomainWorkerCountBounds(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  int
+	}{
+		{"", 1}, {"4", 4}, {"16", 16}, {"17", 1}, {"0", 1}, {"-2", 1}, {"abc", 1}, {" 3 ", 3},
+	} {
+		t.Setenv("PROXY_SENTINEL_DOMAIN_WORKERS", tc.value)
+		if got := domainWorkerCount(); got != tc.want {
+			t.Fatalf("domainWorkerCount(%q) = %d, want %d", tc.value, got, tc.want)
+		}
+	}
+}
