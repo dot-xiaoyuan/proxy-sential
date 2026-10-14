@@ -61,7 +61,8 @@ func (s *ClickHouseStore) ScanApplicationEvents(ctx context.Context, q appdomain
 		if _, err := time.Parse(time.RFC3339Nano, q.After.Timestamp); err != nil {
 			return nil, err
 		}
-		where += " AND (timestamp,sensor_id,event_id) > (parseDateTime64BestEffort(" + chQuote(q.After.Timestamp) + ",9)," + chQuote(q.After.SensorID) + "," + chQuote(q.After.EventID) + ")"
+		stamp := "parseDateTime64BestEffort(" + chQuote(q.After.Timestamp) + ",9)"
+		where += " AND timestamp>=" + stamp + " AND (" + chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "sensor_id", Value: chQuote(q.After.SensorID)}, {Expr: "event_id", Value: chQuote(q.After.EventID)}}) + ")"
 	}
 	// Select the bounded page of keys before fetching JSON payloads. Sorting full
 	// payloads for the whole retained window scales with history size.

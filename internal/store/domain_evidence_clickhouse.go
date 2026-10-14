@@ -32,7 +32,9 @@ func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, s
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid domain backfill cursor: %w", parseErr)
 		}
-		clauses = append(clauses, "(timestamp,event_id) > (parseDateTime64BestEffort("+chQuote(cursor.UTC().Format(time.RFC3339Nano))+",6,'UTC'),"+chQuote(cursorEventID)+")")
+		stamp := "parseDateTime64BestEffort(" + chQuote(cursor.UTC().Format(time.RFC3339Nano)) + ",6,'UTC')"
+		clauses = append(clauses, "timestamp>="+stamp,
+			"("+chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "event_id", Value: chQuote(cursorEventID)}})+")")
 	}
 	data, err := s.query(ctx, fmt.Sprintf(`
 SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,schema_version,source,source_event_type,type,subject_ip,endpoint_id,auth_session_id,sensor_id,campus_id,payload_json,flow_json

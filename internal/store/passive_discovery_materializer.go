@@ -122,7 +122,8 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 	if limit <= 0 || limit > 5000 {
 		limit = 2000
 	}
-	where := "sensor_id=" + chQuote(sensorID) + " AND (timestamp,event_id)>(parseDateTime64BestEffort(" + chQuote(cursor.Timestamp.UTC().Format(time.RFC3339Nano)) + ",6)," + chQuote(cursor.EventID) + ")"
+	stamp := "parseDateTime64BestEffort(" + chQuote(cursor.Timestamp.UTC().Format(time.RFC3339Nano)) + ",6)"
+	where := "sensor_id=" + chQuote(sensorID) + " AND timestamp>=" + stamp + " AND (" + chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "event_id", Value: chQuote(cursor.EventID)}}) + ")"
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
 		where += " AND source_event_type='dhcp'"
 	} else {

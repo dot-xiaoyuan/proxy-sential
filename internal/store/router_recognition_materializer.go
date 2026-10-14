@@ -91,7 +91,10 @@ func (s *DBStore) routerSignalBatch(ctx context.Context, sensorID string, cursor
 	}
 	where := "sensor_id=" + chQuote(sensorID)
 	if !cursor.Timestamp.IsZero() {
-		where += " AND (timestamp,event_id)>(parseDateTime64BestEffort(" + chQuote(cursor.Timestamp.Format(time.RFC3339Nano)) + ",6)," + chQuote(cursor.EventID) + ")"
+		// 时间下界让分区与主键裁剪先发生；续读点用可索引的析取式表达，
+		// 元组比较会让主键索引失效并退化为全表扫描。
+		stamp := "parseDateTime64BestEffort(" + chQuote(cursor.Timestamp.Format(time.RFC3339Nano)) + ",6)"
+		where += " AND timestamp>=" + stamp + " AND (" + chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "event_id", Value: chQuote(cursor.EventID)}}) + ")"
 	}
 	data, err := s.ch.query(ctx, fmt.Sprintf(`SELECT timestamp,event_id,source,source_event_type,type,sensor_id,campus_id,endpoint_id,subject_ip,subject_mac,observer_json,payload_json,flow_json,confidence FROM router_signal_events_v1 WHERE %s ORDER BY timestamp,event_id LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, limit))
 	if err != nil {

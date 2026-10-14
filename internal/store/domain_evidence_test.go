@@ -26,10 +26,21 @@ func TestClickHouseDomainEventCursorQueryIsBounded(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].Subject["endpoint_id"] != "endpoint-1" || events[0].Payload["session_id"] != "session-1" {
 		t.Fatalf("unexpected cursor result: %+v err=%v", events, err)
 	}
-	for _, required := range []string{"type IN ('dns','tls','quic','http')", "sensor_id='sensor-campus-a'", "(timestamp,event_id) >", "LIMIT 100000"} {
+	for _, required := range []string{
+		"type IN ('dns','tls','quic','http')",
+		"sensor_id='sensor-campus-a'",
+		// 续读点必须用可索引的析取式，元组比较会让 ClickHouse 放弃主键索引。
+		"timestamp>=parseDateTime64BestEffort('2026-09-02T09:00:00Z',6,'UTC')",
+		"OR (timestamp=parseDateTime64BestEffort('2026-09-02T09:00:00Z',6,'UTC') AND (event_id>'cursor-1'))",
+		"LIMIT 100000",
+	} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("query is not bounded/cursor based; missing %q: %s", required, query)
 		}
+	}
+	// 回归护栏：行比较 (timestamp,event_id) > (...) 会让主键索引失效并退化为全表扫描。
+	if strings.Contains(query, "(timestamp,event_id)") {
+		t.Fatalf("cursor must not use a row comparison that defeats the primary-key index: %s", query)
 	}
 }
 

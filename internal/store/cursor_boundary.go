@@ -34,3 +34,30 @@ func chAdvanceCursor(current time.Time, currentEventID string, candidate chCurso
 	}
 	return candidate.Stamp, candidate.EventID, true
 }
+
+// chBoundKey 是 ClickHouse 续读键的一列：列表达式与已经转义好的字面量。
+// Value 由调用方负责转义或写成函数调用，本函数只拼接。
+type chBoundKey struct {
+	Expr  string
+	Value string
+}
+
+// chAfterBound 生成与元组比较等价的「严格在游标之后」谓词，同时保持主键索引可用：
+//
+//	a>v1 OR (a=v1 AND (b>v2 OR (b=v2 AND c>v3)))
+//
+// 元组比较 (a,b,c)>(v1,v2,v3) 会让 ClickHouse 的主键索引分析提取不到 key range，
+// 现场实测 router_signal_events_v1 上同一批 2000 行从 1.9 秒退化到 41.6 秒，
+// 扫描的 granule 从 18/3263 变成 3263/3263。
+//
+// 调用方还应同时给出首列下界（`a>=v1`），让分区裁剪先于主键裁剪发生。
+func chAfterBound(keys []chBoundKey) string {
+	if len(keys) == 0 {
+		return "1"
+	}
+	head := keys[0]
+	if len(keys) == 1 {
+		return head.Expr + ">" + head.Value
+	}
+	return head.Expr + ">" + head.Value + " OR (" + head.Expr + "=" + head.Value + " AND (" + chAfterBound(keys[1:]) + "))"
+}

@@ -61,7 +61,8 @@ func (s *ClickHouseStore) ScanProxyEvents(ctx context.Context, q proxyprotocol.S
 		if _, err := time.Parse(time.RFC3339Nano, q.After.Timestamp); err != nil {
 			return nil, err
 		}
-		where += " AND (timestamp,sensor_id,event_id) > (parseDateTime64BestEffort(" + chQuote(q.After.Timestamp) + ")," + chQuote(q.After.SensorID) + "," + chQuote(q.After.EventID) + ")"
+		stamp := "parseDateTime64BestEffort(" + chQuote(q.After.Timestamp) + ")"
+		where += " AND timestamp>=" + stamp + " AND (" + chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "sensor_id", Value: chQuote(q.After.SensorID)}, {Expr: "event_id", Value: chQuote(q.After.EventID)}}) + ")"
 	}
 	data, err := s.query(ctx, fmt.Sprintf(`SELECT DISTINCT timestamp,sensor_id,campus_id,event_id,type,subject_ip,source,raw_ref_json,observer_json,payload_json,flow_json FROM normalized_events WHERE %s ORDER BY timestamp,sensor_id,event_id LIMIT %d FORMAT JSONEachRow`, where, limit))
 	if err != nil {

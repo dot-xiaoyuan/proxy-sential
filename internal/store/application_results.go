@@ -206,7 +206,7 @@ func (d *applicationDB) Page(ctx context.Context, q appdomain.Query, p appdomain
 	}
 	if p.Cursor != "" {
 		ts := "parseDateTime64BestEffort(" + chQuote(c.Timestamp) + ",9)"
-		where += " AND (timestamp<" + ts + " OR (timestamp=" + ts + " AND (sensor_id,event_id)>(" + chQuote(c.SensorID) + "," + chQuote(c.EventID) + ")))"
+		where += " AND timestamp<=" + ts + " AND (timestamp<" + ts + " OR (timestamp=" + ts + " AND (" + chAfterBound([]chBoundKey{{Expr: "sensor_id", Value: chQuote(c.SensorID)}, {Expr: "event_id", Value: chQuote(c.EventID)}}) + ")))"
 	}
 	// Expand a descending time slice until it contains a full page. Every
 	// skipped row is earlier than the selected rows, so this preserves the
