@@ -434,6 +434,15 @@ rollback_install() {
   if [[ "$ingest_enabled" == true ]]; then systemctl restart proxy-sentinel-ingest.service >/dev/null 2>&1 || true; fi
   for unit in ${site_units[@]+"${site_units[@]}"}; do systemctl start "$unit" >/dev/null 2>&1 || true; done
   systemctl start proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true
+  # The stop above also took the projection workers down. Restarting only the
+  # control plane leaves the read model, recognition, inventory, identity and
+  # application layers silently disabled after a rollback, so bring every enabled
+  # worker back and clear the failed state left by a SIGKILL timeout.
+  for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service; do
+    systemctl is-enabled --quiet "$unit" 2>/dev/null || continue
+    systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+    systemctl restart "$unit" >/dev/null 2>&1 || log "failed to restore $unit after rollback"
+  done
   systemctl restart proxy-sentinel-control-plane.service >/dev/null 2>&1 || true
 }
 trap rollback_install ERR
@@ -734,7 +743,15 @@ if [[ "$manage_zeek" == true ]]; then systemctl restart proxy-sentinel-zeek.serv
 if [[ "$manage_device_signals" == true ]]; then systemctl restart proxy-sentinel-device-signal.service; fi
 if [[ "$ingest_enabled" == true ]]; then systemctl restart proxy-sentinel-ingest.service; fi
 for unit in ${site_units[@]+"${site_units[@]}"}; do systemctl restart "$unit"; done
-systemctl restart proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service
+for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service; do
+  # Under disk pressure a worker can exceed its stop timeout, be SIGKILLed and
+  # report a failed restart for one unit. Retry once so a transient stall does not
+  # abort the whole upgrade and roll the site back.
+  if ! systemctl restart "$unit"; then
+    sleep 5
+    systemctl restart "$unit" || die "failed to restart $unit"
+  fi
+done
 systemctl restart proxy-sentinel-control-plane.service
 
 for _ in $(seq 1 20); do
