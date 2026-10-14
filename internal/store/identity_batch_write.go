@@ -76,7 +76,20 @@ ON CONFLICT(event_id) DO UPDATE SET
   source = EXCLUDED.source,
   last_seen = GREATEST(identity_ip_mac_history.last_seen, EXCLUDED.last_seen),
   identity_confidence = GREATEST(identity_ip_mac_history.identity_confidence, EXCLUDED.identity_confidence),
-  event_ids_sample = EXCLUDED.event_ids_sample`,
+  event_ids_sample = EXCLUDED.event_ids_sample
+-- Same no-op guard as the entity upsert: this is the hottest statement on the field, and a
+-- replayed event used to rewrite the row with identical values, which cost a new tuple
+-- version, all five index entries and the row triggers. Each predicate mirrors one
+-- assignment above.
+WHERE identity_ip_mac_history.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id
+   OR identity_ip_mac_history.account_id IS DISTINCT FROM EXCLUDED.account_id
+   OR identity_ip_mac_history.entity_role IS DISTINCT FROM EXCLUDED.entity_role
+   OR identity_ip_mac_history.ip IS DISTINCT FROM EXCLUDED.ip
+   OR identity_ip_mac_history.mac IS DISTINCT FROM EXCLUDED.mac
+   OR identity_ip_mac_history.source IS DISTINCT FROM EXCLUDED.source
+   OR EXCLUDED.last_seen > identity_ip_mac_history.last_seen
+   OR EXCLUDED.identity_confidence > identity_ip_mac_history.identity_confidence
+   OR identity_ip_mac_history.event_ids_sample IS DISTINCT FROM EXCLUDED.event_ids_sample`,
 		eventID, endpointID, accountID, entityRole, ip, mac, source, firstSeen, lastSeen, confidence, sample)
 	return err
 }
@@ -206,7 +219,19 @@ ON CONFLICT(endpoint_id) DO UPDATE SET
   last_seen = GREATEST(endpoint_entities.last_seen, EXCLUDED.last_seen),
   identity_confidence = GREATEST(endpoint_entities.identity_confidence, EXCLUDED.identity_confidence),
   attributes = CASE WHEN EXCLUDED.last_seen >= endpoint_entities.last_seen THEN endpoint_entities.attributes || EXCLUDED.attributes ELSE EXCLUDED.attributes || endpoint_entities.attributes END,
-  updated_at = now()`,
+  updated_at = now()
+-- Skip updates that would write the row back unchanged. PostgreSQL fires row triggers and
+-- writes a new tuple version (plus every index entry) even when the new values equal the
+-- old ones, so without this guard every replayed or duplicated event re-dirtied the
+-- inventory projection and paid a full index/write cost for nothing. Each predicate mirrors
+-- exactly one assignment above, so a skipped row is one whose stored values are already the
+-- result of the update.
+WHERE (endpoint_entities.primary_mac IS NULL AND EXCLUDED.primary_mac IS NOT NULL)
+   OR endpoint_entities.entity_role IS DISTINCT FROM EXCLUDED.entity_role
+   OR EXCLUDED.first_seen < endpoint_entities.first_seen
+   OR EXCLUDED.last_seen > endpoint_entities.last_seen
+   OR EXCLUDED.identity_confidence > endpoint_entities.identity_confidence
+   OR endpoint_entities.attributes IS DISTINCT FROM (CASE WHEN EXCLUDED.last_seen >= endpoint_entities.last_seen THEN endpoint_entities.attributes || EXCLUDED.attributes ELSE EXCLUDED.attributes || endpoint_entities.attributes END)`,
 		endpointID, primaryMAC, entityRole, firstSeen, lastSeen, confidence, attributes)
 	return err
 }
