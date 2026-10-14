@@ -76,3 +76,24 @@
 - `endpoint_entities.idx_endpoint_page_order`（0 扫描，99 MB）与 `idx_endpoint_entities_mac`（0 扫描，4.6 MB）。
 
 这些索引可能服务于本轮排查期间未被访问的页面（例如设备中心列表），删除前需确认对应查询路径不再依赖它们。
+
+### 写放大之二：行级触发器与任务队列索引（2026-10-14，第 11–12 轮）
+
+**受控基准**（探针表与真表结构/索引相同、全部回滚）证明 `identity_ip_mac_history` 的三个行级触发器是身份写入路径的主要成本：
+
+| 场景（同样 300 行） | 改前 | 删除任务队列未使用索引后 |
+|---|---|---|
+| 探针表（无触发器） | 12.8 ms | 14.0 ms |
+| 真表（3 个触发器） | **59,081 ms** | **1,178 ms** |
+| 批量任务入队 upsert | 41,126 ms | 1,968 ms |
+
+逐项隔离显示 `record_inventory_projection_delta` 只占约 45 ms，开销集中在两个"任务入队"触发器对
+`endpoint_inventory_projection_jobs` 的 upsert；而该表堆 20 MB、索引 112 MB，其中
+`inventory_projection_pending`（53 MB）等 7 个索引扫描 0–1 次（表小到顺序扫描更便宜）。
+迁移 124 删除这些索引后（现场用 `DROP INDEX CONCURRENTLY`），触发器路径快了约 50 倍。
+
+**仍然存在**：现场仍可见 `domain batch timing: events=6456 devices=1863 identity=1m38.393s` 的批次，
+即身份写入阶段仍约 **53 ms/设备事件**，而其中 history 插入现在只占约 4 ms，其余来自每事件十余条
+语句（`endpoint_entities`、`policy_identity_observations`、`identity_current_addresses`、租约、画像、
+`legacyAuthorityEvents` 查询等）及其各自触发器。要把物化覆盖率从约 20% 提升到 100%，需要把
+"每事件多条语句"改为按批聚合写入，或按前述检查清单降低事件产生量。
