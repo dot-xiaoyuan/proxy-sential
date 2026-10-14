@@ -32,6 +32,7 @@ release_dir="$build_root/release"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-identity-snapshot" ./cmd/srun-identity-snapshot
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/legacy-4k-identity-bridge" ./cmd/legacy-4k-identity-bridge
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-policy-snapshot" ./cmd/srun-policy-snapshot
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-group-directory-sync" ./cmd/srun-group-directory-sync
   (cd frontend && VITE_ENABLE_MOCKS=false VITE_API_BASE=/api/v1 pnpm build)
   cp -R frontend/dist "$release_dir/frontend/dist"
   node --input-type=module - "$release_dir/frontend/dist/assets" <<'JS'

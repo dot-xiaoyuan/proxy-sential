@@ -76,6 +76,30 @@ online_members: 0
 
 **最小可行路径**：新增一条只用于目录读取的北向凭据配置（或允许 4K 接入仅配置北向端点），配一个独立的"同步用户组目录"动作；该动作只调用 `srunapi.Groups()` 并全量替换 `srun4k_group_catalog` 的命名目录，不触发身份轮询、不启用任何处置动作。
 
+### 2.3 已落地的一次性同步工具
+
+`cmd/srun-group-directory-sync` 就是上面这条"最小可行路径"，且**不需要数据库迁移、不需要启用任何处置能力**：它只调用北向的 token 与组目录两个只读接口，然后把结果按 source 全量替换进 `srun4k_group_catalog`。
+
+```bash
+# 只读预览（不写库）
+srun-group-directory-sync -endpoint https://<4k>:8001 -app-id <appid> \
+  -app-secret-file /path/secret -source ncu-srun4k -insecure-skip-verify -preview
+
+# 真正同步
+PROXY_SENTINEL_POSTGRES_DSN=... srun-group-directory-sync \
+  -endpoint https://<4k>:8001 -app-id <appid> \
+  -app-secret-file /path/secret -source ncu-srun4k -insecure-skip-verify
+```
+
+- 只写 `-source` 指定的那一个键（如 `ncu-srun4k`），不动 `:identity-observed` 也不动其它校区。
+- 幂等：可重复执行；只有命名条目会被写入，空名称一律跳过，避免用编号覆盖已有名称。
+- 回退：`delete from srun4k_group_catalog where source='ncu-srun4k';`（`ncu-srun4k` 这个键完全由本工具维护，删除不影响身份观测目录）。
+
+2026-10-14 在 184 执行结果：`ncu-srun4k` 写入 **88 个带中文名的用户组**；接口可见的用户组共 **88 个，全部有名称**（此前 34 个只有编号）。
+
+> 注意两点：该 4K 部署的证书不被系统信任，故需 `-insecure-skip-verify`；其 `/api/v2/groups` 仍不返回 `pid`，所以同步进来的是**带名称的扁平列表**，不是树。
+
+
 
 ## 3. 目录同步的正确设计
 
