@@ -35,6 +35,8 @@
 
 | 16 | `UPDATE shared_device_profile_runtime WHERE singleton` 每次 431 ms，且 4 个后端同时阻塞在它的 `Lock/tuple` 上——因为它**在投影事务内部**执行，而投影事务可跑数十秒 | 改为先 `tx.Commit()` 再用独立短事务写；新增 `writeAdvisoryState`（`SET LOCAL synchronous_commit=off`）承载心跳/计数这类建议性写入 | 锁等待采样 6/6 只剩 `Lock/advisory`；90 秒慢语句计数 `commit` 39 → **20**、该 UPDATE 39 → **12**；`endpoint_entities` 更新 → **1,370–1,634/分钟** |
 
+| 17 | 两条最热的身份 upsert（`endpoint_entities`、`identity_ip_mac_history`）没有 `ON CONFLICT … WHERE` 守卫：PostgreSQL 对每个冲突行都写新元组版本 + 全部索引项并触发行触发器，即使值完全没变；重复/重放事件因此既是空写、又把投影任务反复标脏 | 为两条 upsert 增加精确镜像 SET 赋值的 `WHERE` 守卫（`internal/store/identity_batch_write.go`），并用 `xmin` 写集成回归测试 | `identity_ip_mac_history` 慢插入 12–69 → **2 次/60 秒**；投影积压**首次停止增长**（58,420 → 58,418/120 秒）；两条 lane 大幅推进（21,305,112 → 21,329,612 等） |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -353,6 +355,42 @@ PG 容器内存上限 16 → 24 GB（`docker update`）。实测 `endpoint_entit
 仍在增长，`account_identity_session_projection` 堆未命中仍 93.1%。要真正达到 AGENTS.md 的
 容量基线，仍需处理事件量（前置决定）或彻底重构分析路径的写入成本
 （如 `identity_ip_mac_history` 按天分区，约 15 GB 一次性重建）。
+
+### 空写与投影脏标记：no-op 守卫（2026-10-14，第 21 轮）
+
+第 20 轮结束时先按计划去查 `account_identity_session_projection` 的 93% 堆未命中，结果发现
+**它当前根本不热**：`seq_scan=0`、`n_tup_ins=0`、`n_tup_upd=0`，70 秒慢语句窗口内没有一条
+触及它。那个 93% 是重启窗口期的旧值。**结论：不要优化冷路径**，于是转向真正的积压源。
+
+真正的问题在投影任务队列：`endpoint_inventory_projection_jobs` 有 58,348 条待处理、
+最老的一条已等 26 小时；而消费端 lane **在正常跑**（约 2.8 任务/秒），只是**产生速度与
+消费速度相当**，所以积压只涨不降。任务表本身很小（80,228 行 / 21 MB），瓶颈不在数据库。
+
+根因排查落到两条最热的 upsert 上：它们都没有 `ON CONFLICT … WHERE` 守卫。PostgreSQL 会为
+每个冲突行写入新元组版本、全部索引项并触发行级触发器，**即使新值与旧值完全相同**。于是：
+
+- 重复/重放的事件是纯空写：新元组 + 索引 + WAL，约 7 张表的触发器白跑；
+- 每次空写还会触发 `inventory_projection_change`，把该 endpoint 的投影任务重新标脏——
+  这正是"消费追不上产生"的来源之一。
+
+改动：给两条 upsert 加 `WHERE` 守卫，**每个谓词精确镜像 SET 中的一条赋值**，因此被跳过的行
+一定是"存储值已经等于更新结果"的行。附带效果：`endpoint_entities.updated_at` 只在真正变化
+时推进。
+
+回归测试用 `xmin`（行版本）断言，而不是只看 `updated_at`——这才真正证明"没有发生写入"。
+
+实测（发布 `2026.10.14-noop-upsert1`）：
+
+| 指标 | 之前 | 之后 |
+|---|---|---|
+| `identity_ip_mac_history` 慢插入（>300 ms） | 12–69 次/窗口 | **2 次/60 秒** |
+| `endpoint_inventory_projection_jobs` 积压 | 单调上升 | **58,420 → 58,418 / 120 秒（首次持平）** |
+| `ncu-184-router-pilot` live | 21,305,112 | **21,329,612** |
+| `ncu-auth-redis` live | 565,353 | **572,203** |
+
+**口径提醒**：`endpoint_entities.updated_at` 的语义变了——no-op 不再推进它，所以
+`entities_updated10min` 由"被触碰"变为"真的发生变化"（8,728/10 分钟）。数值下降是预期的，
+不是回退；今后比较覆盖度请用 `last_seen` 分布，不要用 `updated_at`。
 
 ## 恢复采集前的检查清单
 
