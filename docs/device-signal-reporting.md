@@ -181,3 +181,32 @@ device 事件量降约 4–5×）与**lane 心跳的每周期时间戳更新**�
 2. `activity_chart_facts_5m_v3` 换成 `ReplacingMergeTree(revision)` 并调整 `ORDER BY`
    （去掉 key 里的 revision），让后台合并自动回收被取代的副本；这需要一次
    1.38 GiB 的重建 + 换名切换，且要先确认读路径不依赖 key 中的 revision。
+
+## 九、用真实读取水位跳过已覆盖的图表重算（2026-10-14，第 4 轮）
+
+第 3 轮发现 `source_as_of` 写的是发布时间，无法证明覆盖，因此没敢用它跳过重算。本轮把它改对：
+
+- `publishActivityV3Version` 新增 `sourceAsOf` 参数；5 分钟构建与小时汇总在**发起源表读取之前**
+  捕获 `time.Now().UTC()` 作为"构建开始读取的时刻"——写入早于该时刻的脏收据必然被读到；
+- 现场确认 `source_as_of` 在 Go 代码里**没有任何读取方**（读路径用 `argMax(revision,published_at)`），
+  所以改变其语义对读取零影响；
+- 派发阶段把脏日志按 `(window_start,sensor,campus)` 折叠后 `LEFT JOIN` 每个 key 的最新版本，
+  若 `source_as_of >= written_at + 5 秒`（余量覆盖"源行可见"与"收据时间戳"之间的间隙），
+  则**只推进游标、不建任务**。游标取自结果集最后一行，跳过不会让它卡住；桶关闭后的最终发布
+  走 `read_model_jobs` 自身的 `dirty_generation/not_before`，不依赖派发，因此不受影响。
+
+### 现场预验证与实测
+
+- 部署前用真库验证新查询语法，并用**旧语义**（发布时间）算出今天 358 个脏 bucket 中 357 个"已覆盖"
+  ——这正是需要修正的假阳性方向；换新语义后同一判据立刻回到诚实水平（9 覆盖 / 2 未覆盖）；
+- 写入：`activity_chart_facts_5m_v3` 10 分钟写入 **183,042 → 105,589 行（−42%）**，源事件量相当；
+- 每个 bucket 的 revision 数：**5.8–6.1 → 3.8**（改动后新建、已走完生命周期的 bucket）；
+- 图表任务待处理从堆积降到 **2**；`/readyz=200`、死锁 0。
+
+### 仍然存在
+
+若要在“桶关闭后不再重算”这件事上更彻底，还需要处理两处：
+1. **迟到的重建**仍会产生新 revision（每次 1 份完整副本）。彻底解法是把表换成
+   `ReplacingMergeTree(revision)` 并调整 `ORDER BY`（去掉 key 中的 revision），
+   让后台合并自动回收被取代的副本；需一次 1.38 GiB 重建，且要先确认读路径不依赖 key 中的 revision。
+2. 上表 `TTL 8 天`：被取代的副本在此之前一直占空间（当前 1.38 GiB 中大部分是旧 revision）。
