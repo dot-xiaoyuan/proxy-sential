@@ -4,12 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"proxy-sentinel/internal/normalized"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// errIdentityWriteBusy reports that another writer holds the identity write lock. The
+// caller must leave its queued work in place: the batch was never started, not applied.
+var errIdentityWriteBusy = errors.New("identity write in progress")
 
 // Projection is display-only. Policy reconciliation continues to use immutable
 // authority facts and complete snapshots, including their coverage boundaries.
@@ -38,6 +43,13 @@ func (s *PostgresStore) projectPendingIdentitySnapshots(ctx context.Context, lim
 		if err = json.Unmarshal(raw, &snapshot); err == nil {
 			err = projectIdentitySnapshot(ctx, tx, snapshot)
 		}
+		if errors.Is(err, errIdentityWriteBusy) {
+			// Roll back without deleting the job: an identity writer owns the projection
+			// trigger rows right now, so this snapshot is retried on a later cycle rather
+			// than holding a job row lock while queueing behind that writer.
+			tx.Rollback()
+			return nil
+		}
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `DELETE FROM identity_snapshot_projection_jobs WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND snapshot_id=$5`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.SnapshotID)
 		}
@@ -56,6 +68,21 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 	scopeRaw, _ := json.Marshal(snapshot.IdentityScope)
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,7136))`, string(scopeRaw)); err != nil {
 		return err
+	}
+	// account_identity_session_projection carries inventory_projection_change, a FOR EACH
+	// ROW trigger that upserts endpoint_inventory_projection_jobs once per session. This
+	// batch enqueues those rows in snapshot order, while the identity write path
+	// (writeIdentityEventsTx, which holds the identity write lock) enqueues the same rows
+	// ordered by endpoint_id. Interleaving the two takes the job row locks in opposite
+	// order, and the field measured the result as `deadlock detected (SQLSTATE 40P01)` on
+	// this batch for three hours straight: every projection rolled back, so device state
+	// stopped advancing while no error ever surfaced in the pages. Joining the identity
+	// write lock orders the two writers instead of interleaving them; this transaction
+	// never blocks on it because a busy writer is reported as errIdentityWriteBusy.
+	if locked, err := tryIdentityWriteLock(ctx, tx); err != nil {
+		return err
+	} else if !locked {
+		return errIdentityWriteBusy
 	}
 	args := []any{snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt}
 	var latest bool

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"proxy-sentinel/internal/normalized"
 	"strconv"
@@ -84,5 +85,106 @@ func TestAccountSnapshotProjectionDualStackAndMonotonicScope(t *testing.T) {
 		if (session.Source == scope.Source && session.CampusID == "" && session.EndedAt == "") || (session.Source == foreign.Source && session.EndedAt != "") || session.MAC != "" || session.EndpointID != "" {
 			t.Fatalf("resurrected or invented identity: %+v", session)
 		}
+	}
+}
+
+// account_identity_session_projection carries inventory_projection_change, a FOR EACH ROW
+// trigger that upserts endpoint_inventory_projection_jobs once per session. This projection
+// enqueues those rows in snapshot order while the identity write path enqueues the same rows
+// ordered by endpoint_id; interleaving them takes the job row locks in opposite order, and
+// PostgreSQL aborts one side with SQLSTATE 40P01. On the field that aborted this projection
+// on every cycle for hours, so device state silently stopped advancing. The projection must
+// refuse to start while an identity writer holds the write lock, must keep its queued
+// snapshot for a later cycle, and must project it once the lock is released.
+func TestAccountSnapshotProjectionDefersToIdentityWriter(t *testing.T) {
+	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("isolated PostgreSQL required")
+	}
+	ctx := context.Background()
+	if _, err := ApplyPostgresMigrations(ctx, dsn, "../../migrations/postgres"); err != nil {
+		t.Fatal(err)
+	}
+	pg, err := NewPostgresStore(PostgresOptions{DSN: dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.Close()
+	pg.sensorID = "account-write-lock-replay"
+	source := "srun4k:account-write-lock-replay"
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	scope := IdentityScope{Source: source, SensorID: pg.sensorID}
+	snapshot := IdentitySnapshot{
+		IdentityScope: scope, SnapshotID: "write-lock-snapshot", ObservedAt: at, IntervalSeconds: 60,
+		Events: []normalized.Event{{
+			EventID: "write-lock-snapshot-192.0.2.91", Type: "identity", Timestamp: at.Format(time.RFC3339Nano), Source: source,
+			Observer: map[string]any{"sensor_id": scope.SensorID},
+			Subject:  map[string]any{"account_id": "account-write-lock-replay", "ip": "192.0.2.91", "entity_role": "endpoint"},
+			Payload:  map[string]any{"origin": source, "session_id": "write-lock-session-1", "session_status": "reconcile", "heartbeat_interval_seconds": "60"},
+		}},
+	}
+	if _, err = pg.CommitIdentitySnapshot(ctx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	projected := func() int {
+		var n int
+		if err := pg.db.QueryRowContext(ctx, `SELECT count(*) FROM account_identity_session_projection WHERE source=$1`, source).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	queued := func() int {
+		var n int
+		if err := pg.db.QueryRowContext(ctx, `SELECT count(*) FROM identity_snapshot_projection_jobs WHERE source=$1`, source).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	blocker, err := pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = blocker.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('proxy-sentinel-identity-write', 7137))`); err != nil {
+		blocker.Rollback()
+		t.Fatal(err)
+	}
+	tx, err := pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		blocker.Rollback()
+		t.Fatal(err)
+	}
+	if err = projectIdentitySnapshot(ctx, tx, snapshot); !errors.Is(err, errIdentityWriteBusy) {
+		tx.Rollback()
+		blocker.Rollback()
+		t.Fatalf("projection started while the identity write lock was held: %v", err)
+	}
+	tx.Rollback()
+	if n := projected(); n != 0 {
+		blocker.Rollback()
+		t.Fatalf("projection that never acquired the write lock still wrote %d rows", n)
+	}
+	if err = pg.projectPendingIdentitySnapshots(ctx, 10); err != nil {
+		blocker.Rollback()
+		t.Fatal(err)
+	}
+	if n := projected(); n != 0 {
+		blocker.Rollback()
+		t.Fatalf("queued projection ran while the identity write lock was held: %d rows", n)
+	}
+	if n := queued(); n == 0 {
+		blocker.Rollback()
+		t.Fatal("deferred projection dropped its queued snapshot instead of retrying it")
+	}
+	if err = blocker.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err = pg.projectPendingIdentitySnapshots(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if n := projected(); n == 0 {
+		t.Fatal("projection did not run after the identity write lock was released")
+	}
+	if n := queued(); n != 0 {
+		t.Fatalf("projected snapshot kept its queue row: %d", n)
 	}
 }
