@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { Alert, Button, Checkbox, Form, Input, InputNumber, Select, Space, Steps, Switch, Typography } from 'antd'
 
 import { request } from '../../shared/api/client'
@@ -171,8 +172,41 @@ function BasisFields({ prefix, allowRate }: { prefix: 'disconnect' | 'rate_limit
   </div>
 }
 
-export function PolicyStrategyEditor({ policy, creating, directory, directoryError, directoryLoading, onRetryDirectory, connectors, saving, onCancel, onSave }: {
-  policy: Policy
+// A one-line, always-current statement of what this policy does. It is the
+// confirmation an operator would otherwise look for only after saving, and it
+// makes the effect of every field visible while editing.
+type DirectoryOption = { value: string; label: string }
+
+function policySummary(values: StrategyForm | undefined, products: DirectoryOption[], groups: DirectoryOption[]): string {
+  const nameOf = (options: DirectoryOption[], id: string) => options.find(item => item.value === id)?.label ?? id
+  const scope = [
+    ...(values?.scope?.products ?? []).map(id => nameOf(products, id)),
+    ...(values?.scope?.groups ?? []).map(id => nameOf(groups, id)),
+    ...(values?.scope?.vlans ?? []).map(vlan => `VLAN ${vlan}`),
+    ...(values?.scope?.accounts ?? []),
+  ]
+  const limits = values?.limits
+  const conditions = [
+    limits?.total != null ? `全部设备数 > ${limits.total}` : '',
+    limits?.pc != null ? `电脑数量 > ${limits.pc}` : '',
+    limits?.mobile != null ? `移动设备数 > ${limits.mobile}` : '',
+    limits?.router != null ? `路由器数 > ${limits.router}` : '',
+  ].filter(Boolean)
+  const editor = values?.actions
+  const actions = [
+    editor?.notify_enabled ? '通知' : '',
+    editor?.rate_limit_enabled ? '带宽降速' : '',
+    editor?.disconnect_enabled ? '强制下线' : '',
+    editor?.disable_enabled ? '用户禁用' : '',
+  ].filter(Boolean)
+  return [
+    scope.length ? scope.join('、') : '全部账号',
+    conditions.length ? conditions.join(' 或 ') : '未设置认定条件',
+    actions.length ? actions.join('，') : '仅记录',
+  ].join(' · ')
+}
+
+export function PolicyStrategyEditor({ policy, creating, directory, directoryError, directoryLoading, onRetryDirectory, connectors, saving, onCancel, onSave }: {  policy: Policy
   creating: boolean
   directory?: FourKDirectory
   directoryError?: string
@@ -196,6 +230,11 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
   // The server states why a selector is empty; without it a blank dropdown
   // cannot be told apart from a failed directory read.
   const directoryWarnings = directory?.warnings ?? []
+  // The directory can be empty for two very different reasons: this site only
+  // observes group ids, or the read failed. Both must offer the next step.
+  const directoryEmpty = !directoryLoading && !directoryError && directoryWarnings.length > 0
+  const watched = Form.useWatch([], form) as StrategyForm | undefined
+  const summary = policySummary(watched, products, groups)
 
   useEffect(() => {
     const nextActions = actionValues(policy)
@@ -244,6 +283,7 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
     </Space>
   }>
     <div ref={stepRef}>
+    <p className="policy-summary" role="status" aria-live="polite"><span className="policy-summary-label">策略摘要</span>{summary}</p>
     <Steps className="policy-editor-steps" current={step} responsive items={[{ title: '策略信息' }, { title: '配额超限认定条件' }, { title: '配额超限处理动作' }]} />
     <Form form={form} layout="vertical" className="policy-editor-form">
       <section className={step === 0 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 0}>
@@ -258,7 +298,9 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
         </div>
         {directoryError
           ? <p className="policy-directory-status" role="alert"><span>4K 目录读取失败：{directoryError}</span>{onRetryDirectory && <Button size="small" onClick={onRetryDirectory}>重试</Button>}</p>
-          : directoryWarnings.length > 0 && <AppFactBar items={directoryWarnings} />}
+          : directoryEmpty
+            ? <div className="policy-directory-empty" role="status"><AppFactBar items={directoryWarnings} /><Link to="/settings/actions">去同步 4K 目录</Link></div>
+            : null}
         <details className="policy-advanced-scope">
           <summary>高级匹配（可选）</summary>
           <div className="policy-form-grid">

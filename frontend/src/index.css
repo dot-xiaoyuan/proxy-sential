@@ -2043,7 +2043,8 @@ pre.wrap-code {
   }
 }
 
-/* Directory state for scope selectors: an empty list must explain itself. */
+/* Directory state for scope selectors: a failed read is an error, an empty
+   catalog is a fact with a next step. Neither may render as a blank dropdown. */
 .policy-directory-status {
   display: flex;
   flex-wrap: wrap;
@@ -2052,6 +2053,40 @@ pre.wrap-code {
   margin: 0;
   font-size: 12px;
   color: #b42318;
+}
+
+.policy-directory-empty {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.policy-directory-empty a {
+  justify-self: start;
+  font-size: 12px;
+}
+
+/* Always-current one-line statement of what the edited policy does. */
+.policy-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #2255a7;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.policy-summary-label {
+  flex: none;
+  font-size: 12px;
+  color: #64748b;
 }
 
 .policy-advanced-scope {
