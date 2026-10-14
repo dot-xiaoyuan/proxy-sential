@@ -114,3 +114,38 @@
 
 要达成 100% 覆盖，只有两条路：**降低事件产生量**（`device-signal --bucket` 由 30s 调粗到 5m，
 可把约 1,700 事件/秒降到约 170，与当前物化容量相当），或**重构身份写路径**为按批聚合写入。
+
+## 恢复采集的可执行步骤（需先取得授权）
+
+### 前置决定（未决定前不要执行第 2 步以后）
+
+1. **授权窗口**：`config/router-capture-scope.json`（0600，经 `PROXY_SENTINEL_CAPTURE_SCOPE_CONFIG` 引用）
+   的 `valid_until=2026-10-09T05:26:00Z` 已过期；要么按现场流程续期（新的
+   `valid_from`/`valid_until`/`access_domain`），要么按原窗口结束采集。
+2. **事件量**：`proxy-sentinel-device-signal.service` 的 `ExecStart` 内含 `--bucket 30s`（无 drop-in）。
+   物化容量实测约 370 事件/秒，当前产生约 1,700 事件/秒；建议改为 `--bucket 5m`（约 170 事件/秒）。
+
+### 步骤与核对点
+
+| # | 操作 | 期望结果 |
+|---|---|---|
+| 0 | `docker exec proxy-sentinel-postgres psql -U proxy_sentinel -d proxy_sentinel -Atc "select (124325110008-committed_offset)/1048576 from ingest_checkpoints where source_kind='device-signals'"`；`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/readyz` | 剩余 ≈ 0 MiB；readyz 200 |
+| 1 | 按决定更新 `config/router-capture-scope.json`（若续期） | 新窗口覆盖当前时间；文件仍 0600 |
+| 2 | 编辑 `proxy-sentinel-device-signal.service` 的 `--bucket 30s` → `--bucket 5m`，`systemctl daemon-reload` | `systemctl cat` 显示新参数 |
+| 3a | `systemctl start proxy-sentinel-ncu-identity-sync` | active；`journalctl -u ... -n 5` 无 `operation_error` 激增 |
+| 3b | `systemctl start proxy-sentinel-discovery proxy-sentinel-passive-discovery` | active；`discovery_sources` 不报错 |
+| 3c | `systemctl start proxy-sentinel-device-signal` | active；`stat -c %s data/device-signals/ttl.jsonl` 持续增长 |
+| 3d | `systemctl start proxy-sentinel-zeek-cluster`（内部执行 `zeekctl deploy`） | `zeekctl status` 全部 running；接口日志出现在 `data/zeek/logs/current/` |
+| 4 | 恢复 30 分钟后验收 | 见下 |
+
+### 验收标准（恢复后 30 分钟）
+
+- ingest：`ingest_diagnostics` 的 `read`/`emitted` 持续增长，`collector_runs` 滞后不再扩大；
+- 域名识别：`journalctl -u proxy-sentinel-ingest | grep -c "queue full"` 趋近 0（bucket=5m 时应能跟上）；
+- 设备中心：`endpoint_entities.last_seen` 与 `now()` 的差稳定在分钟级并持续缩小；
+- 投影：`endpoint_inventory_projection_jobs` 积压不再单调增长，`endpoint_inventory_projection_state.last_error` 为空。
+
+### 回滚
+
+任一验收项不达标：先 `systemctl stop` 对应的生产者（尤其 device-signal 与 zeek 集群）让系统回到排空状态，
+保留 `previous` 发布指针用于应用回退；数据库迁移只向前兼容，不假定回退会撤销迁移。
