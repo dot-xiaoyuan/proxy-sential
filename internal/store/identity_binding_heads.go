@@ -13,12 +13,18 @@ func bindingHeadID(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// identityBindingGapFactor 是头部有效期相对存在窗口的倍数，必须大于 1。
+// 头部有效期与“延长已有窗口”的阈值都按同一个窗口计算，若有效期恰好只有一个窗口，
+// “头部仍然有效”与“观测比头部新一个窗口”的交集只剩一个点，延长路径实际无法触发：
+// 现场长期 upd=0，连续在线的绑定每个窗口都要新插一行。取 2 表示同一存在窗口最多容忍
+// 一个窗口的空档，空档超过两个窗口才另开一行。
+const identityBindingGapFactor = 2
+
 // bindingHeadCutoff 是仍可作为“同一个存在窗口”锚点的最老 last_seen。
-// 基准必须取批内最新观测时间，不能取 now：观测天生滞后 now 若干秒，而延长条件要求
-// 头部恰好早于观测一个窗口，用 now 作基准会把两个区间压成空集，于是“延长已有窗口”
-// 永远不成立，连续在线的绑定只能每个窗口插入一条新行（现场表现为 upd=0、每分钟两千条新行）。
+// 基准取批内最新观测时间而不是 now：观测天生滞后 now，用 now 作基准又把有效期收窄一段，
+// 同样会压掉延长路径。详见 identityBindingGapFactor。
 func bindingHeadCutoff(anchor time.Time, window time.Duration) time.Time {
-	return anchor.UTC().Add(-window)
+	return anchor.UTC().Add(-time.Duration(identityBindingGapFactor) * window)
 }
 
 func readBindingHeads(ctx context.Context, tx *sql.Tx, kind string, keys []string, window time.Duration, anchor time.Time) (map[string]storedWindow, error) {

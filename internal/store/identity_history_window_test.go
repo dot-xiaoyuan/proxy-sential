@@ -83,10 +83,10 @@ func TestBindingHeadCutoffKeepsHeadOneWindowOld(t *testing.T) {
 	if len(plan.ExtendEventID) != 1 || plan.ExtendEventID[0] != "window-a" || len(plan.InsertIndexes) != 0 {
 		t.Fatalf("continuous binding did not extend its window: %+v", plan)
 	}
-	// A gap older than the window still opens a new row, which is what makes the history
-	// readable as a sequence of presence windows.
+	// A gap wider than the head horizon still opens a new row, which is what makes the
+	// history readable as a sequence of presence windows.
 	gap := map[string]storedWindow{}
-	old := storedWindow{EventID: "window-old", LastSeen: observed.Add(-window - time.Minute)}
+	old := storedWindow{EventID: "window-old", LastSeen: observed.Add(-identityBindingGapFactor*window - time.Minute)}
 	if !old.LastSeen.Before(cutoff) {
 		gap[observationKey("mac:bb", "10.0.0.2", "bb")] = old
 	}
