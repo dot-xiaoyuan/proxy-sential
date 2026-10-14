@@ -754,7 +754,10 @@ for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model
 done
 systemctl restart proxy-sentinel-control-plane.service
 
-for _ in $(seq 1 20); do
+# Seven projection workers restart at once here, and readiness reports not-ready until
+# their beacons resume; on a saturated disk that window has exceeded the previous 100
+# seconds and rolled a healthy release back. Allow up to five minutes before failing.
+for _ in $(seq 1 60); do
   if curl -fsS --max-time 3 "$health_url" >/dev/null 2>&1; then
     rm -rf "$unit_backup"
     trap - ERR
