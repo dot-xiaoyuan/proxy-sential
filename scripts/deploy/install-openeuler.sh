@@ -614,6 +614,20 @@ WantedBy=timers.target
 EOF
 fi
 
+# Router/TTL and shared-access sidecars reopen their output path for every
+# bucket, so plain rename rotation is safe for them. Ship both configs and the
+# timer that drives them: without this the sidecar output grows without bound
+# and eventually fills the release disk.
+for config in proxy-sentinel-shared-signals proxy-sentinel-router-signals; do
+  sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/logrotate/$config" > "/etc/logrotate.d/$config"
+  chmod 0644 "/etc/logrotate.d/$config"
+done
+for unit in proxy-sentinel-shared-logrotate.service proxy-sentinel-shared-logrotate.timer; do
+  sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
+done
+systemctl daemon-reload
+systemctl enable --now proxy-sentinel-shared-logrotate.timer >/dev/null 2>&1 || true
+
 if [[ "$manage_device_signals" == true ]]; then
   mkdir -p "$(dirname "$device_signal_path")"
   touch "$device_signal_path"
