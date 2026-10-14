@@ -138,3 +138,46 @@ monotonic（`GREATEST` 取最大），抑制中间写入不丢信息。
 device 事件量降约 4–5×）与**lane 心跳的每周期时间戳更新**（本轮，约 7×）。
 剩余的高频写入（差分队列表、投影事实、脏标记计数、代际清理）都对应真实变更或有限排空，
 不属于该模式；其中脏标记计数的合并需要先设计加锁协议，留待后续单独评估。
+
+## 八、ClickHouse 图表事实表的重复 revision（2026-10-14，第 3 轮）
+
+`activity_chart_facts_5m_v3` 是 ClickHouse 里行数最多的表（**1.38 GiB / 1.389 亿行**），
+现场实测其重复程度：
+
+| 年龄段 | 每个 bucket 的平均 revision 数 |
+|---|---|
+| 2 天前（已关闭很久） | **20–29** |
+| 昨天 | 23–30 |
+| 近 2 小时（改动前） | 6–8 |
+
+结构原因：该表是 **带 `revision` 的 MergeTree**（不是 Replacing），写入形如
+`INSERT INTO activity_chart_facts_5m_v3 SELECT … toUInt64(<全局递增值>) …`，
+每个 5 分钟 bucket 每重算一次就**追加一份完整副本**；读路径按
+`activity_chart_bucket_versions_v3` 里发布的那个 revision 取数，因此**旧 revision 对读取
+毫无用处**，只能等 `TTL 8 天` 清掉。
+
+### 已实施（安全、效果有限）
+
+把"进行中 bucket"的重算去抖由 30 秒放宽到 `openBucketRebuildDelay = 2 分钟`
+（`internal/store/activity_v3_read_model.go`）。这只是延迟重算——构建始终读取全部可用数据，
+不影响正确性；代价是当前那根柱子的刷新粒度从 ≤30 秒变为 ≤2 分钟。
+
+实测（发布 `2026.10.14-chart-debounce1`）：近 10 分钟新建 bucket 平均 4 个 revision、
+近 25 分钟 5.5 个、近 2 小时 6.1 个。改善有限，因为**桶关闭后的迟到重建占了大头**。
+
+### 记录一个不能用的改法（重要）
+
+用"已发布版本的 `source_as_of` ≥ 脏收据 `written_at`"直接跳过重算，看似能一次砍掉大部分
+重复，但 **`source_as_of` 写入的是发布时间（`now64(9)`）**，而构建的读取发生在发布之前。
+若构建读取之后、发布之前又到达变更，该判据会错误地判定"已覆盖"并跳过，**导致漏更新**。
+
+要安全使用，必须让写入端记录**构建真正的源水位**（读取上界），再以它作为判据；
+在此之前不要采用任何基于 `source_as_of >= written_at` 的跳过逻辑。
+
+### 下一轮可做
+
+1. 在 `publishActivityV3Version` 记录构建的读取上界（而非 `now()`），并据此跳过已覆盖的重算；
+   落地后需验证：跳过条数、bucket 的 revision 数应降到 1–2，且图表不出现缺柱。
+2. `activity_chart_facts_5m_v3` 换成 `ReplacingMergeTree(revision)` 并调整 `ORDER BY`
+   （去掉 key 里的 revision），让后台合并自动回收被取代的副本；这需要一次
+   1.38 GiB 的重建 + 换名切换，且要先确认读路径不依赖 key 中的 revision。
