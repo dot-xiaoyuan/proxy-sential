@@ -144,6 +144,8 @@ func writeInChunks(events []normalized.Event, chunk int, write func([]normalized
 }
 
 func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) error {
+	began := time.Now()
+	deviceCount := 0
 	// Materialize new DHCP observations before attributing application signals.
 	devices := []normalized.Event{}
 	for _, e := range batch.events {
@@ -156,6 +158,8 @@ func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) err
 			return err
 		}
 	}
+	deviceCount = len(devices)
+	identityPhase := time.Since(began)
 	// Software announcements without a MAC may use a unique live DHCP lease.
 	// Discovery queries are deliberately excluded: the queried name may be another device.
 	software := []normalized.Event{}
@@ -232,6 +236,11 @@ func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) err
 		if err := s.ch.WriteDomainEcosystemObservations(ctx, result.Observations); err != nil {
 			return err
 		}
+	}
+	// 现场需要区分"身份物化"与"域名处理"各占多少：设备事件以约 2,000 条/秒流入，
+	// 而这条路径只能写十几行/秒，先量出相位占比再决定优化方向。阈值避免刷屏。
+	if total := time.Since(began); total > 20*time.Second {
+		log.Printf("domain batch timing: events=%d devices=%d identity=%s total=%s", len(batch.events), deviceCount, identityPhase.Round(time.Millisecond), total.Round(time.Millisecond))
 	}
 	return nil
 }
