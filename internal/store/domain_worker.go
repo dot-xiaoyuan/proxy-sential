@@ -149,9 +149,26 @@ func (s *DBStore) runDomainQueueWorker(parent context.Context) {
 // 100 秒以上，身份车道与设备实体写入被整条饿死。按身份车道相同的批大小分块后，单次持锁
 // 降到数百行，其它写入可以在块与块之间插入。
 func (s *DBStore) writeIdentityEventsChunked(ctx context.Context, events []normalized.Event) error {
-	return writeInChunks(events, identitySignalBatchSize, func(chunk []normalized.Event) error {
+	return writeInChunks(events, domainIdentityChunkSize(), func(chunk []normalized.Event) error {
 		return s.pg.WriteIdentityEvents(ctx, chunk)
 	})
+}
+
+// domainIdentityChunkSize bounds one transaction of this path's identity write.
+//
+// The bound exists so another writer can interleave between chunks, but it also sets the commit
+// count: each chunk is its own transaction and each commit pays a WAL fsync, measured at about
+// 230 ms on the field. A ~6,500-event device batch therefore spent roughly ten seconds inside
+// ~43 commits while the domain queue overflowed, and halving the captured volume did not change
+// the drop rate because the queue pressure follows the batch count rather than the byte count.
+// The knob exists so the field can be swept without a redeploy; the default keeps the
+// historical bound.
+func domainIdentityChunkSize() int {
+	n, err := strconv.Atoi(os.Getenv("PROXY_SENTINEL_DOMAIN_IDENTITY_CHUNK"))
+	if err != nil || n < identitySignalBatchSize || n > 5000 {
+		return identitySignalBatchSize
+	}
+	return n
 }
 
 // writeInChunks 按大小切分并顺序写出，任一块失败立即返回该错误。

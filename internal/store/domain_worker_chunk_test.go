@@ -83,3 +83,28 @@ func TestDomainWorkerCountBounds(t *testing.T) {
 		}
 	}
 }
+
+// The chunk size is a field-tunable knob, so its bounds are pinned: below the historical bound
+// it would multiply the commit count (and with it the WAL fsyncs that dominate this path), and
+// above the ceiling one transaction would hold the identity write lock for too long.
+func TestDomainIdentityChunkSizeBounds(t *testing.T) {
+	cases := []struct {
+		set  string
+		want int
+	}{
+		{"", identitySignalBatchSize},
+		{"abc", identitySignalBatchSize},
+		{"0", identitySignalBatchSize},
+		{"149", identitySignalBatchSize},
+		{"150", 150},
+		{"1000", 1000},
+		{"5000", 5000},
+		{"5001", identitySignalBatchSize},
+	}
+	for _, item := range cases {
+		t.Setenv("PROXY_SENTINEL_DOMAIN_IDENTITY_CHUNK", item.set)
+		if got := domainIdentityChunkSize(); got != item.want {
+			t.Fatalf("chunk size for %q = %d, want %d", item.set, got, item.want)
+		}
+	}
+}
