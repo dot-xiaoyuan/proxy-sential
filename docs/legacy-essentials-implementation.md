@@ -76,6 +76,26 @@ proxy-sentinel ingest run \
 - 写入采集运行时，空值不会覆盖 `sensors` 行里已注册的非空元数据；投影和读模型工作进程因此不会抹掉采集器的注册信息。
 - `/ingest/status` 的四个计数器汇总“每个采集源最近一批已处理输入的运行”。空闲心跳运行只用于判断存活，不会把计数器清零；`latest_run_id`/`latest_run_at` 仍指向最新一次提交的运行。
 
+### 事件幂等模式与域名识别背压
+
+写入 ClickHouse 前默认会对每批事件做一次逐 `event_id` 存在性检查，用于重放去重。该检查在历史量上来后是 ingest 的吞吐上限：索引表 `normalized_event_ids_v2` 按 64 行/granule 细分了 57 个 part，单个 id 就要碰 31–57 个 granule，500 个 id 的一批要几十秒；`normalized_events` 上的时间范围扫描同样会撞 60 秒超时。两条路径都让每批 4 MiB 的写入耗时 7–11 秒，采集因此长期落后于生产速率。
+
+可以改为把重放去重交给 ClickHouse：
+
+```bash
+# 表级：为普通 MergeTree 打开插入级去重窗口（元数据操作，不重写数据）
+ALTER TABLE normalized_events MODIFY SETTING non_replicated_deduplication_window = 100;
+```
+
+```bash
+# 进程级：显式声明跳过逐 id 扫描，默认值 scan 保持原行为
+PROXY_SENTINEL_EVENT_ID_IDEMPOTENCY=clickhouse
+```
+
+同一块内容重放时由 ClickHouse 按块哈希丢弃，因此不再需要逐 id 扫描。184 现场实测：每批写入 3–11 秒降到 0.5–1.1 秒，排空速率 25 MB/min 提到 68 MB/min，且按偏移区间逐批对账 `events_added == batches_read_sum`（零丢失、零重复）。切换前必须确认 `non_replicated_deduplication_window` 已设置，否则重放批次会真的重复入库。
+
+`ingest run` 内的域名识别 worker 有界队列为 32 批，溢出即丢弃并记录 `domain recognition queue full; durable events will be reconciled`，由每 5 分钟一次的对账窗口补齐。排空提速后该 worker 会成为新的瓶颈（184 实测约 133 次/分钟），此时事件本身仍然持久，只是域名/设备名富化滞后；需要平衡 ingest 速率与对账窗口，或提高该 worker 的批处理能力。
+
 ## OIDC 配置
 
 控制面增加以下参数：`--oidc-issuer`、`--oidc-client-id`、`--oidc-client-secret-file`、`--oidc-redirect-url`、`--oidc-role-mapping` 和 `--oidc-default-role`。角色映射是 JSON，例如：
