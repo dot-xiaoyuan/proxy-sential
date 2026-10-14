@@ -63,11 +63,16 @@ func Run(ctx context.Context, opts Options) error {
 	if opts.SharedSignalsOnly {
 		packetSource = "shared-syn-sidecar"
 	}
-	tracker := newStateChangeTracker(opts.StateLiveness)
+	tracker := newStateChangeTracker[packetBucketKey](opts.StateLiveness)
+	controlTracker := newStateChangeTracker[string](opts.StateLiveness)
 	// A device state that has not changed carries no information: write new keys at once,
 	// rewrite a still-present key once per liveness interval, and fold the rest into it.
 	flushPackets := func(at time.Time, packets map[packetBucketKey]int) error {
 		return writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, at, tracker.filter(at, packets))
+	}
+	// Shutdown writes the state the tracker still holds.
+	flushControls := func(at time.Time, controls map[string]controlSignal) error {
+		return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, selectControls(controlTracker, at, controls))
 	}
 	// Shutdown writes the state the tracker still holds.
 	flushHeld := func(at time.Time) error {
@@ -108,7 +113,7 @@ func Run(ctx context.Context, opts Options) error {
 			if err := flushHeld(bucket); err != nil {
 				return err
 			}
-			return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls)
+			return flushControls(bucket, state.controls)
 		case now := <-ticker.C:
 			if state.droppedPacketKeys > 0 {
 				log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
@@ -116,7 +121,7 @@ func Run(ctx context.Context, opts Options) error {
 			if err := flushPackets(bucket, state.packets); err != nil {
 				return err
 			}
-			if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls); err != nil {
+			if err := flushControls(bucket, state.controls); err != nil {
 				return err
 			}
 			state.packets = map[packetBucketKey]int{}
@@ -136,7 +141,7 @@ func Run(ctx context.Context, opts Options) error {
 					if err := flushHeld(bucket); err != nil {
 						return err
 					}
-					return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls)
+					return flushControls(bucket, state.controls)
 				case now := <-ticker.C:
 					if state.droppedPacketKeys > 0 {
 						log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
@@ -144,7 +149,7 @@ func Run(ctx context.Context, opts Options) error {
 					if err := flushPackets(bucket, state.packets); err != nil {
 						return err
 					}
-					if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, state.controls); err != nil {
+					if err := flushControls(bucket, state.controls); err != nil {
 						return err
 					}
 					state.packets = map[packetBucketKey]int{}

@@ -16,11 +16,11 @@ import "time"
 // information. Keys that stay present are rewritten once per liveness interval so that
 // last_seen keeps a known granularity. Keys that stop appearing age out, so a later
 // re-appearance is reported again as a change.
-type stateChangeTracker struct {
+type stateChangeTracker[K comparable] struct {
 	liveness time.Duration
 	grace    time.Duration
 	limit    int
-	active   map[packetBucketKey]*stateEntry
+	active   map[K]*stateEntry
 	dropped  int
 }
 
@@ -35,25 +35,25 @@ type stateEntry struct {
 	count     int
 }
 
-func newStateChangeTracker(liveness time.Duration) *stateChangeTracker {
+func newStateChangeTracker[K comparable](liveness time.Duration) *stateChangeTracker[K] {
 	if liveness <= 0 {
 		return nil
 	}
-	return &stateChangeTracker{
+	return &stateChangeTracker[K]{
 		liveness: liveness,
 		grace:    liveness,
 		limit:    maxTrackedStateKeys,
-		active:   map[packetBucketKey]*stateEntry{},
+		active:   map[K]*stateEntry{},
 	}
 }
 
 // filter returns the subset of this bucket's packets that must be written now. Everything
 // else is folded into its tracked entry and written by a later bucket.
-func (t *stateChangeTracker) filter(bucket time.Time, packets map[packetBucketKey]int) map[packetBucketKey]int {
+func (t *stateChangeTracker[K]) filter(bucket time.Time, packets map[K]int) map[K]int {
 	if t == nil || len(packets) == 0 {
 		return packets
 	}
-	out := make(map[packetBucketKey]int)
+	out := make(map[K]int)
 	for key, count := range packets {
 		entry, tracked := t.active[key]
 		if !tracked {
@@ -84,11 +84,11 @@ func (t *stateChangeTracker) filter(bucket time.Time, packets map[packetBucketKe
 }
 
 // pending returns every still-tracked key so a shutdown writes the state it holds.
-func (t *stateChangeTracker) pending() map[packetBucketKey]int {
+func (t *stateChangeTracker[K]) pending() map[K]int {
 	if t == nil || len(t.active) == 0 {
 		return nil
 	}
-	out := make(map[packetBucketKey]int, len(t.active))
+	out := make(map[K]int, len(t.active))
 	for key, entry := range t.active {
 		out[key] = entry.count
 	}
@@ -96,9 +96,35 @@ func (t *stateChangeTracker) pending() map[packetBucketKey]int {
 }
 
 // trackedCount reports how many keys the tracker is holding, for the periodic diagnostics.
-func (t *stateChangeTracker) trackedCount() int {
+func (t *stateChangeTracker[K]) trackedCount() int {
 	if t == nil {
 		return 0
 	}
 	return len(t.active)
+}
+
+// selectControls applies the same rule to control signals (SSDP, LLDP, IEEE1905, ...). The
+// field sample showed one gateway IP advertising 144 distinct payloads inside a single
+// bucket — 140 distinct USNs, i.e. many real services relayed behind one address — and every
+// one of them re-advertised each bucket. A service that has not changed since it was last
+// written is not re-written until the liveness interval elapses.
+func selectControls(t *stateChangeTracker[string], bucket time.Time, values map[string]controlSignal) map[string]controlSignal {
+	if t == nil || len(values) == 0 {
+		return values
+	}
+	counted := make(map[string]int, len(values))
+	for key := range values {
+		counted[key] = 1
+	}
+	keep := t.filter(bucket, counted)
+	if len(keep) == 0 {
+		return nil
+	}
+	out := make(map[string]controlSignal, len(keep))
+	for key, signal := range values {
+		if _, wanted := keep[key]; wanted {
+			out[key] = signal
+		}
+	}
+	return out
 }
