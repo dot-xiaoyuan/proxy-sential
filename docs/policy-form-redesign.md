@@ -45,7 +45,9 @@ online_members: 0
 | 2 | 4K 北向 `srunapi.Groups()` → `commitSRunGroups` | `group_id` + **`name`** + **`parent_id`** + **`path`**（完整树） | **从未跑**：`srun4k_integrations` 是空表 |
 | 3 | 桥接读取目录 Redis（`list:products` / `list:control` / `hash:control:*`） | 只有产品与管控策略，**不含用户组** | 版本为 0，跳过 |
 
-所以现场"有 ID、没名称、没层级"不是 bug，而是**只有链路 1 在跑**。你说得对：用户组本来就是带名称的组织树，而且**只需要同步一次**——它属于链路 2 的能力，只是现场没有配置北向接入。
+仓库中实际访问的 Redis 键只有：`list:products`、`list:control`、`list:products:control:<id>`、`hash:control:<id>`、`hash:products:<id>`（目录）与 `list:rad_online`、`hash:rad_online:<id>`、`list:antiproxy:...`（身份）。**没有任何用户组相关的键**——所以"组名"不可能从当前已接入的 Redis 侧补齐，只能来自 4K 北向接口。
+
+所以现场"有 ID、没名称、没层级"不是 bug，而是**只有链路 1 在跑**。你说得对：用户组本来就是带名称的组织树，而且**只需要同步一次**——它属于链路 2 的能力，只是现场没有配置北向接入（`srun4k_integrations` 0 行）。
 
 ## 3. 目录同步的正确设计
 
