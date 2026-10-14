@@ -7,7 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/netip"
+	"proxy-sentinel/internal/identityprotocol"
 	"strconv"
 	"strings"
 	"time"
@@ -104,6 +107,7 @@ type Sender struct {
 	Source, CampusID          string
 	AccessDomain              string
 	Client                    *http.Client
+	Durable                   bool
 }
 
 func (s Sender) Send(ctx context.Context, records []map[string]string, idempotency string) error {
@@ -128,11 +132,16 @@ func (s Sender) Send(ctx context.Context, records []map[string]string, idempoten
 		}
 		scoped = append(scoped, copyRecord)
 	}
-	payload, err := json.Marshal(map[string]any{"source": source, "sensor_id": s.SensorID, "records": scoped})
+	batch := identityprotocol.Request{Source: source, SensorID: s.SensorID, Records: scoped}
+	payload, err := json.Marshal(batch)
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.Endpoint, "/")+"/api/v1/integrations/identity/events", bytes.NewReader(payload))
+	path := "/api/v1/integrations/identity/events"
+	if s.Durable {
+		path = "/api/v1/integrations/identity/event-batches"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.Endpoint, "/")+path, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -150,6 +159,26 @@ func (s Sender) Send(ctx context.Context, records []map[string]string, idempoten
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("identity endpoint returned %s", response.Status)
+	}
+	if s.Durable {
+		var receipt identityprotocol.Receipt
+		if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&receipt); err != nil {
+			return fmt.Errorf("invalid durable receipt: %w", err)
+		}
+		return receipt.Verify(idempotency, batch.Hash(), len(records))
+	}
+	var receipt struct {
+		BatchID string `json:"batch_id"`
+		Status  string `json:"status"`
+		Source  string `json:"source"`
+		Sensor  string `json:"sensor_id"`
+		Read    int    `json:"read"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&receipt); err != nil {
+		return fmt.Errorf("invalid identity receipt: %w", err)
+	}
+	if receipt.BatchID != idempotency || receipt.Status != "completed" || receipt.Source != source || receipt.Sensor != s.SensorID || receipt.Read != len(records) {
+		return fmt.Errorf("identity receipt does not confirm completed batch")
 	}
 	return nil
 }
@@ -174,4 +203,48 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// DecodeRecordsForInstance preserves all addresses under one stable login
+// generation. Address rows affect one session reference, never one session each.
+func DecodeRecordsForInstance(raw, instanceID string, now time.Time) ([]map[string]string, error) {
+	base, err := DecodeRecordForInstance(raw, instanceID, now)
+	if err != nil {
+		return nil, err
+	}
+	var e Event
+	if err = json.Unmarshal([]byte(raw), &e); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	out := []map[string]string{}
+	for _, ip := range []string{e.IP, e.IPv6, e.IPv6Legacy, e.IPv6_1, e.IPv6_2, e.IPv6_3, e.IPv6_4, e.IPv6_5, e.IPv6_6, e.IPv6_7} {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			continue
+		}
+		address, parseErr := netip.ParseAddr(ip)
+		if parseErr != nil || address.IsMulticast() {
+			return nil, fmt.Errorf("invalid identity address")
+		}
+		// 4K fills unused address slots with 0.0.0.0 or ::.
+		if address.IsUnspecified() {
+			continue
+		}
+		ip = address.Unmap().String()
+		if seen[ip] {
+			continue
+		}
+		seen[ip] = true
+		record := map[string]string{}
+		for k, v := range base {
+			record[k] = v
+		}
+		record["ip"] = ip
+		out = append(out, record)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("legacy event has no usable identity address")
+	}
+	return out, nil
 }

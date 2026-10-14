@@ -22,7 +22,7 @@ describe('网络设备发现', () => {
   // 空结果历史上被后端序列化为 null，前端直接 .map 会让整页崩到错误边界。
   it('接口 items 为 null 时按空列表渲染且不崩溃', async () => {
     request.mockImplementation((path: string) => {
-      if (String(path).startsWith('/discovery/devices')) return Promise.resolve({ items: null, total: 0 })
+      if (String(path).startsWith('/discovery/devices')) return Promise.resolve({ items: null, next_cursor: '', has_more: false })
       return Promise.resolve({ items: [], total: 0 })
     })
     setup()
@@ -39,7 +39,8 @@ describe('网络设备发现', () => {
             observations: [{ id: 'obs-1', ip: '198.18.90.8', mac: '02:00:00:00:90:08', name: 'office-printer.local', origin: 'dns_sd', observed_at: '2026-10-12T00:00:00Z', valid_until: '2026-10-13T00:00:00Z', explanation: '服务能力公告', device_type: 'printer', capabilities: ['printing'] }],
             association: '',
           }],
-          total: 1,
+          next_cursor: '',
+          has_more: false,
         })
       }
       return Promise.resolve({ items: [], total: 0 })

@@ -1,6 +1,6 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom'
 
-import { LegacyRedirect,LegacySettingsEntry,ActivityEntry } from './LegacyRedirect'
+import { LegacyRedirect,LegacySettingsEntry,ActivityEntry,LegacyDiscoveryRedirect } from './LegacyRedirect'
 import { AppShell } from './AppShell'
 import {
   ActionRecordsRoute,CampusExceptionsRoute,WhitelistRoute,SourcesRoute,
@@ -12,7 +12,6 @@ import {
   AuditRoute,
   AuditDetailsRoute,
   DevicesRoute,
-  DiscoveryRoute,
   RouterObservationDetailsRoute,
   EndpointDetailsRoute,
   EventsRoute,
@@ -42,8 +41,9 @@ export const router = createBrowserRouter([
       { path: 'overview', element: <OverviewRoute /> },
       { path: 'activity', element: <ActivityEntry><ActivityRoute /></ActivityEntry> },
       { path: 'devices', element: <DevicesRoute /> },
-      { path: 'discovery', element: <DiscoveryRoute /> },
+      { path: 'discovery', element: <LegacyDiscoveryRedirect /> },
       { path: 'discovery/routers/:assessmentId', element: <RouterObservationDetailsRoute /> },
+      { path: 'devices/network/:assessmentId', element: <RouterObservationDetailsRoute /> },
       { path: 'devices/:endpointId', element: <EndpointDetailsRoute /> },
       { path: 'events', element: <EventsRoute /> },
       { path: 'events/:eventId', element: <EventDetailsRoute /> },

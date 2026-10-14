@@ -28,6 +28,7 @@ const (
 )
 
 type Status struct {
+	SourceCatalog           []FingerprintSource  `json:"source_catalog"`
 	ActiveDomainVersion     string               `json:"active_domain_version,omitempty"`
 	PendingDomainVersion    string               `json:"pending_domain_version,omitempty"`
 	DomainProcessingError   string               `json:"domain_processing_error,omitempty"`
@@ -104,6 +105,9 @@ func (m *Manager) ImportWithGuard(data []byte, check func() error) (Status, erro
 	}
 	library, err := LoadWithDomainData(bundle.Manifest.Version, bundle.Files["oui.csv"], bundle.Files["device-rules.json"], bundle.Files["fingerbank-dhcp.json"], bundle.Files["brand-aliases.json"], bundle.Files["domain-signatures.json"])
 	if err != nil {
+		return m.fail(err)
+	}
+	if err := library.LoadCatalog(bundle.Files["multisource-catalog.json"]); err != nil {
 		return m.fail(err)
 	}
 	current := m.Status()
@@ -223,6 +227,7 @@ func bundleChecksum(bundle Bundle) string {
 	return hex.EncodeToString(sum[:])
 }
 func libraryStatus(library *Library, status Status) Status {
+	status.SourceCatalog = library.Catalog().Sources
 	status.ApplicationRuleCount = ApplicationRuleCount()
 	if library != nil {
 		status.RuleCount = len(library.rules)
@@ -267,10 +272,20 @@ func bundleLicenses(manifest BundleManifest) []string {
 			result = append(result, "MIT (NextDNS)")
 		}
 	}
+	seen := map[string]bool{}
+	for _, license := range result {
+		seen[license] = true
+	}
+	for _, source := range manifest.Sources {
+		if !seen[source.License] {
+			result = append(result, source.License)
+			seen[source.License] = true
+		}
+	}
 	return result
 }
 func domainBackfillInitialStatus(manifest BundleManifest) string {
-	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 {
+	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 {
 		return "pending"
 	}
 	return "not_required"
@@ -497,6 +512,46 @@ func (m *Manager) loadCurrent() {
 	statusData, _ := os.ReadFile(filepath.Join(m.dir, "status.json"))
 	status := m.status
 	_ = json.Unmarshal(statusData, &status)
+	if manifestData, readErr := os.ReadFile(filepath.Join(base, "manifest.json")); readErr == nil {
+		var manifest BundleManifest
+		if err := json.Unmarshal(manifestData, &manifest); err != nil {
+			m.status.Status = "degraded"
+			m.status.LastError = "invalid installed manifest"
+			return
+		}
+		if manifest.SchemaVersion == BundleSchemaVersionV6 {
+			files := map[string][]byte{}
+			total := 0
+			for name, metadata := range manifest.Files {
+				if filepath.IsAbs(name) || filepath.Clean(name) != name || strings.Contains(name, "..") || metadata.Size < 0 || metadata.Size > MaxBundleContent {
+					m.status.Status = "degraded"
+					m.status.LastError = "invalid installed file path or size"
+					return
+				}
+				data, err := os.ReadFile(filepath.Join(base, name))
+				total += len(data)
+				if err != nil || total > MaxBundleContent || bundleFile(data) != metadata {
+					m.status.Status = "degraded"
+					m.status.LastError = "installed fingerprint file checksum mismatch"
+					return
+				}
+				files[name] = data
+			}
+			encoded, err := encodeBundle(manifest, files)
+			if err == nil {
+				_, err = VerifyBundleBytes(encoded)
+			}
+			if err != nil {
+				m.status.Status = "degraded"
+				m.status.LastError = err.Error()
+				return
+			}
+		}
+		status.Version = manifest.Version
+		status.Sources = manifest.Sources
+		status.Status = "ready"
+		status.LastError = ""
+	}
 	fingerbankData, _ := os.ReadFile(filepath.Join(base, "fingerbank-dhcp.json"))
 	if len(fingerbankData) == 0 {
 		fingerbankData = []byte("[]")
@@ -512,6 +567,25 @@ func (m *Manager) loadCurrent() {
 	if err != nil {
 		m.status.Status = "degraded"
 		m.status.LastError = "load domain/device rules: " + err.Error()
+		return
+	}
+	catalogData, _ := os.ReadFile(filepath.Join(base, "multisource-catalog.json"))
+	if len(catalogData) > 0 {
+		provenance, readErr := os.ReadFile(filepath.Join(base, "multisource-provenance.json"))
+		if readErr != nil {
+			m.status.Status = "degraded"
+			m.status.LastError = "source provenance missing"
+			return
+		}
+		if verifyErr := VerifyCatalogProvenance(catalogData, provenance); verifyErr != nil {
+			m.status.Status = "degraded"
+			m.status.LastError = verifyErr.Error()
+			return
+		}
+	}
+	if err := library.LoadCatalog(catalogData); err != nil {
+		m.status.Status = "degraded"
+		m.status.LastError = err.Error()
 		return
 	}
 	SetDefault(library)
@@ -601,4 +675,44 @@ func mergeOUICSV(parts [][]byte) ([]byte, error) {
 		return nil, err
 	}
 	return output.Bytes(), nil
+}
+
+// WatchInstalled reloads only a changed, complete local release. The last valid
+// library stays active on failure; no network request is made by worker lanes.
+func (m *Manager) WatchInstalled(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	last := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			target, err := filepath.EvalSymlinks(filepath.Join(m.dir, "current"))
+			if err != nil {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(target, "manifest.json"))
+			if err != nil {
+				continue
+			}
+			sum := sha256.Sum256(data)
+			key := target + hex.EncodeToString(sum[:])
+			if key == last {
+				continue
+			}
+			m.importMu.Lock()
+			m.mu.Lock()
+			m.loadCurrent()
+			ready := m.status.Status == "ready"
+			message := m.status.LastError
+			m.mu.Unlock()
+			m.importMu.Unlock()
+			if ready {
+				last = key
+			} else {
+				fmt.Printf("fingerprint worker keeps last valid library: %s\n", message)
+			}
+		}
+	}
 }

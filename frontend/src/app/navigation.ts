@@ -11,7 +11,7 @@ export const navigation: NavigationGroup[] = [
     {...item('reviews','账号复核','/shared-access?tab=reviews','cases:read'), owns: (p,q) => p.startsWith('/shared-access/reviews') || p === '/shared-access' && q.get('tab') === 'reviews'},
     item('cases','风险案件','/cases','cases:read'), {...item('actions','处置记录','/actions?tab=actions','actions:read'),readAlternatives:[{permission:'policies:read',to:'/actions?tab=executions'}]},
   ] },
-  { key: 'assets', title: '资产与画像', items: [item('devices','终端画像','/devices','identity:read'), item('discovery','网络设备发现','/discovery','identity:read')] },
+  { key: 'assets', title: '设备中心', items: [{...item('devices','设备中心','/devices','identity:read'), owns: path => path === '/devices' || path.startsWith('/devices/') || path === '/discovery' || path.startsWith('/discovery/'), }] },
   { key: 'network', title: '网络分析', items: [
     ...(['applications','access','technical'] as const).map((section,index) => ({...item(section,['应用访问','访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['applications','access','technical'].includes(q.get('section')||'')?q.get('section'):'applications') === section})),
     item('events','事件检索','/events','events:read'),

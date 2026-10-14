@@ -449,7 +449,7 @@ func (s *Server) validatePolicyDeliveryContext(parent context.Context, a Enforce
 			return err
 		}
 		if !healthy {
-			return fmt.Errorf("srun4k login and logout event channel is not verified")
+			return fmt.Errorf("认证处理进度、来源版本或同步心跳未通过检查，暂不可执行")
 		}
 	}
 	if a.ActionType != "release" && a.PolicyParameters.ExecutionID == "" {

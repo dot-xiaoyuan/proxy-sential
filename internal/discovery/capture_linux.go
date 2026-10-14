@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -17,7 +18,10 @@ import (
 )
 
 // Capture spools standard events on a separate goroutine; packet reads never wait on database work.
-func Capture(ctx context.Context, iface, spool string, source Source) error {
+func Capture(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix) error {
+	if len(allow) == 0 {
+		return fmt.Errorf("passive capture requires allowed CIDRs")
+	}
 	i, e := net.InterfaceByName(iface)
 	if e != nil {
 		return e
@@ -67,7 +71,7 @@ func Capture(ctx context.Context, iface, spool string, source Source) error {
 		if err != nil {
 			return err
 		}
-		events := decodeFrame(buffer[:n], source, time.Now().UTC(), cache)
+		events := filterCaptureEvents(decodeFrame(buffer[:n], source, time.Now().UTC(), cache), allow)
 		if len(events) == 0 {
 			continue
 		}
@@ -80,6 +84,7 @@ func Capture(ctx context.Context, iface, spool string, source Source) error {
 	}
 	return ctx.Err()
 }
+
 func htons(v uint16) uint16 {
 	var b [2]byte
 	binary.LittleEndian.PutUint16(b[:], v)

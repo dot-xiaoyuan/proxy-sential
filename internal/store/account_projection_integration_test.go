@@ -61,7 +61,7 @@ func TestAccountSnapshotProjectionDualStackAndMonotonicScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := AccountSession{SessionID: "login-generation-1", AccountID: "account-replay", Source: scope.Source, CampusID: "other-campus", IP: "192.0.2.57", StartedAt: loginAt.Format(time.RFC3339Nano), LastConfirmedAt: at.Format(time.RFC3339Nano)}
-	if err = writeIdentityState(ctx, tx, IdentityState{Sessions: []AccountSession{legacy}}); err != nil {
+	if _, err = writeIdentityState(ctx, tx, IdentityState{Sessions: []AccountSession{legacy}}); err != nil {
 		tx.Rollback()
 		t.Fatal(err)
 	}

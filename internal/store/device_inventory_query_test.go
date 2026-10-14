@@ -19,12 +19,13 @@ func TestDeviceInventoryLightQueryOnlyReadsLimitPlusOneAndCachedStatus(t *testin
 	s := &PostgresStore{db: db}
 	now := time.Now().UTC()
 	for request := 0; request < 2; request++ {
+		mock.ExpectQuery(`SELECT backfill_complete AND ready`).WillReturnRows(sqlmock.NewRows([]string{"complete", "updating", "at", "error", "accepted", "processed", "oldest", "available"}).AddRow(true, false, now, "", 1, 1, nil, true))
 		rows := sqlmock.NewRows([]string{"list_item", "updated_at"})
 		for i := 0; i < 21; i++ {
 			raw, _ := json.Marshal(DeviceInventoryListItem{EndpointID: fmt.Sprintf("fixture-%d", i), CurrentIP: "192.0.2.1"})
 			rows.AddRow(raw, now.Add(-time.Duration(i)*time.Second))
 		}
-		mock.ExpectQuery(`SELECT r.list_item,r.updated_at.*`).WithArgs(21, 0).WillReturnRows(rows).RowsWillBeClosed()
+		mock.ExpectQuery(`SELECT i.list_item,i.updated_at.*`).WithArgs(21, 0).WillReturnRows(rows).RowsWillBeClosed()
 		if request == 0 {
 			mock.ExpectQuery(`SELECT\s+EXISTS\(SELECT 1 FROM endpoint_recognition_jobs`).WillReturnRows(sqlmock.NewRows([]string{"updating"}).AddRow(true))
 		}
@@ -33,8 +34,11 @@ func TestDeviceInventoryLightQueryOnlyReadsLimitPlusOneAndCachedStatus(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(page.Items) != 20 || page.Page.Total != 0 || page.Page.NextCursor == nil || *page.Page.NextCursor != "20" {
+		if len(page.Items) != 20 || page.Page.Total != 0 || page.Page.NextCursor == nil || *page.Page.NextCursor == "20" {
 			t.Fatalf("page: %+v", page)
+		}
+		if _, err := decodeInventoryCursor(Query{InventorySearchType: "all"}, *page.Page.NextCursor); err != nil {
+			t.Fatalf("opaque cursor: %v", err)
 		}
 		if page.AsOf != now.Add(-19*time.Second).Format(time.RFC3339Nano) {
 			t.Fatalf("sentinel changed freshness: %s", page.AsOf)
@@ -56,7 +60,8 @@ func TestDeviceInventoryMetadataNeverReadsRowsOrHistories(t *testing.T) {
 	}
 	defer db.Close()
 	s := &PostgresStore{db: db}
-	mock.ExpectQuery(`SELECT DISTINCT r.filter_brand,r.filter_os_family`).WillReturnRows(sqlmock.NewRows([]string{"brand", "os"}).AddRow("Dell", "Windows"))
+	mock.ExpectQuery(`SELECT backfill_complete AND ready`).WillReturnRows(sqlmock.NewRows([]string{"complete", "updating", "at", "error", "accepted", "processed", "oldest", "available"}).AddRow(true, false, time.Now(), "", 1, 1, nil, true))
+	mock.ExpectQuery(`SELECT DISTINCT coalesce`).WillReturnRows(sqlmock.NewRows([]string{"brand", "os"}).AddRow("Dell", "Windows"))
 	mock.ExpectQuery(`SELECT count\(\*\)`).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(35001))
 	page, err := s.ListDeviceInventory(context.Background(), Query{InventoryMetadataOnly: true})
 	if err != nil || page.Page.Total != 35001 || len(page.Items) != 0 || page.AsOf == "" {
@@ -64,5 +69,21 @@ func TestDeviceInventoryMetadataNeverReadsRowsOrHistories(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInventoryCursorIsBoundToFilters(t *testing.T) {
+	q := Query{Q: "printer", InventorySearchType: "name", View: "history", Window: "", Limit: 20}
+	at := time.Date(2026, 10, 13, 1, 2, 3, 0, time.UTC)
+	raw, err := encodeInventoryCursor(q, &at, "endpoint-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = decodeInventoryCursor(q, raw); err != nil {
+		t.Fatalf("cursor should decode: %v", err)
+	}
+	q.Q = "router"
+	if _, err = decodeInventoryCursor(q, raw); err == nil {
+		t.Fatal("cursor was accepted for a different filter")
 	}
 }

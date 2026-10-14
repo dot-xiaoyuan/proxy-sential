@@ -40,20 +40,22 @@ paths:
       operationId: getDiscoveryDevices
       description: Windowed passive, infrastructure, or active discovery read model; requires identity:read. Does not claim online state or create terminal identities.
       parameters:
+        - { name: view, in: query, description: IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient., schema: { type: string, enum: [iot] } }
         - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
         - { name: window, in: query, schema: { type: string, default: 24h } }
-        - { name: search, in: query, schema: { type: string } }
+        - { name: search, in: query, description: 'Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching.', schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
         - { name: category, in: query, schema: { type: string, enum: [mobile, tablet, desktop, printer, camera, network, media, identity_only] } }
         - { name: capability, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
-        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: cursor, in: query, description: Opaque cursor bound to all filters and the last observed device. Numeric offset pagination is not supported., schema: { type: string, minLength: 1 } }
       responses:
         '200':
-          description: Discovery result
+          description: Discovery result page. The result is built from the maintained latest-observation relation; it does not imply online state.
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
+              schema: { $ref: '#/components/schemas/DiscoveryDevicePage' }
+        '400': { description: Invalid cursor, mode, or pagination parameter }
   /router-observations:
     get:
       operationId: listRouterObservations
@@ -65,7 +67,7 @@ paths:
         - { name: vlan, in: query, schema: { type: string } }
         - { name: brand, in: query, schema: { type: string } }
         - { name: model, in: query, schema: { type: string } }
-        - { name: role, in: query, description: Defaults to router; pass ap explicitly to inspect access points., schema: { type: string, enum: [router, ap, switch, firewall, endpoint, unknown], default: router } }
+        - { name: role, in: query, description: Defaults to router; network includes routers access points switches and firewalls., schema: { type: string, enum: [network, router, ap, switch, firewall, endpoint, unknown], default: router } }
         - { name: status, in: query, schema: { type: string, enum: [candidate, likely, confirmed] } }
         - { name: include_candidates, in: query, description: Include low-confidence router candidates when status is not explicitly selected., schema: { type: boolean, default: false } }
         - { name: source, in: query, schema: { type: string } }
@@ -1507,6 +1509,57 @@ paths:
       responses:
         "200": { description: Authenticated callback accepted idempotently. }
         "401": { description: Invalid HMAC signature or stale timestamp. }
+  /integrations/identity/event-batches:
+    post:
+      operationId: acceptDurableIdentityBatch
+      description: Version 2 durable inbox. A receipt acknowledges PostgreSQL commit only; identity processing and raw export are independent. Retry an identical request with the same key. Ordinary 2xx responses are not acknowledgements.
+      security:
+        - IdentityBearer: []
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, sensor_id, records]
+              properties:
+                source: { type: string }
+                sensor_id: { type: string }
+                records: { type: array, minItems: 1, maxItems: 10000, items: { type: object, additionalProperties: { type: string } } }
+      responses:
+        '202':
+          description: Identical durable receipt, including on retries after a lost response.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IdentityDurableReceipt' }
+        '409': { description: Batch ID belongs to different content or protocol. }
+        '429': { description: Inbox capacity reached. Retain messages and retry. }
+        '503': { description: Durable acceptance unavailable or paused. Retain messages and retry. }
+  /integrations/identity/snapshot-publication:
+    get:
+      operationId: identitySnapshotPublication
+      security:
+        - IdentityBearer: []
+      parameters:
+        - { name: source, in: query, required: true, schema: { type: string } }
+        - { name: sensor_id, in: query, required: true, schema: { type: string } }
+        - { name: campus_id, in: query, required: true, schema: { type: string } }
+        - { name: access_domain, in: query, required: true, schema: { type: string } }
+        - { name: snapshot_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Whether this exact complete inventory has become the current projection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [snapshot_id, published, calibration_state]
+                properties:
+                  snapshot_id: { type: string }
+                  published: { type: boolean }
+                  calibration_state: { type: string }
   /integrations/identity/events:
     post:
       operationId: ingestIdentityEvents
@@ -1521,7 +1574,7 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         "202":
-          description: Identity batch normalized and accepted.
+          description: Legacy synchronous batch completed. Existing failed batches return a non-2xx response.
   /integrations/identity/snapshots:
     post:
       operationId: commitIdentitySnapshot
@@ -2584,13 +2637,14 @@ paths:
       operationId: listDeviceInventory
       description: Lightweight terminal list backed by the incrementally maintained recognition read model.
       parameters: &deviceInventoryParameters
+        - { name: search_type, in: query, schema: { type: string, enum: [all, account, ip, mac, name], default: all }, description: Account searches match exact latest observed candidates only; complete IP searches retain historical evidence matching. }
         - name: include_metadata
           in: query
           description: False skips facets and exact count; page.total is omitted.
           schema: { type: boolean, default: true }
         - name: refresh
           in: query
-          description: Bypass the current query cache.
+          description: Requests a fresh read; list pages are not retained across requests, while identical in-flight reads may be coalesced.
           schema: { type: boolean, default: false }
         - name: view
           in: query
@@ -2628,7 +2682,8 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
         - name: cursor
           in: query
-          schema: { type: string }
+          description: Opaque cursor bound to the complete filter and sort. Numeric offset cursors are rejected; omit for the first page.
+          schema: { type: string, minLength: 1 }
       responses:
         "200":
           description: Lightweight terminal inventory page and recognition facets.
@@ -2655,6 +2710,43 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /device-inventory/{endpoint_id}:
+    get:
+      operationId: getDeviceInventoryDetail
+      description: Prepared initial summary and up to 20 relation overviews; no raw histories. Incomplete coverage is explicitly reported.
+      parameters:
+        - { name: endpoint_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Terminal summary, content: { application/json: { schema: { $ref: "#/components/schemas/InventoryDetail" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: Projection unavailable }
+  /endpoints/{endpoint_id}/observations:
+    get:
+      operationId: listEndpointObservations
+      description: Endpoint-scoped trace, exact relation filters and stable opaque cursors. Observation timestamps do not establish continuous validity.
+      parameters:
+        - { name: endpoint_id, in: path, required: true, schema: { type: string } }
+        - { name: kind, in: query, required: true, schema: { type: string, enum: [account, ip, access] } }
+        - { name: value, in: query, schema: { type: string, maxLength: 256 } }
+        - { name: source, in: query, schema: { type: string, maxLength: 128 } }
+        - { name: start, in: query, schema: { type: string, format: date-time } }
+        - { name: end, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: Trace page, content: { application/json: { schema: { $ref: "#/components/schemas/EndpointObservationPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { description: Historical coverage incomplete }
+  /endpoints/{endpoint_id}/observations/{record_id}/evidence:
+    get:
+      operationId: getInventorySnapshotEvidence
+      description: Requires events:read, exactly like the existing raw-event entry. Returns only the referenced event in a retained immutable snapshot or the endpoint-scoped original authentication session; never the entire snapshot.
+      parameters:
+        - { name: endpoint_id, in: path, required: true, schema: { type: string } }
+        - { name: record_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Retained original evidence, content: { application/json: { schema: { oneOf: [{ $ref: "#/components/schemas/NormalizedEventSummary" }, { $ref: "#/components/schemas/AccountSession" }] } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
   /devices:
     get:
       operationId: listDevices
@@ -3181,6 +3273,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeviceFingerprintLibraryStatus"
+  /device-fingerprint-library/sources:
+    get:
+      operationId: listFingerprintSources
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: protocol, in: query, schema: { type: string } }
+        - { name: role, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Fingerprint catalog read model.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FingerprintSourcePage" }
+  /device-fingerprint-library/sources/{id}:
+    get:
+      operationId: getFingerprintSource
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 指纹来源详情
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FingerprintSource" }
+        "404": { description: 来源不存在 }
+  /device-fingerprint-library/rules:
+    get:
+      operationId: listFingerprintRules
+      parameters:
+        - { name: source, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: protocol, in: query, schema: { type: string } }
+        - { name: role, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: page_size, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Fingerprint catalog read model.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FingerprintRulePage" }
+  /device-fingerprint-library/coverage:
+    get:
+      operationId: getFingerprintCoverage
+      responses:
+        "200":
+          description: Fingerprint catalog read model.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FingerprintCoverage" }
   /device-fingerprint-library/update:
     post:
       operationId: updateDeviceFingerprintLibrary
@@ -4056,6 +4201,16 @@ components:
       anyOf:
         - required: [reconcile_interval_seconds]
         - required: [reconcile_interval_hours]
+    IdentityDurableReceipt:
+      type: object
+      required: [protocol_version, batch_id, content_sha256, record_count, durably_accepted, accepted_at]
+      properties:
+        protocol_version: { type: integer, enum: [2] }
+        batch_id: { type: string }
+        content_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        record_count: { type: integer, minimum: 1 }
+        durably_accepted: { type: boolean, enum: [true] }
+        accepted_at: { type: string, format: date-time }
     IdentityBridge:
       type: object
       required: [config, runtime, checked_at, read_only]
@@ -4109,19 +4264,44 @@ components:
         source_queue: { type: integer }
         processing_queue: { type: integer }
         online_members: { type: integer }
-        online_sessions: { type: integer }
+        online_sessions: { type: [integer, "null"] }
         committed_messages: { type: integer }
         bad_messages: { type: integer }
         event_consecutive_failures: { type: integer }
         snapshot_consecutive_failures: { type: integer }
-        accounts: { type: integer }
-        sessions: { type: integer }
+        accounts: { type: [integer, "null"] }
+        sessions: { type: [integer, "null"] }
         last_event_at: { type: string, format: date-time }
         last_snapshot_attempt_at: { type: string, format: date-time }
         last_snapshot_at: { type: string, format: date-time }
         heartbeat_at: { type: string, format: date-time }
         projection_at: { type: string, format: date-time }
         last_error_type: { type: string }
+        queue_sampled_at: { type: string, format: date-time }
+        queue_sample_stale: { type: boolean }
+        quarantine_queue: { type: integer }
+        pipeline: { $ref: '#/components/schemas/IdentityPipelineSummary' }
+    IdentityPipelineSummary:
+      type: object
+      required: [accepted_sequence, processed_sequence, pending_records, export_pending_records, calibration_state, last_error]
+      properties:
+        export_error: { type: string }
+        export_heartbeat_at: { type: [string, 'null'], format: date-time }
+        derived_cursor_at: { type: [string, 'null'], format: date-time }
+        derived_last_success_at: { type: [string, 'null'], format: date-time }
+        derived_error: { type: string }
+        accounts: { type: [integer, 'null'] }
+        sessions: { type: [integer, 'null'] }
+        statistics_at: { type: [string, 'null'], format: date-time }
+        accepted_sequence: { type: integer }
+        processed_sequence: { type: integer }
+        pending_records: { type: integer }
+        export_pending_records: { type: integer }
+        oldest_pending_at: { type: [string, 'null'], format: date-time }
+        heartbeat_at: { type: [string, 'null'], format: date-time }
+        snapshot_at: { type: [string, 'null'], format: date-time }
+        last_error: { type: string }
+        calibration_state: { type: string }
     IdentityBridgeRun:
       type: object
       required: [run_id, kind, status, records_read, records_emitted, records_skipped, records_malformed, retry_count, duration_ms, started_at]
@@ -4759,6 +4939,7 @@ components:
       type: object
       required: [version, status, source, checksum]
       properties:
+        source_catalog: { type: array, items: { $ref: "#/components/schemas/FingerprintSource" } }
         domain_available: { type: boolean }
         brand_eligible_rule_count: { type: integer }
         domain_processing_error: { type: string }
@@ -5690,6 +5871,7 @@ components:
       type: object
       required: [items, page, facets, read_model_updating]
       properties:
+        read_model_state: { $ref: "#/components/schemas/InventoryProjectionState" }
         device_names_disabled: { type: boolean }
         read_model_updating:
           type: boolean
@@ -5713,6 +5895,7 @@ components:
       type: object
       required: [total, facets]
       properties:
+        read_model_state: { $ref: "#/components/schemas/InventoryProjectionState" }
         total: { type: integer }
         facets: { $ref: "#/components/schemas/DeviceFilterFacets" }
         as_of: { type: string, format: date-time, description: Statistics query time, not an observation time. }
@@ -5731,6 +5914,10 @@ components:
         owner_account: { type: string }
         owner_name: { type: string }
         current_account: { type: string }
+        current_account_candidates: { type: array, items: { type: string } }
+        current_account_conflict: { type: boolean }
+        current_account_observed_at: { type: string, format: date-time }
+        current_access_conflict: { type: boolean }
         current_ip: { type: string }
         current_access_id: { type: string }
         last_seen: { type: string, format: date-time }
@@ -5746,6 +5933,65 @@ components:
         os_family_confidence: { type: number, minimum: 0, maximum: 1 }
         randomized_mac: { type: boolean }
         recognition_conflict: { type: boolean }
+    InventoryProjectionState:
+      type: object
+      required: [complete, updating, as_of]
+      properties:
+        available: { type: boolean, description: Current summaries available; does not assert historical completeness or freshness }
+        complete: { type: boolean }
+        updating: { type: boolean }
+        as_of: { type: string }
+        error: { type: string }
+        status: { type: string, enum: [backfilling, processing, ready, failed] }
+        accepted_watermark: { type: integer, format: int64 }
+        processed_watermark: { type: integer, format: int64 }
+        oldest_pending_at: { type: string, format: date-time }
+        processing_lag_seconds: { type: number, minimum: 0 }
+        result_version: { type: string }
+    InventoryAssociation:
+      type: object
+      required: [kind, value, source, first_seen, last_seen, observation_count, session_count, confidence]
+      properties:
+        kind: { type: string, enum: [account, ip, access] }
+        value: { type: string }
+        source: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        observation_count: { type: integer }
+        session_count: { type: integer }
+        confidence: { type: number }
+        event_id: { type: string }
+    InventoryDetail:
+      type: object
+      required: [profile, associations, state]
+      properties:
+        profile: { $ref: "#/components/schemas/EndpointIdentityProfile" }
+        associations: { type: array, items: { $ref: "#/components/schemas/InventoryAssociation" } }
+        association_counts: { type: object, additionalProperties: { type: integer } }
+        state: { $ref: "#/components/schemas/InventoryProjectionState" }
+    EndpointObservation:
+      type: object
+      required: [record_id, kind, value, source, observed_at, confidence, evidence_state]
+      properties:
+        record_id: { type: string }
+        kind: { type: string, enum: [account, ip, access] }
+        value: { type: string }
+        source: { type: string }
+        observed_at: { type: string, format: date-time }
+        confidence: { type: number }
+        event_id: { type: string }
+        evidence_state: { type: string, enum: [not_checked, outside_retention, retained_session, snapshot_reference] }
+        evidence_url: { type: string }
+        session_id: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+    EndpointObservationPage:
+      type: object
+      required: [items, state]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/EndpointObservation" } }
+        next_cursor: { type: string }
+        state: { $ref: "#/components/schemas/InventoryProjectionState" }
     DeviceBrandInferenceSummary:
       type: object
       required: [status, confidence]
@@ -5799,6 +6045,59 @@ components:
         source: { type: string, enum: [ip_observation, account_session] }
         matched_at: { type: string, format: date-time }
         is_recent_ip: { type: boolean }
+    DiscoveryObservation:
+      type: object
+      required: [id, origin, observed_at, valid_until, explanation]
+      properties:
+        id: { type: string }
+        event_id: { type: string }
+        source_id: { type: string }
+        node: { type: string }
+        site: { type: string }
+        domain: { type: string }
+        ip: { type: string }
+        mac: { type: string }
+        name: { type: string }
+        origin: { type: string }
+        device_type: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        observed_at: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        withdrawn: { type: boolean }
+        explanation: { type: string }
+    DiscoveryDevice:
+      type: object
+      required: [id, observations, category, identity_kind, capabilities, protocols, first_seen, last_seen, current, evidence_count]
+      properties:
+        id: { type: string }
+        primary_ip: { type: string }
+        addresses: { type: array, items: { type: string } }
+        mac: { type: string }
+        name: { type: string }
+        device_type: { type: string }
+        category: { type: string }
+        identity_kind: { type: string }
+        capabilities: { type: array, items: { type: string } }
+        protocols: { type: array, items: { type: string } }
+        confidence: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        current: { type: boolean }
+        evidence_count: { type: integer }
+        endpoint_id: { type: string }
+        observations: { type: array, items: { $ref: '#/components/schemas/DiscoveryObservation' } }
+    DiscoveryDevicePage:
+      type: object
+      required: [items, next_cursor, has_more, limit, window]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DiscoveryDevice' } }
+        next_cursor: { type: string }
+        has_more: { type: boolean }
+        facets: { type: array, items: { type: object, additionalProperties: true } }
+        service_devices: { type: integer }
+        linked_endpoints: { type: integer }
+        limit: { type: integer }
+        window: { type: string }
     DiscoveryRecognitionSummary:
       type: object
       properties:
@@ -5811,6 +6110,11 @@ components:
       type: object
       required: [endpoint_id, entity_role, registration_status, merge_status, accounts, ips, access_ids, identity_confidence, recognition_confidence, randomized_mac, summary]
       properties:
+        current_account_candidates: { type: array, items: { type: string } }
+        current_account_conflict: { type: boolean }
+        current_account_observed_at: { type: string, format: date-time }
+        current_access_conflict: { type: boolean }
+        source_matches: { type: array, items: { $ref: "#/components/schemas/FingerprintSourceMatch" } }
         router_observation:
           $ref: '#/components/schemas/RouterAssessment'
         discovery:
@@ -7136,3 +7440,136 @@ components:
           type: string
         message:
           type: string
+
+    FingerprintSource:
+      type: object
+      required: [id, name, url, version, license, status, raw_count, condition_count, executable_count, model_count, dispositions, protocols, categories]
+      properties:
+        kind: { type: string }
+        upstream_count: { type: integer }
+        snapshot_url: { type: string }
+        license_files: { type: array, items: { type: string } }
+        id: { type: string }
+        name: { type: string }
+        url: { type: string }
+        version: { type: string }
+        license: { type: string }
+        checksum: { type: string }
+        converter_version: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        raw_count: { type: integer }
+        condition_count: { type: integer }
+        executable_count: { type: integer }
+        model_count: { type: integer }
+        dispositions: { type: object, additionalProperties: { type: integer } }
+        protocols: { type: array, items: { type: string } }
+        categories: { type: array, items: { type: string } }
+    FingerprintSourcePage:
+      type: object
+      required: [items, version]
+      properties:
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+        items: { type: array, items: { $ref: "#/components/schemas/FingerprintSource" } }
+        version: { type: string }
+    FingerprintSourceRule:
+      type: object
+      required: [id, source_id, original_id, version, name, protocol, direction, conditions, status, strength, examples]
+      properties:
+        original_type: { type: string }
+        hardware_version: { type: string }
+        id: { type: string }
+        source_id: { type: string }
+        original_id: { type: string }
+        version: { type: string }
+        name: { type: string }
+        protocol: { type: string }
+        direction: { type: string }
+        brand: { type: string }
+        model: { type: string }
+        role: { type: string }
+        os: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        strength: { type: string }
+        duplicate_of: { type: string }
+        conditions:
+          type: array
+          items:
+            type: object
+            required: [field, operator, value]
+            properties:
+              field: { type: string }
+              operator: { type: string }
+              value: { type: string }
+        examples:
+          type: array
+          items:
+            type: object
+            required: [values, match]
+            properties:
+              values: { type: object, additionalProperties: { type: string } }
+              match: { type: boolean }
+    FingerprintRulePage:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FingerprintSourceRule" } }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+    FingerprintCoverage:
+      type: object
+      required: [status, window, items]
+      properties:
+        rebuild:
+          type: object
+          properties:
+            version: { type: string }
+            enqueued: { type: integer }
+            visited: { type: integer }
+            complete: { type: boolean }
+            fields: { type: array, items: { type: string } }
+        status: { type: string }
+        window: { type: string }
+        as_of: { type: string }
+        count_semantics: { type: string }
+        evaluation_count_semantics: { type: string }
+        evaluation_flush_interval_seconds: { type: integer }
+        overlap_endpoints: { type: integer }
+        matched_endpoints: { type: integer }
+        conflict_endpoints: { type: integer }
+        items:
+          type: array
+          items:
+            type: object
+            required: [source_id, match_count, endpoint_count, conflict_count]
+            properties:
+              source_id: { type: string }
+              match_count: { type: integer }
+              evaluation_match_count: { type: integer }
+              realtime_match_count: { type: integer }
+              history_match_count: { type: integer }
+              endpoint_count: { type: integer }
+              conflict_count: { type: integer }
+              confirmed_count: { type: integer }
+
+    FingerprintSourceMatch:
+      type: object
+      required: [source_id, rule_id, version, name, protocol, direction, fields, strength]
+      properties:
+        observed: { type: object, additionalProperties: { type: string } }
+        source_id: { type: string }
+        rule_id: { type: string }
+        version: { type: string }
+        name: { type: string }
+        protocol: { type: string }
+        direction: { type: string }
+        fields: { type: array, items: { type: string } }
+        strength: { type: string }
+        brand: { type: string }
+        model: { type: string }
+        role: { type: string }
+        os: { type: string }

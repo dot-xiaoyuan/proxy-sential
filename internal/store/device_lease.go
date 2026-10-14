@@ -72,18 +72,16 @@ func deviceLeaseFromEvent(e normalized.Event) (deviceLease, bool) {
 	l.Until = l.At.Add(time.Duration(seconds * float64(time.Second)))
 	return l, true
 }
+
+// writeDeviceLeases writes every lease the batch carries in one statement.
 func writeDeviceLeases(ctx context.Context, tx *sql.Tx, events []normalized.Event) error {
+	leases := make([]deviceLease, 0, len(events))
 	for _, e := range events {
-		l, ok := deviceLeaseFromEvent(e)
-		if !ok {
-			continue
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,observed_at,valid_until,action) VALUES($1,$2,$3,$4::inet,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, l.Sensor, l.Campus, l.EventID, l.IP, l.Endpoint, l.At, l.Until, l.Action)
-		if err != nil {
-			return err
+		if l, ok := deviceLeaseFromEvent(e); ok {
+			leases = append(leases, l)
 		}
 	}
-	return nil
+	return insertDeviceLeasesBatch(ctx, tx, leases)
 }
 
 // ResolveDeviceAt only assigns a physical endpoint; it never assigns an account.

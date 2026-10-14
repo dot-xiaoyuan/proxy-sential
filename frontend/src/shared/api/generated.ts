@@ -1764,6 +1764,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/integrations/identity/event-batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Version 2 durable inbox. A receipt acknowledges PostgreSQL commit only; identity processing and raw export are independent. Retry an identical request with the same key. Ordinary 2xx responses are not acknowledgements. */
+        post: operations["acceptDurableIdentityBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/snapshot-publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["identitySnapshotPublication"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/integrations/identity/events": {
         parameters: {
             query?: never;
@@ -2560,6 +2593,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/device-inventory/{endpoint_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Prepared initial summary and up to 20 relation overviews; no raw histories. Incomplete coverage is explicitly reported. */
+        get: operations["getDeviceInventoryDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/{endpoint_id}/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Endpoint-scoped trace, exact relation filters and stable opaque cursors. Observation timestamps do not establish continuous validity. */
+        get: operations["listEndpointObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/{endpoint_id}/observations/{record_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires events:read, exactly like the existing raw-event entry. Returns only the referenced event in a retained immutable snapshot or the endpoint-scoped original authentication session; never the entire snapshot. */
+        get: operations["getInventorySnapshotEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/devices": {
         parameters: {
             query?: never;
@@ -2824,6 +2908,70 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getDeviceFingerprintLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-library/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listFingerprintSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-library/sources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getFingerprintSource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-library/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listFingerprintRules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-fingerprint-library/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getFingerprintCoverage"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4051,6 +4199,17 @@ export interface components {
             expected_chunks: number;
             expected_sha256: string;
         } | unknown | unknown;
+        IdentityDurableReceipt: {
+            /** @enum {integer} */
+            protocol_version: 2;
+            batch_id: string;
+            content_sha256: string;
+            record_count: number;
+            /** @enum {boolean} */
+            durably_accepted: true;
+            /** Format: date-time */
+            accepted_at: string;
+        };
         IdentityBridge: {
             config: components["schemas"]["IdentityBridgeConfig"];
             runtime: components["schemas"]["IdentityBridgeRuntime"];
@@ -4102,13 +4261,13 @@ export interface components {
             source_queue: number;
             processing_queue: number;
             online_members: number;
-            online_sessions: number;
+            online_sessions: number | null;
             committed_messages: number;
             bad_messages: number;
             event_consecutive_failures: number;
             snapshot_consecutive_failures: number;
-            accounts: number;
-            sessions: number;
+            accounts: number | null;
+            sessions: number | null;
             /** Format: date-time */
             last_event_at?: string;
             /** Format: date-time */
@@ -4120,6 +4279,37 @@ export interface components {
             /** Format: date-time */
             projection_at?: string;
             last_error_type?: string;
+            /** Format: date-time */
+            queue_sampled_at?: string;
+            queue_sample_stale?: boolean;
+            quarantine_queue?: number;
+            pipeline?: components["schemas"]["IdentityPipelineSummary"];
+        };
+        IdentityPipelineSummary: {
+            export_error?: string;
+            /** Format: date-time */
+            export_heartbeat_at?: string | null;
+            /** Format: date-time */
+            derived_cursor_at?: string | null;
+            /** Format: date-time */
+            derived_last_success_at?: string | null;
+            derived_error?: string;
+            accounts?: number | null;
+            sessions?: number | null;
+            /** Format: date-time */
+            statistics_at?: string | null;
+            accepted_sequence: number;
+            processed_sequence: number;
+            pending_records: number;
+            export_pending_records: number;
+            /** Format: date-time */
+            oldest_pending_at?: string | null;
+            /** Format: date-time */
+            heartbeat_at?: string | null;
+            /** Format: date-time */
+            snapshot_at?: string | null;
+            last_error: string;
+            calibration_state: string;
         };
         IdentityBridgeRun: {
             run_id: string;
@@ -4815,6 +5005,7 @@ export interface components {
             total: number;
         };
         DeviceFingerprintLibraryStatus: {
+            source_catalog?: components["schemas"]["FingerprintSource"][];
             domain_available?: boolean;
             brand_eligible_rule_count?: number;
             domain_processing_error?: string;
@@ -5517,6 +5708,7 @@ export interface components {
             };
         };
         DeviceInventoryListResponse: {
+            read_model_state?: components["schemas"]["InventoryProjectionState"];
             device_names_disabled?: boolean;
             /** @description True while one or more endpoint summaries are waiting to be materialized. */
             read_model_updating: boolean;
@@ -5534,6 +5726,7 @@ export interface components {
             };
         };
         DeviceInventoryMetadataResponse: {
+            read_model_state?: components["schemas"]["InventoryProjectionState"];
             total: number;
             facets: components["schemas"]["DeviceFilterFacets"];
             /**
@@ -5554,6 +5747,11 @@ export interface components {
             owner_account?: string;
             owner_name?: string;
             current_account?: string;
+            current_account_candidates?: string[];
+            current_account_conflict?: boolean;
+            /** Format: date-time */
+            current_account_observed_at?: string;
+            current_access_conflict?: boolean;
             current_ip?: string;
             current_access_id?: string;
             /** Format: date-time */
@@ -5570,6 +5768,70 @@ export interface components {
             os_family_confidence: number;
             randomized_mac: boolean;
             recognition_conflict: boolean;
+        };
+        InventoryProjectionState: {
+            /** @description Current summaries available; does not assert historical completeness or freshness */
+            available?: boolean;
+            complete: boolean;
+            updating: boolean;
+            as_of: string;
+            error?: string;
+            /** @enum {string} */
+            status?: "backfilling" | "processing" | "ready" | "failed";
+            /** Format: int64 */
+            accepted_watermark?: number;
+            /** Format: int64 */
+            processed_watermark?: number;
+            /** Format: date-time */
+            oldest_pending_at?: string;
+            processing_lag_seconds?: number;
+            result_version?: string;
+        };
+        InventoryAssociation: {
+            /** @enum {string} */
+            kind: "account" | "ip" | "access";
+            value: string;
+            source: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            observation_count: number;
+            session_count: number;
+            confidence: number;
+            event_id?: string;
+        };
+        InventoryDetail: {
+            profile: components["schemas"]["EndpointIdentityProfile"];
+            associations: components["schemas"]["InventoryAssociation"][];
+            association_counts?: {
+                [key: string]: number;
+            };
+            state: components["schemas"]["InventoryProjectionState"];
+        };
+        EndpointObservation: {
+            record_id: string;
+            /** @enum {string} */
+            kind: "account" | "ip" | "access";
+            value: string;
+            source: string;
+            /** Format: date-time */
+            observed_at: string;
+            confidence: number;
+            event_id?: string;
+            /** @enum {string} */
+            evidence_state: "not_checked" | "outside_retention" | "retained_session" | "snapshot_reference";
+            evidence_url?: string;
+            session_id?: string;
+            /** Format: date-time */
+            started_at?: string;
+            /** Format: date-time */
+            ended_at?: string;
+        };
+        EndpointObservationPage: {
+            items: components["schemas"]["EndpointObservation"][];
+            next_cursor?: string;
+            state: components["schemas"]["InventoryProjectionState"];
         };
         DeviceBrandInferenceSummary: {
             /** @enum {string} */
@@ -5607,6 +5869,59 @@ export interface components {
             matched_at: string;
             is_recent_ip: boolean;
         };
+        DiscoveryObservation: {
+            id: string;
+            event_id?: string;
+            source_id?: string;
+            node?: string;
+            site?: string;
+            domain?: string;
+            ip?: string;
+            mac?: string;
+            name?: string;
+            origin: string;
+            device_type?: string;
+            capabilities?: string[];
+            /** Format: date-time */
+            observed_at: string;
+            /** Format: date-time */
+            valid_until: string;
+            withdrawn?: boolean;
+            explanation: string;
+        };
+        DiscoveryDevice: {
+            id: string;
+            primary_ip?: string;
+            addresses?: string[];
+            mac?: string;
+            name?: string;
+            device_type?: string;
+            category: string;
+            identity_kind: string;
+            capabilities: string[];
+            protocols: string[];
+            confidence?: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            current: boolean;
+            evidence_count: number;
+            endpoint_id?: string;
+            observations: components["schemas"]["DiscoveryObservation"][];
+        };
+        DiscoveryDevicePage: {
+            items: components["schemas"]["DiscoveryDevice"][];
+            next_cursor: string;
+            has_more: boolean;
+            facets?: {
+                [key: string]: unknown;
+            }[];
+            service_devices?: number;
+            linked_endpoints?: number;
+            limit: number;
+            window: string;
+        };
         DiscoveryRecognitionSummary: {
             capabilities?: string[];
             types?: string[];
@@ -5615,6 +5930,12 @@ export interface components {
             evidence_count?: number;
         };
         EndpointDeviceInventory: {
+            current_account_candidates?: string[];
+            current_account_conflict?: boolean;
+            /** Format: date-time */
+            current_account_observed_at?: string;
+            current_access_conflict?: boolean;
+            source_matches?: components["schemas"]["FingerprintSourceMatch"][];
             router_observation?: components["schemas"]["RouterAssessment"];
             discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
             ip_match?: components["schemas"]["DeviceIPMatch"];
@@ -6318,6 +6639,118 @@ export interface components {
             code: string;
             message: string;
         };
+        FingerprintSource: {
+            kind?: string;
+            upstream_count?: number;
+            snapshot_url?: string;
+            license_files?: string[];
+            id: string;
+            name: string;
+            url: string;
+            version: string;
+            license: string;
+            checksum?: string;
+            converter_version?: string;
+            status: string;
+            reason?: string;
+            raw_count: number;
+            condition_count: number;
+            executable_count: number;
+            model_count: number;
+            dispositions: {
+                [key: string]: number;
+            };
+            protocols: string[];
+            categories: string[];
+        };
+        FingerprintSourcePage: {
+            total?: number;
+            page?: number;
+            page_size?: number;
+            items: components["schemas"]["FingerprintSource"][];
+            version: string;
+        };
+        FingerprintSourceRule: {
+            original_type?: string;
+            hardware_version?: string;
+            id: string;
+            source_id: string;
+            original_id: string;
+            version: string;
+            name: string;
+            protocol: string;
+            direction: string;
+            brand?: string;
+            model?: string;
+            role?: string;
+            os?: string;
+            status: string;
+            reason?: string;
+            strength: string;
+            duplicate_of?: string;
+            conditions: {
+                field: string;
+                operator: string;
+                value: string;
+            }[];
+            examples: {
+                values: {
+                    [key: string]: string;
+                };
+                match: boolean;
+            }[];
+        };
+        FingerprintRulePage: {
+            items: components["schemas"]["FingerprintSourceRule"][];
+            total: number;
+            page: number;
+            page_size: number;
+        };
+        FingerprintCoverage: {
+            rebuild?: {
+                version?: string;
+                enqueued?: number;
+                visited?: number;
+                complete?: boolean;
+                fields?: string[];
+            };
+            status: string;
+            window: string;
+            as_of?: string;
+            count_semantics?: string;
+            evaluation_count_semantics?: string;
+            evaluation_flush_interval_seconds?: number;
+            overlap_endpoints?: number;
+            matched_endpoints?: number;
+            conflict_endpoints?: number;
+            items: {
+                source_id: string;
+                match_count: number;
+                evaluation_match_count?: number;
+                realtime_match_count?: number;
+                history_match_count?: number;
+                endpoint_count: number;
+                conflict_count: number;
+                confirmed_count?: number;
+            }[];
+        };
+        FingerprintSourceMatch: {
+            observed?: {
+                [key: string]: string;
+            };
+            source_id: string;
+            rule_id: string;
+            version: string;
+            name: string;
+            protocol: string;
+            direction: string;
+            fields: string[];
+            strength: string;
+            brand?: string;
+            model?: string;
+            role?: string;
+            os?: string;
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -6416,14 +6849,18 @@ export interface operations {
     getDiscoveryDevices: {
         parameters: {
             query?: {
+                /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
+                view?: "iot";
                 mode?: "passive" | "infrastructure" | "active" | "all";
                 window?: string;
+                /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
                 search?: string;
                 type?: string;
                 category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
                 capability?: string;
                 limit?: number;
-                offset?: number;
+                /** @description Opaque cursor bound to all filters and the last observed device. Numeric offset pagination is not supported. */
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -6431,16 +6868,21 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Discovery result */
+            /** @description Discovery result page. The result is built from the maintained latest-observation relation; it does not imply online state. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DiscoveryDevicePage"];
                 };
+            };
+            /** @description Invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -6453,8 +6895,8 @@ export interface operations {
                 vlan?: string;
                 brand?: string;
                 model?: string;
-                /** @description Defaults to router; pass ap explicitly to inspect access points. */
-                role?: "router" | "ap" | "switch" | "firewall" | "endpoint" | "unknown";
+                /** @description Defaults to router; network includes routers access points switches and firewalls. */
+                role?: "network" | "router" | "ap" | "switch" | "firewall" | "endpoint" | "unknown";
                 status?: "candidate" | "likely" | "confirmed";
                 /** @description Include low-confidence router candidates when status is not explicitly selected. */
                 include_candidates?: boolean;
@@ -9397,6 +9839,89 @@ export interface operations {
             };
         };
     };
+    acceptDurableIdentityBatch: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    source: string;
+                    sensor_id: string;
+                    records: {
+                        [key: string]: string;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description Identical durable receipt, including on retries after a lost response. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityDurableReceipt"];
+                };
+            };
+            /** @description Batch ID belongs to different content or protocol. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Inbox capacity reached. Retain messages and retry. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Durable acceptance unavailable or paused. Retain messages and retry. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    identitySnapshotPublication: {
+        parameters: {
+            query: {
+                source: string;
+                sensor_id: string;
+                campus_id: string;
+                access_domain: string;
+                snapshot_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether this exact complete inventory has become the current projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        snapshot_id: string;
+                        published: boolean;
+                        calibration_state: string;
+                    };
+                };
+            };
+        };
+    };
     ingestIdentityEvents: {
         parameters: {
             query?: never;
@@ -9414,7 +9939,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Identity batch normalized and accepted. */
+            /** @description Legacy synchronous batch completed. Existing failed batches return a non-2xx response. */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -10906,9 +11431,11 @@ export interface operations {
     listDeviceInventory: {
         parameters: {
             query?: {
+                /** @description Account searches match exact latest observed candidates only; complete IP searches retain historical evidence matching. */
+                search_type?: "all" | "account" | "ip" | "mac" | "name";
                 /** @description False skips facets and exact count; page.total is omitted. */
                 include_metadata?: boolean;
-                /** @description Bypass the current query cache. */
+                /** @description Requests a fresh read; list pages are not retained across requests, while identical in-flight reads may be coalesced. */
                 refresh?: boolean;
                 view?: "recent" | "history";
                 sensor_id?: string;
@@ -10926,6 +11453,7 @@ export interface operations {
                 ap?: components["parameters"]["APQuery"];
                 nas_ip?: components["parameters"]["NASIPQuery"];
                 limit?: number;
+                /** @description Opaque cursor bound to the complete filter and sort. Numeric offset cursors are rejected; omit for the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -10950,9 +11478,11 @@ export interface operations {
     getDeviceInventoryMetadata: {
         parameters: {
             query?: {
+                /** @description Account searches match exact latest observed candidates only; complete IP searches retain historical evidence matching. */
+                search_type?: "all" | "account" | "ip" | "mac" | "name";
                 /** @description False skips facets and exact count; page.total is omitted. */
                 include_metadata?: boolean;
-                /** @description Bypass the current query cache. */
+                /** @description Requests a fresh read; list pages are not retained across requests, while identical in-flight reads may be coalesced. */
                 refresh?: boolean;
                 view?: "recent" | "history";
                 sensor_id?: string;
@@ -10970,6 +11500,7 @@ export interface operations {
                 ap?: components["parameters"]["APQuery"];
                 nas_ip?: components["parameters"]["NASIPQuery"];
                 limit?: number;
+                /** @description Opaque cursor bound to the complete filter and sort. Numeric offset cursors are rejected; omit for the first page. */
                 cursor?: string;
             };
             header?: never;
@@ -10989,6 +11520,98 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getDeviceInventoryDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Terminal summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InventoryDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Projection unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listEndpointObservations: {
+        parameters: {
+            query: {
+                kind: "account" | "ip" | "access";
+                value?: string;
+                source?: string;
+                start?: string;
+                end?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Trace page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointObservationPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Historical coverage incomplete */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getInventorySnapshotEvidence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpoint_id: string;
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Retained original evidence */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NormalizedEventSummary"] | components["schemas"]["AccountSession"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     listDevices: {
@@ -11456,6 +12079,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceFingerprintLibraryStatus"];
+                };
+            };
+        };
+    };
+    listFingerprintSources: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: number;
+                status?: string;
+                protocol?: string;
+                role?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fingerprint catalog read model. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FingerprintSourcePage"];
+                };
+            };
+        };
+    };
+    getFingerprintSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 指纹来源详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FingerprintSource"];
+                };
+            };
+            /** @description 来源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listFingerprintRules: {
+        parameters: {
+            query?: {
+                source?: string;
+                q?: string;
+                protocol?: string;
+                role?: string;
+                status?: string;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fingerprint catalog read model. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FingerprintRulePage"];
+                };
+            };
+        };
+    };
+    getFingerprintCoverage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fingerprint catalog read model. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FingerprintCoverage"];
                 };
             };
         };

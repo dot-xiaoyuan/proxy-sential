@@ -6,7 +6,7 @@ const ActivityPage = lazy(() =>
   import('../pages/ActivityPage').then((module) => ({ default: module.ActivityPage })),
 )
 const EventsPage = lazy(() => import('../pages/EventsPage').then((module) => ({ default: module.EventsPage })))
-const DevicesPage = lazy(() => import('../pages/DevicesPage').then((module) => ({ default: module.DevicesPage })))
+const DevicesPage = lazy(() => import('../pages/DeviceCenterPage').then((module) => ({ default: module.DeviceCenterPage })))
 const EndpointDetailsPage = lazy(() =>
   import('../pages/EndpointDetailsPage').then((module) => ({ default: module.EndpointDetailsPage })),
 )

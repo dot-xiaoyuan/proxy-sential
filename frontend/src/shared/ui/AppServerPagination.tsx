@@ -8,16 +8,17 @@ type AppServerPaginationProps = {
 	pageSize: number
 	total: number
 	onChange: (page: number, pageSize: number) => void
+	cursorMode?: boolean
 }
 
-export function AppServerPagination({ disabled = false, page, pageSize, total, onChange }: AppServerPaginationProps) {
+export function AppServerPagination({ disabled = false, page, pageSize, total, onChange, cursorMode = false }: AppServerPaginationProps) {
 	return <Pagination
 		className="list-pagination app-server-pagination"
 		current={page}
 		disabled={disabled}
 		pageSize={pageSize}
 		pageSizeOptions={[20, 50]}
-		showQuickJumper
+		showQuickJumper={!cursorMode}
 		showSizeChanger
 		showTotal={(count) => `共 ${count} 条`}
 		total={total}

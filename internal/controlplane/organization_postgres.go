@@ -176,6 +176,10 @@ func (s *Server) handleOrganizationPostgres(w http.ResponseWriter, r *http.Reque
 			writeError(w, 400, "bad_network_zone", "valid campus_id and network_zone_id are required")
 			return
 		}
+		if err := normalizeNetworkZoneCIDRs(&v); err != nil {
+			writeError(w, 400, "bad_network_zone_cidr", err.Error())
+			return
+		}
 		v.Enabled = true
 		doc.NetworkZones[v.NetworkZoneID] = v
 		campusID = v.CampusID

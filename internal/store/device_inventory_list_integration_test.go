@@ -71,6 +71,23 @@ func TestDeviceInventoryReadModelFiltersAndIncrementalDirtyTriggers(t *testing.T
 		t.Fatal(err)
 	}
 
+	if _, err = store.db.ExecContext(ctx, `INSERT INTO identity_ip_mac_history(event_id,endpoint_id,ip,source,first_seen,last_seen) VALUES($1,$2,'192.0.2.44','test',$3,$3)`, eventID+":latest", endpointID, now); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.materializeInventoryTx(ctx, tx, endpointID); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.ExecContext(ctx, `UPDATE endpoint_inventory_projection_state SET ready=true,backfill_complete=true`); err != nil {
+		t.Fatal(err)
+	}
 	page, err := store.ListDeviceInventory(ctx, Query{View: "recent", Window: "24h", Q: "198.51.100.77", Brand: "dell", OSFamily: "windows 11", CampusID: "campus-test", Limit: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +113,7 @@ func TestDeviceInventoryReadModelFiltersAndIncrementalDirtyTriggers(t *testing.T
 		t.Fatalf("metadata: %+v %v", metadata, err)
 	}
 	var dirty, processed int64
-	if err = store.db.QueryRowContext(ctx, `SELECT dirty_generation,processed_generation FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, endpointID).Scan(&dirty, &processed); err != nil {
+	if err = store.db.QueryRowContext(ctx, `SELECT dirty_generation,processed_generation FROM endpoint_inventory_projection_jobs WHERE endpoint_id=$1`, endpointID).Scan(&dirty, &processed); err != nil {
 		t.Fatal(err)
 	}
 	if dirty-processed < 4 {

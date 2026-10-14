@@ -84,7 +84,7 @@ func TestActionPrecheckEventChannelQueryRetainsCancellation(t *testing.T) {
 	s := &Server{operations: &operationsState{db: db}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mock.ExpectQuery(`SELECT event_channel_state`).WithArgs(cancelAuthorityArgument{value: "owned", cancel: cancel}).WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow("healthy"))
+	mock.ExpectQuery(`SELECT COALESCE`).WithArgs(cancelAuthorityArgument{value: "owned", cancel: cancel}, 5400, "ncu", "campus-auth", "ncu-legacy-4k").WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow(true))
 	healthy, err := s.srunEventChannelStatusContext(ctx, "owned")
 	if healthy || !errors.Is(err, context.Canceled) {
 		t.Fatalf("channel cancellation lost: healthy=%v err=%v", healthy, err)
@@ -102,7 +102,7 @@ func TestActionPrecheckEventChannelFailureIsSanitized(t *testing.T) {
 	defer db.Close()
 	s := &Server{operations: &operationsState{db: db}}
 	private := errors.New("private-event-channel-driver-detail")
-	mock.ExpectQuery(`SELECT event_channel_state`).WillReturnError(private)
+	mock.ExpectQuery(`SELECT COALESCE`).WillReturnError(private)
 	healthy, err := s.srunEventChannelStatusContext(context.Background(), "owned")
 	if healthy || !errors.Is(err, private) || strings.Contains(err.Error(), private.Error()) {
 		t.Fatalf("channel error hidden/leaked: healthy=%v err=%v", healthy, err)

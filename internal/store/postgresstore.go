@@ -1441,19 +1441,19 @@ ON CONFLICT(sensor_id) DO UPDATE SET collector_kind = EXCLUDED.collector_kind, c
 	if err := writePolicyIdentityEvents(ctx, tx, events); err != nil {
 		return err
 	}
-	if err := writeIdentityState(ctx, tx, identityState); err != nil {
+	if _, err := writeIdentityState(ctx, tx, identityState); err != nil {
 		return err
 	}
 	if err := writeEndpointDeviceProfiles(ctx, tx, identityState); err != nil {
 		return err
 	}
 	riskMap := riskSnapshotMap(snapshots)
+	runSignals := make([]DeviceSignal, 0, len(events))
 	for _, inventory := range BuildDeviceInventories("latest-run", events, riskMap) {
-		for _, signal := range inventory.Signals {
-			if err := upsertDeviceSignalFact(ctx, tx, run.SensorID, signal); err != nil {
-				return err
-			}
-		}
+		runSignals = append(runSignals, inventory.Signals...)
+	}
+	if err := upsertDeviceSignalFactsBatch(ctx, tx, run.SensorID, runSignals); err != nil {
+		return err
 	}
 	for _, window := range []string{"10m", "1h", "24h"} {
 		inventories, err := s.buildDeviceInventoriesFromFacts(ctx, tx, run.SensorID, run.FinishedAt, window, riskMap)
@@ -1478,39 +1478,88 @@ func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normal
 		return err
 	}
 	defer tx.Rollback()
-	if err = writeIdentityEventsTx(ctx, tx, events); err != nil {
+	if _, err = writeIdentityEventsTx(ctx, tx, events); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func writeIdentityEventsTx(ctx context.Context, tx *sql.Tx, events []normalized.Event) error {
-	if err := writePolicyIdentityEvents(ctx, tx, events); err != nil {
-		return err
+func writeIdentityEventsTx(ctx context.Context, tx *sql.Tx, events []normalized.Event) (identityHistoryStats, error) {
+	// Identity writes come from four places on the field (two identity materializers, the
+	// domain reconcile worker and the ingest path) and all of them touch the same endpoint
+	// and history rows. Without serialising them the field measured writers blocked on each
+	// other's row locks for 30-50 seconds inside two-minute transactions, so every batch
+	// expired. One writer at a time is slower on paper but is the only shape that makes
+	// progress on a saturated database.
+	if err := lockIdentityWrite(ctx, tx); err != nil {
+		return identityHistoryStats{}, err
+	}
+	authorityEvents, err := legacyAuthorityEvents(ctx, tx, events)
+	if err != nil {
+		return identityHistoryStats{}, err
+	}
+	if err := writePolicyIdentityEvents(ctx, tx, authorityEvents); err != nil {
+		return identityHistoryStats{}, err
 	}
 	if err := writeDeviceLeases(ctx, tx, events); err != nil {
-		return err
+		return identityHistoryStats{}, err
 	}
 	state := BuildIdentityState(events)
-	if err := writeIdentityState(ctx, tx, state); err != nil {
-		return err
+	// account_sessions remains a derived compatibility view for device/detail
+	// pages. Durable authority and counters live in identity_current_*; only the
+	// inbox worker writes their policy facts. This path never updates those rows.
+	stats, err := writeIdentityState(ctx, tx, state)
+	if err != nil {
+		return stats, err
 	}
-	return writeEndpointDeviceProfiles(ctx, tx, state)
+	return stats, writeEndpointDeviceProfiles(ctx, tx, state)
 }
 
 func writeEndpointDeviceProfiles(ctx context.Context, tx *sql.Tx, state IdentityState) error {
-	for i := range state.Endpoints {
-		var raw []byte
-		if err := tx.QueryRowContext(ctx, `SELECT attributes FROM endpoint_entities WHERE endpoint_id=$1`, state.Endpoints[i].EndpointID).Scan(&raw); err != nil {
-			return err
-		}
-		if err := json.Unmarshal(raw, &state.Endpoints[i].Attributes); err != nil {
-			return err
+	if err := attachEndpointAttributes(ctx, tx, state.Endpoints); err != nil {
+		return err
+	}
+	return upsertEndpointDeviceProfilesBatch(ctx, tx, BuildEndpointDeviceInventories(state, Query{}))
+}
+
+// attachEndpointAttributes loads the stored attributes for the whole batch in one query and
+// merges them onto the incoming entities. The previous per-endpoint SELECT also turned a
+// missing endpoint row into a hard batch failure; a batch that carries a new endpoint now
+// simply keeps the attributes it computed.
+func attachEndpointAttributes(ctx context.Context, tx *sql.Tx, entities []EndpointEntity) error {
+	ids := make([]string, 0, len(entities))
+	for _, entity := range entities {
+		if entity.EndpointID != "" {
+			ids = append(ids, entity.EndpointID)
 		}
 	}
-	for _, item := range BuildEndpointDeviceInventories(state, Query{}) {
-		if err := upsertEndpointDeviceProfile(ctx, tx, item); err != nil {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT endpoint_id, attributes FROM endpoint_entities WHERE endpoint_id = ANY($1::text[])`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	stored := map[string]map[string]any{}
+	for rows.Next() {
+		var endpointID string
+		var raw []byte
+		if err = rows.Scan(&endpointID, &raw); err != nil {
 			return err
+		}
+		attributes := map[string]any{}
+		if err = json.Unmarshal(raw, &attributes); err != nil {
+			return err
+		}
+		stored[endpointID] = attributes
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for index := range entities {
+		if attributes, ok := stored[entities[index].EndpointID]; ok {
+			entities[index].Attributes = attributes
 		}
 	}
 	return nil
@@ -1694,176 +1743,33 @@ VALUES($1,'pending',0,now(),now()) ON CONFLICT(version) DO NOTHING`, version); e
 	return result, nil
 }
 
-func writeIdentityState(ctx context.Context, tx *sql.Tx, state IdentityState) error {
-	for _, entity := range state.Endpoints {
-		if err := upsertEndpointEntity(ctx, tx, entity); err != nil {
-			return err
-		}
+// writeIdentityState materializes one identity batch. Every table is written with a single
+// batched statement (see identity_batch_write.go): the field measured the per-item shape
+// spending several statements per event and failing to keep up at ~1% of the arrival rate.
+func writeIdentityState(ctx context.Context, tx *sql.Tx, state IdentityState) (identityHistoryStats, error) {
+	stats := identityHistoryStats{}
+	if err := upsertEndpointEntitiesBatch(ctx, tx, state.Endpoints); err != nil {
+		return stats, err
 	}
-	for _, entity := range state.Infrastructure {
-		if err := upsertInfrastructureEntity(ctx, tx, entity); err != nil {
-			return err
-		}
+	if err := upsertInfrastructureEntitiesBatch(ctx, tx, state.Infrastructure); err != nil {
+		return stats, err
 	}
-	for _, session := range state.Sessions {
-		if err := upsertAccountSession(ctx, tx, session); err != nil {
-			return err
-		}
+	if err := upsertAccountSessionsBatch(ctx, tx, state.Sessions); err != nil {
+		return stats, err
 	}
-	for _, item := range state.IPMACHistory {
-		if err := upsertIdentityIPMACHistory(ctx, tx, item); err != nil {
-			return err
-		}
-	}
-	for _, item := range state.AccessHistory {
-		if err := upsertIdentityAccessHistory(ctx, tx, item); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func upsertEndpointEntity(ctx context.Context, tx *sql.Tx, entity EndpointEntity) error {
-	if entity.EndpointID == "" {
-		return nil
-	}
-	attrs, _ := json.Marshal(entity.Attributes)
-	firstSeen := identitySQLTime(entity.FirstSeen)
-	lastSeen := identitySQLTime(entity.LastSeen)
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO endpoint_entities(endpoint_id, primary_mac, entity_role, first_seen, last_seen, identity_confidence, attributes)
-VALUES($1,$2,$3,$4,$5,$6,$7)
-ON CONFLICT(endpoint_id) DO UPDATE SET
-  primary_mac = COALESCE(endpoint_entities.primary_mac, EXCLUDED.primary_mac),
-  entity_role = EXCLUDED.entity_role,
-  first_seen = LEAST(endpoint_entities.first_seen, EXCLUDED.first_seen),
-  last_seen = GREATEST(endpoint_entities.last_seen, EXCLUDED.last_seen),
-  identity_confidence = GREATEST(endpoint_entities.identity_confidence, EXCLUDED.identity_confidence),
-  attributes = CASE WHEN EXCLUDED.last_seen >= endpoint_entities.last_seen THEN endpoint_entities.attributes || EXCLUDED.attributes ELSE EXCLUDED.attributes || endpoint_entities.attributes END,
-  updated_at = now()`,
-		entity.EndpointID, entity.PrimaryMAC, entity.EntityRole, firstSeen, lastSeen, entity.IdentityConfidence, attrs)
-	return err
-}
-
-func upsertInfrastructureEntity(ctx context.Context, tx *sql.Tx, entity InfrastructureEntity) error {
-	if entity.EntityID == "" {
-		return nil
-	}
-	attrs, _ := json.Marshal(entity.Attributes)
-	firstSeen := identitySQLTime(entity.FirstSeen)
-	lastSeen := identitySQLTime(entity.LastSeen)
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO infrastructure_entities(entity_id, ip, mac, entity_role, name, source, first_seen, last_seen, attributes)
-VALUES($1,NULLIF($2, '')::inet,$3,$4,$5,$6,$7,$8,$9)
-ON CONFLICT(entity_id) DO UPDATE SET
-  ip = COALESCE(EXCLUDED.ip, infrastructure_entities.ip),
-  mac = COALESCE(EXCLUDED.mac, infrastructure_entities.mac),
-  entity_role = EXCLUDED.entity_role,
-  name = COALESCE(EXCLUDED.name, infrastructure_entities.name),
-  first_seen = LEAST(infrastructure_entities.first_seen, EXCLUDED.first_seen),
-  last_seen = GREATEST(infrastructure_entities.last_seen, EXCLUDED.last_seen),
-  attributes = infrastructure_entities.attributes || EXCLUDED.attributes,
-  updated_at = now()`,
-		entity.EntityID, entity.IP, entity.MAC, entity.EntityRole, entity.Name, entity.Source, firstSeen, lastSeen, attrs)
-	return err
-}
-
-func upsertAccountSession(ctx context.Context, tx *sql.Tx, session AccountSession) error {
-	if session.SessionID == "" || session.AccountID == "" {
-		return nil
-	}
-	rawRef, _ := json.Marshal(session.RawRef)
-	startedAt := identitySQLTime(session.StartedAt)
-	endedAt := nullTimeValue(nullableTime(session.EndedAt))
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status)
-VALUES($1,$2,$3,NULLIF($4, '')::inet,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),NULLIF($13,''),NULLIF($14,''),NULLIF($15,''),NULLIF($16,''),NULLIF($17,''),NULLIF($18,''),NULLIF($19,''),NULLIF($20,'')::inet,NULLIF($21,''))
-ON CONFLICT(session_id) DO UPDATE SET
-  account_id = EXCLUDED.account_id,
-  endpoint_id = EXCLUDED.endpoint_id,
-  ip = EXCLUDED.ip,
-  mac = EXCLUDED.mac,
-  access_id = EXCLUDED.access_id,
-  source = EXCLUDED.source,
-  started_at = LEAST(account_sessions.started_at, EXCLUDED.started_at),
-  ended_at = COALESCE(EXCLUDED.ended_at, account_sessions.ended_at),
-  identity_confidence = GREATEST(account_sessions.identity_confidence, EXCLUDED.identity_confidence),
-  raw_ref = account_sessions.raw_ref || EXCLUDED.raw_ref,
-  person_type = COALESCE(EXCLUDED.person_type, account_sessions.person_type),
-  department = COALESCE(EXCLUDED.department, account_sessions.department),
-  campus_id = COALESCE(EXCLUDED.campus_id, account_sessions.campus_id),
-  building_id = COALESCE(EXCLUDED.building_id, account_sessions.building_id),
-  network_zone_id = COALESCE(EXCLUDED.network_zone_id, account_sessions.network_zone_id),
-  ssid = COALESCE(EXCLUDED.ssid, account_sessions.ssid),
-  vlan = COALESCE(EXCLUDED.vlan, account_sessions.vlan),
-  ap = COALESCE(EXCLUDED.ap, account_sessions.ap),
-  nas_ip = COALESCE(EXCLUDED.nas_ip, account_sessions.nas_ip),
-  session_status = COALESCE(EXCLUDED.session_status, account_sessions.session_status),
-  updated_at = now()`,
-		session.SessionID, session.AccountID, session.EndpointID, session.IP, session.MAC, session.AccessID, session.Source, startedAt, endedAt, session.IdentityConfidence, rawRef, session.PersonType, session.Department, session.CampusID, session.BuildingID, session.NetworkZoneID, session.SSID, session.VLAN, session.AP, session.NASIP, session.SessionStatus)
+	history, err := writeIdentityIPMACHistory(ctx, tx, state.IPMACHistory)
 	if err != nil {
-		return err
+		return stats, err
 	}
-	metadata, _ := json.Marshal(session)
-	_, err = tx.ExecContext(ctx, `UPDATE account_sessions SET policy_metadata=$2 WHERE session_id=$1 AND COALESCE(NULLIF(policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz) <= $3::timestamptz`, session.SessionID, metadata, session.LastConfirmedAt)
-	return err
-}
-
-func upsertIdentityIPMACHistory(ctx context.Context, tx *sql.Tx, item IdentityIPMACHistory) error {
-	if item.EventID == "" {
-		return nil
+	access, err := writeIdentityAccessHistory(ctx, tx, state.AccessHistory)
+	if err != nil {
+		return stats, err
 	}
-	eventIDs, _ := json.Marshal(item.EventIDsSample)
-	firstSeen := identitySQLTime(item.FirstSeen)
-	lastSeen := identitySQLTime(item.LastSeen)
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO identity_ip_mac_history(event_id, endpoint_id, account_id, entity_role, ip, mac, source, first_seen, last_seen, identity_confidence, event_ids_sample)
-VALUES($1,$2,$3,$4,NULLIF($5, '')::inet,$6,$7,$8,$9,$10,$11)
-ON CONFLICT(event_id) DO UPDATE SET
-  endpoint_id = EXCLUDED.endpoint_id,
-  account_id = EXCLUDED.account_id,
-  entity_role = EXCLUDED.entity_role,
-  ip = EXCLUDED.ip,
-  mac = EXCLUDED.mac,
-  source = EXCLUDED.source,
-  last_seen = GREATEST(identity_ip_mac_history.last_seen, EXCLUDED.last_seen),
-  identity_confidence = GREATEST(identity_ip_mac_history.identity_confidence, EXCLUDED.identity_confidence),
-  event_ids_sample = EXCLUDED.event_ids_sample`,
-		item.EventID, item.EndpointID, item.AccountID, item.EntityRole, item.IP, item.MAC, item.Source, firstSeen, lastSeen, item.IdentityConfidence, eventIDs)
-	return err
-}
-
-func upsertIdentityAccessHistory(ctx context.Context, tx *sql.Tx, item IdentityAccessHistory) error {
-	if item.EventID == "" || item.AccessID == "" {
-		return nil
-	}
-	eventIDs, _ := json.Marshal(item.EventIDsSample)
-	firstSeen := identitySQLTime(item.FirstSeen)
-	lastSeen := identitySQLTime(item.LastSeen)
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO identity_access_history(event_id, endpoint_id, account_id, entity_role, access_id, access_type, ap, switch_id, switch_port, vlan, source, first_seen, last_seen, identity_confidence, event_ids_sample, campus_id, building_id, network_zone_id, ssid, nas_ip)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),NULLIF($17,''),NULLIF($18,''),NULLIF($19,''),NULLIF($20,'')::inet)
-ON CONFLICT(event_id) DO UPDATE SET
-  endpoint_id = EXCLUDED.endpoint_id,
-  account_id = EXCLUDED.account_id,
-  entity_role = EXCLUDED.entity_role,
-  access_id = EXCLUDED.access_id,
-  access_type = EXCLUDED.access_type,
-  ap = EXCLUDED.ap,
-  switch_id = EXCLUDED.switch_id,
-  switch_port = EXCLUDED.switch_port,
-  vlan = EXCLUDED.vlan,
-  source = EXCLUDED.source,
-  last_seen = GREATEST(identity_access_history.last_seen, EXCLUDED.last_seen),
-  identity_confidence = GREATEST(identity_access_history.identity_confidence, EXCLUDED.identity_confidence),
-  event_ids_sample = EXCLUDED.event_ids_sample,
-  campus_id = COALESCE(EXCLUDED.campus_id, identity_access_history.campus_id),
-  building_id = COALESCE(EXCLUDED.building_id, identity_access_history.building_id),
-  network_zone_id = COALESCE(EXCLUDED.network_zone_id, identity_access_history.network_zone_id),
-  ssid = COALESCE(EXCLUDED.ssid, identity_access_history.ssid),
-  nas_ip = COALESCE(EXCLUDED.nas_ip, identity_access_history.nas_ip)`,
-		item.EventID, item.EndpointID, item.AccountID, item.EntityRole, item.AccessID, item.AccessType, item.AP, item.SwitchID, item.SwitchPort, item.VLAN, item.Source, firstSeen, lastSeen, item.IdentityConfidence, eventIDs, item.CampusID, item.BuildingID, item.NetworkZoneID, item.SSID, item.NASIP)
-	return err
+	stats.HistoryRows = history.HistoryRows + access.HistoryRows
+	stats.WindowInserts = history.WindowInserts + access.WindowInserts
+	stats.WindowExtends = history.WindowExtends + access.WindowExtends
+	stats.WindowUnchanged = history.WindowUnchanged + access.WindowUnchanged
+	return stats, nil
 }
 
 func identitySQLTime(raw string) time.Time {
@@ -1871,60 +1777,6 @@ func identitySQLTime(raw string) time.Time {
 		return parsed
 	}
 	return time.Now()
-}
-
-func upsertDeviceSignalFact(ctx context.Context, tx *sql.Tx, sensorID string, signal DeviceSignal) error {
-	firstSeen := nullableTime(signal.FirstSeen)
-	lastSeen := nullableTime(signal.LastSeen)
-	if !firstSeen.Valid && lastSeen.Valid {
-		firstSeen = lastSeen
-	}
-	if !lastSeen.Valid && firstSeen.Valid {
-		lastSeen = firstSeen
-	}
-	if !firstSeen.Valid || !lastSeen.Valid {
-		now := time.Now()
-		firstSeen = sql.NullTime{Time: now, Valid: true}
-		lastSeen = sql.NullTime{Time: now, Valid: true}
-	}
-	sample, _ := json.Marshal(signalEventIDs(signal))
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO device_signal_facts(sensor_id, signal_id, ip, source, kind, value, normalized_value, strength, confidence, weight, first_seen, last_seen, seen_count, event_ids_sample)
-VALUES($1,$2,$3::inet,$4,$5,$6,$7,$8,$9,$10,$11,$12,0,$13)
-ON CONFLICT(sensor_id, signal_id) DO UPDATE SET
-  value = EXCLUDED.value,
-  confidence = GREATEST(device_signal_facts.confidence, EXCLUDED.confidence),
-  weight = GREATEST(device_signal_facts.weight, EXCLUDED.weight),
-  first_seen = LEAST(device_signal_facts.first_seen, EXCLUDED.first_seen),
-  last_seen = GREATEST(device_signal_facts.last_seen, EXCLUDED.last_seen),
-  updated_at = now()`,
-		sensorID, signal.SignalID, signal.IP, signal.Source, signal.Kind, signal.Value, signal.NormalizedValue, signal.Strength, signal.Confidence, signal.Weight, firstSeen.Time, lastSeen.Time, sample); err != nil {
-		return err
-	}
-	for _, eventID := range signalEventIDs(signal) {
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO device_signal_events(sensor_id, signal_id, event_id, first_seen)
-VALUES($1,$2,$3,$4)
-ON CONFLICT(sensor_id, signal_id, event_id) DO NOTHING`,
-			sensorID, signal.SignalID, eventID, firstSeen.Time); err != nil {
-			return err
-		}
-	}
-	_, err := tx.ExecContext(ctx, `
-UPDATE device_signal_facts
-SET seen_count = counted.seen_count,
-    event_ids_sample = COALESCE(counted.event_ids_sample, '[]'::jsonb),
-    updated_at = now()
-FROM (
-  SELECT count(*) AS seen_count, jsonb_agg(event_id ORDER BY first_seen DESC, event_id) FILTER (WHERE event_rank <= 20) AS event_ids_sample
-  FROM (
-    SELECT event_id, first_seen, row_number() OVER (ORDER BY first_seen DESC, event_id) AS event_rank
-    FROM device_signal_events
-    WHERE sensor_id = $1 AND signal_id = $2
-  ) ranked
-) counted
-WHERE device_signal_facts.sensor_id = $1 AND device_signal_facts.signal_id = $2`, sensorID, signal.SignalID)
-	return err
 }
 
 func signalEventIDs(signal DeviceSignal) []string {

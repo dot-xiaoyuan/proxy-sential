@@ -191,6 +191,7 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 }
 
 type DeviceQuery struct {
+	View       string
 	Mode       string
 	Window     time.Duration
 	Search     string
@@ -199,6 +200,7 @@ type DeviceQuery struct {
 	Capability string
 	Limit      int
 	Offset     int
+	Cursor     string
 }
 
 type AddressDetail struct {

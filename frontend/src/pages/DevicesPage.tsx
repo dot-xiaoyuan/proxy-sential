@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Alert, Button, Checkbox, Input, Popover, Segmented, Select, Table, Tooltip, Typography } from 'antd'
+import { Alert, Button, Checkbox, Input, Popover, Segmented, Select, Table, Tooltip, Typography, Tag } from 'antd'
 import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import type { ColumnsType } from 'antd/es/table'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -10,12 +10,14 @@ import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices } f
 import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
 import { AppErrorAlert, AppLoadingState, AppServerPagination, UniversityDimensionFilters, useServerPagination, type ReportWindow, type UniversityDimensions } from '../shared/ui'
 
-export function DevicesPage() {
+export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const [params, setParams] = useSearchParams()
   const pagination = useServerPagination()
+  const cursorByPage = useRef<Record<number, string>>({ 1: '' })
   const view = params.get('view') === 'history' ? 'history' : 'recent'
   const quickWindow = (['10m','1h','24h','7d','30d'].includes(params.get('window') || '') ? params.get('window') : '24h') as ReportWindow
   const query = params.get('q') || ''
+  const searchType=(params.get('search_type') || 'all') as NonNullable<DeviceQuery['search_type']>
   const [searchInput, setSearchInput] = useState(query)
   const ecosystem = params.get('ecosystem') || undefined
   const brand = params.get('brand') || undefined
@@ -36,19 +38,29 @@ export function DevicesPage() {
   const change = useCallback((values: Record<string,string|undefined>)=>setParams(current=>{
     const next=new URLSearchParams(current)
     for(const [key,value] of Object.entries(values)){if(value)next.set(key,value);else next.delete(key)}
+    cursorByPage.current={1:''}
     next.set('page','1');next.delete('cursor');return next
   },{replace:true}),[setParams])
   useEffect(()=>{setSearchInput(query)},[query])
   useEffect(()=>{
+    if(searchType!=='all'&&searchType!=='name')return
     const next=searchInput.trim();if(next===query)return
     const timer=setTimeout(()=>change({q:next}),300);return ()=>clearTimeout(timer)
-  },[searchInput,query,change])
+  },[searchInput,query,searchType,change])
   useEffect(()=>{if(!params.has('view')||!params.has('window'))setParams(current=>{const next=new URLSearchParams(current);if(!next.has('view'))next.set('view','recent');if(!next.has('window'))next.set('window','24h');return next},{replace:true})},[params,setParams])
   const recognitionSummary = useDeviceRecognitionSummary(diagnosticsOpen)
-  const listQuery: DeviceQuery={ view, window: quickWindow, q: query, ecosystem, brand, os_family: osFamily, sensor_id:params.get('sensor_id')||undefined, ...dimensions, limit: pagination.pageSize, cursor: pagination.cursor }
+  const listQuery: DeviceQuery={ search_type:searchType, view, window: quickWindow, q: query, ecosystem, brand, os_family: osFamily, sensor_id:params.get('sensor_id')||undefined, ...dimensions, limit: pagination.pageSize, cursor: cursorByPage.current[pagination.page] || undefined }
   const devices = useDevices(listQuery)
   const metadata=useDeviceInventoryMetadata(listQuery,Boolean(devices.data)&&!devices.isPlaceholderData)
   const total=metadata.data?.total
+  useEffect(()=>{
+    const next=devices.data?.page?.next_cursor
+    if(next) cursorByPage.current[pagination.page+1]=next
+  },[devices.data,pagination.page])
+  const updatePagination=(nextPage:number,nextSize:number)=>{
+    if(nextPage===1||nextSize!==pagination.pageSize)cursorByPage.current={1:''}
+    pagination.update(nextPage,nextSize)
+  }
   useEffect(()=>{if(total===undefined||metadata.isFetching||devices.isFetching||devices.isPlaceholderData||(devices.data?.items?.length??0)>0)return;const last=Math.max(1,Math.ceil(total/pagination.pageSize));if(pagination.page>last)pagination.update(last,pagination.pageSize)},[total,metadata.isFetching,devices.isFetching,devices.isPlaceholderData,devices.data,pagination])
   const entered=useRef(performance.getEntriesByName('device-inventory-enter').at(-1)?.startTime??performance.now())
   const measured=useRef(false)
@@ -71,10 +83,11 @@ export function DevicesPage() {
     { title: '关联账号 / 接入', key: 'context', render: (_, row) => <OwnershipAccess device={row} /> },
     { title: '最近观测', key:'observed', dataIndex: 'last_seen', width: 110, render: (value?: string) => <ObservedTime value={value} /> },
   ]
-  return <main className="page device-inventory-page">
-    <header className="device-page-header"><Typography.Title level={3}>终端画像</Typography.Title><div className="device-header-actions"><Link to="/discovery">网络设备发现</Link><Segmented aria-label="终端范围" value={view} options={[{label:'近期观测',value:'recent'},{label:'全部历史',value:'history'}]} onChange={value=>change({view:String(value)})}/><Button icon={<ReloadOutlined/>} loading={devices.isFetching} onClick={()=>{void devices.refresh();void metadata.refresh()}}>刷新数据</Button></div></header>
+  return <section className={embedded ? "device-inventory-page" : "page device-inventory-page"}>
+    <header className="device-page-header">{!embedded && <Typography.Title level={3}>终端画像</Typography.Title>}<div className="device-header-actions">{!embedded && <Link to="/devices?tab=network">网络设备</Link>}<Segmented aria-label="终端范围" value={view} options={[{label:'近期观测',value:'recent'},{label:'全部历史',value:'history'}]} onChange={value=>change({view:String(value)})}/><Button icon={<ReloadOutlined/>} loading={devices.isFetching} onClick={()=>{void devices.refresh();void metadata.refresh()}}>刷新数据</Button></div></header>
     <section className="surface device-filter-bar device-filter-compact" aria-label="终端筛选">
-      <div className="device-filter-primary"><Input.Search className="device-search" allowClear placeholder="搜索设备名称、MAC、IP 或账号" value={searchInput} onChange={event=>setSearchInput(event.target.value)} onSearch={value=>change({q:value.trim()})}/>{view==='recent'&&<Segmented aria-label="观测时间范围" value={quickWindow} options={[{label:'10 分钟',value:'10m'},{label:'1 小时',value:'1h'},{label:'24 小时',value:'24h'},{label:'7 天',value:'7d'},{label:'30 天',value:'30d'}]} onChange={value=>change({window:String(value)})}/>}</div>
+      <div className="device-filter-primary"><div className="device-typed-search"><Select aria-label="搜索类型" value={searchType} options={[{value:'all',label:'综合'},{value:'account',label:'账号'},{value:'ip',label:'IP'},{value:'mac',label:'MAC'},{value:'name',label:'名称'}]} onChange={value=>change({search_type:value,q:searchInput.trim()})}/><Input.Search className="device-search" allowClear placeholder={searchType==='account'?'输入完整账号（最新观测关联）':searchType==='ip'?'输入完整 IP（含历史精确匹配）':searchType==='mac'?'输入完整 MAC':searchType==='name'?'搜索设备名称':'搜索设备名称、MAC、IP 或账号'} value={searchInput} onChange={event=>setSearchInput(event.target.value)} onSearch={value=>change({q:value.trim()})}/></div>{view==='recent'&&<Segmented aria-label="观测时间范围" value={quickWindow} options={[{label:'10 分钟',value:'10m'},{label:'1 小时',value:'1h'},{label:'24 小时',value:'24h'},{label:'7 天',value:'7d'},{label:'30 天',value:'30d'}]} onChange={value=>change({window:String(value)})}/>}</div>
+      {searchType==='account'&&<Typography.Text className="device-list-note" type="secondary">账号精确匹配最新观测候选，不代表在线或登记责任人；历史账号请进入详情溯源。</Typography.Text>}
       <details className="filter-disclosure device-filter-disclosure" onToggle={event=>setFiltersOpen(event.currentTarget.open)}><summary>更多筛选{[osFamily,brand,ecosystem,...Object.values(dimensions)].filter(Boolean).length ? `（已启用 ${[osFamily,brand,ecosystem,...Object.values(dimensions)].filter(Boolean).length} 项）` : ''}</summary>{filtersOpen&&<div className="filter-disclosure-content device-more-filters"><Select aria-label="操作系统筛选" allowClear showSearch optionFilterProp="label" placeholder="全部操作系统" value={osFamily} options={(metadata.data?.facets?.os_families??[]).map(value=>({value,label:value==='unknown'?'空值':value}))} onChange={value=>change({os_family:value})}/><Select aria-label="品牌筛选" allowClear showSearch optionFilterProp="label" placeholder="全部品牌" value={brand} options={(metadata.data?.facets?.brands??[]).map(value=>({value,label:brandFilterLabel(value)}))} onChange={value=>change({brand:value})}/><Select allowClear className="ecosystem-filter" placeholder="生态线索" value={ecosystem} options={['Apple','Huawei','Samsung','Xiaomi','Microsoft Windows','Amazon Alexa','Roku','Sonos','Vivo','OPPO/Realme'].map(value=>({label:value,value}))} onChange={value=>change({ecosystem:value})}/><UniversityDimensionFilters value={dimensions} onChange={next=>change(Object.fromEntries(dimensionKeys.map(key=>[key,next[key]])))}/></div>}</details>
     </section>
     <section className="surface device-inventory-surface">
@@ -91,6 +104,8 @@ export function DevicesPage() {
         {metadata.isError&&<Typography.Text className="device-read-model-state">统计加载失败 <Button type="link" size="small" onClick={()=>void metadata.refresh()}>重试统计</Button></Typography.Text>}
       </div>
       {devices.isError&&devices.data&&<AppErrorAlert title="刷新失败，保留上次列表" message={devices.error.message}/>}
+      {devices.data?.read_model_state&&!devices.data.read_model_state.complete&&<Alert type="info" showIcon title="历史关联正在回填" description="当前显示已生成的设备摘要；历史检索和关联统计尚不完整，更新延迟以处理状态为准。"/>}
+      {devices.data?.read_model_state?.error&&<Alert type="warning" showIcon title="检索投影更新异常" description="保留上次已物化结果；关联变更可能尚未完成更新。"/>}
       {matchSearch&&<Typography.Paragraph className="device-list-note" type="secondary">精确 IP 匹配 · {view==='recent'?'所选时间内的观测与会话':'全部历史关联'}</Typography.Paragraph>}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表加载失败" message={devices.error.message} /> : <>
         {compact&&<div className="device-mobile-cards">{items.map(row => <article key={row.endpoint_id} className="device-mobile-card">
@@ -98,12 +113,12 @@ export function DevicesPage() {
           {visibleColumns.includes('recognition')&&<DeviceLedgerRecognition device={row}/>}
           {visibleColumns.includes('os')&&<DeviceLedgerOS device={row}/>}
 
-          {visibleColumns.includes('context')&&(row.current_account||row.owner_name||row.owner_account||row.current_access_id)&&<OwnershipAccess device={row} />}
+          {visibleColumns.includes('context')&&(row.current_account||row.current_account_conflict||row.owner_name||row.owner_account||row.current_access_id)&&<OwnershipAccess device={row} />}
           <div className="device-mobile-footer">{visibleColumns.includes('observed')&&<ObservedTime value={row.last_seen}/>}<div className="device-row-actions"><Link to={detailURL(row)}>查看详情</Link></div></div>
         </article>)}</div>}
         {compact&&items.length === 0 && <Typography.Text className="device-mobile-empty" type="secondary">没有匹配的终端</Typography.Text>}
         {!compact&&<Table className="compact-list-table device-desktop-table" columns={columns.filter(column=>column.key==='identity'||visibleColumns.includes(String(column.key)))} dataSource={items} locale={{ emptyText: '没有匹配的终端' }} pagination={false} rowKey="endpoint_id" tableLayout="fixed" size="small" />}
-        {total!==undefined?<AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={pagination.update}/>:<div className="device-pending-pagination" aria-label="统计等待分页"><Button disabled={pagination.page<=1||devices.isPlaceholderData} onClick={()=>pagination.update(pagination.page-1,pagination.pageSize)}>上一页</Button><Typography.Text>第 {pagination.page} 页</Typography.Text><Button disabled={!devices.data?.page.next_cursor||devices.isPlaceholderData} onClick={()=>pagination.update(pagination.page+1,pagination.pageSize)}>下一页</Button>{!metadata.isError&&<Typography.Text type="secondary">总数统计中</Typography.Text>}</div>}
+        {total!==undefined?<AppServerPagination cursorMode page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={updatePagination}/>:<div className="device-pending-pagination" aria-label="统计等待分页"><Button disabled={pagination.page<=1||devices.isPlaceholderData} onClick={()=>updatePagination(pagination.page-1,pagination.pageSize)}>上一页</Button><Typography.Text>第 {pagination.page} 页</Typography.Text><Button disabled={!devices.data?.page.next_cursor||devices.isPlaceholderData} onClick={()=>updatePagination(pagination.page+1,pagination.pageSize)}>下一页</Button>{!metadata.isError&&<Typography.Text type="secondary">总数统计中</Typography.Text>}</div>}
       </>}
     </section>
     <details className="surface filter-disclosure device-diagnostics" onToggle={event=>setDiagnosticsOpen(event.currentTarget.open)}><summary>识别质量与接入诊断</summary>{diagnosticsOpen&&<div className="filter-disclosure-content recognition-summary-surface">
@@ -137,11 +152,13 @@ export function DevicesPage() {
 		{recognitionSummary.data.event_count > 0 && recognitionSummary.data.event_attribution_rate < 0.2 && <Alert showIcon type="warning" title={`最近 24 小时终端归属率 ${Math.round(recognitionSummary.data.event_attribution_rate * 100)}%，生态命中暂无法完整写入终端画像`} description={<Link to="/ingest">检查身份接入与标准事件 endpoint_id</Link>} />}
 		</>}
 	</div>}</details>
-  </main>
+  </section>
 }
 
 function OwnershipAccess({ device }: { device: DeviceInventoryListItem }) {
   return <div className="device-context-cell">
+    {device.current_account_conflict&&<div><Tag color="orange">关联账号冲突</Tag><Typography.Text className="brand-evidence-wrap">{(device.current_account_candidates??[]).join(' / ')}</Typography.Text></div>}
+    {device.current_access_conflict&&<Tag color="orange">接入位置冲突</Tag>}
     {device.current_account&&<div><Typography.Text type="secondary">关联账号</Typography.Text><Typography.Text className="brand-evidence-wrap">{device.current_account}</Typography.Text></div>}
     {(device.owner_name||device.owner_account)&&<div><Typography.Text type="secondary">登记归属</Typography.Text><Typography.Text className="brand-evidence-wrap">{[device.owner_name,device.owner_account].filter(Boolean).join(' · ')}</Typography.Text></div>}
     {device.current_access_id&&<div><Typography.Text type="secondary">接入位置</Typography.Text><Typography.Text className="brand-evidence-wrap" title={device.current_access_id}>{device.current_access_id}</Typography.Text></div>}

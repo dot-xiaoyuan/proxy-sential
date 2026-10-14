@@ -1,8 +1,12 @@
 import { OperationTaskProgress } from '../shared/ui/OperationTaskProgress'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
+  AlertOutlined,
+  LaptopOutlined,
+  DeploymentUnitOutlined,
+  SafetyCertificateOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   SettingOutlined,
@@ -19,10 +23,19 @@ import { routeOwner, routePermission, visibleNavigation } from './navigation'
 import { Alert } from 'antd'
 import type { Session } from '../shared/api/types'
 
+const navigationIcons: Record<string, ReactNode> = {
+  workbench: <DashboardOutlined />,
+  risk: <AlertOutlined />,
+  assets: <LaptopOutlined />,
+  network: <DeploymentUnitOutlined />,
+  strategy: <SafetyCertificateOutlined />,
+  system: <SettingOutlined />,
+}
+
 function buildNavItems(session: Session): MenuProps['items'] {
   return visibleNavigation(session).map(group => group.key === 'workbench' ? {
-    key: group.items[0].key, icon: <DashboardOutlined />, label: <NavLink to={group.items[0].to}>{group.title}</NavLink>
-  } : {key:group.key,label:group.title,icon:<SettingOutlined />,children:group.items.map(entry=>({key:entry.key,label:<NavLink to={entry.to} onClick={()=>{if(entry.to.split('?')[0]==='/devices'){performance.clearMarks('device-inventory-enter');performance.mark('device-inventory-enter')}}}>{entry.title}</NavLink>}))})
+    key: group.items[0].key, icon: navigationIcons[group.key], label: <NavLink to={group.items[0].to}>{group.title}</NavLink>
+  } : {key:group.key,label:group.title,icon:navigationIcons[group.key],children:group.items.map(entry=>({key:entry.key,label:<NavLink to={entry.to} onClick={()=>{if(entry.to.split('?')[0]==='/devices'){performance.clearMarks('device-inventory-enter');performance.mark('device-inventory-enter')}}}>{entry.title}</NavLink>}))})
 }
 
 function SentinelLogo() {

@@ -102,7 +102,11 @@ func (s *Server) handleIdentityIngest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "identity_batch_lookup_failed", err.Error())
 		return
 	} else if ok {
-		writeJSON(w, http.StatusOK, existing)
+		status := http.StatusOK
+		if existing.Status != "completed" {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, existing)
 		return
 	}
 
@@ -358,8 +362,9 @@ func (s *Server) handleIdentityBatchReplay(w http.ResponseWriter, r *http.Reques
 	}
 	var batch IdentityIngestBatch
 	var eventsJSON []byte
+	var protocol int
 	var receivedAt time.Time
-	err := s.identityIngest.db.QueryRowContext(ctx, `SELECT batch_id,source,sensor_id,status,records_read,records_emitted,records_skipped,records_malformed,COALESCE(error_message,''),received_at,normalized_events FROM identity_ingest_batches WHERE batch_id=$1`, batchID).Scan(&batch.BatchID, &batch.Source, &batch.SensorID, &batch.Status, &batch.Read, &batch.Emitted, &batch.Skipped, &batch.Malformed, &batch.Error, &receivedAt, &eventsJSON)
+	err := s.identityIngest.db.QueryRowContext(ctx, `SELECT batch_id,source,sensor_id,status,records_read,records_emitted,records_skipped,records_malformed,COALESCE(error_message,''),received_at,normalized_events,protocol_version FROM identity_ingest_batches WHERE batch_id=$1`, batchID).Scan(&batch.BatchID, &batch.Source, &batch.SensorID, &batch.Status, &batch.Read, &batch.Emitted, &batch.Skipped, &batch.Malformed, &batch.Error, &receivedAt, &eventsJSON, &protocol)
 	if ctx.Err() != nil {
 		writeIdentityAuthorityError(w, ctx.Err())
 		return
@@ -372,6 +377,11 @@ func (s *Server) handleIdentityBatchReplay(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "identity_batch_read_failed", err.Error())
 		return
 	}
+	if protocol >= 2 {
+		writeError(w, http.StatusConflict, "identity_inbox_owned", "durable inbox workers own recovery of this batch")
+		return
+	}
+
 	events := []normalized.Event{}
 	if err := json.Unmarshal(eventsJSON, &events); err != nil || len(events) == 0 {
 		writeError(w, http.StatusConflict, "identity_batch_not_replayable", "identity batch has no retained normalized events")

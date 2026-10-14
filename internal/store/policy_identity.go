@@ -214,17 +214,26 @@ func (s *PostgresStore) ListPolicySessionsForScope(ctx context.Context, at time.
 	}
 	return reconcileIdentitySessions(out, snapshots, at), nil
 }
+
+// writePolicyIdentityEvents writes the batch's policy observations in one statement. The
+// per-event loop it replaces issued one INSERT per event, which is the same shape that made
+// the identity path fail to keep up on the field.
 func writePolicyIdentityEvents(ctx context.Context, tx *sql.Tx, events []normalized.Event) error {
+	rows := make([]policyIdentityRow, 0, len(events))
 	for _, e := range events {
 		for _, s := range policyRows([]normalized.Event{e}) {
 			raw, err := json.Marshal(s)
 			if err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO policy_identity_observations(event_id,observed_at,account_id,session_id,session_data) VALUES($1,$2,$3,$4,$5) ON CONFLICT(event_id) DO NOTHING`, e.EventID, s.ConfirmedAt, s.AccountID, s.ID, raw); err != nil {
-				return err
-			}
+			rows = append(rows, policyIdentityRow{
+				EventID:     e.EventID,
+				ConfirmedAt: s.ConfirmedAt,
+				AccountID:   s.AccountID,
+				SessionID:   s.ID,
+				SessionData: string(raw),
+			})
 		}
 	}
-	return nil
+	return insertPolicyIdentityObservationsBatch(ctx, tx, rows)
 }

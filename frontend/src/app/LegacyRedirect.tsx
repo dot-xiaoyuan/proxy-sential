@@ -20,3 +20,10 @@ export function ActivityEntry({children}:{children:ReactNode}){
  }
  return children
 }
+
+export function LegacyDiscoveryRedirect(){
+ const location=useLocation();const params=new URLSearchParams(location.search)
+ const tab=params.get('tab');params.set('tab',tab==='devices'||tab==='records'?'records':tab==='iot'?'iot':'network')
+ params.delete('page');params.delete('cursor');params.delete('offset')
+ return <Navigate replace to={`/devices?${params}${location.hash}`}/>
+}

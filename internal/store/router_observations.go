@@ -567,7 +567,9 @@ func routerWhere(query RouterQuery) (string, []any, error) {
 		clauses = append(clauses, `(assessment_id ILIKE '%'||`+placeholder+`||'%' OR endpoint_id ILIKE '%'||`+placeholder+`||'%' OR host(ip) ILIKE '%'||`+placeholder+`||'%' OR mac ILIKE '%'||`+placeholder+`||'%' OR brand ILIKE '%'||`+placeholder+`||'%' OR series ILIKE '%'||`+placeholder+`||'%' OR model ILIKE '%'||`+placeholder+`||'%')`)
 	}
 	role := strings.TrimSpace(query.Role)
-	if role == "" {
+	if role == "network" {
+		clauses = append(clauses, "role IN ('router','ap','switch','firewall')")
+	} else if role == "" {
 		clauses = append(clauses, "role='router'")
 		clauses = append(clauses, "EXISTS(SELECT 1 FROM router_evidence_facts active_router_fact WHERE active_router_fact.assessment_id=router_assessments.assessment_id AND active_router_fact.expires_at>now() AND active_router_fact.conflict=false AND active_router_fact.exclusion=false AND COALESCE(active_router_fact.data->>'brand_reference_only','false')='false' AND active_router_fact.data->>'role'='router')")
 	} else if role == "router" || role == "ap" {
@@ -580,7 +582,12 @@ func routerWhere(query RouterQuery) (string, []any, error) {
 	if strings.TrimSpace(query.Status) == "" && !query.IncludeCandidates {
 		clauses = append(clauses, "status IN('likely','confirmed')")
 	}
-	for _, item := range []struct{ value, clause string }{{query.IP, `ip=$%d::inet`}, {strings.ToLower(query.MAC), `lower(mac)=$%d`}, {query.VLAN, `$%d=ANY(vlans)`}, {query.Brand, `lower(brand)=lower($%d)`}, {query.Model, `lower(model)=lower($%d)`}, {query.Role, `role=$%d`}, {query.Status, `status=$%d`}, {query.Source, `$%d=ANY(sources)`}} {
+	for _, item := range []struct{ value, clause string }{{query.IP, `ip=$%d::inet`}, {strings.ToLower(query.MAC), `lower(mac)=$%d`}, {query.VLAN, `$%d=ANY(vlans)`}, {query.Brand, `lower(brand)=lower($%d)`}, {query.Model, `lower(model)=lower($%d)`}, {func() string {
+		if query.Role == "network" {
+			return ""
+		}
+		return query.Role
+	}(), `role=$%d`}, {query.Status, `status=$%d`}, {query.Source, `$%d=ANY(sources)`}} {
 		if strings.TrimSpace(item.value) != "" {
 			add(item.clause, strings.TrimSpace(item.value))
 		}

@@ -349,7 +349,10 @@ func (s *Server) handleIdentitySnapshotCommit(w http.ResponseWriter, r *http.Req
 		writeIdentityAuthorityError(w, err)
 		return
 	}
-	if _, err = backend.CommitIdentitySnapshot(ctx, snapshot); err != nil && !errors.Is(err, store.ErrIdentitySnapshotConflict) {
+	if _, err = backend.CommitIdentitySnapshot(ctx, snapshot); errors.Is(err, store.ErrIdentitySnapshotConflict) {
+		writeError(w, 409, "identity_snapshot_conflict", "stored snapshot differs from this upload")
+		return
+	} else if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "identity_snapshot_commit_failed", err.Error())
 		return
 	}

@@ -19,13 +19,14 @@ import (
 )
 
 type DBStore struct {
-	pg           *PostgresStore
-	ch           *ClickHouseStore
-	storageMode  Mode
-	domainOnce   sync.Once
-	domainQueue  chan domainBatch
-	domainCancel context.CancelFunc
-	domainDone   chan struct{}
+	fingerprintMatches fingerprintMatchMeter
+	pg                 *PostgresStore
+	ch                 *ClickHouseStore
+	storageMode        Mode
+	domainOnce         sync.Once
+	domainQueue        chan domainBatch
+	domainCancel       context.CancelFunc
+	domainDone         chan struct{}
 }
 
 func (s *DBStore) Health(ctx context.Context) error {
@@ -61,24 +62,10 @@ func NewDBStore(opts Options) (*DBStore, error) {
 }
 
 func (s *DBStore) Overview(ctx context.Context) (Overview, error) {
-	overview, err := s.pg.Overview(ctx)
-	if err != nil {
-		return Overview{}, err
-	}
-	eventTypes, err := s.ch.ListIngestEventTypes(ctx)
-	if err == nil {
-		events := 0
-		for _, item := range eventTypes {
-			events += item.Count
-		}
-		if overview.Throughput == nil {
-			overview.Throughput = map[string]int{}
-		}
-		if events > 0 {
-			overview.Throughput["events"] = events
-		}
-	}
-	return overview, nil
+	// Windowed event counts come from GetActivityOverview's published facts.
+	// Scanning 24h of raw events here duplicates that read and exhausts the
+	// shared request deadline before the windowed query can even start.
+	return s.pg.Overview(ctx)
 }
 
 func (s *DBStore) ListRisks(ctx context.Context, query Query) (RiskPage, error) {
@@ -427,10 +414,10 @@ func (s *DBStore) IngestStatus(ctx context.Context) (ingest.Status, error) {
 		"skipped":   run.Normalized.Skipped,
 		"malformed": run.Normalized.Malformed,
 	}
-	eventTypes, _ := s.ch.ListSensorIngestEventTypes(ctx, s.pg.sensorID)
-	status.LastEventTypeDist = map[string]int{}
-	for _, item := range eventTypes {
-		status.LastEventTypeDist[item.Type] = item.Count
+	// This is the latest batch distribution, matching LastCounters and the
+	// file reader. Health/status requests must not aggregate 24h of raw events.
+	for eventType, count := range run.Normalized.ByType {
+		status.LastEventTypeDist[eventType] = count
 	}
 	status.Healthy = run.Normalized.Malformed == 0 && !run.Truncated
 	status.Severity = "info"
@@ -477,7 +464,7 @@ func (s *DBStore) IngestIdentityEvents(ctx context.Context, events []normalized.
 	if err := s.ch.WriteNormalizedEvents(ctx, events); err != nil {
 		return err
 	}
-	return s.pg.WriteIdentityEvents(ctx, events)
+	return s.pg.writeLegacyIdentityEvents(ctx, events)
 }
 
 func (s *DBStore) ResolveIdentityAt(ctx context.Context, ip, at string) (IdentityAttribution, bool, error) {

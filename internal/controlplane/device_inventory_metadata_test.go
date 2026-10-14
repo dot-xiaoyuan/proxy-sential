@@ -58,7 +58,7 @@ func TestDeviceInventoryMetadataIsIndependentAndLightPageOmitsTotal(t *testing.T
 		t.Fatalf("queries: %+v", reader.queries)
 	}
 }
-func TestDeviceInventoryCanonicalCacheAndRefresh(t *testing.T) {
+func TestDeviceInventoryListDoesNotUseFixedTTLCache(t *testing.T) {
 	s := NewServer(Options{ShadowDir: t.TempDir(), ReadOnly: true})
 	reader := &inventoryModeReader{Reader: s.reader}
 	s.reader = reader
@@ -69,11 +69,11 @@ func TestDeviceInventoryCanonicalCacheAndRefresh(t *testing.T) {
 			t.Fatal(w.Body.String())
 		}
 	}
-	if len(reader.queries) != 2 {
-		t.Fatalf("reads=%d, want cached + manual refresh", len(reader.queries))
+	if len(reader.queries) != 4 {
+		t.Fatalf("reads=%d, want each list read to observe the current projection version", len(reader.queries))
 	}
-	if reader.routerCalls != 2 {
-		t.Fatalf("cached enrichment reads=%d, want 2", reader.routerCalls)
+	if reader.routerCalls != 4 {
+		t.Fatalf("cached enrichment reads=%d, want 4", reader.routerCalls)
 	}
 }
 

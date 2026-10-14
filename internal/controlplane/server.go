@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -138,6 +139,7 @@ type DeviceListResponse struct {
 }
 
 type DeviceInventoryListResponse struct {
+	ReadModelState      *store.InventoryProjectionState `json:"read_model_state,omitempty"`
 	DeviceNamesDisabled bool                            `json:"device_names_disabled,omitempty"`
 	ReadModelUpdating   bool                            `json:"read_model_updating"`
 	AsOf                string                          `json:"as_of,omitempty"`
@@ -157,9 +159,10 @@ type DeviceInventoryLightResponse struct {
 }
 
 type DeviceInventoryMetadataResponse struct {
-	Total  int                      `json:"total"`
-	Facets store.DeviceFilterFacets `json:"facets"`
-	AsOf   string                   `json:"as_of,omitempty"`
+	ReadModelState *store.InventoryProjectionState `json:"read_model_state,omitempty"`
+	Total          int                             `json:"total"`
+	Facets         store.DeviceFilterFacets        `json:"facets"`
+	AsOf           string                          `json:"as_of,omitempty"`
 }
 
 type EventListResponse struct {
@@ -415,7 +418,10 @@ func NewServerWithError(opts Options) (*Server, error) {
 	server := &Server{
 		managedIdentityFailures: &managedIdentityFailureCache{},
 		sharedReviews:           &sharedReviewRuntime{},
-		deviceInventory:         newDeviceInventoryPageCache(5 * time.Second),
+		// List responses are versioned read-model snapshots; a fixed TTL could
+		// hide a committed result during the five-second visibility SLA. Keep
+		// request coalescing, but do not retain list pages between requests.
+		deviceInventory:         newDeviceInventoryPageCache(0),
 		deviceInventoryMetadata: newDeviceInventoryPageCache(30 * time.Second),
 		startedAt:               time.Now(),
 		runtimeSampler:          &runtimeSampler{},
@@ -575,6 +581,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleProductPolicySnapshot(w, r)
 		return
 	}
+	if path == "/integrations/identity/snapshot-publication" && r.Method == http.MethodGet {
+		s.handleIdentityPublication(w, r)
+		return
+	}
 	if path == "/integrations/identity/snapshots" && r.Method == http.MethodPost {
 		s.handleIdentitySnapshot(w, r)
 		return
@@ -587,12 +597,16 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleIdentitySnapshotUpload(w, r, path)
 		return
 	}
-	if path == "/integrations/identity/events" && r.Method == http.MethodPost {
+	if (path == "/integrations/identity/events" || path == "/integrations/identity/event-batches") && r.Method == http.MethodPost {
 		if s.readOnly && !s.allowIdentityIngest {
 			writeError(w, http.StatusForbidden, "read_only", "identity ingestion is disabled by the global read-only switch")
 			return
 		}
-		s.handleIdentityIngest(w, r)
+		if path == "/integrations/identity/event-batches" {
+			s.handleDurableIdentityBatch(w, r)
+		} else {
+			s.handleIdentityIngest(w, r)
+		}
 		return
 	}
 	if path == "/integrations/identity/bridge/runtime-config" && r.Method == http.MethodGet {
@@ -651,7 +665,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "permission_denied", "required permission: "+permission)
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) {
 		writeError(w, http.StatusForbidden, "read_only", "mutating operations are disabled by the global read-only switch")
 		return
 	}
@@ -776,6 +790,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDeviceInventory(w, r)
 	case r.Method == http.MethodGet && path == "/device-inventory/metadata":
 		s.handleDeviceInventoryRequest(w, r, true)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/device-inventory/"):
+		s.handleInventoryDetail(w, r, strings.TrimPrefix(path, "/device-inventory/"))
 	case r.Method == http.MethodGet && path == "/device-recognition/summary":
 		s.handleDeviceRecognitionSummary(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/devices/"):
@@ -784,6 +800,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDeviceSignals(w, r)
 	case r.Method == http.MethodGet && path == "/device-fingerprint-conflicts":
 		s.handleDeviceFingerprintConflicts(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/device-fingerprint-library/"):
+		s.handleFingerprintCatalog(w, r, path)
 	case r.Method == http.MethodGet && path == "/device-fingerprint-library":
 		status := s.fingerprints.Status()
 		if reader, ok := s.reader.(store.DomainRecognitionStatusReader); ok {
@@ -1260,6 +1278,8 @@ func requiredPermission(method, path string) string {
 		return "audit:read"
 	case strings.HasPrefix(path, "/events"):
 		return "events:read"
+	case strings.HasPrefix(path, "/endpoints/") && strings.Contains(path, "/observations/") && strings.HasSuffix(path, "/evidence"):
+		return "events:read"
 	case strings.HasPrefix(path, "/ingest"):
 		return "ingest:read"
 	case strings.HasPrefix(path, "/shadow"):
@@ -1274,7 +1294,7 @@ func requiredPermission(method, path string) string {
 		return "actions:read"
 	case strings.HasPrefix(path, "/integrations"):
 		return "integrations:write"
-	case strings.HasPrefix(path, "/accounts") || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/device-inventory") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
+	case strings.HasPrefix(path, "/device-fingerprint-library") || strings.HasPrefix(path, "/accounts") || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/device-inventory") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
 		return "identity:read"
 	default:
 		return "risks:read"
@@ -1316,6 +1336,7 @@ func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "bad_fingerprint_bundle", err.Error())
 		return
 	}
+	previousLibrary := fingerprint.Default()
 	status, err := s.fingerprints.ImportWithGuard(data, s.operationCommitGuard(r.Context()))
 	if err != nil {
 		s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.import", "failed")
@@ -1327,7 +1348,15 @@ func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.appendFingerprintAudit(r.Context(), "device-fingerprint-library.import", "imported:"+status.Version)
-	s.startFingerprintBackfill(status.Version)
+	if len(fingerprint.Default().Catalog().Rules) > 0 && previousLibrary.LegacySignature() == fingerprint.Default().LegacySignature() {
+		// The recognition worker detects changed field hashes and enqueues bounded
+		// historical jobs. Do not start the legacy full backfill for catalog-only data.
+		s.fingerprints.SetBackfill("pending", 0)
+		s.fingerprints.SetDomainBackfill("not_required", 0)
+		status = s.fingerprints.Status()
+	} else {
+		s.startFingerprintBackfill(status.Version)
+	}
 	writeJSON(w, http.StatusOK, status)
 }
 
@@ -1540,6 +1569,14 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest stri
 }
 
 func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest string) {
+	if strings.Contains(rest, "/observations/") && strings.HasSuffix(rest, "/evidence") {
+		s.handleInventorySnapshotEvidence(w, r, rest)
+		return
+	}
+	if strings.HasSuffix(rest, "/observations") {
+		s.handleInventoryObservations(w, r, strings.TrimSuffix(rest, "/observations"))
+		return
+	}
 	if strings.HasSuffix(rest, "/name-evidence") {
 		s.handleDeviceNameEvidence(w, r, rest)
 		return
@@ -2010,12 +2047,29 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "bad_device_query", "invalid view")
 		return
 	}
-	query, err := deviceQuery(r.URL.Query())
+	// Device inventory uses a filter-bound keyset cursor. Parse the shared
+	// filters without allowing the legacy numeric offset parser to accept it.
+	values := r.URL.Query()
+	rawInventoryCursor := values.Get("cursor")
+	legacyValues := make(url.Values, len(values))
+	for key, values := range values {
+		legacyValues[key] = append([]string(nil), values...)
+	}
+	legacyValues.Del("cursor")
+	query, err := deviceQuery(legacyValues)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_device_query", err.Error())
 		return
 	}
 	query.View = view
+	if !metadataOnly {
+		query.InventoryCursor = rawInventoryCursor
+	}
+	query.InventorySearchType = r.URL.Query().Get("search_type")
+	if err := store.NormalizeInventorySearch(&query); err != nil {
+		writeError(w, 400, "bad_device_query", err.Error())
+		return
+	}
 	if query.SensorID == "" {
 		query.SensorID = s.sensorID
 	}
@@ -2034,6 +2088,12 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 	query.Ecosystem = strings.ToLower(strings.TrimSpace(query.Ecosystem))
 	query.InventorySkipMetadata = r.URL.Query().Get("include_metadata") == "false" && !metadataOnly
 	query.InventoryMetadataOnly = metadataOnly
+	if rawInventoryCursor != "" && !metadataOnly {
+		if _, decodeErr := store.DecodeInventoryCursorForRequest(query, rawInventoryCursor); decodeErr != nil {
+			writeError(w, http.StatusBadRequest, "bad_cursor", decodeErr.Error())
+			return
+		}
+	}
 	if value := r.URL.Query().Get("include_metadata"); value != "" && value != "true" && value != "false" {
 		writeError(w, 400, "bad_device_query", "invalid include_metadata")
 		return
@@ -2059,6 +2119,9 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 		var loadErr error
 		if reader, ok := s.reader.(store.DeviceInventoryReader); ok {
 			result, loadErr = reader.ListDeviceInventory(loadCtx, query)
+		} else if query.Q != "" || query.SrcIP != "" || query.InventorySearchType != "all" {
+			// Legacy offline readers cannot promise current-only search semantics.
+			loadErr = store.ErrInventoryNotReady
 		} else {
 			legacy, err := s.reader.ListEndpointDevices(loadCtx, query)
 			loadErr = err
@@ -2090,6 +2153,10 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 		page, err = load(ctx)
 	}
 	if err != nil {
+		if errors.Is(err, store.ErrInventoryNotReady) {
+			writeError(w, 503, "inventory_projection_not_ready", err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "read_device_inventory_failed", err.Error())
 		return
 	}
@@ -2109,9 +2176,10 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 	}
 	var response any
 	if metadataOnly {
-		response = DeviceInventoryMetadataResponse{Total: page.Page.Total, Facets: page.Facets, AsOf: page.AsOf}
+		response = DeviceInventoryMetadataResponse{ReadModelState: page.ReadModelState, Total: page.Page.Total, Facets: page.Facets, AsOf: page.AsOf}
 	} else {
 		full := DeviceInventoryListResponse{
+			ReadModelState:      page.ReadModelState,
 			DeviceNamesDisabled: os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true",
 			ReadModelUpdating:   page.ReadModelUpdating, AsOf: page.AsOf, Items: page.Items, Facets: page.Facets,
 			Page: Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total},

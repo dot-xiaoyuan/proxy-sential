@@ -254,7 +254,7 @@ def up():
     build()
     if not (ROOT / 'frontend/dist/index.html').exists():
         run(['pnpm', 'build'], cwd=ROOT / 'frontend')
-    run(compose('stop', 'backend', 'realtime'), stdout=subprocess.DEVNULL)
+    run(compose('stop', 'backend', 'realtime', 'recognition'), stdout=subprocess.DEVNULL)
     run(compose('up', '-d', '--wait', 'postgres', 'clickhouse'))
     marker = Path(env['DEV184_DB_DIR']) / 'restored.json'
     if not marker.exists():
@@ -313,7 +313,7 @@ def up():
         marker.write_text(json.dumps({'snapshot': str(snapshot), 'restored_at': dt.datetime.now(dt.timezone.utc).isoformat()}))
     else:
         run([str(STATE / 'bin/proxy-sentinel-host'), 'migrate', '--postgres-dir', str(ROOT / 'migrations/postgres'), '--clickhouse-dir', str(ROOT / 'migrations/clickhouse'), '--timeout', '30m'], env=local_env(env))
-    run(compose('up', '-d', '--force-recreate', 'backend', 'realtime', 'edge'))
+    run(compose('up', '-d', '--force-recreate', 'backend', 'realtime', 'recognition', 'edge'))
     wait_url('http://127.0.0.1:18084/readyz')
     start_frontend()
     wait_url('http://127.0.0.1:5173')

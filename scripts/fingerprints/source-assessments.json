@@ -1,0 +1,21 @@
+{
+  "nmap": {
+    "version": "assessment-sha256-133f6c908a404e6c",
+    "checksum": "133f6c908a404e6cd5cf221bee4b82a91fe50bac19a47a1cbda4cb32d4a061e9",
+    "snapshot_url": "https://raw.githubusercontent.com/nmap/nmap/master/nmap-os-db",
+    "upstream_count": 6108,
+    "reason": "仅登记评估：OS 指纹 6108 条，服务匹配 12172 条。主动探测规则不作为被动规则，未授权打包。",
+    "assessment_files": [
+      {
+        "name": "nmap-os-db",
+        "sha256": "133f6c908a404e6cd5cf221bee4b82a91fe50bac19a47a1cbda4cb32d4a061e9",
+        "count": 6108
+      },
+      {
+        "name": "nmap-service-probes",
+        "sha256": "bd1bc6b1904632c617d6cf70e1f21877f4b0abefc8db977ceaf1699accdde5ff",
+        "count": 12172
+      }
+    ]
+  }
+}

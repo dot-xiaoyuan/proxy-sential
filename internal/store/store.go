@@ -22,38 +22,42 @@ const (
 )
 
 type Query struct {
-	View                  string
-	DiagnosticStage       string
-	DiagnosticType        string
-	Level                 string
-	Q                     string
-	SensorID              string
-	CampusID              string
-	Department            string
-	PersonType            string
-	SSID                  string
-	VLAN                  string
-	AP                    string
-	NASIP                 string
-	Ecosystem             string
-	Brand                 string
-	OSFamily              string
-	From                  string
-	To                    string
-	Window                string
-	SrcIP                 string
-	DstIP                 string
-	Domain                string
-	UserAgent             string
-	Fingerprint           string
-	Port                  int
-	Proto                 string
-	AppProtocol           string
-	Limit                 int
-	Cursor                int
+	View            string
+	DiagnosticStage string
+	DiagnosticType  string
+	Level           string
+	Q               string
+	SensorID        string
+	CampusID        string
+	Department      string
+	PersonType      string
+	SSID            string
+	VLAN            string
+	AP              string
+	NASIP           string
+	Ecosystem       string
+	Brand           string
+	OSFamily        string
+	From            string
+	To              string
+	Window          string
+	SrcIP           string
+	DstIP           string
+	Domain          string
+	UserAgent       string
+	Fingerprint     string
+	Port            int
+	Proto           string
+	AppProtocol     string
+	Limit           int
+	Cursor          int
+	// InventoryCursor is the opaque, filter-bound cursor used by the device
+	// inventory read model. Cursor remains for the other legacy list readers.
+	InventoryCursor       string
 	IncludeWeak           bool
 	InventorySkipMetadata bool
 	InventoryMetadataOnly bool
+	InventorySearchType   string
 }
 
 type Page struct {
@@ -83,32 +87,36 @@ type EndpointDevicePage struct {
 // inventory page. Complete association history and raw recognition evidence
 // remain available from the endpoint detail APIs.
 type DeviceInventoryListItem struct {
-	Discovery            *discovery.Summary           `json:"discovery,omitempty"`
-	RouterObservation    *evidence.RouterAssessment   `json:"router_observation,omitempty"`
-	IPMatch              *DeviceIPMatch               `json:"ip_match,omitempty"`
-	DeviceName           *DeviceName                  `json:"device_name,omitempty"`
-	BrandReference       *fingerprint.BrandReference  `json:"brand_reference,omitempty"`
-	BrandInference       *DeviceBrandInferenceSummary `json:"brand_inference,omitempty"`
-	EndpointID           string                       `json:"endpoint_id"`
-	PrimaryMAC           string                       `json:"primary_mac,omitempty"`
-	OwnerAccount         string                       `json:"owner_account,omitempty"`
-	OwnerName            string                       `json:"owner_name,omitempty"`
-	CurrentAccount       string                       `json:"current_account,omitempty"`
-	CurrentIP            string                       `json:"current_ip,omitempty"`
-	CurrentAccessID      string                       `json:"current_access_id,omitempty"`
-	LastSeen             string                       `json:"last_seen,omitempty"`
-	Vendor               string                       `json:"vendor,omitempty"`
-	Brand                string                       `json:"brand,omitempty"`
-	Model                string                       `json:"model,omitempty"`
-	DeviceType           string                       `json:"device_type,omitempty"`
-	OSFamily             string                       `json:"os_family,omitempty"`
-	VendorConfidence     float64                      `json:"vendor_confidence"`
-	BrandConfidence      float64                      `json:"brand_confidence"`
-	ModelConfidence      float64                      `json:"model_confidence"`
-	DeviceTypeConfidence float64                      `json:"device_type_confidence"`
-	OSFamilyConfidence   float64                      `json:"os_family_confidence"`
-	RandomizedMAC        bool                         `json:"randomized_mac"`
-	RecognitionConflict  bool                         `json:"recognition_conflict"`
+	Discovery                *discovery.Summary           `json:"discovery,omitempty"`
+	RouterObservation        *evidence.RouterAssessment   `json:"router_observation,omitempty"`
+	IPMatch                  *DeviceIPMatch               `json:"ip_match,omitempty"`
+	DeviceName               *DeviceName                  `json:"device_name,omitempty"`
+	BrandReference           *fingerprint.BrandReference  `json:"brand_reference,omitempty"`
+	BrandInference           *DeviceBrandInferenceSummary `json:"brand_inference,omitempty"`
+	EndpointID               string                       `json:"endpoint_id"`
+	PrimaryMAC               string                       `json:"primary_mac,omitempty"`
+	OwnerAccount             string                       `json:"owner_account,omitempty"`
+	OwnerName                string                       `json:"owner_name,omitempty"`
+	CurrentAccount           string                       `json:"current_account,omitempty"`
+	CurrentAccountCandidates []string                     `json:"current_account_candidates,omitempty"`
+	CurrentAccountConflict   bool                         `json:"current_account_conflict"`
+	CurrentAccountObservedAt string                       `json:"current_account_observed_at,omitempty"`
+	CurrentAccessConflict    bool                         `json:"current_access_conflict"`
+	CurrentIP                string                       `json:"current_ip,omitempty"`
+	CurrentAccessID          string                       `json:"current_access_id,omitempty"`
+	LastSeen                 string                       `json:"last_seen,omitempty"`
+	Vendor                   string                       `json:"vendor,omitempty"`
+	Brand                    string                       `json:"brand,omitempty"`
+	Model                    string                       `json:"model,omitempty"`
+	DeviceType               string                       `json:"device_type,omitempty"`
+	OSFamily                 string                       `json:"os_family,omitempty"`
+	VendorConfidence         float64                      `json:"vendor_confidence"`
+	BrandConfidence          float64                      `json:"brand_confidence"`
+	ModelConfidence          float64                      `json:"model_confidence"`
+	DeviceTypeConfidence     float64                      `json:"device_type_confidence"`
+	OSFamilyConfidence       float64                      `json:"os_family_confidence"`
+	RandomizedMAC            bool                         `json:"randomized_mac"`
+	RecognitionConflict      bool                         `json:"recognition_conflict"`
 }
 
 type DeviceBrandInferenceSummary struct {
@@ -118,6 +126,7 @@ type DeviceBrandInferenceSummary struct {
 }
 
 type DeviceInventoryListPage struct {
+	ReadModelState    *InventoryProjectionState `json:"read_model_state,omitempty"`
 	Items             []DeviceInventoryListItem `json:"items"`
 	Page              Page                      `json:"page"`
 	Facets            DeviceFilterFacets        `json:"facets"`
@@ -131,6 +140,8 @@ func ProjectDeviceInventoryListItem(item EndpointDeviceInventory) DeviceInventor
 		DeviceName: item.DeviceName, BrandReference: item.BrandReference,
 		EndpointID: item.EndpointID, PrimaryMAC: item.PrimaryMAC, OwnerAccount: item.OwnerAccount,
 		OwnerName: item.OwnerName, CurrentAccount: item.CurrentAccount, CurrentIP: item.CurrentIP,
+		CurrentAccountCandidates: append([]string{}, item.CurrentAccountCandidates...), CurrentAccountConflict: item.CurrentAccountConflict,
+		CurrentAccountObservedAt: item.CurrentAccountObservedAt, CurrentAccessConflict: item.CurrentAccessConflict,
 		CurrentAccessID: item.CurrentAccessID, LastSeen: item.LastSeen, Vendor: item.Vendor,
 		Brand: item.Brand, Model: item.Model, DeviceType: item.DeviceType, OSFamily: item.OSFamily,
 		VendorConfidence: item.VendorConfidence, BrandConfidence: item.BrandConfidence,
@@ -615,10 +626,15 @@ type DeviceIPMatch struct {
 }
 
 type EndpointDeviceInventory struct {
-	Discovery         *discovery.Summary         `json:"discovery,omitempty"`
-	RouterObservation *evidence.RouterAssessment `json:"router_observation,omitempty"`
-	IPMatch           *DeviceIPMatch             `json:"ip_match,omitempty"`
-	DeviceName        *DeviceName                `json:"device_name,omitempty"`
+	CurrentAccountCandidates []string                   `json:"current_account_candidates,omitempty"`
+	CurrentAccountConflict   bool                       `json:"current_account_conflict"`
+	CurrentAccountObservedAt string                     `json:"current_account_observed_at,omitempty"`
+	CurrentAccessConflict    bool                       `json:"current_access_conflict"`
+	SourceMatches            []fingerprint.SourceMatch  `json:"source_matches,omitempty"`
+	Discovery                *discovery.Summary         `json:"discovery,omitempty"`
+	RouterObservation        *evidence.RouterAssessment `json:"router_observation,omitempty"`
+	IPMatch                  *DeviceIPMatch             `json:"ip_match,omitempty"`
+	DeviceName               *DeviceName                `json:"device_name,omitempty"`
 	// Shared recognition snapshot; never serialized or used for identity fields.
 	domainEvidence []fingerprint.DomainEvidence
 

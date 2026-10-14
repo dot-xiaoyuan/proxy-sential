@@ -16,6 +16,7 @@ import (
 
 func main() {
 	iface := flag.String("interface", "", "optional passive capture interface")
+	allowCIDRs := flag.String("allow-cidrs", "", "CIDRs allowed for passive discovery observations")
 	site := flag.String("site", "", "passive capture site")
 	domain := flag.String("domain", "", "passive capture layer-2 scope")
 	spool := flag.String("spool", "/var/lib/proxy-sentinel/discovery-spool", "durable passive spool")
@@ -42,13 +43,17 @@ func main() {
 		if *site == "" || *domain == "" {
 			log.Fatal("passive site and domain required")
 		}
+		prefixes, e := discovery.ParseCaptureCIDRs(*allowCIDRs)
+		if e != nil {
+			log.Fatal(e)
+		}
 		if *describe {
 			describer := discovery.NewDescriber(*spool)
 			repo.Describe = describer.Offer
 			go describer.Run(ctx)
 		}
 		go func() {
-			if e := discovery.Capture(ctx, *iface, *spool, discovery.Source{ID: "passive-" + *node, Address: *iface, Node: *node, Site: *site, Domain: *domain, ConfigVersion: 1}); e != nil && ctx.Err() == nil {
+			if e := discovery.Capture(ctx, *iface, *spool, discovery.Source{ID: "passive-" + *node, Address: *iface, Node: *node, Site: *site, Domain: *domain, ConfigVersion: 1}, prefixes); e != nil && ctx.Err() == nil {
 				log.Print("passive capture failed: ", e)
 				cancel()
 			}

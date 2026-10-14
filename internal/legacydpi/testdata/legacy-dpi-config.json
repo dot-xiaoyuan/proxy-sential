@@ -1,0 +1,461 @@
+{
+  "source": "dpi-analyze NCU (dpi-mongo @ 222.204.3.184)",
+  "exported_at": "2026-10-13T15:21:33.541Z",
+  "whitelist": [
+    {
+      "legacy_id": "6a54451a7b9e98c00e9df947",
+      "type": 4,
+      "value": "10.202.0.0/16",
+      "remark": "前湖北无线",
+      "operate": "",
+      "add_method": "",
+      "created_at": "0001-01-01T00:00:00.000Z",
+      "updated_at": "2026-07-15T02:46:25.630Z"
+    },
+    {
+      "legacy_id": "6a5459277b9e98c00e9df949",
+      "type": 2,
+      "value": "067735",
+      "remark": "水电中心",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-07-13T03:19:03.990Z",
+      "updated_at": "2026-07-13T03:19:03.990Z"
+    },
+    {
+      "legacy_id": "6a5490287b9e98c00e9df94b",
+      "type": 4,
+      "value": "10.248.0.0/16",
+      "remark": "前湖南无线",
+      "operate": "",
+      "add_method": "",
+      "created_at": "0001-01-01T00:00:00.000Z",
+      "updated_at": "2026-07-15T02:46:21.592Z"
+    },
+    {
+      "legacy_id": "6a54908c7b9e98c00e9df94d",
+      "type": 4,
+      "value": "10.208.0.0/16",
+      "remark": "东湖无线",
+      "operate": "",
+      "add_method": "",
+      "created_at": "0001-01-01T00:00:00.000Z",
+      "updated_at": "2026-07-15T02:46:13.303Z"
+    },
+    {
+      "legacy_id": "6a5490a57b9e98c00e9df94f",
+      "type": 4,
+      "value": "10.210.0.0/16",
+      "remark": "青山湖无线",
+      "operate": "",
+      "add_method": "",
+      "created_at": "0001-01-01T00:00:00.000Z",
+      "updated_at": "2026-07-15T02:46:08.691Z"
+    },
+    {
+      "legacy_id": "6a5494877b9e98c00e9df953",
+      "type": 2,
+      "value": "004763",
+      "remark": "",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-07-13T07:32:23.372Z",
+      "updated_at": "2026-07-13T07:32:23.372Z"
+    },
+    {
+      "legacy_id": "6a55967e7b9e98c00e9df955",
+      "type": 2,
+      "value": "300400015",
+      "remark": "校医院配镜室",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-07-14T01:53:02.229Z",
+      "updated_at": "2026-07-14T01:53:02.229Z"
+    },
+    {
+      "legacy_id": "6a55e2067b9e98c00e9df957",
+      "type": 2,
+      "value": "067911  ",
+      "remark": "水电中心",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-07-14T07:15:18.264Z",
+      "updated_at": "2026-07-14T07:15:18.264Z"
+    },
+    {
+      "legacy_id": "6a56d6ee7b9e98c00e9df959",
+      "type": 2,
+      "value": "092684",
+      "remark": "临时",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-07-15T00:40:14.219Z",
+      "updated_at": "2026-07-15T00:40:14.219Z"
+    },
+    {
+      "legacy_id": "6a61d71c434b7ae2443f8125",
+      "type": 3,
+      "value": "00-5C-C2-C7-A2-07",
+      "remark": "usb网卡",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-07-23T08:55:56.405Z",
+      "updated_at": "2026-07-23T08:55:56.405Z"
+    },
+    {
+      "legacy_id": "6a62c6c3434b7ae2443f8127",
+      "type": 3,
+      "value": "00-5C-C2-C7-A0-0B",
+      "remark": "",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-07-24T01:58:27.649Z",
+      "updated_at": "2026-07-24T01:58:27.649Z"
+    },
+    {
+      "legacy_id": "6a62c6cd434b7ae2443f8129",
+      "type": 3,
+      "value": "00-5C-C2-C7-BF-B6",
+      "remark": "",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-07-24T01:58:37.442Z",
+      "updated_at": "2026-07-24T01:58:37.442Z"
+    },
+    {
+      "legacy_id": "6a742f4e185d4541d7772f84",
+      "type": 3,
+      "value": "04-F9-F8-0D-87-8E",
+      "remark": "申请解除",
+      "operate": "",
+      "add_method": "",
+      "created_at": "0001-01-01T00:00:00.000Z",
+      "updated_at": "2026-08-10T07:15:32.970Z"
+    },
+    {
+      "legacy_id": "6a7abef1185d4541d7772f87",
+      "type": 3,
+      "value": "80-8F-1D-89-70-E6",
+      "remark": "",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-08-11T06:19:29.661Z",
+      "updated_at": "2026-08-11T06:19:29.661Z"
+    },
+    {
+      "legacy_id": "6a8ffa67185d4541d7772f8f",
+      "type": 3,
+      "value": "B8-F8-83-36-B7-8D",
+      "remark": "004081",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-08-27T08:50:47.007Z",
+      "updated_at": "2026-08-27T08:50:47.007Z"
+    },
+    {
+      "legacy_id": "6a8ffaad185d4541d7772f91",
+      "type": 3,
+      "value": "48-5F-08-57-F6-79",
+      "remark": "093014",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-08-27T08:51:57.216Z",
+      "updated_at": "2026-08-27T08:51:57.216Z"
+    },
+    {
+      "legacy_id": "6a9a3bde185d4541d7772f95",
+      "type": 2,
+      "value": "004764",
+      "remark": "分管校长",
+      "operate": "admin",
+      "add_method": "",
+      "created_at": "2026-09-04T03:32:46.400Z",
+      "updated_at": "2026-09-04T03:32:46.400Z"
+    },
+    {
+      "legacy_id": "6a9a89ee185d4541d7772f97",
+      "type": 3,
+      "value": "28-2C-B2-C9-EB-C3",
+      "remark": "shuidianzhongxin",
+      "operate": "",
+      "add_method": "",
+      "created_at": "0001-01-01T00:00:00.000Z",
+      "updated_at": "2026-09-04T09:06:00.581Z"
+    }
+  ],
+  "strategies": [
+    {
+      "legacy_id": "695f6ecde0abefbf341e40b3",
+      "name": "测试",
+      "match": {
+        "ip_ranges": [
+          "222.204.88.132"
+        ]
+      },
+      "condition": {
+        "all": 3,
+        "pc": 2,
+        "mobile": 2,
+        "route_increase": true
+      },
+      "actions": [
+        {
+          "type": "msg_notify",
+          "enabled": true,
+          "params": {
+            "duration": 30,
+            "interval": 300,
+            "template_id": "689da290c91a52bc71c6c9aa"
+          }
+        },
+        {
+          "type": "force_offline",
+          "enabled": false,
+          "depends_on": [],
+          "params": {
+            "sync_msg": false,
+            "duration": ""
+          }
+        },
+        {
+          "depends_on": [],
+          "params": {
+            "duration": "",
+            "sync_msg": false
+          },
+          "type": "bandwidth_reduction",
+          "enabled": false
+        },
+        {
+          "type": "user_disable",
+          "enabled": false,
+          "depends_on": [],
+          "params": {
+            "put_black": false,
+            "sync_msg": false,
+            "duration": 30
+          }
+        }
+      ],
+      "enabled": false,
+      "router_punish_enabled": true,
+      "router_confidence_threshold": 80
+    },
+    {
+      "legacy_id": "6960678b2a913fef72363dcc",
+      "name": "代理行为",
+      "match": {
+        "product_ids": [
+          "86",
+          "85",
+          "84",
+          "83",
+          "82",
+          "81",
+          "80",
+          "79",
+          "74",
+          "69",
+          "68",
+          "67",
+          "65",
+          "64",
+          "63",
+          "58",
+          "52",
+          "49",
+          "48",
+          "42",
+          "38",
+          "32",
+          "21",
+          "16",
+          "12",
+          "3",
+          "89",
+          "88"
+        ]
+      },
+      "condition": {
+        "all": 2,
+        "pc": 2,
+        "mobile": 2,
+        "route_increase": true
+      },
+      "actions": [
+        {
+          "type": "msg_notify",
+          "enabled": true,
+          "params": {
+            "template_id": "689da2b4c91a52bc71c6c9ab",
+            "router_only_notify": true,
+            "first_duration": 172800,
+            "repeat_interval": 86400
+          }
+        },
+        {
+          "type": "force_offline",
+          "enabled": true,
+          "depends_on": [
+            "msg_notify"
+          ],
+          "params": {
+            "count": 2,
+            "sync_msg": false
+          }
+        },
+        {
+          "type": "bandwidth_reduction",
+          "enabled": false,
+          "depends_on": [],
+          "params": {
+            "duration": "",
+            "sync_msg": false
+          }
+        },
+        {
+          "type": "user_disable",
+          "enabled": true,
+          "depends_on": [
+            "msg_notify"
+          ],
+          "params": {
+            "count": 3,
+            "put_black": false,
+            "sync_msg": false
+          }
+        }
+      ],
+      "enabled": false,
+      "router_punish_enabled": true,
+      "router_confidence_threshold": 80
+    },
+    {
+      "legacy_id": "69dd95717264cf975ae61db1",
+      "name": "路由器",
+      "match": {
+        "product_ids": [
+          "86"
+        ]
+      },
+      "condition": {
+        "mobile": 1,
+        "route_increase": true,
+        "all": 1,
+        "pc": 1
+      },
+      "actions": [
+        {
+          "type": "msg_notify",
+          "enabled": false,
+          "params": {
+            "template_id": "688838e71c3244bbba04a466",
+            "router_only_notify": true,
+            "first_duration": 172800,
+            "repeat_interval": 86400
+          }
+        },
+        {
+          "type": "force_offline",
+          "enabled": false,
+          "depends_on": [],
+          "params": {
+            "duration": "",
+            "sync_msg": false
+          }
+        },
+        {
+          "type": "bandwidth_reduction",
+          "enabled": false,
+          "depends_on": [],
+          "params": {
+            "duration": "",
+            "sync_msg": false
+          }
+        },
+        {
+          "type": "user_disable",
+          "enabled": false,
+          "depends_on": [
+            "msg_notify"
+          ],
+          "params": {
+            "count": 2,
+            "put_black": false,
+            "sync_msg": true,
+            "template_id": "689d968d0951ee31c4f4aff0"
+          }
+        }
+      ],
+      "enabled": false,
+      "router_punish_enabled": true,
+      "router_confidence_threshold": 80
+    }
+  ],
+  "poison_rules": [
+    {
+      "legacy_id": "6a72d132185d4541d7772f7c",
+      "name": "高频访问内网地址",
+      "enabled": true,
+      "behavior_type": "high_frequency_internal",
+      "target_type": "ip",
+      "targets": null,
+      "window_seconds": 3600,
+      "threshold": 10000,
+      "push_enabled": true,
+      "push_without_user": false,
+      "remark": "自动识别持续高频访问内网地址的设备，按设备和小时聚合。"
+    }
+  ],
+  "templates": [
+    {
+      "template_id": "689da1fdc91a52bc71c6c9a7",
+      "name": "解禁-联系",
+      "body": "您好，你的{{user_name}}存在异常，存在代理行为，被禁用有疑问联系****解禁",
+      "vendor": "srun"
+    },
+    {
+      "template_id": "689da290c91a52bc71c6c9aa",
+      "name": "下线-联系",
+      "body": "您好，你的{{user_name}}存在异常，存在代理行为，被强制踢下线，有疑问联系****",
+      "vendor": "srun"
+    },
+    {
+      "template_id": "689da2b4c91a52bc71c6c9ab",
+      "name": "限速-联系",
+      "body": "您好，你的{{user_name}}存在异常，存在代理行为，账号被限速，有疑问联系****",
+      "vendor": "srun"
+    },
+    {
+      "template_id": "688838e71c3244bbba04a466",
+      "name": "异常提醒",
+      "body": "您好，你的{{user_name}}存在异常，存在代理行为，有疑问联系****",
+      "vendor": "srun"
+    },
+    {
+      "template_id": "689d94ce0951ee31c4f4afee",
+      "name": "强制下线",
+      "body": "您好，你的{{user_name}}存在异常，存在代理行为，即将强制踢下线",
+      "vendor": "srun"
+    },
+    {
+      "template_id": "689d966f0951ee31c4f4afef",
+      "name": "账号限速",
+      "body": "您好，你的{{user_name}}存在异常，存在代理行为，即将账号限速",
+      "vendor": "srun"
+    },
+    {
+      "template_id": "689d968d0951ee31c4f4aff0",
+      "name": "禁用账号",
+      "body": "您好，你的{{user_name}}存在异常，存在代理行为，即将禁用账号",
+      "vendor": "srun"
+    }
+  ],
+  "sms_channel": {
+    "legacy_id": "69520f97e8c0d2e8fcbf2656",
+    "app_id": "bded5a102bd611f01bea70d4394c75e6",
+    "api_host": "https://poa.ncu.edu.cn",
+    "message_type_code": "MT1747384880000",
+    "client_id": "hPDOA-EEUdYQzv-s9i6iH0B_s6Y="
+  }
+}

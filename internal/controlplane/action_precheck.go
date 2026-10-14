@@ -69,8 +69,9 @@ func (s *Server) srunEventChannelStatusContext(ctx context.Context, id string) (
 	if s.operations == nil || s.operations.db == nil {
 		return false, nil
 	}
-	var state string
-	err := s.operations.db.QueryRowContext(ctx, `SELECT event_channel_state FROM srun4k_integrations WHERE connector_id=$1`, id).Scan(&state)
+	var healthy bool
+	defaults := s.identityBridge.normalized()
+	err := s.operations.db.QueryRowContext(ctx, `SELECT COALESCE(p.enabled AND p.accepted_sequence=p.processed_sequence AND p.pending_records=0 AND p.last_error='' AND p.heartbeat_at>now()-interval '15 seconds' AND p.calibration_state='completed' AND p.snapshot_at>now()-make_interval(secs=>$2) AND r.heartbeat_at>now()-interval '15 seconds' AND r.queue_sampled_at>now()-interval '15 seconds' AND NOT r.queue_sample_error AND r.event_channel_state='healthy' AND r.online_channel_state='healthy' AND r.snapshot_state='healthy' AND r.source_queue=0 AND r.processing_queue=0 AND r.quarantine_queue=0 AND r.active_config_version=c.config_version AND r.active_host=c.desired_host,false) FROM srun4k_integrations i JOIN identity_pipeline_scopes p ON p.source=i.source AND p.sensor_id=i.sensor_id AND p.campus_id=$3 AND p.access_domain=$4 JOIN identity_bridge_runtime r ON r.bridge_id=$5 JOIN identity_bridge_configs c ON c.bridge_id=r.bridge_id WHERE i.connector_id=$1`, id, 3*defaults.ReconcileIntervalSeconds, defaults.CampusID, defaults.AccessDomain, defaults.BridgeID).Scan(&healthy)
 	if interrupted := ctx.Err(); interrupted != nil {
 		return false, interrupted
 	}
@@ -80,7 +81,7 @@ func (s *Server) srunEventChannelStatusContext(ctx context.Context, id string) (
 	if err != nil {
 		return false, actionPrecheckReadError{cause: err}
 	}
-	return state == "healthy", nil
+	return healthy, nil
 }
 
 func (s *Server) readNativeActionAdmission(ctx context.Context, id string) (EnforcementAction, ActionConnector, bool, bool, error) {

@@ -32,6 +32,7 @@ func TestSenderUsesExistingIdentityContract(t *testing.T) {
 			t.Fatalf("unexpected request")
 		}
 		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"batch_id": "batch-1", "status": "completed", "source": "legacy-4k", "sensor_id": "sensor-a", "read": 1})
 	}))
 	defer server.Close()
 	err := (Sender{Endpoint: server.URL, Token: "token", SensorID: "sensor-a"}).Send(context.Background(), []map[string]string{{"ip": "10.0.0.8"}}, "batch-1")
@@ -94,6 +95,7 @@ func TestSenderAddsExplicitAuthorityScopeWithoutMutatingInput(t *testing.T) {
 			t.Fatalf("unexpected scope: %#v", body)
 		}
 		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"batch_id": "batch-1", "status": "completed", "source": "ncu-srun4k", "sensor_id": "ncu-auth-redis", "read": 1})
 	}))
 	defer server.Close()
 	err := (Sender{Endpoint: server.URL, Token: "token", SensorID: "ncu-auth-redis", Source: "ncu-srun4k", CampusID: "ncu", AccessDomain: "campus-auth"}).Send(context.Background(), []map[string]string{record}, "batch-1")
@@ -102,5 +104,26 @@ func TestSenderAddsExplicitAuthorityScopeWithoutMutatingInput(t *testing.T) {
 	}
 	if _, mutated := record["campus_id"]; mutated {
 		t.Fatal("sender mutated caller record")
+	}
+}
+
+func TestDecodeRecordsIgnoresUnusedUnspecifiedAddressSlots(t *testing.T) {
+	now := time.Now().UTC()
+	for _, raw := range []string{
+		`{"action":1,"session_id":"one","user_name":"student","ip":"192.0.2.1","ip6":"::","ip6_1":"::"}`,
+		`{"action":2,"session_id":"one","user_name":"student","ip":"0.0.0.0","ip6":"2001:db8::1","ip6_1":"::"}`,
+	} {
+		records, err := DecodeRecordsForInstance(raw, "instance", now)
+		if err != nil || len(records) != 1 {
+			t.Fatalf("unused slots rejected valid event: count=%d err=%v", len(records), err)
+		}
+	}
+	for _, raw := range []string{
+		`{"action":1,"session_id":"one","user_name":"student","ip":"0.0.0.0","ip6":"::"}`,
+		`{"action":1,"session_id":"one","user_name":"student","ip":"192.0.2.1","ip6":"invalid"}`,
+	} {
+		if _, err := DecodeRecordsForInstance(raw, "instance", now); err == nil {
+			t.Fatal("invalid or empty address inventory accepted")
+		}
 	}
 }

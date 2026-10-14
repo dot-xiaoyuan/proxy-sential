@@ -398,9 +398,9 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 		AssetTag:           endpoint.AssetTag,
 		OwnershipClass:     firstNonEmpty(endpoint.OwnershipClass, "unknown"),
 		MergeStatus:        endpoint.MergeStatus,
-		CurrentAccount:     firstString(profile.Accounts),
+		CurrentAccount:     "",
 		CurrentIP:          recentEndpointIP(profile.IPHistory),
-		CurrentAccessID:    firstString(accessIDs),
+		CurrentAccessID:    "",
 		Accounts:           append([]string{}, profile.Accounts...),
 		IPs:                ips,
 		AccessIDs:          accessIDs,
@@ -408,6 +408,7 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 		LastSeen:           profile.LastSeen,
 		IdentityConfidence: endpoint.IdentityConfidence,
 	}
+	applyLatestInventoryAssociations(&item, profile, time.Now().UTC())
 	baseSignals := endpointRecognitionSignals(endpoint.PrimaryMAC, endpoint.Attributes)
 	recognition := fingerprint.Default().IdentifySignals(baseSignals)
 	if len(profile.DiscoveryRecognitionHints) > 0 {
@@ -444,6 +445,7 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	item.RandomizedMAC = recognition.RandomizedMAC
 	item.RecognitionConflict = recognition.Conflict
 	item.RecognitionEvidence = recognition.Evidence
+	item.SourceMatches = recognition.SourceMatches
 	explicitOS := firstNonEmpty(stringFromMap(endpoint.Attributes, "os_family"), stringFromMap(endpoint.Attributes, "os"))
 	if explicitOS != "" && recognition.OSFamily != "" && !strings.EqualFold(explicitOS, recognition.OSFamily) {
 		item.RecognitionConflict = true
@@ -572,6 +574,13 @@ func endpointRecognitionValues(attributes map[string]any) []string {
 
 func endpointRecognitionSignals(mac string, attributes map[string]any) fingerprint.Signals {
 	return fingerprint.Signals{
+		ProtocolFields: map[string][]string{
+			"http_server": {stringFromMap(attributes, "server")}, "http_title": {stringFromMap(attributes, "title")},
+			"tls_subject": {stringFromMap(attributes, "certificate_subject")}, "tls_issuer": {stringFromMap(attributes, "certificate_issuer")},
+			"snmp_sysdescr": {stringFromMap(attributes, "snmp_sysdescr")}, "snmp_sysoid": {stringFromMap(attributes, "snmp_sysoid")},
+			"mdns_model": {stringFromMap(attributes, "mdns_model")}, "ssh_banner": {stringFromMap(attributes, "ssh_banner")},
+			"http_body": {stringFromMap(attributes, "http_body")}, "favicon_md5": {stringFromMap(attributes, "favicon_md5")}, "tls_san": {stringFromMap(attributes, "certificate_san")}, "sip_user_agent": {stringFromMap(attributes, "sip_user_agent")}, "sip_server": {stringFromMap(attributes, "sip_server")}, "http_www_authenticate": {stringFromMap(attributes, "http_www_authenticate")},
+		},
 		MAC:                  mac,
 		UserAgents:           []string{stringFromMap(attributes, "user_agent")},
 		DHCPVendorClass:      stringFromMap(attributes, "vendor_class"),
@@ -832,7 +841,7 @@ func mergeAccountSession(current, incoming AccountSession) AccountSession {
 
 func identityAttributes(fact identityFact) map[string]any {
 	attrs := map[string]any{}
-	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class", "requested_options", "user_agent", "software_name", "device_hint", "vendor", "oui_vendor", "brand", "model", "device_type", "os", "os_family", "server", "title", "certificate_subject", "certificate_issuer", "certificate_san", "person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type"} {
+	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class", "requested_options", "user_agent", "software_name", "device_hint", "vendor", "oui_vendor", "brand", "model", "device_type", "os", "os_family", "server", "title", "certificate_subject", "certificate_issuer", "certificate_san", "person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type", "snmp_sysdescr", "snmp_sysoid", "mdns_model", "ssh_banner", "sip_server", "sip_user_agent", "http_www_authenticate", "http_body", "favicon_md5"} {
 		if value := stringFromMap(fact.Payload, key); value != "" {
 			attrs[key] = value
 		}

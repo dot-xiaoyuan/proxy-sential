@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"proxy-sentinel/internal/store"
 	"regexp"
 	"strings"
 	"time"
@@ -92,6 +93,9 @@ func (c IdentityBridgeDefaults) normalized() IdentityBridgeDefaults {
 }
 
 type identityBridgeHeartbeat struct {
+	QuarantineQueue             int64      `json:"quarantine_queue"`
+	QueueSampledAt              *time.Time `json:"queue_sampled_at,omitempty"`
+	QueueSampleError            bool       `json:"queue_sample_error"`
 	ActiveHost                  string     `json:"active_host"`
 	ActiveConfigVersion         int64      `json:"active_config_version"`
 	State                       string     `json:"state"`
@@ -188,11 +192,11 @@ func (s *Server) handleIdentityBridgeHeartbeat(w http.ResponseWriter, r *http.Re
 	var value identityBridgeHeartbeat
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&value) != nil || value.ActiveConfigVersion < 0 || !validSRunHost(value.ActiveHost) || !validBridgeState(value.State) || !validChannelState(value.OnlineChannelState) || !validChannelState(value.EventChannelState) || !validSnapshotState(value.SnapshotState) || value.SourceQueue < 0 || value.ProcessingQueue < 0 || value.OnlineMembers < 0 || value.OnlineSessions < 0 || value.CommittedMessages < 0 || value.BadMessages < 0 || value.EventConsecutiveFailures < 0 || value.SnapshotConsecutiveFailures < 0 || len(value.LastErrorType) > 100 || !bridgeErrorTypePattern.MatchString(value.LastErrorType) {
+	if decoder.Decode(&value) != nil || value.ActiveConfigVersion < 0 || !validSRunHost(value.ActiveHost) || !validBridgeState(value.State) || !validChannelState(value.OnlineChannelState) || !validChannelState(value.EventChannelState) || !validSnapshotState(value.SnapshotState) || value.QuarantineQueue < 0 || value.SourceQueue < 0 || value.ProcessingQueue < 0 || value.OnlineMembers < 0 || value.OnlineSessions < 0 || value.CommittedMessages < 0 || value.BadMessages < 0 || value.EventConsecutiveFailures < 0 || value.SnapshotConsecutiveFailures < 0 || len(value.LastErrorType) > 100 || !bridgeErrorTypePattern.MatchString(value.LastErrorType) {
 		writeError(w, http.StatusBadRequest, "bad_identity_bridge_heartbeat", "identity bridge heartbeat is invalid")
 		return
 	}
-	_, err := s.operations.db.ExecContext(r.Context(), `INSERT INTO identity_bridge_runtime(bridge_id,active_host,active_config_version,state,online_channel_state,event_channel_state,snapshot_state,source_queue,processing_queue,online_members,online_sessions,committed_messages,bad_messages,event_consecutive_failures,snapshot_consecutive_failures,last_event_at,last_snapshot_attempt_at,last_snapshot_at,last_error_type,started_at,heartbeat_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now(),now()) ON CONFLICT(bridge_id) DO UPDATE SET active_host=EXCLUDED.active_host,active_config_version=EXCLUDED.active_config_version,state=EXCLUDED.state,online_channel_state=EXCLUDED.online_channel_state,event_channel_state=EXCLUDED.event_channel_state,snapshot_state=EXCLUDED.snapshot_state,source_queue=EXCLUDED.source_queue,processing_queue=EXCLUDED.processing_queue,online_members=EXCLUDED.online_members,online_sessions=EXCLUDED.online_sessions,committed_messages=EXCLUDED.committed_messages,bad_messages=EXCLUDED.bad_messages,event_consecutive_failures=EXCLUDED.event_consecutive_failures,snapshot_consecutive_failures=EXCLUDED.snapshot_consecutive_failures,last_event_at=EXCLUDED.last_event_at,last_snapshot_attempt_at=EXCLUDED.last_snapshot_attempt_at,last_snapshot_at=EXCLUDED.last_snapshot_at,last_error_type=EXCLUDED.last_error_type,started_at=COALESCE(identity_bridge_runtime.started_at,EXCLUDED.started_at),heartbeat_at=now(),updated_at=now()`, s.identityBridge.normalized().BridgeID, value.ActiveHost, value.ActiveConfigVersion, value.State, value.OnlineChannelState, value.EventChannelState, value.SnapshotState, value.SourceQueue, value.ProcessingQueue, value.OnlineMembers, value.OnlineSessions, value.CommittedMessages, value.BadMessages, value.EventConsecutiveFailures, value.SnapshotConsecutiveFailures, value.LastEventAt, value.LastSnapshotAttemptAt, value.LastSnapshotAt, value.LastErrorType, value.StartedAt)
+	_, err := s.operations.db.ExecContext(r.Context(), `INSERT INTO identity_bridge_runtime(bridge_id,active_host,active_config_version,state,online_channel_state,event_channel_state,snapshot_state,source_queue,processing_queue,online_members,online_sessions,committed_messages,bad_messages,event_consecutive_failures,snapshot_consecutive_failures,last_event_at,last_snapshot_attempt_at,last_snapshot_at,last_error_type,started_at,heartbeat_at,updated_at,queue_sampled_at,queue_sample_error,quarantine_queue) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now(),now(),$21,$22,$23) ON CONFLICT(bridge_id) DO UPDATE SET active_host=EXCLUDED.active_host,active_config_version=EXCLUDED.active_config_version,state=EXCLUDED.state,online_channel_state=EXCLUDED.online_channel_state,event_channel_state=EXCLUDED.event_channel_state,snapshot_state=EXCLUDED.snapshot_state,source_queue=EXCLUDED.source_queue,processing_queue=EXCLUDED.processing_queue,online_members=EXCLUDED.online_members,online_sessions=EXCLUDED.online_sessions,committed_messages=EXCLUDED.committed_messages,bad_messages=EXCLUDED.bad_messages,event_consecutive_failures=EXCLUDED.event_consecutive_failures,snapshot_consecutive_failures=EXCLUDED.snapshot_consecutive_failures,last_event_at=EXCLUDED.last_event_at,last_snapshot_attempt_at=EXCLUDED.last_snapshot_attempt_at,last_snapshot_at=EXCLUDED.last_snapshot_at,last_error_type=EXCLUDED.last_error_type,started_at=COALESCE(identity_bridge_runtime.started_at,EXCLUDED.started_at),heartbeat_at=now(),updated_at=now(),queue_sampled_at=EXCLUDED.queue_sampled_at,queue_sample_error=EXCLUDED.queue_sample_error,quarantine_queue=EXCLUDED.quarantine_queue`, s.identityBridge.normalized().BridgeID, value.ActiveHost, value.ActiveConfigVersion, value.State, value.OnlineChannelState, value.EventChannelState, value.SnapshotState, value.SourceQueue, value.ProcessingQueue, value.OnlineMembers, value.OnlineSessions, value.CommittedMessages, value.BadMessages, value.EventConsecutiveFailures, value.SnapshotConsecutiveFailures, value.LastEventAt, value.LastSnapshotAttemptAt, value.LastSnapshotAt, value.LastErrorType, value.StartedAt, value.QueueSampledAt, value.QueueSampleError, value.QuarantineQueue)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "identity_bridge_heartbeat_failed", "identity bridge heartbeat could not be saved")
 		return
@@ -298,8 +302,10 @@ func (s *Server) getIdentityBridge(w http.ResponseWriter, r *http.Request) {
 	var activeHost, state, onlineState, eventState, snapshotState, errorType string
 	var activeVersion, sourceQueue, processingQueue, onlineMembers, onlineSessions, committed, bad int64
 	var eventFailures, snapshotFailures int
-	var lastEvent, lastAttempt, lastSnapshot, started, heartbeat sql.NullTime
-	err = s.operations.db.QueryRowContext(r.Context(), `SELECT active_host,active_config_version,state,online_channel_state,event_channel_state,snapshot_state,source_queue,processing_queue,online_members,online_sessions,committed_messages,bad_messages,event_consecutive_failures,snapshot_consecutive_failures,last_event_at,last_snapshot_attempt_at,last_snapshot_at,last_error_type,started_at,heartbeat_at FROM identity_bridge_runtime WHERE bridge_id=$1`, defaults.BridgeID).Scan(&activeHost, &activeVersion, &state, &onlineState, &eventState, &snapshotState, &sourceQueue, &processingQueue, &onlineMembers, &onlineSessions, &committed, &bad, &eventFailures, &snapshotFailures, &lastEvent, &lastAttempt, &lastSnapshot, &errorType, &started, &heartbeat)
+	var lastEvent, lastAttempt, lastSnapshot, started, heartbeat, queueSampled sql.NullTime
+	var queueSampleError bool
+	var quarantineQueue int64
+	err = s.operations.db.QueryRowContext(r.Context(), `SELECT active_host,active_config_version,state,online_channel_state,event_channel_state,snapshot_state,source_queue,processing_queue,online_members,online_sessions,committed_messages,bad_messages,event_consecutive_failures,snapshot_consecutive_failures,last_event_at,last_snapshot_attempt_at,last_snapshot_at,last_error_type,started_at,heartbeat_at,queue_sampled_at,queue_sample_error,quarantine_queue FROM identity_bridge_runtime WHERE bridge_id=$1`, defaults.BridgeID).Scan(&activeHost, &activeVersion, &state, &onlineState, &eventState, &snapshotState, &sourceQueue, &processingQueue, &onlineMembers, &onlineSessions, &committed, &bad, &eventFailures, &snapshotFailures, &lastEvent, &lastAttempt, &lastSnapshot, &errorType, &started, &heartbeat, &queueSampled, &queueSampleError, &quarantineQueue)
 	if err != nil && err != sql.ErrNoRows {
 		writeError(w, http.StatusServiceUnavailable, "identity_bridge_status_unavailable", "认证同步状态读取失败")
 		return
@@ -314,9 +320,19 @@ func (s *Server) getIdentityBridge(w http.ResponseWriter, r *http.Request) {
 	if lastSnapshot.Valid && now.Sub(lastSnapshot.Time) > time.Duration(3*defaults.ReconcileIntervalSeconds)*time.Second && state == "healthy" {
 		state, snapshotState = "degraded", "stale"
 	}
-	var accounts, sessions int
-	var latestProjection sql.NullTime
-	_ = s.operations.db.QueryRowContext(r.Context(), `SELECT count(DISTINCT account_id),count(DISTINCT session_id),max(confirmed_at) FROM account_identity_session_projection WHERE source=$1 AND sensor_id=$2 AND COALESCE(document->>'ended_at','')=''`, defaults.Source, defaults.SensorID).Scan(&accounts, &sessions, &latestProjection)
+	summary, summaryErr := store.ReadIdentityPipelineSummary(r.Context(), s.operations.db, store.IdentityScope{Source: defaults.Source, SensorID: defaults.SensorID, CampusID: defaults.CampusID, AccessDomain: defaults.AccessDomain})
+	if summaryErr != nil {
+		writeError(w, 503, "identity_summary_unavailable", "身份统计摘要读取失败")
+		return
+	}
+	queueStale := queueSampleError || !queueSampled.Valid || now.Sub(queueSampled.Time) > 15*time.Second
+	if state == "healthy" && (eventState != "healthy" || onlineState != "healthy" || snapshotState != "healthy" || queueStale || summary.LastError != "" || summary.ExportError != "" || (summary.ExportPendingRecords > 0 && (summary.ExportHeartbeatAt == nil || now.Sub(*summary.ExportHeartbeatAt) > 60*time.Second)) || summary.DerivedError != "" || quarantineQueue > 0 || summary.CalibrationState != "completed" || summary.HeartbeatAt == nil || now.Sub(*summary.HeartbeatAt) > 15*time.Second || (summary.OldestPendingAt != nil && now.Sub(*summary.OldestPendingAt) > 5*time.Second)) {
+		state = "degraded"
+	}
+	if !heartbeat.Valid || now.Sub(heartbeat.Time) > 15*time.Second {
+		state = "failed"
+	}
+
 	runtime := map[string]any{
 		"state": state, "active_host": activeHost, "active_config_version": activeVersion,
 		"active_online_redis_addr": func() string {
@@ -329,14 +345,18 @@ func (s *Server) getIdentityBridge(w http.ResponseWriter, r *http.Request) {
 		"source_queue": sourceQueue, "processing_queue": processingQueue, "online_members": onlineMembers,
 		"online_sessions": onlineSessions, "committed_messages": committed, "bad_messages": bad,
 		"event_consecutive_failures": eventFailures, "snapshot_consecutive_failures": snapshotFailures,
-		"last_error_type": errorType, "accounts": accounts, "sessions": sessions,
+		"last_error_type": errorType, "accounts": summary.Accounts, "sessions": summary.Sessions,
+		"pipeline": summary, "queue_sample_stale": queueStale, "quarantine_queue": quarantineQueue,
 	}
 	putOptionalTime(runtime, "last_event_at", lastEvent)
 	putOptionalTime(runtime, "last_snapshot_attempt_at", lastAttempt)
 	putOptionalTime(runtime, "last_snapshot_at", lastSnapshot)
 	putOptionalTime(runtime, "started_at", started)
 	putOptionalTime(runtime, "heartbeat_at", heartbeat)
-	putOptionalTime(runtime, "projection_at", latestProjection)
+	putOptionalTime(runtime, "queue_sampled_at", queueSampled)
+	if summary.StatisticsAt != nil {
+		runtime["projection_at"] = summary.StatisticsAt
+	}
 	response := map[string]any{"config": config, "runtime": runtime, "checked_at": now, "read_only": s.readOnly}
 	if address := identityBridgeFourKAddress(defaults, activeHost, activeVersion); address != nil {
 		response["four_k_address"] = address

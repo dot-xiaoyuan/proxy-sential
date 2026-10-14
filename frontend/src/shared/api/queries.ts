@@ -276,7 +276,7 @@ export function useDevices(query: DeviceQuery, enabled = true) {
     },
     enabled,
     placeholderData: keepPreviousData,
-    staleTime: 30_000,
+    staleTime: 5_000,
     gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
@@ -376,14 +376,23 @@ export function useAccountIdentity(
 export function useEndpointIdentity(
   endpointId: string,
   query: IdentityQuery = {},
+  enabled=true,
 ) {
   return useQuery({
     queryKey: queryKeys.endpointIdentity(endpointId, query),
     queryFn: () => api.endpointIdentity(endpointId, query),
-    enabled: !!endpointId,
-    refetchInterval: 15000,
-    refetchIntervalInBackground: false,
+    enabled: !!endpointId&&enabled,
+    refetchOnWindowFocus:false,
+    refetchOnReconnect:false,
   });
+}
+
+export function useInventoryDetail(endpointId:string) {
+ return useQuery({queryKey:['inventory-detail',endpointId],queryFn:({signal})=>api.inventoryDetail(endpointId,signal),enabled:!!endpointId,staleTime:30_000,refetchOnWindowFocus:false,refetchOnReconnect:false})
+}
+
+export function useEndpointObservations(endpointId:string,query:import('./types').EndpointObservationQuery) {
+ return useQuery({queryKey:['endpoint-observations',endpointId,query],queryFn:({signal})=>api.endpointObservations(endpointId,query,signal),enabled:!!endpointId,staleTime:30_000,placeholderData:(previous,previousQuery)=>{const old=previousQuery?.queryKey[2] as import('./types').EndpointObservationQuery|undefined;return previousQuery?.queryKey[1]===endpointId&&old&&['kind','value','source','start','end'].every(key=>old[key as keyof typeof old]===query[key as keyof typeof query])?previous:undefined},refetchOnWindowFocus:false,refetchOnReconnect:false})
 }
 
 export function useUpdateEndpointRegistration() {
@@ -397,6 +406,7 @@ export function useUpdateEndpointRegistration() {
       payload: UpdateEndpointRegistrationRequest;
     }) => api.updateEndpointRegistration(endpointId, payload),
     onSuccess: (_, variables) => {
+      void client.invalidateQueries({queryKey:['inventory-detail',variables.endpointId]})
       void client.invalidateQueries({
         queryKey: ["endpoint-identity", variables.endpointId],
       });
@@ -680,11 +690,12 @@ export function useOrganizationMutation() {
       void client.invalidateQueries({ queryKey: queryKeys.organization }),
   });
 }
-export function useActionConnectors(enabled = true) {
+export function useActionConnectors(enabled = true, manual = false) {
   return useQuery({
     queryKey: queryKeys.actionConnectors,
     queryFn: api.actionConnectors,
     enabled,
+    refetchInterval:manual?false:undefined,refetchOnWindowFocus:manual?false:undefined,refetchOnReconnect:manual?false:undefined,retry:manual?false:undefined,
   });
 }
 export function useActions(query: ListQuery = {}) {

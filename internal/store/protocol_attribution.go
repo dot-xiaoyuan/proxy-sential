@@ -24,7 +24,7 @@ const (
 // type that carry device self-report. Events without any of these keys are not
 // attributed.
 var protocolAttributionPayloadKeys = map[string][]string{
-	"http": {"server", "title"},
+	"http": {"server", "title", "http_body", "http_www_authenticate", "favicon_md5"},
 	"tls":  {"certificate_subject", "certificate_issuer", "certificate_san", "ja3", "ja4"},
 }
 
@@ -33,7 +33,7 @@ var protocolAttributionPayloadKeys = map[string][]string{
 // certificate's owner. A host-scoped x509 event is the only single-host case.
 func protocolAttributionObservations(event normalized.Event) []normalized.Event {
 	serverKeys := map[string][]string{
-		"http": {"server", "title"},
+		"http": {"server", "title", "http_body", "http_www_authenticate", "favicon_md5"},
 		"tls":  {"certificate_subject", "certificate_issuer", "certificate_san"},
 	}
 	keys, ok := serverKeys[event.Type]
@@ -211,18 +211,18 @@ func (s *PostgresStore) WriteProtocolDeviceEvents(ctx context.Context, events []
 	}
 	defer tx.Rollback()
 	state := BuildIdentityState(events)
-	if err = writeIdentityState(ctx, tx, state); err != nil {
+	if _, err = writeIdentityState(ctx, tx, state); err != nil {
 		return err
 	}
 	if err = writeEndpointDeviceProfiles(ctx, tx, state); err != nil {
 		return err
 	}
+	signals := make([]DeviceSignal, 0, len(events))
 	for _, item := range BuildDeviceInventories("latest-run", events, nil) {
-		for _, signal := range item.Signals {
-			if err = upsertDeviceSignalFact(ctx, tx, s.sensorID, signal); err != nil {
-				return err
-			}
-		}
+		signals = append(signals, item.Signals...)
+	}
+	if err = upsertDeviceSignalFactsBatch(ctx, tx, s.sensorID, signals); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

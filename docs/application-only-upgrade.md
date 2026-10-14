@@ -8,7 +8,7 @@
 scripts/deploy/build-release.sh --version VERSION --output proxy-sentinel-VERSION.tar.gz
 ```
 
-将发布包、`.sha256`、`upgrade-application.sh` 与 `verify-applied-migrations.py` 放入现场同一暂存目录，执行：
+将发布包、`.sha256`、`upgrade-application.sh`、`verify-applied-migrations.py`、`verify-application-cli.py`、`verify-application-runtime.py`、`validate-release-archive.py` 与 `manage-frontend-previous.py` 放入现场同一暂存目录，执行：
 
 ```bash
 bash upgrade-application.sh --version VERSION \
@@ -21,3 +21,5 @@ bash upgrade-application.sh --version VERSION \
 该流程沿用已有 systemd 单元与现场配置。需要更改采集器启动、可信来源登记或运行参数时，另存一份对应配置与单元备份，并单独验证重启后的采集。不要把未验证的新配置当成程序回退即可自动恢复的内容。
 
 回退前确认 `previous` 对应受测版本，并检查附加配置的兼容性。`proxy-sentinelctl rollback` 会切换链接并重启启用的控制面、入库、风险、设备、读模型、识别和发现服务。数据库迁移不会反向执行。
+
+应用切换前还会读取活动服务的启动参数，只提取参数名，与候选程序的帮助输出核对。缺少现场正在使用的参数时，在切换 `current` 前拒绝发布；这不能代替相关协议和数据库回放测试。

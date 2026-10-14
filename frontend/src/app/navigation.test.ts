@@ -4,7 +4,9 @@ import type { Session } from '../shared/api/types'
 
 describe('menu and investigation navigation',()=>{
  it('has six nonempty groups with stable detail ownership',()=>{
- expect(navigation.map(g=>g.title)).toEqual(['运营工作台','风险运营','资产与画像','网络分析','策略与验证','系统管理'])
+ expect(navigation.map(g=>g.title)).toEqual(['运营工作台','风险运营','设备中心','网络分析','策略与验证','系统管理'])
+ expect(navigation.find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['设备中心'])
+ expect(routeOwner('/discovery','')?.entry.key).toBe('devices')
  expect(routeOwner('/policies/exceptions','')?.entry.key).toBe('exceptions')
  expect(routeOwner('/shared-access/reviews/review-1','')?.entry.key).toBe('reviews')
  expect(routeOwner('/ips/10.0.0.1','')?.entry.key).toBe('events')

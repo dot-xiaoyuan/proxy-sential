@@ -37,6 +37,10 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		limit = n
 	}
 	if v := r.URL.Query().Get("offset"); v != "" {
+		if path == "/discovery/devices" {
+			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")
+			return
+		}
 		n, e := strconv.Atoi(v)
 		if e != nil || n < 0 {
 			writeError(w, 400, "bad_page", "分页参数无效")
@@ -170,6 +174,10 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		s.appendAudit(ctx, "discovery.poll", source, "queued")
 		writeJSON(w, 202, map[string]string{"id": id, "status": "pending"})
 	case path == "/discovery/devices" && r.Method == "GET":
+		if r.URL.Query().Get("offset") != "" {
+			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")
+			return
+		}
 		window := 24 * time.Hour
 		if value := r.URL.Query().Get("window"); value != "" {
 			parsed, parseErr := time.ParseDuration(value)
@@ -179,9 +187,15 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			}
 			window = parsed
 		}
-		page, err := repo.DevicesFiltered(ctx, discovery.DeviceQuery{Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset})
+		page, err := repo.DevicesIndexed(ctx, discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor")})
 		if err != nil {
-			writeError(w, 500, "discovery_read", "读取发现结果失败")
+			if strings.Contains(err.Error(), "cursor") {
+				writeError(w, 400, "bad_cursor", err.Error())
+			} else if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") {
+				writeError(w, 400, "bad_filter", err.Error())
+			} else {
+				writeError(w, 500, "discovery_read", "读取发现结果失败")
+			}
 			return
 		}
 		writeJSON(w, 200, page)

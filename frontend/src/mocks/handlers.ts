@@ -1,3 +1,5 @@
+import fingerprintCatalog from "./fingerprintCatalog.json"
+import { inventoryTraceHandlers } from './inventoryTrace'
 import { sharedAccessHandlers } from './sharedAccess'
 import { discoveryHandlers } from './discovery'
 import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './deviceRecognition'
@@ -202,7 +204,7 @@ export const handlers = [
   http.post('/api/v1/integrations/srun4k/:connectorId/authorization', ({params}) => HttpResponse.json(mockSRun4KIntegration(String(params.connectorId)))),
   http.post('/api/v1/integrations/srun4k/:connectorId/test', ({params}) => HttpResponse.json({connector_id:params.connectorId,checked_at:new Date().toISOString(),online_total:16,channels:{authorization_database:'healthy',online_redis:'healthy',catalog_redis:'healthy',event_redis:'healthy',northbound_api:'healthy',event_channel:'waiting'},enforcement_ready:false})),
   http.post('/api/v1/integrations/srun4k/:connectorId/sync', ({params}) => HttpResponse.json({connector_id:params.connectorId,source:`srun4k:${params.connectorId}`,synced_at:new Date().toISOString(),identity_accounts:12,identity_sessions:16,address_records:18,products:3,groups:2,controls:4,event_channel_state:'waiting',enforcement_ready:false})),
-  http.get('/api/v1/integrations/identity/bridge', () => HttpResponse.json({config:{bridge_id:'ncu-legacy-4k',host:'222.204.3.224',config_version:1,online_redis_addr:'222.204.3.224:16380',event_redis_addr:'222.204.3.227:16384',online_list:'list:rad_online',event_list:'list:antiproxy:127.0.0.1',processing_list:'list:antiproxy:127.0.0.1:proxy-sentinel-processing',source:'ncu-srun4k',sensor_id:'ncu-auth-redis',campus_id:'ncu',access_domain:'campus-auth',batch_size:500,reconcile_interval_seconds:1800},runtime:{state:'healthy',active_host:'222.204.3.224',active_config_version:1,active_online_redis_addr:'222.204.3.224:16380',online_channel_state:'healthy',event_channel_state:'healthy',snapshot_state:'healthy',source_queue:0,processing_queue:0,online_members:16266,online_sessions:16266,committed_messages:4468,bad_messages:0,event_consecutive_failures:0,snapshot_consecutive_failures:0,accounts:4476,sessions:8088,last_event_at:new Date().toISOString(),last_snapshot_at:new Date().toISOString()},checked_at:new Date().toISOString()})),
+  http.get('/api/v1/integrations/identity/bridge', () => HttpResponse.json({config:{bridge_id:'ncu-legacy-4k',host:'222.204.3.224',config_version:1,online_redis_addr:'222.204.3.224:16380',event_redis_addr:'222.204.3.227:16384',online_list:'list:rad_online',event_list:'list:antiproxy:127.0.0.1',processing_list:'list:antiproxy:127.0.0.1:proxy-sentinel-processing',source:'ncu-srun4k',sensor_id:'ncu-auth-redis',campus_id:'ncu',access_domain:'campus-auth',batch_size:500,reconcile_interval_seconds:1800},runtime:{state:'healthy',active_host:'222.204.3.224',active_config_version:1,active_online_redis_addr:'222.204.3.224:16380',online_channel_state:'healthy',event_channel_state:'healthy',snapshot_state:'healthy',queue_sampled_at:new Date().toISOString(),queue_sample_stale:false,quarantine_queue:0,pipeline:{statistics_at:new Date().toISOString(),accepted_sequence:20,processed_sequence:20,pending_records:0,export_pending_records:0,calibration_state:"completed",last_error:"",derived_cursor_at:new Date().toISOString()},source_queue:0,processing_queue:0,online_members:16266,online_sessions:16266,committed_messages:4468,bad_messages:0,event_consecutive_failures:0,snapshot_consecutive_failures:0,accounts:4476,sessions:8088,last_event_at:new Date().toISOString(),last_snapshot_at:new Date().toISOString()},checked_at:new Date().toISOString()})),
   http.put('/api/v1/integrations/identity/bridge', async ({request}) => {const value=await request.json() as {host:string};return HttpResponse.json({bridge_id:'ncu-legacy-4k',host:value.host,config_version:2,state:'switching'},{status:202})}),
   http.get('/api/v1/integrations/identity/bridge/runs', () => HttpResponse.json({items:[{run_id:'snapshot-1',kind:'snapshot',status:'completed',records_read:16266,records_emitted:16266,records_skipped:0,records_malformed:0,retry_count:0,duration_ms:2300,started_at:new Date().toISOString(),completed_at:new Date().toISOString()}],page:{limit:20,next_cursor:null,total:1}})),
   http.get('/api/v1/actions', ({ request }) => { const result = mockPage(mockActions, new URL(request.url)); return HttpResponse.json(result) }),
@@ -347,7 +349,10 @@ export const handlers = [
   }),
   http.get(/\/api\/v1\/(?:devices|device-inventory(?:\/metadata)?)$/, ({ request }) => {
     const url = new URL(request.url)
-    const q = url.searchParams.get('q')?.toLowerCase()
+    const qRaw=url.searchParams.get('q')?.trim()||''
+    const q = qRaw.toLowerCase()
+    const searchType=url.searchParams.get('search_type')||'all'
+    if(!['all','account','ip','mac','name'].includes(searchType))return HttpResponse.json({error:'invalid search_type'},{status:400})
     const ip = url.searchParams.get('ip')
     const brand = url.searchParams.get('brand')?.toLowerCase()
     const osFamily = url.searchParams.get('os_family')?.toLowerCase()
@@ -413,7 +418,7 @@ export const handlers = [
       .filter(item => !brand || brandValue(item).toLowerCase() === brand)
       .filter(item => !osFamily || osValue(item).toLowerCase() === osFamily)
       .filter((item) => !ip || item.current_ip === ip)
-      .filter((item) => !q || (/^\d+\.\d+\.\d+\.\d+$/.test(q) ? item.ips.includes(q) : JSON.stringify(item).toLowerCase().includes(q)))
+      .filter((item) => {const name='device_name' in item?item.device_name?.value||'':'';return !q || (searchType==='account'?item.current_account===qRaw:searchType==='mac'?(item.primary_mac||'').replace(/[:.-]/g,'').toLowerCase()===q.replace(/[:.-]/g,''):searchType==='name'?name.toLowerCase().includes(q):/^\d+\.\d+\.\d+\.\d+$/.test(q)?item.ips.includes(q):[item.endpoint_id,item.primary_mac,item.current_ip,item.current_account,item.current_access_id,item.owner_account,item.owner_name,name].join(' ').toLowerCase().includes(q))})
 	  .filter((item)=>!ecosystem||(item.ecosystem_hint || '').toLowerCase()===ecosystem)
     const pageItems = filtered.slice(cursor, cursor + limit).map(item=>({...item,...(q&&/^\d+\.\d+\.\d+\.\d+$/.test(q)?{ip_match:{ip:q,source:'ip_observation',matched_at:item.last_seen,is_recent_ip:item.current_ip===q}}:{})}))
     const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
@@ -428,6 +433,7 @@ export const handlers = [
       page: { limit, next_cursor: nextCursor, ...(url.searchParams.get('include_metadata')==='false'?{}:{total: filtered.length}) },
     })
   }),
+  ...inventoryTraceHandlers,
   http.get('/api/v1/device-recognition/summary', () => HttpResponse.json({
     total_endpoints: 121,
     brand_inference_conflicts: 0, brand_inference_enabled: true, domain_window: '7d',
@@ -636,6 +642,13 @@ export const handlers = [
   }),
   http.get('/api/v1/audit-logs', ({ request }) => { const result = mockPage(auditLogs, new URL(request.url)); return HttpResponse.json({ logs: result.items, page: result.page }) }),
   http.get('/api/v1/audit-logs/:auditId', ({ params }) => { const item = auditLogs.find((entry) => entry.audit_id === params.auditId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
+  http.get('/api/v1/device-fingerprint-library/sources', () => HttpResponse.json({items:fingerprintCatalog.sources,version:'mock-converter-1'})),
+  http.get('/api/v1/device-fingerprint-library/rules', ({request}) => {
+    const q=new URL(request.url).searchParams;const page=Math.max(1,Number(q.get('page')??1));const size=Math.min(100,Math.max(1,Number(q.get('page_size')??25)));
+    const items=fingerprintCatalog.rules.filter(r=>(!q.get('source')||r.source_id===q.get('source'))&&(!q.get('protocol')||r.protocol===q.get('protocol'))&&(!q.get('status')||r.status===q.get('status'))&&(!q.get('role')||r.role===q.get('role'))&&JSON.stringify(r).toLowerCase().includes((q.get('q')??'').toLowerCase()));
+    return HttpResponse.json({items:items.slice((page-1)*size,page*size),total:items.length,page,page_size:size});
+  }),
+  http.get('/api/v1/device-fingerprint-library/coverage', () => HttpResponse.json({status:'ready',window:'24h',as_of:'2026-10-12T08:00:00Z',count_semantics:'current_rule_endpoint_relationships',overlap_endpoints:2,items:[{source_id:'recog',match_count:12,endpoint_count:8,conflict_count:1,evaluation_match_count:24,realtime_match_count:18,history_match_count:6}]})),
   http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ domain_available:true,brand_eligible_rule_count:3,domain_sources:[{name:'Apple enterprise networks',version:'reviewed-2026-09-08',rule_count:3,brand_eligible_rule_count:3},{name:'HaGeZi',version:'mock-pinned',rule_count:100,brand_eligible_rule_count:0}],version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,domain_rule_count:128,domain_ecosystem_count:8,domain_source_version:'abcdef123456',domain_backfill_status:'completed',domain_backfill_processed:3200,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0','MIT (NextDNS)'],backfill_status:'completed',backfill_processed:110 })),
   http.post('/api/v1/device-fingerprint-library/update', () => HttpResponse.json({ code:'offline_update_required',message:'import a verified bundle' },{status:409})),
   http.post('/api/v1/device-fingerprint-library/validate', () => HttpResponse.json({schema_version:'device-fingerprint-bundle/v1',version:'offline-20260831-mock',created_at:new Date().toISOString(),sources:[{name:'IEEE MA-L/MA-M/MA-S',version:'2026-08-31',url:'https://standards-oui.ieee.org/',license:'IEEE public registry'},{name:'uap-core',version:'mocksha',url:'https://github.com/ua-parser/uap-core',license:'Apache-2.0'},{name:'Fingerbank public snapshot',version:'6.8.2-20140609',url:'https://github.com/karottc/fingerbank',license:'ODbL-1.0/DbCL-1.0'}],files:{}})),

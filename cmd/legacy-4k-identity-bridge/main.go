@@ -20,10 +20,12 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"proxy-sentinel/internal/identityprotocol"
 	"proxy-sentinel/internal/legacy4k"
 )
 
 type config struct {
+	durableEvents                  bool
 	onlineAddr, onlinePasswordFile string
 	eventAddr, eventPasswordFile   string
 	catalogAddr                    string
@@ -41,6 +43,9 @@ type config struct {
 }
 
 type runtimeState struct {
+	quarantineQueue             int64
+	queueSampledAt              time.Time
+	queueSampleError            bool
 	mu                          sync.RWMutex
 	startedAt                   time.Time
 	lastEventAt                 time.Time
@@ -50,6 +55,10 @@ type runtimeState struct {
 	lastErrorType               string
 	activeHost                  string
 	activeConfigVersion         int64
+	activeEventAddr             string
+	activeEventList             string
+	activeProcessingList        string
+	activeDeadList              string
 	activeCatalogRedisAddr      string
 	instanceID                  string
 	overallState                string
@@ -128,6 +137,14 @@ func run() error {
 		return fmt.Errorf("read identity token: %w", err)
 	}
 	if remote, fetchErr := fetchBridgeRuntimeConfig(ctx, cfg.endpoint, token); fetchErr == nil {
+		if (remote.EventRedisAddr != "" && remote.EventRedisAddr != cfg.eventAddr) || (remote.EventList != "" && remote.EventList != cfg.eventList) || (remote.ProcessingList != "" && remote.ProcessingList != cfg.processingList) {
+			original := redis.NewClient(&redis.Options{Addr: cfg.eventAddr, Password: eventPassword, ReadTimeout: time.Second, WriteTimeout: time.Second})
+			drained, _ := eventSourceDrained(ctx, original, cfg)
+			original.Close()
+			if !drained {
+				remote.EventRedisAddr, remote.EventList, remote.ProcessingList = cfg.eventAddr, cfg.eventList, cfg.processingList
+			}
+		}
 		if remote.OnlineRedisAddr != "" {
 			cfg.onlineAddr = remote.OnlineRedisAddr
 		}
@@ -164,15 +181,16 @@ func run() error {
 	if instanceID == "" {
 		return fmt.Errorf("online Redis instance id unavailable")
 	}
-	sender := legacy4k.Sender{Endpoint: cfg.endpoint, Token: token, SensorID: cfg.sensor, Source: cfg.source, CampusID: cfg.campus, AccessDomain: cfg.domain}
+	sender := legacy4k.Sender{Endpoint: cfg.endpoint, Token: token, SensorID: cfg.sensor, Source: cfg.source, CampusID: cfg.campus, AccessDomain: cfg.domain, Durable: cfg.durableEvents}
 	activeHost, _, _ := net.SplitHostPort(cfg.onlineAddr)
-	state := &runtimeState{startedAt: time.Now().UTC(), activeHost: activeHost, activeCatalogRedisAddr: cfg.catalogAddr, instanceID: instanceID, overallState: "starting", onlineChannelState: "healthy", eventChannelState: "healthy", snapshotState: "pending"}
+	state := &runtimeState{activeEventAddr: cfg.eventAddr, activeEventList: cfg.eventList, activeProcessingList: cfg.processingList, activeDeadList: cfg.deadList, startedAt: time.Now().UTC(), activeHost: activeHost, activeCatalogRedisAddr: cfg.catalogAddr, instanceID: instanceID, overallState: "starting", onlineChannelState: "healthy", eventChannelState: "healthy", snapshotState: "pending"}
 	server := startHealthServer(cfg.healthAddr, state)
 	defer server.Shutdown(context.Background())
 	logStatus("starting", map[string]any{"source": cfg.source, "sensor_id": cfg.sensor, "event_list": cfg.eventList})
 
 	var workers sync.WaitGroup
-	workers.Add(4)
+	workers.Add(5)
+	go func() { defer workers.Done(); runQueueSampler(ctx, cfg, eventPassword, token, state) }()
 	go func() {
 		defer workers.Done()
 		runCatalogWorker(ctx, cfg, catalogPassword, token, state)
@@ -205,22 +223,40 @@ func runEventWorker(ctx context.Context, client *redis.Client, password string, 
 	for {
 		if !time.Now().Before(nextConfig) {
 			if remote, err := fetchBridgeRuntimeConfig(ctx, cfg.endpoint, token); err == nil {
-				if remote.EventRedisAddr != "" && remote.EventRedisAddr != activeAddr {
-					candidate := redis.NewClient(&redis.Options{Addr: remote.EventRedisAddr, Password: password, ReadTimeout: 35 * time.Second, WriteTimeout: 5 * time.Second})
-					if candidate.Ping(ctx).Err() == nil {
-						if activeClient != client {
-							_ = activeClient.Close()
-						}
-						activeClient, activeAddr = candidate, remote.EventRedisAddr
-						markEventHealthy(state)
-					} else {
-						_ = candidate.Close()
+				wantsSwitch := (remote.EventRedisAddr != "" && remote.EventRedisAddr != activeAddr) || (remote.EventList != "" && remote.EventList != activeCfg.eventList) || (remote.ProcessingList != "" && remote.ProcessingList != activeCfg.processingList)
+				if wantsSwitch {
+					drained, readErr := eventSourceDrained(ctx, activeClient, activeCfg)
+					state.mu.RLock()
+					published := state.activeConfigVersion == remote.ConfigVersion
+					state.mu.RUnlock()
+					if readErr != nil {
+						markEventFailure(state, readErr)
 					}
-				}
-				if remote.EventList != "" {
-					activeCfg.eventList = remote.EventList
-					activeCfg.processingList = remote.ProcessingList
-					activeCfg.deadList = remote.EventList + ":proxy-sentinel-dead-meta"
+					if drained && published {
+						candidateAddr := remote.EventRedisAddr
+						if candidateAddr == "" {
+							candidateAddr = activeAddr
+						}
+						candidate := redis.NewClient(&redis.Options{Addr: candidateAddr, Password: password, ReadTimeout: 35 * time.Second, WriteTimeout: 5 * time.Second})
+						if candidate.Ping(ctx).Err() == nil {
+							if activeClient != client {
+								activeClient.Close()
+							}
+							activeClient, activeAddr = candidate, candidateAddr
+							if remote.EventList != "" {
+								activeCfg.eventList = remote.EventList
+							}
+							if remote.ProcessingList != "" {
+								activeCfg.processingList = remote.ProcessingList
+							}
+							activeCfg.deadList = activeCfg.eventList + ":proxy-sentinel-dead-meta"
+							state.mu.Lock()
+							state.activeEventAddr, state.activeEventList, state.activeProcessingList, state.activeDeadList = activeAddr, activeCfg.eventList, activeCfg.processingList, activeCfg.deadList
+							state.mu.Unlock()
+						} else {
+							candidate.Close()
+						}
+					}
 				}
 			}
 			nextConfig = time.Now().Add(5 * time.Second)
@@ -242,9 +278,9 @@ func runEventWorker(ctx context.Context, client *redis.Client, password string, 
 		if processed {
 			continue
 		}
-		_, err = activeClient.BLMove(ctx, activeCfg.eventList, activeCfg.processingList, "LEFT", "RIGHT", 5*time.Second).Result()
-		if err != nil && err != redis.Nil && !errors.Is(err, context.Canceled) {
-			markEventFailure(state, err)
+		markEventHealthy(state)
+		if !waitContext(ctx, time.Second) {
+			return
 		}
 		if ctx.Err() != nil {
 			return
@@ -367,6 +403,7 @@ func parseConfig() (config, error) {
 	flag.IntVar(&cfg.batchSize, "batch-size", 500, "maximum notification batch size")
 	flag.IntVar(&cfg.maxRecords, "max-records", 100000, "maximum complete online inventory")
 	flag.DurationVar(&cfg.reconcile, "reconcile-interval", 30*time.Minute, "complete inventory calibration interval")
+	flag.BoolVar(&cfg.durableEvents, "durable-events", false, "require versioned durable inbox receipts")
 	flag.BoolVar(&cfg.restoreProcessing, "restore-processing", false, "move unacknowledged processing messages back before the source FIFO and exit")
 	flag.Parse()
 	if cfg.catalogPasswordFile == "" {
@@ -397,78 +434,101 @@ func parseConfig() (config, error) {
 func restoreProcessing(ctx context.Context, client *redis.Client, source, processing string) error {
 	restored := 0
 	for {
-		_, err := client.LMove(ctx, processing, source, "RIGHT", "LEFT").Result()
-		if err == redis.Nil {
-			logStatus("processing_restored", map[string]any{"restored_messages": restored})
-			return nil
-		}
+		count, err := restoreBatchScript.Run(ctx, client, []string{source, processing, processing + ":lease", processing + ":batch"}).Int()
 		if err != nil {
 			return err
 		}
-		restored++
+		restored += count
+		if count < 1000 {
+			logStatus("processing_restored", map[string]any{"restored_messages": restored})
+			return nil
+		}
 	}
 }
 
 func processBatch(ctx context.Context, client *redis.Client, sender legacy4k.Sender, cfg config, instanceID string, state *runtimeState) (bool, error) {
-	pending, err := client.LLen(ctx, cfg.processingList).Result()
+	defer updateQueueMetrics(ctx, client, cfg, state)
+	state.mu.RLock()
+	version := state.activeConfigVersion
+	state.mu.RUnlock()
+	batch, err := beginReliableBatch(ctx, client, cfg, instanceID, version)
 	if err != nil {
 		return false, err
 	}
-	for pending < int64(cfg.batchSize) {
-		_, moveErr := client.LMove(ctx, cfg.eventList, cfg.processingList, "LEFT", "RIGHT").Result()
-		if moveErr == redis.Nil {
-			break
-		}
-		if moveErr != nil {
-			return false, moveErr
-		}
-		pending++
+	if batch.token != "" {
+		defer releaseBatchScript.Run(ctx, client, []string{cfg.processingList + ":lease"}, batch.token)
 	}
-	if pending == 0 {
-		updateQueueMetrics(ctx, client, cfg, state)
-		markEventHealthy(state)
+	if len(batch.Raw) == 0 {
 		return false, nil
 	}
-	limit := int64(cfg.batchSize - 1)
-	if pending < int64(cfg.batchSize) {
-		limit = pending - 1
-	}
-	rawMessages, err := client.LRange(ctx, cfg.processingList, 0, limit).Result()
+	rawMessages := batch.Raw
+	observedAt, err := time.Parse(time.RFC3339Nano, batch.ObservedAt)
 	if err != nil {
-		return false, err
+		return true, err
 	}
-	records := make([]map[string]string, 0, len(rawMessages))
-	badMetadata := make([]string, 0)
-	hasher := sha256.New()
-	for _, raw := range rawMessages {
-		hasher.Write([]byte(strconv.Itoa(len(raw))))
-		hasher.Write([]byte{0})
-		hasher.Write([]byte(raw))
-		record, decodeErr := legacy4k.DecodeRecordForInstance(raw, instanceID, time.Now().UTC())
-		if decodeErr != nil {
-			sum := sha256.Sum256([]byte(raw))
-			meta, _ := json.Marshal(map[string]any{"sha256": hex.EncodeToString(sum[:]), "length": len(raw), "error_type": errorType(decodeErr), "observed_at": time.Now().UTC().Format(time.RFC3339Nano)})
-			badMetadata = append(badMetadata, string(meta))
-			continue
+	sender.Source, sender.SensorID, sender.CampusID, sender.AccessDomain = batch.Source, batch.SensorID, batch.CampusID, batch.AccessDomain
+	if !batch.Frozen {
+		records := make([]map[string]string, 0, len(rawMessages))
+		badMetadata := make([]string, 0)
+		hasher := sha256.New()
+		for _, raw := range rawMessages {
+			hasher.Write([]byte(strconv.Itoa(len(raw))))
+			hasher.Write([]byte{0})
+			hasher.Write([]byte(raw))
+			decoded, decodeErr := legacy4k.DecodeRecordsForInstance(raw, batch.InstanceID, observedAt)
+			if decodeErr != nil {
+				sum := sha256.Sum256([]byte(raw))
+				meta, _ := json.Marshal(map[string]any{"sha256": hex.EncodeToString(sum[:]), "length": len(raw), "error_type": errorType(decodeErr), "observed_at": batch.ObservedAt, "raw": raw})
+				badMetadata = append(badMetadata, string(meta))
+				continue
+			}
+			records = append(records, decoded...)
 		}
-		records = append(records, record)
+		hasher.Write([]byte(batch.ObservedAt + batch.InstanceID + batch.Source + batch.SensorID + batch.CampusID + batch.AccessDomain + batch.SourceVersion))
+		if sender.Durable {
+			hasher.Write([]byte("durable-v2"))
+		}
+		batchID := "legacy-4k-batch-" + hex.EncodeToString(hasher.Sum(nil))
+		for _, record := range records {
+			if sender.CampusID != "" {
+				record["campus_id"] = sender.CampusID
+			}
+			if sender.AccessDomain != "" {
+				record["access_domain"] = sender.AccessDomain
+			}
+		}
+		batch.BatchID, batch.Records, batch.Quarantine, batch.Durable, batch.Frozen = batchID, records, badMetadata, sender.Durable, true
+		// Persist the normalized payload too: upgrades must not reinterpret a retry.
+		request := identityprotocol.Request{Source: sender.Source, SensorID: sender.SensorID, Records: records}
+		batch.ContentSHA256, batch.RecordCount = request.Hash(), len(records)
+		frozen, marshalErr := json.Marshal(batch)
+		if marshalErr != nil {
+			return true, marshalErr
+		}
+		if _, err = freezeBatchScript.Run(ctx, client, []string{cfg.processingList + ":lease", cfg.processingList + ":batch"}, batch.token, string(frozen)).Result(); err != nil {
+			return true, err
+		}
 	}
-	batchID := "legacy-4k-batch-" + hex.EncodeToString(hasher.Sum(nil))[:24]
+	records, badMetadata, batchID := batch.Records, batch.Quarantine, batch.BatchID
+	sender.Durable = batch.Durable
+	request := identityprotocol.Request{Source: sender.Source, SensorID: sender.SensorID, Records: records}
+	if request.Hash() != batch.ContentSHA256 || len(records) != batch.RecordCount {
+		return true, fmt.Errorf("persisted batch checksum mismatch")
+	}
+
 	if err = sender.Send(ctx, records, batchID); err != nil {
 		return true, err
 	}
-	_, err = client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		for _, metadata := range badMetadata {
-			pipe.RPush(ctx, cfg.deadList, metadata)
-		}
-		pipe.LTrim(ctx, cfg.processingList, int64(len(rawMessages)), -1)
-		return nil
-	})
+	args := []any{batch.token}
+	for _, metadata := range badMetadata {
+		args = append(args, metadata)
+	}
+	_, err = finishBatchScript.Run(ctx, client, []string{cfg.processingList, cfg.processingList + ":lease", cfg.processingList + ":batch", cfg.deadList + ":quarantine"}, args...).Result()
 	if err != nil {
 		return true, err
 	}
 	state.mu.Lock()
-	state.committedMessages += uint64(len(records))
+	state.committedMessages += uint64(len(rawMessages) - len(badMetadata))
 	state.badMessages += uint64(len(badMetadata))
 	state.lastEventAt = time.Now().UTC()
 	state.mu.Unlock()
@@ -591,6 +651,7 @@ func sendBridgeHeartbeat(ctx context.Context, cfg config, token string, state *r
 	body, _ := json.Marshal(map[string]any{
 		"active_host": state.activeHost, "active_config_version": state.activeConfigVersion, "state": overall,
 		"online_channel_state": state.onlineChannelState, "event_channel_state": state.eventChannelState,
+		"queue_sampled_at": optionalTime(state.queueSampledAt), "queue_sample_error": state.queueSampleError, "quarantine_queue": state.quarantineQueue,
 		"snapshot_state": state.snapshotState, "source_queue": state.sourceQueue, "processing_queue": state.processingQueue,
 		"online_members": state.onlineMembers, "online_sessions": state.onlineSessions,
 		"committed_messages": state.committedMessages, "bad_messages": state.badMessages,
@@ -652,16 +713,23 @@ func updateQueueMetrics(ctx context.Context, client *redis.Client, cfg config, s
 	values, err := client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.LLen(ctx, cfg.eventList)
 		pipe.LLen(ctx, cfg.processingList)
+		pipe.LLen(ctx, cfg.deadList+":quarantine")
 		return nil
 	})
-	if err != nil || len(values) != 2 {
+	if err != nil || len(values) != 3 {
+		state.mu.Lock()
+		state.queueSampleError = true
+		state.mu.Unlock()
 		return
 	}
 	source, sourceErr := values[0].(*redis.IntCmd).Result()
 	processing, processingErr := values[1].(*redis.IntCmd).Result()
-	if sourceErr == nil && processingErr == nil {
+	quarantine, quarantineErr := values[2].(*redis.IntCmd).Result()
+	if sourceErr == nil && processingErr == nil && quarantineErr == nil {
 		state.mu.Lock()
-		state.sourceQueue, state.processingQueue = source, processing
+		state.sourceQueue, state.processingQueue, state.quarantineQueue = source, processing, quarantine
+		state.queueSampledAt = time.Now().UTC()
+		state.queueSampleError = false
 		state.mu.Unlock()
 	}
 }
@@ -743,7 +811,7 @@ func deriveOverallState(state *runtimeState, reconcile time.Duration) string {
 	if state.eventConsecutiveFailures >= 5 || state.lastSnapshotAt.IsZero() {
 		return "failed"
 	}
-	if time.Since(state.lastSnapshotAt) > 3*reconcile || state.snapshotConsecutiveFailures >= 5 {
+	if state.queueSampleError || state.queueSampledAt.IsZero() || time.Since(state.queueSampledAt) > 15*time.Second || time.Since(state.lastSnapshotAt) > 3*reconcile || state.snapshotConsecutiveFailures > 0 || state.eventConsecutiveFailures > 0 || state.eventChannelState == "failed" || state.onlineChannelState == "failed" || state.catalogState == "failed" || state.quarantineQueue > 0 {
 		return "degraded"
 	}
 	if state.overallState == "switching" || state.overallState == "switch_failed" {
@@ -764,6 +832,21 @@ func errorType(err error) string {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "deadline_exceeded"
+	}
+	message := err.Error()
+	for _, status := range []string{"400", "401", "403", "404", "409", "413", "422", "429", "500", "503"} {
+		if strings.Contains(message, "endpoint returned "+status) {
+			return "remote_http_" + status
+		}
+	}
+	if strings.Contains(message, "acknowledgement") {
+		return "acknowledgement_mismatch"
+	}
+	if strings.Contains(message, "snapshot calibration failed") {
+		return "calibration_failed"
+	}
+	if strings.HasPrefix(message, "online record ") || strings.HasPrefix(message, "duplicate online session") {
+		return "invalid_online_identity"
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "json") {
 		return "malformed_json"

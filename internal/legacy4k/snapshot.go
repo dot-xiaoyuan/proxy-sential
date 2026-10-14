@@ -731,6 +731,9 @@ func (s Sender) SendSnapshot(ctx context.Context, in OnlineInventory, source, ca
 	if ack.Status != "completed" || ack.ID != StableID(string(body)) || ack.Count != len(records) {
 		return fmt.Errorf("inventory acknowledgement mismatch")
 	}
+	if s.Durable {
+		return s.waitSnapshotPublication(ctx, ack.ID, campus, domain)
+	}
 	return nil
 }
 
@@ -820,6 +823,9 @@ func (s Sender) sendSnapshotUpload(ctx context.Context, records []map[string]str
 	}
 	if receipt.Status != "completed" {
 		return fmt.Errorf("identity snapshot upload acknowledgement mismatch")
+	}
+	if s.Durable {
+		return s.waitSnapshotPublication(ctx, StableID(string(manifest)), campus, domain)
 	}
 	return nil
 }

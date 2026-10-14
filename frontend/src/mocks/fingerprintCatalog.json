@@ -1,0 +1,1010 @@
+{
+  "sources": [
+    {
+      "license_files": [
+        "recog/LICENSE",
+        "recog/COPYING"
+      ],
+      "snapshot_url": "https://raw.githubusercontent.com/rapid7/recog/1714aaed118861b4567bb6754920b4b929f59380/",
+      "upstream_count": 4679,
+      "id": "recog",
+      "name": "Rapid7 Recog",
+      "url": "https://github.com/rapid7/recog",
+      "version": "1714aaed118861b4567bb6754920b4b929f59380",
+      "license": "BSD-2-Clause",
+      "checksum": "09ee68ac335cb5755d16c66a3d84c6096b8bc9940599936cbd387eebcf113aef",
+      "converter_version": "sentinel-source-converter/1",
+      "status": "loaded",
+      "raw_count": 4679,
+      "condition_count": 4679,
+      "executable_count": 2878,
+      "model_count": 0,
+      "dispositions": {
+        "converted": 2878,
+        "invalid_data": 2,
+        "unsupported_input": 1799
+      },
+      "protocols": [
+        "dhcp",
+        "dns",
+        "ftp",
+        "h.323",
+        "http",
+        "imap",
+        "ldap",
+        "mdns",
+        "mysql",
+        "nntp",
+        "ntp",
+        "pjl",
+        "pop3",
+        "rsh",
+        "rtsp",
+        "sip",
+        "smb",
+        "smtp",
+        "snmp",
+        "ssh",
+        "telnet",
+        "tls",
+        "x11",
+        "x509"
+      ],
+      "categories": [
+        "access_point",
+        "camera",
+        "desktop",
+        "firewall",
+        "laptop",
+        "media_device",
+        "mobile",
+        "nas",
+        "nvr",
+        "printer",
+        "router",
+        "switch",
+        "tablet",
+        "ups",
+        "voip_phone"
+      ]
+    },
+    {
+      "license_files": [
+        "satori/LICENSE"
+      ],
+      "snapshot_url": "https://raw.githubusercontent.com/xnih/satori/c5dfcfbff31620e35248aa86da0c67f2ad4982f5/",
+      "upstream_count": 1980,
+      "id": "satori",
+      "name": "Satori",
+      "url": "https://github.com/xnih/satori",
+      "version": "c5dfcfbff31620e35248aa86da0c67f2ad4982f5",
+      "license": "GPL-2.0",
+      "checksum": "41a4f9bff9839df4c0e743f1a2608e764a37506bf0eee4c41ae3eb4435edf703",
+      "converter_version": "sentinel-source-converter/1",
+      "status": "loaded",
+      "raw_count": 8426,
+      "condition_count": 9435,
+      "executable_count": 4297,
+      "model_count": 0,
+      "dispositions": {
+        "converted": 4297,
+        "duplicate": 191,
+        "invalid_data": 1,
+        "unsupported_input": 3937
+      },
+      "protocols": [
+        "browser",
+        "dhcp",
+        "dhcpv6",
+        "dns",
+        "icmp",
+        "ntp",
+        "sip",
+        "smb",
+        "ssh",
+        "ssl",
+        "tcp",
+        "web",
+        "webuseragent"
+      ],
+      "categories": [
+        "access_point",
+        "camera",
+        "display",
+        "firewall",
+        "media_device",
+        "mobile",
+        "nas",
+        "nvr",
+        "printer",
+        "router",
+        "switch",
+        "tablet",
+        "voip_phone"
+      ]
+    },
+    {
+      "license_files": [
+        "librenms/LICENSE.txt"
+      ],
+      "snapshot_url": "https://raw.githubusercontent.com/librenms/librenms/4d34094b03c4846e3325a375ca6a94b43f1b1eda/",
+      "upstream_count": 815,
+      "id": "librenms",
+      "name": "LibreNMS",
+      "url": "https://github.com/librenms/librenms",
+      "version": "4d34094b03c4846e3325a375ca6a94b43f1b1eda",
+      "license": "GPL-3.0",
+      "checksum": "77cc7c241a5865c7b14eed045f1bdabb784dce36aa56e98a48ad0d1ef75ad5fa",
+      "converter_version": "sentinel-source-converter/1",
+      "status": "loaded",
+      "raw_count": 1230,
+      "condition_count": 1007,
+      "executable_count": 1007,
+      "model_count": 0,
+      "dispositions": {
+        "converted": 1007,
+        "invalid_data": 1,
+        "unsupported_input": 222
+      },
+      "protocols": [
+        "snmp"
+      ],
+      "categories": []
+    },
+    {
+      "license_files": [
+        "whatweb/LICENSE"
+      ],
+      "snapshot_url": "https://raw.githubusercontent.com/urbanadventurer/WhatWeb/d279d93042d034f3fd29d5a893d44ccc0595d3f8/",
+      "upstream_count": 1832,
+      "id": "whatweb",
+      "name": "WhatWeb",
+      "url": "https://github.com/urbanadventurer/WhatWeb",
+      "version": "d279d93042d034f3fd29d5a893d44ccc0595d3f8",
+      "license": "GPL-2.0",
+      "checksum": "4fd7ffe7cde5913d09c72862cae704cc50402a2d4beb112c77662512091d70ba",
+      "converter_version": "sentinel-source-converter/1",
+      "status": "loaded",
+      "raw_count": 4298,
+      "condition_count": 2466,
+      "executable_count": 2318,
+      "model_count": 0,
+      "dispositions": {
+        "converted": 2318,
+        "duplicate": 24,
+        "unsupported_syntax": 1956
+      },
+      "protocols": [
+        "http"
+      ],
+      "categories": []
+    },
+    {
+      "license_files": [
+        "openwrt/LICENSE"
+      ],
+      "snapshot_url": "https://openwrt.org/toh.json",
+      "upstream_count": 3053,
+      "id": "openwrt",
+      "name": "OpenWrt Table of Hardware",
+      "url": "https://toh.openwrt.org/",
+      "version": "bdb84b112a3188e31862396b691c914de1252187a92ae65d6bd9302eec5fe0c3",
+      "license": "CC-BY-SA-4.0",
+      "checksum": "ecc52f26b9ece15e119599efc6f9d738e89dc095cbb9abf8a450bf0f48bf7f02",
+      "converter_version": "sentinel-source-converter/1",
+      "status": "loaded",
+      "raw_count": 3053,
+      "condition_count": 0,
+      "executable_count": 0,
+      "model_count": 2654,
+      "dispositions": {
+        "dictionary": 3053
+      },
+      "protocols": [],
+      "categories": [
+        "nas",
+        "router",
+        "switch"
+      ]
+    },
+    {
+      "license_files": [
+        "p0f/COPYING"
+      ],
+      "snapshot_url": "https://raw.githubusercontent.com/p0f/p0f/4abbd20ecd7421461e360c77a98dff98e08a8b10/",
+      "upstream_count": 322,
+      "id": "p0f",
+      "name": "p0f",
+      "url": "https://github.com/p0f/p0f",
+      "version": "4abbd20ecd7421461e360c77a98dff98e08a8b10",
+      "license": "LGPL-2.1",
+      "checksum": "7503a4941edd1e6ff3ae0e0b8ecff8e9157ed336c42979b1365b24b32de74510",
+      "converter_version": "sentinel-source-converter/1",
+      "status": "pending_adapter",
+      "raw_count": 322,
+      "condition_count": 322,
+      "executable_count": 0,
+      "model_count": 0,
+      "dispositions": {
+        "unsupported_input": 322
+      },
+      "protocols": [
+        "[http:request]",
+        "[http:response]",
+        "[mtu]",
+        "[tcp:request]",
+        "[tcp:response]"
+      ],
+      "categories": []
+    },
+    {
+      "license_files": null,
+      "snapshot_url": "https://raw.githubusercontent.com/nmap/nmap/master/nmap-os-db",
+      "upstream_count": 6108,
+      "id": "nmap",
+      "name": "Nmap",
+      "url": "https://github.com/nmap/nmap",
+      "version": "assessment-sha256-133f6c908a404e6c",
+      "license": "NPSL",
+      "checksum": "133f6c908a404e6cd5cf221bee4b82a91fe50bac19a47a1cbda4cb32d4a061e9",
+      "converter_version": "sentinel-source-converter/1",
+      "status": "license_required",
+      "reason": "仅登记评估：OS 指纹 6108 条，服务匹配 12172 条。主动探测规则不作为被动规则，未授权打包。",
+      "raw_count": 0,
+      "condition_count": 0,
+      "executable_count": 0,
+      "model_count": 0,
+      "dispositions": {},
+      "protocols": [],
+      "categories": []
+    },
+    {
+      "license_files": null,
+      "snapshot_url": "",
+      "upstream_count": 0,
+      "id": "fingerbank-current",
+      "name": "Fingerbank 当前服务",
+      "url": "https://www.fingerbank.org/",
+      "version": "",
+      "license": "commercial-service",
+      "checksum": "",
+      "converter_version": "sentinel-source-converter/1",
+      "status": "license_required",
+      "reason": "需配置服务授权；与历史公开快照分开统计",
+      "raw_count": 0,
+      "condition_count": 0,
+      "executable_count": 0,
+      "model_count": 0,
+      "dispositions": {},
+      "protocols": [],
+      "categories": []
+    }
+  ],
+  "rules": [
+    {
+      "id": "recog:9b8d7ac82645398404f9",
+      "source_id": "recog",
+      "original_id": "dhcp_vendor_class.xml:0",
+      "version": "1714aaed118861b4567bb6754920b4b929f59380",
+      "name": "Xerox Multifunction Printer",
+      "protocol": "dhcp",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "dhcp_vendor_class",
+          "operator": "regex",
+          "value": "(?i)^Mfg=(?:Fuji)?Xerox;Typ=(?:MFP|AIO|Printer);Mod=(?:Xerox )?(\\S+) ([a-zA-Z0-9]+).*;Ser=([A-Z0-9]{9,10})(?:;Loc=.*)?$"
+        }
+      ],
+      "brand": "Xerox",
+      "model": "{hw.family} {hw.model}",
+      "role": "printer",
+      "status": "converted",
+      "strength": "self_report",
+      "examples": [
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Xerox;Typ=MFP;Mod=VersaLink C405;Ser=ABC123456;Loc=Print Room"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Xerox;Typ=MFP;Mod=Xerox AltaLink C8055 Multifunction Printer;Ser=1AB234567;Loc=Print Room2"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=XEROX;Typ=MFP;Mod=WorkCentre 3345;Ser=1AB234567;Loc="
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Xerox;Typ=MFP;Mod=Xerox WorkCentre 7845 v1 Multifunction System;Ser=AB1234567;Loc="
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=FujiXerox;Typ=printer;Mod=Phaser 6500DN;Ser=ABC123456"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Xerox;Typ=Printer;Mod=Phaser 6600DN;Ser=ABC123456;Loc="
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "mfg=Xerox;typ=MFP;mod=Xerox AltaLink B8045 MFP;ser=A1B234567;loc=Print Room 3"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Xerox;Typ=MFP;Mod=VersaLink B7035;Ser=1AB234567C"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Xerox;Typ=AIO;Mod=WorkCentre 3615;Ser=A1B234567"
+          },
+          "match": true
+        }
+      ]
+    },
+    {
+      "id": "recog:42f27553e3f959ab3494",
+      "source_id": "recog",
+      "original_id": "dhcp_vendor_class.xml:1",
+      "version": "1714aaed118861b4567bb6754920b4b929f59380",
+      "name": "HP Multifunction Printer",
+      "protocol": "dhcp",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "dhcp_vendor_class",
+          "operator": "regex",
+          "value": "^Mfg=Hewlett Packard;Typ=Printer;Mod=HP (LaserJet 200|LaserJet 400) (?:color |colorMFP |MFP )?(M\\d+\\S+);Ser=([A-Z0-9]{10});$"
+        }
+      ],
+      "brand": "HP",
+      "model": "{hw.family} {hw.model}",
+      "role": "printer",
+      "status": "converted",
+      "strength": "self_report",
+      "examples": [
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Hewlett Packard;Typ=Printer;Mod=HP LaserJet 200 colorMFP M276nw;Ser=ABC1DE2F3G;"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Hewlett Packard;Typ=Printer;Mod=HP LaserJet 400 M401dne;Ser=ABCDE12345;"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Hewlett Packard;Typ=Printer;Mod=HP LaserJet 400 M401dw;Ser=ABCDE12345;"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Hewlett Packard;Typ=Printer;Mod=HP LaserJet 400 M401n;Ser=ABCDE12345;"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Mfg=Hewlett Packard;Typ=Printer;Mod=HP LaserJet 400 MFP M425dn;Ser=ABC1D23E4E;"
+          },
+          "match": true
+        }
+      ]
+    },
+    {
+      "id": "recog:dce56602566809905ee5",
+      "source_id": "recog",
+      "original_id": "dhcp_vendor_class.xml:2",
+      "version": "1714aaed118861b4567bb6754920b4b929f59380",
+      "name": "HP Printer",
+      "protocol": "dhcp",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "dhcp_vendor_class",
+          "operator": "regex",
+          "value": "^(?:Hewlett-Packard|HP) (OfficeJet|LaserJet|Printer|JetDirect)$"
+        }
+      ],
+      "brand": "HP",
+      "role": "printer",
+      "status": "converted",
+      "strength": "self_report",
+      "examples": [
+        {
+          "values": {
+            "dhcp_vendor_class": "Hewlett-Packard LaserJet"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Hewlett-Packard OfficeJet"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "HP LaserJet"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "HP Printer"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "dhcp_vendor_class": "Hewlett-Packard JetDirect"
+          },
+          "match": true
+        }
+      ]
+    },
+    {
+      "id": "recog:65739486f60cbe04c4f2",
+      "source_id": "recog",
+      "original_id": "apache_modules.xml:0",
+      "version": "1714aaed118861b4567bb6754920b4b929f59380",
+      "name": "Language-specific apache modules with a version",
+      "protocol": "",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "apache_modules",
+          "operator": "regex",
+          "value": "^(Ben-SSL|Communique|DAV|FrontPage|JRun|LibreSSL|NSS|mpm-itk|OpenSSL|Perl|PHP\\d?|proxy_html|Python|Resin|Ruby|SVN|Tomcat)/(\\S+)$"
+        }
+      ],
+      "status": "unsupported_input",
+      "reason": "协议字段尚未纳入标准设备事件",
+      "strength": "auxiliary",
+      "examples": [
+        {
+          "values": {
+            "apache_modules": "PHP/7.0.30"
+          },
+          "match": true
+        }
+      ]
+    },
+    {
+      "id": "recog:1276163ff2dd5bf1932b",
+      "source_id": "recog",
+      "original_id": "apache_modules.xml:1",
+      "version": "1714aaed118861b4567bb6754920b4b929f59380",
+      "name": "Language-specific apache modules without a version",
+      "protocol": "",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "apache_modules",
+          "operator": "regex",
+          "value": "^(Ben-SSL|Communique|DAV|FrontPage|JRun|LibreSSL|mpm-itk|NSS|OpenSSL|Perl|PHP\\d?|proxy_html|Python|Resin|Ruby|SVN|Tomcat)/?$"
+        }
+      ],
+      "status": "unsupported_input",
+      "reason": "协议字段尚未纳入标准设备事件",
+      "strength": "auxiliary",
+      "examples": [
+        {
+          "values": {
+            "apache_modules": "PHP"
+          },
+          "match": true
+        },
+        {
+          "values": {
+            "apache_modules": "Perl/"
+          },
+          "match": true
+        }
+      ]
+    },
+    {
+      "id": "recog:aca32e8b3b74bb3cb76c",
+      "source_id": "recog",
+      "original_id": "apache_modules.xml:2",
+      "version": "1714aaed118861b4567bb6754920b4b929f59380",
+      "name": "mod_access with version",
+      "protocol": "",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "apache_modules",
+          "operator": "regex",
+          "value": "mod_access/(\\S+)$"
+        }
+      ],
+      "status": "unsupported_input",
+      "reason": "协议字段尚未纳入标准设备事件",
+      "strength": "auxiliary",
+      "examples": [
+        {
+          "values": {
+            "apache_modules": "mod_access/1.2.3"
+          },
+          "match": true
+        }
+      ]
+    },
+    {
+      "id": "satori:9b751491d3d93734b76b",
+      "source_id": "satori",
+      "original_id": "dhcp.xml:0:0",
+      "version": "c5dfcfbff31620e35248aa86da0c67f2ad4982f5",
+      "name": "2Wire Residential Gateway",
+      "protocol": "dhcp",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "dhcp_requested_options",
+          "operator": "exact",
+          "value": "1,2,3,6,15,88,42,44,46,47"
+        }
+      ],
+      "brand": "2Wire, Inc.",
+      "role": "router",
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "satori:acc12ddb700066918332",
+      "source_id": "satori",
+      "original_id": "dhcp.xml:1:2",
+      "version": "c5dfcfbff31620e35248aa86da0c67f2ad4982f5",
+      "name": "3Com IP Phone",
+      "protocol": "dhcp",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "dhcp_vendor_class",
+          "operator": "exact",
+          "value": "3Com-Phone-3101b"
+        }
+      ],
+      "brand": "3Com",
+      "role": "voip_phone",
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "satori:b5fe6ae35be7eb58d710",
+      "source_id": "satori",
+      "original_id": "dhcp.xml:1:3",
+      "version": "c5dfcfbff31620e35248aa86da0c67f2ad4982f5",
+      "name": "3Com IP Phone",
+      "protocol": "dhcp",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "dhcp_vendor_class",
+          "operator": "exact",
+          "value": "3Com-Phone-3103"
+        }
+      ],
+      "brand": "3Com",
+      "role": "voip_phone",
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "satori:851908c4a3064129f71f",
+      "source_id": "satori",
+      "original_id": "browser.xml:0:0",
+      "version": "c5dfcfbff31620e35248aa86da0c67f2ad4982f5",
+      "name": "Brother Printer",
+      "protocol": "browser",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "osversion",
+          "operator": "exact",
+          "value": "1.51"
+        },
+        {
+          "field": "browserversion",
+          "operator": "exact",
+          "value": "11.3"
+        }
+      ],
+      "brand": "Brother Industries, Ltd.",
+      "role": "printer",
+      "status": "unsupported_input",
+      "reason": "保留消息类型和组合条件，当前采集字段不完整",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "satori:6e1fa36fce37b5a7e346",
+      "source_id": "satori",
+      "original_id": "browser.xml:1:0",
+      "version": "c5dfcfbff31620e35248aa86da0c67f2ad4982f5",
+      "name": "Hewlett-Packard Printer",
+      "protocol": "browser",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "osversion",
+          "operator": "exact",
+          "value": "4.22"
+        },
+        {
+          "field": "browserversion",
+          "operator": "exact",
+          "value": "0.4"
+        }
+      ],
+      "brand": "Hewlett-Packard",
+      "role": "printer",
+      "status": "unsupported_input",
+      "reason": "保留消息类型和组合条件，当前采集字段不完整",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "satori:36f6d40f810cebdc03a6",
+      "source_id": "satori",
+      "original_id": "browser.xml:2:0",
+      "version": "c5dfcfbff31620e35248aa86da0c67f2ad4982f5",
+      "name": "Linksys Printer",
+      "protocol": "browser",
+      "direction": "client",
+      "conditions": [
+        {
+          "field": "osversion",
+          "operator": "exact",
+          "value": "1.0"
+        },
+        {
+          "field": "browserversion",
+          "operator": "exact",
+          "value": "0.0"
+        }
+      ],
+      "brand": "Linksys",
+      "role": "printer",
+      "status": "unsupported_input",
+      "reason": "保留消息类型和组合条件，当前采集字段不完整",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "librenms:d14c604a3458363af9e9",
+      "source_id": "librenms",
+      "original_id": "3com.yaml:0:0",
+      "version": "4d34094b03c4846e3325a375ca6a94b43f1b1eda",
+      "name": "3Com",
+      "protocol": "snmp",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "snmp_sysoid",
+          "operator": "oid_prefix",
+          "value": ".1.3.6.1.4.1.43.1."
+        }
+      ],
+      "os": "3Com",
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "librenms:9b181c19cc1a9017a295",
+      "source_id": "librenms",
+      "original_id": "3com.yaml:0:1",
+      "version": "4d34094b03c4846e3325a375ca6a94b43f1b1eda",
+      "name": "3Com",
+      "protocol": "snmp",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "snmp_sysoid",
+          "operator": "oid_prefix",
+          "value": ".1.3.6.1.4.1.43.10."
+        }
+      ],
+      "os": "3Com",
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "librenms:9ff3a95b7a9392adc840",
+      "source_id": "librenms",
+      "original_id": "aaron.yaml:0:0",
+      "version": "4d34094b03c4846e3325a375ca6a94b43f1b1eda",
+      "name": "Aaron FM Rebroadcaster",
+      "protocol": "snmp",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "snmp_sysoid",
+          "operator": "oid_prefix",
+          "value": ".1.3.6.1.4.1.42111.640"
+        }
+      ],
+      "os": "Aaron FM Rebroadcaster",
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "librenms:76f91acee1fea07274e7",
+      "source_id": "librenms",
+      "original_id": "abbups.yaml:0",
+      "version": "4d34094b03c4846e3325a375ca6a94b43f1b1eda",
+      "name": "ABB UPS",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "status": "unsupported_input",
+      "reason": "需要尚未支持的 SNMP 组合查询",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "librenms:977e33a6147fd06dc19b",
+      "source_id": "librenms",
+      "original_id": "acano.yaml:0",
+      "version": "4d34094b03c4846e3325a375ca6a94b43f1b1eda",
+      "name": "Acano OS",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "status": "unsupported_input",
+      "reason": "需要尚未支持的 SNMP 组合查询",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "librenms:0ac76fad682d99522365",
+      "source_id": "librenms",
+      "original_id": "adva_fsp150.yaml:0",
+      "version": "4d34094b03c4846e3325a375ca6a94b43f1b1eda",
+      "name": "ADVA FSP150CC",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "status": "unsupported_input",
+      "reason": "需要尚未支持的 SNMP 组合查询",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "whatweb:0dbe82ba17e7b791ee3e",
+      "source_id": "whatweb",
+      "original_id": "1024-cms.rb:0",
+      "version": "d279d93042d034f3fd29d5a893d44ccc0595d3f8",
+      "name": "1024-CMS",
+      "protocol": "http",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "http_body",
+          "operator": "contains",
+          "value": "<div id='otatfpowered'><a href='http://www.1024cms.com' target='_blank'>Powered by 1024 CMS</a></div></div>"
+        }
+      ],
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "whatweb:fa350d47319ba575a6c1",
+      "source_id": "whatweb",
+      "original_id": "1024-cms.rb:1",
+      "version": "d279d93042d034f3fd29d5a893d44ccc0595d3f8",
+      "name": "1024-CMS",
+      "protocol": "http",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "http_body",
+          "operator": "contains",
+          "value": "<meta name=\"generator\" content=\"1024 CMS (c) 2008 Treble Designs. This is free software, and you may redistribute it under the Attribution-Non-Commercial-Share Alike 2.0 license (http://creativecommons.org/licenses/by-nc-sa/2.0/uk/). 1024 CMS comes with absolutely no warranty, for details, see the license (http://creativecommons.org/licenses/by-nc-sa/2.0/uk/).\" />"
+        }
+      ],
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "whatweb:3f522e5ec1f6d13aacbb",
+      "source_id": "whatweb",
+      "original_id": "3com-nbx.rb:0",
+      "version": "d279d93042d034f3fd29d5a893d44ccc0595d3f8",
+      "name": "3COM-NBX",
+      "protocol": "http",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "http_body",
+          "operator": "contains",
+          "value": "<head><title>NBX NetSet</title>"
+        }
+      ],
+      "status": "converted",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "whatweb:1729253bf80a7bc655d8",
+      "source_id": "whatweb",
+      "original_id": "1024-cms.rb:plugin",
+      "version": "d279d93042d034f3fd29d5a893d44ccc0595d3f8",
+      "name": "1024-CMS",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "status": "unsupported_syntax",
+      "reason": "插件的其余 Ruby 匹配、请求或动态条件不在运行时执行",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "whatweb:98dc473315199c93f454",
+      "source_id": "whatweb",
+      "original_id": "1n1-hosting.rb:plugin",
+      "version": "d279d93042d034f3fd29d5a893d44ccc0595d3f8",
+      "name": "1&1 Hosting",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "status": "unsupported_syntax",
+      "reason": "插件的其余 Ruby 匹配、请求或动态条件不在运行时执行",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "whatweb:dda987b081d63d891162",
+      "source_id": "whatweb",
+      "original_id": "360-web-manager.rb:plugin",
+      "version": "d279d93042d034f3fd29d5a893d44ccc0595d3f8",
+      "name": "360-Web-Manager",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "status": "unsupported_syntax",
+      "reason": "插件的其余 Ruby 匹配、请求或动态条件不在运行时执行",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "openwrt:f2642950e03f26448ac6",
+      "source_id": "openwrt",
+      "original_id": "hame:hame_mpr-a1",
+      "version": "bdb84b112a3188e31862396b691c914de1252187a92ae65d6bd9302eec5fe0c3",
+      "name": "HAME MPR-A1",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "brand": "HAME",
+      "model": "MPR-A1",
+      "role": "router",
+      "status": "dictionary",
+      "reason": "型号目录，不能作为独立网络证据",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "openwrt:e20d452321c9cc3c05c0",
+      "source_id": "openwrt",
+      "original_id": "hame:hame_mpr-a2",
+      "version": "bdb84b112a3188e31862396b691c914de1252187a92ae65d6bd9302eec5fe0c3",
+      "name": "HAME MPR-A2",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "brand": "HAME",
+      "model": "MPR-A2",
+      "role": "router",
+      "status": "dictionary",
+      "reason": "型号目录，不能作为独立网络证据",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "openwrt:2f3df215ca0a8576edf4",
+      "source_id": "openwrt",
+      "original_id": "abt:abt_asr3000",
+      "version": "bdb84b112a3188e31862396b691c914de1252187a92ae65d6bd9302eec5fe0c3",
+      "name": "ABT ASR3000",
+      "protocol": "",
+      "direction": "host",
+      "conditions": [],
+      "brand": "ABT",
+      "model": "ASR3000",
+      "role": "router",
+      "status": "dictionary",
+      "reason": "型号目录，不能作为独立网络证据",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "p0f:535fa30d7e25dd8a49f1",
+      "source_id": "p0f",
+      "original_id": "23",
+      "version": "4abbd20ecd7421461e360c77a98dff98e08a8b10",
+      "name": "Ethernet or modem",
+      "protocol": "[mtu]",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "tcp_signature",
+          "operator": "exact",
+          "value": "576"
+        }
+      ],
+      "status": "unsupported_input",
+      "reason": "需要完整 p0f 特征与通配匹配，不能用单一 TTL 替代",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "p0f:c2356069e9d1e79ca924",
+      "source_id": "p0f",
+      "original_id": "24",
+      "version": "4abbd20ecd7421461e360c77a98dff98e08a8b10",
+      "name": "Ethernet or modem",
+      "protocol": "[mtu]",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "tcp_signature",
+          "operator": "exact",
+          "value": "1500"
+        }
+      ],
+      "status": "unsupported_input",
+      "reason": "需要完整 p0f 特征与通配匹配，不能用单一 TTL 替代",
+      "strength": "auxiliary",
+      "examples": []
+    },
+    {
+      "id": "p0f:624b60c58c9d8bfb6ff1",
+      "source_id": "p0f",
+      "original_id": "30",
+      "version": "4abbd20ecd7421461e360c77a98dff98e08a8b10",
+      "name": "DSL",
+      "protocol": "[mtu]",
+      "direction": "server",
+      "conditions": [
+        {
+          "field": "tcp_signature",
+          "operator": "exact",
+          "value": "1452"
+        }
+      ],
+      "status": "unsupported_input",
+      "reason": "需要完整 p0f 特征与通配匹配，不能用单一 TTL 替代",
+      "strength": "auxiliary",
+      "examples": []
+    }
+  ]
+}

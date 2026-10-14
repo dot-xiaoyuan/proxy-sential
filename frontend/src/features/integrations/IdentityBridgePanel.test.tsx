@@ -18,6 +18,7 @@ const requests = vi.hoisted(() => ({
       state: 'switch_failed', active_host: '222.204.3.224', active_config_version: 1,
       active_online_redis_addr: '222.204.3.224:16380', online_channel_state: 'healthy',
       event_channel_state: 'healthy', snapshot_state: 'healthy', source_queue: 4, processing_queue: 2,
+      queue_sampled_at: '2026-10-09T10:01:00Z', quarantine_queue: 3,
       online_members: 16266, online_sessions: 16260, committed_messages: 800, bad_messages: 1,
       event_consecutive_failures: 0, snapshot_consecutive_failures: 0, accounts: 4908, sessions: 16260,
       last_snapshot_at: '2026-10-09T10:00:00Z', last_event_at: '2026-10-09T10:01:00Z',
@@ -53,11 +54,17 @@ describe('南昌4K认证同步', () => {
   it('只展示同步状态、通道和数量摘要，不读取逐批同步记录', async () => {
     renderPanel()
     expect(await screen.findByText('深澜 4K 认证同步')).toBeInTheDocument()
-    expect(screen.getByText('222.204.3.224:16380')).toBeInTheDocument()
-    expect(screen.getAllByText('222.204.3.227:16384')).toHaveLength(2)
-    expect(screen.getByText('16,266')).toBeInTheDocument()
+    expect(screen.getByText('隔离消息 3 条待处理')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('16,260')).toBeInTheDocument()
     expect(screen.getAllByText('正常')).toHaveLength(2)
-    expect(screen.getByText('队列积压')).toBeInTheDocument()
+    expect(screen.getByText('Redis 待接收')).toBeInTheDocument()
+    const online = screen.getByText('权威在线清单').closest('details')
+    expect(online).not.toHaveAttribute('open')
+    fireEvent.click(screen.getByText('权威在线清单'))
+    expect(online).toHaveAttribute('open')
+    expect(screen.getByText('222.204.3.224:16380')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('更多运行信息'))
     expect(screen.getByText(/最近事件/)).toHaveTextContent(new Date('2026-10-09T10:01:00Z').toLocaleString())
     expect(screen.getByText(/最近全量/)).toHaveTextContent(new Date('2026-10-09T10:00:00Z').toLocaleString())
     expect(screen.queryByText('同步记录')).not.toBeInTheDocument()
@@ -68,7 +75,7 @@ describe('南昌4K认证同步', () => {
 
   it('刷新只更新同步状态，不请求同步记录', async () => {
     renderPanel()
-    fireEvent.click(await screen.findByRole('button', { name: /刷\s*新/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '刷新认证状态' }))
     await waitFor(() => expect(requests.bridge).toHaveBeenCalledTimes(2))
     expect(requests.runs).not.toHaveBeenCalled()
   })
@@ -80,10 +87,18 @@ describe('南昌4K认证同步', () => {
       runtime: { ...data.runtime, snapshot_state: 'failed', last_error_type: 'unrecognized_error' },
     })
     renderPanel()
-    expect(await screen.findByText('全量在线清单同步异常')).toBeInTheDocument()
-    expect(screen.getByText('请检查认证同步服务')).toBeInTheDocument()
+    expect(await screen.findByText('在线清单异常：同步失败')).toBeInTheDocument()
     expect(screen.queryByText(/全量校准记录/)).not.toBeInTheDocument()
     expect(requests.runs).not.toHaveBeenCalled()
+  })
+
+  it('刷新失败保留上次成功数据', async () => {
+    renderPanel()
+    expect(await screen.findByText('16,260')).toBeInTheDocument()
+    requests.bridge.mockRejectedValueOnce(new Error('temporarily unavailable'))
+    fireEvent.click(screen.getByRole('button', { name: '刷新认证状态' }))
+    expect(await screen.findByText('刷新失败，显示上次数据')).toBeInTheDocument()
+    expect(screen.getByText('16,260')).toBeInTheDocument()
   })
 
   it('只展示接入状态，由4K接入配置维护地址', async () => {

@@ -3,14 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { DevicesPage } from './DevicesPage'
 
-const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,metadataError:false,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnosticsData:undefined as unknown,diagnostics:vi.fn((_enabled?:boolean)=>({data:undefined as unknown}))}))
+const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,metadataError:false,readState:undefined as {complete:boolean;updating:boolean;as_of:string;available?:boolean}|undefined,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnosticsData:undefined as unknown,diagnostics:vi.fn((_enabled?:boolean)=>({data:undefined as unknown}))}))
 vi.mock('../shared/api/queries', () => ({
   useOrganization: fixture.organization,
   useDeviceRecognitionSummary: (enabled?:boolean)=>{fixture.diagnostics(enabled);return {data:fixture.diagnosticsData}},
-  useDevices: () => ({ data: { items: fixture.items, page: {next_cursor:'20'}, facets: { brands: [], os_families: [] } },dataUpdatedAt:Date.now(), isFetching: false,isPlaceholderData:false,refresh:fixture.refresh }),
+  useDevices: () => ({ data: { items: fixture.items, read_model_state:fixture.readState, page: {next_cursor:'20'}, facets: { brands: [], os_families: [] } },dataUpdatedAt:Date.now(), isFetching: false,isPlaceholderData:false,refresh:fixture.refresh }),
   useDeviceInventoryMetadata:()=>({data:fixture.total===undefined?undefined:{total:fixture.total,facets:{brands:[],os_families:[]}},isError:fixture.metadataError,refresh:fixture.metadataRefresh}),
 }))
-afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.metadataError=false;fixture.diagnosticsData=undefined;localStorage.clear();vi.clearAllMocks()})
+afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.metadataError=false;fixture.readState=undefined;fixture.diagnosticsData=undefined;localStorage.clear();vi.clearAllMocks()})
 function Location() { return <output data-testid="location">{useLocation().search}</output> }
 function setup(url = '/devices') { render(<MemoryRouter initialEntries={[url]}><DevicesPage /><Location /></MemoryRouter>) }
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) }) }
@@ -54,6 +54,17 @@ it('treats a legacy null items response as an empty list',()=>{
  fixture.items=null
  setup('/devices?view=recent&window=24h')
  expect(screen.getAllByText('没有匹配的终端').length).toBeGreaterThan(0)
+})
+it('restores exact account search and waits for explicit submit',async()=>{
+ setup('/devices?view=recent&window=24h&search_type=account&q=Student-A&page=2')
+ const input=screen.getByPlaceholderText('输入完整账号（最新观测关联）')
+ expect(input).toHaveValue('Student-A')
+ fireEvent.change(input,{target:{value:'Student-B'}});await settle()
+ expect(screen.getByTestId('location')).toHaveTextContent('q=Student-A')
+ fireEvent.keyDown(input,{key:'Enter',code:'Enter',charCode:13});fireEvent.keyUp(input,{key:'Enter',code:'Enter',charCode:13})
+ await waitFor(()=>expect(screen.getByTestId('location')).toHaveTextContent('q=Student-B'))
+ expect(screen.getByTestId('location')).toHaveTextContent('search_type=account')
+ expect(screen.getByTestId('location')).toHaveTextContent('page=1')
 })
 
 it('shows the list before statistics without displaying a zero count',()=>{
@@ -110,4 +121,13 @@ it('warns when no mirrored event carries a link-layer address',async()=>{
  setup('/devices?view=recent&window=24h')
  openDiagnostics()
  await waitFor(()=>expect(screen.getByText('镜像事件尚未带链路层地址')).toBeInTheDocument())
+})
+
+it('distinguishes available summaries from incomplete historical associations',()=>{
+ fixture.readState={available:true,complete:false,updating:true,as_of:'2026-10-13T12:00:00Z'}
+ fixture.items=[{endpoint_id:'summary-only',current_ip:'192.0.2.19'}]
+ setup('/devices')
+ expect(screen.getByText('历史关联正在回填')).toBeInTheDocument()
+ expect(screen.getByText(/历史检索和关联统计尚不完整/)).toBeInTheDocument()
+ expect(screen.getAllByRole('link',{name:'192.0.2.19'}).length).toBeGreaterThan(0)
 })

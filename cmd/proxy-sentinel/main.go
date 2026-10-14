@@ -66,6 +66,8 @@ func run(args []string) error {
 		return runShadow(args[1:])
 	case "ingest":
 		return runIngest(args[1:])
+	case "identity-recovery":
+		return runIdentityRecovery(args[1:])
 	case "read-model":
 		return runReadModel(args[1:])
 	case "control-plane":
@@ -80,6 +82,30 @@ func run(args []string) error {
 		return runDeviceFingerprint(args[1:])
 	case "device-signal":
 		return runDeviceSignal(args[1:])
+	case "inventory-audit":
+		fs := flag.NewFlagSet("inventory-audit", flag.ContinueOnError)
+		limit := fs.Int("limit", 30, "maximum prepared devices to compare")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, PostgresDSN: os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), ClickHouseDSN: os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN")})
+		if err != nil {
+			return err
+		}
+		defer backend.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		report, err := backend.AuditDeviceInventory(ctx, *limit)
+		if err != nil {
+			return err
+		}
+		if err = writeJSON(os.Stdout, report); err != nil {
+			return err
+		}
+		if report.Changed > 0 || report.Compared == 0 {
+			return fmt.Errorf("inventory shadow comparison did not pass")
+		}
+		return nil
 	case "device-census":
 		return runDeviceCensus(args[1:])
 	case "router":
@@ -145,11 +171,11 @@ func runApplicationLibrary(args []string) error {
 
 func runReadModel(args []string) error {
 	if len(args) < 1 || args[0] != "run" {
-		return fmt.Errorf("usage: proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
+		return fmt.Errorf("usage: proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity|inventory|inventory-backfill --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
 	}
 	fs := flag.NewFlagSet("read-model run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	lane := fs.String("lane", "", "worker lane: realtime, coarse, recognition, application, or identity")
+	lane := fs.String("lane", "", "worker lane: realtime, coarse, recognition, application, identity, inventory, or inventory-backfill")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
@@ -162,8 +188,8 @@ func runReadModel(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if *lane != "realtime" && *lane != "coarse" && *lane != "recognition" && *lane != "application" && *lane != "identity" {
-		return fmt.Errorf("--lane must be realtime, coarse, recognition, application, or identity")
+	if *lane != "realtime" && *lane != "coarse" && *lane != "recognition" && *lane != "application" && *lane != "identity" && *lane != "inventory" && *lane != "inventory-backfill" {
+		return fmt.Errorf("--lane must be realtime, coarse, recognition, application, identity, inventory, or inventory-backfill")
 	}
 	if strings.TrimSpace(*postgresDSN) == "" || strings.TrimSpace(*clickhouseDSN) == "" {
 		return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
@@ -176,6 +202,8 @@ func runReadModel(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	switch *lane {
+	case "inventory", "inventory-backfill":
+		backend.RunDeviceInventoryProjection(ctx, *lane == "inventory-backfill")
 	case "realtime":
 		backend.RunRealtimeReadModels(ctx)
 	case "coarse":
@@ -188,6 +216,12 @@ func runReadModel(args []string) error {
 			RefreshDeviceInventory: *identityRefreshDeviceInventory,
 		})
 	case "recognition":
+		dir := os.Getenv("PROXY_SENTINEL_DEVICE_FINGERPRINT_DIR")
+		if dir == "" {
+			dir = "/opt/proxy-sentinel/data/device-fingerprints"
+		}
+		manager := fingerprint.NewManager(dir)
+		go manager.WatchInstalled(ctx)
 		backend.RunRecognitionMaterializer(ctx)
 	case "application":
 		service, openErr := appdomain.OpenServiceWithDefault(*applicationsDir, backend, true)
@@ -511,6 +545,27 @@ func runDeviceFingerprint(args []string) error {
 		return fmt.Errorf("usage: proxy-sentinel device-fingerprint <build|verify|install>")
 	}
 	switch args[0] {
+	case "extend":
+		fs := flag.NewFlagSet("device-fingerprint extend", flag.ContinueOnError)
+		base := fs.String("base", "", "verified prior offline tar.gz bundle")
+		output := fs.String("output", "", "new v6 bundle")
+		version := fs.String("version", "", "new version")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *base == "" || *output == "" {
+			return fmt.Errorf("--base and --output are required")
+		}
+		raw, err := os.ReadFile(*base)
+		if err != nil {
+			return err
+		}
+		manifest, err := fingerprint.ExtendOfflineBundle(raw, *output, *version, time.Now())
+		if err != nil {
+			return err
+		}
+		fmt.Printf("extended offline bundle: %s\n", manifest.Version)
+		return nil
 	case "build-embedded":
 		fs := flag.NewFlagSet("device-fingerprint build-embedded", flag.ContinueOnError)
 		output := fs.String("output", "", "output .tar.gz bundle")
@@ -1449,7 +1504,7 @@ func runControlPlaneServe(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n" +
+	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity|inventory|inventory-backfill --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n" +
 		"       proxy-sentinel device-census --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--sensor-id office-30] [--window 24h] [--json]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
 }
 

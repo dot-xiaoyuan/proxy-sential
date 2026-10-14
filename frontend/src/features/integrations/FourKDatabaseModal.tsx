@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Descriptions, Form, Input, InputNumber, Modal, Space, Spin } from 'antd'
+import { Button, Descriptions, Form, Input, InputNumber, Modal, Space, Spin } from 'antd'
 
 import { api, ApiError } from '../../shared/api/client'
 import type { SRun4KIntegration, SRun4KIntegrationRequest, SRun4KSyncResult, SRun4KTestResult } from '../../shared/api/types'
@@ -103,20 +103,21 @@ export function FourKDatabaseModal({ connectorId, initialHost, onClose, onSaved 
     </Space>
   }>
     <div className="four-k-database-content">
-      <Alert type="info" showIcon title="按实际服务分别填写地址" description="数据库、Redis 的端口与凭据，以及北向 API 协议、端口和证书由部署配置提供。授权仅在首次校验或手动刷新时读取；日常同步使用加密保存的北向授权。" />
-      {eventState !== 'healthy' && <Alert type="warning" showIcon title="真实动作暂不可用" description="上下线事件 Redis 尚未完成接入或验收。可继续检查与同步目录，服务端会阻止真实动作。" />}
-      {onlineChanged && <Alert type="info" showIcon title="在线清单地址变化" description="保存后将建立新的身份来源版本并清空当前同步摘要；其他通道地址变化只重置对应连接状态，不改变身份来源。" />}
-      {error && <Alert type="error" showIcon title={error} />}
+      {(eventState !== 'healthy' || onlineChanged) && <div className="four-k-form-status" role="status">
+        {eventState !== 'healthy' && <span className="is-warning">上下线事件通道待验收</span>}
+        {onlineChanged && <span>在线清单地址已修改，保存后重新建立身份来源</span>}
+      </div>}
+      {error && <p className="actions-inline-error" role="alert">{error}</p>}
       {loading && <Spin />}
       <Form className={`four-k-database-form${loading ? ' is-loading' : ''}`} form={form} layout="vertical" initialValues={{reconcile_interval_hours:6}} onValuesChange={() => { setCheck(undefined); setSync(undefined) }}>
         <Form.Item name="authorization_database_host" label="授权数据库地址" rules={[{required:true,message:'请输入授权数据库地址'}, {pattern:/^[a-zA-Z0-9.:[\]-]+$/,message:'请输入有效的IP或主机名'}]}><Input placeholder="MySQL 主机或 IP" /></Form.Item>
         <Form.Item name="online_redis_host" label="在线清单 Redis 地址" rules={[{required:true,message:'请输入在线清单 Redis 地址'}, {pattern:/^[a-zA-Z0-9.:[\]-]+$/,message:'请输入有效的IP或主机名'}]}><Input placeholder="在线用户清单所在主机" /></Form.Item>
         <Form.Item name="catalog_redis_host" label="产品/控制目录 Redis 地址" rules={[{required:true,message:'请输入产品/控制目录 Redis 地址'}, {pattern:/^[a-zA-Z0-9.:[\]-]+$/,message:'请输入有效的IP或主机名'}]}><Input placeholder="产品与控制目录所在主机" /></Form.Item>
-        <Form.Item name="event_redis_host" label="上下线事件 Redis 地址" extra="未接入时可留空；真实动作将保持阻断。" rules={[{pattern:/^[a-zA-Z0-9.:[\]-]+$/,message:'请输入有效的IP或主机名'}]}><Input placeholder="事件通道所在主机" /></Form.Item>
+        <Form.Item name="event_redis_host" label="上下线事件 Redis 地址" rules={[{pattern:/^[a-zA-Z0-9.:[\]-]+$/,message:'请输入有效的IP或主机名'}]}><Input placeholder="事件通道所在主机" /></Form.Item>
         <Form.Item name="northbound_api_host" label="北向 API 地址" rules={[{required:true,message:'请输入北向 API 地址'}, {pattern:/^[a-zA-Z0-9.:[\]-]+$/,message:'请输入有效的IP或主机名'}]}><Input placeholder="北向接口主机或 IP" /></Form.Item>
-        <Form.Item name="reconcile_interval_hours" label="全量校准周期（小时）" extra="默认每6小时校准一次，可设置为1至168小时。"><InputNumber min={1} max={168} precision={0} /></Form.Item>
+        <Form.Item name="reconcile_interval_hours" label="全量校准周期（小时）"><InputNumber min={1} max={168} precision={0} /></Form.Item>
       </Form>
-      {integration && <div className="four-k-authorization-state"><span>北向授权</span><strong>{integration.authorization_ready ? '已验证并加密保存' : ''}</strong>{integration.authorization_refreshed_at && <small>最近刷新 {new Date(integration.authorization_refreshed_at).toLocaleString()}</small>}</div>}
+      {integration && <div className="four-k-authorization-state"><span>北向授权</span><strong>{integration.authorization_ready ? '已验证' : '待验证'}</strong>{integration.authorization_refreshed_at && <small>最近刷新 {new Date(integration.authorization_refreshed_at).toLocaleString()}</small>}</div>}
       {!endpointChanged && channels && <Descriptions className="four-k-database-result" column={1} size="small" title="通道状态" items={channelItems(channels)} />}
       {check && <Descriptions className="four-k-database-result" column={1} size="small" title="连接测试" items={[{key:'online',label:'在线用户数量',children:check.online_total}]} />}
       {sync && <Descriptions className="four-k-sync-summary" column={1} size="small" title="最近同步摘要" items={[

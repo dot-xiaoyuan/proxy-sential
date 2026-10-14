@@ -3,7 +3,8 @@ import { DiscoveryEvidence } from "../entities/device/DiscoveryEvidence"
 import { DeviceBrandSummary } from '../entities/device/DeviceInventoryCells'
 import { DeviceNamePanel } from '../entities/device/DeviceNameView'
 import { BrandInferenceDetails } from '../entities/device/BrandInferenceView';
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
+import { AssociationOverview, EndpointTracePanel } from '../entities/device/EndpointTracePanel'
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   App as AntApp,
@@ -24,19 +25,16 @@ import {
 import type { ColumnsType } from "antd/es/table";
 
 import {
-  useLegacyDevices,
+  useInventoryDetail,
   useDeviceSignals,
   useEndpointIdentity,
   useSession,
   useUpdateEndpointRegistration,
 } from "../shared/api/queries";
 import type {
-  AccountSession,
   DeviceSignal,
   EndpointDomainEvidence,
   EndpointIdentityProfile,
-  IdentityAccessHistory,
-  IdentityIPMACHistory,
   UpdateEndpointRegistrationRequest,
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
@@ -117,7 +115,9 @@ export function EndpointDetailsPage() {
   const [registrationForm] = Form.useForm<UpdateEndpointRegistrationRequest>();
   const activeTab = params.get("tab") || "overview";
   const setActiveTab=(tab:string)=>setParams(current=>{const next=new URLSearchParams(current);next.set("tab",tab);return next},{replace:true});
-  const identity = useEndpointIdentity(endpointId, { limit: 500 });
+  const detail = useInventoryDetail(endpointId);
+  const identity = {...detail,data:detail.data?.profile};
+  const recognitionEvidence=useEndpointIdentity(endpointId,{limit:20},activeTab==='recognition');
   const signals = useDeviceSignals(
     {
       window: "24h",
@@ -127,10 +127,6 @@ export function EndpointDetailsPage() {
     },
     activeTab === "signals",
   );
-  const inventory = useLegacyDevices(
-    { window: "24h", q: endpointId, limit: 1 },
-    activeTab === "recognition",
-  );
   const session = useSession();
   const updateRegistration = useUpdateEndpointRegistration();
 
@@ -138,22 +134,10 @@ export function EndpointDetailsPage() {
   const canUpdateRegistration = can(session.data, "endpoints:write");
   const mergeStatus = Form.useWatch("merge_status", registrationForm);
   const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? "";
-  const latestAccess = profile?.access_history?.[0]?.access_id ?? "";
+  const latestAccess = profile?.recognition?.current_access_id ?? "";
   const signalItems = signals.data?.items ?? [];
-  const recognition = profile.recognition ?? inventory.data?.items.find(
-    (item) => item.endpoint_id === endpointId,
-  );
-  const uniqueIPs = useMemo(
-    () => uniqueValues(profile?.ip_history?.map((item) => item.ip ?? "") ?? []),
-    [profile],
-  );
-  const uniqueAccessIDs = useMemo(
-    () =>
-      uniqueValues(
-        profile?.access_history?.map((item) => item.access_id) ?? [],
-      ),
-    [profile],
-  );
+  const recognition = recognitionEvidence.data?.recognition ?? profile.recognition;
+  const associationCounts=detail.data?.state.complete?detail.data.association_counts:undefined;
 
   useEffect(() => {
     if (!identity.data) {
@@ -177,6 +161,7 @@ export function EndpointDetailsPage() {
   if (identity.isLoading) {
     return <Skeleton active />;
   }
+  if(identity.isError&&!identity.data)return <main className="page"><Alert showIcon type="error" title="终端摘要加载失败" description={identity.error.message}/><Button onClick={()=>void identity.refetch()}>重试</Button><Link to={back}>返回终端列表</Link></main>
 
   return (
     <main className="page endpoint-details-page">
@@ -198,30 +183,28 @@ export function EndpointDetailsPage() {
           >
             {registrationStatusText(profile.endpoint.registration_status)}
           </Tag>
-          <Tag color={profile.accounts.length > 1 ? "orange" : "blue"}>
-            账号 {profile.accounts.length}
-          </Tag>
+          {profile.recognition?.current_account_conflict&&<Tag color="orange">最新关联账号冲突</Tag>}
         </Space>
       </div>
 
 
-      <section className="metric-grid">
+      {activeTab!=='identity'&&<section className="metric-grid">
         <div className="surface metric-card">
           <Typography.Text type="secondary">关联账号</Typography.Text>
           <Typography.Title className="metric-card-value" level={3}>
-            {profile.accounts.length}
+            {associationCounts?.account??(detail.data?.state.complete?0:'')}
           </Typography.Title>
         </div>
         <div className="surface metric-card">
           <Typography.Text type="secondary">历史 IP</Typography.Text>
           <Typography.Title className="metric-card-value" level={3}>
-            {uniqueIPs.length}
+            {associationCounts?.ip??(detail.data?.state.complete?0:'')}
           </Typography.Title>
         </div>
         <div className="surface metric-card">
           <Typography.Text type="secondary">接入位置</Typography.Text>
           <Typography.Title className="metric-card-value" level={3}>
-            {uniqueAccessIDs.length}
+            {associationCounts?.access??(detail.data?.state.complete?0:'')}
           </Typography.Title>
         </div>
         <div className="surface metric-card">
@@ -231,7 +214,7 @@ export function EndpointDetailsPage() {
             size="small"
           />
         </div>
-      </section>
+      </section>}
 
       <section className="surface details-tab-shell">
         <Tabs
@@ -239,7 +222,7 @@ export function EndpointDetailsPage() {
           onChange={setActiveTab}
           items={[
             { key: "overview", label: "概览" },
-            { key: "identity", label: "身份与位置" },
+            { key: "identity", label: "身份溯源" },
             { key: "recognition", label: "设备识别" },
             { key: "registration", label: "登记管理" },
             { key: "signals", label: "技术信号" },
@@ -247,8 +230,9 @@ export function EndpointDetailsPage() {
         />
       </section>
 
+
       {activeTab === "overview" && (
-        <section className="details-grid">
+        <><section className="details-grid">
           {recognition&&<section className="surface"><Typography.Title level={4}>设备识别</Typography.Title><DeviceBrandSummary device={recognition}/><Button type="link" onClick={()=>setActiveTab('recognition')}>查看识别依据</Button></section>}
           {identity.isError && (
             <Alert
@@ -294,8 +278,9 @@ export function EndpointDetailsPage() {
               <Descriptions.Item label="MAC">
                 {profile.endpoint.primary_mac || ""}
               </Descriptions.Item>
-              <Descriptions.Item label="当前账号">
-                {profile.accounts[0] || ""}
+              <Descriptions.Item label="最新观测账号">
+                {profile.recognition?.current_account || ""}
+                {profile.recognition?.current_account_conflict&&<><Tag color="orange">同时间多账号冲突</Tag>{(profile.recognition.current_account_candidates??[]).join(' / ')}</>}
               </Descriptions.Item>
               <Descriptions.Item label="最近观测 IP">
                 {latestIP ? (
@@ -309,18 +294,18 @@ export function EndpointDetailsPage() {
                   ""
                 )}
               </Descriptions.Item>
-              <Descriptions.Item label="当前接入">
+              <Descriptions.Item label="最近观测接入">
                 {latestAccess || ""}
               </Descriptions.Item>
               <Descriptions.Item label="首次发现">
                 {formatTime(profile.first_seen)}
               </Descriptions.Item>
-              <Descriptions.Item label="最近活跃">
+              <Descriptions.Item label="最近观测">
                 {formatTime(profile.last_seen)}
               </Descriptions.Item>
             </Descriptions>
           </div>
-        </section>
+        </section><AssociationOverview detail={detail.data}/></>
       )}
 
       {activeTab === "recognition" && (
@@ -328,6 +313,7 @@ export function EndpointDetailsPage() {
       {profile.discovery && <DiscoveryEvidence endpointId={endpointId} />}
       {!profile.device_names_disabled && <DeviceNamePanel endpointId={endpointId} name={profile.device_name} canEdit={canUpdateRegistration} />}
           <BrandInferenceDetails value={profile.brand_inference ?? recognition?.brand_inference} />
+          {!!recognition?.source_matches?.length && <section className="surface"><Typography.Title level={4}>多来源指纹依据</Typography.Title><Typography.Paragraph type="secondary">同一协议证据的跨库命中不重复增加置信度；辅助线索不单独确认设备类型。</Typography.Paragraph>{recognition.source_matches.map(m=><details key={`${m.source_id}:${m.rule_id}`} className="fingerprint-evidence"><summary>{m.name} · {m.source_id}{m.strength==='auxiliary'?' · 辅助线索':''}</summary><Descriptions column={1} items={[{key:'rule',label:'规则',children:<span className="fingerprint-ident">{m.rule_id}</span>},{key:'version',label:'版本',children:<span className="fingerprint-ident">{m.version}</span>},{key:'fields',label:'依据字段',children:m.fields.join('、')},{key:'observed',label:'匹配内容节选',children:Object.entries(m.observed??{}).map(([field,value])=><div key={field} className="fingerprint-ident">{field}：{value}</div>)},{key:'side',label:'归属',children:m.direction==='server'?'服务端':m.direction==='client'?'客户端':'设备'}]}/></details>)}</section>}
           <section className="surface">
             <Typography.Title level={4}>设备识别</Typography.Title>
             <Alert
@@ -361,7 +347,7 @@ export function EndpointDetailsPage() {
                 {recognition?.ecosystem_hint && `（${confidenceText(recognition?.ecosystem_confidence)}）`}
               </Descriptions.Item>
               <Descriptions.Item label="识别证据">
-                {recognition?.recognition_evidence?.join("；") || "暂无"}
+                {recognition?.recognition_evidence?.join("；") || ""}
               </Descriptions.Item>
             </Descriptions>
           </section>
@@ -377,7 +363,7 @@ export function EndpointDetailsPage() {
             <Table<EndpointDomainEvidence>
               className="compact-list-table"
               columns={ecosystemColumns}
-              dataSource={profile.ecosystem_evidence ?? []}
+              dataSource={recognitionEvidence.data?.ecosystem_evidence ?? []}
               locale={{ emptyText: "暂无可归属的生态线索" }}
               pagination={false}
               rowKey={(row) =>
@@ -547,57 +533,7 @@ export function EndpointDetailsPage() {
         </section>
       )}
 
-      {activeTab === "identity" && (
-        <>
-          <section className="surface">
-            <div className="surface-title-row">
-              <Typography.Title className="surface-title" level={4}>
-                账号会话历史
-              </Typography.Title>
-              <Typography.Text className="surface-subtitle" type="secondary">
-                按认证会话和 endpoint 关联生成
-              </Typography.Text>
-            </div>
-            <Table<AccountSession>
-              columns={sessionColumns}
-              dataSource={profile.sessions}
-              pagination={{ pageSize: 8, showSizeChanger: false }}
-              rowKey="session_id"
-              scroll={{ x: 860 }}
-              size="small"
-            />
-          </section>
-
-          <section className="surface">
-            <div className="surface-title-row">
-              <Typography.Title className="surface-title" level={4}>
-                IP 与接入历史
-              </Typography.Title>
-              <Typography.Text className="surface-subtitle" type="secondary">
-                动态 IP 不再被当成终端身份
-              </Typography.Text>
-            </div>
-            <div className="endpoint-detail-history-grid">
-              <Table<IdentityIPMACHistory>
-                columns={ipColumns}
-                dataSource={profile.ip_history}
-                pagination={{ pageSize: 8, showSizeChanger: false }}
-                rowKey="event_id"
-                scroll={{ x: 680 }}
-                size="small"
-              />
-              <Table<IdentityAccessHistory>
-                columns={accessColumns}
-                dataSource={profile.access_history}
-                pagination={{ pageSize: 8, showSizeChanger: false }}
-                rowKey="event_id"
-                scroll={{ x: 760 }}
-                size="small"
-              />
-            </div>
-          </section>
-        </>
-      )}
+      {activeTab === "identity" && <EndpointTracePanel endpointId={endpointId}/>}
 
       {activeTab === "signals" && (
         <section className="surface">
@@ -628,114 +564,6 @@ export function EndpointDetailsPage() {
   );
 }
 
-const sessionColumns: ColumnsType<AccountSession> = [
-  {
-    title: "账号",
-    dataIndex: "account_id",
-    width: 150,
-    render: (value: string) => (
-      <Typography.Text className="mono">{value}</Typography.Text>
-    ),
-  },
-  {
-    title: "IP",
-    dataIndex: "ip",
-    width: 140,
-    render: (value?: string) => value || "",
-  },
-  {
-    title: "MAC",
-    dataIndex: "mac",
-    width: 170,
-    render: (value?: string) => (
-      <Typography.Text className="mono">{value || ""}</Typography.Text>
-    ),
-  },
-  {
-    title: "接入位置",
-    dataIndex: "access_id",
-    width: 180,
-    render: (value?: string) => value || "",
-  },
-  { title: "来源", dataIndex: "source", width: 120 },
-  {
-    title: "开始时间",
-    dataIndex: "started_at",
-    width: 180,
-    render: formatTime,
-  },
-  {
-    title: "置信度",
-    dataIndex: "identity_confidence",
-    width: 130,
-    render: (value: number) => (
-      <Progress percent={Math.round(value * 100)} size="small" />
-    ),
-  },
-];
-
-const ipColumns: ColumnsType<IdentityIPMACHistory> = [
-  {
-    title: "IP",
-    dataIndex: "ip",
-    width: 150,
-    render: (value?: string) =>
-      value ? (
-        <Link className="mono" to={detailPath(`/ips/${encodeURIComponent(value)}`,window.location.pathname+window.location.search)}>
-          {value}
-        </Link>
-      ) : (
-        ""
-      ),
-  },
-  {
-    title: "MAC",
-    dataIndex: "mac",
-    width: 170,
-    render: (value?: string) => (
-      <Typography.Text className="mono">{value || ""}</Typography.Text>
-    ),
-  },
-  {
-    title: "账号",
-    dataIndex: "account_id",
-    width: 150,
-    render: (value?: string) => (
-      <Typography.Text className="mono">{value || ""}</Typography.Text>
-    ),
-  },
-  { title: "来源", dataIndex: "source", width: 120 },
-  { title: "最近出现", dataIndex: "last_seen", width: 180, render: formatTime },
-];
-
-const accessColumns: ColumnsType<IdentityAccessHistory> = [
-  { title: "接入 ID", dataIndex: "access_id", width: 180 },
-  {
-    title: "AP",
-    dataIndex: "ap",
-    width: 150,
-    render: (value?: string) => value || "",
-  },
-  {
-    title: "交换机",
-    dataIndex: "switch_id",
-    width: 150,
-    render: (value?: string) => value || "",
-  },
-  {
-    title: "端口",
-    dataIndex: "switch_port",
-    width: 120,
-    render: (value?: string) => value || "",
-  },
-  {
-    title: "VLAN",
-    dataIndex: "vlan",
-    width: 100,
-    render: (value?: string) => value || "",
-  },
-  { title: "最近出现", dataIndex: "last_seen", width: 180, render: formatTime },
-];
 
 const signalColumns: ColumnsType<DeviceSignal> = [
   { title: "来源", dataIndex: "source", width: 130 },
@@ -826,9 +654,6 @@ function formatTime(value?: string) {
   return value ? new Date(value).toLocaleString() : "";
 }
 
-function uniqueValues(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean))).sort();
-}
 
 function fallbackEndpointProfile(endpointId: string): EndpointIdentityProfile {
   const now = new Date().toISOString();

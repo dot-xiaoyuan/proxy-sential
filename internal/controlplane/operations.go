@@ -1060,6 +1060,11 @@ func (s *Server) handleOrganization(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "bad_network_zone", "valid campus_id and network_zone_id are required")
 			return
 		}
+		if err := normalizeNetworkZoneCIDRs(&item); err != nil {
+			s.operations.mu.Unlock()
+			writeError(w, 400, "bad_network_zone_cidr", err.Error())
+			return
+		}
 		item.Enabled = true
 		s.operations.doc.NetworkZones[item.NetworkZoneID] = item
 		result, target = item, item.NetworkZoneID

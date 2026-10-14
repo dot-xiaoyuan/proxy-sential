@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Alert,
   App as AntApp,
   Button,
   Card,
@@ -26,7 +25,6 @@ import {
 import type { ActionConnector } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
 import {
-  AppErrorAlert,
   AppLoadingState,
   AppPageHeader,
   StackList,
@@ -47,8 +45,9 @@ type ConnectorForm = {
 };
 
 export function ActionsPage() {
-  const connectors = useActionConnectors();
-  const fourKIntegrations = useQuery({ queryKey: ['srun4k-integrations'], queryFn: api.srun4KIntegrations });
+  const client = useQueryClient();
+  const connectors = useActionConnectors(true,true);
+  const fourKIntegrations = useQuery({ queryKey: ['srun4k-integrations'], queryFn: api.srun4KIntegrations,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:false,retry:false });
   const session = useSession();
   const canManage = can(session.data, "integrations:write");
   const { message } = AntApp.useApp();
@@ -57,14 +56,8 @@ export function ActionsPage() {
   const [previewConnector, setPreviewConnector] = useState<string>();
   const [fourKConnector, setFourKConnector] = useState<{ id?: string; host?: string }>();
   const [form] = Form.useForm<ConnectorForm>();
-  if (connectors.isLoading)
-    return <AppLoadingState rows={7} />;
-  if (
-    connectors.isError ||
-    !connectors.data
-  )
-    return <AppErrorAlert title="认证与处置接入加载失败" />;
-  const readOnly = connectors.data.read_only !== false;
+  const connectorData=connectors.data;
+  const readOnly = connectorData?.read_only !== false;
   const canWrite = canManage && !readOnly;
   const canConfigureSRun4K = canManage;
   const fourKIntegration = fourKIntegrations.data?.items[0];
@@ -122,43 +115,29 @@ export function ActionsPage() {
     <main className="page">
       <AppPageHeader
         title="认证与处置接入"
-        subtitle="通过北向接口执行隔离、限速、踢线与解除；真实动作需通过策略与身份检查"
+        extra={connectorData && <Space className="actions-mode-controls" wrap>
+          {readOnly && <Tag>只读</Tag>}
+          {connectorData.global_stop && !canWrite && <Tag color="red">紧急停止</Tag>}
+          {canWrite && <Space><Typography.Text>紧急停止</Typography.Text><Switch checked={connectorData.global_stop} onChange={async (value) => {
+            await api.emergencyStop(value);
+            void message.success("紧急停止状态已更新");
+            void connectors.refetch();
+          }}/></Space>}
+        </Space>}
         onRefresh={() => {
+          void client.refetchQueries({queryKey:["identity-bridge"]});
+          void fourKIntegrations.refetch();
           void connectors.refetch();
         }}
       />
-      <Alert
-        showIcon
-        type={connectors.data.global_stop ? "error" : "info"}
-        title={
-          readOnly
-            ? "全局只读保护已开启，真实动作与连接器写入被阻断"
-            : connectors.data.global_stop
-            ? "全局紧急停止已启用，所有真实动作均被阻断"
-            : "真实动作受策略模式、当前身份、登录代次、事件通道、冷却与熔断共同保护"
-        }
-        description={readOnly ? "4K地址仍可在下方认证同步卡片中统一修改；保存地址不会启用真实处置。" : undefined}
-        action={
-          canWrite ? (
-            <Space>
-              <Typography.Text>紧急停止</Typography.Text>
-              <Switch
-                checked={connectors.data.global_stop}
-                onChange={async (value) => {
-                  await api.emergencyStop(value);
-                  void message.success("紧急停止状态已更新");
-                  void connectors.refetch();
-                }}
-              />
-            </Space>
-          ) : undefined
-        }
-      />
       <IdentityBridgePanel />
-      <Card className="four-k-authority-card margin-top-md" title="深澜 4K 通道接入" extra={canConfigureSRun4K ? <Button type="primary" onClick={() => {
-        const legacyConnector = connectors.data.items.find((item) => item.connector_type === "srun4k");
+      {connectors.isLoading&&<AppLoadingState rows={4}/>}
+      {connectors.isError&&<p className="actions-inline-error" role="alert">连接器状态读取失败</p>}
+      <Card className="four-k-authority-card margin-top-md" title="深澜 4K 通道接入" extra={canConfigureSRun4K ? <Button type="primary" disabled={fourKIntegrations.isLoading||fourKIntegrations.isError} onClick={() => {
+        const legacyConnector = (connectorData?.items??[]).find((item) => item.connector_type === "srun4k");
         setFourKConnector(fourKIntegration ? { id: fourKIntegration.connector_id } : legacyConnector ? { id: legacyConnector.connector_id } : {});
       }}>{fourKIntegration ? "配置接入" : "新增接入"}</Button> : undefined}>
+        {fourKIntegrations.isError&&<p className="actions-inline-error" role="alert">4K接入配置读取失败</p>}
         {fourKIntegration ? <div className="four-k-endpoint-summary">
           <span>授权数据库 <Typography.Text className="four-k-endpoint-value">{fourKIntegration.authorization_database_host}</Typography.Text></span>
           <span>在线清单 Redis <Typography.Text className="four-k-endpoint-value">{fourKIntegration.online_redis_host}</Typography.Text></span>
@@ -166,26 +145,18 @@ export function ActionsPage() {
           {fourKIntegration.event_redis_host && <span>上下线事件 Redis <Typography.Text className="four-k-endpoint-value">{fourKIntegration.event_redis_host}</Typography.Text></span>}
           <span>北向 API <Typography.Text className="four-k-endpoint-value">{fourKIntegration.northbound_api_host}</Typography.Text></span>
           <span>北向授权 {fourKIntegration.authorization_ready ? "已验证" : "待验证"} · 校准周期 {fourKIntegration.reconcile_interval_hours} 小时</span>
-          <span>上下线事件状态 {fourKIntegration.event_channel_state === "healthy" ? "正常" : "等待验收"}</span>
-        </div> : <div className="connector-summary">
-          <span>分别配置授权数据库、在线清单、产品目录、上下线事件和北向 API 的主机地址；端口、协议及凭据由部署配置提供。</span>
-          <span>事件通道验收前可以读取身份与匹配目录，但服务端会阻断真实动作。</span>
-        </div>}
+        </div> : !fourKIntegrations.isError && <span className="actions-empty-state">尚未配置接入</span>}
       </Card>
-      <section className="details-grid margin-top-md">
+      <section className="actions-connector-section margin-top-md">
           <Card
             className="actions-connectors"
-            title="通用认证与处置连接器"
-            extra={
-              canWrite ? (
-                <Space wrap><Button onClick={() => openEditor()}>新增通用连接器</Button></Space>
-              ) : undefined
-            }
+            title="通用连接器"
+            extra={<Space wrap><Button loading={connectors.isFetching} onClick={()=>void connectors.refetch()}>刷新连接器</Button>{canWrite&&<Button onClick={() => openEditor()}>新增通用连接器</Button>}</Space>}
           >
             <StackList
-              items={connectors.data.items}
+              items={(connectorData?.items??[])}
               itemKey={(item) => item.connector_id}
-              empty="尚未配置通用处置连接器；南昌 4K 认证同步由上方独立服务运行"
+              empty="尚未配置通用连接器"
               renderItem={(item) => (
                 <StackListItem
                   actions={
@@ -243,7 +214,7 @@ export function ActionsPage() {
                           <span className="nowrap-cell" title={item.endpoint_url}>
                             {item.endpoint_url}
                           </span>
-                          {item.connector_type === "srun4k" ? <span>身份与匹配目录由4K同步，动作由本地防代理策略配置</span> : <span>
+                          {item.connector_type === "srun4k" ? <span>4K 托管</span> : <span>
                             {item.mode === "active" ? "真实模式" : "影子模式"} ·{" "}
                             {item.shadow_ready ? "影子验收通过" : "等待影子验收"}{" "}
                             · 已复核 {item.shadow_reviewed_count ?? 0}/
@@ -262,20 +233,6 @@ export function ActionsPage() {
                   }
                 />
               )}
-            />
-          </Card>
-          <Card title="安全门槛">
-            <StackList
-              items={[
-                "按触发类型检查设备配额、会话配额或可归责的风险证据",
-                "核验当前账号、在线会话与登录代次",
-                "检查策略范围、校园例外与人工复核结论",
-                "真实动作遵守策略冷却和连接器熔断",
-                "通用外部连接器需完成影子验收；4K 托管接入按事件通道状态准入",
-                "全局紧急停止阻断真实动作；所有操作保留审计和撤销入口",
-              ]}
-              itemKey={(item) => item}
-              renderItem={(item) => <StackListItem>{item}</StackListItem>}
             />
           </Card>
       </section>
@@ -321,7 +278,7 @@ export function ActionsPage() {
           >
             <Input.Password />
           </Form.Item>
-          <Form.Item name="mode" label="运行模式" extra="数据库授权和只读接口检查可在影子模式完成；真实处置需另行通过准入验收。">
+          <Form.Item name="mode" label="运行模式">
             <Select
               options={[
                 { value: "shadow", label: "影子模式" },

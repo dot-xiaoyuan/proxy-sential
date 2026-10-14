@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net"
 	"sort"
 	"strings"
@@ -14,6 +15,9 @@ import (
 // ListDeviceInventory reads the prepared endpoint summary projection. It does
 // not load endpoint association histories; those belong to the detail path.
 func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (DeviceInventoryListPage, error) {
+	if err := normalizeInventorySearch(&query); err != nil {
+		return DeviceInventoryListPage{}, err
+	}
 	now := time.Now().UTC()
 	limit := query.Limit
 	if limit == 0 {
@@ -26,19 +30,44 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		return DeviceInventoryListPage{}, err
 	}
 	defer conn.Close()
+	state, err := inventoryProjectionState(ctx, conn)
+	if err != nil {
+		return DeviceInventoryListPage{}, err
+	}
+	if !state.Complete && !state.Available {
+		return DeviceInventoryListPage{}, ErrInventoryNotReady
+	}
 
 	baseWhere := []string{"e.entity_role='endpoint'"}
 	baseArgs := []any{}
 	if query.View == "recent" {
 		baseArgs = append(baseArgs, deviceViewStart(query, now), now)
-		baseWhere = append(baseWhere, "r.last_seen >= $1 AND r.last_seen <= $2")
+		baseWhere = append(baseWhere, "i.last_seen >= $1 AND i.last_seen <= $2")
 	}
-	baseSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) WHERE " + strings.Join(baseWhere, " AND ")
+	position, err := decodeInventoryCursor(query, query.InventoryCursor)
+	if err != nil {
+		return DeviceInventoryListPage{}, err
+	}
+	if position != nil {
+		if position.LastSeen == "" {
+			baseWhere = append(baseWhere, "i.last_seen IS NULL AND i.endpoint_id > $"+strconvArg(len(baseArgs)+1))
+			baseArgs = append(baseArgs, position.Endpoint)
+		} else {
+			lastSeen, parseErr := time.Parse(time.RFC3339Nano, position.LastSeen)
+			if parseErr != nil {
+				return DeviceInventoryListPage{}, fmt.Errorf("invalid inventory cursor timestamp")
+			}
+			baseArgs = append(baseArgs, lastSeen, position.Endpoint)
+			lastArg, endpointArg := "$"+strconvArg(len(baseArgs)-1), "$"+strconvArg(len(baseArgs))
+			baseWhere = append(baseWhere, "(i.last_seen < "+lastArg+" OR (i.last_seen = "+lastArg+" AND i.endpoint_id > "+endpointArg+") OR i.last_seen IS NULL)")
+		}
+	}
+	baseSQL := " FROM endpoint_inventory_lookup i JOIN endpoint_entities e USING(endpoint_id) LEFT JOIN endpoint_recognition_summary r USING(endpoint_id) WHERE " + strings.Join(baseWhere, " AND ")
 
 	facets := DeviceFilterFacets{Brands: []string{}, OSFamilies: []string{}}
 	if !query.InventorySkipMetadata {
 		started = time.Now()
-		facetRows, err := conn.QueryContext(ctx, "SELECT DISTINCT r.filter_brand,r.filter_os_family"+baseSQL, baseArgs...)
+		facetRows, err := conn.QueryContext(ctx, "SELECT DISTINCT coalesce(r.filter_brand,'unknown'),coalesce(r.filter_os_family,'unknown')"+baseSQL, baseArgs...)
 		if err != nil {
 			return DeviceInventoryListPage{}, err
 		}
@@ -89,16 +118,24 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		if query.View == "recent" {
 			args = append(args, deviceViewStart(query, now), now)
 			startArg, endArg := "$"+strconvArg(len(args)-1), "$"+strconvArg(len(args))
-			historyWindow = " AND h.last_seen >= " + startArg + " AND h.first_seen <= " + endArg + " AND h.last_seen <= " + endArg
-			sessionWindow = " AND s.started_at <= " + endArg + " AND (s.ended_at IS NULL OR s.ended_at >= " + startArg + ")"
+			historyWindow = " AND h.observed_at >= " + startArg + " AND h.observed_at <= " + endArg
+			sessionWindow = " AND ((s.interval_explicit AND s.started_at <= " + endArg + " AND (s.ended_at IS NULL OR s.ended_at >= " + startArg + ")) OR (NOT s.interval_explicit AND s.confirmed_at BETWEEN " + startArg + " AND " + endArg + "))"
 		}
-		where = append(where, `(EXISTS(SELECT 1 FROM identity_ip_mac_history h WHERE h.endpoint_id=r.endpoint_id AND h.ip=`+ipArg+`::inet`+historyWindow+`) OR EXISTS(SELECT 1 FROM account_sessions s WHERE s.endpoint_id=r.endpoint_id AND s.ip=`+ipArg+`::inet`+sessionWindow+`))`)
+		where = append(where, `i.endpoint_id IN(SELECT h.endpoint_id FROM endpoint_inventory_ip_points h WHERE h.ip=`+ipArg+`::inet`+historyWindow+` UNION SELECT s.endpoint_id FROM endpoint_inventory_sessions s WHERE s.ip=`+ipArg+`::inet`+sessionWindow+`)`)
 	}
 	if query.Brand != "" {
-		add("lower(r.filter_brand)=lower($N)", query.Brand)
+		if query.Brand == "unknown" {
+			add("lower(coalesce(nullif(r.filter_brand,''),'unknown'))=lower($N)", query.Brand)
+		} else {
+			add("lower(r.filter_brand)=lower($N)", query.Brand)
+		}
 	}
 	if query.OSFamily != "" {
-		add("lower(r.filter_os_family)=lower($N)", query.OSFamily)
+		if query.OSFamily == "unknown" {
+			add("lower(coalesce(nullif(r.filter_os_family,''),'unknown'))=lower($N)", query.OSFamily)
+		} else {
+			add("lower(r.filter_os_family)=lower($N)", query.OSFamily)
+		}
 	}
 	if query.Ecosystem != "" {
 		add("lower(r.ecosystem_hint)=lower($N)", query.Ecosystem)
@@ -106,10 +143,19 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 	if ip := net.ParseIP(strings.TrimSpace(query.SrcIP)); ip != nil {
 		addExactIP(ip.String())
 	}
-	if ip := net.ParseIP(strings.TrimSpace(query.Q)); ip != nil {
+	if ip := net.ParseIP(strings.TrimSpace(query.Q)); ip != nil && (query.InventorySearchType == "all" || query.InventorySearchType == "ip") {
 		addExactIP(ip.String())
 	} else if value := strings.TrimSpace(query.Q); value != "" {
-		add(`(lower(r.device_name) LIKE $N OR lower(r.endpoint_id) LIKE $N OR lower(r.primary_mac) LIKE $N OR lower(r.current_ip) LIKE $N OR lower(r.current_account) LIKE $N OR lower(r.current_access_id) LIKE $N OR lower(coalesce(e.owner_account,'')) LIKE $N OR lower(coalesce(e.owner_name,'')) LIKE $N OR EXISTS(SELECT 1 FROM identity_ip_mac_history h WHERE h.endpoint_id=r.endpoint_id AND lower(host(h.ip)) LIKE $N) OR EXISTS(SELECT 1 FROM account_sessions s WHERE s.endpoint_id=r.endpoint_id AND (lower(host(s.ip)) LIKE $N OR lower(s.account_id) LIKE $N)))`, "%"+strings.ToLower(value)+"%")
+		switch query.InventorySearchType {
+		case "account":
+			add(`i.endpoint_id IN(SELECT endpoint_id FROM endpoint_inventory_accounts WHERE account_id=$N)`, value)
+		case "mac":
+			add(`i.mac_key=$N`, value)
+		case "name":
+			add(`lower(i.device_name) LIKE $N ESCAPE '\'`, "%"+inventoryLikeValue(value)+"%")
+		default:
+			add(`i.search_text LIKE $N ESCAPE '\'`, "%"+inventoryLikeValue(value)+"%")
+		}
 	}
 	for _, dimension := range []struct{ column, value string }{
 		{"campus_id", query.CampusID}, {"department", query.Department}, {"person_type", query.PersonType},
@@ -118,10 +164,10 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		if dimension.value == "" {
 			continue
 		}
-		add("EXISTS(SELECT 1 FROM account_sessions s WHERE s.endpoint_id=r.endpoint_id AND s."+dimension.column+"::text=$N AND (s.ended_at IS NULL OR s.ended_at>=now()))", dimension.value)
+		add("EXISTS(SELECT 1 FROM endpoint_inventory_sessions s WHERE s.endpoint_id=i.endpoint_id AND s.dimensions->>'"+dimension.column+"'=$N AND (s.ended_at IS NULL OR s.ended_at>=now()))", dimension.value)
 	}
 
-	whereSQL := " FROM endpoint_recognition_summary r JOIN endpoint_entities e USING(endpoint_id) WHERE " + strings.Join(where, " AND ")
+	whereSQL := " FROM endpoint_inventory_lookup i JOIN endpoint_entities e USING(endpoint_id) LEFT JOIN endpoint_recognition_summary r USING(endpoint_id) WHERE " + strings.Join(where, " AND ")
 	var total int
 	if !query.InventorySkipMetadata {
 		started = time.Now()
@@ -131,17 +177,26 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		inventoryTiming(ctx, "count", started)
 	}
 	if query.InventoryMetadataOnly {
-		return DeviceInventoryListPage{Items: []DeviceInventoryListItem{}, Page: Page{Total: total}, Facets: facets, AsOf: now.Format(time.RFC3339Nano)}, nil
+		return DeviceInventoryListPage{ReadModelState: &state, Items: []DeviceInventoryListItem{}, Page: Page{Total: total}, Facets: facets, AsOf: now.Format(time.RFC3339Nano)}, nil
 	}
 	pageLimit := limit
 	if query.InventorySkipMetadata {
 		pageLimit++
 	}
-	pageArgs := append(append([]any{}, args...), pageLimit, query.Cursor)
+	pageArgs := append(append([]any{}, args...), pageLimit)
+	legacyOffset := query.InventoryCursor == ""
+	if legacyOffset {
+		pageArgs = append(pageArgs, query.Cursor)
+	}
+	limitArg := strconvArg(len(args) + 1)
+	offsetSQL := ""
+	if legacyOffset {
+		offsetSQL = " OFFSET $" + strconvArg(len(pageArgs))
+	}
 	started = time.Now()
-	rows, err := conn.QueryContext(ctx, `SELECT r.list_item,r.updated_at`+whereSQL+`
-ORDER BY r.last_seen DESC NULLS LAST,r.endpoint_id
-LIMIT $`+strconvArg(len(pageArgs)-1)+` OFFSET $`+strconvArg(len(pageArgs)), pageArgs...)
+	rows, err := conn.QueryContext(ctx, `SELECT i.list_item,i.updated_at`+whereSQL+`
+ORDER BY i.last_seen DESC NULLS LAST,i.endpoint_id
+LIMIT $`+limitArg+offsetSQL, pageArgs...)
 	if err != nil {
 		return DeviceInventoryListPage{}, err
 	}
@@ -177,7 +232,7 @@ LIMIT $`+strconvArg(len(pageArgs)-1)+` OFFSET $`+strconvArg(len(pageArgs)), page
 	inventoryTiming(ctx, "page", started)
 
 	started = time.Now()
-	matches, err := s.deviceIPMatchesWith(ctx, conn, endpointIDs, query, now)
+	matches, err := inventoryIPMatches(ctx, conn, endpointIDs, query, now)
 	if err != nil {
 		return DeviceInventoryListPage{}, err
 	}
@@ -189,14 +244,27 @@ LIMIT $`+strconvArg(len(pageArgs)-1)+` OFFSET $`+strconvArg(len(pageArgs)), page
 	}
 	inventoryTiming(ctx, "ip_match", started)
 	var next *string
-	if hasNext || query.Cursor+len(items) < total {
-		value := strconvArg(query.Cursor + len(items))
+	if hasNext && len(items) > 0 {
+		last := items[len(items)-1]
+		var lastSeen *time.Time
+		if last.LastSeen != "" {
+			parsed, parseErr := time.Parse(time.RFC3339Nano, last.LastSeen)
+			if parseErr != nil {
+				return DeviceInventoryListPage{}, parseErr
+			}
+			lastSeen = &parsed
+		}
+		value, cursorErr := encodeInventoryCursor(query, lastSeen, last.EndpointID)
+		if cursorErr != nil {
+			return DeviceInventoryListPage{}, cursorErr
+		}
 		next = &value
 	}
 	page := Page{Limit: limit, NextCursor: next, Total: total}
-	result := DeviceInventoryListPage{Items: items, Page: page, Facets: facets}
+	result := DeviceInventoryListPage{ReadModelState: &state, Items: items, Page: page, Facets: facets}
 	started = time.Now()
 	result.ReadModelUpdating, err = s.deviceInventoryUpdating(ctx, conn)
+	result.ReadModelUpdating = result.ReadModelUpdating || state.Updating
 	if err != nil {
 		return DeviceInventoryListPage{}, err
 	}

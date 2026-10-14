@@ -24,7 +24,8 @@ const (
 	BundleSchemaVersionV3   = "device-fingerprint-bundle/v3"
 	BundleSchemaVersionV4   = "device-fingerprint-bundle/v4"
 	BundleSchemaVersionV5   = "device-fingerprint-bundle/v5"
-	BundleSchemaVersion     = BundleSchemaVersionV5
+	BundleSchemaVersionV6   = "device-fingerprint-bundle/v6"
+	BundleSchemaVersion     = BundleSchemaVersionV6
 	MaxBundleBytes          = 32 << 20
 	MaxBundleContent        = 128 << 20
 	fingerbankURL           = "https://raw.githubusercontent.com/karottc/fingerbank/master/dhcp_fingerprints.conf"
@@ -88,6 +89,8 @@ func BuildEmbeddedBundle(output, version string, now time.Time) (BundleManifest,
 		version = EmbeddedVersion + "-offline"
 	}
 	files := map[string][]byte{
+		"multisource-catalog.json":    embeddedCatalog,
+		"multisource-provenance.json": embeddedProvenance,
 		"oui.csv":                     embeddedOUI,
 		"device-rules.json":           embeddedRules,
 		"router-rules.json":           embeddedRouterRules,
@@ -106,6 +109,9 @@ func BuildEmbeddedBundle(output, version string, now time.Time) (BundleManifest,
 		{Name: "Apple enterprise networks", Version: "reviewed-2026-09-08", URL: "https://support.apple.com/en-ie/101555", License: "documented-service-facts"},
 		{Name: "Proxy Sentinel application signatures", Version: ApplicationSignatureVersion, URL: "internal://proxy-sentinel/application-signatures", License: "internal-rule"},
 	}, Files: map[string]BundleFile{}}
+	files["multisource-catalog.json"] = embeddedCatalog
+	files["multisource-provenance.json"] = embeddedProvenance
+	manifest.Sources = appendCatalogBundleSources(manifest.Sources)
 	for name, data := range files {
 		manifest.Files[name] = bundleFile(data)
 	}
@@ -282,6 +288,9 @@ func BuildOfflineBundle(ctx context.Context, output string, options BuildOptions
 	manifest.Sources = append(manifest.Sources, hageziSource)
 	hash := sha256.Sum256(domainData)
 	manifest.Version += "-" + hex.EncodeToString(hash[:])[:12]
+	files["multisource-catalog.json"] = embeddedCatalog
+	files["multisource-provenance.json"] = embeddedProvenance
+	manifest.Sources = appendCatalogBundleSources(manifest.Sources)
 	for name, data := range files {
 		manifest.Files[name] = bundleFile(data)
 	}
@@ -313,7 +322,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	reader := tar.NewReader(gz)
 	files := map[string][]byte{}
 	total := int64(0)
-	allowed := map[string]bool{"manifest.json": true, "oui.csv": true, "device-rules.json": true, "router-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "domain-signatures.json": true, "application-signatures.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NextDNS-MIT.txt": true, "licenses/NOTICE.txt": true, "licenses/HaGeZi-GPL-3.0.txt": true, "sources/hagezi.json": true}
+	allowed := map[string]bool{"multisource-catalog.json": true, "multisource-provenance.json": true, "manifest.json": true, "oui.csv": true, "device-rules.json": true, "router-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "domain-signatures.json": true, "application-signatures.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NextDNS-MIT.txt": true, "licenses/NOTICE.txt": true, "licenses/HaGeZi-GPL-3.0.txt": true, "sources/hagezi.json": true}
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -362,7 +371,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 {
 		required = append(required, "application-signatures.json")
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV5 {
+	if manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 {
 		required = append(required, "domain-signatures.json", "application-signatures.json", "router-rules.json")
 		for _, source := range manifest.Sources {
 			if source.Name == "NextDNS native-tracking-domains" {
@@ -375,12 +384,15 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 			required = append(required, "licenses/HaGeZi-GPL-3.0.txt", "sources/hagezi.json")
 		}
 	}
+	if manifest.SchemaVersion == BundleSchemaVersionV6 {
+		required = append(required, "multisource-catalog.json", "multisource-provenance.json")
+	}
 	for _, name := range required {
 		if len(files[name]) == 0 {
 			return Bundle{}, fmt.Errorf("bundle is missing %q", name)
 		}
 	}
-	if (manifest.SchemaVersion != BundleSchemaVersionV1 && manifest.SchemaVersion != BundleSchemaVersionV2 && manifest.SchemaVersion != BundleSchemaVersionV3 && manifest.SchemaVersion != BundleSchemaVersionV4 && manifest.SchemaVersion != BundleSchemaVersionV5) || manifest.Version == "" {
+	if (manifest.SchemaVersion != BundleSchemaVersionV1 && manifest.SchemaVersion != BundleSchemaVersionV2 && manifest.SchemaVersion != BundleSchemaVersionV3 && manifest.SchemaVersion != BundleSchemaVersionV4 && manifest.SchemaVersion != BundleSchemaVersionV5 && manifest.SchemaVersion != BundleSchemaVersionV6) || manifest.Version == "" {
 		return Bundle{}, fmt.Errorf("unsupported bundle manifest")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt); err != nil {
@@ -395,6 +407,11 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 			return Bundle{}, fmt.Errorf("bundle checksum mismatch for %q", name)
 		}
 	}
+	if manifest.SchemaVersion == BundleSchemaVersionV6 {
+		if err := VerifyCatalogProvenance(files["multisource-catalog.json"], files["multisource-provenance.json"]); err != nil {
+			return Bundle{}, err
+		}
+	}
 	if err := validateBundleSourcesAndLicenses(manifest, files); err != nil {
 		return Bundle{}, err
 	}
@@ -405,7 +422,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if manifest.SchemaVersion == BundleSchemaVersionV4 && library.DomainRuleCount() == 0 {
 		return Bundle{}, fmt.Errorf("v4 bundle requires non-empty domain rules")
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV5 {
+	if manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 {
 		if library.DomainRuleCount() == 0 {
 			return Bundle{}, fmt.Errorf("v5 bundle requires non-empty domain rules")
 		}
@@ -416,7 +433,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if len(library.ouis) == 0 || len(library.rules) == 0 || len(library.dhcp) == 0 || len(library.aliases) == 0 {
 		return Bundle{}, fmt.Errorf("bundle must contain non-empty OUI, device, DHCP and brand alias rules")
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 {
+	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 {
 		rules, err := ParseApplicationSignatures(files["application-signatures.json"])
 		if err != nil || len(rules) == 0 {
 			return Bundle{}, fmt.Errorf("bundle application signatures are invalid: %w", err)
@@ -434,7 +451,7 @@ func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string]
 	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || len(files["licenses/NextDNS-MIT.txt"]) > 0 {
 		requiredSources["NextDNS native-tracking-domains"] = "MIT"
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 {
+	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 {
 		requiredSources["Proxy Sentinel application signatures"] = "internal-rule"
 	}
 	seen := map[string]bool{}
@@ -477,7 +494,7 @@ func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string]
 			return fmt.Errorf("bundle must preserve NextDNS MIT attribution")
 		}
 	}
-	if (manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5) && (!strings.Contains(notice, "application signatures") || !strings.Contains(notice, "internal rules")) {
+	if (manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6) && (!strings.Contains(notice, "application signatures") || !strings.Contains(notice, "internal rules")) {
 		return fmt.Errorf("bundle NOTICE must describe application signature licensing")
 	}
 	return nil
@@ -574,4 +591,74 @@ func downloadURL(ctx context.Context, client *http.Client, rawURL string, max in
 		return nil, fmt.Errorf("download %s exceeds size limit", rawURL)
 	}
 	return data, nil
+}
+
+func appendCatalogBundleSources(sources []BundleSource) []BundleSource {
+	c, err := LoadCatalog(embeddedCatalog)
+	if err != nil {
+		return sources
+	}
+	for _, s := range c.Sources {
+		if s.RawCount > 0 {
+			sources = append(sources, BundleSource{Name: s.Name, Version: s.Version, URL: s.URL, License: s.License})
+		}
+	}
+	return sources
+}
+
+// ExtendOfflineBundle adds the audited catalog to a verified existing offline
+// pack. Existing OUI, UA, DHCP and domain data is preserved byte-for-byte.
+func ExtendOfflineBundle(base []byte, output, version string, now time.Time) (BundleManifest, error) {
+	bundle, err := VerifyBundleBytes(base)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	if strings.TrimSpace(version) == "" {
+		return BundleManifest{}, fmt.Errorf("new bundle version is required")
+	}
+	delete(bundle.Files, "manifest.json")
+	bundle.Files["multisource-catalog.json"] = embeddedCatalog
+	bundle.Files["multisource-provenance.json"] = embeddedProvenance
+	bundle.Files["router-rules.json"] = embeddedRouterRules
+	// Older bundles may predate these payloads; retain them whenever present.
+	if len(bundle.Files["domain-signatures.json"]) == 0 {
+		bundle.Files["domain-signatures.json"] = embeddedDomainSignatures
+	}
+	if len(bundle.Files["application-signatures.json"]) == 0 {
+		bundle.Files["application-signatures.json"] = embeddedApplicationSignatures
+	}
+	sources := []BundleSource{}
+	catalog, _ := LoadCatalog(embeddedCatalog)
+	external := map[string]bool{}
+	for _, s := range catalog.Sources {
+		external[s.Name] = true
+	}
+	hasApplication := false
+	for _, source := range bundle.Manifest.Sources {
+		if !external[source.Name] {
+			sources = append(sources, source)
+		}
+		if source.Name == "Proxy Sentinel application signatures" {
+			hasApplication = true
+		}
+	}
+	if !hasApplication {
+		sources = append(sources, BundleSource{Name: "Proxy Sentinel application signatures", Version: ApplicationSignatureVersion, URL: "internal://proxy-sentinel/application-signatures", License: "internal-rule"})
+		bundle.Files["licenses/NOTICE.txt"] = append(bundle.Files["licenses/NOTICE.txt"], []byte("\nProxy Sentinel application signatures are internal rules.\n")...)
+	}
+	manifest := BundleManifest{SchemaVersion: BundleSchemaVersionV6, Version: version, CreatedAt: now.UTC().Format(time.RFC3339Nano), Sources: appendCatalogBundleSources(sources), Files: map[string]BundleFile{}}
+	for name, data := range bundle.Files {
+		manifest.Files[name] = bundleFile(data)
+	}
+	data, err := encodeBundle(manifest, bundle.Files)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	if _, err = VerifyBundleBytes(data); err != nil {
+		return BundleManifest{}, err
+	}
+	if err = writeBundleAtomic(output, data); err != nil {
+		return BundleManifest{}, err
+	}
+	return manifest, nil
 }

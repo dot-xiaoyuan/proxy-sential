@@ -1,6 +1,7 @@
 import type { FourKSyncResult, IdentityBridge, IdentityBridgeRunPage, ManagedIdentityConfiguration, ManagedIdentitySource, SRun4KIntegration, SRun4KIntegrationRequest, SRun4KSyncResult, SRun4KTestResult } from "./types"
 import { awaitOperationTask, clearOperationTasks, isOperationTask, type OperationTask } from './operationTasks'
 import type {
+  InventoryDetail, EndpointObservationPage, EndpointObservationQuery,
  FourKDatabaseConfig, FourKDatabaseResponse, FourKAuthorizationCheck,
   CaseHistoryKind,
   CaseHistoryResponse,
@@ -156,6 +157,8 @@ export const api = {
     request<DpiFlowDetail>(`/dpi/flows/${encodeURIComponent(flowId)}`),
   devices: (query: DeviceQuery) => request<DeviceListResponse>(`/devices${search(query)}`),
   deviceInventory: (query: DeviceQuery, signal?: AbortSignal) => request<DeviceInventoryListResponse>(`/device-inventory${search(query)}`, { signal }),
+  inventoryDetail: (id:string,signal?:AbortSignal)=>request<InventoryDetail>(`/device-inventory/${encodeURIComponent(id)}`,{signal}),
+  endpointObservations:(id:string,query:EndpointObservationQuery,signal?:AbortSignal)=>request<EndpointObservationPage>(`/endpoints/${encodeURIComponent(id)}/observations${search(query)}`,{signal}),
   deviceInventoryMetadata: (query: DeviceQuery, signal?: AbortSignal) => request<DeviceInventoryMetadataResponse>(`/device-inventory/metadata${search(query)}`, { signal }),
   deviceRecognitionSummary: () => request<DeviceRecognitionSummary>('/device-recognition/summary'),
   routerObservations: (query: RouterObservationQuery = {}) =>

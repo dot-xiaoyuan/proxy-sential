@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
 type recognitionJob struct {
+	Historical      bool
 	EndpointID      string
 	DirtyGeneration int64
 	Attempts        int
@@ -53,13 +55,17 @@ FROM endpoint_recognition_jobs WHERE endpoint_id=$1 FOR UPDATE`, job.EndpointID,
 func (s *DBStore) claimRecognitionJob(ctx context.Context, worker string) (recognitionJob, bool, error) {
 	// Each claim needs its own token, including retries by the same worker.
 	owner := worker + ":" + appToken()
+	lane := 0
+	if strings.HasSuffix(worker, "-3") {
+		lane = 1
+	}
 	row := s.pg.db.QueryRowContext(ctx, `WITH picked AS (
  SELECT endpoint_id FROM endpoint_recognition_jobs
- WHERE processed_generation<dirty_generation AND not_before<=now() AND lease_until<now()
+ WHERE processed_generation<dirty_generation AND not_before<=now() AND lease_until<now() AND lane=$2
  ORDER BY updated_at,endpoint_id FOR UPDATE SKIP LOCKED LIMIT 1)
 UPDATE endpoint_recognition_jobs j SET lease_owner=$1,lease_until=now()+interval '1 minute',updated_at=now()
 FROM picked p WHERE j.endpoint_id=p.endpoint_id
-RETURNING j.endpoint_id,j.dirty_generation,j.attempts,j.lease_owner`, owner)
+RETURNING j.endpoint_id,j.dirty_generation,j.attempts,j.lease_owner`, owner, lane)
 	var job recognitionJob
 	if err := row.Scan(&job.EndpointID, &job.DirtyGeneration, &job.Attempts, &job.LeaseOwner); err != nil {
 		if err == sql.ErrNoRows {
@@ -67,6 +73,7 @@ RETURNING j.endpoint_id,j.dirty_generation,j.attempts,j.lease_owner`, owner)
 		}
 		return recognitionJob{}, false, err
 	}
+	job.Historical = lane == 1
 	return job, true, nil
 }
 
@@ -107,7 +114,7 @@ func (s *DBStore) materializeRecognition(ctx context.Context, job recognitionJob
 		return err
 	}
 	evidenceCount := len(item.RecognitionEvidence) + len(profile.EcosystemEvidence)
-	return s.withRecognitionLease(ctx, job, func(tx *sql.Tx) error {
+	err = s.withRecognitionLease(ctx, job, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO endpoint_recognition_summary(
  endpoint_id,brand,model,os_family,role,confidence,conflict,evidence_count,rule_version,summary,first_seen,last_seen,
  primary_mac,current_ip,current_account,current_access_id,device_name,filter_brand,filter_os_family,ecosystem_hint,list_item,updated_at)
@@ -123,6 +130,10 @@ ON CONFLICT(endpoint_id) DO UPDATE SET brand=EXCLUDED.brand,model=EXCLUDED.model
 			item.PrimaryMAC, item.CurrentIP, item.CurrentAccount, item.CurrentAccessID, deviceName, filterBrand, filterOSFamily, item.EcosystemHint, listRaw)
 		return err
 	})
+	if err == nil {
+		s.fingerprintMatches.record(time.Now(), job.Historical, item.SourceMatches)
+	}
+	return err
 }
 
 func (s *DBStore) finishRecognitionJob(ctx context.Context, job recognitionJob, runErr error) error {
@@ -160,6 +171,10 @@ func (s *DBStore) finishRecognitionJob(ctx context.Context, job recognitionJob, 
 
 func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() { defer workers.Done(); s.runFingerprintRebuild(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); s.runFingerprintCoverage(ctx) }()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
@@ -239,6 +254,11 @@ ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`)
 			finishCancel()
 		}
 		cancel()
+		// Drain available work without an unconditional one-second sleep.
+		// Keep the four-worker bound and back off on failures or an empty queue.
+		if found && err == nil {
+			continue
+		}
 		delay := time.Second
 		if !found {
 			delay = 5 * time.Second

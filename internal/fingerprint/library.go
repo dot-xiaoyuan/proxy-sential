@@ -29,25 +29,27 @@ const EmbeddedVersion = "embedded-2026-10.1"
 var macHostnameClue = regexp.MustCompile(`(?i)(^|[-_. ])(mac(book|intosh)?|imac)($|[-_. 0-9])`)
 
 type Result struct {
-	Vendor               string   `json:"vendor,omitempty"`
-	Brand                string   `json:"brand,omitempty"`
-	Model                string   `json:"model,omitempty"`
-	DeviceType           string   `json:"device_type,omitempty"`
-	OSFamily             string   `json:"os_family,omitempty"`
-	Confidence           float64  `json:"recognition_confidence"`
-	VendorConfidence     float64  `json:"vendor_confidence"`
-	BrandConfidence      float64  `json:"brand_confidence"`
-	ModelConfidence      float64  `json:"model_confidence"`
-	DeviceTypeConfidence float64  `json:"device_type_confidence"`
-	OSFamilyConfidence   float64  `json:"os_family_confidence"`
-	Source               string   `json:"recognition_source,omitempty"`
-	Version              string   `json:"fingerprint_version,omitempty"`
-	RandomizedMAC        bool     `json:"randomized_mac"`
-	Conflict             bool     `json:"recognition_conflict"`
-	Evidence             []string `json:"recognition_evidence,omitempty"`
+	SourceMatches        []SourceMatch `json:"source_matches,omitempty"`
+	Vendor               string        `json:"vendor,omitempty"`
+	Brand                string        `json:"brand,omitempty"`
+	Model                string        `json:"model,omitempty"`
+	DeviceType           string        `json:"device_type,omitempty"`
+	OSFamily             string        `json:"os_family,omitempty"`
+	Confidence           float64       `json:"recognition_confidence"`
+	VendorConfidence     float64       `json:"vendor_confidence"`
+	BrandConfidence      float64       `json:"brand_confidence"`
+	ModelConfidence      float64       `json:"model_confidence"`
+	DeviceTypeConfidence float64       `json:"device_type_confidence"`
+	OSFamilyConfidence   float64       `json:"os_family_confidence"`
+	Source               string        `json:"recognition_source,omitempty"`
+	Version              string        `json:"fingerprint_version,omitempty"`
+	RandomizedMAC        bool          `json:"randomized_mac"`
+	Conflict             bool          `json:"recognition_conflict"`
+	Evidence             []string      `json:"recognition_evidence,omitempty"`
 }
 
 type Signals struct {
+	ProtocolFields       map[string][]string
 	MAC                  string
 	UserAgents           []string
 	DHCPVendorClass      string
@@ -72,6 +74,7 @@ type Rule struct {
 }
 
 type Library struct {
+	catalog     *Catalog
 	version     string
 	ouis        map[string]string
 	rules       []Rule
@@ -267,6 +270,7 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			result.Brand = normalized
 		}
 	}
+	applySourceMatches(&result, l.Catalog().Match(catalogSignalValues(signals)))
 	return result
 }
 
@@ -376,8 +380,14 @@ func (l *Library) normalizedBrand(vendor string) string {
 }
 
 func mustLoadEmbedded() *Library {
+	if err := VerifyCatalogProvenance(embeddedCatalog, embeddedProvenance); err != nil {
+		panic(err)
+	}
 	l, err := LoadWithDomainData(EmbeddedVersion, embeddedOUI, embeddedRules, []byte("[]"), embeddedBrandAliases, embeddedDomainSignatures)
 	if err != nil {
+		panic(err)
+	}
+	if err := l.LoadCatalog(embeddedCatalog); err != nil {
 		panic(err)
 	}
 	return l

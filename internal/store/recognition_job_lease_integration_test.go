@@ -24,6 +24,9 @@ func recognitionLeasePrivatePostgres(t *testing.T) *DBStore {
 	if _, err = s.pg.db.Exec(schema); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.pg.db.Exec(`ALTER TABLE endpoint_recognition_jobs ADD COLUMN lane smallint NOT NULL DEFAULT 0`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.pg.db.Exec(`INSERT INTO endpoint_entities VALUES('endpoint'); INSERT INTO endpoint_recognition_jobs(endpoint_id) VALUES('endpoint')`); err != nil {
 		t.Fatal(err)
 	}

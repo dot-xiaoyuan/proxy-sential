@@ -52,6 +52,15 @@ func (s *Server) nativeAuthorization(ctx context.Context, a EnforcementAction) e
 	if reviewManual && (current.PolicyParameters.SharedReview == nil || *current.PolicyParameters.SharedReview != *a.PolicyParameters.SharedReview) {
 		return fmt.Errorf("manual grant identity changed")
 	}
+	if connector.ConnectorType == "srun4k" && reviewManual {
+		healthy, healthErr := s.srunEventChannelStatusContext(ctx, a.ConnectorID)
+		if healthErr != nil {
+			return healthErr
+		}
+		if !healthy {
+			return fmt.Errorf("认证处理进度、来源版本或同步心跳未通过检查，暂不可执行")
+		}
+	}
 	if reviewManual {
 		err = s.validateSharedDisconnectDelivery(ctx, current)
 	} else {

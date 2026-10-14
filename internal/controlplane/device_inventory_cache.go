@@ -65,7 +65,7 @@ func (c *deviceInventoryPageCache) getMode(ctx context.Context, key string, refr
 	page, err := load(ctx)
 	c.mu.Lock()
 	flight.page, flight.err = page, err
-	if err == nil {
+	if err == nil && c.ttl > 0 {
 		c.entries[key] = deviceInventoryCacheEntry{page: page, expiresAt: time.Now().Add(c.ttl)}
 	}
 	delete(c.flights, key)

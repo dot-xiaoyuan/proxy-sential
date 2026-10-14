@@ -1,0 +1,26 @@
+[Unit]
+Description=Proxy Sentinel device inventory projection
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proxy-sentinel
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel read-model run --lane inventory --sensor-id ${PROXY_SENTINEL_SENSOR_ID}
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+CPUQuota=100%
+CPUWeight=60
+MemoryMax=512M
+IOWeight=60
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

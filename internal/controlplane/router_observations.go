@@ -110,7 +110,7 @@ func routerObservationQuery(values url.Values) (store.RouterQuery, error) {
 	if role == "" {
 		role = "router"
 	}
-	if role != "router" && role != "ap" && role != "switch" && role != "firewall" && role != "endpoint" && role != "unknown" {
+	if role != "network" && role != "router" && role != "ap" && role != "switch" && role != "firewall" && role != "endpoint" && role != "unknown" {
 		return store.RouterQuery{}, &routerQueryError{message: "role 无效"}
 	}
 	return store.RouterQuery{

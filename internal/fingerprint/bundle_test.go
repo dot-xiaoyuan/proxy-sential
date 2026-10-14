@@ -181,8 +181,8 @@ func TestBuildOfflineBundlePinsSources(t *testing.T) {
 	if !strings.Contains(manifest.Version, "1234567890ab") {
 		t.Fatalf("version is not pinned: %s", manifest.Version)
 	}
-	if manifest.SchemaVersion != BundleSchemaVersionV5 || manifest.Sources[3].Version != "abcdef1234567890" {
-		t.Fatalf("NextDNS source is not pinned in v5 manifest: %+v", manifest)
+	if manifest.SchemaVersion != BundleSchemaVersionV6 || manifest.Sources[3].Version != "abcdef1234567890" {
+		t.Fatalf("NextDNS source is not pinned in v6 manifest: %+v", manifest)
 	}
 	bundle, err := VerifyBundleFile(path)
 	if err != nil || len(bundle.Files["domain-signatures.json"]) == 0 || len(bundle.Files["licenses/NextDNS-MIT.txt"]) == 0 || len(bundle.Files["application-signatures.json"]) == 0 {
@@ -222,4 +222,76 @@ func testBundleBytesVersion(t *testing.T, version string) []byte {
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+func TestV6BuilderPreservesLegacyBundleReaders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	if _, err := BuildEmbeddedBundle(path, "compatibility", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := VerifyBundleFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{BundleSchemaVersionV1, BundleSchemaVersionV2, BundleSchemaVersionV3, BundleSchemaVersionV4, BundleSchemaVersionV5} {
+		names := []string{"oui.csv", "device-rules.json", "fingerbank-dhcp.json", "brand-aliases.json", "licenses/ODbL-1.0.html", "licenses/DbCL-1.0.html", "licenses/NOTICE.txt"}
+		if version != BundleSchemaVersionV1 {
+			names = append(names, "domain-signatures.json")
+		}
+		if version == BundleSchemaVersionV3 || version == BundleSchemaVersionV4 || version == BundleSchemaVersionV5 {
+			names = append(names, "application-signatures.json")
+		}
+		if version == BundleSchemaVersionV5 {
+			names = append(names, "router-rules.json")
+		}
+		manifest := bundle.Manifest
+		manifest.SchemaVersion = version
+		manifest.Files = map[string]BundleFile{}
+		files := map[string][]byte{}
+		for _, name := range names {
+			files[name] = bundle.Files[name]
+		}
+		if version == BundleSchemaVersionV2 || version == BundleSchemaVersionV3 {
+			files["licenses/NextDNS-MIT.txt"] = []byte("MIT License NextDNS")
+			files["licenses/NOTICE.txt"] = append(append([]byte{}, files["licenses/NOTICE.txt"]...), []byte(" NextDNS MIT")...)
+			manifest.Sources = append(append([]BundleSource{}, manifest.Sources...), BundleSource{Name: "NextDNS native-tracking-domains", Version: "test", URL: "https://example.test", License: "MIT"})
+		}
+		for name, data := range files {
+			manifest.Files[name] = bundleFile(data)
+		}
+		data, err := encodeBundle(manifest, files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = VerifyBundleBytes(data); err != nil {
+			t.Fatalf("%s: %v", version, err)
+		}
+	}
+}
+
+func TestExtendKeepsLegacyPayloadAndRejectsBadBase(t *testing.T) {
+	base := testBundleBytes(t)
+	old, err := VerifyBundleBytes(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "v6.tar.gz")
+	if _, err = ExtendOfflineBundle(base, output, "extended", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	next, err := VerifyBundleFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"oui.csv", "device-rules.json", "fingerbank-dhcp.json", "brand-aliases.json"} {
+		if !bytes.Equal(old.Files[name], next.Files[name]) {
+			t.Fatalf("legacy input replaced: %s", name)
+		}
+	}
+	if _, err = ExtendOfflineBundle([]byte("corrupt"), output, "invalid", time.Now()); err == nil {
+		t.Fatal("invalid base accepted")
+	}
+	if after, err := VerifyBundleFile(output); err != nil || after.Manifest.Version != "extended" {
+		t.Fatal("failed extension changed valid bundle", err)
+	}
 }

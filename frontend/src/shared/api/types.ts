@@ -117,6 +117,11 @@ export type DeviceConflict = components['schemas']['DeviceConflict']
 export type IpDeviceInventory = components['schemas']['IpDeviceInventory']
 export type DeviceListResponse = components['schemas']['DeviceListResponse']
 export type DeviceInventoryListItem = components['schemas']['DeviceInventoryListItem']
+export type InventoryDetail = components['schemas']['InventoryDetail']
+export type InventoryAssociation = components['schemas']['InventoryAssociation']
+export type EndpointObservation = components['schemas']['EndpointObservation']
+export type EndpointObservationPage = components['schemas']['EndpointObservationPage']
+export type EndpointObservationQuery = { kind: 'account'|'ip'|'access'; value?:string; source?:string; start?:string; end?:string; cursor?:string; limit?:number }
 export type DeviceInventoryListResponse = components['schemas']['DeviceInventoryListResponse']
 export type DeviceInventoryMetadataResponse = components['schemas']['DeviceInventoryMetadataResponse']
 export type BrandInference = components['schemas']['BrandInference']
@@ -240,6 +245,7 @@ export type DeviceFingerprintBundleManifest = { schema_version: string; version:
 export type DeviceRecognitionSummary = components['schemas']['DeviceRecognitionSummary']
 
 export type DeviceQuery = {
+  search_type?: 'all'|'account'|'ip'|'mac'|'name'
   include_metadata?: boolean
   refresh?: boolean
   view?: 'recent' | 'history'

@@ -32,7 +32,7 @@ func TestIdentityMaterializerReceiptCursorAtomicAndLateReplay(t *testing.T) {
 	}))
 	defer server.Close()
 	backend := &DBStore{pg: pg, ch: &ClickHouseStore{dsn: server.URL, client: server.Client()}}
-	if _, err = backend.processIdentitySignalBatch(ctx, "live"); err == nil {
+	if _, _, err = backend.processIdentitySignalBatch(ctx, "live", identitySignalBatchSize); err == nil {
 		t.Fatal("invalid identity committed")
 	}
 	var cursor time.Time
@@ -41,7 +41,7 @@ func TestIdentityMaterializerReceiptCursorAtomicAndLateReplay(t *testing.T) {
 	}
 	bad = false
 	for i := 0; i < 2; i++ {
-		if _, err = backend.processIdentitySignalBatch(context.Background(), "live"); err != nil {
+		if _, _, err = backend.processIdentitySignalBatch(context.Background(), "live", identitySignalBatchSize); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -76,12 +76,12 @@ func TestIdentityMaterializerEmptyPartitionResumesFromDurableCursor(t *testing.T
 	}))
 	defer server.Close()
 	backend := &DBStore{pg: pg, ch: &ClickHouseStore{dsn: server.URL, client: server.Client()}}
-	if n, err := backend.processIdentitySignalBatch(ctx, "backfill"); err != nil || n != 0 {
+	if n, _, err := backend.processIdentitySignalBatch(ctx, "backfill", identitySignalBatchSize); err != nil || n != 0 {
 		t.Fatalf("empty partition failed: %d %v", n, err)
 	}
 	// Recreate the worker to prove restart resumes from PostgreSQL progress.
 	backend = &DBStore{pg: pg, ch: &ClickHouseStore{dsn: server.URL, client: server.Client()}}
-	if n, err := backend.processIdentitySignalBatch(ctx, "backfill"); err != nil || n != 0 {
+	if n, _, err := backend.processIdentitySignalBatch(ctx, "backfill", identitySignalBatchSize); err != nil || n != 0 {
 		t.Fatalf("restart failed: %d %v", n, err)
 	}
 	var cursor time.Time

@@ -63,6 +63,8 @@ services:
       PROXY_SENTINEL_POSTGRES_DSN: postgres://proxy_sentinel:${DEV184_POSTGRES_PASSWORD}@postgres:5432/proxy_sentinel?sslmode=disable
       PROXY_SENTINEL_CLICKHOUSE_DSN: http://clickhouse:8123/?user=proxy_sentinel&password=${DEV184_CLICKHOUSE_PASSWORD}&database=proxy_sentinel
       PROXY_SENTINEL_ACTION_MASTER_KEY: ${DEV184_ACTION_MASTER_KEY:?}
+      PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED: "true"
+      PROXY_SENTINEL_DEVICE_FINGERPRINT_DIR: /workspace/data/dev184/device-fingerprints
       PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3: "true"
       PROXY_SENTINEL_RECOGNITION_SUMMARY_V1: "true"
       PROXY_SENTINEL_DOMAIN_RECOGNITION_DISABLED: "true"
@@ -80,6 +82,17 @@ services:
       - read-model
       - run
       - --lane=realtime
+      - --sensor-id=${DEV184_SENSOR_ID:?}
+    mem_limit: 1g
+    cpus: "1.0"
+  recognition:
+    extends: {service: backend}
+    container_name: proxy-sentinel-dev184-recognition
+    command:
+      - /workspace/data/dev184/bin/proxy-sentinel
+      - read-model
+      - run
+      - --lane=recognition
       - --sensor-id=${DEV184_SENSOR_ID:?}
     mem_limit: 1g
     cpus: "1.0"

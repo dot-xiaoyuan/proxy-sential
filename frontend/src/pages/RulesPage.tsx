@@ -1,3 +1,4 @@
+import { FingerprintCatalog } from "../features/fingerprints/FingerprintCatalog";
 import { ApplicationLibrary } from "../features/applications/ApplicationLibrary";
 import { useQuery } from '@tanstack/react-query';
 import { request } from '../shared/api/client';
@@ -81,7 +82,8 @@ export function RulesPage() {
               disabled:!can(session.data,'identity:read'),
               children: (
                 <div>
-                  <Typography.Title level={4}>设备特征库</Typography.Title>
+                  <FingerprintCatalog />
+                  <Typography.Title level={4}>指纹包与重算状态</Typography.Title>
                   {fingerprintLibrary.isLoading ? <Skeleton active/> : fingerprintLibrary.isError ? (
                     <Alert
                       showIcon
