@@ -47,7 +47,35 @@ online_members: 0
 
 仓库中实际访问的 Redis 键只有：`list:products`、`list:control`、`list:products:control:<id>`、`hash:control:<id>`、`hash:products:<id>`（目录）与 `list:rad_online`、`hash:rad_online:<id>`、`list:antiproxy:...`（身份）。**没有任何用户组相关的键**——所以"组名"不可能从当前已接入的 Redis 侧补齐，只能来自 4K 北向接口。
 
-所以现场"有 ID、没名称、没层级"不是 bug，而是**只有链路 1 在跑**。你说得对：用户组本来就是带名称的组织树，而且**只需要同步一次**——它属于链路 2 的能力，只是现场没有配置北向接入（`srun4k_integrations` 0 行）。
+所以现场"有 ID、没名称、没层级"不是 bug，而是**只有链路 1 在跑**。
+
+### 2.1 北向接口实测（2026-10-14，从 184 只读探测）
+
+用旧系统遗留的北向配置（`interface.northbound`：`https://222.204.3.227:8001`、app_id/app_secret）从 184 实测：
+
+| 探测 | 结果 |
+| --- | --- |
+| `POST /api/v2/auth/get-access-token` | `code=0`，拿到 471 字符 token —— **凭据可用** |
+| `POST /api/v2/base/get-online-total` | `{"code":0,…,"data":{"online_total":14569}}` —— token 有效 |
+| `GET /api/v2/groups?page=1&per-page=100` | `code=0`，**88 个用户组且全部带中文名**：`{"id":208,"name":"访客"}`、`{"id":209,"name":"教职工"}`、`{"id":211,"name":"学生"}`、`{"id":212,"name":"学生宿舍辅导员"}` …… |
+| ID 对照 | 北向返回的 `208/209/211/212/213…` 与 `srun4k_group_catalog` 里仅有编号的那批**完全对得上** |
+| `per-page=500` | `code=10206`（4K 限制每页 ≤100） |
+| `GET /api/v2/groups/tree`、`/api/v2/groups/detail` | `404` —— 该版本**没有层级接口** |
+| 88 条中的 `pid` / `path` 字段 | **0 条**（`/api/v2/groups` 返回扁平列表） |
+
+结论（修正原先的推测）：
+
+- **名称可以拿到，而且现成可用**：只要把这份组目录同步进 `srun4k_group_catalog`，"组 208"就会变成"访客"。
+- **层级当前拿不到**：这台 4K（`version: v1.5.7`）的 `/api/v2/groups` 不返回 `pid`/`path`，也没有 tree/detail 接口。前端已按 `parent_id` 渲染树的实现会**自动生效**——一旦有层级数据就直接显示层级，没有时就是扁平命名列表。
+
+### 2.2 为什么现在没能同步（配置缺口）
+
+`srunapi` 客户端由**原生配置文件**驱动（`PROXY_SENTINEL_NATIVE_ACTIONS_CONFIG`，`native_config.go`：`endpoint` + `app_id` + `app_secret` + …）。184 上该变量未设置、也没有对应文件，`srun4k_integrations` 与 `enforcement_connectors` 里都没有 4K 接入。因此链路 2 无从启动。
+
+注意：该配置文件同时承载**下线动作**能力（native actions），所以配置它不只是"拿目录名"，而是接通处置通道，需要现场按授权流程单独决策与验收。
+
+**最小可行路径**：新增一条只用于目录读取的北向凭据配置（或允许 4K 接入仅配置北向端点），配一个独立的"同步用户组目录"动作；该动作只调用 `srunapi.Groups()` 并全量替换 `srun4k_group_catalog` 的命名目录，不触发身份轮询、不启用任何处置动作。
+
 
 ## 3. 目录同步的正确设计
 
