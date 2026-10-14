@@ -39,15 +39,22 @@ func TestManagedFourKDirectoryJoinsNamesFromCurrentGroupVersion(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT observed_at,session_count FROM identity_full_snapshots WHERE source=$1 ORDER BY observed_at DESC,received_at DESC LIMIT 1`)).
 		WithArgs("ncu-srun4k").
 		WillReturnRows(sqlmock.NewRows([]string{"observed_at", "session_count"}).AddRow(time.Now().UTC(), 1))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name,parent_id,path FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
 		WithArgs(identityGroupCatalogSource("ncu-srun4k"), managedGroupCatalogSource("ncu-srun4k", 4), "ncu-srun4k").
-		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name"}).
-			AddRow("12", "").
-			AddRow("12", "真实用户组").
-			AddRow("99", "未上线用户组"))
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name", "parent_id", "path"}).
+			AddRow("12", "", "", "").
+			AddRow("12", "真实用户组", "1", "/信息工程学院").
+			AddRow("99", "未上线用户组", "1", "/信息工程学院"))
 	directory, err := loadFourKDirectoryWithGroupSource(context.Background(), db, "ncu-srun4k", "", managedGroupCatalogSource("ncu-srun4k", 4))
 	if err != nil || len(directory.Groups) != 2 || directory.Groups[0].Name != "未上线用户组" || directory.Groups[1].Name != "真实用户组" {
 		t.Fatalf("directory=%+v err=%v", directory, err)
+	}
+	// The tree must survive the merge with the id-only observation: losing the
+	// parent would flatten a real organisational hierarchy in the selector.
+	for _, group := range directory.Groups {
+		if group.ParentID != "1" || group.Path != "/信息工程学院" {
+			t.Fatalf("group tree lost in merge: %+v", group)
+		}
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -71,11 +78,11 @@ func TestGroupDirectoryPrefersNamedEntries(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT observed_at,session_count FROM identity_full_snapshots`)).
 		WithArgs("ncu-srun4k").
 		WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name,parent_id,path FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
 		WithArgs(identityGroupCatalogSource("ncu-srun4k"), "ncu-srun4k", "ncu-srun4k").
-		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name"}).
-			AddRow("12", "真实用户组").
-			AddRow("12", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name", "parent_id", "path"}).
+			AddRow("12", "真实用户组", "1", "/信息工程学院").
+			AddRow("12", "", "", ""))
 	directory, err := loadFourKDirectoryWithGroupSource(context.Background(), db, "ncu-srun4k", "", "ncu-srun4k")
 	if err != nil {
 		t.Fatal(err)

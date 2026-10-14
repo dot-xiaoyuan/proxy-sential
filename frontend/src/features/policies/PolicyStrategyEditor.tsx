@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Alert, Button, Checkbox, Form, Input, InputNumber, Select, Space, Steps, Switch, Typography } from 'antd'
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Select, Space, Steps, Switch, TreeSelect, Typography } from 'antd'
 
 import { request } from '../../shared/api/client'
 import type { components } from '../../shared/api/generated'
 import type { ActionConnector } from '../../shared/api/types'
 import type { FourKDirectory, Policy, Stage } from './api'
+import { groupTreeData } from './directoryTree'
 import { AppFactBar, AppFormModal } from '../../shared/ui'
 
 type TriggerBasis = 'duration' | 'notify' | 'rate_limit'
@@ -176,7 +177,6 @@ function BasisFields({ prefix, allowRate }: { prefix: 'disconnect' | 'rate_limit
 // confirmation an operator would otherwise look for only after saving, and it
 // makes the effect of every field visible while editing.
 type DirectoryOption = { value: string; label: string }
-
 function policySummary(values: StrategyForm | undefined, products: DirectoryOption[], groups: DirectoryOption[]): string {
   const nameOf = (options: DirectoryOption[], id: string) => options.find(item => item.value === id)?.label ?? id
   const scope = [
@@ -223,7 +223,11 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
   const actions = Form.useWatch('actions', form) as ActionEditor | undefined
   const channels = useQuery({ queryKey: ['notifications', 'channels'], queryFn: () => request<components['schemas']['NotificationChannelPage']>('/notifications/channels') })
   const products = useMemo(() => (directory?.products || []).map(item => ({ value: item.id, label: item.name ? `${item.name} (${item.id})` : item.id })), [directory])
-  const groups = useMemo(() => (directory?.groups || []).map(item => ({ value: item.id, label: item.name ? `${item.name} (${item.id})` : item.id })), [directory])
+  const groups = useMemo(() => (directory?.groups || []).map(item => ({ value: item.id, label: item.name ? `${item.name} (${item.id})` : `组 ${item.id}` })), [directory])
+  const groupTree = useMemo(() => groupTreeData(directory?.groups || []), [directory])
+  // Only the northbound catalog carries names and parents; saying so is the
+  // difference between "this group has no name" and "we have not synced it yet".
+  const groupDirectoryHasNames = (directory?.groups || []).some(item => Boolean(item.name))
   const accounts = useMemo(() => (directory?.accounts || []).map(item => ({ value: item.id, label: item.name || item.id })), [directory])
   const vlans = useMemo(() => (directory?.vlans || []).map(item => ({ value: item.id, label: item.name || item.id })), [directory])
   const managedConnectorId = directory?.source.startsWith('srun4k:') ? directory.source.slice('srun4k:'.length) : undefined
@@ -294,7 +298,7 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
         <Typography.Title level={5}>管控目标</Typography.Title>
         <div className="policy-form-grid">
           <Form.Item name={['scope', 'products']} label="选择产品"><Select mode="multiple" loading={directoryLoading} options={products} placeholder="请选择产品" /></Form.Item>
-          <Form.Item name={['scope', 'groups']} label="选择用户组"><Select mode="multiple" loading={directoryLoading} options={groups} placeholder="请选择用户组" /></Form.Item>
+          <Form.Item name={['scope', 'groups']} label="选择用户组" extra={groupDirectoryHasNames ? undefined : '当前只有身份观测到的用户组编号；在「认证与处置接入」配置 4K 北向接入并同步目录后可显示名称与层级'}><TreeSelect multiple loading={directoryLoading} treeData={groupTree} treeDefaultExpandAll showSearch allowClear treeNodeFilterProp="title" placeholder="请选择用户组" /></Form.Item>
         </div>
         {directoryError
           ? <p className="policy-directory-status" role="alert"><span>4K 目录读取失败：{directoryError}</span>{onRetryDirectory && <Button size="small" onClick={onRetryDirectory}>重试</Button>}</p>

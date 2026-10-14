@@ -4048,6 +4048,10 @@ export interface components {
         FourKDirectoryItem: {
             id: string;
             name?: string;
+            /** @description Parent group id for the northbound group tree. Absent for groups that are only observed in identity events. */
+            parent_id?: string;
+            /** @description Human-readable group path from the northbound catalog. Absent for groups that are only observed in identity events. */
+            path?: string;
         };
         FourKDirectory: {
             source: string;

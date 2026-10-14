@@ -10,7 +10,7 @@ export interface Simulation { account_id: string; inventory: Quota; sessions: co
 export interface Execution { proxy_evidence?: ProxyProtocolEvidence[]; execution_id: string; account_id: string; policy_id: string; state: string; episode: number; reasons: string[]; stages: { index: number; status: string; action_ids: string[] }[] }
 export interface ApprovalPreviewData { fingerprint: string; account_id: string; stage_index: number; stage: Stage; evidence_ids: string[]; sessions: {session_id:string;ip:string;campus_id:string;access_domain:string}[] }
 export interface ProductCatalogItem { source: string; product_id: string; name: string; snapshot_id: string; active: boolean; updated_at: string; document: {control_ids?: string[]} }
-export interface FourKDirectoryItem { id:string; name?:string }
+export interface FourKDirectoryItem { id:string; name?:string; parent_id?:string; path?:string }
 export interface FourKDirectory { source:string; products:FourKDirectoryItem[]; groups:FourKDirectoryItem[]; accounts:FourKDirectoryItem[]; vlans:FourKDirectoryItem[]; product_observed_at?:string; identity_observed_at?:string; identity_sessions:number; controls:number; warnings?:string[] }
 export interface ProductPolicyStatus { enabled: boolean; active_products: number; active_controls: number; snapshots: number; last_received_at?: string | null }
 export interface ImportItem { external_type: string; external_id: string; name: string; disposition: 'direct'|'reference_only'|'configuration_required'|'rejected'; reasons: string[]; policy?: Policy }

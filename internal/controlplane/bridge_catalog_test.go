@@ -135,9 +135,9 @@ func TestFourKDirectoryReturnsCatalogWhileBridgeVersionIsZero(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT observed_at,session_count FROM identity_full_snapshots`)).
 		WithArgs("ncu-srun4k").
 		WillReturnRows(sqlmock.NewRows([]string{"observed_at", "session_count"}).AddRow(time.Now().UTC(), 24932))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name,parent_id,path FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
 		WithArgs("ncu-srun4k:identity-observed", "ncu-srun4k", "ncu-srun4k").
-		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name"}).AddRow("208", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name", "parent_id", "path"}).AddRow("208", "", "", ""))
 
 	directory, err := loadFourKDirectoryWithGroupSource(context.Background(), db, source, "", source)
 	if err != nil {

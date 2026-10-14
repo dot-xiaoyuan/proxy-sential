@@ -19,6 +19,11 @@ const defaultFourKSource = "srun-office"
 type fourKDirectoryItem struct {
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
+	// ParentID and Path are set for the northbound group directory, which is a
+	// tree. Groups observed only in identity events carry neither, and the UI
+	// must say so rather than present a bare id as a complete entry.
+	ParentID string `json:"parent_id,omitempty"`
+	Path     string `json:"path,omitempty"`
 }
 
 type fourKDirectory struct {
@@ -147,35 +152,50 @@ func loadFourKDirectoryWithGroupSource(ctx context.Context, db *sql.DB, source, 
 	return directory, nil
 }
 
-// loadGroupDirectory merges the named northbound catalog with the groups that
-// identity snapshots observed online. Both are keyed by group id, and a named
-// entry always wins over an id-only entry.
+// loadGroupDirectory merges the named northbound group tree with the groups that
+// identity snapshots observed online. Both are keyed by group id. The named,
+// parented entry from the northbound catalog always wins: identity only ever
+// knows an id, and losing a name or a parent to a weaker observation would make
+// the selector show a bare number for a group that has a real name.
 func loadGroupDirectory(ctx context.Context, db *sql.DB, source, groupSource string) ([]fourKDirectoryItem, error) {
-	rows, err := db.QueryContext(ctx, `SELECT group_id,name FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`,
+	rows, err := db.QueryContext(ctx, `SELECT group_id,name,parent_id,path FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`,
 		identityGroupCatalogSource(source), groupSource, source)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	names := map[string]string{}
+	type groupEntry struct{ name, parentID, path string }
+	entries := map[string]groupEntry{}
+	strength := func(entry groupEntry) int {
+		score := 0
+		if entry.name != "" {
+			score += 2
+		}
+		if entry.parentID != "" || entry.path != "" {
+			score++
+		}
+		return score
+	}
 	for rows.Next() {
-		var id, name string
-		if err = rows.Scan(&id, &name); err != nil {
+		var id string
+		var entry groupEntry
+		if err = rows.Scan(&id, &entry.name, &entry.parentID, &entry.path); err != nil {
 			return nil, err
 		}
 		if id == "" {
 			continue
 		}
-		if existing, ok := names[id]; !ok || existing == "" {
-			names[id] = name
+		existing, ok := entries[id]
+		if !ok || strength(entry) > strength(existing) {
+			entries[id] = entry
 		}
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	items := make([]fourKDirectoryItem, 0, len(names))
-	for id, name := range names {
-		items = append(items, fourKDirectoryItem{ID: id, Name: name})
+	items := make([]fourKDirectoryItem, 0, len(entries))
+	for id, entry := range entries {
+		items = append(items, fourKDirectoryItem{ID: id, Name: entry.name, ParentID: entry.parentID, Path: entry.path})
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Name != items[j].Name {

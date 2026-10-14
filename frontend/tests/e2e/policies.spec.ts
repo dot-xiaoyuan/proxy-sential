@@ -23,6 +23,13 @@ for(const width of [390,1280,1440]) test(`policy forms and inventory ${width}`,a
  // directory bug made this impossible while the option list looked fine.
  await product.click()
  await page.keyboard.press('Escape')
+ // The group selector is a tree: the nested group must be reachable and must
+ // land in the policy scope with its real name.
+ await page.getByRole('dialog').getByLabel('选择用户组').click()
+ const nestedGroup=page.getByText('网络中心',{exact:true}).last()
+ await expect(nestedGroup).toBeVisible()
+ await nestedGroup.click()
+ await page.keyboard.press('Escape')
  await page.getByRole('dialog').getByRole('button',{name:'下一步'}).click()
  await expect(page.getByRole('dialog').getByText('设备数量或已绑定的路由器证据满足任意一项就会触发',{exact:true})).toBeVisible()
  await page.getByRole('dialog').getByLabel('全部设备数大于').fill('3')
@@ -30,6 +37,7 @@ for(const width of [390,1280,1440]) test(`policy forms and inventory ${width}`,a
  await page.getByRole('dialog').getByLabel('移动设备数量大于').fill('2')
  // The summary must track the form, otherwise it is worse than no summary.
  await expect(page.getByRole('dialog').locator('.policy-summary')).toContainText('办公室上网产品 (office-product-001)')
+ await expect(page.getByRole('dialog').locator('.policy-summary')).toContainText('网络中心')
  await expect(page.getByRole('dialog').locator('.policy-summary')).toContainText('全部设备数 > 3')
  await page.getByRole('dialog').getByRole('button',{name:'下一步'}).click()
  await page.getByRole('dialog').getByRole('switch',{name:'强制下线'}).click()
