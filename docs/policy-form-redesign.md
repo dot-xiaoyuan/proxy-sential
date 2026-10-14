@@ -99,6 +99,18 @@ PROXY_SENTINEL_POSTGRES_DSN=... srun-group-directory-sync \
 
 > 注意两点：该 4K 部署的证书不被系统信任，故需 `-insecure-skip-verify`；其 `/api/v2/groups` 仍不返回 `pid`，所以同步进来的是**带名称的扁平列表**，不是树。
 
+184 现场的实际调用（凭据已归置到现场 secrets 目录，权限 600）：
+
+```bash
+D=/opt/proxy-sentinel/incoming/group-sync
+export PROXY_SENTINEL_POSTGRES_DSN="$(grep '^PROXY_SENTINEL_POSTGRES_DSN=' /opt/proxy-sentinel/config/runtime.env | cut -d= -f2- | tr -d "'\"")"
+"$D/srun-group-directory-sync" -endpoint https://222.204.3.227:8001 \
+  -app-id "$(cat "$D/app-id")" \
+  -app-secret-file /opt/proxy-sentinel/secrets/srun-northbound-app-secret \
+  -source ncu-srun4k -insecure-skip-verify
+```
+
+
 
 
 ## 3. 目录同步的正确设计
