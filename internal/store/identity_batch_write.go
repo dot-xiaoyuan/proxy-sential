@@ -161,7 +161,24 @@ ON CONFLICT(event_id) DO UPDATE SET
   source = EXCLUDED.source,
   last_seen = GREATEST(identity_access_history.last_seen, EXCLUDED.last_seen),
   identity_confidence = GREATEST(identity_access_history.identity_confidence, EXCLUDED.identity_confidence),
-  event_ids_sample = EXCLUDED.event_ids_sample`,
+  event_ids_sample = EXCLUDED.event_ids_sample
+-- No-op guard, same rationale as identity_ip_mac_history and endpoint_entities: this table
+-- carries inventory_projection_change, so replaying an event used to write an identical row
+-- version and re-dirty the endpoint's inventory projection for nothing. Each predicate
+-- mirrors exactly one assignment above.
+WHERE identity_access_history.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id
+   OR identity_access_history.account_id IS DISTINCT FROM EXCLUDED.account_id
+   OR identity_access_history.entity_role IS DISTINCT FROM EXCLUDED.entity_role
+   OR identity_access_history.access_id IS DISTINCT FROM EXCLUDED.access_id
+   OR identity_access_history.access_type IS DISTINCT FROM EXCLUDED.access_type
+   OR identity_access_history.ap IS DISTINCT FROM EXCLUDED.ap
+   OR identity_access_history.switch_id IS DISTINCT FROM EXCLUDED.switch_id
+   OR identity_access_history.switch_port IS DISTINCT FROM EXCLUDED.switch_port
+   OR identity_access_history.vlan IS DISTINCT FROM EXCLUDED.vlan
+   OR identity_access_history.source IS DISTINCT FROM EXCLUDED.source
+   OR EXCLUDED.last_seen > identity_access_history.last_seen
+   OR EXCLUDED.identity_confidence > identity_access_history.identity_confidence
+   OR identity_access_history.event_ids_sample IS DISTINCT FROM EXCLUDED.event_ids_sample`,
 		eventID, endpointID, accountID, entityRole, accessID, accessType, ap, switchID, switchPort, vlan, source,
 		firstSeen, lastSeen, confidence, sample, campusID, buildingID, networkZoneID, ssid, nasIP)
 	return err
@@ -361,7 +378,32 @@ ON CONFLICT(session_id) DO UPDATE SET
   ap = COALESCE(EXCLUDED.ap, account_sessions.ap),
   nas_ip = COALESCE(EXCLUDED.nas_ip, account_sessions.nas_ip),
   session_status = COALESCE(EXCLUDED.session_status, account_sessions.session_status),
-  updated_at = now()`,
+  updated_at = now()
+-- No-op guard. account_sessions carries inventory_projection_change, and this upsert runs on
+-- every identity event, so an unchanged replay wrote a full row version plus every index
+-- entry and re-dirtied the projection. Assignments that preserve the stored value when the
+-- incoming one is NULL reduce to "the incoming value is present and different"; the rest
+-- mirror their assignment directly. updated_at is deliberately absent: it must only move
+-- when something else does.
+WHERE account_sessions.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id
+   OR account_sessions.ip IS DISTINCT FROM EXCLUDED.ip
+   OR account_sessions.mac IS DISTINCT FROM EXCLUDED.mac
+   OR account_sessions.access_id IS DISTINCT FROM EXCLUDED.access_id
+   OR account_sessions.source IS DISTINCT FROM EXCLUDED.source
+   OR EXCLUDED.started_at < account_sessions.started_at
+   OR (EXCLUDED.ended_at IS NOT NULL AND account_sessions.ended_at IS DISTINCT FROM EXCLUDED.ended_at)
+   OR EXCLUDED.identity_confidence > account_sessions.identity_confidence
+   OR account_sessions.raw_ref IS DISTINCT FROM account_sessions.raw_ref || EXCLUDED.raw_ref
+   OR (EXCLUDED.person_type IS NOT NULL AND account_sessions.person_type IS DISTINCT FROM EXCLUDED.person_type)
+   OR (EXCLUDED.department IS NOT NULL AND account_sessions.department IS DISTINCT FROM EXCLUDED.department)
+   OR (EXCLUDED.campus_id IS NOT NULL AND account_sessions.campus_id IS DISTINCT FROM EXCLUDED.campus_id)
+   OR (EXCLUDED.building_id IS NOT NULL AND account_sessions.building_id IS DISTINCT FROM EXCLUDED.building_id)
+   OR (EXCLUDED.network_zone_id IS NOT NULL AND account_sessions.network_zone_id IS DISTINCT FROM EXCLUDED.network_zone_id)
+   OR (EXCLUDED.ssid IS NOT NULL AND account_sessions.ssid IS DISTINCT FROM EXCLUDED.ssid)
+   OR (EXCLUDED.vlan IS NOT NULL AND account_sessions.vlan IS DISTINCT FROM EXCLUDED.vlan)
+   OR (EXCLUDED.ap IS NOT NULL AND account_sessions.ap IS DISTINCT FROM EXCLUDED.ap)
+   OR (EXCLUDED.nas_ip IS NOT NULL AND account_sessions.nas_ip IS DISTINCT FROM EXCLUDED.nas_ip)
+   OR (EXCLUDED.session_status IS NOT NULL AND account_sessions.session_status IS DISTINCT FROM EXCLUDED.session_status)`,
 		sessionID, accountID, endpointID, ip, mac, accessID, source, startedAt, endedAt, endedValid, confidence, rawRef,
 		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus)
 	if err != nil {
@@ -375,7 +417,12 @@ ON CONFLICT(session_id) DO UPDATE SET
 UPDATE account_sessions s SET policy_metadata = NULLIF(v.metadata,'')::jsonb
 FROM (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS t(session_id, metadata, confirmed_at)) v
 WHERE s.session_id = v.session_id
-  AND COALESCE(NULLIF(s.policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz) <= COALESCE(NULLIF(v.confirmed_at,'')::timestamptz,'-infinity'::timestamptz)`,
+  AND COALESCE(NULLIF(s.policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz) <= COALESCE(NULLIF(v.confirmed_at,'')::timestamptz,'-infinity'::timestamptz)
+  -- This statement runs after the guarded upsert above and would undo its effect: a replay
+  -- still satisfies the ordering test and rewrote policy_metadata with an identical value,
+  -- which writes a row version and fires inventory_projection_change (this table carries
+  -- it). Skip rows whose stored metadata already equals the incoming document.
+  AND s.policy_metadata IS DISTINCT FROM NULLIF(v.metadata,'')::jsonb`,
 		sessionID, metadata, confirmedAt)
 	return err
 }
