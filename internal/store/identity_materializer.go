@@ -34,6 +34,12 @@ const identityWorkBudget = 60 * time.Second
 // contended lock still leaves time to read ClickHouse and write the batch.
 const identityLockWaitBudget = 8 * time.Second
 
+// identityHealthInterval throttles the lane's read_model_runtime_state beacon. The loop
+// runs about once a second, and one autocommit per iteration measured 245 ms against a
+// `commit` that already cost 228 ms on the field, so the beacon alone consumed roughly a
+// fifth of the lane's database time.
+const identityHealthInterval = 10 * time.Second
+
 // nextIdentityBatchSize shrinks the batch after a timeout and grows it after a full batch.
 // Other failures keep the size: they are data errors, and shrinking would only make the
 // worker retry the same broken row more often.
@@ -288,6 +294,7 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 		}
 	}()
 	batchSize := identitySignalBatchSize
+	var lastHealth time.Time
 	for ctx.Err() == nil {
 		if s.deferIdentityDerivedWork(ctx) {
 			continue
@@ -313,12 +320,24 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 			status["last_error"] = err.Error()
 			fmt.Fprintln(os.Stderr, "identity materializer:", err)
 		}
-		raw, _ := json.Marshal(status)
-		health, c := context.WithTimeout(ctx, 5*time.Second)
-		_, healthErr := s.pg.db.ExecContext(health, `INSERT INTO read_model_runtime_state(name,state) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, options.HealthName, raw)
-		c()
-		if healthErr != nil && ctx.Err() == nil {
-			fmt.Fprintln(os.Stderr, "identity health:", healthErr)
+		// The beacon is advisory, and this loop runs about once a second. Writing it every
+		// iteration made one autocommit per second: the field measured 90 writes in 100
+		// seconds at 245 ms each, ~22% of the lane's database time, on top of a `commit`
+		// that already cost 228 ms. Write at most every identityHealthInterval, and always
+		// immediately on failure so an error never waits for the next tick.
+		if err == nil && time.Since(lastHealth) < identityHealthInterval {
+			// Skip the beacon, but keep the loop's normal pacing below.
+		} else {
+			raw, _ := json.Marshal(status)
+			health, c := context.WithTimeout(ctx, 5*time.Second)
+			_, healthErr := s.pg.db.ExecContext(health, `INSERT INTO read_model_runtime_state(name,state) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, options.HealthName, raw)
+			c()
+			if healthErr != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "identity health:", healthErr)
+			}
+			if healthErr == nil {
+				lastHealth = time.Now()
+			}
 		}
 		delay := time.Second
 		if err != nil {
