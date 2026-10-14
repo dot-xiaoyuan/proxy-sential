@@ -28,6 +28,8 @@
 | 11 | `shared_buffers` 仅 1 GB（容器 16 GB），而热表约 20 GB：`identity_ip_mac_history` 堆未命中 23.7%、`identity_access_history` 71.3%，identity 写入几乎都在盘上随机 I/O | `ALTER SYSTEM SET shared_buffers='4GB'`、`effective_cache_size='16GB'`（持久化在容器 PGDATA 的 `postgresql.auto.conf`，需重启生效） | 触发器单次 7.26 → **0.348 ms**（21×）；`endpoint_entities` 5 分钟更新 2,300 → **4,105**（1.7×）；冻结 1 小时的 `ncu-184-router-pilot` lane **恢复推进** |
 | 12 | `idx_ip_history_endpoint_has_ip`（90 MB，`idx_scan=0`）前导列与 `idx_ip_history_endpoint_list_cover` 相同且被其完全覆盖 | PG 迁移 126 删除（现场以 `CONCURRENTLY` 先删） | 该表索引 6 → 5 个，每次写入少维护一个盘上索引 |
 
+| 13 | 缓存仍不足以覆盖工作集：`shared_buffers` 4 GB vs `identity_ip_mac_history` 堆 9.1 GB + 索引 6.4 GB（工作集约 15.5 GB） | `shared_buffers` 4 → **8 GB**、`effective_cache_size` 16 → 32 GB；PG 容器内存上限 16 → 24 GB | `endpoint_entities` 5 分钟更新 785 → **1,362/分钟**（再 1.7×）；`readyz=200`、无新增失败单元 |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -234,6 +236,49 @@ Seq Scan on shared_device_profiles  (actual time=0.028..7.028 rows=1 loops=1)
 因为每次写入仍要维护 5 个盘上索引并产生 WAL；缓存未命中仍偏高
 （`account_identity_session_projection` 堆未命中 93%）。这条路径距离 AGENTS.md 要求的
 容量基线仍有数量级差距，主要受事件量与磁盘带宽约束。
+
+### 逐语句归因：批量插入 identity_ip_mac_history 是单一最大瓶颈（2026-10-14，第 18 轮）
+
+第 17 轮把缓存从 1 GB 提到 4 GB 后仍有约 19 事件/秒的上限。这一轮改用**不重启**的归因方法：
+临时打开 `log_min_duration_statement`（`ALTER SYSTEM` + `pg_reload_conf`，采集 100 秒后复位），
+直接读每条语句的 `duration:`。
+
+结果（100 秒窗口，>200 ms 的语句）：
+
+| 语句 | 次数 | 平均 |
+|---|---|---|
+| `INSERT INTO identity_ip_mac_history(...) SELECT ... FROM unnest(...)`（prepared `stmtcache_643f147e…`） | 69 | **1,364 ms**（最慢 4,033 ms） |
+| `commit` | 112 | 228 ms |
+| `INSERT INTO read_model_runtime_state` | 90 | 245 ms |
+| `UPDATE shared_device_profile_runtime SET last_success_at=now()…` | 44 | **431 ms** |
+| `INSERT INTO endpoint_inventory_contributions` | 43 | 265 ms |
+
+即 identity 相位的时间几乎全在**一条**批量插入语句上：该表堆 9.1 GB、索引 6.4 GB，而
+`shared_buffers` 只有 4 GB，于是每行插入的 5 个索引页大多要落盘随机 I/O。
+
+同时确认两个随之而来的现象：
+1. **身份写锁仍 100% 被占用**（6 次采样全部“被持有”），物化器批次因此 `timeout: context
+   deadline exceeded`，自适应批次从 2,000 一路缩到 500 / 300——这就是它只能跑约 19 事件/秒的原因。
+2. `shared_device_profile_runtime` 是一个**单行热点**：多个后端同时阻塞在
+   `Lock/tuple` / `Lock/transactionid` 上等这条 `WHERE singleton` 的 UPDATE（每次 431 ms）。
+   同一个文件第 801 行已经用了节流写法（`AND updated_at<now()-interval '5 seconds'`），
+   第 720/738 行的**按 job** 更新没有节流，是下一个可改点。
+
+**本轮改动与实测**：`shared_buffers` 4 → 8 GB、`effective_cache_size` 16 → 32 GB，
+PG 容器内存上限 16 → 24 GB（`docker update`）。实测 `endpoint_entities` 5 分钟更新
+785 → **1,362/分钟**（再 1.7×），`readyz=200`，无新增失败单元。
+
+**运维发现（重要）**：`docker restart` 会走崩溃恢复，实测约 150 秒；改用
+`docker exec -u postgres … pg_ctl stop -m fast -D "$(SHOW data_directory)"` 干净关机后再
+`docker start`，实测**关机 101 秒、启动仅 5 秒就绪**，且不会触发崩溃恢复。
+注意必须以 `postgres` 用户执行（root 会被拒绝），且数据目录是
+`/var/lib/postgresql/data/pgdata` 而不是 `/var/lib/postgresql/data`。
+
+**下一步（按预期收益排序）**：
+1. `identity_ip_mac_history` 按天分区——新行只写小分区、索引可全部驻留缓存，
+   这是这类追加型历史表的教科书解法，但需要一次性重建（约 9 GB 堆 + 6.4 GB 索引）。
+2. `shared_buffers` 再提到 12 GB（容器已是 24 GB），工作集 15.5 GB 可覆盖大部分。
+3. 给 `shared_device_profile_runtime` 的按 job 更新加节流，去掉单行热点。
 
 ## 恢复采集前的检查清单
 
