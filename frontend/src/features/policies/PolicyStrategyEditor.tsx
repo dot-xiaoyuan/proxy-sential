@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Steps, Switch, Typography } from 'antd'
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Select, Space, Steps, Switch, Typography } from 'antd'
 
 import { request } from '../../shared/api/client'
 import type { components } from '../../shared/api/generated'
 import type { ActionConnector } from '../../shared/api/types'
 import type { FourKDirectory, Policy, Stage } from './api'
-import { AppFactBar } from '../../shared/ui'
+import { AppFactBar, AppFormModal } from '../../shared/ui'
 
 type TriggerBasis = 'duration' | 'notify' | 'rate_limit'
 
@@ -171,10 +171,13 @@ function BasisFields({ prefix, allowRate }: { prefix: 'disconnect' | 'rate_limit
   </div>
 }
 
-export function PolicyStrategyEditor({ policy, creating, directory, connectors, saving, onCancel, onSave }: {
+export function PolicyStrategyEditor({ policy, creating, directory, directoryError, directoryLoading, onRetryDirectory, connectors, saving, onCancel, onSave }: {
   policy: Policy
   creating: boolean
   directory?: FourKDirectory
+  directoryError?: string
+  directoryLoading?: boolean
+  onRetryDirectory?: () => void
   connectors: ActionConnector[]
   saving: boolean
   onCancel: () => void
@@ -182,6 +185,7 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
 }) {
   const [form] = Form.useForm<StrategyForm>()
   const [step, setStep] = useState(0)
+  const stepRef = useRef<HTMLDivElement>(null)
   const actions = Form.useWatch('actions', form) as ActionEditor | undefined
   const channels = useQuery({ queryKey: ['notifications', 'channels'], queryFn: () => request<components['schemas']['NotificationChannelPage']>('/notifications/channels') })
   const products = useMemo(() => (directory?.products || []).map(item => ({ value: item.id, label: item.name ? `${item.name} (${item.id})` : item.id })), [directory])
@@ -189,6 +193,9 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
   const accounts = useMemo(() => (directory?.accounts || []).map(item => ({ value: item.id, label: item.name || item.id })), [directory])
   const vlans = useMemo(() => (directory?.vlans || []).map(item => ({ value: item.id, label: item.name || item.id })), [directory])
   const managedConnectorId = directory?.source.startsWith('srun4k:') ? directory.source.slice('srun4k:'.length) : undefined
+  // The server states why a selector is empty; without it a blank dropdown
+  // cannot be told apart from a failed directory read.
+  const directoryWarnings = directory?.warnings ?? []
 
   useEffect(() => {
     const nextActions = actionValues(policy)
@@ -203,6 +210,12 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
     form.setFieldsValue({ ...scopedPolicy, actions: nextActions })
     setStep(0)
   }, [connectors, directory?.source, form, managedConnectorId, policy])
+
+  // Each step is a fresh screen on a phone; keeping the previous scroll offset
+  // hides the fields the operator just navigated to.
+  useEffect(() => {
+    stepRef.current?.closest('.ant-modal-body')?.scrollTo({ top: 0 })
+  }, [step])
 
   const next = async () => {
     const fields = step === 0 ? [['name'], ['scope', 'products'], ['scope', 'groups'], ['scope', 'vlans']] : [['limits', 'total'], ['limits', 'mobile'], ['limits', 'pc'], ['limits', 'router']]
@@ -223,13 +236,14 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
     onSave(buildPolicy(policy, values))
   }
 
-  return <Modal className="policy-modal policy-strategy-modal" title={creating ? '新增设备配额策略' : '编辑设备配额策略'} open width={900} destroyOnHidden onCancel={onCancel} footer={
+  return <AppFormModal className="policy-strategy-modal" title={creating ? '新增设备配额策略' : '编辑设备配额策略'} open width={900} destroyOnHidden onCancel={onCancel} footer={
     <Space wrap className="policy-editor-footer">
       <Button onClick={onCancel}>返回列表</Button>
       {step > 0 && <Button onClick={() => setStep(current => current - 1)}>上一步</Button>}
       {step < 2 ? <Button type="primary" onClick={() => void next()}>下一步</Button> : <Button type="primary" loading={saving} onClick={() => void finish()}>保存设置</Button>}
     </Space>
   }>
+    <div ref={stepRef}>
     <Steps className="policy-editor-steps" current={step} responsive items={[{ title: '策略信息' }, { title: '配额超限认定条件' }, { title: '配额超限处理动作' }]} />
     <Form form={form} layout="vertical" className="policy-editor-form">
       <section className={step === 0 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 0}>
@@ -239,11 +253,19 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
         <Form.Item name="mode" label="运行模式" rules={[{required:true}]}><Select options={[{value:'automatic',label:'真实执行'},{value:'observe',label:'仅记录'},{value:'manual',label:'人工确认'}]} /></Form.Item>
         <Typography.Title level={5}>管控目标</Typography.Title>
         <div className="policy-form-grid">
-          <Form.Item name={['scope', 'products']} label="选择产品"><Select mode="multiple" options={products} placeholder="请选择产品" /></Form.Item>
-          <Form.Item name={['scope', 'groups']} label="选择用户组"><Select mode="multiple" options={groups} placeholder="请选择用户组" /></Form.Item>
-          <Form.Item name={['scope', 'vlans']} label="VLAN"><Select mode="tags" options={vlans} tokenSeparators={[',']} placeholder="选择或输入VLAN" /></Form.Item>
-          <Form.Item name={['scope', 'accounts']} label="限定账号"><Select mode="tags" options={accounts} tokenSeparators={[',']} placeholder="选择或输入账号" /></Form.Item>
+          <Form.Item name={['scope', 'products']} label="选择产品"><Select mode="multiple" loading={directoryLoading} options={products} placeholder="请选择产品" /></Form.Item>
+          <Form.Item name={['scope', 'groups']} label="选择用户组"><Select mode="multiple" loading={directoryLoading} options={groups} placeholder="请选择用户组" /></Form.Item>
         </div>
+        {directoryError
+          ? <p className="policy-directory-status" role="alert"><span>4K 目录读取失败：{directoryError}</span>{onRetryDirectory && <Button size="small" onClick={onRetryDirectory}>重试</Button>}</p>
+          : directoryWarnings.length > 0 && <AppFactBar items={directoryWarnings} />}
+        <details className="policy-advanced-scope">
+          <summary>高级匹配（可选）</summary>
+          <div className="policy-form-grid">
+            <Form.Item name={['scope', 'vlans']} label="VLAN"><Select mode="tags" options={vlans} tokenSeparators={[',']} placeholder="选择或输入VLAN" /></Form.Item>
+            <Form.Item name={['scope', 'accounts']} label="限定账号"><Select mode="tags" options={accounts} tokenSeparators={[',']} placeholder="选择或输入账号" /></Form.Item>
+          </div>
+        </details>
       </section>
       <section className={step === 1 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 1}>
         <Typography.Title level={5}>配额超限认定条件</Typography.Title>
@@ -282,5 +304,6 @@ export function PolicyStrategyEditor({ policy, creating, directory, connectors, 
         </article>
       </section>
     </Form>
-  </Modal>
+    </div>
+  </AppFormModal>
 }

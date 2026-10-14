@@ -4061,6 +4061,8 @@ export interface components {
             identity_observed_at?: string;
             identity_sessions: number;
             controls: number;
+            /** @description Why a selector is empty. An empty list without a warning would be indistinguishable from a failed directory read. */
+            warnings?: string[];
         };
         SRun4KIntegrationRequest: {
             /**

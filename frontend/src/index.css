@@ -1970,6 +1970,106 @@ pre.wrap-code {
   font-weight: 600;
 }
 
+/* Configuration form shell. Wider viewports keep the centred dialog with a
+   single scrolling body; below 560px (the same breakpoint where the policy
+   form grids collapse) it becomes a full-height sheet with a sticky header and
+   footer, so a long form never hides its primary action behind a scroll. */
+.app-form-modal .ant-modal-body {
+  max-height: calc(100dvh - 180px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-inline-end: 8px;
+}
+
+.app-form-modal .ant-modal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.app-form-modal .ant-btn,
+.app-form-modal .ant-tag,
+.app-form-modal .ant-switch {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .app-form-modal {
+    top: 0;
+    padding-bottom: 0;
+  }
+
+  .app-form-modal .ant-modal {
+    top: 0;
+    width: 100% !important;
+    max-width: 100%;
+    margin: 0;
+    padding-bottom: 0;
+  }
+
+  .app-form-modal .ant-modal-container {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: 0;
+    border-radius: 0;
+  }
+
+  .app-form-modal .ant-modal-header {
+    flex: none;
+    margin: 0;
+    padding: 14px 16px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .app-form-modal .ant-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    padding: 14px 16px 16px;
+    overscroll-behavior: contain;
+  }
+
+  .app-form-modal .ant-modal-footer {
+    flex: none;
+    position: sticky;
+    bottom: 0;
+    margin: 0;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: #ffffff;
+    border-top: 1px solid #e2e8f0;
+  }
+}
+
+/* Directory state for scope selectors: an empty list must explain itself. */
+.policy-directory-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: #b42318;
+}
+
+.policy-advanced-scope {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.policy-advanced-scope > summary {
+  cursor: pointer;
+  color: #334155;
+  font-weight: 600;
+}
+
+.policy-advanced-scope[open] > summary {
+  margin-bottom: 12px;
+}
+
 .section-toolbar-spaced {
   margin-top: 16px;
 }
@@ -3420,7 +3520,10 @@ pre.wrap-code {
 .policy-editor-footer { width: 100%; justify-content: flex-end; }
 .policy-strategy-modal .ant-btn, .policy-strategy-modal .ant-tag, .policy-strategy-modal .ant-switch { white-space: nowrap; flex-shrink: 0; }
 @media (max-width: 560px) {
-  .policy-editor-steps .ant-steps-item-title { font-size: 12px; }
+  /* narrow screens stack the steps, so every title has a full row: keep it on
+     one line instead of letting CJK wrap one character per line. */
+  .policy-editor-steps .ant-steps-item-title { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .policy-editor-steps .ant-steps-item { padding-inline-end: 4px; }
   .policy-condition-grid, .policy-action-fields { grid-template-columns: minmax(0, 1fr); }
   .policy-condition-or { padding: 0; }
   .policy-action-card { padding: 14px; }

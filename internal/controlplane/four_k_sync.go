@@ -31,6 +31,9 @@ type fourKDirectory struct {
 	IdentityObservedAt *time.Time           `json:"identity_observed_at,omitempty"`
 	IdentitySessions   int                  `json:"identity_sessions"`
 	Controls           int                  `json:"controls"`
+	// Warnings explains an empty selector. A blank list otherwise cannot be told
+	// apart from a failed directory read.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func fourKSyncPath(path string) (string, bool) {
@@ -123,56 +126,75 @@ func loadFourKDirectoryWithGroupSource(ctx context.Context, db *sql.DB, source, 
 		directory.ProductObservedAt = &productObserved
 	}
 
-	var identityRaw []byte
+	// Only scalar columns are read here. The snapshot document is the entire
+	// online inventory — tens of thousands of events and several megabytes — so
+	// deserializing it to build a selector list made every directory request
+	// unusably slow on a production-sized site. The compact group directory is
+	// maintained when the snapshot is committed instead.
 	var identityObserved time.Time
-	err = db.QueryRowContext(ctx, `SELECT document,observed_at,session_count FROM identity_full_snapshots WHERE source=$1 ORDER BY observed_at DESC,received_at DESC LIMIT 1`, source).Scan(&identityRaw, &identityObserved, &directory.IdentitySessions)
-	if err == sql.ErrNoRows {
-		return directory, nil
+	err = db.QueryRowContext(ctx, `SELECT observed_at,session_count FROM identity_full_snapshots WHERE source=$1 ORDER BY observed_at DESC,received_at DESC LIMIT 1`, source).Scan(&identityObserved, &directory.IdentitySessions)
+	if err != nil && err != sql.ErrNoRows {
+		return directory, err
 	}
+	if err == nil {
+		directory.IdentityObservedAt = &identityObserved
+	}
+
+	directory.Groups, err = loadGroupDirectory(ctx, db, source, groupSource)
 	if err != nil {
 		return directory, err
 	}
-	directory.IdentityObservedAt = &identityObserved
-	var snapshot store.IdentitySnapshot
-	if err = json.Unmarshal(identityRaw, &snapshot); err != nil {
-		return directory, err
-	}
-	directory.Accounts, directory.Groups, directory.VLANs = fourKIdentityDirectory(snapshot)
-	// The identity snapshot tells us which groups are currently online, but it
-	// is not a directory.  Load the complete active northbound group catalog so
-	// an operator can choose a real group before any member of that group happens
-	// to be online.  Merge the snapshot IDs as a fallback for a just-arrived
-	// identity event whose catalog refresh has not completed yet.
-	groupRows, groupErr := db.QueryContext(ctx, `SELECT group_id,name FROM srun4k_group_catalog WHERE source=$1 AND active ORDER BY group_id`, groupSource)
-	if groupErr == nil {
-		names := map[string]string{}
-		for groupRows.Next() {
-			var id, name string
-			if groupRows.Scan(&id, &name) == nil {
-				names[id] = name
-			}
-		}
-		groupRows.Close()
-		for i := range directory.Groups {
-			directory.Groups[i].Name = names[directory.Groups[i].ID]
-		}
-		known := map[string]bool{}
-		for _, item := range directory.Groups {
-			known[item.ID] = true
-		}
-		for id, name := range names {
-			if !known[id] {
-				directory.Groups = append(directory.Groups, fourKDirectoryItem{ID: id, Name: name})
-			}
-		}
-		sort.Slice(directory.Groups, func(i, j int) bool {
-			if directory.Groups[i].Name != directory.Groups[j].Name {
-				return directory.Groups[i].Name < directory.Groups[j].Name
-			}
-			return directory.Groups[i].ID < directory.Groups[j].ID
-		})
-	}
 	return directory, nil
+}
+
+// loadGroupDirectory merges the named northbound catalog with the groups that
+// identity snapshots observed online. Both are keyed by group id, and a named
+// entry always wins over an id-only entry.
+func loadGroupDirectory(ctx context.Context, db *sql.DB, source, groupSource string) ([]fourKDirectoryItem, error) {
+	rows, err := db.QueryContext(ctx, `SELECT group_id,name FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`,
+		identityGroupCatalogSource(source), groupSource, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := map[string]string{}
+	for rows.Next() {
+		var id, name string
+		if err = rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		if id == "" {
+			continue
+		}
+		if existing, ok := names[id]; !ok || existing == "" {
+			names[id] = name
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	items := make([]fourKDirectoryItem, 0, len(names))
+	for id, name := range names {
+		items = append(items, fourKDirectoryItem{ID: id, Name: name})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Name != items[j].Name {
+			return items[i].Name < items[j].Name
+		}
+		return items[i].ID < items[j].ID
+	})
+	return items, nil
+}
+
+// identityGroupCatalogSource namespaces the groups observed in identity
+// snapshots. Identity only knows which groups are online, never the complete
+// northbound directory, so its entries live under their own key and can never
+// deactivate or blank a named catalog.
+func identityGroupCatalogSource(source string) string {
+	if source == "" {
+		return ""
+	}
+	return source + ":identity-observed"
 }
 
 func (s *Server) handle4KDirectory(w http.ResponseWriter, r *http.Request) {
@@ -203,12 +225,33 @@ func (s *Server) handle4KDirectory(w http.ResponseWriter, r *http.Request) {
 			groupSource = managedGroupCatalogSource(source, version)
 		}
 	}
-	directory, err := loadFourKDirectoryWithGroupSource(r.Context(), s.productPolicies.db, source, catalogPrefix, groupSource)
+	ctx, cancel := context.WithTimeout(r.Context(), fourKDirectoryTimeout)
+	defer cancel()
+	directory, err := loadFourKDirectoryWithGroupSource(ctx, s.productPolicies.db, source, catalogPrefix, groupSource)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "four_k_directory_failed", err.Error())
 		return
 	}
+	directory.Warnings = directoryWarnings(directory)
 	writeJSON(w, http.StatusOK, directory)
+}
+
+// fourKDirectoryTimeout bounds the selector read. The directory feeds a form
+// dropdown, so it must never hold a request open.
+const fourKDirectoryTimeout = 3 * time.Second
+
+// directoryWarnings turns an empty selector into an actionable statement.
+// Accounts and VLANs are free-text inputs, so their empty option lists are
+// expected and are not reported.
+func directoryWarnings(directory fourKDirectory) []string {
+	warnings := []string{}
+	if len(directory.Products) == 0 {
+		warnings = append(warnings, "产品目录为空，请到「认证与处置接入」检查 4K 接入与目录同步")
+	}
+	if len(directory.Groups) == 0 {
+		warnings = append(warnings, "用户组目录为空，可在策略中直接填写用户组标识")
+	}
+	return warnings
 }
 
 func (s *Server) fourKDirectorySource(ctx context.Context) (string, error) {

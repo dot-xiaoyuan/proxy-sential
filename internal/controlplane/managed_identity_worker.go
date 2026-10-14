@@ -279,5 +279,7 @@ func (s *Server) reconcileManagedIdentity(item managedIdentityRegistration) {
 		s.markManagedIdentityFailure(item, "identity_status_commit_failed")
 	} else {
 		s.clearIdentityFailure(item)
+		// Best effort: a directory refresh must never fail a completed inventory.
+		_ = s.refreshIdentityGroupCatalog(context.Background(), snapshot)
 	}
 }

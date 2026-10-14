@@ -11,7 +11,7 @@ export interface Execution { proxy_evidence?: ProxyProtocolEvidence[]; execution
 export interface ApprovalPreviewData { fingerprint: string; account_id: string; stage_index: number; stage: Stage; evidence_ids: string[]; sessions: {session_id:string;ip:string;campus_id:string;access_domain:string}[] }
 export interface ProductCatalogItem { source: string; product_id: string; name: string; snapshot_id: string; active: boolean; updated_at: string; document: {control_ids?: string[]} }
 export interface FourKDirectoryItem { id:string; name?:string }
-export interface FourKDirectory { source:string; products:FourKDirectoryItem[]; groups:FourKDirectoryItem[]; accounts:FourKDirectoryItem[]; vlans:FourKDirectoryItem[]; product_observed_at?:string; identity_observed_at?:string; identity_sessions:number; controls:number }
+export interface FourKDirectory { source:string; products:FourKDirectoryItem[]; groups:FourKDirectoryItem[]; accounts:FourKDirectoryItem[]; vlans:FourKDirectoryItem[]; product_observed_at?:string; identity_observed_at?:string; identity_sessions:number; controls:number; warnings?:string[] }
 export interface ProductPolicyStatus { enabled: boolean; active_products: number; active_controls: number; snapshots: number; last_received_at?: string | null }
 export interface ImportItem { external_type: string; external_id: string; name: string; disposition: 'direct'|'reference_only'|'configuration_required'|'rejected'; reasons: string[]; policy?: Policy }
 export interface ImportBatch { batch_id: string; status: 'previewed'|'published'; preview: {snapshot_id:string;source:string;items:ImportItem[];summary:Record<string,number>} }

@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"regexp"
 	"testing"
@@ -35,18 +34,58 @@ func TestManagedFourKDirectoryJoinsNamesFromCurrentGroupVersion(t *testing.T) {
 	defer db.Close()
 	mock.ExpectQuery(`SELECT product_id,name FROM product_catalog`).WithArgs("ncu-srun4k", "").WillReturnRows(sqlmock.NewRows([]string{"product_id", "name"}))
 	mock.ExpectQuery(`SELECT observed_at,\(SELECT count\(\*\) FROM product_control_catalog`).WithArgs("ncu-srun4k", "").WillReturnError(sql.ErrNoRows)
-	identity, err := json.Marshal(map[string]any{"events": []map[string]any{{"subject": map[string]any{"account_id": "acct"}, "payload": map[string]any{"group_id": "12"}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mock.ExpectQuery(`SELECT document,observed_at,session_count FROM identity_full_snapshots`).WithArgs("ncu-srun4k").WillReturnRows(sqlmock.NewRows([]string{"document", "observed_at", "session_count"}).AddRow(identity, time.Now().UTC(), 1))
-	mock.ExpectQuery(`SELECT group_id,name FROM srun4k_group_catalog WHERE source=\$1 AND active`).WithArgs("ncu-srun4k:bridge-v4").WillReturnRows(sqlmock.NewRows([]string{"group_id", "name"}).AddRow("12", "真实用户组").AddRow("99", "未上线用户组"))
+	// Only scalar columns: the inventory document is deliberately never read here,
+	// so sqlmock fails the test if such a query reappears.
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT observed_at,session_count FROM identity_full_snapshots WHERE source=$1 ORDER BY observed_at DESC,received_at DESC LIMIT 1`)).
+		WithArgs("ncu-srun4k").
+		WillReturnRows(sqlmock.NewRows([]string{"observed_at", "session_count"}).AddRow(time.Now().UTC(), 1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
+		WithArgs(identityGroupCatalogSource("ncu-srun4k"), managedGroupCatalogSource("ncu-srun4k", 4), "ncu-srun4k").
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name"}).
+			AddRow("12", "").
+			AddRow("12", "真实用户组").
+			AddRow("99", "未上线用户组"))
 	directory, err := loadFourKDirectoryWithGroupSource(context.Background(), db, "ncu-srun4k", "", managedGroupCatalogSource("ncu-srun4k", 4))
 	if err != nil || len(directory.Groups) != 2 || directory.Groups[0].Name != "未上线用户组" || directory.Groups[1].Name != "真实用户组" {
 		t.Fatalf("directory=%+v err=%v", directory, err)
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An id-only entry observed online must never blank the name the northbound
+// catalog published for the same group.
+func TestGroupDirectoryPrefersNamedEntries(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`SELECT product_id,name FROM product_catalog`).
+		WithArgs("ncu-srun4k", "").
+		WillReturnRows(sqlmock.NewRows([]string{"product_id", "name"}))
+	mock.ExpectQuery(`SELECT observed_at,\(SELECT count\(\*\) FROM product_control_catalog`).
+		WithArgs("ncu-srun4k", "").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT observed_at,session_count FROM identity_full_snapshots`)).
+		WithArgs("ncu-srun4k").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT group_id,name FROM srun4k_group_catalog WHERE active AND source IN ($1,$2,$3) ORDER BY group_id`)).
+		WithArgs(identityGroupCatalogSource("ncu-srun4k"), "ncu-srun4k", "ncu-srun4k").
+		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name"}).
+			AddRow("12", "真实用户组").
+			AddRow("12", ""))
+	directory, err := loadFourKDirectoryWithGroupSource(context.Background(), db, "ncu-srun4k", "", "ncu-srun4k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(directory.Groups) != 1 || directory.Groups[0].Name != "真实用户组" {
+		t.Fatalf("named entry lost: %+v", directory.Groups)
+	}
+	// No identity snapshot row is not an error: the group directory still loads.
+	if directory.IdentityObservedAt != nil || directory.IdentitySessions != 0 {
+		t.Fatalf("unexpected identity state: %+v", directory)
 	}
 }
 

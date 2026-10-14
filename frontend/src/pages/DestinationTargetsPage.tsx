@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Empty, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppFactBar, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppFactBar, AppFormModal, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
 
@@ -94,7 +94,7 @@ function RulesPanel({ rules, writable, invalidate }: { rules: ReturnType<typeof 
         <Button type="primary" disabled={!writable} onClick={() => edit()}>新增规则</Button>
       </div>
       {rules.isError ? <Alert type="error" showIcon title="规则读取失败" description={String(rules.error)} /> : rules.isLoading ? <AppLoadingState rows={3} /> : rules.data?.items.length ? <Table rowKey="rule_id" className="compact-list-table" columns={columns} dataSource={rules.data.items} pagination={false} scroll={{ x: 1100 }} /> : <Empty description="暂无检测规则" />}
-      <Modal forceRender width={680} title={editing ? '编辑规则' : '新增规则'} open={open} confirmLoading={save.isPending} onCancel={() => setOpen(false)} onOk={() => void form.validateFields().then((value) => save.mutate({ ...value, targets: value.targets ?? [] })).catch(() => undefined)}>
+      <AppFormModal width={680} title={editing ? '编辑规则' : '新增规则'} open={open} confirmLoading={save.isPending} onCancel={() => setOpen(false)} onOk={() => void form.validateFields().then((value) => save.mutate({ ...value, targets: value.targets ?? [] })).catch(() => undefined)}>
         <Form form={form} layout="vertical">
           <Form.Item name="rule_id" label="规则标识" rules={[{ required: !editing, max: 128 }]}><Input disabled={!!editing} placeholder="例如 ncu-sensitive-range" /></Form.Item>
           <Form.Item name="name" label="名称" rules={[{ required: true, max: 128 }]}><Input /></Form.Item>
@@ -114,8 +114,8 @@ function RulesPanel({ rules, writable, invalidate }: { rules: ReturnType<typeof 
           <Form.Item name="push_without_account" label="无账号时也上报" valuePropName="checked"><Switch /></Form.Item>
           <Form.Item name="enabled" label="启用规则" valuePropName="checked"><Switch /></Form.Item>
         </Form>
-      </Modal>
-      <Modal width={760} footer={null} title="试算结果" open={!!preview} onCancel={() => setPreview(undefined)}>
+      </AppFormModal>
+      <AppFormModal width={760} footer={null} title="试算结果" open={!!preview} onCancel={() => setPreview(undefined)}>
         {preview ? (
           <>
             <Alert type="info" showIcon title={`当前窗口命中 ${preview.items.length} 个终端`} description={`规则状态：${preview.rule_enabled ? '已启用' : '未启用'}；观测数据 ${preview.observations} 条聚合记录；窗口 ${preview.window_seconds} 秒。试算不写入任何记录。`} />
@@ -127,7 +127,7 @@ function RulesPanel({ rules, writable, invalidate }: { rules: ReturnType<typeof 
             ]} /> : <Empty description="当前窗口没有命中" />}
           </>
         ) : <AppLoadingState rows={3} />}
-      </Modal>
+      </AppFormModal>
     </>
   )
 }

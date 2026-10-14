@@ -5,6 +5,7 @@ export * from './AppTableBar'
 export * from './UniversityDimensionFilters'
 export * from './AppStateFeedback'
 export * from './AppFactBar'
+export * from './AppFormModal'
 export * from './AppServerPagination'
 export * from './StackList'
 

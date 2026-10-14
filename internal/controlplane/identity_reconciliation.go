@@ -361,6 +361,8 @@ func (s *Server) handleIdentitySnapshotCommit(w http.ResponseWriter, r *http.Req
 		return
 	}
 	_, _ = s.operations.db.ExecContext(context.Background(), `DELETE FROM identity_snapshot_upload_chunks WHERE upload_id=$1`, uploadID)
+	// Best effort: a directory refresh must never fail a completed inventory.
+	_ = s.refreshIdentityGroupCatalog(context.Background(), snapshot)
 	writeJSON(w, http.StatusAccepted, map[string]any{"upload_id": uploadID, "snapshot_id": snapshotID, "status": "completed", "session_count": len(snapshot.Events)})
 }
 
@@ -421,5 +423,7 @@ func (s *Server) handleIdentitySnapshot(w http.ResponseWriter, r *http.Request) 
 	if !created {
 		code = http.StatusOK
 	}
+	// Best effort: a directory refresh must never fail a completed inventory.
+	_ = s.refreshIdentityGroupCatalog(context.Background(), snapshot)
 	writeJSON(w, code, map[string]any{"snapshot_id": snapshot.SnapshotID, "status": "completed", "observed_at": snapshot.ObservedAt, "session_count": len(snapshot.Events), "replayed": !created})
 }

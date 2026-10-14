@@ -138,5 +138,10 @@ func (s *Server) commitSRunIdentityPoll(ctx context.Context, item srun4KIntegrat
 		return fmt.Errorf("身份快照存储不可用")
 	}
 	_, err = reconciler.CommitIdentitySnapshot(ctx, snapshot)
-	return err
+	if err != nil {
+		return err
+	}
+	// Best effort: a directory refresh must never fail a completed inventory.
+	_ = s.refreshIdentityGroupCatalog(context.Background(), snapshot)
+	return nil
 }

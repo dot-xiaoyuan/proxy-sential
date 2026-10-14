@@ -20,7 +20,7 @@ for(const width of [390,1280,1440]) test(`policy forms and inventory ${width}`,a
  await expect(page.getByText('办公室上网产品 (office-product-001)',{exact:true}).last()).toBeVisible()
  await page.keyboard.press('Escape')
  await page.getByRole('dialog').getByRole('button',{name:'下一步'}).click()
- await expect(page.getByRole('dialog').getByText('设备数量满足任意一项就会触发',{exact:true})).toBeVisible()
+ await expect(page.getByRole('dialog').getByText('设备数量或已绑定的路由器证据满足任意一项就会触发',{exact:true})).toBeVisible()
  await page.getByRole('dialog').getByLabel('全部设备数大于').fill('3')
  await page.getByRole('dialog').getByLabel('电脑数量大于').fill('2')
  await page.getByRole('dialog').getByLabel('移动设备数量大于').fill('2')

@@ -4,7 +4,6 @@ import {
   Card,
   Form,
   Input,
-  Modal,
   Select,
   Table,
   Tag,
@@ -21,6 +20,7 @@ import type {
 } from "../shared/api/types";
 import {
   AppErrorAlert,
+  AppFormModal,
   AppLoadingState,
   AppPageHeader,
   AppServerPagination,
@@ -109,7 +109,7 @@ return <main className="page"><AppPageHeader title="校园例外" subtitle="维�
                     total={exceptions.data?.page.total ?? 0}
                     onChange={exceptionPage.update}
                   />
-</Card>      <Modal
+</Card>      <AppFormModal
         title="新增校园例外"
         open={exceptionOpen}
         confirmLoading={exceptionMutation.isPending}
@@ -176,6 +176,6 @@ return <main className="page"><AppPageHeader title="校园例外" subtitle="维�
             <Input placeholder="RFC3339，例如 2027-01-01T00:00:00+08:00" />
           </Form.Item>
         </Form>
-      </Modal>
+      </AppFormModal>
 </main>
 }
