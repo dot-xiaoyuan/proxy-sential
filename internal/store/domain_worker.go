@@ -130,22 +130,12 @@ func (s *DBStore) runDomainQueueWorker(parent context.Context) {
 		case <-parent.Done():
 			return
 		case batch := <-s.domainQueue:
-			var err error
-			for attempt := 0; attempt < 3; attempt++ {
-				ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
-				err = s.processDomainBatch(ctx, batch)
-				cancel()
-				if err == nil {
-					break
-				}
-				timer := time.NewTimer(time.Duration(attempt+1) * time.Second)
-				select {
-				case <-timer.C:
-				case <-parent.Done():
-					timer.Stop()
-					return
-				}
-			}
+			// 单次尝试即放弃：事件已持久在 ClickHouse，失败批次由每 5 分钟的对账窗口补做。
+			// 原先 3 次重试 × 2 分钟预算会把 worker 钉在同一个批次上：现场实测 10 分钟内
+			// 42 次失败、只完成 1 个批次、同时丢弃 168 个新批次（覆盖率降到约 2%）。
+			ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+			err := s.processDomainBatch(ctx, batch)
+			cancel()
 			s.recordDomainError(err)
 		}
 	}
