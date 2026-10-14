@@ -52,3 +52,27 @@
 结论：身份写入由事务级 advisory lock 串行，增加 worker 只增加争用而不提升吞吐。现场已回退为 1；并发开关保留在代码中（默认 1），但在这套硬件上不应开启。
 
 真正的天花板是**串行身份写路径的单位事件成本**：实测单 worker 10 分钟完成约 34 个批次、丢弃 121 个（覆盖率约 22%），单 batch（约 6,500 事件）约 17 秒，即约 2.7 毫秒/事件；期间没有任何批次超过 20 秒，说明问题不是"个别批次卡死"，而是稳定的吞吐上限。要提升只能减少每事件的语句数/索引数，或降低事件产生量（见上文检查清单第 2 项）。
+
+### 写放大：索引比堆大 3 倍，其中多个索引从未被扫描（2026-10-14）
+
+`identity_ip_mac_history` 堆 2.7 GB、索引 8.5 GB。`pg_stat_user_indexes`（`stats_reset=never`，计数覆盖容器整个生命周期）显示两个 endpoint 覆盖索引从未被选中：
+
+| 索引 | idx_scan | 大小 |
+|---|---|---|
+| `idx_ip_history_endpoint_observed` | 0 | 2,127 MB |
+| `idx_ip_history_endpoint_has_ip` | 0 | 89 MB |
+| `idx_ip_history_endpoint_list_cover` | 12,512 | 2,932 MB（在用） |
+
+迁移 123 删除了与在用索引前导列相同的 `idx_ip_history_endpoint_observed`；现场先用
+`DROP INDEX CONCURRENTLY` 手工删除以避免大表 ACCESS EXCLUSIVE 长锁等待（迁移文件本身用幂等
+`DROP INDEX IF EXISTS` 记录账本）。表索引 8,517 MB → 6,390 MB，实测物化写入速率从约 12 行/秒
+升到约 25 行/秒，车道无回归。
+
+仍需按查询面语义判断的候选（尚未处理）：
+
+- `identity_ip_mac_history.idx_ip_history_endpoint_has_ip`（0 扫描，89 MB，partial endpoint_id）；
+- `policy_identity_observations` 上 `policy_identity_time` / `policy_identity_account_time` /
+  `policy_identity_scope_time`（均 0 扫描，合计 157 MB）；
+- `endpoint_entities.idx_endpoint_page_order`（0 扫描，99 MB）与 `idx_endpoint_entities_mac`（0 扫描，4.6 MB）。
+
+这些索引可能服务于本轮排查期间未被访问的页面（例如设备中心列表），删除前需确认对应查询路径不再依赖它们。
