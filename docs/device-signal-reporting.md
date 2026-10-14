@@ -363,3 +363,66 @@ failed: timeout: context deadline exceeded` 现在**全部发生在识别相位*
 （`ProcessDomainEvents` / `WriteDomainEcosystemObservations`）。这是与身份写入**无关**的另一个
 组件，也是 1.7 次/分钟残余丢弃的来源。下一步应测该相位的时间去向（单批仅 16 个事件也要 25 秒，
 不像是数据量导致的），而不是继续加大分块。
+
+## 十四、第 9–11 轮的参数化查询、身份窗口与死视图（2026-10-14/15，第 9–11 轮）
+
+### 通用计划与定制计划差 180 倍缓冲
+
+`ResolveDeviceAt` 的租约查询在 110 秒窗口内 2 次调用共 **87 秒**（43.6 秒/次）。同一 SQL、
+同一参数单独执行只要 **0.2 毫秒**：`plan_cache_mode=auto` 下 PG 选了通用计划，按
+`device_address_leases_lookup` 走索引扫描，对一个 IP 的 **3,026 条**租约逐条过滤
+（2,727 个缓冲），而定制计划走部分索引 `device_center_live_lease_lookup`（15 个缓冲）。
+磁盘饱和时 2,727 个缓冲的物理读就是 30–57 秒。
+
+现场以 `ALTER SYSTEM SET plan_cache_mode='force_custom_plan'`（与其它 PG 参数同存于
+`postgresql.auto.conf`）修正：该语句**从慢日志中消失**，慢语句总量 25 条 / 213 秒 →
+7 条 / 20 秒。
+
+### 身份绑定窗口"只能新建、不能延长"
+
+`identity_ip_mac_history` 的 `n_tup_upd` 长期为 **0**，而 `n_tup_ins` 每分钟 +2,106 行
+（约 300 万行/天，表 10 GB、五个索引 6.9 GB）。根因是头部有效期用 `now()` 计算、
+延长判定用观测时间计算，两个区间只在一点相交，于是延长路径永不触发：连续在线的绑定在
+头部过期后只能再插一条**只差时间戳的新行**。
+
+修复分两步（第一步不够，如实记录）：先改为以批内最新观测时间为基准（插入降到 674/分但
+`upd` 仍为 0），再加入 `identityBindingGapFactor=2`，使头部有效期严格大于延长阈值。
+修复后实测：**新增 28 行/分钟（−98.7%）、更新 636 次/分钟**，行增长基本停止。
+
+### ClickHouse 每个事件多写两张死索引表
+
+`normalized_event_ids_v1/v2` 只服务 `PROXY_SENTINEL_EVENT_ID_IDEMPOTENCY=scan` 的逐 id 扫描；
+现场为 `clickhouse` 模式，`eventIDScanDisabled` 直接跳过。`system.query_log`（662 万行，
+全留存期）实测两表被读 8 / 49 次，对照 `identity_signal_events_v1` 被读 337,479 次。
+两个视图仍挂在 `normalized_events` 上，195.94M 行事件各多写两次，占 728 个活跃部件中的 141 个。
+迁移 039 只删视图、保留目标表（8 天 TTL 自行收缩、可重建）。
+
+### 为什么没有合并 `endpoint_inventory_contributions`
+
+该表 **1,818 万行 / 17 GB**（5.5 GB 堆 + 11.6 GB 索引），抽样 50 个端点后
+`(endpoint_id,kind,value,source,is_session)` 只有 **122 组**，冗余倍率 **59.4×**：
+一个端点的同一个 `(ip, 192.168.1.51, arp)` 有 136 行，只有 `origin_key` 里的事件 id 和
+`first_seen/last_seen` 不同。看着正是"只差时间戳的重复记录"，但按下不表的三个依赖使它
+不能就地收敛：
+
+1. **纠正精度**：源行 UPDATE/DELETE 的 delta 带 `old_payload`，现有语义是"按 origin 整组替换"；
+   合并成聚合行后无法把某个 origin 的贡献从 `min/max` 里减掉，会长期显示已纠正掉的地址。
+2. **删除精度**：源行删除后需要能移除该 origin 的贡献，同理。
+3. **用户可见计数**：`endpoint_inventory_associations.observation_count` 由每次 origin 增删计数，
+   `inventory_trace.go` 直接读它；合并后无法区分"新 origin"与"重复 origin"，计数会失真。
+
+0.16%（1,771 / 1,113,164）的 delta 带 `old_payload`，说明"整端点重建"在频率上可行，
+真正的问题是重建只能恢复 **min/max/最新**，恢复不了 origin 级计数。要做这个优化，
+需要把 origin 身份以紧凑形式（例如每行一个 `bigint[]` 的 origin 哈希集）保留在聚合行里，
+再按"新 origin 才自增计数"维护 `observation_count`，并且必须先在 184 上跑通
+`inventory_*_integration_test.go` 与改动前后的派生表对照。这是一次数据模型改动，
+不适合当作局部优化顺手做完。
+
+### 仍未采用的两项
+
+- 数据库全局 **1,696 MB 从未被扫描的索引**：最大几个是 `idx_endpoint_page_order`（103 MB）、
+  `endpoint_recognition_summary_page`（40 MB）这类**列表分页专用**索引。测试环境页面访问少，
+  `idx_scan=0` 不能证明它们无用，因此没有按统计删除。
+- `endpoint_inventory_contributions` 的 11.6 GB 索引里，`_first`/`_confidence`/`_ip`
+  可以合并成一个带 INCLUDE 的覆盖索引（约省 2.6 GB，并少三次索引写），但需要先改写
+  `refreshInventoryRelation` 的三段子查询并现场对照执行计划，属于下一步。
