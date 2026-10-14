@@ -1,6 +1,9 @@
 package devicesignal
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // stateChangeTracker suppresses device reports that only restate a state the collector has
 // already written.
@@ -33,6 +36,24 @@ type stateEntry struct {
 	lastSeen  time.Time
 	emitted   time.Time
 	count     int
+	// spread rotates this key's rewrite threshold inside [0.7,1.0] of the liveness interval.
+	// Keys first seen together would otherwise all come due in the same bucket, which the
+	// field measured as a periodic burst: the domain queue filled and dropped batches for a
+	// minute at a time. The threshold still never exceeds the configured interval, so
+	// freshness stays bounded by --state-liveness.
+	spread time.Duration
+}
+
+// stateSpreadSequence hands consecutive keys different spreads, so a cohort created in one
+// bucket is spread across the following intervals instead of firing together.
+var stateSpreadSequence atomic.Uint64
+
+// spreadSteps is how many distinct thresholds the interval is divided into (0.7..1.0).
+const spreadSteps = 4
+
+func nextLivenessSpread(liveness time.Duration) time.Duration {
+	step := stateSpreadSequence.Add(1) % spreadSteps
+	return time.Duration(step) * liveness / 10
 }
 
 func newStateChangeTracker[K comparable](liveness time.Duration) *stateChangeTracker[K] {
@@ -63,13 +84,13 @@ func (t *stateChangeTracker[K]) filter(bucket time.Time, packets map[K]int) map[
 			}
 			// The first sighting is written now, so the entry starts with an empty
 			// accumulator rather than double-counting this bucket's packets.
-			t.active[key] = &stateEntry{firstSeen: bucket, lastSeen: bucket, emitted: bucket}
+			t.active[key] = &stateEntry{firstSeen: bucket, lastSeen: bucket, emitted: bucket, spread: nextLivenessSpread(t.liveness)}
 			out[key] = count
 			continue
 		}
 		entry.count += count
 		entry.lastSeen = bucket
-		if bucket.Sub(entry.emitted) >= t.liveness {
+		if bucket.Sub(entry.emitted) >= t.liveness-entry.spread {
 			out[key] = entry.count
 			entry.count = 0
 			entry.emitted = bucket

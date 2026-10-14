@@ -31,14 +31,29 @@ func TestStateChangeTrackerSuppressesUnchangedStates(t *testing.T) {
 	if got := tracker.filter(bucket, packets); len(got) != 1 || got[key] != 3 {
 		t.Fatalf("a first sighting must be written at once: %#v", got)
 	}
-	for i := 1; i < 10; i++ {
+	// No threshold is shorter than 0.7 intervals, so the first six buckets cannot rewrite.
+	for i := 1; i < 7; i++ {
 		if got := tracker.filter(bucket.Add(time.Duration(i)*step), map[packetBucketKey]int{key: 2}); len(got) != 0 {
 			t.Fatalf("bucket %d rewrote an unchanged state: %#v", i, got)
 		}
 	}
-	// Ten buckets in, the liveness interval has elapsed: one rewrite carrying 9*2+2 packets.
-	if got := tracker.filter(bucket.Add(10*step), map[packetBucketKey]int{key: 2}); len(got) != 1 || got[key] != 20 {
-		t.Fatalf("liveness rewrite missing or miscounted: %#v", got)
+	// The rewrite lands between bucket 7 and bucket 10 depending on this key's spread, and it
+	// carries every packet folded since the first sighting.
+	var rewrites map[packetBucketKey]int
+	for i := 7; i <= 10; i++ {
+		if got := tracker.filter(bucket.Add(time.Duration(i)*step), map[packetBucketKey]int{key: 2}); len(got) > 0 {
+			if rewrites != nil {
+				t.Fatalf("state rewritten twice inside one interval: %#v then %#v", rewrites, got)
+			}
+			rewrites = got
+		}
+	}
+	if len(rewrites) != 1 || rewrites[key]%2 != 0 || rewrites[key] < 14 || rewrites[key] > 20 {
+		t.Fatalf("liveness rewrite missing or miscounted: %#v", rewrites)
+	}
+	// Past the full interval the key is due regardless of its spread.
+	if got := tracker.filter(bucket.Add(20*step), map[packetBucketKey]int{key: 2}); len(got) != 1 {
+		t.Fatalf("key not rewritten after a full interval: %#v", got)
 	}
 	if held := tracker.pending(); len(held) != 1 {
 		t.Fatalf("shutdown must carry the held state, got %#v", held)
@@ -110,7 +125,8 @@ func TestSelectControlsSuppressesUnchangedAdvertisements(t *testing.T) {
 		t.Fatalf("new advertisements must be written: %#v", got)
 	}
 	// Re-advertising the same services is not.
-	for i := 1; i < 10; i++ {
+	// No threshold is shorter than 0.7 intervals, so the first six buckets cannot re-advertise.
+	for i := 1; i < 7; i++ {
 		if got := selectControls(tracker, bucket.Add(time.Duration(i)*step), map[string]controlSignal{first.key(): first, second.key(): second}); len(got) != 0 {
 			t.Fatalf("bucket %d re-wrote unchanged advertisements: %#v", i, got)
 		}
@@ -120,9 +136,15 @@ func TestSelectControlsSuppressesUnchangedAdvertisements(t *testing.T) {
 	if got := selectControls(tracker, bucket.Add(5*step), map[string]controlSignal{third.key(): third}); len(got) != 1 {
 		t.Fatalf("a new service was suppressed: %#v", got)
 	}
-	// At the liveness interval the still-present services are refreshed.
-	if got := selectControls(tracker, bucket.Add(10*step), map[string]controlSignal{first.key(): first, second.key(): second}); len(got) != 2 {
-		t.Fatalf("liveness refresh missing: %#v", got)
+	// Both still-present services are refreshed within the interval, each exactly once.
+	refreshed := map[string]int{}
+	for i := 7; i <= 12; i++ {
+		for key := range selectControls(tracker, bucket.Add(time.Duration(i)*step), map[string]controlSignal{first.key(): first, second.key(): second}) {
+			refreshed[key]++
+		}
+	}
+	if refreshed[first.key()] != 1 || refreshed[second.key()] != 1 {
+		t.Fatalf("expected one refresh per advertisement inside the interval, got %#v", refreshed)
 	}
 }
 
@@ -135,5 +157,44 @@ func TestControlSignalKeySeparatesServices(t *testing.T) {
 	}
 	if ssdp("uuid:one").key() != ssdp("uuid:one").key() {
 		t.Fatal("the same advertisement must keep a stable key")
+	}
+}
+
+// A cohort of keys first seen together must not all come due in the same bucket. The field
+// measured the synchronized rewrite as a periodic burst that filled the domain queue and
+// dropped batches for about a minute at a time. Four keys created together take four distinct
+// thresholds in [0.7,1.0] of the interval: at 0.75 intervals exactly the earliest one is due,
+// and none is due later than the full interval.
+func TestLivenessRewriteIsSpreadAcrossKeys(t *testing.T) {
+	const step = 30 * time.Second
+	const liveness = 5 * time.Minute
+	bucket := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	tracker := newStateChangeTracker[packetBucketKey](liveness)
+	keys := []packetBucketKey{
+		stateKey("10.0.0.1", 1, 64),
+		stateKey("10.0.0.2", 2, 64),
+		stateKey("10.0.0.3", 3, 64),
+		stateKey("10.0.0.4", 4, 64),
+	}
+	first := map[packetBucketKey]int{}
+	for _, key := range keys {
+		first[key] = 1
+	}
+	if got := tracker.filter(bucket, first); len(got) != len(keys) {
+		t.Fatalf("first sightings must all be written: %d", len(got))
+	}
+	if got := tracker.filter(bucket.Add(time.Second), first); len(got) != 0 {
+		t.Fatalf("keys rewritten before any threshold: %#v", got)
+	}
+	// Thresholds are 3.5, 4.0, 4.5 and 5.0 minutes; at 4.5 minutes exactly three are due,
+	// which is what turns one synchronized rewrite into four spread over two minutes.
+	due := tracker.filter(bucket.Add(4*time.Minute+30*time.Second), first)
+	if len(due) != 3 {
+		t.Fatalf("expected three of four keys due at 0.9 of the interval, got %d", len(due))
+	}
+	// The last key is due no later than the configured interval.
+	rest := tracker.filter(bucket.Add(liveness), first)
+	if len(rest) != 1 {
+		t.Fatalf("expected the final key at the full interval, got %d", len(rest))
 	}
 }
