@@ -172,6 +172,8 @@ func (s *DBStore) finishRecognitionJob(ctx context.Context, job recognitionJob, 
 func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 	var workers sync.WaitGroup
 	workers.Add(1)
+	go func() { defer workers.Done(); s.runAccountTagMaterializer(ctx) }()
+	workers.Add(1)
 	go func() { defer workers.Done(); s.runFingerprintRebuild(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); s.runFingerprintCoverage(ctx) }()
@@ -228,7 +230,7 @@ func (s *DBStore) recordSharedBehaviorFailure(parent context.Context, runErr err
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	state, _ := json.Marshal(map[string]any{"error": runErr.Error()})
-	_, err := s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
+	_, err := s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now() WHERE read_model_runtime_state.updated_at < now() - interval '10 seconds'`, state)
 	return err
 }
 
@@ -249,7 +251,11 @@ func (s *DBStore) runRecognitionMaterializerWorker(ctx context.Context, worker s
 			if err == nil {
 				_, _ = s.pg.db.ExecContext(finishCtx, `INSERT INTO read_model_runtime_state(name,state,updated_at)
 VALUES('endpoint-recognition',jsonb_build_object('as_of',now()::text),now())
-ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`)
+ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()
+-- Advisory lane beacon. Writing it every cycle made one autocommit per few seconds, and each
+-- autocommit pays a WAL fsync (~230 ms on the field). The payload is only an "as_of"
+-- timestamp, so a stale row costs nothing: at most one write per 10 seconds.
+WHERE read_model_runtime_state.updated_at < now() - interval '10 seconds'`)
 			}
 			finishCancel()
 		}

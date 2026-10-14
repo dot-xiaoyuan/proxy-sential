@@ -119,7 +119,11 @@ func (s *DBStore) dispatchActivityV3Jobs(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	if len(rows) == 0 {
-		_, err = tx.ExecContext(ctx, `UPDATE read_model_runtime_state SET updated_at=now() WHERE name=$1`, activityV3DispatchState)
+		// A "checked, nothing to do" heartbeat: this statement's only effect is its timestamp,
+		// which is exactly the shape that carries no information. It runs on every dispatch
+		// cycle, and each autocommit pays a WAL fsync (~230 ms on the field). Keep the liveness
+		// marker fresh to within ten seconds instead of touching it every cycle.
+		_, err = tx.ExecContext(ctx, `UPDATE read_model_runtime_state SET updated_at=now() WHERE name=$1 AND updated_at < now() - interval '10 seconds'`, activityV3DispatchState)
 		if err != nil {
 			return 0, err
 		}
@@ -414,7 +418,11 @@ func (s *DBStore) updateActivityV3State(ctx context.Context, granularity string,
 VALUES($1,jsonb_build_object('as_of',$2::text),now()) ON CONFLICT(name) DO UPDATE SET
 state=jsonb_build_object('as_of',GREATEST(
  COALESCE((read_model_runtime_state.state->>'as_of')::timestamptz,'-infinity'::timestamptz),
- $2::timestamptz)),updated_at=now()`, name, asOf.UTC().Format(time.RFC3339Nano))
+ $2::timestamptz)),updated_at=now()
+-- The watermark is monotonic (GREATEST keeps the maximum), so suppressing intermediate writes
+-- loses nothing: the next write past the throttle carries the newer value. Without this the
+-- lane rewrote the row every few seconds even when only the timestamp moved.
+WHERE read_model_runtime_state.updated_at < now() - interval '10 seconds'`, name, asOf.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
