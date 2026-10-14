@@ -176,6 +176,12 @@ Seq Scan on shared_device_profiles  (actual time=0.028..7.028 rows=1 loops=1)
 改为**语句级（transition table）+ 集合式**唤醒：一条语句对整批变更行做一次 join，
 而不是每行一次。
 
+**同样要记录**：第 16 轮的有界等待预算为 8 秒，而 domain worker 单批持锁实测 49–107 秒，
+比预算长一个数量级，因此 `ncu-184-router-pilot` lane 在收尾时仍抢不到锁（现场采样
+`locks_waiting=1`，活跃语句以 `LWLock/WALWrite` 与 `IO/DataFileRead` 为主）。
+把等待预算继续放大不可行——它会吃掉该 lane 自己的 60 秒批次预算。**真正的解法是缩短
+持锁时间**（即上面的语句级触发器改造），而不是让等待方等更久。
+
 同时确认：`normalized_events` 上剩余 11 个物化视图的目标表在 6 天 query_log 窗口内
 **全部被读取**（`identity_signal_events_v1` 75.8 万、`router_signal_events_v1` 69.9 万、
 `normalized_event_ids_v1` 42.8 万…），已无更多死写可删——第 15 轮删掉的
