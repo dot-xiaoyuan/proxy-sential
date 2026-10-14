@@ -66,6 +66,16 @@ proxy-sentinel ingest run \
 
 `ingest run` 不提供自管的 `start/stop/restart`。生产环境使用 systemd 的 `Restart=on-failure`、`TimeoutStopSec` 和日志策略托管进程。
 
+### 采集器元数据与采集状态口径
+
+采集诊断页的“采集器 / 版本 / 接口”取自 PostgreSQL `sensors` 注册行，只有声明过采集元数据的进程才能决定这三个字段：
+
+- `ingest run` 与 `control-plane serve` 都接受 `--collector-kind`、`--collector-interface`、`--collector-version`，也读取同名环境变量 `PROXY_SENTINEL_COLLECTOR_KIND`、`PROXY_SENTINEL_COLLECTOR_INTERFACE`、`PROXY_SENTINEL_COLLECTOR_VERSION`。
+- 不传 `--collector-kind` 时，`ingest run` 按启用的数据源派生真实采集器：存在 `--device-signals`/`--shared-device-signals` 记为 `device-signal`，否则 `--eve` 记为 `suricata`，否则任一 `--zeek-*` 记为 `zeek`。
+- `--collector-version` 默认取构建版本。`--collector-interface` 留空时，`ingest run` 从 `--device-signals`/`--shared-device-signals` 文件末尾的最新记录中读取采集进程实际使用的网卡（只读文件尾部 64 KiB），取不到才保持为空；采集进程本身不占有网卡时不要依赖任何默认网卡名。
+- 写入采集运行时，空值不会覆盖 `sensors` 行里已注册的非空元数据；投影和读模型工作进程因此不会抹掉采集器的注册信息。
+- `/ingest/status` 的四个计数器汇总“每个采集源最近一批已处理输入的运行”。空闲心跳运行只用于判断存活，不会把计数器清零；`latest_run_id`/`latest_run_at` 仍指向最新一次提交的运行。
+
 ## OIDC 配置
 
 控制面增加以下参数：`--oidc-issuer`、`--oidc-client-id`、`--oidc-client-secret-file`、`--oidc-redirect-url`、`--oidc-role-mapping` 和 `--oidc-default-role`。角色映射是 JSON，例如：

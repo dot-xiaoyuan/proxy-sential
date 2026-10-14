@@ -454,7 +454,18 @@ func runIngest(args []string) error {
 	if kind == "" {
 		kind = deriveCollectorKind(sources)
 	}
-	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, CollectorKind: kind, CollectorVer: *collectorVersion, InterfaceName: *collectorInterface, PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: *storeTimeout})
+	// The ingest service reads normalized files and owns no NIC, so it reports
+	// the interface the device-signal capture recorded in the records it
+	// ingests. An explicit flag or environment value always wins.
+	iface := strings.TrimSpace(*collectorInterface)
+	if iface == "" {
+		for _, path := range []string{*deviceSignals, *sharedDeviceSignals} {
+			if iface = devicesignal.ObservedInterface(path); iface != "" {
+				break
+			}
+		}
+	}
+	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, CollectorKind: kind, CollectorVer: *collectorVersion, InterfaceName: iface, PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: *storeTimeout})
 	if err != nil {
 		return err
 	}
