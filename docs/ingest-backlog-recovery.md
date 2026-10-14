@@ -33,6 +33,8 @@
 | 14 | 身份物化循环每秒写一次 `read_model_runtime_state` 健康心跳，等于每秒一个 autocommit（245 ms/次），叠加在 228 ms 的 `commit` 之上 | 新增 `identityHealthInterval=10s` 节流，出错时仍立即写（`internal/store/identity_materializer.go`） | 心跳写入 90/100s → 约 66/100s（−27%）；`commit` 112/100s → 约 67/100s（−40%） |
 | 15 | 缓存仍不足：`shared_buffers` 8 GB vs 工作集约 15.5 GB，导致批量插入 `identity_ip_mac_history` 每次 1.4 s（最慢 4.0 s） | `shared_buffers` 8 → **12 GB**（容器已是 24 GB） | 该插入**降到 300 ms 以下**（>5×）；`endpoint_entities` 更新 → **1,104/分钟**；**两条 identity live lane 全部解冻** |
 
+| 16 | `UPDATE shared_device_profile_runtime WHERE singleton` 每次 431 ms，且 4 个后端同时阻塞在它的 `Lock/tuple` 上——因为它**在投影事务内部**执行，而投影事务可跑数十秒 | 改为先 `tx.Commit()` 再用独立短事务写；新增 `writeAdvisoryState`（`SET LOCAL synchronous_commit=off`）承载心跳/计数这类建议性写入 | 锁等待采样 6/6 只剩 `Lock/advisory`；90 秒慢语句计数 `commit` 39 → **20**、该 UPDATE 39 → **12**；`endpoint_entities` 更新 → **1,370–1,634/分钟** |
+
 ### 身份物化的死锁自锁死（2026-10-14，第 14 轮；已修复并上线）
 
 这是"设备中心数据积压"的直接原因，独立于磁盘与速率问题。
@@ -315,6 +317,42 @@ PG 容器内存上限 16 → 24 GB（`docker update`）。实测 `endpoint_entit
 仍然偏高：`account_identity_session_projection` 堆未命中 93.1%（1.4 GB 表，读取密集），
 以及 `endpoint_inventory_projection_jobs` 积压仍在增长——后者与设备中心的列表页无关，
 但会影响设备详情的清单完整度。
+
+### 单行热点与建议性写入（2026-10-14，第 20 轮）
+
+第 19 轮的收尾测量显示主插入已降到 300 ms 以下，但
+`UPDATE shared_device_profile_runtime … WHERE singleton` 仍以 30 次/90 秒出现在慢日志里，
+每次约 431 ms，而且 `pg_stat_activity` 同时有**四个后端阻塞在它的 `Lock/tuple`** 上。
+
+关键判断：调用频率其实只有 0.33 次/秒，所以不是频率问题——**是它在投影事务内部执行**，
+而投影事务可以跑数十秒，于是这一行的元组锁被长期持有，所有触及该物化器的车道都排队。
+
+改动两步：
+1. `publishSharedDeviceProfile` 先 `tx.Commit()`，再用独立短事务写这一行；信标失败只报错，
+   不回滚已经提交的投影。
+2. 新增 `(*PostgresStore).writeAdvisoryState`，用 `SET LOCAL synchronous_commit=off` 执行这类
+   建议性写入——心跳与监控计数在崩溃时丢失没有代价，不值得为它付 228 ms 的 WAL fsync。
+
+实测（发布 `2026.10.14-async-beacon1`）：锁等待采样 6/6 只剩 `Lock/advisory`；
+90 秒慢语句计数 `commit` 39 → 20、该 UPDATE 39 → 12、`read_model_runtime_state` 12 → 6；
+`endpoint_entities` 更新 1,370–1,634/分钟；两条 lane 均推进；死锁 0；
+`processed_jobs` 计数继续增长（说明改用异步提交后计数没有丢）。
+
+### 设备中心覆盖度的诚实口径（2026-10-14，第 20 轮实测）
+
+五轮优化（第 14、16–17、18、19、20 轮）之后按第 13 轮的口径重新测量，这才是用户可感知的结果：
+
+| 指标（76,699 台设备） | 第 13 轮 | 第 20 轮 |
+|---|---|---|
+| 近 1 小时内有更新 | 0 | 0（生产端已停采，必然为 0） |
+| 近 24 小时内有更新 | 11,143（15%） | **27,257（35.5%）** |
+| `last_seen` 接近生产前沿（>06:00） | 未测 | **21,349（27.8%）** |
+| `endpoint_entities` 写入速率 | 约 460/分钟 | **1,370–1,634/分钟** |
+
+覆盖度翻了一倍以上，方向正确，但**仍未达标**：`endpoint_inventory_projection_jobs` 积压
+仍在增长，`account_identity_session_projection` 堆未命中仍 93.1%。要真正达到 AGENTS.md 的
+容量基线，仍需处理事件量（前置决定）或彻底重构分析路径的写入成本
+（如 `identity_ip_mac_history` 按天分区，约 15 GB 一次性重建）。
 
 ## 恢复采集前的检查清单
 
