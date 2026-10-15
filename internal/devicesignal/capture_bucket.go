@@ -1,6 +1,10 @@
 package devicesignal
 
-import "proxy-sentinel/internal/normalized"
+import (
+	"os"
+
+	"proxy-sentinel/internal/normalized"
+)
 
 // captureBucket groups replayable frame observations without deriving device
 // ownership from transit traffic. Control and IP packet eligibility are separate.
@@ -32,8 +36,19 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 		}
 	}
 	for _, signal := range parseControlFrames(frame) {
+		// ARP only serves dumb-terminal discovery and the device-center address history; router
+		// and shared-access detection never read it. It was ~73% of all events on 184 and
+		// crowded the risk window sample, so it is emitted only when explicitly enabled.
+		if signal.Kind == "arp" && !arpSignalsEnabled() {
+			continue
+		}
 		// The control parser can supply an explicit protocol or management IP.
 		// A packet forwarded under this MAC does not establish its source device IP.
 		b.controls[signal.key()] = signal
 	}
+}
+
+// arpSignalsEnabled reports whether ARP control signals are exported. Default off.
+func arpSignalsEnabled() bool {
+	return os.Getenv("PROXY_SENTINEL_DEVICE_SIGNAL_ARP") == "true"
 }

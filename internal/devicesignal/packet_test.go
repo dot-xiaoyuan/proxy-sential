@@ -217,6 +217,19 @@ func TestParseARPAndNDPDeviceSignals(t *testing.T) {
 	if !ok || signal.Kind != "arp" || signal.IP != "192.168.0.45" || signal.MAC != "22:07:44:95:05:f7" {
 		t.Fatalf("unexpected ARP signal: %+v", signal)
 	}
+	// ARP feeds only dumb-terminal discovery; the capture bucket exports it only on request.
+	t.Setenv("PROXY_SENTINEL_DEVICE_SIGNAL_ARP", "")
+	off := newCaptureBucket()
+	off.addFrame(arp, nil)
+	if len(off.controls) != 0 {
+		t.Fatalf("ARP exported while disabled: %+v", off.controls)
+	}
+	t.Setenv("PROXY_SENTINEL_DEVICE_SIGNAL_ARP", "true")
+	on := newCaptureBucket()
+	on.addFrame(arp, nil)
+	if len(on.controls) != 1 {
+		t.Fatalf("ARP not exported while enabled: %+v", on.controls)
+	}
 
 	ndp := make([]byte, 14+40+24)
 	copy(ndp[6:12], []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff})
