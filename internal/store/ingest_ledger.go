@@ -59,7 +59,7 @@ func (s *PostgresStore) LoadIngestCheckpoint(ctx context.Context, sourceKind, so
 }
 
 func (s *PostgresStore) BeginIngestBatch(ctx context.Context, item ingest.Batch) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO ingest_batches(batch_id,sensor_id,source_kind,source_path,file_id,start_offset,end_offset,checksum,status,event_count,malformed_count,last_error,started_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'started',0,0,NULL,$9) ON CONFLICT(batch_id) DO UPDATE SET status='started',last_error=NULL,started_at=EXCLUDED.started_at`, item.BatchID, item.SensorID, item.SourceKind, item.SourcePath, item.FileID, item.StartOffset, item.EndOffset, item.Checksum, item.StartedAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ingest_batches(batch_id,sensor_id,source_kind,source_path,file_id,start_offset,end_offset,checksum,status,event_count,malformed_count,last_error,started_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'started',0,0,NULL,$9) ON CONFLICT(batch_id) DO UPDATE SET status='started',last_error=NULL,started_at=least(ingest_batches.started_at,EXCLUDED.started_at)`, item.BatchID, item.SensorID, item.SourceKind, item.SourcePath, item.FileID, item.StartOffset, item.EndOffset, item.Checksum, item.StartedAt)
 	return err
 }
 
@@ -69,7 +69,7 @@ func (s *PostgresStore) CommitIngestBatch(ctx context.Context, item ingest.Batch
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE ingest_batches SET status='committed',event_count=$2,malformed_count=$3,last_error=NULL,committed_at=$4 WHERE batch_id=$1`, item.BatchID, item.EventCount, item.Malformed, item.CommittedAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE ingest_batches SET status='committed',event_count=$2,malformed_count=$3,last_error=NULL,committed_at=coalesce(committed_at,$4::timestamptz) WHERE batch_id=$1`, item.BatchID, item.EventCount, item.Malformed, item.CommittedAt); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO ingest_checkpoints(sensor_id,source_kind,source_path,file_id,committed_offset,last_event_at,updated_at) VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::timestamptz,now()) ON CONFLICT(sensor_id,source_kind,source_path) DO UPDATE SET file_id=EXCLUDED.file_id,committed_offset=EXCLUDED.committed_offset,last_event_at=COALESCE(EXCLUDED.last_event_at,ingest_checkpoints.last_event_at),updated_at=now()`, item.SensorID, item.SourceKind, item.SourcePath, item.FileID, item.EndOffset, lastEventAt); err != nil {
