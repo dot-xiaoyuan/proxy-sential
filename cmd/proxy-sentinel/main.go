@@ -92,29 +92,10 @@ func run(args []string) error {
 	case "device-signal":
 		return runDeviceSignal(args[1:])
 	case "inventory-audit":
-		fs := flag.NewFlagSet("inventory-audit", flag.ContinueOnError)
-		limit := fs.Int("limit", 30, "maximum prepared devices to compare")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, PostgresDSN: os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), ClickHouseDSN: os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN")})
-		if err != nil {
-			return err
-		}
-		defer backend.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		report, err := backend.AuditDeviceInventory(ctx, *limit)
-		if err != nil {
-			return err
-		}
-		if err = writeJSON(os.Stdout, report); err != nil {
-			return err
-		}
-		if report.Changed > 0 || report.Compared == 0 {
-			return fmt.Errorf("inventory shadow comparison did not pass")
-		}
-		return nil
+		// The audit compared the retired trigger-driven projection with a reference rebuild.
+		// The endpoint state updater re-derives every row on its sweep, so there is no second
+		// implementation left to compare against.
+		return fmt.Errorf("inventory-audit is retired with the trigger-driven inventory projection")
 	case "device-census":
 		return runDeviceCensus(args[1:])
 	case "router":

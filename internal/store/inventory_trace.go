@@ -93,37 +93,12 @@ func (s *PostgresStore) GetInventorySessionEvidence(ctx context.Context, id, rec
 func (s *DBStore) GetInventorySnapshotEvidence(ctx context.Context, id, record string) (normalized.Event, bool, error) {
 	return s.pg.GetInventorySnapshotEvidence(ctx, id, record)
 }
+
+// GetInventorySnapshotEvidence served "snapshot:" trace records from the retired
+// endpoint_inventory_snapshot_facts table (dropped in migration 141). The trace now lists
+// DHCP leases and account sessions only, so such records are never produced; old links
+// resolve as not found.
 func (s *PostgresStore) GetInventorySnapshotEvidence(ctx context.Context, id, record string) (normalized.Event, bool, error) {
-	var refRaw []byte
-	var eventID string
-	err := s.db.QueryRowContext(ctx, `SELECT snapshot_ref,event_id FROM endpoint_inventory_snapshot_facts WHERE endpoint_id=$1 AND record_id=$2`, id, strings.TrimPrefix(record, "snapshot:")).Scan(&refRaw, &eventID)
-	if err == sql.ErrNoRows {
-		return normalized.Event{}, false, nil
-	}
-	if err != nil {
-		return normalized.Event{}, false, err
-	}
-	var k [5]string
-	if err = json.Unmarshal(refRaw, &k); err != nil {
-		return normalized.Event{}, false, err
-	}
-	var raw []byte
-	err = s.db.QueryRowContext(ctx, `SELECT document FROM identity_full_snapshots WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND snapshot_id=$5`, k[0], k[1], k[2], k[3], k[4]).Scan(&raw)
-	if err == sql.ErrNoRows {
-		return normalized.Event{}, false, nil
-	}
-	if err != nil {
-		return normalized.Event{}, false, err
-	}
-	var snap IdentitySnapshot
-	if err = json.Unmarshal(raw, &snap); err != nil {
-		return normalized.Event{}, false, err
-	}
-	for _, event := range snap.Events {
-		if event.EventID == eventID {
-			return event, true, nil
-		}
-	}
 	return normalized.Event{}, false, nil
 }
 

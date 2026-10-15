@@ -14,33 +14,92 @@ func (s *PostgresStore) ProcessDeviceNames(ctx context.Context, events []normali
 	return s.processDeviceNamesReceived(ctx, events, time.Time{})
 }
 func (s *PostgresStore) processDeviceNamesReceived(ctx context.Context, events []normalized.Event, received time.Time) error {
-	// Address answers are persisted before service records, independent of packet order.
-	ordered := append([]normalized.Event(nil), events...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		return stringFromMap(ordered[i].Payload, "record_type") != "SRV" && stringFromMap(ordered[j].Payload, "record_type") == "SRV"
-	})
-	for _, e := range ordered {
+	// Address answers are persisted before service records, independent of packet order:
+	// service attribution reads the hostname rows, so hostnames and other names are written
+	// first and services are attributed and written afterwards.
+	var names, services []DeviceNameEvidence
+	for _, e := range events {
 		for _, n := range extractDeviceNames(e) {
+			if n.Kind == "service" {
+				services = append(services, n)
+			} else {
+				names = append(names, n)
+			}
+		}
+	}
+	for _, group := range [][]DeviceNameEvidence{names, services} {
+		attributed := make([]DeviceNameEvidence, 0, len(group))
+		for _, n := range group {
 			var err error
-			n, err = s.attributeDeviceName(ctx, n)
-			if err != nil {
+			if n, err = s.attributeDeviceName(ctx, n); err != nil {
 				return err
 			}
 			if !received.IsZero() {
 				latency := time.Since(received).Milliseconds()
 				n.ProcessingLatencyMillis = &latency
 			}
-			raw, err := json.Marshal(n)
-			if err != nil {
-				return err
-			}
-			_, err = s.db.ExecContext(ctx, `INSERT INTO device_name_evidence(sensor_id,event_id,source,value,endpoint_id,observed_at,evidence) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(sensor_id,event_id,source,value) DO UPDATE SET endpoint_id=excluded.endpoint_id,evidence=jsonb_set(excluded.evidence,'{processing_latency_ms}',coalesce(nullif(device_name_evidence.evidence->'processing_latency_ms','null'::jsonb),excluded.evidence->'processing_latency_ms','null'::jsonb)),processed_at=now()`, n.SensorID, n.EventID, n.Source, n.Value, n.EndpointID, n.ObservedAt, raw)
-			if err != nil {
-				return err
-			}
+			attributed = append(attributed, n)
+		}
+		if err := s.insertDeviceNamesBatch(ctx, attributed); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// insertDeviceNamesBatch writes one batch of name evidence in a single statement. One
+// autocommitted INSERT per name cost a WAL fsync each (~108 ms on 184, 7.9k calls in a few
+// hours) and kept the domain queue full; names are rebuildable evidence, so the batch
+// also skips waiting for the fsync.
+func (s *PostgresStore) insertDeviceNamesBatch(ctx context.Context, names []DeviceNameEvidence) error {
+	if len(names) == 0 {
+		return nil
+	}
+	type row struct {
+		SensorID   string          `json:"sensor_id"`
+		EventID    string          `json:"event_id"`
+		Source     string          `json:"source"`
+		Value      string          `json:"value"`
+		EndpointID string          `json:"endpoint_id"`
+		ObservedAt time.Time       `json:"observed_at"`
+		Evidence   json.RawMessage `json:"evidence"`
+	}
+	latest := map[[4]string]row{}
+	for _, n := range names {
+		raw, err := json.Marshal(n)
+		if err != nil {
+			return err
+		}
+		// ON CONFLICT cannot touch the same row twice in one statement; keep the last.
+		latest[[4]string{n.SensorID, n.EventID, n.Source, n.Value}] = row{n.SensorID, n.EventID, n.Source, n.Value, n.EndpointID, n.ObservedAt, raw}
+	}
+	rows := make([]row, 0, len(latest))
+	for _, r := range latest {
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		return a.SensorID+"\x00"+a.EventID+"\x00"+a.Source+"\x00"+a.Value < b.SensorID+"\x00"+b.EventID+"\x00"+b.Source+"\x00"+b.Value
+	})
+	body, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO device_name_evidence(sensor_id,event_id,source,value,endpoint_id,observed_at,evidence)
+ SELECT r.sensor_id,r.event_id,r.source,r.value,r.endpoint_id,r.observed_at,r.evidence
+ FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,event_id text,source text,value text,endpoint_id text,observed_at timestamptz,evidence jsonb)
+ ON CONFLICT(sensor_id,event_id,source,value) DO UPDATE SET endpoint_id=excluded.endpoint_id,evidence=jsonb_set(excluded.evidence,'{processing_latency_ms}',coalesce(nullif(device_name_evidence.evidence->'processing_latency_ms','null'::jsonb),excluded.evidence->'processing_latency_ms','null'::jsonb)),processed_at=now()`, body); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *PostgresStore) DeviceNames(ctx context.Context, ids []string, now time.Time) (map[string]*DeviceName, error) {
 	out := map[string]*DeviceName{}
@@ -252,15 +311,17 @@ func (s *PostgresStore) RetryDeviceNames(ctx context.Context, events []normalize
 			ips = append(ips, stringFromMap(e.Subject, "ip"))
 		}
 	}
-	// Unattributed names leave the hot rotation by retry_after backoff; fresh DHCP evidence
-	// for the same sensor and address retries them immediately.
-	// The periodic pass has no DHCP context; keep its predicate inside the partial index
-	// device_name_retry_due instead of an OR the planner can only satisfy with a scan.
-	query := `SELECT evidence FROM device_name_evidence WHERE source IN ('mdns_hostname','mdns_service') AND observed_at>=now()-interval '7 days' AND ((endpoint_id='' AND retry_after<=now()) OR (sensor_id=ANY($1::text[]) AND (source='mdns_service' OR evidence->>'address'=ANY($2::text[])))) ORDER BY processed_at,event_id LIMIT 100`
+	// A DHCP batch retries only the names its sensors and addresses can now resolve; the
+	// unattributed backlog belongs to the periodic pass alone. Mixing both made every DHCP
+	// batch re-walk the backlog inside the domain queue, which kept that queue full.
+	query := `SELECT evidence FROM device_name_evidence WHERE source IN ('mdns_hostname','mdns_service') AND observed_at>=now()-interval '7 days' AND sensor_id=ANY($1::text[]) AND (source='mdns_service' OR evidence->>'address'=ANY($2::text[])) ORDER BY processed_at,event_id LIMIT 100`
 	args := []any{sensors, ips}
-	if len(sensors) == 0 {
+	if len(events) == 0 {
+		// The periodic pass stays inside the partial index device_name_retry_due.
 		query = `SELECT evidence FROM device_name_evidence WHERE source IN ('mdns_hostname','mdns_service') AND endpoint_id='' AND retry_after<=now() AND observed_at>=now()-interval '7 days' ORDER BY retry_after,processed_at,event_id LIMIT 100`
 		args = nil
+	} else if len(sensors) == 0 {
+		return nil
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -285,18 +346,56 @@ func (s *PostgresStore) RetryDeviceNames(ctx context.Context, events []normalize
 	if err != nil {
 		return err
 	}
+	// Attribute until the budget is nearly spent, then write every result in one statement.
+	// A pass that runs out of time records what it finished instead of failing as a whole;
+	// the rest stays due and the next pass continues from it.
+	deadline, bounded := ctx.Deadline()
+	done := make([]DeviceNameEvidence, 0, len(pending))
 	for _, n := range pending {
-		n, err = s.attributeDeviceName(ctx, n)
-		if err != nil {
-			return err
+		if bounded && time.Until(deadline) < deviceNameRetryReserve {
+			break
 		}
-		raw, err := json.Marshal(n)
-		if err != nil {
-			return err
+		attributed, attrErr := s.attributeDeviceName(ctx, n)
+		if attrErr != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			return attrErr
 		}
-		if _, err = s.db.ExecContext(ctx, `UPDATE device_name_evidence SET endpoint_id=$1,evidence=$2,processed_at=now(),retry_attempts=CASE WHEN $1='' THEN retry_attempts+1 ELSE 0 END,retry_after=CASE WHEN $1='' THEN now()+make_interval(secs=>least(21600,60*power(2,least(retry_attempts,9)))) ELSE '-infinity' END WHERE sensor_id=$3 AND event_id=$4 AND source=$5 AND value=$6`, n.EndpointID, raw, n.SensorID, n.EventID, n.Source, n.Value); err != nil {
-			return err
-		}
+		done = append(done, attributed)
 	}
-	return nil
+	if len(done) == 0 {
+		return nil
+	}
+	type row struct {
+		SensorID   string          `json:"sensor_id"`
+		EventID    string          `json:"event_id"`
+		Source     string          `json:"source"`
+		Value      string          `json:"value"`
+		EndpointID string          `json:"endpoint_id"`
+		Evidence   json.RawMessage `json:"evidence"`
+	}
+	rowsJSON := make([]row, 0, len(done))
+	for _, n := range done {
+		raw, marshalErr := json.Marshal(n)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		rowsJSON = append(rowsJSON, row{n.SensorID, n.EventID, n.Source, n.Value, n.EndpointID, raw})
+	}
+	body, err := json.Marshal(rowsJSON)
+	if err != nil {
+		return err
+	}
+	write, cancel := context.WithTimeout(context.WithoutCancel(ctx), deviceNameRetryReserve)
+	defer cancel()
+	_, err = s.db.ExecContext(write, `UPDATE device_name_evidence d SET endpoint_id=r.endpoint_id,evidence=r.evidence,processed_at=now(),
+ retry_attempts=CASE WHEN r.endpoint_id='' THEN d.retry_attempts+1 ELSE 0 END,
+ retry_after=CASE WHEN r.endpoint_id='' THEN now()+make_interval(secs=>least(21600,60*power(2,least(d.retry_attempts,9)))) ELSE '-infinity' END
+ FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,event_id text,source text,value text,endpoint_id text,evidence jsonb)
+ WHERE d.sensor_id=r.sensor_id AND d.event_id=r.event_id AND d.source=r.source AND d.value=r.value`, body)
+	return err
 }
+
+// deviceNameRetryReserve is the time kept back from a retry pass for its single write.
+const deviceNameRetryReserve = 2 * time.Second
