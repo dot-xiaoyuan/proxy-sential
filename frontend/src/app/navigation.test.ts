@@ -20,7 +20,8 @@ describe('menu and investigation navigation',()=>{
  })
  it('hides empty groups and preserves protected read permissions',()=>{
  const session={user:{id:'viewer',name:'viewer'},role:'viewer',permissions:['events:read']} as Session
- expect(visibleNavigation(session).map(g=>g.key)).toEqual(['network'])
+ expect(visibleNavigation(session).map(g=>g.key)).toEqual([])
+ expect(navigation.find(g=>g.key==='network')).toBeTruthy()
  const policyOnly={...session,permissions:['policies:read']} as Session
  expect(visibleNavigation(policyOnly).find(g=>g.key==='risk')?.items[0].to).toBe('/actions?tab=executions')
  const identityOnly={...session,permissions:['identity:read']} as Session

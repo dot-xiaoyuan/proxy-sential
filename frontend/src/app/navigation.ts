@@ -2,7 +2,7 @@ import type { Permission, Session } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
 
 export type NavigationItem = { key: string; title: string; to: string; permission?: Permission; readAlternatives?: {permission: Permission; to: string}[]; owns: (path: string, params: URLSearchParams) => boolean }
-export type NavigationGroup = { key: string; title: string; items: NavigationItem[] }
+export type NavigationGroup = { key: string; title: string; items: NavigationItem[]; hidden?: boolean }
 const item = (key: string, title: string, to: string, permission?: Permission, prefix = to.split('?')[0]): NavigationItem => ({ key, title, to, permission, owns: path => path === prefix || path.startsWith(`${prefix}/`) })
 export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
@@ -12,7 +12,7 @@ export const navigation: NavigationGroup[] = [
     item('cases','风险案件','/cases','cases:read'), {...item('actions','处置记录','/actions?tab=actions','actions:read'),readAlternatives:[{permission:'policies:read',to:'/actions?tab=executions'}]},
   ] },
   { key: 'assets', title: '设备中心', items: [{...item('devices','设备中心','/devices','identity:read'), owns: path => path === '/devices' || path.startsWith('/devices/') || path === '/discovery' || path.startsWith('/discovery/'), }] },
-  { key: 'network', title: '网络分析', items: [
+  { key: 'network', title: '网络分析', hidden: true, items: [
     ...(['applications','access','technical'] as const).map((section,index) => ({...item(section,['应用访问','访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['applications','access','technical'].includes(q.get('section')||'')?q.get('section'):'applications') === section})),
     item('events','事件检索','/events','events:read'),
   ] },
@@ -65,5 +65,5 @@ export function visibleNavigation(session: Session) {
   if(!entry.permission || can(session,entry.permission))return [entry]
   const alternative=entry.readAlternatives?.find(option=>can(session,option.permission))
   return alternative?[{...entry,...alternative}]:[]
- })})).filter(group => group.items.length)
+ })})).filter(group => group.items.length && !group.hidden)
 }
