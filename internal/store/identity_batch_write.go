@@ -692,34 +692,36 @@ ON CONFLICT(sensor_id, signal_id) DO UPDATE SET
 	if err != nil {
 		return err
 	}
-	if len(eventEventID) > 0 {
-		if _, err = tx.ExecContext(ctx, `
-INSERT INTO device_signal_events(sensor_id, signal_id, event_id, first_seen)
-SELECT $1, t.signal_id, t.event_id, t.first_seen
-FROM unnest($2::text[], $3::text[], $4::timestamptz[]) AS t(signal_id, event_id, first_seen)
-ON CONFLICT(sensor_id, signal_id, event_id) DO NOTHING`,
-			sensorID, eventSignalID, eventEventID, eventFirstSeen); err != nil {
-			return err
-		}
+	if len(eventEventID) == 0 {
+		return nil
 	}
+	// Maintain seen_count and the 20-event sample incrementally. The previous statement
+	// recounted and re-ranked every stored event of each touched signal on every batch; with
+	// no retention that grew without bound (3M rows on 184) and one batch spent over 30 s in
+	// it while holding the global identity write lock, stalling every other identity writer.
+	// Only events this batch actually inserted change the count, and the sample is read from
+	// device_signal_events_recent (migration 138) as a bounded top-20 per touched signal.
 	_, err = tx.ExecContext(ctx, `
+WITH inserted AS (
+  INSERT INTO device_signal_events(sensor_id, signal_id, event_id, first_seen)
+  SELECT $1, t.signal_id, t.event_id, t.first_seen
+  FROM unnest($2::text[], $3::text[], $4::timestamptz[]) AS t(signal_id, event_id, first_seen)
+  ON CONFLICT(sensor_id, signal_id, event_id) DO NOTHING
+  RETURNING signal_id
+), added AS (
+  SELECT signal_id, count(*) AS n FROM inserted GROUP BY signal_id
+)
 UPDATE device_signal_facts f
-SET seen_count = counted.seen_count,
-    event_ids_sample = COALESCE(counted.event_ids_sample, '[]'::jsonb),
+SET seen_count = f.seen_count + a.n,
+    event_ids_sample = COALESCE((
+      SELECT jsonb_agg(r.event_id ORDER BY r.first_seen DESC, r.event_id)
+      FROM (SELECT event_id, first_seen FROM device_signal_events e
+            WHERE e.sensor_id = $1 AND e.signal_id = a.signal_id
+            ORDER BY e.first_seen DESC, e.event_id LIMIT 20) r), f.event_ids_sample),
     updated_at = now()
-FROM (
-  SELECT signal_id, count(*) AS seen_count,
-         jsonb_agg(event_id ORDER BY first_seen DESC, event_id) FILTER (WHERE event_rank <= 20) AS event_ids_sample
-  FROM (
-    SELECT signal_id, event_id, first_seen,
-           row_number() OVER (PARTITION BY signal_id ORDER BY first_seen DESC, event_id) AS event_rank
-    FROM device_signal_events
-    WHERE sensor_id = $1 AND signal_id = ANY($2::text[])
-  ) ranked
-  GROUP BY signal_id
-) counted
-WHERE f.sensor_id = $1 AND f.signal_id = counted.signal_id`,
-		sensorID, pick(signalID))
+FROM added a
+WHERE f.sensor_id = $1 AND f.signal_id = a.signal_id`,
+		sensorID, eventSignalID, eventEventID, eventFirstSeen)
 	return err
 }
 
