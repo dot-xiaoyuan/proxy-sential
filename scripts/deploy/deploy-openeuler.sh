@@ -2,17 +2,19 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: deploy-openeuler.sh --target user@host --version VERSION --env-file FILE" >&2
+  echo "usage: deploy-openeuler.sh --target user@host --version VERSION --env-file FILE [--skip-backup]" >&2
 }
 
 target=""
 version=""
 env_file=""
+skip_backup=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) target="${2:-}"; shift 2 ;;
     --version) version="${2:-}"; shift 2 ;;
     --env-file) env_file="${2:-}"; shift 2 ;;
+    --skip-backup) skip_backup=true; shift ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -74,7 +76,9 @@ fi
 if [[ -n "$admin_secret" ]]; then
   scp -q "$admin_secret" "$target:$remote_tmp/admin-password"
 fi
-ssh -tt -o BatchMode=yes "$target" "chmod 0700 '$remote_tmp/install-openeuler.sh'; '$remote_tmp/install-openeuler.sh' --version '$version' --archive '$remote_tmp/$(basename "$archive")' --checksum '$remote_tmp/$(basename "$archive").sha256' --env-file '$installer_env' --admin-secret '$remote_tmp/admin-password'"
+install_args="--version '$version' --archive '$remote_tmp/$(basename "$archive")' --checksum '$remote_tmp/$(basename "$archive").sha256' --env-file '$installer_env' --admin-secret '$remote_tmp/admin-password'"
+if [[ "$skip_backup" == true ]]; then install_args+=" --skip-backup"; fi
+ssh -tt -o BatchMode=yes "$target" "chmod 0700 '$remote_tmp/install-openeuler.sh'; '$remote_tmp/install-openeuler.sh' $install_args"
 if [[ -n "$active_field_units" ]]; then
   while IFS= read -r unit; do
     [[ "$unit" == proxy-sentinel-device-signal.service || "$unit" == proxy-sentinel-ingest.service ]] || continue
