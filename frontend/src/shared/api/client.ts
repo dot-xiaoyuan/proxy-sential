@@ -10,6 +10,11 @@ import type {
   ActivityOverviewQuery,
 	ActivityReport,
   AccountIdentityProfile,
+  AccountAssessmentPage,
+  AccountAssessmentDetail,
+  AccountAssessmentQuery,
+  AccountTagReview,
+  AccountTagReviewRequest,
   AuditLog,
   AuditLogListResponse,
   CreateLabelRequest,
@@ -187,6 +192,9 @@ export const api = {
     request<AccountIdentityProfile>(
       `/accounts/${encodeURIComponent(accountId)}/identity${search(query)}`,
     ),
+  accountAssessments: (query: AccountAssessmentQuery = {}) => request<AccountAssessmentPage>(`/account-assessments${search(query)}`),
+  accountAssessment: (accountId: string) => request<AccountAssessmentDetail>(`/accounts/${encodeURIComponent(accountId)}/assessment`),
+  createAccountTagReview: (accountId: string, payload: AccountTagReviewRequest) => request<AccountTagReview>(`/accounts/${encodeURIComponent(accountId)}/tag-reviews`, {method:'POST', body:JSON.stringify(payload)}),
   deviceNameEvidence: (endpointId: string, offset = 0) => request<{items: {value: string;source: string;kind: string;event_id?: string;sensor_id: string;address?: string;observed_at: string;valid_until: string;attribution: string}[];total: number}>(`/endpoints/${encodeURIComponent(endpointId)}/name-evidence?limit=20&offset=${offset}`),
   updateDeviceName: (endpointId: string, value: string) => request(`/endpoints/${encodeURIComponent(endpointId)}/name-note`, {method: 'POST', body: JSON.stringify({value})}),
   endpointIdentity: (endpointId: string, query: IdentityQuery = {}) =>

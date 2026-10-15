@@ -10,6 +10,8 @@ const DevicesPage = lazy(() => import('../pages/DeviceCenterPage').then((module)
 const EndpointDetailsPage = lazy(() =>
   import('../pages/EndpointDetailsPage').then((module) => ({ default: module.EndpointDetailsPage })),
 )
+const AccountAssessmentsPage = lazy(() => import('../pages/AccountAssessmentsPage').then(module => ({default:module.AccountAssessmentsPage})))
+const AccountAssessmentDetailsPage = lazy(() => import('../pages/AccountAssessmentsPage').then(module => ({default:module.AccountAssessmentDetailsPage})))
 const IpDetailsPage = lazy(() =>
   import('../pages/IpDetailsPage').then((module) => ({ default: module.IpDetailsPage })),
 )
@@ -83,6 +85,8 @@ export function EndpointDetailsRoute() {
     </RouteSuspense>
   )
 }
+export function AccountAssessmentsRoute(){return <RouteSuspense><AccountAssessmentsPage/></RouteSuspense>}
+export function AccountAssessmentDetailsRoute(){return <RouteSuspense><AccountAssessmentDetailsPage/></RouteSuspense>}
 
 export function IpDetailsRoute() {
   return (

@@ -138,6 +138,13 @@ export type AccountSession = components['schemas']['AccountSession']
 export type IdentityIPMACHistory = components['schemas']['IdentityIPMACHistory']
 export type IdentityAccessHistory = components['schemas']['IdentityAccessHistory']
 export type AccountIdentityProfile = components['schemas']['AccountIdentityProfile']
+export type AccountTagType = components['schemas']['AccountTagType']
+export type AccountTagAssessment = components['schemas']['AccountTagAssessment']
+export type AccountAssessmentPage = components['schemas']['AccountAssessmentPage']
+export type AccountAssessmentDetail = components['schemas']['AccountAssessmentDetail']
+export type AccountTagReviewRequest = components['schemas']['AccountTagReviewRequest']
+export type AccountTagReview = components['schemas']['AccountTagReview']
+export type AccountAssessmentQuery = ListQuery & { q?:string; tag?:string; evidence_level?:'confirmed'|'likely'|'clue'; review_state?:'pending'|'confirm'|'reject'; state?:'current'|'historical' }
 export type EndpointIdentityProfile = components['schemas']['EndpointIdentityProfile']
 export type EndpointDomainEvidence = components['schemas']['EndpointDomainEvidence']
 

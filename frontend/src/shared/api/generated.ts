@@ -4,6 +4,74 @@
  */
 
 export interface paths {
+    "/discovery/types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped device discovery data; requires identity:read. */
+        get: operations["getDiscoveryTypes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped device discovery data; requires identity:read. */
+        get: operations["getDiscoveryCoverage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/statistics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Independent incremental discovery statistics; requires identity:read. */
+        get: operations["getDiscoveryStatistics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Scoped device discovery data; requires identity:read. */
+        get: operations["getDiscoveryHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/nodes": {
         parameters: {
             query?: never;
@@ -97,7 +165,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Windowed passive, infrastructure, or active discovery read model; requires identity:read. Does not claim online state or create terminal identities. */
+        /** @description Versioned device state with optional last-observation window; requires identity:read. Does not claim online state or create terminal identities. */
         get: operations["getDiscoveryDevices"];
         put?: never;
         post?: never;
@@ -2489,6 +2557,57 @@ export interface paths {
         get: operations["getAccountIdentity"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/account-assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Reads the bounded account tag projection; requires identity:read. */
+        get: operations["listAccountAssessments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/assessment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Current and historical account tags with bounded endpoint summaries; requires identity:read. */
+        get: operations["getAccountAssessment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/{account_id}/tag-reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Confirms or rejects one exact assessment version; requires labels:create and never authorizes enforcement. */
+        post: operations["createAccountTagReview"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5883,6 +6002,75 @@ export interface components {
             matched_at: string;
             is_recent_ip: boolean;
         };
+        DiscoveryFreshness: {
+            /** @enum {string} */
+            status: "initializing" | "ready" | "processing" | "delayed" | "failed";
+            lag_seconds: number;
+            /** Format: int64 */
+            result_version: number;
+            /** Format: date-time */
+            oldest_pending_at?: string;
+            /** Format: date-time */
+            ingested_at?: string;
+            /** Format: date-time */
+            processed_at?: string;
+            error?: string;
+        };
+        DiscoveryTypeCatalogue: {
+            version: string;
+            items: {
+                id: string;
+                label: string;
+                category: string;
+            }[];
+        };
+        DiscoveryCoverage: {
+            enabled: boolean;
+            scope?: string;
+            freshness?: components["schemas"]["DiscoveryFreshness"];
+            items: {
+                owner?: string;
+                sensor_id: string;
+                protocol: string;
+                enabled: boolean;
+                received: number;
+                parsed: number;
+                rejected: number;
+                admitted: number;
+                /** Format: date-time */
+                last_seen?: string | null;
+                /** Format: date-time */
+                last_success?: string | null;
+                error: string;
+            }[];
+        };
+        DiscoveryStatistics: {
+            pending_updates: number;
+            /** Format: date-time */
+            oldest_pending_at?: string | null;
+            items: {
+                device_type: string;
+                state: string;
+                count: number;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+        };
+        DiscoveryHistoryPage: {
+            has_more: boolean;
+            next_cursor: string;
+            items: {
+                /** Format: int64 */
+                id: number;
+                event_id: string;
+                /** Format: date-time */
+                ingested_at: string;
+                /** Format: date-time */
+                observed_at: string;
+                kind: string;
+                evidence: components["schemas"]["DiscoveryObservation"];
+            }[];
+        };
         DiscoveryObservation: {
             id: string;
             event_id?: string;
@@ -5904,6 +6092,25 @@ export interface components {
             explanation: string;
         };
         DiscoveryDevice: {
+            last_device_type?: string;
+            last_category?: string;
+            /** @enum {string} */
+            classification_status?: "identified" | "expired" | "conflict" | "candidate";
+            classification?: {
+                reason?: string;
+                rule_version?: string;
+                conflict?: boolean;
+                confidence?: string;
+            };
+            manufacturer?: string;
+            model_name?: string;
+            domain?: string;
+            vlan?: string;
+            sensor_id?: string;
+            current_addresses?: string[];
+            last_observed_ip?: string;
+            /** Format: int64 */
+            result_version?: number;
             id: string;
             primary_ip?: string;
             addresses?: string[];
@@ -5925,6 +6132,7 @@ export interface components {
             observations: components["schemas"]["DiscoveryObservation"][];
         };
         DiscoveryDevicePage: {
+            freshness?: components["schemas"]["DiscoveryFreshness"];
             items: components["schemas"]["DiscoveryDevice"][];
             next_cursor: string;
             has_more: boolean;
@@ -6157,6 +6365,83 @@ export interface components {
             first_seen?: string;
             /** Format: date-time */
             last_seen?: string;
+        };
+        /** @enum {string} */
+        AccountTagType: "proxy" | "router" | "mobile" | "pc";
+        /** @enum {string} */
+        AccountTagEvidenceLevel: "confirmed" | "likely" | "clue";
+        AccountTagAssessment: {
+            account_id: string;
+            tag_type: components["schemas"]["AccountTagType"];
+            assessment_version: string;
+            /** @enum {string} */
+            state: "current" | "historical";
+            evidence_level: components["schemas"]["AccountTagEvidenceLevel"];
+            source_type: string;
+            reason: string;
+            endpoint_ids: string[];
+            evidence_ids: string[];
+            rule_version?: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            /** Format: date-time */
+            valid_until: string;
+            /** @enum {string} */
+            review_state: "pending" | "confirm" | "reject";
+        };
+        AccountAssessmentListItem: {
+            account_id: string;
+            tags: components["schemas"]["AccountTagAssessment"][];
+            endpoint_count: number;
+            primary_reason: string;
+            /** @enum {string} */
+            review_state: "pending" | "confirm" | "reject";
+            /** Format: date-time */
+            last_assessed_at: string;
+        };
+        AccountAssessmentPage: {
+            items: components["schemas"]["AccountAssessmentListItem"][];
+            /** @enum {string} */
+            state: "ready" | "processing" | "stale" | "no_records" | "failed";
+            as_of: string;
+            page: components["schemas"]["Page"];
+        };
+        AccountAssessmentEndpoint: {
+            endpoint_id: string;
+            primary_mac?: string;
+            brand?: string;
+            model?: string;
+            device_type?: string;
+            /** Format: date-time */
+            last_seen?: string;
+            evidence_level: components["schemas"]["AccountTagEvidenceLevel"];
+        };
+        AccountTagReviewRequest: {
+            tag_type: components["schemas"]["AccountTagType"];
+            assessment_version: string;
+            /** @enum {string} */
+            decision: "confirm" | "reject";
+            reason: string;
+        };
+        AccountTagReview: components["schemas"]["AccountTagReviewRequest"] & {
+            review_id: string;
+            account_id: string;
+            evidence_ids: string[];
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AccountAssessmentDetail: {
+            account_id: string;
+            /** @enum {string} */
+            state: "ready" | "processing" | "stale" | "no_records" | "failed";
+            as_of: string;
+            tags: components["schemas"]["AccountTagAssessment"][];
+            history: components["schemas"]["AccountTagAssessment"][];
+            endpoints: components["schemas"]["AccountAssessmentEndpoint"][];
+            reviews: components["schemas"]["AccountTagReview"][];
         };
         EndpointIdentityProfile: {
             discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
@@ -6838,6 +7123,114 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getDiscoveryTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryTypeCatalogue"];
+                };
+            };
+            /** @description Read failed; never replaced by an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryCoverage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryCoverage"];
+                };
+            };
+            /** @description Read failed; never replaced by an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryStatistics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Statistics and outstanding update count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryStatistics"];
+                };
+            };
+            /** @description Statistics read failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryHistoryPage"];
+                };
+            };
+            /** @description Read failed; never replaced by an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getDiscoverySources: {
         parameters: {
             query?: never;
@@ -6863,13 +7256,17 @@ export interface operations {
     getDiscoveryDevices: {
         parameters: {
             query?: {
+                type?: string;
+                protocol?: string;
+                state?: "identified" | "expired" | "conflict" | "candidate";
+                domain?: string;
+                vlan?: string;
                 /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
                 view?: "iot";
                 mode?: "passive" | "infrastructure" | "active" | "all";
                 window?: string;
                 /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
                 search?: string;
-                type?: string;
                 category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
                 capability?: string;
                 limit?: number;
@@ -11287,6 +11684,95 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listAccountAssessments: {
+        parameters: {
+            query?: {
+                q?: string;
+                tag?: components["schemas"]["AccountTagType"][];
+                evidence_level?: components["schemas"]["AccountTagEvidenceLevel"];
+                review_state?: "pending" | "confirm" | "reject";
+                state?: "current" | "historical";
+                limit?: components["parameters"]["LimitQuery"];
+                cursor?: components["parameters"]["CursorQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account assessment projection page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountAssessmentPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAccountAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account assessment detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountAssessmentDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createAccountTagReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountTagReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Review recorded. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountTagReview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Assessment version changed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             500: components["responses"]["InternalError"];
         };
     };
