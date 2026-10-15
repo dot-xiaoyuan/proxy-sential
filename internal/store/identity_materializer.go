@@ -32,7 +32,7 @@ const identityWorkBudget = 60 * time.Second
 // identityLockWaitBudget bounds how long one live/backfill batch waits for the identity
 // write lock before giving the loop back. It stays well inside identityWorkBudget so a
 // contended lock still leaves time to read ClickHouse and write the batch.
-const identityLockWaitBudget = 8 * time.Second
+const identityLockWaitBudget = 30 * time.Second
 
 // identityHealthInterval throttles the lane's read_model_runtime_state beacon. The loop
 // runs about once a second, and one autocommit per iteration measured 245 ms against a

@@ -812,10 +812,6 @@ func lockIdentityWrite(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
-// identityLockWaitStep is the pause between attempts while a live lane waits for the
-// identity write lock.
-const identityLockWaitStep = 250 * time.Millisecond
-
 // ErrIdentityWriteLockBusy reports that a batch gave up waiting for the identity write
 // lock. The cursor does not move, so the batch is retried; the error keeps the stall visible.
 var ErrIdentityWriteLockBusy = errors.New("identity write lock busy")
@@ -823,31 +819,42 @@ var ErrIdentityWriteLockBusy = errors.New("identity write lock busy")
 // awaitIdentityWriteLock waits up to budget for the identity write lock and reports
 // whether this transaction now holds it.
 //
-// tryIdentityWriteLock alone starves the live lane. The domain worker holds the same lock
-// across the identity phase of every batch — one measured batch spent 49.045s of its
-// 49.058s total in that phase — and it re-acquires immediately, so sampling the lock on
-// the field returned "held" on 10 of 10 attempts across 20 seconds. A lane that skips
-// instead of waiting therefore never runs: the identity materializer's live cursor sat
-// frozen at 2026-10-13 15:20:45 for tens of minutes with an empty last_error, and
-// endpoint_entities stopped advancing, which is the device center going stale. Waiting a
-// bounded time turns that silent starvation into a delay.
+// The wait queues in PostgreSQL instead of polling. PostgreSQL grants a contended advisory
+// lock to waiters in arrival order, so every writer gets its turn. Polling with
+// pg_try_advisory_xact_lock every 250 ms lost almost every race to a writer that
+// re-acquired immediately after committing: after stability1 the router-pilot and NCU
+// lanes reported 61 lock-busy batches in 12 minutes and their live cursors fell further
+// behind on every pass. lock_timeout bounds the wait inside the server.
 func awaitIdentityWriteLock(ctx context.Context, tx *sql.Tx, budget time.Duration) (bool, error) {
-	deadline := time.Now().Add(budget)
-	for {
-		locked, err := tryIdentityWriteLock(ctx, tx)
-		if err != nil || locked {
-			return locked, err
-		}
-		if !time.Now().After(deadline) {
-			select {
-			case <-ctx.Done():
-				return false, ctx.Err()
-			case <-time.After(identityLockWaitStep):
-				continue
-			}
-		}
-		return false, nil
+	if err := boundIdentityStatements(ctx, tx); err != nil {
+		return false, err
 	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('lock_timeout',$1,true)`, strconv.FormatInt(max(1, budget.Milliseconds()), 10)); err != nil {
+		return false, err
+	}
+	// Run the wait under a savepoint: a lock_timeout cancellation aborts the statement,
+	// and rolling back to the savepoint keeps the caller's transaction usable.
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT identity_write_lock`); err != nil {
+		return false, err
+	}
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('proxy-sentinel-identity-write', 7137))`)
+	if err != nil {
+		var pgErr interface{ SQLState() string }
+		if errors.As(err, &pgErr) && pgErr.SQLState() == "55P03" {
+			if _, rollbackErr := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT identity_write_lock`); rollbackErr != nil {
+				return false, rollbackErr
+			}
+			return false, nil
+		}
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, `RELEASE SAVEPOINT identity_write_lock`); err != nil {
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, `SELECT set_config('lock_timeout','0',true)`); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Client cancellation alone can leave a disconnected backend doing expensive
