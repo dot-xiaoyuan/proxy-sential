@@ -24,47 +24,53 @@ type RouterAssociation struct {
 type RouterOptions struct {
 	AsOf       time.Time
 	RuleSet    *fingerprint.RouterRuleSet
+	Catalog    *fingerprint.Catalog
 	Resolve    func(normalized.Event) RouterAssociation
 	ShadowMode bool
 }
 
 type RouterEvidence struct {
-	EvidenceID          string   `json:"evidence_id"`
-	AssessmentID        string   `json:"assessment_id"`
-	Kind                string   `json:"kind"`
-	EndpointID          string   `json:"endpoint_id,omitempty"`
-	IP                  string   `json:"ip,omitempty"`
-	MAC                 string   `json:"mac,omitempty"`
-	VLAN                string   `json:"vlan,omitempty"`
-	Brand               string   `json:"brand,omitempty"`
-	Series              string   `json:"series,omitempty"`
-	Model               string   `json:"model,omitempty"`
-	Role                string   `json:"role,omitempty"`
-	Source              string   `json:"source"`
-	SourceFamily        string   `json:"source_family"`
-	SourceEventType     string   `json:"source_event_type,omitempty"`
-	SensorID            string   `json:"sensor_id,omitempty"`
-	SharedObservationID string   `json:"shared_observation_id,omitempty"`
-	RawValue            string   `json:"raw_value,omitempty"`
-	Strength            string   `json:"strength"`
-	Score               int      `json:"score"`
-	RuleID              string   `json:"rule_id"`
-	RuleVersion         string   `json:"rule_version"`
-	Explanation         string   `json:"explanation"`
-	Conflict            bool     `json:"conflict"`
-	ConflictCode        string   `json:"conflict_code,omitempty"`
-	Exclusion           bool     `json:"exclusion"`
-	BrandReferenceOnly  bool     `json:"brand_reference_only"`
-	BrandAttribution    bool     `json:"brand_attribution"`
-	AssociationQuality  string   `json:"association_quality"`
-	AssociationReason   string   `json:"association_reason,omitempty"`
-	Ambiguous           bool     `json:"ambiguous"`
-	Infrastructure      bool     `json:"infrastructure"`
-	FirstSeen           string   `json:"first_seen"`
-	LastSeen            string   `json:"last_seen"`
-	ExpiresAt           string   `json:"expires_at"`
-	Expired             bool     `json:"expired"`
-	EventIDs            []string `json:"event_ids"`
+	EvidenceID          string `json:"evidence_id"`
+	AssessmentID        string `json:"assessment_id"`
+	Kind                string `json:"kind"`
+	EndpointID          string `json:"endpoint_id,omitempty"`
+	IP                  string `json:"ip,omitempty"`
+	MAC                 string `json:"mac,omitempty"`
+	VLAN                string `json:"vlan,omitempty"`
+	Brand               string `json:"brand,omitempty"`
+	Series              string `json:"series,omitempty"`
+	Model               string `json:"model,omitempty"`
+	Role                string `json:"role,omitempty"`
+	Source              string `json:"source"`
+	SourceFamily        string `json:"source_family"`
+	SourceEventType     string `json:"source_event_type,omitempty"`
+	SensorID            string `json:"sensor_id,omitempty"`
+	SharedObservationID string `json:"shared_observation_id,omitempty"`
+	RawValue            string `json:"raw_value,omitempty"`
+	Strength            string `json:"strength"`
+	Score               int    `json:"score"`
+	RuleID              string `json:"rule_id"`
+	RuleVersion         string `json:"rule_version"`
+	Explanation         string `json:"explanation"`
+	// Library names the open-source library that produced this observation. Label-only
+	// observations (LabelOnly) are displayed and never score, name a role, or count as a
+	// source; they arise from libraries whose license forbids a role basis.
+	Library            string   `json:"library,omitempty"`
+	LabelOnly          bool     `json:"label_only,omitempty"`
+	Conflict           bool     `json:"conflict"`
+	ConflictCode       string   `json:"conflict_code,omitempty"`
+	Exclusion          bool     `json:"exclusion"`
+	BrandReferenceOnly bool     `json:"brand_reference_only"`
+	BrandAttribution   bool     `json:"brand_attribution"`
+	AssociationQuality string   `json:"association_quality"`
+	AssociationReason  string   `json:"association_reason,omitempty"`
+	Ambiguous          bool     `json:"ambiguous"`
+	Infrastructure     bool     `json:"infrastructure"`
+	FirstSeen          string   `json:"first_seen"`
+	LastSeen           string   `json:"last_seen"`
+	ExpiresAt          string   `json:"expires_at"`
+	Expired            bool     `json:"expired"`
+	EventIDs           []string `json:"event_ids"`
 }
 
 type RouterScoreComponent struct {
@@ -72,6 +78,7 @@ type RouterScoreComponent struct {
 	EvidenceID   string `json:"evidence_id"`
 	Score        int    `json:"score"`
 	Explanation  string `json:"explanation"`
+	Library      string `json:"library,omitempty"`
 }
 
 // RouterAuthBinding is display-only identity context. It is deliberately kept
@@ -118,8 +125,11 @@ type RouterAssessment struct {
 	ExpiresAt          string                 `json:"expires_at"`
 	Conflicts          []string               `json:"conflicts"`
 	ScoreComponents    []RouterScoreComponent `json:"score_components"`
-	Evidence           []RouterEvidence       `json:"evidence,omitempty"`
-	AuthBindings       []RouterAuthBinding    `json:"auth_bindings,omitempty"`
+	// Libraries lists every open-source library that recognised part of this device,
+	// including label-only libraries. Labels enrich the assessment; they never create one.
+	Libraries    []string            `json:"libraries,omitempty"`
+	Evidence     []RouterEvidence    `json:"evidence,omitempty"`
+	AuthBindings []RouterAuthBinding `json:"auth_bindings,omitempty"`
 	// MergedRecords is populated by list queries when multiple incremental
 	// assessments resolve to the same physical device. It is presentation
 	// metadata and is not persisted in the assessment snapshot.
@@ -177,6 +187,13 @@ func AnalyzeRouters(events []normalized.Event, opts RouterOptions) (RouterResult
 		inputs := routerInputs(event)
 		matches := rules.Match(inputs)
 		family := routerSourceFamily(event)
+		catalog := opts.Catalog
+		if catalog == nil {
+			catalog = fingerprint.Default().Catalog()
+		}
+		for _, item := range routerLibraryEvidence(catalog, inputs, family, rules) {
+			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, item)
+		}
 		for _, match := range matches {
 			score := routerMatchScore(family, match)
 			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, RouterEvidence{
@@ -315,6 +332,52 @@ func routerAssociationFor(event normalized.Event, at time.Time, window time.Dura
 	return routerEventAssociation{id: stableRouterID("assessment", key), endpoint: endpoint, ip: ip, mac: mac, vlan: vlan, quality: quality, reason: reason, ambiguous: ambiguous, infrastructure: infrastructure}
 }
 
+// routerLibraryEvidence turns open-source catalog matches into router observations. A
+// role-eligible self-report that names a router or access point can score; every other
+// match is a label only, carrying the library and the brand it reported for display.
+func routerLibraryEvidence(catalog *fingerprint.Catalog, inputs map[string][]string, family string, rules *fingerprint.RouterRuleSet) []RouterEvidence {
+	if catalog == nil {
+		return nil
+	}
+	out := []RouterEvidence{}
+	for _, match := range catalog.Match(fingerprint.RouterCatalogValues(inputs)) {
+		name := fingerprint.LibraryDisplayName(match.SourceID)
+		eligible := fingerprint.LibraryRoleEligible(catalog.SourceLicense(match.SourceID))
+		brand := match.Brand
+		if strings.Contains(brand, "$") {
+			brand = ""
+		}
+		model := match.Model
+		if strings.Contains(model, "$") {
+			model = ""
+		}
+		item := RouterEvidence{
+			Kind: "router_signal", SourceFamily: family, RawValue: firstNonEmptyRouter(match.Name, match.RuleID),
+			Library: match.SourceID, RuleID: "library:" + match.SourceID + ":" + match.RuleID, RuleVersion: match.Version,
+			Strength: "weak", Score: 0, LabelOnly: true,
+		}
+		detail := strings.TrimSpace(strings.Join([]string{brand, model}, " "))
+		role := routerRoleFromCatalog(match.Role)
+		if eligible && match.Strength == "self_report" && role != "" {
+			item.Role = role
+			item.Brand, item.Model = brand, model
+			item.Strength, item.LabelOnly = "medium", false
+			item.Score = 25
+			if model != "" {
+				item.Score = 35
+			}
+			item.Explanation = name + " 自报为" + map[string]string{"router": "路由器", "ap": "无线接入点"}[role] + "设备"
+		} else if detail != "" {
+			item.Explanation = name + " 规则命中：" + detail + "（仅展示，不作为角色依据）"
+		} else {
+			item.Explanation = name + " 规则命中（仅展示，不作为角色依据）"
+		}
+		_ = rules
+		out = append(out, item)
+	}
+	return out
+}
+
 func routerInputs(event normalized.Event) map[string][]string {
 	result := map[string][]string{}
 	add := func(key string, values ...any) {
@@ -347,6 +410,11 @@ func routerInputs(event normalized.Event) map[string][]string {
 	add("tls_san", event.Payload["san"], event.Payload["certificate_san"])
 	add("user_agent", event.Payload["user_agent"])
 	add("oui_vendor", event.Payload["oui_vendor"], event.Payload["vendor"])
+	// SNMP system description names the management platform; only SNMP events carry it
+	// here, so LLDP and other system descriptions keep their own input names.
+	if strings.EqualFold(event.SourceEventType, "snmp") {
+		add("snmp_sysdescr", event.Payload["system_description"])
+	}
 	if mac := routerString(event.Subject["mac"]); mac != "" {
 		identified := fingerprint.Default().Identify(mac)
 		add("oui_vendor", identified.Vendor)
@@ -436,7 +504,7 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		sharedGatewayRole = sharedGatewayRole || item.SourceFamily == "shared_gateway_behavior" && item.Role == "router" && !item.Exclusion
 	}
 	bestByFamily := map[string]RouterEvidence{}
-	vlans, conflicts := map[string]bool{}, map[string]bool{}
+	vlans, conflicts, libraries := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	strong, exclusion, verifiedBrand, attributedBrand := false, false, false, false
 	brandRank := 0
 	for _, item := range items {
@@ -494,6 +562,9 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		if overriddenRoleConflict {
 			continue
 		}
+		if item.Library != "" {
+			libraries[item.Library] = true
+		}
 		if item.Conflict {
 			conflicts[firstNonEmptyRouter(item.ConflictCode, item.Explanation)] = true
 		}
@@ -535,7 +606,7 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 			assessment.Sources = append(assessment.Sources, family)
 		}
 		assessment.Confidence += item.Score
-		assessment.ScoreComponents = append(assessment.ScoreComponents, RouterScoreComponent{SourceFamily: family, EvidenceID: item.EvidenceID, Score: item.Score, Explanation: item.Explanation})
+		assessment.ScoreComponents = append(assessment.ScoreComponents, RouterScoreComponent{SourceFamily: family, EvidenceID: item.EvidenceID, Score: item.Score, Explanation: item.Explanation, Library: item.Library})
 	}
 	if weakScore > 10 {
 		weakScore = 10
@@ -554,6 +625,10 @@ func buildRouterAssessment(id string, association routerEventAssociation, items 
 		assessment.Confidence = 100
 	}
 	assessment.IndependentSources = positiveSources
+	for library := range libraries {
+		assessment.Libraries = append(assessment.Libraries, library)
+	}
+	sort.Strings(assessment.Libraries)
 	sort.Strings(assessment.Sources)
 	for conflict := range conflicts {
 		assessment.Conflicts = append(assessment.Conflicts, conflict)
@@ -855,4 +930,18 @@ func firstNonEmptyRouter(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// routerRoleFromCatalog maps a catalog device role to the router pipeline's roles. Only the
+// roles a library may legitimately name for router identity are returned; anything else
+// (printer, laptop, camera...) is not a router basis and returns "".
+func routerRoleFromCatalog(role string) string {
+	switch role {
+	case "router", "gateway":
+		return "router"
+	case "access_point":
+		return "ap"
+	default:
+		return ""
+	}
 }

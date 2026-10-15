@@ -5737,6 +5737,8 @@ components:
         evidence_id: { type: string }
         assessment_id: { type: string }
         kind: { type: string, enum: [router_signal, conflict, confirmed_router] }
+        library: { type: string, description: Open-source library that produced this observation. }
+        label_only: { type: boolean, description: True when the library may label but not score or name a role. }
         endpoint_id: { type: string }
         ip: { type: string }
         mac: { type: string }
@@ -5776,6 +5778,7 @@ components:
         evidence_id: { type: string }
         score: { type: integer }
         explanation: { type: string }
+        library: { type: string, description: Open-source library that produced this component. }
     RouterAuthBinding:
       type: object
       required: [session_id, account_id, assigned_ips, source, match_basis, ambiguous]
@@ -5820,6 +5823,7 @@ components:
         expires_at: { type: string, format: date-time }
         conflicts: { type: array, items: { type: string } }
         score_components: { type: array, items: { $ref: '#/components/schemas/RouterScoreComponent' } }
+        libraries: { type: array, items: { type: string }, description: Open-source libraries that recognised part of this device. Labels only; they never create an assessment and copyleft libraries never score. }
         evidence: { type: array, items: { $ref: '#/components/schemas/RouterEvidence' } }
         auth_bindings: { type: array, items: { $ref: '#/components/schemas/RouterAuthBinding' }, description: Current authentication sessions linked only by exact MAC or endpoint identity. These bindings do not affect router confidence. }
         merged_records: { type: integer, minimum: 1, description: Number of active incremental assessments represented by this device row. }

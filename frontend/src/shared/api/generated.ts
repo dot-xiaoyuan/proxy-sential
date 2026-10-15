@@ -5581,6 +5581,10 @@ export interface components {
             assessment_id: string;
             /** @enum {string} */
             kind: "router_signal" | "conflict" | "confirmed_router";
+            /** @description Open-source library that produced this observation. */
+            library?: string;
+            /** @description True when the library may label but not score or name a role. */
+            label_only?: boolean;
             endpoint_id?: string;
             ip?: string;
             mac?: string;
@@ -5622,6 +5626,8 @@ export interface components {
             evidence_id: string;
             score: number;
             explanation: string;
+            /** @description Open-source library that produced this component. */
+            library?: string;
         };
         RouterAuthBinding: {
             session_id: string;
@@ -5670,6 +5676,8 @@ export interface components {
             expires_at: string;
             conflicts: string[];
             score_components: components["schemas"]["RouterScoreComponent"][];
+            /** @description Open-source libraries that recognised part of this device. Labels only; they never create an assessment and copyleft libraries never score. */
+            libraries?: string[];
             evidence?: components["schemas"]["RouterEvidence"][];
             /** @description Current authentication sessions linked only by exact MAC or endpoint identity. These bindings do not affect router confidence. */
             auth_bindings?: components["schemas"]["RouterAuthBinding"][];

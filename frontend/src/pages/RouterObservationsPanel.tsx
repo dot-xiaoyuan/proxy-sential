@@ -12,7 +12,7 @@ import { api } from '../shared/api/client'
 import type { RouterAssessment, RouterObservationQuery } from '../shared/api/types'
 import { AppErrorAlert, AppLoadingState, AppServerPagination } from '../shared/ui'
 import { BrandLogo } from '../entities/device/BrandLogo'
-import { routerConflictLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
+import { routerConflictLabels, routerLibraryLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
 
 const statusLabels = routerStatusLabels
 const roleLabels = routerRoleLabels
@@ -128,6 +128,7 @@ function RouterRecognition({ item }: { item: RouterAssessment }) {
    <Tooltip title={basis}><span className={`router-score router-score-${item.status}`}>{statusLabels[item.status]} · {item.confidence} 分</span></Tooltip>
    {sources.slice(0, 3).map(source => <Tag key={source} className="router-source">{routerSourceLabels[source] || source}</Tag>)}
    {sources.length > 3 && <Tooltip title={sources.map(source => routerSourceLabels[source] || source).join('、')}><Tag className="router-source">+{sources.length - 3}</Tag></Tooltip>}
+   {(item.libraries || []).map(library => <Tag key={library} className="router-library">{routerLibraryLabels[library] || library}</Tag>)}
    {item.ambiguous && <Tag color="warning">关联不唯一</Tag>}
    {item.conflicts.length > 0 && <Tooltip title={item.conflicts.map(conflict => routerConflictLabels[conflict] || conflict).join('、')}><Tag color="error">证据冲突</Tag></Tooltip>}
   </div>
