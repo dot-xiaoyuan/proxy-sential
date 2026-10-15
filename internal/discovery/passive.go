@@ -27,7 +27,7 @@ type DNSCache struct{ records map[string]cachedDNS }
 func DecodeFrame(frame []byte, source Source, at time.Time) []normalized.Event {
 	return decodeFrame(frame, source, at, nil)
 }
-func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []normalized.Event {
+func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []normalized.Event {
 	if len(frame) < 14 {
 		return nil
 	}
@@ -42,19 +42,25 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 		if len(frame) < offset+4 {
 			return nil
 		}
-		vlan = strconv.Itoa(int(binary.BigEndian.Uint16(frame[offset:offset+2]) & 4095))
+		tag := strconv.Itoa(int(binary.BigEndian.Uint16(frame[offset:offset+2]) & 4095))
+		if vlan != "" {
+			vlan += "/"
+		}
+		vlan += tag
 		ether = binary.BigEndian.Uint16(frame[offset+2 : offset+4])
 		offset += 4
 	}
 	emit := func(kind, key, ip, mac string, payload map[string]any) normalized.Event {
 		h := sha256.Sum256(append(append([]byte(source.ID+":"+key+":"+at.Format(time.RFC3339Nano)), frame...), byte(0)))
 		payload["origin"] = kind
-		return normalized.Event{SchemaVersion: "v1", EventID: "passive-" + hex.EncodeToString(h[:16]), Type: "discovery", Confidence: 0.5, Flow: map[string]any{"src_ip": "", "dst_ip": "", "proto": "other", "direction": "unknown"}, Source: "passive", Timestamp: at.Format(time.RFC3339Nano), Observer: map[string]any{"source_id": source.ID, "sensor_id": source.Node, "config_version": source.ConfigVersion, "interface": source.Address}, Subject: map[string]any{"site": source.Site, "domain": source.Domain, "vlan": vlan, "ip": ip, "mac": mac}, Payload: payload}
+		payload["ethernet_source_mac"] = senderMAC
+		return normalized.Event{SchemaVersion: "v1", EventID: "passive-" + hex.EncodeToString(h[:16]), Type: "discovery", Confidence: 0.5, Flow: map[string]any{"src_ip": "", "dst_ip": "", "proto": "other", "direction": "unknown"}, Source: "passive", SourceEventType: kind, Timestamp: at.Format(time.RFC3339Nano), Observer: map[string]any{"source_id": source.ID, "sensor_id": source.Node, "config_version": source.ConfigVersion, "interface": source.Address}, Subject: map[string]any{"site": source.Site, "domain": source.Domain, "vlan": vlan, "ip": ip, "mac": mac}, Payload: payload}
 	}
 	if ether == 0x88cc {
 		data := frame[offset:]
 		p := map[string]any{"location_kind": "neighbor"}
 		haveChassis, havePort, haveTTL := false, false, false
+		managementIP := ""
 		for len(data) >= 2 {
 			h := binary.BigEndian.Uint16(data[:2])
 			typ, length := h>>9, int(h&511)
@@ -84,6 +90,13 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 				}
 			case 5:
 				p["name"] = string(v)
+			case 8:
+				if length >= 6 && v[0] == 5 && v[1] == 1 {
+					managementIP = net.IP(v[2:6]).String()
+				}
+				if length >= 18 && v[0] == 17 && v[1] == 2 {
+					managementIP = net.IP(v[2:18]).String()
+				}
 			case 7:
 				if length == 4 {
 					p["system_capabilities"] = int(binary.BigEndian.Uint16(v[2:]))
@@ -93,7 +106,7 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 		if !haveChassis || !havePort || !haveTTL {
 			return nil
 		}
-		return []normalized.Event{emit("lldp", "neighbor", "", "", p)}
+		return []normalized.Event{emit("lldp", str(p, "chassis_id"), managementIP, "", p)}
 	}
 	var src net.IP
 	var udp []byte
@@ -157,7 +170,76 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 		if ttl > 604800 {
 			ttl = 604800
 		}
-		return []normalized.Event{emit("ssdp", h.Get("Usn"), src.String(), senderMAC, map[string]any{"is_response": true, "ttl": ttl, "withdrawn": withdraw, "usn": h.Get("Usn"), "service_type": firstText(h.Get("St"), h.Get("Nt")), "device_type": h.Get("Nt"), "location": h.Get("Location")})}
+		return []normalized.Event{emit("ssdp", h.Get("Usn"), src.String(), "", map[string]any{"is_response": true, "ttl": ttl, "withdrawn": withdraw, "usn": h.Get("Usn"), "service_type": firstText(h.Get("St"), h.Get("Nt")), "device_type": h.Get("Nt"), "location": h.Get("Location")})}
+	}
+	if sport == 547 || dport == 547 {
+		bindings, withdrawn, err := ParseDHCPv6(body)
+		if err != nil {
+			return nil
+		}
+		out := []normalized.Event{}
+		for _, binding := range bindings {
+			p := map[string]any{"origin": "dhcpv6", "is_response": true, "ttl": int(binding.Valid), "withdrawn": withdrawn, "duid": binding.DUID, "service_instance": binding.DUID + ":" + binding.IAID}
+			out = append(out, emit("dhcpv6", binding.IP, binding.IP, "", p))
+		}
+		return out
+	}
+	if sport == 5355 || sport == 137 {
+		var msg dnsmessage.Message
+		if msg.Unpack(body) != nil || !msg.Header.Response {
+			return nil
+		}
+		out := []normalized.Event{}
+		kind := "llmnr"
+		if sport == 137 {
+			kind = "nbns"
+		}
+		for _, rr := range msg.Answers {
+			ip := ""
+			switch v := rr.Body.(type) {
+			case *dnsmessage.AResource:
+				ip = net.IP(v.A[:]).String()
+			case *dnsmessage.AAAAResource:
+				ip = net.IP(v.AAAA[:]).String()
+			case *dnsmessage.UnknownResource:
+				if sport == 137 && rr.Header.Type == 32 && len(v.Data) >= 6 {
+					ip = net.IP(v.Data[2:6]).String()
+				}
+			}
+			if ip == "" {
+				continue
+			}
+			out = append(out, emit(kind, ip, ip, "", map[string]any{"origin": kind, "is_response": true, "ttl": int(min(rr.Header.TTL, 604800)), "name": discoveryResponseName(kind, rr.Header.Name.String())}))
+		}
+		return out
+	}
+	if sport == 3702 || dport == 3702 {
+		p, err := ParseWSDiscovery(string(body))
+		if err != nil {
+			return nil
+		}
+		return []normalized.Event{emit("ws_discovery", str(p, "endpoint_reference"), src.String(), "", p)}
+	}
+	if sport == 161 || sport == 162 {
+		p, err := ParseSNMPResponse(body)
+		if err != nil {
+			return nil
+		}
+		return []normalized.Event{emit("snmp", str(p, "system_object_id"), src.String(), "", p)}
+	}
+	if sport == 47808 || dport == 47808 {
+		p, err := ParseBACnetAnnouncement(body)
+		if err != nil {
+			return nil
+		}
+		return []normalized.Event{emit("bacnet", str(p, "device_identifier"), firstText(str(p, "announcer_ip"), src.String()), "", p)}
+	}
+	if sport == 5683 {
+		p, err := ParseCoAPResponse(body)
+		if err != nil {
+			return nil
+		}
+		return []normalized.Event{emit("coap", str(p, "resource_type"), src.String(), "", p)}
 	}
 	if sport != 5353 && dport != 5353 {
 		return nil
@@ -259,7 +341,8 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 			// Cached or proxied records may describe another host; only the sender's own address gets its MAC.
 			mac := ""
 			if ip != "" && ip == src.String() {
-				mac = senderMAC
+				// Transport MAC is not a client identity binding.
+				mac = ""
 			}
 			ttl := r.Header.TTL
 			if a, ok := addressTTL[strings.ToLower(srv.Target.String())+"|"+ip]; ok && a < ttl {

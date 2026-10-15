@@ -142,6 +142,8 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 		return proxyEvent(raw, fields, opts)
 	}
 	switch opts.LogKind {
+	case "iot":
+		return iotMetadataEvent(raw, fields, lineOffset, opts)
 	case "conn":
 		return connectionEventFromFields(raw, fields, lineOffset, opts)
 	case "dns", "http", "ssl", "tls", "x509":
@@ -368,7 +370,7 @@ func discoveryEventFromFields(raw []byte, fields map[string]string, lineOffset i
 			}
 		}
 	}
-	subject := map[string]any{"ip": subjectIP}
+	subject := map[string]any{"ip": subjectIP, "vlan": first(fields, "capture_vlan", "vlan")}
 	if mac := first(fields, "mac", "client_mac"); mac != "" {
 		subject["mac"] = normalizeMAC(mac)
 	}
@@ -444,7 +446,7 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 	}
 
 	payload := dhcpPayload(fields)
-	subject := map[string]any{"ip": subjectIP}
+	subject := map[string]any{"ip": subjectIP, "vlan": first(fields, "capture_vlan", "vlan")}
 	if mac := first(fields, "mac", "client_mac", "client_chaddr"); mac != "" {
 		subject["mac"] = normalizeMAC(mac)
 	}
@@ -525,6 +527,9 @@ func softwareEventFromFields(raw []byte, fields map[string]string, lineOffset in
 
 func dhcpPayload(fields map[string]string) map[string]any {
 	payload := map[string]any{"origin": "dhcp"}
+	if first(fields, "discovery_scope_conflict") == "T" || first(fields, "discovery_scope_conflict") == "true" {
+		payload["discovery_scope_conflict"] = true
+	}
 	copyPayload(payload, fields, "lease_time", "lease_time")
 	if at := normalizeTimestamp(first(fields, "lease_observed_at")); at != "" {
 		payload["lease_observed_at"] = at

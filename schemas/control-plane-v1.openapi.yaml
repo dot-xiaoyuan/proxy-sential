@@ -6,6 +6,50 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /discovery/types:
+    get:
+      operationId: getDiscoveryTypes
+      description: Scoped device discovery data; requires identity:read.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryTypeCatalogue' }
+        '500': { description: Read failed; never replaced by an empty result }
+  /discovery/coverage:
+    get:
+      operationId: getDiscoveryCoverage
+      description: Scoped device discovery data; requires identity:read.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryCoverage' }
+        '500': { description: Read failed; never replaced by an empty result }
+  /discovery/statistics:
+    get:
+      operationId: getDiscoveryStatistics
+      description: Independent incremental discovery statistics; requires identity:read.
+      responses:
+        '200':
+          description: Statistics and outstanding update count
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryStatistics' }
+        '500': { description: Statistics read failed }
+  /discovery/history:
+    get:
+      operationId: getDiscoveryHistory
+      description: Scoped device discovery data; requires identity:read.
+      responses:
+        '200':
+          description: Discovery result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryHistoryPage' }
+        '500': { description: Read failed; never replaced by an empty result }
   /discovery/nodes:
     get:
       description: Discovery worker heartbeat; requires identity:read.
@@ -38,8 +82,13 @@ paths:
   /discovery/devices:
     get:
       operationId: getDiscoveryDevices
-      description: Windowed passive, infrastructure, or active discovery read model; requires identity:read. Does not claim online state or create terminal identities.
+      description: Versioned device state with optional last-observation window; requires identity:read. Does not claim online state or create terminal identities.
       parameters:
+        - { name: type, in: query, schema: { type: string } }
+        - { name: protocol, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string, enum: [identified, expired, conflict, candidate] } }
+        - { name: domain, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
         - { name: view, in: query, description: IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient., schema: { type: string, enum: [iot] } }
         - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
         - { name: window, in: query, schema: { type: string, default: 24h } }
@@ -6113,6 +6162,89 @@ components:
         source: { type: string, enum: [ip_observation, account_session] }
         matched_at: { type: string, format: date-time }
         is_recent_ip: { type: boolean }
+    DiscoveryFreshness:
+      type: object
+      required: [status, lag_seconds, result_version]
+      properties:
+        status: { type: string, enum: [initializing, ready, processing, delayed, failed] }
+        lag_seconds: { type: number }
+        result_version: { type: integer, format: int64 }
+        oldest_pending_at: { type: string, format: date-time }
+        ingested_at: { type: string, format: date-time }
+        processed_at: { type: string, format: date-time }
+        error: { type: string }
+    DiscoveryTypeCatalogue:
+      type: object
+      required: [version, items]
+      properties:
+        version: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, label, category]
+            properties:
+              id: { type: string }
+              label: { type: string }
+              category: { type: string }
+    DiscoveryCoverage:
+      type: object
+      required: [enabled, items]
+      properties:
+        enabled: { type: boolean }
+        scope: { type: string }
+        freshness: { $ref: '#/components/schemas/DiscoveryFreshness' }
+        items:
+          type: array
+          items:
+            type: object
+            required: [sensor_id, protocol, enabled, received, parsed, rejected, admitted, error]
+            properties:
+              owner: { type: string }
+              sensor_id: { type: string }
+              protocol: { type: string }
+              enabled: { type: boolean }
+              received: { type: integer }
+              parsed: { type: integer }
+              rejected: { type: integer }
+              admitted: { type: integer }
+              last_seen: { type: [string, 'null'], format: date-time }
+              last_success: { type: [string, 'null'], format: date-time }
+              error: { type: string }
+    DiscoveryStatistics:
+      type: object
+      required: [items, pending_updates]
+      properties:
+        pending_updates: { type: integer }
+        oldest_pending_at: { type: [string, 'null'], format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            required: [device_type, state, count, updated_at]
+            properties:
+              device_type: { type: string }
+              state: { type: string }
+              count: { type: integer }
+              updated_at: { type: string, format: date-time }
+    DiscoveryHistoryPage:
+      type: object
+      required: [items, has_more, next_cursor]
+      properties:
+        has_more: { type: boolean }
+        next_cursor: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, event_id, ingested_at, observed_at, kind, evidence]
+            properties:
+              id: { type: integer, format: int64 }
+              event_id: { type: string }
+              ingested_at: { type: string, format: date-time }
+              observed_at: { type: string, format: date-time }
+              kind: { type: string }
+              evidence: { $ref: '#/components/schemas/DiscoveryObservation' }
     DiscoveryObservation:
       type: object
       required: [id, origin, observed_at, valid_until, explanation]
@@ -6137,6 +6269,18 @@ components:
       type: object
       required: [id, observations, category, identity_kind, capabilities, protocols, first_seen, last_seen, current, evidence_count]
       properties:
+        last_device_type: { type: string }
+        last_category: { type: string }
+        classification_status: { type: string, enum: [identified, expired, conflict, candidate] }
+        classification: { type: object, properties: { reason: { type: string }, rule_version: { type: string }, conflict: { type: boolean }, confidence: { type: string } } }
+        manufacturer: { type: string }
+        model_name: { type: string }
+        domain: { type: string }
+        vlan: { type: string }
+        sensor_id: { type: string }
+        current_addresses: { type: array, items: { type: string } }
+        last_observed_ip: { type: string }
+        result_version: { type: integer, format: int64 }
         id: { type: string }
         primary_ip: { type: string }
         addresses: { type: array, items: { type: string } }
@@ -6158,6 +6302,7 @@ components:
       type: object
       required: [items, next_cursor, has_more, limit, window]
       properties:
+        freshness: { $ref: '#/components/schemas/DiscoveryFreshness' }
         items: { type: array, items: { $ref: '#/components/schemas/DiscoveryDevice' } }
         next_cursor: { type: string }
         has_more: { type: boolean }

@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/netip"
 	"proxy-sentinel/internal/devicename"
 	"proxy-sentinel/internal/normalized"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -120,8 +122,15 @@ func number(m map[string]any, k string) int {
 	case float64:
 		return int(v)
 	case json.Number:
-		n, _ := v.Int64()
-		return int(n)
+		n, _ := v.Float64()
+		if !math.IsNaN(n) && !math.IsInf(n, 0) {
+			return int(n)
+		}
+	case string:
+		n, e := strconv.ParseFloat(v, 64)
+		if e == nil && !math.IsNaN(n) && !math.IsInf(n, 0) {
+			return int(n)
+		}
 	}
 	return 0
 }
@@ -180,7 +189,7 @@ func FromEvent(e normalized.Event) (Observation, error) {
 	o.ValidUntil = o.ObservedAt.Add(time.Duration(ttl) * time.Second)
 	o.Withdrawn = ttl == 0 || e.Payload["withdrawn"] == true
 	switch o.Origin {
-	case "fdb", "neighbor", "lldp":
+	case "fdb", "neighbor", "lldp", "cdp", "arp", "ndp", "dhcp", "dhcpv6", "nbns", "llmnr", "ieee1905_client_association":
 		o.Explanation = "基础设施表项或邻居公告；读取时间不代表终端流量观测时间"
 		if o.Origin == "lldp" {
 			caps := number(e.Payload, "system_capabilities")
@@ -229,6 +238,13 @@ func FromEvent(e normalized.Event) (Observation, error) {
 			o.Capabilities = []string{"routing"}
 			o.DeviceType = "gateway"
 		}
+	case "ws_discovery", "snmp", "bacnet", "coap", "mqtt", "ipp", "onvif", "http", "tls", "rtsp":
+		if e.Payload["is_response"] != true {
+			return o, errors.New("protocol query is not device evidence")
+		}
+		o.Explanation = "设备协议响应，类型由产品证据规则判定"
+		o.Manufacturer = str(e.Payload, "manufacturer")
+		o.ModelName = firstText(str(e.Payload, "product_model"), str(e.Payload, "printer_make_and_model"))
 	case "active":
 		o.Explanation = "指定目标对只读探测的响应，不代表持续在线"
 		switch str(e.Payload, "protocol") {
@@ -241,6 +257,7 @@ func FromEvent(e normalized.Event) (Observation, error) {
 	default:
 		return o, fmt.Errorf("unsupported discovery origin %q", o.Origin)
 	}
+	applyProductRules(&o)
 	return o, nil
 }
 

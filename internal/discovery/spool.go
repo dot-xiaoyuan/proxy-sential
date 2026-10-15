@@ -38,11 +38,16 @@ func (r Repository) DrainSpool(ctx context.Context, dir string) error {
 		if len(events) == 0 {
 			continue
 		}
-		o, e := FromEvent(events[0])
-		if e != nil {
-			return e
+		s := Snapshot{ID: strings.TrimSuffix(entry.Name(), ".json"), Events: events}
+		if !r.PipelineV2 {
+			o, parseErr := FromEvent(events[0])
+			if parseErr != nil {
+				return parseErr
+			}
+			s.SourceID, s.ConfigVersion, s.At = o.SourceID, o.ConfigVersion, o.ObservedAt
 		}
-		s := Snapshot{ID: strings.TrimSuffix(entry.Name(), ".json"), SourceID: o.SourceID, ConfigVersion: o.ConfigVersion, At: o.ObservedAt, Events: events}
+		// V2 records each rejection in the durable event receipt. A malformed
+		// first observation must not strand the rest of a valid input batch.
 		if e = r.SaveSnapshot(ctx, s); e != nil {
 			return e
 		}
@@ -56,4 +61,20 @@ func (r Repository) DrainSpool(ctx context.Context, dir string) error {
 		}
 	}
 	return nil
+}
+
+func writeDurableSpool(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }

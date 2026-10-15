@@ -82,7 +82,7 @@ func TestSSDPNotifyWithdrawalUsesSameService(t *testing.T) {
 	}
 }
 
-func TestSSDPCarriesSenderMACForIdentityAssociation(t *testing.T) {
+func TestSSDPTransportMACIsNotDeviceBinding(t *testing.T) {
 	body := "NOTIFY * HTTP/1.1\r\nNT: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\nUSN: uuid:gw\r\nCACHE-CONTROL: max-age=120\r\nLOCATION: http://192.168.1.1:1900/igd.xml\r\n\r\n"
 	packet := func(mac []byte, vlan bool) []byte {
 		head := 14
@@ -114,7 +114,7 @@ func TestSSDPCarriesSenderMACForIdentityAssociation(t *testing.T) {
 			t.Fatalf("vlan=%v: ssdp not decoded", vlan)
 		}
 		o, err := FromEvent(events[0])
-		if err != nil || o.MAC != "00:11:22:33:44:77" || o.IP != "192.168.1.1" || o.DeviceType != "gateway" {
+		if err != nil || o.MAC != "" || str(o.Evidence.Payload, "ethernet_source_mac") != "00:11:22:33:44:77" || o.IP != "192.168.1.1" || o.DeviceType != "gateway" {
 			t.Fatalf("vlan=%v: sender identity missing: %+v %v", vlan, o, err)
 		}
 	}

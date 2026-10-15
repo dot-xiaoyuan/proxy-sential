@@ -27,20 +27,24 @@ func RunWorker(ctx context.Context, r Repository, node string, key []byte) error
 		if _, err := r.DB.ExecContext(ctx, `INSERT INTO discovery_nodes(node,last_seen) VALUES($1,now()) ON CONFLICT(node) DO UPDATE SET last_seen=now()`, node); err != nil && ctx.Err() == nil {
 			log.Print("discovery worker heartbeat failed")
 		}
-		if time.Since(lastCleanup) > time.Hour {
+		if !r.PipelineV2 && time.Since(lastCleanup) > time.Hour {
 			if err := r.Cleanup(ctx); err != nil {
 				log.Print("discovery retention failed")
 			}
 			lastCleanup = time.Now()
 		}
-		if err := r.Associate(ctx); err != nil && ctx.Err() == nil {
-			log.Print("discovery identity association failed")
+		if !r.PipelineV2 {
+			if err := r.Associate(ctx); err != nil && ctx.Err() == nil {
+				log.Print("discovery identity association failed")
+			}
 		}
 		if err := r.Schedule(ctx); err != nil && ctx.Err() == nil {
 			log.Print("discovery schedule failed")
 		}
-		if err := r.ScheduleScans(ctx); err != nil && ctx.Err() == nil {
-			log.Print("discovery scan scheduling failed")
+		if !r.PipelineV2 {
+			if err := r.ScheduleScans(ctx); err != nil && ctx.Err() == nil {
+				log.Print("discovery scan scheduling failed")
+			}
 		}
 		for i := 0; i < 3; i++ {
 			t, err := r.Claim(ctx, node)
@@ -111,28 +115,39 @@ func runPoll(ctx context.Context, t Task, key []byte) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	s.ConfigVersion = t.Version
-	raw, err := base64.RawStdEncoding.DecodeString(t.EncryptedSecret)
+	var err error
+	secret, err = decryptDiscoverySecret(t.EncryptedSecret, key)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	return Poll(ctx, s, secret, t.ID)
+}
+
+func decryptDiscoverySecret(encrypted string, key []byte) (Secret, error) {
+	raw, err := base64.RawStdEncoding.DecodeString(encrypted)
+	if err != nil {
+		return Secret{}, err
 	}
 	sum := sha256.Sum256(key)
 	block, err := aes.NewCipher(sum[:])
 	if err != nil {
-		return Snapshot{}, err
+		return Secret{}, err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return Snapshot{}, err
+		return Secret{}, err
 	}
 	if len(raw) < gcm.NonceSize() {
-		return Snapshot{}, errors.New("invalid credential envelope")
+		return Secret{}, errors.New("invalid credential envelope")
 	}
 	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
 	if err != nil {
-		return Snapshot{}, err
+		return Secret{}, err
 	}
+	var secret Secret
 	if err = json.Unmarshal(plain, &secret); err != nil {
-		return Snapshot{}, err
+		return Secret{}, err
 	}
-	return Poll(ctx, s, secret, t.ID)
+
+	return secret, nil
 }

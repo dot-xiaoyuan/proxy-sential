@@ -13,12 +13,16 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"proxy-sentinel/internal/normalized"
 	"syscall"
 	"time"
 )
 
 // Capture spools standard events on a separate goroutine; packet reads never wait on database work.
 func Capture(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix) error {
+	return CaptureConfigured(ctx, iface, spool, source, allow, DefaultCollectionConfig())
+}
+func CaptureConfigured(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig) (result error) {
 	if len(allow) == 0 {
 		return fmt.Errorf("passive capture requires allowed CIDRs")
 	}
@@ -31,56 +35,135 @@ func Capture(ctx context.Context, iface, spool string, source Source, allow []ne
 		return e
 	}
 	defer syscall.Close(fd)
+	if e = attachDiscoveryFilter(fd, config); e != nil {
+		return e
+	}
 	if e = syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(3), Ifindex: i.Index}); e != nil {
 		return e
 	}
-	_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &syscall.Timeval{Sec: 1})
+	_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &syscall.Timeval{Usec: 100000})
 	if e = os.MkdirAll(spool, 0700); e != nil {
 		return e
 	}
 	queue := make(chan []byte, 256)
 	done := make(chan error, 1)
 	go func() {
-		for b := range queue {
+		done <- drainSpoolQueue(queue, func(b []byte) error {
 			h := sha256.Sum256(b)
 			path := filepath.Join(spool, hex.EncodeToString(h[:16])+".json")
-			if e := os.WriteFile(path+".tmp", b, 0600); e != nil {
-				done <- e
-				return
+			if e := writeDurableSpool(path+".tmp", b); e != nil {
+				return e
 			}
 			if e := os.Rename(path+".tmp", path); e != nil {
-				done <- e
-				return
+				return e
 			}
-		}
-		done <- nil
+			dir, e := os.Open(spool)
+			if e != nil {
+				return e
+			}
+			defer dir.Close()
+			return dir.Sync()
+		})
 	}()
-	defer close(queue)
-	cache := &DNSCache{}
+	defer func() {
+		close(queue)
+		if writerErr := <-done; writerErr != nil {
+			result = writerErr
+		}
+	}()
+	decoder := &FrameDecoder{}
+	stats := NewCaptureStats()
+	stats.Config = config
+	pending := []normalized.Event{}
+	positions := map[string]int{}
+	lastFlush, lastStats := time.Now(), time.Now()
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		b, e := json.Marshal(pending)
+		if e != nil {
+			return e
+		}
+		select {
+		case queue <- b:
+			pending = nil
+			positions = map[string]int{}
+			lastFlush = time.Now()
+			return nil
+		default:
+			return fmt.Errorf("passive spool queue full; capture stopped to expose data loss")
+		}
+	}
 	buffer := make([]byte, 65536)
 	for ctx.Err() == nil {
 		select {
 		case err := <-done:
+			done <- err
 			return err
 		default:
 		}
 		n, _, err := syscall.Recvfrom(fd, buffer, 0)
 		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK || err == syscall.EINTR {
+			if e = flush(); e != nil {
+				return e
+			}
+			if time.Since(lastStats) >= time.Second {
+				stats.FragmentDrops = decoder.FragmentDrops
+				if e = stats.persist(spool); e != nil {
+					return e
+				}
+				lastStats = time.Now()
+			}
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		events := filterCaptureEvents(decodeFrame(buffer[:n], source, time.Now().UTC(), cache), allow)
-		if len(events) == 0 {
-			continue
+
+		decoded := decoder.Decode(buffer[:n], source, time.Now().UTC())
+		stats.record(packetProtocol(buffer[:n]), len(decoded))
+		events := filterCaptureEvents(decoded, allow)
+		for _, event := range events {
+			if !config.Enabled(event.SourceEventType) {
+				continue
+			}
+			payload := map[string]any{}
+			for k, v := range event.Payload {
+				if k != "ttl" {
+					payload[k] = v
+				}
+			}
+			key := contentHash([]any{event.SourceEventType, event.Subject, payload})
+			if at, ok := positions[key]; ok {
+				pending[at] = event
+				stats.Coalesced++
+			} else {
+				positions[key] = len(pending)
+				pending = append(pending, event)
+			}
+			if len(pending) >= 250 {
+				if e = flush(); e != nil {
+					return e
+				}
+			}
 		}
-		b, _ := json.Marshal(events)
-		select {
-		case queue <- b:
-		default:
-			return fmt.Errorf("passive spool queue full; capture stopped to expose data loss")
+		if time.Since(lastFlush) >= 100*time.Millisecond {
+			if e = flush(); e != nil {
+				return e
+			}
 		}
+		if time.Since(lastStats) >= time.Second {
+			stats.FragmentDrops = decoder.FragmentDrops
+			if e = stats.persist(spool); e != nil {
+				return e
+			}
+			lastStats = time.Now()
+		}
+
+	}
+	if e = flush(); e != nil {
+		return e
 	}
 	return ctx.Err()
 }

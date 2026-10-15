@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"proxy-sentinel/internal/discovery"
 	"strconv"
 	"strings"
@@ -26,7 +27,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	repo := discovery.Repository{DB: s.operations.db, DeviceCache: s.discoveryDevices}
+	repo := discovery.Repository{DB: s.operations.db, DeviceCache: s.discoveryDevices, PipelineV2: os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true"}
 	limit, offset := 50, 0
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, e := strconv.Atoi(v)
@@ -49,6 +50,38 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		offset = n
 	}
 	switch {
+	case path == "/discovery/types" && r.Method == "GET":
+		writeJSON(w, 200, map[string]any{"version": discovery.IoTRuleVersion, "items": discovery.IoTTypes})
+	case path == "/discovery/statistics" && r.Method == "GET":
+		if !repo.PipelineV2 {
+			writeError(w, 409, "pipeline_disabled", "发现统计路径未启用")
+			return
+		}
+		result, e := repo.DiscoveryStatistics(ctx)
+		if e != nil {
+			writeError(w, 500, "statistics_read", "读取发现统计失败")
+			return
+		}
+		writeJSON(w, 200, result)
+	case path == "/discovery/coverage" && r.Method == "GET":
+		s.handleDiscoveryCoverage(w, r, repo)
+	case path == "/discovery/history" && r.Method == "GET":
+		key := r.URL.Query().Get("device_id")
+		after := r.URL.Query().Get("cursor")
+		if key == "" {
+			writeError(w, 400, "bad_cursor", "设备和历史游标无效")
+			return
+		}
+		page, e := repo.DiscoveryHistory(ctx, key, after, limit)
+		if e != nil {
+			if strings.Contains(e.Error(), "cursor") {
+				writeError(w, 400, "bad_cursor", e.Error())
+				return
+			}
+			writeError(w, 500, "history_read", "读取设备历史失败")
+			return
+		}
+		writeJSON(w, 200, page)
 	case path == "/discovery/nodes" && r.Method == "GET":
 		rows, err := repo.DB.QueryContext(ctx, `SELECT node,last_seen,last_seen>now()-interval '30 seconds' FROM discovery_nodes ORDER BY node`)
 		if err != nil {
@@ -179,6 +212,9 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			return
 		}
 		window := 24 * time.Hour
+		if repo.PipelineV2 {
+			window = 0
+		}
 		if value := r.URL.Query().Get("window"); value != "" {
 			parsed, parseErr := time.ParseDuration(value)
 			if parseErr != nil || parsed < 10*time.Minute || parsed > 30*24*time.Hour {
@@ -187,7 +223,14 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			}
 			window = parsed
 		}
-		page, err := repo.DevicesIndexed(ctx, discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor")})
+		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
+		var page map[string]any
+		var err error
+		if repo.PipelineV2 {
+			page, err = repo.DevicesState(ctx, query)
+		} else {
+			page, err = repo.DevicesIndexed(ctx, query)
+		}
 		if err != nil {
 			if strings.Contains(err.Error(), "cursor") {
 				writeError(w, 400, "bad_cursor", err.Error())
@@ -291,4 +334,11 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	default:
 		writeError(w, 404, "not_found", "发现接口不存在")
 	}
+}
+
+func firstQueryValue(r *http.Request, key, fallback string) string {
+	if v := r.URL.Query().Get(key); v != "" {
+		return v
+	}
+	return fallback
 }

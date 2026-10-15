@@ -11,3 +11,7 @@ import (
 func Capture(context.Context, string, string, Source, []netip.Prefix) error {
 	return errors.New("passive capture requires Linux")
 }
+
+func CaptureConfigured(context.Context, string, string, Source, []netip.Prefix, CollectionConfig) error {
+	return errors.New("passive capture requires Linux")
+}

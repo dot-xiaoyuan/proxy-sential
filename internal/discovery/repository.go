@@ -14,8 +14,11 @@ import (
 )
 
 type Repository struct {
-	DB      *sql.DB
-	Archive func(context.Context, []normalized.Event) error
+	Collection       *CollectionConfig
+	ArchiveDiscovery func(context.Context, string, time.Time, []normalized.Event) error
+	PipelineV2       bool
+	DB               *sql.DB
+	Archive          func(context.Context, []normalized.Event) error
 	// Describe receives persisted SSDP announcements; nil disables description reads.
 	Describe    func(normalized.Event)
 	DeviceCache *DeviceCache
@@ -78,6 +81,9 @@ type Task struct {
 }
 
 func (r Repository) SaveSnapshot(ctx context.Context, s Snapshot) error {
+	if r.PipelineV2 {
+		return r.AcceptDiscoveryBatch(ctx, "discovery:"+s.ID, s.Events)
+	}
 	for _, e := range s.Events {
 		if _, err := FromEvent(e); err != nil {
 			return err
@@ -191,16 +197,17 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 }
 
 type DeviceQuery struct {
-	View       string
-	Mode       string
-	Window     time.Duration
-	Search     string
-	DeviceType string
-	Category   string
-	Capability string
-	Limit      int
-	Offset     int
-	Cursor     string
+	Protocol, State, Domain, VLAN string
+	View                          string
+	Mode                          string
+	Window                        time.Duration
+	Search                        string
+	DeviceType                    string
+	Category                      string
+	Capability                    string
+	Limit                         int
+	Offset                        int
+	Cursor                        string
 }
 
 type AddressDetail struct {
