@@ -4632,3 +4632,14 @@ pre.wrap-code {
   .account-tag-detail { flex-basis: 100%; }
 }
 
+/* Discovery protocol coverage and evidence summaries. */
+.iot-coverage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.iot-coverage-item { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; overflow-wrap: anywhere; }
+.discovery-statistics { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.discovery-statistics-item { padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 999px; color: #334155; background: #f8fafc; white-space: nowrap; flex-shrink: 0; }
+.passive-discovery-controls > .ant-select { min-width: 150px; }
+.passive-discovery-controls > .ant-input-affix-wrapper { width: 150px; }
+@media (max-width: 560px) {
+  .passive-discovery-controls > .ant-select, .passive-discovery-controls > .ant-input-affix-wrapper { width: 100%; min-width: 0; }
+  .iot-coverage-grid { grid-template-columns: 1fr; }
+}

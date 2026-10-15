@@ -7,12 +7,14 @@ export function BrandInferenceLabel({ value }: { value?: BrandInference }) {
   return <div className="brand-inference-label">
     {value.status === 'inferred' && <BrandLogo brandKey={value.brand} showName={false} />}
     <Tag color={value.status === 'conflict' ? 'orange' : 'blue'}>{value.status === 'conflict' ? '品牌线索冲突' : `推测 ${value.brand}`}</Tag>
-    <Typography.Text type="secondary" className="brand-inference-source">{value.status === 'inferred' ? `域名证据 · 评分 ${Math.round(value.confidence * 100)}%` : value.candidates.map(item => item.brand).join(' / ')}</Typography.Text>
+    <Typography.Text type="secondary" className="brand-inference-source">{value.status === 'inferred' ? `域名证据 · 评分 ${Math.round(value.confidence * 100)}%` : (value.candidates ?? []).map(item => item.brand).join(' / ')}</Typography.Text>
   </div>
 }
 
 export function BrandInferenceDetails({ value }: { value?: BrandInference }) {
-  if (!value) return null
+  // Inventory summaries omit candidate evidence; wait for the full identity
+  // response instead of treating the compact projection as a detailed result.
+  if (!value?.candidates) return null
   return <section className="surface brand-inference-details">
     <Typography.Title level={4}>推测品牌与依据</Typography.Title>
     <BrandInferenceLabel value={value} />
