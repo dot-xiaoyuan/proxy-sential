@@ -93,11 +93,11 @@ func (s *PostgresStore) stageInventorySnapshot(ctx context.Context, k [5]string,
 		return 0, fmt.Errorf("snapshot events missing")
 	}
 	if _, err = s.db.ExecContext(ctx, `INSERT INTO endpoint_inventory_snapshot_chunks
- SELECT $1,$2,$3,$4,$5,((ord-1)/$7)*$7,jsonb_agg(e ORDER BY ord)
+ SELECT $1,$2,$3,$4,$5,((ord-1)/$6)*$6,jsonb_agg(e ORDER BY ord)
  FROM identity_full_snapshots s
  CROSS JOIN LATERAL jsonb_array_elements(s.document->'events') WITH ORDINALITY AS t(e,ord)
  WHERE s.source=$1 AND s.sensor_id=$2 AND s.campus_id=$3 AND s.access_domain=$4 AND s.snapshot_id=$5
- GROUP BY (ord-1)/$7
+ GROUP BY (ord-1)/$6
  ON CONFLICT DO NOTHING`, k[0], k[1], k[2], k[3], k[4], inventorySnapshotChunkSize); err != nil {
 		return 0, err
 	}
