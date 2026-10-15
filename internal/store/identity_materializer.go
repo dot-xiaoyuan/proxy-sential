@@ -198,12 +198,19 @@ func (s *DBStore) processIdentitySignalBatch(ctx context.Context, phase string, 
 		// and never take the global identity write lock.
 		err = writeDeviceEventsTx(ctx, tx, events)
 	} else {
+		if s.identitySkipHistory {
+			// Commit endpoint-shared rows first in a short transaction. They merge
+			// idempotently, so a retry after a later failure rewrites them harmlessly.
+			if err = s.pg.commitIdentityEndpoints(ctx, events); err != nil {
+				return 0, identityHistoryStats{}, err
+			}
+		}
 		if locked, lockErr := awaitIdentityWriteLock(ctx, tx, identityLockWaitBudget); lockErr != nil {
 			return 0, identityHistoryStats{}, lockErr
 		} else if !locked {
 			return 0, identityHistoryStats{}, ErrIdentityWriteLockBusy
 		}
-		stats, err = writeIdentityEventsWithHistoryTx(ctx, tx, events, !s.identitySkipHistory)
+		stats, err = writeIdentityEventsShapedTx(ctx, tx, events, !s.identitySkipHistory, !s.identitySkipHistory)
 	}
 	if err != nil {
 		return 0, identityHistoryStats{}, err
@@ -446,4 +453,16 @@ func (s *DBStore) deferIdentityDerivedWork(ctx context.Context) bool {
 	case <-time.After(time.Second):
 	}
 	return true
+}
+
+func (s *PostgresStore) commitIdentityEndpoints(ctx context.Context, events []normalized.Event) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = writeIdentityEndpointsTx(ctx, tx, events); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

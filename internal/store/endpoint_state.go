@@ -107,6 +107,7 @@ func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
 		}
 	}
 	changed := map[string]bool{}
+	sessionChanged := map[string]bool{}
 	for _, source := range endpointStateSources {
 		position := cursors[source.name]
 		if position.At == "" {
@@ -129,6 +130,9 @@ func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
 				return refreshed, err
 			}
 			changed[id] = true
+			if source.name == "sessions" {
+				sessionChanged[id] = true
+			}
 			position = endpointStateKey{At: stamp.UTC().Format(time.RFC3339Nano), ID: id}
 		}
 		err = rows.Err()
@@ -158,6 +162,9 @@ func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
 	}
 	sort.Strings(ids)
 	if err = s.refreshEndpointStates(ctx, ids); err != nil {
+		return refreshed, err
+	}
+	if err = s.markRecognitionForSessions(ctx, sessionChanged); err != nil {
 		return refreshed, err
 	}
 	refreshed += len(ids)
@@ -440,4 +447,21 @@ func endpointStateProjection(ctx context.Context, db inventoryRowQueryer) (Inven
 		s.Status = "ready"
 	}
 	return s, nil
+}
+
+// markRecognitionForSessions replaces the per-row recognition trigger on account_sessions
+// (dropped in migration 140). That trigger took recognition job row locks inside the
+// authentication lane's long session insert and blocked every other writer of the same
+// endpoints; here the change set is marked once per round, sorted, in a short transaction.
+func (s *PostgresStore) markRecognitionForSessions(ctx context.Context, changed map[string]bool) error {
+	if len(changed) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(changed))
+	for id := range changed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	_, err := s.db.ExecContext(ctx, `SELECT mark_endpoint_recognition_dirty(id) FROM unnest($1::text[]) AS t(id) ORDER BY id`, ids)
+	return err
 }

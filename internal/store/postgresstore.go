@@ -1532,6 +1532,29 @@ func writeIdentityEventsTx(ctx context.Context, tx *sql.Tx, events []normalized.
 // history inserts were the slowest statements of an identity batch on 184 (13–20 s on cold
 // pages) while the batch held endpoint row locks that blocked the device lane.
 func writeIdentityEventsWithHistoryTx(ctx context.Context, tx *sql.Tx, events []normalized.Event, history bool) (identityHistoryStats, error) {
+	return writeIdentityEventsShapedTx(ctx, tx, events, history, true)
+}
+
+// writeIdentityEndpointsTx writes only the endpoint-shared rows of an identity batch:
+// endpoint and infrastructure entities and device profiles, in endpoint order. The
+// authentication lane commits these in their own short transaction, before its slow
+// session write: holding endpoint row locks across a 25–30 s account_sessions insert on
+// 184 blocked the device lane's endpoint upserts and froze both cursors.
+func writeIdentityEndpointsTx(ctx context.Context, tx *sql.Tx, events []normalized.Event) error {
+	if err := boundIdentityStatements(ctx, tx); err != nil {
+		return err
+	}
+	state := BuildIdentityState(events)
+	if err := upsertEndpointEntitiesBatch(ctx, tx, state.Endpoints); err != nil {
+		return err
+	}
+	if err := upsertInfrastructureEntitiesBatch(ctx, tx, state.Infrastructure); err != nil {
+		return err
+	}
+	return writeEndpointDeviceProfiles(ctx, tx, state)
+}
+
+func writeIdentityEventsShapedTx(ctx context.Context, tx *sql.Tx, events []normalized.Event, history, endpoints bool) (identityHistoryStats, error) {
 	// Identity writes come from four places on the field (two identity materializers, the
 	// domain reconcile worker and the ingest path) and all of them touch the same endpoint
 	// and history rows. Without serialising them the field measured writers blocked on each
@@ -1558,8 +1581,12 @@ func writeIdentityEventsWithHistoryTx(ctx context.Context, tx *sql.Tx, events []
 	if !history {
 		state.IPMACHistory, state.AccessHistory = nil, nil
 	}
+	if !endpoints {
+		// Endpoint rows were committed separately by writeIdentityEndpointsTx.
+		state.Endpoints, state.Infrastructure = nil, nil
+	}
 	stats, err := writeIdentityState(ctx, tx, state)
-	if err != nil {
+	if err != nil || !endpoints {
 		return stats, err
 	}
 	return stats, writeEndpointDeviceProfiles(ctx, tx, state)
