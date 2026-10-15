@@ -153,7 +153,7 @@ func (s *DBStore) runDeviceInventoryProjectionWork(ctx context.Context, guard *s
 		cancel()
 		if err != nil && ctx.Err() == nil {
 			// Never log the account/query, raw payload or endpoint ID.
-			fmt.Fprintf(os.Stderr, "inventory projection batch failed lane=%s cause=%s\n", map[bool]string{true: "backfill", false: "realtime"}[backfill], inventoryProjectionErrorCode(err))
+			fmt.Fprintf(os.Stderr, "inventory projection batch failed lane=%s cause=%s err=%v\n", map[bool]string{true: "backfill", false: "realtime"}[backfill], inventoryProjectionErrorCode(err), err)
 			status, cancel := context.WithTimeout(ctx, 2*time.Second)
 			stateError := "projection_failed"
 			if errors.Is(err, ErrInventoryProjectionRepairRequired) {
@@ -183,7 +183,7 @@ func (s *DBStore) runInventoryBackfillEndpoints(ctx context.Context) {
 		done, err := s.pg.materializeNextInventoryLane(work, "backfill")
 		cancel()
 		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "inventory endpoint backfill failed cause=%s\n", inventoryProjectionErrorCode(err))
+			fmt.Fprintf(os.Stderr, "inventory endpoint backfill failed cause=%s err=%v\n", inventoryProjectionErrorCode(err), err)
 		}
 		delay := inventoryBackfillDelay()
 		if !done || err != nil || delay > 0 {
