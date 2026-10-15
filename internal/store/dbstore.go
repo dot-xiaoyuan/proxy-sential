@@ -20,16 +20,17 @@ import (
 )
 
 type DBStore struct {
-	fingerprintMatches fingerprintMatchMeter
-	pg                 *PostgresStore
-	ch                 *ClickHouseStore
-	storageMode        Mode
-	domainOnce         sync.Once
-	domainQueue        chan domainBatch
-	domainDropped      atomic.Int64
-	identityDeviceOnly bool
-	domainCancel       context.CancelFunc
-	domainDone         chan struct{}
+	fingerprintMatches  fingerprintMatchMeter
+	pg                  *PostgresStore
+	ch                  *ClickHouseStore
+	storageMode         Mode
+	domainOnce          sync.Once
+	domainQueue         chan domainBatch
+	domainDropped       atomic.Int64
+	identityDeviceOnly  bool
+	identitySkipHistory bool
+	domainCancel        context.CancelFunc
+	domainDone          chan struct{}
 }
 
 func (s *DBStore) Health(ctx context.Context) error {

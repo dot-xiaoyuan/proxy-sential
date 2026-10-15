@@ -13,7 +13,8 @@ ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel read-model run \
   --identity-health-name identity-materializer:ncu-auth-redis \
   --identity-backfill=false \
   --identity-project-snapshots=false \
-  --identity-refresh-device-inventory=false
+  --identity-refresh-device-inventory=false \
+  --identity-skip-history=true
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30s

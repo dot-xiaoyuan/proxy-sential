@@ -1524,6 +1524,14 @@ func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normal
 }
 
 func writeIdentityEventsTx(ctx context.Context, tx *sql.Tx, events []normalized.Event) (identityHistoryStats, error) {
+	return writeIdentityEventsWithHistoryTx(ctx, tx, events, true)
+}
+
+// writeIdentityEventsWithHistoryTx optionally skips IP/MAC and access history. The terminal
+// list now derives current associations from account sessions and DHCP leases, and the
+// history inserts were the slowest statements of an identity batch on 184 (13–20 s on cold
+// pages) while the batch held endpoint row locks that blocked the device lane.
+func writeIdentityEventsWithHistoryTx(ctx context.Context, tx *sql.Tx, events []normalized.Event, history bool) (identityHistoryStats, error) {
 	// Identity writes come from four places on the field (two identity materializers, the
 	// domain reconcile worker and the ingest path) and all of them touch the same endpoint
 	// and history rows. Without serialising them the field measured writers blocked on each
@@ -1547,6 +1555,9 @@ func writeIdentityEventsTx(ctx context.Context, tx *sql.Tx, events []normalized.
 	// account_sessions remains a derived compatibility view for device/detail
 	// pages. Durable authority and counters live in identity_current_*; only the
 	// inbox worker writes their policy facts. This path never updates those rows.
+	if !history {
+		state.IPMACHistory, state.AccessHistory = nil, nil
+	}
 	stats, err := writeIdentityState(ctx, tx, state)
 	if err != nil {
 		return stats, err

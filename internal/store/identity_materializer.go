@@ -203,7 +203,7 @@ func (s *DBStore) processIdentitySignalBatch(ctx context.Context, phase string, 
 		} else if !locked {
 			return 0, identityHistoryStats{}, ErrIdentityWriteLockBusy
 		}
-		stats, err = writeIdentityEventsTx(ctx, tx, events)
+		stats, err = writeIdentityEventsWithHistoryTx(ctx, tx, events, !s.identitySkipHistory)
 	}
 	if err != nil {
 		return 0, identityHistoryStats{}, err
@@ -264,7 +264,10 @@ type IdentityMaterializerOptions struct {
 	// DeviceOnly materializes device events (DHCP leases, endpoints, device profiles and
 	// signal facts) without account sessions or IP/MAC history. Router sensors carry no
 	// account authority, and those history rows only fed the retired inventory projection.
-	DeviceOnly             bool
+	DeviceOnly bool
+	// SkipHistory keeps sessions, policy facts and endpoints but writes no IP/MAC or access
+	// history rows; the terminal list no longer reads them.
+	SkipHistory            bool
 	Backfill               bool
 	ProjectSnapshots       bool
 	RefreshDeviceInventory bool
@@ -284,6 +287,7 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 		options.HealthName = "identity-materializer"
 	}
 	s.identityDeviceOnly = options.DeviceOnly
+	s.identitySkipHistory = options.SkipHistory
 	done := []<-chan struct{}{}
 	start := func(run func(context.Context)) {
 		finished := make(chan struct{})

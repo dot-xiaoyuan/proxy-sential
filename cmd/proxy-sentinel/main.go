@@ -193,6 +193,7 @@ func runReadModel(args []string) error {
 	identityProjectSnapshots := fs.Bool("identity-project-snapshots", true, "project completed authoritative identity snapshots")
 	identityRefreshDeviceInventory := fs.Bool("identity-refresh-device-inventory", true, "refresh current device inventory from identity evidence")
 	identityDeviceOnly := fs.Bool("identity-device-only", false, "materialize device events only: leases, endpoints and device profiles, without sessions or IP history")
+	identitySkipHistory := fs.Bool("identity-skip-history", false, "write sessions and endpoints but no IP/MAC or access history rows")
 	applicationsDir := fs.String("applications-dir", "/opt/proxy-sentinel/data/applications", "durable application library directory")
 	applicationsBootstrap := fs.String("applications-bootstrap", "", "optional reviewed bootstrap application bundle used only when the library is empty")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -230,6 +231,7 @@ func runReadModel(args []string) error {
 			ProjectSnapshots:       *identityProjectSnapshots,
 			RefreshDeviceInventory: *identityRefreshDeviceInventory,
 			DeviceOnly:             *identityDeviceOnly,
+			SkipHistory:            *identitySkipHistory,
 		})
 	case "recognition":
 		dir := os.Getenv("PROXY_SENTINEL_DEVICE_FINGERPRINT_DIR")
