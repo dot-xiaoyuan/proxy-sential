@@ -59,6 +59,7 @@ JS
   cp deploy/clickhouse/production-system-logs.xml "$release_dir/deploy/clickhouse/production-system-logs.xml"
   cp deploy/logrotate/proxy-sentinel-shared-signals "$release_dir/deploy/logrotate/proxy-sentinel-shared-signals"
   cp deploy/logrotate/proxy-sentinel-router-signals "$release_dir/deploy/logrotate/proxy-sentinel-router-signals"
+  cp deploy/logrotate/proxy-sentinel-handshake-signals "$release_dir/deploy/logrotate/proxy-sentinel-handshake-signals"
   cp -R deploy/systemd "$release_dir/deploy/systemd"
   cp scripts/deploy/proxy-sentinelctl "$release_dir/scripts/proxy-sentinelctl"
   cp scripts/deploy/refresh-proxy-sources.py "$release_dir/scripts/refresh-proxy-sources.py"

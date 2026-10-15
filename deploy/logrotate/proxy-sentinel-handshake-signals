@@ -1,0 +1,16 @@
+# Handshake summary output (device-signal --handshake-only). Same reopen-per-bucket contract
+# as the router TTL output: rename rotation plus delaycompress keeps the newest rotation
+# readable for realtime ingest, which drains by file identity. A clock-level dateformat
+# prevents a second same-day rotation from colliding and being skipped.
+# The file grows at roughly 25k records per hour with the per-bucket bound, far below the
+# TTL stream, so the threshold is smaller.
+/opt/proxy-sentinel/data/device-signals/handshake.jsonl {
+  size 256M
+  rotate 4
+  missingok
+  notifempty
+  nocreate
+  compress
+  delaycompress
+  dateformat -%Y%m%d-%H%M%S
+}
