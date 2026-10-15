@@ -308,6 +308,13 @@ func (s *PostgresStore) materializeNextInventoryLane(ctx context.Context, lane s
 	if err != nil {
 		return false, err
 	}
+	// The projection is a derived read model: every fact here is rebuildable from the durable
+	// delta queue and the row triggers, and a lost commit simply leaves the endpoint dirty and
+	// re-claimable. Waiting for a WAL fsync per endpoint cost ~2.3 s of IO/WalSync on the
+	// saturated disk and capped the drain at ~116 endpoints/min. Same pattern as writeAdvisoryState.
+	if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
+		return false, err
+	}
 	defer func() {
 		tx.Rollback()
 		release, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
