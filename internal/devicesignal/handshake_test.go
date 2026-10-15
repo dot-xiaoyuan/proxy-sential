@@ -3,6 +3,7 @@ package devicesignal
 import (
 	"encoding/binary"
 	"encoding/json"
+	"net/netip"
 	"os"
 	"testing"
 	"time"
@@ -125,5 +126,32 @@ func TestWriteHandshakeBucketEmitsIngestableDeviceEvent(t *testing.T) {
 	}
 	if got := payload["user_agents"].([]any); len(got) != 1 || got[0] != "ua-one" {
 		t.Fatalf("user agents: %v", payload["user_agents"])
+	}
+}
+
+// The bucket bound keeps the most active devices and drops the rest for that bucket only.
+func TestSelectHandshakeKeysKeepsMostActiveWithinLimit(t *testing.T) {
+	summaries := map[handshakeKey]*handshakeSummary{}
+	for i := 0; i < 10; i++ {
+		key := handshakeKey{IP: netip.AddrFrom4([4]byte{10, 0, 0, byte(i + 1)})}
+		summaries[key] = &handshakeSummary{count: i + 1}
+	}
+	kept := selectHandshakeKeys(summaries, 3)
+	if len(kept) != 3 {
+		t.Fatalf("kept %d, want 3", len(kept))
+	}
+	for _, key := range kept {
+		if summaries[key].count < 8 {
+			t.Fatalf("kept a quiet device: %v count=%d", key.IP, summaries[key].count)
+		}
+	}
+}
+
+func TestHandshakeBucketLimitFallsBackOnInvalidValue(t *testing.T) {
+	for value, want := range map[string]int{"": defaultHandshakeBucketLimit, "abc": defaultHandshakeBucketLimit, "0": defaultHandshakeBucketLimit, "-5": defaultHandshakeBucketLimit, "50": 50} {
+		t.Setenv("PROXY_SENTINEL_HANDSHAKE_BUCKET_LIMIT", value)
+		if got := handshakeBucketLimit(); got != want {
+			t.Fatalf("value %q: got %d want %d", value, got, want)
+		}
 	}
 }

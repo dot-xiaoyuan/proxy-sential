@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -220,11 +221,7 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 		return err
 	}
 	defer file.Close()
-	keys := make([]handshakeKey, 0, len(summaries))
-	for key := range summaries {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i].IP.Less(keys[j].IP) })
+	keys := selectHandshakeKeys(summaries, handshakeBucketLimit())
 	encoder := json.NewEncoder(file)
 	for _, key := range keys {
 		summary := summaries[key]
@@ -251,4 +248,41 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 		}
 	}
 	return file.Sync()
+}
+
+// defaultHandshakeBucketLimit bounds the device summaries written per bucket. Without a bound
+// the summaries of every device that reached port 443 or 80 were written, which on 184 meant
+// about 580k records per hour, four times the router TTL volume, on a disk already at 98%.
+const defaultHandshakeBucketLimit = 200
+
+// handshakeBucketLimit reads PROXY_SENTINEL_HANDSHAKE_BUCKET_LIMIT. Invalid or non-positive
+// values fall back to the default so a typo cannot lift the bound.
+func handshakeBucketLimit() int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_HANDSHAKE_BUCKET_LIMIT")))
+	if err != nil || value <= 0 {
+		return defaultHandshakeBucketLimit
+	}
+	return value
+}
+
+// selectHandshakeKeys keeps the most active devices of a bucket: highest observed_count
+// first, then IP for a stable order. Devices outside the bound are dropped for this bucket
+// only; the next bucket selects again, so a quiet device is never blocked for good.
+func selectHandshakeKeys(summaries map[handshakeKey]*handshakeSummary, limit int) []handshakeKey {
+	keys := make([]handshakeKey, 0, len(summaries))
+	for key := range summaries {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := summaries[keys[i]].count, summaries[keys[j]].count
+		if a != b {
+			return a > b
+		}
+		return keys[i].IP.Less(keys[j].IP)
+	})
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].IP.Less(keys[j].IP) })
+	return keys
 }
