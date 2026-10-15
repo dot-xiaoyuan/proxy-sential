@@ -245,7 +245,10 @@ func (s *PostgresStore) projectInventorySnapshotBatch(ctx context.Context) (bool
 	if _, err = tx.ExecContext(ctx, `SET LOCAL lock_timeout='100ms'`); err != nil {
 		return false, err
 	}
-	locked, lockErr := tx.QueryContext(ctx, `SELECT endpoint_id FROM endpoint_inventory_projection_jobs WHERE endpoint_id=ANY($1::text[]) ORDER BY endpoint_id FOR UPDATE NOWAIT`, ids)
+	// lock_timeout above bounds the wait; NOWAIT used to give up instantly, which live-locked
+	// against the projection churning the same job rows: the batch could never win a lock and
+	// endpoint_inventory_snapshot_jobs stopped advancing, keeping ready=false forever.
+	locked, lockErr := tx.QueryContext(ctx, `SELECT endpoint_id FROM endpoint_inventory_projection_jobs WHERE endpoint_id=ANY($1::text[]) ORDER BY endpoint_id FOR UPDATE`, ids)
 	if lockErr == nil {
 		for locked.Next() {
 		}
