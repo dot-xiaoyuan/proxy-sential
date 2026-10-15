@@ -119,6 +119,11 @@ func (s *DBStore) processIdentitySignalBatch(ctx context.Context, phase string, 
 	// Keep a scalar time bound for pruning and an exact event-ID boundary before LIMIT.
 	where := "sensor_id=" + chQuote(sensor) + " AND received_at>=" + stamp(cursor) + " AND (received_at>" + stamp(cursor) + " OR event_id>" + chQuote(eventID) + ") AND " + bound
 	where += " AND received_at<=" + stamp(readUntil)
+	if s.identityDeviceOnly {
+		// ARP only served dumb-terminal discovery, which is paused; device-signal stopped
+		// emitting it, and the backlog it left behind would otherwise cost this lane hours.
+		where += " AND source_event_type!='arp'"
+	}
 	raw, err := s.ch.query(ctx, fmt.Sprintf(`SELECT * FROM identity_signal_events_v1 WHERE %s ORDER BY sensor_id,received_at,event_id LIMIT %d SETTINGS max_threads=1,max_block_size=128,preferred_block_size_bytes=1048576,max_memory_usage=268435456,max_execution_time=15 FORMAT JSONEachRow`, where, limit))
 	if err != nil {
 		return 0, identityHistoryStats{}, err
