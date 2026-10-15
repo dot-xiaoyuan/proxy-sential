@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -79,72 +78,28 @@ func (s *PostgresStore) stageInventorySnapshot(ctx context.Context, k [5]string,
 	if count.Valid && (available || int(count.Int64) == offset) {
 		return int(count.Int64), nil
 	}
-	var raw []byte
-	if err = s.db.QueryRowContext(ctx, `SELECT document FROM identity_full_snapshots WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND snapshot_id=$5`, k[0], k[1], k[2], k[3], k[4]).Scan(&raw); err != nil {
+	// Stage every chunk in one PostgreSQL statement. The previous Go-side decoder re-read the
+	// whole jsonb document and re-parsed it from the first event on every resume, relying on
+	// ON CONFLICT DO NOTHING for chunks already written, so resuming at chunk K cost O(K) event
+	// parses: a ~35k-event snapshot staged 1,000 at a time burned ~600M parses, and the field
+	// measured ~12 events/s against an 8.06M-event backlog (about eight days).
+	// Chunk keys and stored bodies are unchanged (jsonb_agg yields the same JSON array the Go
+	// marshal produced), so this stays idempotent and skips nothing.
+	var total int
+	if err = s.db.QueryRowContext(ctx, `SELECT coalesce(jsonb_array_length(document->'events'),0) FROM identity_full_snapshots WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND snapshot_id=$5`, k[0], k[1], k[2], k[3], k[4]).Scan(&total); err != nil {
 		return 0, fmt.Errorf("snapshot retry input unavailable: %w", err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	token, err := dec.Token()
-	if err != nil || token != json.Delim('{') {
-		return 0, fmt.Errorf("invalid snapshot object")
-	}
-	total := 0
-	found := false
-	for dec.More() {
-		key, e := dec.Token()
-		if e != nil {
-			return 0, e
-		}
-		if key != "events" {
-			var ignored json.RawMessage
-			if e = dec.Decode(&ignored); e != nil {
-				return 0, e
-			}
-			continue
-		}
-		found = true
-		token, e = dec.Token()
-		if e != nil || token != json.Delim('[') {
-			return 0, fmt.Errorf("invalid snapshot events")
-		}
-		chunk := []json.RawMessage{}
-		flush := func() error {
-			if len(chunk) == 0 {
-				return nil
-			}
-			body, e := json.Marshal(chunk)
-			if e != nil {
-				return e
-			}
-			_, e = s.db.ExecContext(ctx, `INSERT INTO endpoint_inventory_snapshot_chunks VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`, k[0], k[1], k[2], k[3], k[4], total-len(chunk), body)
-			chunk = nil
-			return e
-		}
-		for dec.More() {
-			var event json.RawMessage
-			if e = dec.Decode(&event); e != nil {
-				return 0, e
-			}
-			chunk = append(chunk, event)
-			total++
-			if len(chunk) == inventorySnapshotChunkSize {
-				if e = flush(); e != nil {
-					return 0, e
-				}
-			}
-		}
-		if _, e = dec.Token(); e != nil {
-			return 0, e
-		}
-		if e = flush(); e != nil {
-			return 0, e
-		}
-	}
-	if _, err = dec.Token(); err != nil {
-		return 0, err
-	}
-	if !found {
+	if total == 0 {
 		return 0, fmt.Errorf("snapshot events missing")
+	}
+	if _, err = s.db.ExecContext(ctx, `INSERT INTO endpoint_inventory_snapshot_chunks
+ SELECT $1,$2,$3,$4,$5,((ord-1)/$7)*$7,jsonb_agg(e ORDER BY ord)
+ FROM identity_full_snapshots s
+ CROSS JOIN LATERAL jsonb_array_elements(s.document->'events') WITH ORDINALITY AS t(e,ord)
+ WHERE s.source=$1 AND s.sensor_id=$2 AND s.campus_id=$3 AND s.access_domain=$4 AND s.snapshot_id=$5
+ GROUP BY (ord-1)/$7
+ ON CONFLICT DO NOTHING`, k[0], k[1], k[2], k[3], k[4], inventorySnapshotChunkSize); err != nil {
+		return 0, err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE endpoint_inventory_snapshot_jobs SET staged_count=$6 WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND snapshot_id=$5`, k[0], k[1], k[2], k[3], k[4], total)
 	return total, err
