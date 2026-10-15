@@ -1,30 +1,27 @@
 import { InfoCircleOutlined } from '@ant-design/icons'
-import { Tabs, Tooltip, Typography } from 'antd'
+import { Tooltip, Typography } from 'antd'
 import { useSearchParams } from 'react-router-dom'
+import { deviceCenterTab } from '../app/navigation'
 import { DevicesPage } from './DevicesPage'
 import { RouterObservationsPanel } from './RouterObservationsPanel'
-import { PassiveDiscoveryPanel } from './PassiveDiscoveryPanel'
 
-const tabs = [{ key: 'terminal', label: '终端' }, { key: 'network', label: '网络设备' }, { key: 'iot', label: '哑终端' }, { key: 'records', label: '发现线索' }]
+// 设备中心的每个子菜单是独立页面：终端列表与路由器各自开发、各自展示。
+// 哑终端与发现线索随采集侧 ARP 一并暂停，旧链接（tab=iot/records）回落到终端列表。
+const views = {
+  terminal: { title: '终端列表', hint: '按终端身份查看在线终端与最近归属；最近观测不代表当前在线。' },
+  network: { title: '路由器', hint: '按网络设备身份查看疑似路由器、共享接入证据与归属账号。' },
+} as const
 
 export function DeviceCenterPage() {
-  const [params, setParams] = useSearchParams()
-  const requested = params.get('tab')
-  const tab = tabs.some(item => item.key === requested) ? requested! : 'terminal'
-  const selectTab = (value: string) => setParams(current => {
-    const next = new URLSearchParams(current)
-    next.set('tab', value)
-    for (const key of ['page', 'cursor', 'routers_page', 'discovery_page', 'device']) next.delete(key)
-    return next
-  }, { replace: true })
+  const [params] = useSearchParams()
+  const tab = deviceCenterTab(params)
+  const view = views[tab]
   return <main className="page device-center-page">
     <header className="center-header"><div className="center-header-title">
-      <Typography.Title level={3}>设备中心</Typography.Title>
-      <Tooltip title="按设备身份查看终端、网络设备和发现证据；最近观测和服务公告不代表当前在线。"><InfoCircleOutlined className="center-title-hint" aria-label="设备中心说明" /></Tooltip>
+      <Typography.Title level={3}>{view.title}</Typography.Title>
+      <Tooltip title={view.hint}><InfoCircleOutlined className="center-title-hint" aria-label={`${view.title}说明`} /></Tooltip>
     </div></header>
-    <Tabs activeKey={tab} onChange={selectTab} items={tabs} />
     {tab === 'terminal' && <DevicesPage embedded />}
     {tab === 'network' && <section className="surface device-center-network"><RouterObservationsPanel /></section>}
-    {(tab === 'iot' || tab === 'records') && <PassiveDiscoveryPanel key={tab} view={tab} />}
   </main>
 }

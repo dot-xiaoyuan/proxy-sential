@@ -3,6 +3,9 @@ import { can } from '../shared/auth/permissions'
 
 export type NavigationItem = { key: string; title: string; to: string; permission?: Permission; readAlternatives?: {permission: Permission; to: string}[]; owns: (path: string, params: URLSearchParams) => boolean }
 export type NavigationGroup = { key: string; title: string; items: NavigationItem[]; hidden?: boolean }
+export const deviceCenterTabs = ['terminal','network'] as const
+export type DeviceCenterTab = typeof deviceCenterTabs[number]
+export const deviceCenterTab = (params: URLSearchParams): DeviceCenterTab => params.get('tab') === 'network' ? 'network' : 'terminal'
 const item = (key: string, title: string, to: string, permission?: Permission, prefix = to.split('?')[0]): NavigationItem => ({ key, title, to, permission, owns: path => path === prefix || path.startsWith(`${prefix}/`) })
 export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
@@ -11,7 +14,12 @@ export const navigation: NavigationGroup[] = [
     {...item('reviews','账号复核','/shared-access?tab=reviews','cases:read'), owns: (p,q) => p.startsWith('/shared-access/reviews') || p === '/shared-access' && q.get('tab') === 'reviews'},
     item('cases','风险案件','/cases','cases:read'), {...item('actions','处置记录','/actions?tab=actions','actions:read'),readAlternatives:[{permission:'policies:read',to:'/actions?tab=executions'}]},
   ] },
-  { key: 'assets', title: '设备中心', items: [{...item('devices','设备中心','/devices','identity:read'), owns: path => path === '/devices' || path.startsWith('/devices/') || path === '/discovery' || path.startsWith('/discovery/'), }] },
+  // 设备中心按子菜单分别开发与展示。哑终端与发现线索暂停（采集侧已停 ARP），不进菜单；旧链接回落到终端列表。
+  { key: 'assets', title: '设备中心', items: [
+    {...item('devices','终端列表','/devices?tab=terminal','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'terminal') || (p.startsWith('/devices/') && !p.startsWith('/devices/network/')) || p === '/discovery'},
+    {...item('routers','路由器','/devices?tab=network','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'network') || p.startsWith('/devices/network/') || p.startsWith('/discovery/routers/')},
+    item('account-assessments','用户研判','/accounts','identity:read'),
+  ] },
   { key: 'network', title: '网络分析', hidden: true, items: [
     ...(['applications','access','technical'] as const).map((section,index) => ({...item(section,['应用访问','访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['applications','access','technical'].includes(q.get('section')||'')?q.get('section'):'applications') === section})),
     item('events','事件检索','/events','events:read'),
@@ -20,7 +28,7 @@ export const navigation: NavigationGroup[] = [
   { key: 'system', title: '系统管理', items: [{...item('sources','数据源与采集','/settings/sources','ingest:read'),readAlternatives:[{permission:'identity:read',to:'/settings/sources?tab=sources'}]},item('integrations','认证与处置接入','/settings/actions','actions:read'),item('notifications','通知模板与通道','/settings/notifications','notifications:read'),{...item('behavior-reports','网络安全行为上报','/settings/behavior-reports','behavior-reports:read'),readAlternatives:[{permission:'behavior-reports:manage',to:'/settings/behavior-reports'}]},item('organization','校区与网络区域','/settings/organization','organization:read'),item('users','用户权限','/settings/security','users:manage'),item('audit','审计日志','/audit','audit:read')] },
 ]
 
-const registeredRoutes=[/^\/(overview|activity|devices|discovery|events|cases|actions|audit|policies|shared-access)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
+const registeredRoutes=[/^\/(overview|activity|devices|accounts|discovery|events|cases|actions|audit|policies|shared-access)$/, /^\/(devices|accounts|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
 export function safeReturnTo(value: string | null | undefined, fallback = '/events', depth=0): string {
   if (!value || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f]/.test(value)) return fallback
   try {

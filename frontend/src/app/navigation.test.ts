@@ -5,8 +5,15 @@ import type { Session } from '../shared/api/types'
 describe('menu and investigation navigation',()=>{
  it('has six nonempty groups with stable detail ownership',()=>{
  expect(navigation.map(g=>g.title)).toEqual(['运营工作台','风险运营','设备中心','网络分析','策略与验证','系统管理'])
- expect(navigation.find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['设备中心'])
+ expect(navigation.find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['终端列表','路由器','用户研判'])
  expect(routeOwner('/discovery','')?.entry.key).toBe('devices')
+ expect(routeOwner('/devices','')?.entry.key).toBe('devices')
+ expect(routeOwner('/devices','?tab=network')?.entry.key).toBe('routers')
+ expect(routeOwner('/devices','?tab=iot')?.entry.key).toBe('devices')
+ expect(routeOwner('/devices/mac:aa:bb','')?.entry.key).toBe('devices')
+ expect(routeOwner('/devices/network/assessment-1','')?.entry.key).toBe('routers')
+ expect(routeOwner('/discovery/routers/assessment-1','')?.entry.key).toBe('routers')
+ expect(routeOwner('/accounts/student-1','')?.entry.key).toBe('account-assessments')
  expect(routeOwner('/policies/exceptions','')?.entry.key).toBe('exceptions')
  expect(routeOwner('/shared-access/reviews/review-1','')?.entry.key).toBe('reviews')
  expect(routeOwner('/ips/10.0.0.1','')?.entry.key).toBe('events')
