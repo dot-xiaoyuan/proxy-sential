@@ -119,15 +119,6 @@ export function EndpointDetailsPage() {
   const detail = useInventoryDetail(endpointId);
   const identity = {...detail,data:detail.data?.profile};
   const recognitionEvidence=useEndpointIdentity(endpointId,{limit:20},activeTab==='recognition');
-  const signals = useDeviceSignals(
-    {
-      window: "24h",
-      q: endpointId,
-      include_weak: true,
-      limit: 200,
-    },
-    activeTab === "signals",
-  );
   const session = useSession();
   const updateRegistration = useUpdateEndpointRegistration();
 
@@ -136,6 +127,19 @@ export function EndpointDetailsPage() {
   const mergeStatus = Form.useWatch("merge_status", registrationForm);
   const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? "";
   const latestAccess = profile?.recognition?.current_access_id ?? "";
+  // 设备信号按 IP 或 MAC 存储，终端 ID 不参与匹配；按最近观测 IP 查询，缺失时退回 MAC。
+  const signalQuery = latestIP
+    ? { ip: latestIP }
+    : { q: profile.endpoint.primary_mac ?? "" };
+  const signals = useDeviceSignals(
+    {
+      window: "24h",
+      ...signalQuery,
+      include_weak: true,
+      limit: 50,
+    },
+    activeTab === "signals" && Boolean(latestIP || profile.endpoint.primary_mac),
+  );
   const signalItems = signals.data?.items ?? [];
   const recognition = recognitionEvidence.data?.recognition ?? profile.recognition;
   const associationCounts=detail.data?.state.complete?detail.data.association_counts:undefined;
@@ -243,7 +247,7 @@ export function EndpointDetailsPage() {
               type="warning"
             />
           )}
-          <div className="surface">
+          <div className="surface endpoint-registration-summary">
             <Typography.Title level={4}>登记信息</Typography.Title>
             <Descriptions column={1} size="small">
               <Descriptions.Item label="登记状态">
@@ -538,16 +542,19 @@ export function EndpointDetailsPage() {
               设备信号
             </Typography.Title>
             <Typography.Text className="surface-subtitle" type="secondary">
-              DHCP、Software、指纹和其他终端线索
+              按最近观测 IP 查询近 24 小时的 DHCP、TLS/HTTP 握手、指纹等线索
             </Typography.Text>
           </div>
-          {signals.isError ? (
+          {!latestIP && !profile.endpoint.primary_mac ? (
+            <Typography.Text type="secondary">该终端没有可用于查询的 IP 或 MAC，无法匹配设备信号。</Typography.Text>
+          ) : signals.isError ? (
             <Alert showIcon title="设备信号加载失败" type="warning" />
           ) : (
             <Table<DeviceSignal>
               columns={signalColumns}
               dataSource={signalItems}
-              locale={{ emptyText: "暂无该 endpoint 的设备信号" }}
+              loading={signals.isFetching}
+              locale={{ emptyText: "近 24 小时没有该 IP 的设备信号，可在身份溯源中查看历史关联" }}
               pagination={{ pageSize: 8, showSizeChanger: false }}
               rowKey="signal_id"
               scroll={{ x: 920 }}

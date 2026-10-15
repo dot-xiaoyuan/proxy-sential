@@ -3815,6 +3815,14 @@ pre.wrap-code {
 .device-filter-compact > .ant-select { min-width: 140px; }
 .device-filter-primary { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
 .device-filter-disclosure { flex-basis: 100%; }
+/* 收起时“更多筛选”与主筛选同行，列表才能在首屏露出。 */
+.device-filter-disclosure:not([open]) { flex-basis: auto; }
+.device-filter-disclosure > summary { white-space: nowrap; flex-shrink: 0; }
+.device-inventory-page .device-filter-compact { padding: 12px 16px; }
+.device-inventory-page .device-list-heading { min-height: 32px; }
+.device-list-heading .device-list-actions { margin-left: auto; }
+.device-inventory-page .device-list-freshness { margin: 2px 0 8px; }
+.device-center-page .center-header { margin-bottom: 4px; }
 .device-more-filters { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
 .device-more-filters > .ant-select { min-width: 160px; }
 .device-more-filters .university-filter-grid { flex: 1 1 100%; }
@@ -4475,6 +4483,13 @@ pre.wrap-code {
 .endpoint-snapshot-evidence { white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; max-height:60vh; font-size:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px; }
 .endpoint-details-page .page-header > div { min-width:0; }
 .endpoint-details-page .page-header .page-title { white-space:normal; overflow-wrap:anywhere; }
+/* 概览两列按内容高度对齐：卡片不再被同行的长卡拉伸出空白。 */
+.endpoint-details-page .details-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+.endpoint-details-page .details-grid > .surface { padding: 16px 20px; }
+.endpoint-details-page .details-grid > .endpoint-registration-summary { grid-column: 2; grid-row: 1 / span 2; }
+.endpoint-details-page .details-tab-shell { padding: 6px 16px 0; }
+.endpoint-details-page .details-tab-shell .ant-tabs-nav { margin: 0; }
+@media (max-width: 991px) { .endpoint-details-page .details-grid { grid-template-columns: minmax(0, 1fr); } .endpoint-details-page .details-grid > .endpoint-registration-summary { grid-column: auto; grid-row: auto; } }
 
 /* Campus directory and network mapping editor. */
 .organization-page .ant-card { border-color: #e2e8f0; border-radius: 8px; }
