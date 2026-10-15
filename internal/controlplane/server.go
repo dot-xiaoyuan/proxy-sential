@@ -665,7 +665,21 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "permission_denied", "required permission: "+permission)
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) {
+	// The 4K identity bridge posts events, batches and snapshots to these routes with its own
+	// ingest token. Three other places in this tree already gate identity ingestion with
+	// `readOnly && !allowIdentityIngest` (serveAPI, bridge_catalog, identity_reconciliation),
+	// but this blanket switch only waived a single PUT route, so every snapshot upload from the
+	// bridge was rejected with 403 read_only: normalized_events stopped receiving ncu-srun4k
+	// rows at 2026-10-15 01:27, the identity materializer had no input, and devices could no
+	// longer be linked to authentication accounts. Honour the same convention here.
+	identityIngestPost := s.allowIdentityIngest && r.Method == http.MethodPost &&
+		(path == "/integrations/identity/events" ||
+			path == "/integrations/identity/event-batches" ||
+			path == "/integrations/identity/snapshots" ||
+			path == "/integrations/identity/snapshot-uploads" ||
+			strings.HasPrefix(path, "/integrations/identity/snapshot-uploads/") ||
+			path == "/integrations/identity/bridge/catalog-snapshots")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !identityIngestPost && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) {
 		writeError(w, http.StatusForbidden, "read_only", "mutating operations are disabled by the global read-only switch")
 		return
 	}
@@ -774,8 +788,12 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDPIFlow(w, r, strings.TrimPrefix(path, "/dpi/flows/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/dpi/ips/"):
 		s.handleDPIIP(w, r, strings.TrimPrefix(path, "/dpi/ips/"))
+	case r.Method == http.MethodGet && path == "/account-assessments":
+		s.handleAccountAssessments(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/accounts/"):
 		s.handleAccount(w, r, strings.TrimPrefix(path, "/accounts/"))
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/tag-reviews"):
+		s.handleAccountTagReview(w, r, strings.TrimPrefix(path, "/accounts/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/endpoints/"):
 		s.handleEndpoint(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/endpoints/"):
@@ -1249,6 +1267,8 @@ func requiredPermission(method, path string) string {
 	}
 	if method == http.MethodPost {
 		switch {
+		case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/tag-reviews"):
+			return "labels:create"
 		case path == "/labels":
 			return "labels:create"
 		case strings.HasPrefix(path, "/endpoints/"):
@@ -1294,7 +1314,7 @@ func requiredPermission(method, path string) string {
 		return "actions:read"
 	case strings.HasPrefix(path, "/integrations"):
 		return "integrations:write"
-	case strings.HasPrefix(path, "/device-fingerprint-library") || strings.HasPrefix(path, "/accounts") || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/device-inventory") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
+	case strings.HasPrefix(path, "/device-fingerprint-library") || (method == http.MethodGet && (path == "/account-assessments" || strings.HasPrefix(path, "/accounts"))) || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/device-inventory") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
 		return "identity:read"
 	default:
 		return "risks:read"
@@ -1539,6 +1559,10 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest string) {
+	if strings.HasSuffix(rest, "/assessment") {
+		s.handleAccountAssessment(w, r, strings.TrimSuffix(rest, "/assessment"))
+		return
+	}
 	if !strings.HasSuffix(rest, "/identity") {
 		writeError(w, http.StatusNotFound, "not_found", "account endpoint not found")
 		return
