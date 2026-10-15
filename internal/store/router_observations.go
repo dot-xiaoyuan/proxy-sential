@@ -247,24 +247,25 @@ func (s *PostgresStore) ListRouterObservations(ctx context.Context, query Router
 	// Keep both durable assessments for auditability, but expose one current row
 	// per physical device so the operator does not see the same router twice.
 	rows, err := s.db.QueryContext(ctx, `WITH filtered AS (
- SELECT *,CASE
-  WHEN mac<>'' THEN 'mac:'||lower(mac)
-  WHEN endpoint_id<>'' THEN 'endpoint:'||endpoint_id
-  WHEN ip IS NOT NULL THEN 'ip:'||host(ip)||':vlans:'||array_to_string(vlans,',')
-  ELSE 'assessment:'||assessment_id
- END AS device_key
+ SELECT assessment_id,confidence,first_seen,last_seen,expires_at,
+  CASE WHEN mac<>'' THEN 'mac:'||lower(mac)
+       WHEN endpoint_id<>'' THEN 'endpoint:'||endpoint_id
+       WHEN ip IS NOT NULL THEN 'ip:'||host(ip)||':vlans:'||array_to_string(vlans,',')
+       ELSE 'assessment:'||assessment_id END AS device_key,
+  CASE status WHEN 'confirmed' THEN 3 WHEN 'likely' THEN 2 ELSE 1 END AS status_rank,
+  (endpoint_id<>'') AS has_endpoint
  FROM router_assessments `+where+`
 ), ranked AS (
- SELECT assessment,confidence,first_seen,last_seen,expires_at,assessment_id,
+ SELECT assessment_id,confidence,first_seen,last_seen,expires_at,
   count(*) OVER(PARTITION BY device_key) AS merged_records,
-  row_number() OVER(PARTITION BY device_key ORDER BY
-   CASE status WHEN 'confirmed' THEN 3 WHEN 'likely' THEN 2 ELSE 1 END DESC,
-   confidence DESC,(endpoint_id<>'') DESC,last_seen DESC,assessment_id) AS device_rank
+  row_number() OVER(PARTITION BY device_key ORDER BY status_rank DESC,confidence DESC,has_endpoint DESC,last_seen DESC,assessment_id) AS device_rank
  FROM filtered
 ), devices AS (
- SELECT assessment,confidence,first_seen,last_seen,expires_at,assessment_id,merged_records FROM ranked WHERE device_rank=1
+ SELECT assessment_id,confidence,first_seen,last_seen,expires_at,merged_records FROM ranked WHERE device_rank=1
+), page AS (
+ SELECT assessment_id,confidence,first_seen,last_seen,expires_at,merged_records,count(*) OVER() AS total FROM devices`+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,assessment_id LIMIT $%d OFFSET $%d`, len(args)-1, len(args))+`
 )
-SELECT assessment,merged_records,count(*) OVER(),first_seen,last_seen,expires_at FROM devices`+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,assessment_id LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+SELECT r.assessment,p.merged_records,p.total,p.first_seen,p.last_seen,p.expires_at FROM page p JOIN router_assessments r USING (assessment_id)`, args...)
 	if err != nil {
 		return RouterAssessmentPage{}, err
 	}
