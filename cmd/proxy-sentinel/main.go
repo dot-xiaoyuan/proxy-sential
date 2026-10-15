@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -44,9 +45,17 @@ func main() {
 	}
 }
 
+// retiredBacklogSkipError rejects the removed skip-backlog switch. Skipping moved cursors
+// to now()-N and discarded the unread facts permanently, which violates reliable
+// consumption; a stale runtime.env must fail loudly rather than run with a silent no-op.
+const retiredBacklogSkipError = "PROXY_SENTINEL_MAX_BACKLOG is retired: backlog skipping discards durable facts; remove it from runtime.env"
+
 func run(args []string) error {
 	if len(args) < 1 {
 		return usageError()
+	}
+	if _, set := os.LookupEnv("PROXY_SENTINEL_MAX_BACKLOG"); set {
+		return errors.New(retiredBacklogSkipError)
 	}
 
 	// Every processing command uses the same installed offline library.

@@ -12,24 +12,38 @@ import (
 	"proxy-sentinel/internal/normalized"
 )
 
+// Inbox work budgets. A fixed 2s budget on a congested disk turned every slow commit
+// into a rollback and replay: the field logged 6,447 apply timeouts while each batch
+// cost 0.4-0.9s regardless of size. The lease must outlive one claim plus one apply so
+// a slow but healthy worker is never fenced out mid-batch.
+const (
+	identityInboxWorkBudget = 30 * time.Second
+	identityInboxLease      = 70 * time.Second
+	identityInboxBatchMin   = 100
+	identityInboxBatchMax   = 2000
+)
+
+// nextInboxBatchSize sizes the next claim. Per-batch cost is dominated by fixed round
+// trips and the commit fsync, so shrinking below identityInboxBatchMin only lowers
+// throughput. Failures halve down to that floor; a fast success doubles back up.
 func nextInboxBatchSize(size int, elapsed time.Duration, err error, stable *int) int {
-	if err != nil || elapsed >= 2*time.Second {
+	if err != nil || elapsed >= identityInboxWorkBudget/2 {
 		*stable = 0
-		return max(25, size/2)
+		return max(identityInboxBatchMin, size/2)
 	}
 	*stable++
-	if *stable >= 10 {
+	if elapsed < identityInboxWorkBudget/6 && *stable >= 2 {
 		*stable = 0
-		return min(500, size+25)
+		return min(identityInboxBatchMax, size*2)
 	}
 	return size
 }
 func (s *DBStore) runIdentityInbox(ctx context.Context) {
-	size, stable := 100, 0
+	size, stable := identityInboxBatchMin, 0
 	nextProgress := time.Time{}
 	for ctx.Err() == nil {
 		claimStarted := time.Now()
-		work, cancel := context.WithTimeout(ctx, 2*time.Second)
+		work, cancel := context.WithTimeout(ctx, identityInboxWorkBudget)
 		w, err := s.pg.claimIdentityInbox(work, s.pg.sensorID, size)
 		cancel()
 		claimDuration := time.Since(claimStarted)
@@ -37,7 +51,7 @@ func (s *DBStore) runIdentityInbox(ctx context.Context) {
 		began := time.Now()
 		if err == nil {
 			phase = "apply"
-			work, cancel = context.WithTimeout(ctx, 2*time.Second)
+			work, cancel = context.WithTimeout(ctx, identityInboxWorkBudget)
 			err = s.pg.applyIdentityInbox(work, w)
 			cancel()
 			size = nextInboxBatchSize(size, time.Since(began), err, &stable)
@@ -54,8 +68,10 @@ func (s *DBStore) runIdentityInbox(ctx context.Context) {
 		delay := 20 * time.Millisecond
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
+				// Idle liveness only: consumers treat 15 s as stale, so a 5 s refresh keeps the
+				// signal while removing four of five writes to the shared scope row.
 				health, c := context.WithTimeout(ctx, time.Second)
-				_, _ = s.pg.db.ExecContext(health, `UPDATE identity_pipeline_scopes SET heartbeat_at=now() WHERE sensor_id=$1`, s.pg.sensorID)
+				_, _ = s.pg.db.ExecContext(health, `UPDATE identity_pipeline_scopes SET heartbeat_at=now() WHERE sensor_id=$1 AND (heartbeat_at IS NULL OR heartbeat_at<now()-interval '5 seconds')`, s.pg.sensorID)
 				c()
 			}
 			delay = time.Second
@@ -213,7 +229,7 @@ func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
 		cancel()
 		if errors.Is(err, sql.ErrNoRows) {
 			health, c := context.WithTimeout(ctx, time.Second)
-			_, _ = s.pg.db.ExecContext(health, `UPDATE identity_pipeline_scopes SET export_heartbeat_at=now() WHERE sensor_id=$1`, s.pg.sensorID)
+			_, _ = s.pg.db.ExecContext(health, `UPDATE identity_pipeline_scopes SET export_heartbeat_at=now() WHERE sensor_id=$1 AND (export_heartbeat_at IS NULL OR export_heartbeat_at<now()-interval '5 seconds')`, s.pg.sensorID)
 			c()
 		}
 		delay := 20 * time.Millisecond

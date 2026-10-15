@@ -60,7 +60,9 @@ func (s *DBStore) updateApplicationConnectionBatch(ctx context.Context, limit in
 		return false, err
 	}
 	if len(rows) == 0 {
-		if _, err = tx.ExecContext(ctx, `UPDATE application_connection_read_model_v2_cursor SET updated_at=now() WHERE id=1`); err != nil {
+		// An idle poll runs every second; refreshing the check time on each one cost a
+		// dead tuple per second and hundreds of autovacuums a day for a one-row cursor.
+		if _, err = tx.ExecContext(ctx, `UPDATE application_connection_read_model_v2_cursor SET updated_at=now() WHERE id=1 AND updated_at<now()-interval '30 seconds'`); err != nil {
 			return false, err
 		}
 		return false, tx.Commit()

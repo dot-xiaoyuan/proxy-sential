@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"proxy-sentinel/internal/normalized"
@@ -104,6 +105,11 @@ func (s *PostgresStore) stageInventorySnapshot(ctx context.Context, k [5]string,
 	_, err = s.db.ExecContext(ctx, `UPDATE endpoint_inventory_snapshot_jobs SET staged_count=$6 WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND snapshot_id=$5`, k[0], k[1], k[2], k[3], k[4], total)
 	return total, err
 }
+
+// ErrInventorySnapshotLockBusy reports that a snapshot slice could not lock its projection
+// jobs within lock_timeout. The slice cursor does not move and the slice is retried; the
+// error keeps the stall visible instead of returning an unchanged cursor as success.
+var ErrInventorySnapshotLockBusy = errors.New("inventory snapshot projection jobs busy")
 
 func (s *PostgresStore) projectInventorySnapshotBatch(ctx context.Context) (bool, error) {
 	var k [5]string
@@ -212,7 +218,7 @@ func (s *PostgresStore) projectInventorySnapshotBatch(ctx context.Context) (bool
 	}
 	if lockErr != nil {
 		if inventoryProjectionErrorCode(lockErr) == "sqlstate:55P03" {
-			return false, nil
+			return false, fmt.Errorf("%w: %v", ErrInventorySnapshotLockBusy, lockErr)
 		}
 		return false, lockErr
 	}
@@ -222,7 +228,7 @@ func (s *PostgresStore) projectInventorySnapshotBatch(ctx context.Context) (bool
  FROM jsonb_to_recordset($1::jsonb) AS x("Record" text,"Endpoint" text,"Account" text,"IP" text,"Access" text,"Event" text,"Confidence" double precision) ORDER BY x."Endpoint",x."Record" ON CONFLICT(record_id) DO NOTHING`, body, k[0], observed, ref)
 	if err != nil {
 		if inventoryProjectionErrorCode(err) == "sqlstate:55P03" {
-			return false, nil
+			return false, fmt.Errorf("%w: %v", ErrInventorySnapshotLockBusy, err)
 		}
 		return false, err
 	}

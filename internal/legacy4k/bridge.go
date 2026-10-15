@@ -108,6 +108,9 @@ type Sender struct {
 	AccessDomain              string
 	Client                    *http.Client
 	Durable                   bool
+	// PublicationWait bounds how long a durable snapshot upload waits for calibration to
+	// publish before reporting ErrSnapshotPublicationPending. Zero means three minutes.
+	PublicationWait time.Duration
 }
 
 func (s Sender) Send(ctx context.Context, records []map[string]string, idempotency string) error {

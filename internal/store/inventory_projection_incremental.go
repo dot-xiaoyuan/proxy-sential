@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+// inventoryDeltaBatchSize bounds the deltas one endpoint transaction consumes. Each origin
+// costs several statement round trips, and a 500-delta batch regularly exceeded the
+// 30-second endpoint budget on the field and rolled back whole. Smaller batches commit
+// progress that a timeout can no longer discard.
+const inventoryDeltaBatchSize = 200
+
 var ErrInventoryProjectionRepairRequired = errors.New("inventory projection repair required")
 
 type inventoryOrigin [3]string
@@ -35,7 +41,7 @@ type inventoryDeltaBatch struct {
 // to the outer transaction; no source notification row is locked during work.
 func (s *PostgresStore) materializeInventoryDeltaTx(ctx context.Context, tx *sql.Tx, id string) (inventoryDeltaBatch, error) {
 	batch := inventoryDeltaBatch{}
-	rows, err := tx.QueryContext(ctx, `SELECT delta_id,source_table,payload,old_payload FROM endpoint_inventory_projection_deltas WHERE endpoint_id=$1 ORDER BY delta_id LIMIT 500`, id)
+	rows, err := tx.QueryContext(ctx, `SELECT delta_id,source_table,payload,old_payload FROM endpoint_inventory_projection_deltas WHERE endpoint_id=$1 ORDER BY delta_id LIMIT $2`, id, inventoryDeltaBatchSize)
 	if err != nil {
 		return batch, err
 	}
@@ -310,11 +316,33 @@ func replaceInventoryContributions(ctx context.Context, tx *sql.Tx, id string, k
 	if _, err = tx.ExecContext(ctx, `DELETE FROM endpoint_inventory_contributions WHERE endpoint_id=$1 AND origin_key=$2::jsonb`, id, key.json()); err != nil {
 		return err
 	}
-	for _, f := range facts {
-		_, err = tx.ExecContext(ctx, `INSERT INTO endpoint_inventory_contributions VALUES($1,$2::jsonb,$3,$4,$5,$6,$7,$8,$9,$10)`, id, key.json(), f.Kind, f.Value, f.Source, f.First, f.Last, f.Confidence, f.Event, f.Session)
-		if err != nil {
+	// One statement per origin instead of one per contribution: every round trip waits on
+	// the shared disk, and an origin carries up to three relations.
+	if len(facts) > 0 {
+		type row struct {
+			Kind       string    `json:"kind"`
+			Value      string    `json:"value"`
+			Source     string    `json:"source"`
+			First      time.Time `json:"first"`
+			Last       time.Time `json:"last"`
+			Confidence float64   `json:"confidence"`
+			Event      string    `json:"event"`
+			Session    bool      `json:"session"`
+		}
+		rowsJSON := make([]row, 0, len(facts))
+		for _, f := range facts {
+			rowsJSON = append(rowsJSON, row{f.Kind, f.Value, f.Source, f.First, f.Last, f.Confidence, f.Event, f.Session})
+		}
+		body, e := json.Marshal(rowsJSON)
+		if e != nil {
+			return e
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO endpoint_inventory_contributions(endpoint_id,origin_key,kind,value,source,first_seen,last_seen,confidence,event_id,is_session)
+ SELECT $1,$2::jsonb,r.kind,r.value,r.source,r.first,r.last,r.confidence,r.event,r.session FROM jsonb_to_recordset($3::jsonb) r(kind text,value text,source text,first timestamptz,last timestamptz,confidence double precision,event text,session boolean)`, id, key.json(), body); err != nil {
 			return err
 		}
+	}
+	for _, f := range facts {
 		d := changes[f.inventoryRelation]
 		if f.Session {
 			d[1]++
@@ -504,7 +532,7 @@ func reconcileInitialInventoryContributions(ctx context.Context, tx *sql.Tx, id 
 
 func inventoryInitialDeltaBatch(ctx context.Context, tx *sql.Tx, id string) (inventoryDeltaBatch, error) {
 	batch := inventoryDeltaBatch{}
-	rows, err := tx.QueryContext(ctx, `SELECT delta_id FROM endpoint_inventory_projection_deltas WHERE endpoint_id=$1 ORDER BY delta_id LIMIT 500`, id)
+	rows, err := tx.QueryContext(ctx, `SELECT delta_id FROM endpoint_inventory_projection_deltas WHERE endpoint_id=$1 ORDER BY delta_id LIMIT $2`, id, inventoryDeltaBatchSize)
 	if err != nil {
 		return batch, err
 	}

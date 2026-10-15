@@ -190,10 +190,12 @@ func (s *DBStore) processIdentitySignalBatch(ctx context.Context, phase string, 
 	// starves this lane permanently. The field measured the live cursor frozen while
 	// endpoint_entities stopped advancing, with no error recorded anywhere. The cursor
 	// still does not move when the wait expires, so the work is retried on the next loop.
+	// An expired wait is reported as an error: returning success hid a frozen lane behind
+	// an empty last_error on the field.
 	if locked, lockErr := awaitIdentityWriteLock(ctx, tx, identityLockWaitBudget); lockErr != nil {
 		return 0, identityHistoryStats{}, lockErr
 	} else if !locked {
-		return 0, identityHistoryStats{}, nil
+		return 0, identityHistoryStats{}, ErrIdentityWriteLockBusy
 	}
 	stats, err := writeIdentityEventsTx(ctx, tx, events)
 	if err != nil {
@@ -416,7 +418,9 @@ func (s *DBStore) IdentityMaterializerStatus(ctx context.Context) (map[string]an
 func (s *DBStore) deferIdentityDerivedWork(ctx context.Context) bool {
 	check, cancel := context.WithTimeout(ctx, time.Second)
 	var backlog bool
-	err := s.pg.db.QueryRowContext(check, `SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE enabled AND pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds'))`).Scan(&backlog)
+	// Only this sensor's inbox gates its own derived work. The unscoped check let the NCU
+	// inbox backlog pause the router-pilot materializer and export as well, silently.
+	err := s.pg.db.QueryRowContext(check, `SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds'))`, s.pg.sensorID).Scan(&backlog)
 	cancel()
 	if err == nil && !backlog {
 		return false

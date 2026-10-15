@@ -252,7 +252,17 @@ func (s *PostgresStore) RetryDeviceNames(ctx context.Context, events []normalize
 			ips = append(ips, stringFromMap(e.Subject, "ip"))
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT evidence FROM device_name_evidence WHERE source IN ('mdns_hostname','mdns_service') AND observed_at>=now()-interval '7 days' AND (endpoint_id='' OR (sensor_id=ANY($1::text[]) AND (source='mdns_service' OR evidence->>'address'=ANY($2::text[])))) ORDER BY processed_at,event_id LIMIT 100`, sensors, ips)
+	// Unattributed names leave the hot rotation by retry_after backoff; fresh DHCP evidence
+	// for the same sensor and address retries them immediately.
+	// The periodic pass has no DHCP context; keep its predicate inside the partial index
+	// device_name_retry_due instead of an OR the planner can only satisfy with a scan.
+	query := `SELECT evidence FROM device_name_evidence WHERE source IN ('mdns_hostname','mdns_service') AND observed_at>=now()-interval '7 days' AND ((endpoint_id='' AND retry_after<=now()) OR (sensor_id=ANY($1::text[]) AND (source='mdns_service' OR evidence->>'address'=ANY($2::text[])))) ORDER BY processed_at,event_id LIMIT 100`
+	args := []any{sensors, ips}
+	if len(sensors) == 0 {
+		query = `SELECT evidence FROM device_name_evidence WHERE source IN ('mdns_hostname','mdns_service') AND endpoint_id='' AND retry_after<=now() AND observed_at>=now()-interval '7 days' ORDER BY retry_after,processed_at,event_id LIMIT 100`
+		args = nil
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -284,7 +294,7 @@ func (s *PostgresStore) RetryDeviceNames(ctx context.Context, events []normalize
 		if err != nil {
 			return err
 		}
-		if _, err = s.db.ExecContext(ctx, `UPDATE device_name_evidence SET endpoint_id=$1,evidence=$2,processed_at=now() WHERE sensor_id=$3 AND event_id=$4 AND source=$5 AND value=$6`, n.EndpointID, raw, n.SensorID, n.EventID, n.Source, n.Value); err != nil {
+		if _, err = s.db.ExecContext(ctx, `UPDATE device_name_evidence SET endpoint_id=$1,evidence=$2,processed_at=now(),retry_attempts=CASE WHEN $1='' THEN retry_attempts+1 ELSE 0 END,retry_after=CASE WHEN $1='' THEN now()+make_interval(secs=>least(21600,60*power(2,least(retry_attempts,9)))) ELSE '-infinity' END WHERE sensor_id=$3 AND event_id=$4 AND source=$5 AND value=$6`, n.EndpointID, raw, n.SensorID, n.EventID, n.Source, n.Value); err != nil {
 			return err
 		}
 	}

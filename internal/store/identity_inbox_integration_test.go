@@ -346,9 +346,15 @@ func TestIdentityBacklogDefersDerivedWork(t *testing.T) {
 	if _, err := pg.db.ExecContext(ctx, `UPDATE identity_pipeline_scopes SET oldest_pending_at=now()-interval '10 seconds' WHERE scope_key=$1`, key); err != nil {
 		t.Fatal(err)
 	}
+	pg.sensorID = scope.SensorID
 	db := &DBStore{pg: pg}
 	if !db.deferIdentityDerivedWork(ctx) {
 		t.Fatal("historical writes were allowed ahead of current identity")
+	}
+	// Another sensor's materializer must not stall behind this inbox.
+	other := &PostgresStore{db: pg.db, sensorID: scope.SensorID + "-other"}
+	if (&DBStore{pg: other}).deferIdentityDerivedWork(ctx) {
+		t.Fatal("an unrelated sensor was paused by another inbox backlog")
 	}
 	var pending int
 	if err := pg.db.QueryRowContext(ctx, `SELECT pending_records FROM identity_pipeline_scopes WHERE scope_key=$1`, key).Scan(&pending); err != nil || pending != 1 {

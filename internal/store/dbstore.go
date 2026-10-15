@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"proxy-sentinel/internal/behaviorreport"
@@ -25,6 +26,7 @@ type DBStore struct {
 	storageMode        Mode
 	domainOnce         sync.Once
 	domainQueue        chan domainBatch
+	domainDropped      atomic.Int64
 	domainCancel       context.CancelFunc
 	domainDone         chan struct{}
 }

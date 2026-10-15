@@ -87,7 +87,9 @@ func writeDeviceLeases(ctx context.Context, tx *sql.Tx, events []normalized.Even
 // ResolveDeviceAt only assigns a physical endpoint; it never assigns an account.
 // A later ACK supersedes earlier leases, while simultaneous disagreeing ACKs conflict.
 func (s *PostgresStore) ResolveDeviceAt(ctx context.Context, o DomainObservation) (IdentityAttribution, bool, error) {
-	if o.SensorID == "" {
+	// An observation without an address cannot match a lease. Casting '' to inet raised
+	// 51,834 errors on the field, each aborting the caller's batch.
+	if o.SensorID == "" || strings.TrimSpace(o.IP) == "" {
 		return IdentityAttribution{}, false, nil
 	}
 	at, err := time.Parse(time.RFC3339Nano, o.Timestamp)

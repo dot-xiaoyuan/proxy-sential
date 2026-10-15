@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"proxy-sentinel/internal/normalized"
@@ -50,8 +51,9 @@ func TestInventorySnapshotCursorEvidenceAndNoSyntheticIntervals(t *testing.T) {
 	started := time.Now()
 	done, deferredErr := s.projectInventorySnapshotBatch(ctx)
 	busy.Rollback()
-	if deferredErr != nil || done || time.Since(started) > time.Second {
-		t.Fatalf("contended snapshot did not defer promptly: done=%t err=%v", done, deferredErr)
+	// A contended slice defers promptly and reports the stall instead of claiming success.
+	if !errors.Is(deferredErr, ErrInventorySnapshotLockBusy) || done || time.Since(started) > time.Second {
+		t.Fatalf("contended snapshot did not defer visibly: done=%t err=%v", done, deferredErr)
 	}
 	var pendingCursor int
 	if err = s.db.QueryRowContext(ctx, `SELECT event_cursor FROM endpoint_inventory_snapshot_jobs WHERE source=$1 AND snapshot_id='old' AND NOT processed`, snap.Source).Scan(&pendingCursor); err != nil || pendingCursor != 0 {

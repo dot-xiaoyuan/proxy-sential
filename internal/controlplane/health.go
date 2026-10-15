@@ -2,10 +2,12 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/store"
@@ -116,7 +118,7 @@ func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth
 		name   string
 		health componentHealth
 	}
-	results := make(chan probeResult, 8)
+	results := make(chan probeResult, 12)
 	pending := map[string]bool{}
 	launch := func(name string, required bool, probe func() componentHealth) {
 		pending[name] = required
@@ -164,8 +166,15 @@ func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth
 	} else {
 		components["authentication_oidc"] = componentHealth{Status: "disabled"}
 	}
+	if s.operations != nil && s.operations.db != nil {
+		launch("inventory_projection", false, func() componentHealth { return inventoryProjectionHealth(ctx, s.operations.db) })
+	}
 	if s.identityIngest != nil && s.identityIngest.db != nil {
 		check("identity_ingest", true, func() error { return s.identityIngest.db.PingContext(ctx) })
+		// Acceptance only needs the database; processing progress is reported separately so
+		// a stalled inbox is visible instead of hiding behind a successful ping. The field
+		// reported identity_ingest ready while 62k records waited for 2.5 hours.
+		launch("identity_pipeline", false, func() componentHealth { return identityPipelineHealth(ctx, s.identityIngest.db) })
 	} else {
 		components["identity_ingest"] = componentHealth{Status: "memory_mode"}
 	}
@@ -304,4 +313,71 @@ func errorString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// identityPipelineHealth classifies inbox processing by backlog age, never by liveness.
+func identityPipelineHealth(ctx context.Context, db *sql.DB) componentHealth {
+	var pending int64
+	var oldest sql.NullTime
+	var lastError string
+	err := db.QueryRowContext(ctx, `SELECT COALESCE(sum(pending_records),0),min(oldest_pending_at) FILTER (WHERE pending_records>0),COALESCE(string_agg(DISTINCT nullif(last_error,''),','),'') FROM identity_pipeline_scopes WHERE enabled`).Scan(&pending, &oldest, &lastError)
+	if err != nil {
+		return componentHealth{Status: "unavailable", Error: err.Error()}
+	}
+	return classifyIdentityPipeline(pending, oldest, lastError, time.Now())
+}
+
+func classifyIdentityPipeline(pending int64, oldest sql.NullTime, lastError string, now time.Time) componentHealth {
+	if pending == 0 || !oldest.Valid {
+		return componentHealth{Status: "ready"}
+	}
+	age := now.Sub(oldest.Time)
+	item := componentHealth{Status: "ready", UpdatedAt: oldest.Time.UTC().Format(time.RFC3339Nano)}
+	switch {
+	case age > 5*time.Minute:
+		item.Status = "stale"
+	case age > 5*time.Second:
+		item.Status = "delayed"
+	}
+	if lastError != "" && item.Status != "ready" {
+		item.Status = "failed"
+	}
+	if item.Status != "ready" {
+		item.Error = fmt.Sprintf("pending_records=%d oldest_pending_age=%s last_error=%s", pending, age.Round(time.Second), lastError)
+	}
+	return item
+}
+
+// inventoryProjectionHealth reports the oldest endpoint still waiting for its projection,
+// read from the claim index head instead of scanning the job table.
+func inventoryProjectionHealth(ctx context.Context, db *sql.DB) componentHealth {
+	var oldest sql.NullTime
+	err := db.QueryRowContext(ctx, `SELECT COALESCE(pending_since,updated_at) FROM endpoint_inventory_projection_jobs WHERE processed_generation<dirty_generation AND last_error='' ORDER BY (last_error<>''),COALESCE(pending_since,updated_at),endpoint_id LIMIT 1`).Scan(&oldest)
+	if err != nil && err != sql.ErrNoRows {
+		return componentHealth{Status: "unavailable", Error: err.Error()}
+	}
+	var failed bool
+	if err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_inventory_projection_jobs WHERE last_error<>'' AND processed_generation<dirty_generation)`).Scan(&failed); err != nil {
+		return componentHealth{Status: "unavailable", Error: err.Error()}
+	}
+	return classifyInventoryProjection(oldest, failed, time.Now())
+}
+
+func classifyInventoryProjection(oldest sql.NullTime, failed bool, now time.Time) componentHealth {
+	item := componentHealth{Status: "ready"}
+	if oldest.Valid {
+		item.UpdatedAt = oldest.Time.UTC().Format(time.RFC3339Nano)
+		switch age := now.Sub(oldest.Time); {
+		case age > 5*time.Minute:
+			item.Status, item.Error = "stale", fmt.Sprintf("oldest_pending_age=%s", age.Round(time.Second))
+		case age > 5*time.Second:
+			item.Status, item.Error = "delayed", fmt.Sprintf("oldest_pending_age=%s", age.Round(time.Second))
+		}
+	}
+	// A failing endpoint is reported even when the healthy queue is empty.
+	if failed {
+		item.Status = "failed"
+		item.Error = strings.TrimSpace(item.Error + " projection_failed")
+	}
+	return item
 }

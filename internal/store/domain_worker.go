@@ -88,7 +88,11 @@ func (s *DBStore) enqueueDomainEvents(events []normalized.Event) {
 	select {
 	case s.domainQueue <- domainBatch{events: filtered, library: fingerprint.Default(), enqueuedAt: time.Now()}:
 	default:
-		log.Print("domain recognition queue full; durable events will be reconciled")
+		// Only domain evidence (dns/tls/quic/http) is repaired by reconciliation. Device names,
+		// software and protocol attribution in a dropped batch are lost, so the drop is
+		// counted and surfaced instead of being reported as reconciled.
+		dropped := s.domainDropped.Add(1)
+		log.Printf("domain recognition queue full; dropped batch events=%d total_dropped_batches=%d", len(filtered), dropped)
 	}
 }
 
@@ -109,6 +113,7 @@ func (s *DBStore) runDomainMaintenance(parent context.Context) {
 			cancel()
 			s.recordDomainError(err)
 		case <-nameTicker.C:
+			s.flushDomainDropped(parent)
 			ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 			err := s.pg.RetryDeviceNames(ctx, nil)
 			cancel()
@@ -190,20 +195,16 @@ func writeInChunks(events []normalized.Event, chunk int, write func([]normalized
 
 func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) error {
 	began := time.Now()
+	// Device events that carry a MAC are materialized by the identity materializer from
+	// identity_signal_events_v1 with a durable cursor. Writing them here as well wrote every
+	// device fact twice, contended for the global identity write lock, and was the main
+	// reason this queue overflowed and dropped batches on the field.
 	deviceCount := 0
-	// Materialize new DHCP observations before attributing application signals.
-	devices := []normalized.Event{}
 	for _, e := range batch.events {
 		if e.Type == "device" && stringFromMap(e.Subject, "mac") != "" {
-			devices = append(devices, e)
+			deviceCount++
 		}
 	}
-	if len(devices) > 0 {
-		if err := s.writeIdentityEventsChunked(ctx, devices); err != nil {
-			return err
-		}
-	}
-	deviceCount = len(devices)
 	identityPhase := time.Since(began)
 	// Software announcements without a MAC may use a unique live DHCP lease.
 	// Discovery queries are deliberately excluded: the queried name may be another device.
@@ -304,6 +305,32 @@ func (s *DBStore) reconcileDomainWindow(ctx context.Context) error {
 	}
 	return nil
 }
+
+// domainReconcileStart returns the read start for one pass. A completed incremental pass
+// re-reads a ten-minute overlap; a completed daily pass restarts from the window floor.
+func domainReconcileStart(kind string, completed bool, cursor time.Time, cursorID string, since time.Time) (time.Time, string) {
+	if completed {
+		if kind == "daily" {
+			cursor, cursorID = since, ""
+		} else {
+			cursor, cursorID = cursor.Add(-10*time.Minute), ""
+		}
+	}
+	if cursor.Before(since) {
+		return since, ""
+	}
+	return cursor, cursorID
+}
+
+// domainReconcileHighWater keeps the stored cursor monotonic: an empty pass never
+// persists a position earlier than the one it started from.
+func domainReconcileHighWater(cursor time.Time, cursorID string, high time.Time, highID string) (time.Time, string) {
+	if cursor.Before(high) || (cursor.Equal(high) && cursorID < highID) {
+		return high, highID
+	}
+	return cursor, cursorID
+}
+
 func (s *DBStore) reconcileDomainCursor(ctx context.Context, library *fingerprint.Library, kind string) error {
 	conn, err := s.pg.db.Conn(ctx)
 	if err != nil {
@@ -332,29 +359,22 @@ func (s *DBStore) reconcileDomainCursor(ctx context.Context, library *fingerprin
 	if err != nil {
 		return err
 	}
-	if completed.Valid {
-		if kind == "daily" {
-			if now.Sub(completed.Time) < 24*time.Hour {
-				return nil
-			}
-			cursor = since
-			cursorID = ""
-		} else {
-			cursor = cursor.Add(-10 * time.Minute)
-			cursorID = ""
-		}
+	if completed.Valid && kind == "daily" && now.Sub(completed.Time) < 24*time.Hour {
+		return nil
 	}
-	if cursor.Before(since) {
-		cursor = since
-		cursorID = ""
-	}
+	// The overlap rewind applies to reads only. Persisting it on an empty pass moved the
+	// stored cursor back ten minutes per pass until it hit the seven-day floor, and every
+	// pass then rescanned days of normalized_events (field: cursor frozen at 10-11).
+	highCursor, highID := cursor, cursorID
+	cursor, cursorID = domainReconcileStart(kind, completed.Valid, cursor, cursorID, since)
 	for {
 		events, err := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), cursor.Format(time.RFC3339Nano), cursorID, 10000)
 		if err != nil {
 			return err
 		}
 		if len(events) == 0 {
-			_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_reconcile_cursors SET cursor_timestamp=$4,cursor_event_id=$5,completed_at=now() WHERE sensor_id=$1 AND rule_version=$2 AND kind=$3`, s.pg.sensorID, library.Version(), kind, cursor, cursorID)
+			keepAt, keepID := domainReconcileHighWater(cursor, cursorID, highCursor, highID)
+			_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_reconcile_cursors SET cursor_timestamp=$4,cursor_event_id=$5,completed_at=now() WHERE sensor_id=$1 AND rule_version=$2 AND kind=$3`, s.pg.sensorID, library.Version(), kind, keepAt, keepID)
 			return err
 		}
 		if err := s.processDomainBatch(ctx, domainBatch{events: events, library: library}); err != nil {
@@ -370,6 +390,20 @@ func (s *DBStore) reconcileDomainCursor(ctx context.Context, library *fingerprin
 		if err != nil {
 			return err
 		}
+	}
+}
+
+// flushDomainDropped persists batches dropped since the last flush. A failed write keeps
+// the count in memory for the next flush.
+func (s *DBStore) flushDomainDropped(parent context.Context) {
+	dropped := s.domainDropped.Swap(0)
+	if dropped == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	if _, err := s.pg.db.ExecContext(ctx, `INSERT INTO domain_recognition_state(singleton,active_version,dropped_batches) VALUES(true,$1,$2) ON CONFLICT(singleton) DO UPDATE SET dropped_batches=domain_recognition_state.dropped_batches+EXCLUDED.dropped_batches,updated_at=now()`, fingerprint.Default().Version(), dropped); err != nil {
+		s.domainDropped.Add(dropped)
 	}
 }
 

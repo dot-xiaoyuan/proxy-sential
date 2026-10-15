@@ -2,6 +2,7 @@ package legacy4k
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,8 +10,15 @@ import (
 	"time"
 )
 
-func (s Sender) waitSnapshotPublication(ctx context.Context, id, campus, domain string) error {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+// ErrSnapshotPublicationPending reports a snapshot the endpoint durably accepted whose
+// calibration has not published yet. It is not a failed upload: re-reading and re-sending
+// the inventory would only create another snapshot to calibrate. On the field the three
+// minute wait expired on a busy disk, the bridge re-sent every 3m20s instead of every 30m,
+// and each retry rebuilt a 37k-row generation that made the next wait expire too.
+var ErrSnapshotPublicationPending = errors.New("identity snapshot accepted; publication pending")
+
+func (s Sender) waitSnapshotPublication(parent context.Context, id, campus, domain string) error {
+	ctx, cancel := context.WithTimeout(parent, s.publicationWait())
 	defer cancel()
 	source := s.Source
 	if source == "" {
@@ -33,8 +41,18 @@ func (s Sender) waitSnapshotPublication(ctx context.Context, id, campus, domain 
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			if parent.Err() != nil {
+				return parent.Err()
+			}
+			return ErrSnapshotPublicationPending
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+func (s Sender) publicationWait() time.Duration {
+	if s.PublicationWait > 0 {
+		return s.PublicationWait
+	}
+	return 3 * time.Minute
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strconv"
 	"time"
@@ -814,6 +815,10 @@ func lockIdentityWrite(ctx context.Context, tx *sql.Tx) error {
 // identityLockWaitStep is the pause between attempts while a live lane waits for the
 // identity write lock.
 const identityLockWaitStep = 250 * time.Millisecond
+
+// ErrIdentityWriteLockBusy reports that a batch gave up waiting for the identity write
+// lock. The cursor does not move, so the batch is retried; the error keeps the stall visible.
+var ErrIdentityWriteLockBusy = errors.New("identity write lock busy")
 
 // awaitIdentityWriteLock waits up to budget for the identity write lock and reports
 // whether this transaction now holds it.

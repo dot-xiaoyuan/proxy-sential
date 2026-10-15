@@ -331,6 +331,13 @@ func runSnapshotWorker(ctx context.Context, sender legacy4k.Sender, base config,
 			}
 			reportBridgeRun(ctx, base.endpoint, token, map[string]any{"run_id": runID, "kind": runKind, "status": "running", "started_at": started})
 			result, err := submitSnapshotAt(ctx, targetAddr, password, sender, attemptCfg)
+			// The endpoint already holds this snapshot durably; only calibration is still
+			// running. Treat it as committed so the next full inventory waits for the
+			// reconcile interval instead of re-sending a new snapshot ten seconds later.
+			publicationPending := errors.Is(err, legacy4k.ErrSnapshotPublicationPending)
+			if publicationPending {
+				err = nil
+			}
 			completed := time.Now().UTC()
 			report := map[string]any{"run_id": runID, "kind": runKind, "started_at": started, "completed_at": completed, "duration_ms": completed.Sub(started).Milliseconds(), "records_read": result.members, "records_emitted": result.records, "records_skipped": result.skipped}
 			if err != nil {
@@ -363,7 +370,11 @@ func runSnapshotWorker(ctx context.Context, sender legacy4k.Sender, base config,
 				if attemptSwitch {
 					nextSwitchAttempt = nextActiveSnapshot
 				}
-				logStatus("snapshot_committed", map[string]any{"source": base.source, "records": result.records})
+				status := "snapshot_committed"
+				if publicationPending {
+					status = "snapshot_publication_pending"
+				}
+				logStatus(status, map[string]any{"source": base.source, "records": result.records})
 			}
 		}
 		if !waitContext(ctx, time.Second) {

@@ -198,7 +198,7 @@ func TestIdentityProjectionCleanupPreservesCurrentAndEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
-		if err := pg.cleanIdentityProjectionGeneration(ctx, scope.SensorID); err != nil {
+		if _, err := pg.cleanIdentityProjectionGeneration(ctx, scope.SensorID); err != nil {
 			t.Fatal(err)
 		}
 	}

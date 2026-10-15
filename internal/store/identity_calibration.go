@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"os"
 	"strconv"
 	"time"
 
@@ -229,8 +230,22 @@ func (s *DBStore) runIdentityCalibration(ctx context.Context) {
 			}
 		}
 		cancel()
-		cleanup, stop := context.WithTimeout(ctx, time.Second)
-		_ = s.pg.cleanIdentityProjectionGeneration(cleanup, s.pg.sensorID)
+		// Each step deletes one bounded slice in its own transaction. One second for one
+		// 1,000-row step was cancelled 2,196 times in six hours on the field and left 47
+		// generations (1.3M rows, one live) behind; the budget now drains several steps.
+		cleanup, stop := context.WithTimeout(ctx, identityCleanupBudget)
+		for cleanup.Err() == nil {
+			deleted, cleanErr := s.pg.cleanIdentityProjectionGeneration(cleanup, s.pg.sensorID)
+			if cleanErr != nil {
+				if ctx.Err() == nil && cleanup.Err() == nil {
+					fmt.Fprintln(os.Stderr, "identity generation cleanup:", cleanErr)
+				}
+				break
+			}
+			if !deleted {
+				break
+			}
+		}
 		stop()
 		select {
 		case <-ctx.Done():
@@ -242,25 +257,32 @@ func (s *DBStore) runIdentityCalibration(ctx context.Context) {
 
 // The small queue indexes exact obsolete generations; it never scans current
 // sessions to discover work, and never deletes a still-current/building version.
-func (s *PostgresStore) cleanIdentityProjectionGeneration(ctx context.Context, sensor string) error {
+const (
+	identityCleanupBudget = 30 * time.Second
+	identityCleanupSlice  = 5000
+)
+
+// cleanIdentityProjectionGeneration deletes one slice of an obsolete generation and
+// reports whether any work was done, so the caller can keep draining within its budget.
+func (s *PostgresStore) cleanIdentityProjectionGeneration(ctx context.Context, sensor string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 	var key, generation string
 	err = tx.QueryRowContext(ctx, `SELECT j.scope_key,j.generation FROM identity_projection_cleanup j JOIN identity_pipeline_scopes p USING(scope_key) WHERE p.sensor_id=$1 AND j.generation<>p.current_generation AND (j.calibration_epoch<p.calibration_epoch OR p.calibration_state='failed') ORDER BY j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT 1`, sensor).Scan(&key, &generation)
 	if err == sql.ErrNoRows {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	var deleted int64
 	for _, table := range []string{"identity_current_addresses", "identity_session_refs", "identity_account_refs"} {
-		result, e := tx.ExecContext(ctx, `WITH batch AS (SELECT ctid FROM `+table+` WHERE scope_key=$1 AND generation=$2 LIMIT 1000 FOR UPDATE SKIP LOCKED) DELETE FROM `+table+` WHERE ctid IN (SELECT ctid FROM batch)`, key, generation)
+		result, e := tx.ExecContext(ctx, `WITH batch AS (SELECT ctid FROM `+table+` WHERE scope_key=$1 AND generation=$2 LIMIT $3 FOR UPDATE SKIP LOCKED) DELETE FROM `+table+` WHERE ctid IN (SELECT ctid FROM batch)`, key, generation, identityCleanupSlice)
 		if e != nil {
-			return e
+			return false, e
 		}
 		n, _ := result.RowsAffected()
 		deleted += n
@@ -268,8 +290,8 @@ func (s *PostgresStore) cleanIdentityProjectionGeneration(ctx context.Context, s
 	if deleted == 0 {
 		_, err = tx.ExecContext(ctx, `DELETE FROM identity_projection_cleanup WHERE scope_key=$1 AND generation=$2 AND NOT EXISTS(SELECT 1 FROM identity_current_addresses WHERE scope_key=$1 AND generation=$2) AND NOT EXISTS(SELECT 1 FROM identity_session_refs WHERE scope_key=$1 AND generation=$2) AND NOT EXISTS(SELECT 1 FROM identity_account_refs WHERE scope_key=$1 AND generation=$2)`, key, generation)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
-	return tx.Commit()
+	return true, tx.Commit()
 }

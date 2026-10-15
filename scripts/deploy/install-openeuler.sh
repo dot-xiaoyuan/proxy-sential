@@ -250,6 +250,7 @@ start_storage_direct() {
     -p "127.0.0.1:${CLICKHOUSE_NATIVE_HOST_PORT:-29000}:9000" \
     -v "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/clickhouse/data:/var/lib/clickhouse" \
     -v "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/clickhouse/logs:/var/log/clickhouse-server" \
+    -v "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/clickhouse/config.d/production-system-logs.xml:/etc/clickhouse-server/config.d/production-system-logs.xml:ro" \
     --ulimit nofile=262144:262144 \
     --health-cmd='clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SELECT 1"' \
     --health-interval=10s --health-timeout=5s --health-retries=18 \
@@ -264,7 +265,16 @@ storage_container_current() {
   [[ "$running" == true && "$configured" == "$image" ]]
 }
 
+install_clickhouse_system_log_policy() {
+  local dir="${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/clickhouse/config.d"
+  mkdir -p "$dir"
+  # System-log policy ships with the release. A running container on the pinned image is
+  # kept, so it picks the policy up when it is next recreated, never by a forced restart.
+  install -m 0644 "$stage_dir/deploy/clickhouse/production-system-logs.xml" "$dir/production-system-logs.xml"
+}
+
 start_storage() {
+  install_clickhouse_system_log_policy
   if has_compose; then
     docker compose --env-file "$runtime_env" -f "$stage_dir/deploy/compose/storage.yml" config --quiet
     docker compose --env-file "$runtime_env" -f "$stage_dir/deploy/compose/storage.yml" up -d

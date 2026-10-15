@@ -47,3 +47,13 @@ func TestOpenOutputWithParentsCreatesNestedDirectory(t *testing.T) {
 		t.Fatalf("nested output was not created: %v", err)
 	}
 }
+
+// Skipping backlog discarded more than 110 million identity and device facts on the
+// field. A leftover PROXY_SENTINEL_MAX_BACKLOG in runtime.env must stop every command
+// instead of being silently ignored.
+func TestRunRefusesRetiredBacklogSkip(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_MAX_BACKLOG", "5m")
+	if err := run([]string{"read-model", "run"}); err == nil || err.Error() != retiredBacklogSkipError {
+		t.Fatalf("expected refusal, got %v", err)
+	}
+}

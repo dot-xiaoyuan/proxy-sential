@@ -296,7 +296,7 @@ func (s *PostgresStore) materializeNextInventoryLane(ctx context.Context, lane s
 	var contributionsReady bool
 	owner := appToken()
 	err := s.db.QueryRowContext(ctx, `WITH picked AS(SELECT endpoint_id FROM endpoint_inventory_projection_jobs WHERE processed_generation<dirty_generation AND not_before<=now() AND lease_until<now()
- AND ($2='all' OR ($2='backfill' AND NOT contributions_ready) OR ($2='realtime' AND (contributions_ready OR (SELECT ready FROM endpoint_inventory_projection_state WHERE singleton)))) ORDER BY (last_error<>''),(processed_generation>0) DESC,coalesce(pending_since,updated_at),endpoint_id FOR UPDATE SKIP LOCKED LIMIT 1)
+ AND ($2='all' OR ($2='backfill' AND NOT contributions_ready) OR ($2='realtime' AND (contributions_ready OR (SELECT ready FROM endpoint_inventory_projection_state WHERE singleton)))) ORDER BY (last_error<>''),coalesce(pending_since,updated_at),endpoint_id FOR UPDATE SKIP LOCKED LIMIT 1)
 		UPDATE endpoint_inventory_projection_jobs j SET lease_owner=$1,lease_until=now()+CASE WHEN $2='backfill' THEN interval '2 minutes' ELSE interval '1 minute' END FROM picked p WHERE j.endpoint_id=p.endpoint_id RETURNING j.endpoint_id,j.dirty_generation,j.processed_generation,j.contributions_ready`, owner, lane).Scan(&id, &generation, &processedGeneration, &contributionsReady)
 	if err == sql.ErrNoRows {
 		return false, nil
@@ -357,7 +357,12 @@ func (s *PostgresStore) materializeNextInventoryLane(ctx context.Context, lane s
 	// if new work arrived: derived rows match the stored contributions and only
 	// captured delta IDs are acknowledged. New changes remain pending, so a hot
 	// endpoint does not have to restart its entire history on every observation.
-	result, err := tx.ExecContext(ctx, `UPDATE endpoint_inventory_projection_jobs SET last_error='' WHERE endpoint_id=$1 AND ($4 OR dirty_generation=$2) AND lease_owner=$3 AND lease_until>clock_timestamp()`, id, generation, owner, initial)
+	// Incremental batches publish under the same rule as initial facts: only captured
+	// delta IDs are acknowledged and processed_generation only advances once the queue is
+	// empty. Fencing on an unchanged dirty_generation discarded every batch of a hot
+	// endpoint whose deltas kept arriving; a gateway MAC on the field sat at 558,441
+	// pending deltas because each completed batch was rolled back.
+	result, err := tx.ExecContext(ctx, `UPDATE endpoint_inventory_projection_jobs SET last_error='' WHERE endpoint_id=$1 AND lease_owner=$2 AND lease_until>clock_timestamp()`, id, owner)
 	if err != nil {
 		return false, err
 	}

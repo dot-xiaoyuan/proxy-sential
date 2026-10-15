@@ -145,7 +145,7 @@ func (s *PostgresStore) claimIdentityInbox(ctx context.Context, sensor string, l
 	if err != nil {
 		return w, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE identity_pipeline_scopes SET lease_epoch=$2,lease_until=now()+interval '10 seconds',heartbeat_at=now() WHERE scope_key=$1`, w.Scope, w.Epoch)
+	_, err = tx.ExecContext(ctx, `UPDATE identity_pipeline_scopes SET lease_epoch=$2,lease_until=now()+make_interval(secs=>$3),heartbeat_at=now() WHERE scope_key=$1`, w.Scope, w.Epoch, identityInboxLease.Seconds())
 	if err != nil {
 		return w, err
 	}
