@@ -2508,6 +2508,60 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /account-assessments:
+    get:
+      operationId: listAccountAssessments
+      description: Reads the bounded account tag projection; requires identity:read.
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: tag, in: query, schema: { type: array, items: { $ref: "#/components/schemas/AccountTagType" } } }
+        - { name: evidence_level, in: query, schema: { $ref: "#/components/schemas/AccountTagEvidenceLevel" } }
+        - { name: review_state, in: query, schema: { type: string, enum: [pending, confirm, reject] } }
+        - { name: state, in: query, schema: { type: string, enum: [current, historical], default: current } }
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200":
+          description: Account assessment projection page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountAssessmentPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /accounts/{account_id}/assessment:
+    get:
+      operationId: getAccountAssessment
+      description: Current and historical account tags with bounded endpoint summaries; requires identity:read.
+      parameters:
+        - { name: account_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Account assessment detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountAssessmentDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /accounts/{account_id}/tag-reviews:
+    post:
+      operationId: createAccountTagReview
+      description: Confirms or rejects one exact assessment version; requires labels:create and never authorizes enforcement.
+      parameters:
+        - { name: account_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountTagReviewRequest" }
+      responses:
+        "201":
+          description: Review recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountTagReview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { description: Assessment version changed. }
+        "500": { $ref: "#/components/responses/InternalError" }
   /endpoints/{endpoint_id}/name-note:
     post:
       operationId: updateDeviceNameNote
@@ -6468,6 +6522,89 @@ components:
         last_seen:
           type: string
           format: date-time
+    AccountTagType:
+      type: string
+      enum: [proxy, router, mobile, pc]
+    AccountTagEvidenceLevel:
+      type: string
+      enum: [confirmed, likely, clue]
+    AccountTagAssessment:
+      type: object
+      required: [account_id, tag_type, assessment_version, state, evidence_level, source_type, reason, endpoint_ids, evidence_ids, first_seen, last_seen, valid_until, review_state]
+      properties:
+        account_id: { type: string }
+        tag_type: { $ref: "#/components/schemas/AccountTagType" }
+        assessment_version: { type: string }
+        state: { type: string, enum: [current, historical] }
+        evidence_level: { $ref: "#/components/schemas/AccountTagEvidenceLevel" }
+        source_type: { type: string }
+        reason: { type: string }
+        endpoint_ids: { type: array, items: { type: string } }
+        evidence_ids: { type: array, items: { type: string } }
+        rule_version: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        review_state: { type: string, enum: [pending, confirm, reject] }
+    AccountAssessmentListItem:
+      type: object
+      required: [account_id, tags, endpoint_count, primary_reason, review_state, last_assessed_at]
+      properties:
+        account_id: { type: string }
+        tags: { type: array, items: { $ref: "#/components/schemas/AccountTagAssessment" } }
+        endpoint_count: { type: integer }
+        primary_reason: { type: string }
+        review_state: { type: string, enum: [pending, confirm, reject] }
+        last_assessed_at: { type: string, format: date-time }
+    AccountAssessmentPage:
+      type: object
+      required: [items, state, as_of, page]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/AccountAssessmentListItem" } }
+        state: { type: string, enum: [ready, processing, stale, no_records, failed] }
+        as_of: { type: string }
+        page: { $ref: "#/components/schemas/Page" }
+    AccountAssessmentEndpoint:
+      type: object
+      required: [endpoint_id, evidence_level]
+      properties:
+        endpoint_id: { type: string }
+        primary_mac: { type: string }
+        brand: { type: string }
+        model: { type: string }
+        device_type: { type: string }
+        last_seen: { type: string, format: date-time }
+        evidence_level: { $ref: "#/components/schemas/AccountTagEvidenceLevel" }
+    AccountTagReviewRequest:
+      type: object
+      required: [tag_type, assessment_version, decision, reason]
+      properties:
+        tag_type: { $ref: "#/components/schemas/AccountTagType" }
+        assessment_version: { type: string }
+        decision: { type: string, enum: [confirm, reject] }
+        reason: { type: string, minLength: 2 }
+    AccountTagReview:
+      allOf:
+        - $ref: "#/components/schemas/AccountTagReviewRequest"
+        - type: object
+          required: [review_id, account_id, evidence_ids, created_by, created_at]
+          properties:
+            review_id: { type: string }
+            account_id: { type: string }
+            evidence_ids: { type: array, items: { type: string } }
+            created_by: { type: string }
+            created_at: { type: string, format: date-time }
+    AccountAssessmentDetail:
+      type: object
+      required: [account_id, state, as_of, tags, history, endpoints, reviews]
+      properties:
+        account_id: { type: string }
+        state: { type: string, enum: [ready, processing, stale, no_records, failed] }
+        as_of: { type: string }
+        tags: { type: array, items: { $ref: "#/components/schemas/AccountTagAssessment" } }
+        history: { type: array, items: { $ref: "#/components/schemas/AccountTagAssessment" } }
+        endpoints: { type: array, items: { $ref: "#/components/schemas/AccountAssessmentEndpoint" } }
+        reviews: { type: array, items: { $ref: "#/components/schemas/AccountTagReview" } }
     EndpointIdentityProfile:
       type: object
       required: [endpoint_id, summary, endpoint, accounts, sessions, ip_history, access_history]

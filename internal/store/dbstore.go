@@ -96,6 +96,18 @@ func (s *DBStore) GetAccountIdentity(ctx context.Context, accountID string, quer
 	return s.pg.GetAccountIdentity(ctx, accountID, query)
 }
 
+func (s *DBStore) ListAccountAssessments(ctx context.Context, query AccountAssessmentQuery) (AccountAssessmentPage, error) {
+	return s.pg.ListAccountAssessments(ctx, query)
+}
+
+func (s *DBStore) GetAccountAssessment(ctx context.Context, accountID string) (AccountAssessmentDetail, bool, error) {
+	return s.pg.GetAccountAssessment(ctx, accountID)
+}
+
+func (s *DBStore) CreateAccountTagReview(ctx context.Context, accountID string, request AccountTagReviewRequest) (AccountTagReview, error) {
+	return s.pg.CreateAccountTagReview(ctx, accountID, request)
+}
+
 func (s *DBStore) GetEndpointIdentity(ctx context.Context, endpointID string, query Query) (EndpointIdentityProfile, bool, error) {
 	return s.pg.GetEndpointIdentity(ctx, endpointID, query)
 }
