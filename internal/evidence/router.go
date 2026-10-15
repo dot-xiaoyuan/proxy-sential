@@ -408,7 +408,10 @@ func routerInputs(event normalized.Event) map[string][]string {
 	add("tls_subject", event.Payload["subject"], event.Payload["certificate_subject"])
 	add("tls_issuer", event.Payload["issuer"], event.Payload["certificate_issuer"])
 	add("tls_san", event.Payload["san"], event.Payload["certificate_san"])
-	add("user_agent", event.Payload["user_agent"])
+	add("user_agent", event.Payload["user_agent"], event.Payload["user_agents"])
+	add("tls_sni", event.Payload["snis"])
+	add("http_host", event.Payload["hosts"])
+	add("tls_alpn", event.Payload["alpns"])
 	add("oui_vendor", event.Payload["oui_vendor"], event.Payload["vendor"])
 	// SNMP system description names the management platform; only SNMP events carry it
 	// here, so LLDP and other system descriptions keep their own input names.
@@ -674,6 +677,10 @@ func routerSourceFamily(event normalized.Event) string {
 		return "tls_management"
 	case "ttl", "conn", "flow", "dns":
 		return "weak_stack"
+	case "handshake":
+		// Client-side handshake fields name the software a device runs. They are self-report
+		// from the client, so they count as their own family, not as management evidence.
+		return "client_fingerprint"
 	default:
 		if len(routerStrings(event.Payload["oui_vendor"])) > 0 || len(routerStrings(event.Payload["vendor"])) > 0 {
 			return "oui"

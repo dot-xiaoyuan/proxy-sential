@@ -16,6 +16,7 @@ type Options struct {
 	Bucket                      time.Duration
 	StateLiveness               time.Duration
 	RouterProtocolsOnly         bool
+	HandshakeOnly               bool
 	SharedSignalsOnly           bool
 }
 

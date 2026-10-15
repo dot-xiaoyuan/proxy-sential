@@ -12,6 +12,10 @@ type captureBucket struct {
 	packets           map[packetBucketKey]int
 	controls          map[string]controlSignal
 	droppedPacketKeys int
+	// handshakes holds one summary per device for the current bucket. Only populated when
+	// the handshake filter is attached.
+	handshakes       map[handshakeKey]*handshakeSummary
+	handshakeEnabled bool
 }
 
 // At roughly 0.5-1 KiB per normalized JSON record, this hard ceiling keeps the
@@ -20,10 +24,13 @@ type captureBucket struct {
 const maxPacketBucketKeys = 50000
 
 func newCaptureBucket() *captureBucket {
-	return &captureBucket{packets: map[packetBucketKey]int{}, controls: map[string]controlSignal{}}
+	return &captureBucket{packets: map[packetBucketKey]int{}, controls: map[string]controlSignal{}, handshakes: map[handshakeKey]*handshakeSummary{}}
 }
 
 func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
+	if b.handshakeEnabled {
+		b.addHandshake(frame)
+	}
 	if value, ok := parsePacketFrame(frame); ok && value.TTL > 0 {
 		value.Direction = scope.DirectionAddr(value.IP, value.DestinationIP)
 		if value.Direction != "inbound" && value.Direction != "internal" && (value.Direction != "unknown" || value.IP.IsPrivate()) {
@@ -51,4 +58,24 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 // arpSignalsEnabled reports whether ARP control signals are exported. Default off.
 func arpSignalsEnabled() bool {
 	return os.Getenv("PROXY_SENTINEL_DEVICE_SIGNAL_ARP") == "true"
+}
+
+// addHandshake folds one client handshake packet into its device's summary. A new device is
+// dropped once the bucket reaches the key limit, the same bound the packet buckets use.
+func (b *captureBucket) addHandshake(frame []byte) {
+	observation, ok := parseHandshakeFrame(frame)
+	if !ok {
+		return
+	}
+	key := handshakeKey{IP: observation.IP, MAC: observation.MAC}
+	summary := b.handshakes[key]
+	if summary == nil {
+		if len(b.handshakes) >= maxPacketBucketKeys {
+			b.droppedPacketKeys++
+			return
+		}
+		summary = &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}
+		b.handshakes[key] = summary
+	}
+	summary.add(observation)
 }

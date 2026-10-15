@@ -129,3 +129,21 @@ func TestAnalyzeRoutersDHCPLibraryAccessPointScoresWithLabel(t *testing.T) {
 		t.Fatalf("recog access-point label/role missing: role=%s libs=%v", got.Role, got.Libraries)
 	}
 }
+
+// A handshake summary feeds the client's user-agent into router inputs under its own family,
+// so a library rule over the user agent can label or, when role-eligible, score the device.
+func TestRouterInputsFromHandshakeSummary(t *testing.T) {
+	event := normalized.Event{SchemaVersion: "v1", EventID: "hs-1", Source: "handshake-sidecar", SourceEventType: "handshake", Type: "device",
+		Timestamp: "2026-09-24T01:01:00Z", Observer: map[string]any{"sensor_id": "s"}, Subject: map[string]any{"ip": "192.0.2.50", "mac": "AA:BB:CC:DD:EE:50"},
+		Payload: map[string]any{"origin": "handshake", "user_agents": []any{"UniFi-OS/2.1"}, "snis": []any{"unifi.ui.com"}, "hosts": []any{"router.local"}}}
+	inputs := routerInputs(event)
+	if got := inputs["user_agent"]; len(got) != 1 || got[0] != "UniFi-OS/2.1" {
+		t.Fatalf("user agent not carried: %v", got)
+	}
+	if got := inputs["tls_sni"]; len(got) != 1 || got[0] != "unifi.ui.com" {
+		t.Fatalf("sni not carried: %v", got)
+	}
+	if family := routerSourceFamily(event); family != "client_fingerprint" {
+		t.Fatalf("family = %s", family)
+	}
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=Proxy Sentinel lightweight TLS ClientHello and HTTP handshake summaries
+After=network-online.target
+Wants=network-online.target
+
+# Opt-in: not enabled by the installer. It runs beside, not instead of, the router signal
+# capture because one socket takes one kernel filter. Output goes to its own file and is read
+# by ingest through --handshake-signals.
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel device-signal run --interface bond0 --sensor-id ${PROXY_SENTINEL_SENSOR_ID} --output /opt/proxy-sentinel/data/device-signals/handshake.jsonl --bucket 30s --collector-instance-id ${PROXY_SENTINEL_COLLECTOR_INSTANCE_ID} --capture-scope-config /opt/proxy-sentinel/config/router-capture-scope.json --handshake-only
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+CPUQuota=50%
+MemoryMax=512M
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

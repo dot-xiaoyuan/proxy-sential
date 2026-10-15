@@ -24,6 +24,10 @@ type Options struct {
 	StateLiveness       time.Duration
 	RouterProtocolsOnly bool
 	SharedSignalsOnly   bool
+	// HandshakeOnly attaches the bounded TLS ClientHello / HTTP request BPF and writes device
+	// summaries of handshake fields. It runs as its own process so the router control filter
+	// and its output stay unchanged.
+	HandshakeOnly bool
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -35,6 +39,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if opts.RouterProtocolsOnly && opts.SharedSignalsOnly {
 		return fmt.Errorf("router protocol and shared signal filters are mutually exclusive")
+	}
+	if opts.HandshakeOnly && (opts.RouterProtocolsOnly || opts.SharedSignalsOnly) {
+		return fmt.Errorf("handshake filter cannot be combined with router or shared filters: one socket takes one filter")
 	}
 	iface, err := net.InterfaceByName(opts.Interface)
 	if err != nil {
@@ -48,7 +55,11 @@ func Run(ctx context.Context, opts Options) error {
 	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0003), Ifindex: iface.Index}); err != nil {
 		return fmt.Errorf("bind %s: %w", opts.Interface, err)
 	}
-	if opts.RouterProtocolsOnly {
+	if opts.HandshakeOnly {
+		if err := attachHandshakeFilter(fd); err != nil {
+			return fmt.Errorf("attach handshake BPF: %w", err)
+		}
+	} else if opts.RouterProtocolsOnly {
 		if err := attachRouterProtocolFilter(fd); err != nil {
 			return fmt.Errorf("attach router protocol BPF: %w", err)
 		}
@@ -59,6 +70,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	_ = syscall.SetNonblock(fd, true)
 	state := newCaptureBucket()
+	state.handshakeEnabled = opts.HandshakeOnly
 	packetSource := "packet-sidecar"
 	if opts.SharedSignalsOnly {
 		packetSource = "shared-syn-sidecar"
@@ -72,6 +84,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	// Shutdown writes the state the tracker still holds.
 	flushControls := func(at time.Time, controls map[string]controlSignal) error {
+		if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, state.handshakes); err != nil {
+			return err
+		}
 		return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, selectControls(controlTracker, at, controls))
 	}
 	// Shutdown writes the state the tracker still holds.
@@ -126,6 +141,7 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			state.packets = map[packetBucketKey]int{}
 			state.controls = map[string]controlSignal{}
+			state.handshakes = map[handshakeKey]*handshakeSummary{}
 			state.droppedPacketKeys = 0
 			bucket = now.UTC().Truncate(opts.Bucket)
 		default:

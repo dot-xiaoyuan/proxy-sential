@@ -388,6 +388,7 @@ func runIngest(args []string) error {
 	zeekSSDP := fs.String("zeek-ssdp", "", "Zeek ssdp.log path")
 	zeekSNMP := fs.String("zeek-snmp", "", "Zeek sanitized snmp.log path")
 	deviceSignals := fs.String("device-signals", "", "normalized TTL/device signal JSONL path")
+	handshakeSignals := fs.String("handshake-signals", "", "TLS ClientHello and HTTP request handshake summary JSONL path")
 	sharedDeviceSignals := fs.String("shared-device-signals", "", "payload-free TCP SYN/TTL shared-access signal JSONL path")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
@@ -438,6 +439,7 @@ func runIngest(args []string) error {
 		{Kind: "zeek-ssdp", Path: *zeekSSDP},
 		{Kind: "zeek-snmp", Path: *zeekSNMP},
 		{Kind: "device-signals", Path: *deviceSignals},
+		{Kind: "device-signals", Path: *handshakeSignals},
 		{Kind: "shared-device-signals", Path: *sharedDeviceSignals},
 	} {
 		if source.Path != "" {
@@ -491,6 +493,7 @@ func runDeviceSignal(args []string) error {
 	stateLiveness := fs.Duration("state-liveness", 5*time.Minute, "rewrite an unchanged device state at most this often; 0 rewrites every key every bucket")
 	routerProtocolsOnly := fs.Bool("router-protocols-only", false, "attach the bounded router/discovery protocol BPF before capture")
 	sharedSignalsOnly := fs.Bool("shared-signals-only", false, "capture only payload-free initial TCP SYN metadata for shared-access analysis")
+	handshakeOnly := fs.Bool("handshake-only", false, "capture only TLS ClientHello SNI/ALPN and HTTP request Host/User-Agent summaries")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -500,7 +503,7 @@ func runDeviceSignal(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, StateLiveness: *stateLiveness, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly})
+	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, StateLiveness: *stateLiveness, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly, HandshakeOnly: *handshakeOnly})
 }
 
 // runDeviceCensus prints the passive device census for one sensor. It is
