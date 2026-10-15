@@ -265,7 +265,8 @@ func (s *PostgresStore) ListRouterObservations(ctx context.Context, query Router
 ), page AS (
  SELECT assessment_id,confidence,first_seen,last_seen,expires_at,merged_records,count(*) OVER() AS total FROM devices`+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,assessment_id LIMIT $%d OFFSET $%d`, len(args)-1, len(args))+`
 )
-SELECT r.assessment,p.merged_records,p.total,p.first_seen,p.last_seen,p.expires_at FROM page p JOIN router_assessments r USING (assessment_id)`, args...)
+SELECT r.assessment,p.merged_records,p.total,p.first_seen,p.last_seen,p.expires_at FROM page p JOIN router_assessments r USING (assessment_id)
+ORDER BY p.confidence DESC,p.last_seen DESC,p.assessment_id`, args...)
 	if err != nil {
 		return RouterAssessmentPage{}, err
 	}
@@ -613,7 +614,7 @@ WHERE COALESCE(auth_projection.document->>'ended_at','')='' AND COALESCE(auth_pr
 AND auth_source.observed_at >= now()-make_interval(secs=>GREATEST(60,LEAST(86400,COALESCE(NULLIF(auth_projection.document->>'reconcile_interval_seconds','')::int,1800)))*3)
 UNION
 SELECT auth_session.endpoint_id FROM account_sessions auth_session
-WHERE auth_session.ended_at IS NULL AND auth_session.updated_at>=now()-interval '90 minutes' AND COALESCE(auth_session.endpoint_id,'')<>''
+WHERE auth_session.ended_at IS NULL AND auth_session.updated_at>=now()-interval '90 minutes' AND COALESCE(auth_session.endpoint_id,'')<>'' AND COALESCE(auth_session.account_id,'')<>''
 )) OR (router_assessments.mac<>'' AND regexp_replace(lower(router_assessments.mac),'[^0-9a-f]','','g') IN (
 SELECT regexp_replace(lower(COALESCE(auth_projection.document->>'mac','')),'[^0-9a-f]','','g') FROM account_identity_session_projection auth_projection
 JOIN account_identity_projection_sources auth_source USING(source,sensor_id,campus_id,access_domain)
@@ -621,7 +622,7 @@ WHERE COALESCE(auth_projection.document->>'ended_at','')='' AND COALESCE(auth_pr
 AND auth_source.observed_at >= now()-make_interval(secs=>GREATEST(60,LEAST(86400,COALESCE(NULLIF(auth_projection.document->>'reconcile_interval_seconds','')::int,1800)))*3)
 UNION
 SELECT regexp_replace(lower(COALESCE(auth_session.mac,'')),'[^0-9a-f]','','g') FROM account_sessions auth_session
-WHERE auth_session.ended_at IS NULL AND auth_session.updated_at>=now()-interval '90 minutes' AND COALESCE(auth_session.mac,'')<>''
+WHERE auth_session.ended_at IS NULL AND auth_session.updated_at>=now()-interval '90 minutes' AND COALESCE(auth_session.mac,'')<>'' AND COALESCE(auth_session.account_id,'')<>''
 )))`
 		if !*query.HasAuthBinding {
 			predicate = "NOT " + predicate

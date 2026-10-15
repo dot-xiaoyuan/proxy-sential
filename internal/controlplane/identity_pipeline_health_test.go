@@ -32,13 +32,20 @@ func TestIdentityPipelineHealthReflectsBacklogAge(t *testing.T) {
 
 func TestInventoryProjectionHealthReportsAgeAndFailures(t *testing.T) {
 	now := time.Date(2026, 10, 15, 4, 0, 0, 0, time.UTC)
-	if got := classifyInventoryProjection(sql.NullTime{}, false, now); got.Status != "ready" {
-		t.Fatalf("empty queue: %s", got.Status)
+	at := func(age time.Duration) sql.NullTime { return sql.NullTime{Time: now.Add(-age), Valid: true} }
+	if got := classifyInventoryProjection(at(20*time.Second), false, now); got.Status != "ready" {
+		t.Fatalf("recent round: %s", got.Status)
 	}
-	if got := classifyInventoryProjection(sql.NullTime{Time: now.Add(-13 * time.Hour), Valid: true}, false, now); got.Status != "stale" {
-		t.Fatalf("13h backlog: %s", got.Status)
+	if got := classifyInventoryProjection(at(2*time.Minute), false, now); got.Status != "delayed" {
+		t.Fatalf("2m old round: %s", got.Status)
 	}
-	if got := classifyInventoryProjection(sql.NullTime{}, true, now); got.Status != "failed" {
-		t.Fatalf("failed endpoints hidden: %s", got.Status)
+	if got := classifyInventoryProjection(at(13*time.Hour), false, now); got.Status != "stale" {
+		t.Fatalf("13h old round: %s", got.Status)
+	}
+	if got := classifyInventoryProjection(sql.NullTime{}, false, now); got.Status != "stale" {
+		t.Fatalf("never ran: %s", got.Status)
+	}
+	if got := classifyInventoryProjection(at(10*time.Second), true, now); got.Status != "failed" {
+		t.Fatalf("failed round hidden: %s", got.Status)
 	}
 }

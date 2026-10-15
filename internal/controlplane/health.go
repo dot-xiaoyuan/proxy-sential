@@ -348,30 +348,37 @@ func classifyIdentityPipeline(pending int64, oldest sql.NullTime, lastError stri
 	return item
 }
 
-// inventoryProjectionHealth reports the oldest endpoint still waiting for its projection,
-// read from the claim index head instead of scanning the job table.
+// inventoryProjectionHealth reports the terminal read model updater's progress: failed
+// while its last round errored, stale/delayed by the age of its last successful round.
 func inventoryProjectionHealth(ctx context.Context, db *sql.DB) componentHealth {
-	var oldest sql.NullTime
-	err := db.QueryRowContext(ctx, `SELECT COALESCE(pending_since,updated_at) FROM endpoint_inventory_projection_jobs WHERE processed_generation<dirty_generation AND last_error='' ORDER BY (last_error<>''),COALESCE(pending_since,updated_at),endpoint_id LIMIT 1`).Scan(&oldest)
-	if err != nil && err != sql.ErrNoRows {
+	var lastError string
+	var success sql.NullTime
+	var complete bool
+	err := db.QueryRowContext(ctx, `SELECT bootstrap_complete,last_error,last_success_at FROM endpoint_state_watermark WHERE singleton`).Scan(&complete, &lastError, &success)
+	if err == sql.ErrNoRows {
+		return componentHealth{Status: "no_data"}
+	}
+	if err != nil {
 		return componentHealth{Status: "unavailable", Error: err.Error()}
 	}
-	var failed bool
-	if err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_inventory_projection_jobs WHERE last_error<>'' AND processed_generation<dirty_generation)`).Scan(&failed); err != nil {
-		return componentHealth{Status: "unavailable", Error: err.Error()}
+	item := classifyInventoryProjection(success, lastError != "", time.Now())
+	if item.Status == "ready" && !complete {
+		item.Status, item.Error = "delayed", "endpoint state bootstrap in progress"
 	}
-	return classifyInventoryProjection(oldest, failed, time.Now())
+	return item
 }
 
-func classifyInventoryProjection(oldest sql.NullTime, failed bool, now time.Time) componentHealth {
+func classifyInventoryProjection(lastSuccess sql.NullTime, failed bool, now time.Time) componentHealth {
 	item := componentHealth{Status: "ready"}
-	if oldest.Valid {
-		item.UpdatedAt = oldest.Time.UTC().Format(time.RFC3339Nano)
-		switch age := now.Sub(oldest.Time); {
+	if !lastSuccess.Valid {
+		item.Status, item.Error = "stale", "endpoint state updater has not completed a round"
+	} else {
+		item.UpdatedAt = lastSuccess.Time.UTC().Format(time.RFC3339Nano)
+		switch age := now.Sub(lastSuccess.Time); {
 		case age > 5*time.Minute:
-			item.Status, item.Error = "stale", fmt.Sprintf("oldest_pending_age=%s", age.Round(time.Second))
-		case age > 5*time.Second:
-			item.Status, item.Error = "delayed", fmt.Sprintf("oldest_pending_age=%s", age.Round(time.Second))
+			item.Status, item.Error = "stale", fmt.Sprintf("last_success_age=%s", age.Round(time.Second))
+		case age > 90*time.Second:
+			item.Status, item.Error = "delayed", fmt.Sprintf("last_success_age=%s", age.Round(time.Second))
 		}
 	}
 	// A failing endpoint is reported even when the healthy queue is empty.

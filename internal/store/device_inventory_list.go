@@ -119,9 +119,11 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 			args = append(args, deviceViewStart(query, now), now)
 			startArg, endArg := "$"+strconvArg(len(args)-1), "$"+strconvArg(len(args))
 			historyWindow = " AND h.observed_at >= " + startArg + " AND h.observed_at <= " + endArg
-			sessionWindow = " AND ((s.interval_explicit AND s.started_at <= " + endArg + " AND (s.ended_at IS NULL OR s.ended_at >= " + startArg + ")) OR (NOT s.interval_explicit AND s.confirmed_at BETWEEN " + startArg + " AND " + endArg + "))"
+			sessionWindow = " AND s.started_at <= " + endArg + " AND (s.ended_at IS NULL OR s.ended_at >= " + startArg + ")"
 		}
-		where = append(where, `i.endpoint_id IN(SELECT h.endpoint_id FROM endpoint_inventory_ip_points h WHERE h.ip=`+ipArg+`::inet`+historyWindow+` UNION SELECT s.endpoint_id FROM endpoint_inventory_sessions s WHERE s.ip=`+ipArg+`::inet`+sessionWindow+`)`)
+		// Exact IP search reads the durable sources through their IP indexes: DHCP leases and
+		// account sessions (migration 139), not a derived per-endpoint copy.
+		where = append(where, `i.endpoint_id IN(SELECT h.endpoint_id FROM device_address_leases h WHERE h.ip=`+ipArg+`::inet AND h.endpoint_id<>''`+historyWindow+` UNION SELECT s.endpoint_id FROM account_sessions s WHERE s.ip=`+ipArg+`::inet AND s.endpoint_id<>''`+sessionWindow+`)`)
 	}
 	if query.Brand != "" {
 		if query.Brand == "unknown" {
@@ -164,7 +166,7 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		if dimension.value == "" {
 			continue
 		}
-		add("EXISTS(SELECT 1 FROM endpoint_inventory_sessions s WHERE s.endpoint_id=i.endpoint_id AND s.dimensions->>'"+dimension.column+"'=$N AND (s.ended_at IS NULL OR s.ended_at>=now()))", dimension.value)
+		add("i.dimensions @> jsonb_build_object('"+dimension.column+"',$N::text)", dimension.value)
 	}
 
 	whereSQL := " FROM endpoint_inventory_lookup i JOIN endpoint_entities e USING(endpoint_id) LEFT JOIN endpoint_recognition_summary r USING(endpoint_id) WHERE " + strings.Join(where, " AND ")

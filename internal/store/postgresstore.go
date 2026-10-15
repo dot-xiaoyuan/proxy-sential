@@ -1554,6 +1554,33 @@ func writeIdentityEventsTx(ctx context.Context, tx *sql.Tx, events []normalized.
 	return stats, writeEndpointDeviceProfiles(ctx, tx, state)
 }
 
+// writeDeviceEventsTx is the device-only identity write: DHCP leases, endpoint and
+// infrastructure entities, and device profiles. It skips account sessions, policy facts and
+// IP/MAC/access history, and runs without the global identity write lock; every batch
+// statement writes rows in endpoint order, so concurrent writers cannot deadlock.
+func writeDeviceEventsTx(ctx context.Context, tx *sql.Tx, events []normalized.Event) error {
+	if err := boundIdentityStatements(ctx, tx); err != nil {
+		return err
+	}
+	devices := make([]normalized.Event, 0, len(events))
+	for _, event := range events {
+		if event.Type == "device" {
+			devices = append(devices, event)
+		}
+	}
+	if err := writeDeviceLeases(ctx, tx, devices); err != nil {
+		return err
+	}
+	state := BuildIdentityState(devices)
+	if err := upsertEndpointEntitiesBatch(ctx, tx, state.Endpoints); err != nil {
+		return err
+	}
+	if err := upsertInfrastructureEntitiesBatch(ctx, tx, state.Infrastructure); err != nil {
+		return err
+	}
+	return writeEndpointDeviceProfiles(ctx, tx, state)
+}
+
 func writeEndpointDeviceProfiles(ctx context.Context, tx *sql.Tx, state IdentityState) error {
 	if err := attachEndpointAttributes(ctx, tx, state.Endpoints); err != nil {
 		return err

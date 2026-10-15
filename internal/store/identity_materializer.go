@@ -192,12 +192,19 @@ func (s *DBStore) processIdentitySignalBatch(ctx context.Context, phase string, 
 	// still does not move when the wait expires, so the work is retried on the next loop.
 	// An expired wait is reported as an error: returning success hid a frozen lane behind
 	// an empty last_error on the field.
-	if locked, lockErr := awaitIdentityWriteLock(ctx, tx, identityLockWaitBudget); lockErr != nil {
-		return 0, identityHistoryStats{}, lockErr
-	} else if !locked {
-		return 0, identityHistoryStats{}, ErrIdentityWriteLockBusy
+	var stats identityHistoryStats
+	if s.identityDeviceOnly {
+		// Device lanes write only lease, endpoint and recognition inputs, in endpoint order,
+		// and never take the global identity write lock.
+		err = writeDeviceEventsTx(ctx, tx, events)
+	} else {
+		if locked, lockErr := awaitIdentityWriteLock(ctx, tx, identityLockWaitBudget); lockErr != nil {
+			return 0, identityHistoryStats{}, lockErr
+		} else if !locked {
+			return 0, identityHistoryStats{}, ErrIdentityWriteLockBusy
+		}
+		stats, err = writeIdentityEventsTx(ctx, tx, events)
 	}
-	stats, err := writeIdentityEventsTx(ctx, tx, events)
 	if err != nil {
 		return 0, identityHistoryStats{}, err
 	}
@@ -253,7 +260,11 @@ func (s *PostgresStore) refreshCurrentDeviceInventory(ctx context.Context) error
 }
 
 type IdentityMaterializerOptions struct {
-	HealthName             string
+	HealthName string
+	// DeviceOnly materializes device events (DHCP leases, endpoints, device profiles and
+	// signal facts) without account sessions or IP/MAC history. Router sensors carry no
+	// account authority, and those history rows only fed the retired inventory projection.
+	DeviceOnly             bool
 	Backfill               bool
 	ProjectSnapshots       bool
 	RefreshDeviceInventory bool
@@ -272,6 +283,7 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 	if options.HealthName == "" {
 		options.HealthName = "identity-materializer"
 	}
+	s.identityDeviceOnly = options.DeviceOnly
 	done := []<-chan struct{}{}
 	start := func(run func(context.Context)) {
 		finished := make(chan struct{})

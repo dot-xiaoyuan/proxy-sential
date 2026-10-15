@@ -27,6 +27,7 @@ type DBStore struct {
 	domainOnce         sync.Once
 	domainQueue        chan domainBatch
 	domainDropped      atomic.Int64
+	identityDeviceOnly bool
 	domainCancel       context.CancelFunc
 	domainDone         chan struct{}
 }

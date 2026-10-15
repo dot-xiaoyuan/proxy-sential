@@ -47,3 +47,15 @@ func TestRouterObservationQueryDefaultsToRouterRole(t *testing.T) {
 		t.Fatalf("explicit AP role not preserved: %+v %v", query, err)
 	}
 }
+
+// Clearing the "只看有认证身份" checkbox submits has_auth_binding=false. It must remove the
+// filter rather than restrict the list to routers without an authenticated binding.
+func TestRouterObservationQueryClearedAuthBindingIsNoFilter(t *testing.T) {
+	query, err := routerObservationQuery(url.Values{"has_auth_binding": {"false"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query.HasAuthBinding != nil {
+		t.Fatalf("cleared checkbox inverted the filter: %v", *query.HasAuthBinding)
+	}
+}

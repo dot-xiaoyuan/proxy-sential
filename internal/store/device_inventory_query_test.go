@@ -19,7 +19,7 @@ func TestDeviceInventoryLightQueryOnlyReadsLimitPlusOneAndCachedStatus(t *testin
 	s := &PostgresStore{db: db}
 	now := time.Now().UTC()
 	for request := 0; request < 2; request++ {
-		mock.ExpectQuery(`SELECT backfill_complete AND ready`).WillReturnRows(sqlmock.NewRows([]string{"complete", "updating", "at", "error", "accepted", "processed", "oldest", "available"}).AddRow(true, false, now, "", 1, 1, nil, true))
+		mock.ExpectQuery(`SELECT bootstrap_complete,last_error,last_success_at,updated_at FROM endpoint_state_watermark`).WillReturnRows(sqlmock.NewRows([]string{"complete", "error", "success", "at"}).AddRow(true, "", now, now))
 		rows := sqlmock.NewRows([]string{"list_item", "updated_at"})
 		for i := 0; i < 21; i++ {
 			raw, _ := json.Marshal(DeviceInventoryListItem{EndpointID: fmt.Sprintf("fixture-%d", i), CurrentIP: "192.0.2.1"})
@@ -60,7 +60,7 @@ func TestDeviceInventoryMetadataNeverReadsRowsOrHistories(t *testing.T) {
 	}
 	defer db.Close()
 	s := &PostgresStore{db: db}
-	mock.ExpectQuery(`SELECT backfill_complete AND ready`).WillReturnRows(sqlmock.NewRows([]string{"complete", "updating", "at", "error", "accepted", "processed", "oldest", "available"}).AddRow(true, false, time.Now(), "", 1, 1, nil, true))
+	mock.ExpectQuery(`SELECT bootstrap_complete,last_error,last_success_at,updated_at FROM endpoint_state_watermark`).WillReturnRows(sqlmock.NewRows([]string{"complete", "error", "success", "at"}).AddRow(true, "", time.Now(), time.Now()))
 	mock.ExpectQuery(`SELECT DISTINCT coalesce`).WillReturnRows(sqlmock.NewRows([]string{"brand", "os"}).AddRow("Dell", "Windows"))
 	mock.ExpectQuery(`SELECT count\(\*\)`).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(35001))
 	page, err := s.ListDeviceInventory(context.Background(), Query{InventoryMetadataOnly: true})

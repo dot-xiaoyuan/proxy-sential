@@ -192,6 +192,7 @@ func runReadModel(args []string) error {
 	identityBackfill := fs.Bool("identity-backfill", true, "replay identity events before the worker cutover")
 	identityProjectSnapshots := fs.Bool("identity-project-snapshots", true, "project completed authoritative identity snapshots")
 	identityRefreshDeviceInventory := fs.Bool("identity-refresh-device-inventory", true, "refresh current device inventory from identity evidence")
+	identityDeviceOnly := fs.Bool("identity-device-only", false, "materialize device events only: leases, endpoints and device profiles, without sessions or IP history")
 	applicationsDir := fs.String("applications-dir", "/opt/proxy-sentinel/data/applications", "durable application library directory")
 	applicationsBootstrap := fs.String("applications-bootstrap", "", "optional reviewed bootstrap application bundle used only when the library is empty")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -211,8 +212,13 @@ func runReadModel(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	switch *lane {
-	case "inventory", "inventory-backfill":
-		backend.RunDeviceInventoryProjection(ctx, *lane == "inventory-backfill")
+	case "inventory":
+		backend.RunEndpointStateUpdater(ctx)
+	case "inventory-backfill":
+		// The endpoint state updater bootstraps and sweeps on its own; the separate backfill
+		// lane of the retired projection has nothing to do. Stay idle until stopped.
+		fmt.Fprintln(os.Stderr, "inventory-backfill lane is retired; the inventory lane bootstraps endpoint state")
+		<-ctx.Done()
 	case "realtime":
 		backend.RunRealtimeReadModels(ctx)
 	case "coarse":
@@ -223,6 +229,7 @@ func runReadModel(args []string) error {
 			Backfill:               *identityBackfill,
 			ProjectSnapshots:       *identityProjectSnapshots,
 			RefreshDeviceInventory: *identityRefreshDeviceInventory,
+			DeviceOnly:             *identityDeviceOnly,
 		})
 	case "recognition":
 		dir := os.Getenv("PROXY_SENTINEL_DEVICE_FINGERPRINT_DIR")

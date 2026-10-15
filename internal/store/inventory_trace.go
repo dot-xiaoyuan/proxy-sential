@@ -134,6 +134,14 @@ func (s *DBStore) ListEndpointObservations(ctx context.Context, id string, q End
 	return s.pg.ListEndpointObservations(ctx, id, q)
 }
 
+// endpointAssociationSourcesSQL lists one endpoint's account, access and IP observations
+// from DHCP leases and account sessions in the 30-day hot window. $1 is the endpoint ID.
+const endpointAssociationSourcesSQL = `SELECT 'ip'::text kind,host(ip) value,'dhcp'::text source,observed_at first_seen,observed_at last_seen,false is_session,1.0::float8 confidence,event_id
+ FROM device_address_leases WHERE endpoint_id=$1 AND action='ack' AND observed_at>now()-interval '30 days'
+ UNION ALL SELECT v.kind,v.value,s.source,s.started_at,coalesce(s.ended_at,greatest(s.started_at,coalesce(nullif(s.policy_metadata->>'last_confirmed_at','')::timestamptz,s.started_at))),true,coalesce(s.identity_confidence,0),s.session_id
+ FROM account_sessions s CROSS JOIN LATERAL (VALUES ('account',s.account_id),('access',coalesce(s.access_id,'')),('ip',coalesce(host(s.ip),''))) v(kind,value)
+ WHERE s.endpoint_id=$1 AND v.value<>'' AND s.started_at>now()-interval '30 days'`
+
 func (s *PostgresStore) GetDeviceInventoryDetail(ctx context.Context, id string) (InventoryDetail, bool, error) {
 	endpoint, found, err := s.getEndpointEntity(ctx, id)
 	if err != nil || !found {
@@ -174,11 +182,11 @@ func (s *PostgresStore) GetDeviceInventoryDetail(ctx context.Context, id string)
 	result.State.Complete = global.Complete
 	result.State.Error = global.Error
 	result.State.AsOf = at.UTC().Format(time.RFC3339Nano)
-	if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_inventory_projection_jobs WHERE endpoint_id=$1 AND processed_generation<dirty_generation)`, id).Scan(&result.State.Updating); err != nil {
-		return result, true, err
-	}
-	result.State.Updating = result.State.Updating || global.Updating
-	rows, err := s.db.QueryContext(ctx, `SELECT kind,value,source,first_seen,last_seen,observation_count,session_count,confidence,event_id FROM endpoint_inventory_associations WHERE endpoint_id=$1 ORDER BY last_seen DESC,kind,value,source LIMIT 20`, id)
+	result.State.Updating = global.Updating
+	// Associations are aggregated from the durable sources within the hot window, bounded
+	// by the endpoint indexes on leases and sessions (migration 139).
+	rows, err := s.db.QueryContext(ctx, `SELECT kind,value,source,min(first_seen),max(last_seen),count(*) FILTER (WHERE NOT is_session),count(*) FILTER (WHERE is_session),max(confidence),coalesce(max(event_id),'')
+ FROM (`+endpointAssociationSourcesSQL+`) a GROUP BY kind,value,source ORDER BY max(last_seen) DESC,kind,value,source LIMIT 20`, id)
 	if err != nil {
 		return result, true, err
 	}
@@ -199,7 +207,7 @@ func (s *PostgresStore) GetDeviceInventoryDetail(ctx context.Context, id string)
 		return result, true, err
 	}
 	result.AssociationCounts = map[string]int{}
-	rows, err = s.db.QueryContext(ctx, `SELECT kind,count(DISTINCT value) FROM endpoint_inventory_associations WHERE endpoint_id=$1 GROUP BY kind`, id)
+	rows, err = s.db.QueryContext(ctx, `SELECT kind,count(DISTINCT value) FROM (`+endpointAssociationSourcesSQL+`) a GROUP BY kind`, id)
 	if err != nil {
 		return result, true, err
 	}
@@ -320,20 +328,17 @@ func (s *PostgresStore) ListEndpointObservations(ctx context.Context, id string,
 		return result, ErrInventoryNotReady
 	}
 	result.State.Error = global.Error
-	if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_inventory_projection_jobs WHERE endpoint_id=$1 AND processed_generation<dirty_generation)`, id).Scan(&result.State.Updating); err != nil {
-		return result, err
-	}
-	result.State.Updating = result.State.Updating || global.Updating
+	result.State.Updating = global.Updating
 	// Every branch is endpoint-bounded. Stable keyset cursor replaces LIMIT 500
-	// and frontend slicing. Sessions provide explicit intervals, observations do not.
-	sqlText := `WITH facts AS (
- SELECT record_id,kind,value,source,observed_at,confidence,event_id,NULL::timestamptz started_at,NULL::timestamptz ended_at
- FROM endpoint_inventory_observation_facts WHERE endpoint_id=$1 AND kind=$2
- ), observations AS (
- SELECT * FROM facts UNION ALL
+	// and frontend slicing. DHCP leases are point observations; sessions carry intervals.
+	sqlText := `WITH observations AS (
+ SELECT 'lease:'||event_id record_id,'ip'::text kind,host(ip) value,'dhcp'::text source,observed_at,1.0::float8 confidence,event_id,NULL::timestamptz started_at,NULL::timestamptz ended_at
+ FROM device_address_leases WHERE endpoint_id=$1 AND action='ack' AND $2='ip'
+ UNION ALL
  SELECT 'session:'||jsonb_build_array(source,session_id,host(ip))::text,$2,
- CASE $2 WHEN 'account' THEN account_id WHEN 'ip' THEN host(ip) ELSE access_id END,
- source,confirmed_at,confidence,''::text,started_at,ended_at FROM endpoint_inventory_sessions WHERE endpoint_id=$1 AND interval_explicit
+ CASE $2 WHEN 'account' THEN account_id WHEN 'ip' THEN host(ip) ELSE coalesce(access_id,'') END,
+ source,greatest(started_at,coalesce(nullif(policy_metadata->>'last_confirmed_at','')::timestamptz,started_at)),coalesce(identity_confidence,0),''::text,started_at,ended_at
+ FROM account_sessions WHERE endpoint_id=$1
  ) SELECT record_id,kind,value,source,observed_at,confidence,event_id,started_at,ended_at FROM observations
  WHERE value<>'' AND ($3='' OR value=$3) AND ($4='' OR source=$4)
  AND ($5::timestamptz IS NULL OR observed_at>=$5) AND ($6::timestamptz IS NULL OR observed_at<=$6) AND observed_at<=$7

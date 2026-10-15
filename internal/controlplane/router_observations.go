@@ -93,7 +93,11 @@ func routerObservationQuery(values url.Values) (store.RouterQuery, error) {
 		if parseErr != nil {
 			return store.RouterQuery{}, &routerQueryError{message: "has_auth_binding 必须是 true 或 false"}
 		}
-		hasAuthBinding = &value
+		// The list's "只看有认证身份" checkbox submits false when cleared; that means "no
+		// filter", not "only routers without a binding", which used to invert the list.
+		if value {
+			hasAuthBinding = &value
+		}
 	}
 	includeCandidates := false
 	if raw := strings.TrimSpace(values.Get("include_candidates")); raw != "" {
