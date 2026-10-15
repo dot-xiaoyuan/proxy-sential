@@ -333,7 +333,7 @@ func refreshInventoryRelation(ctx context.Context, tx *sql.Tx, id string, key in
 	var event string
 	err := tx.QueryRowContext(ctx, `SELECT newest.last_seen,newest.event_id,stats.first_seen,stats.confidence
  FROM (SELECT last_seen,event_id FROM endpoint_inventory_contributions WHERE endpoint_id=$1 AND kind=$2 AND value=$3 AND source=$4 ORDER BY last_seen DESC,event_id DESC LIMIT 1) newest
- CROSS JOIN (SELECT min(first_seen) first_seen,max(confidence) confidence FROM endpoint_inventory_contributions WHERE endpoint_id=$1 AND kind=$2 AND value=$3 AND source=$4) stats`, args[0], args[1], args[2], args[3], args[0], args[1], args[2], args[3]).Scan(&last, &event, &first, &confidence)
+ CROSS JOIN (SELECT min(first_seen) first_seen,max(confidence) confidence FROM endpoint_inventory_contributions WHERE endpoint_id=$1 AND kind=$2 AND value=$3 AND source=$4) stats`, args...).Scan(&last, &event, &first, &confidence)
 	if err == sql.ErrNoRows {
 		_, err = tx.ExecContext(ctx, `DELETE FROM endpoint_inventory_associations WHERE endpoint_id=$1 AND kind=$2 AND value=$3 AND source=$4`, args...)
 	} else if err == nil {
