@@ -4586,22 +4586,25 @@ pre.wrap-code {
 .router-card-meta { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; min-width:0; }
 .router-card-meta .router-card-footer { padding:0; border:0; gap:8px 14px; }
 .router-observation-card .router-recognition-evidence { gap:4px; }
+.router-verdict-reason { flex-basis:100%; color:#475569; font-size:11px; line-height:1.4; overflow-wrap:anywhere; }
 .router-observation-card .router-auth-identity { flex-direction:row; flex-wrap:wrap; align-items:baseline; gap:4px 8px; }
-.device-inventory-page .device-mobile-card { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px 20px; align-items:start; }
-.device-mobile-primary { display:grid; gap:6px; min-width:0; }
+.device-inventory-page .device-mobile-card { grid-template-columns:minmax(0,1fr) auto; gap:5px 14px; align-items:start; padding:10px 14px; }
+.device-mobile-primary,.device-mobile-tags { min-width:0; }
+.device-mobile-primary .device-identity-content { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px 10px; }
 .device-mobile-primary .device-ledger-primary { white-space:normal; overflow-wrap:anywhere; word-break:break-all; }
-.device-mobile-classification { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; padding-left:34px; min-width:0; }
-.device-mobile-classification .device-ledger-recognition { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-width:0; }
-.device-mobile-classification .device-ledger-recognition > .ant-typography,.device-mobile-classification .device-brand-model { font-size:12px; }
-.device-mobile-classification .device-identity-clues { gap:3px; }
-.device-mobile-context { min-width:0; }
-.device-inventory-page .device-mobile-card .device-mobile-footer { grid-column:1 / -1; border-top:1px solid #e2e8f0; padding-top:6px; }
-@media(min-width:560px) and (max-width:991px){.device-mobile-context .device-context-cell > div {grid-template-columns:72px minmax(0,1fr)} }
+.device-mobile-primary .device-mac-identity { display:block; }
+.device-mobile-primary .device-mac-vendor { display:none; }
+.device-mobile-tags,.device-mobile-tags .device-ledger-recognition,.device-mobile-tags .device-context-cell { display:flex; align-items:center; flex-wrap:wrap; gap:4px 6px; }
+.device-mobile-tags .device-ledger-recognition > .ant-typography,.device-mobile-tags .device-brand-model,.device-mobile-tags .device-os-summary,.device-mobile-tags .device-context-cell > div { display:inline-flex; align-items:center; gap:4px; margin:0; padding:1px 6px; border:1px solid #e2e8f0; border-radius:4px; background:#f8fafc; color:#334155; font-size:11px; line-height:20px; white-space:nowrap; max-width:100%; }
+.device-mobile-tags .device-context-cell > div { display:flex; min-width:0; }
+.device-mobile-tags .device-context-cell > div > .ant-typography-secondary { font-size:11px; }
+.device-mobile-tags .device-context-cell .brand-evidence-wrap { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.device-mobile-tags .device-identity-clues { gap:3px; }
+.device-inventory-page .device-mobile-card .device-mobile-footer { grid-column:2; grid-row:1 / 3; display:flex; flex-direction:column; align-items:flex-end; justify-content:space-between; gap:6px; border:0; padding:0; white-space:nowrap; }
 @media(max-width:559px){
  .router-card-main { grid-template-columns:1fr; gap:5px; }
  .device-inventory-page .device-mobile-card { grid-template-columns:1fr; }
- .device-mobile-classification { padding-left:34px; }
- .device-mobile-card .device-mobile-context .device-context-cell { padding:6px 0 0; }
+ .device-inventory-page .device-mobile-card .device-mobile-footer { grid-column:1; grid-row:auto; flex-direction:row; align-items:center; justify-content:space-between; border-top:1px solid #e2e8f0; padding-top:5px; }
 }
 /* Mobile router list: the auth checkbox shares the search row and list rows drop the nested border. */
 @media (max-width: 559px) {
@@ -4629,6 +4632,13 @@ pre.wrap-code {
 .account-id { font-weight: 600; overflow-wrap: anywhere; }
 .account-reason { display: block; max-width: 420px; }
 .account-assessment-mobile { gap: 10px; }
+.account-assessment-help { color:#475569; font-size:13px; line-height:1.6; }
+.account-assessment-help a { white-space:nowrap; }
+@media(max-width:991px){
+ .account-assessment-page .account-assessment-table { display:none!important; }
+ .account-assessment-page .account-assessment-mobile { display:grid!important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; min-width:0; }
+}
+@media(max-width:559px){ .account-assessment-page .account-assessment-mobile { grid-template-columns:1fr; } }
 .account-assessment-card,
 .account-tag-detail,
 .account-endpoint { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; background: #fff; }

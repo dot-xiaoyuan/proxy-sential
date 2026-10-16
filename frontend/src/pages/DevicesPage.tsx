@@ -112,10 +112,12 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {matchSearch&&<Typography.Paragraph className="device-list-note" type="secondary">精确 IP 匹配 · {view==='recent'?'所选时间内的观测与会话':'全部历史关联'}</Typography.Paragraph>}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表加载失败" message={devices.error.message} /> : <>
         {compact&&<div className="device-mobile-cards">{items.map(row => <article key={row.endpoint_id} className="device-mobile-card">
-          <div className="device-mobile-primary"><DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/>
-            <div className="device-mobile-classification">{visibleColumns.includes('recognition')&&<DeviceLedgerRecognition device={row}/>}{visibleColumns.includes('os')&&<DeviceLedgerOS device={row}/>}</div>
+          <div className="device-mobile-primary"><DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/></div>
+          <div className="device-mobile-tags">
+            {visibleColumns.includes('recognition')&&<DeviceLedgerRecognition device={row}/>}
+            {visibleColumns.includes('os')&&<DeviceLedgerOS device={row}/>}
+            {visibleColumns.includes('context')&&(row.current_account||row.current_account_conflict||row.owner_name||row.owner_account||row.current_access_id)&&<OwnershipAccess device={row}/>}
           </div>
-          {visibleColumns.includes('context')&&(row.current_account||row.current_account_conflict||row.owner_name||row.owner_account||row.current_access_id)&&<div className="device-mobile-context"><OwnershipAccess device={row}/></div>}
           <div className="device-mobile-footer">{visibleColumns.includes('observed')&&<ObservedTime value={row.last_seen}/>}<div className="device-row-actions"><Link to={detailURL(row)}>查看详情</Link></div></div>
         </article>)}</div>}
         {compact&&items.length === 0 && <Typography.Text className="device-mobile-empty" type="secondary">没有匹配的终端</Typography.Text>}
@@ -163,8 +165,14 @@ function OwnershipAccess({ device }: { device: DeviceInventoryListItem }) {
     {device.current_access_conflict&&<Tag color="orange">接入位置冲突</Tag>}
     {device.current_account&&<div><Typography.Text type="secondary">关联账号</Typography.Text><Typography.Text className="brand-evidence-wrap">{device.current_account}</Typography.Text></div>}
     {(device.owner_name||device.owner_account)&&<div><Typography.Text type="secondary">登记归属</Typography.Text><Typography.Text className="brand-evidence-wrap">{[device.owner_name,device.owner_account].filter(Boolean).join(' · ')}</Typography.Text></div>}
-    {device.current_access_id&&<div><Typography.Text type="secondary">接入位置</Typography.Text><Typography.Text className="brand-evidence-wrap" title={device.current_access_id}>{device.current_access_id}</Typography.Text></div>}
+    {device.current_access_id&&<div><Typography.Text type="secondary">接入位置</Typography.Text><Typography.Text className="brand-evidence-wrap" title={device.current_access_id}>{accessLocationLabel(device.current_access_id)}</Typography.Text></div>}
   </div>
+}
+
+function accessLocationLabel(value: string) {
+  const fields = Object.fromEntries([...value.matchAll(/(?:^|;)(slot|subslot|port|vlanid)=([^;]+)/g)].map(([,key,item])=>[key,item]))
+  if (fields.slot && fields.subslot && fields.port && fields.vlanid) return `端口 ${fields.slot}/${fields.subslot}/${fields.port} · VLAN ${fields.vlanid}`
+  return value
 }
 
 function ObservedTime({ value }: { value?: string }) {

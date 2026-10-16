@@ -14,6 +14,7 @@ import { AppErrorAlert, AppLoadingState, AppServerPagination } from '../shared/u
 import { BrandLogo } from '../entities/device/BrandLogo'
 import { routerLibraryLabels } from '../entities/device/libraryLabels'
 import { routerConflictLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
+import { routerVerdictExplanation } from './routerVerdictExplanation'
 
 const statusLabels = routerStatusLabels
 const roleLabels = routerRoleLabels
@@ -79,7 +80,7 @@ export function RouterObservationsPanel() {
         <Form.Item name="infrastructure" label="仅基础设施" valuePropName="checked"><Switch /></Form.Item>
         <Form.Item name="include_candidates" label="包含候选记录" valuePropName="checked"><Switch /></Form.Item>
       </div></details>
-      <div className="center-list-meta"><Typography.Text type="secondary">{total} 台设备</Typography.Text><Tooltip title="按路由身份聚合；品牌、型号与角色来自多源证据评分，MAC 合并要求采集范围和 VLAN 一致。"><InfoCircleOutlined aria-label="网络设备说明" /></Tooltip></div>
+      <div className="center-list-meta"><Typography.Text type="secondary">{total} 台设备</Typography.Text><Tooltip title="本页识别网络设备，不代表下游共享已确认。分数表示证据匹配强度；路由器确认还要求明确路由角色、独立来源、强证据和可靠设备关联，基础设施及排除证据会阻断确认。接入点角色不按路由器确认。"><InfoCircleOutlined aria-label="网络设备说明" /></Tooltip></div>
       </div>
     </Form>
     <section className="surface center-list-surface">{observations.isLoading ? <AppLoadingState rows={6} /> : observations.isError ? <AppErrorAlert title="路由观察加载失败" message={observations.error.message} /> : <>
@@ -125,12 +126,13 @@ function RouterEvidence({ item }: { item: RouterAssessment }) {
   ? <div className="router-basis"><b>识别依据 · 规则 {item.rule_version || ''}</b>{components.map(component => <div key={component.evidence_id}>{routerSourceLabels[component.source_family] || component.source_family} {component.score > 0 ? `+${component.score}` : component.score} · {component.explanation}</div>)}</div>
   : undefined
  return <div className="router-recognition-evidence">
-   <Tooltip title={basis}><span className={`router-score router-score-${item.status}`}>{statusLabels[item.status]} · {item.confidence} 分</span></Tooltip>
+   <Tooltip title={basis}><span className={`router-score router-score-${item.status}`}>{statusLabels[item.status]} · 匹配 {item.confidence} 分</span></Tooltip>
    {sources.slice(0, 3).map(source => <Tag key={source} className="router-source">{routerSourceLabels[source] || source}</Tag>)}
    {sources.length > 3 && <Tooltip title={sources.map(source => routerSourceLabels[source] || source).join('、')}><Tag className="router-source">+{sources.length - 3}</Tag></Tooltip>}
    {(item.libraries || []).map(library => <Tag key={library} className="router-library">{routerLibraryLabels[library] || library}</Tag>)}
    {item.ambiguous && <Tag color="warning">关联不唯一</Tag>}
-   {item.conflicts.length > 0 && <Tooltip title={item.conflicts.map(conflict => routerConflictLabels[conflict] || conflict).join('、')}><Tag color="error">证据冲突</Tag></Tooltip>}
+   {item.conflicts.length > 0 && <Tooltip title={item.conflicts.map(conflict => routerConflictLabels[conflict] || conflict).join('、')}><Tag color={item.conflicts.every(conflict=>['infrastructure_role','ambiguous_association'].includes(conflict))?'warning':'error'}>{item.conflicts.every(conflict=>['infrastructure_role','ambiguous_association'].includes(conflict))?'确认受限':'证据冲突'}</Tag></Tooltip>}
+   {item.status !== 'confirmed' && <span className="router-verdict-reason">未确认：{routerVerdictExplanation(item)}</span>}
  </div>
 }
 function DeviceIdentity({item,historical=false,name}:{item:RouterAssessment;historical?:boolean;name?:string}){
