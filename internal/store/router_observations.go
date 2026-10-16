@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -294,6 +295,9 @@ ORDER BY p.confidence DESC,p.last_seen DESC,p.assessment_id`, args...)
 	if err = s.attachRouterAuthBindings(ctx, page.Items); err != nil {
 		return page, err
 	}
+	if err = s.attachEndpointLibraries(ctx, page.Items); err != nil {
+		return page, err
+	}
 	if query.Cursor+len(page.Items) < page.Page.Total {
 		next := fmt.Sprint(query.Cursor + len(page.Items))
 		page.Page.NextCursor = &next
@@ -379,6 +383,69 @@ type routerAuthSession struct {
 // exact MAC or endpoint identities. IP, VLAN and time proximity are never
 // considered, which prevents every private 192.168.1.1 observation from being
 // attributed to the same authenticated account.
+// Library hits recorded on the router's device-level summary label the router as well.
+// Routers are keyed by MAC; their endpoint summary is "mac:<mac>". Labels never change
+// the assessment score.
+func (s *PostgresStore) attachEndpointLibraries(ctx context.Context, items []evidence.RouterAssessment) error {
+	keys := []string{}
+	seen := map[string]bool{}
+	for _, item := range items {
+		key := routerSummaryKey(item.MAC)
+		if key != "" && !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT s.endpoint_id,string_agg(DISTINCT m->>'source_id',',')
+FROM endpoint_recognition_summary s CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.summary->'source_matches','[]'::jsonb)) m
+WHERE s.endpoint_id=ANY($1) AND COALESCE(m->>'source_id','')<>''
+GROUP BY s.endpoint_id`, keys)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	summaryLibraries := map[string][]string{}
+	for rows.Next() {
+		var key, joined string
+		if err = rows.Scan(&key, &joined); err != nil {
+			return err
+		}
+		summaryLibraries[key] = strings.Split(joined, ",")
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for index := range items {
+		libraries := append(append([]string{}, items[index].Libraries...), summaryLibraries[routerSummaryKey(items[index].MAC)]...)
+		items[index].Libraries = distinctSortedStrings(libraries)
+	}
+	return nil
+}
+
+func routerSummaryKey(mac string) string {
+	mac = strings.ToLower(strings.TrimSpace(mac))
+	if mac == "" {
+		return ""
+	}
+	return "mac:" + mac
+}
+
+func distinctSortedStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, value := range values {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *PostgresStore) attachRouterAuthBindings(ctx context.Context, items []evidence.RouterAssessment) error {
 	macs, endpoints := []string{}, []string{}
 	seenMAC, seenEndpoint := map[string]bool{}, map[string]bool{}
