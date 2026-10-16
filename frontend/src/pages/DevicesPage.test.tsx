@@ -55,6 +55,24 @@ it('treats a legacy null items response as an empty list',()=>{
  setup('/devices?view=recent&window=24h')
  expect(screen.getAllByText('没有匹配的终端').length).toBeGreaterThan(0)
 })
+it('keeps IPv4 as the only primary address and places names and MACs in fixed fields',()=>{
+ fixture.items=[
+  {endpoint_id:'named',current_ip:'192.0.2.10',primary_mac:'00:11:22:33:44:10',device_name:{value:'DESKTOP-01',source:'dhcp',confidence:1}},
+  {endpoint_id:'mac-only',primary_mac:'00:11:22:33:44:11'},
+  {endpoint_id:'ipv6-only',current_ip:'2001:db8::12',primary_mac:'00:11:22:33:44:12'},
+ ]
+ const {container}=render(<MemoryRouter initialEntries={['/devices?view=recent&window=24h']}><DevicesPage /></MemoryRouter>)
+ const rows=[...container.querySelectorAll('.device-ledger-row')]
+ expect(rows).toHaveLength(3)
+ expect(rows[0].querySelector('.device-row-ip')).toHaveTextContent('192.0.2.10')
+ expect(rows[0].querySelector('.device-row-name')).toHaveTextContent('DESKTOP-01')
+ expect(rows[0].querySelector('.device-row-mac')).toHaveTextContent('00:11:22:33:44:10')
+ expect(rows[1].querySelector('.device-row-ip-value')).toBeEmptyDOMElement()
+ expect(rows[1].querySelector('.device-row-mac')).toHaveTextContent('00:11:22:33:44:11')
+ expect(rows[2].querySelector('.device-row-ip-value')).toBeEmptyDOMElement()
+ expect(rows[2].querySelector('.device-row-mac')).toHaveTextContent('00:11:22:33:44:12')
+ expect(rows[2].querySelector('.device-row-ipv6')).toHaveTextContent('2001:db8::12')
+})
 it('restores exact account search and waits for explicit submit',async()=>{
  setup('/devices?view=recent&window=24h&search_type=account&q=Student-A&page=2')
  const input=screen.getByPlaceholderText('输入完整账号（最新观测关联）')

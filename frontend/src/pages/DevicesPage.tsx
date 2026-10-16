@@ -5,7 +5,7 @@ import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import { Link, useSearchParams } from 'react-router-dom'
 import { InfoCircleOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons'
 
-import { DeviceLedgerIdentity, DeviceLedgerRecognition, DeviceLedgerOS, deviceDetailsURL } from '../entities/device/DeviceInventoryCells'
+import { DeviceMAC, DeviceLedgerRecognition, DeviceLedgerOS, deviceDetailsURL } from '../entities/device/DeviceInventoryCells'
 import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices } from '../shared/api/queries'
 import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
 import { AppErrorAlert, AppLoadingState, AppServerPagination, UniversityDimensionFilters, useServerPagination, type ReportWindow, type UniversityDimensions } from '../shared/ui'
@@ -97,15 +97,22 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {devices.data?.read_model_state?.error&&<Alert type="warning" showIcon title="检索投影更新异常" description="保留上次已物化结果；关联变更可能尚未完成更新。"/>}
       {matchSearch&&<Typography.Paragraph className="device-list-note" type="secondary">精确 IP 匹配 · {view==='recent'?'所选时间内的观测与会话':'全部历史关联'}</Typography.Paragraph>}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表加载失败" message={devices.error.message} /> : <>
-        <div className="device-mobile-cards device-tag-list">{items.map(row => <article key={row.endpoint_id} className="device-mobile-card">
-          <div className="device-mobile-primary"><DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/></div>
-          <div className="device-mobile-tags">
-            {visibleColumns.includes('recognition')&&<DeviceLedgerRecognition device={row}/>}
-            {visibleColumns.includes('os')&&<DeviceLedgerOS device={row}/>}
-            {visibleColumns.includes('context')&&(row.current_account||row.current_account_conflict||row.owner_name||row.owner_account||row.current_access_id)&&<OwnershipAccess device={row}/>}
-          </div>
-          <div className="device-mobile-footer">{visibleColumns.includes('observed')&&<ObservedTime value={row.last_seen}/>}<div className="device-row-actions"><Link to={detailURL(row)}>查看详情</Link></div></div>
-        </article>)}</div>
+        <div className="device-ledger-list">
+          <div className="device-ledger-head"><span>IPv4</span><span>设备名</span><span>MAC / IPv6</span><span>类型与系统</span><span>账号与接入</span><span>最近观测</span></div>
+          {items.map(row => {
+            const ipv4=ipv4Address(row.current_ip)
+            const name=devices.data?.device_names_disabled ? '' : row.device_name?.value || ''
+            const hasAccess=Boolean(row.current_account||row.current_account_conflict||row.current_access_conflict||row.owner_name||row.owner_account||row.current_access_id)
+            return <article key={row.endpoint_id} className="device-ledger-row">
+              <div className="device-row-ip"><span className="device-field-label">IPv4</span><div className="device-row-ip-value">{ipv4&&<><Link className="mono device-row-ip-link" to={detailURL(row)}>{ipv4}</Link><Typography.Text className="device-copy-control" copyable={{text:ipv4}}/></>}{row.ip_match&&<span className="device-match-caption">{row.ip_match.is_recent_ip?'最近 IP 命中':'历史 IP 命中'}</span>}</div></div>
+              <div className="device-row-name">{name&&<><span className="device-field-label">设备名</span><Link to={detailURL(row)} title={row.device_name?.status==='historical'?'历史观测名称':name}>{name}</Link>{row.device_name?.status==='historical'&&<span className="device-name-caption">历史名称</span>}</>}</div>
+              <div className="device-row-mac">{row.primary_mac&&<><span className="device-field-label">MAC</span><DeviceMAC device={row} href={detailURL(row)}/></>}{row.current_ip&&!ipv4&&<div className="device-row-ipv6"><span className="device-field-label">IPv6</span><span className="mono">{row.current_ip}</span></div>}</div>
+              <div className="device-row-profile">{visibleColumns.includes('recognition')&&<DeviceLedgerRecognition device={row}/>}{visibleColumns.includes('os')&&<DeviceLedgerOS device={row}/>}</div>
+              <div className="device-row-access">{visibleColumns.includes('context')&&hasAccess&&<OwnershipAccess device={row}/>}</div>
+              <div className="device-row-recent">{visibleColumns.includes('observed')&&<ObservedTime value={row.last_seen}/>}<Link to={detailURL(row)}>查看详情</Link></div>
+            </article>
+          })}
+        </div>
         {items.length === 0 && <Typography.Text className="device-mobile-empty" type="secondary">没有匹配的终端</Typography.Text>}
         {total!==undefined?<AppServerPagination cursorMode page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={updatePagination}/>:<div className="device-pending-pagination" aria-label="统计等待分页"><Button disabled={pagination.page<=1||devices.isPlaceholderData} onClick={()=>updatePagination(pagination.page-1,pagination.pageSize)}>上一页</Button><Typography.Text>第 {pagination.page} 页</Typography.Text><Button disabled={!devices.data?.page.next_cursor||devices.isPlaceholderData} onClick={()=>updatePagination(pagination.page+1,pagination.pageSize)}>下一页</Button>{!metadata.isError&&<Typography.Text type="secondary">总数统计中</Typography.Text>}</div>}
       </>}
@@ -158,6 +165,12 @@ function accessLocationLabel(value: string) {
   const fields = Object.fromEntries([...value.matchAll(/(?:^|;)(slot|subslot|port|vlanid)=([^;]+)/g)].map(([,key,item])=>[key,item]))
   if (fields.slot && fields.subslot && fields.port && fields.vlanid) return `端口 ${fields.slot}/${fields.subslot}/${fields.port} · VLAN ${fields.vlanid}`
   return value
+}
+
+function ipv4Address(value?: string) {
+  if (!value) return ''
+  const octets=value.split('.')
+  return octets.length===4&&octets.every(part=>/^\d{1,3}$/.test(part)&&Number(part)<=255) ? value : ''
 }
 
 function ObservedTime({ value }: { value?: string }) {
