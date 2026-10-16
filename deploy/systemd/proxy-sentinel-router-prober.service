@@ -1,0 +1,27 @@
+[Unit]
+Description=Proxy Sentinel active router HTTP management interface prober
+After=network-online.target proxy-sentinel-recognition-materializer.service
+Wants=network-online.target
+
+# Opt-in: not enabled by the installer. Queries router_assessments for likely/confirmed
+# IPs, GETs their management ports (80/8080/443/8443), extracts Server header and page
+# title, and emits source_event_type="http" normalized events. Those events flow through
+# router_signal_events_v1_mv into catalog matching (Recog http_server, WhatWeb, etc.).
+# Output is read by ingest via --router-probe-signals.
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel router-prober run \
+  --postgres-dsn ${PROXY_SENTINEL_POSTGRES_DSN} \
+  --sensor-id ${PROXY_SENTINEL_SENSOR_ID} \
+  --output /opt/proxy-sentinel/data/device-signals/router-probe.jsonl
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+CPUQuota=20%
+MemoryMax=128M
+LimitNOFILE=4096
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

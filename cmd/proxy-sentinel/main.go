@@ -29,6 +29,7 @@ import (
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/proxyprotocol"
 	"proxy-sentinel/internal/realtime"
+	"proxy-sentinel/internal/routerprober"
 	"proxy-sentinel/internal/replay"
 	"proxy-sentinel/internal/risk"
 	"proxy-sentinel/internal/shadow"
@@ -91,6 +92,8 @@ func run(args []string) error {
 		return runDeviceFingerprint(args[1:])
 	case "device-signal":
 		return runDeviceSignal(args[1:])
+	case "router-prober":
+		return runRouterProber(args[1:])
 	case "inventory-audit":
 		// The audit compared the retired trigger-driven projection with a reference rebuild.
 		// The endpoint state updater re-derives every row on its sweep, so there is no second
@@ -389,6 +392,7 @@ func runIngest(args []string) error {
 	zeekSNMP := fs.String("zeek-snmp", "", "Zeek sanitized snmp.log path")
 	deviceSignals := fs.String("device-signals", "", "normalized TTL/device signal JSONL path")
 	handshakeSignals := fs.String("handshake-signals", "", "TLS ClientHello and HTTP request handshake summary JSONL path")
+	routerProbeSignals := fs.String("router-probe-signals", "", "active router HTTP management probe normalized event JSONL path")
 	sharedDeviceSignals := fs.String("shared-device-signals", "", "payload-free TCP SYN/TTL shared-access signal JSONL path")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
@@ -440,6 +444,7 @@ func runIngest(args []string) error {
 		{Kind: "zeek-snmp", Path: *zeekSNMP},
 		{Kind: "device-signals", Path: *deviceSignals},
 		{Kind: "device-signals", Path: *handshakeSignals},
+		{Kind: "device-signals", Path: *routerProbeSignals},
 		{Kind: "shared-device-signals", Path: *sharedDeviceSignals},
 	} {
 		if source.Path != "" {
@@ -504,6 +509,33 @@ func runDeviceSignal(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, StateLiveness: *stateLiveness, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly, HandshakeOnly: *handshakeOnly})
+}
+
+func runRouterProber(args []string) error {
+	if len(args) < 1 || args[0] != "run" {
+		return fmt.Errorf("usage: proxy-sentinel router-prober run --postgres-dsn <dsn> --output <path> [--sensor-id <id>]")
+	}
+	fs := flag.NewFlagSet("router-prober run", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	output := fs.String("output", "", "normalized event JSONL output path")
+	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*postgresDSN) == "" {
+		return fmt.Errorf("--postgres-dsn is required")
+	}
+	if strings.TrimSpace(*output) == "" {
+		return fmt.Errorf("--output is required")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return routerprober.Run(ctx, routerprober.Config{
+		PostgresDSN: *postgresDSN,
+		SensorID:    *sensorID,
+		OutputPath:  *output,
+	})
 }
 
 // runDeviceCensus prints the passive device census for one sensor. It is
@@ -1412,6 +1444,7 @@ func runControlPlaneServe(args []string) error {
 	shadowDir := fs.String("shadow-dir", "/opt/proxy-sentinel/data/shadow", "shadow output directory")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
 	frontendDir := fs.String("frontend-dir", "", "optional frontend dist directory to serve")
+	sharedObservationEnabled := fs.Bool("shared-observation-enabled", envBool("PROXY_SENTINEL_SHARED_OBSERVATION_ENABLED", false), "materialize sharing and record observe decisions; never dispatch actions")
 	readOnly := fs.Bool("read-only", true, "disable mutating review and reload endpoints")
 	allowIdentityIngest := fs.Bool("allow-identity-ingest", envBool("PROXY_SENTINEL_ALLOW_IDENTITY_INGEST_IN_READ_ONLY", false), "allow authenticated identity events and snapshots while the global control plane remains read-only")
 	storageMode := fs.String("storage-mode", firstEnv("PROXY_SENTINEL_STORAGE_MODE", "file"), "storage mode: file, db, or dual")
@@ -1508,26 +1541,27 @@ func runControlPlaneServe(args []string) error {
 		return err
 	}
 	return controlplane.Serve(controlplane.Options{
-		NativeActions:         nativeActions,
-		ProxyProtocolConfig:   *proxyConfigFile,
-		ApplicationsEnabled:   *applicationsEnabled,
-		ApplicationsDir:       *applicationsDir,
-		Addr:                  *addr,
-		ShadowDir:             *shadowDir,
-		SensorID:              *sensorID,
-		FrontendDir:           *frontendDir,
-		ReadOnly:              *readOnly,
-		AllowIdentityIngest:   *allowIdentityIngest,
-		StorageMode:           *storageMode,
-		PostgresDSN:           *postgresDSN,
-		ClickHouseDSN:         *clickHouseDSN,
-		CollectorKind:         *collectorKind,
-		CollectorVer:          *collectorVersion,
-		InterfaceName:         *collectorInterface,
-		FingerprintDir:        *fingerprintDir,
-		FingerprintAutoUpdate: *fingerprintAutoUpdate,
-		AuthFile:              *authFile,
-		AuthCookieSecure:      *authCookieSecure,
+		NativeActions:            nativeActions,
+		ProxyProtocolConfig:      *proxyConfigFile,
+		ApplicationsEnabled:      *applicationsEnabled,
+		ApplicationsDir:          *applicationsDir,
+		Addr:                     *addr,
+		ShadowDir:                *shadowDir,
+		SensorID:                 *sensorID,
+		FrontendDir:              *frontendDir,
+		ReadOnly:                 *readOnly,
+		SharedObservationEnabled: *sharedObservationEnabled,
+		AllowIdentityIngest:      *allowIdentityIngest,
+		StorageMode:              *storageMode,
+		PostgresDSN:              *postgresDSN,
+		ClickHouseDSN:            *clickHouseDSN,
+		CollectorKind:            *collectorKind,
+		CollectorVer:             *collectorVersion,
+		InterfaceName:            *collectorInterface,
+		FingerprintDir:           *fingerprintDir,
+		FingerprintAutoUpdate:    *fingerprintAutoUpdate,
+		AuthFile:                 *authFile,
+		AuthCookieSecure:         *authCookieSecure,
 		OIDC: controlplane.OIDCOptions{
 			Issuer: *oidcIssuer, ClientID: *oidcClientID, ClientSecret: oidcSecret,
 			RedirectURL: *oidcRedirectURL, RoleMapping: roleMapping, DefaultRole: *oidcDefaultRole,
