@@ -3887,7 +3887,7 @@ pre.wrap-code {
 @media(max-width:559px) { .discovery-desktop { display: none; } .discovery-mobile { display: grid; gap: 12px; } .discovery-card { padding: 14px; } .discovery-filters { grid-template-columns: 1fr; } .discovery-category-grid { display: flex; overflow-x: auto; padding-bottom: 4px; } .discovery-category-card { min-width: 118px; flex-shrink: 0; } .discovery-device-cell { min-width: 0; } }
 
 .router-observations-panel { min-width: 0; }
-.router-filter-form { padding: 16px 0; border-bottom: 1px solid #e2e8f0; }
+.router-filter-form { padding: 12px 0; border-bottom: 1px solid #e2e8f0; }
 .router-filter-primary { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
 .router-filter-primary > .ant-form-item { flex: 0 1 360px; margin: 0; }
 .router-filter-primary > .router-auth-filter { flex: 0 0 auto; align-self: center; }
@@ -3896,7 +3896,10 @@ pre.wrap-code {
 .router-filter-basic { grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(140px, 1fr)); }
 .router-filter-grid .ant-form-item { margin-bottom: 12px; min-width: 0; }
 .router-filter-grid .ant-input-number { width: 100%; }
-.router-advanced-filters { margin-bottom: 12px; }
+.router-filter-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; }
+.router-filter-footer .center-list-meta { margin-left: auto; white-space: nowrap; }
+.router-advanced-filters { flex: 0 0 auto; min-width: 0; }
+.router-advanced-filters[open] { flex: 1 1 100%; }
 .router-advanced-filters summary { width: fit-content; cursor: pointer; color: #2563eb; white-space: nowrap; }
 .router-advanced-filters[open] summary { margin-bottom: 12px; }
 .router-advanced-filters .router-filter-grid { padding: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
@@ -4587,7 +4590,7 @@ pre.wrap-code {
 /* Account assessment projection */
 .account-assessment-page,
 .account-assessment-detail { display: grid; gap: 16px; }
-.account-assessment-filters { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 20px; align-items: center; }
+.account-assessment-filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 20px; align-items: center; }
 .account-assessment-filters .ant-input-search { flex: 1 1 280px; max-width: 460px; }
 .account-assessment-filters .ant-select { flex: 0 0 150px; }
 .account-tag-list,
