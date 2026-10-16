@@ -801,12 +801,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDPIFlow(w, r, strings.TrimPrefix(path, "/dpi/flows/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/dpi/ips/"):
 		s.handleDPIIP(w, r, strings.TrimPrefix(path, "/dpi/ips/"))
-	case r.Method == http.MethodGet && path == "/account-assessments":
-		s.handleAccountAssessments(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/accounts/"):
 		s.handleAccount(w, r, strings.TrimPrefix(path, "/accounts/"))
-	case r.Method == http.MethodPost && strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/tag-reviews"):
-		s.handleAccountTagReview(w, r, strings.TrimPrefix(path, "/accounts/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/endpoints/"):
 		s.handleEndpoint(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/endpoints/"):
@@ -1280,8 +1276,6 @@ func requiredPermission(method, path string) string {
 	}
 	if method == http.MethodPost {
 		switch {
-		case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/tag-reviews"):
-			return "labels:create"
 		case path == "/labels":
 			return "labels:create"
 		case strings.HasPrefix(path, "/endpoints/"):
@@ -1327,7 +1321,7 @@ func requiredPermission(method, path string) string {
 		return "actions:read"
 	case strings.HasPrefix(path, "/integrations"):
 		return "integrations:write"
-	case strings.HasPrefix(path, "/device-fingerprint-library") || (method == http.MethodGet && (path == "/account-assessments" || strings.HasPrefix(path, "/accounts"))) || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/device-inventory") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
+	case strings.HasPrefix(path, "/device-fingerprint-library") || (method == http.MethodGet && strings.HasPrefix(path, "/accounts")) || strings.HasPrefix(path, "/devices") || strings.HasPrefix(path, "/device-inventory") || strings.HasPrefix(path, "/endpoints") || strings.HasPrefix(path, "/router-observations"):
 		return "identity:read"
 	default:
 		return "risks:read"
@@ -1572,10 +1566,6 @@ func (s *Server) handleCreateLabel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest string) {
-	if strings.HasSuffix(rest, "/assessment") {
-		s.handleAccountAssessment(w, r, strings.TrimSuffix(rest, "/assessment"))
-		return
-	}
 	if !strings.HasSuffix(rest, "/identity") {
 		writeError(w, http.StatusNotFound, "not_found", "account endpoint not found")
 		return

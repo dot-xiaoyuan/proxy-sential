@@ -1,5 +1,6 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { ReloadOutlined } from '@ant-design/icons'
-import { Alert, Button, Drawer, Empty, Input, Select, Space, Tag, Typography } from 'antd'
+import { Button, Drawer, Empty, Input, Select, Space, Tag, Typography } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'

@@ -16,8 +16,6 @@ import type {
   EventQuery,
   EvidenceQuery,
   IdentityQuery,
-  AccountAssessmentQuery,
-  AccountTagReviewRequest,
   ListQuery,
   Page,
   ProxyReviewQuery,
@@ -109,8 +107,6 @@ export const queryKeys = {
   ipEvents: (ip: string, limit: number) => ["ip-events", ip, limit] as const,
   accountIdentity: (accountId: string, query: IdentityQuery) =>
     ["account-identity", accountId, query] as const,
-  accountAssessments: (query: AccountAssessmentQuery) => ["account-assessments", query] as const,
-  accountAssessment: (accountId: string) => ["account-assessment", accountId] as const,
   endpointIdentity: (endpointId: string, query: IdentityQuery) =>
     ["endpoint-identity", endpointId, query] as const,
   events: (query: EventQuery) => ["events", query] as const,
@@ -375,19 +371,6 @@ export function useAccountIdentity(
     queryFn: () => api.accountIdentity(accountId, query),
     enabled: !!accountId,
   });
-}
-
-export function useAccountAssessments(query: AccountAssessmentQuery = {}) {
-  return usePagedQuery(query, queryKeys.accountAssessments, api.accountAssessments)
-}
-
-export function useAccountAssessment(accountId: string) {
-  return useQuery({queryKey: queryKeys.accountAssessment(accountId), queryFn: () => api.accountAssessment(accountId), enabled: Boolean(accountId)})
-}
-
-export function useAccountTagReview(accountId: string) {
-  const client=useQueryClient()
-  return useMutation({mutationFn:(payload:AccountTagReviewRequest)=>api.createAccountTagReview(accountId,payload),onSuccess:()=>{void client.invalidateQueries({queryKey:queryKeys.accountAssessment(accountId)});void client.invalidateQueries({queryKey:["account-assessments"]})}})
 }
 
 export function useEndpointIdentity(

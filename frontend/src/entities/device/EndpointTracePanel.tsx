@@ -1,5 +1,6 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import { useState } from 'react'
-import { Alert, Button, Input, Select, Tag, Typography, Modal } from 'antd'
+import { Button, Input, Select, Tag, Typography, Modal } from 'antd'
 import { Link } from 'react-router-dom'
 import { useEndpointObservations } from '../../shared/api/queries'
 import { api, ApiError, request } from '../../shared/api/client'

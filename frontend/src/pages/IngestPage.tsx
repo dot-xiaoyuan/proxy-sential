@@ -1,20 +1,18 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { statusText } from '../shared/ui/status'
 import { detailPath } from '../app/navigation'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { CodeOutlined } from "@ant-design/icons";
-import {
-  Alert,
-  Button,
+import {Button,
   Descriptions,
   Drawer,
   Space,
   Table,
   Tabs,
   Tag,
-  Typography,
-} from "antd";
+  Typography} from "antd";
 import type { ColumnsType } from "antd/es/table";
 
 import {

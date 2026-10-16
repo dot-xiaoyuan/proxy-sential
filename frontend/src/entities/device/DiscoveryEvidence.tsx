@@ -1,6 +1,7 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import {useState} from 'react'
 import {useQuery} from '@tanstack/react-query'
-import {Alert,Button,Pagination,Tag,Typography} from 'antd'
+import { Button,Pagination,Tag,Typography } from 'antd'
 import {request} from '../../shared/api/client'
 export function DiscoveryEvidence({endpointId}:{endpointId:string}){
  const[page,setPage]=useState(1);const[open,setOpen]=useState(false)

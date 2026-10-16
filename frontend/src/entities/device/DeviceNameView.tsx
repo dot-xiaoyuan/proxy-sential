@@ -1,6 +1,7 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
-import { Button, Input, Modal, Typography, Pagination, Alert, Tag, Tooltip } from 'antd'
+import { Button, Input, Modal, Typography, Pagination, Tag, Tooltip } from 'antd'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../shared/api/client'
 import type { EndpointDeviceInventory } from '../../shared/api/types'

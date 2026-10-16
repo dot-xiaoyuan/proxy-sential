@@ -172,8 +172,6 @@ func (s *DBStore) finishRecognitionJob(ctx context.Context, job recognitionJob, 
 func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 	var workers sync.WaitGroup
 	workers.Add(1)
-	go func() { defer workers.Done(); s.runAccountTagMaterializer(ctx) }()
-	workers.Add(1)
 	go func() { defer workers.Done(); s.runFingerprintRebuild(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); s.runFingerprintCoverage(ctx) }()

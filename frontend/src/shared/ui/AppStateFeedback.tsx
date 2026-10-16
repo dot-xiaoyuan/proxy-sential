@@ -1,5 +1,6 @@
+import { Notice as Alert } from './Notice'
 import type { ReactNode } from 'react'
-import { Alert, Empty, Skeleton } from 'antd'
+import { Empty, Skeleton } from 'antd'
 
 interface AppLoadingProps {
   active?: boolean

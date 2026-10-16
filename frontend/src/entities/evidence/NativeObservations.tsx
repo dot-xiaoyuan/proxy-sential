@@ -1,6 +1,7 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Empty, Spin, Tag } from 'antd'
+import { Button, Empty, Spin, Tag } from 'antd'
 import { api } from '../../shared/api/client'
 import { AppFactBar } from '../../shared/ui'
 

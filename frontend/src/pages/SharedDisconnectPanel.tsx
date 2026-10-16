@@ -1,6 +1,7 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Card, Checkbox, Modal, Space, Tag } from 'antd'
+import { Button, Card, Checkbox, Modal, Space, Tag } from 'antd'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import type { OperationTask } from '../shared/api/operationTasks'

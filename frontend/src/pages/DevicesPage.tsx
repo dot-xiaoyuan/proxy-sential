@@ -1,7 +1,7 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Alert, Button, Checkbox, Input, Popover, Segmented, Select, Table, Tooltip, Typography, Tag } from 'antd'
+import { Button, Checkbox, Input, Popover, Segmented, Select, Tooltip, Typography, Tag } from 'antd'
 import { resolveDeviceBrand } from '../entities/device/brandMatcher'
-import type { ColumnsType } from 'antd/es/table'
 import { Link, useSearchParams } from 'react-router-dom'
 import { InfoCircleOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons'
 
@@ -27,13 +27,6 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const columnOptions=[{label:'类型 / 品牌',value:'recognition'},{label:'操作系统',value:'os'},{label:'关联账号 / 接入',value:'context'},{label:'最近观测',value:'observed'}]
   const [visibleColumns, setVisibleColumns] = useState<string[]>(()=>{try {const value=JSON.parse(localStorage.getItem('device-ledger-columns') || 'null');return Array.isArray(value)?value.filter(v=>['recognition','os','context','observed'].includes(v)):['recognition','os','context','observed']}catch{return ['recognition','os','context','observed']}})
   const [filtersOpen,setFiltersOpen]=useState(false)
-  const [compact,setCompact]=useState(()=>window.matchMedia('(max-width: 991px)').matches)
-  useEffect(()=>{
-    const media=window.matchMedia('(max-width: 991px)')
-    const change=(event:MediaQueryListEvent)=>setCompact(event.matches)
-    setCompact(media.matches);media.addEventListener('change',change)
-    return ()=>media.removeEventListener('change',change)
-  },[])
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const change = useCallback((values: Record<string,string|undefined>)=>setParams(current=>{
     const next=new URLSearchParams(current)
@@ -76,13 +69,6 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const items = devices.data?.items ?? []
   const matchSearch=items.some(row=>row.ip_match)
 
-  const columns: ColumnsType<DeviceInventoryListItem> = [
-    { title: '终端身份', key: 'identity', render: (_, row) => <DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/> },
-    { title: '类型 / 品牌', key: 'recognition', render: (_,row)=><DeviceLedgerRecognition device={row}/> },
-    { title: '操作系统', key: 'os', render: (_,row)=><DeviceLedgerOS device={row}/> },
-    { title: '关联账号 / 接入', key: 'context', render: (_, row) => <OwnershipAccess device={row} /> },
-    { title: '最近观测', key:'observed', dataIndex: 'last_seen', width: 110, render: (value?: string) => <ObservedTime value={value} /> },
-  ]
   const scopeControls = <>
     <Segmented aria-label="终端范围" value={view} options={[{label:'近期观测',value:'recent'},{label:'全部历史',value:'history'}]} onChange={value=>change({view:String(value)})}/>
     <Button icon={<ReloadOutlined/>} loading={devices.isFetching} onClick={()=>{void devices.refresh();void metadata.refresh()}}>刷新数据</Button>
@@ -111,7 +97,7 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {devices.data?.read_model_state?.error&&<Alert type="warning" showIcon title="检索投影更新异常" description="保留上次已物化结果；关联变更可能尚未完成更新。"/>}
       {matchSearch&&<Typography.Paragraph className="device-list-note" type="secondary">精确 IP 匹配 · {view==='recent'?'所选时间内的观测与会话':'全部历史关联'}</Typography.Paragraph>}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表加载失败" message={devices.error.message} /> : <>
-        {compact&&<div className="device-mobile-cards">{items.map(row => <article key={row.endpoint_id} className="device-mobile-card">
+        <div className="device-mobile-cards device-tag-list">{items.map(row => <article key={row.endpoint_id} className="device-mobile-card">
           <div className="device-mobile-primary"><DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/></div>
           <div className="device-mobile-tags">
             {visibleColumns.includes('recognition')&&<DeviceLedgerRecognition device={row}/>}
@@ -119,9 +105,8 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
             {visibleColumns.includes('context')&&(row.current_account||row.current_account_conflict||row.owner_name||row.owner_account||row.current_access_id)&&<OwnershipAccess device={row}/>}
           </div>
           <div className="device-mobile-footer">{visibleColumns.includes('observed')&&<ObservedTime value={row.last_seen}/>}<div className="device-row-actions"><Link to={detailURL(row)}>查看详情</Link></div></div>
-        </article>)}</div>}
-        {compact&&items.length === 0 && <Typography.Text className="device-mobile-empty" type="secondary">没有匹配的终端</Typography.Text>}
-        {!compact&&<Table className="compact-list-table device-desktop-table" columns={columns.filter(column=>column.key==='identity'||visibleColumns.includes(String(column.key)))} dataSource={items} locale={{ emptyText: '没有匹配的终端' }} pagination={false} rowKey="endpoint_id" tableLayout="fixed" size="small" />}
+        </article>)}</div>
+        {items.length === 0 && <Typography.Text className="device-mobile-empty" type="secondary">没有匹配的终端</Typography.Text>}
         {total!==undefined?<AppServerPagination cursorMode page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={updatePagination}/>:<div className="device-pending-pagination" aria-label="统计等待分页"><Button disabled={pagination.page<=1||devices.isPlaceholderData} onClick={()=>updatePagination(pagination.page-1,pagination.pageSize)}>上一页</Button><Typography.Text>第 {pagination.page} 页</Typography.Text><Button disabled={!devices.data?.page.next_cursor||devices.isPlaceholderData} onClick={()=>updatePagination(pagination.page+1,pagination.pageSize)}>下一页</Button>{!metadata.isError&&<Typography.Text type="secondary">总数统计中</Typography.Text>}</div>}
       </>}
     </section>

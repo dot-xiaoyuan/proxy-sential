@@ -1,6 +1,7 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { safeReturnTo } from '../app/navigation'
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Descriptions, Empty, Progress, Space, Tag, Timeline, Typography } from 'antd'
+import { Descriptions, Empty, Progress, Space, Tag, Timeline, Typography } from 'antd'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../shared/api/client'
 import type { RouterEvidence } from '../shared/api/types'

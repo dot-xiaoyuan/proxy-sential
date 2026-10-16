@@ -1,3 +1,4 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { ActiveRiskIps } from './ActiveRiskIps'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { useSession } from '../shared/api/queries'
@@ -13,7 +14,7 @@ import {
   DeploymentUnitOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
-import { Alert, Card, Progress, Select, Typography } from 'antd'
+import { Card, Progress, Select, Typography } from 'antd'
 
 import { RootFilesystemCapacity, RootFilesystemWarning } from '../entities/system/RootFilesystemCapacity'
 import { formatBytes } from '../shared/ui/formatBytes'

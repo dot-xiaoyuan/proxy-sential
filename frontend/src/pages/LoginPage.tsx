@@ -1,5 +1,6 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
-import { Alert, Button, Form, Input, Typography } from 'antd'
+import { Button, Form, Input, Typography } from 'antd'
 
 import { useLogin } from '../shared/api/queries'
 

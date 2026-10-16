@@ -1,5 +1,6 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { useRef, useState } from 'react'
-import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Tabs, Tag, Typography, message } from 'antd'
+import { Button, Card, Empty, Form, Input, Modal, Select, Space, Tabs, Tag, Typography, message } from 'antd'
 import { can } from '../shared/auth/permissions'
 import { useOrganization, useOrganizationList, useOrganizationMutation, useSession } from '../shared/api/queries'
 import { AppErrorAlert, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'

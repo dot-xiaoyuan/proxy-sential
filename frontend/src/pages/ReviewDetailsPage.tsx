@@ -1,4 +1,5 @@
-import { Alert, App as AntApp, Button, Descriptions, Space, Tag, Typography } from 'antd'
+import { Notice as Alert } from '../shared/ui/Notice'
+import { App as AntApp, Button, Descriptions, Space, Tag, Typography } from 'antd'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 import { ReviewStatusTag } from '../entities/risk/ReviewStatusTag'

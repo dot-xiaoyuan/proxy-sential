@@ -1,4 +1,5 @@
-import { Alert, Tag } from 'antd'
+import { Notice as Alert } from '../../shared/ui/Notice'
+import { Tag } from 'antd'
 import type { RootFilesystemStatus } from '../../shared/api/types'
 import { formatBytes } from '../../shared/ui/formatBytes'
 

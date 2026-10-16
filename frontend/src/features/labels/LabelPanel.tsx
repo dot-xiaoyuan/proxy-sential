@@ -1,4 +1,5 @@
-import { Alert, App as AntApp, Button, Form, Input, Select } from 'antd'
+import { Notice as Alert } from '../../shared/ui/Notice'
+import { App as AntApp, Button, Form, Input, Select } from 'antd'
 
 import { useCreateLabel } from '../../shared/api/queries'
 import type { LabelKind } from '../../shared/api/types'

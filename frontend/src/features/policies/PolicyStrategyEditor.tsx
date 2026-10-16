@@ -1,7 +1,8 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Alert, Button, Checkbox, Form, Input, InputNumber, Select, Space, Steps, Switch, TreeSelect, Typography } from 'antd'
+import { Button, Checkbox, Form, Input, InputNumber, Select, Space, Steps, Switch, TreeSelect, Typography } from 'antd'
 
 import { request } from '../../shared/api/client'
 import type { components } from '../../shared/api/generated'

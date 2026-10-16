@@ -1,10 +1,9 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { safeReturnTo,detailPath } from '../app/navigation'
 import { useState } from "react";
 import { CaseHistoryList } from "./CaseHistoryList";
 import { Link, useParams, useSearchParams, useLocation } from "react-router-dom";
-import {
-  Alert,
-  Button,
+import {Button,
   Card,
   Descriptions,
   Divider,
@@ -15,8 +14,7 @@ import {
   Tag,
   Timeline,
   Typography,
-  message,
-} from "antd";
+  message} from "antd";
 
 import { CaseAssessment } from '../entities/risk/CaseAssessment';
 import { can } from "../shared/auth/permissions";

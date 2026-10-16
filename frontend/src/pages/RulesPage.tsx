@@ -1,3 +1,4 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { FingerprintCatalog } from "../features/fingerprints/FingerprintCatalog";
 import { ApplicationLibrary } from "../features/applications/ApplicationLibrary";
 import { useQuery } from '@tanstack/react-query';
@@ -6,9 +7,7 @@ import type { RulesStatus } from '../shared/api/types';
 import { useSearchParams } from 'react-router-dom';
 import { useState } from "react";
 import { UploadOutlined } from "@ant-design/icons";
-import {
-  App as AntApp,
-  Alert,
+import {App as AntApp,
   Button,
   Descriptions,
   Skeleton,
@@ -16,8 +15,7 @@ import {
   Tabs,
   Tag,
   Typography,
-  Upload,
-} from "antd";
+  Upload} from "antd";
 
 import {
   useDeviceFingerprintLibrary,

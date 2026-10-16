@@ -1,5 +1,6 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Alert, Button, Spin } from 'antd'
+import { Button, Spin } from 'antd'
 import { policiesAPI } from './api'
 
 export function ApprovalPreview({ id, onComplete }: { id: string; onComplete: () => void }) {

@@ -1,5 +1,6 @@
+import { Notice as Alert } from './Notice'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { Alert, Button, Typography } from 'antd'
+import { Button, Typography } from 'antd'
 import { request } from '../api/client'
 import { awaitOperationTask, subscribeTasks, taskSnapshot, trackOperationTask, type OperationTask } from '../api/operationTasks'
 

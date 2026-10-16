@@ -1,3 +1,4 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import { useEffect, useState } from 'react'
 import {
   CheckCircleOutlined,
@@ -5,7 +6,7 @@ import {
   CodeOutlined,
   TagOutlined,
 } from '@ant-design/icons'
-import { Alert, Button, Card, Descriptions, Drawer, message, Space, Table, Typography } from 'antd'
+import { Button, Card, Descriptions, Drawer, message, Space, Table, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../../entities/risk/RiskLevelTag'

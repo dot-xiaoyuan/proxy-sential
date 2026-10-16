@@ -1,3 +1,4 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { OperationTaskProgress } from '../shared/ui/OperationTaskProgress'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
@@ -20,7 +21,7 @@ import { LoginPage } from '../pages/LoginPage'
 import { AppLoadingState } from '../shared/ui'
 import { can } from '../shared/auth/permissions'
 import { routeOwner, routePermission, visibleNavigation } from './navigation'
-import { Alert } from 'antd'
+
 import type { Session } from '../shared/api/types'
 
 const navigationIcons: Record<string, ReactNode> = {

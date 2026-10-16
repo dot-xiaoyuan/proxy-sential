@@ -1,7 +1,8 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Card, Empty, Input, Select, Tag } from 'antd'
+import { Button, Card, Empty, Input, Select, Tag } from 'antd'
 import { request } from '../shared/api/client'
 import { AppErrorAlert, AppLoadingState } from '../shared/ui'
 

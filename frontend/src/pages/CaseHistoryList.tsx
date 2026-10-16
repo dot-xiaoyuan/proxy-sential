@@ -1,5 +1,6 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { useState } from 'react';
-import { Alert, Button, Typography } from 'antd';
+import { Button, Typography } from 'antd';
 import { useCaseHistory } from '../shared/api/queries';
 import type { CaseHistoryKind, CaseHistoryRow } from '../shared/api/types';
 

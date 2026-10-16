@@ -1,11 +1,10 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { safeReturnTo } from '../app/navigation'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { ApplicationActivity } from "../features/applications/ApplicationActivity";
 
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import {
-  Alert,
-  Descriptions,
+import {Descriptions,
   Progress,
   Skeleton,
   Space,
@@ -13,8 +12,7 @@ import {
   Table,
   Tabs,
   Tag,
-  Typography,
-} from "antd";
+  Typography} from "antd";
 
 import { EvidenceList } from "../entities/evidence/EvidenceList";
 import { RiskLevelTag } from "../entities/risk/RiskLevelTag";

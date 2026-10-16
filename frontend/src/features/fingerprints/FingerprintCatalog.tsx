@@ -1,8 +1,7 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
+import {Button,
   Card,
   Descriptions,
   Drawer,
@@ -14,8 +13,7 @@ import {
   Statistic,
   Tabs,
   Tag,
-  Typography,
-} from "antd";
+  Typography} from "antd";
 import { request } from "../../shared/api/client";
 import type { components } from "../../shared/api/generated";
 import { AppFactBar } from '../../shared/ui'

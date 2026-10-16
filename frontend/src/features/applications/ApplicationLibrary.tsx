@@ -1,6 +1,7 @@
+import { Notice as Alert } from '../../shared/ui/Notice'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Button, Input, InputNumber, Select, Switch, Typography, Upload } from 'antd'
+import { Button, Input, InputNumber, Select, Switch, Typography, Upload } from 'antd'
 import { UploadOutlined } from '@ant-design/icons'
 import { useSession } from '../../shared/api/queries'
 import { can } from '../../shared/auth/permissions'

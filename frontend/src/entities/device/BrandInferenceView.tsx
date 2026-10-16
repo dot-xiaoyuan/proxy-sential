@@ -1,4 +1,5 @@
-import { Alert, Tag, Typography } from 'antd'
+import { Notice as Alert } from '../../shared/ui/Notice'
+import { Tag, Typography } from 'antd'
 import { BrandLogo } from './BrandLogo'
 import type { BrandInference } from '../../shared/api/types'
 

@@ -18,7 +18,6 @@ export const navigation: NavigationGroup[] = [
   { key: 'assets', title: '设备中心', items: [
     {...item('devices','终端列表','/devices?tab=terminal','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'terminal') || (p.startsWith('/devices/') && !p.startsWith('/devices/network/')) || p === '/discovery'},
     {...item('routers','路由器','/devices?tab=network','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'network') || p.startsWith('/devices/network/') || p.startsWith('/discovery/routers/')},
-    item('account-assessments','用户研判','/accounts','identity:read'),
   ] },
   { key: 'network', title: '网络分析', hidden: true, items: [
     ...(['applications','access','technical'] as const).map((section,index) => ({...item(section,['应用访问','访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['applications','access','technical'].includes(q.get('section')||'')?q.get('section'):'applications') === section})),
@@ -28,7 +27,7 @@ export const navigation: NavigationGroup[] = [
   { key: 'system', title: '系统管理', items: [{...item('sources','数据源与采集','/settings/sources','ingest:read'),readAlternatives:[{permission:'identity:read',to:'/settings/sources?tab=sources'}]},item('integrations','认证与处置接入','/settings/actions','actions:read'),item('notifications','通知模板与通道','/settings/notifications','notifications:read'),{...item('behavior-reports','网络安全行为上报','/settings/behavior-reports','behavior-reports:read'),readAlternatives:[{permission:'behavior-reports:manage',to:'/settings/behavior-reports'}]},item('organization','校区与网络区域','/settings/organization','organization:read'),item('users','用户权限','/settings/security','users:manage'),item('audit','审计日志','/audit','audit:read')] },
 ]
 
-const registeredRoutes=[/^\/(overview|activity|devices|accounts|discovery|events|cases|actions|audit|policies|shared-access)$/, /^\/(devices|accounts|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
+const registeredRoutes=[/^\/(overview|activity|devices|discovery|events|cases|actions|audit|policies|shared-access)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
 export function safeReturnTo(value: string | null | undefined, fallback = '/events', depth=0): string {
   if (!value || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f]/.test(value)) return fallback
   try {

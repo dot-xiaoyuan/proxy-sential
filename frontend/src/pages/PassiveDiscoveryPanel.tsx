@@ -1,6 +1,7 @@
+import { Notice as Alert } from '../shared/ui/Notice'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Collapse, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd'
+import { Button, Collapse, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { request } from '../shared/api/client'
