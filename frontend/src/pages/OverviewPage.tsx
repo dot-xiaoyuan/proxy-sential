@@ -210,75 +210,6 @@ export function OverviewPage() {
         />
       </section>
 
-      <section className="surface workbench-actions"><Typography.Title level={4}>风险待办</Typography.Title><p>待处理 {overview.data.open_case_count??overview.data.pending_reviews} 件 · 超时 {overview.data.overdue_case_count??0} 件</p><div className="policy-toolbar">
-      {can(session.data,'cases:read')&&<><Link to={`/cases?${context}`}>处理风险案件</Link><Link to={`/shared-access?tab=reviews&${context}`}>进入账号复核</Link></>}
-      {can(session.data,'actions:read')&&<Link to="/actions?tab=actions">核对处置记录</Link>}
-      </div></section>
-      {activity.data&&<section className="surface"><ActiveRiskIps items={activity.data.top_active_risk_ips}/></section>}
-      <section className="overview-risk-summary">
-        <Card className="surface-card overview-panel" size="small">
-          <PanelHeader icon={<SafetyCertificateOutlined />} title="风险等级分布" meta={`${totalRiskObjects.toLocaleString()} 个对象`} />
-          <div className="overview-risk-list">
-            {levelOrder.map((level) => {
-              const count = levelCounts[level]
-              const percent = totalRiskObjects > 0 ? count / totalRiskObjects * 100 : 0
-              return (
-                <div className={`overview-risk-item overview-risk-item-${level}`} key={level}>
-                  <span className="overview-risk-dot" />
-                  <span className="overview-risk-name">{levelNames[level]}</span>
-                  <strong>{count.toLocaleString()}</strong>
-                  <span className="overview-risk-percent">{percent.toFixed(percent > 0 && percent < 1 ? 1 : 0)}%</span>
-                </div>
-              )
-            })}
-          </div>
-        </Card>
-
-      </section>
-
-      <section className="overview-focus-grid">
-        <Card className="surface-card overview-panel overview-evidence-panel" size="small">
-          <PanelHeader
-            icon={<DeploymentUnitOutlined />}
-            title="历史累计证据"
-            meta={`展示前 ${Math.min(8, overview.data.top_evidence.length)} 类`}
-          />
-          <div className="overview-evidence-grid">
-            {overview.data.top_evidence.slice(0, 8).map((item) => (
-              <div className="overview-evidence-item" key={item.type}>
-                <div className="overview-evidence-label">
-                  <span title={item.type}>{evidenceNames[item.type] ?? item.type}</span>
-                  <strong>{item.count.toLocaleString()}</strong>
-                </div>
-                <Progress percent={item.count / maxEvidenceCount * 100} showInfo={false} strokeColor="#64748b" />
-              </div>
-            ))}
-          </div>
-          {overview.data.top_evidence.length > 8 && (
-            <Typography.Text className="overview-panel-footnote">
-              另有 {overview.data.top_evidence.length - 8} 类低贡献证据已收拢
-            </Typography.Text>
-          )}
-        </Card>
-
-      </section>
-
-      <section className="overview-detail-grid">
-        <div className="surface overview-activity-summary">
-          <div>
-            <Typography.Title level={4}>DPI 访问态势</Typography.Title>
-            <Typography.Text type="secondary">
-              {quickWindow} 内覆盖 {activity.data?.active_ip_count ?? 0} 个活跃 IP 与 {activity.data?.access_object_count ?? 0} 个访问目标
-            </Typography.Text>
-          </div>
-          <div className="overview-activity-metrics">
-            <div><span>标准事件</span><strong>{(activity.data?.event_count ?? 0).toLocaleString()}</strong></div>
-            <div><span>活跃风险 IP</span><strong>{activity.data?.active_risk_ip_count ?? 0}</strong></div>
-            <Link to={`/activity?section=access&${context}`}>进入访问分析</Link>
-          </div>
-        </div>
-
-      </section>
       <details className="surface platform-health"><summary>平台健康与运行负载 <RootFilesystemWarning status={host?.root_filesystem} error={host?.root_filesystem_error} /></summary><div className="overview-runtime-grid">        <Card className="surface-card overview-panel" size="small">
           <PanelHeader icon={<CloudServerOutlined />} title="服务器负载" meta={host ? `${host.logical_cpus} 核` : undefined} />
           <div className="overview-load-stack">
@@ -338,6 +269,78 @@ export function OverviewPage() {
           {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="平台健康状态加载失败" />}
         </Card>
 </div></details>
+
+      <section className="surface workbench-actions"><Typography.Title level={4}>风险待办</Typography.Title><p>待处理 {overview.data.open_case_count??overview.data.pending_reviews} 件 · 超时 {overview.data.overdue_case_count??0} 件</p><div className="policy-toolbar">
+      {can(session.data,'cases:read')&&<><Link to={`/cases?${context}`}>处理风险案件</Link><Link to={`/shared-access?tab=reviews&${context}`}>进入账号复核</Link></>}
+      {can(session.data,'actions:read')&&<Link to="/actions?tab=actions">核对处置记录</Link>}
+      </div></section>
+      {activity.data && (activity.data.top_active_risk_ips?.length ?? 0) > 0 && <section className="surface"><ActiveRiskIps items={activity.data.top_active_risk_ips}/></section>}
+      {totalRiskObjects > 0 && (
+        <section className="overview-risk-summary">
+          <Card className="surface-card overview-panel" size="small">
+            <PanelHeader icon={<SafetyCertificateOutlined />} title="风险等级分布" meta={`${totalRiskObjects.toLocaleString()} 个对象`} />
+            <div className="overview-risk-list">
+              {levelOrder.map((level) => {
+                const count = levelCounts[level]
+                const percent = totalRiskObjects > 0 ? count / totalRiskObjects * 100 : 0
+                return (
+                  <div className={`overview-risk-item overview-risk-item-${level}`} key={level}>
+                    <span className="overview-risk-dot" />
+                    <span className="overview-risk-name">{levelNames[level]}</span>
+                    <strong>{count.toLocaleString()}</strong>
+                    <span className="overview-risk-percent">{percent.toFixed(percent > 0 && percent < 1 ? 1 : 0)}%</span>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+
+        </section>
+      )}
+
+      <section className="overview-focus-grid">
+        <Card className="surface-card overview-panel overview-evidence-panel" size="small">
+          <PanelHeader
+            icon={<DeploymentUnitOutlined />}
+            title="历史累计证据"
+            meta={`展示前 ${Math.min(8, overview.data.top_evidence.length)} 类`}
+          />
+          <div className="overview-evidence-grid">
+            {overview.data.top_evidence.slice(0, 8).map((item) => (
+              <div className="overview-evidence-item" key={item.type}>
+                <div className="overview-evidence-label">
+                  <span title={item.type}>{evidenceNames[item.type] ?? item.type}</span>
+                  <strong>{item.count.toLocaleString()}</strong>
+                </div>
+                <Progress percent={item.count / maxEvidenceCount * 100} showInfo={false} strokeColor="#64748b" />
+              </div>
+            ))}
+          </div>
+          {overview.data.top_evidence.length > 8 && (
+            <Typography.Text className="overview-panel-footnote">
+              另有 {overview.data.top_evidence.length - 8} 类低贡献证据已收拢
+            </Typography.Text>
+          )}
+        </Card>
+
+      </section>
+
+      <section className="overview-detail-grid">
+        <div className="surface overview-activity-summary">
+          <div>
+            <Typography.Title level={4}>DPI 访问态势</Typography.Title>
+            <Typography.Text type="secondary">
+              {quickWindow} 内覆盖 {activity.data?.active_ip_count ?? 0} 个活跃 IP 与 {activity.data?.access_object_count ?? 0} 个访问目标
+            </Typography.Text>
+          </div>
+          <div className="overview-activity-metrics">
+            <div><span>标准事件</span><strong>{(activity.data?.event_count ?? 0).toLocaleString()}</strong></div>
+            <div><span>活跃风险 IP</span><strong>{activity.data?.active_risk_ip_count ?? 0}</strong></div>
+            <Link to={`/activity?section=access&${context}`}>进入访问分析</Link>
+          </div>
+        </div>
+
+      </section>
     </main>
   )
 }
