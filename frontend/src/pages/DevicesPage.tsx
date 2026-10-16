@@ -112,11 +112,10 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {matchSearch&&<Typography.Paragraph className="device-list-note" type="secondary">精确 IP 匹配 · {view==='recent'?'所选时间内的观测与会话':'全部历史关联'}</Typography.Paragraph>}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表加载失败" message={devices.error.message} /> : <>
         {compact&&<div className="device-mobile-cards">{items.map(row => <article key={row.endpoint_id} className="device-mobile-card">
-          <DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/>
-          {visibleColumns.includes('recognition')&&<DeviceLedgerRecognition device={row}/>}
-          {visibleColumns.includes('os')&&<DeviceLedgerOS device={row}/>}
-
-          {visibleColumns.includes('context')&&(row.current_account||row.current_account_conflict||row.owner_name||row.owner_account||row.current_access_id)&&<OwnershipAccess device={row} />}
+          <div className="device-mobile-primary"><DeviceLedgerIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled}/>
+            <div className="device-mobile-classification">{visibleColumns.includes('recognition')&&<DeviceLedgerRecognition device={row}/>}{visibleColumns.includes('os')&&<DeviceLedgerOS device={row}/>}</div>
+          </div>
+          {visibleColumns.includes('context')&&(row.current_account||row.current_account_conflict||row.owner_name||row.owner_account||row.current_access_id)&&<div className="device-mobile-context"><OwnershipAccess device={row}/></div>}
           <div className="device-mobile-footer">{visibleColumns.includes('observed')&&<ObservedTime value={row.last_seen}/>}<div className="device-row-actions"><Link to={detailURL(row)}>查看详情</Link></div></div>
         </article>)}</div>}
         {compact&&items.length === 0 && <Typography.Text className="device-mobile-empty" type="secondary">没有匹配的终端</Typography.Text>}

@@ -459,7 +459,7 @@ FROM account_tag_assessments WHERE state='historical') a`
 	if q.State != "historical" && q.ReviewState != "reject" {
 		tagReviewFilter = " AND " + reviewExpr + "<>'reject'"
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.account_id,a.tag_type,a.assessment_version,a.state,a.evidence_level,a.source_type,a.reason,a.endpoint_ids,a.evidence_ids,a.rule_version,a.raw_score,a.first_seen,a.last_seen,a.valid_until,`+reviewExpr+` FROM `+source+` WHERE a.account_id=ANY($1::text[]) AND a.state=$2`+tagReviewFilter+` ORDER BY array_position($1::text[],a.account_id),a.tag_type,a.last_seen DESC`, ids, func() string {
+	rows, err := s.db.QueryContext(ctx, `SELECT a.account_id,a.tag_type,a.assessment_version,a.state,a.evidence_level,a.source_type,a.reason,a.endpoint_ids,a.evidence_ids,a.rule_version,a.raw_score,a.first_seen,a.last_seen,a.valid_until,`+reviewExpr+`,a.last_seen FROM `+source+` WHERE a.account_id=ANY($1::text[]) AND a.state=$2`+tagReviewFilter+` ORDER BY array_position($1::text[],a.account_id),a.tag_type,a.last_seen DESC`, ids, func() string {
 		if q.State == "historical" {
 			return "historical"
 		}

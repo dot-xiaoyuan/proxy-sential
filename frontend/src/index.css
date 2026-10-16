@@ -4578,7 +4578,31 @@ pre.wrap-code {
 .router-library, .device-library-tag { margin:0; font-size:11px; color:#334155; background:#ffffff; border:1px dashed #cbd5e1; white-space:nowrap; flex-shrink:0; }
 .router-basis { display:grid; gap:4px; max-width:360px; }
 .router-basis b { color:#e2e8f0; font-weight:600; }
-@media(max-width:559px){ .device-center-page .router-desktop-list {display:none} .device-center-page .router-mobile-list {display:grid;gap:10px} }
+@media(max-width:991px){ .device-center-page .router-desktop-list {display:none} .device-center-page .router-mobile-list {display:grid;gap:0} }
+/* Keep the conclusion and address compact; scoring and source labels have their own row. */
+.device-center-page .router-observation-card { gap:8px; border:0; border-radius:0; padding:12px 0; }
+.device-center-page .router-mobile-list > .router-observation-card + .router-observation-card { border-top:1px solid #e2e8f0; }
+.router-card-main { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; min-width:0; align-items:start; }
+.router-card-meta { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; min-width:0; }
+.router-card-meta .router-card-footer { padding:0; border:0; gap:8px 14px; }
+.router-observation-card .router-recognition-evidence { gap:4px; }
+.router-observation-card .router-auth-identity { flex-direction:row; flex-wrap:wrap; align-items:baseline; gap:4px 8px; }
+.device-inventory-page .device-mobile-card { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px 20px; align-items:start; }
+.device-mobile-primary { display:grid; gap:6px; min-width:0; }
+.device-mobile-primary .device-ledger-primary { white-space:normal; overflow-wrap:anywhere; word-break:break-all; }
+.device-mobile-classification { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; padding-left:34px; min-width:0; }
+.device-mobile-classification .device-ledger-recognition { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; min-width:0; }
+.device-mobile-classification .device-ledger-recognition > .ant-typography,.device-mobile-classification .device-brand-model { font-size:12px; }
+.device-mobile-classification .device-identity-clues { gap:3px; }
+.device-mobile-context { min-width:0; }
+.device-inventory-page .device-mobile-card .device-mobile-footer { grid-column:1 / -1; border-top:1px solid #e2e8f0; padding-top:6px; }
+@media(min-width:560px) and (max-width:991px){.device-mobile-context .device-context-cell > div {grid-template-columns:72px minmax(0,1fr)} }
+@media(max-width:559px){
+ .router-card-main { grid-template-columns:1fr; gap:5px; }
+ .device-inventory-page .device-mobile-card { grid-template-columns:1fr; }
+ .device-mobile-classification { padding-left:34px; }
+ .device-mobile-card .device-mobile-context .device-context-cell { padding:6px 0 0; }
+}
 /* Mobile router list: the auth checkbox shares the search row and list rows drop the nested border. */
 @media (max-width: 559px) {
   .router-filter-primary > .ant-form-item:not(.router-auth-filter) { flex: 1 1 100%; }

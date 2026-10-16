@@ -46,10 +46,10 @@ export function RouterObservationsPanel() {
   }
   const items = observations.data?.items || []
   const columns: ColumnsType<RouterAssessment> = [
-    // Recognition leads the row: brand, role, model and the scored evidence that produced them.
-    { title:'识别结果',key:'recognition',width:290,render:(_,item)=><RouterRecognition item={item}/> },
-    { title:'地址',key:'identity',width:230,render:(_,item)=><DeviceIdentity item={item}/> },
-    { title:'关联账号',key:'auth',render:(_,item)=><AuthIdentity item={item}/> },
+    { title:'识别结果',key:'recognition',width:210,render:(_,item)=><RouterRecognition item={item}/> },
+    { title:'地址',key:'identity',width:190,render:(_,item)=><DeviceIdentity item={item}/> },
+    { title:'判定依据',key:'evidence',width:250,render:(_,item)=><RouterEvidence item={item}/> },
+    { title:'关联账号',key:'auth',width:170,render:(_,item)=><AuthIdentity item={item}/> },
     { title:'最近观测',dataIndex:'last_seen',width:118,render:(value?:string)=><ObservedTime value={value}/> },
     { title:'操作',key:'action',width:84,render:(_,item)=><Link to={detailPath(`/devices/network/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link> },
   ]
@@ -84,7 +84,7 @@ export function RouterObservationsPanel() {
     </Form>
     <section className="surface center-list-surface">{observations.isLoading ? <AppLoadingState rows={6} /> : observations.isError ? <AppErrorAlert title="路由观察加载失败" message={observations.error.message} /> : <>
       <div className="router-desktop-list"><Table rowKey="assessment_id" size="small" columns={columns} dataSource={items} pagination={false} tableLayout="fixed" locale={{ emptyText: '没有匹配的路由设备' }} /></div>
-      <div className="router-mobile-list">{items.map(item=><article className="router-observation-card" key={item.assessment_id}><RouterRecognition item={item}/><DeviceIdentity item={item}/><AuthIdentity item={item}/><div className="router-card-footer"><ObservedTime value={item.last_seen}/><Link to={detailPath(`/devices/network/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link></div></article>)}</div>
+      <div className="router-mobile-list">{items.map(item=><article className="router-observation-card" key={item.assessment_id}><div className="router-card-main"><RouterRecognition item={item}/><DeviceIdentity item={item}/></div><RouterEvidence item={item}/><div className="router-card-meta"><AuthIdentity item={item}/><div className="router-card-footer"><ObservedTime value={item.last_seen}/><Link to={detailPath(`/devices/network/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link></div></div></article>)}</div>
       <AppServerPagination page={page} pageSize={pagination.pageSize} total={total} onChange={pagination.update}/>
     </>}</section>
   </div>
@@ -99,11 +99,6 @@ function AuthIdentity({ item }: { item: RouterAssessment }) {
   return <div className="router-auth-identity"><strong>{binding.account_id}</strong><span>{binding.match_basis === 'exact_endpoint' ? '终端标识精确匹配' : 'MAC 精确匹配'}</span></div>
 }
 
-/**
- * Routing gear is identified from scored multi-source evidence, so the list shows the
- * conclusion (brand / role / model) together with the score and the sources behind it,
- * instead of two unlabelled stacked strings.
- */
 function RouterRecognition({ item }: { item: RouterAssessment }) {
  const brand = item.brand_reference_only ? '' : (item.brand || '')
  // series and model often repeat the brand or each other; show each fact once.
@@ -115,26 +110,27 @@ function RouterRecognition({ item }: { item: RouterAssessment }) {
   if (modelValue) parts.push(brand && modelValue.toLowerCase().startsWith(brand.toLowerCase()) ? modelValue.slice(brand.length).trim() : modelValue)
   return parts.join(' · ')
  })()
+ return <div className="router-recognition">
+  <div className="router-recognition-head">
+   {brand && <BrandLogo brandKey={brand} />}
+   <Tag className={`router-role router-role-${item.role}`}>{roleLabels[item.role] || item.role}</Tag>
+  </div>
+  {model && <span className="router-model" title={model}>{model}</span>}
+ </div>
+}
+function RouterEvidence({ item }: { item: RouterAssessment }) {
  const sources = item.sources || []
  const components = item.score_components || []
  const basis = components.length > 0
   ? <div className="router-basis"><b>识别依据 · 规则 {item.rule_version || ''}</b>{components.map(component => <div key={component.evidence_id}>{routerSourceLabels[component.source_family] || component.source_family} {component.score > 0 ? `+${component.score}` : component.score} · {component.explanation}</div>)}</div>
   : undefined
- return <div className="router-recognition">
-  <div className="router-recognition-head">
-   {brand && <BrandLogo brandKey={brand} />}
-   {brand && <strong className="router-brand">{brand}</strong>}
-   <Tag className={`router-role router-role-${item.role}`}>{roleLabels[item.role] || item.role}</Tag>
-  </div>
-  {model && <span className="router-model" title={model}>{model}</span>}
-  <div className="router-recognition-evidence">
+ return <div className="router-recognition-evidence">
    <Tooltip title={basis}><span className={`router-score router-score-${item.status}`}>{statusLabels[item.status]} · {item.confidence} 分</span></Tooltip>
    {sources.slice(0, 3).map(source => <Tag key={source} className="router-source">{routerSourceLabels[source] || source}</Tag>)}
    {sources.length > 3 && <Tooltip title={sources.map(source => routerSourceLabels[source] || source).join('、')}><Tag className="router-source">+{sources.length - 3}</Tag></Tooltip>}
    {(item.libraries || []).map(library => <Tag key={library} className="router-library">{routerLibraryLabels[library] || library}</Tag>)}
    {item.ambiguous && <Tag color="warning">关联不唯一</Tag>}
    {item.conflicts.length > 0 && <Tooltip title={item.conflicts.map(conflict => routerConflictLabels[conflict] || conflict).join('、')}><Tag color="error">证据冲突</Tag></Tooltip>}
-  </div>
  </div>
 }
 function DeviceIdentity({item,historical=false,name}:{item:RouterAssessment;historical?:boolean;name?:string}){
