@@ -178,6 +178,7 @@ func applyMaterializedRecognition(item *EndpointDeviceInventory, cached Endpoint
 	item.RandomizedMAC = cached.RandomizedMAC
 	item.RecognitionConflict = cached.RecognitionConflict
 	item.RecognitionEvidence = append([]string{}, cached.RecognitionEvidence...)
+	item.SourceMatches = cached.SourceMatches
 	item.BrandReference = cached.BrandReference
 	item.BrandInference = cached.BrandInference
 	item.EcosystemHint = cached.EcosystemHint

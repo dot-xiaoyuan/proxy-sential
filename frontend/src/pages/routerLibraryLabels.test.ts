@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { routerLibraryLabels } from './routerLabels'
+import { routerLibraryLabels } from '../entities/device/libraryLabels'
 
 describe('router library labels', () => {
   it('names every open-source library as a secondary "命中" label', () => {

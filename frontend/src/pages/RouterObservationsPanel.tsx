@@ -12,7 +12,8 @@ import { api } from '../shared/api/client'
 import type { RouterAssessment, RouterObservationQuery } from '../shared/api/types'
 import { AppErrorAlert, AppLoadingState, AppServerPagination } from '../shared/ui'
 import { BrandLogo } from '../entities/device/BrandLogo'
-import { routerConflictLabels, routerLibraryLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
+import { routerLibraryLabels } from '../entities/device/libraryLabels'
+import { routerConflictLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
 
 const statusLabels = routerStatusLabels
 const roleLabels = routerRoleLabels

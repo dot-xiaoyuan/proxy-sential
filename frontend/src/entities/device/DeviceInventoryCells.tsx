@@ -6,6 +6,7 @@ import { BrandLogo } from './BrandLogo'
 import { DeviceNameView } from './DeviceNameView'
 import { OperatingSystemLabel } from './OperatingSystemLabel'
 import { resolveDeviceBrand } from './brandMatcher'
+import { routerLibraryLabels } from './libraryLabels'
 
 type DeviceDisplayItem = EndpointDeviceInventory | DeviceInventoryListItem
 
@@ -79,6 +80,7 @@ export function DeviceIdentityCell({ device, showName = true }: { device: Device
         {platform && <Tooltip title="VMware 注册厂商仅提示虚拟网卡或虚拟化平台，不确认宿主机品牌。"><Tag className="device-platform-tag"><CloudServerOutlined />VMware 虚拟平台线索</Tag></Tooltip>}
         {(device.recognition_conflict || inference?.status === 'conflict') && <Tooltip title="识别线索存在冲突，查看详情核对证据"><Tag className="device-conflict-tag">线索冲突</Tag></Tooltip>}
         {device.discovery?.conflict && <Tag className="device-conflict-tag">发现线索冲突</Tag>}
+        {('libraries' in device ? device.libraries ?? [] : []).map(library => <Tooltip key={library} title="开源指纹库识别到该终端的部分特征；仅作来源标签，不改变品牌或型号结论。"><Tag className="router-library device-library-tag">{routerLibraryLabels[library] || library}</Tag></Tooltip>)}
       </div>
       {device.router_observation && <Link className={`router-device-summary router-device-summary-${device.router_observation.status}`} to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}>路由观察 · {routerStatusLabel(device.router_observation.status)} · {device.router_observation.confidence}</Link>}
     </div>

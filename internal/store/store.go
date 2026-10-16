@@ -117,6 +117,7 @@ type DeviceInventoryListItem struct {
 	OSFamilyConfidence       float64                      `json:"os_family_confidence"`
 	RandomizedMAC            bool                         `json:"randomized_mac"`
 	RecognitionConflict      bool                         `json:"recognition_conflict"`
+	Libraries                []string                     `json:"libraries,omitempty"`
 }
 
 type DeviceBrandInferenceSummary struct {
@@ -148,6 +149,7 @@ func ProjectDeviceInventoryListItem(item EndpointDeviceInventory) DeviceInventor
 		ModelConfidence: item.ModelConfidence, DeviceTypeConfidence: item.DeviceTypeConfidence,
 		OSFamilyConfidence: item.OSFamilyConfidence, RandomizedMAC: item.RandomizedMAC,
 		RecognitionConflict: item.RecognitionConflict,
+		Libraries:           fingerprint.LibrarySourceIDs(item.SourceMatches),
 	}
 	if item.BrandInference != nil {
 		projected.BrandInference = &DeviceBrandInferenceSummary{Status: item.BrandInference.Status, Brand: item.BrandInference.Brand, Confidence: item.BrandInference.Confidence}

@@ -1,6 +1,9 @@
 package fingerprint
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // RouterLibraryLabel is one open-source library's contribution to a router assessment.
 // A library is shown as a label whenever it recognises part of a device; only libraries
@@ -62,6 +65,22 @@ func RouterCatalogValues(inputs map[string][]string) map[string][]string {
 }
 
 // LibraryDisplayName is the name shown for a catalog source on router labels.
+// LibrarySourceIDs returns the distinct open-source library IDs that matched a device,
+// sorted for a stable order. Matches are labels for display; they never change a score.
+func LibrarySourceIDs(matches []SourceMatch) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, match := range matches {
+		if match.SourceID == "" || seen[match.SourceID] {
+			continue
+		}
+		seen[match.SourceID] = true
+		out = append(out, match.SourceID)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func LibraryDisplayName(sourceID string) string {
 	names := map[string]string{"recog": "Recog", "satori": "Satori", "whatweb": "WhatWeb", "librenms": "LibreNMS", "openwrt": "OpenWrt ToH", "fingerbank-current": "Fingerbank", "p0f": "p0f"}
 	if name, ok := names[sourceID]; ok {

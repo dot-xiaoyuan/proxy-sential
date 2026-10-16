@@ -4575,7 +4575,7 @@ pre.wrap-code {
 .router-score-candidate { color:#92400e; background:#fffbeb; border-color:#fde68a; }
 .router-source { margin:0; font-size:11px; color:#475569; background:#f8fafc; border-color:#e2e8f0; }
 /* Open-source library labels are secondary evidence: smaller, lighter, and clearly named by library. */
-.router-library { margin:0; font-size:11px; color:#334155; background:#ffffff; border:1px dashed #cbd5e1; }
+.router-library, .device-library-tag { margin:0; font-size:11px; color:#334155; background:#ffffff; border:1px dashed #cbd5e1; white-space:nowrap; flex-shrink:0; }
 .router-basis { display:grid; gap:4px; max-width:360px; }
 .router-basis b { color:#e2e8f0; font-weight:600; }
 @media(max-width:559px){ .device-center-page .router-desktop-list {display:none} .device-center-page .router-mobile-list {display:grid;gap:10px} }

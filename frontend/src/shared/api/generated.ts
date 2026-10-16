@@ -5901,6 +5901,8 @@ export interface components {
             os_family_confidence: number;
             randomized_mac: boolean;
             recognition_conflict: boolean;
+            /** @description Open-source library IDs that recognised part of this device. Labels only; they never change a score. */
+            libraries?: string[];
         };
         InventoryProjectionState: {
             /** @description Current summaries available; does not assert historical completeness or freshness */

@@ -6050,6 +6050,7 @@ components:
         os_family_confidence: { type: number, minimum: 0, maximum: 1 }
         randomized_mac: { type: boolean }
         recognition_conflict: { type: boolean }
+        libraries: { type: array, items: { type: string }, description: "Open-source library IDs that recognised part of this device. Labels only; they never change a score." }
     InventoryProjectionState:
       type: object
       required: [complete, updating, as_of]
