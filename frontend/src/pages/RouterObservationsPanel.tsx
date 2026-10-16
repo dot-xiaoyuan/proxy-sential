@@ -58,7 +58,7 @@ export function RouterObservationsPanel() {
     <Form form={form} className="surface router-filter-form center-list-toolbar" layout="vertical" onFinish={submit}>
       <div className="center-list-toolbar-row">
         <div className="center-list-search router-filter-primary"><Form.Item name="keyword"><Input allowClear prefix={<SearchOutlined />} placeholder="搜索品牌、型号、IP 或 MAC" /></Form.Item><Form.Item className="router-auth-filter" name="has_auth_binding" valuePropName="checked"><Checkbox>只看有认证身份</Checkbox></Form.Item><div className="router-filter-actions"><Button type="primary" htmlType="submit">查询</Button><Button onClick={() => { form.resetFields(); submit({}) }}>重置</Button><Button icon={<ReloadOutlined />} loading={observations.isFetching} onClick={() => void observations.refetch()}>刷新</Button></div></div>
-        <div className="center-list-meta"><Typography.Text strong className="center-list-title">路由器</Typography.Text><Typography.Text type="secondary">{total} 台设备</Typography.Text><Tooltip title="按路由身份聚合；品牌、型号与角色来自多源证据评分，MAC 合并要求采集范围和 VLAN 一致。"><InfoCircleOutlined aria-label="网络设备说明" /></Tooltip></div>
+        <div className="center-list-meta"><Typography.Text type="secondary">{total} 台设备</Typography.Text><Tooltip title="按路由身份聚合；品牌、型号与角色来自多源证据评分，MAC 合并要求采集范围和 VLAN 一致。"><InfoCircleOutlined aria-label="网络设备说明" /></Tooltip></div>
       </div>
       <details className="router-advanced-filters"><summary>更多筛选条件</summary><div className="router-filter-grid">
         <Form.Item name="brand" label="品牌"><Select allowClear showSearch options={brandOptions.map(value => ({ value, label: value }))} /></Form.Item>

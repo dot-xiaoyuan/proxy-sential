@@ -4576,6 +4576,14 @@ pre.wrap-code {
 .router-basis { display:grid; gap:4px; max-width:360px; }
 .router-basis b { color:#e2e8f0; font-weight:600; }
 @media(max-width:559px){ .device-center-page .router-desktop-list {display:none} .device-center-page .router-mobile-list {display:grid;gap:10px} }
+/* Mobile router list: the auth checkbox shares the search row and list rows drop the nested border. */
+@media (max-width: 559px) {
+  .router-filter-primary > .ant-form-item:not(.router-auth-filter) { flex: 1 1 100%; }
+  .router-filter-primary > .router-auth-filter { flex: 0 0 auto; width: auto; }
+  .device-center-page .router-mobile-list { gap: 0; }
+  .device-center-page .router-observation-card { border: 0; border-radius: 0; padding: 14px 0; }
+  .device-center-page .router-mobile-list > .router-observation-card + .router-observation-card { border-top: 1px solid #e2e8f0; }
+}
 /* Account assessment projection */
 .account-assessment-page,
 .account-assessment-detail { display: grid; gap: 16px; }
@@ -4596,7 +4604,7 @@ pre.wrap-code {
 .account-assessment-mobile { gap: 10px; }
 .account-assessment-card,
 .account-tag-detail,
-.account-endpoint { border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; background: #fff; }
+.account-endpoint { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; background: #fff; }
 .account-assessment-card-head,
 .account-tag-detail-head,
 .account-assessment-meta { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
@@ -4604,8 +4612,9 @@ pre.wrap-code {
 .account-assessment-meta { color: #64748b; font-size: 12px; }
 .account-tag-detail-list { align-items: stretch; }
 .account-tag-detail { flex: 1 1 320px; min-width: 0; }
-.account-tag-detail dl { display: grid; gap: 8px; margin: 12px 0; }
-.account-tag-detail dl div { display: grid; grid-template-columns: 86px minmax(0,1fr); gap: 8px; }
+.account-tag-detail dl { display: grid; gap: 4px; margin: 8px 0 0; }
+.account-tag-detail .ant-typography { margin: 6px 0 0; }
+.account-tag-detail dl div { display: grid; grid-template-columns: 72px minmax(0,1fr); gap: 8px; }
 .account-tag-detail dt { color: #64748b; }
 .account-tag-detail dd { margin: 0; overflow-wrap: anywhere; }
 .account-evidence-list { display: grid; gap: 6px; padding: 10px 0; }
@@ -4615,23 +4624,26 @@ pre.wrap-code {
 .account-review-actions .ant-btn,
 .account-assessment-filters .ant-btn { white-space: nowrap; flex-shrink: 0; }
 .account-endpoint-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap: 10px; }
-.account-endpoint { display: grid; gap: 6px; min-width: 0; }
+.account-endpoint { display: grid; gap: 4px; min-width: 0; }
 .account-endpoint a,
 .account-endpoint strong { overflow-wrap: anywhere; }
 .account-endpoint span { color: #64748b; }
 .account-history { display: grid; }
-.account-history article { display: grid; grid-template-columns: 170px 150px minmax(0,1fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid #e2e8f0; }
+.account-history article { display: grid; grid-template-columns: 170px 150px minmax(0,1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid #e2e8f0; }
+.account-history-section > .ant-typography-secondary { display: block; padding: 8px 0; }
 .account-history article:last-child { border-bottom: 0; }
 .account-history time,
 .account-history span { color: #64748b; }
 @media (max-width: 560px) {
   .account-assessment-filters { padding: 14px; }
   .account-assessment-filters .ant-input-search,
-  .account-assessment-filters .ant-select { flex: 1 1 100%; max-width: none; }
+  .account-assessment-filters .ant-input-search { flex: 1 1 100%; max-width: none; }
+  .account-assessment-filters .ant-select { flex: 1 1 calc(50% - 5px); min-width: 0; }
   .account-history article { grid-template-columns: 1fr; gap: 4px; }
   .account-tag-detail { flex-basis: 100%; }
 }
 
+/* Discovery protocol coverage and evidence summaries. */
 /* Discovery protocol coverage and evidence summaries. */
 .iot-coverage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .iot-coverage-item { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; overflow-wrap: anywhere; }
@@ -4643,3 +4655,4 @@ pre.wrap-code {
   .passive-discovery-controls > .ant-select, .passive-discovery-controls > .ant-input-affix-wrapper { width: 100%; min-width: 0; }
   .iot-coverage-grid { grid-template-columns: 1fr; }
 }
+

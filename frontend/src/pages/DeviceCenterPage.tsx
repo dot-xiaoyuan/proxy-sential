@@ -22,6 +22,6 @@ export function DeviceCenterPage() {
       <Tooltip title={view.hint}><InfoCircleOutlined className="center-title-hint" aria-label={`${view.title}说明`} /></Tooltip>
     </div></header>
     {tab === 'terminal' && <DevicesPage embedded />}
-    {tab === 'network' && <section className="surface device-center-network"><RouterObservationsPanel /></section>}
+    {tab === 'network' && <section className="device-center-network"><RouterObservationsPanel /></section>}
   </main>
 }
