@@ -88,13 +88,16 @@ func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
 		From: now.Add(-10 * time.Minute), To: now, LastObservedAt: now.Add(-time.Second), Complete: true, CoverageVerified: true,
 		EventIDs: []string{"event-1"}, Records: []sharedaccess.RecordRef{{EventID: "event-1", Source: "zeek", InstanceID: "instance-1"}},
 	}
-	item := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 95, CoverageState: "verified", StrongAnchor: "coexisting_device_models", DeviceLowerBound: 2}
+	item := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 95, CoverageState: "verified", StrongAnchor: "ieee1905_association", DeviceLowerBound: 2}
 	got, ok := confirmedSharedBehaviorEvidence(window, item)
 	if !ok || got.Type != "shared_access_window" || got.Score != 95 || got.Confidence != .95 || got.SharedAccess == nil {
 		t.Fatalf("evidence=%+v ok=%v", got, ok)
 	}
 
 	for name, mutate := range map[string]func(*sharedaccess.Window, *sharedaccess.BehaviorAssessment){
+		"UA model anchor": func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) {
+			a.StrongAnchor = "coexisting_device_models"
+		},
 		"missing anchor": func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) { a.StrongAnchor = "" },
 		"unknown anchor": func(_ *sharedaccess.Window, a *sharedaccess.BehaviorAssessment) {
 			a.StrongAnchor = "unsupported-anchor"

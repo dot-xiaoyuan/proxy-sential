@@ -29,13 +29,13 @@ func TestSharedDeviceProfileFiltersReachMaterializedReader(t *testing.T) {
 	reader := &sharedDeviceProfileReaderFixture{}
 	server := NewServer(Options{ReadOnly: true})
 	server.reader = reader
-	request := httptest.NewRequest("GET", "/shared-access/devices?role=router&identity_state=supported&current_shared=true&account_conflict=false&limit=25&cursor=50", nil)
+	request := httptest.NewRequest("GET", "/shared-access/devices?role=router&identity_state=supported&current_shared=true&account_conflict=false&has_account=true&limit=25&cursor=50", nil)
 	recorder := httptest.NewRecorder()
 	server.handleSharedDeviceProfiles(recorder, request, "/shared-access/devices")
 	if recorder.Code != 200 {
 		t.Fatal(recorder.Code, recorder.Body.String())
 	}
-	if reader.query.Role != "router" || reader.query.IdentityState != "supported" || reader.query.Limit != 25 || reader.query.Cursor != 50 || reader.query.CurrentShared == nil || !*reader.query.CurrentShared || reader.query.AccountConflict == nil || *reader.query.AccountConflict {
+	if reader.query.HasAccount == nil || !*reader.query.HasAccount || reader.query.Role != "router" || reader.query.IdentityState != "supported" || reader.query.Limit != 25 || reader.query.Cursor != 50 || reader.query.CurrentShared == nil || !*reader.query.CurrentShared || reader.query.AccountConflict == nil || *reader.query.AccountConflict {
 		t.Fatalf("filters not forwarded: %+v", reader.query)
 	}
 }
@@ -44,7 +44,7 @@ func TestSharedDeviceProfileRejectsInvalidBooleanFilter(t *testing.T) {
 	reader := &sharedDeviceProfileReaderFixture{}
 	server := NewServer(Options{ReadOnly: true})
 	server.reader = reader
-	request := httptest.NewRequest("GET", "/shared-access/devices?current_shared=maybe", nil)
+	request := httptest.NewRequest("GET", "/shared-access/devices?has_account=maybe", nil)
 	recorder := httptest.NewRecorder()
 	server.handleSharedDeviceProfiles(recorder, request, "/shared-access/devices")
 	if recorder.Code != 400 {

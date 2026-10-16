@@ -8,8 +8,10 @@ import (
 	"log"
 	"net"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/sharedaccess"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 type Options struct {
@@ -82,12 +84,59 @@ func Run(ctx context.Context, opts Options) error {
 	flushPackets := func(at time.Time, packets map[packetBucketKey]int) error {
 		return writePacketBucketWithSource(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, packetSource, opts.CaptureScope, at, tracker.filter(at, packets))
 	}
+	coverageFrom := time.Now().UTC()
 	// Shutdown writes the state the tracker still holds.
 	flushControls := func(at time.Time, controls map[string]controlSignal) error {
-		if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, state.handshakes); err != nil {
-			return err
+		if opts.HandshakeOnly {
+			end := time.Now().UTC()
+			stats, known := packetDropStats(fd)
+			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Dropped: uint64(stats), KeyDrops: state.droppedPacketKeys, ParseUnknown: state.handshakeParseFailures, Stopped: ctx.Err() != nil}
+			for _, summary := range state.handshakes {
+				summary.coverage = coverage
+				coverage.Truncated += summary.truncated
+				coverage.Overflow += summary.overflow
+			}
+			// Per-IP summaries inherit only unlocatable loss, never another IP’s truncation.
+			for _, summary := range state.handshakes {
+				summary.coverage.Truncated = 0
+				summary.coverage.Overflow = 0
+			}
+			coverage.Omitted = max(0, len(state.handshakes)-handshakeBucketLimit())
+			if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, state.handshakes); err != nil {
+				return err
+			}
+			if err := writeHandshakeCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, coverage); err != nil {
+				return err
+			}
+			coverageFrom = end
 		}
-		return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, selectControls(controlTracker, at, controls))
+		selected := selectControls(controlTracker, at, controls)
+		if !opts.HandshakeOnly && !opts.SharedSignalsOnly {
+			end := time.Now().UTC()
+			stats, known := packetDropStats(fd)
+			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Dropped: uint64(stats), ParseUnknown: state.controlParseFailures, KeyDrops: state.controlKeyDrops, Stopped: ctx.Err() != nil}
+			for key, signal := range selected {
+				if signal.Kind == "ieee1905_client_snapshot" || signal.Kind == "ieee1905_client_association" {
+					// Copy: the liveness tracker must compare only protocol content.
+					payload := make(map[string]any, len(signal.Payload)+1)
+					for k, v := range signal.Payload {
+						payload[k] = v
+					}
+					payload["capture_coverage"] = coverage
+					signal.Payload = payload
+					selected[key] = signal
+				}
+			}
+			if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, selected); err != nil {
+				return err
+			}
+			if err := writeCaptureCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage); err != nil {
+				return err
+			}
+			coverageFrom = end
+			return nil
+		}
+		return writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, selected)
 	}
 	// Shutdown writes the state the tracker still holds.
 	flushHeld := func(at time.Time) error {
@@ -143,6 +192,10 @@ func Run(ctx context.Context, opts Options) error {
 			state.controls = map[string]controlSignal{}
 			state.handshakes = map[handshakeKey]*handshakeSummary{}
 			state.droppedPacketKeys = 0
+			state.handshakeParseFailures = 0
+			state.handshakeFeatureSamples = 0
+			state.controlParseFailures = 0
+			state.controlKeyDrops = 0
 			bucket = now.UTC().Truncate(opts.Bucket)
 		default:
 			if processed == 0 {
@@ -170,7 +223,12 @@ func Run(ctx context.Context, opts Options) error {
 					}
 					state.packets = map[packetBucketKey]int{}
 					state.controls = map[string]controlSignal{}
+					state.handshakes = map[handshakeKey]*handshakeSummary{}
 					state.droppedPacketKeys = 0
+					state.handshakeParseFailures = 0
+					state.handshakeFeatureSamples = 0
+					state.controlParseFailures = 0
+					state.controlKeyDrops = 0
 					bucket = now.UTC().Truncate(opts.Bucket)
 				case <-time.After(20 * time.Millisecond):
 				}
@@ -180,3 +238,11 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func htons(value uint16) uint16 { return value<<8 | value>>8 }
+
+// PACKET_STATISTICS resets the socket counters on every successful read.
+func packetDropStats(fd int) (uint32, bool) {
+	var stats struct{ Packets, Drops uint32 }
+	length := uint32(unsafe.Sizeof(stats))
+	_, _, errno := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(fd), syscall.SOL_PACKET, syscall.PACKET_STATISTICS, uintptr(unsafe.Pointer(&stats)), uintptr(unsafe.Pointer(&length)), 0)
+	return stats.Drops, errno == 0 && length >= 8
+}

@@ -190,10 +190,10 @@ func TestAssessBehaviorUsesPassiveIEEE1905Associations(t *testing.T) {
 		"10:20:30:40:50:61": {Count: 1, Buckets: []int64{now.Unix() / 5}},
 	}
 	item, present := AssessBehavior("easy-mesh", "endpoint", w, BehaviorRouterContext{Role: "router", Status: "confirmed"})
-	if !present || item.Status != "confirmed" || item.Confidence != 90 || item.CoverageState != "verified" {
+	if !present || item.Status != "candidate" || item.Confidence != 90 || item.CoverageState != "verified" {
 		t.Fatalf("passive association state did not confirm shared behavior: %+v present=%t", item, present)
 	}
-	if len(item.SignalGroups) != 3 || item.SignalGroups[0] != "confirmed_same_exit_endpoints" || item.SignalGroups[1] != "ieee1905_association" || item.SignalGroups[2] != "router_identity" {
+	if len(item.SignalGroups) != 2 || item.SignalGroups[0] != "ieee1905_association" || item.SignalGroups[1] != "router_identity" {
 		t.Fatalf("unexpected passive association signal groups: %+v", item.SignalGroups)
 	}
 

@@ -14,7 +14,7 @@ import (
 	"proxy-sentinel/internal/policy"
 )
 
-const RuleVersion = "shared-access/v4"
+const RuleVersion = "shared-access/v5"
 
 type Source struct {
 	SensorID     string `json:"sensor_id"`
@@ -23,10 +23,11 @@ type Source struct {
 	AccessDomain string `json:"access_domain"`
 }
 type Config struct {
-	SchemaVersion    string   `json:"schema_version,omitempty"`
-	FreshnessSeconds int      `json:"freshness_seconds"`
-	Version          string   `json:"version"`
-	Sources          []Source `json:"sources"`
+	IdentityMappings []IdentityMapping `json:"identity_mappings,omitempty"`
+	SchemaVersion    string            `json:"schema_version,omitempty"`
+	FreshnessSeconds int               `json:"freshness_seconds"`
+	Version          string            `json:"version"`
+	Sources          []Source          `json:"sources"`
 }
 
 func (c Config) ID() string {
@@ -42,7 +43,12 @@ type RecordRef struct {
 }
 
 type Window struct {
-	AssociatedClients []string `json:"associated_clients,omitempty"`
+	GatewayMAC        string          `json:"gateway_mac,omitempty"`
+	GatewayLease      json.RawMessage `json:"gateway_lease,omitempty"`
+	CoverageFacts     []CoverageFact  `json:"coverage_facts,omitempty"`
+	StrongAnchor      string          `json:"strong_anchor,omitempty"`
+	DeviceLowerBound  int             `json:"device_lower_bound,omitempty"`
+	AssociatedClients []string        `json:"associated_clients,omitempty"`
 
 	CoverageVerified bool                                `json:"coverage_verified,omitempty"`
 	Samples          map[string]map[string]FeatureSample `json:"feature_samples,omitempty"`
@@ -67,26 +73,27 @@ type Window struct {
 	Conflicts        []string                            `json:"conflicts"`
 }
 type Result struct {
-	Records          []RecordRef `json:"records,omitempty"`
-	ID               string      `json:"id"`
-	State            string      `json:"state"`
-	AccountID        string      `json:"account_id,omitempty"`
-	IP               string      `json:"ip"`
-	SensorID         string      `json:"sensor_id"`
-	CampusID         string      `json:"campus_id,omitempty"`
-	AccessDomain     string      `json:"access_domain,omitempty"`
-	RuleVersion      string      `json:"rule_version"`
-	ConfigVersion    string      `json:"config_version"`
-	From             time.Time   `json:"from"`
-	To               time.Time   `json:"to"`
-	ObservedAt       time.Time   `json:"observed_at"`
-	DeviceLowerBound int         `json:"device_lower_bound"`
-	QuantityKnown    bool        `json:"quantity_known"`
-	Confidence       float64     `json:"confidence"`
-	SignalGroups     []string    `json:"signal_groups"`
-	Reasons          []string    `json:"reasons"`
-	EvidenceIDs      []string    `json:"evidence_ids"`
-	EventIDs         []string    `json:"event_ids"`
+	SessionGeneration string      `json:"session_generation,omitempty"`
+	Records           []RecordRef `json:"records,omitempty"`
+	ID                string      `json:"id"`
+	State             string      `json:"state"`
+	AccountID         string      `json:"account_id,omitempty"`
+	IP                string      `json:"ip"`
+	SensorID          string      `json:"sensor_id"`
+	CampusID          string      `json:"campus_id,omitempty"`
+	AccessDomain      string      `json:"access_domain,omitempty"`
+	RuleVersion       string      `json:"rule_version"`
+	ConfigVersion     string      `json:"config_version"`
+	From              time.Time   `json:"from"`
+	To                time.Time   `json:"to"`
+	ObservedAt        time.Time   `json:"observed_at"`
+	DeviceLowerBound  int         `json:"device_lower_bound"`
+	QuantityKnown     bool        `json:"quantity_known"`
+	Confidence        float64     `json:"confidence"`
+	SignalGroups      []string    `json:"signal_groups"`
+	Reasons           []string    `json:"reasons"`
+	EvidenceIDs       []string    `json:"evidence_ids"`
+	EventIDs          []string    `json:"event_ids"`
 }
 
 func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback time.Duration) Result {
@@ -200,9 +207,20 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 		return fail("shared_identity_unknown_or_conflicting")
 	}
 	r.AccountID = account
-	quota := policy.EvaluateQuota(account, selected, policy.Limits{}, w.LastObservedAt)
-	r.DeviceLowerBound = quota.Total
-	r.QuantityKnown = quota.Total > 0
+	r.SessionGeneration = stableObservationID(generation)
+	// A login count describes authentication, not devices behind an exit.
+	// Re-evaluate the immutable physical evidence rather than trusting a count
+	// supplied by a producer or borrowing the account's session quota.
+	if w.StrongAnchor != "" {
+		assessment, present := AssessBehavior(w.ID, "", w, BehaviorRouterContext{})
+		if !present || assessment.CoverageState != "verified" || assessment.StrongAnchor != w.StrongAnchor || assessment.DeviceLowerBound != w.DeviceLowerBound {
+			return fail("shared_anchor_not_verified")
+		}
+		r.State, r.DeviceLowerBound, r.QuantityKnown = "basis_present", assessment.DeviceLowerBound, true
+		r.Confidence, r.SignalGroups = float64(assessment.Confidence)/100, assessment.SignalGroups
+		r.Reasons = []string{"confirmed_shared_observation"}
+		return r
+	}
 	ua := diversity(w.UAOS) > 1
 	ttl := ttlHostDiversity(w.TTLPaths)
 	tls := diversity(w.TLSStacks) > 1

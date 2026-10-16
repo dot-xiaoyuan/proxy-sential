@@ -80,6 +80,10 @@ func (s *Server) evaluatePolicyQuota(ctx context.Context, account string, sessio
 }
 
 func (s *Server) handlePolicies(w http.ResponseWriter, r *http.Request, path string) {
+	if r.Method != http.MethodGet && strings.Contains(path, sharedaccess.ObservationPolicyID) {
+		writeError(w, 403, "builtin_policy_read_only", "内置共享记录策略不提供修改或执行入口")
+		return
+	}
 	if s.operations == nil {
 		writeError(w, 503, "policies_unavailable", "策略存储不可用")
 		return
@@ -166,6 +170,19 @@ func (s *Server) handlePolicies(w http.ResponseWriter, r *http.Request, path str
 			writeError(w, 503, "policy_storage_failed", err.Error())
 			return
 		}
+		builtinFound := false
+		for i := range items {
+			if items[i].ID == sharedaccess.ObservationPolicyID {
+				items[i] = sharedaccess.ObservationPolicy()
+				items[i].Enabled = s.sharedObservationEnabled
+				builtinFound = true
+			}
+		}
+		if !builtinFound {
+			builtin := sharedaccess.ObservationPolicy()
+			builtin.Enabled = s.sharedObservationEnabled
+			items = append(items, builtin)
+		}
 		sort.Slice(items, func(i, j int) bool {
 			if items[i].Priority != items[j].Priority {
 				return items[i].Priority > items[j].Priority
@@ -181,6 +198,10 @@ func (s *Server) handlePolicies(w http.ResponseWriter, r *http.Request, path str
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&p); err != nil {
 			writeError(w, 400, "invalid_policy", err.Error())
+			return
+		}
+		if p.ID == sharedaccess.ObservationPolicyID {
+			writeError(w, 403, "builtin_policy_read_only", "内置共享记录策略不提供修改或执行入口")
 			return
 		}
 		creating := r.Method == http.MethodPost
@@ -407,6 +428,10 @@ func (s *Server) policySimulation(w http.ResponseWriter, r *http.Request, accoun
 }
 
 func (s *Server) handlePolicyExecutionMutation(w http.ResponseWriter, r *http.Request, path string) {
+	if strings.HasPrefix(path, "/policy-executions/shared-observe-") {
+		writeError(w, 403, "observe_only", "共享记录不支持执行或撤销")
+		return
+	}
 	if s.operations.db != nil && !s.operations.readView {
 		s.mutatePolicyExecutionPostgres(w, r, path)
 		return

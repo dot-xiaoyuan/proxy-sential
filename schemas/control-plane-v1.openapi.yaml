@@ -448,6 +448,7 @@ paths:
         - { name: router_status, in: query, schema: { type: string, enum: [candidate, likely, confirmed] } }
         - { name: current_shared, in: query, schema: { type: boolean } }
         - { name: account_conflict, in: query, schema: { type: boolean } }
+        - { name: has_account, in: query, description: Whether the materialized profile has a nonempty associated account ID; does not assert event-time attribution., schema: { type: boolean } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
         - { name: cursor, in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses:
@@ -2000,12 +2001,50 @@ paths:
   /policy-decisions:
     get:
       operationId: listPolicyDecisionRecords
+      description: Stable cursor pagination over recorded decisions; shared observe records never dispatch actions.
       parameters:
         - { name: account_id, in: query, schema: { type: string } }
         - { name: policy_id, in: query, schema: { type: string } }
+        - { name: observation_id, in: query, schema: { type: string } }
+        - { name: trigger, in: query, schema: { type: string, enum: [shared_access] } }
+        - { name: ip, in: query, schema: { type: string } }
+        - { name: result, in: query, schema: { type: string, enum: [matched, insufficient, expired] } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: include_processing, in: query, schema: { type: boolean, default: false } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
-        '200': { description: Append-only policy decisions including blockers and planned shadow stages. }
+        '200':
+          description: Append-only decisions, including mode, delivery status and evidence versions. Empty results do not prove absence of sharing.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  next_cursor: { type: string }
+                  processing: { type: array, items: { type: object, additionalProperties: true } }
+                  processing_has_more: { type: boolean }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        decision_id: { type: string }
+                        policy_revision: { type: integer }
+                        evidence_version: { type: string }
+                        observation_id: { type: string }
+                        account_id: { type: string }
+                        ip: { type: string }
+                        evaluated_at: { type: string, format: date-time }
+                        mode: { type: string, description: Shared-access records always use observe. }
+                        planned_action: { type: string }
+                        delivery_status: { type: string, description: Shared-access records always use not_sent. }
+                        result: { type: string, enum: [matched, insufficient, expired] }
+                        evidence: { type: object, additionalProperties: true }
+        '400': { description: Invalid filter or cursor. }
+        '503': { description: Decision storage unavailable. }
   /overview:
     get:
       operationId: getOverview

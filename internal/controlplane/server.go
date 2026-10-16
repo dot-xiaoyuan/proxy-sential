@@ -34,48 +34,50 @@ const (
 )
 
 type Options struct {
-	NativeActions          map[string]NativeActionRuntime
-	SharedAccessConfig     string
-	IdentitySourcesConfig  string
-	ProxyProtocolConfig    string
-	ApplicationsEnabled    bool
-	ApplicationsDir        string
-	Addr                   string
-	ShadowDir              string
-	SensorID               string
-	FrontendDir            string
-	ReadOnly               bool
-	AllowIdentityIngest    bool
-	StorageMode            string
-	PostgresDSN            string
-	ClickHouseDSN          string
-	CollectorKind          string
-	CollectorVer           string
-	InterfaceName          string
-	FingerprintDir         string
-	FingerprintAutoUpdate  bool
-	AuthFile               string
-	AuthCookieSecure       bool
-	OIDC                   OIDCOptions
-	ExportDir              string
-	IdentityIngestKey      string
-	ProductPolicyIngestKey string
-	SRun4K                 SRun4KDefaults
-	IdentityBridge         IdentityBridgeDefaults
-	OperationsFile         string
-	ActionMasterKey        string
-	PostgresMigrationsDir  string
-	SignalFreshness        []SignalExpectation
+	SharedObservationEnabled bool
+	NativeActions            map[string]NativeActionRuntime
+	SharedAccessConfig       string
+	IdentitySourcesConfig    string
+	ProxyProtocolConfig      string
+	ApplicationsEnabled      bool
+	ApplicationsDir          string
+	Addr                     string
+	ShadowDir                string
+	SensorID                 string
+	FrontendDir              string
+	ReadOnly                 bool
+	AllowIdentityIngest      bool
+	StorageMode              string
+	PostgresDSN              string
+	ClickHouseDSN            string
+	CollectorKind            string
+	CollectorVer             string
+	InterfaceName            string
+	FingerprintDir           string
+	FingerprintAutoUpdate    bool
+	AuthFile                 string
+	AuthCookieSecure         bool
+	OIDC                     OIDCOptions
+	ExportDir                string
+	IdentityIngestKey        string
+	ProductPolicyIngestKey   string
+	SRun4K                   SRun4KDefaults
+	IdentityBridge           IdentityBridgeDefaults
+	OperationsFile           string
+	ActionMasterKey          string
+	PostgresMigrationsDir    string
+	SignalFreshness          []SignalExpectation
 }
 
 type Server struct {
-	managedIdentityFailures *managedIdentityFailureCache
-	sharedReviews           *sharedReviewRuntime
-	deviceInventory         *deviceInventoryPageCache
-	deviceInventoryMetadata *deviceInventoryPageCache
-	startedAt               time.Time
-	runtimeSampler          *runtimeSampler
-	signalFreshness         *signalFreshnessMonitor
+	sharedObservationEnabled bool
+	managedIdentityFailures  *managedIdentityFailureCache
+	sharedReviews            *sharedReviewRuntime
+	deviceInventory          *deviceInventoryPageCache
+	deviceInventoryMetadata  *deviceInventoryPageCache
+	startedAt                time.Time
+	runtimeSampler           *runtimeSampler
+	signalFreshness          *signalFreshnessMonitor
 
 	actionDeliveries    *actionDeliveryQueue
 	statistics          *statisticsCache
@@ -456,6 +458,12 @@ func NewServerWithError(opts Options) (*Server, error) {
 	}
 	server.bind4KCredentialProviders()
 	server.actionDeliveries = newActionDeliveryQueue(server.deliverAction)
+	server.sharedObservationEnabled = opts.SharedObservationEnabled
+	if opts.SharedObservationEnabled {
+		if enabled, ok := reader.(interface{ EnableSharedObservation() }); ok {
+			enabled.EnableSharedObservation()
+		}
+	}
 	server.sharedConfig, err = sharedaccess.Load(opts.SharedAccessConfig)
 	if err != nil {
 		return nil, fmt.Errorf("load shared access config: %w", err)
@@ -495,6 +503,11 @@ func NewServerWithError(opts Options) (*Server, error) {
 	fingerprintStatus := fingerprints.Status()
 	if !opts.ReadOnly && fingerprintStatus.Source == "offline-bundle" && (fingerprintStatus.BackfillStatus != "completed" || fingerprintStatus.DomainBackfillStatus == "pending" || fingerprintStatus.DomainBackfillStatus == "running" || fingerprintStatus.DomainBackfillStatus == "failed") {
 		server.startFingerprintBackfill(fingerprintStatus.Version)
+	}
+	if opts.SharedObservationEnabled {
+		if err := server.startSharedObservationWorker(); err != nil {
+			return nil, err
+		}
 	}
 	if !opts.ReadOnly && operations.db != nil {
 		server.startActionWorker()
@@ -679,7 +692,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 			path == "/integrations/identity/snapshot-uploads" ||
 			strings.HasPrefix(path, "/integrations/identity/snapshot-uploads/") ||
 			path == "/integrations/identity/bridge/catalog-snapshots")
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !identityIngestPost && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !identityIngestPost && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) && !endpointRegistrationAllowed(r.Method, path) {
 		writeError(w, http.StatusForbidden, "read_only", "mutating operations are disabled by the global read-only switch")
 		return
 	}
@@ -1648,12 +1661,22 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 	writeJSON(w, http.StatusOK, profile)
 }
 
+// Registration edits local inventory metadata. They do not execute policy actions.
+// Keep the exception exact; authentication, endpoints:write and CSRF still apply.
+func endpointRegistrationAllowed(method, path string) bool {
+	if method != http.MethodPost || !strings.HasPrefix(path, "/endpoints/") || !strings.HasSuffix(path, "/registration") {
+		return false
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(path, "/endpoints/"), "/registration")
+	return strings.TrimSpace(id) != "" && !strings.Contains(id, "/")
+}
+
 func (s *Server) handleEndpointRegistration(w http.ResponseWriter, r *http.Request, rest string) {
 	if strings.HasSuffix(rest, "/name-note") {
 		s.handleDeviceNameNote(w, r, rest)
 		return
 	}
-	if s.readOnly {
+	if s.readOnly && !endpointRegistrationAllowed(r.Method, "/endpoints/"+rest) {
 		writeError(w, http.StatusForbidden, "read_only", "endpoint registration is disabled in read-only control plane mode")
 		return
 	}

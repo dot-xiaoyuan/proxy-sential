@@ -15,18 +15,24 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/sharedaccess"
 )
 
 // handshakeObservation is what one client packet reveals about the device that sent it:
 // a TLS ClientHello server name and ALPN, or an HTTP request's Host and User-Agent. Only
 // the header fields are read; bodies and application data are never retained.
 type handshakeObservation struct {
-	IP        netip.Addr
-	MAC       [6]byte
-	SNI       string
-	ALPN      string
-	Host      string
-	UserAgent string
+	FeaturesOmitted bool
+	JA3             string
+	EventID         string
+	ObservedAt      time.Time
+	Truncated       bool
+	IP              netip.Addr
+	MAC             [6]byte
+	SNI             string
+	ALPN            string
+	Host            string
+	UserAgent       string
 }
 
 // maxHandshakeValues bounds the distinct values kept per (device, bucket).
@@ -48,25 +54,33 @@ func parseHandshakeFrame(frame []byte) (handshakeObservation, bool) {
 		return handshakeObservation{}, false
 	}
 	// Fragments after the first carry no TCP header.
-	if binary.BigEndian.Uint16(ip[6:8])&0x1fff != 0 {
+	if binary.BigEndian.Uint16(ip[6:8])&0x3fff != 0 {
 		return handshakeObservation{}, false
 	}
 	var source [4]byte
 	copy(source[:], ip[12:16])
-	tcp := ip[ihl:]
+	total := int(binary.BigEndian.Uint16(ip[2:4]))
+	if total < ihl+20 || total > len(ip) {
+		return handshakeObservation{}, false
+	}
+	tcp := ip[ihl:total]
 	dstPort := binary.BigEndian.Uint16(tcp[2:4])
 	dataOffset := int(tcp[12]>>4) * 4
 	if dataOffset < 20 || len(tcp) <= dataOffset {
 		return handshakeObservation{}, false
 	}
 	payload := tcp[dataOffset:]
-	observation := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source}
+	identity := append(append(append([]byte{}, ip[12:20]...), tcp[:8]...), payload...)
+	sum := sha256.Sum256(identity)
+	observation := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source, EventID: hex.EncodeToString(sum[:16]), ObservedAt: time.Now().UTC()}
 	switch dstPort {
 	case 443:
 		sni, alpn, ok := parseClientHello(payload)
-		if !ok {
+		if !ok && (len(payload) < 6 || payload[0] != 22 || payload[5] != 1) {
 			return handshakeObservation{}, false
 		}
+		observation.JA3 = clientHelloJA3(payload)
+		observation.Truncated = observation.JA3 == ""
 		observation.SNI, observation.ALPN = sni, alpn
 	case 80:
 		host, userAgent, ok := parseHTTPRequestHeaders(payload)
@@ -74,6 +88,7 @@ func parseHandshakeFrame(frame []byte) (handshakeObservation, bool) {
 			return handshakeObservation{}, false
 		}
 		observation.Host, observation.UserAgent = host, userAgent
+		observation.Truncated = !bytes.Contains(payload, []byte("\r\n\r\n"))
 	default:
 		return handshakeObservation{}, false
 	}
@@ -179,6 +194,10 @@ func parseHTTPRequestHeaders(payload []byte) (host, userAgent string, ok bool) {
 // bucket. Emitting one summary per device keeps the event volume at the same order as the
 // TTL events, which already pass through the same identity path.
 type handshakeSummary struct {
+	samples                        map[string]sharedaccess.HandshakeSample
+	sampleCounts                   map[string]int
+	overflow, truncated            int
+	coverage                       sharedaccess.CoverageV2
 	count                          int
 	snis, alpns, hosts, userAgents map[string]bool
 }
@@ -188,10 +207,49 @@ type handshakeKey struct {
 	MAC [6]byte
 }
 
+func newHandshakeSummary() *handshakeSummary {
+	return &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}
+}
+
 func (s *handshakeSummary) add(o handshakeObservation) {
 	s.count++
+	if o.FeaturesOmitted {
+		s.overflow++
+	}
+	if o.Truncated {
+		s.truncated++
+	}
+	if s.samples == nil {
+		s.samples = map[string]sharedaccess.HandshakeSample{}
+		s.sampleCounts = map[string]int{}
+	}
+	if !o.Truncated && !o.FeaturesOmitted && o.EventID != "" && !o.ObservedAt.IsZero() {
+		for family, value := range map[string]string{"user_agent": o.UserAgent, "ja3": o.JA3} {
+			if value == "" {
+				continue
+			}
+			key := family + "/" + o.EventID
+			if _, ok := s.samples[key]; ok {
+				continue
+			}
+			bucketKey := family + "/" + value + "/" + strconv.FormatInt(o.ObservedAt.Unix()/5, 10)
+			if s.sampleCounts[bucketKey] >= 3 {
+				continue
+			}
+			if len(s.samples) >= 288 {
+				s.overflow++
+				continue
+			}
+			s.sampleCounts[bucketKey]++
+			s.samples[key] = sharedaccess.HandshakeSample{Family: family, Value: value, EventID: o.EventID, ObservedAt: o.ObservedAt, Bucket: o.ObservedAt.Unix() / 5}
+		}
+	}
 	add := func(set map[string]bool, value string) {
-		if value != "" && len(set) < maxHandshakeValues {
+		if value != "" {
+			if !set[value] && len(set) >= maxHandshakeValues {
+				s.overflow++
+				return
+			}
 			set[value] = true
 		}
 	}
@@ -223,11 +281,35 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 	defer file.Close()
 	keys := selectHandshakeKeys(summaries, handshakeBucketLimit())
 	encoder := json.NewEncoder(file)
+	kept := map[handshakeKey]bool{}
+	omitted := map[netip.Addr]int{}
+	for _, key := range keys {
+		kept[key] = true
+	}
+	for key := range summaries {
+		if !kept[key] {
+			omitted[key.IP]++
+		}
+	}
 	for _, key := range keys {
 		summary := summaries[key]
 		mac := net.HardwareAddr(key.MAC[:]).String()
 		identity := strings.Join([]string{sensorID, instance, key.IP.String(), mac, bucket.UTC().Format(time.RFC3339)}, "\x00")
 		sum := sha256.Sum256([]byte("handshake\x00" + identity))
+		samples := make([]sharedaccess.HandshakeSample, 0, len(summary.samples))
+		for _, v := range summary.samples {
+			samples = append(samples, v)
+		}
+		sort.Slice(samples, func(i, j int) bool {
+			if !samples[i].ObservedAt.Equal(samples[j].ObservedAt) {
+				return samples[i].ObservedAt.Before(samples[j].ObservedAt)
+			}
+			return samples[i].Family+samples[i].EventID < samples[j].Family+samples[j].EventID
+		})
+		coverage := summary.coverage
+		coverage.Omitted = omitted[key.IP]
+		coverage.Overflow += summary.overflow
+		coverage.Truncated += summary.truncated
 		event := normalized.Event{
 			SchemaVersion: "v1", EventID: "device-" + hex.EncodeToString(sum[:16]),
 			Source: "handshake-sidecar", SourceEventType: "handshake", Type: "device",
@@ -237,6 +319,7 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 			Flow:      map[string]any{"src_ip": key.IP.String(), "direction": "outbound", "ip_version": 4},
 			Payload: map[string]any{
 				"origin": "handshake", "mac": mac, "observed_count": summary.count,
+				"handshake_schema": "handshake-samples/v1", "feature_samples": samples, "capture_coverage": coverage,
 				"snis": sortedHandshakeValues(summary.snis), "alpns": sortedHandshakeValues(summary.alpns),
 				"hosts": sortedHandshakeValues(summary.hosts), "user_agents": sortedHandshakeValues(summary.userAgents),
 			},

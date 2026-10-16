@@ -64,6 +64,7 @@ type SharedDeviceProfileQuery struct {
 	IdentityState   string
 	CurrentShared   *bool
 	AccountConflict *bool
+	HasAccount      *bool
 	Limit, Cursor   int
 }
 type SharedDeviceProfilePage struct {
@@ -129,6 +130,9 @@ func (s *PostgresStore) ListSharedDeviceProfiles(ctx context.Context, q SharedDe
 	}
 	if q.CurrentShared != nil {
 		add("p.current_shared=$N", *q.CurrentShared)
+	}
+	if q.HasAccount != nil {
+		add("(btrim(coalesce(p.latest_account_id,''))<>'')=$N", *q.HasAccount)
 	}
 	if q.AccountConflict != nil {
 		add("p.account_conflict=$N", *q.AccountConflict)

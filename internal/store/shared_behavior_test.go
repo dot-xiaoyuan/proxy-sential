@@ -67,7 +67,7 @@ func TestSharedBehaviorDefaultIncludesCurrentCandidatesForOperations(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, part := range []string{"current=true", "window_end>now()-interval '20 minutes'"} {
+	for _, part := range []string{"current=true", "window_end>now()-interval '20 minutes'", "? 'ieee1905_association'"} {
 		if !strings.Contains(where, part) {
 			t.Fatalf("missing discovery gate %q in %s", part, where)
 		}
@@ -78,5 +78,12 @@ func TestSharedBehaviorDefaultIncludesCurrentCandidatesForOperations(t *testing.
 	where, _, err = sharedBehaviorWhere(SharedBehaviorQuery{Status: "candidate"})
 	if err != nil || strings.Contains(where, "status='confirmed'") {
 		t.Fatalf("explicit candidate review unavailable: %s %v", where, err)
+	}
+}
+
+func TestProtocolOnlyCurrentWindowsRemainInHistoricalClues(t *testing.T) {
+	where, _, err := sharedBehaviorWhere(SharedBehaviorQuery{View: "history", HistoryBasis: "clues"})
+	if err != nil || !strings.Contains(where, "window_end<=now() AND COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association')") || strings.Contains(where, "coexisting_device_models") {
+		t.Fatalf("weak current evidence hidden or UA models counted as strong: %s %v", where, err)
 	}
 }

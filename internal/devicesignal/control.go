@@ -20,6 +20,7 @@ import (
 // routing or discovery protocol observation. It is converted to the standard
 // event schema before it leaves the packet collector.
 type controlSignal struct {
+	ObservedAt  time.Time
 	Kind        string
 	IP          string
 	MAC         string
@@ -583,6 +584,9 @@ func writeControlBucket(path, sensorID, interfaceName, instance string, scope *n
 			flow["dst_ip"] = signal.Destination
 		}
 		event := normalized.Event{SchemaVersion: "v1", EventID: "control-" + hex.EncodeToString(sum[:16]), Source: "packet-sidecar", SourceEventType: signal.Kind, Type: "device", Timestamp: bucket.UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": sensorID, "interface": interfaceName}, Subject: subject, Flow: flow, Payload: signal.Payload, Confidence: 0.95}
+		if !signal.ObservedAt.IsZero() {
+			event.Timestamp = signal.ObservedAt.UTC().Format(time.RFC3339Nano)
+		}
 		if instance != "" {
 			event.Observer["collector_instance_id"] = instance
 		}

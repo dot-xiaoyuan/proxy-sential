@@ -389,6 +389,7 @@ func confirmedSharedBehaviorEvidence(window sharedaccess.Window, item sharedacce
 	if item.Status != "confirmed" || !supported || item.DeviceLowerBound < 2 || item.CoverageState != "verified" || !window.Complete || !window.CoverageVerified || len(window.Conflicts) > 0 || len(window.Sources) == 0 || len(window.Records) == 0 {
 		return evidence.Evidence{}, false
 	}
+	window.StrongAnchor, window.DeviceLowerBound = item.StrongAnchor, item.DeviceLowerBound
 	return evidence.Evidence{
 		EvidenceID: window.ID, IP: window.IP, Type: "shared_access_window", Window: window.To.Sub(window.From).String(),
 		Score: item.Confidence, Confidence: float64(item.Confidence) / 100, Severity: "info",
@@ -734,8 +735,6 @@ func sharedBehaviorAnchorExplanation(anchor string) (string, bool) {
 	switch anchor {
 	case "ieee1905_association":
 		return "IEEE 1905.1/EasyMesh 当前关联状态表明多个终端接入同一设备，地址租约确认关联设备的 IP 归属", true
-	case "coexisting_device_models":
-		return "当前窗口内多个明确硬件型号重复共现，并有协议栈差异佐证该设备承担共享网关角色", true
 	default:
 		return "", false
 	}

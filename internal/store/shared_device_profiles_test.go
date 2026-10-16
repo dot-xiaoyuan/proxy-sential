@@ -148,3 +148,22 @@ func TestSharedBehaviorHistoricalQueryDoesNotReviveOldConfirmation(t *testing.T)
 		t.Fatal("invalid view accepted")
 	}
 }
+
+func TestSharedDeviceProfileAccountFilterBeforePagination(t *testing.T) {
+	for _, has := range []bool{true, false} {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC()
+		mock.ExpectQuery(`(?s)filtered AS NOT MATERIALIZED.*btrim\(coalesce\(p.latest_account_id,''\)\)<>''.*page AS`).WithArgs("sensor", has, 20, 40).WillReturnRows(sqlmock.NewRows([]string{"items", "total", "last_success_at", "last_error", "materialized_at", "pending_jobs", "oldest_pending_at", "checked_at"}).AddRow([]byte("[]"), 40, now, "", now, 0, nil, now))
+		_, err = (&PostgresStore{db: db, sensorID: "sensor"}).ListSharedDeviceProfiles(context.Background(), SharedDeviceProfileQuery{HasAccount: &has, Limit: 20, Cursor: 40})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+	}
+}

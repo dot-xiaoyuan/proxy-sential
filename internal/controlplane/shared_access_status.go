@@ -7,6 +7,10 @@ import (
 )
 
 func (s *Server) handleSharedAccessStatus(w http.ResponseWriter, r *http.Request) {
+	if s.sharedObservationEnabled {
+		s.sharedObservationStatus(w, r)
+		return
+	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
 	sources, err := s.managedIdentityRegistrations(ctx)

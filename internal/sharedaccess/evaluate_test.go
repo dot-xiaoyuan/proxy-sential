@@ -74,7 +74,7 @@ func TestSharedAccessReplayBoundaries(t *testing.T) {
 			if result.State != want {
 				t.Fatalf("state=%s want=%s reasons=%v", result.State, want, result.Reasons)
 			}
-			if name == "hotspot" && (result.DeviceLowerBound != 1 || result.AccountID != "a" || result.Confidence <= 0 || len(result.SignalGroups) < 3) {
+			if name == "hotspot" && (result.DeviceLowerBound != 0 || result.QuantityKnown || result.AccountID != "a" || result.Confidence <= 0 || len(result.SignalGroups) < 3) {
 				t.Fatal("fabricated downstream device count or missing basis", result)
 			}
 			if name == "hotspot_unknown_device" && (result.QuantityKnown || result.DeviceLowerBound != 0) {

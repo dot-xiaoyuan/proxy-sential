@@ -2250,6 +2250,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Stable cursor pagination over recorded decisions; shared observe records never dispatch actions. */
         get: operations["listPolicyDecisionRecords"];
         put?: never;
         post?: never;
@@ -7799,6 +7800,8 @@ export interface operations {
                 router_status?: "candidate" | "likely" | "confirmed";
                 current_shared?: boolean;
                 account_conflict?: boolean;
+                /** @description Whether the materialized profile has a nonempty associated account ID; does not assert event-time attribution. */
+                has_account?: boolean;
                 limit?: number;
                 cursor?: number;
             };
@@ -11120,6 +11123,14 @@ export interface operations {
             query?: {
                 account_id?: string;
                 policy_id?: string;
+                observation_id?: string;
+                trigger?: "shared_access";
+                ip?: string;
+                result?: "matched" | "insufficient" | "expired";
+                from?: string;
+                to?: string;
+                cursor?: string;
+                include_processing?: boolean;
                 limit?: number;
             };
             header?: never;
@@ -11128,8 +11139,50 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Append-only policy decisions including blockers and planned shadow stages. */
+            /** @description Append-only decisions, including mode, delivery status and evidence versions. Empty results do not prove absence of sharing. */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        next_cursor: string;
+                        processing?: {
+                            [key: string]: unknown;
+                        }[];
+                        processing_has_more?: boolean;
+                        items: {
+                            decision_id?: string;
+                            policy_revision?: number;
+                            evidence_version?: string;
+                            observation_id?: string;
+                            account_id?: string;
+                            ip?: string;
+                            /** Format: date-time */
+                            evaluated_at?: string;
+                            /** @description Shared-access records always use observe. */
+                            mode?: string;
+                            planned_action?: string;
+                            /** @description Shared-access records always use not_sent. */
+                            delivery_status?: string;
+                            /** @enum {string} */
+                            result?: "matched" | "insufficient" | "expired";
+                            evidence?: {
+                                [key: string]: unknown;
+                            };
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid filter or cursor. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Decision storage unavailable. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

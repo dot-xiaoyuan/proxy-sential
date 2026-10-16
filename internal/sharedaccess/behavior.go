@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const BehaviorRuleVersion = "shared-behavior/v12"
+const BehaviorRuleVersion = "shared-behavior/v13"
 
 type BehaviorRouterContext struct {
 	AssessmentID string `json:"assessment_id,omitempty"`
@@ -98,7 +98,7 @@ func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContex
 	}
 	if diversity(w.AssociatedClients) >= 2 {
 		result.Confidence = 90
-		result.SignalGroups = append(result.SignalGroups, "confirmed_same_exit_endpoints", "ieee1905_association")
+		result.SignalGroups = append(result.SignalGroups, "ieee1905_association")
 		result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{
 			Signal: "ieee1905_association", Score: 90,
 			Explanation: "IEEE 1905.1/EasyMesh 当前关联状态确认多个终端接入同一设备",
@@ -116,46 +116,13 @@ func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContex
 			result.Reasons = append(result.Reasons, "EasyMesh 关联可见，但采集连续性尚未验证")
 			return result, true
 		}
-		result.Status = "confirmed"
+		result.Status = "candidate"
 		result.StrongAnchor = "ieee1905_association"
 		result.DeviceLowerBound = diversity(w.AssociatedClients)
-		result.Reasons = append(result.Reasons, "被动 EasyMesh 关联状态确认多个终端同时接入")
+		result.Reasons = append(result.Reasons, "多终端接入关系可见，但尚未验证路由 / NAT 转发，不确认路由器共享")
 		return result, true
 	}
-	models := w.CoexistingDeviceModels()
-	if len(models) >= 2 && (w.repeatedTogether("tcp_stack", w.TCPStacks) || w.repeatedTogether("tls_stack", w.TLSStacks)) {
-		result.Confidence = 90
-		result.SignalGroups = append(result.SignalGroups, "coexisting_device_models")
-		for _, corroboration := range []struct {
-			name   string
-			values []string
-		}{{"tcp_stack", w.TCPStacks}, {"tls_stack", w.TLSStacks}} {
-			if w.repeatedTogether(corroboration.name, corroboration.values) {
-				result.SignalGroups = append(result.SignalGroups, corroboration.name)
-				result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{Signal: corroboration.name, Score: 0, Explanation: "协议栈差异佐证当前型号共现，不单独计为物理设备"})
-			}
-		}
-		result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{
-			Signal: "coexisting_device_models", Score: 90,
-			Explanation: "当前窗口内至少两个明确硬件型号重复共现，并有协议栈差异佐证",
-		})
-		if (router.Status == "confirmed" || router.Status == "likely") && router.Role == "router" {
-			result.SignalGroups = append(result.SignalGroups, "router_identity")
-		}
-		sort.Strings(result.SignalGroups)
-		if result.CoverageState != "verified" {
-			result.Confidence = 59
-			result.Conflicts = append(result.Conflicts, "capture_coverage_incomplete")
-			result.Reasons = append(result.Reasons, "多设备身份可见，但采集连续性尚未验证")
-			return result, true
-		}
-		result.Status = "confirmed"
-		result.StrongAnchor = "coexisting_device_models"
-		// Pairwise coexistence proves two devices, not that every model overlaps.
-		result.DeviceLowerBound = 2
-		result.Reasons = append(result.Reasons, "当前窗口内至少两个明确硬件型号重复共现，并有协议栈差异佐证")
-		return result, true
-	}
+	// Application-declared models and stack variants cannot prove physical clients.
 	type signal struct {
 		name        string
 		values      []string

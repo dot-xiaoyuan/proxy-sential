@@ -560,6 +560,11 @@ func (s *DBStore) WriteNormalizedEvents(ctx context.Context, events []normalized
 	if err := s.ch.WriteNormalizedEvents(ctx, events); err != nil {
 		return err
 	}
+	if SharedObservationEnabled() || s.pg.sharedObservationEnabled {
+		if err := s.enqueueSharedObservations(ctx, events); err != nil {
+			return err
+		}
+	}
 	s.enqueueDomainEvents(events)
 	return nil
 }

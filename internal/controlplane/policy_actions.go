@@ -69,6 +69,9 @@ func (s *Server) processAccountPolicies(now time.Time) {
 	decisions := []pendingDecision{}
 	defs := []policy.Definition{}
 	for _, p := range s.operations.doc.Policies {
+		if p.ID == sharedaccess.ObservationPolicyID {
+			continue
+		}
 		defs = append(defs, p)
 	}
 	accounts := map[string]bool{}

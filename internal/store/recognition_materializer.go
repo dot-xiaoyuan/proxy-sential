@@ -204,6 +204,9 @@ func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 }
 
 func (s *DBStore) runSharedBehaviorMaterializer(ctx context.Context, sensorID string) {
+	if SharedObservationEnabled() {
+		return
+	}
 	for ctx.Err() == nil {
 		workCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		_, err := s.materializeSharedBehavior(workCtx, sensorID, time.Now().UTC())

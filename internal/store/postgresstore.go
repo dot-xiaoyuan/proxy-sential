@@ -30,14 +30,15 @@ type PostgresOptions struct {
 }
 
 type PostgresStore struct {
-	inventoryStatus    inventoryStatusCache
-	recognitionCatalog recognitionCatalogCache
-	db                 *sql.DB
-	dsn                string
-	sensorID           string
-	collectorKind      string
-	collectorVer       string
-	interfaceName      string
+	sharedObservationEnabled bool
+	inventoryStatus          inventoryStatusCache
+	recognitionCatalog       recognitionCatalogCache
+	db                       *sql.DB
+	dsn                      string
+	sensorID                 string
+	collectorKind            string
+	collectorVer             string
+	interfaceName            string
 }
 
 func NewPostgresStore(opts PostgresOptions) (*PostgresStore, error) {

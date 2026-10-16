@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,15 +50,15 @@ type SharedBehaviorReader interface {
 }
 
 func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
-	clauses := []string{"current=true", "expires_at>now()", "window_end>now()-interval '20 minutes'", "window_end<=now()"}
+	clauses := []string{"current=true", "expires_at>now()", "window_end>now()-interval '20 minutes'", "window_end<=now()", "COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association'"}
 	if query.View != "" && query.View != "current" && query.View != "history" {
 		return "", nil, fmt.Errorf("invalid shared behavior view")
 	}
 	if query.View == "history" {
-		clauses = []string{"NOT (current AND rule_version='" + sharedaccess.BehaviorRuleVersion + "' AND expires_at>now() AND window_end>now()-interval '20 minutes' AND window_end<=now())"}
+		clauses = []string{"NOT (current AND rule_version='" + sharedaccess.BehaviorRuleVersion + "' AND expires_at>now() AND window_end>now()-interval '20 minutes' AND window_end<=now() AND COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association')"}
 		// Old scores and router projections do not prove downstream devices.
 		// Filter by evidence before choosing the newest historical episode.
-		strong := `(status='confirmed' AND coverage_state='verified' AND COALESCE(observation->>'strong_anchor','') IN ('ieee1905_association','coexisting_device_models') AND CASE WHEN observation->>'device_lower_bound' ~ '^[0-9]{1,9}$' THEN (observation->>'device_lower_bound')::int ELSE 0 END>=2 AND COALESCE(NULLIF(observation->'conflicts','null'::jsonb),'[]'::jsonb)='[]'::jsonb)`
+		strong := `(status IN ('confirmed','candidate') AND coverage_state='verified' AND COALESCE(observation->>'strong_anchor','') ='ieee1905_association' AND CASE WHEN observation->>'device_lower_bound' ~ '^[0-9]{1,9}$' THEN (observation->>'device_lower_bound')::int ELSE 0 END>=2 AND COALESCE(NULLIF(observation->'conflicts','null'::jsonb),'[]'::jsonb)='[]'::jsonb)`
 		switch query.HistoryBasis {
 		case "", "shared":
 			clauses = append(clauses, strong)
@@ -176,7 +177,7 @@ func (s *PostgresStore) GetSharedBehavior(ctx context.Context, id string) (Share
 	}
 	result.WindowStart, result.WindowEnd, result.ExpiresAt = windowStart.UTC(), windowEnd.UTC(), expires.UTC()
 	now := time.Now().UTC()
-	result.Current = current && result.RuleVersion == sharedaccess.BehaviorRuleVersion && expires.After(now) && windowEnd.After(now.Add(-20*time.Minute)) && !windowEnd.After(now)
+	result.Current = slices.Contains(result.SignalGroups, "ieee1905_association") && current && result.RuleVersion == sharedaccess.BehaviorRuleVersion && expires.After(now) && windowEnd.After(now.Add(-20*time.Minute)) && !windowEnd.After(now)
 	rows, err := s.db.QueryContext(ctx, `SELECT h.status,h.confidence,array_to_json(h.signal_groups),h.coverage_state,h.rule_version,h.observed_at,h.created_at
 FROM shared_behavior_observation_history h
 JOIN shared_behavior_observations o ON o.observation_id=h.observation_id
@@ -206,5 +207,9 @@ func (s *DBStore) ListSharedBehavior(ctx context.Context, query SharedBehaviorQu
 }
 
 func (s *DBStore) GetSharedBehavior(ctx context.Context, id string) (SharedBehaviorDetail, bool, error) {
-	return s.pg.GetSharedBehavior(ctx, id)
+	item, found, err := s.pg.GetSharedBehavior(ctx, id)
+	if err != nil || found || !SharedObservationEnabled() {
+		return item, found, err
+	}
+	return s.archivedSharedBehavior(ctx, id)
 }

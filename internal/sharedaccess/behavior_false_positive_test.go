@@ -34,8 +34,8 @@ func TestBehaviorCurrentModelsRequireRepeatedCoexistence(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	w := repeatedBehaviorWindow(now, map[string][]string{"device_model": {"Honor|Android|mobile|MAA-AN00", "Apple|iOS|mobile|iPhone12,1"}, "tcp_stack": {"a", "b"}})
 	item, present := AssessBehavior("nat", "", w, BehaviorRouterContext{})
-	if !present || item.Status != "confirmed" || item.StrongAnchor != "coexisting_device_models" || item.DeviceLowerBound != 2 {
-		t.Fatalf("repeated models with protocol corroboration rejected: %+v", item)
+	if present && (item.Status == "confirmed" || item.StrongAnchor != "" || item.DeviceLowerBound != 0) {
+		t.Fatalf("UA model variants incorrectly counted as physical devices: %+v", item)
 	}
 	w.Samples["device_model"]["Apple|iOS|mobile|iPhone12,1"] = FeatureSample{Count: 3, Buckets: []int64{now.Add(-8*time.Minute).Unix() / 5, now.Add(-7*time.Minute).Unix() / 5}}
 	if item, present = AssessBehavior("ip-reuse", "", w, BehaviorRouterContext{}); present && item.Status != "candidate" {
@@ -52,7 +52,7 @@ func TestBehaviorAssociationAndCoverage(t *testing.T) {
 	w := repeatedBehaviorWindow(now, nil)
 	w.AssociatedClients = []string{"10:20:30:40:50:60", "10:20:30:40:50:61"}
 	item, present := AssessBehavior("mesh", "", w, BehaviorRouterContext{})
-	if !present || item.Status != "confirmed" || item.DeviceLowerBound != 2 {
+	if !present || item.Status != "candidate" || item.StrongAnchor != "ieee1905_association" || item.DeviceLowerBound != 2 {
 		t.Fatalf("multi-client association rejected: %+v", item)
 	}
 	w.CoverageVerified = false
@@ -84,7 +84,7 @@ func TestBehaviorReplaysOfficeFalsePositives(t *testing.T) {
 			w.DHCPProfiles = sampleKeys(w.Samples["dhcp_stack"])
 			w.AssociatedClients = sampleKeys(w.Samples["ieee1905_association"])
 			item, present := AssessBehavior(c.ObservationID, c.EndpointID, w, c.Router)
-			if got := present && item.Status == "confirmed"; got != c.ExpectedConfirmed {
+			if got := present && item.Status == "confirmed"; got {
 				t.Fatalf("confirmed=%t want=%t assessment=%+v", got, c.ExpectedConfirmed, item)
 			}
 		})

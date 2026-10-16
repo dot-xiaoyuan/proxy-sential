@@ -1,0 +1,17 @@
+{
+  "schema_version": "shared-access-sources/v1",
+  "version": "ncu-shared-observe-20261016-v1",
+  "freshness_seconds": 180,
+  "sources": [
+    {"sensor_id":"ncu-184-router-pilot","source":"handshake-sidecar","campus_id":"ncu","access_domain":"bond0-router-minimal-overnight"},
+    {"sensor_id":"ncu-184-router-pilot","source":"packet-sidecar","campus_id":"ncu","access_domain":"bond0-router-minimal-overnight"}
+  ],
+  "identity_mappings": [
+    {
+      "sensor_id":"ncu-184-router-pilot","campus_id":"ncu","access_domain":"bond0-router-minimal-overnight",
+      "identity_source":"ncu-srun4k","identity_sensor_id":"ncu-auth-redis","identity_campus_id":"ncu","identity_access_domain":"campus-auth",
+      "health_bridge_id":"ncu-legacy-4k",
+      "valid_from":"2026-10-16T00:00:00+08:00","valid_until":"2027-01-01T00:00:00+08:00"
+    }
+  ]
+}

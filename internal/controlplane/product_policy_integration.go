@@ -495,33 +495,7 @@ func publishPolicyImport(ctx context.Context, db *sql.DB, batchID string) ([]pol
 }
 
 func (s *Server) handlePolicyDecisionRecords(w http.ResponseWriter, r *http.Request) {
-	if s.productPolicies == nil || s.productPolicies.db == nil {
-		writeJSON(w, 200, map[string]any{"items": []any{}})
-		return
-	}
-	limit, err := boundedInt(r.URL.Query().Get("limit"), 50, 1, 200)
-	if err != nil {
-		writeError(w, 400, "bad_limit", err.Error())
-		return
-	}
-	rows, err := s.productPolicies.db.QueryContext(r.Context(), `SELECT document FROM policy_decision_records WHERE ($1='' OR account_id=$1) AND ($2='' OR policy_id=$2) ORDER BY evaluated_at DESC,decision_id LIMIT $3`, r.URL.Query().Get("account_id"), r.URL.Query().Get("policy_id"), limit)
-	if err != nil {
-		writeError(w, 503, "policy_decisions_failed", err.Error())
-		return
-	}
-	defer rows.Close()
-	items := []any{}
-	for rows.Next() {
-		var raw []byte
-		if err = rows.Scan(&raw); err != nil {
-			writeError(w, 503, "policy_decisions_failed", err.Error())
-			return
-		}
-		var item any
-		_ = json.Unmarshal(raw, &item)
-		items = append(items, item)
-	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	s.queryPolicyDecisions(w, r)
 }
 
 func (s *Server) appendPolicyDecision(ctx context.Context, p policy.Definition, e policy.Execution, in policy.Input, now time.Time, sessions []policy.Session) {

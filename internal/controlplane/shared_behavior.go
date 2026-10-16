@@ -110,7 +110,7 @@ func (s *Server) handleSharedDeviceProfiles(w http.ResponseWriter, r *http.Reque
 	for _, param := range []struct {
 		name   string
 		target **bool
-	}{{"current_shared", &q.CurrentShared}, {"account_conflict", &q.AccountConflict}} {
+	}{{"current_shared", &q.CurrentShared}, {"account_conflict", &q.AccountConflict}, {"has_account", &q.HasAccount}} {
 		if value := r.URL.Query().Get(param.name); value != "" {
 			parsed, err := strconv.ParseBool(value)
 			if err != nil {

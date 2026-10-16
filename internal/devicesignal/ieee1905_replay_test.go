@@ -49,3 +49,16 @@ func TestIEEE1905UsesOriginALMACInsteadOfRelayMAC(t *testing.T) {
 		t.Fatalf("relay MAC used as association owner: %+v", signals)
 	}
 }
+
+func TestIEEE1905CaptureCountsUnreassembledFragments(t *testing.T) {
+	// An actual Ethernet IEEE 1905 fragment cannot supply a complete snapshot.
+	frame := make([]byte, 22)
+	frame[12], frame[13] = 0x89, 0x3a
+	frame[16], frame[17] = 0, 3
+	frame[20], frame[21] = 1, 0
+	bucket := newCaptureBucket()
+	bucket.addFrame(frame, nil)
+	if bucket.controlParseFailures != 1 || len(bucket.controls) != 0 {
+		t.Fatalf("fragment was treated as complete: %+v", bucket)
+	}
+}

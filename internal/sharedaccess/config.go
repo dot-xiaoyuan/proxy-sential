@@ -40,6 +40,16 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("invalid shared source configuration header")
 	}
 	seen := map[[2]string]Source{}
+	for i, m := range cfg.IdentityMappings {
+		if m.SensorID == "" || m.CampusID == "" || m.AccessDomain == "" || m.Source == "" || m.IdentitySensorID == "" || m.IdentityCampusID == "" || m.IdentityAccessDomain == "" || m.ValidFrom.IsZero() || !m.ValidUntil.After(m.ValidFrom) {
+			return Config{}, fmt.Errorf("invalid shared identity mapping")
+		}
+		for _, other := range cfg.IdentityMappings[:i] {
+			if other.SensorID == m.SensorID && other.CampusID == m.CampusID && other.AccessDomain == m.AccessDomain && m.ValidFrom.Before(other.ValidUntil) && other.ValidFrom.Before(m.ValidUntil) {
+				return Config{}, fmt.Errorf("overlapping shared identity mappings")
+			}
+		}
+	}
 	for _, s := range cfg.Sources {
 		for _, v := range []string{s.SensorID, s.Source, s.CampusID, s.AccessDomain} {
 			if v == "" || strings.TrimSpace(v) != v {

@@ -216,7 +216,7 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 		}
 	}
 	eventWriteStarted := time.Now()
-	if err := backend.WriteNormalizedEvents(writeCtx, events); err != nil {
+	if err := backend.WriteNormalizedEvents(store.WithSharedIngestBatch(writeCtx, batchID), events); err != nil {
 		return false, failed(err)
 	}
 	finished := time.Now().UTC()

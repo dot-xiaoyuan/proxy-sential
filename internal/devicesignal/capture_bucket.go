@@ -2,6 +2,7 @@ package devicesignal
 
 import (
 	"os"
+	"time"
 
 	"proxy-sentinel/internal/normalized"
 )
@@ -14,14 +15,19 @@ type captureBucket struct {
 	droppedPacketKeys int
 	// handshakes holds one summary per device for the current bucket. Only populated when
 	// the handshake filter is attached.
-	handshakes       map[handshakeKey]*handshakeSummary
-	handshakeEnabled bool
+	handshakes              map[handshakeKey]*handshakeSummary
+	handshakeEnabled        bool
+	handshakeParseFailures  int
+	handshakeFeatureSamples int
+	controlParseFailures    int
+	controlKeyDrops         int
 }
 
 // At roughly 0.5-1 KiB per normalized JSON record, this hard ceiling keeps the
 // collector's raw output comfortably below the five GiB/hour pilot budget even
 // if an adversarial or asymmetric mirror produces maximal key diversity.
 const maxPacketBucketKeys = 50000
+const maxHandshakeFeatureSamples = 32768
 
 func newCaptureBucket() *captureBucket {
 	return &captureBucket{packets: map[packetBucketKey]int{}, controls: map[string]controlSignal{}, handshakes: map[handshakeKey]*handshakeSummary{}}
@@ -42,7 +48,11 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 			}
 		}
 	}
-	for _, signal := range parseControlFrames(frame) {
+	controls := parseControlFrames(frame)
+	if eth, ok := parseEthernetFrame(frame); ok && eth.etherType == 0x893a && len(controls) == 0 {
+		b.controlParseFailures++
+	}
+	for _, signal := range controls {
 		// ARP only serves dumb-terminal discovery and the device-center address history; router
 		// and shared-access detection never read it. It was ~73% of all events on 184 and
 		// crowded the risk window sample, so it is emitted only when explicitly enabled.
@@ -51,7 +61,15 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 		}
 		// The control parser can supply an explicit protocol or management IP.
 		// A packet forwarded under this MAC does not establish its source device IP.
-		b.controls[signal.key()] = signal
+		key := signal.key()
+		if _, found := b.controls[key]; !found && len(b.controls) >= maxPacketBucketKeys {
+			b.controlKeyDrops++
+			continue
+		}
+		if signal.Kind == "ieee1905_client_snapshot" || signal.Kind == "ieee1905_client_association" {
+			signal.ObservedAt = time.Now().UTC()
+		}
+		b.controls[key] = signal
 	}
 }
 
@@ -65,6 +83,7 @@ func arpSignalsEnabled() bool {
 func (b *captureBucket) addHandshake(frame []byte) {
 	observation, ok := parseHandshakeFrame(frame)
 	if !ok {
+		b.handshakeParseFailures++
 		return
 	}
 	key := handshakeKey{IP: observation.IP, MAC: observation.MAC}
@@ -77,5 +96,10 @@ func (b *captureBucket) addHandshake(frame []byte) {
 		summary = &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}
 		b.handshakes[key] = summary
 	}
+	before := len(summary.samples)
+	if b.handshakeFeatureSamples >= maxHandshakeFeatureSamples-2 {
+		observation.FeaturesOmitted = true
+	}
 	summary.add(observation)
+	b.handshakeFeatureSamples += len(summary.samples) - before
 }
