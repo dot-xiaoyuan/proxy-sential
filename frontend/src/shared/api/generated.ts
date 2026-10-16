@@ -6391,6 +6391,11 @@ export interface components {
             last_seen: string;
             /** Format: date-time */
             valid_until: string;
+            /**
+             * Format: date-time
+             * @description Time when a historical conclusion was superseded.
+             */
+            recorded_at?: string;
             /** @enum {string} */
             review_state: "pending" | "confirm" | "reject";
         };
@@ -6443,6 +6448,8 @@ export interface components {
             as_of: string;
             tags: components["schemas"]["AccountTagAssessment"][];
             history: components["schemas"]["AccountTagAssessment"][];
+            /** @description More than 50 distinct historical conclusions exist. */
+            history_has_more?: boolean;
             endpoints: components["schemas"]["AccountAssessmentEndpoint"][];
             reviews: components["schemas"]["AccountTagReview"][];
         };

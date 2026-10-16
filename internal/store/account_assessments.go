@@ -30,6 +30,7 @@ type AccountTagAssessment struct {
 	FirstSeen         string   `json:"first_seen"`
 	LastSeen          string   `json:"last_seen"`
 	ValidUntil        string   `json:"valid_until"`
+	RecordedAt        string   `json:"recorded_at,omitempty"`
 	ReviewState       string   `json:"review_state"`
 }
 
@@ -72,13 +73,14 @@ type AccountTagReview struct {
 }
 
 type AccountAssessmentDetail struct {
-	AccountID string                      `json:"account_id"`
-	State     string                      `json:"state"`
-	AsOf      string                      `json:"as_of"`
-	Tags      []AccountTagAssessment      `json:"tags"`
-	History   []AccountTagAssessment      `json:"history"`
-	Endpoints []AccountAssessmentEndpoint `json:"endpoints"`
-	Reviews   []AccountTagReview          `json:"reviews"`
+	AccountID      string                      `json:"account_id"`
+	State          string                      `json:"state"`
+	AsOf           string                      `json:"as_of"`
+	Tags           []AccountTagAssessment      `json:"tags"`
+	History        []AccountTagAssessment      `json:"history"`
+	HistoryHasMore bool                        `json:"history_has_more"`
+	Endpoints      []AccountAssessmentEndpoint `json:"endpoints"`
+	Reviews        []AccountTagReview          `json:"reviews"`
 }
 
 type AccountAssessmentQuery struct {
@@ -111,7 +113,7 @@ type AccountAssessmentWriter interface {
 }
 
 func accountTagVersion(item AccountTagAssessment) string {
-	raw, _ := json.Marshal([]any{item.AccountID, item.TagType, item.EvidenceLevel, item.SourceType, item.EndpointIDs, item.EvidenceIDs, item.RuleVersion, item.FirstSeen, item.LastSeen, item.ValidUntil})
+	raw, _ := json.Marshal([]any{item.AccountID, item.TagType, item.EvidenceLevel, item.SourceType, item.Reason, item.EndpointIDs, item.EvidenceIDs, item.RuleVersion})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:16])
 }
@@ -309,11 +311,12 @@ func (s *PostgresStore) materializeAccountTags(ctx context.Context, account stri
 		_, err = tx.ExecContext(ctx, `INSERT INTO account_tag_assessment_history(account_id,tag_type,assessment_version,state,evidence_level,source_type,reason,endpoint_ids,evidence_ids,rule_version,raw_score,first_seen,last_seen,valid_until)
 SELECT account_id,tag_type,assessment_version,'historical',evidence_level,source_type,reason,endpoint_ids,evidence_ids,rule_version,raw_score,first_seen,last_seen,valid_until
 FROM account_tag_assessments WHERE account_id=$1 AND tag_type=$2 AND assessment_version<>$3
-ON CONFLICT(account_id,tag_type,assessment_version) DO NOTHING`, account, item.TagType, item.AssessmentVersion)
+AND (evidence_level,source_type,reason,endpoint_ids,evidence_ids,rule_version) IS DISTINCT FROM ($4,$5,$6,$7::jsonb,$8::jsonb,$9)
+ON CONFLICT(account_id,tag_type,assessment_version) DO NOTHING`, account, item.TagType, item.AssessmentVersion, item.EvidenceLevel, item.SourceType, item.Reason, string(endpoints), string(evidence), item.RuleVersion)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO account_tag_assessments(account_id,tag_type,assessment_version,state,evidence_level,source_type,reason,endpoint_ids,evidence_ids,rule_version,raw_score,first_seen,last_seen,valid_until) VALUES($1,$2,$3,'current',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(account_id,tag_type) DO UPDATE SET assessment_version=EXCLUDED.assessment_version,state='current',evidence_level=EXCLUDED.evidence_level,source_type=EXCLUDED.source_type,reason=EXCLUDED.reason,endpoint_ids=EXCLUDED.endpoint_ids,evidence_ids=EXCLUDED.evidence_ids,rule_version=EXCLUDED.rule_version,raw_score=EXCLUDED.raw_score,first_seen=LEAST(account_tag_assessments.first_seen,EXCLUDED.first_seen),last_seen=EXCLUDED.last_seen,valid_until=EXCLUDED.valid_until,updated_at=now()`, account, item.TagType, item.AssessmentVersion, item.EvidenceLevel, item.SourceType, item.Reason, endpoints, evidence, item.RuleVersion, item.RawScore, item.FirstSeen, item.LastSeen, item.ValidUntil)
+		_, err = tx.ExecContext(ctx, `INSERT INTO account_tag_assessments(account_id,tag_type,assessment_version,state,evidence_level,source_type,reason,endpoint_ids,evidence_ids,rule_version,raw_score,first_seen,last_seen,valid_until) VALUES($1,$2,$3,'current',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(account_id,tag_type) DO UPDATE SET assessment_version=CASE WHEN (account_tag_assessments.evidence_level,account_tag_assessments.source_type,account_tag_assessments.reason,account_tag_assessments.endpoint_ids,account_tag_assessments.evidence_ids,account_tag_assessments.rule_version) IS DISTINCT FROM (EXCLUDED.evidence_level,EXCLUDED.source_type,EXCLUDED.reason,EXCLUDED.endpoint_ids,EXCLUDED.evidence_ids,EXCLUDED.rule_version) THEN EXCLUDED.assessment_version ELSE account_tag_assessments.assessment_version END,state='current',evidence_level=EXCLUDED.evidence_level,source_type=EXCLUDED.source_type,reason=EXCLUDED.reason,endpoint_ids=EXCLUDED.endpoint_ids,evidence_ids=EXCLUDED.evidence_ids,rule_version=EXCLUDED.rule_version,raw_score=EXCLUDED.raw_score,first_seen=LEAST(account_tag_assessments.first_seen,EXCLUDED.first_seen),last_seen=EXCLUDED.last_seen,valid_until=EXCLUDED.valid_until,updated_at=now()`, account, item.TagType, item.AssessmentVersion, item.EvidenceLevel, item.SourceType, item.Reason, endpoints, evidence, item.RuleVersion, item.RawScore, item.FirstSeen, item.LastSeen, item.ValidUntil)
 		if err != nil {
 			return err
 		}
@@ -379,8 +382,8 @@ func (s *DBStore) runAccountTagMaterializer(ctx context.Context) {
 func scanAccountTag(rows interface{ Scan(...any) error }) (AccountTagAssessment, error) {
 	var item AccountTagAssessment
 	var endpoints, evidence []byte
-	var first, last, valid time.Time
-	err := rows.Scan(&item.AccountID, &item.TagType, &item.AssessmentVersion, &item.State, &item.EvidenceLevel, &item.SourceType, &item.Reason, &endpoints, &evidence, &item.RuleVersion, &item.RawScore, &first, &last, &valid, &item.ReviewState)
+	var first, last, valid, recorded time.Time
+	err := rows.Scan(&item.AccountID, &item.TagType, &item.AssessmentVersion, &item.State, &item.EvidenceLevel, &item.SourceType, &item.Reason, &endpoints, &evidence, &item.RuleVersion, &item.RawScore, &first, &last, &valid, &item.ReviewState, &recorded)
 	if err != nil {
 		return item, err
 	}
@@ -389,6 +392,7 @@ func scanAccountTag(rows interface{ Scan(...any) error }) (AccountTagAssessment,
 	item.FirstSeen = first.UTC().Format(time.RFC3339Nano)
 	item.LastSeen = last.UTC().Format(time.RFC3339Nano)
 	item.ValidUntil = valid.UTC().Format(time.RFC3339Nano)
+	item.RecordedAt = recorded.UTC().Format(time.RFC3339Nano)
 	return item, nil
 }
 
@@ -530,12 +534,8 @@ FROM account_tag_assessments WHERE state='historical') a`
 
 func (s *PostgresStore) GetAccountAssessment(ctx context.Context, account string) (AccountAssessmentDetail, bool, error) {
 	detail := AccountAssessmentDetail{AccountID: account, Tags: []AccountTagAssessment{}, History: []AccountTagAssessment{}, Endpoints: []AccountAssessmentEndpoint{}, Reviews: []AccountTagReview{}}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.account_id,a.tag_type,a.assessment_version,a.state,a.evidence_level,a.source_type,a.reason,a.endpoint_ids,a.evidence_ids,a.rule_version,a.raw_score,a.first_seen,a.last_seen,a.valid_until,COALESCE((SELECT decision FROM account_tag_reviews r WHERE r.account_id=a.account_id AND r.tag_type=a.tag_type AND r.assessment_version=a.assessment_version),'pending')
-FROM account_tag_assessments a WHERE account_id=$1
-UNION ALL
-SELECT h.account_id,h.tag_type,h.assessment_version,'historical',h.evidence_level,h.source_type,h.reason,h.endpoint_ids,h.evidence_ids,h.rule_version,h.raw_score,h.first_seen,h.last_seen,h.valid_until,COALESCE((SELECT decision FROM account_tag_reviews r WHERE r.account_id=h.account_id AND r.tag_type=h.tag_type AND r.assessment_version=h.assessment_version),'pending')
-FROM account_tag_assessment_history h WHERE account_id=$1
-ORDER BY state,tag_type,last_seen DESC`, account)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.account_id,a.tag_type,a.assessment_version,a.state,a.evidence_level,a.source_type,a.reason,a.endpoint_ids,a.evidence_ids,a.rule_version,a.raw_score,a.first_seen,a.last_seen,a.valid_until,COALESCE((SELECT decision FROM account_tag_reviews r WHERE r.account_id=a.account_id AND r.tag_type=a.tag_type AND r.assessment_version=a.assessment_version),'pending'),a.updated_at
+FROM account_tag_assessments a WHERE a.account_id=$1 ORDER BY a.tag_type`, account)
 	if err != nil {
 		return detail, false, err
 	}
@@ -555,7 +555,49 @@ ORDER BY state,tag_type,last_seen DESC`, account)
 			endpointSet[id] = true
 		}
 	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return detail, false, err
+	}
 	rows.Close()
+	// Historical versions are retained for audit. The detail page reads one latest
+	// representative per distinct conclusion and omits conclusions still current.
+	// A timestamp-only refresh must never fill the page or fetch thousands of rows.
+	hrows, err := s.db.QueryContext(ctx, `WITH distinct_conclusions AS (
+ SELECT DISTINCT ON (h.tag_type,h.evidence_level,h.source_type,h.reason,h.rule_version)
+  h.account_id,h.tag_type,h.assessment_version,h.state,h.evidence_level,h.source_type,h.reason,h.endpoint_ids,h.evidence_ids,h.rule_version,h.raw_score,h.first_seen,h.last_seen,h.valid_until,h.recorded_at,h.history_id
+ FROM account_tag_assessment_history h WHERE h.account_id=$1
+ ORDER BY h.tag_type,h.evidence_level,h.source_type,h.reason,h.rule_version,h.recorded_at DESC,h.history_id DESC
+)
+SELECT h.account_id,h.tag_type,h.assessment_version,'historical',h.evidence_level,h.source_type,h.reason,h.endpoint_ids,h.evidence_ids,h.rule_version,h.raw_score,h.first_seen,h.last_seen,h.valid_until,COALESCE((SELECT decision FROM account_tag_reviews r WHERE r.account_id=h.account_id AND r.tag_type=h.tag_type AND r.assessment_version=h.assessment_version),'pending'),h.recorded_at
+FROM distinct_conclusions h
+WHERE NOT EXISTS (SELECT 1 FROM account_tag_assessments a WHERE a.account_id=h.account_id AND a.tag_type=h.tag_type AND a.evidence_level=h.evidence_level AND a.source_type=h.source_type AND a.reason=h.reason AND a.rule_version=h.rule_version)
+ORDER BY h.recorded_at DESC,h.history_id DESC LIMIT 51`, account)
+	if err != nil {
+		return detail, false, err
+	}
+	historyCount := 0
+	for hrows.Next() {
+		item, e := scanAccountTag(hrows)
+		if e != nil {
+			hrows.Close()
+			return detail, false, e
+		}
+		if historyCount == 50 {
+			detail.HistoryHasMore = true
+			break
+		}
+		detail.History = append(detail.History, item)
+		historyCount++
+		for _, id := range item.EndpointIDs {
+			endpointSet[id] = true
+		}
+	}
+	if err = hrows.Err(); err != nil {
+		hrows.Close()
+		return detail, false, err
+	}
+	hrows.Close()
 	if len(detail.Tags)+len(detail.History) == 0 {
 		return detail, false, nil
 	}

@@ -15,11 +15,11 @@ const tags=[
   {account_id:'student-1',tag_type:'pc',assessment_version:'pc-v1',state:'current',evidence_level:'likely',source_type:'endpoint_recognition',reason:'近 7 天认证关联终端识别为 PC',endpoint_ids:['endpoint-1'],evidence_ids:['endpoint:endpoint-1'],rule_version:'fingerprint-v1',first_seen:now,last_seen:now,valid_until:now,review_state:'pending'},
 ] as const
 
-function setup(path='/accounts'){
+function setup(path='/accounts', detailOverride?: Record<string,unknown>){
   request.mockImplementation((url:string)=>{
     if(url==='/session')return Promise.resolve({user:{id:'operator',name:'操作员'},role:'operator',permissions:['identity:read','labels:create']})
     if(url.startsWith('/account-assessments'))return Promise.resolve({items:[{account_id:'student-1',tags,endpoint_count:1,primary_reason:tags[0].reason,review_state:'pending',last_assessed_at:now}],state:'ready',as_of:now,page:{limit:20,total:1}})
-    if(url==='/accounts/student-1/assessment')return Promise.resolve({account_id:'student-1',state:'ready',as_of:now,tags,history:[],endpoints:[{endpoint_id:'endpoint-1',primary_mac:'00:11:22:33:44:55',brand:'Dell',device_type:'desktop',last_seen:now,evidence_level:'likely'}],reviews:[]})
+    if(url==='/accounts/student-1/assessment')return Promise.resolve({account_id:'student-1',state:'ready',as_of:now,tags,history:[],endpoints:[{endpoint_id:'endpoint-1',primary_mac:'00:11:22:33:44:55',brand:'Dell',device_type:'desktop',last_seen:now,evidence_level:'likely'}],reviews:[],...detailOverride})
     if(url==='/accounts/student-1/tag-reviews')return Promise.resolve({review_id:'review-1',account_id:'student-1',tag_type:'proxy',assessment_version:'proxy-v1',decision:'reject',reason:'现场核对',evidence_ids:['evidence-1'],created_by:'operator',created_at:now})
     return Promise.reject(new Error(url))
   })
@@ -30,6 +30,14 @@ function setup(path='/accounts'){
 afterEach(()=>{cleanup();request.mockReset()})
 
 describe('用户研判',()=>{
+  it('历史只保留不同于当前标签的结论和人工复核',async()=>{
+    const same={...tags[1],state:'historical',recorded_at:'2026-10-14T01:00:00Z'}
+    const changed={...same,evidence_level:'confirmed',assessment_version:'pc-confirmed',recorded_at:'2026-10-13T01:00:00Z'}
+    setup('/accounts/student-1',{history:[same,{...same,assessment_version:'repeat-2'},changed,{...changed,assessment_version:'repeat-3'}],reviews:[{review_id:'review-1',tag_type:'proxy',decision:'reject',reason:'现场复核无代理行为',created_at:now}]})
+    expect(await screen.findByText('现场复核无代理行为')).toBeInTheDocument()
+    expect(document.querySelectorAll('.account-history article')).toHaveLength(2)
+    expect(screen.getByText('PC · 已确认')).toBeInTheDocument()
+  })
   it('同时展示多个当前标签且不把评分包装为百分比',async()=>{
     setup()
     expect(await screen.findAllByText('代理')).not.toHaveLength(0)

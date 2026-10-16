@@ -28,8 +28,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
   })
 }
 
-test('assessment detail evidence hierarchy at 1440', async ({ page }, info) => {
-  await page.setViewportSize({ width: 1440, height: 900 })
+for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
+test(`assessment detail evidence hierarchy at ${viewport.width}`, async ({ page }, info) => {
+  await page.setViewportSize(viewport)
   const errors: string[] = []
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
   page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
@@ -37,6 +38,7 @@ test('assessment detail evidence hierarchy at 1440', async ({ page }, info) => {
   await expect(page.getByRole('heading', { name: '2026000123' })).toBeVisible()
   await expect(page.getByText('当前有效研判存在代理行为依据')).toBeVisible()
   await expect(page.getByRole('heading', { name: '研判历史' })).toBeVisible()
+  await expect(page.getByText('暂无不同于当前标签的历史结论或人工复核；重复刷新记录已归并。')).toBeVisible()
   const probe = await page.evaluate(() => ({
     overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 2,
     controls: [...document.querySelectorAll('.account-assessment-detail .ant-btn,.account-assessment-detail .ant-tag')].map(element => ({ whiteSpace: getComputedStyle(element).whiteSpace, flexShrink: getComputedStyle(element).flexShrink })),
@@ -49,3 +51,4 @@ test('assessment detail evidence hierarchy at 1440', async ({ page }, info) => {
   await writeFile(info.outputPath('dom.json'), JSON.stringify(probe, null, 2))
   await page.screenshot({ path: info.outputPath('detail.png'), fullPage: true })
 })
+}

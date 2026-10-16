@@ -18,6 +18,13 @@ func TestAccountTagVersionTracksEvidenceAndRuleChanges(t *testing.T) {
 	if first, second := accountTagVersion(base), accountTagVersion(base); first != second {
 		t.Fatalf("unchanged assessment version is unstable: %q != %q", first, second)
 	}
+	refreshed := base
+	refreshed.FirstSeen = "2026-10-14T01:01:00Z"
+	refreshed.LastSeen = "2026-10-14T02:01:00Z"
+	refreshed.ValidUntil = "2026-10-15T02:01:00Z"
+	if accountTagVersion(base) != accountTagVersion(refreshed) {
+		t.Fatal("observation timestamps must not create new assessment history")
+	}
 	changed := base
 	changed.RuleVersion = "router-v2"
 	if accountTagVersion(base) == accountTagVersion(changed) {
@@ -27,5 +34,10 @@ func TestAccountTagVersionTracksEvidenceAndRuleChanges(t *testing.T) {
 	changed.EvidenceIDs = []string{"router-2"}
 	if accountTagVersion(base) == accountTagVersion(changed) {
 		t.Fatal("independent evidence must create a new assessment version")
+	}
+	changed = base
+	changed.Reason = "路由身份依据已变化"
+	if accountTagVersion(base) == accountTagVersion(changed) {
+		t.Fatal("a changed conclusion must create a new assessment version")
 	}
 }

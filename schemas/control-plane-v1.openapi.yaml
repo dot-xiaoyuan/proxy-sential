@@ -6730,6 +6730,7 @@ components:
         first_seen: { type: string, format: date-time }
         last_seen: { type: string, format: date-time }
         valid_until: { type: string, format: date-time }
+        recorded_at: { type: string, format: date-time, description: Time when a historical conclusion was superseded. }
         review_state: { type: string, enum: [pending, confirm, reject] }
     AccountAssessmentListItem:
       type: object
@@ -6788,6 +6789,7 @@ components:
         as_of: { type: string }
         tags: { type: array, items: { $ref: "#/components/schemas/AccountTagAssessment" } }
         history: { type: array, items: { $ref: "#/components/schemas/AccountTagAssessment" } }
+        history_has_more: { type: boolean, description: More than 50 distinct historical conclusions exist. }
         endpoints: { type: array, items: { $ref: "#/components/schemas/AccountAssessmentEndpoint" } }
         reviews: { type: array, items: { $ref: "#/components/schemas/AccountTagReview" } }
     EndpointIdentityProfile:
