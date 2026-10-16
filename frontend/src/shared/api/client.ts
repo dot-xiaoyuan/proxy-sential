@@ -86,6 +86,13 @@ export class ApiError extends Error {
 
 let csrfToken = ''
 
+const sessionEndpoints = new Set(['/session', '/auth/login', '/auth/logout'])
+let unauthorizedHandler: (() => void) | undefined
+
+export function setUnauthorizedHandler(handler: () => void) {
+  unauthorizedHandler = handler
+}
+
 export function getApiBase(): string {
   const envBase = import.meta.env.VITE_API_BASE
   if (envBase) {
@@ -108,6 +115,7 @@ export async function request<T>(path: string, init?: RequestInit & { deferTaskP
   })
 
   if (!response.ok) {
+    if (response.status === 401 && !sessionEndpoints.has(cleanPath.split('?')[0])) unauthorizedHandler?.()
     const text = await response.text()
     throw new ApiError(response.status, text || `HTTP ${response.status}`)
   }
