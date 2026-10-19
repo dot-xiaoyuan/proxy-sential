@@ -29,15 +29,15 @@ func TestIdentityPipelineSoak(t *testing.T) {
 	key := IdentityScopeKey(scope)
 	at := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
 	// Field-scale snapshot: 35k current sessions, with 10k accounts and dual-stack
-	// rows. The private build is outside the live authority transaction.
+	// rows. The snapshot publishes when it commits.
 	snap := IdentitySnapshot{IdentityScope: scope, SnapshotID: "baseline", ObservedAt: at, IntervalSeconds: 1800}
 	for i := 0; i < 35000; i++ {
-		event := inboxEvent(scope, fmt.Sprintf("base-%d", i), fmt.Sprintf("session-%d", i), fmt.Sprintf("10.%d.%d.%d", i/65536, (i/256)%256, i%256), "reconcile", at)
+		event := snapshotEvent(scope, fmt.Sprintf("base-%d", i), fmt.Sprintf("session-%d", i), fmt.Sprintf("10.%d.%d.%d", i/65536, (i/256)%256, i%256), at, 1800)
 		event.Subject["account_id"] = fmt.Sprintf("account-%d", i%10000)
 		snap.Events = append(snap.Events, event)
 	}
 	start := time.Now()
-	if err = pg.calibrateIdentitySnapshot(ctx, snap); err != nil {
+	if _, err = pg.CommitIdentitySnapshot(ctx, snap); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("baseline 35000 sessions built in %s", time.Since(start))

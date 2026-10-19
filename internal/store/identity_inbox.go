@@ -231,40 +231,17 @@ func (s *PostgresStore) applyIdentityInbox(ctx context.Context, w identityInboxW
 		for i := 0; i < batch.Count; i++ {
 			event := w.Events[index]
 			index++
-			documents = append(documents, map[string]any{"event_id": event.EventID, "sequence": batch.Sequence, "ordinal": batch.Offset + i, "observed_at": event.Timestamp, "document": event})
+			documents = append(documents, map[string]any{"event_id": event.EventID, "sequence": batch.Sequence, "ordinal": batch.Offset + i, "observed_at": event.Timestamp})
 		}
 	}
 	raw, err := json.Marshal(documents)
 	if err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `INSERT INTO identity_applied_events(scope_key,event_id,batch_sequence,ordinal,observed_at,document) SELECT $1,r.event_id,r.sequence,r.ordinal,r.observed_at,r.document FROM jsonb_to_recordset($2::jsonb) r(event_id text,sequence bigint,ordinal integer,observed_at timestamptz,document jsonb) ORDER BY r.sequence,r.ordinal ON CONFLICT DO NOTHING RETURNING event_id`, w.Scope, raw)
-	if err != nil {
-		return err
-	}
-	inserted := map[string]bool{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		inserted[id] = true
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	fresh := make([]normalized.Event, 0, len(inserted))
-	for _, event := range w.Events {
-		if inserted[event.EventID] {
-			fresh = append(fresh, event)
-			delete(inserted, event.EventID)
-		}
-	}
-	accounts, sessions, err := applyCurrentIdentityEvents(ctx, tx, w.Scope, w.Generation, fresh, w.SnapshotAt)
-	if err != nil {
+	// Deduplication only. Event documents were stored for the old calibration replay, and the
+	// generation-keyed current-state tables it fed are no longer maintained per event: publication
+	// now happens with the complete snapshot (see publishSnapshotTx).
+	if _, err = tx.ExecContext(ctx, `INSERT INTO identity_applied_events(scope_key,event_id,batch_sequence,ordinal,observed_at) SELECT $1,r.event_id,r.sequence,r.ordinal,r.observed_at FROM jsonb_to_recordset($2::jsonb) r(event_id text,sequence bigint,ordinal integer,observed_at timestamptz) ORDER BY r.sequence,r.ordinal ON CONFLICT DO NOTHING`, w.Scope, raw); err != nil {
 		return err
 	}
 	batchJSON, err := json.Marshal(batches)
@@ -298,10 +275,6 @@ func (s *PostgresStore) applyIdentityInbox(ctx context.Context, w identityInboxW
 	if changedBatches != len(batches) {
 		return ErrIdentityLeaseExpired
 	}
-	// Totals go to their own row, so the scope row that receipts and leases share is not locked here.
-	if _, err = tx.ExecContext(ctx, scopeStatisticsAddSQL, w.Scope, accounts, sessions, lastSequence); err != nil {
-		return err
-	}
 	// Only the final progress publication locks the summary. Receipt insertion can
 	// proceed while facts and address references are being written. A fresh statement
 	// after this lock sees any concurrently committed next batch for oldest_pending_at.
@@ -318,36 +291,6 @@ func (s *PostgresStore) applyIdentityInbox(ctx context.Context, w identityInboxW
 	}
 	return tx.Commit()
 }
-func applyCurrentIdentityEvents(ctx context.Context, tx *sql.Tx, key, generation string, events []normalized.Event, snapshotAt sql.NullTime) (int, int, error) {
-	documents := make([]map[string]any, 0, len(events))
-	for ordinal, event := range events {
-		rows := policyRows([]normalized.Event{event})
-		if len(rows) != 1 {
-			return 0, 0, fmt.Errorf("identity event must have one scoped session")
-		}
-		row := rows[0]
-		if snapshotAt.Valid && !row.ConfirmedAt.After(snapshotAt.Time) {
-			continue
-		}
-		session := BuildIdentityState([]normalized.Event{event}).Sessions[0]
-		address, err := netip.ParseAddr(row.IP)
-		if err != nil {
-			return 0, 0, err
-		}
-		session.IP = address.Unmap().String()
-		documents = append(documents, map[string]any{"ordinal": ordinal, "session_id": row.ID, "ip": session.IP, "account_id": row.AccountID, "observed_at": row.ConfirmedAt, "active": row.EndedAt.IsZero(), "document": session})
-	}
-	if len(documents) == 0 {
-		return 0, 0, nil
-	}
-	raw, err := json.Marshal(documents)
-	if err != nil {
-		return 0, 0, err
-	}
-	var accounts, sessions int
-	err = tx.QueryRowContext(ctx, `WITH ordered AS MATERIALIZED (SELECT * FROM jsonb_to_recordset($3::jsonb) r(ordinal integer,session_id text,ip text,account_id text,observed_at timestamptz,active boolean,document jsonb) ORDER BY ordinal), applied AS MATERIALIZED (SELECT identity_apply_address($1,$2,session_id,ip,account_id,observed_at,active,document) AS delta FROM ordered ORDER BY ordinal) SELECT COALESCE(sum(delta[1]),0),COALESCE(sum(delta[2]),0) FROM applied`, key, generation, raw).Scan(&accounts, &sessions)
-	return accounts, sessions, err
-}
 
 func identityInboxCapacity() int {
 	value, err := strconv.Atoi(os.Getenv("PROXY_SENTINEL_IDENTITY_INBOX_MAX_RECORDS"))
@@ -358,9 +301,5 @@ func identityInboxCapacity() int {
 }
 
 // applyScopeProgressSQL advances processing progress in the apply transaction. Account and session
-// totals are not here: they are statistics written by scopeStatisticsAddSQL outside this lock.
+// totals are published with each complete snapshot, not accumulated per batch.
 const applyScopeProgressSQL = `UPDATE identity_pipeline_scopes SET processed_at=now(),pending_records=pending_records-$3,processed_sequence=$5-CASE WHEN $4 THEN 0 ELSE 1 END,lease_until=NULL,heartbeat_at=now(),last_error='',oldest_pending_at=(SELECT accepted_at FROM identity_ingest_batches WHERE scope_key=$1 AND sequence=CASE WHEN $4 THEN $5+1 ELSE $5 END) WHERE scope_key=$1 AND lease_epoch=$2 AND lease_until>clock_timestamp() AND current_generation=$6`
-
-// scopeStatisticsAddSQL accumulates totals for one scope, keyed so a retry adds the same batch once only
-// through the caller that owns the apply. It runs outside the apply transaction.
-const scopeStatisticsAddSQL = `INSERT INTO identity_scope_statistics(scope_key,accounts,sessions,counted_sequence,statistics_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(scope_key) DO UPDATE SET accounts=identity_scope_statistics.accounts+EXCLUDED.accounts,sessions=identity_scope_statistics.sessions+EXCLUDED.sessions,counted_sequence=EXCLUDED.counted_sequence,statistics_at=now() WHERE identity_scope_statistics.counted_sequence < EXCLUDED.counted_sequence`

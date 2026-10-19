@@ -311,7 +311,7 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 	}
 	start(s.runIdentityInbox)
 	start(s.runIdentityInboxExport)
-	start(s.runIdentityCalibration)
+	// Snapshots publish when they commit (publishSnapshotTx); there is no background calibration.
 	if SharedObservationEnabled() {
 		start(s.runSharedSnapshotIndexer)
 	}

@@ -1,0 +1,50 @@
+package store
+
+import (
+	"context"
+	"database/sql/driver"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+)
+
+// noDocument matches an applied-events payload that carries no event documents: only the old
+// calibration replay read them, and they were the bulk of that table.
+type noDocument struct{}
+
+func (noDocument) Match(v driver.Value) bool {
+	raw, ok := v.([]byte)
+	if !ok {
+		text, isText := v.(string)
+		raw, ok = []byte(text), isText
+	}
+	return ok && !strings.Contains(string(raw), `"document"`)
+}
+
+// An apply records facts, deduplication and progress only. It must not maintain the generation-keyed
+// current-state tables (identity_apply_address) or write per-batch statistics: both locked hot rows
+// on every batch and fed the index bloat that saturated the disk.
+func TestInboxApplyWritesFactsDedupAndProgressOnly(t *testing.T) {
+	db, mock := newReconcileMock(t)
+	snapshot := adapterSnapshot(t, "s1", "a1", "10.0.0.1")
+	w := identityInboxWork{Scope: IdentityScopeKey(reconcileScope), BatchID: "b1", Generation: "initial", Epoch: 7, Sequence: 1, Events: snapshot.Events,
+		Batches: []identityInboxBatch{{BatchID: "b1", Sequence: 1, Offset: 0, Count: len(snapshot.Events)}}}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT COALESCE\(lease_epoch=\$2`).WillReturnRows(sqlmock.NewRows([]string{"valid"}).AddRow(true))
+	mock.ExpectExec(`INSERT INTO policy_identity_observations`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO identity_applied_events(scope_key,event_id,batch_sequence,ordinal,observed_at)`)).
+		WithArgs(w.Scope, noDocument{}).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`UPDATE identity_ingest_batches b SET processed_offset`).WillReturnRows(sqlmock.NewRows([]string{"sequence", "completed"}).AddRow(int64(1), true))
+	mock.ExpectExec(`SELECT scope_key FROM identity_pipeline_scopes WHERE scope_key=\$1 FOR UPDATE`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(applyScopeProgressSQL)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := (&PostgresStore{db: db}).applyIdentityInbox(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

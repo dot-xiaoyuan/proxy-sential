@@ -164,14 +164,21 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
+	accounts, sessions, conflict := snapshotPublication(snapshot.Sessions)
 	// Session reconciliation runs before this snapshot row is stored, so the last applied
 	// time it reads excludes the snapshot being committed. Both commit or neither does.
-	reconciled, err := reconcileSnapshotSessionsTx(ctx, tx, snapshot)
-	if err != nil {
-		return false, err
+	// A snapshot with conflicting ownership is evidence only: it must not end or add sessions.
+	var reconciled sessionReconcileStats
+	if !conflict {
+		if reconciled, err = reconcileSnapshotSessionsTx(ctx, tx, snapshot); err != nil {
+			return false, err
+		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO identity_full_snapshots(source,sensor_id,campus_id,access_domain,snapshot_id,observed_at,interval_seconds,session_count,content_sha256,document) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.SnapshotID, snapshot.ObservedAt, snapshot.IntervalSeconds, len(snapshot.Sessions), digest, raw)
 	if err != nil {
+		return false, err
+	}
+	if err = pruneSnapshotsTx(ctx, tx, snapshot); err != nil {
 		return false, err
 	}
 	// Shared-observation members are indexed asynchronously by indexPendingSharedSnapshots.
@@ -180,8 +187,14 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 		return false, err
 	}
 	// Conflicts are recorded, never hidden: a member that disagrees with a stored end is a review item.
-	outcome := reconcileOutcome(reconciled)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,'identity.session.reconcile',$3,$4,now())`, "identity-session-reconcile-"+digest, "identity-integration:"+snapshot.Source, string(scopeJSON)+"/"+snapshot.SnapshotID, outcome); err != nil {
+	if !conflict {
+		outcome := reconcileOutcome(reconciled)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,'identity.session.reconcile',$3,$4,now())`, "identity-session-reconcile-"+digest, "identity-integration:"+snapshot.Source, string(scopeJSON)+"/"+snapshot.SnapshotID, outcome); err != nil {
+			return false, err
+		}
+	}
+	// Publication is the last write, so the shared scope row is locked only until commit.
+	if err = publishSnapshotTx(ctx, tx, snapshot, accounts, sessions, conflict); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

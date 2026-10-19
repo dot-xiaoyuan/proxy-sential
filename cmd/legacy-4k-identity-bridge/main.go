@@ -354,7 +354,10 @@ func runSnapshotWorker(ctx context.Context, sender legacy4k.Sender, base config,
 				if attemptSwitch {
 					nextSwitchAttempt = time.Now().Add(30 * time.Second)
 				} else {
-					nextActiveSnapshot = time.Now().Add(10 * time.Second)
+					state.mu.RLock()
+					failures := int(state.snapshotConsecutiveFailures)
+					state.mu.RUnlock()
+					nextActiveSnapshot = time.Now().Add(snapshotRetryDelay(failures))
 				}
 			} else {
 				report["status"] = "completed"
@@ -765,6 +768,17 @@ func markEventHealthy(state *runtimeState) {
 		state.lastErrorType = ""
 	}
 	state.mu.Unlock()
+}
+
+// snapshotRetryDelay backs off a failed snapshot: 10 s, doubling, capped at 5 min. Each retry
+// re-reads and re-sends the whole online inventory, so retrying fast against an overloaded
+// endpoint only adds load.
+func snapshotRetryDelay(consecutiveFailures int) time.Duration {
+	delay := 10 * time.Second
+	for i := 1; i < consecutiveFailures && delay < 5*time.Minute; i++ {
+		delay *= 2
+	}
+	return min(delay, 5*time.Minute)
 }
 
 func markSnapshotFailure(state *runtimeState, err error) {

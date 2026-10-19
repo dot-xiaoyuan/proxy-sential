@@ -74,8 +74,12 @@ func TestManagedSRunSnapshotReplaysWithoutInventingScope(t *testing.T) {
 			mock.ExpectExec(`INSERT INTO account_sessions\(`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`UPDATE account_sessions s SET policy_metadata = NULLIF`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(`DELETE FROM identity_full_snapshots WHERE ctid IN`).WillReturnResult(sqlmock.NewResult(0, 0))
 			mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
+			// The snapshot publishes in the same transaction, scope-row write last.
+			mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key`).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(`UPDATE identity_pipeline_scopes SET snapshot_id=`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectCommit()
 			created, err := (&PostgresStore{db: db}).CommitIdentitySnapshot(context.Background(), snapshot)
 			if err != nil || !created {

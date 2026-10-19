@@ -10,22 +10,32 @@ import (
 )
 
 const (
-	// sharedIndexBatch bounds the snapshots one pass indexes, so one pass cannot monopolize the database.
-	sharedIndexBatch = 4
 	// sharedIndexMembers bounds the member rows per statement.
 	sharedIndexMembers = 1000
 	sharedIndexIdle    = 10 * time.Second
+	// sharedPruneBatch bounds the member rows one pass deletes.
+	sharedPruneBatch = 5000
 )
 
-// indexPendingSharedSnapshots indexes committed snapshots that have no shared-observation index row,
-// oldest first. Each snapshot is indexed in its own transaction, outside the snapshot commit. The index
-// row is written last, so its presence means every member is stored. Until then readers report
-// identity_snapshot_index_pending, which is the honest state for a snapshot that is still being indexed.
-func (s *DBStore) indexPendingSharedSnapshots(ctx context.Context) (int, error) {
-	rows, err := s.pg.db.QueryContext(ctx, `SELECT f.source,f.sensor_id,f.campus_id,f.access_domain,f.snapshot_id,f.observed_at,f.document
+// sharedIndexSelectSQL picks the newest unindexed snapshot of this process's sensor inside the
+// retention window, one document per pass. History is never indexed: shared-observation windows only
+// look back about three reconcile intervals.
+const sharedIndexSelectSQL = `SELECT f.source,f.sensor_id,f.campus_id,f.access_domain,f.snapshot_id,f.observed_at,f.document
 FROM identity_full_snapshots f
-WHERE NOT EXISTS (SELECT 1 FROM shared_identity_snapshot_indexes i WHERE i.source=f.source AND i.sensor_id=f.sensor_id AND i.campus_id=f.campus_id AND i.access_domain=f.access_domain AND i.snapshot_id=f.snapshot_id)
-ORDER BY f.observed_at, f.snapshot_id LIMIT $1`, sharedIndexBatch)
+WHERE f.sensor_id=$1 AND f.observed_at>$2 AND NOT EXISTS (SELECT 1 FROM shared_identity_snapshot_indexes i WHERE i.source=f.source AND i.sensor_id=f.sensor_id AND i.campus_id=f.campus_id AND i.access_domain=f.access_domain AND i.snapshot_id=f.snapshot_id)
+ORDER BY f.observed_at DESC, f.snapshot_id DESC LIMIT 1`
+
+// Members and index rows outside the retention window are deleted in bounded, index-ordered batches.
+const sharedMembersPruneSQL = `DELETE FROM shared_identity_snapshot_members WHERE ctid IN (SELECT ctid FROM shared_identity_snapshot_members WHERE received_at<$1 ORDER BY received_at LIMIT $2)`
+const sharedIndexesPruneSQL = `DELETE FROM shared_identity_snapshot_indexes WHERE observed_at<$1`
+
+// indexPendingSharedSnapshots indexes the newest unindexed snapshot, outside the snapshot commit, then
+// prunes expired member and index rows. The index row is written last, so its presence means every
+// member is stored. Until then readers report identity_snapshot_index_pending, which is the honest
+// state for a snapshot that is still being indexed.
+func (s *DBStore) indexPendingSharedSnapshots(ctx context.Context) (int, error) {
+	cutoff := time.Now().UTC().Add(-snapshotRetention)
+	rows, err := s.pg.db.QueryContext(ctx, sharedIndexSelectSQL, s.pg.sensorID, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -55,6 +65,12 @@ ORDER BY f.observed_at, f.snapshot_id LIMIT $1`, sharedIndexBatch)
 			return indexed, fmt.Errorf("index snapshot %s: %w", snapshot.SnapshotID, err)
 		}
 		indexed++
+	}
+	if _, err = s.pg.db.ExecContext(ctx, sharedMembersPruneSQL, cutoff, sharedPruneBatch); err != nil {
+		return indexed, fmt.Errorf("prune shared members: %w", err)
+	}
+	if _, err = s.pg.db.ExecContext(ctx, sharedIndexesPruneSQL, cutoff); err != nil {
+		return indexed, fmt.Errorf("prune shared indexes: %w", err)
 	}
 	return indexed, nil
 }

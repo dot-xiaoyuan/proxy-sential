@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,6 +31,15 @@ func inboxTestStore(t *testing.T) *PostgresStore {
 func inboxEvent(scope IdentityScope, id, sid, ip, status string, at time.Time) normalized.Event {
 	return normalized.Event{EventID: id, Type: "identity", Timestamp: at.UTC().Format(time.RFC3339Nano), Source: scope.Source, Observer: map[string]any{"sensor_id": scope.SensorID}, Subject: map[string]any{"entity_role": "endpoint", "account_id": "student", "ip": ip, "campus_id": scope.CampusID}, Payload: map[string]any{"campus_id": scope.CampusID, "origin": scope.Source, "session_id": sid, "session_status": status, "access_domain": scope.AccessDomain}}
 }
+
+// snapshotEvent is one complete-snapshot member: status reconcile, heartbeat equal to the interval.
+func snapshotEvent(scope IdentityScope, id, sid, ip string, at time.Time, interval int) normalized.Event {
+	event := inboxEvent(scope, id, sid, ip, "reconcile", at)
+	event.Payload["heartbeat_interval_seconds"] = strconv.Itoa(interval)
+	event.Payload["reconcile_interval_seconds"] = strconv.Itoa(interval)
+	return event
+}
+
 func TestIdentityInboxDurabilityFencingAndCounters(t *testing.T) {
 	pg := inboxTestStore(t)
 	ctx := context.Background()
@@ -81,7 +91,8 @@ func TestIdentityInboxDurabilityFencingAndCounters(t *testing.T) {
 			t.Fatalf("counts %d %d %d expected %d %d %d", a, s, p, accounts, sessions, pending)
 		}
 	}
-	check(1, 1, 1)
+	// Account and session totals are published with complete snapshots; applies never change them.
+	check(0, 0, 1)
 	// A crash after commit and retry cannot count twice.
 	if err = pg.applyIdentityInbox(ctx, replacement); !errors.Is(err, ErrIdentityLeaseExpired) {
 		t.Fatalf("repeat commit: %v", err)
@@ -93,7 +104,7 @@ func TestIdentityInboxDurabilityFencingAndCounters(t *testing.T) {
 	if err = pg.applyIdentityInbox(ctx, work); err != nil {
 		t.Fatal(err)
 	}
-	check(1, 1, 0)
+	check(0, 0, 0)
 	next := []normalized.Event{events[0], events[1], inboxEvent(scope, "logout-v6", "generation-1", "2001:db8::1", "stop", at.Add(time.Second)), inboxEvent(scope, "equal-login", "generation-1", "2001:db8::1", "start", at.Add(time.Second)), inboxEvent(scope, "new-generation", "generation-2", "192.0.2.1", "start", at.Add(2*time.Second))}
 	if _, err = pg.acceptIdentityBatch(ctx, key+"-2", "hash2", scope, next, len(next)); err != nil {
 		t.Fatal(err)
@@ -105,18 +116,47 @@ func TestIdentityInboxDurabilityFencingAndCounters(t *testing.T) {
 	if err = pg.applyIdentityInbox(ctx, work); err != nil {
 		t.Fatal(err)
 	}
-	check(1, 1, 0)
+	check(0, 0, 0)
 }
 
-func TestIdentityCalibrationPublishesCountsAndReplaysNewerFacts(t *testing.T) {
+func TestSnapshotCommitPublishesCountsForwardOnly(t *testing.T) {
 	pg := inboxTestStore(t)
 	ctx := context.Background()
-	scope := IdentityScope{Source: "calibration", SensorID: fmt.Sprintf("calibration-%d", time.Now().UnixNano()), CampusID: "c", AccessDomain: "d"}
+	scope := IdentityScope{Source: "publication", SensorID: fmt.Sprintf("publication-%d", time.Now().UnixNano()), CampusID: "c", AccessDomain: "d"}
 	key := IdentityScopeKey(scope)
 	at := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
-	snap := IdentitySnapshot{IdentityScope: scope, SnapshotID: "first", ObservedAt: at, IntervalSeconds: 60, Events: []normalized.Event{inboxEvent(scope, key+"base", "old-session", "192.0.2.1", "reconcile", at)}}
-	events := []normalized.Event{inboxEvent(scope, key+"new", "new-session", "192.0.2.2", "start", at.Add(time.Second)), inboxEvent(scope, key+"end", "old-session", "192.0.2.1", "stop", at.Add(2*time.Second))}
-	if _, err := pg.acceptIdentityBatch(ctx, key+"batch", "hash", scope, events, len(events)); err != nil {
+	snap := IdentitySnapshot{IdentityScope: scope, SnapshotID: "first", ObservedAt: at, IntervalSeconds: 60, Events: []normalized.Event{snapshotEvent(scope, key+"base", "old-session", "192.0.2.1", at, 60)}}
+	if _, err := pg.CommitIdentitySnapshot(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := ReadIdentityPipelineSummary(ctx, pg.db, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *summary.Accounts != 1 || *summary.Sessions != 1 || summary.CalibrationState != "completed" || !summary.SnapshotAt.Equal(at) {
+		t.Fatalf("commit did not publish: %+v", summary)
+	}
+	empty := snap
+	empty.SnapshotID = "empty"
+	empty.ObservedAt = at.Add(10 * time.Second)
+	empty.Events = nil
+	if _, err = pg.CommitIdentitySnapshot(ctx, empty); err != nil {
+		t.Fatal(err)
+	}
+	// Replaying the older snapshot is idempotent and cannot move the publication backwards.
+	if _, err = pg.CommitIdentitySnapshot(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	summary, err = ReadIdentityPipelineSummary(ctx, pg.db, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *summary.Accounts != 0 || *summary.Sessions != 0 || !summary.SnapshotAt.Equal(empty.ObservedAt) {
+		t.Fatalf("old snapshot replaced newer publication: %+v", summary)
+	}
+	// Incremental facts never change the published totals.
+	events := []normalized.Event{inboxEvent(scope, key+"new", "new-session", "192.0.2.2", "start", at.Add(time.Second))}
+	if _, err = pg.acceptIdentityBatch(ctx, key+"late", "late-hash", scope, events, len(events)); err != nil {
 		t.Fatal(err)
 	}
 	work, err := pg.claimIdentityInbox(ctx, scope.SensorID, 100)
@@ -126,47 +166,9 @@ func TestIdentityCalibrationPublishesCountsAndReplaysNewerFacts(t *testing.T) {
 	if err = pg.applyIdentityInbox(ctx, work); err != nil {
 		t.Fatal(err)
 	}
-	if err = pg.calibrateIdentitySnapshot(ctx, snap); err != nil {
-		t.Fatal(err)
-	}
-	summary, err := ReadIdentityPipelineSummary(ctx, pg.db, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if *summary.Accounts != 1 || *summary.Sessions != 1 || summary.CalibrationState != "completed" {
-		t.Fatalf("calibration lost delta: %+v", summary)
-	}
-	empty := snap
-	empty.SnapshotID = "empty"
-	empty.ObservedAt = at.Add(10 * time.Second)
-	empty.Events = nil
-	if err = pg.calibrateIdentitySnapshot(ctx, empty); err != nil {
-		t.Fatal(err)
-	}
-	if err = pg.calibrateIdentitySnapshot(ctx, snap); err != nil {
-		t.Fatal(err)
-	}
-	summary, err = ReadIdentityPipelineSummary(ctx, pg.db, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if *summary.Accounts != 0 || *summary.Sessions != 0 || !summary.SnapshotAt.Equal(empty.ObservedAt) {
-		t.Fatalf("old snapshot resurrected sessions: %+v", summary)
-	}
-	// Old facts remain immutable but cannot reopen a session covered by an empty snapshot.
-	if _, err = pg.acceptIdentityBatch(ctx, key+"late", "late-hash", scope, events, len(events)); err != nil {
-		t.Fatal(err)
-	}
-	work, err = pg.claimIdentityInbox(ctx, scope.SensorID, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = pg.applyIdentityInbox(ctx, work); err != nil {
-		t.Fatal(err)
-	}
 	summary, err = ReadIdentityPipelineSummary(ctx, pg.db, scope)
 	if err != nil || *summary.Sessions != 0 {
-		t.Fatalf("late event regressed state: %+v %v", summary, err)
+		t.Fatalf("apply changed published totals: %+v %v", summary, err)
 	}
 }
 
@@ -362,23 +364,23 @@ func TestIdentityBacklogDefersDerivedWork(t *testing.T) {
 	}
 }
 
-func TestIdentityCalibrationConflictingOwnershipRetainsPublishedVersion(t *testing.T) {
+func TestConflictingSnapshotRetainsPublishedVersion(t *testing.T) {
 	pg := inboxTestStore(t)
 	ctx := context.Background()
 	scope := IdentityScope{Source: "conflict", SensorID: fmt.Sprintf("conflict-%d", time.Now().UnixNano()), CampusID: "c", AccessDomain: "d"}
-	at := time.Now().UTC().Add(-time.Minute)
-	first := inboxEvent(scope, "base", "session", "192.0.2.1", "reconcile", at)
-	snap := IdentitySnapshot{IdentityScope: scope, SnapshotID: "good", ObservedAt: at, Events: []normalized.Event{first}}
-	if err := pg.calibrateIdentitySnapshot(ctx, snap); err != nil {
+	at := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
+	first := snapshotEvent(scope, "base", "session", "192.0.2.1", at, 60)
+	snap := IdentitySnapshot{IdentityScope: scope, SnapshotID: "good", ObservedAt: at, IntervalSeconds: 60, Events: []normalized.Event{first}}
+	if _, err := pg.CommitIdentitySnapshot(ctx, snap); err != nil {
 		t.Fatal(err)
 	}
-	second := inboxEvent(scope, "conflict", "session", "192.0.2.2", "reconcile", at.Add(time.Second))
+	later := at.Add(time.Second)
+	again := snapshotEvent(scope, "base-again", "session", "192.0.2.1", later, 60)
+	second := snapshotEvent(scope, "conflict", "session", "192.0.2.2", later, 60)
 	second.Subject["account_id"] = "different-account"
-	snap.SnapshotID = "conflicting"
-	snap.ObservedAt = at.Add(time.Second)
-	snap.Events = append(snap.Events, second)
-	if err := pg.calibrateIdentitySnapshot(ctx, snap); err == nil {
-		t.Fatal("conflicting snapshot published")
+	conflicting := IdentitySnapshot{IdentityScope: scope, SnapshotID: "conflicting", ObservedAt: later, IntervalSeconds: 60, Events: []normalized.Event{again, second}}
+	if _, err := pg.CommitIdentitySnapshot(ctx, conflicting); err != nil {
+		t.Fatal(err)
 	}
 	summary, err := ReadIdentityPipelineSummary(ctx, pg.db, scope)
 	if err != nil || summary.Accounts == nil || *summary.Accounts != 1 || *summary.Sessions != 1 || !summary.SnapshotAt.Equal(at) || summary.CalibrationState != "failed" {
