@@ -168,6 +168,9 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 		for _, coverage := range s.SourceCoverage {
 			points = append(points, coverage.From, coverage.To)
 		}
+		for _, confirmed := range s.ConfirmedRanges {
+			points = append(points, confirmed.From, confirmed.To)
+		}
 	}
 	account := ""
 	generation := ""

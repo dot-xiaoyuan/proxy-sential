@@ -53,7 +53,11 @@ func foldPolicySessions(rows []policy.Session) []policy.Session {
 			old := out[index]
 			status := strings.ToLower(s.Status)
 			login := status == "start" || status == "login" || status == "accounting-start" || status == "reconcile"
-			if login && !old.EndedAt.IsZero() && s.ConfirmedAt.After(old.EndedAt) {
+			// A session folded earlier that began when or after the previous one ended stays separate even once
+			// it carries a stop status; a raw end fact (start equal to end) still closes the session.
+			// Without this, folding the folded list again merged a reopened session back after it ended.
+			reopened := !s.EndedAt.IsZero() && !s.StartedAt.Before(old.EndedAt) && s.EndedAt.After(s.StartedAt)
+			if (login || reopened) && !old.EndedAt.IsZero() && s.ConfirmedAt.After(old.EndedAt) {
 				latest[key] = len(out)
 				out = append(out, s)
 				continue
@@ -95,27 +99,26 @@ func foldPolicySessions(rows []policy.Session) []policy.Session {
 					s.Confirmations = append(s.Confirmations, at)
 				}
 			}
+			ranges := append(append([]policy.IdentityCoverage(nil), old.ConfirmedRanges...), s.ConfirmedRanges...)
+			sort.Slice(ranges, func(i, j int) bool {
+				if !ranges[i].From.Equal(ranges[j].From) {
+					return ranges[i].From.Before(ranges[j].From)
+				}
+				return ranges[i].To.Before(ranges[j].To)
+			})
+			s.ConfirmedRanges = nil
+			for _, window := range ranges {
+				if n := len(s.ConfirmedRanges); n == 0 || s.ConfirmedRanges[n-1] != window {
+					s.ConfirmedRanges = append(s.ConfirmedRanges, window)
+				}
+			}
 			out[index] = s
 		} else {
 			latest[key] = len(out)
 			out = append(out, s)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.AccountID != b.AccountID {
-			return a.AccountID < b.AccountID
-		}
-		if a.ID != b.ID {
-			return a.ID < b.ID
-		}
-		if !a.StartedAt.Equal(b.StartedAt) {
-			return a.StartedAt.Before(b.StartedAt)
-		}
-		x, _ := json.Marshal(a)
-		y, _ := json.Marshal(b)
-		return string(x) < string(y)
-	})
+	sortPolicySessions(out)
 	return out
 }
 func policyRows(events []normalized.Event) []policy.Session {
@@ -181,11 +184,11 @@ func (s *PostgresStore) ListPolicySessions(ctx context.Context, at time.Time) ([
 		return nil, err
 	}
 	rows.Close()
-	snapshots, err := s.identitySnapshots(ctx, at)
+	log, members, err := projectionPolicyInputs(ctx, s.db, at, "", "")
 	if err != nil {
 		return nil, err
 	}
-	return reconcileIdentitySessions(out, snapshots, at), nil
+	return policySessionsFromProjection(out, log, members, at), nil
 }
 func (s *PostgresStore) ListPolicySessionsForScope(ctx context.Context, at time.Time, campus, domain string) ([]policy.Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT session_data FROM policy_identity_observations WHERE observed_at >= $1 AND observed_at <= $2 AND session_data->>'campus_id'=$3 AND session_data->>'access_domain'=$4 ORDER BY observed_at,event_id`, at.Add(-7*24*time.Hour), at, campus, domain)
@@ -208,11 +211,11 @@ func (s *PostgresStore) ListPolicySessionsForScope(ctx context.Context, at time.
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	snapshots, err := s.identitySnapshotsForScope(ctx, at, campus, domain)
+	log, members, err := projectionPolicyInputs(ctx, s.db, at, campus, domain)
 	if err != nil {
 		return nil, err
 	}
-	return reconcileIdentitySessions(out, snapshots, at), nil
+	return policySessionsFromProjection(out, log, members, at), nil
 }
 
 // writePolicyIdentityEvents writes the batch's policy observations in one statement. The
@@ -236,4 +239,23 @@ func writePolicyIdentityEvents(ctx context.Context, tx *sql.Tx, events []normali
 		}
 	}
 	return insertPolicyIdentityObservationsBatch(ctx, tx, rows)
+}
+
+// sortPolicySessions orders sessions by account, session ID and start, deterministically.
+func sortPolicySessions(out []policy.Session) {
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.AccountID != b.AccountID {
+			return a.AccountID < b.AccountID
+		}
+		if a.ID != b.ID {
+			return a.ID < b.ID
+		}
+		if !a.StartedAt.Equal(b.StartedAt) {
+			return a.StartedAt.Before(b.StartedAt)
+		}
+		x, _ := json.Marshal(a)
+		y, _ := json.Marshal(b)
+		return string(x) < string(y)
+	})
 }

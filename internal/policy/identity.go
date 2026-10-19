@@ -20,24 +20,27 @@ type Session struct {
 	SourceCoverage      []IdentityCoverage `json:"source_coverage,omitempty"`
 	Status              string             `json:"session_status,omitempty"`
 	Confirmations       []time.Time        `json:"confirmations,omitempty"`
-	ID                  string             `json:"session_id"`
-	AccountID           string             `json:"account_id"`
-	EndpointID          string             `json:"endpoint_id"`
-	IP                  string             `json:"ip"`
-	MAC                 string             `json:"mac"`
-	CampusID            string             `json:"campus_id"`
-	AccessDomain        string             `json:"access_domain"`
-	GroupID             string             `json:"group_id"`
-	ProductID           string             `json:"product_id"`
-	VLAN                string             `json:"vlan"`
-	Source              string             `json:"source"`
-	StartedAt           time.Time          `json:"started_at"`
-	EndedAt             time.Time          `json:"ended_at"`
-	ConfirmedAt         time.Time          `json:"last_confirmed_at"`
-	HeartbeatSeconds    int                `json:"heartbeat_interval_seconds"`
-	ReconcileSeconds    int                `json:"reconcile_interval_seconds"`
-	DeviceClass         string             `json:"device_class"`
-	BindingConflict     bool               `json:"binding_conflict"`
+	// ConfirmedRanges stand for runs of consecutive snapshot confirmations: any time inside a range
+	// is confirmed, as if each snapshot in the run were listed in Confirmations.
+	ConfirmedRanges  []IdentityCoverage `json:"confirmed_ranges,omitempty"`
+	ID               string             `json:"session_id"`
+	AccountID        string             `json:"account_id"`
+	EndpointID       string             `json:"endpoint_id"`
+	IP               string             `json:"ip"`
+	MAC              string             `json:"mac"`
+	CampusID         string             `json:"campus_id"`
+	AccessDomain     string             `json:"access_domain"`
+	GroupID          string             `json:"group_id"`
+	ProductID        string             `json:"product_id"`
+	VLAN             string             `json:"vlan"`
+	Source           string             `json:"source"`
+	StartedAt        time.Time          `json:"started_at"`
+	EndedAt          time.Time          `json:"ended_at"`
+	ConfirmedAt      time.Time          `json:"last_confirmed_at"`
+	HeartbeatSeconds int                `json:"heartbeat_interval_seconds"`
+	ReconcileSeconds int                `json:"reconcile_interval_seconds"`
+	DeviceClass      string             `json:"device_class"`
+	BindingConflict  bool               `json:"binding_conflict"`
 }
 
 func (s Session) State(at time.Time) string {
@@ -70,15 +73,20 @@ func (s Session) State(at time.Time) string {
 	if s.BindingConflict || s.AccountID == "" || s.Source == "" || period <= 0 || s.ConfirmedAt.IsZero() || !at.Before(s.ConfirmedAt.Add(time.Duration(3*period)*time.Second)) {
 		return "unknown"
 	}
-	if len(s.Confirmations) == 0 && at.Before(s.ConfirmedAt) {
+	if len(s.Confirmations) == 0 && len(s.ConfirmedRanges) == 0 && at.Before(s.ConfirmedAt) {
 		return "unknown"
 	}
-	if len(s.Confirmations) > 0 {
+	if len(s.Confirmations) > 0 || len(s.ConfirmedRanges) > 0 {
 		covered := false
 		for _, confirmed := range s.Confirmations {
 			if !at.Before(confirmed) && at.Before(confirmed.Add(time.Duration(3*period)*time.Second)) {
 				covered = true
 				break
+			}
+		}
+		for _, window := range s.ConfirmedRanges {
+			if !covered && !at.Before(window.From) && at.Before(window.To) {
+				covered = true
 			}
 		}
 		if !covered {

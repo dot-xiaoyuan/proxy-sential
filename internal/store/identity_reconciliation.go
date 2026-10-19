@@ -83,6 +83,7 @@ func reconcileIdentitySessions(facts []policy.Session, snapshots []IdentitySnaps
 			s.EndedAt = snapshot.ObservedAt
 			s.ConfirmedAt = snapshot.ObservedAt
 			s.Confirmations = nil
+			s.ConfirmedRanges = nil
 			rows = append(rows, s)
 		}
 		rows = append(rows, snapshot.Sessions...)
@@ -202,58 +203,6 @@ func (s *PostgresStore) IdentitySources(ctx context.Context, at time.Time) ([]Id
 		v.State = "healthy"
 		if v.AgeSeconds >= float64(3*v.IntervalSeconds) {
 			v.State = "interrupted"
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-func (s *PostgresStore) identitySnapshots(ctx context.Context, at time.Time) ([]IdentitySnapshot, error) {
-	// Include the most recent pre-window inventory as a baseline and all in-window
-	// snapshots, so long-lived logins and late pre-snapshot facts remain bounded.
-	rows, err := s.db.QueryContext(ctx, `SELECT document FROM identity_full_snapshots WHERE observed_at BETWEEN $1 AND $2 UNION ALL SELECT document FROM (SELECT DISTINCT ON(source,sensor_id,campus_id,access_domain) document FROM identity_full_snapshots WHERE observed_at<$1 ORDER BY source,sensor_id,campus_id,access_domain,observed_at DESC) baseline`, at.Add(-7*24*time.Hour), at)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []IdentitySnapshot{}
-	for rows.Next() {
-		var raw []byte
-		var v IdentitySnapshot
-		if err = rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		if err = json.Unmarshal(raw, &v); err != nil {
-			return nil, err
-		}
-		v.Sessions = policyRows(v.Events)
-		for i := range v.Sessions {
-			v.Sessions[i].IdentitySnapshotIDs = []string{v.SnapshotID}
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-func (s *PostgresStore) identitySnapshotsForScope(ctx context.Context, at time.Time, campus, domain string) ([]IdentitySnapshot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT document FROM identity_full_snapshots WHERE observed_at BETWEEN $1 AND $2 AND campus_id=$3 AND access_domain=$4 UNION ALL SELECT document FROM (SELECT DISTINCT ON(source,sensor_id,campus_id,access_domain) document FROM identity_full_snapshots WHERE observed_at<$1 AND campus_id=$3 AND access_domain=$4 ORDER BY source,sensor_id,campus_id,access_domain,observed_at DESC) baseline`, at.Add(-7*24*time.Hour), at, campus, domain)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []IdentitySnapshot{}
-	for rows.Next() {
-		var raw []byte
-		var v IdentitySnapshot
-		if err = rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		if err = json.Unmarshal(raw, &v); err != nil {
-			return nil, err
-		}
-		v.Sessions = policyRows(v.Events)
-		for i := range v.Sessions {
-			v.Sessions[i].IdentitySnapshotIDs = []string{v.SnapshotID}
 		}
 		out = append(out, v)
 	}
