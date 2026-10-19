@@ -103,7 +103,7 @@ func TestLoadSnapshotSessionRowsReadsScopeAndMemberKeys(t *testing.T) {
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows(columns).AddRow("instance-A:S-1", "acct-1", "", "10.157.2.191", "", reconcileScope.Source, reconcileObserved.Add(-2*time.Hour), nil, rotatedLoginKey, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, "2026-10-16T06:10:00Z"))
 	snapshot := snapshotWith(keyedMember("instance-B:S-1", rotatedLoginKey))
-	rows, err := loadSnapshotSessionRows(context.Background(), db, snapshot)
+	rows, err := loadSnapshotSessionRows(context.Background(), db, snapshot, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestAccessDomainIsReadFromMetadataNotColumn(t *testing.T) {
 	mock.ExpectQuery(`COALESCE\(policy_metadata->>'access_domain'`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
 	mock.ExpectQuery(`.*`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
 	mock.ExpectQuery(`.*`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
-	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshotWith(keyedMember("x", "k|1"))); err != nil {
+	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshotWith(keyedMember("x", "k|1")), true); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -183,7 +183,7 @@ func TestEndCandidatesAreAbsentOpenRowsOnly(t *testing.T) {
 		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, sqlmock.AnyArg(), sqlmock.AnyArg(), reconcileEndBatch).
 		WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
 	snapshot := snapshotWith()
-	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshot); err != nil {
+	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshot, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -197,7 +197,19 @@ func TestNoFullOpenRowScanPerSnapshot(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery(`WHERE session_id = ANY`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
 	mock.ExpectQuery(`NOT EXISTS`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
-	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshotWith(snapshotMember("sess-A", "acct-1", "10.0.0.1"))); err != nil {
+	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshotWith(snapshotMember("sess-A", "acct-1", "10.0.0.1")), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// With ends disabled the pass must not issue the end-candidate read at all.
+func TestDisabledEndsIssueNoCandidateRead(t *testing.T) {
+	db, mock := newReconcileMock(t)
+	mock.ExpectQuery(`WHERE session_id = ANY`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
+	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshotWith(snapshotMember("sess-A", "acct-1", "10.0.0.1")), false); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

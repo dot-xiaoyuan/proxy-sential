@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/policy"
@@ -72,7 +75,8 @@ func accountSessionFromReconcile(row policy.Session, snapshot IdentitySnapshot) 
 
 // loadSnapshotSessionRows reads what the planner needs and nothing more: every open row of the
 // snapshot's source, plus rows matched by member session ID or login key. It never reads history.
-func loadSnapshotSessionRows(ctx context.Context, q identityQueryer, snapshot IdentitySnapshot) ([]policy.Session, error) {
+// withEnds false skips the end-candidate read entirely, so a disabled pass costs only the member lookups.
+func loadSnapshotSessionRows(ctx context.Context, q identityQueryer, snapshot IdentitySnapshot, withEnds bool) ([]policy.Session, error) {
 	rows := map[string]policy.Session{}
 	add := func(query string, args ...any) error {
 		result, err := q.QueryContext(ctx, query, args...)
@@ -108,9 +112,11 @@ func loadSnapshotSessionRows(ctx context.Context, q identityQueryer, snapshot Id
 	// thousands of rows per commit; rows left over are ended by later snapshots.
 	// The member sets are CTEs so the planner hash-anti-joins them. As a correlated unnest it nested-loops,
 	// rescanning the whole member array for every open row.
-	if err := add(`WITH m AS (SELECT unnest($5::text[]) AS id), k AS (SELECT unnest($6::text[]) AS key) `+sessionSelectSQL+` WHERE ended_at IS NULL AND source = $1 AND (sensor_id = '' OR sensor_id = $2) AND COALESCE(campus_id,'') = $3 AND COALESCE(policy_metadata->>'access_domain','') = $4 AND NOT EXISTS (SELECT 1 FROM m WHERE m.id = account_sessions.session_id) AND NOT EXISTS (SELECT 1 FROM k WHERE account_sessions.login_key <> '' AND k.key = account_sessions.login_key) LIMIT $7`,
-		snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, textArray(ids), textArray(keys), reconcileEndBatch); err != nil {
-		return nil, err
+	if withEnds {
+		if err := add(`WITH m AS (SELECT unnest($5::text[]) AS id), k AS (SELECT unnest($6::text[]) AS key) `+sessionSelectSQL+` WHERE ended_at IS NULL AND source = $1 AND (sensor_id = '' OR sensor_id = $2) AND COALESCE(campus_id,'') = $3 AND COALESCE(policy_metadata->>'access_domain','') = $4 AND NOT EXISTS (SELECT 1 FROM m WHERE m.id = account_sessions.session_id) AND NOT EXISTS (SELECT 1 FROM k WHERE account_sessions.login_key <> '' AND k.key = account_sessions.login_key) LIMIT $7`,
+			snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, textArray(ids), textArray(keys), reconcileEndBatch); err != nil {
+			return nil, err
+		}
 	}
 	for start := 0; start < len(ids); start += reconcileChunk {
 		if err := add(sessionSelectSQL+` WHERE session_id = ANY($1::text[])`, textArray(ids[start:min(start+reconcileChunk, len(ids))])); err != nil {
@@ -181,6 +187,23 @@ WHERE s.session_id = v.session_id AND s.ended_at IS NULL`,
 	return stats, nil
 }
 
+// sessionReconcileEndsEnabled gates ending open rows. Off by default; see reconcileEndBatch.
+func sessionReconcileEndsEnabled() bool {
+	enabled, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_SESSION_RECONCILE_ENDS")))
+	return enabled
+}
+
+// withoutEnds keeps inserts and confirmations and drops every end.
+func withoutEnds(actions []sessionReconcileAction) []sessionReconcileAction {
+	kept := make([]sessionReconcileAction, 0, len(actions))
+	for _, action := range actions {
+		if action.Kind != sessionReconcileEnd {
+			kept = append(kept, action)
+		}
+	}
+	return kept
+}
+
 // reconcileOutcome names the audit result of one snapshot pass. A pass that hit its end batch is
 // partial: the remaining open rows are ended by later snapshots, and that must be visible.
 func reconcileOutcome(stats sessionReconcileStats) string {
@@ -212,11 +235,15 @@ func reconcileSnapshotSessionsTx(ctx context.Context, tx *sql.Tx, snapshot Ident
 	if err != nil {
 		return sessionReconcileStats{}, err
 	}
-	rows, err := loadSnapshotSessionRows(ctx, tx, snapshot)
+	endsEnabled := sessionReconcileEndsEnabled()
+	rows, err := loadSnapshotSessionRows(ctx, tx, snapshot, endsEnabled)
 	if err != nil {
 		return sessionReconcileStats{}, err
 	}
 	actions, conflicts := planSnapshotSessionReconcile(snapshot, rows, lastApplied)
+	if !endsEnabled {
+		actions = withoutEnds(actions)
+	}
 	stats, err := applySessionReconcileActions(ctx, tx, snapshot, actions)
 	stats.Conflicts = conflicts
 	if len(snapshot.Sessions) == 0 && len(rows) > 0 {

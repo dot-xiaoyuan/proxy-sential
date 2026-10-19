@@ -70,7 +70,6 @@ func TestManagedSRunSnapshotReplaysWithoutInventingScope(t *testing.T) {
 			// Session reconciliation runs before the snapshot row is stored. The members carry no
 			// login generation, so there is no login-key lookup; both members share one session ID.
 			mock.ExpectQuery(`SELECT max\(observed_at\) FROM identity_full_snapshots`).WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(nil))
-			mock.ExpectQuery(`FROM account_sessions WHERE ended_at IS NULL AND source = \$1`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
 			mock.ExpectQuery(`WHERE session_id = ANY`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
 			mock.ExpectExec(`INSERT INTO account_sessions\(`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`UPDATE account_sessions s SET policy_metadata = NULLIF`).WillReturnResult(sqlmock.NewResult(0, 1))

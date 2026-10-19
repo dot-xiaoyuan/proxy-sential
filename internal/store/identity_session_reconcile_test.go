@@ -401,3 +401,34 @@ func TestReconcileOutcomeReportsPartialAndHeld(t *testing.T) {
 		}
 	}
 }
+
+// Ending open rows is off unless the operator enables it: the first enabled passes would end
+// hundreds of thousands of stale rows, which changes what the terminal list shows as online.
+func TestSessionReconcileEndsDisabledByDefault(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_SESSION_RECONCILE_ENDS", "")
+	if sessionReconcileEndsEnabled() {
+		t.Fatal("ends enabled without opt-in")
+	}
+	t.Setenv("PROXY_SENTINEL_SESSION_RECONCILE_ENDS", "true")
+	if !sessionReconcileEndsEnabled() {
+		t.Fatal("explicit opt-in ignored")
+	}
+}
+
+// With ends disabled, a plan keeps inserts and confirmations and drops every end.
+func TestWithoutEndsDropsOnlyEndActions(t *testing.T) {
+	actions := []sessionReconcileAction{
+		{Kind: sessionReconcileInsert, SessionID: "new"},
+		{Kind: sessionReconcileConfirm, SessionID: "held"},
+		{Kind: sessionReconcileEnd, SessionID: "gone"},
+	}
+	kept := withoutEnds(actions)
+	if len(kept) != 2 {
+		t.Fatalf("kept=%+v", kept)
+	}
+	for _, action := range kept {
+		if action.Kind == sessionReconcileEnd {
+			t.Fatalf("end kept: %+v", action)
+		}
+	}
+}
