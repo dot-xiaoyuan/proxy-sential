@@ -21,6 +21,7 @@ type Session struct {
 	Status              string             `json:"session_status,omitempty"`
 	Confirmations       []time.Time        `json:"confirmations,omitempty"`
 	ID                  string             `json:"session_id"`
+	LoginKey            string             `json:"login_key,omitempty"`
 	AccountID           string             `json:"account_id"`
 	EndpointID          string             `json:"endpoint_id"`
 	IP                  string             `json:"ip"`

@@ -59,7 +59,7 @@ func TestManagedSRunSnapshotReplaysWithoutInventingScope(t *testing.T) {
 			if snapshot.Events[0].Payload["nas_ip"] != "192.0.2.190" {
 				t.Fatal("NAS source evidence lost")
 			}
-			db, mock, err := sqlmock.New()
+			db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(passthroughConverter{}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -67,7 +67,15 @@ func TestManagedSRunSnapshotReplaysWithoutInventingScope(t *testing.T) {
 			mock.ExpectBegin()
 			mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectQuery(`SELECT content_sha256 FROM identity_full_snapshots`).WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}))
+			// Session reconciliation runs before the snapshot row is stored. The members carry no
+			// login generation, so there is no login-key lookup; both members share one session ID.
+			mock.ExpectQuery(`SELECT max\(observed_at\) FROM identity_full_snapshots`).WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(nil))
+			mock.ExpectQuery(`FROM account_sessions WHERE ended_at IS NULL AND source = \$1`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
+			mock.ExpectQuery(`WHERE session_id = ANY`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
+			mock.ExpectExec(`INSERT INTO account_sessions\(`).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(`UPDATE account_sessions s SET policy_metadata = NULLIF`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectCommit()
 			created, err := (&PostgresStore{db: db}).CommitIdentitySnapshot(context.Background(), snapshot)

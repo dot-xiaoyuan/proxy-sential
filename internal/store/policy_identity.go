@@ -23,7 +23,7 @@ func policySession(s AccountSession) policy.Session {
 	start, _ := time.Parse(time.RFC3339Nano, s.StartedAt)
 	end, _ := time.Parse(time.RFC3339Nano, s.EndedAt)
 	confirmed, _ := time.Parse(time.RFC3339Nano, s.LastConfirmedAt)
-	return policy.Session{Status: s.SessionStatus, ID: s.SessionID, AccountID: s.AccountID, EndpointID: s.EndpointID, IP: s.IP, MAC: s.MAC, CampusID: s.CampusID, AccessDomain: s.AccessDomain, GroupID: s.GroupID, ProductID: s.ProductID, VLAN: s.VLAN, Source: s.Source, StartedAt: start, EndedAt: end, ConfirmedAt: confirmed, HeartbeatSeconds: s.HeartbeatSeconds, ReconcileSeconds: s.ReconcileSeconds, DeviceClass: s.DeviceClass, Confirmations: []time.Time{confirmed}}
+	return policy.Session{Status: s.SessionStatus, ID: s.SessionID, LoginKey: s.LoginKey, AccountID: s.AccountID, EndpointID: s.EndpointID, IP: s.IP, MAC: s.MAC, CampusID: s.CampusID, AccessDomain: s.AccessDomain, GroupID: s.GroupID, ProductID: s.ProductID, VLAN: s.VLAN, Source: s.Source, StartedAt: start, EndedAt: end, ConfirmedAt: confirmed, HeartbeatSeconds: s.HeartbeatSeconds, ReconcileSeconds: s.ReconcileSeconds, DeviceClass: s.DeviceClass, Confirmations: []time.Time{confirmed}}
 }
 
 // foldPolicySessions replays facts by event time, retaining separate login intervals.

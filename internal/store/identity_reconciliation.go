@@ -164,6 +164,12 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 	if !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
+	// Session reconciliation runs before this snapshot row is stored, so the last applied
+	// time it reads excludes the snapshot being committed. Both commit or neither does.
+	reconciled, err := reconcileSnapshotSessionsTx(ctx, tx, snapshot)
+	if err != nil {
+		return false, err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO identity_full_snapshots(source,sensor_id,campus_id,access_domain,snapshot_id,observed_at,interval_seconds,session_count,content_sha256,document) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.SnapshotID, snapshot.ObservedAt, snapshot.IntervalSeconds, len(snapshot.Sessions), digest, raw)
 	if err != nil {
 		return false, err
@@ -174,6 +180,17 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,'identity.snapshot.commit',$3,'success',now())`, "identity-snapshot-"+digest, "identity-integration:"+snapshot.Source, string(scopeJSON)+"/"+snapshot.SnapshotID); err != nil {
+		return false, err
+	}
+	// Conflicts are recorded, never hidden: a member that disagrees with a stored end is a review item.
+	outcome := "success"
+	if reconciled.Conflicts > 0 {
+		outcome = "conflict"
+	}
+	if reconciled.Held > 0 {
+		outcome = "held_empty"
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,'identity.session.reconcile',$3,$4,now())`, "identity-session-reconcile-"+digest, "identity-integration:"+snapshot.Source, string(scopeJSON)+"/"+snapshot.SnapshotID, outcome); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
