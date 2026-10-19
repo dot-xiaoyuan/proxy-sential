@@ -361,6 +361,8 @@ func (s *Server) handleIdentitySnapshotCommit(w http.ResponseWriter, r *http.Req
 		return
 	}
 	_, _ = s.operations.db.ExecContext(context.Background(), `DELETE FROM identity_snapshot_upload_chunks WHERE upload_id=$1`, uploadID)
+	// Unfinished uploads of this scope that began earlier can no longer become the newest snapshot.
+	_, _ = s.operations.db.ExecContext(context.Background(), supersededUploadsDeleteSQL, uploadID)
 	// Best effort: a directory refresh must never fail a completed inventory.
 	_ = s.refreshIdentityGroupCatalog(context.Background(), snapshot)
 	writeJSON(w, http.StatusAccepted, map[string]any{"upload_id": uploadID, "snapshot_id": snapshotID, "status": "completed", "session_count": len(snapshot.Events)})
@@ -427,3 +429,9 @@ func (s *Server) handleIdentitySnapshot(w http.ResponseWriter, r *http.Request) 
 	_ = s.refreshIdentityGroupCatalog(context.Background(), snapshot)
 	writeJSON(w, code, map[string]any{"snapshot_id": snapshot.SnapshotID, "status": "completed", "observed_at": snapshot.ObservedAt, "session_count": len(snapshot.Events), "replayed": !created})
 }
+
+// supersededUploadsDeleteSQL removes unfinished uploads of the completed upload's scope that began before
+// it; their chunks cascade. Each holds a whole-inventory copy, so they are not kept for 24 hours.
+const supersededUploadsDeleteSQL = `DELETE FROM identity_snapshot_uploads o USING identity_snapshot_uploads c
+ WHERE c.upload_id=$1 AND o.source=c.source AND o.sensor_id=c.sensor_id AND o.campus_id=c.campus_id AND o.access_domain=c.access_domain
+ AND o.status<>'completed' AND o.created_at<c.created_at`

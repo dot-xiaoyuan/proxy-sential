@@ -25,6 +25,7 @@ func TestSnapshotCommitRecordsMetadataLog(t *testing.T) {
 		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, "snapshot-replay", reconcileObserved, 1800, 1, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`DELETE FROM identity_full_snapshots WHERE ctid IN`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DELETE FROM identity_snapshot_log WHERE ctid IN`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(snapshotPublishSQL)).WillReturnResult(sqlmock.NewResult(0, 1))

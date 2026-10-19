@@ -69,7 +69,10 @@ func TestSnapshotCommitPublishesInSameTransaction(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_snapshot_log`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM identity_full_snapshots WHERE ctid IN`)).
-		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, reconcileObserved.Add(-snapshotRetention), snapshotPruneBatch).
+		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, reconcileObserved, snapshotPruneBatch).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(snapshotLogPruneSQL)).
+		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, reconcileObserved.Add(-snapshotMetadataRetention), snapshotPruneBatch).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key,source,sensor_id,campus_id,access_domain\)`).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -94,6 +97,7 @@ func TestConflictingSnapshotKeepsPublishedVersionAndSkipsReconcile(t *testing.T)
 	mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_snapshot_log`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM identity_full_snapshots WHERE ctid IN`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DELETE FROM identity_snapshot_log WHERE ctid IN`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key,source,sensor_id,campus_id,access_domain\)`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(snapshotPublishFailedSQL)).
@@ -148,6 +152,7 @@ func TestSnapshotCommitDoesNotWriteAccountSessions(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_snapshot_log`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM identity_full_snapshots WHERE ctid IN`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DELETE FROM identity_snapshot_log WHERE ctid IN`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(snapshotPublishSQL)).WillReturnResult(sqlmock.NewResult(0, 1))

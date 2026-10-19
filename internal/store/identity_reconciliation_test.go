@@ -70,6 +70,7 @@ func TestManagedSRunSnapshotReplaysWithoutInventingScope(t *testing.T) {
 			mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`INSERT INTO identity_snapshot_log`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`DELETE FROM identity_full_snapshots WHERE ctid IN`).WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectExec(`DELETE FROM identity_snapshot_log WHERE ctid IN`).WillReturnResult(sqlmock.NewResult(0, 0))
 			mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 			// The snapshot publishes in the same transaction, scope-row write last.
 			mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key`).WillReturnResult(sqlmock.NewResult(0, 1))

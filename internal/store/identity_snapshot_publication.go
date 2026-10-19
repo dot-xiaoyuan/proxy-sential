@@ -8,9 +8,9 @@ import (
 	"proxy-sentinel/internal/policy"
 )
 
-// snapshotRetention keeps complete snapshots long enough for shared-observation identity windows,
-// which look back about three reconcile intervals. Older inventories are not needed.
-const snapshotRetention = 3 * time.Hour
+// snapshotMetadataRetention keeps the snapshot log for a year after each snapshot. The log is the
+// durable record of which snapshots existed; documents are not kept beyond the newest one per scope.
+const snapshotMetadataRetention = 365 * 24 * time.Hour
 
 // snapshotPruneBatch bounds how many old snapshots one commit deletes, so steady state is one in,
 // one out and a commit never carries a large delete.
@@ -24,7 +24,15 @@ const snapshotPublishSQL = `UPDATE identity_pipeline_scopes SET snapshot_id=$3,s
 // snapshotPublishFailedSQL records a snapshot that cannot be published and keeps the published one.
 const snapshotPublishFailedSQL = `UPDATE identity_pipeline_scopes SET calibration_state='failed',calibration_error=$3 WHERE scope_key=$1 AND (snapshot_at IS NULL OR snapshot_at<$2)`
 
-const snapshotPruneSQL = `DELETE FROM identity_full_snapshots WHERE ctid IN (SELECT ctid FROM identity_full_snapshots WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND observed_at<$5 ORDER BY observed_at LIMIT $6)`
+// snapshotPruneSQL deletes older documents of the scope once the projection no longer needs them: a
+// document is read only by its pending projection job, and the newest one by managed polling.
+const snapshotPruneSQL = `DELETE FROM identity_full_snapshots WHERE ctid IN (SELECT f.ctid FROM identity_full_snapshots f
+ WHERE f.source=$1 AND f.sensor_id=$2 AND f.campus_id=$3 AND f.access_domain=$4 AND f.observed_at<$5
+ AND NOT EXISTS (SELECT 1 FROM identity_snapshot_projection_jobs j WHERE j.source=f.source AND j.sensor_id=f.sensor_id AND j.campus_id=f.campus_id AND j.access_domain=f.access_domain AND j.snapshot_id=f.snapshot_id)
+ ORDER BY f.observed_at LIMIT $6)`
+
+const snapshotLogPruneSQL = `DELETE FROM identity_snapshot_log WHERE ctid IN (SELECT ctid FROM identity_snapshot_log
+ WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND observed_at<$5 ORDER BY observed_at LIMIT $6)`
 
 // snapshotPublication counts distinct sessions and accounts in a complete snapshot and reports a
 // session that belongs to more than one account.
@@ -56,8 +64,11 @@ func publishSnapshotTx(ctx context.Context, tx *sql.Tx, snapshot IdentitySnapsho
 	return err
 }
 
-// pruneSnapshotsTx deletes a bounded number of snapshots older than the retention window.
+// pruneSnapshotsTx deletes a bounded number of superseded documents and expired log rows.
 func pruneSnapshotsTx(ctx context.Context, tx *sql.Tx, snapshot IdentitySnapshot) error {
-	_, err := tx.ExecContext(ctx, snapshotPruneSQL, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt.Add(-snapshotRetention), snapshotPruneBatch)
+	if _, err := tx.ExecContext(ctx, snapshotPruneSQL, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, snapshotPruneBatch); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, snapshotLogPruneSQL, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt.Add(-snapshotMetadataRetention), snapshotPruneBatch)
 	return err
 }
