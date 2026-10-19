@@ -21,7 +21,8 @@ import (
 // write path:
 //
 //   - each round reads the endpoints whose source rows changed since a keyset watermark
-//     (endpoint_entities, recognition summary, account_sessions, DHCP leases, name notes);
+//     (endpoint_entities, recognition summary, account_sessions, snapshot projection, DHCP
+//     leases, name notes);
 //   - a round-robin sweep re-derives a slice of every endpoint, so time-based expiry of
 //     sessions is reflected without a timer table;
 //   - affected endpoints are recomputed set-wise in one statement per chunk and written
@@ -51,6 +52,9 @@ var endpointStateSources = []endpointStateSource{
 	{"entities", `SELECT endpoint_id,updated_at FROM endpoint_entities WHERE (updated_at,endpoint_id)>($1,$2) ORDER BY updated_at,endpoint_id LIMIT $3`},
 	{"recognition", `SELECT endpoint_id,updated_at FROM endpoint_recognition_summary WHERE (updated_at,endpoint_id)>($1,$2) ORDER BY updated_at,endpoint_id LIMIT $3`},
 	{"sessions", `SELECT endpoint_id,updated_at FROM account_sessions WHERE endpoint_id IS NOT NULL AND endpoint_id<>'' AND (updated_at,endpoint_id)>($1,$2) ORDER BY updated_at,endpoint_id LIMIT $3`},
+	// Snapshot membership changes only: unchanged members are not rewritten (projectionUpsertSQL), and
+	// their confirmation follows the scope snapshot, which the sweep picks up.
+	{"projection", `SELECT document->>'endpoint_id',confirmed_at FROM account_identity_session_projection WHERE (confirmed_at,document->>'endpoint_id')>($1,$2) ORDER BY confirmed_at,document->>'endpoint_id' LIMIT $3`},
 	{"leases", `SELECT endpoint_id,observed_at FROM device_address_leases WHERE (observed_at,endpoint_id)>($1,$2) ORDER BY observed_at,endpoint_id LIMIT $3`},
 	{"notes", `SELECT endpoint_id,updated_at FROM device_name_notes WHERE (updated_at,endpoint_id)>($1,$2) ORDER BY updated_at,endpoint_id LIMIT $3`},
 }
@@ -211,8 +215,14 @@ type endpointStateRow struct {
 	AccountAt  *time.Time      `json:"account_at"`
 }
 
+// projectionCurrentSQL keeps a snapshot member current while its scope's latest projected snapshot is
+// within three reconcile intervals, the same rule the router bindings use.
+const projectionCurrentSQL = "src.observed_at>=now()-make_interval(secs=>GREATEST(60,LEAST(86400,COALESCE(NULLIF(p.document->>'reconcile_interval_seconds','')::int,1800)))*3)"
+
 // endpointStateSQL derives every input of one endpoint row in a single set-wise read:
-// entity, recognition item, manual name, latest DHCP lease and current sessions.
+// entity, recognition item, manual name, latest DHCP lease and current sessions. Current
+// sessions come from account_sessions (events) and from open members of the snapshot
+// projection: a device online since before the event stream existed has no event session.
 const endpointStateSQL = `WITH ids AS (SELECT DISTINCT unnest($1::text[]) AS id)
 SELECT e.endpoint_id,coalesce(r.list_item,'{}'::jsonb),coalesce(e.primary_mac,''),coalesce(nullif(n.value,''),r.device_name,''),coalesce(n.value,'')<>'',
  coalesce(e.owner_account,''),coalesce(e.owner_name,''),concat_ws(' ',e.owner_account,e.owner_name,e.owner_department,e.asset_tag),e.last_seen,
@@ -222,6 +232,12 @@ SELECT e.endpoint_id,coalesce(r.list_item,'{}'::jsonb),coalesce(e.primary_mac,''
    'dims',jsonb_strip_nulls(jsonb_build_object('campus_id',nullif(s.campus_id::text,''),'department',nullif(s.department::text,''),'person_type',nullif(s.person_type::text,''),
      'ssid',nullif(s.ssid::text,''),'vlan',nullif(s.vlan::text,''),'ap',nullif(s.ap::text,''),'nas_ip',host(s.nas_ip)))))
   FROM account_sessions s WHERE s.endpoint_id=e.endpoint_id AND s.ended_at IS NULL AND s.updated_at>now()-$2::interval),'[]'::jsonb)
+ ||coalesce((SELECT jsonb_agg(jsonb_build_object('account',p.account_id,'access',coalesce(p.document->>'access_id',''),'ip',p.ip,
+   'at',` + projectionConfirmedSQL + `,
+   'dims',jsonb_strip_nulls(jsonb_build_object('campus_id',nullif(p.document->>'campus_id',''),'department',nullif(p.document->>'department',''),'person_type',nullif(p.document->>'person_type',''),
+     'ssid',nullif(p.document->>'ssid',''),'vlan',nullif(p.document->>'vlan',''),'ap',nullif(p.document->>'ap',''),'nas_ip',nullif(p.document->>'nas_ip','')))))
+  FROM account_identity_session_projection p JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
+  WHERE p.document->>'endpoint_id'=e.endpoint_id AND COALESCE(p.document->>'ended_at','')='' AND ` + projectionCurrentSQL + `),'[]'::jsonb)
 FROM ids JOIN endpoint_entities e ON e.endpoint_id=ids.id
 LEFT JOIN endpoint_recognition_summary r ON r.endpoint_id=e.endpoint_id
 LEFT JOIN device_name_notes n ON n.endpoint_id=e.endpoint_id

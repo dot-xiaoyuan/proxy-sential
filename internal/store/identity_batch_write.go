@@ -302,7 +302,7 @@ ON CONFLICT(entity_id) DO UPDATE SET
 	return err
 }
 
-func upsertAccountSessionsBatch(ctx context.Context, tx identityQueryer, items []AccountSession) error {
+func upsertAccountSessionsBatch(ctx context.Context, tx *sql.Tx, items []AccountSession) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -340,8 +340,6 @@ func upsertAccountSessionsBatch(ctx context.Context, tx identityQueryer, items [
 	nasIP := make([]string, len(filtered))
 	sessionStatus := make([]string, len(filtered))
 	confirmedAt := make([]string, len(filtered))
-	loginKey := make([]string, len(filtered))
-	sensorID := make([]string, len(filtered))
 	for index, item := range filtered {
 		sessionID[index], accountID[index], endpointID[index] = item.SessionID, item.AccountID, item.EndpointID
 		ip[index], mac[index], accessID[index], source[index] = item.IP, item.MAC, item.AccessID, item.Source
@@ -354,13 +352,12 @@ func upsertAccountSessionsBatch(ctx context.Context, tx identityQueryer, items [
 		buildingID[index], networkZoneID[index], ssid[index] = item.BuildingID, item.NetworkZoneID, item.SSID
 		vlan[index], ap[index], nasIP[index], sessionStatus[index] = item.VLAN, item.AP, item.NASIP, item.SessionStatus
 		confirmedAt[index] = item.LastConfirmedAt
-		loginKey[index], sensorID[index] = item.LoginKey, item.SensorID
 	}
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status, login_key, sensor_id)
-SELECT t.session_id, t.account_id, t.endpoint_id, NULLIF(t.ip,'')::inet, t.mac, t.access_id, t.source, t.started_at, CASE WHEN t.ended_valid THEN t.ended_at ELSE NULL END, t.confidence, t.raw_ref::jsonb, NULLIF(t.person_type,''), NULLIF(t.department,''), NULLIF(t.campus_id,''), NULLIF(t.building_id,''), NULLIF(t.network_zone_id,''), NULLIF(t.ssid,''), NULLIF(t.vlan,''), NULLIF(t.ap,''), NULLIF(t.nas_ip,'')::inet, NULLIF(t.session_status,''), t.login_key, t.sensor_id
-FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::timestamptz[], $9::timestamptz[], $10::boolean[], $11::float8[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[], $18::text[], $19::text[], $20::text[], $21::text[], $22::text[], $23::text[], $24::text[])
-  AS t(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, ended_valid, confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status, login_key, sensor_id)
+INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status)
+SELECT t.session_id, t.account_id, t.endpoint_id, NULLIF(t.ip,'')::inet, t.mac, t.access_id, t.source, t.started_at, CASE WHEN t.ended_valid THEN t.ended_at ELSE NULL END, t.confidence, t.raw_ref::jsonb, NULLIF(t.person_type,''), NULLIF(t.department,''), NULLIF(t.campus_id,''), NULLIF(t.building_id,''), NULLIF(t.network_zone_id,''), NULLIF(t.ssid,''), NULLIF(t.vlan,''), NULLIF(t.ap,''), NULLIF(t.nas_ip,'')::inet, NULLIF(t.session_status,'')
+FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::timestamptz[], $9::timestamptz[], $10::boolean[], $11::float8[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[], $18::text[], $19::text[], $20::text[], $21::text[], $22::text[])
+  AS t(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, ended_valid, confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status)
 ON CONFLICT(session_id) DO UPDATE SET
   account_id = EXCLUDED.account_id,
   endpoint_id = EXCLUDED.endpoint_id,
@@ -382,8 +379,6 @@ ON CONFLICT(session_id) DO UPDATE SET
   ap = COALESCE(EXCLUDED.ap, account_sessions.ap),
   nas_ip = COALESCE(EXCLUDED.nas_ip, account_sessions.nas_ip),
   session_status = COALESCE(EXCLUDED.session_status, account_sessions.session_status),
-  login_key = COALESCE(NULLIF(EXCLUDED.login_key,''), account_sessions.login_key),
-  sensor_id = COALESCE(NULLIF(EXCLUDED.sensor_id,''), account_sessions.sensor_id),
   updated_at = now()
 -- No-op guard. account_sessions carries inventory_projection_change, and this upsert runs on
 -- every identity event, so an unchanged replay wrote a full row version plus every index
@@ -409,11 +404,9 @@ WHERE account_sessions.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id
    OR (EXCLUDED.vlan IS NOT NULL AND account_sessions.vlan IS DISTINCT FROM EXCLUDED.vlan)
    OR (EXCLUDED.ap IS NOT NULL AND account_sessions.ap IS DISTINCT FROM EXCLUDED.ap)
    OR (EXCLUDED.nas_ip IS NOT NULL AND account_sessions.nas_ip IS DISTINCT FROM EXCLUDED.nas_ip)
-   OR (EXCLUDED.session_status IS NOT NULL AND account_sessions.session_status IS DISTINCT FROM EXCLUDED.session_status)
-   OR (EXCLUDED.login_key <> '' AND account_sessions.login_key IS DISTINCT FROM EXCLUDED.login_key)
-   OR (EXCLUDED.sensor_id <> '' AND account_sessions.sensor_id IS DISTINCT FROM EXCLUDED.sensor_id)`,
+   OR (EXCLUDED.session_status IS NOT NULL AND account_sessions.session_status IS DISTINCT FROM EXCLUDED.session_status)`,
 		sessionID, accountID, endpointID, ip, mac, accessID, source, startedAt, endedAt, endedValid, confidence, rawRef,
-		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus, loginKey, sensorID)
+		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus)
 	if err != nil {
 		return err
 	}

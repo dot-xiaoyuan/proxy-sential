@@ -69,8 +69,6 @@ type AccountSession struct {
 	DeviceClass      string `json:"device_class,omitempty"`
 
 	SessionID          string         `json:"session_id"`
-	LoginKey           string         `json:"login_key,omitempty"`
-	SensorID           string         `json:"sensor_id,omitempty"`
 	AccountID          string         `json:"account_id"`
 	EndpointID         string         `json:"endpoint_id,omitempty"`
 	IP                 string         `json:"ip,omitempty"`
@@ -203,9 +201,7 @@ func BuildIdentityState(events []normalized.Event) IdentityState {
 			endpoints[entity.EndpointID] = entity
 		}
 		if fact.AccountID != "" && fact.EntityRole == "endpoint" {
-			incoming := accountSessionFromFact(fact)
-			incoming.SensorID = stringFromMap(event.Observer, "sensor_id")
-			session := mergeAccountSession(sessions[fact.SessionID()], incoming)
+			session := mergeAccountSession(sessions[fact.SessionID()], accountSessionFromFact(fact))
 			sessions[session.SessionID] = session
 		}
 		if fact.IP != "" || fact.MAC != "" {
@@ -769,7 +765,6 @@ func accountSessionFromFact(fact identityFact) AccountSession {
 		AccessDomain:    domain,
 		LastConfirmedAt: fact.Timestamp, HeartbeatSeconds: policyInterval(fact.Payload, "heartbeat_interval_seconds", maxInterval), ReconcileSeconds: policyInterval(fact.Payload, "reconcile_interval_seconds", maxInterval), DeviceClass: stringFromMap(fact.Payload, "device_class"),
 		SessionID:          fact.SessionID(),
-		LoginKey:           loginKeyFromPayload(fact.Payload),
 		AccountID:          fact.AccountID,
 		EndpointID:         fact.EndpointID,
 		IP:                 fact.IP,
@@ -803,8 +798,6 @@ func mergeAccountSession(current, incoming AccountSession) AccountSession {
 	}
 	if incoming.LastConfirmedAt >= current.LastConfirmedAt {
 		current.GroupID = firstNonEmpty(incoming.GroupID, current.GroupID)
-		current.LoginKey = firstNonEmpty(incoming.LoginKey, current.LoginKey)
-		current.SensorID = firstNonEmpty(incoming.SensorID, current.SensorID)
 		current.ProductID = firstNonEmpty(incoming.ProductID, current.ProductID)
 		current.AccessDomain = firstNonEmpty(incoming.AccessDomain, current.AccessDomain)
 		current.DeviceClass = firstNonEmpty(incoming.DeviceClass, current.DeviceClass)
