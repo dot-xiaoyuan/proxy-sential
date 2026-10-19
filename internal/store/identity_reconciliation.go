@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,13 +134,10 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 		}
 		seen[key] = true
 	}
-	sort.Slice(snapshot.Events, func(i, j int) bool { return snapshot.Events[i].EventID < snapshot.Events[j].EventID })
-	raw, err := json.Marshal(snapshot)
+	raw, digest, err := snapshotDocument(snapshot)
 	if err != nil {
 		return false, err
 	}
-	hash := sha256.Sum256(raw)
-	digest := hex.EncodeToString(hash[:])
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -154,7 +149,7 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 		return false, err
 	}
 	var old string
-	err = tx.QueryRowContext(ctx, `SELECT content_sha256 FROM identity_full_snapshots WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND (snapshot_id=$5 OR observed_at=$6)`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.SnapshotID, snapshot.ObservedAt).Scan(&old)
+	err = tx.QueryRowContext(ctx, `SELECT content_sha256 FROM identity_snapshot_log WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND (snapshot_id=$5 OR observed_at=$6)`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.SnapshotID, snapshot.ObservedAt).Scan(&old)
 	if err == nil {
 		if old != digest {
 			return false, ErrIdentitySnapshotConflict
@@ -171,6 +166,9 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 	// is written asynchronously and only for members that changed.
 	_, err = tx.ExecContext(ctx, `INSERT INTO identity_full_snapshots(source,sensor_id,campus_id,access_domain,snapshot_id,observed_at,interval_seconds,session_count,content_sha256,document) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.SnapshotID, snapshot.ObservedAt, snapshot.IntervalSeconds, len(snapshot.Sessions), digest, raw)
 	if err != nil {
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, snapshotLogInsertSQL, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.SnapshotID, snapshot.ObservedAt, snapshot.IntervalSeconds, len(snapshot.Sessions), digest); err != nil {
 		return false, err
 	}
 	if err = pruneSnapshotsTx(ctx, tx, snapshot); err != nil {

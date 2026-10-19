@@ -93,6 +93,10 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 	if err != nil {
 		return err
 	}
+	// Only snapshots that reached the projection count as confirmations (see identity_snapshot_log).
+	if _, err = tx.ExecContext(ctx, snapshotLogProjectedSQL, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.SnapshotID); err != nil {
+		return err
+	}
 	// Complete snapshots are authoritative membership projections, not a second
 	// copy of the realtime accounting/device-fact stream. Keeping them in the
 	// dedicated table avoids duplicate device evidence and lock contention with
