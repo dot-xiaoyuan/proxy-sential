@@ -32,6 +32,7 @@ type PostgresOptions struct {
 type PostgresStore struct {
 	sharedObservationEnabled bool
 	inventoryStatus          inventoryStatusCache
+	profileBeacon            sharedProfileBeacon
 	recognitionCatalog       recognitionCatalogCache
 	db                       *sql.DB
 	dsn                      string

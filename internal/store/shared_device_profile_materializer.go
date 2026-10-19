@@ -720,17 +720,9 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(sensor_id,campus_id,key_type,key_val
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-	// The runtime row is a singleton. Updating it inside this transaction held its tuple
-	// lock for the whole projection, and a projection transaction can run for tens of
-	// seconds: the field measured four backends queued on that lock at once and 431 ms per
-	// update, which serialised every lane that touches the materializer. Commit first, then
-	// write the beacon in its own short transaction. The counter is advisory, so a failed
-	// beacon must not undo a projection that already committed — report it instead.
-	beacon, cancelBeacon := context.WithTimeout(ctx, 5*time.Second)
-	defer cancelBeacon()
-	if err = s.pg.writeAdvisoryState(beacon, `UPDATE shared_device_profile_runtime SET last_success_at=now(),last_error='',processed_jobs=processed_jobs+1,updated_at=now() WHERE singleton`); err != nil {
-		fmt.Fprintln(os.Stderr, "shared device profile beacon:", err)
-	}
+	// The runtime row is a singleton: writing it per job queued every worker on one row lock. The
+	// counter is buffered in memory and flushed on an interval (see runSharedProfileBeacon).
+	s.pg.profileBeacon.success()
 	return nil
 }
 
@@ -765,7 +757,7 @@ func (s *DBStore) finishSharedDeviceProfileJob(ctx context.Context, job sharedDe
 		if changed != 1 {
 			return errRecognitionLeaseLost
 		}
-		_, err = s.pg.db.ExecContext(ctx, `UPDATE shared_device_profile_runtime SET last_success_at=now(),last_error='',processed_jobs=processed_jobs+1,updated_at=now() WHERE singleton`)
+		s.pg.profileBeacon.success()
 		return nil
 	}
 	attempts := job.Attempts + 1
@@ -776,7 +768,7 @@ func (s *DBStore) finishSharedDeviceProfileJob(ctx context.Context, job sharedDe
 	_, err := s.pg.db.ExecContext(ctx, `UPDATE shared_device_profile_jobs SET attempts=$2,lease_owner='',lease_until='-infinity',last_error=$3,
  not_before=now()+$4::interval,updated_at=now() WHERE subject_key=$1 AND lease_owner=$5`, job.SubjectKey, attempts, runErr.Error(), delay.String(), job.LeaseOwner)
 	if err == nil {
-		_, _ = s.pg.db.ExecContext(ctx, `UPDATE shared_device_profile_runtime SET last_error=$1,updated_at=now() WHERE singleton`, runErr.Error())
+		s.pg.profileBeacon.failure(runErr.Error())
 	}
 	return err
 }
@@ -805,6 +797,11 @@ func (s *DBStore) runSharedDeviceProfileMaterializer(ctx context.Context) {
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
+		s.pg.runSharedProfileBeacon(ctx)
+	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
 		for ctx.Err() == nil {
 			work, cancel := context.WithTimeout(ctx, 20*time.Second)
 			_, err := s.pg.pruneSharedDeviceProfileHistory(work, 1000)
@@ -827,9 +824,6 @@ func (s *DBStore) runSharedDeviceProfileMaterializer(ctx context.Context) {
 			for ctx.Err() == nil {
 				work, cancel := context.WithTimeout(ctx, 20*time.Second)
 				found, err := s.processSharedDeviceProfileJob(work, worker)
-				if !found && err == nil {
-					_, err = s.pg.db.ExecContext(work, `UPDATE shared_device_profile_runtime SET last_success_at=now(),updated_at=now() WHERE singleton AND updated_at<now()-interval '5 seconds'`)
-				}
 				cancel()
 				if err != nil && ctx.Err() == nil {
 					fmt.Fprintln(os.Stderr, "shared device profile materializer:", err)
