@@ -252,21 +252,16 @@ func (s *PostgresStore) refreshCurrentDeviceInventory(ctx context.Context) error
 	}
 	now := time.Now().UTC()
 	run := Run{RunID: "current-" + now.Format("20060102150405"), SensorID: s.sensorID}
-	for _, window := range []string{"10m", "1h", "24h"} {
-		inventories, e := s.buildDeviceInventoriesFromFacts(ctx, tx, s.sensorID, now.Format(time.RFC3339Nano), window, nil)
-		if e != nil {
-			return e
-		}
-		ips := []string{}
-		for _, item := range inventories {
-			ips = append(ips, item.IP)
-			if e = upsertCurrentDeviceInventory(ctx, tx, run, window, item); e != nil {
-				return e
-			}
-		}
-		if _, e = tx.ExecContext(ctx, `DELETE FROM device_inventory_current WHERE sensor_id=$1 AND "window"=$2 AND NOT(host(ip)=ANY($3::text[]))`, s.sensorID, window, ips); e != nil {
-			return e
-		}
+	state, err := loadDeviceInventoryState(ctx, tx, s.sensorID)
+	if err != nil {
+		return err
+	}
+	state, err = refreshDeviceInventoryIncrementally(ctx, sqlDeviceFacts{tx: tx, sensor: s.sensorID}, sqlDeviceInventory{tx: tx, sensor: s.sensorID, run: run}, state, now)
+	if err != nil {
+		return err
+	}
+	if err = saveDeviceInventoryState(ctx, tx, s.sensorID, state); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
