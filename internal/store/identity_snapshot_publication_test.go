@@ -66,15 +66,10 @@ func expectSnapshotCommitPrefix(mock sqlmock.Sqlmock) {
 func TestSnapshotCommitPublishesInSameTransaction(t *testing.T) {
 	db, mock := newReconcileMock(t)
 	expectSnapshotCommitPrefix(mock)
-	mock.ExpectQuery(`SELECT max\(observed_at\) FROM identity_full_snapshots`).WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(nil))
-	mock.ExpectQuery(`WHERE session_id = ANY`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
-	mock.ExpectExec(`INSERT INTO account_sessions\(`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE account_sessions s SET policy_metadata = NULLIF`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM identity_full_snapshots WHERE ctid IN`)).
 		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, reconcileObserved.Add(-snapshotRetention), snapshotPruneBatch).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key,source,sensor_id,campus_id,access_domain\)`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(snapshotPublishSQL)).
@@ -140,4 +135,24 @@ func adapterSnapshot(t *testing.T, sessionID, account, ip string) IdentitySnapsh
 		snapshot.Events = append(snapshot.Events, event)
 	}
 	return snapshot
+}
+
+// The commit stores, prunes and publishes. It must not write account_sessions: that table carries
+// 14 indexes and a per-row trigger, and reconciling every member inside the commit took longer than
+// the 90-second request budget on the field. Current membership comes from the snapshot projection.
+func TestSnapshotCommitDoesNotWriteAccountSessions(t *testing.T) {
+	db, mock := newReconcileMock(t)
+	expectSnapshotCommitPrefix(mock)
+	mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM identity_full_snapshots WHERE ctid IN`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(snapshotPublishSQL)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if _, err := (&PostgresStore{db: db}).CommitIdentitySnapshot(context.Background(), adapterSnapshot(t, "s1", "a1", "10.0.0.1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }

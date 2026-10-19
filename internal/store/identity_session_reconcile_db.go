@@ -229,7 +229,9 @@ func lastAppliedSnapshotAt(ctx context.Context, q identityQueryer, scope Identit
 	return at.Time, nil
 }
 
-// reconcileSnapshotSessionsTx runs inside the snapshot commit transaction, under the scope lock.
+// reconcileSnapshotSessionsTx is not called. Run inside the snapshot commit it read and wrote every
+// member through account_sessions' 14 indexes and per-row trigger, exceeding the 90-second request
+// budget on the field (2026-10-19). Current membership is served by the snapshot projection instead.
 func reconcileSnapshotSessionsTx(ctx context.Context, tx *sql.Tx, snapshot IdentitySnapshot) (sessionReconcileStats, error) {
 	lastApplied, err := lastAppliedSnapshotAt(ctx, tx, snapshot.IdentityScope)
 	if err != nil {

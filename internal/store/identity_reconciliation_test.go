@@ -67,15 +67,8 @@ func TestManagedSRunSnapshotReplaysWithoutInventingScope(t *testing.T) {
 			mock.ExpectBegin()
 			mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectQuery(`SELECT content_sha256 FROM identity_full_snapshots`).WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}))
-			// Session reconciliation runs before the snapshot row is stored. The members carry no
-			// login generation, so there is no login-key lookup; both members share one session ID.
-			mock.ExpectQuery(`SELECT max\(observed_at\) FROM identity_full_snapshots`).WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(nil))
-			mock.ExpectQuery(`WHERE session_id = ANY`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
-			mock.ExpectExec(`INSERT INTO account_sessions\(`).WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectExec(`UPDATE account_sessions s SET policy_metadata = NULLIF`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`INSERT INTO identity_full_snapshots`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`DELETE FROM identity_full_snapshots WHERE ctid IN`).WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec(`INSERT INTO audit_logs`).WillReturnResult(sqlmock.NewResult(0, 1))
 			// The snapshot publishes in the same transaction, scope-row write last.
 			mock.ExpectExec(`INSERT INTO identity_pipeline_scopes\(scope_key`).WillReturnResult(sqlmock.NewResult(0, 1))

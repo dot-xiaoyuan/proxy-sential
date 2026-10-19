@@ -106,10 +106,7 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 		if len(sessionIDs) == 0 {
 			return nil
 		}
-		_, execErr := tx.ExecContext(ctx, `INSERT INTO account_identity_session_projection(source,sensor_id,campus_id,access_domain,session_id,ip,account_id,confirmed_at,document)
-SELECT $1,$2,$3,$4,rows.session_id,rows.ip,rows.account_id,$5::timestamptz,rows.document::jsonb
-FROM unnest($6::text[],$7::text[],$8::text[],$9::text[]) AS rows(session_id,ip,account_id,document)
-ON CONFLICT(source,sensor_id,campus_id,access_domain,session_id,ip) DO UPDATE SET account_id=EXCLUDED.account_id,confirmed_at=EXCLUDED.confirmed_at,document=jsonb_set(EXCLUDED.document,'{started_at}',CASE WHEN (account_identity_session_projection.document->>'started_at')::timestamptz <= (EXCLUDED.document->>'started_at')::timestamptz THEN account_identity_session_projection.document->'started_at' ELSE EXCLUDED.document->'started_at' END) WHERE account_identity_session_projection.confirmed_at<=EXCLUDED.confirmed_at`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, sessionIDs, ips, accountIDs, documents)
+		_, execErr := tx.ExecContext(ctx, projectionUpsertSQL, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, sessionIDs, ips, accountIDs, documents)
 		sessionIDs = sessionIDs[:0]
 		ips = ips[:0]
 		accountIDs = accountIDs[:0]
@@ -151,7 +148,7 @@ ON CONFLICT(source,sensor_id,campus_id,access_domain,session_id,ip) DO UPDATE SE
 }
 
 func (s *PostgresStore) projectedAccountSessions(ctx context.Context, account string, limit int) ([]AccountSession, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT document FROM account_identity_session_projection WHERE account_id=$1 ORDER BY confirmed_at DESC,source,session_id,ip LIMIT $2`, account, limit)
+	rows, err := s.db.QueryContext(ctx, projectedAccountSessionsSQL, account, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -170,3 +167,23 @@ func (s *PostgresStore) projectedAccountSessions(ctx context.Context, account st
 	}
 	return out, rows.Err()
 }
+
+// projectionVolatileKeys are document fields that change with every snapshot without changing the
+// membership: the snapshot time, its provenance and the earliest start, which is merged separately.
+const projectionVolatileKeys = ` - 'last_confirmed_at' - 'raw_ref' - 'started_at'`
+
+// projectionUpsertSQL writes only members that are new or whose account or content changed. An
+// unchanged member stays as it is: its confirmation comes from the scope's latest projected snapshot
+// (projectionConfirmedSQL), so rewriting it only rewrote every confirmed_at index and fired the
+// shared-profile trigger for the whole inventory on every snapshot.
+const projectionUpsertSQL = `INSERT INTO account_identity_session_projection(source,sensor_id,campus_id,access_domain,session_id,ip,account_id,confirmed_at,document)
+SELECT $1,$2,$3,$4,rows.session_id,rows.ip,rows.account_id,$5::timestamptz,rows.document::jsonb
+FROM unnest($6::text[],$7::text[],$8::text[],$9::text[]) AS rows(session_id,ip,account_id,document)
+ON CONFLICT(source,sensor_id,campus_id,access_domain,session_id,ip) DO UPDATE SET account_id=EXCLUDED.account_id,confirmed_at=EXCLUDED.confirmed_at,document=jsonb_set(EXCLUDED.document,'{started_at}',CASE WHEN (account_identity_session_projection.document->>'started_at')::timestamptz <= (EXCLUDED.document->>'started_at')::timestamptz THEN account_identity_session_projection.document->'started_at' ELSE EXCLUDED.document->'started_at' END) WHERE account_identity_session_projection.confirmed_at<=EXCLUDED.confirmed_at AND (account_identity_session_projection.account_id IS DISTINCT FROM EXCLUDED.account_id OR (account_identity_session_projection.document` + projectionVolatileKeys + `) IS DISTINCT FROM (EXCLUDED.document` + projectionVolatileKeys + `))`
+
+// projectionConfirmedSQL is a projection row's effective confirmation. An open member is confirmed by
+// the latest projected snapshot of its scope; the per-row rewrite used to store exactly that value.
+const projectionConfirmedSQL = "CASE WHEN COALESCE(p.document->>'ended_at','')='' THEN GREATEST(p.confirmed_at,COALESCE(src.observed_at,p.confirmed_at)) ELSE p.confirmed_at END"
+
+// projectedAccountSessionsSQL lists an account's projected sessions, newest effective confirmation first.
+const projectedAccountSessionsSQL = `SELECT p.document FROM account_identity_session_projection p LEFT JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain) WHERE p.account_id=$1 ORDER BY ` + projectionConfirmedSQL + ` DESC,p.source,p.session_id,p.ip LIMIT $2`
