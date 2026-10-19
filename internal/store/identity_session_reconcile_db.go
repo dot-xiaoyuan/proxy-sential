@@ -10,7 +10,10 @@ import (
 )
 
 // reconcileChunk bounds one array argument. Statements stay small and planner-friendly.
-const reconcileChunk = 500
+const reconcileChunk = 1000
+
+// reconcileEndBatch bounds the open rows one snapshot may end. The remainder is ended by later snapshots.
+const reconcileEndBatch = 5000
 
 // identityQueryer is satisfied by *sql.DB and *sql.Tx, so the same code runs in tests and in the commit transaction.
 type identityQueryer interface {
@@ -91,9 +94,6 @@ func loadSnapshotSessionRows(ctx context.Context, q identityQueryer, snapshot Id
 		}
 		return result.Err()
 	}
-	if err := add(sessionSelectSQL+` WHERE ended_at IS NULL AND source = $1`, snapshot.Source); err != nil {
-		return nil, err
-	}
 	ids, keys := []string{}, []string{}
 	seenKey := map[string]bool{}
 	for _, member := range snapshot.Sessions {
@@ -102,6 +102,15 @@ func loadSnapshotSessionRows(ctx context.Context, q identityQueryer, snapshot Id
 			seenKey[member.LoginKey] = true
 			keys = append(keys, member.LoginKey)
 		}
+	}
+	// End candidates: open rows of this scope that the snapshot holds neither by ID nor by login key.
+	// Only these are read, bounded per snapshot. A full scan of every open row read hundreds of
+	// thousands of rows per commit; rows left over are ended by later snapshots.
+	// The member sets are CTEs so the planner hash-anti-joins them. As a correlated unnest it nested-loops,
+	// rescanning the whole member array for every open row.
+	if err := add(`WITH m AS (SELECT unnest($5::text[]) AS id), k AS (SELECT unnest($6::text[]) AS key) `+sessionSelectSQL+` WHERE ended_at IS NULL AND source = $1 AND (sensor_id = '' OR sensor_id = $2) AND COALESCE(campus_id,'') = $3 AND COALESCE(policy_metadata->>'access_domain','') = $4 AND NOT EXISTS (SELECT 1 FROM m WHERE m.id = account_sessions.session_id) AND NOT EXISTS (SELECT 1 FROM k WHERE account_sessions.login_key <> '' AND k.key = account_sessions.login_key) LIMIT $7`,
+		snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, textArray(ids), textArray(keys), reconcileEndBatch); err != nil {
+		return nil, err
 	}
 	for start := 0; start < len(ids); start += reconcileChunk {
 		if err := add(sessionSelectSQL+` WHERE session_id = ANY($1::text[])`, textArray(ids[start:min(start+reconcileChunk, len(ids))])); err != nil {
@@ -170,6 +179,21 @@ WHERE s.session_id = v.session_id AND s.ended_at IS NULL`,
 		stats.Ended += end - start
 	}
 	return stats, nil
+}
+
+// reconcileOutcome names the audit result of one snapshot pass. A pass that hit its end batch is
+// partial: the remaining open rows are ended by later snapshots, and that must be visible.
+func reconcileOutcome(stats sessionReconcileStats) string {
+	switch {
+	case stats.Held > 0:
+		return "held_empty"
+	case stats.Conflicts > 0:
+		return "conflict"
+	case stats.Ended >= reconcileEndBatch:
+		return "partial_ends"
+	default:
+		return "success"
+	}
 }
 
 // lastAppliedSnapshotAt returns the newest snapshot already committed for the scope.

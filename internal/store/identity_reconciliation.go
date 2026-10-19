@@ -180,13 +180,7 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 		return false, err
 	}
 	// Conflicts are recorded, never hidden: a member that disagrees with a stored end is a review item.
-	outcome := "success"
-	if reconciled.Conflicts > 0 {
-		outcome = "conflict"
-	}
-	if reconciled.Held > 0 {
-		outcome = "held_empty"
-	}
+	outcome := reconcileOutcome(reconciled)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,'identity.session.reconcile',$3,$4,now())`, "identity-session-reconcile-"+digest, "identity-integration:"+snapshot.Source, string(scopeJSON)+"/"+snapshot.SnapshotID, outcome); err != nil {
 		return false, err
 	}

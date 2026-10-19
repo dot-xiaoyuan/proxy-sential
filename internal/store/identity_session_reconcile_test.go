@@ -368,3 +368,36 @@ func TestEmptySnapshotEndsNothing(t *testing.T) {
 		t.Fatalf("empty snapshot changed state: actions=%+v conflicts=%d", actions, conflicts)
 	}
 }
+
+// Ambiguous rows (two open rows sharing one login key) cannot be matched safely, so neither may be
+// ended on the strength of that same snapshot: the conflict is reported and both stay as they are.
+func TestAmbiguousRowsAreNeverEnded(t *testing.T) {
+	rows := []policy.Session{
+		keyedRow("instance-A:S-1", rotatedLoginKey, reconcileObserved.Add(-30*time.Minute)),
+		keyedRow("instance-C:S-1", rotatedLoginKey, reconcileObserved.Add(-20*time.Minute)),
+	}
+	actions, conflicts := planSnapshotSessionReconcile(snapshotWith(keyedMember("instance-B:S-1", rotatedLoginKey)), rows, time.Time{})
+	if conflicts != 1 {
+		t.Fatalf("conflicts=%d want 1", conflicts)
+	}
+	for _, action := range actions {
+		if action.Kind == sessionReconcileEnd {
+			t.Fatalf("ambiguous row ended: %+v", action)
+		}
+	}
+}
+
+// The audit outcome must show a bounded pass that did not finish, a conflict, or a held empty snapshot.
+func TestReconcileOutcomeReportsPartialAndHeld(t *testing.T) {
+	cases := map[string]sessionReconcileStats{
+		"success":      {},
+		"partial_ends": {Ended: reconcileEndBatch},
+		"conflict":     {Conflicts: 1},
+		"held_empty":   {Held: 1},
+	}
+	for want, stats := range cases {
+		if got := reconcileOutcome(stats); got != want {
+			t.Fatalf("stats=%+v outcome=%s want %s", stats, got, want)
+		}
+	}
+}

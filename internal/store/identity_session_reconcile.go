@@ -81,7 +81,11 @@ func planSnapshotSessionReconcile(snapshot IdentitySnapshot, rows []policy.Sessi
 			// Match it only when exactly one row holds that login generation.
 			candidates := byKey[member.LoginKey]
 			if len(candidates) > 1 {
+				// Keep every candidate: none can be ended on the strength of an ambiguous match.
 				conflicts++
+				for _, candidate := range candidates {
+					present[candidate.ID] = true
+				}
 				continue
 			}
 			if len(candidates) == 1 {

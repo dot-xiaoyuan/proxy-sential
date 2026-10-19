@@ -93,8 +93,8 @@ func TestStoredRowRoundTripsToPolicySession(t *testing.T) {
 func TestLoadSnapshotSessionRowsReadsScopeAndMemberKeys(t *testing.T) {
 	db, mock := newReconcileMock(t)
 	columns := sessionRowColumns()
-	mock.ExpectQuery(`FROM account_sessions WHERE ended_at IS NULL AND source = \$1`).
-		WithArgs(reconcileScope.Source).
+	mock.ExpectQuery(`WITH m AS \(SELECT unnest\(\$5::text\[\]\)`).
+		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, sqlmock.AnyArg(), sqlmock.AnyArg(), reconcileEndBatch).
 		WillReturnRows(sqlmock.NewRows(columns).AddRow("sess-open", "acct-1", "", "10.157.2.191", "", reconcileScope.Source, reconcileObserved.Add(-time.Hour), nil, rotatedLoginKey, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, "2026-10-16T06:10:00Z"))
 	mock.ExpectQuery(`WHERE session_id = ANY\(\$1::text\[\]\)`).
 		WithArgs(sqlmock.AnyArg()).
@@ -172,5 +172,35 @@ func TestAccessDomainIsReadFromMetadataNotColumn(t *testing.T) {
 	}
 	if strings.Contains(sessionSelectSQL, " access_domain,") {
 		t.Fatal("access_domain must not be selected as a column")
+	}
+}
+
+// Only open rows that are absent from the snapshot are read as end candidates, in bounded batches.
+// Reading every open row of the source costs hundreds of thousands of rows per snapshot.
+func TestEndCandidatesAreAbsentOpenRowsOnly(t *testing.T) {
+	db, mock := newReconcileMock(t)
+	mock.ExpectQuery(`WITH m AS \(SELECT unnest\(\$5::text\[\]\)`).
+		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, sqlmock.AnyArg(), sqlmock.AnyArg(), reconcileEndBatch).
+		WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
+	snapshot := snapshotWith()
+	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A full open-row scan must not be issued.
+func TestNoFullOpenRowScanPerSnapshot(t *testing.T) {
+	db, mock := newReconcileMock(t)
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectQuery(`WHERE session_id = ANY`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
+	mock.ExpectQuery(`NOT EXISTS`).WillReturnRows(sqlmock.NewRows(sessionRowColumns()))
+	if _, err := loadSnapshotSessionRows(context.Background(), db, snapshotWith(snapshotMember("sess-A", "acct-1", "10.0.0.1"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
