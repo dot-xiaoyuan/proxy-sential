@@ -298,13 +298,17 @@ func (s *PostgresStore) applyIdentityInbox(ctx context.Context, w identityInboxW
 	if changedBatches != len(batches) {
 		return ErrIdentityLeaseExpired
 	}
+	// Totals go to their own row, so the scope row that receipts and leases share is not locked here.
+	if _, err = tx.ExecContext(ctx, scopeStatisticsAddSQL, w.Scope, accounts, sessions, lastSequence); err != nil {
+		return err
+	}
 	// Only the final progress publication locks the summary. Receipt insertion can
 	// proceed while facts and address references are being written. A fresh statement
 	// after this lock sees any concurrently committed next batch for oldest_pending_at.
 	if _, err = tx.ExecContext(ctx, `SELECT scope_key FROM identity_pipeline_scopes WHERE scope_key=$1 FOR UPDATE`, w.Scope); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE identity_pipeline_scopes SET accounts=accounts+$3,sessions=sessions+$4,statistics_at=now(),processed_at=now(),pending_records=pending_records-$5,processed_sequence=$7-CASE WHEN $6 THEN 0 ELSE 1 END,lease_until=NULL,heartbeat_at=now(),last_error='',oldest_pending_at=(SELECT accepted_at FROM identity_ingest_batches WHERE scope_key=$1 AND sequence=CASE WHEN $6 THEN $7+1 ELSE $7 END) WHERE scope_key=$1 AND lease_epoch=$2 AND lease_until>clock_timestamp() AND current_generation=$8`, w.Scope, w.Epoch, accounts, sessions, len(w.Events), done, lastSequence, w.Generation)
+	result, err := tx.ExecContext(ctx, applyScopeProgressSQL, w.Scope, w.Epoch, len(w.Events), done, lastSequence, w.Generation)
 	if err != nil {
 		return err
 	}
@@ -352,3 +356,11 @@ func identityInboxCapacity() int {
 	}
 	return value
 }
+
+// applyScopeProgressSQL advances processing progress in the apply transaction. Account and session
+// totals are not here: they are statistics written by scopeStatisticsAddSQL outside this lock.
+const applyScopeProgressSQL = `UPDATE identity_pipeline_scopes SET processed_at=now(),pending_records=pending_records-$3,processed_sequence=$5-CASE WHEN $4 THEN 0 ELSE 1 END,lease_until=NULL,heartbeat_at=now(),last_error='',oldest_pending_at=(SELECT accepted_at FROM identity_ingest_batches WHERE scope_key=$1 AND sequence=CASE WHEN $4 THEN $5+1 ELSE $5 END) WHERE scope_key=$1 AND lease_epoch=$2 AND lease_until>clock_timestamp() AND current_generation=$6`
+
+// scopeStatisticsAddSQL accumulates totals for one scope, keyed so a retry adds the same batch once only
+// through the caller that owns the apply. It runs outside the apply transaction.
+const scopeStatisticsAddSQL = `INSERT INTO identity_scope_statistics(scope_key,accounts,sessions,counted_sequence,statistics_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(scope_key) DO UPDATE SET accounts=identity_scope_statistics.accounts+EXCLUDED.accounts,sessions=identity_scope_statistics.sessions+EXCLUDED.sessions,counted_sequence=EXCLUDED.counted_sequence,statistics_at=now() WHERE identity_scope_statistics.counted_sequence < EXCLUDED.counted_sequence`
