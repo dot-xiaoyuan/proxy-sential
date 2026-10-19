@@ -394,11 +394,31 @@ func (s *DBStore) runCurrentDeviceInventoryRefresh(ctx context.Context) {
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintln(os.Stderr, "identity device inventory refresh:", err)
 		}
+		s.pg.pruneDeviceSignalEvents(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(30 * time.Second):
 		}
+	}
+}
+
+const (
+	deviceSignalEventsRetention = 48 * time.Hour
+	deviceSignalEventsPruneBatch = 5000
+)
+
+func (s *PostgresStore) pruneDeviceSignalEvents(ctx context.Context) {
+	cutoff := time.Now().UTC().Add(-deviceSignalEventsRetention)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM device_signal_events WHERE ctid IN (SELECT ctid FROM device_signal_events WHERE first_seen < $1 LIMIT $2)`, cutoff, deviceSignalEventsPruneBatch)
+	if err != nil {
+		if ctx.Err() == nil {
+			fmt.Fprintln(os.Stderr, "device signal events prune:", err)
+		}
+		return
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		fmt.Fprintf(os.Stderr, "device signal events prune: deleted %d rows (cutoff %s)\n", n, cutoff.Format(time.RFC3339))
 	}
 }
 

@@ -607,9 +607,6 @@ func upsertDeviceSignalFactsBatch(ctx context.Context, tx *sql.Tx, sensorID stri
 	firstSeen := make([]time.Time, len(signals))
 	lastSeen := make([]time.Time, len(signals))
 	sample := make([]string, len(signals))
-	eventSignalID := []string{}
-	eventEventID := []string{}
-	eventFirstSeen := []time.Time{}
 	now := time.Now()
 	for index, signal := range signals {
 		signalID[index], ip[index], source[index] = signal.SignalID, signal.IP, signal.Source
@@ -629,11 +626,6 @@ func upsertDeviceSignalFactsBatch(ctx context.Context, tx *sql.Tx, sensorID stri
 		}
 		firstSeen[index], lastSeen[index] = start.Time, end.Time
 		sample[index] = jsonText(signalEventIDs(signal))
-		for _, eventID := range signalEventIDs(signal) {
-			eventSignalID = append(eventSignalID, signal.SignalID)
-			eventEventID = append(eventEventID, eventID)
-			eventFirstSeen = append(eventFirstSeen, start.Time)
-		}
 	}
 	// The signal facts are keyed by (sensor_id, signal_id); the duplicate signal ids that
 	// a batch can contain are collapsed by the conflict update, so deduplicate the
@@ -692,36 +684,59 @@ ON CONFLICT(sensor_id, signal_id) DO UPDATE SET
 	if err != nil {
 		return err
 	}
-	if len(eventEventID) == 0 {
+	// Build per-signal event counts and ID samples from the batch. The cursor ensures
+	// forward progress, so double-counting a replayed event in seen_count is acceptable
+	// for this display-only field. The sample prepends new IDs to the stored sample and
+	// keeps 20; this avoids all reads and writes to device_signal_events, whose 3.2 GB
+	// indexes on a single HDD were the bottleneck (2.7 s per batch on 184).
+	type signalEvents struct {
+		count int
+		ids   []string
+	}
+	perSignal := map[string]*signalEvents{}
+	for _, signal := range signals {
+		eids := signalEventIDs(signal)
+		if len(eids) == 0 {
+			continue
+		}
+		se := perSignal[signal.SignalID]
+		if se == nil {
+			se = &signalEvents{}
+			perSignal[signal.SignalID] = se
+		}
+		se.count += len(eids)
+		se.ids = append(se.ids, eids...)
+	}
+	if len(perSignal) == 0 {
 		return nil
 	}
-	// Maintain seen_count and the 20-event sample incrementally. The previous statement
-	// recounted and re-ranked every stored event of each touched signal on every batch; with
-	// no retention that grew without bound (3M rows on 184) and one batch spent over 30 s in
-	// it while holding the global identity write lock, stalling every other identity writer.
-	// Only events this batch actually inserted change the count, and the sample is read from
-	// device_signal_events_recent (migration 138) as a bounded top-20 per touched signal.
+	updateSignalIDs := make([]string, 0, len(perSignal))
+	updateCounts := make([]int64, 0, len(perSignal))
+	updateSamples := make([]string, 0, len(perSignal))
+	for sid, se := range perSignal {
+		updateSignalIDs = append(updateSignalIDs, sid)
+		updateCounts = append(updateCounts, int64(se.count))
+		ids := se.ids
+		if len(ids) > 20 {
+			ids = ids[:20]
+		}
+		updateSamples = append(updateSamples, jsonText(ids))
+	}
 	_, err = tx.ExecContext(ctx, `
-WITH inserted AS (
-  INSERT INTO device_signal_events(sensor_id, signal_id, event_id, first_seen)
-  SELECT $1, t.signal_id, t.event_id, t.first_seen
-  FROM unnest($2::text[], $3::text[], $4::timestamptz[]) AS t(signal_id, event_id, first_seen)
-  ON CONFLICT(sensor_id, signal_id, event_id) DO NOTHING
-  RETURNING signal_id
-), added AS (
-  SELECT signal_id, count(*) AS n FROM inserted GROUP BY signal_id
-)
 UPDATE device_signal_facts f
-SET seen_count = f.seen_count + a.n,
-    event_ids_sample = COALESCE((
-      SELECT jsonb_agg(r.event_id ORDER BY r.first_seen DESC, r.event_id)
-      FROM (SELECT event_id, first_seen FROM device_signal_events e
-            WHERE e.sensor_id = $1 AND e.signal_id = a.signal_id
-            ORDER BY e.first_seen DESC, e.event_id LIMIT 20) r), f.event_ids_sample),
+SET seen_count = f.seen_count + a.n::int,
+    event_ids_sample = (
+      SELECT COALESCE(jsonb_agg(id), f.event_ids_sample)
+      FROM (SELECT DISTINCT value AS id
+            FROM jsonb_array_elements_text(
+              COALESCE(NULLIF(a.new_ids,'')::jsonb,'[]'::jsonb) ||
+              COALESCE(f.event_ids_sample,'[]'::jsonb))
+            LIMIT 20) sub),
     updated_at = now()
-FROM added a
+FROM (SELECT * FROM unnest($2::text[], $3::bigint[], $4::text[])
+      AS t(signal_id, n, new_ids)) a
 WHERE f.sensor_id = $1 AND f.signal_id = a.signal_id`,
-		sensorID, eventSignalID, eventEventID, eventFirstSeen)
+		sensorID, updateSignalIDs, updateCounts, updateSamples)
 	return err
 }
 
