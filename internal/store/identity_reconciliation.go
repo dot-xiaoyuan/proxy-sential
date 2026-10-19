@@ -175,8 +175,8 @@ func (s *PostgresStore) CommitIdentitySnapshot(ctx context.Context, snapshot Ide
 	if err = pruneSnapshotsTx(ctx, tx, snapshot); err != nil {
 		return false, err
 	}
-	// Shared-observation members are indexed asynchronously by indexPendingSharedSnapshots.
-	// Doing it here held this transaction open for every member of a large snapshot.
+	// Shared observation reads members from the snapshot projection (SharedIdentitySessions); the
+	// commit does not copy them.
 	if _, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,'identity.snapshot.commit',$3,'success',now())`, "identity-snapshot-"+digest, "identity-integration:"+snapshot.Source, string(scopeJSON)+"/"+snapshot.SnapshotID); err != nil {
 		return false, err
 	}

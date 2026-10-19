@@ -312,9 +312,6 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 	start(s.runIdentityInbox)
 	start(s.runIdentityInboxExport)
 	// Snapshots publish when they commit (publishSnapshotTx); there is no background calibration.
-	if SharedObservationEnabled() {
-		start(s.runSharedSnapshotIndexer)
-	}
 	if options.ProjectSnapshots {
 		start(s.runIdentitySnapshotMaterializer)
 		// The projection owner also expires ended members: archive to ClickHouse, then delete.
@@ -413,6 +410,13 @@ func (s *DBStore) runCurrentDeviceInventoryRefresh(ctx context.Context) {
 // Complete inventories are intentionally projected outside the realtime signal
 // loop. A large campus snapshot must not delay new online/offline events, and a
 // failed projection remains queued for an idempotent retry.
+// ProjectPendingIdentitySnapshots applies up to limit committed snapshots to the projection now. The
+// identity materializer does this continuously; callers that need a snapshot visible immediately, such
+// as integration tests, can drive it directly.
+func (s *DBStore) ProjectPendingIdentitySnapshots(ctx context.Context, limit int) error {
+	return s.pg.projectPendingIdentitySnapshots(ctx, limit)
+}
+
 func (s *DBStore) runIdentitySnapshotMaterializer(ctx context.Context) {
 	for ctx.Err() == nil {
 		if s.deferIdentityDerivedWork(ctx) {

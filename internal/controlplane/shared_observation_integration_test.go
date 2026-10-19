@@ -70,8 +70,13 @@ func TestSharedObservationIsolatedEndToEnd(t *testing.T) {
 	if _, err = backend.CommitIdentitySnapshot(ctx, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	defer db.ExecContext(context.Background(), `DELETE FROM shared_identity_snapshot_members WHERE source=$1`, sensor)
-	defer db.ExecContext(context.Background(), `DELETE FROM shared_identity_snapshot_indexes WHERE source=$1`, sensor)
+	// Shared observation reads membership from the snapshot projection, which is applied asynchronously.
+	if err = backend.ProjectPendingIdentitySnapshots(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	defer db.ExecContext(context.Background(), `DELETE FROM account_identity_session_projection WHERE source=$1`, sensor)
+	defer db.ExecContext(context.Background(), `DELETE FROM account_identity_projection_sources WHERE source=$1`, sensor)
+	defer db.ExecContext(context.Background(), `DELETE FROM identity_snapshot_log WHERE source=$1`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM identity_full_snapshots WHERE source=$1`, sensor)
 	tables := []string{"enforcement_actions", "notification_outbox", "notification_delivery_attempts", "behavior_report_outbox", "control_plane_tasks"}
 	before := map[string]int{}

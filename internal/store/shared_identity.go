@@ -2,31 +2,12 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"time"
 )
-
-// insertSharedSnapshotMembers stores one chunk of members. Chunks may repeat: the key is unique.
-func insertSharedSnapshotMembers(ctx context.Context, tx *sql.Tx, s IdentitySnapshot, members []policy.Session) error {
-	raw, err := json.Marshal(members)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO shared_identity_snapshot_members(source,sensor_id,campus_id,access_domain,snapshot_id,ip,session_id,document)
- SELECT $1,$2,$3,$4,$5,(v->>'ip')::inet,v->>'session_id',v FROM jsonb_array_elements($6::jsonb) v ON CONFLICT DO NOTHING`, s.Source, s.SensorID, s.CampusID, s.AccessDomain, s.SnapshotID, raw)
-	return err
-}
-
-// insertSharedSnapshotIndex marks the snapshot indexed. Call it only after every member is stored:
-// this row fires the shared-scope wake trigger and tells readers the members are complete.
-func insertSharedSnapshotIndex(ctx context.Context, tx *sql.Tx, s IdentitySnapshot) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO shared_identity_snapshot_indexes(source,sensor_id,campus_id,access_domain,snapshot_id,observed_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, s.Source, s.SensorID, s.CampusID, s.AccessDomain, s.SnapshotID, s.ObservedAt)
-	return err
-}
 
 func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.IdentityMapping, ip string, from, to time.Time, period int) ([]policy.Session, error) {
 	args := []any{m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, ip, from.Add(-time.Duration(3*period) * time.Second), to}
@@ -58,86 +39,92 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 		return nil, fmt.Errorf("identity window exceeds 2000 events")
 	}
 	// Metadata only: a complete snapshot that omits this IP must still end it.
-	rows, err = s.pg.db.QueryContext(ctx, `SELECT f.snapshot_id,f.observed_at,f.interval_seconds,EXISTS(SELECT 1 FROM shared_identity_snapshot_indexes i WHERE i.source=f.source AND i.sensor_id=f.sensor_id AND i.campus_id=f.campus_id AND i.access_domain=f.access_domain AND i.snapshot_id=f.snapshot_id)
- FROM identity_full_snapshots f WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND observed_at BETWEEN $5 AND $6 ORDER BY observed_at LIMIT 257`, m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, from.Add(-time.Duration(3*period)*time.Second), to)
+	lower := from.Add(-time.Duration(3*period) * time.Second)
+	rows, err = s.pg.db.QueryContext(ctx, sharedSnapshotLogSQL, m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, lower, to)
 	if err != nil {
 		return nil, err
 	}
-	snapshots := []IdentitySnapshot{}
-	ids := []string{}
-	indexedSnapshots := map[string]bool{}
-	issue := ""
+	scope := IdentityScope{m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain}
+	type logRow struct {
+		meta      snapshotMeta
+		projected bool
+	}
+	logged := []logRow{}
 	for rows.Next() {
-		v := IdentitySnapshot{IdentityScope: IdentityScope{m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain}}
-		var indexed bool
-		if err = rows.Scan(&v.SnapshotID, &v.ObservedAt, &v.IntervalSeconds, &indexed); err != nil {
+		row := logRow{meta: snapshotMeta{Scope: scope, IntervalSeconds: period}}
+		if err = rows.Scan(&row.meta.SnapshotID, &row.meta.ObservedAt, &row.projected); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		v.IntervalSeconds = period
-		indexedSnapshots[v.SnapshotID] = indexed
-		snapshots = append(snapshots, v)
-		ids = append(ids, v.SnapshotID)
+		logged = append(logged, row)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	if len(snapshots) > 256 {
+	if len(logged) > 256 {
 		return nil, fmt.Errorf("identity snapshot window exceeds bound")
 	}
-	if len(snapshots) == 0 {
+	issue := ""
+	log := []snapshotMeta{}
+	if len(logged) == 0 {
 		issue = "identity_source_interrupted"
 	} else {
-		baseline := -1
-		for i, snapshot := range snapshots {
-			if !snapshot.ObservedAt.After(from) {
-				baseline = i
+		// Only projected snapshots carry membership. A snapshot newer than every projected one is still
+		// being applied and may change this window; an older unprojected one was superseded and skipped.
+		var newestProjected time.Time
+		for _, row := range logged {
+			if row.projected && row.meta.ObservedAt.After(newestProjected) {
+				newestProjected = row.meta.ObservedAt
 			}
+		}
+		baseline := -1
+		for _, row := range logged {
+			if !row.projected {
+				continue
+			}
+			if !row.meta.ObservedAt.After(from) {
+				baseline = len(log)
+			}
+			log = append(log, row.meta)
 		}
 		if baseline < 0 {
 			issue = "identity_window_uncovered"
 		} else {
-			snapshots = snapshots[baseline:]
+			log = log[baseline:]
 		}
-		ids = nil
-		for _, snapshot := range snapshots {
-			ids = append(ids, snapshot.SnapshotID)
-			if !indexedSnapshots[snapshot.SnapshotID] {
+		for _, row := range logged {
+			if !row.projected && row.meta.ObservedAt.After(newestProjected) {
 				issue = "identity_snapshot_index_pending"
 			}
 		}
 	}
-	rows, err = s.pg.db.QueryContext(ctx, `SELECT snapshot_id,document FROM shared_identity_snapshot_members WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND ip=$5::inet AND snapshot_id=ANY($6::text[]) LIMIT 2001`, m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, ip, ids)
+	rows, err = s.pg.db.QueryContext(ctx, sharedProjectionMembersSQL, m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, ip, lower)
 	if err != nil {
 		return nil, err
 	}
-	count := 0
+	members := []projectionMember{}
 	for rows.Next() {
-		count++
-		var id string
+		var confirmed time.Time
 		var raw []byte
-		var item policy.Session
-		if err = rows.Scan(&id, &raw); err == nil {
-			err = json.Unmarshal(raw, &item)
-		}
-		if err != nil {
+		if err = rows.Scan(&confirmed, &raw); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		for i := range snapshots {
-			if snapshots[i].SnapshotID == id {
-				snapshots[i].Sessions = append(snapshots[i].Sessions, item)
-			}
+		member, memberErr := projectionMemberFromRow(scope, confirmed, raw)
+		if memberErr != nil {
+			rows.Close()
+			return nil, memberErr
 		}
+		members = append(members, member)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	if count > 2000 {
+	if len(members) > 2000 {
 		return nil, fmt.Errorf("identity snapshot members exceed bound")
 	}
 	// Unprocessed identity changes may alter attribution inside this window.
@@ -176,7 +163,7 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 			issue = "identity_source_interrupted"
 		}
 	}
-	out := reconcileIdentitySessions(facts, snapshots, to)
+	out := policySessionsFromProjection(facts, log, members, to)
 	if len(out) == 0 && issue != "" {
 		out = []policy.Session{{ID: "health", IP: ip, Source: m.Source, SensorID: m.IdentitySensorID, CampusID: m.IdentityCampusID, AccessDomain: m.IdentityAccessDomain, StartedAt: from, ConfirmedAt: from}}
 	}
@@ -189,3 +176,12 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 	}
 	return out, nil
 }
+
+// sharedSnapshotLogSQL reads the scope's snapshot timeline for one shared-observation window.
+const sharedSnapshotLogSQL = `SELECT snapshot_id,observed_at,projected FROM identity_snapshot_log
+ WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND observed_at BETWEEN $5 AND $6 ORDER BY observed_at LIMIT 257`
+
+// sharedProjectionMembersSQL reads one IP's open members and members that ended inside the window.
+const sharedProjectionMembersSQL = `SELECT p.confirmed_at,p.document FROM account_identity_session_projection p
+ WHERE p.ip=$5 AND p.source=$1 AND p.sensor_id=$2 AND p.campus_id=$3 AND p.access_domain=$4
+ AND (COALESCE(p.document->>'ended_at','')='' OR p.confirmed_at>=$6) LIMIT 2001`

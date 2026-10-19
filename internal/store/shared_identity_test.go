@@ -35,22 +35,22 @@ func TestSharedIdentityUsesLatestCompleteBaseline(t *testing.T) {
 			s := policy.Session{ID: "session", AccountID: "account", Status: "reconcile", IP: "192.0.2.4", Source: "auth", SensorID: "auth", CampusID: "campus", AccessDomain: "auth", StartedAt: now.Add(-time.Hour), ConfirmedAt: now.Add(-2 * time.Minute), HeartbeatSeconds: 60}
 			s.Confirmations = []time.Time{s.ConfirmedAt}
 			mock.ExpectQuery("SELECT session_data").WillReturnRows(sqlmock.NewRows([]string{"session_data"}))
-			headers := sqlmock.NewRows([]string{"id", "at", "period", "indexed"})
+			// The log lists every snapshot; only projected ones carry membership. An older unprojected
+			// snapshot was superseded and is skipped, so an unprojected baseline leaves the window uncovered.
+			headers := sqlmock.NewRows([]string{"snapshot_id", "observed_at", "projected"})
 			if mode != "missing_baseline" {
-				headers.AddRow("legacy", now.Add(-3*time.Minute), 60, false).AddRow("baseline", s.ConfirmedAt, 60, mode != "unindexed_baseline")
+				headers.AddRow("legacy", now.Add(-3*time.Minute), false).AddRow("baseline", s.ConfirmedAt, mode != "unindexed_baseline")
 			}
-			headers.AddRow("current", now.Add(-time.Second), 60, true)
-			mock.ExpectQuery("SELECT f.snapshot_id").WillReturnRows(headers)
-			members := sqlmock.NewRows([]string{"id", "doc"})
-			raw, _ := json.Marshal(s)
-			if mode != "missing_baseline" && mode != "unindexed_baseline" {
-				members.AddRow("baseline", raw)
+			headers.AddRow("current", now.Add(-time.Second), true)
+			mock.ExpectQuery("SELECT snapshot_id,observed_at,projected FROM identity_snapshot_log").WillReturnRows(headers)
+			first := now.Add(-time.Second)
+			if mode == "ready" || mode == "pending_changes" {
+				first = s.ConfirmedAt
 			}
-			s.ConfirmedAt = now.Add(-time.Second)
-			s.Confirmations = []time.Time{s.ConfirmedAt}
-			raw, _ = json.Marshal(s)
-			members.AddRow("current", raw)
-			mock.ExpectQuery("SELECT snapshot_id,document").WillReturnRows(members)
+			members := sqlmock.NewRows([]string{"confirmed_at", "document"})
+			raw, _ := json.Marshal(map[string]any{"session_id": s.ID, "account_id": s.AccountID, "ip": s.IP, "session_status": "reconcile", "first_confirmed_at": first.Format(time.RFC3339Nano)})
+			members.AddRow(first, raw)
+			mock.ExpectQuery("SELECT p.confirmed_at,p.document FROM account_identity_session_projection").WillReturnRows(members)
 			mock.ExpectQuery("SELECT EXISTS").WillReturnRows(sqlmock.NewRows([]string{"pending"}).AddRow(mode == "pending_changes"))
 			result, err := (&DBStore{pg: &PostgresStore{db: db}}).SharedIdentitySessions(context.Background(), m, s.IP, now.Add(-time.Minute), now, 60)
 			if err != nil || len(result) == 0 {
