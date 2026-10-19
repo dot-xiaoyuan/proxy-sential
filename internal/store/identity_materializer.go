@@ -312,6 +312,9 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 	start(s.runIdentityInbox)
 	start(s.runIdentityInboxExport)
 	start(s.runIdentityCalibration)
+	if SharedObservationEnabled() {
+		start(s.runSharedSnapshotIndexer)
+	}
 	if options.ProjectSnapshots {
 		start(s.runIdentitySnapshotMaterializer)
 	}

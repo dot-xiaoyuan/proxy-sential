@@ -10,17 +10,21 @@ import (
 	"time"
 )
 
-func indexSharedIdentitySnapshot(ctx context.Context, tx *sql.Tx, s IdentitySnapshot) error {
-	raw, err := json.Marshal(s.Sessions)
+// insertSharedSnapshotMembers stores one chunk of members. Chunks may repeat: the key is unique.
+func insertSharedSnapshotMembers(ctx context.Context, tx *sql.Tx, s IdentitySnapshot, members []policy.Session) error {
+	raw, err := json.Marshal(members)
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO shared_identity_snapshot_members(source,sensor_id,campus_id,access_domain,snapshot_id,ip,session_id,document)
  SELECT $1,$2,$3,$4,$5,(v->>'ip')::inet,v->>'session_id',v FROM jsonb_array_elements($6::jsonb) v ON CONFLICT DO NOTHING`, s.Source, s.SensorID, s.CampusID, s.AccessDomain, s.SnapshotID, raw)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO shared_identity_snapshot_indexes(source,sensor_id,campus_id,access_domain,snapshot_id,observed_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, s.Source, s.SensorID, s.CampusID, s.AccessDomain, s.SnapshotID, s.ObservedAt)
+	return err
+}
+
+// insertSharedSnapshotIndex marks the snapshot indexed. Call it only after every member is stored:
+// this row fires the shared-scope wake trigger and tells readers the members are complete.
+func insertSharedSnapshotIndex(ctx context.Context, tx *sql.Tx, s IdentitySnapshot) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO shared_identity_snapshot_indexes(source,sensor_id,campus_id,access_domain,snapshot_id,observed_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, s.Source, s.SensorID, s.CampusID, s.AccessDomain, s.SnapshotID, s.ObservedAt)
 	return err
 }
 

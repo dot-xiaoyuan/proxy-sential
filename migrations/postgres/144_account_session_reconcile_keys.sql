@@ -1,3 +1,7 @@
+-- The table is hot. Fail fast if the ACCESS EXCLUSIVE lock is queued behind long transactions,
+-- rather than blocking every session write until they finish.
+SET LOCAL lock_timeout = '5s';
+
 -- Snapshot reconciliation matches a login by its generation and checks the collector scope.
 -- Rows written before this migration keep empty values and are matched by source, campus and
 -- access domain only. Partial indexes cover just the keyed rows and the open rows, so existing
