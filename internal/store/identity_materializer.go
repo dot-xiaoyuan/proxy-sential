@@ -317,6 +317,10 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 	}
 	if options.ProjectSnapshots {
 		start(s.runIdentitySnapshotMaterializer)
+		// The projection owner also expires ended members: archive to ClickHouse, then delete.
+		if s.ch != nil {
+			start(s.runProjectionRetention)
+		}
 	}
 	if options.RefreshDeviceInventory {
 		start(s.runCurrentDeviceInventoryRefresh)
