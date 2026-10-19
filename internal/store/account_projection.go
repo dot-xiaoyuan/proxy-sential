@@ -173,17 +173,18 @@ func (s *PostgresStore) projectedAccountSessions(ctx context.Context, account st
 }
 
 // projectionVolatileKeys are document fields that change with every snapshot without changing the
-// membership: the snapshot time, its provenance and the earliest start, which is merged separately.
-const projectionVolatileKeys = ` - 'last_confirmed_at' - 'raw_ref' - 'started_at'`
+// membership: the snapshot time, its provenance, the earliest start and the first confirmation, the
+// last two merged separately.
+const projectionVolatileKeys = ` - 'last_confirmed_at' - 'raw_ref' - 'started_at' - 'first_confirmed_at'`
 
 // projectionUpsertSQL writes only members that are new or whose account or content changed. An
 // unchanged member stays as it is: its confirmation comes from the scope's latest projected snapshot
 // (projectionConfirmedSQL), so rewriting it only rewrote every confirmed_at index and fired the
 // shared-profile trigger for the whole inventory on every snapshot.
 const projectionUpsertSQL = `INSERT INTO account_identity_session_projection(source,sensor_id,campus_id,access_domain,session_id,ip,account_id,confirmed_at,document)
-SELECT $1,$2,$3,$4,rows.session_id,rows.ip,rows.account_id,$5::timestamptz,rows.document::jsonb
+SELECT $1,$2,$3,$4,rows.session_id,rows.ip,rows.account_id,$5::timestamptz,rows.document::jsonb||jsonb_build_object('first_confirmed_at',$5::timestamptz)
 FROM unnest($6::text[],$7::text[],$8::text[],$9::text[]) AS rows(session_id,ip,account_id,document)
-ON CONFLICT(source,sensor_id,campus_id,access_domain,session_id,ip) DO UPDATE SET account_id=EXCLUDED.account_id,confirmed_at=EXCLUDED.confirmed_at,document=jsonb_set(EXCLUDED.document,'{started_at}',CASE WHEN (account_identity_session_projection.document->>'started_at')::timestamptz <= (EXCLUDED.document->>'started_at')::timestamptz THEN account_identity_session_projection.document->'started_at' ELSE EXCLUDED.document->'started_at' END) WHERE account_identity_session_projection.confirmed_at<=EXCLUDED.confirmed_at AND (account_identity_session_projection.account_id IS DISTINCT FROM EXCLUDED.account_id OR (account_identity_session_projection.document` + projectionVolatileKeys + `) IS DISTINCT FROM (EXCLUDED.document` + projectionVolatileKeys + `))`
+ON CONFLICT(source,sensor_id,campus_id,access_domain,session_id,ip) DO UPDATE SET account_id=EXCLUDED.account_id,confirmed_at=EXCLUDED.confirmed_at,document=jsonb_set(jsonb_set(EXCLUDED.document,'{started_at}',CASE WHEN (account_identity_session_projection.document->>'started_at')::timestamptz <= (EXCLUDED.document->>'started_at')::timestamptz THEN account_identity_session_projection.document->'started_at' ELSE EXCLUDED.document->'started_at' END),'{first_confirmed_at}',CASE WHEN COALESCE(account_identity_session_projection.document->>'ended_at','')<>'' THEN EXCLUDED.document->'first_confirmed_at' ELSE COALESCE(account_identity_session_projection.document->'first_confirmed_at',to_jsonb(account_identity_session_projection.confirmed_at)) END) WHERE account_identity_session_projection.confirmed_at<=EXCLUDED.confirmed_at AND (account_identity_session_projection.account_id IS DISTINCT FROM EXCLUDED.account_id OR (account_identity_session_projection.document` + projectionVolatileKeys + `) IS DISTINCT FROM (EXCLUDED.document` + projectionVolatileKeys + `))`
 
 // projectionConfirmedSQL is a projection row's effective confirmation. An open member is confirmed by
 // the latest projected snapshot of its scope; the per-row rewrite used to store exactly that value.
