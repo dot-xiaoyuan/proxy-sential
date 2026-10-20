@@ -877,6 +877,62 @@ func awaitIdentityWriteLock(ctx context.Context, tx *sql.Tx, budget time.Duratio
 // Client cancellation alone can leave a disconnected backend doing expensive
 // history I/O while retaining its advisory lock. Enforce the remaining budget
 // inside PostgreSQL as well; SET LOCAL never changes other connections.
+// enqueueSharedDeviceProfileJobs marks shared device profile jobs dirty for the given
+// endpoint/MAC pairs in one batch SQL, replacing the per-row PL/pgSQL trigger that
+// previously ran inside every account_sessions and projection INSERT.
+func enqueueSharedDeviceProfileJobs(ctx context.Context, tx *sql.Tx, sessions []AccountSession, observedAt time.Time) error {
+	endpointSet := map[string]struct{}{}
+	macSet := map[string]struct{}{}
+	for _, s := range sessions {
+		if s.EndpointID != "" {
+			endpointSet[s.EndpointID] = struct{}{}
+		}
+		if normalized := normalizedSharedProfileMAC(s.MAC); normalized != "" {
+			macSet[normalized] = struct{}{}
+		}
+	}
+	if len(endpointSet) == 0 && len(macSet) == 0 {
+		return nil
+	}
+	endpoints := make([]string, 0, len(endpointSet))
+	for id := range endpointSet {
+		endpoints = append(endpoints, id)
+	}
+	macs := make([]string, 0, len(macSet))
+	for m := range macSet {
+		macs = append(macs, m)
+	}
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO shared_device_profile_jobs(subject_key,sensor_id,campus_id,endpoint_id,mac,ip,vlan,observed_at)
+SELECT DISTINCT ON (k.key)
+  k.key, p.sensor_id, coalesce(p.campus_id,''), coalesce(p.endpoint_id,''),
+  coalesce(p.mac,''), p.primary_ip, coalesce(p.vlan,''), $3
+FROM shared_device_profiles p
+CROSS JOIN LATERAL (SELECT
+  coalesce(nullif(p.sensor_id,''),'') || ':' ||
+  CASE WHEN coalesce(p.endpoint_id,'')<>'' THEN 'endpoint:'||p.endpoint_id
+       WHEN regexp_replace(lower(coalesce(p.mac,'')),'[^0-9a-f]','','g')<>'' THEN 'mac:'||regexp_replace(lower(p.mac),'[^0-9a-f]','','g')
+       ELSE 'address:'||coalesce(p.campus_id,'')||':'||coalesce(p.vlan,'')||':'||host(p.primary_ip)
+  END AS key
+) k
+WHERE p.merged_into_profile_id IS NULL
+  AND (p.endpoint_id = ANY($1::text[]) OR regexp_replace(lower(p.mac),'[^0-9a-f]','','g') = ANY($2::text[]))
+  AND $3 >= (SELECT cutover_at FROM shared_device_profile_runtime WHERE singleton)
+ON CONFLICT(subject_key) DO UPDATE SET
+  sensor_id = CASE WHEN EXCLUDED.sensor_id<>'' THEN EXCLUDED.sensor_id ELSE shared_device_profile_jobs.sensor_id END,
+  campus_id = CASE WHEN EXCLUDED.campus_id<>'' THEN EXCLUDED.campus_id ELSE shared_device_profile_jobs.campus_id END,
+  endpoint_id = CASE WHEN EXCLUDED.endpoint_id<>'' THEN EXCLUDED.endpoint_id ELSE shared_device_profile_jobs.endpoint_id END,
+  mac = CASE WHEN EXCLUDED.mac<>'' THEN EXCLUDED.mac ELSE shared_device_profile_jobs.mac END,
+  ip = coalesce(EXCLUDED.ip, shared_device_profile_jobs.ip),
+  vlan = CASE WHEN EXCLUDED.vlan<>'' THEN EXCLUDED.vlan ELSE shared_device_profile_jobs.vlan END,
+  observed_at = greatest(shared_device_profile_jobs.observed_at, EXCLUDED.observed_at),
+  dirty_since = CASE WHEN shared_device_profile_jobs.processed_generation>=shared_device_profile_jobs.dirty_generation THEN now() ELSE shared_device_profile_jobs.dirty_since END,
+  dirty_generation = shared_device_profile_jobs.dirty_generation+1,
+  not_before = least(shared_device_profile_jobs.not_before, now()),
+  updated_at = now()`, endpoints, macs, observedAt)
+	return err
+}
+
 func boundIdentityStatements(ctx context.Context, tx *sql.Tx) error {
 	budget := identityWorkBudget
 	if deadline, ok := ctx.Deadline(); ok {

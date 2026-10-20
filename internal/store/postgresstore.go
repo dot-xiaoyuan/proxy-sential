@@ -1863,6 +1863,9 @@ func writeIdentityState(ctx context.Context, tx *sql.Tx, state IdentityState) (i
 	if err := upsertAccountSessionsBatch(ctx, tx, state.Sessions); err != nil {
 		return stats, err
 	}
+	if err := enqueueSharedDeviceProfileJobs(ctx, tx, state.Sessions, time.Now()); err != nil {
+		return stats, err
+	}
 	history, err := writeIdentityIPMACHistory(ctx, tx, state.IPMACHistory)
 	if err != nil {
 		return stats, err

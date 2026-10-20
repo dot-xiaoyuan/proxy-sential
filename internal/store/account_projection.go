@@ -102,6 +102,7 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 	// dedicated table avoids duplicate device evidence and lock contention with
 	// live event materialization while preserving account and router bindings.
 	keys := make([]string, 0, len(snapshot.Events))
+	projectedSessions := make([]AccountSession, 0, len(snapshot.Events))
 	sessionIDs := make([]string, 0, 2000)
 	ips := make([]string, 0, 2000)
 	accountIDs := make([]string, 0, 2000)
@@ -133,6 +134,7 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 		if e != nil {
 			return e
 		}
+		projectedSessions = append(projectedSessions, session)
 		keys = append(keys, session.SessionID+"\x1f"+session.IP)
 		sessionIDs = append(sessionIDs, session.SessionID)
 		ips = append(ips, session.IP)
@@ -148,7 +150,10 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE account_identity_session_projection SET document=jsonb_set(jsonb_set(document,'{ended_at}',to_jsonb($7::text)), '{session_status}','"stop"'::jsonb),confirmed_at=$5::timestamptz WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND confirmed_at<=$5::timestamptz AND COALESCE(document->>'ended_at','')='' AND NOT(session_id||chr(31)||ip=ANY($6::text[]))`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, keys, snapshot.ObservedAt.UTC().Format(time.RFC3339Nano))
-	return err
+	if err != nil {
+		return err
+	}
+	return enqueueSharedDeviceProfileJobs(ctx, tx, projectedSessions, snapshot.ObservedAt)
 }
 
 func (s *PostgresStore) projectedAccountSessions(ctx context.Context, account string, limit int) ([]AccountSession, error) {
