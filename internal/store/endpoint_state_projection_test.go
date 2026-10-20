@@ -12,7 +12,8 @@ import (
 func TestEndpointStateReadsCurrentSnapshotMembers(t *testing.T) {
 	for _, required := range []string{
 		"FROM account_identity_session_projection p JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)",
-		"p.document->>'endpoint_id'=e.endpoint_id",
+		"p.document->>'endpoint_id'=ids.id",
+		"COALESCE(p.document->>'endpoint_id','')<>''",
 		"COALESCE(p.document->>'ended_at','')=''",
 		projectionCurrentSQL,
 		"'at'," + projectionConfirmedSQL,

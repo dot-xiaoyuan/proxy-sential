@@ -29,7 +29,8 @@ import (
 //     back with one upsert, skipping rows whose content did not change.
 const (
 	endpointStateInterval    = 15 * time.Second
-	endpointStateChunk       = 300
+	endpointStateChunk       = 50
+	endpointStateProgress    = 100
 	endpointStateSourceLimit = 5000
 	endpointStateSweep       = 1000
 	// endpointSessionFreshness matches the router binding rule: a session counts as
@@ -40,6 +41,42 @@ const (
 type endpointStateKey struct {
 	At string `json:"at"`
 	ID string `json:"id"`
+}
+
+type endpointStateChange struct {
+	id    string
+	stamp time.Time
+}
+
+// Save a source cursor only after its corresponding state rows are durable. A later
+// batch may fail without replaying all earlier work or skipping the failed rows.
+func (s *PostgresStore) processEndpointStateChanges(ctx context.Context, source string, changes []endpointStateChange, batchSize int, position *endpointStateKey, refresh func(context.Context, []string) error) error {
+	for start := 0; start < len(changes); start += batchSize {
+		end := min(start+batchSize, len(changes))
+		ids := make([]string, 0, end-start)
+		seen := make(map[string]bool, end-start)
+		for _, change := range changes[start:end] {
+			if !seen[change.id] {
+				ids = append(ids, change.id)
+				seen[change.id] = true
+			}
+		}
+		started := time.Now()
+		if err := refresh(ctx, ids); err != nil {
+			return fmt.Errorf("endpoint state %s batch: %w", source, err)
+		}
+		last := changes[end-1]
+		next := endpointStateKey{At: last.stamp.UTC().Format(time.RFC3339Nano), ID: last.id}
+		encoded, _ := json.Marshal(next)
+		if _, err := s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=jsonb_set(cursors,ARRAY[$1]::text[],$2::jsonb,true),updated_at=now() WHERE singleton`, source, encoded); err != nil {
+			return fmt.Errorf("endpoint state %s cursor: %w", source, err)
+		}
+		*position = next
+		if elapsed := time.Since(started); elapsed > 5*time.Second {
+			fmt.Fprintf(os.Stderr, "endpoint state %s batch: rows=%d duration=%s\n", source, len(ids), elapsed.Round(time.Millisecond))
+		}
+	}
+	return nil
 }
 
 type endpointStateSource struct {
@@ -92,40 +129,61 @@ func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
 	if err := json.Unmarshal(raw, &cursors); err != nil {
 		return 0, err
 	}
+	// Pin the first change watermark before bootstrap. Recomputing now()-interval
+	// after a slow or failed bootstrap could skip changes to rows already scanned.
+	initial := time.Now().UTC().Add(-endpointStateInterval).Format(time.RFC3339Nano)
+	initialized := false
+	for _, source := range endpointStateSources {
+		if cursors[source.name].At == "" {
+			cursors[source.name] = endpointStateKey{At: initial}
+			initialized = true
+		}
+	}
+	if initialized {
+		encoded, _ := json.Marshal(cursors)
+		if _, err := s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=$1,updated_at=now() WHERE singleton`, encoded); err != nil {
+			return 0, err
+		}
+	}
 	refreshed := 0
 	if !bootstrapComplete {
+		started := time.Now()
 		ids, err := s.endpointIDsAfter(ctx, bootstrapCursor, endpointStateSweep)
 		if err != nil {
 			return refreshed, err
 		}
-		if err = s.refreshEndpointStates(ctx, ids); err != nil {
-			return refreshed, err
+		if elapsed := time.Since(started); elapsed > 5*time.Second {
+			fmt.Fprintf(os.Stderr, "endpoint state bootstrap scan: rows=%d duration=%s\n", len(ids), elapsed.Round(time.Millisecond))
 		}
-		refreshed += len(ids)
-		next := bootstrapCursor
-		if len(ids) > 0 {
-			next = ids[len(ids)-1]
+		for start := 0; start < len(ids); start += endpointStateProgress {
+			end := min(start+endpointStateProgress, len(ids))
+			if err = s.refreshEndpointStates(ctx, ids[start:end]); err != nil {
+				return refreshed, fmt.Errorf("endpoint state bootstrap: %w", err)
+			}
+			refreshed += end - start
+			bootstrapCursor = ids[end-1]
+			if _, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET bootstrap_cursor=$1,updated_at=now() WHERE singleton`, bootstrapCursor); err != nil {
+				return refreshed, err
+			}
 		}
-		if _, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET bootstrap_cursor=$1,bootstrap_complete=$2,updated_at=now() WHERE singleton`, next, len(ids) < endpointStateSweep); err != nil {
-			return refreshed, err
+		if len(ids) < endpointStateSweep {
+			if _, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET bootstrap_complete=true,updated_at=now() WHERE singleton`); err != nil {
+				return refreshed, err
+			}
 		}
 	}
-	changed := map[string]bool{}
-	sessionChanged := map[string]bool{}
 	for _, source := range endpointStateSources {
 		position := cursors[source.name]
-		if position.At == "" {
-			// Bootstrap covers everything older than the updater's first round.
-			position.At = time.Now().UTC().Add(-endpointStateInterval).Format(time.RFC3339Nano)
-		}
 		at, err := time.Parse(time.RFC3339Nano, position.At)
 		if err != nil {
 			return refreshed, fmt.Errorf("endpoint state %s cursor: %w", source.name, err)
 		}
+		started := time.Now()
 		rows, err := s.db.QueryContext(ctx, source.query, at, position.ID, endpointStateSourceLimit)
 		if err != nil {
 			return refreshed, fmt.Errorf("endpoint state %s: %w", source.name, err)
 		}
+		changes := make([]endpointStateChange, 0, endpointStateSourceLimit)
 		for rows.Next() {
 			var id string
 			var stamp time.Time
@@ -133,47 +191,58 @@ func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
 				rows.Close()
 				return refreshed, err
 			}
-			changed[id] = true
-			if source.name == "sessions" {
-				sessionChanged[id] = true
-			}
-			position = endpointStateKey{At: stamp.UTC().Format(time.RFC3339Nano), ID: id}
+			changes = append(changes, endpointStateChange{id: id, stamp: stamp})
 		}
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
 			return refreshed, err
 		}
-		cursors[source.name] = position
+		if elapsed := time.Since(started); elapsed > 5*time.Second {
+			fmt.Fprintf(os.Stderr, "endpoint state %s scan: rows=%d duration=%s\n", source.name, len(changes), elapsed.Round(time.Millisecond))
+		}
+		refresh := func(ctx context.Context, ids []string) error {
+			if err := s.refreshEndpointStates(ctx, ids); err != nil {
+				return err
+			}
+			if source.name == "sessions" {
+				changed := make(map[string]bool, len(ids))
+				for _, id := range ids {
+					changed[id] = true
+				}
+				return s.markRecognitionForSessions(ctx, changed)
+			}
+			return nil
+		}
+		if err := s.processEndpointStateChanges(ctx, source.name, changes, endpointStateProgress, &position, refresh); err != nil {
+			return refreshed, err
+		}
+		refreshed += len(changes)
 	}
 	// Round-robin sweep: every endpoint is re-derived about every 20 minutes, which ends
 	// sessions that went stale without a source update.
+	started := time.Now()
 	sweep, err := s.endpointIDsAfter(ctx, cursors["sweep"].ID, endpointStateSweep)
 	if err != nil {
 		return refreshed, err
 	}
-	for _, id := range sweep {
-		changed[id] = true
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		fmt.Fprintf(os.Stderr, "endpoint state sweep scan: rows=%d duration=%s\n", len(sweep), elapsed.Round(time.Millisecond))
 	}
-	sweepCursor := ""
-	if len(sweep) == endpointStateSweep {
-		sweepCursor = sweep[len(sweep)-1]
+	for start := 0; start < len(sweep); start += endpointStateProgress {
+		end := min(start+endpointStateProgress, len(sweep))
+		if err = s.refreshEndpointStates(ctx, sweep[start:end]); err != nil {
+			return refreshed, fmt.Errorf("endpoint state sweep: %w", err)
+		}
+		refreshed += end - start
+		encoded, _ := json.Marshal(endpointStateKey{ID: sweep[end-1]})
+		if _, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=jsonb_set(cursors,'{sweep}',$1::jsonb,true),updated_at=now() WHERE singleton`, encoded); err != nil {
+			return refreshed, err
+		}
 	}
-	cursors["sweep"] = endpointStateKey{ID: sweepCursor}
-	ids := make([]string, 0, len(changed))
-	for id := range changed {
-		ids = append(ids, id)
+	if len(sweep) < endpointStateSweep {
+		_, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=jsonb_set(cursors,'{sweep}','{"id":""}'::jsonb,true),updated_at=now() WHERE singleton`)
 	}
-	sort.Strings(ids)
-	if err = s.refreshEndpointStates(ctx, ids); err != nil {
-		return refreshed, err
-	}
-	if err = s.markRecognitionForSessions(ctx, sessionChanged); err != nil {
-		return refreshed, err
-	}
-	refreshed += len(ids)
-	encoded, _ := json.Marshal(cursors)
-	_, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=$1,updated_at=now() WHERE singleton`, encoded)
 	return refreshed, err
 }
 
@@ -223,25 +292,39 @@ const projectionCurrentSQL = "src.observed_at>=now()-make_interval(secs=>GREATES
 // entity, recognition item, manual name, latest DHCP lease and current sessions. Current
 // sessions come from account_sessions (events) and from open members of the snapshot
 // projection: a device online since before the event stream existed has no event session.
-const endpointStateSQL = `WITH ids AS (SELECT DISTINCT unnest($1::text[]) AS id)
+//
+// Sessions and projection members are pre-aggregated per endpoint in CTEs so the two
+// large tables are each scanned once for the whole batch instead of once per row.
+const endpointStateSQL = `WITH ids AS (SELECT DISTINCT unnest($1::text[]) AS id),
+sess_agg AS (
+ SELECT s.endpoint_id, jsonb_agg(jsonb_build_object('account',s.account_id,'access',coalesce(s.access_id,''),'ip',coalesce(host(s.ip),''),
+   'at',greatest(s.started_at,coalesce(nullif(s.policy_metadata->>'last_confirmed_at','')::timestamptz,s.started_at)),
+   'dims',jsonb_strip_nulls(jsonb_build_object('campus_id',nullif(s.campus_id::text,''),'department',nullif(s.department::text,''),'person_type',nullif(s.person_type::text,''),
+     'ssid',nullif(s.ssid::text,''),'vlan',nullif(s.vlan::text,''),'ap',nullif(s.ap::text,''),'nas_ip',host(s.nas_ip))))) AS sessions
+ FROM account_sessions s JOIN ids ON s.endpoint_id=ids.id
+ WHERE s.ended_at IS NULL AND s.updated_at>now()-$2::interval
+ GROUP BY s.endpoint_id
+),
+proj_agg AS (
+ SELECT p.document->>'endpoint_id' AS endpoint_id,
+  jsonb_agg(jsonb_build_object('account',p.account_id,'access',coalesce(p.document->>'access_id',''),'ip',p.ip,
+   'at',` + projectionConfirmedSQL + `,
+   'dims',jsonb_strip_nulls(jsonb_build_object('campus_id',nullif(p.document->>'campus_id',''),'department',nullif(p.document->>'department',''),'person_type',nullif(p.document->>'person_type',''),
+     'ssid',nullif(p.document->>'ssid',''),'vlan',nullif(p.document->>'vlan',''),'ap',nullif(p.document->>'ap',''),'nas_ip',nullif(p.document->>'nas_ip',''))))) AS sessions
+ FROM account_identity_session_projection p JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain) JOIN ids ON p.document->>'endpoint_id'=ids.id
+ WHERE COALESCE(p.document->>'endpoint_id','')<>'' AND COALESCE(p.document->>'ended_at','')='' AND ` + projectionCurrentSQL + `
+ GROUP BY p.document->>'endpoint_id'
+)
 SELECT e.endpoint_id,coalesce(r.list_item,'{}'::jsonb),coalesce(e.primary_mac,''),coalesce(nullif(n.value,''),r.device_name,''),coalesce(n.value,'')<>'',
  coalesce(e.owner_account,''),coalesce(e.owner_name,''),concat_ws(' ',e.owner_account,e.owner_name,e.owner_department,e.asset_tag),e.last_seen,
  coalesce(l.ip,''),l.observed_at,
- coalesce((SELECT jsonb_agg(jsonb_build_object('account',s.account_id,'access',coalesce(s.access_id,''),'ip',coalesce(host(s.ip),''),
-   'at',greatest(s.started_at,coalesce(nullif(s.policy_metadata->>'last_confirmed_at','')::timestamptz,s.started_at)),
-   'dims',jsonb_strip_nulls(jsonb_build_object('campus_id',nullif(s.campus_id::text,''),'department',nullif(s.department::text,''),'person_type',nullif(s.person_type::text,''),
-     'ssid',nullif(s.ssid::text,''),'vlan',nullif(s.vlan::text,''),'ap',nullif(s.ap::text,''),'nas_ip',host(s.nas_ip)))))
-  FROM account_sessions s WHERE s.endpoint_id=e.endpoint_id AND s.ended_at IS NULL AND s.updated_at>now()-$2::interval),'[]'::jsonb)
- ||coalesce((SELECT jsonb_agg(jsonb_build_object('account',p.account_id,'access',coalesce(p.document->>'access_id',''),'ip',p.ip,
-   'at',` + projectionConfirmedSQL + `,
-   'dims',jsonb_strip_nulls(jsonb_build_object('campus_id',nullif(p.document->>'campus_id',''),'department',nullif(p.document->>'department',''),'person_type',nullif(p.document->>'person_type',''),
-     'ssid',nullif(p.document->>'ssid',''),'vlan',nullif(p.document->>'vlan',''),'ap',nullif(p.document->>'ap',''),'nas_ip',nullif(p.document->>'nas_ip','')))))
-  FROM account_identity_session_projection p JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
-  WHERE p.document->>'endpoint_id'=e.endpoint_id AND COALESCE(p.document->>'ended_at','')='' AND ` + projectionCurrentSQL + `),'[]'::jsonb)
+ coalesce(sa.sessions,'[]'::jsonb)||coalesce(pa.sessions,'[]'::jsonb)
 FROM ids JOIN endpoint_entities e ON e.endpoint_id=ids.id
 LEFT JOIN endpoint_recognition_summary r ON r.endpoint_id=e.endpoint_id
 LEFT JOIN device_name_notes n ON n.endpoint_id=e.endpoint_id
-LEFT JOIN LATERAL (SELECT host(d.ip) AS ip,d.observed_at FROM device_address_leases d WHERE d.endpoint_id=e.endpoint_id AND d.action='ack' ORDER BY d.observed_at DESC LIMIT 1) l ON true`
+LEFT JOIN LATERAL (SELECT host(d.ip) AS ip,d.observed_at FROM device_address_leases d WHERE d.endpoint_id=e.endpoint_id AND d.action='ack' ORDER BY d.observed_at DESC LIMIT 1) l ON true
+LEFT JOIN sess_agg sa ON sa.endpoint_id=e.endpoint_id
+LEFT JOIN proj_agg pa ON pa.endpoint_id=e.endpoint_id`
 
 func (s *PostgresStore) refreshEndpointStates(ctx context.Context, ids []string) error {
 	for start := 0; start < len(ids); start += endpointStateChunk {
