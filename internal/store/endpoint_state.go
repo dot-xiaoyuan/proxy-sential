@@ -31,8 +31,8 @@ const (
 	endpointStateInterval    = 15 * time.Second
 	endpointStateChunk       = 50
 	endpointStateProgress    = 100
-	endpointStateSourceLimit = 5000
-	endpointStateSweep       = 1000
+	endpointStateSourceLimit = 1000
+	endpointStateSweep       = 500
 	// endpointSessionFreshness matches the router binding rule: a session counts as
 	// current only while it is open and was refreshed within three reconcile intervals.
 	endpointSessionFreshness = 90 * time.Minute
@@ -98,7 +98,7 @@ var endpointStateSources = []endpointStateSource{
 
 func (s *DBStore) RunEndpointStateUpdater(ctx context.Context) {
 	for ctx.Err() == nil {
-		work, cancel := context.WithTimeout(ctx, 4*time.Minute)
+		work, cancel := context.WithTimeout(ctx, 30*time.Minute)
 		refreshed, err := s.pg.endpointStateRound(work)
 		cancel()
 		report, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
