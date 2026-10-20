@@ -619,6 +619,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 	knownDevices := sharedBehaviorKnownDevices(knownRows)
 	written := 0
 	currentIDs := []string{}
+	var profileKeys []SharedObservationProfileKey
 	for _, window := range windows {
 		key := strings.Join([]string{window.SensorID, window.CampusID, window.AccessDomain, window.IP}, "\x00")
 		item, present := directItems[window.ID]
@@ -670,6 +671,10 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 		if err = s.persistSharedBehavior(ctx, item); err != nil {
 			return written, err
 		}
+		profileKeys = append(profileKeys, SharedObservationProfileKey{
+			SensorID: item.SensorID, CampusID: item.CampusID, EndpointID: item.EndpointID,
+			IP: item.IP, ObservedAt: item.LastSeen,
+		})
 		if err = s.writeSharedGatewayRouterEvidence(ctx, item); err != nil {
 			return written, err
 		}
@@ -686,6 +691,9 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 		if err = s.publishSharedBehaviorCurrent(ctx, sensorID, currentIDs); err != nil {
 			return written, err
 		}
+	}
+	if err = enqueueSharedDeviceProfileJobsForObservationsDB(ctx, s.pg.db, profileKeys); err != nil {
+		return written, err
 	}
 	state, _ := json.Marshal(map[string]any{"as_of": windowEnd, "window_start": windowStart, "rows": len(rows), "observations": written, "coverage_verified": complete, "coverage_blockers": coverageReasons})
 	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now())
@@ -838,7 +846,7 @@ func (s *DBStore) publishSharedBehaviorCurrent(ctx context.Context, sensorID str
 	}
 	defer tx.Rollback()
 	_, err = tx.ExecContext(ctx, `UPDATE shared_behavior_observations SET current=(observation_id=ANY($2::text[])),observation=jsonb_set(observation,'{current}',to_jsonb(observation_id=ANY($2::text[]))),updated_at=now()
-WHERE sensor_id=$1 AND (current OR observation_id=ANY($2::text[]))`, sensorID, ids)
+WHERE sensor_id=$1 AND (current OR observation_id=ANY($2::text[])) AND current IS DISTINCT FROM (observation_id=ANY($2::text[]))`, sensorID, ids)
 	if err != nil {
 		return err
 	}

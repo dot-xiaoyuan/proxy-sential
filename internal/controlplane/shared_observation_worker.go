@@ -189,6 +189,11 @@ func (s *Server) processSharedObservation(ctx context.Context, now time.Time) (b
 	if err = store.PersistSharedObservationTx(ctx, tx, item); err != nil {
 		return failure(err)
 	}
+	if err = store.EnqueueSharedDeviceProfileJobsForObservations(ctx, tx, []store.SharedObservationProfileKey{
+		{SensorID: item.SensorID, CampusID: item.CampusID, EndpointID: item.EndpointID, IP: item.IP, ObservedAt: item.LastSeen},
+	}); err != nil {
+		return failure(err)
+	}
 	if err = persistSharedObservationDecision(ctx, tx, decision); err != nil {
 		return failure(err)
 	}

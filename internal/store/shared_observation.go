@@ -339,3 +339,55 @@ func PersistSharedObservationTx(ctx context.Context, tx *sql.Tx, item sharedacce
  ON CONFLICT(observation_id) DO UPDATE SET observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,coverage_state=EXCLUDED.coverage_state,updated_at=now()`, item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen, item.WindowStart, item.WindowEnd, item.ExpiresAt, raw, item.Current)
 	return err
 }
+
+type SharedObservationProfileKey struct {
+	SensorID   string    `json:"sensor_id"`
+	CampusID   string    `json:"campus_id"`
+	EndpointID string    `json:"endpoint_id"`
+	IP         string    `json:"ip"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
+func EnqueueSharedDeviceProfileJobsForObservations(ctx context.Context, tx *sql.Tx, items []SharedObservationProfileKey) error {
+	if len(items) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO shared_device_profile_jobs(subject_key,sensor_id,campus_id,endpoint_id,mac,ip,vlan,observed_at)
+SELECT
+  coalesce(nullif(r.sensor_id,''),'') || ':' ||
+  CASE WHEN coalesce(r.endpoint_id,'')<>'' THEN 'endpoint:'||r.endpoint_id
+       ELSE 'address:'||coalesce(r.campus_id,'')||':'||':'||host(r.ip)
+  END,
+  coalesce(r.sensor_id,''), coalesce(r.campus_id,''), coalesce(r.endpoint_id,''),
+  '', r.ip, '', r.observed_at
+FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,campus_id text,endpoint_id text,ip inet,observed_at timestamptz)
+WHERE r.observed_at >= (SELECT cutover_at FROM shared_device_profile_runtime WHERE singleton)
+ON CONFLICT(subject_key) DO UPDATE SET
+  dirty_generation = shared_device_profile_jobs.dirty_generation+1,
+  dirty_since = CASE WHEN shared_device_profile_jobs.processed_generation>=shared_device_profile_jobs.dirty_generation
+    THEN now() ELSE shared_device_profile_jobs.dirty_since END,
+  observed_at = greatest(shared_device_profile_jobs.observed_at, EXCLUDED.observed_at),
+  not_before = least(shared_device_profile_jobs.not_before, now()),
+  updated_at = now()`, raw)
+	return err
+}
+
+func enqueueSharedDeviceProfileJobsForObservationsDB(ctx context.Context, db *sql.DB, items []SharedObservationProfileKey) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = EnqueueSharedDeviceProfileJobsForObservations(ctx, tx, items); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
