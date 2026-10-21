@@ -110,7 +110,7 @@ func (s *DBStore) ReadSharedObservation(ctx context.Context, scope SharedObserva
  PREWHERE sensor_id=%s AND campus_id=%s AND access_domain=%s AND subject_ip IN ('',%s)
  AND timestamp>=parseDateTime64BestEffort(%s,6) AND timestamp<=parseDateTime64BestEffort(%s,6)
  GROUP BY event_id,source,collector_instance_id,subject_ip ORDER BY event_id LIMIT 2001
- SETTINGS prefer_column_name_to_alias=1,max_threads=1,max_memory_usage=134217728,max_execution_time=2 FORMAT JSONEachRow`, chQuote(scope.SensorID), chQuote(scope.CampusID), chQuote(scope.AccessDomain), chQuote(scope.IP), chQuote(now.Add(-11*time.Minute).Format(time.RFC3339Nano)), chQuote(now.Format(time.RFC3339Nano)))
+ SETTINGS prefer_column_name_to_alias=1,max_threads=1,max_memory_usage=134217728,max_execution_time=10 FORMAT JSONEachRow`, chQuote(scope.SensorID), chQuote(scope.CampusID), chQuote(scope.AccessDomain), chQuote(scope.IP), chQuote(now.Add(-11*time.Minute).Format(time.RFC3339Nano)), chQuote(now.Format(time.RFC3339Nano)))
 	raw, err := s.ch.query(ctx, query)
 	if err != nil {
 		return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, err

@@ -76,7 +76,7 @@ func (s *Server) startSharedObservationWorker() error {
 	for i := 0; i < 2; i++ {
 		go func() {
 			for {
-				ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				did, err := s.processSharedObservation(ctx, time.Now().UTC())
 				cancel()
 				if err != nil {
