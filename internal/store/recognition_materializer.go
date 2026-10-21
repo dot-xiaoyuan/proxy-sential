@@ -203,7 +203,7 @@ func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 
 func (s *DBStore) runSharedBehaviorMaterializer(ctx context.Context, sensorID string) {
 	for ctx.Err() == nil {
-		workCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		workCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 		_, err := s.materializeSharedBehavior(workCtx, sensorID, time.Now().UTC())
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "shared behavior materialize failed: %v\n", err)
