@@ -170,12 +170,19 @@ func (s *Server) processSharedObservation(ctx context.Context, now time.Time) (b
 				if e != nil {
 					return failure(e)
 				}
+				if s.sharedConfig.SkipCaptureVerification {
+					for i := range sessions {
+						sessions[i].IdentityIssue = ""
+					}
+				}
 				identityEvidence = sessions
 				result = sharedaccess.EvaluateObservation(w, s.sharedConfig, sessions, now)
-				for _, session := range sessions {
-					if session.IdentityIssue != "" {
-						result.Reasons = append(result.Reasons, session.IdentityIssue)
-						break
+				if !s.sharedConfig.SkipCaptureVerification {
+					for _, session := range sessions {
+						if session.IdentityIssue != "" {
+							result.Reasons = append(result.Reasons, session.IdentityIssue)
+							break
+						}
 					}
 				}
 			} else {
@@ -186,10 +193,12 @@ func (s *Server) processSharedObservation(ctx context.Context, now time.Time) (b
 	evaluatedAt := now.Add(time.Since(started))
 	if item.Current && identityEvidence != nil {
 		result = sharedaccess.EvaluateObservation(w, s.sharedConfig, identityEvidence, evaluatedAt)
-		for _, session := range identityEvidence {
-			if session.IdentityIssue != "" {
-				result.Reasons = append(result.Reasons, session.IdentityIssue)
-				break
+		if !s.sharedConfig.SkipCaptureVerification {
+			for _, session := range identityEvidence {
+				if session.IdentityIssue != "" {
+					result.Reasons = append(result.Reasons, session.IdentityIssue)
+					break
+				}
 			}
 		}
 	}
