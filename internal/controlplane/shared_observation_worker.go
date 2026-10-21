@@ -157,7 +157,8 @@ func (s *Server) processSharedObservation(ctx context.Context, now time.Time) (b
 	}
 	anchorSatisfied := w.StrongAnchor != "" && w.DeviceLowerBound >= s.sharedConfig.DeviceBound()
 	diversitySatisfied := s.sharedConfig.SkipCaptureVerification && len(item.SignalGroups) >= 2
-	if item.Current && (anchorSatisfied || diversitySatisfied) && w.Complete && w.CoverageVerified {
+	captureBypass := s.sharedConfig.SkipCaptureVerification
+	if item.Current && (anchorSatisfied || diversitySatisfied || captureBypass) && w.Complete && w.CoverageVerified {
 		mapping, mapErr := s.sharedConfig.Mapping(w)
 		if mapErr == nil {
 			authority, e := newIdentityAuthorityResolver(s).resolve(ctx, store.IdentityScope{Source: mapping.Source, SensorID: mapping.IdentitySensorID, CampusID: mapping.IdentityCampusID, AccessDomain: mapping.IdentityAccessDomain})

@@ -264,6 +264,12 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 		r.Reasons = append(r.Reasons, "shared_device_quantity_unknown")
 	}
 
+	if cfg.SkipCaptureVerification && account != "" {
+		r.State = "basis_present"
+		r.Confidence = 0.30
+		r.Reasons = append(r.Reasons, "capture_verification_bypassed")
+		return r
+	}
 	if ua && ttl && (tls || tcp || device) || device && ttl && (tls || tcp) || r.DeviceLowerBound >= deviceBound && (ua || ttl || device || tcp) {
 		for _, group := range []struct {
 			family  string
