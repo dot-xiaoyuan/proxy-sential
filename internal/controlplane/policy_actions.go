@@ -228,6 +228,12 @@ func (s *Server) refreshPolicyStagesLocked(e *policy.Execution, now time.Time) {
 
 func (s *Server) createPolicyActionsLocked(e *policy.Execution, index int, ss []policy.Session, now time.Time) {
 	st := &e.Stages[index]
+	if e.Definition.RecordOnly {
+		st.Status = "shadow_succeeded"
+		st.CompletedAt = now
+		st.CompletedPausedSeconds = e.PausedSeconds
+		return
+	}
 	if e.Definition.Trigger == "shared_access" {
 		if e.Definition.Mode != "manual" || index >= len(e.Definition.Stages) || e.Definition.Stages[index].Action != "disconnect" {
 			st.Status = "blocked"

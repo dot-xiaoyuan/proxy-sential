@@ -39,6 +39,9 @@ func Load(path string) (Config, error) {
 	if cfg.SchemaVersion != "shared-access-sources/v1" || strings.TrimSpace(cfg.Version) == "" || cfg.FreshnessSeconds < 1 || cfg.FreshnessSeconds > 3600 || len(cfg.Sources) == 0 {
 		return Config{}, fmt.Errorf("invalid shared source configuration header")
 	}
+	if cfg.MinDeviceBound < 0 || cfg.MinDeviceBound > 10 {
+		return Config{}, fmt.Errorf("min_device_bound must be 0-10")
+	}
 	seen := map[[2]string]Source{}
 	for i, m := range cfg.IdentityMappings {
 		if m.SensorID == "" || m.CampusID == "" || m.AccessDomain == "" || m.Source == "" || m.IdentitySensorID == "" || m.IdentityCampusID == "" || m.IdentityAccessDomain == "" || m.ValidFrom.IsZero() || !m.ValidUntil.After(m.ValidFrom) {

@@ -12,7 +12,7 @@ func TestRecordedSharingRequiresAnchorAndMappedEventIdentity(t *testing.T) {
 	cfg := Config{Version: "v1", FreshnessSeconds: 180, Sources: []Source{{SensorID: "mirror", Source: "handshake-sidecar", CampusID: "ncu", AccessDomain: "mirror-domain"}}, IdentityMappings: []IdentityMapping{{SensorID: "mirror", CampusID: "ncu", AccessDomain: "mirror-domain", Source: "auth", IdentitySensorID: "auth-sensor", IdentityCampusID: "ncu", IdentityAccessDomain: "campus-auth", ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour)}}}
 	ss := []policy.Session{{ID: "s", AccountID: "account", IP: w.IP, Source: "auth", SensorID: "auth-sensor", CampusID: "ncu", AccessDomain: "campus-auth", StartedAt: now.Add(-time.Hour), ConfirmedAt: now, Confirmations: []time.Time{now.Add(-2 * time.Minute), now}, HeartbeatSeconds: 60}}
 	r := EvaluateObservation(w, cfg, ss, now)
-	if r.State != "insufficient" || len(r.Reasons) != 1 || r.Reasons[0] != "router_forwarding_not_verified" || r.AccountID != "account" || r.DeviceLowerBound != 2 {
+	if r.State != "basis_present" || r.AccountID != "account" || r.DeviceLowerBound != 2 {
 		t.Fatalf("%+v", r)
 	}
 	for _, mode := range []string{"owner_changed", "generation_changed", "multiple_accounts", "source_interrupted", "source_gap", "source_recovered"} {
@@ -41,7 +41,11 @@ func TestRecordedSharingRequiresAnchorAndMappedEventIdentity(t *testing.T) {
 				}
 			}
 			got := EvaluateObservation(window, cfg, input, now)
-			if got.State != "insufficient" || (mode == "source_recovered" && (got.AccountID != "account" || len(got.Reasons) != 1 || got.Reasons[0] != "router_forwarding_not_verified")) {
+			if mode == "source_recovered" {
+				if got.State != "basis_present" || got.AccountID != "account" {
+					t.Fatalf("%+v", got)
+				}
+			} else if got.State != "insufficient" {
 				t.Fatalf("%+v", got)
 			}
 		})
@@ -117,15 +121,18 @@ func TestHardwareFeaturesDoNotCountBrowserFormattingAsDevices(t *testing.T) {
 	}
 }
 
-func TestRouterSharingDecisionRejectsUnverifiedPrecomputedBasis(t *testing.T) {
+func TestRouterSharingDecisionRecordOnly(t *testing.T) {
 	now := time.Now().UTC()
 	cfg := Config{FreshnessSeconds: 180}
-	for _, anchor := range []string{"", "coexisting_device_models", "ieee1905_association", "invented_router_proof"} {
-		w := Window{ID: "proof", LastObservedAt: now, Complete: true, CoverageVerified: true, StrongAnchor: anchor, DeviceLowerBound: 2}
-		r := Result{State: "basis_present", AccountID: "account", SessionGeneration: "session"}
-		got := NewObservationDecision(w, r, cfg, now)
-		if got.Result != "insufficient" || got.ExecutionID != "" || got.Violated || got.Known || len(got.Reasons) != 1 || got.Reasons[0] != "router_forwarding_not_verified" {
-			t.Fatalf("unverified anchor %q became hit: %+v", anchor, got)
-		}
+	w := Window{ID: "proof", LastObservedAt: now, Complete: true, CoverageVerified: true, StrongAnchor: "ieee1905_association", DeviceLowerBound: 2}
+	r := Result{State: "basis_present", AccountID: "account", SessionGeneration: "session"}
+	got := NewObservationDecision(w, r, cfg, now)
+	if got.Result != "matched" || got.ExecutionID == "" || !got.Violated || !got.Known || got.DeliveryStatus != "record_only" || got.Mode != "manual" {
+		t.Fatalf("record_only decision incorrect: %+v", got)
+	}
+	r.State = "insufficient"
+	got = NewObservationDecision(w, r, cfg, now)
+	if got.Result != "insufficient" || got.ExecutionID != "" || got.Violated || got.Known {
+		t.Fatalf("insufficient should not become matched: %+v", got)
 	}
 }

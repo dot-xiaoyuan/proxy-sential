@@ -384,9 +384,9 @@ func buildSharedBehaviorWindows(rows []sharedBehaviorSignalRow, from, to time.Ti
 	return out, nil
 }
 
-func confirmedSharedBehaviorEvidence(window sharedaccess.Window, item sharedaccess.BehaviorAssessment) (evidence.Evidence, bool) {
+func confirmedSharedBehaviorEvidence(window sharedaccess.Window, item sharedaccess.BehaviorAssessment, minBound int) (evidence.Evidence, bool) {
 	_, supported := sharedBehaviorAnchorExplanation(item.StrongAnchor)
-	if item.Status != "confirmed" || !supported || item.DeviceLowerBound < 2 || item.CoverageState != "verified" || !window.Complete || !window.CoverageVerified || len(window.Conflicts) > 0 || len(window.Sources) == 0 || len(window.Records) == 0 {
+	if item.Status != "confirmed" || !supported || item.DeviceLowerBound < minBound || item.CoverageState != "verified" || !window.Complete || !window.CoverageVerified || len(window.Conflicts) > 0 || len(window.Sources) == 0 || len(window.Records) == 0 {
 		return evidence.Evidence{}, false
 	}
 	window.StrongAnchor, window.DeviceLowerBound = item.StrongAnchor, item.DeviceLowerBound
@@ -571,6 +571,10 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 	if err != nil {
 		return 0, err
 	}
+	if s.skipCaptureVerification {
+		complete = true
+		coverageReasons = nil
+	}
 	if !complete {
 		state, _ := json.Marshal(map[string]any{"as_of": windowEnd, "window_start": windowStart, "coverage_verified": false, "coverage_blockers": coverageReasons})
 		_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('shared-behavior',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
@@ -588,7 +592,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 	// shared-access leads instead of total campus address cardinality.
 	potential := windows[:0]
 	for _, window := range windows {
-		if sharedBehaviorPotentialWindow(window) {
+		if sharedBehaviorPotentialWindow(window, s.deviceBound()) {
 			potential = append(potential, window)
 		}
 	}
@@ -596,7 +600,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 	directItems := map[string]sharedaccess.BehaviorAssessment{}
 	windowIPs := make([]string, 0, len(windows))
 	for _, window := range windows {
-		if item, present := sharedaccess.AssessBehavior(window.ID, "", window, sharedaccess.BehaviorRouterContext{}); present && item.Status == "candidate" && len(item.SignalGroups) == 1 && item.SignalGroups[0] == "tcp_stack" {
+		if item, present := sharedaccess.AssessBehavior(window.ID, "", window, sharedaccess.BehaviorRouterContext{}, s.deviceBound()); present && item.Status == "candidate" && len(item.SignalGroups) == 1 && item.SignalGroups[0] == "tcp_stack" {
 			directItems[window.ID] = item
 			continue
 		}
@@ -626,7 +630,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 		if !present {
 			window.Samples["device_model"] = modelSamples[key]
 			appendSharedBehaviorModelRefs(&window, modelRowsByScope[key], key)
-			item, present = sharedaccess.AssessBehavior(window.ID, "", window, sharedaccess.BehaviorRouterContext{})
+			item, present = sharedaccess.AssessBehavior(window.ID, "", window, sharedaccess.BehaviorRouterContext{}, s.deviceBound())
 			if !present {
 				continue
 			}
@@ -652,7 +656,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 			if routerErr != nil {
 				return written, routerErr
 			}
-			item, present = sharedaccess.AssessBehavior(window.ID, endpointID, window, router)
+			item, present = sharedaccess.AssessBehavior(window.ID, endpointID, window, router, s.deviceBound())
 			if !present {
 				continue
 			}
@@ -678,7 +682,7 @@ func (s *DBStore) materializeSharedBehavior(ctx context.Context, sensorID string
 		if err = s.writeSharedGatewayRouterEvidence(ctx, item); err != nil {
 			return written, err
 		}
-		if bridge, ok := confirmedSharedBehaviorEvidence(window, item); ok {
+		if bridge, ok := confirmedSharedBehaviorEvidence(window, item, s.deviceBound()); ok {
 			if err = s.WriteEvidence(ctx, []evidence.Evidence{bridge}); err != nil {
 				return written, err
 			}
@@ -701,8 +705,8 @@ ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
 	return written, err
 }
 
-func sharedBehaviorPotentialWindow(window sharedaccess.Window) bool {
-	if _, present := sharedaccess.AssessBehavior("prefilter", "", window, sharedaccess.BehaviorRouterContext{}); present {
+func sharedBehaviorPotentialWindow(window sharedaccess.Window, minBound int) bool {
+	if _, present := sharedaccess.AssessBehavior("prefilter", "", window, sharedaccess.BehaviorRouterContext{}, minBound); present {
 		return true
 	}
 	for _, source := range window.Sources {
@@ -750,7 +754,7 @@ func sharedBehaviorAnchorExplanation(anchor string) (string, bool) {
 
 func (s *DBStore) writeSharedGatewayRouterEvidence(ctx context.Context, item sharedaccess.BehaviorAssessment) error {
 	explanation, supported := sharedBehaviorAnchorExplanation(item.StrongAnchor)
-	if item.CoverageState != "verified" || item.Status != "confirmed" || !supported || item.DeviceLowerBound < 2 || len(item.Conflicts) > 0 {
+	if item.CoverageState != "verified" || item.Status != "confirmed" || !supported || item.DeviceLowerBound < s.deviceBound() || len(item.Conflicts) > 0 {
 		return nil
 	}
 	behaviorGroups := []string{}
@@ -864,8 +868,8 @@ AND NOT EXISTS(
  WHERE o.observation_id=f.data->>'shared_observation_id' AND o.sensor_id=f.data->>'sensor_id'
  AND o.ip=f.ip AND o.current AND o.rule_version=$2 AND o.status='confirmed' AND o.coverage_state='verified'
  AND o.window_end>now()-interval '20 minutes' AND o.expires_at>now()
- AND COALESCE(o.observation->>'strong_anchor','')<>'' AND COALESCE((o.observation->>'device_lower_bound')::int,0)>=2
-) RETURNING f.assessment_id`, sensorID, sharedaccess.BehaviorRuleVersion)
+ AND COALESCE(o.observation->>'strong_anchor','')<>'' AND COALESCE((o.observation->>'device_lower_bound')::int,0)>=$3
+) RETURNING f.assessment_id`, sensorID, sharedaccess.BehaviorRuleVersion, s.deviceBound())
 	if err != nil {
 		return err
 	}

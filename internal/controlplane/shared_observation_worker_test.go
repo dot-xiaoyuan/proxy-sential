@@ -45,6 +45,8 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 		mock.ExpectQuery("SELECT job_id").WillReturnRows(sqlmock.NewRows([]string{"id", "sensor", "campus", "domain", "ip", "revision", "last"}).AddRow("job", "mirror", "ncu", "capture", w.IP, 1, nil))
 		mock.ExpectExec("UPDATE shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec("INSERT INTO shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
 		expectation := mock.ExpectExec("INSERT INTO policy_decision_records")
 		if fail {
 			expectation.WillReturnError(errors.New("database unavailable"))
@@ -66,7 +68,7 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 	result := sharedaccess.EvaluateObservation(w, cfg, sessions, now)
 	a := sharedaccess.NewObservationDecision(w, result, cfg, now)
 	b := sharedaccess.NewObservationDecision(w, result, cfg, now.Add(time.Second))
-	if a.Result != "insufficient" || a.ExecutionID != "" || a.Violated || a.DecisionID != b.DecisionID || a.Mode != "observe" || a.DeliveryStatus != "not_sent" || a.PlannedAction != "disconnect" {
+	if a.Result != "matched" || a.ExecutionID == "" || !a.Violated || a.DecisionID != b.DecisionID || a.Mode != "manual" || a.DeliveryStatus != "record_only" || a.PlannedAction != "disconnect" {
 		raw, _ := json.Marshal(a)
 		t.Fatal(string(raw))
 	}

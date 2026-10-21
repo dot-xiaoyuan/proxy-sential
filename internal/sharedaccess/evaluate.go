@@ -23,11 +23,20 @@ type Source struct {
 	AccessDomain string `json:"access_domain"`
 }
 type Config struct {
-	IdentityMappings []IdentityMapping `json:"identity_mappings,omitempty"`
-	SchemaVersion    string            `json:"schema_version,omitempty"`
-	FreshnessSeconds int               `json:"freshness_seconds"`
-	Version          string            `json:"version"`
-	Sources          []Source          `json:"sources"`
+	IdentityMappings        []IdentityMapping `json:"identity_mappings,omitempty"`
+	SchemaVersion           string            `json:"schema_version,omitempty"`
+	FreshnessSeconds        int               `json:"freshness_seconds"`
+	Version                 string            `json:"version"`
+	Sources                 []Source          `json:"sources"`
+	SkipCaptureVerification bool              `json:"skip_capture_verification,omitempty"`
+	MinDeviceBound          int               `json:"min_device_bound,omitempty"`
+}
+
+func (c Config) DeviceBound() int {
+	if c.MinDeviceBound >= 1 {
+		return c.MinDeviceBound
+	}
+	return 2
 }
 
 func (c Config) ID() string {
@@ -215,7 +224,7 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 	// Re-evaluate the immutable physical evidence rather than trusting a count
 	// supplied by a producer or borrowing the account's session quota.
 	if w.StrongAnchor != "" {
-		assessment, present := AssessBehavior(w.ID, "", w, BehaviorRouterContext{})
+		assessment, present := AssessBehavior(w.ID, "", w, BehaviorRouterContext{}, cfg.DeviceBound())
 		if !present || assessment.CoverageState != "verified" || assessment.StrongAnchor != w.StrongAnchor || assessment.DeviceLowerBound != w.DeviceLowerBound {
 			return fail("shared_anchor_not_verified")
 		}
@@ -244,7 +253,8 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 	if device {
 		r.SignalGroups = append(r.SignalGroups, "dhcp_stack")
 	}
-	if r.DeviceLowerBound >= 2 {
+	deviceBound := cfg.DeviceBound()
+	if r.DeviceLowerBound >= deviceBound {
 		r.SignalGroups = append(r.SignalGroups, "confirmed_same_exit_endpoints")
 	}
 	if !w.Complete {
@@ -254,7 +264,7 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 		r.Reasons = append(r.Reasons, "shared_device_quantity_unknown")
 	}
 
-	if ua && ttl && (tls || tcp || device) || device && ttl && (tls || tcp) || r.DeviceLowerBound >= 2 && (ua || ttl || device || tcp) {
+	if ua && ttl && (tls || tcp || device) || device && ttl && (tls || tcp) || r.DeviceLowerBound >= deviceBound && (ua || ttl || device || tcp) {
 		for _, group := range []struct {
 			family  string
 			values  []string
@@ -268,7 +278,7 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 		}
 		r.State = "basis_present"
 		r.Confidence = 0.70
-		if r.DeviceLowerBound >= 2 {
+		if r.DeviceLowerBound >= deviceBound {
 			r.Confidence = 0.90
 		}
 		r.Reasons = append(r.Reasons, "corroborated_shared_access_basis_requires_review")

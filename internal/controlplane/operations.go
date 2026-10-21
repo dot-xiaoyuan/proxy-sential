@@ -379,7 +379,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 			return err
 		}
 		for _, assessment := range page.Items {
-			if assessment.Status != "confirmed" || assessment.CoverageState != "verified" || assessment.StrongAnchor == "" || assessment.DeviceLowerBound < 2 || len(assessment.Conflicts) > 0 {
+			if assessment.Status != "confirmed" || assessment.CoverageState != "verified" || assessment.StrongAnchor == "" || assessment.DeviceLowerBound < s.sharedConfig.DeviceBound() || len(assessment.Conflicts) > 0 {
 				continue
 			}
 			items = append(items, proxyReviewCaseForSharedAssessment(assessment))

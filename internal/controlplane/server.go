@@ -468,6 +468,11 @@ func NewServerWithError(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load shared access config: %w", err)
 	}
+	if setter, ok := reader.(interface {
+		SetSharedBehaviorOptions(bool, int)
+	}); ok {
+		setter.SetSharedBehaviorOptions(server.sharedConfig.SkipCaptureVerification, server.sharedConfig.MinDeviceBound)
+	}
 	server.proxyConfig, err = proxyprotocol.Load(opts.ProxyProtocolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("load proxy protocol config: %w", err)

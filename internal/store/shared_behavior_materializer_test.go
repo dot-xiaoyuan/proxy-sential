@@ -89,7 +89,7 @@ func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
 		EventIDs: []string{"event-1"}, Records: []sharedaccess.RecordRef{{EventID: "event-1", Source: "zeek", InstanceID: "instance-1"}},
 	}
 	item := sharedaccess.BehaviorAssessment{Status: "confirmed", Confidence: 95, CoverageState: "verified", StrongAnchor: "ieee1905_association", DeviceLowerBound: 2}
-	got, ok := confirmedSharedBehaviorEvidence(window, item)
+	got, ok := confirmedSharedBehaviorEvidence(window, item, 2)
 	if !ok || got.Type != "shared_access_window" || got.Score != 95 || got.Confidence != .95 || got.SharedAccess == nil {
 		t.Fatalf("evidence=%+v ok=%v", got, ok)
 	}
@@ -114,7 +114,7 @@ func TestConfirmedSharedBehaviorEvidenceRequiresAllSafetyGates(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			copyWindow, copyItem := window, item
 			mutate(&copyWindow, &copyItem)
-			if _, allowed := confirmedSharedBehaviorEvidence(copyWindow, copyItem); allowed {
+			if _, allowed := confirmedSharedBehaviorEvidence(copyWindow, copyItem, 2); allowed {
 				t.Fatal("unsafe observation bridged")
 			}
 		})
@@ -149,7 +149,7 @@ func TestSharedBehaviorCoverageAcceptsDedicatedPayloadFreeCollector(t *testing.T
 func TestSharedBehaviorPrefilterDropsOrdinarySingleStackCampusEndpoints(t *testing.T) {
 	now := time.Date(2026, 10, 8, 14, 40, 0, 0, time.UTC)
 	ordinary := sharedaccess.Window{From: now.Add(-10 * time.Minute), To: now, LastObservedAt: now.Add(-time.Minute), Complete: true, CoverageVerified: true, TCPStacks: []string{"one"}, Samples: map[string]map[string]sharedaccess.FeatureSample{}, EventIDs: []string{"ordinary"}}
-	if sharedBehaviorPotentialWindow(ordinary) {
+	if sharedBehaviorPotentialWindow(ordinary, 2) {
 		t.Fatal("ordinary single-stack endpoint reached PostgreSQL enrichment")
 	}
 	shared := ordinary
@@ -160,7 +160,7 @@ func TestSharedBehaviorPrefilterDropsOrdinarySingleStackCampusEndpoints(t *testi
 		"two":   {Count: 3, Buckets: []int64{now.Add(-3*time.Minute).Unix() / 5, now.Add(-2*time.Minute).Unix() / 5}},
 		"three": {Count: 3, Buckets: []int64{now.Add(-3*time.Minute).Unix() / 5, now.Add(-2*time.Minute).Unix() / 5}},
 	}
-	if !sharedBehaviorPotentialWindow(shared) {
+	if !sharedBehaviorPotentialWindow(shared, 2) {
 		t.Fatal("dedicated repeated TCP candidate was removed by the prefilter")
 	}
 }

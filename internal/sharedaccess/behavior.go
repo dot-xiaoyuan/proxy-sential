@@ -79,7 +79,11 @@ type BehaviorAssessment struct {
 // from account attribution. A result can be reviewed without becoming eligible
 // for enforcement; policy code still requires authoritative identity and all
 // existing shared-access gates.
-func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContext) (BehaviorAssessment, bool) {
+func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContext, minBound ...int) (BehaviorAssessment, bool) {
+	bound := 2
+	if len(minBound) > 0 && minBound[0] >= 1 {
+		bound = minBound[0]
+	}
 	result := BehaviorAssessment{
 		ObservationID: id, SensorID: w.SensorID, CampusID: w.CampusID, AccessDomain: w.AccessDomain,
 		IP: w.IP, EndpointID: endpointID, Status: "candidate", RuleVersion: BehaviorRuleVersion,
@@ -96,7 +100,7 @@ func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContex
 	} else {
 		result.CoverageState = "unknown"
 	}
-	if diversity(w.AssociatedClients) >= 2 {
+	if diversity(w.AssociatedClients) >= bound {
 		result.Confidence = 90
 		result.SignalGroups = append(result.SignalGroups, "ieee1905_association")
 		result.ScoreComponents = append(result.ScoreComponents, BehaviorScoreComponent{

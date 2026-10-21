@@ -20,17 +20,31 @@ import (
 )
 
 type DBStore struct {
-	fingerprintMatches  fingerprintMatchMeter
-	pg                  *PostgresStore
-	ch                  *ClickHouseStore
-	storageMode         Mode
-	domainOnce          sync.Once
-	domainQueue         chan domainBatch
-	domainDropped       atomic.Int64
-	identityDeviceOnly  bool
-	identitySkipHistory bool
-	domainCancel        context.CancelFunc
-	domainDone          chan struct{}
+	fingerprintMatches      fingerprintMatchMeter
+	pg                      *PostgresStore
+	ch                      *ClickHouseStore
+	storageMode             Mode
+	domainOnce              sync.Once
+	domainQueue             chan domainBatch
+	domainDropped           atomic.Int64
+	identityDeviceOnly      bool
+	identitySkipHistory     bool
+	skipCaptureVerification bool
+	minDeviceBound          int
+	domainCancel            context.CancelFunc
+	domainDone              chan struct{}
+}
+
+func (s *DBStore) SetSharedBehaviorOptions(skipCapture bool, minBound int) {
+	s.skipCaptureVerification = skipCapture
+	s.minDeviceBound = minBound
+}
+
+func (s *DBStore) deviceBound() int {
+	if s.minDeviceBound >= 1 {
+		return s.minDeviceBound
+	}
+	return 2
 }
 
 func (s *DBStore) Health(ctx context.Context) error {

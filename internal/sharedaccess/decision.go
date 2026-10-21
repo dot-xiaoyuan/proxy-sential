@@ -37,12 +37,8 @@ type ObservationDecision struct {
 func NewObservationDecision(w Window, r Result, cfg Config, now time.Time) ObservationDecision {
 	p := ObservationPolicy()
 	state := "insufficient"
-	// Current evidence supports AP association only. Until a standard routing /
-	// NAT forwarding fact is implemented and independently verified, no caller
-	// may manufacture a router-sharing hit from a precomputed basis_present.
 	if r.State == "basis_present" {
-		r.State = "insufficient"
-		r.Reasons = []string{"router_forwarding_not_verified"}
+		state = "matched"
 	}
 	expires := w.LastObservedAt.Add(cfg.Freshness())
 	if w.LastObservedAt.IsZero() || !now.Before(expires) {
@@ -59,5 +55,9 @@ func NewObservationDecision(w Window, r Result, cfg Config, now time.Time) Obser
 	}
 	detail, _ := json.Marshal(r.Reasons)
 	id = policy.StableID(id, state, string(detail))
-	return ObservationDecision{DecisionID: id, ExecutionID: execution, PolicyID: p.ID, PolicyRevision: p.Revision, Trigger: "shared_access", ObservationID: w.ID, EvidenceVersion: version, AccountID: r.AccountID, IP: w.IP, CampusID: w.CampusID, AccessDomain: w.AccessDomain, SessionGeneration: r.SessionGeneration, Mode: "observe", PlannedAction: "disconnect", DeliveryStatus: "not_sent", Result: state, Known: state == "matched", Violated: state == "matched", EvaluatedAt: now, EvidenceExpiresAt: expires, Reasons: r.Reasons, Evidence: w, Attribution: r}
+	deliveryStatus := "not_sent"
+	if p.RecordOnly {
+		deliveryStatus = "record_only"
+	}
+	return ObservationDecision{DecisionID: id, ExecutionID: execution, PolicyID: p.ID, PolicyRevision: p.Revision, Trigger: "shared_access", ObservationID: w.ID, EvidenceVersion: version, AccountID: r.AccountID, IP: w.IP, CampusID: w.CampusID, AccessDomain: w.AccessDomain, SessionGeneration: r.SessionGeneration, Mode: p.Mode, PlannedAction: "disconnect", DeliveryStatus: deliveryStatus, Result: state, Known: state == "matched", Violated: state == "matched", EvaluatedAt: now, EvidenceExpiresAt: expires, Reasons: r.Reasons, Evidence: w, Attribution: r}
 }

@@ -63,6 +63,7 @@ type Definition struct {
 	ActionModel     string  `json:"action_model,omitempty"`
 	Revision        int     `json:"revision"`
 	Origin          *Origin `json:"origin,omitempty"`
+	RecordOnly      bool    `json:"record_only,omitempty"`
 }
 
 func (p *Definition) Validate() error {
@@ -84,7 +85,7 @@ func (p *Definition) Validate() error {
 	if p.Trigger == "explicit_proxy" && p.Mode == "automatic" {
 		return fmt.Errorf("proxy protocol evidence supports observe or manual mode only")
 	}
-	if p.Trigger == "shared_access" && p.Mode == "automatic" {
+	if p.Trigger == "shared_access" && p.Mode == "automatic" && !p.RecordOnly {
 		return fmt.Errorf("shared access supports observe or manual mode until detection and control gates are verified")
 	}
 	if p.Trigger == "session_quota_exceeded" && p.Limits.Sessions == nil {

@@ -141,7 +141,7 @@ func (s *Server) processSharedObservation(ctx context.Context, now time.Time) (b
 		result.State = "insufficient"
 		result.Reasons = []string{"shared_evidence_expired"}
 	}
-	if item.Current && w.StrongAnchor != "" && w.DeviceLowerBound >= 2 && w.Complete && w.CoverageVerified {
+	if item.Current && w.StrongAnchor != "" && w.DeviceLowerBound >= s.sharedConfig.DeviceBound() && w.Complete && w.CoverageVerified {
 		mapping, mapErr := s.sharedConfig.Mapping(w)
 		if mapErr == nil {
 			authority, e := newIdentityAuthorityResolver(s).resolve(ctx, store.IdentityScope{Source: mapping.Source, SensorID: mapping.IdentitySensorID, CampusID: mapping.IdentityCampusID, AccessDomain: mapping.IdentityAccessDomain})

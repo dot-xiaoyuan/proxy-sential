@@ -29,7 +29,7 @@ func stableObservationID(value string) string {
 }
 
 func ObservationPolicy() policy.Definition {
-	return policy.Definition{ID: ObservationPolicyID, Name: "共享确认记录", Enabled: true, Mode: "observe", Trigger: "shared_access", WindowSeconds: 600, Revision: 2, Stages: []policy.Stage{{Action: "disconnect"}}}
+	return policy.Definition{ID: ObservationPolicyID, Name: "共享确认记录", Enabled: true, Mode: "manual", RecordOnly: true, Trigger: "shared_access", WindowSeconds: 600, Revision: 3, Stages: []policy.Stage{{Action: "disconnect"}}}
 }
 
 func (c Config) Mapping(w Window) (IdentityMapping, error) {
@@ -65,7 +65,7 @@ func EvaluateObservation(w Window, cfg Config, sessions []policy.Session, now ti
 	if !w.Complete || !w.CoverageVerified {
 		return fail("incomplete_shared_observation_window")
 	}
-	if w.StrongAnchor == "" || w.DeviceLowerBound < 2 {
+	if w.StrongAnchor == "" || w.DeviceLowerBound < cfg.DeviceBound() {
 		return fail("confirmed_shared_observation_required")
 	}
 	selected := []policy.Session{}
@@ -77,16 +77,9 @@ func EvaluateObservation(w Window, cfg Config, sessions []policy.Session, now ti
 		selected = append(selected, s)
 	}
 	result := Evaluate(w, cfg, selected, now, 10*time.Minute)
-	if result.State == "basis_present" && (w.StrongAnchor == "" || !w.CoverageVerified || w.DeviceLowerBound < 2) {
+	if result.State == "basis_present" && (w.StrongAnchor == "" || !w.CoverageVerified || w.DeviceLowerBound < cfg.DeviceBound()) {
 		result.State = "insufficient"
 		result.Reasons = []string{"confirmed_shared_observation_required"}
-	}
-	// EasyMesh proves association with an AP, not routing/NAT forwarding.
-	// No current collector supplies verified forwarding evidence. Keep account
-	// attribution available for review, but never turn association into a hit.
-	if result.State == "basis_present" {
-		result.State = "insufficient"
-		result.Reasons = []string{"router_forwarding_not_verified"}
 	}
 	return result
 }

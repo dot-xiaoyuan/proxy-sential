@@ -303,7 +303,7 @@ func finalizeSharedObservation(w sharedaccess.Window, cfg sharedaccess.Config, n
 	if w.GatewayMAC != "" {
 		endpointID = "mac:" + w.GatewayMAC
 	}
-	item, present := sharedaccess.AssessBehavior(w.ID, endpointID, w, sharedaccess.BehaviorRouterContext{})
+	item, present := sharedaccess.AssessBehavior(w.ID, endpointID, w, sharedaccess.BehaviorRouterContext{}, cfg.DeviceBound())
 	if !present {
 		item = sharedaccess.BehaviorAssessment{ObservationID: w.ID, SensorID: w.SensorID, CampusID: w.CampusID, AccessDomain: w.AccessDomain, IP: w.IP, Status: "candidate", RuleVersion: sharedaccess.BehaviorRuleVersion, WindowStart: w.From, WindowEnd: w.To, FirstSeen: w.From, LastSeen: w.To, ExpiresAt: now.Add(30 * 24 * time.Hour), FeatureSamples: w.Samples, SignalGroups: []string{}, Reasons: []string{"当前证据未满足确认共享标准"}, Conflicts: w.Conflicts, EventIDs: w.EventIDs, KnownDevices: []sharedaccess.KnownDevice{}, ScoreComponents: []sharedaccess.BehaviorScoreComponent{}, CoverageState: "partial"}
 	}
