@@ -134,6 +134,20 @@ func (s *Server) processSharedObservation(ctx context.Context, now time.Time) (b
 		w, item = doc.Window, doc.Assessment
 		item.Current = false
 	}
+	if item.Current && len(previous) > 0 && w.StrongAnchor == "" {
+		var prev sharedObservationDocument
+		if json.Unmarshal(previous, &prev) == nil && prev.Window.StrongAnchor != "" {
+			w.StrongAnchor = prev.Window.StrongAnchor
+			w.AssociatedClients = prev.Window.AssociatedClients
+			if prev.Window.DeviceLowerBound > w.DeviceLowerBound {
+				w.DeviceLowerBound = prev.Window.DeviceLowerBound
+			}
+		}
+	}
+	if s.sharedConfig.SkipCaptureVerification && item.Current {
+		w.CoverageVerified = true
+		w.Complete = true
+	}
 	var identityEvidence []policy.Session
 	result := sharedaccess.EvaluateObservation(w, s.sharedConfig, nil, now)
 	if !item.Current && len(previous) > 0 {

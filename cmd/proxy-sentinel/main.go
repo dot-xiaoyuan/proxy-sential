@@ -31,6 +31,7 @@ import (
 	"proxy-sentinel/internal/realtime"
 	"proxy-sentinel/internal/routerprober"
 	"proxy-sentinel/internal/replay"
+	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/risk"
 	"proxy-sentinel/internal/shadow"
 	"proxy-sentinel/internal/store"
@@ -180,6 +181,7 @@ func runReadModel(args []string) error {
 	identitySkipHistory := fs.Bool("identity-skip-history", false, "write sessions and endpoints but no IP/MAC or access history rows")
 	applicationsDir := fs.String("applications-dir", "/opt/proxy-sentinel/data/applications", "durable application library directory")
 	applicationsBootstrap := fs.String("applications-bootstrap", "", "optional reviewed bootstrap application bundle used only when the library is empty")
+	sharedAccessConfigPath := fs.String("shared-access-config", os.Getenv("PROXY_SENTINEL_SHARED_ACCESS_CONFIG"), "controlled shared evidence source registration (recognition lane)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -224,6 +226,13 @@ func runReadModel(args []string) error {
 		}
 		manager := fingerprint.NewManager(dir)
 		go manager.WatchInstalled(ctx)
+		if *sharedAccessConfigPath != "" {
+			sharedCfg, loadErr := sharedaccess.Load(*sharedAccessConfigPath)
+			if loadErr != nil {
+				return fmt.Errorf("load shared access config: %w", loadErr)
+			}
+			backend.SetSharedBehaviorOptions(sharedCfg.SkipCaptureVerification, sharedCfg.MinDeviceBound)
+		}
 		backend.RunRecognitionMaterializer(ctx)
 	case "application":
 		service, openErr := appdomain.OpenServiceWithDefault(*applicationsDir, backend, true)
