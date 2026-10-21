@@ -57,7 +57,7 @@ func EvaluateObservation(w Window, cfg Config, sessions []policy.Session, now ti
 	if err != nil {
 		return fail(err.Error())
 	}
-	if len(w.Conflicts) > 0 {
+	if !cfg.SkipCaptureVerification && len(w.Conflicts) > 0 {
 		result := fail("shared_observation_conflict")
 		result.Reasons = append(append([]string{}, w.Conflicts...), result.Reasons...)
 		return result

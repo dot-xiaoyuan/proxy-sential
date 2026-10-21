@@ -121,7 +121,7 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 	if now.Sub(w.LastObservedAt) > freshness {
 		return fail("stale_or_invalid_shared_window")
 	}
-	if len(w.Conflicts) > 0 {
+	if !cfg.SkipCaptureVerification && len(w.Conflicts) > 0 {
 		r.Reasons = append(r.Reasons, w.Conflicts...)
 		return fail("shared_observation_conflict")
 	}
