@@ -5,7 +5,6 @@ import { useUrlState } from '../shared/ui/useUrlState'
 import { detailPath,
   safeReturnTo } from '../app/navigation'
 import { SharedDeviceProfiles } from './SharedDeviceProfiles'
-import { sharedPolicyLabel, sharedReason, type SharedPolicyDecision } from './SharedPolicyRecords'
 import { SharedDisconnectPanel } from './SharedDisconnectPanel'
 import { routerStatusLabels } from './routerLabels'
 import { useEffect,
