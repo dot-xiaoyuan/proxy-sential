@@ -24,11 +24,11 @@ describe('共享策略仅记录', () => {
   expect(screen.getByText('请填写有效时间，且结束时间晚于开始时间')).toBeInTheDocument()
   expect(request).not.toHaveBeenCalled()
  })
- it('默认查询命中并展示证据、原定动作，始终没有执行入口', async () => {
+ it('默认查询命中并展示证据与仅记录说明，始终没有执行入口', async () => {
   vi.mocked(request).mockResolvedValue({items:[sharedDecisionFixture],next_cursor:''});setup()
   expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
   expect(screen.getAllByText('仅记录，未执行')).toHaveLength(2)
-  expect(screen.getByText('下线',{exact:true})).toBeInTheDocument()
+  expect(screen.getByText('命中后不会下线或发送请求')).toBeInTheDocument()
   expect(screen.queryByRole('button',{name:/确认执行|下线|撤销/})).toBeNull()
   expect(vi.mocked(request).mock.calls.every(([url])=>!String(url).includes('include_processing'))).toBe(true)
   ;(document.querySelector('.ant-table-row-expand-icon') as HTMLElement).click()
