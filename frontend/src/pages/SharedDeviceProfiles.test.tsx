@@ -31,8 +31,8 @@ describe('共享设备持久化档案', () => {
   it('初始化阶段直接展示持久化档案口径和空状态', async () => {
     request.mockResolvedValue({ items: [], page: { limit: 20, total: 0 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'initializing', pending_jobs: 0 })
     setup()
-    expect(await screen.findByText('正在建立新的设备档案')).toBeInTheDocument()
-    expect(screen.getByText('暂无设备身份档案')).toBeInTheDocument()
+    expect(await screen.findByText('正在建立新的终端档案')).toBeInTheDocument()
+    expect(screen.getByText('当前筛选下暂无有认证账号的终端档案')).toBeInTheDocument()
     expect(screen.getByText(/本次上线不回填旧记录/)).toBeInTheDocument()
   })
 
@@ -46,17 +46,14 @@ describe('共享设备持久化档案', () => {
     expect(screen.queryByText(/未识别|未获取|未知/)).not.toBeInTheDocument()
   })
 
-  it('只在用户点击时刷新，并按需读取档案历史', async () => {
+  it('按需读取档案历史，不额外刷新列表', async () => {
     request.mockImplementation((url: string) => Promise.resolve(url.includes('/profile-1')
       ? { profile, history: [{ kind: 'projection', observed_at: '2026-10-09T06:01:00Z', snapshot: profile }] }
       : { items: [profile], page: { limit: 20, total: 1 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', pending_jobs: 0 }))
     setup()
     await screen.findAllByText('TP-Link AX3000')
-    const initialCalls = request.mock.calls.length
-    fireEvent.click(screen.getByRole('button', { name: /刷新/ }))
-    await waitFor(() => expect(request.mock.calls.length).toBe(initialCalls + 1))
     fireEvent.click(screen.getAllByRole('button', { name: '档案历史' })[0])
-    await screen.findByText('设备档案历史')
+    await screen.findByText('终端档案历史')
     await waitFor(() => expect(request.mock.calls.some(([url]) => String(url).includes('/profile-1'))).toBe(true))
     expect(screen.getByText('账号 student-1')).toBeInTheDocument()
   })
@@ -67,7 +64,7 @@ describe('共享设备持久化档案', () => {
     const inferred = { ...profile, profile_id: 'inferred', display_name: '198.51.100.20', brand: '', model: '', role: 'shared_gateway', role_source: 'inferred_shared_gateway', identity_assessment_id: '', ip: '198.51.100.20' }
     request.mockResolvedValue({ items: [candidate, hint, inferred], page: { limit: 20, total: 3 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', pending_jobs: 0 })
     setup()
-    expect(await screen.findByText('候选')).toBeInTheDocument()
+    expect(await screen.findByText('身份线索')).toBeInTheDocument()
     expect(screen.getAllByText('身份当前有效').length).toBe(2)
     expect(screen.queryByText(/历史身份依据|身份已过期/)).not.toBeInTheDocument()
     expect(screen.getByText('厂商线索：Huawei')).toHaveClass('shared-profile-role-hint')
@@ -82,5 +79,6 @@ describe('共享设备持久化档案', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/shared-access?tab=devices&device_router_status=likely']}><SharedDeviceProfiles /></MemoryRouter></QueryClientProvider>)
     await waitFor(() => expect(request.mock.calls.some(([url]) => String(url).includes('router_status=likely'))).toBe(true))
+    expect(new URL(request.mock.calls[0][0], 'http://localhost').searchParams.get('has_account')).toBe('true')
   })
 })

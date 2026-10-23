@@ -101,10 +101,29 @@ func (s *PostgresStore) insertDeviceNamesBatch(ctx context.Context, names []Devi
 	}
 	return tx.Commit()
 }
+
+// Seek one latest row per name stream. Strict key advancement preserves historical
+// names without visiting every repeated announcement; both seeks honor as-of time.
+const deviceNamesReadSQL = `SELECT n.endpoint_id,n.evidence, CASE WHEN n.source='mdns_hostname' AND n.observed_at > $2::timestamptz-interval '7 days' AND (n.evidence->>'valid_until')::timestamptz > $2 THEN (SELECT min(l.observed_at) FROM device_address_leases l WHERE l.sensor_id=n.sensor_id AND l.campus_id=coalesce(n.evidence->>'campus_id','') AND host(l.ip)=n.evidence->>'address' AND l.observed_at>n.observed_at AND ((l.action='ack' AND l.endpoint_id<>n.endpoint_id) OR (l.action='stop' AND l.endpoint_id=n.endpoint_id))) END FROM (SELECT DISTINCT unnest($1::text[]) AS endpoint_id) requested
+ CROSS JOIN LATERAL (
+ WITH RECURSIVE streams AS (
+  (SELECT endpoint_id,sensor_id,source,lower(value) AS value_key,coalesce(evidence->>'address','') AS address_key,observed_at,event_id,evidence
+   FROM device_name_evidence WHERE endpoint_id=requested.endpoint_id AND observed_at <= $2
+   ORDER BY source,lower(value),sensor_id,coalesce(evidence->>'address',''),observed_at DESC,event_id DESC LIMIT 1)
+  UNION ALL
+  SELECT next.* FROM streams p CROSS JOIN LATERAL (
+   SELECT endpoint_id,sensor_id,source,lower(value) AS value_key,coalesce(evidence->>'address','') AS address_key,observed_at,event_id,evidence
+   FROM device_name_evidence WHERE endpoint_id=requested.endpoint_id AND observed_at <= $2
+    AND (source,lower(value),sensor_id,coalesce(evidence->>'address','')) > (p.source,p.value_key,p.sensor_id,p.address_key)
+   ORDER BY source,lower(value),sensor_id,coalesce(evidence->>'address',''),observed_at DESC,event_id DESC LIMIT 1
+  ) next
+ ) SELECT * FROM streams
+ ) n`
+
 func (s *PostgresStore) DeviceNames(ctx context.Context, ids []string, now time.Time) (map[string]*DeviceName, error) {
 	out := map[string]*DeviceName{}
 	evidence := map[string][]DeviceNameEvidence{}
-	rows, err := s.db.QueryContext(ctx, `SELECT n.endpoint_id,n.evidence, CASE WHEN n.source='mdns_hostname' THEN (SELECT min(l.observed_at) FROM device_address_leases l WHERE l.sensor_id=n.sensor_id AND l.campus_id=coalesce(n.evidence->>'campus_id','') AND host(l.ip)=n.evidence->>'address' AND l.observed_at>n.observed_at AND ((l.action='ack' AND l.endpoint_id<>n.endpoint_id) OR (l.action='stop' AND l.endpoint_id=n.endpoint_id))) END FROM (SELECT DISTINCT ON (endpoint_id,source,lower(value),sensor_id,coalesce(evidence->>'address','')) endpoint_id,sensor_id,source,observed_at,evidence FROM device_name_evidence WHERE endpoint_id=ANY($1::text[]) AND observed_at <= $2 ORDER BY endpoint_id,source,lower(value),sensor_id,coalesce(evidence->>'address',''),observed_at DESC,event_id DESC) n`, ids, now)
+	rows, err := s.db.QueryContext(ctx, deviceNamesReadSQL, ids, now)
 	if err != nil {
 		return nil, err
 	}

@@ -1,11 +1,11 @@
 import { Notice as Alert } from '../shared/ui/Notice'
 import { safeReturnTo } from '../app/navigation'
 import { useQuery } from '@tanstack/react-query'
-import { Descriptions, Empty, Progress, Space, Tag, Timeline, Typography } from 'antd'
+import { Descriptions, Progress, Space, Tag, Timeline, Typography } from 'antd'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../shared/api/client'
 import type { RouterEvidence } from '../shared/api/types'
-import { AppErrorAlert, AppLoadingState } from '../shared/ui'
+import { AppEmptyState, AppErrorAlert, AppLoadingState, formatDateTime } from '../shared/ui'
 import { routerAssociationLabels, routerConflictLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels, routerStrengthLabels } from './routerLabels'
 import { routerVerdictExplanation } from './routerVerdictExplanation'
 
@@ -16,8 +16,9 @@ export function RouterObservationDetailsPage() {
   const { assessmentId = '' } = useParams()
   const query = useQuery({ queryKey: ['router-observation', assessmentId], queryFn: () => api.routerObservation(assessmentId), enabled: Boolean(assessmentId) })
   if (query.isLoading) return <main className="page router-detail-page"><AppLoadingState rows={8} /></main>
-  if (query.isError || !query.data) return <main className="page router-detail-page"><AppErrorAlert title="路由观察加载失败" message={query.error?.message || '记录不存在'} /></main>
+  if (query.isError || !query.data) return <main className="page router-detail-page"><AppErrorAlert title="路由观察读取失败" message={query.error?.message || '记录不存在'} /></main>
   const item = query.data
+  const isAccessPoint = item.role === 'ap'
   const evidence = [...(item.evidence || [])].sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen))
   const history = meaningfulHistory(item.history)
   const evidenceConflicts = item.conflicts.filter(value=>!['infrastructure_role','ambiguous_association'].includes(value))
@@ -31,13 +32,13 @@ export function RouterObservationDetailsPage() {
   return <main className="page router-detail-page">
     <header className="router-detail-header"><div><Link to={safeReturnTo(params.get('return_to'),'/discovery?tab=routers')}>返回设备中心</Link><Typography.Title level={3}>{item.current ? [item.brand, item.model || item.series, routerRoleLabels[item.role]].filter(Boolean).join(' · ') || '路由观察详情' : '历史路由观察'}</Typography.Title><Typography.Text className="router-detail-id">{item.assessment_id}</Typography.Text></div>{item.current ? <Space wrap><Tag className={`router-status router-status-${item.status}`}>{routerStatusLabels[item.status]}</Tag>{item.status === 'candidate' ? <span className="router-score-muted">{item.confidence} 分</span> : <strong>{item.confidence} 分</strong>}</Space> : <Tag>已失效</Tag>}</header>
     {!item.current && <Alert type="info" showIcon title="该观察已失效" description="以下身份信息和判定仅供历史复核，不用于当前设备或共享确认。" />}
-    {item.current && item.status !== 'confirmed' && <Alert type="info" showIcon title={`证据匹配 ${item.confidence} 分，尚未确认路由器`} description={`${routerVerdictExplanation(item)}。匹配分衡量证据吻合程度；确认还要求路由角色、至少两类独立来源、强证据、唯一关联，且没有基础设施或排除标记。`} />}
-    {item.brand_reference_only && <Alert type="info" showIcon title="仅为品牌参考，不足以确认路由器" description="当前观察只有厂商或 OUI 线索，没有满足型号、角色强证据和独立来源要求。" />}
-    {!!evidenceConflicts.length && <Alert type="error" showIcon title="存在角色排除或冲突证据" description={evidenceConflicts.map(value => conflictLabels[value] || value).join('；')} />}
+    {item.current && item.status !== 'confirmed' && <Alert type="info" showIcon title={isAccessPoint ? `接入点记录 · 证据匹配 ${item.confidence} 分` : `证据匹配 ${item.confidence} 分，尚未确认路由器`} description={isAccessPoint ? `${routerVerdictExplanation(item)}。接入点分类用于识别无线接入设备，不参与路由器确认。` : `${routerVerdictExplanation(item)}。匹配分衡量证据吻合程度；确认还要求路由角色、至少两类独立来源、强证据、唯一关联，且没有基础设施或排除标记。`} />}
+    {item.brand_reference_only && <Alert type="info" showIcon title={isAccessPoint ? '仅为品牌参考，不足以确认接入点' : '仅为品牌参考，不足以确认路由器'} description="当前观察只有厂商或 OUI 线索，没有满足型号、角色强证据和独立来源要求。" />}
+    {!!evidenceConflicts.length && <AppErrorAlert title="存在角色排除或冲突证据" message={evidenceConflicts.map(value => conflictLabels[value] || value).join('；')} />}
     <section className="surface router-detail-summary"><Descriptions column={{ xs: 1, sm: 2, lg: 3 }} size="small" items={summaryItems} /></section>
     {!!item.auth_bindings?.length && <section className="surface router-detail-section"><div className="router-detail-section-heading"><Typography.Title level={4}>认证身份</Typography.Title><Typography.Text type="secondary">仅展示 MAC 或终端标识精确匹配，认证信息不参与路由置信度计算</Typography.Text></div>{item.auth_bindings.some(binding=>binding.ambiguous)&&<Alert type="warning" showIcon title="存在多个当前认证会话" description="以下记录均为精确命中，但不能作为唯一归属展示。" />}<div className="router-auth-binding-list">{item.auth_bindings.map(binding=><article className={binding.ambiguous?'router-auth-binding router-auth-binding-ambiguous':'router-auth-binding'} key={`${binding.source}-${binding.session_id}`}><div><strong>{binding.account_id}</strong>{binding.ambiguous&&<Tag color="warning">归属有歧义</Tag>}</div><Descriptions column={{xs:1,sm:2,lg:3}} size="small" items={[{key:'ips',label:'认证分配 IP',children:binding.assigned_ips.join('、')},{key:'mac',label:'认证 MAC',children:binding.mac||''},{key:'basis',label:'匹配依据',children:binding.match_basis==='exact_endpoint'?'终端标识精确匹配':'MAC 精确匹配'},{key:'vlan',label:'VLAN',children:binding.vlan||''},{key:'nas',label:'NAS',children:binding.nas_ip||''},{key:'access',label:'接入标识',children:binding.access_id||''},{key:'started',label:'会话开始',children:formatTime(binding.started_at)},{key:'confirmed',label:'最近校准',children:formatTime(binding.last_confirmed_at)},{key:'source',label:'来源',children:binding.source}].filter(entry => entry.children !== '')} /></article>)}</div></section>}
     {item.current ? <section className="surface router-detail-section"><Typography.Title level={4}>证据匹配分构成</Typography.Title><Progress percent={item.confidence} status={item.status === 'confirmed' ? 'success' : 'normal'} /><ScoreComponents components={item.score_components} /></section> : <section className="surface router-detail-section"><details className="router-historical-score"><summary>查看历史分数（{item.confidence} 分）</summary><Typography.Paragraph type="secondary">历史判定：{routerStatusLabels[item.status]}。分数不代表当前风险或设备确认。</Typography.Paragraph><ScoreComponents components={item.score_components}/></details></section>}
-    <section className="surface router-detail-section"><div className="router-detail-section-heading"><Typography.Title level={4}>当前有效证据</Typography.Title><Typography.Text type="secondary">{evidence.length} 条，已隐藏过期和旧规则记录</Typography.Text></div>{evidence.length ? <Timeline items={evidence.map(entry => ({ color: entry.conflict || entry.exclusion ? 'red' : entry.strength === 'strong' ? 'green' : 'blue', content: <EvidenceItem item={entry} /> }))} /> : <Empty description="暂无有效证据" />}</section>
+    <section className="surface router-detail-section"><div className="router-detail-section-heading"><Typography.Title level={4}>当前有效证据</Typography.Title><Typography.Text type="secondary">{evidence.length} 条，已隐藏过期和旧规则记录</Typography.Text></div>{evidence.length ? <Timeline items={evidence.map(entry => ({ color: entry.conflict || entry.exclusion ? 'red' : entry.strength === 'strong' ? 'green' : 'blue', content: <EvidenceItem item={entry} /> }))} /> : <AppEmptyState description="暂无有效证据" />}</section>
     <section className="surface router-detail-section"><div className="router-detail-section-heading"><Typography.Title level={4}>判定历史</Typography.Title><Typography.Text type="secondary">相同状态和分数的重复计算已折叠</Typography.Text></div><Timeline items={history.map(entry => ({ content: <div className="router-history-item"><strong>{routerStatusLabels[entry.status]} · {entry.confidence} 分</strong><span>{formatTime(entry.changed_at)} · 规则 {entry.rule_version}</span>{entry.conflicts.length > 0 && <span>{entry.conflicts.map(value => conflictLabels[value] || value).join('；')}</span>}</div> }))} /></section>
   </main>
 }
@@ -61,5 +62,5 @@ function meaningfulHistory<T extends { status: string; confidence: number; confl
 }
 
 function formatTime(value?: string) {
-  return value && !value.startsWith('0001-') ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : ''
+  return formatDateTime(value)
 }

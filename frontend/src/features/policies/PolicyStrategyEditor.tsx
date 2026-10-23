@@ -280,7 +280,7 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
     onSave(buildPolicy(policy, values))
   }
 
-  return <AppFormModal className="policy-strategy-modal" title={creating ? '新增设备配额策略' : '编辑设备配额策略'} open width={900} destroyOnHidden onCancel={onCancel} footer={
+  return <AppFormModal className="policy-strategy-modal" title={creating ? '新增终端配额策略' : '编辑终端配额策略'} open width={900} destroyOnHidden onCancel={onCancel} footer={
     <Space wrap className="policy-editor-footer">
       <Button onClick={onCancel}>返回列表</Button>
       {step > 0 && <Button onClick={() => setStep(current => current - 1)}>上一步</Button>}

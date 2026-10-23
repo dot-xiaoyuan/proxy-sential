@@ -1,5 +1,12 @@
-import { ApartmentOutlined, SearchOutlined } from '@ant-design/icons'
-import { Button, Card, Table, Tag, Typography } from 'antd'
+import {
+  AppTable } from '../../shared/ui'
+import { ApartmentOutlined,
+  SearchOutlined } from '@ant-design/icons'
+import { Button,
+  Card,
+  Tag,
+  Typography,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../../entities/risk/RiskLevelTag'
@@ -42,7 +49,7 @@ export function FingerprintConflictMatrix({ items, onInspectIp }: FingerprintCon
           当前窗口下暂无需要复核的多源指纹差异
         </Typography.Text>
       ) : (
-		<Table className="compact-list-table" columns={columns} dataSource={items} pagination={{ pageSize: 10, showSizeChanger: false }} rowKey="id" size="small" />
+		<AppTable className="compact-list-table" columns={columns} dataSource={items} pagination={{ pageSize: 10, showSizeChanger: false }} rowKey="id" size="small" />
       )}
     </Card>
   )

@@ -27,7 +27,7 @@ describe('网络设备发现', () => {
     })
     setup()
     fireEvent.click(await screen.findByText('发现记录'))
-    await waitFor(() => expect(screen.getAllByText('没有发现记录').length).toBeGreaterThan(0))
+    await waitFor(() => expect(screen.getAllByText('暂无发现记录').length).toBeGreaterThan(0))
   })
 
   it('接口 items 为正常数组时渲染发现记录', async () => {

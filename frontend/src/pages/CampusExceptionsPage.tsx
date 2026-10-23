@@ -1,3 +1,4 @@
+import { AppListHeader, AppTable, formatDateTime } from '../shared/ui'
 import { useState } from "react";
 import {
   Button,
@@ -5,7 +6,6 @@ import {
   Form,
   Input,
   Select,
-  Table,
   Tag,
   message,
 } from "antd";
@@ -22,13 +22,13 @@ import {
   AppErrorAlert,
   AppFormModal,
   AppLoadingState,
-  AppPageHeader,
   AppServerPagination,
   useServerPagination,
 } from "../shared/ui";
 
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
+import { statusColor } from '../shared/ui/status'
 export function CampusExceptionsPage(){
 const session=useSession();const writable=can(session.data,'rules:reload');
 const exceptionPage=useServerPagination('exceptions_');const exceptions=useCampusExceptions({limit:exceptionPage.pageSize,cursor:exceptionPage.cursor});const exceptionMutation=useCampusExceptionMutation();const [exceptionOpen,setExceptionOpen]=useState(false);const [exceptionForm]=Form.useForm<CampusException>();
@@ -59,7 +59,7 @@ if(exceptions.isError)return <AppErrorAlert title="校园例外读取失败"/>;
       dataIndex: "expires_at",
       render: (value) => (
         <span className="nowrap-cell">
-          {value ? new Date(value).toLocaleString() : "长期"}
+          {formatDateTime(value) || "长期"}
         </span>
       ),
     },
@@ -67,7 +67,7 @@ if(exceptions.isError)return <AppErrorAlert title="校园例外读取失败"/>;
       title: "状态",
       dataIndex: "enabled",
       render: (value) => (
-        <Tag color={value ? "green" : "default"}>
+        <Tag color={statusColor(value ? "active" : "disabled")}>
           {value ? "生效中" : "已停用"}
         </Tag>
       ),
@@ -87,7 +87,7 @@ if(exceptions.isError)return <AppErrorAlert title="校园例外读取失败"/>;
       ),
     },
   ];
-return <main className="page"><AppPageHeader title="校园例外" subtitle="维护有原因、版本和有效期的校园业务例外" onRefresh={()=>void exceptions.refetch()}/><Card>                  <div className="tab-toolbar">
+return <main className="page"><Card><AppListHeader title="校园例外" count={`${exceptions.data?.page.total ?? 0} 条`} />                  <div className="tab-toolbar">
                     <Button
                       type="primary" disabled={!writable}
                       onClick={() => setExceptionOpen(true)}
@@ -95,7 +95,7 @@ return <main className="page"><AppPageHeader title="校园例外" subtitle="维�
                       新增例外
                     </Button>
                   </div>
-                  <Table
+                  <AppTable
                     className="compact-list-table"
                     columns={exceptionColumns}
                     dataSource={exceptions.data?.items ?? []}

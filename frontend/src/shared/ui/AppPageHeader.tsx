@@ -1,19 +1,16 @@
 import type { ReactNode } from 'react'
-import { ReloadOutlined } from '@ant-design/icons'
-import { Button, Select, Space, Typography } from 'antd'
+import { Select, Space, Typography } from 'antd'
 
 import { AppTimePicker, type QuickWindow, type ReportWindow } from './AppTimePicker'
 
 interface AppPageHeaderProps<T extends ReportWindow> {
-  title: string
+  title?: string
   subtitle?: string
   extra?: ReactNode
   sensorId?: string
   onSensorChange?: (sensorId: string) => void
   quickWindow?: T
   onQuickWindowChange?: (window: T) => void
-  onRefresh?: () => void
-  loading?: boolean
   quickWindows?: T[]
 }
 
@@ -25,22 +22,24 @@ export function AppPageHeader<T extends ReportWindow = QuickWindow>({
   onSensorChange,
   quickWindow,
   onQuickWindowChange,
-  onRefresh,
-  loading = false,
   quickWindows,
 }: AppPageHeaderProps<T>) {
+  const hasActions = Boolean(onSensorChange || onQuickWindowChange || extra)
+  if (!title && !subtitle && !hasActions) return null
   return (
-    <div className="page-header page-header-spaced">
-      <div className="page-header-main">
-        <Typography.Title className="page-title" level={3}>
-          {title}
-        </Typography.Title>
-        {subtitle && (
-          <Typography.Text className="page-subtitle" type="secondary">
-            {subtitle}
-          </Typography.Text>
-        )}
-      </div>
+    <div className={`page-header page-header-spaced${title ? '' : ' page-header-actions-only'}`}>
+      {title && (
+        <div className="page-header-main">
+          <Typography.Title className="page-title" level={3}>
+            {title}
+          </Typography.Title>
+          {subtitle && (
+            <Typography.Text className="page-subtitle" type="secondary">
+              {subtitle}
+            </Typography.Text>
+          )}
+        </div>
+      )}
 
       <Space className="page-header-actions" size="small" wrap>
         {onSensorChange && (
@@ -66,16 +65,6 @@ export function AppPageHeader<T extends ReportWindow = QuickWindow>({
 
         {extra}
 
-        {onRefresh && (
-          <Button
-            className="dpi-badge-tag"
-            icon={<ReloadOutlined spin={loading} />}
-            loading={loading}
-            onClick={onRefresh}
-          >
-            刷新数据
-          </Button>
-        )}
       </Space>
     </div>
   )

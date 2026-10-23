@@ -1,3 +1,4 @@
+import { AppListHeader, AppTable } from '../shared/ui'
 import { useState } from "react";
 import {
   Button,
@@ -7,7 +8,6 @@ import {
   Modal,
   Select,
   Space,
-  Table,
   Tag,
   message,
 } from "antd";
@@ -24,10 +24,10 @@ import type {
 import {
   AppErrorAlert,
   AppLoadingState,
-  AppPageHeader,
   AppServerPagination,
   useServerPagination,
 } from "../shared/ui";
+import { statusColor } from '../shared/ui/status'
 
 const roleLabels: Record<string, string> = {
   viewer: "只读查看",
@@ -60,7 +60,7 @@ if(users.isError)return <AppErrorAlert title="用户权限读取失败"/>;
       title: "状态",
       dataIndex: "disabled",
       render: (value) => (
-        <Tag color={value ? "default" : "green"}>
+        <Tag color={statusColor(value ? "disabled" : "ok")}>
           {value ? "已停用" : "正常"}
         </Tag>
       ),
@@ -117,12 +117,12 @@ if(users.isError)return <AppErrorAlert title="用户权限读取失败"/>;
       ),
     },
   ];
-return <main className="page"><AppPageHeader title="用户权限" subtitle="管理本地账号、角色与会话失效" onRefresh={()=>void users.refetch()}/><Card>                  <div className="tab-toolbar">
+return <main className="page"><Card><AppListHeader title="用户权限" count={`${users.data?.page.total ?? 0} 条`} />                  <div className="tab-toolbar">
                     <Button type="primary" onClick={() => setUserOpen(true)}>
                       新建用户
                     </Button>
                   </div>
-                  <Table
+                  <AppTable
                     className="compact-list-table"
                     columns={userColumns}
                     dataSource={users.data?.items ?? []}

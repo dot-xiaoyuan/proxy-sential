@@ -19,7 +19,7 @@ import {Button,
 import { CaseAssessment } from '../entities/risk/CaseAssessment';
 import { can } from "../shared/auth/permissions";
 import { useCase, useCaseMutation, useSession } from "../shared/api/queries";
-import { AppErrorAlert, AppLoadingState, AppPageHeader } from "../shared/ui";
+import { AppErrorAlert, AppLoadingState, AppPageHeader, formatDateTime } from "../shared/ui";
 
 export function CaseDetailsPage() {
  const [params]=useSearchParams();const location=useLocation();
@@ -106,7 +106,7 @@ export function CaseDetailsPage() {
             {
               key: "due",
               label: "SLA 截止",
-              children: data.due_at && Number.isFinite(Date.parse(data.due_at)) ? new Date(data.due_at).toLocaleString() : "",
+              children: formatDateTime(data.due_at),
             },
           ]}
         />
@@ -223,7 +223,7 @@ export function CaseDetailsPage() {
                           <div>
                             <Typography.Text type="secondary">
                               {event.actor_id} ·{" "}
-                              {new Date(event.created_at).toLocaleString()}
+                              {formatDateTime(event.created_at)}
                             </Typography.Text>
                           </div>
                         </div>

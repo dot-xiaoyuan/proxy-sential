@@ -15,7 +15,7 @@ func TestCatalogClassifiesAndMatchesDirectionalFields(t *testing.T) {
 	if c.Rules[1].Status != "duplicate" || c.Rules[2].Status != "unsupported_syntax" {
 		t.Fatalf("classification: %+v", c.Rules)
 	}
-	data, _ := json.Marshal(c)
+	data, _ := json.Marshal(&c)
 	loaded, err := LoadCatalog(data)
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestCatalogEmptyOIDAndCaptureReplay(t *testing.T) {
 		{ID: "capture", SourceID: "s", Version: "1", Status: "converted", Model: "$1", Conditions: []FingerprintCondition{{Field: "http_server", Operator: "regex", Value: "^(.*)$"}}},
 	}}
 	PrepareCatalog(&c)
-	data, _ := json.Marshal(c)
+	data, _ := json.Marshal(&c)
 	loaded, err := LoadCatalog(data)
 	if err != nil {
 		t.Fatal(err)

@@ -15,7 +15,7 @@ export const proxySentinelTheme: ThemeConfig = {
     fontSize: 14,
   },
   components: {
-    Card: { borderRadiusLG: 8 },
+    Card: { borderRadiusLG: 8, headerFontSize: 15 },
     Table: { cellPaddingBlock: 10, cellPaddingInline: 12 },
     Tag: { defaultBg: '#f1f5f9', defaultColor: '#475569' },
   },

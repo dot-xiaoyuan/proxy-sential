@@ -114,16 +114,18 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 	addExactIP := func(ip string) {
 		args = append(args, ip)
 		ipArg := "$" + strconvArg(len(args))
-		historyWindow, sessionWindow := "", ""
+		historyWindow, sessionWindow, snapshotWindow := "", "", ""
 		if query.View == "recent" {
 			args = append(args, deviceViewStart(query, now), now)
 			startArg, endArg := "$"+strconvArg(len(args)-1), "$"+strconvArg(len(args))
 			historyWindow = " AND h.observed_at >= " + startArg + " AND h.observed_at <= " + endArg
 			sessionWindow = " AND s.started_at <= " + endArg + " AND (s.ended_at IS NULL OR s.ended_at >= " + startArg + ")"
+			snapshotWindow = " AND " + projectionConfirmedSQL + " BETWEEN " + startArg + " AND " + endArg
 		}
-		// Exact IP search reads the durable sources through their IP indexes: DHCP leases and
-		// account sessions (migration 139), not a derived per-endpoint copy.
-		where = append(where, `i.endpoint_id IN(SELECT h.endpoint_id FROM device_address_leases h WHERE h.ip=`+ipArg+`::inet AND h.endpoint_id<>''`+historyWindow+` UNION SELECT s.endpoint_id FROM account_sessions s WHERE s.ip=`+ipArg+`::inet AND s.endpoint_id<>''`+sessionWindow+`)`)
+		// Start snapshot matches at the indexed current-IP lookup, then check each
+		// candidate's current source scope. LIMIT keeps the lateral probe bounded and
+		// prevents an IP-wide scan of the large snapshot projection.
+		where = append(where, `i.endpoint_id IN(SELECT h.endpoint_id FROM device_address_leases h WHERE h.ip=`+ipArg+`::inet AND h.endpoint_id<>''`+historyWindow+` UNION SELECT s.endpoint_id FROM account_sessions s WHERE s.ip=`+ipArg+`::inet AND s.endpoint_id<>''`+sessionWindow+` UNION SELECT candidate.endpoint_id FROM endpoint_inventory_lookup candidate JOIN LATERAL (SELECT 1 FROM account_identity_session_projection p JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain) WHERE p.document->>'endpoint_id'=candidate.endpoint_id AND p.ip=`+ipArg+` AND COALESCE(p.document->>'ended_at','')='' AND `+projectionCurrentSQL+snapshotWindow+` LIMIT 1) snapshot ON true WHERE candidate.current_ip=`+ipArg+`::inet)`)
 	}
 	if query.Brand != "" {
 		if query.Brand == "unknown" {

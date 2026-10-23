@@ -67,6 +67,24 @@ func nextIdentityBatchSize(current int, runErr error, processed int) int {
 	return current
 }
 
+// A successful but slow batch must not double into the 60-second deadline on
+// its next iteration. Keep headroom for cold pages and competing realtime IO.
+func nextIdentityTimedBatchSize(current int, runErr error, processed int, elapsed time.Duration) int {
+	if runErr != nil {
+		return nextIdentityBatchSize(current, runErr, processed)
+	}
+	if current <= 0 {
+		current = identitySignalBatchSize
+	}
+	if elapsed >= identityWorkBudget/3 {
+		return max(identitySignalBatchMin, current/2)
+	}
+	if elapsed >= identityWorkBudget/6 {
+		return current
+	}
+	return nextIdentityBatchSize(current, nil, processed)
+}
+
 // claimIdentityCursor reads a stable resume point without keeping a transaction
 // open across the ClickHouse read. Pending history is never skipped.
 func (s *DBStore) claimIdentityCursor(ctx context.Context, sensorID, phase string) (time.Time, string, time.Time, bool, error) {
@@ -237,7 +255,11 @@ func (s *DBStore) processIdentitySignalBatch(ctx context.Context, phase string, 
 	if err != nil {
 		return 0, identityHistoryStats{}, err
 	}
-	return len(rows), stats, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return 0, stats, err
+	}
+	fmt.Fprintf(os.Stderr, "identity_derived_commit sensor=%s phase=%s records=%d cursor_at=%s cursor_lag_ms=%d\n", sensor, phase, len(rows), cursor.UTC().Format(time.RFC3339Nano), max(int64(0), time.Since(cursor).Milliseconds()))
+	return len(rows), stats, nil
 }
 
 func (s *PostgresStore) refreshCurrentDeviceInventory(ctx context.Context) error {
@@ -328,13 +350,16 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 		if s.deferIdentityDerivedWork(ctx) {
 			continue
 		}
+		began := time.Now()
 		work, cancel := context.WithTimeout(ctx, identityWorkBudget)
 		processed, stats, err := s.processIdentitySignalBatch(work, "live", batchSize)
 		if err == nil && options.Backfill && processed < batchSize {
 			_, stats, err = s.processIdentitySignalBatch(work, "backfill", batchSize)
 		}
 		cancel()
-		batchSize = nextIdentityBatchSize(batchSize, err, processed)
+		previousSize := batchSize
+		batchSize = nextIdentityTimedBatchSize(batchSize, err, processed, time.Since(began))
+		fmt.Fprintf(os.Stderr, "identity_derived_batch sensor=%s records=%d elapsed_ms=%d batch_size=%d next_batch_size=%d failed=%t\n", s.pg.sensorID, processed, time.Since(began).Milliseconds(), previousSize, batchSize, err != nil)
 		status := map[string]any{
 			"last_checked_at":        time.Now().UTC().Format(time.RFC3339Nano),
 			"processed_live_batch":   processed,
@@ -404,7 +429,7 @@ func (s *DBStore) runCurrentDeviceInventoryRefresh(ctx context.Context) {
 }
 
 const (
-	deviceSignalEventsRetention = 48 * time.Hour
+	deviceSignalEventsRetention  = 48 * time.Hour
 	deviceSignalEventsPruneBatch = 5000
 )
 
@@ -433,6 +458,10 @@ func (s *DBStore) ProjectPendingIdentitySnapshots(ctx context.Context, limit int
 }
 
 func (s *DBStore) runIdentitySnapshotMaterializer(ctx context.Context) {
+	if s.pg.identityDeltaEnabled {
+		s.runIdentityDeltaMaterializer(ctx)
+		return
+	}
 	for ctx.Err() == nil {
 		if s.deferIdentityDerivedWork(ctx) {
 			continue
@@ -474,7 +503,7 @@ func (s *DBStore) deferIdentityDerivedWork(ctx context.Context) bool {
 	var backlog bool
 	// Only this sensor's inbox gates its own derived work. The unscoped check let the NCU
 	// inbox backlog pause the router-pilot materializer and export as well, silently.
-	err := s.pg.db.QueryRowContext(check, `SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds'))`, s.pg.sensorID).Scan(&backlog)
+	err := s.pg.db.QueryRowContext(check, IdentityScopeStatusSQL(`SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds'))`), s.pg.sensorID).Scan(&backlog)
 	cancel()
 	if err == nil && !backlog {
 		return false

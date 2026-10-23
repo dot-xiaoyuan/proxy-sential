@@ -16,22 +16,20 @@ export function AppLoadingState({ rows = 4 }: AppLoadingProps) {
 }
 
 interface AppErrorAlertProps {
-  title?: string
-  message?: string
-  onRetry?: () => void
+  title?: ReactNode
+  message?: ReactNode
+  action?: ReactNode
+  className?: string
 }
 
 export function AppErrorAlert({
   title = '数据加载异常',
-  message = '网络请求中断或 Backend 节点未响应，请检查链接或稍后重试。',
+  message = '请求未完成，请稍后重试；如持续失败，请检查网络连接与账号权限。',
+  action,
+  className,
 }: AppErrorAlertProps) {
   return (
-    <Alert
-      description={message}
-      showIcon
-      title={title}
-      type="error"
-    />
+    <Alert action={action} className={className} description={message} showIcon title={title} type="error" />
   )
 }
 

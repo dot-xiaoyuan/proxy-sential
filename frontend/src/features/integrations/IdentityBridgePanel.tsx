@@ -3,18 +3,18 @@ import { useQuery } from '@tanstack/react-query'
 import { Button, Card, Space, Statistic, Tag, Typography } from 'antd'
 
 import { api } from '../../shared/api/client'
-import { AppLoadingState } from '../../shared/ui'
+import { AppLoadingState, formatDateTime } from '../../shared/ui'
 
 const stateLabels: Record<string,string> = { starting:'启动中',healthy:'正常',degraded:'降级',switching:'切换中',switch_failed:'切换失败',failed:'异常',pending:'等待检查',stale:'快照过期',completed:'完成',running:'执行中',building:'构建中' }
 const errorLabels: Record<string,string> = { online_inventory_changed:'在线清单持续变化',resource_limit:'数据量超过安全上限',deadline_exceeded:'操作超时',operation_error:'同步操作失败',ingest_error:'实时事件写入失败',malformed_json:'记录格式异常' }
 
-function time(value?:string) { return value ? new Date(value).toLocaleString() : '' }
+const time = formatDateTime
 function stateColor(value:string) { return value === 'healthy' || value === 'completed' ? 'green' : value === 'failed' || value === 'switch_failed' ? 'red' : value === 'degraded' || value === 'stale' ? 'orange' : 'blue' }
 
 export function IdentityBridgePanel() {
   const bridge = useQuery({queryKey:['identity-bridge'],queryFn:api.identityBridge,refetchInterval:false,refetchOnWindowFocus:false,refetchOnReconnect:false,retry:false})
   const refresh = <Button icon={<ReloadOutlined />} aria-label="刷新认证状态" title="刷新认证状态" loading={bridge.isFetching} onClick={()=>void bridge.refetch()}/>
-  if (bridge.isLoading) return <AppLoadingState rows={4}/>
+  if (bridge.isLoading) return <Card className="identity-bridge-panel"><AppLoadingState rows={3}/></Card>
   if (!bridge.data) return <Card className="identity-bridge-panel" title="深澜 4K 认证同步" extra={refresh}><p className="actions-inline-error" role="alert">认证同步状态读取失败</p></Card>
   const {config,runtime}=bridge.data
   const statisticsAt = runtime.pipeline?.statistics_at??runtime.projection_at
@@ -26,7 +26,7 @@ export function IdentityBridgePanel() {
     (runtime.quarantine_queue??0)>0&&{text:`隔离消息 ${runtime.quarantine_queue} 条待处理`,tone:'error'},
     runtime.pipeline?.last_error&&{text:'身份处理异常',tone:'error'},
     runtime.pipeline?.export_error&&{text:'原始事件导出异常',tone:'error'},
-    runtime.pipeline?.derived_error&&{text:'设备派生处理异常',tone:'error'},
+    runtime.pipeline?.derived_error&&{text:'终端派生处理异常',tone:'error'},
   ].filter((issue): issue is {text:string;tone:string}=>Boolean(issue))
   return <Card className="identity-bridge-panel" title={<Space wrap><span>深澜 4K 认证同步</span><Tag color={stateColor(runtime.state)}>{stateLabels[runtime.state]??runtime.state}</Tag></Space>} extra={refresh}>
     {issues.length>0&&<div className="identity-bridge-issues" role="status">{issues.map(issue=><span className={`identity-bridge-issue is-${issue.tone}`} key={issue.text}>{issue.text}</span>)}</div>}

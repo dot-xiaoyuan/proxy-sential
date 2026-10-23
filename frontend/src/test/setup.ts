@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest'
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: (query: string) => ({
-    matches: false,
+    matches: query.includes('min-width'),
     media: query,
     onchange: null,
     addListener: () => undefined,

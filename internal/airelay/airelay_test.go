@@ -1,6 +1,32 @@
 package airelay
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestMaterializedMatchViewCoversIndicatorAsset(t *testing.T) {
+	sql, err := os.ReadFile("../../migrations/clickhouse/048_ai_relay_domain_matches_update.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := string(sql)
+	matcher := Default()
+	if !strings.Contains(view, "AS indicator_version") || !strings.Contains(view, "'"+matcher.Version()+"'") {
+		t.Fatal("materialized view indicator version differs from embedded asset")
+	}
+	for _, indicator := range matcher.Indicators() {
+		if !strings.Contains(view, "domain='"+indicator.Domain+"'") {
+			t.Errorf("materialized view missing indicator %s", indicator.Domain)
+		}
+	}
+	for _, domain := range matcher.OfficialDomains() {
+		if !strings.Contains(view, "'"+domain+"'") {
+			t.Errorf("materialized view missing official exclusion %s", domain)
+		}
+	}
+}
 
 func TestEmbeddedAssetLoads(t *testing.T) {
 	matcher := Default()
@@ -9,6 +35,30 @@ func TestEmbeddedAssetLoads(t *testing.T) {
 	}
 	if matcher.Version() == "" {
 		t.Fatal("embedded indicator asset has no version")
+	}
+}
+
+func TestCCTQAndMICUIndicators(t *testing.T) {
+	matcher := Default()
+	for _, tc := range []struct{ host, domain, nameZH string }{
+		{"www.cctq.ai", "cctq.ai", "CCTQ 中转站"},
+		{"cf-fast.cctq.ai", "cctq.ai", "CCTQ 中转站"},
+		{"www.micuapi.ai", "micuapi.ai", "米醋中转站"},
+	} {
+		indicator, ok := matcher.Match(tc.host)
+		if !ok || indicator.Domain != tc.domain || indicator.NameZH != tc.nameZH {
+			t.Errorf("Match(%q) = %+v, %v", tc.host, indicator, ok)
+		}
+	}
+	for _, host := range []string{"fakecctq.ai", "cctq.ai.evil.example", "notmicuapi.ai", "micuapi.ai.evil.example", "micu.cc"} {
+		if _, ok := matcher.Match(host); ok {
+			t.Errorf("unexpected relay match for %q", host)
+		}
+	}
+	for _, indicator := range matcher.Indicators() {
+		if indicator.NameZH == "" {
+			t.Errorf("missing Chinese display name for %q", indicator.Domain)
+		}
 	}
 }
 

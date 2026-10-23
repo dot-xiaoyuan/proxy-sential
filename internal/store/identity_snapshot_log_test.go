@@ -73,7 +73,8 @@ func TestProjectionMarksSnapshotProjected(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(snapshotLogProjectedSQL)).
 		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, "snap-p").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE account_identity_session_projection SET document=jsonb_set`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`UPDATE account_identity_session_projection p SET document=jsonb_set.*NOT EXISTS`).WillReturnRows(sqlmock.NewRows([]string{"ip"}))
+	mock.ExpectExec(`UPDATE shared_observation_wakes SET received_at`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	tx, err := db.Begin()
 	if err != nil {
@@ -86,6 +87,35 @@ func TestProjectionMarksSnapshotProjected(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProjectionRecordsChangedAndEndedIPs(t *testing.T) {
+	db, mock := newReconcileMock(t)
+	snapshot := adapterSnapshot(t, "s1", "a1", "192.0.2.7")
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SELECT set_config\('statement_timeout'`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta(identityWriteLockSQL)).WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery(`INSERT INTO account_identity_projection_sources`).WillReturnRows(sqlmock.NewRows([]string{"latest"}).AddRow(true))
+	mock.ExpectExec(regexp.QuoteMeta(snapshotLogProjectedSQL)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`INSERT INTO account_identity_session_projection`).WillReturnRows(sqlmock.NewRows([]string{"ip"}).AddRow("192.0.2.7"))
+	mock.ExpectQuery(`UPDATE account_identity_session_projection p SET document=jsonb_set.*NOT EXISTS`).WillReturnRows(sqlmock.NewRows([]string{"ip"}).AddRow("192.0.2.8"))
+	mock.ExpectExec(`INSERT INTO shared_observation_wakes`).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`UPDATE shared_observation_wakes SET received_at`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = projectIdentitySnapshot(context.Background(), tx, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
 }

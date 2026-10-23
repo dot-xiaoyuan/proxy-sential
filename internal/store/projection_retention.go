@@ -25,15 +25,16 @@ const (
 
 // projectionArchiveRow is one ended projection member as archived.
 type projectionArchiveRow struct {
-	Source       string          `json:"source"`
-	SensorID     string          `json:"sensor_id"`
-	CampusID     string          `json:"campus_id"`
-	AccessDomain string          `json:"access_domain"`
-	SessionID    string          `json:"session_id"`
-	IP           string          `json:"ip"`
-	AccountID    string          `json:"account_id"`
-	ConfirmedAt  time.Time       `json:"confirmed_at"`
-	Document     json.RawMessage `json:"document"`
+	FirstReceivedAt *time.Time      `json:"first_received_at,omitempty"`
+	Source          string          `json:"source"`
+	SensorID        string          `json:"sensor_id"`
+	CampusID        string          `json:"campus_id"`
+	AccessDomain    string          `json:"access_domain"`
+	SessionID       string          `json:"session_id"`
+	IP              string          `json:"ip"`
+	AccountID       string          `json:"account_id"`
+	ConfirmedAt     time.Time       `json:"confirmed_at"`
+	Document        json.RawMessage `json:"document"`
 }
 
 // Case-referenced IPs keep their history; a case without an IP keeps everything (fail closed), the
@@ -57,6 +58,13 @@ WHERE p.source=r.source AND p.sensor_id=r.sensor_id AND p.campus_id=r.campus_id 
 // WriteIdentityProjectionArchive stores a batch and verifies every ordinal and content hash; a replay
 // of a complete batch writes nothing.
 func (s *ClickHouseStore) WriteIdentityProjectionArchive(ctx context.Context, batch string, rows []projectionArchiveRow) error {
+	return s.writeIdentityProjectionArchive(ctx, batch, rows, false)
+}
+func (s *ClickHouseStore) writeIdentityProjectionArchive(ctx context.Context, batch string, rows []projectionArchiveRow, interval bool) error {
+	table := "identity_projection_history_archive"
+	if interval {
+		table = "identity_projection_intervals_archive"
+	}
 	if len(rows) > projectionArchiveBatch {
 		return fmt.Errorf("projection archive batch budget exceeded")
 	}
@@ -70,7 +78,7 @@ func (s *ClickHouseStore) WriteIdentityProjectionArchive(ctx context.Context, ba
 		hashes[i] = hex.EncodeToString(sum[:])
 	}
 	read := func() (map[int]bool, error) {
-		raw, err := s.query(ctx, `SELECT ordinal,content_hash FROM identity_projection_history_archive WHERE batch_id=`+chQuote(batch)+` GROUP BY ordinal,content_hash LIMIT `+fmt.Sprint(len(rows)+1)+` SETTINGS max_threads=1,max_execution_time=10 FORMAT JSONEachRow`)
+		raw, err := s.query(ctx, `SELECT ordinal,content_hash FROM `+table+` WHERE batch_id=`+chQuote(batch)+` GROUP BY ordinal,content_hash LIMIT `+fmt.Sprint(len(rows)+1)+` SETTINGS max_threads=1,max_execution_time=10 FORMAT JSONEachRow`)
 		if err != nil {
 			return nil, err
 		}
@@ -98,17 +106,25 @@ func (s *ClickHouseStore) WriteIdentityProjectionArchive(ctx context.Context, ba
 		return nil
 	}
 	var buffer bytes.Buffer
-	buffer.WriteString("INSERT INTO identity_projection_history_archive FORMAT JSONEachRow\n")
+	buffer.WriteString("INSERT INTO " + table + " FORMAT JSONEachRow\n")
 	encoder := json.NewEncoder(&buffer)
 	for i, row := range rows {
 		if found[i] {
 			continue
 		}
-		if err = encoder.Encode(map[string]any{
+		firstReceived := row.ConfirmedAt
+		if row.FirstReceivedAt != nil {
+			firstReceived = *row.FirstReceivedAt
+		}
+		payload := map[string]any{
 			"batch_id": batch, "ordinal": i, "source": row.Source, "sensor_id": row.SensorID, "campus_id": row.CampusID,
 			"access_domain": row.AccessDomain, "session_id": row.SessionID, "ip": row.IP, "account_id": row.AccountID,
 			"confirmed_at": row.ConfirmedAt.UTC().Format("2006-01-02 15:04:05.000000"), "content_hash": hashes[i], "document": string(row.Document),
-		}); err != nil {
+		}
+		if interval {
+			payload["first_received_at"] = firstReceived.UTC().Format("2006-01-02 15:04:05.000000")
+		}
+		if err = encoder.Encode(payload); err != nil {
 			return err
 		}
 	}
@@ -174,8 +190,25 @@ func (s *DBStore) runProjectionRetention(ctx context.Context) {
 	for ctx.Err() == nil {
 		drained := false
 		for step := 0; step < projectionRetentionPass && ctx.Err() == nil; step++ {
+			if s.pg.identityDeltaEnabled {
+				probe, c := context.WithTimeout(ctx, 2*time.Second)
+				age, blocked, e := s.pg.identityDeltaLoad(probe)
+				c()
+				if e != nil || blocked || age > 5*time.Second {
+					break
+				}
+			}
 			work, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			n, err := s.archiveEndedProjectionBatch(work, time.Now().UTC())
+			var n int
+			var err error
+			if s.pg.identityDeltaEnabled {
+				n, err = s.archiveIdentityIntervalBatch(work, time.Now().UTC())
+			}
+			if err == nil && n < projectionArchiveBatch {
+				var old int
+				old, err = s.archiveEndedProjectionBatch(work, time.Now().UTC())
+				n += old
+			}
 			cancel()
 			if err != nil {
 				if ctx.Err() == nil {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +31,9 @@ type PostgresOptions struct {
 }
 
 type PostgresStore struct {
+	identityDeltaSnapshot    *IdentitySnapshot
+	identityDeltaSnapshotRun int64
+	identityDeltaEnabled     bool
 	sharedObservationEnabled bool
 	inventoryStatus          inventoryStatusCache
 	profileBeacon            sharedProfileBeacon
@@ -63,12 +67,13 @@ func NewPostgresStore(opts PostgresOptions) (*PostgresStore, error) {
 	// report a collector and a NIC it never ran; status reads prefer the
 	// registered sensors row, and an undeclared field is left blank.
 	return &PostgresStore{
-		db:            db,
-		dsn:           opts.DSN,
-		sensorID:      sensorID,
-		collectorKind: strings.TrimSpace(opts.CollectorKind),
-		collectorVer:  strings.TrimSpace(opts.CollectorVer),
-		interfaceName: strings.TrimSpace(opts.InterfaceName),
+		db:                   db,
+		identityDeltaEnabled: os.Getenv("PROXY_SENTINEL_IDENTITY_DELTA_ENABLED") == "true",
+		dsn:                  opts.DSN,
+		sensorID:             sensorID,
+		collectorKind:        strings.TrimSpace(opts.CollectorKind),
+		collectorVer:         strings.TrimSpace(opts.CollectorVer),
+		interfaceName:        strings.TrimSpace(opts.InterfaceName),
 	}, nil
 }
 
@@ -425,6 +430,10 @@ func (s *PostgresStore) resolveIdentityHistoryAt(ctx context.Context, ip string,
 }
 
 func (s *PostgresStore) GetEndpointIdentity(ctx context.Context, endpointID string, query Query) (EndpointIdentityProfile, bool, error) {
+	return s.getEndpointIdentity(ctx, endpointID, query, false)
+}
+
+func (s *PostgresStore) getEndpointIdentity(ctx context.Context, endpointID string, query Query, recognitionOnly bool) (EndpointIdentityProfile, bool, error) {
 	var snapshotErr error
 	ctx, snapshotErr = s.domainSnapshot(ctx)
 	if snapshotErr != nil {
@@ -448,16 +457,21 @@ func (s *PostgresStore) GetEndpointIdentity(ctx context.Context, endpointID stri
 		return EndpointIdentityProfile{}, false, err
 	}
 	state.Sessions = sessions
-	ipHistory, err := s.queryIdentityIPMACHistory(ctx, "endpoint_id = $1", []any{endpointID}, limit)
-	if err != nil {
-		return EndpointIdentityProfile{}, false, err
+	if recognitionOnly {
+		state.IPMACHistory, state.AccessHistory, err = s.recognitionHistory(ctx, endpointID, limit)
+		if err != nil {
+			return EndpointIdentityProfile{}, false, err
+		}
+	} else {
+		state.IPMACHistory, err = s.queryIdentityIPMACHistory(ctx, "endpoint_id = $1", []any{endpointID}, limit)
+		if err != nil {
+			return EndpointIdentityProfile{}, false, err
+		}
+		state.AccessHistory, err = s.queryIdentityAccessHistory(ctx, "endpoint_id = $1", []any{endpointID}, limit)
+		if err != nil {
+			return EndpointIdentityProfile{}, false, err
+		}
 	}
-	state.IPMACHistory = ipHistory
-	accessHistory, err := s.queryIdentityAccessHistory(ctx, "endpoint_id = $1", []any{endpointID}, limit)
-	if err != nil {
-		return EndpointIdentityProfile{}, false, err
-	}
-	state.AccessHistory = accessHistory
 	profile, ok := BuildEndpointIdentityProfile(state, endpointID)
 	if ok {
 		now := time.Now().UTC()

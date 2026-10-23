@@ -26,4 +26,3 @@ export const applicationAPI = {
 
  },
 }
-export function formatBytes(n: number | null | undefined): string { if (n == null) return '不可用'; if (n < 1024) return `${n} B`; const index = Math.min(4, Math.floor(Math.log(n) / Math.log(1024))); return `${(n / 1024 ** index).toFixed(1)} ${['B','KiB','MiB','GiB','TiB'][index]}` }

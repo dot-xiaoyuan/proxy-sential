@@ -1,3 +1,4 @@
+import { AppListHeader, AppTable, formatCount, formatDateTime } from '../shared/ui'
 import { Notice as Alert } from '../shared/ui/Notice'
 import { statusText } from '../shared/ui/status'
 import { detailPath } from '../app/navigation'
@@ -9,10 +10,10 @@ import {Button,
   Descriptions,
   Drawer,
   Space,
-  Table,
   Tabs,
   Tag,
-  Typography} from "antd";
+  Typography,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 
 import {
@@ -35,7 +36,7 @@ import {
   useServerPagination,
 } from "../shared/ui";
 
-export function IngestPage() {
+export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [activeTab, setActiveTab] = useUrlState("diagnostic_tab","nodes",["nodes","types","diagnostics","errors","events"]);
   const [inspectJson, setInspectJson] = useState<{
     title: string;
@@ -65,7 +66,7 @@ export function IngestPage() {
   }
 
   if (status.isError || !status.data) {
-    return <AppErrorAlert title="采集诊断节点加载失败" />;
+    return <AppErrorAlert title="采集诊断节点读取失败" />;
   }
 
   const severityType =
@@ -86,7 +87,7 @@ export function IngestPage() {
       dataIndex: "timestamp",
       width: 170,
       render: (value: string) => (
-        <span className="mono-path">{new Date(value).toLocaleString()}</span>
+        <span className="mono-path">{formatDateTime(value)}</span>
       ),
     },
     { title: "阶段", dataIndex: "stage", width: 100 },
@@ -163,7 +164,7 @@ export function IngestPage() {
       dataIndex: "timestamp",
       width: 170,
       render: (value: string) => (
-        <span className="mono-path">{new Date(value).toLocaleString()}</span>
+        <span className="mono-path">{formatDateTime(value)}</span>
       ),
     },
     {
@@ -191,18 +192,11 @@ export function IngestPage() {
     },
   ];
 
+  const Shell = embedded ? 'section' : 'main'
   return (
-    <main className="page">
-      <AppPageHeader
-        loading={status.isFetching}
-        onRefresh={() => {
-          void status.refetch();
-          void diagnostics.refetch();
-          void errors.refetch();
-        }}
-        subtitle="查看采集节点状态、标准事件与异常记录"
-        title="采集诊断与节点性能"
-      />
+    <Shell className={embedded ? 'page-content' : 'page'}>
+      {!embedded && <AppPageHeader
+      />}
 
       <Alert
         className="ingest-status-alert"
@@ -245,7 +239,7 @@ export function IngestPage() {
                 : "orange"
           }
           statusText={zeekStatusText(zeekStatus)}
-          title="Zeek 设备事件"
+          title="Zeek 终端事件"
           value={zeekDeviceCount}
         />
       </section>
@@ -261,7 +255,7 @@ export function IngestPage() {
               label: "节点状态",
               children: (
                 <div className="tab-content-stack">
-                  <Typography.Title level={4}>采集服务节点</Typography.Title>
+                  <AppListHeader title="采集服务节点" />
                   <Descriptions column={{ xs: 1, sm: 2, md: 4 }} size="small">
                     <Descriptions.Item label="Sensor ID">
                       {status.data.sensor_id}
@@ -285,7 +279,7 @@ export function IngestPage() {
                       </span>
                     </Descriptions.Item>
                     <Descriptions.Item label="DHCP Offset">{`${numberDetail(latestDiagnostic, "zeek_previous_offset")} → ${numberDetail(latestDiagnostic, "zeek_new_offset")}`}</Descriptions.Item>
-                    <Descriptions.Item label="设备事件">
+                    <Descriptions.Item label="终端事件">
                       {zeekDeviceCount}
                     </Descriptions.Item>
                     <Descriptions.Item label="日志轮转">
@@ -315,7 +309,7 @@ export function IngestPage() {
                         标准事件
                       </Tag>
                       <span className="ingest-event-type-count">
-                        {item.count.toLocaleString()} msg
+                        {formatCount(item.count)} msg
                       </span>
                     </div>
                   ))}
@@ -327,7 +321,8 @@ export function IngestPage() {
               label: "诊断",
               children: (
                 <div className="ingest-table-container">
-                  <Table<IngestDiagnostic>
+                  <AppListHeader title="采集诊断" count={`${diagnostics.data?.page.total ?? 0} 条`} />
+                  <AppTable<IngestDiagnostic>
                     columns={diagnosticColumns}
                     dataSource={diagnostics.data?.diagnostics ?? []}
                     pagination={false}
@@ -349,7 +344,8 @@ export function IngestPage() {
               label: "错误记录",
               children: (
                 <div className="ingest-table-container">
-                  <Table<IngestDiagnostic>
+                  <AppListHeader title="采集错误" count={`${errors.data?.page.total ?? 0} 条`} />
+                  <AppTable<IngestDiagnostic>
                     columns={diagnosticColumns}
                     dataSource={errors.data?.diagnostics ?? []}
                     pagination={false}
@@ -371,7 +367,8 @@ export function IngestPage() {
               label: "最近事件",
               children: (
                 <div className="ingest-table-container">
-                  <Table<NormalizedEventSummary>
+                  <AppListHeader title="最近事件" count={`${events.data?.page.total ?? 0} 条`} />
+                  <AppTable<NormalizedEventSummary>
                     columns={eventColumns}
                     dataSource={events.data?.events ?? []}
                     pagination={false}
@@ -404,7 +401,7 @@ export function IngestPage() {
           </pre>
         )}
       </Drawer>
-    </main>
+    </Shell>
   );
 }
 
@@ -564,7 +561,7 @@ function zeekStatusText(status: string) {
 function zeekStatusDescription(status: string) {
   switch (status) {
     case "no_dhcp_events":
-      return "Zeek 日志存在，但最新 shadow run 没有转换出设备事件。";
+      return "Zeek 日志存在，但最新 shadow run 没有转换出终端事件。";
     case "unavailable":
       return "Zeek 日志路径不可读，需检查 Zeek 服务、日志目录和权限。";
     case "log_truncated":

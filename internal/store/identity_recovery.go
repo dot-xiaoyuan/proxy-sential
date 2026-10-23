@@ -90,7 +90,7 @@ func (s *PostgresStore) RecoverFailedIdentityBatches(ctx context.Context, source
 		report.UniqueEvents += len(unique)
 		for key, scope := range scopes {
 			enabled := false
-			if err = s.db.QueryRowContext(ctx, `SELECT enabled FROM identity_pipeline_scopes WHERE scope_key=$1`, key).Scan(&enabled); err != nil {
+			if err = s.db.QueryRowContext(ctx, IdentityScopeStatusSQL(`SELECT enabled FROM identity_pipeline_scopes WHERE scope_key=$1`), key).Scan(&enabled); err != nil {
 				return report, err
 			}
 			if !enabled {
@@ -153,7 +153,7 @@ func (s *PostgresStore) RecoverFailedIdentityBatches(ctx context.Context, source
 			for start := 0; start < len(pending); start += 25 {
 				for {
 					var waiting, exportPending int64
-					if err = s.db.QueryRowContext(ctx, `SELECT pending_records,export_pending_records FROM identity_pipeline_scopes WHERE scope_key=$1`, key).Scan(&waiting, &exportPending); err != nil {
+					if err = s.db.QueryRowContext(ctx, IdentityScopeStatusSQL(`SELECT pending_records,export_pending_records FROM identity_pipeline_scopes WHERE scope_key=$1`), key).Scan(&waiting, &exportPending); err != nil {
 						return report, err
 					}
 					if waiting == 0 && exportPending <= identityRecoveryExportBudget {
@@ -190,7 +190,7 @@ func (s *PostgresStore) RecoverFailedIdentityBatches(ctx context.Context, source
 			}
 		}
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(sum(pending_records),0),COALESCE(sum(export_pending_records),0) FROM identity_pipeline_scopes WHERE source=$1 AND sensor_id=$2`, source, sensor).Scan(&report.PendingIdentity, &report.RawExportPending)
+	err = s.db.QueryRowContext(ctx, IdentityScopeStatusSQL(`SELECT COALESCE(sum(pending_records),0),COALESCE(sum(export_pending_records),0) FROM identity_pipeline_scopes WHERE source=$1 AND sensor_id=$2`), source, sensor).Scan(&report.PendingIdentity, &report.RawExportPending)
 	report.Complete = err == nil && report.InvalidEvents == 0 && len(report.MissingEvidenceBatches) == 0 && report.AlreadyApplied == report.UniqueEvents && report.PendingIdentity == 0 && report.RawExportPending == 0
 	return report, err
 }

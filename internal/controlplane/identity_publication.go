@@ -13,7 +13,7 @@ func (s *Server) handleIdentityPublication(w http.ResponseWriter, r *http.Reques
 	q := r.URL.Query()
 	scope := store.IdentityScope{Source: q.Get("source"), SensorID: q.Get("sensor_id"), CampusID: q.Get("campus_id"), AccessDomain: q.Get("access_domain")}
 	var id, state string
-	err := s.operations.db.QueryRowContext(r.Context(), `SELECT snapshot_id,calibration_state FROM identity_pipeline_scopes WHERE scope_key=$1`, store.IdentityScopeKey(scope)).Scan(&id, &state)
+	err := s.operations.db.QueryRowContext(r.Context(), store.IdentityScopeStatusSQL(`SELECT snapshot_id,calibration_state FROM identity_pipeline_scopes WHERE scope_key=$1`), store.IdentityScopeKey(scope)).Scan(&id, &state)
 	if err != nil && err != sql.ErrNoRows {
 		writeError(w, 503, "identity_publication_unavailable", "calibration status unavailable")
 		return

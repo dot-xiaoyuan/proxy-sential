@@ -55,6 +55,7 @@ type Indicator struct {
 	MatchType  string  `json:"match_type"`
 	Category   string  `json:"category"`
 	Name       string  `json:"name,omitempty"`
+	NameZH     string  `json:"name_zh,omitempty"`
 	Confidence float64 `json:"confidence"`
 	Status     string  `json:"status"`
 	Source     string  `json:"source"`
@@ -81,6 +82,7 @@ type Matcher struct {
 	version    string
 	updatedAt  string
 	indicators []Indicator
+	sources    []Source
 	official   map[string]struct{}
 	root       *node
 }
@@ -110,6 +112,35 @@ func (m *Matcher) IndicatorCount() int {
 		return 0
 	}
 	return len(m.indicators)
+}
+
+// Indicators returns a copy of the immutable rules for bounded read queries.
+func (m *Matcher) Indicators() []Indicator {
+	if m == nil {
+		return nil
+	}
+	return append([]Indicator(nil), m.indicators...)
+}
+
+// Sources returns the provenance entries for the embedded indicator rules.
+func (m *Matcher) Sources() []Source {
+	if m == nil {
+		return nil
+	}
+	return append([]Source(nil), m.sources...)
+}
+
+// OfficialDomains returns the explicit first-party exclusions.
+func (m *Matcher) OfficialDomains() []string {
+	if m == nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.official))
+	for domain := range m.official {
+		out = append(out, domain)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Load parses and validates an indicator asset. Invalid data is rejected
@@ -149,6 +180,7 @@ func Load(data []byte) (*Matcher, error) {
 	matcher := &Matcher{
 		version:   doc.Version,
 		updatedAt: doc.UpdatedAt,
+		sources:   append([]Source(nil), doc.Sources...),
 		official:  map[string]struct{}{},
 		root:      &node{children: map[string]*node{}},
 	}

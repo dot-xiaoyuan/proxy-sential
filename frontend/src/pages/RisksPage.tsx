@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { useRisks } from '../shared/api/queries'
 import type { RiskLevel } from '../shared/api/types'
-import { AppErrorAlert, AppLoadingState, AppPageHeader, AppServerPagination, AppTableBar, UniversityDimensionFilters, useServerPagination, type QuickWindow, type UniversityDimensions } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppPageHeader, AppServerPagination, AppTableBar, type QuickWindow, type UniversityDimensions, UniversityDimensionFilters, useServerPagination } from '../shared/ui'
 import { RiskTable } from '../widgets/RiskTable'
 
 export function RisksPage() {
@@ -20,10 +20,10 @@ export function RisksPage() {
   ]
   if (risks.isLoading) return <AppLoadingState rows={8} />
   return <main className="page">
-    <AppPageHeader title="风险 IP 监控" subtitle="单行展示风险摘要，点击 IP 查看设备、证据与事件详情。" quickWindow={quickWindow} onQuickWindowChange={setQuickWindow} loading={risks.isFetching} onRefresh={() => void risks.refetch()} />
-    {risks.isError && <AppErrorAlert title="加载风险快照失败" message={risks.error.message} />}
-    <AppTableBar filterOptions={filterOptions} onClearFilters={() => {setLevel('all');setSearchInput('');pagination.reset()}} onFilterToggle={(key) => {setLevel(level===key?'all':key as RiskLevel);pagination.reset()}} onSearchChange={setSearchInput} searchPlaceholder="搜索 IP 或风险摘要" searchValue={searchInput} totalCount={risks.data?.page.total ?? 0} />
+    <AppPageHeader quickWindow={quickWindow} onQuickWindowChange={setQuickWindow} />
+    {risks.isError && <AppErrorAlert title="读取风险快照失败" message={risks.error.message} />}
+    <AppTableBar filterOptions={filterOptions} onClearFilters={() => {setLevel('all');setSearchInput('');pagination.reset()}} onFilterToggle={(key) => {setLevel(level===key?'all':key as RiskLevel);pagination.reset()}} onSearchChange={setSearchInput} searchPlaceholder="搜索 IP 或风险摘要" searchValue={searchInput} />
     <details className="surface filter-disclosure"><summary>高校维度筛选</summary><div className="filter-disclosure-content"><UniversityDimensionFilters value={dimensions} onChange={(next) => { setDimensions(next); pagination.reset() }} /></div></details>
-    <section className="surface"><RiskTable data={risks.data?.items ?? []} loading={risks.isFetching} /><AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={risks.data?.page.total ?? 0} onChange={pagination.update} /></section>
+    <section className="surface"><AppListHeader title="风险 IP" count={`${risks.data?.page.total ?? 0} 条`} /><RiskTable data={risks.data?.items ?? []} loading={risks.isFetching} /><AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={risks.data?.page.total ?? 0} onChange={pagination.update} /></section>
   </main>
 }

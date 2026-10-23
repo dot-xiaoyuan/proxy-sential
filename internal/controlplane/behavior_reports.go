@@ -275,6 +275,9 @@ func (s *Server) handleBehaviorReportChannelTest(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "该接口不支持此操作")
 		return
 	}
+	if s.observeTestRequest(w, r, "拟行为上报测试", id) {
+		return
+	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
 	channel, err := storage.GetBehaviorReportChannel(ctx, id)
@@ -431,6 +434,10 @@ func (s *Server) startBehaviorReportWorker() {
 }
 
 func (s *Server) processBehaviorReports(now time.Time) {
+	if violationObservationOnly() {
+		s.observeQueuedBehaviorReports()
+		return
+	}
 	storage, ok := s.behaviorReports()
 	if !ok {
 		return
@@ -490,6 +497,9 @@ func (s *Server) enqueueBehaviorReportCandidates(ctx context.Context, storage be
 }
 
 func (s *Server) deliverBehaviorReportChannel(ctx context.Context, storage behaviorReportReader, channel store.BehaviorReportChannel) {
+	if violationObservationOnly() {
+		return
+	}
 	rows, err := storage.ClaimBehaviorReportBatch(ctx, channel.ChannelID, channel.BatchSize)
 	if err != nil || len(rows) == 0 {
 		return

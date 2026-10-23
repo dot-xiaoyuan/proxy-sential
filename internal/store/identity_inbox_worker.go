@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
@@ -21,6 +22,7 @@ const (
 	identityInboxLease      = 70 * time.Second
 	identityInboxBatchMin   = 100
 	identityInboxBatchMax   = 2000
+	identityInboxMaxBytes   = 4 << 20
 )
 
 // nextInboxBatchSize sizes the next claim. Per-batch cost is dominated by fixed round
@@ -39,6 +41,15 @@ func nextInboxBatchSize(size int, elapsed time.Duration, err error, stable *int)
 	return size
 }
 func (s *DBStore) runIdentityInbox(ctx context.Context) {
+	if identitySplitProgressEnabled() {
+		lane, close, e := s.identityLane(2)
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "identity inbox pool: %v\n", e)
+			return
+		}
+		defer close()
+		s = lane
+	}
 	size, stable := identityInboxBatchMin, 0
 	nextProgress := time.Time{}
 	for ctx.Err() == nil {
@@ -55,14 +66,34 @@ func (s *DBStore) runIdentityInbox(ctx context.Context) {
 			err = s.pg.applyIdentityInbox(work, w)
 			cancel()
 			size = nextInboxBatchSize(size, time.Since(began), err, &stable)
+			if identitySplitProgressEnabled() {
+				finished := time.Now()
+				index := 0
+				for _, b := range w.Batches {
+					ids := []string{}
+					latency := finished.Sub(b.AcceptedAt)
+					if err != nil || latency > 5*time.Second {
+						for _, event := range w.Events[index : index+b.Count] {
+							ids = append(ids, event.EventID)
+						}
+					}
+					metric := map[string]any{"metric": "identity_queryable", "batch_id": b.BatchID, "sequence": b.Sequence, "offset": b.Offset, "records": b.Count, "accepted_at": b.AcceptedAt, "completed_at": finished, "queryable_at": nil, "latency_ms": latency.Milliseconds(), "apply_ms": time.Since(began).Milliseconds(), "claim_ms": claimDuration.Milliseconds(), "failed": err != nil, "overdue_event_ids": ids}
+					if err == nil {
+						metric["queryable_at"] = finished
+					}
+					raw, _ := json.Marshal(metric)
+					fmt.Fprintln(os.Stderr, string(raw))
+					index += b.Count
+				}
+			}
 			if err == nil && time.Now().After(nextProgress) {
 				fmt.Fprintf(os.Stderr, "identity inbox progress: records=%d claim=%s apply=%s next_batch=%d\n", len(w.Events), claimDuration, time.Since(began), size)
 				nextProgress = time.Now().Add(30 * time.Second)
 			}
 			if err != nil {
-				report, stop := context.WithTimeout(ctx, time.Second)
-				_, _ = s.pg.db.ExecContext(report, `UPDATE identity_pipeline_scopes SET lease_until=now()+interval '2 seconds',heartbeat_at=now(),last_error=$3 WHERE scope_key=$1 AND lease_epoch=$2`, w.Scope, w.Epoch, "identity_processing_failed")
-				stop()
+				if releaseErr := s.pg.releaseIdentityInboxFailure(ctx, w); releaseErr != nil {
+					fmt.Fprintf(os.Stderr, "identity inbox lease release: %v\n", releaseErr)
+				}
 			}
 		}
 		delay := 20 * time.Millisecond
@@ -71,7 +102,11 @@ func (s *DBStore) runIdentityInbox(ctx context.Context) {
 				// Idle liveness only: consumers treat 15 s as stale, so a 5 s refresh keeps the
 				// signal while removing four of five writes to the shared scope row.
 				health, c := context.WithTimeout(ctx, time.Second)
-				_, _ = s.pg.db.ExecContext(health, `UPDATE identity_pipeline_scopes SET heartbeat_at=now() WHERE sensor_id=$1 AND (heartbeat_at IS NULL OR heartbeat_at<now()-interval '5 seconds')`, s.pg.sensorID)
+				heartbeatSQL := `UPDATE identity_pipeline_scopes SET heartbeat_at=now() WHERE scope_key IN (SELECT scope_key FROM identity_pipeline_scopes WHERE sensor_id=$1) AND (heartbeat_at IS NULL OR heartbeat_at<now()-interval '5 seconds')`
+				if identitySplitProgressEnabled() {
+					heartbeatSQL = strings.Replace(heartbeatSQL, "UPDATE identity_pipeline_scopes", "UPDATE identity_consume_progress", 1)
+				}
+				_, _ = s.pg.db.ExecContext(health, heartbeatSQL, s.pg.sensorID)
 				c()
 			}
 			delay = time.Second
@@ -85,6 +120,16 @@ func (s *DBStore) runIdentityInbox(ctx context.Context) {
 		case <-time.After(delay):
 		}
 	}
+}
+
+// Graceful shutdown cancels the work context before this cleanup. Give the
+// fenced release its own bounded context so restart need not wait a 70s lease.
+// Offset, accepted time, event facts and consumer progress are never advanced.
+func (s *PostgresStore) releaseIdentityInboxFailure(ctx context.Context, w identityInboxWork) error {
+	report, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer stop()
+	_, err := s.db.ExecContext(report, identityConsumeSQL(`UPDATE identity_pipeline_scopes SET lease_until=now()+interval '2 seconds',heartbeat_at=now(),last_error=$3 WHERE scope_key=$1 AND lease_epoch=$2 AND current_generation=$4`), w.Scope, w.Epoch, "identity_processing_failed", w.Generation)
+	return err
 }
 
 // Export is independently leased and never holds a PostgreSQL transaction across
@@ -165,7 +210,7 @@ func (s *DBStore) exportIdentityInboxBatch(ctx context.Context) error {
 				seen[batch.Scope] = true
 			}
 		}
-		_, _ = s.pg.db.ExecContext(report, `UPDATE identity_pipeline_scopes SET export_last_error='raw_export_failed',export_heartbeat_at=now() WHERE scope_key=ANY($1::text[])`, scopes)
+		_, _ = s.pg.db.ExecContext(report, identityExportSQL(`UPDATE identity_pipeline_scopes SET export_last_error='raw_export_failed',export_heartbeat_at=now() WHERE scope_key=ANY($1::text[])`), scopes)
 		return err
 	}
 	tx, err = s.pg.db.BeginTx(ctx, nil)
@@ -206,7 +251,11 @@ func (s *DBStore) exportIdentityInboxBatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE identity_pipeline_scopes p SET export_pending_records=p.export_pending_records-r.records,export_last_error='',export_heartbeat_at=now(),export_completed_at=now() FROM jsonb_to_recordset($1::jsonb) r(scope_key text,records integer) WHERE p.scope_key=r.scope_key`, rawUpdates)
+	exportSQL := `UPDATE identity_pipeline_scopes p SET export_pending_records=p.export_pending_records-r.records,export_last_error='',export_heartbeat_at=now(),export_completed_at=now() FROM jsonb_to_recordset($1::jsonb) r(scope_key text,records integer) WHERE p.scope_key=r.scope_key`
+	if identitySplitProgressEnabled() {
+		exportSQL = `UPDATE identity_export_progress p SET exported_records=p.exported_records+r.records,export_last_error='',export_heartbeat_at=now(),export_completed_at=now() FROM jsonb_to_recordset($1::jsonb) r(scope_key text,records integer) WHERE p.scope_key=r.scope_key`
+	}
+	result, err = tx.ExecContext(ctx, exportSQL, rawUpdates)
 	if err != nil {
 		return err
 	}
@@ -217,6 +266,15 @@ func (s *DBStore) exportIdentityInboxBatch(ctx context.Context) error {
 	return tx.Commit()
 }
 func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
+	if identitySplitProgressEnabled() {
+		lane, close, e := s.identityLane(1)
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "identity export pool: %v\n", e)
+			return
+		}
+		defer close()
+		s = lane
+	}
 	for ctx.Err() == nil {
 		// Raw evidence remains durably queued in PostgreSQL. When the authoritative
 		// identity lane falls behind, avoid competing ClickHouse writes on the
@@ -229,7 +287,11 @@ func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
 		cancel()
 		if errors.Is(err, sql.ErrNoRows) {
 			health, c := context.WithTimeout(ctx, time.Second)
-			_, _ = s.pg.db.ExecContext(health, `UPDATE identity_pipeline_scopes SET export_heartbeat_at=now() WHERE sensor_id=$1 AND (export_heartbeat_at IS NULL OR export_heartbeat_at<now()-interval '5 seconds')`, s.pg.sensorID)
+			heartbeatSQL := `UPDATE identity_pipeline_scopes SET export_heartbeat_at=now() WHERE scope_key IN (SELECT scope_key FROM identity_pipeline_scopes WHERE sensor_id=$1) AND (export_heartbeat_at IS NULL OR export_heartbeat_at<now()-interval '5 seconds')`
+			if identitySplitProgressEnabled() {
+				heartbeatSQL = strings.Replace(heartbeatSQL, "UPDATE identity_pipeline_scopes", "UPDATE identity_export_progress", 1)
+			}
+			_, _ = s.pg.db.ExecContext(health, heartbeatSQL, s.pg.sensorID)
 			c()
 		}
 		delay := 20 * time.Millisecond
@@ -242,4 +304,18 @@ func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
 		case <-time.After(delay):
 		}
 	}
+}
+
+// Independent connection budgets prevent low-priority export/calibration from
+// consuming the realtime lane's pool. Existing query pool stays unchanged.
+func (s *DBStore) identityLane(connections int) (*DBStore, func(), error) {
+	db, err := sql.Open("pgx", s.pg.dsn)
+	if err != nil {
+		return nil, nil, err
+	}
+	db.SetMaxOpenConns(connections)
+	db.SetMaxIdleConns(connections)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	pg := &PostgresStore{db: db, dsn: s.pg.dsn, sensorID: s.pg.sensorID, identityDeltaEnabled: s.pg.identityDeltaEnabled}
+	return &DBStore{pg: pg, ch: s.ch}, func() { db.Close() }, nil
 }

@@ -3,7 +3,7 @@ import { ActiveRiskIps } from './ActiveRiskIps'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertOutlined,
@@ -11,7 +11,6 @@ import {
   CloudServerOutlined,
   CodeOutlined,
   DatabaseOutlined,
-  DeploymentUnitOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { Card, Progress, Select, Typography } from 'antd'
@@ -20,14 +19,7 @@ import { RootFilesystemCapacity, RootFilesystemWarning } from '../entities/syste
 import { formatBytes } from '../shared/ui/formatBytes'
 import { useActivityOverview, useOrganization, useOverview, useSystemStatus } from '../shared/api/queries'
 import type { RiskLevel } from '../shared/api/types'
-import {
-  AppErrorAlert,
-  AppLoadingState,
-  AppMetricCard,
-  AppPageHeader,
-  StatisticsTime,
-  type ReportWindow,
-} from '../shared/ui'
+import { AppErrorAlert, AppLoadingState, AppMetricCard, AppPageHeader, StatisticsTime, type ReportWindow } from '../shared/ui'
 
 const levelOrder: RiskLevel[] = ['confirmed', 'high', 'suspicious', 'normal']
 
@@ -38,23 +30,6 @@ const levelNames: Record<RiskLevel, string> = {
   normal: '正常终端',
 }
 
-const evidenceNames: Record<string, string> = {
-  ttl_clusters: 'TTL 路径差异',
-  multi_ja3_ja4: '多 JA3 / JA4 指纹',
-  port_distribution: '端口分布线索',
-  dhcp_device_fingerprint: 'DHCP 设备指纹',
-  encrypted_tunnel_behavior: '加密传输线索',
-  domain_diversity: '域名多样性',
-  vpn_proxy_domain_hint: '代理域名线索',
-  ua_os_divergence: 'UA 与系统偏差',
-  vpn_proxy_rule_hint: '代理规则线索',
-  vpn_proxy_rule_match: '代理规则命中',
-  known_game_accelerator: '游戏加速器',
-  device_fingerprint_conflict: '设备画像差异',
-  ai_relay_domain_usage: 'AI 中继域名',
-  shared_access_window: '共享接入窗口',
-  multi_user_agent: '多用户代理',
-}
 
 const componentNames: Record<string, string> = {
   operations: '运营数据',
@@ -127,6 +102,7 @@ export function OverviewPage() {
   const [windowValue,setQuickWindow]=useUrlState('window','1h',['10m','1h','24h','7d','30d']);const quickWindow=windowValue as ReportWindow
   const [campusId,setCampusId]=useUrlState('campus_id','');const session=useSession();
   const [sensorId]=useUrlState('sensor_id','');
+  const [healthOpen,setHealthOpen]=useState(true)
   const context=new URLSearchParams({window:quickWindow,...(campusId?{campus_id:campusId}:{}),...(sensorId?{sensor_id:sensorId}:{})}).toString()
   const organization = useOrganization(can(session.data,'organization:read'))
   const overview = useOverview({ window: quickWindow, sensor_id:sensorId||undefined, campus_id: campusId || undefined })
@@ -138,28 +114,21 @@ export function OverviewPage() {
   }
 
   if (overview.isError || !overview.data) {
-    return <AppErrorAlert title="总览控制塔加载失败" message={overview.error?.message} />
+    return <AppErrorAlert title="总览控制塔读取失败" message={overview.error?.message} />
   }
 
   const levelCounts = overview.data.level_counts
   const totalRiskObjects = levelOrder.reduce((total, level) => total + levelCounts[level], 0)
-  const maxEvidenceCount = Math.max(...overview.data.top_evidence.map((item) => item.count), 1)
   const runtime = system.data?.runtime
   const host = runtime?.host
   const process = runtime?.process
   const hostLoadPercent = host?.load_1 === undefined ? undefined : (host.load_1 / Math.max(host.logical_cpus, 1)) * 100
-  const healthComponents = Object.entries(system.data?.components ?? {})
+  const healthComponents = Object.entries(system.data?.components ?? {}).filter(([, item]) => Boolean(item.status))
 
   return (
     <main className="page overview-page">
       <AppPageHeader
-        loading={overview.isFetching || activity.isFetching || system.isFetching}
         onQuickWindowChange={setQuickWindow}
-        onRefresh={() => {
-          void overview.refetch()
-          void activity.refetch()
-          void system.refetch()
-        }}
         quickWindow={quickWindow}
         quickWindows={['10m', '1h', '24h', '7d', '30d']}
         extra={(
@@ -173,8 +142,6 @@ export function OverviewPage() {
             ]}
           />
         )}
-        subtitle="优先处理风险待办、超时案件和证据复核"
-        title="高校网络风险运营工作台"
       />
 
       <StatisticsTime freshness={overview.data.data_freshness} value={overview.data.statistics_as_of} />
@@ -210,7 +177,7 @@ export function OverviewPage() {
         />
       </section>
 
-      <details className="surface platform-health"><summary>平台健康与运行负载 <RootFilesystemWarning status={host?.root_filesystem} error={host?.root_filesystem_error} /></summary><div className="overview-runtime-grid">        <Card className="surface-card overview-panel" size="small">
+      <details className="surface platform-health" open={healthOpen} onToggle={event=>setHealthOpen(event.currentTarget.open)}><summary>平台健康与运行负载 <RootFilesystemWarning status={host?.root_filesystem} error={host?.root_filesystem_error} /></summary><div className="overview-runtime-grid">{host && <Card className="surface-card overview-panel" size="small">
           <PanelHeader icon={<CloudServerOutlined />} title="服务器负载" meta={host ? `${host.logical_cpus} 核` : undefined} />
           <div className="overview-load-stack">
             {hostLoadPercent !== undefined && host?.load_1 !== undefined && (
@@ -231,9 +198,9 @@ export function OverviewPage() {
               {host.load_15 !== undefined && <div><span>15 分钟负载</span><strong>{host.load_15.toFixed(2)}</strong></div>}
             </div>
           )}
-        </Card>
+        </Card>}
 
-        <Card className="surface-card overview-panel" size="small">
+        {process && <Card className="surface-card overview-panel" size="small">
           <PanelHeader icon={<CodeOutlined />} title="程序负载" meta={process ? `运行 ${formatDuration(process.uptime_seconds)}` : undefined} />
           {process && (
             <>
@@ -248,9 +215,9 @@ export function OverviewPage() {
               </div>
             </>
           )}
-          {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="运行状态接口加载失败" />}
-        </Card>
-        <Card className="surface-card overview-panel" size="small">
+          {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="运行状态接口读取失败" />}
+        </Card>}
+        {healthComponents.length > 0 && <Card className="surface-card overview-panel" size="small">
           <PanelHeader
             icon={<CheckCircleOutlined />}
             title="平台链路健康"
@@ -266,14 +233,14 @@ export function OverviewPage() {
               </div>
             ))}
           </div>
-          {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="平台健康状态加载失败" />}
-        </Card>
+          {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="平台健康状态读取失败" />}
+        </Card>}
 </div></details>
 
-      <section className="surface workbench-actions"><Typography.Title level={4}>风险待办</Typography.Title><p>待处理 {overview.data.open_case_count??overview.data.pending_reviews} 件 · 超时 {overview.data.overdue_case_count??0} 件</p><div className="policy-toolbar">
-      {can(session.data,'cases:read')&&<><Link to={`/cases?${context}`}>处理风险案件</Link><Link to={`/shared-access?tab=reviews&${context}`}>进入账号复核</Link></>}
+      {(overview.data.open_case_count??overview.data.pending_reviews)>0||(overview.data.overdue_case_count??0)>0 ? <section className="surface workbench-actions"><Typography.Title level={4}>风险待办</Typography.Title><p>待处理 {overview.data.open_case_count??overview.data.pending_reviews} 件 · 超时 {overview.data.overdue_case_count??0} 件</p><div className="policy-toolbar">
+      {can(session.data,'cases:read')&&<><Link to={`/cases?${context}`}>处理风险案件</Link><Link to={`/shared-access?tab=reviews&${context}`}>核对账号归属</Link></>}
       {can(session.data,'actions:read')&&<Link to="/actions?tab=actions">核对处置记录</Link>}
-      </div></section>
+      </div></section> : null}
       {activity.data && (activity.data.top_active_risk_ips?.length ?? 0) > 0 && <section className="surface"><ActiveRiskIps items={activity.data.top_active_risk_ips}/></section>}
       {totalRiskObjects > 0 && (
         <section className="overview-risk-summary">
@@ -283,6 +250,7 @@ export function OverviewPage() {
               {levelOrder.map((level) => {
                 const count = levelCounts[level]
                 const percent = totalRiskObjects > 0 ? count / totalRiskObjects * 100 : 0
+                if (count <= 0) return null
                 return (
                   <div className={`overview-risk-item overview-risk-item-${level}`} key={level}>
                     <span className="overview-risk-dot" />
@@ -298,34 +266,7 @@ export function OverviewPage() {
         </section>
       )}
 
-      <section className="overview-focus-grid">
-        <Card className="surface-card overview-panel overview-evidence-panel" size="small">
-          <PanelHeader
-            icon={<DeploymentUnitOutlined />}
-            title="历史累计证据"
-            meta={`展示前 ${Math.min(8, overview.data.top_evidence.length)} 类`}
-          />
-          <div className="overview-evidence-grid">
-            {overview.data.top_evidence.slice(0, 8).map((item) => (
-              <div className="overview-evidence-item" key={item.type}>
-                <div className="overview-evidence-label">
-                  <span title={item.type}>{evidenceNames[item.type] ?? item.type}</span>
-                  <strong>{item.count.toLocaleString()}</strong>
-                </div>
-                <Progress percent={item.count / maxEvidenceCount * 100} showInfo={false} strokeColor="#64748b" />
-              </div>
-            ))}
-          </div>
-          {overview.data.top_evidence.length > 8 && (
-            <Typography.Text className="overview-panel-footnote">
-              另有 {overview.data.top_evidence.length - 8} 类低贡献证据已收拢
-            </Typography.Text>
-          )}
-        </Card>
-
-      </section>
-
-      <section className="overview-detail-grid">
+      {activity.data && ((activity.data.active_ip_count ?? 0) > 0 || (activity.data.access_object_count ?? 0) > 0 || (activity.data.event_count ?? 0) > 0) && <section className="overview-detail-grid">
         <div className="surface overview-activity-summary">
           <div>
             <Typography.Title level={4}>DPI 访问态势</Typography.Title>
@@ -340,7 +281,7 @@ export function OverviewPage() {
           </div>
         </div>
 
-      </section>
+      </section>}
     </main>
   )
 }

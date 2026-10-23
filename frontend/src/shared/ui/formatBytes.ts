@@ -1,5 +1,5 @@
-export function formatBytes(value?: number) {
-  if (value === undefined) return ''
+export function formatBytes(value?: number | null) {
+  if (value == null) return ''
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let unitIndex = 0
   let result = value

@@ -7,6 +7,7 @@ import {
   AlertOutlined,
   LaptopOutlined,
   DeploymentUnitOutlined,
+  ApiOutlined,
   SafetyCertificateOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -26,6 +27,7 @@ import type { Session } from '../shared/api/types'
 
 const navigationIcons: Record<string, ReactNode> = {
   workbench: <DashboardOutlined />,
+  'ai-relay': <ApiOutlined />,
   risk: <AlertOutlined />,
   assets: <LaptopOutlined />,
   network: <DeploymentUnitOutlined />,
@@ -34,7 +36,7 @@ const navigationIcons: Record<string, ReactNode> = {
 }
 
 function buildNavItems(session: Session): MenuProps['items'] {
-  return visibleNavigation(session).map(group => group.key === 'workbench' ? {
+  return visibleNavigation(session).map(group => (group.key === 'workbench' || group.key === 'ai-relay') ? {
     key: group.items[0].key, icon: navigationIcons[group.key], label: <NavLink to={group.items[0].to}>{group.title}</NavLink>
   } : {key:group.key,label:group.title,icon:navigationIcons[group.key],children:group.items.map(entry=>({key:entry.key,label:<NavLink to={entry.to} onClick={()=>{if(entry.to.split('?')[0]==='/devices'){performance.clearMarks('device-inventory-enter');performance.mark('device-inventory-enter')}}}>{entry.title}</NavLink>}))})
 }
@@ -122,6 +124,12 @@ export function AppShell() {
               type="text"
             />
             {isMockEnabled && <span className="mock-badge">Mock API Active</span>}
+            {owner && (
+              <div className="app-current-page">
+                {owner.group.title !== owner.entry.title && <span className="app-current-group">{owner.group.title}</span>}
+                <h1 className="app-current-title">{owner.entry.title}</h1>
+              </div>
+            )}
           </Space>
           <Space size="middle">
             <div className="user-session-badge">

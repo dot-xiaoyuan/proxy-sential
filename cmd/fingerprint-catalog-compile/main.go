@@ -13,7 +13,7 @@ func main() {
 		panic(err)
 	}
 	fingerprint.PrepareCatalog(&c)
-	data, err := json.Marshal(c)
+	data, err := json.Marshal(&c)
 	if err != nil {
 		panic(err)
 	}

@@ -49,6 +49,10 @@ func inventoryIPMatches(ctx context.Context, db deviceInventoryQueryer, ids []st
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT ON(endpoint_id) endpoint_id,ip,source,matched_at FROM (
  SELECT endpoint_id,host(ip) ip,'ip_observation' source,observed_at matched_at FROM device_address_leases WHERE endpoint_id=ANY($5::text[]) AND ip=$1::inet AND (NOT $2 OR observed_at BETWEEN $3 AND $4)
  UNION ALL SELECT endpoint_id,host(ip),'account_session',greatest(started_at,coalesce(nullif(policy_metadata->>'last_confirmed_at','')::timestamptz,started_at)) FROM account_sessions WHERE endpoint_id=ANY($5::text[]) AND ip=$1::inet AND (NOT $2 OR (started_at<=$4 AND (ended_at IS NULL OR ended_at>=$3)))
+ UNION ALL SELECT p.document->>'endpoint_id',p.ip,'account_snapshot',`+projectionConfirmedSQL+`
+ FROM account_identity_session_projection p JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
+ WHERE p.document->>'endpoint_id'=ANY($5::text[]) AND p.ip=$1 AND COALESCE(p.document->>'ended_at','')='' AND `+projectionCurrentSQL+`
+ AND (NOT $2 OR `+projectionConfirmedSQL+` BETWEEN $3 AND $4)
  )m ORDER BY endpoint_id,matched_at DESC,source`, ip, q.View == "recent", deviceViewStart(q, now), now, ids)
 	if err != nil {
 		return nil, err

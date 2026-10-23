@@ -4,7 +4,7 @@ export const statusLabels: Record<string,string> = {
  normal:'正常', suspicious:'可疑', high:'高风险', confirmed:'极高风险',
  confirmed_proxy:'确认代理', false_positive:'误报', benign:'良性', needs_more_data:'需补数据', unreviewed:'未复核',
  shadow:'影子模式', active:'真实模式', observe:'仅观测', manual:'人工确认', automatic:'自动执行',
- pending:'等待执行', queued:'等待执行', running:'执行中', succeeded:'成功', failed:'失败', blocked:'已阻断',
+ pending:'等待执行', queued:'等待执行', running:'执行中', succeeded:'成功', failed:'失败', blocked:'已阻断', recorded:'仅记录，未执行', record_only:'仅记录',
  complete:'已完成', completed:'已完成', partial:'部分完成', cancelled:'已停止', revoked:'已撤销',
  sent:'已送达', sending:'投递中',
  awaiting_approval:'等待审批', approved:'已批准', cooldown:'冷却中', observing:'观测中', recovered:'已恢复',
@@ -16,8 +16,23 @@ export const statusLabels: Record<string,string> = {
  shadow_watch:'影子观察', shadow_manual_review:'人工复核（影子）', shadow_confirm_review:'重点复核（影子）',
 }
 export function statusText(value?: string | null) { return value ? statusLabels[value] ?? value : '' }
+// 状态色板：同一状态在列表、详情和标签里保持同一颜色，避免各页自选颜色。
+// 绿色=正常/生效/完成，蓝色=进行中/等待，金色=待处理，橙色=部分/降级，红色=失败/阻断，默认=停用/失效。
+const statusColors: Record<string, string> = {
+ healthy:'green', ok:'green', ready:'green', active:'green', enabled:'green', configured:'green',
+ succeeded:'green', sent:'green', complete:'green', completed:'green', resolved:'green',
+ approved:'green', recovered:'green', matched:'green',
+ pending:'blue', queued:'blue', running:'blue', sending:'blue', processing:'blue', recorded:'default',
+ awaiting_approval:'gold', scheduled:'gold', observing:'gold', shadow:'gold',
+ partial:'orange', degraded:'orange', stale:'orange', cooldown:'orange', insufficient:'orange',
+ failed:'red', error:'red', blocked:'red', revoked:'red', unavailable:'red',
+ cancelled:'default', expired:'default', disabled:'default', closed:'default', skipped:'default',
+}
+export function statusColor(value?: string | null) { return value ? statusColors[value] : undefined }
 const severityLabels:Record<string,string>={critical:'严重',high:'高',medium:'中',low:'低',info:'提示',warning:'警告',error:'错误'}
 export function severityText(value?:string|null){return value?severityLabels[value]??value:''}
+const severityColors:Record<string,string>={critical:'red',high:'red',medium:'orange',low:'gold',info:'blue',warning:'orange',error:'red'}
+export function severityColor(value?:string|null){return value?severityColors[value]:undefined}
 export function displayField(value?: string | null) {
  if(!value || /^(?:unknown|未知.*|未识别.*|未获取.*|未关联.*|待关联.*|未观测.*|[—-])$/i.test(value.trim()))return ''
  return value

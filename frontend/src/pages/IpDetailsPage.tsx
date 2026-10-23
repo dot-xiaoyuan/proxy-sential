@@ -1,18 +1,21 @@
-import { Notice as Alert } from '../shared/ui/Notice'
+import {
+  Notice as Alert } from '../shared/ui/Notice'
 import { safeReturnTo } from '../app/navigation'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { ApplicationActivity } from "../features/applications/ApplicationActivity";
 
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link,
+  useParams,
+  useSearchParams } from "react-router-dom";
 import {Descriptions,
   Progress,
   Skeleton,
   Space,
   Statistic,
-  Table,
   Tabs,
   Tag,
-  Typography} from "antd";
+  Typography,
+} from "antd";
 
 import { EvidenceList } from "../entities/evidence/EvidenceList";
 import { RiskLevelTag } from "../entities/risk/RiskLevelTag";
@@ -40,7 +43,7 @@ import type {
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
 import { displayField, statusText } from "../shared/ui/status";
-import { AppFactBar } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppListHeader, AppTable, formatDateTime } from '../shared/ui'
 
 export function IpDetailsPage() {
   const rawIp = useParams().ip ?? "";
@@ -59,7 +62,7 @@ export function IpDetailsPage() {
   }
 
   if (risk.isError || !risk.data) {
-    return <Alert showIcon title="IP 详情加载失败" type="error" />;
+    return <AppErrorAlert title="IP 详情读取失败" />;
   }
 
   const evidenceItems = evidence.data?.evidence ?? [];
@@ -77,7 +80,7 @@ export function IpDetailsPage() {
             {ip}
           </Typography.Title>
           <Typography.Text type="secondary">
-            风险解释、设备识别、访问画像、证据时间线和人工标注。
+            风险解释、终端识别、访问画像、证据时间线和人工标注。
           </Typography.Text>
         </div>
         <Space wrap>
@@ -131,14 +134,14 @@ export function IpDetailsPage() {
                   <Typography.Text type="secondary">
                     {risk.data.reviewed_by}
                     {risk.data.reviewed_at
-                      ? ` / ${new Date(risk.data.reviewed_at).toLocaleString()}`
+                      ? ` / ${formatDateTime(risk.data.reviewed_at)}`
                       : ""}
                   </Typography.Text>
                 )}
               </Space>
             </Descriptions.Item>
             <Descriptions.Item label="更新时间">
-              {risk.data.updated_at && Number.isFinite(Date.parse(risk.data.updated_at)) ? new Date(risk.data.updated_at).toLocaleString() : ''}
+              {risk.data.updated_at && Number.isFinite(Date.parse(risk.data.updated_at)) ? formatDateTime(risk.data.updated_at) : ''}
             </Descriptions.Item>
             {risk.data.evidence_ids.length > 0 && <Descriptions.Item label="证据 ID"><Typography.Text className="mono wrap-text">{risk.data.evidence_ids.join(' / ')}</Typography.Text></Descriptions.Item>}
             </>}
@@ -173,7 +176,7 @@ export function IpDetailsPage() {
           activeKey={activeTab}
           onChange={setActiveTab}
           items={[
-            { key: "devices", label: "设备识别" },
+            { key: "devices", label: "终端识别" },
             { key: "activity", label: "访问画像" },
             { key: "applications", label: "应用访问" },
             { key: "evidence", label: "证据与技术信息" },
@@ -181,15 +184,15 @@ export function IpDetailsPage() {
         />
       </section>
 
-      {activeTab === "applications" && <ApplicationActivity ip={ip} />}
+      {activeTab === "applications" && <section className="surface"><ApplicationActivity ip={ip} /></section>}
 
       {activeTab === "devices" && (
         <section className="surface">
-          <Typography.Title level={4}>IP 维度设备识别</Typography.Title>
+          <Typography.Title level={4}>IP 维度终端识别</Typography.Title>
           {devices.isLoading ? (
             <Skeleton active paragraph={{ rows: 4 }} />
           ) : devices.isError ? (
-            <Alert showIcon title="设备识别加载失败" type="warning" />
+            <Alert showIcon title="终端识别读取失败" type="warning" />
           ) : deviceInventory ? (
             renderDeviceInventory(deviceInventory)
           ) : (
@@ -204,7 +207,7 @@ export function IpDetailsPage() {
           {activity.isLoading ? (
             <Skeleton active paragraph={{ rows: 4 }} />
           ) : activity.isError ? (
-            <Alert showIcon title="访问画像加载失败" type="warning" />
+            <Alert showIcon title="访问画像读取失败" type="warning" />
           ) : !profile || profile.event_count === 0 ? (
             <Typography.Text type="secondary">
               暂无该 IP 的标准事件画像
@@ -314,22 +317,15 @@ export function IpDetailsPage() {
               </section>
 
               <div>
-                <div className="section-title-row">
-                  <Typography.Title level={5}>最近访问样本</Typography.Title>
-                  <Typography.Text type="secondary">
-                    仅展示最近 {recentAccesses.length}{" "}
-                    条，完整明细见标准事件样本
-                  </Typography.Text>
-                </div>
-                <div className="desktop-only">
-                  <Table<ActivityAccess>
+                <AppListHeader title="最近访问样本" count={`${recentAccesses.length} 条`} description="仅展示最近记录，完整明细见标准事件样本" />
+                  <AppTable<ActivityAccess>
                     columns={[
                       {
                         title: "时间",
                         dataIndex: "timestamp",
                         width: 170,
                         render: (value: string) =>
-                          new Date(value).toLocaleString(),
+                          formatDateTime(value),
                       },
                       {
                         title: "类型",
@@ -383,48 +379,6 @@ export function IpDetailsPage() {
                     scroll={{ x: 720 }}
                     size="small"
                   />
-                </div>
-
-                <div className="mobile-only">
-                  <div className="mobile-access-list">
-                    {recentAccesses.map((acc) => (
-                      <div className="mobile-access-card" key={acc.event_id}>
-                        <div className="flex-between-center">
-                          <Tag color="blue" className="tag-margin-zero">
-                            {acc.type}
-                          </Tag>
-                          <Typography.Text
-                            type="secondary"
-                            className="font-size-sm"
-                          >
-                            {new Date(acc.timestamp).toLocaleString()}
-                          </Typography.Text>
-                        </div>
-                        <Typography.Text
-                          className="mono wrap-text font-size-md"
-                          strong
-                        >
-                          {acc.target}
-                        </Typography.Text>
-                        <Typography.Text
-                          type="secondary"
-                          className="font-size-sm"
-                        >
-                          {acc.target_kind} · {acc.dst_ip ?? ""}:
-                          {acc.dst_port ?? ""}
-                        </Typography.Text>
-                        {acc.user_agent && (
-                          <Typography.Text
-                            className="wrap-text font-size-xs"
-                            type="secondary"
-                          >
-                            {acc.user_agent}
-                          </Typography.Text>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
             </Space>
           )}
@@ -446,7 +400,7 @@ export function IpDetailsPage() {
                 children: evidence.isLoading ? (
                   <Skeleton active paragraph={{ rows: 4 }} />
                 ) : evidence.isError ? (
-                  <Alert showIcon title="证据摘要加载失败" type="warning" />
+                  <Alert showIcon title="证据摘要读取失败" type="warning" />
                 ) : (
                   <EvidenceList evidence={evidenceItems} />
                 ),
@@ -457,7 +411,7 @@ export function IpDetailsPage() {
                 children: events.isLoading ? (
                   <Skeleton active paragraph={{ rows: 4 }} />
                 ) : events.isError ? (
-                  <Alert showIcon title="标准事件样本加载失败" type="warning" />
+                  <Alert showIcon title="标准事件样本读取失败" type="warning" />
                 ) : (
                   renderEventSamples(eventItems)
                 ),
@@ -512,7 +466,7 @@ function negativeEvidenceLabel(type: NegativeEvidence["type"]) {
     manual_benign: "人工良性",
     needs_more_data: "需补数据",
     whitelist: "白名单",
-    test_device: "测试设备",
+    test_device: "测试终端",
     infrastructure: "基础设施",
     known_application: "已知应用",
   };
@@ -541,7 +495,7 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
       <div className="metric-grid">
         {inventory.suspected_device_count > 0 && <div className="surface metric-card">
           <Statistic
-            title="设备候选数"
+            title="终端候选数"
             value={inventory.suspected_device_count}
           />
         </div>}
@@ -557,12 +511,12 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
       </div>
 
       {!hasDHCPStrongSignal && (
-        <AppFactBar label="设备识别信号" items={['设备候选主要来自 UA、TLS 或 TCP 栈推断','UA 可伪造，建议等待 Zeek DHCP、mDNS、NBNS 等局域网强信号后再确认']}/>
+        <AppFactBar label="终端识别信号" items={['终端候选主要来自 UA、TLS 或 TCP 栈推断','UA 可伪造，建议等待 Zeek DHCP、mDNS、NBNS 等局域网强信号后再确认']}/>
       )}
 
       {inventory.devices.length === 0 ? (
         <Typography.Text type="secondary">
-          当前 IP 没有足够信号生成设备候选。
+          当前 IP 没有足够信号生成终端候选。
         </Typography.Text>
       ) : (
         <div className="device-card-grid">
@@ -703,7 +657,7 @@ function renderEventSamples(events: NormalizedEventSummary[]) {
               {event.type}
             </Tag>
             <Typography.Text type="secondary">
-              {new Date(event.timestamp).toLocaleString()}
+              {formatDateTime(event.timestamp)}
             </Typography.Text>
             <Typography.Text type="secondary">
               confidence {Math.round(event.confidence * 100)}%
@@ -814,13 +768,13 @@ function deviceStatusText(status: string) {
     case "non_endpoint_or_weak":
       return "仅有协议或基础设施线索";
     case "multi_candidate":
-      return "发现多个设备候选";
+      return "发现多个终端候选";
     case "single_candidate":
-      return "单设备候选";
+      return "单终端候选";
     case "weak_signals_only":
       return "仅有弱信号";
     default:
-      return "设备信号不足";
+      return "终端信号不足";
   }
 }
 

@@ -17,7 +17,7 @@ it('ledger prioritizes confident recognition and keeps weak OS out of the OS col
  expect(screen.getByText('笔记本电脑')).toBeVisible()
  expect(screen.getByText('戴尔 · Latitude')).toBeVisible()
  expect(screen.queryByText('Windows')).not.toBeInTheDocument()
- expect(screen.getByText('识别依据')).toBeVisible()
+ expect(screen.getByText(/识别线索/)).toBeVisible()
 })
 it('ledger keeps VMware as a virtual clue and does not render its logo or hardware brand',()=>{
  const device={...domainOnlyDevice,primary_mac:'00:0c:29:2f:fe:f6',vendor:'VMware, Inc.',vendor_confidence:.9,randomized_mac:false,brand:'VMware',brand_confidence:.9}

@@ -382,6 +382,7 @@ func (s *Server) handleEmergencyStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConnectorTest(w http.ResponseWriter, r *http.Request, connectorID string) {
+	if s.observeTestRequest(w, r, "拟连接器测试", connectorID) { return }
 	if s.operations.db != nil && !s.operations.readView {
 		s.connectorTestPostgres(w, r, connectorID)
 		return
@@ -674,6 +675,10 @@ func (s *Server) handleExecuteAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deliverAction(actionID string, revoke bool) {
+	if violationObservationOnly() {
+		s.blockOutboundAction(actionID, revoke)
+		return
+	}
 	if s.operations.db != nil && !s.operations.readView {
 		s.deliverActionPostgres(actionID, revoke)
 		return
@@ -735,6 +740,10 @@ func (s *Server) deliverAction(actionID string, revoke bool) {
 }
 
 func (s *Server) deliverActionRequest(action EnforcementAction, connector ActionConnector, revoke bool) {
+	if violationObservationOnly() {
+		s.blockOutboundAction(action.ActionID, revoke)
+		return
+	}
 	if connector.ConnectorType == "srun4k" {
 		s.recordActionPrecheckFailure(action, errors.New("native runtime or action capability unavailable"))
 		return

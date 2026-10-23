@@ -1,13 +1,31 @@
-import { Notice as Alert } from '../shared/ui/Notice'
+import {
+  Notice as Alert } from '../shared/ui/Notice'
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { Button, Card, Descriptions, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd'
+import { useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult } from '@tanstack/react-query'
+import { Button,
+  Card,
+  Descriptions,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
+  Space,
+  Switch,
+  Tabs,
+  Tag,
+  Typography,
+  message,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppFactBar, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
-import { statusText } from '../shared/ui/status'
+import { AppErrorAlert, AppFactBar, AppListHeader, AppListSection, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, formatDateTime, useServerPagination } from '../shared/ui'
+import { statusText, statusColor } from '../shared/ui/status'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
 
@@ -23,7 +41,7 @@ type TestResult = components['schemas']['NotificationTestResult']
 const channelTypes = { http: '通用 HTTP', srun_sms: '短信消息中心' }
 const authTypes = { none: '无鉴权', bearer: 'Bearer 令牌', basic: 'Basic 用户名口令', oauth2_client_credentials: 'OAuth2 客户端凭据' }
 const statusFilters = ['queued', 'sending', 'sent', 'failed', 'cancelled']
-const when = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '')
+const when = formatDateTime
 
 const emptyChannel: Partial<Channel> = { channel_type: 'http', auth_type: 'none', enabled: false, is_default: false, config: { timeout_seconds: 10 } }
 
@@ -41,8 +59,8 @@ export function NotificationsPage() {
   }
 
   return (
-    <section className="notifications-page">
-      <AppPageHeader title="通知模板与通道" subtitle="策略提醒的模板、发送通道与投递状态" onRefresh={invalidate} />
+    <main className="page notifications-page">
+      <AppPageHeader />
       <AppFactBar label="通知投递规则" items={['入队只表示通知已受理，送达状态以投递记录为准','未配置通道时明确记为失败，不停留在等待状态']} />
       <Card>
         <Tabs
@@ -56,7 +74,7 @@ export function NotificationsPage() {
           ]}
         />
       </Card>
-    </section>
+    </main>
   )
 }
 
@@ -92,7 +110,7 @@ function TemplatesPanel({ templates, allowed, writable, invalidate }: { template
     { title: '名称', dataIndex: 'name', render: (value: string, row) => <div><strong>{value}</strong><div className="notifications-muted">{row.template_id}</div></div> },
     { title: '标题', dataIndex: 'subject' },
     { title: '变量', dataIndex: 'variables', render: (values: string[]) => (values?.length ? <Space wrap>{values.map((value) => <Tag key={value}>{value}</Tag>)}</Space> : '') },
-    { title: '状态', dataIndex: 'enabled', render: (value: boolean) => <Tag color={value ? 'blue' : undefined}>{value ? '已启用' : '已停用'}</Tag> },
+    { title: '状态', dataIndex: 'enabled', render: (value: boolean) => <Tag color={statusColor(value ? 'enabled' : 'disabled')}>{statusText(value ? 'enabled' : 'disabled')}</Tag> },
     { title: '版本', dataIndex: 'revision', width: 80 },
     {
       title: '操作',
@@ -107,11 +125,12 @@ function TemplatesPanel({ templates, allowed, writable, invalidate }: { template
   ]
   return (
     <>
+      <AppListHeader title="通知模板" count={`${templates.data?.items.length ?? 0} 条`} />
       <div className="notifications-toolbar">
         <Typography.Text type="secondary">正文与标题只能引用白名单变量，例如 {'{{account}}'}、{'{{ip}}'}、{'{{policy_name}}'}。</Typography.Text>
         <Button type="primary" disabled={!writable} onClick={() => edit()}>新增模板</Button>
       </div>
-      {templates.isError ? <Alert type="error" showIcon title="模板读取失败" description={String(templates.error)} /> : templates.isLoading ? <AppLoadingState rows={3} /> : templates.data?.items.length ? <Table rowKey="template_id" className="compact-list-table" columns={columns} dataSource={templates.data.items} pagination={false} scroll={{ x: 900 }} /> : <Empty description="暂无通知模板" />}
+      {<AppListSection isError={templates.isError} errorTitle="模板读取失败" errorMessage={String(templates.error)} isLoading={templates.isLoading} loadingRows={3} isEmpty={!templates.data?.items.length} emptyText="暂无通知模板">{<AppTable rowKey="template_id" className="compact-list-table" columns={columns} dataSource={templates.data?.items ?? []} pagination={false} scroll={{ x: 900 }} />}</AppListSection>}
       <Modal forceRender title={editing ? '编辑模板' : '新增模板'} open={open} confirmLoading={save.isPending} onCancel={() => setOpen(false)} onOk={() => void form.validateFields().then((value) => save.mutate(value)).catch(() => undefined)}>
         <Form form={form} layout="vertical">
           <Form.Item name="template_id" label="模板标识" rules={[{ required: !editing, max: 128 }]}>
@@ -162,7 +181,7 @@ function ChannelsPanel({ channels, writable, invalidate }: { channels: UseQueryR
     { title: '鉴权', dataIndex: 'auth_type', render: (value: string) => authTypes[value as keyof typeof authTypes] ?? value },
     { title: '密钥', dataIndex: 'has_secret', width: 90, render: (value: boolean) => (value ? <Tag color="blue">已配置</Tag> : '') },
     { title: '默认', dataIndex: 'is_default', width: 80, render: (value: boolean) => (value ? <Tag color="blue">默认</Tag> : '') },
-    { title: '状态', dataIndex: 'enabled', width: 90, render: (value: boolean) => <Tag color={value ? 'blue' : undefined}>{value ? '已启用' : '已停用'}</Tag> },
+    { title: '状态', dataIndex: 'enabled', width: 90, render: (value: boolean) => <Tag color={statusColor(value ? 'enabled' : 'disabled')}>{statusText(value ? 'enabled' : 'disabled')}</Tag> },
     {
       title: '操作',
       width: 160,
@@ -176,11 +195,12 @@ function ChannelsPanel({ channels, writable, invalidate }: { channels: UseQueryR
   ]
   return (
     <>
+      <AppListHeader title="发送通道" count={`${channels.data?.items.length ?? 0} 条`} />
       <div className="notifications-toolbar">
         <Typography.Text type="secondary">密钥使用处置主密钥加密保存，接口不会回显；编辑时留空表示保持原密钥，填写“-”表示清空。</Typography.Text>
         <Button type="primary" disabled={!writable} onClick={() => edit()}>新增通道</Button>
       </div>
-      {channels.isError ? <Alert type="error" showIcon title="通道读取失败" description={String(channels.error)} /> : channels.isLoading ? <AppLoadingState rows={3} /> : channels.data?.items.length ? <Table rowKey="channel_id" className="compact-list-table" columns={columns} dataSource={channels.data.items} pagination={false} scroll={{ x: 1000 }} /> : <Empty description="暂无通知通道" />}
+      {<AppListSection isError={channels.isError} errorTitle="通道读取失败" errorMessage={String(channels.error)} isLoading={channels.isLoading} loadingRows={3} isEmpty={!channels.data?.items.length} emptyText="暂无通知通道">{<AppTable rowKey="channel_id" className="compact-list-table" columns={columns} dataSource={channels.data?.items ?? []} pagination={false} scroll={{ x: 1000 }} />}</AppListSection>}
       <Modal forceRender width={640} title={editing ? '编辑通道' : '新增通道'} open={open} confirmLoading={save.isPending} onCancel={() => setOpen(false)} onOk={() => void form.validateFields().then((value) => save.mutate(value)).catch(() => undefined)}>
         <Form form={form} layout="vertical">
           <Form.Item name="channel_id" label="通道标识" rules={[{ required: !editing, max: 128 }]}><Input disabled={!!editing} placeholder="例如 duty-webhook" /></Form.Item>
@@ -238,7 +258,7 @@ function OutboxPanel({ writable, invalidate }: { writable: boolean; invalidate: 
   const columns: ColumnsType<OutboxRow> = [
     { title: '账号', dataIndex: 'account_id', render: (value: string, row) => <div><strong>{value}</strong><div className="notifications-muted">{row.notification_id}</div></div> },
     { title: '模板', dataIndex: 'template', render: (value: string) => <span className="notifications-wrap">{value}</span> },
-    { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={value === 'sent' ? 'green' : value === 'failed' ? 'red' : value === 'queued' ? 'blue' : undefined}>{statusText(value)}</Tag> },
+    { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={statusColor(value)}>{statusText(value)}</Tag> },
     { title: '尝试', dataIndex: 'attempts', width: 80 },
     { title: '送达时间', dataIndex: 'sent_at', width: 180, render: (value: string) => when(value) },
     { title: '最后错误', dataIndex: 'last_error', render: (value: string) => <span className="notifications-wrap">{value}</span> },
@@ -256,10 +276,11 @@ function OutboxPanel({ writable, invalidate }: { writable: boolean; invalidate: 
   ]
   return (
     <>
+      <AppListHeader title="投递记录" count={`${outbox.data?.page.total ?? 0} 条`} />
       <div className="notifications-toolbar">
         <Select aria-label="投递状态筛选" allowClear placeholder="全部状态" value={status || undefined} onChange={(value) => setStatus(value ?? '')} options={statusFilters.map((value) => ({ value, label: statusText(value) }))} />
       </div>
-      {outbox.isError ? <Alert type="error" showIcon title="投递记录读取失败" description={String(outbox.error)} /> : outbox.isLoading ? <AppLoadingState rows={4} /> : outbox.data?.items.length ? <Table rowKey="notification_id" className="compact-list-table" columns={columns} dataSource={outbox.data.items} pagination={false} scroll={{ x: 1200 }} /> : <Empty description="暂无投递记录" />}
+      {<AppListSection isError={outbox.isError} errorTitle="投递记录读取失败" errorMessage={String(outbox.error)} isLoading={outbox.isLoading} loadingRows={4} isEmpty={!outbox.data?.items.length} emptyText="暂无投递记录">{<AppTable rowKey="notification_id" className="compact-list-table" columns={columns} dataSource={outbox.data?.items ?? []} pagination={false} scroll={{ x: 1200 }} />}</AppListSection>}
       <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={outbox.data?.page.total ?? 0} onChange={pagination.update} />
       <Modal width={720} footer={null} title="投递详情" open={!!detail} onCancel={() => setDetail(undefined)}>
         {detailQuery.isLoading ? <AppLoadingState rows={3} /> : detailQuery.data ? (
@@ -275,7 +296,7 @@ function OutboxPanel({ writable, invalidate }: { writable: boolean; invalidate: 
               { key: 'error', label: '最后错误', children: detailQuery.data.notification.last_error },
               { key: 'variables', label: '变量', children: Object.entries(detailQuery.data.notification.parameters ?? {}).map(([key, value]) => `${key}=${value}`).join(' · ') },
             ]} />
-            <Table rowKey="attempt_id" size="small" className="compact-list-table" pagination={false} dataSource={detailQuery.data.attempts} columns={[
+            <AppTable rowKey="attempt_id" size="small" className="compact-list-table" pagination={false} dataSource={detailQuery.data.attempts} columns={[
               { title: '第几次', dataIndex: 'attempt', width: 80 },
               { title: '结果', dataIndex: 'status', width: 90, render: (value: string) => statusText(value) },
               { title: 'HTTP', dataIndex: 'http_status', width: 80 },
@@ -283,7 +304,7 @@ function OutboxPanel({ writable, invalidate }: { writable: boolean; invalidate: 
               { title: '时间', dataIndex: 'finished_at', width: 180, render: (value: string) => when(value) },
             ]} />
           </>
-        ) : <Alert type="error" showIcon title="投递详情读取失败" description={String(detailQuery.error)} />}
+        ) : <AppErrorAlert title="投递详情读取失败" message={String(detailQuery.error)} />}
       </Modal>
     </>
   )

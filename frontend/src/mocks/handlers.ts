@@ -9,6 +9,7 @@ import { policyHandlers } from './policies'
 import { behaviorReportHandlers, blacklistHandlers, destinationTargetHandlers, notificationHandlers } from './notifications'
 import { applicationHandlers } from './applications'
 import { routerObservationHandlers } from './routerObservations'
+import { violationHandlers } from './violation'
 import { delay, http, HttpResponse } from 'msw'
 
 import type { CreateLabelRequest, RiskCase, CaseHistoryRow } from '../shared/api/types'
@@ -120,11 +121,12 @@ const mockOrganization = {
 }
 
 const mockConnectors = [{ connector_type: 'srun4k' as const, connector_id: 'portal-gateway', name: '4K 认证系统', endpoint_url: 'https://192.0.2.190:8001', action_mapping: { 'account_policy_v1': 'supported', 'session.disconnect': 'online-drop' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, shadow_candidate_count: 12, shadow_reviewed_count: 10, shadow_accuracy: .9, updated_at: new Date().toISOString() }]
-const mockActions: Array<Record<string, unknown>> = []
+const mockActions: Array<Record<string, unknown>> = [{ action_id:'shared-record:shared-observe-demo',idempotency_key:'shared-record:shared-observe-demo',action_type:'disconnect',subject_type:'account',subject_id:'campus-student-001',account_id:'campus-student-001',ip:'192.0.2.44',campus_id:'ncu',mode:'record_only',status:'recorded',retry_count:0,evidence_ids:['shared-behavior-test'],policy_parameters:{decision_id:'shared-observe-demo',policy_id:'builtin:shared-access-observe',policy_revision:1,evidence_version:'8e79c1a7fabc0123456789abcdef012345',observation_id:'shared-behavior-test'},created_by:'shared_observation',created_at:new Date().toISOString(),updated_at:new Date().toISOString() }]
 const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管理员',role:'admin',disabled:false},{user_id:'reviewer-1',username:'reviewer',display_name:'风险复核员',role:'reviewer',disabled:false}]
 const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
 
 export const handlers = [
+ ...violationHandlers,
  http.get('/api/v1/whitelist',()=>HttpResponse.json({items:[],page:{total:0,limit:20},checked_at:new Date().toISOString()})),
  ...notificationHandlers,
  ...blacklistHandlers,
@@ -584,6 +586,22 @@ export const handlers = [
     const ip = normalizeIp(String(params.ip))
     return HttpResponse.json({ events: eventsByIp[ip] ?? [] })
   }),
+  http.get('/api/v1/ai-relay/indicators', () => HttpResponse.json({version:'2026.10.21',updated_at:'2026-10-21',sources:[{id:'awesome-ai-api-proxy',name:'awesome-ai-api-proxy',url:'https://github.com/howardpen9/awesome-ai-api-proxy'},{id:'cctq-doc',name:'CCTQ 接入文档',url:'https://doc.cctq.ai/guide/chatbox.html'},{id:'micuapi-doc',name:'米醋接入文档',url:'https://docs.micuapi.ai/external-compat'}],official_domains:['api.openai.com','api.anthropic.com'],indicators:[{domain:'cctq.ai',match_type:'subdomain',category:'relay',name:'CCTQ',name_zh:'CCTQ 中转站',confidence:0.9,status:'resolved',source:'cctq-doc'},{domain:'micuapi.ai',match_type:'subdomain',category:'relay',name:'MICU',name_zh:'米醋中转站',confidence:0.9,status:'resolved',source:'micuapi-doc'},{domain:'yunwu.ai',match_type:'subdomain',category:'relay',name:'云雾 API',name_zh:'云雾 API',confidence:0.8,status:'resolved',source:'awesome-ai-api-proxy'},{domain:'openrouter.ai',match_type:'subdomain',category:'aggregator',name:'OpenRouter',name_zh:'OpenRouter 聚合站',confidence:0.8,status:'resolved',source:'awesome-ai-api-proxy'}]})),
+  http.get('/api/v1/ai-relay/usages', ({ request }) => {
+    const params = new URL(request.url).searchParams
+    const limit = Math.min(50, Math.max(1, Number(params.get('limit') ?? 20)))
+    const offset = Math.max(0, Number(params.get('cursor') ?? 0) || 0)
+    const timestamp = new Date(Date.now()-10*60_000).toISOString()
+    const all = Array.from({ length: 45 }, (_, index) => {
+      const ip = `10.20.${Math.floor(index / 200)}.${(index % 200) + 11}`
+      const domain = index % 2 === 0 ? 'api.yunwu.ai' : 'api.micuapi.ai'
+      return { ip, account_id: `student-${11 + index}`, first_seen: timestamp, last_seen: timestamp, event_count: index + 1, domains: [domain], domain_names: { [domain]: index % 2 === 0 ? '云雾 API' : '米醋中转站' }, events: [{ event_id: `ai-relay-mock-${index + 1}`, timestamp, domain, source: 'handshake_tls', sensor_id: 'mock-sensor' }] }
+    })
+    const visible = all.filter(item => (!params.get('ip') || item.ip === params.get('ip')) && (!params.get('domain') || item.domains.some(domain => domain.endsWith(params.get('domain')!))))
+    const items = visible.slice(offset, offset + limit)
+    const next = offset + items.length < visible.length ? String(offset + items.length) : null
+    return HttpResponse.json({ items, page: { limit, next_cursor: next, total: visible.length }, indicator_version: 'mock-v1' })
+  }),
   http.get('/api/v1/events', ({ request }) => {
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()
@@ -613,6 +631,7 @@ export const handlers = [
     return HttpResponse.json({ events: pageItems, page: { limit, next_cursor: nextCursor, total: filtered.length } })
   }),
   http.get('/api/v1/events/:eventId', ({ params }) => {
+    if (params.eventId === 'ai-relay-mock-1') return HttpResponse.json({event_id:'ai-relay-mock-1',type:'tls',source:'replay',timestamp:new Date(Date.now()-10*60_000).toISOString(),observer:{sensor_id:'mock-sensor'},subject:{ip:'10.20.0.11'},flow:{src_ip:'10.20.0.11',dst_ip:'203.0.113.11',dst_port:443,proto:'tcp',direction:'outbound'},payload:{sni:'api.yunwu.ai'},confidence:1})
     const item = Object.values(eventsByIp).flat().find((entry) => entry.event_id === params.eventId)
     return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
   }),

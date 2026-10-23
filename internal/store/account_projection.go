@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"proxy-sentinel/internal/normalized"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,12 @@ func (s *PostgresStore) projectPendingIdentitySnapshots(ctx context.Context, lim
 			return err
 		}
 		var raw []byte
-		err = tx.QueryRowContext(ctx, `SELECT f.document FROM identity_snapshot_projection_jobs j JOIN identity_full_snapshots f USING(source,sensor_id,campus_id,access_domain,snapshot_id) ORDER BY j.observed_at,j.source,j.snapshot_id FOR UPDATE OF j SKIP LOCKED LIMIT 1`).Scan(&raw)
+		query := `SELECT f.document FROM identity_snapshot_projection_jobs j JOIN identity_full_snapshots f USING(source,sensor_id,campus_id,access_domain,snapshot_id)`
+		if s.identityDeltaEnabled {
+			query += ` WHERE NOT EXISTS(SELECT 1 FROM identity_delta_settings st WHERE st.mode IN ('shadow','delta') AND st.scope_key::jsonb->>'source'=j.source AND st.scope_key::jsonb->>'sensor_id'=j.sensor_id AND st.scope_key::jsonb->>'campus_id'=j.campus_id AND st.scope_key::jsonb->>'access_domain'=j.access_domain)`
+		}
+		query += ` ORDER BY j.observed_at,j.source,j.snapshot_id FOR UPDATE OF j SKIP LOCKED LIMIT 1`
+		err = tx.QueryRowContext(ctx, query).Scan(&raw)
 		if err == sql.ErrNoRows {
 			tx.Rollback()
 			return nil
@@ -107,11 +113,26 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 	ips := make([]string, 0, 2000)
 	accountIDs := make([]string, 0, 2000)
 	documents := make([]string, 0, 2000)
+	changedIPs := make(map[string]struct{})
 	flush := func() error {
 		if len(sessionIDs) == 0 {
 			return nil
 		}
-		_, execErr := tx.ExecContext(ctx, projectionUpsertSQL, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, sessionIDs, ips, accountIDs, documents)
+		rows, execErr := tx.QueryContext(ctx, projectionUpsertSQL+` RETURNING ip`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, sessionIDs, ips, accountIDs, documents)
+		if execErr != nil {
+			return execErr
+		}
+		for rows.Next() {
+			var ip string
+			if execErr = rows.Scan(&ip); execErr != nil {
+				break
+			}
+			changedIPs[ip] = struct{}{}
+		}
+		if execErr == nil {
+			execErr = rows.Err()
+		}
+		rows.Close()
 		sessionIDs = sessionIDs[:0]
 		ips = ips[:0]
 		accountIDs = accountIDs[:0]
@@ -149,11 +170,57 @@ func projectIdentitySnapshot(ctx context.Context, tx *sql.Tx, snapshot IdentityS
 	if err = flush(); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE account_identity_session_projection SET document=jsonb_set(jsonb_set(document,'{ended_at}',to_jsonb($7::text)), '{session_status}','"stop"'::jsonb),confirmed_at=$5::timestamptz WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND confirmed_at<=$5::timestamptz AND COALESCE(document->>'ended_at','')='' AND NOT(session_id||chr(31)||ip=ANY($6::text[]))`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, keys, snapshot.ObservedAt.UTC().Format(time.RFC3339Nano))
+	// A snapshot can contain tens of thousands of members. NOT (... = ANY(array))
+	// compares every open session against the whole array; the anti join builds
+	// one hash table of the snapshot keys and probes it once per open session.
+	rows, err := tx.QueryContext(ctx, `UPDATE account_identity_session_projection p SET document=jsonb_set(jsonb_set(p.document,'{ended_at}',to_jsonb($7::text)), '{session_status}','"stop"'::jsonb),confirmed_at=$5::timestamptz WHERE p.source=$1 AND p.sensor_id=$2 AND p.campus_id=$3 AND p.access_domain=$4 AND p.confirmed_at<=$5::timestamptz AND COALESCE(p.document->>'ended_at','')='' AND NOT EXISTS (SELECT 1 FROM unnest($6::text[]) AS snapshot_member(key) WHERE snapshot_member.key=p.session_id||chr(31)||p.ip) RETURNING p.ip`, snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, snapshot.ObservedAt, keys, snapshot.ObservedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return err
 	}
-	return enqueueSharedDeviceProfileJobs(ctx, tx, projectedSessions, snapshot.ObservedAt)
+	for rows.Next() {
+		var ip string
+		if err = rows.Scan(&ip); err != nil {
+			break
+		}
+		changedIPs[ip] = struct{}{}
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if len(changedIPs) > 0 {
+		addresses := make([]string, 0, len(changedIPs))
+		for ip := range changedIPs {
+			addresses = append(addresses, ip)
+		}
+		sort.Strings(addresses)
+		for start := 0; start < len(addresses); start += 1000 {
+			end := start + 1000
+			if end > len(addresses) {
+				end = len(addresses)
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO shared_observation_wakes(kind,producer_mode,source,sensor_id,campus_id,access_domain,ip)
+ SELECT 'snapshot_ip',(SELECT mode FROM shared_observation_wake_mode WHERE singleton),$1,$2,$3,$4,changed_ip.ip::inet FROM unnest($5::text[]) AS changed_ip(ip)
+ WHERE (SELECT mode FROM shared_observation_wake_mode WHERE singleton) IN ('shadow','async')`,
+				snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain, addresses[start:end]); err != nil {
+				return err
+			}
+		}
+	}
+	if err = enqueueSharedDeviceProfileJobs(ctx, tx, projectedSessions, snapshot.ObservedAt); err != nil {
+		return err
+	}
+	// The scope wake was inserted when the projected flag changed, before bulk
+	// membership work. Stamp it at the end of this transaction so latency starts
+	// close to the dependency becoming visible after commit.
+	_, err = tx.ExecContext(ctx, `UPDATE shared_observation_wakes SET received_at=clock_timestamp()
+ WHERE origin_xid=txid_current() AND kind='snapshot_scope' AND source=$1 AND sensor_id=$2
+ AND campus_id=$3 AND access_domain=$4 AND producer_mode IN ('shadow','async')`,
+		snapshot.Source, snapshot.SensorID, snapshot.CampusID, snapshot.AccessDomain)
+	return err
 }
 
 func (s *PostgresStore) projectedAccountSessions(ctx context.Context, account string, limit int) ([]AccountSession, error) {

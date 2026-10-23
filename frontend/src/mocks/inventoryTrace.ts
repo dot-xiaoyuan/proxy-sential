@@ -2,11 +2,11 @@ import { http, HttpResponse } from 'msw'
 import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './deviceRecognition'
 import { domainOnlyDevice, domainOnlyProfile } from './brandInference'
 import { deviceInventoriesByIp } from './fixtures'
-import type { InventoryDetail, EndpointObservation } from '../shared/api/types'
+import type { InventoryAssociation, InventoryDetail, EndpointObservation } from '../shared/api/types'
 
 function detailFor(id:string):InventoryDetail|undefined {
  const reference=manufacturerReferenceDevices.find(v=>v.endpoint_id===id)
- if(reference||id===macOSDevice.endpoint_id||id===domainOnlyDevice.endpoint_id){const original=id===domainOnlyDevice.endpoint_id?domainOnlyProfile:macOSProfile;const recognition=reference||original.recognition;return {profile:{...original,endpoint_id:id,endpoint:{...original.endpoint,endpoint_id:id},recognition,sessions:[],ip_history:[],access_history:[]},associations:[],association_counts:{account:recognition?.current_account?1:0,ip:recognition?.current_ip?1:0,access:recognition?.current_access_id?1:0},state:{complete:true,updating:false,as_of:new Date().toISOString()}}}
+ if(reference||id===macOSDevice.endpoint_id||id===domainOnlyDevice.endpoint_id){const original=id===domainOnlyDevice.endpoint_id?domainOnlyProfile:macOSProfile;const recognition=reference||original.recognition;const last=recognition?.last_seen||new Date().toISOString();const first=recognition?.first_seen||last;const associations=[recognition?.current_account&&{kind:'account' as const,value:recognition.current_account,source:'srun4k',first_seen:first,last_seen:last,observation_count:42,session_count:2,confidence:.94},recognition?.current_ip&&{kind:'ip' as const,value:recognition.current_ip,source:'dhcp',first_seen:first,last_seen:last,observation_count:18,session_count:1,confidence:.88},recognition?.current_access_id&&{kind:'access' as const,value:recognition.current_access_id,source:'radius',first_seen:first,last_seen:last,observation_count:7,session_count:0,confidence:.8}].filter(Boolean) as InventoryAssociation[];return {profile:{...original,endpoint_id:id,endpoint:{...original.endpoint,endpoint_id:id},recognition,sessions:[],ip_history:[],access_history:[]},associations,association_counts:{account:recognition?.current_account?1:0,ip:recognition?.current_ip?1:0,access:recognition?.current_access_id?1:0},state:{complete:true,updating:false,as_of:new Date().toISOString()}}}
  for(const inventory of Object.values(deviceInventoriesByIp)){
   const d=inventory.devices.find(v=>(v.endpoint_id||v.device_id)===id);if(!d)continue
   const account=d.account_id||'',mac=d.signals.find(v=>v.kind==='mac')?.normalized_value||''

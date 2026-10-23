@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"proxy-sentinel/internal/policy"
@@ -40,7 +41,13 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 	}
 	// Metadata only: a complete snapshot that omits this IP must still end it.
 	lower := from.Add(-time.Duration(3*period) * time.Second)
-	rows, err = s.pg.db.QueryContext(ctx, sharedSnapshotLogSQL, m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, lower, to)
+	logSQL := sharedSnapshotLogSQL
+	logArgs := []any{m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, lower, to}
+	if s.pg.identityDeltaEnabled {
+		logSQL = deltaSharedSnapshotLogSQL
+		logArgs = append(logArgs, ip)
+	}
+	rows, err = s.pg.db.QueryContext(ctx, logSQL, logArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -52,9 +59,17 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 	logged := []logRow{}
 	for rows.Next() {
 		row := logRow{meta: snapshotMeta{Scope: scope, IntervalSeconds: period}}
-		if err = rows.Scan(&row.meta.SnapshotID, &row.meta.ObservedAt, &row.projected); err != nil {
+		fields := []any{&row.meta.SnapshotID, &row.meta.ObservedAt, &row.projected}
+		var captured sql.NullTime
+		if s.pg.identityDeltaEnabled {
+			fields = append(fields, &captured)
+		}
+		if err = rows.Scan(fields...); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if captured.Valid {
+			row.meta.CaptureStartedAt = captured.Time
 		}
 		logged = append(logged, row)
 	}
@@ -100,7 +115,13 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 			}
 		}
 	}
-	rows, err = s.pg.db.QueryContext(ctx, sharedProjectionMembersSQL, m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, ip, lower)
+	memberSQL := sharedProjectionMembersSQL
+	memberArgs := []any{m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, ip, lower}
+	if s.pg.identityDeltaEnabled {
+		memberSQL = `SELECT confirmed_at,document FROM (` + sharedProjectionMembersSQL + `) heads UNION ALL SELECT confirmed_at,document FROM identity_projection_intervals WHERE scope_key=$7 AND ip=$5 AND confirmed_at>=$6 LIMIT 2001`
+		memberArgs = append(memberArgs, IdentityScopeKey(scope))
+	}
+	rows, err = s.pg.db.QueryContext(ctx, memberSQL, memberArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +150,11 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 	}
 	// Unprocessed identity changes may alter attribution inside this window.
 	var pending bool
-	err = s.pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND (pending_records>0 OR last_error<>'' OR calibration_state IN ('failed','building')))`, m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain).Scan(&pending)
+	if identitySplitProgressEnabled() {
+		err = s.pg.db.QueryRowContext(ctx, deltaSharedPendingSQL, IdentityScopeKey(scope), ip, to).Scan(&pending)
+	} else {
+		err = s.pg.db.QueryRowContext(ctx, IdentityScopeStatusSQL(`SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND (pending_records>0 OR last_error<>'' OR calibration_state IN ('failed','building')))`), m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain).Scan(&pending)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -163,6 +188,9 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 			issue = "identity_source_interrupted"
 		}
 	}
+	if identityCaptureConflict(facts, log, from, to) {
+		issue = "identity_snapshot_capture_conflict"
+	}
 	out := policySessionsFromProjection(facts, log, members, to)
 	if len(out) == 0 && issue != "" {
 		out = []policy.Session{{ID: "health", IP: ip, Source: m.Source, SensorID: m.IdentitySensorID, CampusID: m.IdentityCampusID, AccessDomain: m.IdentityAccessDomain, StartedAt: from, ConfirmedAt: from}}
@@ -172,6 +200,9 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 		out[i].ReconcileSeconds = period
 		if issue != "" {
 			out[i].IdentityIssue = issue
+			if issue == "identity_snapshot_capture_conflict" {
+				out[i].AccountID = ""
+			}
 		}
 	}
 	return out, nil
@@ -185,3 +216,15 @@ const sharedSnapshotLogSQL = `SELECT snapshot_id,observed_at,projected FROM iden
 const sharedProjectionMembersSQL = `SELECT p.confirmed_at,p.document FROM account_identity_session_projection p
  WHERE p.ip=$5 AND p.source=$1 AND p.sensor_id=$2 AND p.campus_id=$3 AND p.access_domain=$4
  AND (COALESCE(p.document->>'ended_at','')='' OR p.confirmed_at>=$6) LIMIT 2001`
+
+const deltaSharedSnapshotLogSQL = `SELECT l.snapshot_id,l.observed_at,
+ l.projected OR COALESCE((r.state IN ('ready','applying','completed') AND r.capture_started_at IS NOT NULL AND st.mode='delta' AND NOT EXISTS(SELECT 1 FROM identity_delta_changes c WHERE c.run_id=r.run_id AND c.ip=$7 AND c.applied_at IS NULL)),false),r.capture_started_at
+ FROM identity_snapshot_log l LEFT JOIN identity_delta_runs r USING(source,sensor_id,campus_id,access_domain,snapshot_id)
+ LEFT JOIN identity_delta_settings st ON st.scope_key=r.scope_key
+ WHERE l.source=$1 AND l.sensor_id=$2 AND l.campus_id=$3 AND l.access_domain=$4 AND l.observed_at BETWEEN $5 AND $6 ORDER BY l.observed_at LIMIT 257`
+
+const deltaSharedPendingSQL = `SELECT EXISTS(SELECT 1 FROM identity_pipeline_scope_status s JOIN identity_receive_progress r USING(scope_key)
+ WHERE s.scope_key=$1 AND (
+ (s.pending_records>0 AND s.processed_sequence<r.ip_tracking_after_sequence)
+ OR EXISTS(SELECT 1 FROM identity_inbox_ip_pending p WHERE p.scope_key=$1 AND p.ip=$2 AND p.first_event_at<=$3)
+ OR s.calibration_state='failed'))`

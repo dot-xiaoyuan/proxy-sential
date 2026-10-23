@@ -302,6 +302,31 @@ ON CONFLICT(entity_id) DO UPDATE SET
 	return err
 }
 
+// Keep the existing value-merge rules; metadata-only confirmation must not
+// move updated_at, which is used by current-session readers.
+const accountSessionValuesChangedSQL = `account_sessions.account_id IS DISTINCT FROM EXCLUDED.account_id
+   OR account_sessions.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id
+   OR account_sessions.ip IS DISTINCT FROM EXCLUDED.ip
+   OR account_sessions.mac IS DISTINCT FROM EXCLUDED.mac
+   OR account_sessions.access_id IS DISTINCT FROM EXCLUDED.access_id
+   OR account_sessions.source IS DISTINCT FROM EXCLUDED.source
+   OR EXCLUDED.started_at < account_sessions.started_at
+   OR (EXCLUDED.ended_at IS NOT NULL AND account_sessions.ended_at IS DISTINCT FROM EXCLUDED.ended_at)
+   OR EXCLUDED.identity_confidence > account_sessions.identity_confidence
+   OR account_sessions.raw_ref IS DISTINCT FROM account_sessions.raw_ref || EXCLUDED.raw_ref
+   OR (EXCLUDED.person_type IS NOT NULL AND account_sessions.person_type IS DISTINCT FROM EXCLUDED.person_type)
+   OR (EXCLUDED.department IS NOT NULL AND account_sessions.department IS DISTINCT FROM EXCLUDED.department)
+   OR (EXCLUDED.campus_id IS NOT NULL AND account_sessions.campus_id IS DISTINCT FROM EXCLUDED.campus_id)
+   OR (EXCLUDED.building_id IS NOT NULL AND account_sessions.building_id IS DISTINCT FROM EXCLUDED.building_id)
+   OR (EXCLUDED.network_zone_id IS NOT NULL AND account_sessions.network_zone_id IS DISTINCT FROM EXCLUDED.network_zone_id)
+   OR (EXCLUDED.ssid IS NOT NULL AND account_sessions.ssid IS DISTINCT FROM EXCLUDED.ssid)
+   OR (EXCLUDED.vlan IS NOT NULL AND account_sessions.vlan IS DISTINCT FROM EXCLUDED.vlan)
+   OR (EXCLUDED.ap IS NOT NULL AND account_sessions.ap IS DISTINCT FROM EXCLUDED.ap)
+   OR (EXCLUDED.nas_ip IS NOT NULL AND account_sessions.nas_ip IS DISTINCT FROM EXCLUDED.nas_ip)
+   OR (EXCLUDED.session_status IS NOT NULL AND account_sessions.session_status IS DISTINCT FROM EXCLUDED.session_status)`
+
+const accountSessionMetadataNewerSQL = `COALESCE(NULLIF(account_sessions.policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz) <= COALESCE(NULLIF(EXCLUDED.policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz)`
+
 func upsertAccountSessionsBatch(ctx context.Context, tx *sql.Tx, items []AccountSession) error {
 	if len(items) == 0 {
 		return nil
@@ -339,7 +364,7 @@ func upsertAccountSessionsBatch(ctx context.Context, tx *sql.Tx, items []Account
 	ap := make([]string, len(filtered))
 	nasIP := make([]string, len(filtered))
 	sessionStatus := make([]string, len(filtered))
-	confirmedAt := make([]string, len(filtered))
+	metadata := make([]string, len(filtered))
 	for index, item := range filtered {
 		sessionID[index], accountID[index], endpointID[index] = item.SessionID, item.AccountID, item.EndpointID
 		ip[index], mac[index], accessID[index], source[index] = item.IP, item.MAC, item.AccessID, item.Source
@@ -351,13 +376,13 @@ func upsertAccountSessionsBatch(ctx context.Context, tx *sql.Tx, items []Account
 		personType[index], department[index], campusID[index] = item.PersonType, item.Department, item.CampusID
 		buildingID[index], networkZoneID[index], ssid[index] = item.BuildingID, item.NetworkZoneID, item.SSID
 		vlan[index], ap[index], nasIP[index], sessionStatus[index] = item.VLAN, item.AP, item.NASIP, item.SessionStatus
-		confirmedAt[index] = item.LastConfirmedAt
+		metadata[index] = jsonText(item)
 	}
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status)
-SELECT t.session_id, t.account_id, t.endpoint_id, NULLIF(t.ip,'')::inet, t.mac, t.access_id, t.source, t.started_at, CASE WHEN t.ended_valid THEN t.ended_at ELSE NULL END, t.confidence, t.raw_ref::jsonb, NULLIF(t.person_type,''), NULLIF(t.department,''), NULLIF(t.campus_id,''), NULLIF(t.building_id,''), NULLIF(t.network_zone_id,''), NULLIF(t.ssid,''), NULLIF(t.vlan,''), NULLIF(t.ap,''), NULLIF(t.nas_ip,'')::inet, NULLIF(t.session_status,'')
-FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::timestamptz[], $9::timestamptz[], $10::boolean[], $11::float8[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[], $18::text[], $19::text[], $20::text[], $21::text[], $22::text[])
-  AS t(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, ended_valid, confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status)
+INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status, policy_metadata)
+SELECT t.session_id, t.account_id, t.endpoint_id, NULLIF(t.ip,'')::inet, t.mac, t.access_id, t.source, t.started_at, CASE WHEN t.ended_valid THEN t.ended_at ELSE NULL END, t.confidence, t.raw_ref::jsonb, NULLIF(t.person_type,''), NULLIF(t.department,''), NULLIF(t.campus_id,''), NULLIF(t.building_id,''), NULLIF(t.network_zone_id,''), NULLIF(t.ssid,''), NULLIF(t.vlan,''), NULLIF(t.ap,''), NULLIF(t.nas_ip,'')::inet, NULLIF(t.session_status,''), t.metadata::jsonb
+FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::timestamptz[], $9::timestamptz[], $10::boolean[], $11::float8[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[], $18::text[], $19::text[], $20::text[], $21::text[], $22::text[], $23::text[])
+  AS t(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, ended_valid, confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status, metadata)
 ON CONFLICT(session_id) DO UPDATE SET
   account_id = EXCLUDED.account_id,
   endpoint_id = EXCLUDED.endpoint_id,
@@ -379,52 +404,18 @@ ON CONFLICT(session_id) DO UPDATE SET
   ap = COALESCE(EXCLUDED.ap, account_sessions.ap),
   nas_ip = COALESCE(EXCLUDED.nas_ip, account_sessions.nas_ip),
   session_status = COALESCE(EXCLUDED.session_status, account_sessions.session_status),
-  updated_at = now()
+  policy_metadata = CASE WHEN `+accountSessionMetadataNewerSQL+` THEN EXCLUDED.policy_metadata ELSE account_sessions.policy_metadata END,
+  updated_at = CASE WHEN (`+accountSessionValuesChangedSQL+`) THEN now() ELSE account_sessions.updated_at END
 -- No-op guard. account_sessions carries inventory_projection_change, and this upsert runs on
 -- every identity event, so an unchanged replay wrote a full row version plus every index
 -- entry and re-dirtied the projection. Assignments that preserve the stored value when the
 -- incoming one is NULL reduce to "the incoming value is present and different"; the rest
 -- mirror their assignment directly. updated_at is deliberately absent: it must only move
 -- when something else does.
-WHERE account_sessions.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id
-   OR account_sessions.ip IS DISTINCT FROM EXCLUDED.ip
-   OR account_sessions.mac IS DISTINCT FROM EXCLUDED.mac
-   OR account_sessions.access_id IS DISTINCT FROM EXCLUDED.access_id
-   OR account_sessions.source IS DISTINCT FROM EXCLUDED.source
-   OR EXCLUDED.started_at < account_sessions.started_at
-   OR (EXCLUDED.ended_at IS NOT NULL AND account_sessions.ended_at IS DISTINCT FROM EXCLUDED.ended_at)
-   OR EXCLUDED.identity_confidence > account_sessions.identity_confidence
-   OR account_sessions.raw_ref IS DISTINCT FROM account_sessions.raw_ref || EXCLUDED.raw_ref
-   OR (EXCLUDED.person_type IS NOT NULL AND account_sessions.person_type IS DISTINCT FROM EXCLUDED.person_type)
-   OR (EXCLUDED.department IS NOT NULL AND account_sessions.department IS DISTINCT FROM EXCLUDED.department)
-   OR (EXCLUDED.campus_id IS NOT NULL AND account_sessions.campus_id IS DISTINCT FROM EXCLUDED.campus_id)
-   OR (EXCLUDED.building_id IS NOT NULL AND account_sessions.building_id IS DISTINCT FROM EXCLUDED.building_id)
-   OR (EXCLUDED.network_zone_id IS NOT NULL AND account_sessions.network_zone_id IS DISTINCT FROM EXCLUDED.network_zone_id)
-   OR (EXCLUDED.ssid IS NOT NULL AND account_sessions.ssid IS DISTINCT FROM EXCLUDED.ssid)
-   OR (EXCLUDED.vlan IS NOT NULL AND account_sessions.vlan IS DISTINCT FROM EXCLUDED.vlan)
-   OR (EXCLUDED.ap IS NOT NULL AND account_sessions.ap IS DISTINCT FROM EXCLUDED.ap)
-   OR (EXCLUDED.nas_ip IS NOT NULL AND account_sessions.nas_ip IS DISTINCT FROM EXCLUDED.nas_ip)
-   OR (EXCLUDED.session_status IS NOT NULL AND account_sessions.session_status IS DISTINCT FROM EXCLUDED.session_status)`,
+WHERE (`+accountSessionValuesChangedSQL+`)
+ OR ((`+accountSessionMetadataNewerSQL+`) AND account_sessions.policy_metadata IS DISTINCT FROM EXCLUDED.policy_metadata)`,
 		sessionID, accountID, endpointID, ip, mac, accessID, source, startedAt, endedAt, endedValid, confidence, rawRef,
-		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus)
-	if err != nil {
-		return err
-	}
-	metadata := make([]string, len(filtered))
-	for index, item := range filtered {
-		metadata[index] = jsonText(item)
-	}
-	_, err = tx.ExecContext(ctx, `
-UPDATE account_sessions s SET policy_metadata = NULLIF(v.metadata,'')::jsonb
-FROM (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS t(session_id, metadata, confirmed_at)) v
-WHERE s.session_id = v.session_id
-  AND COALESCE(NULLIF(s.policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz) <= COALESCE(NULLIF(v.confirmed_at,'')::timestamptz,'-infinity'::timestamptz)
-  -- This statement runs after the guarded upsert above and would undo its effect: a replay
-  -- still satisfies the ordering test and rewrote policy_metadata with an identical value,
-  -- which writes a row version and fires inventory_projection_change (this table carries
-  -- it). Skip rows whose stored metadata already equals the incoming document.
-  AND s.policy_metadata IS DISTINCT FROM NULLIF(v.metadata,'')::jsonb`,
-		sessionID, metadata, confirmedAt)
+		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus, metadata)
 	return err
 }
 

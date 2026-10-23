@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/identityprotocol"
@@ -96,7 +97,18 @@ func (s *PostgresStore) acceptIdentityBatch(ctx context.Context, id, hash string
 		return receipt, err
 	}
 	var sequence int64
-	err = tx.QueryRowContext(ctx, `UPDATE identity_pipeline_scopes SET enabled=true,accepted_sequence=accepted_sequence+1,pending_records=pending_records+$2,export_pending_records=export_pending_records+$2,oldest_pending_at=COALESCE(oldest_pending_at,now()) WHERE scope_key=$1 AND pending_records+$2<=$3 AND export_pending_records+$2<=$3 RETURNING accepted_sequence`, key, len(events), identityInboxCapacity()).Scan(&sequence)
+	if identitySplitProgressEnabled() {
+		if err = ensureIdentityProgress(ctx, tx, key); err != nil {
+			return receipt, err
+		}
+		// Scope ownership changes once; steady-state acceptance owns only receive progress.
+		if _, err = tx.ExecContext(ctx, `UPDATE identity_pipeline_scopes SET enabled=true WHERE scope_key=$1 AND NOT enabled`, key); err != nil {
+			return receipt, err
+		}
+		err = tx.QueryRowContext(ctx, acceptIdentitySplitSQL, key, len(events), identityInboxCapacity()).Scan(&sequence)
+	} else {
+		err = tx.QueryRowContext(ctx, `UPDATE identity_pipeline_scopes SET enabled=true,accepted_sequence=accepted_sequence+1,pending_records=pending_records+$2,export_pending_records=export_pending_records+$2,oldest_pending_at=COALESCE(oldest_pending_at,now()) WHERE scope_key=$1 AND pending_records+$2<=$3 AND export_pending_records+$2<=$3 RETURNING accepted_sequence`, key, len(events), identityInboxCapacity()).Scan(&sequence)
+	}
 	if err == sql.ErrNoRows {
 		return receipt, ErrIdentityInboxFull
 	}
@@ -111,6 +123,11 @@ func (s *PostgresStore) acceptIdentityBatch(ctx context.Context, id, hash string
 	if err != nil {
 		return receipt, err
 	}
+	if identitySplitProgressEnabled() {
+		if err = recordIdentityPendingIPs(ctx, tx, id, key, events); err != nil {
+			return receipt, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return receipt, err
 	}
@@ -118,10 +135,11 @@ func (s *PostgresStore) acceptIdentityBatch(ctx context.Context, id, hash string
 }
 
 type identityInboxBatch struct {
-	BatchID  string `json:"batch_id"`
-	Sequence int64  `json:"sequence"`
-	Offset   int    `json:"offset"`
-	Count    int    `json:"count"`
+	AcceptedAt time.Time `json:"-"`
+	BatchID    string    `json:"batch_id"`
+	Sequence   int64     `json:"sequence"`
+	Offset     int       `json:"offset"`
+	Count      int       `json:"count"`
 }
 type identityInboxWork struct {
 	Batches    []identityInboxBatch
@@ -141,11 +159,15 @@ func (s *PostgresStore) claimIdentityInbox(ctx context.Context, sensor string, l
 		return w, err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, `SELECT scope_key,current_generation,lease_epoch+1,processed_sequence+1,snapshot_at FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (lease_until IS NULL OR lease_until<now()) ORDER BY oldest_pending_at,scope_key FOR UPDATE LIMIT 1`, sensor).Scan(&w.Scope, &w.Generation, &w.Epoch, &w.Sequence, &w.SnapshotAt)
+	claimSQL := `SELECT scope_key,current_generation,lease_epoch+1,processed_sequence+1,snapshot_at FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (lease_until IS NULL OR lease_until<now()) ORDER BY oldest_pending_at,scope_key FOR UPDATE LIMIT 1`
+	if identitySplitProgressEnabled() {
+		claimSQL = claimIdentitySplitSQL
+	}
+	err = tx.QueryRowContext(ctx, claimSQL, sensor).Scan(&w.Scope, &w.Generation, &w.Epoch, &w.Sequence, &w.SnapshotAt)
 	if err != nil {
 		return w, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE identity_pipeline_scopes SET lease_epoch=$2,lease_until=now()+make_interval(secs=>$3),heartbeat_at=now() WHERE scope_key=$1`, w.Scope, w.Epoch, identityInboxLease.Seconds())
+	_, err = tx.ExecContext(ctx, identityConsumeSQL(`UPDATE identity_pipeline_scopes SET lease_epoch=$2,lease_until=now()+make_interval(secs=>$3),heartbeat_at=now() WHERE scope_key=$1`), w.Scope, w.Epoch, identityInboxLease.Seconds())
 	if err != nil {
 		return w, err
 	}
@@ -159,17 +181,26 @@ func (s *PostgresStore) claimIdentityInbox(ctx context.Context, sensor string, l
 		if err != nil {
 			release, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 			defer cancel()
-			_, _ = s.db.ExecContext(release, `UPDATE identity_pipeline_scopes SET lease_until=NULL WHERE scope_key=$1 AND lease_epoch=$2`, w.Scope, w.Epoch)
+			_, _ = s.db.ExecContext(release, identityConsumeSQL(`UPDATE identity_pipeline_scopes SET lease_until=NULL WHERE scope_key=$1 AND lease_epoch=$2`), w.Scope, w.Epoch)
 		}
 	}()
-	rows, err := s.db.QueryContext(ctx, `WITH candidates AS MATERIALIZED (SELECT batch_id,sequence,processed_offset,records_emitted FROM identity_ingest_batches WHERE scope_key=$1 AND sequence>=$2 AND protocol_version=2 ORDER BY sequence LIMIT 500), bounded AS (SELECT *,COALESCE(sum(records_emitted-processed_offset) OVER (ORDER BY sequence ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS preceding_records FROM candidates) SELECT b.batch_id,b.sequence,b.processed_offset,b.normalized_events FROM bounded c JOIN identity_ingest_batches b USING(batch_id) WHERE c.preceding_records<$3 ORDER BY b.sequence`, w.Scope, w.Sequence, limit)
+	payloadSQL := `WITH candidates AS MATERIALIZED (SELECT batch_id,sequence,processed_offset,records_emitted FROM identity_ingest_batches WHERE scope_key=$1 AND sequence>=$2 AND protocol_version=2 ORDER BY sequence LIMIT 500), bounded AS (SELECT *,COALESCE(sum(records_emitted-processed_offset) OVER (ORDER BY sequence ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS preceding_records FROM candidates) SELECT b.batch_id,b.sequence,b.processed_offset,b.normalized_events FROM bounded c JOIN identity_ingest_batches b USING(batch_id) WHERE c.preceding_records<$3 ORDER BY b.sequence`
+	if identitySplitProgressEnabled() {
+		payloadSQL = strings.Replace(payloadSQL, "b.normalized_events FROM", "b.normalized_events,b.accepted_at FROM", 1)
+	}
+	rows, err := s.db.QueryContext(ctx, payloadSQL, w.Scope, w.Sequence, limit)
 	if err != nil {
 		return w, err
 	}
+	bytes := 0
 	for rows.Next() && len(w.Events) < limit {
 		var raw []byte
 		var batch identityInboxBatch
-		if err = rows.Scan(&batch.BatchID, &batch.Sequence, &batch.Offset, &raw); err != nil {
+		fields := []any{&batch.BatchID, &batch.Sequence, &batch.Offset, &raw}
+		if identitySplitProgressEnabled() {
+			fields = append(fields, &batch.AcceptedAt)
+		}
+		if err = rows.Scan(fields...); err != nil {
 			rows.Close()
 			return w, err
 		}
@@ -187,6 +218,27 @@ func (s *PostgresStore) claimIdentityInbox(ctx context.Context, sensor string, l
 			return w, fmt.Errorf("invalid inbox processing offset")
 		}
 		end := min(len(events), batch.Offset+limit-len(w.Events))
+		if identitySplitProgressEnabled() {
+			for i := batch.Offset; i < end; i++ {
+				item, e := json.Marshal(events[i])
+				if e != nil {
+					rows.Close()
+					return w, e
+				}
+				if len(item) > identityInboxMaxBytes {
+					rows.Close()
+					return w, fmt.Errorf("identity event exceeds processing byte limit")
+				}
+				if bytes+len(item) > identityInboxMaxBytes {
+					end = i
+					break
+				}
+				bytes += len(item)
+			}
+			if end == batch.Offset {
+				break
+			}
+		}
 		batch.Count = end - batch.Offset
 		w.Events = append(w.Events, events[batch.Offset:end]...)
 		w.Batches = append(w.Batches, batch)
@@ -209,7 +261,7 @@ func (s *PostgresStore) applyIdentityInbox(ctx context.Context, w identityInboxW
 	}
 	defer tx.Rollback()
 	var valid bool
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(lease_epoch=$2 AND lease_until>now() AND current_generation=$3,false) FROM identity_pipeline_scopes WHERE scope_key=$1`, w.Scope, w.Epoch, w.Generation).Scan(&valid)
+	err = tx.QueryRowContext(ctx, identityConsumeSQL(`SELECT COALESCE(lease_epoch=$2 AND lease_until>now() AND current_generation=$3,false) FROM identity_pipeline_scopes WHERE scope_key=$1`), w.Scope, w.Epoch, w.Generation).Scan(&valid)
 	if err != nil {
 		return err
 	}
@@ -275,13 +327,22 @@ func (s *PostgresStore) applyIdentityInbox(ctx context.Context, w identityInboxW
 	if changedBatches != len(batches) {
 		return ErrIdentityLeaseExpired
 	}
+	if identitySplitProgressEnabled() {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM identity_inbox_ip_pending p USING identity_ingest_batches b WHERE p.batch_id=b.batch_id AND b.protocol_version=2 AND b.scope_key=$1 AND b.sequence BETWEEN $2 AND $3 AND b.status='completed'`, w.Scope, w.Sequence, lastSequence); err != nil {
+			return err
+		}
+	}
 	// Only the final progress publication locks the summary. Receipt insertion can
 	// proceed while facts and address references are being written. A fresh statement
 	// after this lock sees any concurrently committed next batch for oldest_pending_at.
-	if _, err = tx.ExecContext(ctx, `SELECT scope_key FROM identity_pipeline_scopes WHERE scope_key=$1 FOR UPDATE`, w.Scope); err != nil {
+	if _, err = tx.ExecContext(ctx, identityConsumeSQL(`SELECT scope_key FROM identity_pipeline_scopes WHERE scope_key=$1 FOR UPDATE`), w.Scope); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, applyScopeProgressSQL, w.Scope, w.Epoch, len(w.Events), done, lastSequence, w.Generation)
+	progressSQL := applyScopeProgressSQL
+	if identitySplitProgressEnabled() {
+		progressSQL = applyIdentitySplitSQL
+	}
+	result, err := tx.ExecContext(ctx, progressSQL, w.Scope, w.Epoch, len(w.Events), done, lastSequence, w.Generation)
 	if err != nil {
 		return err
 	}
@@ -302,4 +363,4 @@ func identityInboxCapacity() int {
 
 // applyScopeProgressSQL advances processing progress in the apply transaction. Account and session
 // totals are published with each complete snapshot, not accumulated per batch.
-const applyScopeProgressSQL = `UPDATE identity_pipeline_scopes SET processed_at=now(),pending_records=pending_records-$3,processed_sequence=$5-CASE WHEN $4 THEN 0 ELSE 1 END,lease_until=NULL,heartbeat_at=now(),last_error='',oldest_pending_at=(SELECT accepted_at FROM identity_ingest_batches WHERE scope_key=$1 AND sequence=CASE WHEN $4 THEN $5+1 ELSE $5 END) WHERE scope_key=$1 AND lease_epoch=$2 AND lease_until>clock_timestamp() AND current_generation=$6`
+const applyScopeProgressSQL = `UPDATE identity_pipeline_scopes SET processed_at=now(),pending_records=pending_records-$3,processed_sequence=$5-CASE WHEN $4 THEN 0 ELSE 1 END,lease_until=NULL,heartbeat_at=now(),last_error='',oldest_pending_at=(SELECT accepted_at FROM identity_ingest_batches WHERE protocol_version=2 AND scope_key=$1 AND sequence=CASE WHEN $4 THEN $5+1 ELSE $5 END) WHERE scope_key=$1 AND lease_epoch=$2 AND lease_until>clock_timestamp() AND current_generation=$6`

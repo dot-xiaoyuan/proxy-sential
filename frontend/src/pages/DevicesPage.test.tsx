@@ -29,7 +29,8 @@ describe('终端列表分页与搜索', () => {
     setup('/devices?page=2&limit=50')
     await settle()
     expect(screen.getByTestId('location')).toHaveTextContent('page=2&limit=50')
-    fireEvent.change(screen.getByPlaceholderText('搜索设备名称、MAC、IP 或账号'), { target: { value: 'Dell' } })
+    fireEvent.change(screen.getByPlaceholderText('搜索终端名称、MAC、IP 或账号'), { target: { value: 'Dell' } })
+    fireEvent.click(screen.getByRole('button', { name: /查\s*询/ }))
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('page=1&limit=50'))
     fireEvent.click(screen.getByTitle('2'))
     await settle()
@@ -45,7 +46,7 @@ it('falls back to the last available page after the result count shrinks', async
 })
 it('restores search and scope from the URL', async()=>{
  setup('/devices?view=history&q=office&page=1&limit=20')
- expect(screen.getByPlaceholderText('搜索设备名称、MAC、IP 或账号')).toHaveValue('office')
+ expect(screen.getByPlaceholderText('搜索终端名称、MAC、IP 或账号')).toHaveValue('office')
  expect(screen.queryByText('10 分钟')).not.toBeInTheDocument()
  await settle()
  expect(screen.getByTestId('location')).toHaveTextContent('q=office')
@@ -62,16 +63,16 @@ it('keeps IPv4 as the only primary address and places names and MACs in fixed fi
   {endpoint_id:'ipv6-only',current_ip:'2001:db8::12',primary_mac:'00:11:22:33:44:12'},
  ]
  const {container}=render(<MemoryRouter initialEntries={['/devices?view=recent&window=24h']}><DevicesPage /></MemoryRouter>)
- const rows=[...container.querySelectorAll('.device-ledger-row')]
+ const rows=[...container.querySelectorAll('.ant-table-tbody tr.ant-table-row')]
  expect(rows).toHaveLength(3)
- expect(rows[0].querySelector('.device-row-ip')).toHaveTextContent('192.0.2.10')
- expect(rows[0].querySelector('.device-row-name')).toHaveTextContent('DESKTOP-01')
- expect(rows[0].querySelector('.device-row-mac')).toHaveTextContent('00:11:22:33:44:10')
- expect(rows[1].querySelector('.device-row-ip-value')).toBeEmptyDOMElement()
- expect(rows[1].querySelector('.device-row-mac')).toHaveTextContent('00:11:22:33:44:11')
- expect(rows[2].querySelector('.device-row-ip-value')).toBeEmptyDOMElement()
- expect(rows[2].querySelector('.device-row-mac')).toHaveTextContent('00:11:22:33:44:12')
- expect(rows[2].querySelector('.device-row-ipv6')).toHaveTextContent('2001:db8::12')
+ expect(rows[0]).toHaveTextContent('192.0.2.10')
+ expect(rows[0]).toHaveTextContent('DESKTOP-01')
+ expect(rows[0]).toHaveTextContent('00:11:22:33:44:10')
+ expect(rows[1]).not.toHaveTextContent('192.0.2.')
+ expect(rows[1]).toHaveTextContent('00:11:22:33:44:11')
+ expect(rows[2]).not.toHaveTextContent('192.0.2.')
+ expect(rows[2]).toHaveTextContent('00:11:22:33:44:12')
+ expect(rows[2]).toHaveTextContent('2001:db8::12')
 })
 it('restores exact account search and waits for explicit submit',async()=>{
  setup('/devices?view=recent&window=24h&search_type=account&q=Student-A&page=2')
@@ -103,18 +104,10 @@ it('keeps the list when metadata fails and retries only statistics',()=>{
  expect(fixture.metadataRefresh).toHaveBeenCalledOnce()
  expect(fixture.refresh).not.toHaveBeenCalled()
 })
-it('manual refresh refreshes current list and statistics without changing the page',()=>{
- setup('/devices?view=history&page=2')
- fireEvent.click(screen.getByRole('button',{name:/刷新数据/}))
- expect(fixture.refresh).toHaveBeenCalledOnce()
- expect(fixture.metadataRefresh).toHaveBeenCalledOnce()
- expect(screen.getByTestId('location')).toHaveTextContent('page=2')
-})
 it('mounts campus filters only when expanded and enables diagnostics separately',async()=>{
  setup('/devices?view=recent&window=24h')
  expect(fixture.organization).not.toHaveBeenCalled()
- const filters=document.querySelector('.device-filter-disclosure') as HTMLDetailsElement
- filters.open=true;fireEvent(filters,new Event('toggle'))
+ fireEvent.click(screen.getByRole('button',{name:/更多筛选/}))
  await waitFor(()=>expect(fixture.organization).toHaveBeenCalled())
  expect(fixture.diagnostics).toHaveBeenLastCalledWith(false)
  const diagnostics=document.querySelector('.device-diagnostics') as HTMLDetailsElement

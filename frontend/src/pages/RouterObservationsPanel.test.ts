@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { routerObservationQueryFromParams } from './RouterObservationsPanel'
 
-describe('router observation default role', () => {
-  it('defaults to network equipment and hides candidates so the headline count only covers likely and confirmed records', () => {
-    expect(routerObservationQueryFromParams(new URLSearchParams())).toEqual({ role: 'network', include_candidates: false })
+describe('router observation role view', () => {
+  it('defaults to the router view and hides candidates', () => {
+    expect(routerObservationQueryFromParams(new URLSearchParams())).toEqual({ role: 'router', include_candidates: false })
   })
 
-  it('keeps an explicit access-point filter available', () => {
-    expect(routerObservationQueryFromParams(new URLSearchParams('router_role=ap&router_confidence_min=60'))).toEqual({ role: 'ap', include_candidates: false, confidence_min: 60 })
+  it('switches to access points from the view parameter', () => {
+    expect(routerObservationQueryFromParams(new URLSearchParams('routers_view=ap&router_confidence_min=60'))).toEqual({ role: 'ap', include_candidates: false, confidence_min: 60 })
   })
 
-  it('restores an explicit candidate inclusion from the URL', () => {
-    expect(routerObservationQueryFromParams(new URLSearchParams('router_include_candidates=true'))).toEqual({ role: 'network', include_candidates: true })
+  it('keeps the current view when candidate inclusion is enabled', () => {
+    expect(routerObservationQueryFromParams(new URLSearchParams('routers_view=ap&router_include_candidates=true'))).toEqual({ role: 'ap', include_candidates: true })
   })
 
-  it('preserves the current authentication identity filter as a boolean', () => {
-    expect(routerObservationQueryFromParams(new URLSearchParams('router_has_auth_binding=true'))).toEqual({ role: 'network', include_candidates: false, has_auth_binding: true })
+  it('preserves the authentication identity filter and ignores a stale role filter', () => {
+    expect(routerObservationQueryFromParams(new URLSearchParams('routers_view=ap&router_role=router&router_has_auth_binding=true'))).toEqual({ role: 'ap', include_candidates: false, has_auth_binding: true })
   })
 })

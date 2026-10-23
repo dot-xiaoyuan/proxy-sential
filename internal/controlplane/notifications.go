@@ -797,6 +797,7 @@ func (s *Server) handleNotificationOutboxItem(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) runNotificationTest(w http.ResponseWriter, r *http.Request, m *notificationManager, request notificationTestRequest) {
+	if s.observeTestRequest(w, r, "拟通知测试", request.ChannelID) { return }
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
 	channel, err := s.resolveNotificationChannel(ctx, m, request.ChannelID)
@@ -883,6 +884,10 @@ func (s *Server) startNotificationWorker() {
 }
 
 func (s *Server) processNotificationOutbox(now time.Time) {
+	if violationObservationOnly() {
+		s.observeQueuedNotifications()
+		return
+	}
 	if s.notifications == nil || s.operations.db == nil {
 		return
 	}
@@ -899,6 +904,10 @@ func (s *Server) processNotificationOutbox(now time.Time) {
 }
 
 func (s *Server) deliverNotification(ctx context.Context, row notificationOutboxRow) {
+	if violationObservationOnly() {
+		s.recordOutboundObservation(ctx, "notification:"+row.NotificationID, "拟提醒", row.AccountID, map[string]any{"notification_id": row.NotificationID, "reason": "observation_only"})
+		return
+	}
 	channel, err := s.resolveNotificationChannel(ctx, s.notifications, row.ChannelID)
 	if err != nil {
 		_ = s.notifications.markFailed(ctx, row, map[string]any{"account_id": row.AccountID}, 0, err.Error())

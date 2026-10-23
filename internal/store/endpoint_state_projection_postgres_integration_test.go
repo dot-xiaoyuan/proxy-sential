@@ -70,8 +70,27 @@ func TestPostgresEndpointStateUsesSnapshotProjection(t *testing.T) {
 	if ip, accounts := current(); ip != "10.157.2.191" || accounts != 1 {
 		t.Fatalf("current snapshot member not shown: ip=%q accounts=%d", ip, accounts)
 	}
+	search := func() *DeviceIPMatch {
+		t.Helper()
+		page, searchErr := pg.ListDeviceInventory(ctx, Query{Q: "10.157.2.191", InventorySearchType: "ip", View: "recent", Window: "24h", Limit: 100, InventorySkipMetadata: true})
+		if searchErr != nil {
+			t.Fatal(searchErr)
+		}
+		for _, item := range page.Items {
+			if item.EndpointID == endpoint {
+				return item.IPMatch
+			}
+		}
+		return nil
+	}
+	if match := search(); match == nil || match.Source != "account_snapshot" || !match.IsRecentIP {
+		t.Fatalf("current snapshot IP search missed endpoint: %+v", match)
+	}
 	setSnapshot(time.Now().UTC().Add(-2 * time.Hour))
 	if ip, accounts := current(); ip != "" || accounts != 0 {
 		t.Fatalf("stale snapshot member still shown: ip=%q accounts=%d", ip, accounts)
+	}
+	if match := search(); match != nil {
+		t.Fatalf("stale snapshot still matched IP search: %+v", match)
 	}
 }

@@ -18,6 +18,18 @@ export const discoveryHandlers=[
   const category=url.searchParams.get('category');const scoped=url.searchParams.get('view')==='iot'?items.filter(item=>item.capabilities.some(c=>['printing','scanning','network_video','casting','media_rendering'].includes(c))):items;const filtered=category?scoped.filter(item=>item.category===category):scoped
   return HttpResponse.json({next_cursor:'',has_more:false,facets:[{category:'all',count:3},{category:'mobile',count:0},{category:'tablet',count:0},{category:'desktop',count:0},{category:'printer',count:1},{category:'camera',count:0},{category:'network',count:0},{category:'media',count:0},{category:'identity_only',count:2}],items:filtered,freshness:{status:'ready',lag_seconds:0,result_version:1}})
  }),
- ...['sources','tasks','scan-profiles'].map(path=>http.get(`*/discovery/${path}`,()=>HttpResponse.json({items:[]}))),
+ http.get('*/discovery/sources',()=>HttpResponse.json({items:[
+  {id:'core-sw-01',name:'核心交换机',node:'sensor-test',site:'主校区',domain:'教学网',address:'192.0.2.2',snmp_version:'3',interval_seconds:300,enabled:true,config_version:3},
+  {id:'core-sw-02',name:'',node:'sensor-test',site:'主校区',domain:'办公网',address:'192.0.2.3',snmp_version:'2c',interval_seconds:600,enabled:false,config_version:1},
+ ]})),
+ http.get('*/discovery/scan-profiles',()=>HttpResponse.json({items:[
+  {id:'scan-campus',node:'sensor-test',site:'主校区',domain:'教学网',version:2,trial_version:2,enabled:true,config:{allow:['192.0.2.0/24','198.51.100.0/24'],exclude:['192.0.2.1'],addresses:['fe80::1'],interface:'eth0',protocols:['icmp','arp'],sensitive:false,interval_seconds:86400}},
+  {id:'scan-lab',node:'sensor-test',site:'实验区',domain:'实验网',version:4,trial_version:3,enabled:false,config:{allow:['203.0.113.0/24'],exclude:[],addresses:[],interface:'eth1',protocols:['icmp'],sensitive:true,interval_seconds:604800}},
+ ]})),
+ http.get('*/discovery/tasks',()=>HttpResponse.json({items:[
+  {id:'task-1',source_id:'core-sw-01',status:'complete',created_at:now,result:{tables:[{name:'arp',count:128,complete:true},{name:'fdb',count:96,complete:true}]}},
+  {id:'task-2',source_id:'core-sw-02',status:'failed',created_at:now,error:'SNMP 请求超时'},
+  {id:'task-3',source_id:'core-sw-01',status:'running',created_at:now},
+ ]})),
  http.post('*/discovery/preview',()=>HttpResponse.json({total:2,targets:['192.0.2.1','192.0.2.2'],active_enabled:false})),
 ]

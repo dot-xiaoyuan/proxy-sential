@@ -24,7 +24,7 @@ func legacyAuthorityEvents(ctx context.Context, tx *sql.Tx, events []normalized.
 			seen[key] = true
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT scope_key FROM identity_pipeline_scopes WHERE enabled AND scope_key=ANY($1::text[])`, keys)
+	rows, err := tx.QueryContext(ctx, IdentityScopeStatusSQL(`SELECT scope_key FROM identity_pipeline_scopes WHERE enabled AND scope_key=ANY($1::text[])`), keys)
 	if err != nil {
 		return nil, err
 	}

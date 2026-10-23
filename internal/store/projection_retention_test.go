@@ -34,7 +34,7 @@ func (f *fakeArchive) serve(t *testing.T) *ClickHouseStore {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		switch {
-		case strings.Contains(text, "INSERT INTO identity_projection_history_archive"):
+		case strings.Contains(text, "INSERT INTO identity_projection_history_archive") || strings.Contains(text, "INSERT INTO identity_projection_intervals_archive"):
 			if f.fail {
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				return
@@ -53,7 +53,7 @@ func (f *fakeArchive) serve(t *testing.T) *ClickHouseStore {
 				}
 				f.rows = append(f.rows, row)
 			}
-		case strings.Contains(text, "FROM identity_projection_history_archive"):
+		case strings.Contains(text, "FROM identity_projection_history_archive") || strings.Contains(text, "FROM identity_projection_intervals_archive"):
 			batch := regexp.MustCompile(`batch_id='([^']+)'`).FindStringSubmatch(text)
 			for _, row := range f.rows {
 				if batch == nil || row["batch_id"] != batch[1] {

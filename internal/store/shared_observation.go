@@ -87,9 +87,9 @@ func (s *DBStore) enqueueSharedObservations(ctx context.Context, events []normal
 	}
 	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO shared_observation_jobs(job_id,sensor_id,campus_id,access_domain,ip,last_event_at,first_received_at,dirty_since)
  SELECT id,sensor_id,campus_id,access_domain,ip::inet,at,COALESCE((SELECT started_at FROM ingest_batches WHERE batch_id=$2),now()),COALESCE((SELECT started_at FROM ingest_batches WHERE batch_id=$2),now()) FROM jsonb_to_recordset($1::jsonb) r(id text,sensor_id text,campus_id text,access_domain text,ip text,at timestamptz) ORDER BY id
- ON CONFLICT(job_id) DO UPDATE SET revision=shared_observation_jobs.revision+1,last_event_at=GREATEST(shared_observation_jobs.last_event_at,EXCLUDED.last_event_at),last_received_at=now(),
+ ON CONFLICT(job_id) DO UPDATE SET revision=shared_observation_jobs.revision+1,last_event_at=GREATEST(shared_observation_jobs.last_event_at,EXCLUDED.last_event_at),last_received_at=now(),last_dependency_at=clock_timestamp(),
  dirty_since=CASE WHEN shared_observation_jobs.revision=shared_observation_jobs.completed_revision THEN EXCLUDED.dirty_since ELSE LEAST(shared_observation_jobs.dirty_since,EXCLUDED.dirty_since) END,
- next_attempt_at=LEAST(shared_observation_jobs.next_attempt_at,now()),expired=false`, raw, ctx.Value(sharedIngestBatchKey{}))
+ next_attempt_at=LEAST(shared_observation_jobs.next_attempt_at,now()),expired=false,lease_token='',lease_until=NULL`, raw, ctx.Value(sharedIngestBatchKey{}))
 	return err
 }
 

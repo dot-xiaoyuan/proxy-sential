@@ -13,7 +13,7 @@ import type {
   ActivityOverviewQuery,
   CreateLabelRequest,
   DeviceQuery,
-  EventQuery,
+  EventQuery, AIRelayUsageQuery,
   EvidenceQuery,
   IdentityQuery,
   ListQuery,
@@ -149,7 +149,6 @@ export function useSystemStatus() {
   return useQuery({
     queryKey: queryKeys.systemStatus,
     queryFn: api.systemStatus,
-    refetchInterval: 5000,
   });
 }
 
@@ -768,3 +767,5 @@ export function useCampusExceptionMutation() {
 export function useCaseHistory(caseId: string, kind: CaseHistoryKind, enabled: boolean) {
   return useInfiniteQuery({queryKey: ['case-history',caseId,kind], initialPageParam: '0', queryFn: ({pageParam}) => api.caseHistory(caseId,kind,pageParam), getNextPageParam: (page) => page.page.next_cursor ?? undefined, enabled: enabled && !!caseId})
 }
+
+export function useAIRelayUsages(query: AIRelayUsageQuery) { return usePagedQuery(query, value => ["ai-relay-usages", value], api.aiRelayUsages) }

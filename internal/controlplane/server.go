@@ -302,6 +302,9 @@ func Serve(opts Options) error {
 		go server.runSRun4KScheduler(ctx)
 	}
 	if server.operations != nil && server.operations.db != nil {
+		// Observation processing only writes local proposed decisions. It must
+		// continue on the read-only field control plane, which disables dispatch.
+		server.startViolationWorker(ctx)
 		// The read-only control plane may refresh reference directories from the
 		// committed 4K identity host. This only performs read-only northbound
 		// requests and writes a local directory snapshot plus audit record.
@@ -697,11 +700,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 			path == "/integrations/identity/snapshot-uploads" ||
 			strings.HasPrefix(path, "/integrations/identity/snapshot-uploads/") ||
 			path == "/integrations/identity/bridge/catalog-snapshots")
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !identityIngestPost && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) && !endpointRegistrationAllowed(r.Method, path) {
+	localObservationPost := r.Method == http.MethodPost && strings.HasPrefix(path, "/violation-cases/") && strings.HasSuffix(path, "/release-preview")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !identityIngestPost && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) && !endpointRegistrationAllowed(r.Method, path) && !localObservationPost && !(path == "/mcp" && r.Method == http.MethodPost) {
 		writeError(w, http.StatusForbidden, "read_only", "mutating operations are disabled by the global read-only switch")
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.auth.enabled {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && path != "/mcp" && s.auth.enabled {
 		current, _ := s.auth.current(r)
 		if r.Header.Get("X-CSRF-Token") == "" || !hmac.Equal([]byte(r.Header.Get("X-CSRF-Token")), []byte(current.CSRFToken)) {
 			writeError(w, http.StatusForbidden, "csrf_failed", "valid CSRF token is required")
@@ -774,6 +778,12 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handlePolicies(w, r, path)
 	case strings.HasPrefix(path, "/cases"):
 		s.handleCases(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/violation-cases/") && strings.HasSuffix(path, "/release-preview"):
+		s.handleViolationReleasePreview(w, r, path)
+	case strings.HasPrefix(path, "/violation-"):
+		s.handleViolationRead(w, r, path)
+	case path == "/mcp":
+		s.handleViolationMCP(w, r)
 	case strings.HasPrefix(path, "/organization"):
 		s.handleOrganization(w, r)
 	case strings.HasPrefix(path, "/actions"):
@@ -858,6 +868,10 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleIP(w, r, strings.TrimPrefix(path, "/ips/"))
 	case r.Method == http.MethodGet && path == "/events":
 		s.handleEvents(w, r)
+	case r.Method == http.MethodGet && path == "/ai-relay/usages":
+		s.handleAIRelayUsages(w, r)
+	case r.Method == http.MethodGet && path == "/ai-relay/indicators":
+		s.handleAIRelayIndicators(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/events/"):
 		s.handleEvent(w, r, strings.TrimPrefix(path, "/events/"))
 	case r.Method == http.MethodGet && path == "/ingest/status":
@@ -1289,6 +1303,8 @@ func requiredPermission(method, path string) string {
 			return "rules:reload"
 		case strings.HasPrefix(path, "/device-fingerprint-library/"):
 			return "device-fingerprint-library:update"
+		case strings.HasPrefix(path, "/violation-cases/") && strings.HasSuffix(path, "/release-preview"):
+			return "cases:write"
 		case strings.HasPrefix(path, "/cases"):
 			return "cases:write"
 		case strings.HasPrefix(path, "/actions"):
@@ -1310,6 +1326,10 @@ func requiredPermission(method, path string) string {
 		return "audit:read"
 	case strings.HasPrefix(path, "/events"):
 		return "events:read"
+	case path == "/ai-relay/indicators":
+		return "risks:read"
+	case strings.HasPrefix(path, "/ai-relay/"):
+		return "events:read"
 	case strings.HasPrefix(path, "/endpoints/") && strings.Contains(path, "/observations/") && strings.HasSuffix(path, "/evidence"):
 		return "events:read"
 	case strings.HasPrefix(path, "/ingest"):
@@ -1319,6 +1339,10 @@ func requiredPermission(method, path string) string {
 	case strings.HasPrefix(path, "/dpi") || strings.HasPrefix(path, "/activity"):
 		return "dpi:read"
 	case strings.HasPrefix(path, "/cases"):
+		return "cases:read"
+	case strings.HasPrefix(path, "/violation-"):
+		return "cases:read"
+	case path == "/mcp":
 		return "cases:read"
 	case strings.HasPrefix(path, "/organization"):
 		return "organization:read"

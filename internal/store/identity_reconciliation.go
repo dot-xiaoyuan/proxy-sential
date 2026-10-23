@@ -23,11 +23,12 @@ type IdentityScope struct {
 }
 type IdentitySnapshot struct {
 	IdentityScope
-	SnapshotID      string             `json:"snapshot_id"`
-	ObservedAt      time.Time          `json:"observed_at"`
-	IntervalSeconds int                `json:"reconcile_interval_seconds"`
-	Sessions        []policy.Session   `json:"-"`
-	Events          []normalized.Event `json:"events"`
+	CaptureStartedAt *time.Time         `json:"capture_started_at,omitempty"`
+	SnapshotID       string             `json:"snapshot_id"`
+	ObservedAt       time.Time          `json:"observed_at"`
+	IntervalSeconds  int                `json:"reconcile_interval_seconds"`
+	Sessions         []policy.Session   `json:"-"`
+	Events           []normalized.Event `json:"events"`
 }
 type IdentitySourceStatus struct {
 	Blocker string `json:"blocker,omitempty"`

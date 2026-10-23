@@ -17,10 +17,11 @@ const snapshotLogProjectedSQL = `UPDATE identity_snapshot_log SET projected=true
 
 // snapshotMeta is one identity_snapshot_log row.
 type snapshotMeta struct {
-	Scope           IdentityScope
-	SnapshotID      string
-	ObservedAt      time.Time
-	IntervalSeconds int
+	CaptureStartedAt time.Time
+	Scope            IdentityScope
+	SnapshotID       string
+	ObservedAt       time.Time
+	IntervalSeconds  int
 }
 
 // snapshotDocument returns the canonical stored document of a snapshot and its content digest.

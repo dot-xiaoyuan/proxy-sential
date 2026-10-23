@@ -22,6 +22,10 @@ func loadEmergencyStop(ctx context.Context, q operationsQuerier, doc *operations
 }
 
 func (s *Server) deliverActionPostgres(id string, revoke bool) {
+	if violationObservationOnly() {
+		s.blockOutboundAction(id, revoke)
+		return
+	}
 	ctx, cancel := contextWithRequestTimeout(context.Background())
 	defer cancel()
 	doc := emptyOperationsDocument()

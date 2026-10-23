@@ -29,7 +29,7 @@ export function IngestDiagnosticDetailsPage() {
 function RecordPage({title,back,identifier,query}:{title:string;back:string;identifier:string;query:{isLoading:boolean;isError:boolean;isFetching:boolean;data?:unknown;error:Error|null;refetch:()=>unknown}}) {
   const [params]=useSearchParams();
   if (query.isLoading) return <AppLoadingState rows={10} />
-  if (query.isError || !query.data) return <AppErrorAlert title={`${title}加载失败`} message={query.error?.message} />
+  if (query.isError || !query.data) return <AppErrorAlert title={`${title}读取失败`} message={query.error?.message} />
   const proxy=(query.data as {proxy_protocol?:ProxyProtocolEvidence}).proxy_protocol
   const record=query.data as Record<string,unknown>
   const fields:Record<string,string>={created_at:'记录时间',timestamp:'发生时间',started_at:'开始时间',finished_at:'结束时间',actor:'操作者',action:'操作',target:'目标',outcome:'结果',summary:'业务说明',stage:'采集阶段',severity:'级别',sensor_id:'传感器',run_id:'运行 ID',evidence_count:'证据数',risk_count:'风险快照数',type:'类型',event_id:'事件 ID',zeek_status:'Zeek 状态',truncated:'输入截断'}
@@ -37,7 +37,7 @@ function RecordPage({title,back,identifier,query}:{title:string;back:string;iden
   const normalized=record.normalized as {read?:number;emitted?:number;malformed?:number}|undefined
   const subject=record.subject as {ip?:string;endpoint_id?:string}|undefined
   const flow=record.flow as {src_ip?:string;dst_ip?:string;app_protocol?:string}|undefined
-  return <main className="page"><AppPageHeader title={title} subtitle={identifier} loading={query.isFetching} onRefresh={() => void query.refetch()} extra={<Link to={safeReturnTo(params.get('return_to'),back)}>返回列表</Link>} /><section className="surface detail-stack">
+  return <main className="page"><AppPageHeader title={title} subtitle={identifier} extra={<Link to={safeReturnTo(params.get('return_to'),back)}>返回列表</Link>} /><section className="surface detail-stack">
   {proxy&&<ProxyProtocolView evidence={proxy}/>}
   {normalized&&<Typography.Paragraph>读取 {normalized.read??0} 条 · 标准化 {normalized.emitted??0} 条 · 异常 {normalized.malformed??0} 条</Typography.Paragraph>}
   {(subject||flow)&&<Typography.Paragraph>{[subject?.ip,subject?.endpoint_id,flow?.src_ip,flow?.dst_ip,flow?.app_protocol].filter(Boolean).join(' · ')}</Typography.Paragraph>}

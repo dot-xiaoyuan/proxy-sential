@@ -179,3 +179,6 @@ export function DestinationTargetsRoute(){return <RouteSuspense><DestinationTarg
 
 const BehaviorReportsPage=lazy(()=>import('../pages/BehaviorReportsPage').then(m=>({default:m.BehaviorReportsPage})))
 export function BehaviorReportsRoute(){return <RouteSuspense><BehaviorReportsPage/></RouteSuspense>}
+
+const AIRelayPage = lazy(() => import('../pages/AIRelayPage').then(m => ({default:m.AIRelayPage})))
+export function AIRelayRoute(){return <RouteSuspense><AIRelayPage/></RouteSuspense>}

@@ -1,12 +1,17 @@
-import { Notice as Alert } from '../shared/ui/Notice'
-import { detailPath,safeReturnTo } from '../app/navigation'
+import {
+  Notice as Alert } from '../shared/ui/Notice'
+import { detailPath,
+  safeReturnTo } from '../app/navigation'
 import { DiscoveryEvidence } from "../entities/device/DiscoveryEvidence"
-import { DeviceBrandSummary } from '../entities/device/DeviceInventoryCells'
-import { DeviceNamePanel } from '../entities/device/DeviceNameView'
+import { DeviceBrandSummary, deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
+import { DeviceNamePanel, DeviceNameView } from '../entities/device/DeviceNameView'
 import { BrandInferenceDetails } from '../entities/device/BrandInferenceView';
-import { useEffect } from "react";
-import { AssociationOverview, EndpointTracePanel } from '../entities/device/EndpointTracePanel'
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { AssociationOverview,
+  EndpointTracePanel } from '../entities/device/EndpointTracePanel'
+import { Link,
+  useParams,
+  useSearchParams } from "react-router-dom";
 import {App as AntApp,
   Button,
   Descriptions,
@@ -16,10 +21,10 @@ import {App as AntApp,
   Select,
   Skeleton,
   Space,
-  Table,
   Tabs,
   Tag,
-  Typography} from "antd";
+  Typography,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 
 import {
@@ -36,7 +41,7 @@ import type {
   UpdateEndpointRegistrationRequest,
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
-import { AppFactBar } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppServerPagination, AppTable, formatDateTime } from '../shared/ui'
 
 const ecosystemColumns: ColumnsType<EndpointDomainEvidence> = [
   {
@@ -113,6 +118,8 @@ export function EndpointDetailsPage() {
   const { message } = AntApp.useApp();
   const [registrationForm] = Form.useForm<UpdateEndpointRegistrationRequest>();
   const activeTab = params.get("tab") || "overview";
+  const [signalPage,setSignalPage]=useState(1);const [signalPageSize,setSignalPageSize]=useState(20)
+  const [ecosystemPage,setEcosystemPage]=useState(1);const [ecosystemPageSize,setEcosystemPageSize]=useState(20)
   const setActiveTab=(tab:string)=>setParams(current=>{const next=new URLSearchParams(current);next.set("tab",tab);return next},{replace:true});
   const detail = useInventoryDetail(endpointId);
   const identity = {...detail,data:detail.data?.profile};
@@ -125,7 +132,7 @@ export function EndpointDetailsPage() {
   const mergeStatus = Form.useWatch("merge_status", registrationForm);
   const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? "";
   const latestAccess = profile?.recognition?.current_access_id ?? "";
-  // 设备信号按 IP 或 MAC 存储，终端 ID 不参与匹配；按最近观测 IP 查询，缺失时退回 MAC。
+  // 终端信号按 IP 或 MAC 存储，终端 ID 不参与匹配；按最近观测 IP 查询，缺失时退回 MAC。
   const signalQuery = latestIP
     ? { ip: latestIP }
     : { q: profile.endpoint.primary_mac ?? "" };
@@ -139,7 +146,19 @@ export function EndpointDetailsPage() {
     activeTab === "signals" && Boolean(latestIP || profile.endpoint.primary_mac),
   );
   const signalItems = signals.data?.items ?? [];
+  const signalPageCount=Math.max(1,Math.ceil(signalItems.length/signalPageSize))
+  const visibleSignalPage=Math.min(signalPage,signalPageCount)
+  const visibleSignals=signalItems.slice((visibleSignalPage-1)*signalPageSize,visibleSignalPage*signalPageSize)
+  const ecosystemItems=recognitionEvidence.data?.ecosystem_evidence??[]
+  const ecosystemPageCount=Math.max(1,Math.ceil(ecosystemItems.length/ecosystemPageSize))
+  const visibleEcosystemPage=Math.min(ecosystemPage,ecosystemPageCount)
+  const visibleEcosystem=ecosystemItems.slice((visibleEcosystemPage-1)*ecosystemPageSize,visibleEcosystemPage*ecosystemPageSize)
   const recognition = recognitionEvidence.data?.recognition ?? profile.recognition;
+  const knownRecognition = (value?: string) => Boolean(value && !/^(unknown|未知|未识别)$/i.test(value.trim()))
+  const recognitionType = knownRecognition(recognition?.device_type) ? recognition!.device_type! : ''
+  const tentativeBrand = knownRecognition(recognition?.brand) && (recognition?.brand_confidence ?? 0) < 0.8 ? recognition!.brand! : ''
+  const tentativeModel = knownRecognition(recognition?.model) && (recognition?.model_confidence ?? 0) < 0.8 ? recognition!.model! : ''
+  const hasRecognition = Boolean(recognitionType || knownRecognition(recognition?.brand) || knownRecognition(recognition?.model) || knownRecognition(recognition?.os_family) || recognition?.brand_inference?.brand || recognition?.brand_reference?.brand || recognition?.discovery?.capabilities?.length || recognition?.recognition_conflict)
   const associationCounts=detail.data?.state.complete?detail.data.association_counts:undefined;
 
   useEffect(() => {
@@ -164,7 +183,7 @@ export function EndpointDetailsPage() {
   if (identity.isLoading) {
     return <Skeleton active />;
   }
-  if(identity.isError&&!identity.data)return <main className="page"><Alert showIcon type="error" title="终端摘要加载失败" description={identity.error.message}/><Button onClick={()=>void identity.refetch()}>重试</Button><Link to={back}>返回终端列表</Link></main>
+  if(identity.isError&&!identity.data)return <main className="page"><AppErrorAlert title="终端摘要读取失败" message={identity.error.message} /><Button onClick={()=>void identity.refetch()}>重试</Button><Link to={back}>返回终端列表</Link></main>
 
   return (
     <main className="page endpoint-details-page">
@@ -174,7 +193,7 @@ export function EndpointDetailsPage() {
             {[profile.device_names_disabled ? '' : profile.device_name?.value,latestIP].filter(Boolean).join(' · ') || profile.endpoint.primary_mac || '终端详情'}
           </Typography.Title>
           <Typography.Text type="secondary">
-            终端登记、账号历史、IP 历史、接入位置和设备信号。
+            终端登记、账号历史、IP 历史、接入位置和终端信号。
           </Typography.Text>
         </div>
         <Space wrap>
@@ -191,31 +210,23 @@ export function EndpointDetailsPage() {
       </div>
 
 
-      {activeTab!=='identity'&&<section className="metric-grid">
-        <div className="surface metric-card">
-          <Typography.Text type="secondary">关联账号</Typography.Text>
-          <Typography.Title className="metric-card-value" level={3}>
-            {associationCounts?.account??(detail.data?.state.complete?0:'')}
-          </Typography.Title>
+      {activeTab!=='identity'&&<section className="surface endpoint-summary" aria-label="终端关联摘要">
+        <div className="endpoint-summary-item">
+          <span>关联账号</span>
+          <strong>{associationCounts?.account ?? (detail.data?.state.complete ? 0 : '')}</strong>
         </div>
-        <div className="surface metric-card">
-          <Typography.Text type="secondary">历史 IP</Typography.Text>
-          <Typography.Title className="metric-card-value" level={3}>
-            {associationCounts?.ip??(detail.data?.state.complete?0:'')}
-          </Typography.Title>
+        <div className="endpoint-summary-item">
+          <span>历史 IP</span>
+          <strong>{associationCounts?.ip ?? (detail.data?.state.complete ? 0 : '')}</strong>
         </div>
-        <div className="surface metric-card">
-          <Typography.Text type="secondary">接入位置</Typography.Text>
-          <Typography.Title className="metric-card-value" level={3}>
-            {associationCounts?.access??(detail.data?.state.complete?0:'')}
-          </Typography.Title>
+        <div className="endpoint-summary-item">
+          <span>接入位置</span>
+          <strong>{associationCounts?.access ?? (detail.data?.state.complete ? 0 : '')}</strong>
         </div>
-        <div className="surface metric-card">
-          <Typography.Text type="secondary">身份置信度</Typography.Text>
-          <Progress
-            percent={Math.round(profile.endpoint.identity_confidence * 100)}
-            size="small"
-          />
+        <div className="endpoint-summary-item endpoint-summary-confidence">
+          <span>身份置信度</span>
+          <strong>{Math.round(profile.endpoint.identity_confidence * 100)}%</strong>
+          <Progress percent={Math.round(profile.endpoint.identity_confidence * 100)} size="small" showInfo={false} />
         </div>
       </section>}
 
@@ -226,7 +237,7 @@ export function EndpointDetailsPage() {
           items={[
             { key: "overview", label: "概览" },
             { key: "identity", label: "身份溯源" },
-            { key: "recognition", label: "设备识别" },
+            { key: "recognition", label: "终端识别" },
             { key: "registration", label: "登记管理" },
             { key: "signals", label: "技术信号" },
           ]}
@@ -235,8 +246,7 @@ export function EndpointDetailsPage() {
 
 
       {activeTab === "overview" && (
-        <><section className="details-grid">
-          {recognition&&<section className="surface"><Typography.Title level={4}>设备识别</Typography.Title><DeviceBrandSummary device={recognition}/><Button type="link" onClick={()=>setActiveTab('recognition')}>查看识别依据</Button></section>}
+        <>
           {identity.isError && (
             <Alert
               className="endpoint-detail-alert"
@@ -245,70 +255,57 @@ export function EndpointDetailsPage() {
               type="warning"
             />
           )}
-          <div className="surface endpoint-registration-summary">
-            <Typography.Title level={4}>登记信息</Typography.Title>
-            <Descriptions column={1} size="small">
-              <Descriptions.Item label="登记状态">
-                {registrationStatusText(profile.endpoint.registration_status)}
-              </Descriptions.Item>
-              <Descriptions.Item label="责任账号">
-                {profile.endpoint.owner_account || ""}
-              </Descriptions.Item>
-              <Descriptions.Item label="责任人">
-                {profile.endpoint.owner_name || ""}
-              </Descriptions.Item>
-              <Descriptions.Item label="部门">
-                {profile.endpoint.owner_department || ""}
-              </Descriptions.Item>
-              <Descriptions.Item label="资产编号">
-                {profile.endpoint.asset_tag || ""}
-              </Descriptions.Item>
-              <Descriptions.Item label="终端归属">
-                {ownershipClassText(profile.endpoint.ownership_class)}
-              </Descriptions.Item>
-              <Descriptions.Item label="合并状态">
-                {profile.endpoint.merge_status || "active"}
-              </Descriptions.Item>
-              <Descriptions.Item label="备注">
-                {profile.endpoint.registration_note || ""}
-              </Descriptions.Item>
-            </Descriptions>
-          </div>
-
-          <div className="surface">
-            <Typography.Title level={4}>观测摘要</Typography.Title>
-            <Descriptions column={1} size="small">
-              <Descriptions.Item label="MAC">
-                {profile.endpoint.primary_mac || ""}
-              </Descriptions.Item>
-              <Descriptions.Item label="最新观测账号">
-                {profile.recognition?.current_account || ""}
-                {profile.recognition?.current_account_conflict&&<><Tag color="orange">同时间多账号冲突</Tag>{(profile.recognition.current_account_candidates??[]).join(' / ')}</>}
-              </Descriptions.Item>
-              <Descriptions.Item label="最近观测 IP">
-                {latestIP ? (
-                  <Link
-                    className="mono"
-                    to={detailPath(`/ips/${encodeURIComponent(latestIP)}`,`/devices/${encodeURIComponent(endpointId)}?${params.toString()}`)}
-                  >
-                    {latestIP}
-                  </Link>
-                ) : (
-                  ""
-                )}
-              </Descriptions.Item>
-              <Descriptions.Item label="最近观测接入">
-                {latestAccess || ""}
-              </Descriptions.Item>
-              <Descriptions.Item label="首次发现">
-                {formatTime(profile.first_seen)}
-              </Descriptions.Item>
-              <Descriptions.Item label="最近观测">
-                {formatTime(profile.last_seen)}
-              </Descriptions.Item>
-            </Descriptions>
-          </div>
-        </section><AssociationOverview detail={detail.data}/></>
+          <section className="endpoint-overview-grid">
+            <section className="surface endpoint-overview-card">
+              <div className="endpoint-overview-card-head"><Typography.Title level={4}>终端识别</Typography.Title><Button type="link" onClick={()=>setActiveTab('recognition')}>查看识别依据</Button></div>
+              {!profile.device_names_disabled&&profile.device_name?.value&&<div className="endpoint-recognition-name"><span>设备名称</span><DeviceNameView name={profile.device_name}/></div>}
+              {recognition&&<DeviceBrandSummary device={recognition}/>}
+              {recognition&&hasRecognition&&<Descriptions column={1} size="small" className="endpoint-recognition-facts">
+                {recognitionType&&<Descriptions.Item label="类型">{deviceTypeLabel(recognitionType)}{(recognition.device_type_confidence??0)<.8&&<Tag className="device-inference-tag">类型线索</Tag>}</Descriptions.Item>}
+                {tentativeBrand&&<Descriptions.Item label="品牌">{tentativeBrand}<Tag className="device-inference-tag">品牌线索 {Math.round((recognition.brand_confidence??0)*100)}%</Tag></Descriptions.Item>}
+                {tentativeModel&&<Descriptions.Item label="型号">{tentativeModel}<Tag className="device-inference-tag">型号线索 {Math.round((recognition.model_confidence??0)*100)}%</Tag></Descriptions.Item>}
+                {(recognition.recognition_confidence ?? 0) > 0 && <Descriptions.Item label="识别置信度">{Math.round(recognition.recognition_confidence*100)}%</Descriptions.Item>}
+                {recognition.vendor&&<Descriptions.Item label="注册厂商">{recognition.vendor}</Descriptions.Item>}
+                {recognition.ecosystem_hint&&<Descriptions.Item label="生态线索">{recognition.ecosystem_hint}{recognition.ecosystem_confidence!==undefined&&` · ${Math.round(recognition.ecosystem_confidence*100)}%`}</Descriptions.Item>}
+                {recognition.recognition_source&&<Descriptions.Item label="识别来源">{recognitionSourceText(recognition.recognition_source)}</Descriptions.Item>}
+                {recognition.fingerprint_version&&<Descriptions.Item label="规则版本">{recognition.fingerprint_version}</Descriptions.Item>}
+              </Descriptions>}
+              {!hasRecognition&&<Typography.Text type="secondary">尚无足够识别结果，可查看识别依据或技术信号。</Typography.Text>}
+            </section>
+            <section className="surface endpoint-overview-card">
+              <div className="endpoint-overview-card-head"><Typography.Title level={4}>观测摘要</Typography.Title></div>
+              <Descriptions column={1} size="small">
+                {profile.endpoint.primary_mac && <Descriptions.Item label="MAC">{profile.endpoint.primary_mac}</Descriptions.Item>}
+                {(profile.recognition?.current_account || profile.recognition?.current_account_conflict) && <Descriptions.Item label="最新观测账号">
+                  {profile.recognition?.current_account || ''}
+                  {profile.recognition?.current_account_conflict&&<><Tag color="orange">同时间多账号冲突</Tag>{(profile.recognition.current_account_candidates??[]).join(' / ')}</>}
+                </Descriptions.Item>}
+                {latestIP && <Descriptions.Item label="最近观测 IP">
+                  <Link className="mono" to={detailPath(`/ips/${encodeURIComponent(latestIP)}`,`/devices/${encodeURIComponent(endpointId)}?${params.toString()}`)}>{latestIP}</Link>
+                </Descriptions.Item>}
+                {latestAccess && <Descriptions.Item label="最近观测接入">{latestAccess}</Descriptions.Item>}
+                {formatTime(profile.first_seen) && <Descriptions.Item label="首次发现">{formatTime(profile.first_seen)}</Descriptions.Item>}
+                {formatTime(profile.last_seen) && <Descriptions.Item label="最近观测">{formatTime(profile.last_seen)}</Descriptions.Item>}
+              </Descriptions>
+            </section>
+            <section className="surface endpoint-overview-card endpoint-registration-summary">
+              <div className="endpoint-overview-card-head"><Typography.Title level={4}>登记信息</Typography.Title>{profile.endpoint.registration_status !== 'registered' && <Button type="link" className="endpoint-registration-link" onClick={()=>setActiveTab('registration')}>补充登记</Button>}</div>
+              <Descriptions column={1} size="small">
+                <Descriptions.Item label="登记状态">
+                  {registrationStatusText(profile.endpoint.registration_status)}
+                </Descriptions.Item>
+                {profile.endpoint.owner_account && <Descriptions.Item label="责任账号">{profile.endpoint.owner_account}</Descriptions.Item>}
+                {profile.endpoint.owner_name && <Descriptions.Item label="责任人">{profile.endpoint.owner_name}</Descriptions.Item>}
+                {profile.endpoint.owner_department && <Descriptions.Item label="部门">{profile.endpoint.owner_department}</Descriptions.Item>}
+                {profile.endpoint.asset_tag && <Descriptions.Item label="资产编号">{profile.endpoint.asset_tag}</Descriptions.Item>}
+                {ownershipClassText(profile.endpoint.ownership_class) && <Descriptions.Item label="终端归属">{ownershipClassText(profile.endpoint.ownership_class)}</Descriptions.Item>}
+                <Descriptions.Item label="合并状态">{mergeStatusText(profile.endpoint.merge_status)}</Descriptions.Item>
+                {profile.endpoint.registration_note && <Descriptions.Item label="备注">{profile.endpoint.registration_note}</Descriptions.Item>}
+              </Descriptions>
+            </section>
+          </section>
+          <AssociationOverview detail={detail.data}/>
+        </>
       )}
 
       {activeTab === "recognition" && (
@@ -316,9 +313,9 @@ export function EndpointDetailsPage() {
       {profile.discovery && <DiscoveryEvidence endpointId={endpointId} />}
       {!profile.device_names_disabled && <DeviceNamePanel endpointId={endpointId} name={profile.device_name} canEdit={canUpdateRegistration} />}
           <BrandInferenceDetails value={profile.brand_inference ?? recognition?.brand_inference} />
-          {!!recognition?.source_matches?.length && <section className="surface"><Typography.Title level={4}>多来源指纹依据</Typography.Title><Typography.Paragraph type="secondary">同一协议证据的跨库命中不重复增加置信度；辅助线索不单独确认设备类型。</Typography.Paragraph>{recognition.source_matches.map(m=><details key={`${m.source_id}:${m.rule_id}`} className="fingerprint-evidence"><summary>{m.name} · {m.source_id}{m.strength==='auxiliary'?' · 辅助线索':''}</summary><Descriptions column={1} items={[{key:'rule',label:'规则',children:<span className="fingerprint-ident">{m.rule_id}</span>},{key:'version',label:'版本',children:<span className="fingerprint-ident">{m.version}</span>},{key:'fields',label:'依据字段',children:m.fields.join('、')},{key:'observed',label:'匹配内容节选',children:Object.entries(m.observed??{}).map(([field,value])=><div key={field} className="fingerprint-ident">{field}：{value}</div>)},{key:'side',label:'归属',children:m.direction==='server'?'服务端':m.direction==='client'?'客户端':'设备'}]}/></details>)}</section>}
+          {!!recognition?.source_matches?.length && <section className="surface"><Typography.Title level={4}>多来源指纹依据</Typography.Title><Typography.Paragraph type="secondary">同一协议证据的跨库命中不重复增加置信度；辅助线索不单独确认设备类型。</Typography.Paragraph><div className="endpoint-scroll-list">{recognition.source_matches.map(m=><details key={`${m.source_id}:${m.rule_id}`} className="fingerprint-evidence"><summary>{m.name} · {m.source_id}{m.strength==='auxiliary'?' · 辅助线索':''}</summary><Descriptions column={1} items={[{key:'rule',label:'规则',children:<span className="fingerprint-ident">{m.rule_id}</span>},{key:'version',label:'版本',children:<span className="fingerprint-ident">{m.version}</span>},{key:'fields',label:'依据字段',children:m.fields.join('、')},{key:'observed',label:'匹配内容节选',children:Object.entries(m.observed??{}).map(([field,value])=><div key={field} className="fingerprint-ident">{field}：{value}</div>)},{key:'side',label:'归属',children:m.direction==='server'?'服务端':m.direction==='client'?'客户端':'终端'}]}/></details>)}</div></section>}
           <section className="surface">
-            <Typography.Title level={4}>设备识别</Typography.Title>
+            <Typography.Title level={4}>终端识别</Typography.Title>
             <AppFactBar label="生态线索口径" items={['生态线索表示终端访问过相关厂商服务','不代表硬件品牌、型号或设备类型已确认']}/>
             <Descriptions column={{ xs: 1, md: 2 }} size="small">
               <Descriptions.Item label="识别摘要">{recognition&&<DeviceBrandSummary device={recognition}/>}</Descriptions.Item>
@@ -358,18 +355,20 @@ export function EndpointDetailsPage() {
                 仅展示可审计的标准事件命中，不作为单独定性依据
               </Typography.Text>
             </div>
-            <Table<EndpointDomainEvidence>
-              className="compact-list-table"
-              columns={ecosystemColumns}
-              dataSource={recognitionEvidence.data?.ecosystem_evidence ?? []}
-              locale={{ emptyText: "暂无可归属的生态线索" }}
-              pagination={false}
-              rowKey={(row) =>
-                `${row.rule_version}:${row.domain}:${row.event_source}`
-              }
-              scroll={{ x: 1100 }}
-              size="small"
-            />
+            <div className="endpoint-tab-table-wrap">
+              <AppTable<EndpointDomainEvidence>
+                className="compact-list-table"
+                columns={ecosystemColumns}
+                dataSource={visibleEcosystem}
+                locale={{ emptyText: "暂无可归属的生态线索" }}
+                pagination={false}
+                rowKey={(row) =>
+                  `${row.rule_version}:${row.domain}:${row.event_source}`
+                }
+                scroll={{ x: 1100 }}
+              />
+            </div>
+            {ecosystemItems.length>0&&<AppServerPagination page={visibleEcosystemPage} pageSize={ecosystemPageSize} total={ecosystemItems.length} onChange={(nextPage,nextSize)=>{setEcosystemPageSize(nextSize);setEcosystemPage(nextPage)}} totalText={`共 ${ecosystemItems.length} 条`} />}
           </section>
         </>
       )}
@@ -378,7 +377,7 @@ export function EndpointDetailsPage() {
         <section className="surface endpoint-registration-editor">
           <div className="surface-title-row">
             <Typography.Title className="surface-title" level={4}>
-              更新设备登记
+              更新终端登记
             </Typography.Title>
             <Typography.Text className="surface-subtitle" type="secondary">
               保存后记录操作者、时间和审计日志
@@ -401,7 +400,7 @@ export function EndpointDetailsPage() {
                 { endpointId, payload },
                 {
                   onError: (error) => message.error(error.message),
-                  onSuccess: () => message.success("设备登记已更新"),
+                  onSuccess: () => message.success("终端登记已更新"),
                 },
               );
             }}
@@ -445,7 +444,7 @@ export function EndpointDetailsPage() {
                       }
                       return Promise.reject(
                         new Error(
-                          "已登记设备至少填写责任账号、责任人或资产编号之一",
+                          "已登记终端至少填写责任账号、责任人或资产编号之一",
                         ),
                       );
                     },
@@ -513,7 +512,7 @@ export function EndpointDetailsPage() {
                 name="registration_note"
               >
                 <Input.TextArea
-                  placeholder="记录人工确认依据、设备类型或例外原因"
+                  placeholder="记录人工确认依据、终端类型或例外原因"
                   rows={3}
                 />
               </Form.Item>
@@ -537,27 +536,31 @@ export function EndpointDetailsPage() {
         <section className="surface">
           <div className="surface-title-row">
             <Typography.Title className="surface-title" level={4}>
-              设备信号
+              终端信号
             </Typography.Title>
             <Typography.Text className="surface-subtitle" type="secondary">
               按最近观测 IP 查询近 24 小时的 DHCP、TLS/HTTP 握手、指纹等线索
             </Typography.Text>
           </div>
           {!latestIP && !profile.endpoint.primary_mac ? (
-            <Typography.Text type="secondary">该终端没有可用于查询的 IP 或 MAC，无法匹配设备信号。</Typography.Text>
+            <Typography.Text type="secondary">该终端没有可用于查询的 IP 或 MAC，无法匹配终端信号。</Typography.Text>
           ) : signals.isError ? (
-            <Alert showIcon title="设备信号加载失败" type="warning" />
+            <Alert showIcon title="终端信号读取失败" type="warning" />
           ) : (
-            <Table<DeviceSignal>
-              columns={signalColumns}
-              dataSource={signalItems}
-              loading={signals.isFetching}
-              locale={{ emptyText: "近 24 小时没有该 IP 的设备信号，可在身份溯源中查看历史关联" }}
-              pagination={{ pageSize: 8, showSizeChanger: false }}
-              rowKey="signal_id"
-              scroll={{ x: 920 }}
-              size="small"
-            />
+            <>
+              <div className="endpoint-tab-table-wrap">
+                <AppTable<DeviceSignal>
+                  columns={signalColumns}
+                  dataSource={visibleSignals}
+                  loading={signals.isFetching}
+                  locale={{ emptyText: "近 24 小时暂无该 IP 的终端信号，可在身份溯源中查看历史关联" }}
+                  pagination={false}
+                  rowKey="signal_id"
+                  scroll={{ x: 920 }}
+                />
+              </div>
+              {signalItems.length>0&&<AppServerPagination page={visibleSignalPage} pageSize={signalPageSize} total={signalItems.length} onChange={(nextPage,nextSize)=>{setSignalPageSize(nextSize);setSignalPage(nextPage)}} totalText={`共 ${signalItems.length} 条`} />}
+            </>
           )}
         </section>
       )}
@@ -622,6 +625,14 @@ function registrationStatusColor(status?: string) {
   }
 }
 
+function recognitionSourceText(value: string) {
+  return ({ dhcp_hostname_hint: 'DHCP 主机名线索', passive_discovery: '被动发现', ieee_oui: 'MAC 厂商库', fingerprint: '指纹库', fixture: '测试数据' } as Record<string, string>)[value] ?? value
+}
+
+function mergeStatusText(value?: string) {
+  return ({ active: '正常', merged: '已合并', split: '已拆分' } as Record<string, string>)[value ?? 'active'] ?? ''
+}
+
 function ownershipClassText(value?: string) {
   return (
     (
@@ -652,7 +663,7 @@ function signalStrengthColor(value: string) {
 }
 
 function formatTime(value?: string) {
-  return value ? new Date(value).toLocaleString() : "";
+  return formatDateTime(value);
 }
 
 

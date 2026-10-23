@@ -1,6 +1,9 @@
+import {
+  AppListHeader, AppTable, formatDateTime } from '../shared/ui'
 import { useState } from 'react'
-import { Link,useLocation } from 'react-router-dom'
-import { Button,Table,Typography } from 'antd'
+import { Link,
+  useLocation } from 'react-router-dom'
+import { Button } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
@@ -36,10 +39,10 @@ export function ActiveRiskIps({items}:{items:ActivityIpSummary[]}){
     {
       title: "综合评分",
       dataIndex: "score",
-      width: 75,
+      width: 130,
       render: (value: number) => <RiskScore score={value} />,
     },
-    { title: "DPI 事件数", dataIndex: "event_count", width: 85 },
+    { title: "DPI 事件数", dataIndex: "event_count", width: 100 },
     {
       title: "Top 访问对象 (DNS/SNI/Host)",
       dataIndex: "top_domains",
@@ -50,8 +53,7 @@ export function ActiveRiskIps({items}:{items:ActivityIpSummary[]}){
       title: "最后抓包时间",
       dataIndex: "last_seen",
       width: 150,
-      render: (value?: string) =>
-        value ? <span className="nowrap-cell" title={new Date(value).toLocaleString('zh-CN')}>{new Date(value).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})}</span> : "",
+      render: (value?: string) => formatDateTime(value),
     },
     {
       title: "快捷追查",
@@ -73,15 +75,8 @@ export function ActiveRiskIps({items}:{items:ActivityIpSummary[]}){
   ];
 
 return <>          <div className="activity-tab-panel">
-            <div className="surface-title-row">
-              <Typography.Title className="surface-title" level={4}>
-                活跃风险 IP
-              </Typography.Title>
-              <Typography.Text className="surface-subtitle" type="secondary">
-                点击 DPI Flow 样本展开追查抽屉
-              </Typography.Text>
-            </div>
-            <Table<ActivityIpSummary> className="compact-list-table"
+            <AppListHeader title="活跃风险 IP" count={`${items.length} 个`} description="点击 DPI Flow 样本展开追查抽屉" />
+            <AppTable<ActivityIpSummary> className="compact-list-table"
               tableLayout="fixed"
             columns={riskColumns}
               dataSource={items}

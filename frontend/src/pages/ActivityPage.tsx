@@ -78,13 +78,13 @@ export function ActivityPage() {
   const navigateReport = (dimension: string, key: string) =>
     navigate(reportSearchPath(dimension, key, quickWindow, params));
 
-  if(section==='applications')return <main className="page"><AppPageHeader title="应用访问" subtitle="按明确应用特征查看服务访问与对应观测" quickWindow={quickWindow} quickWindows={['10m','1h','24h','7d','30d']} onQuickWindowChange={setQuickWindow}/><section className="surface"><ApplicationActivity window={quickWindow}/></section></main>;
+  if(section==='applications')return <main className="page"><AppPageHeader quickWindow={quickWindow} quickWindows={['10m','1h','24h','7d','30d']} onQuickWindowChange={setQuickWindow}/><section className="surface"><ApplicationActivity window={quickWindow}/></section></main>;
   if (activity.isLoading) {
     return <AppLoadingState rows={8} />;
   }
 
   if (activity.isError || !activity.data) {
-    return <AppErrorAlert title="DPI 访问态势加载失败" message={activity.error?.message} />;
+    return <AppErrorAlert title="DPI 访问态势读取失败" message={activity.error?.message} />;
   }
 
   const data = activity.data;
@@ -275,20 +275,9 @@ export function ActivityPage() {
   return (
     <main className="page">
       <AppPageHeader
-        loading={
-          activity.isFetching ||
-          dpiTrends.isFetching ||
-          (tabKey === "matrix" && fingerprintConflicts.isFetching)
-        }
         onQuickWindowChange={setQuickWindow}
-        onRefresh={() => {
-          void activity.refetch();
-          void dpiTrends.refetch();
-          if (tabKey === "matrix") void fingerprintConflicts.refetch();
-        }}
         quickWindow={quickWindow}
         quickWindows={['10m', '1h', '24h', '7d', '30d']}
-        subtitle="从标准事件查看 L7 协议流向、终端指纹碰撞与访问对象排行"
         title={section==='technical'?'技术指纹':'访问分析'}
       />
 

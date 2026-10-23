@@ -69,7 +69,7 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
 	test('desktop navigation and header stay fixed while content scrolls', async ({ page }) => {
 		await page.setViewportSize({ width: 1280, height: 800 })
 		await page.goto('/devices')
-		await expect(page.getByRole('heading', { name: '终端画像' })).toBeVisible()
+		await expect(page.getByRole('heading', { name: '终端列表', level: 1 })).toBeVisible()
 		await page.locator('.app-content').evaluate((element) => {
 			const probe = document.createElement('div')
 			probe.dataset.scrollProbe = 'true'
@@ -96,13 +96,13 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
 	test('list pages expose primary content before filters dominate the viewport', async ({ page }) => {
 		test.setTimeout(120_000)
 		const probes = [
-			{ route: '/shared-access?tab=devices', selector: '.shared-profile-panel' },
+			{ route: '/shared-access?tab=devices', selector: '.compact-list-table' },
 			{ route: '/devices', selector: '.device-inventory-surface' },
 			{ route: '/events', selector: '.compact-list-table' },
 			{ route: '/cases', selector: '.compact-list-table' },
 			{ route: '/review', selector: '.compact-list-table' },
 			{ route: '/audit', selector: '.compact-list-table' },
-			{ route: '/discovery', selector: '.router-list-heading' },
+			{ route: '/discovery', selector: '.app-list-header' },
 		]
 		for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
 			await page.setViewportSize(viewport)
@@ -146,28 +146,21 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
 		expect(drawerMetrics.maxItemHeight).toBeLessThanOrEqual(40)
 	})
 
-	test('shared device profiles use a list without horizontal scrolling on laptop and compact screens', async ({ page }) => {
-		for (const viewport of [{ width: 743, height: 774 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
+	test('shared device profiles keep the table bounded and use cards on mobile', async ({ page }) => {
+		for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
 			await page.setViewportSize(viewport)
 			await page.goto('/shared-access?tab=devices', { waitUntil: 'domcontentloaded' })
-			await expect(page.locator('.shared-profile-mobile-list')).toBeVisible()
-			await expect(page.locator('.shared-profile-desktop-list')).toBeHidden()
-			const metrics = await page.locator('.shared-profile-panel').evaluate(element => ({
+			const table = page.locator('.compact-list-table')
+			await expect(table).toBeVisible()
+			await expect(table.locator('.ant-table-row').first()).toBeVisible()
+			const metrics = await table.evaluate(element => ({
 				overflowing: element.scrollWidth > element.clientWidth + 2,
 				documentOverflowing: document.documentElement.scrollWidth > innerWidth + 2,
-				horizontalScrollers: [...element.querySelectorAll('*')].filter(child => {
-					const node = child as HTMLElement
-					const style = getComputedStyle(node)
-					return node.getBoundingClientRect().width > 0 && node.scrollWidth > node.clientWidth + 2 && ['auto', 'scroll'].includes(style.overflowX)
-				}).length,
+				rowDisplay: getComputedStyle(element.querySelector('.ant-table-row')!).display,
 			}))
-			expect(metrics).toEqual({ overflowing: false, documentOverflowing: false, horizontalScrollers: 0 })
-			const tagWidths = await page.locator('.shared-profile-mobile-list .shared-profile-network .ant-tag').evaluateAll(tags => tags.map(tag => ({
-				tag: tag.getBoundingClientRect().width,
-				container: tag.parentElement?.getBoundingClientRect().width ?? 0,
-			})))
-			expect(tagWidths.length).toBeGreaterThan(0)
-			expect(tagWidths.every(({ tag, container }) => tag < container * 0.75)).toBe(true)
+			expect(metrics.overflowing).toBe(false)
+			expect(metrics.documentOverflowing).toBe(false)
+			if (viewport.width < 560) expect(metrics.rowDisplay).not.toBe('table-row')
 		}
 	})
 })

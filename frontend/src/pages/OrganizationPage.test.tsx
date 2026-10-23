@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { OrganizationPage } from './OrganizationPage'
@@ -41,9 +41,9 @@ it('selects the existing Qianhu campus automatically for a network zone', async 
 })
 
 it('configures the administration building by CIDR without VLAN, SSID or access points', async () => {
-  setup(); fireEvent.click(screen.getByText('查看楼宇'))
-  const building = screen.getByText('行政楼').closest('.organization-building')!
-  fireEvent.click(within(building as HTMLElement).getByRole('button', {name:'配置网段'}))
+  setup(); fireEvent.click(screen.getByRole('button',{name:'新增网段映射'}))
+  fireEvent.mouseDown(screen.getByLabelText('楼宇（选填）'))
+  fireEvent.click(await screen.findByText('行政楼'))
   fireEvent.change(screen.getByLabelText('IP 网段'), {target:{value:'222.204.88.0/23'}})
   fireEvent.click(screen.getByRole('button', {name:/保\s*存/}))
   await waitFor(() => expect(state.save).toHaveBeenCalledWith({kind:'network-zones',payload:expect.objectContaining({campus_id:'ncu',building_id:'admin-building',name:'行政楼',cidrs:['222.204.88.0/23'],ssids:[],vlans:[]})}))

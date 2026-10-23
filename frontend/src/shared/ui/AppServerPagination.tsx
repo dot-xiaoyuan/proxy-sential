@@ -9,9 +9,12 @@ type AppServerPaginationProps = {
 	total: number
 	onChange: (page: number, pageSize: number) => void
 	cursorMode?: boolean
+	/** 可选的总量文案；游标分页没有准确总数时可传“已加载 N 条” */
+	totalText?: string
+	showSizeChanger?: boolean
 }
 
-export function AppServerPagination({ disabled = false, page, pageSize, total, onChange, cursorMode = false }: AppServerPaginationProps) {
+export function AppServerPagination({ disabled = false, page, pageSize, total, onChange, cursorMode = false, totalText, showSizeChanger = true }: AppServerPaginationProps) {
 	return <Pagination
 		className="list-pagination app-server-pagination"
 		current={page}
@@ -19,8 +22,8 @@ export function AppServerPagination({ disabled = false, page, pageSize, total, o
 		pageSize={pageSize}
 		pageSizeOptions={[20, 50]}
 		showQuickJumper={!cursorMode}
-		showSizeChanger
-		showTotal={(count) => `共 ${count} 条`}
+		showSizeChanger={showSizeChanger}
+		showTotal={() => totalText ?? `共 ${total} 条`}
 		total={total}
 		onChange={(nextPage, nextSize) => onChange(nextSize !== pageSize ? 1 : nextPage, nextSize)}
 	/>

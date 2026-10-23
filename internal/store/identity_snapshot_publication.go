@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"os"
 	"time"
 
 	"proxy-sentinel/internal/policy"
@@ -59,6 +60,16 @@ func publishSnapshotTx(ctx context.Context, tx *sql.Tx, snapshot IdentitySnapsho
 	if conflict {
 		_, err := tx.ExecContext(ctx, snapshotPublishFailedSQL, key, snapshot.ObservedAt, "session_account_conflict")
 		return err
+	}
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_DELTA_ENABLED") == "true" {
+		var delta bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_delta_settings WHERE scope_key=$1 AND mode IN ('shadow','delta'))`, key).Scan(&delta); err != nil {
+			return err
+		}
+		if delta {
+			_, err := tx.ExecContext(ctx, `UPDATE identity_pipeline_scopes SET calibration_state='building',calibration_error='' WHERE scope_key=$1`, key)
+			return err
+		}
 	}
 	_, err := tx.ExecContext(ctx, snapshotPublishSQL, key, snapshot.ObservedAt, snapshot.SnapshotID, accounts, sessions)
 	return err

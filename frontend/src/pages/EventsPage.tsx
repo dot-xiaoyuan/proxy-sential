@@ -1,20 +1,18 @@
-import { detailPath } from '../app/navigation'
+import {
+  detailPath } from '../app/navigation'
 import { useMemo } from 'react'
-import { Link, useSearchParams, useLocation } from 'react-router-dom'
-import { Input, Table, Tag, Typography } from 'antd'
+import { Link,
+  useSearchParams,
+  useLocation } from 'react-router-dom'
+import { Input,
+  Tag,
+  Typography,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { useEvents } from '../shared/api/queries'
 import type { EventQuery, NormalizedEventSummary } from '../shared/api/types'
-import {
-  AppErrorAlert,
-  AppLoadingState,
-  AppPageHeader,
-	AppServerPagination,
-  AppTableBar,
-  UniversityDimensionFilters,
-  type ReportWindow,
-} from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, UniversityDimensionFilters } from '../shared/ui'
 
 export function EventsPage() {
   const location=useLocation();
@@ -29,7 +27,7 @@ export function EventsPage() {
       title: '时间戳',
       dataIndex: 'timestamp',
       width: 180,
-      render: (value: string) => new Date(value).toLocaleString(),
+      render: (value: string) => formatDateTime(value),
     },
     {
       title: '协议/类型',
@@ -74,7 +72,7 @@ export function EventsPage() {
     { key: 'tls', label: 'TLS 握手', active: activeType === 'tls' },
     { key: 'http', label: 'HTTP 请求', active: activeType === 'http' },
     { key: 'quic', label: 'QUIC', active: activeType === 'quic' },
-    { key: 'device', label: '设备事件', active: activeType === 'device' },
+    { key: 'device', label: '终端事件', active: activeType === 'device' },
   ]
 
   if (events.isLoading) {
@@ -84,18 +82,12 @@ export function EventsPage() {
   return (
     <main className="page">
       <AppPageHeader
-        loading={events.isFetching}
         onQuickWindowChange={(value) => updateQuery(setSearchParams, { ...query, window: value, cursor: undefined })}
-        onRefresh={() => {
-          void events.refetch()
-        }}
         quickWindow={quickWindow}
         quickWindows={['10m','1h','24h','7d','30d']}
-        subtitle="按时间、IP、访问对象与协议检索标准事件"
-        title="DPI 标准事件检索"
       />
 
-      {events.isError && <AppErrorAlert title="标准事件列表加载失败" />}
+      {events.isError && <AppErrorAlert title="标准事件列表读取失败" />}
 
       <AppTableBar
         filterOptions={filterOptions}
@@ -114,7 +106,6 @@ export function EventsPage() {
         }}
         searchPlaceholder="快速检索 (Event ID / IP / 域名 / SNI / UA)..."
         searchValue={searchParams.get('q') || ''}
-        totalCount={events.data?.page.total ?? 0}
       />
 
       <details className="surface filter-disclosure">
@@ -197,7 +188,8 @@ export function EventsPage() {
       </details>
 
       <section className="surface">
-        <Table<NormalizedEventSummary>
+        <AppListHeader title="标准事件" count={`${events.data?.page.total ?? 0} 条`} />
+        <AppTable<NormalizedEventSummary>
           className="compact-list-table"
           columns={columns}
           dataSource={events.data?.events ?? []}

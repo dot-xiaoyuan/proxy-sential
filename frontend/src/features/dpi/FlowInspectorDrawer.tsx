@@ -1,12 +1,20 @@
-import { Notice as Alert } from '../../shared/ui/Notice'
-import { useEffect, useState } from 'react'
+import {
+  useEffect,
+  useState } from 'react'
 import {
   CheckCircleOutlined,
   CloseOutlined,
   CodeOutlined,
   TagOutlined,
-} from '@ant-design/icons'
-import { Button, Card, Descriptions, Drawer, message, Space, Table, Typography } from 'antd'
+  } from '@ant-design/icons'
+import { Button,
+  Card,
+  Descriptions,
+  Drawer,
+  message,
+  Space,
+  Typography,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../../entities/risk/RiskLevelTag'
@@ -18,7 +26,7 @@ import {
   useSession,
 } from '../../shared/api/queries'
 import type { CreateLabelRequest, DpiFlowSample, EventQuery } from '../../shared/api/types'
-import { AppFactBar } from '../../shared/ui'
+import { AppErrorAlert, AppFactBar, AppTable, formatDateTime } from '../../shared/ui'
 
 interface FlowInspectorDrawerProps {
   ip: string | null
@@ -65,7 +73,7 @@ export function FlowInspectorDrawer({ ip, open, onClose, context }: FlowInspecto
   }
 
   const columns: ColumnsType<DpiFlowSample> = [
-    { title: '时间戳', dataIndex: 'timestamp', width: 170, render: (v: string) => new Date(v).toLocaleString() },
+    { title: '时间戳', dataIndex: 'timestamp', width: 170, render: (v: string) => formatDateTime(v) },
     { title: '协议', dataIndex: 'protocol', width: 70 },
     { title: '应用协议', dataIndex: 'app_protocol', width: 110 },
     { title: '源端口', dataIndex: 'src_port', width: 80 },
@@ -96,9 +104,9 @@ export function FlowInspectorDrawer({ ip, open, onClose, context }: FlowInspecto
     >
       <div className="drawer-stack">
         <AppFactBar items={[`Flow 查询窗口：${context?.window || '1h'}`, '风险与复核依据为当前风险快照']} />
-        {risk.isError && <Alert type="error" showIcon title="当前风险快照读取失败" />}
-        {evidence.isError && <Alert type="error" showIcon title="复核证据读取失败" />}
-        {flowSamples.isError && <Alert type="error" showIcon title="Flow 样本读取失败" />}
+        {risk.isError && <AppErrorAlert title="当前风险快照读取失败" />}
+        {evidence.isError && <AppErrorAlert title="复核证据读取失败" />}
+        {flowSamples.isError && <AppErrorAlert title="Flow 样本读取失败" />}
 
         <Card size="small" title="IP 深度概览与采集上下文">
           <Descriptions column={2} size="small">
@@ -136,7 +144,7 @@ export function FlowInspectorDrawer({ ip, open, onClose, context }: FlowInspecto
         </Card>
 
         <Card size="small" title="DPI Flow 样本 (标准化事件元数据)">
-          <Table<DpiFlowSample>
+          <AppTable<DpiFlowSample>
             columns={columns}
             dataSource={rows}
             loading={flowSamples.isLoading}

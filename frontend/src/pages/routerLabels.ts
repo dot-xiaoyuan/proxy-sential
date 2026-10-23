@@ -1,4 +1,4 @@
-export const routerStatusLabels: Record<string, string> = { candidate: '候选', likely: '较可信', confirmed: '已确认' }
+export const routerStatusLabels: Record<string, string> = { candidate: '身份线索', likely: '身份待确认', confirmed: '身份已确认' }
 
 export const routerRoleLabels: Record<string, string> = {
   router: '路由器',

@@ -38,26 +38,29 @@ type BehaviorReportChannel struct {
 }
 
 type BehaviorReportOutboxRow struct {
-	ReportID       string `json:"report_id"`
-	IdempotencyKey string `json:"idempotency_key"`
-	ChannelID      string `json:"channel_id"`
-	EventType      string `json:"event_type"`
-	SubjectType    string `json:"subject_type"`
-	SubjectID      string `json:"subject_id"`
-	AccountID      string `json:"account_id,omitempty"`
-	IP             string `json:"ip,omitempty"`
-	Target         string `json:"target,omitempty"`
-	TargetType     string `json:"target_type,omitempty"`
-	OccurredAt     string `json:"occurred_at"`
-	Status         string `json:"status"`
-	Attempts       int    `json:"attempts"`
-	NextAttemptAt  string `json:"next_attempt_at,omitempty"`
-	LastError      string `json:"last_error,omitempty"`
-	HTTPStatus     int    `json:"http_status"`
-	RemoteID       string `json:"remote_id,omitempty"`
-	SentAt         string `json:"sent_at,omitempty"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ReportID         string `json:"report_id"`
+	IdempotencyKey   string `json:"idempotency_key"`
+	ChannelID        string `json:"channel_id"`
+	EventType        string `json:"event_type"`
+	SubjectType      string `json:"subject_type"`
+	SubjectID        string `json:"subject_id"`
+	AccountID        string `json:"account_id,omitempty"`
+	IP               string `json:"ip,omitempty"`
+	Target           string `json:"target,omitempty"`
+	TargetType       string `json:"target_type,omitempty"`
+	OccurredAt       string `json:"occurred_at"`
+	Status           string `json:"status"`
+	Attempts         int    `json:"attempts"`
+	NextAttemptAt    string `json:"next_attempt_at,omitempty"`
+	LastError        string `json:"last_error,omitempty"`
+	HTTPStatus       int    `json:"http_status"`
+	RemoteID         string `json:"remote_id,omitempty"`
+	SentAt           string `json:"sent_at,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+	PolicyDecisionID string `json:"policy_decision_id,omitempty"`
+	ObservationID    string `json:"observation_id,omitempty"`
+	EvidenceVersion  string `json:"evidence_version,omitempty"`
 }
 
 type BehaviorReportAttempt struct {
@@ -197,11 +200,11 @@ func (s *PostgresStore) EnqueueBehaviorReport(ctx context.Context, row BehaviorR
 	return err
 }
 
-const behaviorReportOutboxColumns = `report_id,idempotency_key,channel_id,event_type,subject_type,subject_id,account_id,ip,target,target_type,to_char(occurred_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),status,attempts,coalesce(to_char(next_attempt_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),''),last_error,http_status,remote_id,coalesce(to_char(sent_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),''),to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),to_char(updated_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
+const behaviorReportOutboxColumns = `report_id,idempotency_key,channel_id,event_type,subject_type,subject_id,account_id,ip,target,target_type,to_char(occurred_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),status,attempts,coalesce(to_char(next_attempt_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),''),last_error,http_status,remote_id,coalesce(to_char(sent_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),''),to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),to_char(updated_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),coalesce(payload->>'policy_decision_id',''),coalesce(payload->>'observation_id',''),coalesce(payload->>'evidence_version','')`
 
 func scanBehaviorReportOutbox(scanner interface{ Scan(...any) error }) (BehaviorReportOutboxRow, error) {
 	var row BehaviorReportOutboxRow
-	err := scanner.Scan(&row.ReportID, &row.IdempotencyKey, &row.ChannelID, &row.EventType, &row.SubjectType, &row.SubjectID, &row.AccountID, &row.IP, &row.Target, &row.TargetType, &row.OccurredAt, &row.Status, &row.Attempts, &row.NextAttemptAt, &row.LastError, &row.HTTPStatus, &row.RemoteID, &row.SentAt, &row.CreatedAt, &row.UpdatedAt)
+	err := scanner.Scan(&row.ReportID, &row.IdempotencyKey, &row.ChannelID, &row.EventType, &row.SubjectType, &row.SubjectID, &row.AccountID, &row.IP, &row.Target, &row.TargetType, &row.OccurredAt, &row.Status, &row.Attempts, &row.NextAttemptAt, &row.LastError, &row.HTTPStatus, &row.RemoteID, &row.SentAt, &row.CreatedAt, &row.UpdatedAt, &row.PolicyDecisionID, &row.ObservationID, &row.EvidenceVersion)
 	return row, err
 }
 

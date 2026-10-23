@@ -9,21 +9,19 @@ vi.mock('./RouterObservationsPanel', () => ({ RouterObservationsPanel: () => <di
 const renderAt = (path: string) => render(<MemoryRouter initialEntries={[path]}><DeviceCenterPage /></MemoryRouter>)
 
 describe('设备中心子菜单页面', () => {
-  it('终端列表独立展示，不再出现标签页', () => {
+  it('终端列表直接展示列表内容，不再出现标签页', () => {
     renderAt('/devices?tab=terminal')
-    expect(screen.getByRole('heading', { name: '终端列表' })).toBeVisible()
     expect(screen.getByTestId('terminal-panel')).toBeVisible()
     expect(screen.queryByRole('tab')).toBeNull()
   })
   it('路由器独立展示', () => {
     renderAt('/devices?tab=network')
-    expect(screen.getByRole('heading', { name: '路由器' })).toBeVisible()
     expect(screen.getByTestId('network-panel')).toBeVisible()
   })
   it('暂停的哑终端与发现线索链接回落到终端列表', () => {
     for (const tab of ['iot', 'records']) {
       const { unmount } = renderAt(`/devices?tab=${tab}`)
-      expect(screen.getByRole('heading', { name: '终端列表' })).toBeVisible()
+      expect(screen.getByTestId('terminal-panel')).toBeVisible()
       unmount()
     }
   })

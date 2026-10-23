@@ -7,7 +7,7 @@ import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { useCreateLabel, useProxyReview, useSession } from '../shared/api/queries'
 import type { CreateLabelRequest, LabelKind, ProxyReviewCase } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
-import { AppErrorAlert, AppLoadingState, AppPageHeader } from '../shared/ui'
+import { AppErrorAlert, AppLoadingState, AppPageHeader, formatDateTime } from '../shared/ui'
 
 const actions: Array<{label:string; value:LabelKind}> = [
   {label:'确认代理',value:'confirmed_proxy'}, {label:'误报',value:'false_positive'},
@@ -23,11 +23,11 @@ export function ReviewDetailsPage() {
   const createLabel = useCreateLabel()
   const { message } = AntApp.useApp()
   if (review.isLoading) return <AppLoadingState rows={10} />
-  if (review.isError || !review.data) return <AppErrorAlert title="复核详情加载失败" message={review.error?.message} />
+  if (review.isError || !review.data) return <AppErrorAlert title="复核详情读取失败" message={review.error?.message} />
   const item = review.data
   const target = reviewTarget(item)
   return <main className="page">
-    <AppPageHeader title="复核详情" subtitle={item.case_id} onRefresh={() => void review.refetch()} loading={review.isFetching} extra={<Link to="/review">返回列表</Link>} />
+    <AppPageHeader title="复核详情" subtitle={item.case_id} extra={<Link to="/review">返回列表</Link>} />
     <section className="surface detail-stack">
       <Space wrap><RiskLevelTag level={item.risk_level} /><ReviewStatusTag reason={item.review_reason} status={item.review_status} /><Tag>{item.confidence_level} 置信度</Tag><Tag>{item.risk_score} 分</Tag></Space>
       <Descriptions bordered column={{xs:1,md:2}} size="small" items={[
@@ -36,7 +36,7 @@ export function ReviewDetailsPage() {
         {key:'endpoint',label:'终端',children:item.endpoint_id ? <Link className="list-cell-nowrap" to={`/devices/${encodeURIComponent(item.endpoint_id)}`}>{item.endpoint_id}</Link> : ''},
         {key:'access',label:'接入位置',children:item.access_ids.join('、') || ''},
         {key:'events',label:'事件',children:`共 ${item.event_count} · TLS ${item.tls_count} · QUIC ${item.quic_count} · Alert ${item.alert_count}`},
-        {key:'time',label:'时间范围',children:`${new Date(item.first_seen).toLocaleString()} — ${new Date(item.last_seen).toLocaleString()}`},
+        {key:'time',label:'时间范围',children:`${formatDateTime(item.first_seen)} 至 ${formatDateTime(item.last_seen)}`},
       ]} />
       <DetailValues title="目的域名 / SNI" values={item.destination_domains.map(value => `${value.value} (${value.count})`)} />
       <DetailValues title="目的 IP" values={item.destination_ips.map(value => `${value.value} (${value.count})`)} />

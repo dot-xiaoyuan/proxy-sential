@@ -6,6 +6,65 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /violation-cases:
+    get:
+      operationId: listViolationCases
+      description: Read-only paginated violation observations; requires cases:read. Simulated notices never represent delivery.
+      parameters:
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+      responses:
+        '200': { description: Observation cases with next_cursor and observation_only=true }
+        '503': { description: Observation store unavailable }
+  /violation-cases/{case_id}:
+    get:
+      operationId: getViolationCase
+      description: Read one observation case; requires cases:read.
+      parameters:
+        - { name: case_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Observation case }
+        '404': { description: Case not found }
+  /violation-cases/{case_id}/timeline:
+    get:
+      operationId: getViolationCaseTimeline
+      description: Bounded case-linked observation timeline; requires cases:read.
+      parameters:
+        - { name: case_id, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+      responses:
+        '200': { description: Case-linked proposed reminders and sanctions }
+  /violation-cases/{case_id}/release-preview:
+    post:
+      operationId: previewViolationRelease
+      description: Record a proposed manual release with reason and Idempotency-Key; no external request. Requires cases:write.
+      parameters:
+        - { name: case_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Local observation with external_request_sent=false }
+  /violation-observations:
+    get:
+      operationId: listViolationObservations
+      description: Read-only observation records; requires cases:read.
+      parameters:
+        - { name: account_id, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+      responses:
+        '200': { description: Observation records with next_cursor and observation_only=true }
+  /violation-dashboard:
+    get:
+      operationId: getViolationDashboard
+      description: Seven-day observation counts; requires cases:read.
+      responses:
+        '200': { description: Independent observation statistics }
+  /mcp:
+    post:
+      operationId: violationReadOnlyMCP
+      description: Authenticated read-only MCP JSON-RPC tools; requires cases:read. No action tools exist.
+      responses:
+        '200': { description: MCP JSON-RPC result }
   /discovery/types:
     get:
       operationId: getDiscoveryTypes
@@ -1152,7 +1211,7 @@ paths:
       operationId: listBehaviorReportOutbox
       description: Requires behavior-reports:read.
       parameters:
-        - {name: status, in: query, schema: {type: string, enum: [queued, sending, sent, failed, cancelled]}}
+        - {name: status, in: query, schema: {type: string, enum: [recorded, queued, sending, sent, failed, cancelled]}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
         - {name: cursor, in: query, schema: {type: integer, minimum: 0}}
       responses:
@@ -3016,6 +3075,33 @@ paths:
                       $ref: "#/components/schemas/DeviceConflict"
         "500":
           $ref: "#/components/responses/InternalError"
+  /ai-relay/indicators:
+    get:
+      operationId: getAIRelayIndicators
+      responses:
+        "200":
+          description: Embedded AI relay domain indicator library and provenance.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIRelayIndicatorLibrary" }
+  /ai-relay/usages:
+    get:
+      operationId: listAIRelayUsages
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: ip, in: query, schema: { type: string } }
+        - { name: domain, in: query, schema: { type: string } }
+        - { name: campus_id, in: query, schema: { type: string } }
+        - { name: sensor_id, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Paginated IP-level AI relay domain observations from the retained seven days.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIRelayUsagePage" }
   /events:
     get:
       operationId: listEvents
@@ -3391,6 +3477,7 @@ paths:
   /device-fingerprint-library/rules:
     get:
       operationId: listFingerprintRules
+      description: Raw rule conditions require device-fingerprint-library:update; ordinary identity readers use sources and coverage.
       parameters:
         - { name: source, in: query, schema: { type: string } }
         - { name: q, in: query, schema: { type: string } }
@@ -3400,6 +3487,7 @@ paths:
         - { name: page, in: query, schema: { type: integer } }
         - { name: page_size, in: query, schema: { type: integer } }
       responses:
+        "403": { description: Raw rule access denied }
         "200":
           description: Fingerprint catalog read model.
           content:
@@ -4584,7 +4672,10 @@ components:
         target: { type: string }
         target_type: { type: string }
         occurred_at: { type: string, format: date-time }
-        status: { type: string, enum: [queued, sending, sent, failed, cancelled] }
+        status: { type: string, enum: [recorded, queued, sending, sent, failed, cancelled] }
+        policy_decision_id: { type: string }
+        observation_id: { type: string }
+        evidence_version: { type: string }
         attempts: { type: integer }
         next_attempt_at: { type: string, format: date-time }
         last_error: { type: string }
@@ -5375,8 +5466,17 @@ components:
         next_attempt_at: { type: string, format: date-time }
         cooldown_until: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
-        status: { type: string, enum: [shadow, pending, running, succeeded, failed, revoked, expired, blocked] }
-        mode: { type: string, enum: [shadow, active] }
+        status: { type: string, enum: [shadow, pending, running, succeeded, failed, revoked, expired, blocked, recorded] }
+        mode: { type: string, enum: [shadow, active, record_only] }
+        policy_parameters:
+          type: object
+          properties:
+            execution_id: { type: string }
+            policy_id: { type: string }
+            policy_revision: { type: integer }
+            decision_id: { type: string }
+            evidence_version: { type: string }
+            observation_id: { type: string }
         blockers: { type: array, items: { type: string } }
         last_error: { type: string }
         created_at: { type: string, format: date-time }
@@ -5535,6 +5635,71 @@ components:
                 - "null"
             total:
               type: integer
+    AIRelayIndicatorLibrary:
+      type: object
+      required: [version, updated_at, indicators, official_domains, sources]
+      properties:
+        version: { type: string }
+        updated_at: { type: string }
+        indicators: { type: array, items: { $ref: "#/components/schemas/AIRelayIndicator" } }
+        official_domains: { type: array, items: { type: string } }
+        sources: { type: array, items: { $ref: "#/components/schemas/AIRelayIndicatorSource" } }
+    AIRelayIndicator:
+      type: object
+      required: [domain, match_type, category, confidence, status, source]
+      properties:
+        domain: { type: string }
+        match_type: { type: string, enum: [exact, subdomain] }
+        category: { type: string, enum: [relay, aggregator] }
+        name: { type: string }
+        name_zh: { type: string }
+        confidence: { type: number }
+        status: { type: string, enum: [resolved, unresolved] }
+        source: { type: string }
+        note: { type: string }
+    AIRelayIndicatorSource:
+      type: object
+      required: [id, name, url]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        url: { type: string }
+        version: { type: string }
+    AIRelayUsagePage:
+      type: object
+      required: [items, page, indicator_version]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/AIRelayUsage" } }
+        page: { $ref: "#/components/schemas/AIRelayPageInfo" }
+        indicator_version: { type: string }
+    AIRelayPageInfo:
+      type: object
+      required: [limit, next_cursor, total]
+      properties:
+        limit: { type: integer }
+        next_cursor: { type: [string, "null"] }
+        total: { type: integer }
+    AIRelayUsage:
+      type: object
+      required: [ip, first_seen, last_seen, event_count, domains, domain_names, events]
+      properties:
+        ip: { type: string }
+        account_id: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        event_count: { type: integer }
+        domains: { type: array, items: { type: string } }
+        domain_names: { type: object, additionalProperties: { type: string } }
+        events: { type: array, items: { $ref: "#/components/schemas/AIRelayEvent" } }
+    AIRelayEvent:
+      type: object
+      required: [event_id, timestamp, domain, source, sensor_id]
+      properties:
+        event_id: { type: string }
+        timestamp: { type: string, format: date-time }
+        domain: { type: string }
+        source: { type: string }
+        sensor_id: { type: string }
     EventListResponse:
       type: object
       required: [events, page]

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"proxy-sentinel/internal/fingerprint"
@@ -17,7 +18,7 @@ func TestFingerprintCatalogPaginationAndPermissions(t *testing.T) {
 	for _, tc := range []struct {
 		url, path string
 		status    int
-	}{{"/device-fingerprint-library/sources?page_size=2", "/device-fingerprint-library/sources", 200}, {"/device-fingerprint-library/sources?page=-1", "/device-fingerprint-library/sources", 400}, {"/device-fingerprint-library/rules?page_size=2&source=recog", "/device-fingerprint-library/rules", 200}, {"/device-fingerprint-library/sources/no-such-source", "/device-fingerprint-library/sources/no-such-source", 404}} {
+	}{{"/device-fingerprint-library/sources?page_size=2", "/device-fingerprint-library/sources", 200}, {"/device-fingerprint-library/sources?page=-1", "/device-fingerprint-library/sources", 400}, {"/device-fingerprint-library/rules?page_size=2&source=recog", "/device-fingerprint-library/rules", 403}, {"/device-fingerprint-library/sources/no-such-source", "/device-fingerprint-library/sources/no-such-source", 404}} {
 		w := httptest.NewRecorder()
 		s.handleFingerprintCatalog(w, httptest.NewRequest("GET", tc.url, nil), tc.path)
 		if w.Code != tc.status {
@@ -34,5 +35,12 @@ func TestFingerprintCatalogPaginationAndPermissions(t *testing.T) {
 				t.Fatalf("unbounded page %s: %d", tc.url, len(data.Items))
 			}
 		}
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/device-fingerprint-library/rules?page_size=2&source=recog", nil)
+	r = r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, Session{Permissions: []string{"device-fingerprint-library:update"}}))
+	s.handleFingerprintCatalog(w, r, "/device-fingerprint-library/rules")
+	if w.Code != 200 {
+		t.Fatalf("authorized rules: %d", w.Code)
 	}
 }

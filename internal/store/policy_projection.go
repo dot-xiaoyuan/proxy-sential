@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"sort"
 	"time"
 
@@ -44,6 +45,7 @@ func policySessionsFromProjection(facts []policy.Session, log []snapshotMeta, me
 		ordered := timeline[scope]
 		sort.Slice(ordered, func(i, j int) bool { return ordered[i].ObservedAt.Before(ordered[j].ObservedAt) })
 	}
+	factsByIP := map[policySessionKey][]policy.Session{}
 	factsByKey := map[policySessionKey][]policy.Session{}
 	membersByKey := map[policySessionKey][]projectionMember{}
 	keys := []policySessionKey{}
@@ -57,6 +59,8 @@ func policySessionsFromProjection(facts []policy.Session, log []snapshotMeta, me
 	for _, fact := range facts {
 		key := policySessionKey{scopeOf(fact), fact.ID, fact.IP}
 		factsByKey[key] = append(factsByKey[key], fact)
+		ipKey := policySessionKey{scope: key.scope, ip: key.ip}
+		factsByIP[ipKey] = append(factsByIP[ipKey], fact)
 		note(key)
 	}
 	for _, member := range members {
@@ -66,7 +70,19 @@ func policySessionsFromProjection(facts []policy.Session, log []snapshotMeta, me
 	}
 	out := []policy.Session{}
 	for _, key := range keys {
-		subset := keySnapshots(timeline[key.scope], factsByKey[key], membersByKey[key], key.scope)
+		keyLog := timeline[key.scope]
+		conflict := identityCaptureConflict(factsByIP[policySessionKey{scope: key.scope, ip: key.ip}], keyLog, at, at)
+		subset := keySnapshots(keyLog, factsByKey[key], membersByKey[key], key.scope)
+		if conflict {
+			// Preserve evidence but expose no unique owner across an unordered capture.
+			ambiguous := reconcileIdentitySessions(factsByKey[key], subset, at)
+			for i := range ambiguous {
+				ambiguous[i].IdentityIssue = "identity_snapshot_capture_conflict"
+				ambiguous[i].AccountID = ""
+			}
+			out = append(out, ambiguous...)
+			continue
+		}
 		out = append(out, reconcileIdentitySessions(factsByKey[key], subset, at)...)
 	}
 	for i := range out {
@@ -176,16 +192,29 @@ SELECT p.source,p.sensor_id,p.campus_id,p.access_domain,p.confirmed_at,p.documen
 // projectionPolicyInputs loads the snapshot timeline and presence intervals for policy reads.
 func projectionPolicyInputs(ctx context.Context, db *sql.DB, at time.Time, campus, domain string) ([]snapshotMeta, []projectionMember, error) {
 	since := at.Add(-policyIdentityWindow)
-	rows, err := db.QueryContext(ctx, policySnapshotLogSQL, since, at, campus, domain)
+	logSQL := policySnapshotLogSQL
+	delta := os.Getenv("PROXY_SENTINEL_IDENTITY_DELTA_ENABLED") == "true"
+	if delta {
+		logSQL = `SELECT l.*,r.capture_started_at FROM (` + policySnapshotLogSQL + `) l LEFT JOIN identity_delta_runs r USING(source,sensor_id,campus_id,access_domain,snapshot_id)`
+	}
+	rows, err := db.QueryContext(ctx, logSQL, since, at, campus, domain)
 	if err != nil {
 		return nil, nil, err
 	}
 	log := []snapshotMeta{}
 	for rows.Next() {
 		var v snapshotMeta
-		if err = rows.Scan(&v.Scope.Source, &v.Scope.SensorID, &v.Scope.CampusID, &v.Scope.AccessDomain, &v.SnapshotID, &v.ObservedAt, &v.IntervalSeconds); err != nil {
+		fields := []any{&v.Scope.Source, &v.Scope.SensorID, &v.Scope.CampusID, &v.Scope.AccessDomain, &v.SnapshotID, &v.ObservedAt, &v.IntervalSeconds}
+		var captured sql.NullTime
+		if delta {
+			fields = append(fields, &captured)
+		}
+		if err = rows.Scan(fields...); err != nil {
 			rows.Close()
 			return nil, nil, err
+		}
+		if captured.Valid {
+			v.CaptureStartedAt = captured.Time
 		}
 		log = append(log, v)
 	}
@@ -194,7 +223,11 @@ func projectionPolicyInputs(ctx context.Context, db *sql.DB, at time.Time, campu
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err = db.QueryContext(ctx, policyProjectionMembersSQL, campus, domain, since)
+	membersSQL := policyProjectionMembersSQL
+	if delta {
+		membersSQL += ` UNION ALL SELECT r.scope_key::jsonb->>'source',r.scope_key::jsonb->>'sensor_id',r.scope_key::jsonb->>'campus_id',r.scope_key::jsonb->>'access_domain',r.confirmed_at,r.document FROM identity_projection_intervals r WHERE r.confirmed_at>=$3 AND ($1='' OR (r.scope_key::jsonb->>'campus_id'=$1 AND r.scope_key::jsonb->>'access_domain'=$2))`
+	}
+	rows, err = db.QueryContext(ctx, membersSQL, campus, domain, since)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -237,4 +270,41 @@ func projectionMemberFromRow(scope IdentityScope, confirmed time.Time, raw []byt
 		member.First = member.End
 	}
 	return member, nil
+}
+
+// A capture conflict affects only the interval before the next authoritative
+// event or conflict-free full confirmation. Later events do not rewrite past
+// attribution; callers evaluating a window still see any overlapping gap.
+func identityCaptureConflict(facts []policy.Session, log []snapshotMeta, from, to time.Time) bool {
+	conflictAt := func(snapshot snapshotMeta) bool {
+		if snapshot.CaptureStartedAt.IsZero() {
+			return false
+		}
+		for _, fact := range facts {
+			if !fact.ConfirmedAt.Before(snapshot.CaptureStartedAt) && !fact.ConfirmedAt.After(snapshot.ObservedAt) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, snapshot := range log {
+		if snapshot.CaptureStartedAt.After(to) || !conflictAt(snapshot) {
+			continue
+		}
+		var resolved time.Time
+		for _, fact := range facts {
+			if fact.ConfirmedAt.After(snapshot.ObservedAt) && (resolved.IsZero() || fact.ConfirmedAt.Before(resolved)) {
+				resolved = fact.ConfirmedAt
+			}
+		}
+		for _, next := range log {
+			if next.ObservedAt.After(snapshot.ObservedAt) && !conflictAt(next) && (resolved.IsZero() || next.ObservedAt.Before(resolved)) {
+				resolved = next.ObservedAt
+			}
+		}
+		if resolved.IsZero() || from.Before(resolved) {
+			return true
+		}
+	}
+	return false
 }

@@ -76,6 +76,10 @@ func (s *Server) nativeAuthorization(ctx context.Context, a EnforcementAction) e
 // A stored native intent never falls through to generic HTTP after restart or
 // removal of configuration. Repeated pending evaluations only reconcile.
 func (s *Server) deliverNativeAction(id string, revoke bool) bool {
+	if violationObservationOnly() {
+		s.blockOutboundAction(id, revoke)
+		return true
+	}
 	s.operations.mu.Lock()
 	a, ok := s.operations.doc.Actions[id]
 	runtime, configured := s.nativeRuntime(a.ConnectorID)

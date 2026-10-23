@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { IdentityBridgePanel } from './IdentityBridgePanel'
+import { formatDateTime } from '../../shared/ui'
 
 const requests = vi.hoisted(() => ({
   bridge: vi.fn().mockResolvedValue({
@@ -65,8 +66,8 @@ describe('南昌4K认证同步', () => {
     expect(online).toHaveAttribute('open')
     expect(screen.getByText('222.204.3.224:16380')).toBeInTheDocument()
     fireEvent.click(screen.getByText('更多运行信息'))
-    expect(screen.getByText(/最近事件/)).toHaveTextContent(new Date('2026-10-09T10:01:00Z').toLocaleString())
-    expect(screen.getByText(/最近全量/)).toHaveTextContent(new Date('2026-10-09T10:00:00Z').toLocaleString())
+    expect(screen.getByText(/最近事件/)).toHaveTextContent(formatDateTime('2026-10-09T10:01:00Z'))
+    expect(screen.getByText(/最近全量/)).toHaveTextContent(formatDateTime('2026-10-09T10:00:00Z'))
     expect(screen.queryByText('同步记录')).not.toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()

@@ -63,6 +63,10 @@ func (s *Server) handleFingerprintCatalog(w http.ResponseWriter, r *http.Request
 		}
 		writeError(w, 404, "source_not_found", "指纹来源不存在")
 	case path == "/device-fingerprint-library/rules":
+		if !sessionHasPermission(sessionFromContext(r.Context()), "device-fingerprint-library:update") {
+			writeError(w, http.StatusForbidden, "permission_denied", "规则细节仅限授权管理员查看")
+			return
+		}
 		q := r.URL.Query()
 		page, _ := strconv.Atoi(q.Get("page"))
 		size, _ := strconv.Atoi(q.Get("page_size"))

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ import (
 )
 
 type identitySnapshotRequest struct {
+	CaptureStartedAt *time.Time `json:"capture_started_at,omitempty"`
 	store.IdentityScope
 	ObservedAt      time.Time           `json:"observed_at"`
 	IntervalSeconds int                 `json:"reconcile_interval_seconds"`
@@ -38,7 +41,7 @@ func prepareIdentitySnapshotWithLimit(request identitySnapshotRequest, id string
 }
 
 func prepareIdentitySnapshotContext(ctx context.Context, request identitySnapshotRequest, id string, now time.Time, maxRecords int) (store.IdentitySnapshot, error) {
-	result := store.IdentitySnapshot{IdentityScope: request.IdentityScope, SnapshotID: id, ObservedAt: request.ObservedAt.UTC(), IntervalSeconds: request.IntervalSeconds, Events: []normalized.Event{}}
+	result := store.IdentitySnapshot{CaptureStartedAt: request.CaptureStartedAt, IdentityScope: request.IdentityScope, SnapshotID: id, ObservedAt: request.ObservedAt.UTC(), IntervalSeconds: request.IntervalSeconds, Events: []normalized.Event{}}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -69,6 +72,9 @@ func prepareIdentitySnapshotContext(ctx context.Context, request identitySnapsho
 	}
 	if request.IntervalSeconds < 1 || request.IntervalSeconds > maxInterval {
 		return result, fmt.Errorf("reconcile_interval_seconds must be between 1 and %d", maxInterval)
+	}
+	if request.CaptureStartedAt != nil && (request.CaptureStartedAt.IsZero() || request.CaptureStartedAt.After(request.ObservedAt) || request.ObservedAt.Sub(*request.CaptureStartedAt) > time.Minute) {
+		return result, fmt.Errorf("invalid snapshot capture interval")
 	}
 	fixed := map[string]string{"entity_role": "endpoint", "source": request.Source, "sensor_id": request.SensorID, "campus_id": request.CampusID, "access_domain": request.AccessDomain, "timestamp": result.ObservedAt.Format(time.RFC3339Nano), "session_status": "reconcile", "action": "reconcile", "heartbeat_interval_seconds": strconv.Itoa(request.IntervalSeconds), "reconcile_interval_seconds": strconv.Itoa(request.IntervalSeconds)}
 	seen := make(map[[2]string]struct{}, len(request.Records))
@@ -120,6 +126,7 @@ func prepareIdentitySnapshotContext(ctx context.Context, request identitySnapsho
 }
 
 type identitySnapshotUploadCreate struct {
+	CaptureStartedAt *time.Time `json:"capture_started_at,omitempty"`
 	store.IdentityScope
 	UploadID        string    `json:"upload_id"`
 	ObservedAt      time.Time `json:"observed_at"`
@@ -204,6 +211,22 @@ func (s *Server) handleIdentitySnapshotUploadCreate(w http.ResponseWriter, r *ht
 		return
 	}
 	var status string
+	if request.CaptureStartedAt != nil {
+		if request.CaptureStartedAt.IsZero() || request.CaptureStartedAt.After(request.ObservedAt) || request.ObservedAt.Sub(*request.CaptureStartedAt) > time.Minute {
+			writeError(w, http.StatusBadRequest, "bad_identity_snapshot", "invalid snapshot capture interval")
+			return
+		}
+		result, e := s.operations.db.ExecContext(r.Context(), `UPDATE identity_snapshot_uploads SET capture_started_at=$2 WHERE upload_id=$1 AND (capture_started_at IS NULL OR capture_started_at=$2)`, request.UploadID, *request.CaptureStartedAt)
+		if e != nil {
+			writeError(w, http.StatusServiceUnavailable, "identity_upload_failed", e.Error())
+			return
+		}
+		n, _ := result.RowsAffected()
+		if n != 1 {
+			writeError(w, http.StatusConflict, "identity_upload_conflict", "capture interval differs")
+			return
+		}
+	}
 	err = s.operations.db.QueryRowContext(r.Context(), `SELECT status FROM identity_snapshot_uploads WHERE upload_id=$1 AND source=$2 AND sensor_id=$3 AND campus_id=$4 AND access_domain=$5 AND observed_at=$6 AND interval_seconds=$7 AND expected_count=$8 AND expected_chunks=$9 AND expected_sha256=$10`, request.UploadID, request.Source, request.SensorID, request.CampusID, request.AccessDomain, request.ObservedAt.UTC(), intervalSeconds, request.ExpectedCount, request.ExpectedChunks, request.ExpectedSHA256).Scan(&status)
 	if err != nil {
 		writeError(w, http.StatusConflict, "identity_upload_conflict", "upload identity already belongs to different immutable content")
@@ -298,6 +321,16 @@ func (s *Server) handleIdentitySnapshotCommit(w http.ResponseWriter, r *http.Req
 	if status == "completed" {
 		writeJSON(w, http.StatusOK, map[string]any{"upload_id": uploadID, "status": "completed", "replayed": true})
 		return
+	}
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_DELTA_ENABLED") == "true" {
+		var captured sql.NullTime
+		if err = tx.QueryRowContext(ctx, `SELECT capture_started_at FROM identity_snapshot_uploads WHERE upload_id=$1`, uploadID).Scan(&captured); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "identity_upload_failed", err.Error())
+			return
+		}
+		if captured.Valid {
+			request.CaptureStartedAt = &captured.Time
+		}
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT chunk_index,records FROM identity_snapshot_upload_chunks WHERE upload_id=$1 ORDER BY chunk_index`, uploadID)
 	if err != nil {

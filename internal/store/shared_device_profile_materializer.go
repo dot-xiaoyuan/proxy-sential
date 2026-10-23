@@ -801,7 +801,11 @@ func (s *DBStore) runSharedDeviceProfileMaterializer(ctx context.Context) {
 		go func(workerIndex int) {
 			defer workers.Done()
 			worker := fmt.Sprintf("shared-device-profile-%d-%d", os.Getpid(), workerIndex)
+			var identityPressure identityDeltaPressure
 			for ctx.Err() == nil {
+				if !s.identityBackgroundPriority(ctx, workerIndex, &identityPressure) {
+					continue
+				}
 				work, cancel := context.WithTimeout(ctx, 20*time.Second)
 				found, err := s.processSharedDeviceProfileJob(work, worker)
 				cancel()

@@ -72,6 +72,26 @@ func TestDeviceInventoryMetadataNeverReadsRowsOrHistories(t *testing.T) {
 	}
 }
 
+func TestDeviceInventoryExactIPSearchIncludesCurrentSnapshot(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &PostgresStore{db: db}
+	now := time.Now().UTC()
+	mock.ExpectQuery(`SELECT bootstrap_complete,last_error,last_success_at,updated_at FROM endpoint_state_watermark`).WillReturnRows(sqlmock.NewRows([]string{"complete", "error", "success", "at"}).AddRow(true, "", now, now))
+	mock.ExpectQuery(`(?s)SELECT i.list_item,i.updated_at.*JOIN LATERAL \(SELECT 1 FROM account_identity_session_projection p JOIN account_identity_projection_sources src.*src.observed_at>=now\(\).*LIMIT 1\) snapshot ON true WHERE candidate.current_ip=\$[0-9]+::inet`).WillReturnRows(sqlmock.NewRows([]string{"list_item", "updated_at"}))
+	mock.ExpectQuery(`SELECT\s+EXISTS\(SELECT 1 FROM endpoint_recognition_jobs`).WillReturnRows(sqlmock.NewRows([]string{"updating"}).AddRow(false))
+	page, err := s.ListDeviceInventory(context.Background(), Query{Q: "10.157.2.191", InventorySearchType: "ip", View: "recent", Window: "24h", InventorySkipMetadata: true})
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("snapshot IP search: %+v %v", page, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInventoryCursorIsBoundToFilters(t *testing.T) {
 	q := Query{Q: "printer", InventorySearchType: "name", View: "history", Window: "", Limit: 20}
 	at := time.Date(2026, 10, 13, 1, 2, 3, 0, time.UTC)

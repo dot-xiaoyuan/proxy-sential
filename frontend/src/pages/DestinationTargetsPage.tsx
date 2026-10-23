@@ -1,14 +1,29 @@
-import { Notice as Alert } from '../shared/ui/Notice'
-import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Empty, Form, Input, InputNumber, Select, Space, Switch, Table, Tabs, Tag, Typography, message } from 'antd'
+import {
+  Notice as Alert } from '../shared/ui/Notice'
+import { useEffect, useState } from 'react'
+import { useMutation,
+  useQuery,
+  useQueryClient } from '@tanstack/react-query'
+import { Button,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Tabs,
+  Tag,
+  Typography,
+  message,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppFactBar, AppFormModal, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppEmptyState, AppFactBar, AppFormModal, AppListHeader, AppListSection, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, useServerPagination } from '../shared/ui'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
+import { statusColor, statusText } from '../shared/ui/status'
 
 type Rule = components['schemas']['DestinationTargetRule']
 type RulePage = components['schemas']['DestinationTargetRulePage']
@@ -19,7 +34,7 @@ type Preview = components['schemas']['DestinationTargetPreview']
 const behaviorTypes: Record<string, string> = { configured_ip_range: '按配置目标判定', high_frequency_internal: '高频内网访问' }
 const targetTypes: Record<string, string> = { ip: 'IP 地址', cidr: '网段（CIDR）', domain: '域名' }
 const directions: Record<string, string> = { any: '不限方向', up: '仅上行', down: '仅下行' }
-const when = (value?: string) => (value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '')
+const when = formatDateTime
 
 export function DestinationTargetsPage() {
   const session = useSession()
@@ -31,14 +46,11 @@ export function DestinationTargetsPage() {
 
   return (
     <section className="page destination-targets-page">
-      <AppPageHeader title="内网目标访问检测" subtitle="识别访问敏感网段或高频访问内网目标的终端" onRefresh={invalidate} />
       <AppFactBar label="内网目标访问检测规则" items={['规则默认关闭，启用前先用试算核对命中范围','命中生成风险证据，该线索单独不足以认定代理或共享']} />
-      <Card>
-        <Tabs activeKey={tab} onChange={setTab} items={[
-          { key: 'rules', label: '检测规则', children: <RulesPanel rules={rules} writable={writable} invalidate={invalidate} /> },
-          { key: 'findings', label: '发现记录', children: <FindingsPanel /> },
-        ]} />
-      </Card>
+      <Tabs className="page-section-tabs" activeKey={tab} onChange={setTab} items={[
+        { key: 'rules', label: '检测规则', children: <RulesPanel rules={rules} writable={writable} invalidate={invalidate} /> },
+        { key: 'findings', label: '发现记录', children: <FindingsPanel /> },
+      ]} />
     </section>
   )
 }
@@ -48,6 +60,11 @@ function RulesPanel({ rules, writable, invalidate }: { rules: ReturnType<typeof 
   const [editing, setEditing] = useState<Rule>()
   const [preview, setPreview] = useState<Preview>()
   const [form] = Form.useForm()
+  const [search, setSearch] = useState('')
+  const filtered = (rules.data?.items ?? []).filter(item => {
+    const keyword = search.trim().toLowerCase()
+    return !keyword || [item.name, item.rule_id, ...(item.targets ?? [])].filter(Boolean).join(' ').toLowerCase().includes(keyword)
+  })
   const save = useMutation({
     mutationFn: (value: Record<string, unknown>) => request<Rule>(editing ? `/destination-targets/rules/${encodeURIComponent(editing.rule_id ?? '')}` : '/destination-targets/rules', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(value) }),
     onSuccess: () => { invalidate(); setOpen(false); message.success('规则已保存') },
@@ -71,14 +88,14 @@ function RulesPanel({ rules, writable, invalidate }: { rules: ReturnType<typeof 
   }
   const columns: ColumnsType<Rule> = [
     { title: '名称', dataIndex: 'name', render: (value: string, row) => <div><strong>{value}</strong><div className="notifications-muted">{row.rule_id}</div></div> },
-    { title: '判定方式', dataIndex: 'behavior_type', width: 150, render: (value: string) => behaviorTypes[value] ?? value },
+    { title: '判定方式', dataIndex: 'behavior_type', width: 130, render: (value: string) => behaviorTypes[value] ?? value },
     { title: '目标', dataIndex: 'targets', render: (values: string[], row) => (row.behavior_type === 'high_frequency_internal' ? <Typography.Text type="secondary">内网目标</Typography.Text> : <Space wrap>{(values ?? []).map((value) => <Tag key={value}>{value}</Tag>)}</Space>) },
-    { title: '窗口', dataIndex: 'window_seconds', width: 100, render: (value: number) => `${value} 秒` },
-    { title: '阈值', dataIndex: 'threshold', width: 80 },
-    { title: '方向', dataIndex: 'direction', width: 100, render: (value: string) => directions[value] ?? value },
-    { title: '状态', dataIndex: 'enabled', width: 90, render: (value: boolean) => <Tag color={value ? 'blue' : undefined}>{value ? '已启用' : '未启用'}</Tag> },
+    { title: '窗口', dataIndex: 'window_seconds', width: 90, render: (value: number) => `${value} 秒` },
+    { title: '阈值', dataIndex: 'threshold', width: 70 },
+    { title: '方向', dataIndex: 'direction', width: 90, render: (value: string) => directions[value] ?? value },
+    { title: '状态', dataIndex: 'enabled', width: 90, render: (value: boolean) => <Tag color={statusColor(value ? 'enabled' : 'disabled')}>{statusText(value ? 'enabled' : 'disabled')}</Tag> },
     {
-      title: '操作', width: 220, fixed: 'right',
+      title: '操作', width: 200, fixed: 'right',
       render: (_value, row) => (
         <Space wrap>
           <Button size="small" loading={runPreview.isPending && runPreview.variables === row.rule_id} onClick={() => { setPreview(undefined); runPreview.mutate(row.rule_id) }}>试算</Button>
@@ -89,12 +106,20 @@ function RulesPanel({ rules, writable, invalidate }: { rules: ReturnType<typeof 
     },
   ]
   return (
-    <>
-      <div className="notifications-toolbar">
+    <div className="page-content">
+      <AppTableBar
+        extra={<Space wrap><Button type="primary" disabled={!writable} onClick={() => edit()}>新增规则</Button></Space>}
+        onSearchChange={setSearch}
+        searchPlaceholder="搜索规则名称、标识或目标"
+        searchValue={search}
+      />
+      <section className="surface">
+        <AppListHeader title="检测规则" count={`${filtered.length} 条`} />
         <Typography.Text type="secondary">窗口最小 60 秒，最大 24 小时；阈值是窗口内命中次数的下限。</Typography.Text>
-        <Button type="primary" disabled={!writable} onClick={() => edit()}>新增规则</Button>
-      </div>
-      {rules.isError ? <Alert type="error" showIcon title="规则读取失败" description={String(rules.error)} /> : rules.isLoading ? <AppLoadingState rows={3} /> : rules.data?.items.length ? <Table rowKey="rule_id" className="compact-list-table" columns={columns} dataSource={rules.data.items} pagination={false} scroll={{ x: 1100 }} /> : <Empty description="暂无检测规则" />}
+        <AppListSection isError={rules.isError} errorTitle="规则读取失败" errorMessage={String(rules.error)} isLoading={rules.isLoading} loadingRows={3} isEmpty={!filtered.length} emptyText={search ? '当前筛选下暂无检测规则' : '暂无检测规则'}>
+          <AppTable rowKey="rule_id" columns={columns} dataSource={filtered} scroll={{ x: 970 }} />
+        </AppListSection>
+      </section>
       <AppFormModal width={680} title={editing ? '编辑规则' : '新增规则'} open={open} confirmLoading={save.isPending} onCancel={() => setOpen(false)} onOk={() => void form.validateFields().then((value) => save.mutate({ ...value, targets: value.targets ?? [] })).catch(() => undefined)}>
         <Form form={form} layout="vertical">
           <Form.Item name="rule_id" label="规则标识" rules={[{ required: !editing, max: 128 }]}><Input disabled={!!editing} placeholder="例如 ncu-sensitive-range" /></Form.Item>
@@ -119,38 +144,57 @@ function RulesPanel({ rules, writable, invalidate }: { rules: ReturnType<typeof 
       <AppFormModal width={760} footer={null} title="试算结果" open={!!preview} onCancel={() => setPreview(undefined)}>
         {preview ? (
           <>
-            <Alert type="info" showIcon title={`当前窗口命中 ${preview.items.length} 个终端`} description={`规则状态：${preview.rule_enabled ? '已启用' : '未启用'}；观测数据 ${preview.observations} 条聚合记录；窗口 ${preview.window_seconds} 秒。试算不写入任何记录。`} />
-            {preview.items.length ? <Table rowKey="subject_ip" size="small" className="compact-list-table" pagination={false} dataSource={preview.items} columns={[
+            <Alert type="info" showIcon title={`当前窗口命中 ${preview.items.length} 个终端`} description={`规则状态：${preview.rule_enabled ? '已启用' : '已停用'}；观测数据 ${preview.observations} 条聚合记录；窗口 ${preview.window_seconds} 秒。试算不写入任何记录。`} />
+            {preview.items.length ? <AppTable rowKey="subject_ip" size="small" className="compact-list-table" pagination={false} dataSource={preview.items} columns={[
               { title: '终端 IP', dataIndex: 'subject_ip' },
               { title: '命中次数', dataIndex: 'hit_count', width: 100 },
               { title: '内网目标数', dataIndex: 'unique_destinations', width: 110 },
               { title: '命中目标', dataIndex: 'matched_targets', render: (values: string[]) => <Space wrap>{(values ?? []).map((value) => <Tag key={value}>{value}</Tag>)}</Space> },
-            ]} /> : <Empty description="当前窗口没有命中" />}
+            ]} /> : <AppEmptyState description="当前窗口暂无命中" />}
           </>
         ) : <AppLoadingState rows={3} />}
       </AppFormModal>
-    </>
+    </div>
   )
 }
 
 function FindingsPanel() {
   const pagination = useServerPagination('destination_target_findings_')
-  const query = new URLSearchParams({ limit: String(pagination.pageSize), cursor: pagination.cursor })
+  const [ipInput, setIpInput] = useState('')
+  const [subjectIp, setSubjectIp] = useState('')
+  useEffect(() => {
+    const timer = globalThis.setTimeout(() => {
+      const next = ipInput.trim()
+      if (next !== subjectIp) { setSubjectIp(next); pagination.reset() }
+    }, 400)
+    return () => globalThis.clearTimeout(timer)
+  }, [ipInput])
+  const query = new URLSearchParams({ limit: String(pagination.pageSize), cursor: pagination.cursor, ...(subjectIp ? { subject_ip: subjectIp } : {}) })
   const findings = useQuery({ queryKey: ['destination-targets', 'findings', query.toString()], queryFn: () => request<FindingPage>(`/destination-targets/findings?${query}`), refetchInterval: 60000 })
   const columns: ColumnsType<Finding> = [
     { title: '终端', dataIndex: 'subject_ip', render: (value: string, row) => <div><strong>{value}</strong>{row.account_id && <div className="notifications-muted">{row.account_id}</div>}</div> },
     { title: '规则', dataIndex: 'rule_name', render: (value: string, row) => value || row.rule_id },
-    { title: '判定方式', dataIndex: 'behavior_type', width: 150, render: (value: string) => behaviorTypes[value] ?? value },
-    { title: '命中次数', dataIndex: 'hit_count', width: 100 },
-    { title: '内网目标数', dataIndex: 'unique_destinations', width: 110 },
+    { title: '判定方式', dataIndex: 'behavior_type', width: 130, render: (value: string) => behaviorTypes[value] ?? value },
+    { title: '命中次数', dataIndex: 'hit_count', width: 80 },
+    { title: '内网目标数', dataIndex: 'unique_destinations', width: 90 },
     { title: '命中目标', dataIndex: 'matched_targets', render: (values: string[]) => <Space wrap>{(values ?? []).map((value) => <Tag key={value}>{value}</Tag>)}</Space> },
-    { title: '最近观测', dataIndex: 'last_seen', width: 180, render: (value: string) => when(value) },
-    { title: '上报', dataIndex: 'pushed', width: 90, render: (value: boolean, row) => (value ? <Tag color="green">已上报</Tag> : row.push_error ? <Tag color="red">上报失败</Tag> : '') },
+    { title: '最近观测', dataIndex: 'last_seen', width: 150, render: (value: string) => when(value) },
+    { title: '上报', dataIndex: 'pushed', width: 60, render: (value: boolean, row) => (value ? <Tag color="green">已上报</Tag> : row.push_error ? <Tag color="red">上报失败</Tag> : '') },
   ]
   return (
-    <>
-      {findings.isError ? <Alert type="error" showIcon title="发现记录读取失败" description={String(findings.error)} /> : findings.isLoading ? <AppLoadingState rows={4} /> : findings.data?.items.length ? <Table rowKey="finding_id" className="compact-list-table" columns={columns} dataSource={findings.data.items} pagination={false} scroll={{ x: 1200 }} /> : <Empty description="暂无发现记录" />}
-      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={findings.data?.page.total ?? 0} onChange={pagination.update} />
-    </>
+    <div className="page-content">
+      <AppTableBar
+        onSearchChange={setIpInput}
+        searchPlaceholder="输入完整终端 IP 精确筛选"
+        searchValue={ipInput}
+      />
+      <section className="surface">
+        <AppListHeader title="发现记录" count={`${findings.data?.page.total ?? 0} 条`} />
+        <AppListSection isError={findings.isError} errorTitle="发现记录读取失败" errorMessage={String(findings.error)} isLoading={findings.isLoading} loadingRows={4} isEmpty={!findings.data?.items.length} emptyText="暂无发现记录">
+          <AppTable rowKey="finding_id" columns={columns} dataSource={findings.data?.items ?? []} scroll={{ x: 970 }} />
+        </AppListSection>
+        <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={findings.data?.page.total ?? 0} onChange={pagination.update} />
+      </section>
+    </div>
   )
 }

@@ -1,5 +1,9 @@
-import { useEffect, useState } from 'react'
-import { Select, Table, Typography } from 'antd'
+import {
+  useEffect,
+  useState } from 'react'
+import { Select,
+  Typography,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { Link } from 'react-router-dom'
 
@@ -7,7 +11,7 @@ import { ReviewStatusTag } from '../entities/risk/ReviewStatusTag'
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { useProxyReviews } from '../shared/api/queries'
 import type { ProxyReviewCase } from '../shared/api/types'
-import { AppEmptyState, AppErrorAlert, AppLoadingState, AppPageHeader, AppServerPagination, AppTableBar, useServerPagination } from '../shared/ui'
+import { AppEmptyState, AppErrorAlert, AppListHeader, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, AppTableBar, formatDateTime, useServerPagination } from '../shared/ui'
 
 type ReviewWindow = '24h' | '7d'
 
@@ -30,15 +34,16 @@ export function ReviewPage() {
     { title: '置信度', dataIndex: 'confidence_level', width: 90 },
     { title: '复核状态', key: 'review_status', width: 130, render: (_, item) => <ReviewStatusTag reason={item.review_reason} status={item.review_status} /> },
     { title: '事件摘要', key: 'events', width: 240, render: (_, item) => { const value = `共 ${item.event_count} 条 · TLS ${item.tls_count} · QUIC ${item.quic_count} · Alert ${item.alert_count}`; return <Typography.Text className="list-cell-nowrap" title={value}>{value}</Typography.Text> } },
-    { title: '最后发现', dataIndex: 'last_seen', width: 180, render: (value: string) => new Date(value).toLocaleString() },
+    { title: '最后发现', dataIndex: 'last_seen', width: 180, render: (value: string) => formatDateTime(value) },
   ]
 
   return <main className="page">
-    <AppPageHeader title="翻墙监测复核" subtitle="列表仅显示待处理摘要，点击对象进入完整证据与复核页面。" loading={reviews.isFetching} onRefresh={() => void reviews.refetch()} />
-    <AppTableBar searchPlaceholder="搜索 IP、账号或终端" searchValue={searchInput} onSearchChange={setSearchInput} totalCount={reviews.data?.page.total ?? 0} extra={<Select value={reviewWindow} onChange={(value) => { setReviewWindow(value); pagination.reset() }} options={[{label:'最近 24 小时',value:'24h'},{label:'最近 7 天',value:'7d'}]} />} />
+    <AppPageHeader />
+    <AppTableBar searchPlaceholder="搜索 IP、账号或终端" searchValue={searchInput} onSearchChange={setSearchInput} extra={<Select value={reviewWindow} onChange={(value) => { setReviewWindow(value); pagination.reset() }} options={[{label:'最近 24 小时',value:'24h'},{label:'最近 7 天',value:'7d'}]} />} />
     <section className="surface">
-      {reviews.isLoading ? <AppLoadingState rows={8} /> : reviews.isError ? <AppErrorAlert title="复核数据加载失败" message={reviews.error.message} /> : (reviews.data?.items.length ?? 0) === 0 ? <AppEmptyState description="当前筛选条件下没有复核对象" /> : <>
-        <Table className="compact-list-table" columns={columns} dataSource={reviews.data?.items ?? []} pagination={false} rowKey="case_id" scroll={{x:1180}} size="small" />
+      <AppListHeader title="翻墙监测复核" count={`${reviews.data?.page.total ?? 0} 条`} />
+      {reviews.isLoading ? <AppLoadingState rows={8} /> : reviews.isError ? <AppErrorAlert title="复核数据读取失败" message={reviews.error.message} /> : (reviews.data?.items.length ?? 0) === 0 ? <AppEmptyState description="当前筛选下暂无复核对象" /> : <>
+        <AppTable className="compact-list-table" columns={columns} dataSource={reviews.data?.items ?? []} pagination={false} rowKey="case_id" scroll={{x:1180}} size="small" />
         <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={reviews.data?.page.total ?? 0} onChange={pagination.update} />
       </>}
     </section>

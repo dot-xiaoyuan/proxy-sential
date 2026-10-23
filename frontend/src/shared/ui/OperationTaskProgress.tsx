@@ -1,4 +1,4 @@
-import { Notice as Alert } from './Notice'
+import { AppErrorAlert } from './AppStateFeedback'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Button, Typography } from 'antd'
 import { request } from '../api/client'
@@ -24,7 +24,7 @@ export function OperationTaskProgress() {
   }, [jobs])
   if (!jobs.length) return null
   return <section className="operation-task-progress" aria-label="后台任务进度">
-    {error && <Alert type="error" title="任务状态查询或取消失败" description={error} />}
+    {error && <AppErrorAlert title="任务状态查询或取消失败" message={error} />}
     {jobs.length > 8 && <Typography.Text type="secondary">共 {jobs.length} 项任务，展示最近 8 项；其余任务保留在后台执行。</Typography.Text>}
     {jobs.slice(0, 8).map(job => <div className="operation-task-row" key={job.task_id}>
       <Typography.Text>{names[job.kind] || (job.kind.endsWith('/test') ? '连接器测试' : '外部账号预览')} · {states[job.status]}</Typography.Text>

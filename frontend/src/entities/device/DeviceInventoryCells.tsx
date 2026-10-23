@@ -140,7 +140,7 @@ export function DeviceLedgerRecognition({device}:{device:DeviceDisplayItem}) {
    {platform&&<Tooltip title="虚拟网卡或虚拟化平台线索，不确认宿主机品牌。"><Tag className="device-platform-tag"><CloudServerOutlined/>VMware 虚拟平台线索</Tag></Tooltip>}
    {(device.recognition_conflict||device.brand_inference?.status==='conflict')&&<Tag className="device-conflict-tag">线索冲突</Tag>}
    {device.discovery?.conflict&&<Tag className="device-conflict-tag">发现线索冲突</Tag>}
-   {clues.length>0&&<Tooltip title={<div>{clues.map(clue=><div key={clue}>{clue}</div>)}</div>}><Typography.Text className="device-ledger-clues" tabIndex={0}>识别依据</Typography.Text></Tooltip>}
+   {clues.length>0&&<Tooltip title={<div>{clues.map(clue=><div key={clue}>{clue}</div>)}</div>}><Typography.Text className="device-ledger-clues" tabIndex={0}>识别线索 {clues.length}</Typography.Text></Tooltip>}
   </div>
   {device.router_observation&&<Link className="router-device-summary" to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}>路由观察 · {routerStatusLabel(device.router_observation.status)}</Link>}
  </div>
@@ -154,7 +154,7 @@ function isEmptyRecognition(value?: string) {
   return !value || /^(unknown|未知|未识别)$/i.test(value.trim())
 }
 
-function deviceTypeLabel(value: string) {
+export function deviceTypeLabel(value: string) {
   const normalized = value.toLowerCase()
   if (/printer/.test(normalized)) return '打印机'
   if (/router/.test(normalized)) return '路由器'

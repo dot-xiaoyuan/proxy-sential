@@ -4,6 +4,125 @@
  */
 
 export interface paths {
+    "/violation-cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only paginated violation observations; requires cases:read. Simulated notices never represent delivery. */
+        get: operations["listViolationCases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/violation-cases/{case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read one observation case; requires cases:read. */
+        get: operations["getViolationCase"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/violation-cases/{case_id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Bounded case-linked observation timeline; requires cases:read. */
+        get: operations["getViolationCaseTimeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/violation-cases/{case_id}/release-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Record a proposed manual release with reason and Idempotency-Key; no external request. Requires cases:write. */
+        post: operations["previewViolationRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/violation-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only observation records; requires cases:read. */
+        get: operations["listViolationObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/violation-dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Seven-day observation counts; requires cases:read. */
+        get: operations["getViolationDashboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Authenticated read-only MCP JSON-RPC tools; requires cases:read. No action tools exist. */
+        post: operations["violationReadOnlyMCP"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/types": {
         parameters: {
             query?: never;
@@ -2793,6 +2912,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ai-relay/indicators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAIRelayIndicators"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai-relay/usages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAIRelayUsages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/events": {
         parameters: {
             query?: never;
@@ -3024,6 +3175,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Raw rule conditions require device-fingerprint-library:update; ordinary identity readers use sources and coverage. */
         get: operations["listFingerprintRules"];
         put?: never;
         post?: never;
@@ -4699,7 +4851,10 @@ export interface components {
             /** Format: date-time */
             occurred_at: string;
             /** @enum {string} */
-            status: "queued" | "sending" | "sent" | "failed" | "cancelled";
+            status: "recorded" | "queued" | "sending" | "sent" | "failed" | "cancelled";
+            policy_decision_id?: string;
+            observation_id?: string;
+            evidence_version?: string;
             attempts: number;
             /** Format: date-time */
             next_attempt_at?: string;
@@ -5398,9 +5553,17 @@ export interface components {
             /** Format: date-time */
             expires_at?: string;
             /** @enum {string} */
-            status: "shadow" | "pending" | "running" | "succeeded" | "failed" | "revoked" | "expired" | "blocked";
+            status: "shadow" | "pending" | "running" | "succeeded" | "failed" | "revoked" | "expired" | "blocked" | "recorded";
             /** @enum {string} */
-            mode: "shadow" | "active";
+            mode: "shadow" | "active" | "record_only";
+            policy_parameters?: {
+                execution_id?: string;
+                policy_id?: string;
+                policy_revision?: number;
+                decision_id?: string;
+                evidence_version?: string;
+                observation_id?: string;
+            };
             blockers?: string[];
             last_error?: string;
             /** Format: date-time */
@@ -5491,6 +5654,65 @@ export interface components {
                 next_cursor: string | null;
                 total: number;
             };
+        };
+        AIRelayIndicatorLibrary: {
+            version: string;
+            updated_at: string;
+            indicators: components["schemas"]["AIRelayIndicator"][];
+            official_domains: string[];
+            sources: components["schemas"]["AIRelayIndicatorSource"][];
+        };
+        AIRelayIndicator: {
+            domain: string;
+            /** @enum {string} */
+            match_type: "exact" | "subdomain";
+            /** @enum {string} */
+            category: "relay" | "aggregator";
+            name?: string;
+            name_zh?: string;
+            confidence: number;
+            /** @enum {string} */
+            status: "resolved" | "unresolved";
+            source: string;
+            note?: string;
+        };
+        AIRelayIndicatorSource: {
+            id: string;
+            name: string;
+            url: string;
+            version?: string;
+        };
+        AIRelayUsagePage: {
+            items: components["schemas"]["AIRelayUsage"][];
+            page: components["schemas"]["AIRelayPageInfo"];
+            indicator_version: string;
+        };
+        AIRelayPageInfo: {
+            limit: number;
+            next_cursor: string | null;
+            total: number;
+        };
+        AIRelayUsage: {
+            ip: string;
+            account_id?: string;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            event_count: number;
+            domains: string[];
+            domain_names: {
+                [key: string]: string;
+            };
+            events: components["schemas"]["AIRelayEvent"][];
+        };
+        AIRelayEvent: {
+            event_id: string;
+            /** Format: date-time */
+            timestamp: string;
+            domain: string;
+            source: string;
+            sensor_id: string;
         };
         EventListResponse: {
             events: components["schemas"]["NormalizedEventSummary"][];
@@ -6998,6 +7220,162 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listViolationCases: {
+        parameters: {
+            query?: {
+                account_id?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Observation cases with next_cursor and observation_only=true */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Observation store unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getViolationCase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Observation case */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Case not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getViolationCaseTimeline: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Case-linked proposed reminders and sanctions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    previewViolationRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Local observation with external_request_sent=false */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listViolationObservations: {
+        parameters: {
+            query?: {
+                account_id?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Observation records with next_cursor and observation_only=true */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getViolationDashboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Independent observation statistics */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    violationReadOnlyMCP: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MCP JSON-RPC result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getDiscoveryTypes: {
         parameters: {
             query?: never;
@@ -9278,7 +9656,7 @@ export interface operations {
     listBehaviorReportOutbox: {
         parameters: {
             query?: {
-                status?: "queued" | "sending" | "sent" | "failed" | "cancelled";
+                status?: "recorded" | "queued" | "sending" | "sent" | "failed" | "cancelled";
                 limit?: number;
                 cursor?: number;
             };
@@ -12099,6 +12477,55 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    getAIRelayIndicators: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Embedded AI relay domain indicator library and provenance. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIRelayIndicatorLibrary"];
+                };
+            };
+        };
+    };
+    listAIRelayUsages: {
+        parameters: {
+            query?: {
+                from?: string;
+                to?: string;
+                ip?: string;
+                domain?: string;
+                campus_id?: string;
+                sensor_id?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated IP-level AI relay domain observations from the retained seven days. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIRelayUsagePage"];
+                };
+            };
+        };
+    };
     listEvents: {
         parameters: {
             query?: {
@@ -12501,6 +12928,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["FingerprintRulePage"];
                 };
+            };
+            /** @description Raw rule access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

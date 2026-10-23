@@ -28,10 +28,11 @@ const targetFindings = [
 ]
 
 const reportChannels = [
-  { channel_id: 'ncu-behavior', name: '网络安全行为上报', endpoint_url: 'https://example.invalid/security-behavior/report', auth_type: 'oauth2_client_credentials', token_endpoint: 'https://example.invalid/api/v1/auth/get-access-token', token_method: 'GET', has_secret: true, enabled: false, revision: 1, batch_size: 100, timeout_seconds: 10, field_mapping: { behavior_type: 'event_type', account: 'account' }, success_status_codes: [200], updated_at: now() },
+  { channel_id: 'ncu-behavior', name: '网络安全行为上报', endpoint_url: 'https://example.invalid/security-behavior/report', auth_type: 'oauth2_client_credentials', token_endpoint: 'https://example.invalid/api/v1/auth/get-access-token', token_method: 'GET', has_secret: true, enabled: true, revision: 1, batch_size: 100, timeout_seconds: 10, field_mapping: { behavior_type: 'event_type', account: 'account' }, success_status_codes: [200], updated_at: now() },
 ]
 
 const reportOutbox = [
+  { report_id: 'shared-record:shared-observe-demo:ncu-behavior', idempotency_key: 'shared-record:shared-observe-demo:ncu-behavior', channel_id: 'ncu-behavior', event_type: 'proxy_behavior', subject_type: 'account', subject_id: 'campus-student-001', account_id: 'campus-student-001', ip: '192.0.2.44', target: '', target_type: '', occurred_at: now(), status: 'recorded', attempts: 0, http_status: 0, policy_decision_id:'shared-observe-demo',observation_id:'shared-behavior-test',evidence_version:'8e79c1a7fabc0123456789abcdef012345',created_at: now(), updated_at: now() },
   { report_id: 'report-demo-1', idempotency_key: 'demo-report-1', channel_id: 'ncu-behavior', event_type: 'poison_behavior', subject_type: 'ip', subject_id: '10.155.9.9', account_id: 'student-03', ip: '10.155.9.9', target: 'w1', target_type: 'window', occurred_at: now(), status: 'queued', attempts: 0, http_status: 0, created_at: now(), updated_at: now() },
 ]
 
@@ -66,9 +67,9 @@ export const behaviorReportHandlers = [
   http.get('/api/v1/behavior-reports/channels', () => HttpResponse.json({ items: reportChannels, event_types: ['poison_behavior', 'proxy_behavior', 'ai_relay_audit'] })),
   http.post('/api/v1/behavior-reports/channels/:channelId/test', () => HttpResponse.json({ channel_id: 'ncu-behavior', status: 'succeeded', http_status: 200, remote_id: 'preview-1' })),
   http.post('/api/v1/behavior-reports/channels/:channelId/preview', () => HttpResponse.json({ channel_id: 'ncu-behavior', payload: { behavior_type: 'malware', account: 'student-03', source_ip: '10.155.9.9' } })),
-  http.get('/api/v1/behavior-reports/outbox', () => HttpResponse.json(page(reportOutbox))),
+  http.get('/api/v1/behavior-reports/outbox', ({request}) => {const status=new URL(request.url).searchParams.get('status');return HttpResponse.json(page(status?reportOutbox.filter(row=>row.status===status):reportOutbox))}),
   http.get('/api/v1/behavior-reports/outbox/:reportId', ({ params }) => HttpResponse.json({
     report: reportOutbox.find((item) => item.report_id === params.reportId) ?? reportOutbox[0],
-    attempts: [{ attempt_id: 'attempt-1', report_id: String(params.reportId), attempt: 1, status: 'failed', http_status: 502, error: '平台暂时不可用', started_at: now(), finished_at: now() }],
+    attempts: String(params.reportId).startsWith('shared-record:')?[]:[{ attempt_id: 'attempt-1', report_id: String(params.reportId), attempt: 1, status: 'failed', http_status: 502, error: '平台暂时不可用', started_at: now(), finished_at: now() }],
   })),
 ]

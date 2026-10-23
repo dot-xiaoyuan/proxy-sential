@@ -48,3 +48,21 @@ func TestInboxApplyWritesFactsDedupAndProgressOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIdentityInboxCanceledWorkerReleasesOnlyItsLease(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := identityInboxWork{Scope: "scope", Epoch: 7, Generation: "generation"}
+	mock.ExpectExec(`UPDATE identity_pipeline_scopes SET lease_until=.*lease_epoch=\$2 AND current_generation=\$4`).WithArgs("scope", int64(7), "identity_processing_failed", "generation").WillReturnResult(sqlmock.NewResult(0, 1))
+	if err = (&PostgresStore{db: db}).releaseIdentityInboxFailure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

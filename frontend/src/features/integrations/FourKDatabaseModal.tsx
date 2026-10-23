@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../shared/ui'
 import { useEffect, useState } from 'react'
 import { Button, Descriptions, Form, Input, InputNumber, Modal, Space, Spin } from 'antd'
 
@@ -117,7 +118,7 @@ export function FourKDatabaseModal({ connectorId, initialHost, onClose, onSaved 
         <Form.Item name="northbound_api_host" label="北向 API 地址" rules={[{required:true,message:'请输入北向 API 地址'}, {pattern:/^[a-zA-Z0-9.:[\]-]+$/,message:'请输入有效的IP或主机名'}]}><Input placeholder="北向接口主机或 IP" /></Form.Item>
         <Form.Item name="reconcile_interval_hours" label="全量校准周期（小时）"><InputNumber min={1} max={168} precision={0} /></Form.Item>
       </Form>
-      {integration && <div className="four-k-authorization-state"><span>北向授权</span><strong>{integration.authorization_ready ? '已验证' : '待验证'}</strong>{integration.authorization_refreshed_at && <small>最近刷新 {new Date(integration.authorization_refreshed_at).toLocaleString()}</small>}</div>}
+      {integration && <div className="four-k-authorization-state"><span>北向授权</span><strong>{integration.authorization_ready ? '已验证' : '待验证'}</strong>{integration.authorization_refreshed_at && <small>最近刷新 {formatDateTime(integration.authorization_refreshed_at)}</small>}</div>}
       {!endpointChanged && channels && <Descriptions className="four-k-database-result" column={1} size="small" title="通道状态" items={channelItems(channels)} />}
       {check && <Descriptions className="four-k-database-result" column={1} size="small" title="连接测试" items={[{key:'online',label:'在线用户数量',children:check.online_total}]} />}
       {sync && <Descriptions className="four-k-sync-summary" column={1} size="small" title="最近同步摘要" items={[
@@ -125,7 +126,7 @@ export function FourKDatabaseModal({ connectorId, initialHost, onClose, onSaved 
         {key:'catalog',label:'匹配目录',children:`${sync.products}个产品 / ${sync.groups}个用户组 / ${sync.controls}个来源控制策略`},
       ]} />}
       {!endpointChanged && !sync && integration?.last_synced_at && <Descriptions className="four-k-sync-summary" column={1} size="small" title="最近同步摘要" items={[
-        {key:'time',label:'同步时间',children:new Date(integration.last_synced_at).toLocaleString()},
+        {key:'time',label:'同步时间',children:formatDateTime(integration.last_synced_at)},
         {key:'identity',label:'身份关联',children:`${integration.identity_accounts}个账号 / ${integration.identity_sessions}个会话`},
         {key:'catalog',label:'匹配目录',children:`${integration.products}个产品 / ${integration.groups}个用户组 / ${integration.controls}个来源控制策略`},
       ]} />}

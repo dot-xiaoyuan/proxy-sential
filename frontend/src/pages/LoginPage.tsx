@@ -1,4 +1,4 @@
-import { Notice as Alert } from '../shared/ui/Notice'
+import { AppErrorAlert } from '../shared/ui'
 import { LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
 import { Button, Form, Input, Typography } from 'antd'
 
@@ -10,7 +10,7 @@ export function LoginPage() {
     <main className="login-page">
       <section className="login-card">
         <div className="login-brand"><SafetyCertificateOutlined /><div><Typography.Title level={3}>Proxy Sentinel</Typography.Title><Typography.Text type="secondary">高校网络风险运营平台</Typography.Text></div></div>
-        {login.isError && <Alert className="margin-bottom-md" showIcon title="登录失败，请检查账号或稍后重试" type="error" />}
+        {login.isError && <AppErrorAlert className="margin-bottom-md" title="登录失败，请检查账号或稍后重试" />}
         <Form layout="vertical" onFinish={(values:{username:string;password:string})=>login.mutate(values)}>
           <Form.Item label="账号" name="username" rules={[{required:true,message:'请输入账号'}]}><Input autoComplete="username" prefix={<UserOutlined />} /></Form.Item>
           <Form.Item label="密码" name="password" rules={[{required:true,message:'请输入密码'}]}><Input.Password autoComplete="current-password" prefix={<LockOutlined />} /></Form.Item>

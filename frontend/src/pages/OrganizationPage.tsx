@@ -1,9 +1,9 @@
-import { Notice as Alert } from '../shared/ui/Notice'
 import { useRef, useState } from 'react'
-import { Button, Card, Empty, Form, Input, Modal, Select, Space, Tabs, Tag, Typography, message } from 'antd'
+import { Button, Card, Form, Input, Modal, Select, Space, Tabs, Tag, Typography, message } from 'antd'
 import { can } from '../shared/auth/permissions'
 import { useOrganization, useOrganizationList, useOrganizationMutation, useSession } from '../shared/api/queries'
-import { AppErrorAlert, AppLoadingState, AppPageHeader, AppServerPagination, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppListSection, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, useServerPagination } from '../shared/ui'
+import type { ColumnsType } from 'antd/es/table'
 import { useUrlState } from '../shared/ui/useUrlState'
 
 type OrganizationKind = 'campuses' | 'buildings' | 'network-zones' | 'access-points'
@@ -36,7 +36,7 @@ export function OrganizationPage() {
   const selectedCampus = Form.useWatch('campus_id', {form, preserve:true})
   const selectedBuilding = Form.useWatch('building_id', {form, preserve:true})
   if (query.isLoading) return <AppLoadingState rows={6} />
-  if (query.isError || !query.data) return <AppErrorAlert title="校园组织与网络区域加载失败" />
+  if (query.isError || !query.data) return <AppErrorAlert title="校园组织与网络区域读取失败" />
   const data = query.data
   const writable = !!session.data && can(session.data, 'organization:write')
   const qianhu = data.campuses.find(item => item.campus_id === 'ncu' || item.code === 'NCU-QH' || item.name.includes('前湖'))
@@ -76,9 +76,23 @@ export function OrganizationPage() {
   const buildings = data.buildings.filter(item => item.campus_id === selectedCampus)
   const zones = data.network_zones.filter(item => item.campus_id === selectedCampus && (!selectedBuilding || !item.building_id || item.building_id === selectedBuilding))
   const editButton = (value: OrganizationKind, item: object, label: string) => writable && <Button size="small" onClick={() => open(value, item)}>{label}</Button>
+  const campusColumns: ColumnsType<NonNullable<typeof campusList.data>['items'][number]> = [
+    { title: '校区', dataIndex: 'name', render: (value: string) => <Typography.Text strong>{value}</Typography.Text> },
+    { title: '楼宇', key: 'buildings', width: 100, render: (_, campus) => `${data.buildings.filter(item => item.campus_id === campus.campus_id).length} 栋` },
+    { title: '网段', key: 'zones', width: 100, render: (_, campus) => `${data.network_zones.filter(zone => zone.campus_id === campus.campus_id).length} 个` },
+    { title: '操作', key: 'action', width: 120, render: (_, campus) => editButton('campuses', campus, '编辑校区') },
+  ]
+  const zoneColumns: ColumnsType<NonNullable<typeof zoneList.data>['items'][number]> = [
+    { title: '名称', dataIndex: 'name', width: 170, render: (value: string) => <Typography.Text strong>{value}</Typography.Text> },
+    { title: '校区 / 楼宇', key: 'location', width: 190, render: (_, zone) => [data.campuses.find(item => item.campus_id === zone.campus_id)?.name, data.buildings.find(item => item.building_id === zone.building_id)?.name].filter(Boolean).join(' · ') },
+    { title: 'IP 网段', key: 'cidrs', width: 220, render: (_, zone) => <div className="organization-mappings">{(zone.cidrs ?? []).map(cidr => <span key={cidr}>{cidr}</span>)}</div> },
+    { title: 'SSID', key: 'ssids', width: 140, render: (_, zone) => (zone.ssids ?? []).join('、') },
+    { title: 'VLAN', key: 'vlans', width: 120, render: (_, zone) => (zone.vlans ?? []).join('、') },
+    { title: '操作', key: 'action', width: 110, render: (_, zone) => editButton('network-zones', zone, '编辑映射') },
+  ]
   return <main className="page organization-page">
     {messageContext}
-    <AppPageHeader title="校区与网络区域" subtitle="前湖校区基础资料与网络位置映射" loading={query.isFetching} onRefresh={() => { void query.refetch(); void campusList.refetch(); void zoneList.refetch() }} extra={writable && <Space wrap>
+    <AppPageHeader extra={writable && <Space wrap>
       <Button onClick={() => open('campuses')}>新增校区</Button>
       <Button disabled={!data.campuses.length} onClick={() => open('buildings')}>新增楼宇</Button>
       <Button type="primary" disabled={!data.campuses.length} onClick={() => open('network-zones')}>新增网段映射</Button>
@@ -92,32 +106,32 @@ export function OrganizationPage() {
     <Card className="surface-card margin-top-md operations-tabs-surface">
       <Tabs activeKey={activeTab} onChange={setActiveTab} destroyOnHidden items={[
         { key: 'campuses', label: '校区与楼宇', children: <>
-          {campusList.isError ? <AppErrorAlert title="校区列表加载失败" /> : campusList.isLoading ? <AppLoadingState rows={3} /> : !campusList.data?.items.length ? <Empty description="尚未配置校区" /> : <div className="organization-list">{campusList.data.items.map(campus => <section key={campus.campus_id} className="organization-item">
-            <div className="organization-row"><div><Typography.Title level={5}>{campus.name}</Typography.Title><Typography.Text type="secondary">{data.buildings.filter(item => item.campus_id === campus.campus_id).length} 栋楼宇</Typography.Text></div>{editButton('campuses', campus, '编辑校区')}</div>
-            {data.buildings.some(item => item.campus_id === campus.campus_id) && <details className="organization-buildings"><summary>查看楼宇</summary><div className="organization-building-grid">{data.buildings.filter(item => item.campus_id === campus.campus_id).map(item => <div className="organization-building" key={item.building_id}>
+          <AppListHeader title="校区与楼宇" count={`${campusList.data?.page.total ?? 0} 个校区`} />
+          <AppListSection isError={campusList.isError} errorTitle="校区列表读取失败" isLoading={campusList.isLoading} loadingRows={3} isEmpty={!campusList.data?.items.length} emptyText="尚未配置校区">
+            <AppTable rowKey="campus_id" columns={campusColumns} dataSource={campusList.data?.items ?? []} scroll={{x:640}} expandable={{rowExpandable: campus => data.buildings.some(item => item.campus_id === campus.campus_id), expandedRowRender: campus => <div className="organization-building-grid">{data.buildings.filter(item => item.campus_id === campus.campus_id).map(item => <div className="organization-building" key={item.building_id}>
               <div className="organization-row"><Typography.Text strong>{item.name}</Typography.Text>{editButton('buildings', item, '编辑楼宇')}</div>
               {data.network_zones.filter(zone => zone.building_id === item.building_id).map(zone => <div className="organization-building-mapping" key={zone.network_zone_id}>
                 <div className="organization-mappings">{(zone.cidrs ?? []).map(cidr => <span key={cidr}>{cidr}</span>)}{!zone.cidrs?.length && <span>{zone.name}</span>}</div>
                 {editButton('network-zones', zone, '编辑网段')}
               </div>)}
               {writable && <Button size="small" onClick={() => open('network-zones', undefined, {campus_id:item.campus_id,building_id:item.building_id})}>配置网段</Button>}
-            </div>)}</div></details>}
-          </section>)}</div>}
+            </div>)}</div>}} />
+          </AppListSection>
           <AppServerPagination page={campusPage.page} pageSize={campusPage.pageSize} total={campusList.data?.page.total ?? 0} onChange={campusPage.update} />
         </> },
         { key: 'zones', label: '网段与位置映射', children: <>
           <p className="organization-guidance">用 IP 网段关联楼宇或区域，例如 222.204.88.0/23 对应行政楼。VLAN、SSID 与接入点均为可选信息。</p>
-          {zoneList.isError ? <AppErrorAlert title="网络区域列表加载失败" /> : zoneList.isLoading ? <AppLoadingState rows={3} /> : !zoneList.data?.items.length ? <Empty description="尚未配置网络区域" /> : <div className="organization-list">{zoneList.data.items.map(zone => <section className="organization-item" key={zone.network_zone_id}>
-            <div className="organization-row"><div><Typography.Title level={5}>{zone.name}</Typography.Title><Typography.Text type="secondary">{[data.campuses.find(item => item.campus_id === zone.campus_id)?.name, data.buildings.find(item => item.building_id === zone.building_id)?.name].filter(Boolean).join(' · ')}</Typography.Text></div>{editButton('network-zones', zone, '编辑映射')}</div>
-            <div className="organization-mappings">{(zone.cidrs ?? []).length > 0 && <span>IP 网段 {(zone.cidrs ?? []).join('、')}</span>}{(zone.ssids ?? []).length > 0 && <span>SSID {(zone.ssids ?? []).join('、')}</span>}{(zone.vlans ?? []).length > 0 && <span>VLAN {(zone.vlans ?? []).join('、')}</span>}</div>
-          </section>)}</div>}
+          <AppListHeader title="网段与位置映射" count={`${zoneList.data?.page.total ?? 0} 个映射`} />
+          <AppListSection isError={zoneList.isError} errorTitle="网络区域列表读取失败" isLoading={zoneList.isLoading} loadingRows={3} isEmpty={!zoneList.data?.items.length} emptyText="尚未配置网络区域">
+            <AppTable rowKey="network_zone_id" columns={zoneColumns} dataSource={zoneList.data?.items ?? []} scroll={{x:900}} />
+          </AppListSection>
           <AppServerPagination page={zonePage.page} pageSize={zonePage.pageSize} total={zoneList.data?.page.total ?? 0} onChange={zonePage.update} />
           {data.access_points.length > 0 && <details className="organization-buildings"><summary>接入点 / NAS（{data.access_points.length}）</summary><div className="organization-list">{data.access_points.map(item => <div key={item.access_point_id} className="organization-row organization-item"><span>{[item.name, item.management_ip].filter(Boolean).join(' · ')}</span>{editButton('access-points', item, '编辑接入点')}</div>)}</div></details>}
         </> },
       ]} />
     </Card>
     <Modal title={kind ? `${editing ? '编辑' : '新增'}${names[kind]}` : ''} open={kind !== null} confirmLoading={mutation.isPending} closable={!mutation.isPending} mask={{closable:!mutation.isPending}} keyboard={!mutation.isPending} cancelButtonProps={{disabled: mutation.isPending}} onCancel={() => setKind(null)} onOk={() => void submit()} okText="保存" cancelText="取消" forceRender>
-      {error && <Alert className="margin-bottom-md" type="error" showIcon title={error} />}
+      {error && <AppErrorAlert className="margin-bottom-md" title={error} />}
       <Form form={form} layout="vertical" onFinish={() => void submit()} disabled={mutation.isPending}>
         {kind && <Form.Item name={identifiers[kind]} hidden><Input /></Form.Item>}
         {(kind === 'campuses' || kind === 'buildings') && <Form.Item name="code" hidden><Input /></Form.Item>}

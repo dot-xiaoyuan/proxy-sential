@@ -320,7 +320,7 @@ func identityPipelineHealth(ctx context.Context, db *sql.DB) componentHealth {
 	var pending int64
 	var oldest sql.NullTime
 	var lastError string
-	err := db.QueryRowContext(ctx, `SELECT COALESCE(sum(pending_records),0),min(oldest_pending_at) FILTER (WHERE pending_records>0),COALESCE(string_agg(DISTINCT nullif(last_error,''),','),'') FROM identity_pipeline_scopes WHERE enabled`).Scan(&pending, &oldest, &lastError)
+	err := db.QueryRowContext(ctx, store.IdentityScopeStatusSQL(`SELECT COALESCE(sum(pending_records),0),min(oldest_pending_at) FILTER (WHERE pending_records>0),COALESCE(string_agg(DISTINCT nullif(last_error,''),','),'') FROM identity_pipeline_scopes WHERE enabled`)).Scan(&pending, &oldest, &lastError)
 	if err != nil {
 		return componentHealth{Status: "unavailable", Error: err.Error()}
 	}

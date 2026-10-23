@@ -70,7 +70,7 @@ export type SRun4KSyncResult = { connector_id:string;source:string;synced_at:str
 export type IdentityBridge = components['schemas']['IdentityBridge']
 export type IdentityBridgeRun = components['schemas']['IdentityBridgeRun']
 export type IdentityBridgeRunPage = components['schemas']['IdentityBridgeRunPage']
-export type EnforcementAction = { action_id:string; idempotency_key:string; case_id?:string; connector_id:string; action_type:string; subject_id:string; ip?:string; account_id?:string; endpoint_id?:string; campus_id?:string; session_id?:string; ruleset_version?:string; remote_action_id?:string; parent_action_id?:string; retry_count?:number; next_attempt_at?:string; cooldown_until?:string; expires_at?:string; status:string; mode:string; blockers?:string[]; last_error?:string; created_at:string; updated_at:string }
+export type EnforcementAction = { action_id:string; idempotency_key:string; case_id?:string; connector_id:string; action_type:string; subject_id:string; ip?:string; account_id?:string; endpoint_id?:string; campus_id?:string; session_id?:string; ruleset_version?:string; remote_action_id?:string; parent_action_id?:string; retry_count?:number; next_attempt_at?:string; cooldown_until?:string; expires_at?:string; status:string; mode:string; blockers?:string[]; last_error?:string; created_at:string; updated_at:string; policy_parameters?:{decision_id?:string;policy_id?:string;policy_revision?:number;evidence_version?:string;observation_id?:string} }
 export type LocalUser = components['schemas']['LocalUser']
 export type UserMutation = components['schemas']['UserMutation']
 export type CampusException = components['schemas']['CampusException']
@@ -320,3 +320,7 @@ export type ManagedIdentityConfiguration = {
 export type ManagedIdentitySource = { configuration: ManagedIdentityConfiguration; config_version: number; token_configured: boolean; state: string; blocker: string }
 
 export type RulesStatus = components['schemas']['RulesStatus']
+
+export type AIRelayUsagePage = components['schemas']['AIRelayUsagePage']
+export type AIRelayUsage = components['schemas']['AIRelayUsage']
+export type AIRelayUsageQuery = { from?: string; to?: string; ip?: string; domain?: string; campus_id?: string; sensor_id?: string; limit?: number; cursor?: string }

@@ -52,6 +52,8 @@ func TestSharedObservationIsolatedEndToEnd(t *testing.T) {
 	ip := "192.0.2.44"
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	defer db.ExecContext(context.Background(), `DELETE FROM policy_decision_records WHERE document->'evidence'->>'sensor_id'=$1`, sensor)
+	defer db.ExecContext(context.Background(), `DELETE FROM enforcement_actions WHERE account_id=$1 AND mode='record_only'`, sensor)
+	defer db.ExecContext(context.Background(), `DELETE FROM behavior_report_outbox WHERE account_id=$1 AND status='recorded'`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM shared_observation_executions WHERE account_id=$1`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM shared_behavior_observations WHERE sensor_id=$1`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM shared_observation_jobs WHERE sensor_id=$1`, sensor)
@@ -78,7 +80,7 @@ func TestSharedObservationIsolatedEndToEnd(t *testing.T) {
 	defer db.ExecContext(context.Background(), `DELETE FROM account_identity_projection_sources WHERE source=$1`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM identity_snapshot_log WHERE source=$1`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM identity_full_snapshots WHERE source=$1`, sensor)
-	tables := []string{"enforcement_actions", "notification_outbox", "notification_delivery_attempts", "behavior_report_outbox", "control_plane_tasks"}
+	tables := []string{"notification_outbox", "notification_delivery_attempts", "control_plane_tasks"}
 	before := map[string]int{}
 	for _, table := range tables {
 		var n int
@@ -98,8 +100,11 @@ func TestSharedObservationIsolatedEndToEnd(t *testing.T) {
 		}
 	}
 	var n int
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM policy_decision_records WHERE account_id=$1 AND result='matched' AND document->>'mode'='observe' AND document->>'delivery_status'='not_sent'`, sensor).Scan(&n); err != nil || n != 1 {
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM policy_decision_records WHERE account_id=$1 AND result='matched' AND document->>'mode'='manual' AND document->>'delivery_status'='record_only'`, sensor).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("exactly one hit: %d %v", n, err)
+	}
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM enforcement_actions WHERE account_id=$1 AND status='recorded' AND mode='record_only'`, sensor).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("exactly one record-only action: %d %v", n, err)
 	}
 	for _, table := range tables {
 		var n int

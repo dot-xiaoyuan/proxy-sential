@@ -1,5 +1,6 @@
+import { AppTable } from '../shared/ui'
 import { Link } from 'react-router-dom'
-import { Table, Tag, Typography } from 'antd'
+import { Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
 import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
@@ -27,7 +28,7 @@ const columns: ColumnsType<RiskSnapshot> = [
   {
     title: '分数',
     dataIndex: 'score',
-    width: 72,
+    width: 130,
     render: (score: number) => <RiskScore score={score} />,
   },
   {
@@ -53,7 +54,7 @@ const columns: ColumnsType<RiskSnapshot> = [
       <div className="list-inline-tags">
         <Tag color={row.suspected_device_count > 1 ? 'orange' : 'blue'}>{row.suspected_device_count}</Tag>
         <Typography.Text className="list-cell-nowrap" title={row.device_summary} type="secondary">
-          {row.device_summary || '暂无设备信号'}
+          {row.device_summary || '暂无终端信号'}
         </Typography.Text>
       </div>
     ),
@@ -96,7 +97,7 @@ export function RiskTable({
   emptyText?: string
 }) {
   return (
-    <Table
+    <AppTable
 	  className="compact-list-table"
       columns={columns}
       dataSource={data}

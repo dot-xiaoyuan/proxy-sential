@@ -9,10 +9,10 @@ export const deviceCenterTab = (params: URLSearchParams): DeviceCenterTab => par
 const item = (key: string, title: string, to: string, permission?: Permission, prefix = to.split('?')[0]): NavigationItem => ({ key, title, to, permission, owns: path => path === prefix || path.startsWith(`${prefix}/`) })
 export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
+  { key: 'ai-relay', title: 'AI 中转站', items: [item('ai-relay-usages','AI 中转站','/ai-relay','events:read')] },
   { key: 'risk', title: '风险运营', items: [
-    {...item('observations','共享发现','/shared-access?tab=devices','cases:read'), owns: (p,q) => p.startsWith('/shared-access/observations') || p === '/shared-access' && q.get('tab') !== 'reviews'},
-    {...item('reviews','账号复核','/shared-access?tab=reviews','cases:read'), owns: (p,q) => p.startsWith('/shared-access/reviews') || p === '/shared-access' && q.get('tab') === 'reviews'},
-    item('cases','风险案件','/cases','cases:read'), {...item('actions','处置记录','/actions?tab=actions','actions:read'),readAlternatives:[{permission:'policies:read',to:'/actions?tab=executions'}]},
+    {...item('observations','共享发现与核验','/shared-access?tab=routers','cases:read'), owns: p => p === '/shared-access' || p.startsWith('/shared-access/')},
+    {...item('actions','策略与处置记录','/actions?tab=decisions','policies:read'),readAlternatives:[{permission:'actions:read',to:'/actions?tab=actions'},{permission:'behavior-reports:read',to:'/actions?tab=reports'}]},
   ] },
   // 设备中心按子菜单分别开发与展示。哑终端与发现线索暂停（采集侧已停 ARP），不进菜单；旧链接回落到终端列表。
   { key: 'assets', title: '设备中心', items: [
@@ -24,10 +24,10 @@ export const navigation: NavigationGroup[] = [
     item('events','事件检索','/events','events:read'),
   ] },
   { key: 'strategy', title: '策略与验证', items: [item('policies','防代理策略','/policies','policies:read'),item('whitelist','白名单','/policies/whitelist','policies:read'),item('blacklist','黑名单','/policies/blacklist','policies:read'),{...item('destination-targets','内网目标访问','/policies/destination-targets','destination-targets:read'),readAlternatives:[{permission:'destination-targets:manage',to:'/policies/destination-targets'}]},item('exceptions','校园例外','/policies/exceptions','risks:read'),{...item('rules','规则与特征库','/settings/rules','risks:read'),readAlternatives:[{permission:'dpi:read',to:'/settings/rules?tab=application-domains'},{permission:'identity:read',to:'/settings/rules?tab=fingerprints'}]}] },
-  { key: 'system', title: '系统管理', items: [{...item('sources','数据源与采集','/settings/sources','ingest:read'),readAlternatives:[{permission:'identity:read',to:'/settings/sources?tab=sources'}]},item('integrations','认证与处置接入','/settings/actions','actions:read'),item('notifications','通知模板与通道','/settings/notifications','notifications:read'),{...item('behavior-reports','网络安全行为上报','/settings/behavior-reports','behavior-reports:read'),readAlternatives:[{permission:'behavior-reports:manage',to:'/settings/behavior-reports'}]},item('organization','校区与网络区域','/settings/organization','organization:read'),item('users','用户权限','/settings/security','users:manage'),item('audit','审计日志','/audit','audit:read')] },
+  { key: 'system', title: '系统管理', items: [{...item('sources','数据源与采集','/settings/sources','ingest:read'),readAlternatives:[{permission:'identity:read',to:'/settings/sources?tab=sources'}]},item('integrations','认证与处置接入','/settings/actions','actions:read'),item('notifications','通知模板与通道','/settings/notifications','notifications:read'),{...item('behavior-reports','上报通道配置','/settings/behavior-reports','behavior-reports:read'),readAlternatives:[{permission:'behavior-reports:manage',to:'/settings/behavior-reports'}]},item('organization','校区与网络区域','/settings/organization','organization:read'),item('users','用户权限','/settings/security','users:manage'),item('audit','审计日志','/audit','audit:read')] },
 ]
 
-const registeredRoutes=[/^\/(overview|activity|devices|discovery|events|cases|actions|audit|policies|shared-access)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
+const registeredRoutes=[/^\/(overview|ai-relay|activity|devices|discovery|events|cases|actions|audit|policies|shared-access|violation-observations|behavior-report-proposals)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
 export function safeReturnTo(value: string | null | undefined, fallback = '/events', depth=0): string {
   if (!value || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f]/.test(value)) return fallback
   try {
@@ -64,7 +64,7 @@ export function routePermission(path: string, search: string): Permission | unde
   if(path.startsWith('/ips/')) return 'risks:read'
   if(path.startsWith('/ingest')) return 'ingest:read'
   if(path === '/settings/sources' && ['sources','scan','tasks'].includes(new URLSearchParams(search).get('tab') || '')) return 'identity:read'
-  if(path === '/actions' && new URLSearchParams(search).get('tab') !== 'actions') return 'policies:read'
+  if(path === '/actions') return tab==='actions'?'actions:read':tab==='reports'?'behavior-reports:read':'policies:read'
   return routeOwner(path,search)?.entry.permission
 }
 export function visibleNavigation(session: Session) {

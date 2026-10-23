@@ -27,10 +27,11 @@ const (
 )
 
 type OnlineInventory struct {
-	InstanceID     string              `json:"instance_id"`
-	ObservedAt     time.Time           `json:"observed_at"`
-	Rows           []map[string]string `json:"rows"`
-	SkippedInvalid int                 `json:"skipped_invalid,omitempty"`
+	CaptureStartedAt *time.Time          `json:"capture_started_at,omitempty"`
+	InstanceID       string              `json:"instance_id"`
+	ObservedAt       time.Time           `json:"observed_at"`
+	Rows             []map[string]string `json:"rows"`
+	SkippedInvalid   int                 `json:"skipped_invalid,omitempty"`
 }
 
 type InventoryStats struct {
@@ -334,6 +335,10 @@ func ReadOnlineInventoryStabilized(ctx context.Context, client *RedisOnlineClien
 	if instance == "" || len(instance) > 200 {
 		return OnlineInventory{}, fmt.Errorf("redis source instance unavailable")
 	}
+	captureStarted, err := conn.Time(readCtx).Result()
+	if err != nil {
+		return OnlineInventory{}, err
+	}
 	rowsByID := map[string]map[string]string{}
 	for pass := 0; pass < maxPasses; pass++ {
 		count, readErr := conn.LLen(readCtx, list).Result()
@@ -411,7 +416,7 @@ func ReadOnlineInventoryStabilized(ctx context.Context, client *RedisOnlineClien
 				continue
 			}
 		}
-		candidate := OnlineInventory{InstanceID: instance, ObservedAt: observed.UTC(), Rows: rows, SkippedInvalid: len(ids) - len(rows)}
+		candidate := OnlineInventory{CaptureStartedAt: &captureStarted, InstanceID: instance, ObservedAt: observed.UTC(), Rows: rows, SkippedInvalid: len(ids) - len(rows)}
 		if _, readErr = candidate.StatsContext(readCtx); readErr != nil {
 			if errors.Is(readErr, ErrOnlineInventoryChanged) {
 				continue
@@ -687,12 +692,12 @@ func (s Sender) SendSnapshot(ctx context.Context, in OnlineInventory, source, ca
 	if source == "" || s.SensorID == "" || campus == "" || domain == "" || interval < 1 || interval > 86400 {
 		return fmt.Errorf("explicit snapshot authority scope and interval required")
 	}
-	body, err := json.Marshal(map[string]any{"source": source, "sensor_id": s.SensorID, "campus_id": campus, "access_domain": domain, "observed_at": in.ObservedAt, "reconcile_interval_seconds": interval, "complete": true, "expected_count": len(records), "records": records})
+	body, err := json.Marshal(map[string]any{"source": source, "sensor_id": s.SensorID, "campus_id": campus, "access_domain": domain, "observed_at": in.ObservedAt, "capture_started_at": in.CaptureStartedAt, "reconcile_interval_seconds": interval, "complete": true, "expected_count": len(records), "records": records})
 	if err != nil {
 		return err
 	}
 	if len(records) > legacySnapshotRecordLimit || len(body) > 12<<20 {
-		return s.sendSnapshotUpload(ctx, records, in.ObservedAt, source, campus, domain, interval)
+		return s.sendSnapshotUpload(ctx, records, in.ObservedAt, source, campus, domain, interval, in.CaptureStartedAt)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.Endpoint, "/")+"/api/v1/integrations/identity/snapshots", bytes.NewReader(body))
 	if err != nil {
@@ -787,15 +792,19 @@ func encodeSnapshotChunks(records []map[string]string) ([][]byte, string, error)
 	return chunks, hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func (s Sender) sendSnapshotUpload(ctx context.Context, records []map[string]string, observed time.Time, source, campus, domain string, interval int) error {
+func (s Sender) sendSnapshotUpload(ctx context.Context, records []map[string]string, observed time.Time, source, campus, domain string, interval int, captureStarted ...*time.Time) error {
 	chunks, digest, err := encodeSnapshotChunks(records)
 	if err != nil {
 		return err
 	}
 	uploadID := StableID(strings.Join([]string{source, s.SensorID, campus, domain, observed.UTC().Format(time.RFC3339Nano), digest}, "\x00"))
+	var captured *time.Time
+	if len(captureStarted) > 0 {
+		captured = captureStarted[0]
+	}
 	manifest, err := json.Marshal(map[string]any{
 		"upload_id": uploadID, "source": source, "sensor_id": s.SensorID, "campus_id": campus, "access_domain": domain,
-		"observed_at": observed.UTC(), "reconcile_interval_seconds": interval, "expected_count": len(records),
+		"observed_at": observed.UTC(), "capture_started_at": captured, "reconcile_interval_seconds": interval, "expected_count": len(records),
 		"expected_chunks": len(chunks), "expected_sha256": digest,
 	})
 	if err != nil {

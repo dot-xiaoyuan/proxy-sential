@@ -89,7 +89,7 @@ func recognitionTimestamp(raw string) any {
 }
 
 func (s *DBStore) materializeRecognition(ctx context.Context, job recognitionJob) error {
-	profile, found, err := s.pg.GetEndpointIdentity(ctx, job.EndpointID, Query{Limit: 200})
+	profile, found, err := s.pg.getEndpointIdentity(ctx, job.EndpointID, Query{Limit: 200}, true)
 	if err != nil {
 		return err
 	}
