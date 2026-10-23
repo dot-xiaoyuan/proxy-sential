@@ -124,8 +124,10 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 		}
 		// Start snapshot matches at the indexed current-IP lookup, then check each
 		// candidate's current source scope. LIMIT keeps the lateral probe bounded and
-		// prevents an IP-wide scan of the large snapshot projection.
-		where = append(where, `i.endpoint_id IN(SELECT h.endpoint_id FROM device_address_leases h WHERE h.ip=`+ipArg+`::inet AND h.endpoint_id<>''`+historyWindow+` UNION SELECT s.endpoint_id FROM account_sessions s WHERE s.ip=`+ipArg+`::inet AND s.endpoint_id<>''`+sessionWindow+` UNION SELECT candidate.endpoint_id FROM endpoint_inventory_lookup candidate JOIN LATERAL (SELECT 1 FROM account_identity_session_projection p JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain) WHERE p.document->>'endpoint_id'=candidate.endpoint_id AND p.ip=`+ipArg+` AND COALESCE(p.document->>'ended_at','')='' AND `+projectionCurrentSQL+snapshotWindow+` LIMIT 1) snapshot ON true WHERE candidate.current_ip=`+ipArg+`::inet)`)
+		// prevents an IP-wide scan of the large snapshot projection. The parameter
+		// is inet in the other branches; host converts it to bare IP text for
+		// projection matching without casting the indexed text column.
+		where = append(where, `i.endpoint_id IN(SELECT h.endpoint_id FROM device_address_leases h WHERE h.ip=`+ipArg+`::inet AND h.endpoint_id<>''`+historyWindow+` UNION SELECT s.endpoint_id FROM account_sessions s WHERE s.ip=`+ipArg+`::inet AND s.endpoint_id<>''`+sessionWindow+` UNION SELECT candidate.endpoint_id FROM endpoint_inventory_lookup candidate JOIN LATERAL (SELECT 1 FROM account_identity_session_projection p JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain) WHERE p.document->>'endpoint_id'=candidate.endpoint_id AND p.ip=host(`+ipArg+`::inet) AND COALESCE(p.document->>'ended_at','')='' AND `+projectionCurrentSQL+snapshotWindow+` LIMIT 1) snapshot ON true WHERE candidate.current_ip=`+ipArg+`::inet)`)
 	}
 	if query.Brand != "" {
 		if query.Brand == "unknown" {
