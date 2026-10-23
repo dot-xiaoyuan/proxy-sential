@@ -134,3 +134,28 @@ func TestInventoryCursorIsBoundToFilters(t *testing.T) {
 		t.Fatal("cursor was accepted for a different filter")
 	}
 }
+
+func TestDeviceInventoryMatchedIPEvidenceUsesTextProjectionIP(t *testing.T) {
+	for _, ip := range []string{"10.157.2.191", "2001:db8::1"} {
+		t.Run(ip, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(passthroughConverter{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			now := time.Now().UTC()
+			mock.ExpectQuery(`(?s)SELECT DISTINCT ON\(endpoint_id\).*ip=\$1::inet.*p.ip=host\(\$1::inet\).*ORDER BY endpoint_id,matched_at DESC,source`).WithArgs(ip, true, sqlmock.AnyArg(), now, sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"endpoint_id", "ip", "source", "matched_at"}).AddRow("endpoint-a", ip, "account_snapshot", now))
+			matches, err := inventoryIPMatches(context.Background(), db, []string{"endpoint-a"}, Query{Q: ip, InventorySearchType: "ip", View: "recent", Window: "24h"}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			match := matches["endpoint-a"]
+			if match == nil || match.IP != ip || match.Source != "account_snapshot" || match.MatchedAt != now.Format(time.RFC3339Nano) {
+				t.Fatalf("incorrect IP match evidence: %+v", matches)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
