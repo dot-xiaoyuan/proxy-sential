@@ -45,7 +45,7 @@ func controlledScopeBindingHash(fileHash, interfaceName string) string {
 }
 
 func verifyIngestStreamCutover(ctx context.Context, db *sql.DB, cursor streamlog.SourceCursor, sensor, scopeHash string) error {
-	if db == nil || cursor.Path == "" || cursor.Epoch == "" || cursor.ParserVersion != streamParserForSource(cursor.Source) || cursor.ParserVersion == "" || cursor.Offset < cursor.DiscardedBeforeOffset {
+	if db == nil || cursor.Path == "" || cursor.Epoch == "" || cursor.ParserVersion != streamParserForSource(cursor.Source) || cursor.ParserVersion == "" || cursor.Offset < 0 || cursor.DiscardedBeforeOffset < 0 {
 		return errors.New("invalid controlled file stream cursor")
 	}
 	if cursor.Source == "zeek-dhcp-binding" && (cursor.KeyScheme != "generation-v2" || cursor.Generation == 0) {
@@ -62,6 +62,17 @@ func verifyIngestStreamCutover(ctx context.Context, db *sql.DB, cursor streamlog
 	if registeredSensor != sensor || parser != cursor.ParserVersion || start != cursor.DiscardedBeforeOffset || manifest == "" || scopeHash == "" || registeredScope != scopeHash ||
 		(cursor.LastSegmentID == "" && registeredFile != cursor.FileID) {
 		return errors.New("file stream cursor does not match audited cutover")
+	}
+	// The cutover offset belongs to the original file. After rotation, Offset
+	// starts at zero in the next file while DiscardedBeforeOffset remains the
+	// immutable original cutoff. Require a committed segment and a newer file
+	// generation before accepting an offset below that cutoff.
+	if cursor.Offset < cursor.DiscardedBeforeOffset {
+		if cursor.LastSegmentID == "" ||
+			(cursor.KeyScheme == "generation-v2" && cursor.Generation <= 1) ||
+			(cursor.KeyScheme != "generation-v2" && registeredFile == cursor.FileID) {
+			return errors.New("file stream cursor rewound below audited cutover")
+		}
 	}
 	return nil
 }

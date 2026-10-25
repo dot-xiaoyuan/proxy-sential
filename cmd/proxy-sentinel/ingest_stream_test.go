@@ -65,3 +65,34 @@ func TestVerifiedDHCPBindingHasItsOwnParserVersion(t *testing.T) {
 		t.Fatal("aggregate and verified DHCP bindings share a parser version")
 	}
 }
+
+func TestVerifiedBindingRestartAfterRotationKeepsOriginalCutover(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		generation uint64
+		last       string
+		wantErr    bool
+	}{
+		{name: "verified second generation", generation: 2, last: "committed-rotation"},
+		{name: "first generation cannot rewind below cutoff", generation: 1, last: "committed-rotation", wantErr: true},
+		{name: "uncommitted replacement cannot rewind", generation: 2, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cursor := streamlog.SourceCursor{Epoch: "fresh-binding", Source: "zeek-dhcp-binding", Path: "/zeek/current/device_dhcp_binding.log", FileID: "new-file", DiscardedBeforeOffset: 742359, Offset: 2475, ParserVersion: "zeek-dhcp-binding-v2", KeyScheme: "generation-v2", Generation: tc.generation, LastSegmentID: tc.last}
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectQuery(`FROM stream_source_cutovers`).WithArgs(cursor.Epoch, cursor.Source, cursor.Path).
+				WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "start_offset", "parser_version", "cancel_manifest_sha256", "capture_scope_sha256"}).AddRow("sensor-a", "old-file", int64(742359), "zeek-dhcp-binding-v2", "manifest", strings.Repeat("c", 64)))
+			err = verifyIngestStreamCutover(context.Background(), db, cursor, "sensor-a", strings.Repeat("c", 64))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("rotation restart validation: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
