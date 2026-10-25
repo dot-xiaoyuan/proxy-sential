@@ -888,6 +888,10 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleIP(w, r, strings.TrimPrefix(path, "/ips/"))
 	case r.Method == http.MethodGet && path == "/events":
 		s.handleEvents(w, r)
+	case r.Method == http.MethodGet && path == "/events/stream-index":
+		s.handleStreamEventIndex(w, r)
+	case r.Method == http.MethodGet && path == "/events/stream-body":
+		s.handleStreamEventBody(w, r)
 	case r.Method == http.MethodGet && path == "/ai-relay/usages":
 		s.handleAIRelayUsages(w, r)
 	case r.Method == http.MethodGet && path == "/ai-relay/indicators":
@@ -2789,6 +2793,65 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		Events: page.Items,
 		Page:   Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total},
 	})
+}
+
+// Stream log listing is intentionally separate from the legacy offset page.
+// Its time and scope bound are part of the API contract; details use the exact
+// verified body locator returned by the narrow ClickHouse index.
+func (s *Server) handleStreamEventIndex(w http.ResponseWriter, r *http.Request) {
+	reader, ok := s.reader.(store.StreamEventIndexReader)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "stream_index_unavailable", "stream event index is unavailable")
+		return
+	}
+	values := r.URL.Query()
+	from, fromErr := time.Parse(time.RFC3339Nano, values.Get("from"))
+	to, toErr := time.Parse(time.RFC3339Nano, values.Get("to"))
+	limit, limitErr := boundedInt(values.Get("limit"), 50, 1, 100)
+	if fromErr != nil || toErr != nil || limitErr != nil {
+		writeError(w, http.StatusBadRequest, "bad_stream_query", "valid from, to and limit are required")
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	page, err := reader.ListStreamEventIndex(ctx, store.StreamEventIndexQuery{
+		ScopeID: values.Get("scope_id"), Protocol: values.Get("protocol"), From: from, To: to,
+		Limit: limit, Cursor: values.Get("cursor"),
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrInvalidStreamEventIndexQuery) {
+			writeError(w, http.StatusBadRequest, "bad_stream_query", err.Error())
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "stream_index_error", "stream event index is temporarily unavailable")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (s *Server) handleStreamEventBody(w http.ResponseWriter, r *http.Request) {
+	reader, ok := s.reader.(store.StreamEventIndexReader)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "stream_index_unavailable", "stream event index is unavailable")
+		return
+	}
+	ref, err := store.ParseStreamBodyRef(r.URL.Query().Get("ref"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_stream_ref", err.Error())
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	event, found, err := reader.GetStreamEventByRef(ctx, ref)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "stream_body_error", err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "stream event body not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, event)
 }
 
 func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request, rawEventID string) {

@@ -365,6 +365,14 @@ func (s *DBStore) GetEvent(ctx context.Context, eventID string) (normalized.Even
 	return s.ch.GetEvent(ctx, eventID)
 }
 
+func (s *DBStore) ListStreamEventIndex(ctx context.Context, query StreamEventIndexQuery) (StreamEventIndexPage, error) {
+	return s.ch.ListStreamEventIndex(ctx, query)
+}
+
+func (s *DBStore) GetStreamEventByRef(ctx context.Context, ref StreamBodyRef) (normalized.Event, bool, error) {
+	return s.ch.GetStreamEventByRef(ctx, ref)
+}
+
 func (s *DBStore) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	return s.pg.ListRuns(ctx, limit)
 }
