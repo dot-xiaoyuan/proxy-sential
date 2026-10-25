@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"proxy-sentinel/internal/realtime"
 	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
 )
@@ -34,6 +35,7 @@ func run(directory, id string, lane streamlog.Lane) error {
 	if err != nil {
 		return err
 	}
+	j.SetRawResolver(realtime.ResolveZeekSourceRaw)
 	state, err := j.Load(id)
 	if err != nil {
 		return err

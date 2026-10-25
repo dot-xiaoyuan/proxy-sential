@@ -85,9 +85,14 @@ func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
 	if !cutover.IsZero() && !v2Cutover.IsZero() && v2Cutover.Before(cutover) {
 		return nil, fmt.Errorf("PROXY_SENTINEL_EVENT_ID_INDEX_V2_CUTOVER must not precede the v1 cutover")
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// ClickHouse closes idle HTTP connections sooner than Go's default pool.
+	// Retire them first so a new insert does not inherit a stale connection;
+	// an ambiguous POST result still goes through segment reconciliation.
+	transport.IdleConnTimeout = 5 * time.Second
 	return &ClickHouseStore{
 		dsn:              parsed.String(),
-		client:           &http.Client{Timeout: requestTimeout},
+		client:           &http.Client{Transport: transport, Timeout: requestTimeout},
 		eventIDCutover:   cutover,
 		eventIDV2Cutover: v2Cutover,
 	}, nil

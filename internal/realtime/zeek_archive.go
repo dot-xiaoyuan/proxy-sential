@@ -174,6 +174,12 @@ func zeekArchiveMatchesCursor(path string, cursor streamlog.SourceCursor) (bool,
 // resolveZeekSourceRaw rehydrates one immutable descriptor. The exact source
 // bytes are accepted only after file identity (for current/) or a unique
 // cryptographic match (for a compressed rotation) has been established.
+// ResolveZeekSourceRaw also supplies the same proof to the stopped-source
+// operator repair command.
+func ResolveZeekSourceRaw(segment streamlog.Segment) ([]byte, error) {
+	return resolveZeekSourceRaw(segment)
+}
+
 func resolveZeekSourceRaw(segment streamlog.Segment) ([]byte, error) {
 	if segment.Source != "zeek-dhcp-binding" || !segment.SourceBackedRaw ||
 		segment.StartOffset < 0 || segment.EndOffset <= segment.StartOffset ||

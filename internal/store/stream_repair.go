@@ -17,9 +17,6 @@ import (
 // the table, and recent query logging proves the original token was never
 // received. A partial or ambiguous result stays on disk for investigation.
 func (s *ClickHouseStore) RetryProvenUnsentStreamLane(ctx context.Context, id string, segment streamlog.Segment, lane streamlog.Lane) error {
-	if len(segment.Raw) != 0 {
-		return errors.New("raw source repair requires separate proof for the source table")
-	}
 	age := time.Since(segment.AcceptedAt)
 	if age < 2*time.Minute || age > time.Hour {
 		return fmt.Errorf("stream repair requires a recent, settled attempt: %w", streamlog.ErrUnconfirmed)
@@ -49,6 +46,16 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamLane(ctx context.Context, id st
 	if err != nil {
 		return err
 	}
+	rawRequired := lane == streamlog.Archive && streamRawArchiveRequired(segment)
+	if rawRequired {
+		present, verifyErr := s.verifyStreamRaw(ctx, id, segment)
+		if verifyErr != nil {
+			return verifyErr
+		}
+		if present != (len(missing) == 0) {
+			return fmt.Errorf("partial source and body archive requires scoped manual review: %w", streamlog.ErrUnconfirmed)
+		}
+	}
 	if len(missing) == 0 {
 		if lane == streamlog.Search && segment.RiskFeaturesRequired {
 			confirmed, verifyErr := s.VerifyStreamRiskFeatures(ctx, segment)
@@ -64,32 +71,47 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamLane(ctx context.Context, id st
 	if len(missing) != len(segment.Events) {
 		return fmt.Errorf("partially committed stream segment requires scoped manual review: %w", streamlog.ErrUnconfirmed)
 	}
-	queued, err := s.streamSystemCount(ctx, "SELECT count() FROM system.asynchronous_inserts WHERE database=currentDatabase() AND table="+chQuote(table))
-	if err != nil || queued != 0 {
-		if err != nil {
-			return err
-		}
-		return streamlog.ErrUnconfirmed
-	}
 	from := segment.AcceptedAt.Add(-time.Minute).UTC().Format("2006-01-02 15:04:05")
-	token := streamInsertSettings(id, table)["insert_deduplication_token"]
-	received, err := s.streamSystemCount(ctx, "SELECT count() FROM system.query_log WHERE event_time >= toDateTime("+chQuote(from)+") AND Settings['insert_deduplication_token']="+chQuote(token))
-	if err != nil || received != 0 {
-		if err != nil {
-			return err
-		}
-		return streamlog.ErrUnconfirmed
+	tables := []string{table}
+	if rawRequired {
+		tables = append([]string{"stream_source_raw"}, tables...)
 	}
-	coverage, err := s.streamSystemCount(ctx, "SELECT count() FROM system.query_log WHERE event_time >= toDateTime("+chQuote(from)+") AND query LIKE 'INSERT INTO stream_event_%'")
-	if err != nil || coverage == 0 {
+	for _, sink := range tables {
+		queued, err := s.streamSystemCount(ctx, "SELECT count() FROM system.asynchronous_inserts WHERE database=currentDatabase() AND table="+chQuote(sink))
 		if err != nil {
 			return err
 		}
-		return streamlog.ErrUnconfirmed
+		if queued != 0 {
+			return streamlog.ErrUnconfirmed
+		}
+		token := streamInsertSettings(id, sink)["insert_deduplication_token"]
+		received, err := s.streamSystemCount(ctx, "SELECT count() FROM system.query_log WHERE event_time >= toDateTime("+chQuote(from)+") AND Settings['insert_deduplication_token']="+chQuote(token))
+		if err != nil {
+			return err
+		}
+		if received != 0 {
+			return streamlog.ErrUnconfirmed
+		}
+		coverage, err := s.streamSystemCount(ctx, "SELECT count() FROM system.query_log WHERE event_time >= toDateTime("+chQuote(from)+") AND query LIKE "+chQuote("INSERT INTO "+sink+"%"))
+		if err != nil {
+			return err
+		}
+		if coverage == 0 {
+			return streamlog.ErrUnconfirmed
+		}
 	}
 	if lane == streamlog.Archive {
 		if err := s.WriteStreamBody(ctx, id, segment); err != nil {
 			return err
+		}
+		if rawRequired {
+			confirmed, err := s.verifyStreamRaw(ctx, id, segment)
+			if err != nil || !confirmed {
+				if err != nil {
+					return err
+				}
+				return streamlog.ErrUnconfirmed
+			}
 		}
 		confirmed, err := s.VerifyStreamBody(ctx, segment)
 		if err != nil || !confirmed {

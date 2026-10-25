@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +15,85 @@ import (
 
 	"proxy-sentinel/internal/streamlog"
 )
+
+func TestRetryProvenUnsentSourceBackedArchiveRequiresRawAndBodyProof(t *testing.T) {
+	segment := testStreamSegment()
+	segment.AcceptedAt = time.Now().UTC().Add(-3 * time.Minute)
+	segment.SourceBackedRaw = true
+	segment.Raw = []byte(strings.Repeat("x", 100))
+	sum := sha256.Sum256(segment.Raw)
+	segment.RawSHA256 = hex.EncodeToString(sum[:])
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "source-backed-segment"
+	rawToken := streamInsertSettings(id, "stream_source_raw")["insert_deduplication_token"]
+	var rawPresent, bodyPresent, rawTokenSeen, rawBusy bool
+	var rawInserts, bodyInserts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		q := string(data)
+		switch {
+		case strings.HasPrefix(q, "SELECT raw_sha256,raw_base64"):
+			if rawPresent {
+				row, _ := json.Marshal(map[string]any{"raw_sha256": segment.RawSHA256, "raw_base64": base64.StdEncoding.EncodeToString(segment.Raw)})
+				_, _ = w.Write(append(row, '\n'))
+			}
+		case strings.HasPrefix(q, "SELECT scope_id,event_key,content_sha256"):
+			if bodyPresent {
+				row, _ := json.Marshal(map[string]any{"scope_id": prepared[0].scope, "event_key": prepared[0].key, "content_sha256": prepared[0].hash})
+				_, _ = w.Write(append(row, '\n'))
+			}
+		case strings.Contains(q, "FROM system.asynchronous_inserts"):
+			if rawBusy && strings.Contains(q, "stream_source_raw") {
+				_, _ = io.WriteString(w, "1\n")
+			} else {
+				_, _ = io.WriteString(w, "0\n")
+			}
+		case strings.Contains(q, "FROM system.query_log") && strings.Contains(q, "insert_deduplication_token"):
+			if rawTokenSeen && strings.Contains(q, rawToken) {
+				_, _ = io.WriteString(w, "1\n")
+			} else {
+				_, _ = io.WriteString(w, "0\n")
+			}
+		case strings.Contains(q, "FROM system.query_log"):
+			_, _ = io.WriteString(w, "2\n")
+		case strings.HasPrefix(q, "INSERT INTO stream_source_raw"):
+			rawInserts++
+			rawPresent = true
+		case strings.HasPrefix(q, "INSERT INTO stream_event_body_evidence"):
+			bodyInserts++
+			bodyPresent = true
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawPresent = true
+	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err == nil {
+		t.Fatal("partial source archive was replayed")
+	}
+	rawPresent = false
+	rawTokenSeen = true
+	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err == nil {
+		t.Fatal("original raw token was replayed")
+	}
+	rawTokenSeen = false
+	rawBusy = true
+	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err == nil {
+		t.Fatal("queued raw source was replayed")
+	}
+	rawBusy = false
+	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err != nil {
+		t.Fatal(err)
+	}
+	if rawInserts != 1 || bodyInserts != 1 {
+		t.Fatalf("expected one raw and body insert, got raw=%d body=%d", rawInserts, bodyInserts)
+	}
+}
 
 func TestRetryProvenUnsentSearchRequiresTerminalEvidence(t *testing.T) {
 	segment := testStreamSegment()
