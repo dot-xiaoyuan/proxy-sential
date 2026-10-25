@@ -33,7 +33,11 @@ func (r Repository) AcceptDiscoveryBatchLane(ctx context.Context, id string, eve
 	if id == "" || len(events) == 0 || len(events) > 2000 {
 		return fmt.Errorf("invalid discovery batch size or ID")
 	}
-	raw, err := EncodeDiscoveryBatch(events)
+	_, err := EncodeDiscoveryBatch(events)
+	if err != nil {
+		return err
+	}
+	segments, err := EncodeDiscoverySegments(events)
 	if err != nil {
 		return err
 	}
@@ -63,77 +67,126 @@ func (r Repository) AcceptDiscoveryBatchLane(ctx context.Context, id string, eve
 	if prior != hash {
 		return fmt.Errorf("discovery batch ID content conflict")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO discovery_batch_work(batch_id,events,lane) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, raw, lane)
+	result, err := tx.ExecContext(ctx, `INSERT INTO discovery_batch_work(batch_id,events,lane,selected_event_count,payload_sha256)
+ VALUES($1,'[]'::jsonb,$2,$3,$4) ON CONFLICT DO NOTHING`, id, lane, len(events), hash)
 	if err != nil {
 		return err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if inserted == 1 {
+		if err = InsertDiscoverySegments(ctx, tx, id, segments); err != nil {
+			return err
+		}
+	} else {
+		var priorHash sql.NullString
+		if err = tx.QueryRowContext(ctx, `SELECT payload_sha256 FROM discovery_batch_work WHERE batch_id=$1`, id).Scan(&priorHash); err != nil {
+			return err
+		}
+		if priorHash.Valid && priorHash.String != hash {
+			return ErrDiscoveryContentConflict
+		}
 	}
 	return tx.Commit()
 }
 
-// A row lock fences every claim including ClickHouse export. Only this batch
-// is locked; unrelated batches and queries remain independent. A lost process
-// rolls back progress and the input remains available for idempotent recovery.
+// A durable lease fences the short publication transaction. Archive calls never
+// hold a PostgreSQL transaction open; expired owners cannot advance the offset.
 func (r Repository) ProcessDiscoveryBatch(ctx context.Context) (bool, error) {
 	return r.ProcessDiscoveryLane(ctx, "realtime")
 }
-func (r Repository) ProcessDiscoveryLane(ctx context.Context, lane string) (bool, error) {
+func (r Repository) ProcessDiscoveryLane(ctx context.Context, lane string) (worked bool, resultErr error) {
 	if lane != "realtime" && lane != "backfill" && lane != "rules" {
 		return false, fmt.Errorf("invalid discovery lane")
 	}
-
-	tx, err := r.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	var id, sourceKind string
-	var raw []byte
-	var offset int
-	var archived bool
-	var accepted time.Time
-	err = tx.QueryRowContext(ctx, `SELECT w.batch_id,w.events,w.processed_offset,w.archived,b.started_at,b.source_kind
-FROM discovery_batch_work w JOIN LATERAL (
- SELECT started_at,source_kind FROM ingest_batches b WHERE b.batch_id=w.batch_id
- AND (b.source_kind='discovery-v2' OR b.status='committed') LIMIT 1
-) b ON true WHERE w.lane=$1 AND NOT w.completed AND w.next_attempt_at<=now()
-ORDER BY w.next_attempt_at,w.created_at FOR UPDATE OF w SKIP LOCKED LIMIT 1`, lane).Scan(&id, &raw, &offset, &archived, &accepted, &sourceKind)
+	stage, started := "claim", time.Now()
+	nextStage := func(next string) { ObserveStage(ctx, stage, started, nil); stage, started = next, time.Now() }
+	defer func() { ObserveStage(ctx, stage, started, resultErr) }()
+	claim, err := r.claimDiscovery(ctx, lane)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
+		recordPipelineResult(ctx, 0, err, stage)
 		return false, err
 	}
+	var tx *sql.Tx
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
 	fail := func(cause error) (bool, error) {
-		_ = tx.Rollback()
-		report, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-		defer cancel()
-		_, _ = r.DB.ExecContext(report, `UPDATE discovery_batch_work SET attempts=attempts+1,error=$2,next_attempt_at=now()+least(interval '60 seconds',interval '1 second'*power(2,least(attempts,5))) WHERE batch_id=$1 AND NOT completed`, id, cause.Error())
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+		r.failDiscovery(ctx, claim, stage, cause)
+		recordPipelineResult(ctx, 0, cause, stage)
 		return true, cause
 	}
+	id, offset, archived, accepted, sourceKind := claim.ID, claim.Offset, claim.Archived, claim.Accepted, claim.Source
+	nextStage("decode")
 	var events []normalized.Event
-	if err = decodeDiscoveryBatch(raw, &events); err != nil {
+	if err = decodeDiscoveryBatch(claim.Raw, &events); err != nil {
 		return fail(err)
 	}
-	end := min(offset+50, len(events))
-	if !archived {
-		if sourceKind == "discovery-v2" && r.Archive == nil {
+	if claim.Segmented && (len(events) != claim.SegmentCount || contentHash(events) != claim.SegmentHash) {
+		return fail(fmt.Errorf("discovery segment content mismatch"))
+	}
+	if offset < 0 || (claim.Segmented && (len(events) == 0 || claim.SegmentFirst+len(events) > claim.Total)) || (!claim.Segmented && offset >= len(events)) {
+		return fail(fmt.Errorf("invalid discovery offset"))
+	}
+	end, total := 0, len(events)
+	var part []normalized.Event
+	archiveEvents := events
+	archiveOffset := offset
+	partStart := 0
+	if claim.Segmented {
+		archiveOffset = claim.SegmentFirst
+		partStart = offset - claim.SegmentFirst
+		partEnd := min(partStart+DiscoveryPublishMaxEvents, len(events))
+		end = claim.SegmentFirst + partEnd
+		part = events[partStart:partEnd]
+		total = claim.Total
+	} else {
+		end = min(offset+DiscoverySegmentMaxEvents, len(events))
+		part = events[offset:end]
+		archiveEvents = part
+	}
+	if !archived && sourceKind == "discovery-v2" {
+		nextStage("normalized_archive")
+		if r.Archive == nil {
 			return fail(fmt.Errorf("discovery archive unavailable"))
 		}
-		if sourceKind == "discovery-v2" {
-			if err = r.Archive(ctx, events[offset:end]); err != nil {
+		if err = r.Archive(WithArchiveAdmission(ctx, accepted), part); err != nil {
+			return fail(err)
+		}
+	}
+	if !archived && (!claim.Segmented || !claim.SegmentArchived) {
+		if r.ArchiveDiscovery != nil {
+			nextStage("evidence_archive")
+			if err = r.ArchiveDiscovery(ctx, fmt.Sprintf("%s/segment/%d", id, archiveOffset), accepted, archiveEvents); err != nil {
 				return fail(err)
 			}
-		}
-		if r.ArchiveDiscovery != nil {
-			if err = r.ArchiveDiscovery(ctx, fmt.Sprintf("%s/segment/%d", id, offset), accepted, events[offset:end]); err != nil {
-				return fail(err)
+			if claim.Segmented {
+				nextStage("archive_checkpoint")
+				if err = r.markDiscoverySegmentArchived(ctx, claim); err != nil {
+					return fail(err)
+				}
 			}
 		}
 	}
+	nextStage("publish_claim")
+	if tx, err = r.beginDiscoveryPublish(ctx, claim); err != nil {
+		return fail(err)
+	}
+	nextStage("device_locks")
 	now := time.Now().UTC()
 	// Acquire all device locks in one stable order before taking any fact locks.
 	lockKeys := map[string]bool{}
-	for _, e := range events[offset:end] {
+	for _, e := range part {
 		a, pe := AdaptDiscoveryEvent(e)
 		if pe != nil {
 			continue
@@ -153,23 +206,42 @@ ORDER BY w.next_attempt_at,w.created_at FOR UPDATE OF w SKIP LOCKED LIMIT 1`, la
 			return fail(err)
 		}
 	}
+	nextStage("state_update")
+	priorReceipts, err := loadDiscoveryReceipts(ctx, tx, part)
+	if err != nil {
+		return fail(err)
+	}
+	factVersions, err := loadDiscoveryFactVersions(ctx, tx, part)
+	if err != nil {
+		return fail(err)
+	}
+	newReceipts := make([]discoveryReceiptInsert, 0, len(part))
+	factWrites := make(map[string]discoveryFactWrite, len(part))
+	changes := make([]discoveryChangeInsert, 0, len(part))
+	seenReceipts := map[discoveryReceiptKey]string{}
 	touched := map[string]bool{}
 	type runtimeDelta struct{ admitted, rejected, received, parsed int64 }
 	runtime := map[string]runtimeDelta{}
-	for _, e := range events[offset:end] {
-		revision := int64(number(e.Payload, "revision"))
+	for ordinalInPart, e := range part {
+		receipt := receiptKey(e)
+		revision := receipt.Revision
 		hash := contentHash(e)
-		var prior string
-		err = tx.QueryRowContext(ctx, `SELECT content_hash FROM discovery_event_receipts WHERE sensor_id=$1 AND source_id=$2 AND event_id=$3 AND revision=$4`, str(e.Observer, "sensor_id"), firstText(str(e.Observer, "source_id"), e.Source), e.EventID, revision).Scan(&prior)
-		if err == nil {
-			if hash != prior {
-				return fail(fmt.Errorf("event revision content conflict: %s", e.EventID))
+		if prior, exists := priorReceipts[receipt]; exists {
+			if hash != prior.Hash {
+				var original []byte
+				if err = tx.QueryRowContext(ctx, `SELECT events FROM discovery_batch_work WHERE batch_id=$1`, prior.Batch).Scan(&original); err != nil || !ReceiptMatchesEvent(e, prior.Hash, original) {
+					return fail(ErrDiscoveryContentConflict)
+				}
 			}
 			continue
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return fail(err)
+		if prior, exists := seenReceipts[receipt]; exists {
+			if prior != hash {
+				return fail(ErrDiscoveryContentConflict)
+			}
+			continue
 		}
+		seenReceipts[receipt] = hash
 		adapted, parseErr := AdaptDiscoveryEvent(e)
 		var o Observation
 		if parseErr == nil {
@@ -183,7 +255,6 @@ ORDER BY w.next_attempt_at,w.created_at FOR UPDATE OF w SKIP LOCKED LIMIT 1`, la
 		} else {
 			key := discoveryStateKey(o)
 			// Stable per-device locks serialize simultaneous protocol batches.
-			touched[key] = true
 			fact := discoveryFactKey(o)
 			encoded, _ := json.Marshal(o)
 			semantic := o
@@ -199,23 +270,24 @@ ORDER BY w.next_attempt_at,w.created_at FOR UPDATE OF w SKIP LOCKED LIMIT 1`, la
 			}
 			semantic.Evidence = normalized.Event{Payload: payload}
 			semanticHash := contentHash(semantic)
-			var previousHash string
-			err = tx.QueryRowContext(ctx, `SELECT content_hash FROM discovery_service_facts_v2 WHERE device_key=$1 AND fact_key=$2`, key, fact).Scan(&previousHash)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return fail(err)
-			}
-			res, e2 := tx.ExecContext(ctx, `INSERT INTO discovery_service_facts_v2(device_key,fact_key,sensor_id,domain,vlan,interface_name,source_id,protocol,service_instance,ip,mac,event_id,revision,observed_at,valid_until,withdrawn,observation,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) ON CONFLICT(device_key,fact_key) DO UPDATE SET event_id=EXCLUDED.event_id,revision=EXCLUDED.revision,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,observation=EXCLUDED.observation,content_hash=EXCLUDED.content_hash WHERE (EXCLUDED.event_id=discovery_service_facts_v2.event_id AND EXCLUDED.revision>discovery_service_facts_v2.revision) OR (EXCLUDED.event_id<>discovery_service_facts_v2.event_id AND (EXCLUDED.observed_at,EXCLUDED.event_id)>(discovery_service_facts_v2.observed_at,discovery_service_facts_v2.event_id))`, key, fact, o.Node, o.Domain, o.VLAN, o.Interface, o.SourceID, o.Origin, serviceInstance(o), o.IP, o.MAC, o.ID, revision, o.ObservedAt, o.ValidUntil, o.Withdrawn, encoded, semanticHash)
-			if e2 != nil {
-				return fail(e2)
-			}
-			changed, _ := res.RowsAffected()
-			if changed == 0 {
+			factIdentity := key + "\x00" + fact
+			previous, exists := factVersions[factIdentity]
+			next := discoveryFactVersion{Event: o.ID, Revision: revision, Observed: o.ObservedAt, Hash: semanticHash}
+			previousHash := previous.Hash
+			if exists && !previous.supersededBy(next) {
 				result = "late_history"
+			} else {
+				touched[key] = true
+				factVersions[factIdentity] = next
+				factWrites[factIdentity] = discoveryFactWrite{Device: key, Fact: fact, Sensor: o.Node, Domain: o.Domain, VLAN: o.VLAN, Interface: o.Interface, Source: o.SourceID, Protocol: o.Origin, ServiceInstance: serviceInstance(o), IP: o.IP, MAC: o.MAC, Event: o.ID, Revision: revision, Observed: o.ObservedAt, ValidUntil: o.ValidUntil, Withdrawn: o.Withdrawn, Observation: encoded, Hash: semanticHash}
 			}
-			if changed == 0 || previousHash != semanticHash {
-				if _, err = tx.ExecContext(ctx, `INSERT INTO discovery_device_changes_v2(device_key,event_id,ingested_at,observed_at,change_kind,document,archive_verified_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, key, o.ID, accepted, o.ObservedAt, result, encoded, archiveVerifiedTime(r.ArchiveDiscovery != nil)); err != nil {
-					return fail(err)
+			if previousHash != semanticHash {
+				var verified *time.Time
+				if r.ArchiveDiscovery != nil {
+					at := time.Now().UTC()
+					verified = &at
 				}
+				changes = append(changes, discoveryChangeInsert{Device: key, Event: o.ID, Ingested: accepted, Observed: o.ObservedAt, Kind: result, Document: encoded, ArchiveVerified: verified})
 			}
 		}
 		protocol := firstText(e.SourceEventType, str(e.Payload, "origin"))
@@ -225,9 +297,16 @@ ORDER BY w.next_attempt_at,w.created_at FOR UPDATE OF w SKIP LOCKED LIMIT 1`, la
 		delta.received += int64(discoveryZeekCount(e.Source))
 		delta.parsed += int64(discoveryZeekCount(e.Source))
 		runtime[str(e.Observer, "sensor_id")+"\x00"+protocol] = delta
-		if _, err = tx.ExecContext(ctx, `INSERT INTO discovery_event_receipts(sensor_id,source_id,event_id,revision,content_hash,batch_id,accepted_at,result) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, str(e.Observer, "sensor_id"), firstText(str(e.Observer, "source_id"), e.Source), e.EventID, revision, hash, id, accepted, result); err != nil {
-			return fail(err)
-		}
+		newReceipts = append(newReceipts, discoveryReceiptInsert{receipt.Sensor, receipt.Source, receipt.Event, revision, hash, id, accepted, result, offset + ordinalInPart, fmt.Sprintf("%s/segment/%d", id, archiveOffset), partStart + ordinalInPart})
+	}
+	if err = insertDiscoveryFacts(ctx, tx, factWrites); err != nil {
+		return fail(err)
+	}
+	if err = insertDiscoveryChanges(ctx, tx, changes); err != nil {
+		return fail(err)
+	}
+	if err = insertDiscoveryReceipts(ctx, tx, newReceipts); err != nil {
+		return fail(err)
 	}
 
 	keys := make([]string, 0, len(touched))
@@ -260,10 +339,30 @@ ORDER BY w.next_attempt_at,w.created_at FOR UPDATE OF w SKIP LOCKED LIMIT 1`, la
 			return fail(err)
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE discovery_batch_work SET archived=archived OR $3,processed_offset=$2,completed=$3,completed_at=CASE WHEN $3 THEN now() ELSE NULL END,error='',next_attempt_at=now() WHERE batch_id=$1`, id, end, end == len(events)); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE discovery_batch_work SET archived=archived OR $3,processed_offset=$2,completed=$3,completed_at=CASE WHEN $3 THEN now() ELSE NULL END,error='',error_stage='',next_attempt_at=now(),last_progress_at=now(),lease_token='',lease_until='-infinity' WHERE batch_id=$1`, id, end, end == total); err != nil {
 		return fail(err)
 	}
-	return true, tx.Commit()
+	// The verified archive and every projection receipt are durable at this
+	// commit. Keep the small locator row, but drop the duplicate PostgreSQL
+	// document in the same transaction that advances the processing offset.
+	segmentComplete := !claim.Segmented || end == claim.SegmentFirst+claim.SegmentCount
+	if claim.Segmented && r.ArchiveDiscovery != nil && segmentComplete {
+		result, releaseErr := tx.ExecContext(ctx, `UPDATE discovery_batch_segments SET events=NULL,released_at=now()
+ WHERE batch_id=$1 AND first_offset=$2 AND archive_verified_at IS NOT NULL AND released_at IS NULL`, id, archiveOffset)
+		if releaseErr != nil {
+			return fail(releaseErr)
+		}
+		released, releaseErr := result.RowsAffected()
+		if releaseErr != nil || released != 1 {
+			return fail(fmt.Errorf("discovery segment release was not fenced: %v", releaseErr))
+		}
+	}
+	nextStage("commit")
+	if err = tx.Commit(); err != nil {
+		return fail(err)
+	}
+	recordPipelineProgress(ctx, end-offset, segmentComplete)
+	return true, nil
 }
 func serviceInstance(o Observation) string {
 	return firstText(str(o.Evidence.Payload, "service_instance"), firstText(str(o.Evidence.Payload, "endpoint_reference"), firstText(str(o.Evidence.Payload, "usn"), str(o.Evidence.Payload, "service_type"))))
@@ -348,12 +447,17 @@ func refreshDiscoveryState(ctx context.Context, tx *sql.Tx, key string, now time
 		lastCategory = ""
 	}
 	o.MAC = boundMAC
+	enrichmentQueued := map[string]bool{}
 	for _, fact := range observations {
 		if boundMAC != "" {
 			fact.MAC = boundMAC
 		}
-		if err = queueEnrichment(ctx, tx, key, fact); err != nil {
-			return err
+		protocol, location, _ := enrichmentRequest(fact)
+		if protocol != "" && location != "" && !enrichmentQueued[protocol] && fact.Current(now) {
+			if err = queueEnrichment(ctx, tx, key, fact); err != nil {
+				return err
+			}
+			enrichmentQueued[protocol] = true
 		}
 	}
 	last := o.ObservedAt
@@ -498,7 +602,11 @@ func refreshDiscoveryState(ctx context.Context, tx *sql.Tx, key string, now time
 	}
 	document["observations"] = summary
 	encoded, _ := json.Marshal(document)
-	_, err = tx.ExecContext(ctx, `INSERT INTO discovery_device_state_v2(device_key,sensor_id,domain,vlan,interface_name,name,manufacturer,model_name,device_type,category,last_device_type,last_category,classification_status,first_seen,last_seen,expires_at,document) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(device_key) DO UPDATE SET name=EXCLUDED.name,manufacturer=EXCLUDED.manufacturer,model_name=EXCLUDED.model_name,device_type=EXCLUDED.device_type,category=EXCLUDED.category,last_device_type=EXCLUDED.last_device_type,last_category=EXCLUDED.last_category,classification_status=EXCLUDED.classification_status,first_seen=least(discovery_device_state_v2.first_seen,EXCLUDED.first_seen),last_seen=greatest(discovery_device_state_v2.last_seen,EXCLUDED.last_seen),expires_at=EXCLUDED.expires_at,document=EXCLUDED.document,result_version=nextval('discovery_result_version'),updated_at=now()`, key, o.Node, o.Domain, o.VLAN, o.Interface, name, manufacturer, model, classification.DeviceType, classification.Category, lastType, lastCategory, state, first, last, expiry, encoded)
+	_, err = tx.ExecContext(ctx, `INSERT INTO discovery_device_state_v2(device_key,sensor_id,domain,vlan,interface_name,name,manufacturer,model_name,device_type,category,last_device_type,last_category,classification_status,first_seen,last_seen,expires_at,document) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) ON CONFLICT(device_key) DO UPDATE SET name=EXCLUDED.name,manufacturer=EXCLUDED.manufacturer,model_name=EXCLUDED.model_name,device_type=EXCLUDED.device_type,category=EXCLUDED.category,last_device_type=EXCLUDED.last_device_type,last_category=EXCLUDED.last_category,classification_status=EXCLUDED.classification_status,first_seen=least(discovery_device_state_v2.first_seen,EXCLUDED.first_seen),last_seen=greatest(discovery_device_state_v2.last_seen,EXCLUDED.last_seen),expires_at=EXCLUDED.expires_at,document=EXCLUDED.document,result_version=nextval('discovery_result_version'),updated_at=now()
+	 WHERE discovery_device_state_v2.document IS DISTINCT FROM EXCLUDED.document
+	 OR discovery_device_state_v2.last_seen < EXCLUDED.last_seen
+	 OR discovery_device_state_v2.first_seen > EXCLUDED.first_seen
+	 OR discovery_device_state_v2.expires_at IS DISTINCT FROM EXCLUDED.expires_at`, key, o.Node, o.Domain, o.VLAN, o.Interface, name, manufacturer, model, classification.DeviceType, classification.Category, lastType, lastCategory, state, first, last, expiry, encoded)
 	return err
 }
 

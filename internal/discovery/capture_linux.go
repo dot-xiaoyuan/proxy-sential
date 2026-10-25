@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/streamlog"
 	"syscall"
 	"time"
 )
@@ -23,6 +24,41 @@ func Capture(ctx context.Context, iface, spool string, source Source, allow []ne
 	return CaptureConfigured(ctx, iface, spool, source, allow, DefaultCollectionConfig())
 }
 func CaptureConfigured(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig) (result error) {
+	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, func(b []byte) error {
+		h := sha256.Sum256(b)
+		path := filepath.Join(spool, hex.EncodeToString(h[:16])+".json")
+		if e := writeDurableSpool(path+".tmp", b); e != nil {
+			return e
+		}
+		if e := os.Rename(path+".tmp", path); e != nil {
+			return e
+		}
+		dir, e := os.Open(spool)
+		if e != nil {
+			return e
+		}
+		defer dir.Close()
+		return dir.Sync()
+	})
+}
+
+func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source Source, allow []netip.Prefix, config CollectionConfig, journal *streamlog.Journal, scope *normalized.CaptureScope, onSegment func(string) error) error {
+	if journal == nil || scope == nil {
+		return fmt.Errorf("passive stream capture needs durable journal and scope")
+	}
+	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, func(b []byte) error {
+		var events []normalized.Event
+		if err := json.Unmarshal(b, &events); err != nil {
+			return err
+		}
+		id, err := AppendPassiveStreamBatch(ctx, journal, source, scope, events)
+		if err != nil { return err }
+		if onSegment != nil { return onSegment(id) }
+		return nil
+	})
+}
+
+func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes int, persist func([]byte) error) (result error) {
 	if len(allow) == 0 {
 		return fmt.Errorf("passive capture requires allowed CIDRs")
 	}
@@ -48,22 +84,7 @@ func CaptureConfigured(ctx context.Context, iface, spool string, source Source, 
 	queue := make(chan []byte, 256)
 	done := make(chan error, 1)
 	go func() {
-		done <- drainSpoolQueue(queue, func(b []byte) error {
-			h := sha256.Sum256(b)
-			path := filepath.Join(spool, hex.EncodeToString(h[:16])+".json")
-			if e := writeDurableSpool(path+".tmp", b); e != nil {
-				return e
-			}
-			if e := os.Rename(path+".tmp", path); e != nil {
-				return e
-			}
-			dir, e := os.Open(spool)
-			if e != nil {
-				return e
-			}
-			defer dir.Close()
-			return dir.Sync()
-		})
+		done <- drainSpoolQueueBounded(queue, persist, maxEvents, maxBytes)
 	}()
 	defer func() {
 		close(queue)

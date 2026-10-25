@@ -29,11 +29,11 @@ import (
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/proxyprotocol"
 	"proxy-sentinel/internal/realtime"
-	"proxy-sentinel/internal/routerprober"
 	"proxy-sentinel/internal/replay"
-	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/risk"
+	"proxy-sentinel/internal/routerprober"
 	"proxy-sentinel/internal/shadow"
+	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/validation"
 )
@@ -265,8 +265,11 @@ func runReadModel(args []string) error {
 }
 
 func runRouter(args []string) error {
+	if len(args) > 0 && args[0] == "fresh-cutover" {
+		return runRouterFreshCutover(args[1:])
+	}
 	if len(args) < 1 || args[0] != "sample" {
-		return fmt.Errorf("usage: proxy-sentinel router sample --interface <name> --duration 5m --work-dir <path>")
+		return fmt.Errorf("usage: proxy-sentinel router sample|fresh-cutover")
 	}
 	fs := flag.NewFlagSet("router sample", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -343,6 +346,39 @@ func runRouter(args []string) error {
 	return writeJSON(os.Stdout, map[string]any{"mode": "sample_only", "shadow_mode": true, "interface": *interfaceName, "duration": duration.String(), "work_dir": runDir, "zeek_logs": zeekLogs, "router_candidates": summary.RouterAssessmentCount, "router_evidence": summary.RouterEvidenceCount, "source_distribution": summary.RouterSourceDistribution, "shadow_run": summary})
 }
 
+func runRouterFreshCutover(args []string) error {
+	fs := flag.NewFlagSet("router fresh-cutover", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	sensorID := fs.String("sensor-id", "", "sensor whose old router index is canceled")
+	cancelID := fs.String("cancel-id", "", "immutable cancellation audit identifier")
+	cutoffText := fs.String("indexed-after", "", "fresh index cutoff in RFC3339 format")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *sensorID == "" || *cancelID == "" || *cutoffText == "" || *postgresDSN == "" || *clickhouseDSN == "" {
+		return errors.New("router fresh-cutover requires sensor-id, cancel-id, indexed-after and database DSNs")
+	}
+	cutoff, err := time.Parse(time.RFC3339Nano, *cutoffText)
+	if err != nil {
+		return fmt.Errorf("parse router indexed-after: %w", err)
+	}
+	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: 15 * time.Second})
+	if err != nil {
+		return err
+	}
+	defer backend.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	oldRows, err := backend.StartStreamRouterFreshCutover(ctx, *sensorID, *cancelID, cutoff)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "router fresh cutover: sensor=%s cancel_id=%s indexed_after=%s canceled_index_rows=%d\n", *sensorID, *cancelID, cutoff.UTC().Format(time.RFC3339Nano), oldRows)
+	return nil
+}
+
 // deriveCollectorKind names the collector that produced the configured input.
 // The ingest service itself is not a capture framework, so reporting the name
 // of the framework it happens to depend on would be wrong; it reports the
@@ -372,6 +408,15 @@ func deriveCollectorKind(sources []realtime.Source) string {
 }
 
 func runIngest(args []string) error {
+	if len(args) > 0 && args[0] == "stream-shared-activate" {
+		return runIngestStreamSharedActivate(args[1:])
+	}
+	if len(args) > 0 && args[0] == "stream-prepare" {
+		return runIngestStreamPrepare(args[1:])
+	}
+	if len(args) > 0 && args[0] == "stream-run" {
+		return runIngestStream(args[1:])
+	}
 	if len(args) < 1 || args[0] != "run" {
 		return fmt.Errorf("usage: proxy-sentinel ingest run --eve <path> --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
 	}
@@ -467,6 +512,27 @@ func runIngest(args []string) error {
 	if len(sources) == 0 {
 		return fmt.Errorf("at least one of --eve, --zeek-dhcp or --zeek-software is required")
 	}
+	guardStore, err := store.NewPostgresStore(store.PostgresOptions{DSN: *postgresDSN, SensorID: *sensorID})
+	if err != nil {
+		return err
+	}
+	guardCtx, guardCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	owners, guardErr := guardStore.ActiveStreamSourceCutovers(guardCtx)
+	guardCancel()
+	_ = guardStore.Close()
+	if guardErr != nil {
+		return fmt.Errorf("verify legacy source ownership: %w", guardErr)
+	}
+	sources, transferred, err := filterLegacyStreamOwnedSources(*sensorID, sources, owners)
+	if err != nil {
+		return err
+	}
+	for _, source := range transferred {
+		fmt.Fprintf(os.Stderr, "legacy ingest source transferred to audited stream owner: kind=%s path=%s\n", source.Kind, source.Path)
+	}
+	if len(sources) == 0 {
+		return errors.New("all configured ingest sources have active stream owners; stop the legacy ingest service")
+	}
 	kind := strings.TrimSpace(*collectorKind)
 	if kind == "" {
 		kind = deriveCollectorKind(sources)
@@ -522,13 +588,15 @@ func runDeviceSignal(args []string) error {
 
 func runRouterProber(args []string) error {
 	if len(args) < 1 || args[0] != "run" {
-		return fmt.Errorf("usage: proxy-sentinel router-prober run --postgres-dsn <dsn> --output <path> [--sensor-id <id>]")
+		return fmt.Errorf("usage: proxy-sentinel router-prober run --postgres-dsn <dsn> --output <path> --capture-scope-config <path> [--sensor-id <id>]")
 	}
 	fs := flag.NewFlagSet("router-prober run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	output := fs.String("output", "", "normalized event JSONL output path")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
+	scopeFile := fs.String("capture-scope-config", os.Getenv("PROXY_SENTINEL_CAPTURE_SCOPE_CONFIG"), "registered capture scope")
+	interfaceName := fs.String("controlled-interface", "", "operator-verified source interface")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -538,12 +606,27 @@ func runRouterProber(args []string) error {
 	if strings.TrimSpace(*output) == "" {
 		return fmt.Errorf("--output is required")
 	}
+	if *scopeFile == "" {
+		return fmt.Errorf("--capture-scope-config is required")
+	}
+	scope, err := normalized.LoadCaptureScope(*scopeFile)
+	if err != nil {
+		return err
+	}
+	if scope == nil {
+		return fmt.Errorf("router prober requires a capture scope")
+	}
+	if *interfaceName == "" {
+		*interfaceName = scope.InterfaceName
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return routerprober.Run(ctx, routerprober.Config{
-		PostgresDSN: *postgresDSN,
-		SensorID:    *sensorID,
-		OutputPath:  *output,
+		PostgresDSN:  *postgresDSN,
+		SensorID:     *sensorID,
+		OutputPath:   *output,
+		CaptureScope: scope,
+		Interface:    *interfaceName,
 	})
 }
 
@@ -976,9 +1059,43 @@ func runRisk(args []string) error {
 		return runRiskRecalculate(args[1:])
 	case "materialize":
 		return runRiskMaterialize(args[1:])
+	case "fresh-cutover":
+		return runRiskFreshCutover(args[1:])
 	default:
 		return fmt.Errorf("unknown risk command: %s", args[0])
 	}
+}
+
+func runRiskFreshCutover(args []string) error {
+	fs := flag.NewFlagSet("risk fresh-cutover", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	sensorID := fs.String("sensor-id", "", "sensor whose old dirty subjects are canceled")
+	cancelID := fs.String("cancel-id", "", "immutable cancellation audit identifier")
+	cutoffText := fs.String("accepted-after", "", "new input cutoff in RFC3339 format")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *sensorID == "" || *cancelID == "" || *cutoffText == "" || *postgresDSN == "" {
+		return errors.New("risk fresh-cutover requires sensor-id, cancel-id, accepted-after and postgres-dsn")
+	}
+	cutoff, err := time.Parse(time.RFC3339Nano, *cutoffText)
+	if err != nil {
+		return fmt.Errorf("parse risk accepted-after: %w", err)
+	}
+	pg, err := store.NewPostgresStore(store.PostgresOptions{DSN: *postgresDSN, SensorID: *sensorID})
+	if err != nil {
+		return err
+	}
+	defer pg.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	count, err := pg.StartStreamRiskFreshCutover(ctx, *sensorID, *cancelID, cutoff)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "risk fresh cutover: sensor=%s cancel_id=%s accepted_after=%s audited_old_subjects=%d\n", *sensorID, *cancelID, cutoff.UTC().Format(time.RFC3339Nano), count)
+	return nil
 }
 
 func runRiskMaterialize(args []string) error {
@@ -988,12 +1105,26 @@ func runRiskMaterialize(args []string) error {
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	window := fs.Duration("window", 10*time.Minute, "rolling evidence window")
-	interval := fs.Duration("interval", time.Minute, "materialization interval")
+	interval := fs.Duration("interval", 0, "materialization interval; defaults to 1s for incremental, 1m for legacy")
 	limit := fs.Int("event-limit", 200000, "maximum events per rolling window")
+	incremental := fs.Bool("incremental", false, "evaluate only confirmed, dirty stream risk subjects")
+	claimLimit := fs.Int("claim-limit", 64, "maximum dirty subjects per incremental transaction")
+	featureLimit := fs.Int("feature-limit", 20000, "maximum physical feature rows per incremental read")
 	sharedAccess := fs.Bool("shared-access", os.Getenv("PROXY_SENTINEL_SHARED_ACCESS_ENABLED") == "true", "build scoped shared access evidence for observation policies")
+	routerDedicated := fs.Bool("router-observations-dedicated", os.Getenv("PROXY_SENTINEL_ROUTER_OBSERVATIONS_DEDICATED") == "true", "use the healthy incremental recognition owner instead of replaying router observations")
 	once := fs.Bool("once", false, "run one materialization and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *interval == 0 {
+		if *incremental {
+			*interval = time.Second
+		} else {
+			*interval = time.Minute
+		}
+	}
+	if *incremental && (*interval < 100*time.Millisecond || *interval > time.Second) {
+		return errors.New("incremental risk interval must be between 100ms and 1s")
 	}
 	if *postgresDSN == "" || *clickhouseDSN == "" {
 		return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
@@ -1008,7 +1139,17 @@ func runRiskMaterialize(args []string) error {
 	runOnce := func() error {
 		runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
-		result, err := materialize.RunOnce(runCtx, backend, materialize.Options{SharedAccess: *sharedAccess, SensorID: *sensorID, Window: *window, Limit: *limit})
+		if *incremental {
+			boundedCtx, stopBatch := context.WithTimeout(runCtx, 4*time.Second)
+			defer stopBatch()
+			result, err := materialize.RunIncrementalOnce(boundedCtx, backend, materialize.IncrementalOptions{SensorID: *sensorID, Window: *window, ClaimLimit: *claimLimit, FeatureLimit: *featureLimit})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "risk incremental: claims=%d features=%d evidence=%d snapshots=%d oldest_claim_age=%s\n", result.Claims, result.Features, result.Evidence, result.Snapshots, result.OldestClaimAge.Round(time.Millisecond))
+			return nil
+		}
+		result, err := materialize.RunOnce(runCtx, backend, materialize.Options{SharedAccess: *sharedAccess, RouterDedicated: *routerDedicated, SensorID: *sensorID, Window: *window, Limit: *limit})
 		if err != nil {
 			return err
 		}

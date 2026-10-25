@@ -31,6 +31,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	prefix := "iot-replay-" + time.Now().UTC().Format("150405.000000000")
 	now := time.Now().UTC().Add(-time.Second)
 	event := normalized.Event{SchemaVersion: "v1", EventID: prefix + "-camera", Source: "passive", SourceEventType: "ws_discovery", Type: "discovery", Timestamp: now.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": prefix, "source_id": prefix, "interface": "mirror0"}, Subject: map[string]any{"site": "test", "domain": "test", "vlan": "12", "ip": "10.11.12.13"}, Payload: map[string]any{"origin": "ws_discovery", "is_response": true, "endpoint_reference": "camera-uuid", "types": "dn:NetworkVideoTransmitter", "ttl": 3600}}
+	event.Subject["domain"] = prefix
 	fail := true
 	calls := 0
 	repo := discovery.Repository{DB: pg.db, PipelineV2: true, Archive: func(context.Context, []normalized.Event) error {
@@ -55,7 +56,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	if _, err = repo.ProcessDiscoveryBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	page, err := repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Limit: 20})
+	page, err := repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Domain: prefix, Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	if _, err = repo.ProcessDiscoveryBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Limit: 20})
+	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Domain: prefix, Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	if err = repo.ExpireDiscoveryStates(ctx); err != nil {
 		t.Fatal(err)
 	}
-	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Limit: 20})
+	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Domain: prefix, Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	if _, e := repo.ProcessDiscoveryBatch(ctx); e != nil {
 		t.Fatal(e)
 	}
-	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13"})
+	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Domain: prefix})
 	if err != nil || len(page["items"].([]map[string]any)) != 1 {
 		t.Fatalf("unrelated withdrawal removed camera %v %v", page, err)
 	}
@@ -130,7 +131,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	if _, e := repo.ProcessDiscoveryBatch(ctx); e != nil {
 		t.Fatal(e)
 	}
-	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13"})
+	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Domain: prefix})
 	if err != nil || len(page["items"].([]map[string]any)) != 0 {
 		t.Fatalf("correction retained camera %v %v", page, err)
 	}
@@ -138,7 +139,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	scoped := event
 	scoped.EventID = prefix + "-vlan"
 	scoped.Payload = map[string]any{"origin": "ws_discovery", "is_response": true, "endpoint_reference": "camera-uuid", "types": "dn:NetworkVideoTransmitter", "xaddrs": "http://10.11.12.13/onvif/device_service", "ttl": 3600}
-	scoped.Subject = map[string]any{"site": "test", "domain": "test", "vlan": "13", "ip": "10.11.12.13"}
+	scoped.Subject = map[string]any{"site": "test", "domain": prefix, "vlan": "13", "ip": "10.11.12.13"}
 	scoped.Timestamp = time.Now().UTC().Add(-time.Millisecond).Format(time.RFC3339Nano)
 	if e := repo.AcceptDiscoveryBatch(ctx, prefix+"-vlan", []normalized.Event{scoped}); e != nil {
 		t.Fatal(e)
@@ -146,7 +147,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	if _, e := repo.ProcessDiscoveryBatch(ctx); e != nil {
 		t.Fatal(e)
 	}
-	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", VLAN: "13"})
+	page, err = repo.DevicesState(ctx, discovery.DeviceQuery{View: "iot", Search: "10.11.12.13", Domain: prefix, VLAN: "13"})
 	if err != nil || len(page["items"].([]map[string]any)) != 1 {
 		t.Fatalf("VLAN separation failed %v %v", page, err)
 	}
@@ -247,7 +248,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 	binaryText.EventID = prefix + "-binary-text"
 	binaryText.Payload = map[string]any{"origin": "dns_sd", "is_response": true, "ttl": 120, "txt": []string{"model=Printer\x00firmware"}}
 	raw, _ := json.Marshal([]normalized.Event{bad, binaryText, good})
-	file := filepath.Join(spool, "invalid-first.json")
+	file := filepath.Join(spool, prefix+"-invalid-first.json")
 	if err = os.WriteFile(file, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +262,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rejected, applied int
-	if err = pg.db.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE result LIKE 'rejected:%'),count(*) FILTER(WHERE result='applied') FROM discovery_event_receipts WHERE batch_id='discovery:invalid-first'`).Scan(&rejected, &applied); err != nil || rejected != 2 || applied != 1 {
+	if err = pg.db.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE result LIKE 'rejected:%'),count(*) FILTER(WHERE result='applied') FROM discovery_event_receipts WHERE batch_id=$1`, "discovery:"+prefix+"-invalid-first").Scan(&rejected, &applied); err != nil || rejected != 2 || applied != 1 {
 		t.Fatalf("spool receipts rejected=%d applied=%d err=%v", rejected, applied, err)
 	}
 
@@ -320,7 +321,7 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 		t.Fatal(e)
 	}
 	var remaining int
-	if e := pg.db.QueryRowContext(ctx, `SELECT count(*) FROM discovery_batch_work WHERE NOT completed`).Scan(&remaining); e != nil || remaining != 0 {
+	if e := pg.db.QueryRowContext(ctx, `SELECT count(*) FROM discovery_batch_work w JOIN ingest_batches b USING(batch_id) WHERE b.sensor_id=$1 AND NOT w.completed`, prefix).Scan(&remaining); e != nil || remaining != 0 {
 		t.Fatalf("concurrent tasks incomplete: %d %v", remaining, e)
 	}
 

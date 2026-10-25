@@ -28,6 +28,7 @@ import (
 
 type Source struct {
 	CaptureScope        *normalized.CaptureScope
+	ControlledInterface string
 	ProxyProducer       *proxyprotocol.Producer
 	Kind                string
 	Path                string
@@ -311,8 +312,12 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 		if err != nil {
 			return nil, stats, err
 		}
-	case "zeek-iot", "zeek-proxy", "zeek-dhcp", "zeek-software", "zeek-mdns", "zeek-nbns", "zeek-llmnr", "zeek-ttl", "zeek-conn", "zeek-dns", "zeek-http", "zeek-ssl", "zeek-x509", "zeek-lldp", "zeek-ssdp", "zeek-snmp":
-		value, err := zeek.Convert(bytes.NewReader(input), &output, zeek.Options{CaptureScope: source.CaptureScope, SensorID: sensorID, LogKind: strings.TrimPrefix(source.Kind, "zeek-"), CollectorInstanceID: source.CollectorInstanceID, ProxyProducer: source.ProxyProducer})
+	case "zeek-iot", "zeek-proxy", "zeek-dhcp", "zeek-dhcp-binding", "zeek-software", "zeek-mdns", "zeek-nbns", "zeek-llmnr", "zeek-ttl", "zeek-conn", "zeek-dns", "zeek-http", "zeek-ssl", "zeek-x509", "zeek-lldp", "zeek-ssdp", "zeek-snmp":
+		logKind := strings.TrimPrefix(source.Kind, "zeek-")
+		if source.Kind == "zeek-dhcp-binding" {
+			logKind = "dhcp"
+		}
+		value, err := zeek.Convert(bytes.NewReader(input), &output, zeek.Options{CaptureScope: source.CaptureScope, ControlledInterface: source.ControlledInterface, SensorID: sensorID, LogKind: logKind, CollectorInstanceID: source.CollectorInstanceID, ProxyProducer: source.ProxyProducer})
 		stats = normalizedStats{Read: value.Read, Emitted: value.Emitted, Skipped: value.Skipped, Malformed: value.Malformed, ByType: value.ByType}
 		if err != nil {
 			return nil, stats, err
@@ -379,6 +384,7 @@ type sourceChunk struct {
 	fileID             string
 	start, end         int64
 	truncated, archive bool
+	verifiedRotation   bool
 }
 
 func readCompleteLines(path string, checkpoint ingest.Checkpoint, found bool, maxBytes int64) ([]byte, string, int64, int64, bool, error) {
@@ -545,6 +551,10 @@ func fileIdentity(path string, info os.FileInfo) string {
 	}
 	return fmt.Sprintf("%s:%d", filepath.Clean(path), info.ModTime().UnixNano())
 }
+
+// FileIdentity is shared by the legacy checkpoint and the audited fresh file
+// cutover. A new reader must compare the exact identity before dropping bytes.
+func FileIdentity(path string, info os.FileInfo) string { return fileIdentity(path, info) }
 
 func stableID(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))

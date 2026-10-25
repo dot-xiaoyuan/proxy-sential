@@ -76,3 +76,32 @@ func TestSpoolWriterReportsDurabilityFailure(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestStreamSpoolWriterNeverCombinesBeyondSegmentBudget(t *testing.T) {
+	queue := make(chan []byte, 4)
+	for i := 0; i < 4; i++ {
+		batch := make([]map[string]int, 250)
+		for at := range batch {
+			batch[at] = map[string]int{"id": i*250 + at}
+		}
+		raw, _ := json.Marshal(batch)
+		queue <- raw
+	}
+	close(queue)
+	total, writes := 0, 0
+	err := drainSpoolQueueBounded(queue, func(raw []byte) error {
+		var batch []json.RawMessage
+		if err := json.Unmarshal(raw, &batch); err != nil {
+			return err
+		}
+		if len(batch) > 500 || len(raw) > 1<<20 {
+			t.Fatal("stream segment exceeds capture budget")
+		}
+		total += len(batch)
+		writes++
+		return nil
+	}, 500, 1<<20)
+	if err != nil || total != 1000 || writes != 2 {
+		t.Fatalf("stream combine: total=%d writes=%d err=%v", total, writes, err)
+	}
+}

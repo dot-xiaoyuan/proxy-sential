@@ -37,3 +37,19 @@ func TestCaptureScopeDoesNotRelabelHistoryOrCollector(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestCaptureScopeBindsPassiveInterface(t *testing.T) {
+	now := time.Now().UTC()
+	scope := &CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor", CollectorInstanceID: "boot", CampusID: "site", AccessDomain: "domain", InterfaceName: "bond0", ValidFrom: now.Add(-time.Minute), ValidUntil: now.Add(time.Minute)}
+	event := Event{Timestamp: now.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor", "collector_instance_id": "boot", "interface": "bond1"}, Subject: map[string]any{}, Payload: map[string]any{}}
+	if got := scope.Apply(event); got.Observer["capture_scope_issue"] != "capture_scope_interface_mismatch" {
+		t.Fatalf("wrong interface accepted: %+v", got.Observer)
+	}
+	event.Observer["interface"] = "bond0"
+	if got := scope.Apply(event); got.Observer["capture_scope_id"] == nil {
+		t.Fatalf("bound interface was rejected: %+v", got.Observer)
+	}
+	if scope.ID() != scope.Apply(event).Observer["capture_scope_id"] {
+		t.Fatal("source cutover scope does not match normalized event scope")
+	}
+}

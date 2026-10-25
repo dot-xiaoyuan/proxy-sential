@@ -50,6 +50,14 @@ func applyProductRules(o *Observation) {
 	for _, value := range fields {
 		for _, rule := range campusProductRules {
 			if model := rule.pattern.FindString(value); model != "" {
+				// Inferred attributes belong to the observation. Never mutate the
+				// input shared with archival, retries and the durable receipt hash.
+				derived := make(map[string]any, len(p)+3)
+				for key, value := range p {
+					derived[key] = value
+				}
+				p = derived
+				o.Evidence.Payload = derived
 				p["product_verified"] = true
 				p["product_type"] = rule.kind
 				p["product_model"] = model

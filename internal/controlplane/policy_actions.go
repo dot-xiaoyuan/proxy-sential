@@ -45,6 +45,16 @@ func (s *Server) processAccountPolicies(now time.Time) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if s.operations.db != nil {
+		var hasWork bool
+		// The shared observation policy has its own worker. With no other enabled
+		// policy or existing execution, scanning seven days of identity facts cannot
+		// produce a decision. On a read error, retain the conservative old path.
+		err := s.operations.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_policy_definitions WHERE id<>$1 AND document->>'enabled'='true') OR EXISTS(SELECT 1 FROM account_policy_executions)`, sharedaccess.ObservationPolicyID).Scan(&hasWork)
+		if err == nil && !hasWork {
+			return
+		}
+	}
 	ss, err := s.policySessions(ctx, reader, now)
 	if err != nil {
 		return

@@ -146,7 +146,7 @@ func (s *DBStore) exportIdentityInboxBatch(ctx context.Context) error {
 		Scope string
 		Count int
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT batch_id,scope_key,export_epoch,normalized_events,records_emitted FROM identity_ingest_batches WHERE protocol_version=2 AND sensor_id=$1 AND export_state<>'completed' AND (export_lease_until IS NULL OR export_lease_until<now()) ORDER BY accepted_at,batch_id FOR UPDATE SKIP LOCKED LIMIT 100`, s.pg.sensorID)
+	rows, err := tx.QueryContext(ctx, `SELECT batch_id,scope_key,export_epoch,normalized_events,records_emitted FROM identity_ingest_batches WHERE protocol_version=2 AND payload_format='legacy_json' AND sensor_id=$1 AND export_state<>'completed' AND (export_lease_until IS NULL OR export_lease_until<now()) ORDER BY accepted_at,batch_id FOR UPDATE SKIP LOCKED LIMIT 100`, s.pg.sensorID)
 	if err != nil {
 		return err
 	}
@@ -276,14 +276,17 @@ func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
 		s = lane
 	}
 	for ctx.Err() == nil {
-		// Raw evidence remains durably queued in PostgreSQL. When the authoritative
-		// identity lane falls behind, avoid competing ClickHouse writes on the
-		// same storage device until current sessions catch up.
-		if s.deferIdentityDerivedWork(ctx) {
-			continue
-		}
 		work, cancel := context.WithTimeout(ctx, 45*time.Second)
-		err := s.exportIdentityInboxBatch(work)
+		err := s.exportIdentityInboxFragment(work)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Legacy full-JSON exports remain low priority while current facts
+			// are queued. Fresh fragments archive independently of PG projection.
+			if s.deferIdentityDerivedWork(ctx) {
+				cancel()
+				continue
+			}
+			err = s.exportIdentityInboxBatch(work)
+		}
 		cancel()
 		if errors.Is(err, sql.ErrNoRows) {
 			health, c := context.WithTimeout(ctx, time.Second)

@@ -14,17 +14,31 @@ type operationsQuerier interface {
 }
 
 func (s *operationsState) beginLocked() {
+	s.beginLockedWithTimeout(15 * time.Second)
+}
+
+func (s *operationsState) beginLockedWithTimeout(setupTimeout time.Duration) {
 	s.lockErr = nil
 	if s.db == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	// database/sql rolls back a transaction when the BeginTx context expires.
+	// Bound transaction setup, then tie cancellation to Unlock; savePostgres
+	// retains its own query budget instead of inheriting an expired setup timer.
+	txCtx, cancel := context.WithCancel(context.Background())
+	setupTimer := time.AfterFunc(setupTimeout, cancel)
+	tx, err := s.db.BeginTx(txCtx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err == nil {
-		_, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('proxy-sentinel-operations'))`)
+		_, err = tx.ExecContext(txCtx, `SELECT pg_advisory_xact_lock(hashtext('proxy-sentinel-operations'))`)
 	}
 	if err == nil {
-		err = s.reloadPostgres(ctx, tx)
+		err = s.reloadPostgres(txCtx, tx)
+	}
+	if !setupTimer.Stop() && err == nil {
+		err = context.DeadlineExceeded
+	}
+	if err == nil {
+		err = txCtx.Err()
 	}
 	if err != nil {
 		if tx != nil {
@@ -91,6 +105,16 @@ func (s *operationsState) health(ctx context.Context) error {
 
 func (s *operationsState) reloadPostgres(ctx context.Context, q operationsQuerier) error {
 	doc := emptyOperationsDocument()
+	if s.caseOnly {
+		if err := loadSLAPolicies(ctx, q, &doc); err != nil {
+			return err
+		}
+		if err := loadCases(ctx, q, &doc); err != nil {
+			return err
+		}
+		s.adoptPostgresDocument(doc)
+		return nil
+	}
 	if err := loadPolicyDocuments(ctx, q, &doc); err != nil {
 		return err
 	}
@@ -106,7 +130,19 @@ func (s *operationsState) reloadPostgres(ctx context.Context, q operationsQuerie
 	if err := loadConnectors(ctx, q, &doc); err != nil {
 		return err
 	}
-	if err := loadActions(ctx, q, &doc); err != nil {
+	// Action reads, callbacks, admission and due-work use scoped SQL in database
+	// mode. Retain only a bounded live working set for older in-memory business
+	// paths; recorded history must never be loaded at startup or on unrelated
+	// operations mutations. Exceeding the bound fails closed instead of silently
+	// omitting a live action from an in-memory decision.
+	if s.db != nil {
+		if err := loadActionsScoped(ctx, q, &doc, ` WHERE status IN ('pending','running') ORDER BY updated_at DESC,action_id DESC LIMIT 513`, nil); err != nil {
+			return err
+		}
+		if len(doc.Actions) > 512 {
+			return fmt.Errorf("active operations action budget exceeded; use scoped repository")
+		}
+	} else if err := loadActions(ctx, q, &doc); err != nil {
 		return err
 	}
 	var raw []byte
@@ -117,6 +153,11 @@ func (s *operationsState) reloadPostgres(ctx context.Context, q operationsQuerie
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &doc.GlobalStop)
 	}
+	s.adoptPostgresDocument(doc)
+	return nil
+}
+
+func (s *operationsState) adoptPostgresDocument(doc operationsDocument) {
 	s.doc = doc
 	s.recordBaseline = operationFingerprints(doc)
 	s.recordVersionBaseline = operationRecordVersions(doc)
@@ -140,7 +181,6 @@ func (s *operationsState) reloadPostgres(ctx context.Context, q operationsQuerie
 			s.persistedHistory[[2]string{"snapshot", row.SnapshotID}] = true
 		}
 	}
-	return nil
 }
 
 func loadSLAPolicies(ctx context.Context, q operationsQuerier, doc *operationsDocument) error {
@@ -462,6 +502,9 @@ func (s *operationsState) savePostgres(tx *sql.Tx) error {
 				continue
 			}
 			evidence, _ := json.Marshal(snapshot.Evidence)
+			if err = s.protectDiscoveryEvidence(ctx, tx, item.CaseID, evidence); err != nil {
+				return fmt.Errorf("protect discovery evidence %s: %w", snapshot.SnapshotID, err)
+			}
 			_, err = tx.ExecContext(ctx, `INSERT INTO risk_case_evidence_snapshots(snapshot_id,case_id,ruleset_version,evidence,created_at) VALUES($1,$2,NULLIF($3,''),$4,$5::timestamptz) ON CONFLICT(snapshot_id) DO NOTHING`, snapshot.SnapshotID, item.CaseID, snapshot.RulesetVersion, evidence, snapshot.CreatedAt)
 			if err != nil {
 				return fmt.Errorf("save case evidence %s: %w", snapshot.SnapshotID, err)

@@ -16,6 +16,26 @@ import (
 	"time"
 )
 
+func TestIdentityBatchPhasesDoNotTreatAcceptanceAsCompletion(t *testing.T) {
+	tests := []struct {
+		status, export      string
+		projected, count    int
+		archive, projection string
+	}{
+		{"accepted", "pending", 0, 2, "pending", "pending"},
+		{"completed", "processing", 2, 2, "pending", "completed"},
+		{"processing", "completed", 1, 2, "completed", "pending"},
+		{"completed", "completed", 2, 2, "completed", "completed"},
+		{"failed", "failed", 0, 2, "failed", "failed"},
+	}
+	for _, tc := range tests {
+		archive, projection := identityBatchPhases(tc.status, tc.export, tc.projected, tc.count)
+		if archive != tc.archive || projection != tc.projection {
+			t.Fatalf("%+v -> %s/%s", tc, archive, projection)
+		}
+	}
+}
+
 func TestDurableIdentityHTTPDoesNotWaitForDerivedStorage(t *testing.T) {
 	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
 	if dsn == "" {

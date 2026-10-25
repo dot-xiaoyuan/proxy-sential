@@ -14,10 +14,14 @@ import (
 )
 
 type Repository struct {
+	BackfillArchive  func(context.Context, []normalized.Event) error
 	Collection       *CollectionConfig
 	ArchiveDiscovery func(context.Context, string, time.Time, []normalized.Event) error
 	PipelineV2       bool
 	DB               *sql.DB
+	BackfillDB       *sql.DB
+	RuntimeDB        *sql.DB
+	ClaimSensor      string
 	Archive          func(context.Context, []normalized.Event) error
 	// Describe receives persisted SSDP announcements; nil disables description reads.
 	Describe    func(normalized.Event)

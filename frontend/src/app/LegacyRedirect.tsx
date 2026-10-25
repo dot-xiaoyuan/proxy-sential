@@ -23,7 +23,7 @@ export function ActivityEntry({children}:{children:ReactNode}){
 
 export function LegacyDiscoveryRedirect(){
  const location=useLocation();const params=new URLSearchParams(location.search)
- const tab=params.get('tab');params.set('tab',tab==='devices'||tab==='records'?'records':tab==='iot'?'iot':'network')
+ const tab=params.get('tab');params.set('tab',tab==='iot'?'iot':['routers','network','infrastructure'].includes(tab || '')?'network':'discovery')
  params.delete('page');params.delete('cursor');params.delete('offset')
  return <Navigate replace to={`/devices?${params}${location.hash}`}/>
 }

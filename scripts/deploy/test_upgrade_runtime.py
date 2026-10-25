@@ -47,6 +47,8 @@ sys.exit(1)
   p=self.root/'releases'/name;(p/'bin').mkdir(parents=True);(p/'frontend/dist').mkdir(parents=True)
   shutil.copy2('/usr/bin/sleep',p/'bin/proxy-sentinel')
   (p/'frontend/dist/index.html').write_text('same frontend')
+  (p/'scripts').mkdir(exist_ok=True)
+  shutil.copy2(Path(__file__).with_name('verify-service-expectations.py'),p/'scripts/verify-service-expectations.py')
   (p/'release-manifest.json').write_text(json.dumps({'version':name,'os':'linux','arch':'amd64'}))
   (p/'SHA256SUMS').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+str(f.relative_to(p))+'\n' for f in sorted(p.rglob('*')) if f.is_file()))
   return p

@@ -149,7 +149,9 @@ func (s *Server) queryPolicyDecisions(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{"items": items, "next_cursor": next}
 	if trigger == "shared_access" && q.Get("include_processing") == "true" {
 		rows.Close()
-		pending, e := s.productPolicies.db.QueryContext(ctx, `SELECT host(ip),dirty_since,last_error FROM shared_observation_jobs WHERE revision>completed_revision AND NOT expired AND ($1='' OR ip=NULLIF($1,'')::inet) ORDER BY dirty_since,job_id LIMIT 31`, q.Get("ip"))
+		pending, e := s.productPolicies.db.QueryContext(ctx, `SELECT host(ip),dirty_since,last_error FROM shared_observation_jobs j WHERE revision>completed_revision AND NOT expired AND canceled_epoch=''
+ AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')
+ AND ($1='' OR ip=NULLIF($1,'')::inet) ORDER BY dirty_since,job_id LIMIT 31`, q.Get("ip"))
 		if e != nil {
 			writeError(w, 503, "policy_decisions_failed", "共享待办读取失败")
 			return

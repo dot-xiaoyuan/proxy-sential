@@ -302,6 +302,7 @@ func Serve(opts Options) error {
 		go server.runSRun4KScheduler(ctx)
 	}
 	if server.operations != nil && server.operations.db != nil {
+		go server.runCompletedIdentitySnapshotChunkCleanup(ctx)
 		// Observation processing only writes local proposed decisions. It must
 		// continue on the read-only field control plane, which disables dispatch.
 		server.startViolationWorker(ctx)
@@ -411,6 +412,21 @@ func NewServerWithError(opts Options) (*Server, error) {
 	operations, err := newOperationsState(operationsFile, operationsDSN)
 	if err != nil {
 		return nil, fmt.Errorf("load operations state: %w", err)
+	}
+	if evidenceReader, ok := reader.(interface {
+		ReadDiscoveryCaseEvidence(context.Context, []store.DiscoveryCaseEvidenceRef) (map[store.DiscoveryCaseEvidenceRef]store.DiscoveryCaseEvidence, error)
+	}); ok {
+		operations.discoveryEvidenceLoader = evidenceReader.ReadDiscoveryCaseEvidence
+	}
+	if evidenceReader, ok := reader.(interface {
+		ReadStreamCaseEvidence(context.Context, []store.StreamBodyRef) (map[store.StreamBodyRef]store.StreamCaseEvidence, error)
+	}); ok {
+		operations.streamEvidenceLoader = evidenceReader.ReadStreamCaseEvidence
+	}
+	if evidenceReader, ok := reader.(interface {
+		ReadStreamSharedCaseEvidence(context.Context, []store.StreamBodyRef) (map[store.StreamBodyRef]store.StreamCaseEvidence, error)
+	}); ok {
+		operations.streamSharedEvidenceLoader = evidenceReader.ReadStreamSharedCaseEvidence
 	}
 	identityIngest, err := newIdentityIngestState(opts.IdentityIngestKey, operationsDSN)
 	if err != nil {
@@ -628,6 +644,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.handleIdentityIngest(w, r)
 		}
+		return
+	}
+	if strings.HasPrefix(path, "/integrations/identity/event-batches/") && r.Method == http.MethodGet {
+		s.handleDurableIdentityBatchStatus(w, r, strings.TrimPrefix(path, "/integrations/identity/event-batches/"))
 		return
 	}
 	if path == "/integrations/identity/bridge/runtime-config" && r.Method == http.MethodGet {

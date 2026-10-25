@@ -191,6 +191,11 @@ func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 		defer workers.Done()
 		s.runRouterRecognitionMaterializer(ctx, s.pg.sensorID)
 	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		s.runStreamRouterRecognitionMaterializer(ctx, s.pg.sensorID)
+	}()
 	for index := 0; index < 4; index++ {
 		workers.Add(1)
 		go func(workerIndex int) {

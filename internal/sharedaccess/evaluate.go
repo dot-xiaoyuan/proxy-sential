@@ -52,12 +52,14 @@ type RecordRef struct {
 }
 
 type Window struct {
-	GatewayMAC        string          `json:"gateway_mac,omitempty"`
-	GatewayLease      json.RawMessage `json:"gateway_lease,omitempty"`
-	CoverageFacts     []CoverageFact  `json:"coverage_facts,omitempty"`
-	StrongAnchor      string          `json:"strong_anchor,omitempty"`
-	DeviceLowerBound  int             `json:"device_lower_bound,omitempty"`
-	AssociatedClients []string        `json:"associated_clients,omitempty"`
+	SourceEpochs      map[string]string `json:"source_epochs,omitempty"`
+	SourceScopes      map[string]string `json:"source_scopes,omitempty"`
+	GatewayMAC        string            `json:"gateway_mac,omitempty"`
+	GatewayLease      json.RawMessage   `json:"gateway_lease,omitempty"`
+	CoverageFacts     []CoverageFact    `json:"coverage_facts,omitempty"`
+	StrongAnchor      string            `json:"strong_anchor,omitempty"`
+	DeviceLowerBound  int               `json:"device_lower_bound,omitempty"`
+	AssociatedClients []string          `json:"associated_clients,omitempty"`
 
 	CoverageVerified bool                                `json:"coverage_verified,omitempty"`
 	Samples          map[string]map[string]FeatureSample `json:"feature_samples,omitempty"`

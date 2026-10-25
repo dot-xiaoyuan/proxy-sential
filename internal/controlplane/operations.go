@@ -165,23 +165,27 @@ type operationsDocument struct {
 }
 
 type operationsState struct {
-	recordBaseline        map[[2]string][32]byte
-	recordVersionBaseline map[[2]string]string
-	caseVersionBaseline   map[string]string
-	readView              bool
-	shadowMetricsPrepared bool
-	organizationBaseline  map[[2]string]string
-	persistedHistory      map[[2]string]bool
-	mu                    operationsMutex
-	path                  string
-	doc                   operationsDocument
-	db                    *sql.DB
-	tx                    *sql.Tx
-	txCancel              context.CancelFunc
-	lockErr               error
-	healthMu              sync.RWMutex
-	healthErr             error
-	caseSyncHealthErr     error
+	recordBaseline             map[[2]string][32]byte
+	recordVersionBaseline      map[[2]string]string
+	caseVersionBaseline        map[string]string
+	readView                   bool
+	caseOnly                   bool
+	shadowMetricsPrepared      bool
+	organizationBaseline       map[[2]string]string
+	persistedHistory           map[[2]string]bool
+	mu                         operationsMutex
+	path                       string
+	doc                        operationsDocument
+	db                         *sql.DB
+	tx                         *sql.Tx
+	txCancel                   context.CancelFunc
+	lockErr                    error
+	healthMu                   sync.RWMutex
+	healthErr                  error
+	caseSyncHealthErr          error
+	discoveryEvidenceLoader    func(context.Context, []store.DiscoveryCaseEvidenceRef) (map[store.DiscoveryCaseEvidenceRef]store.DiscoveryCaseEvidence, error)
+	streamEvidenceLoader       func(context.Context, []store.StreamBodyRef) (map[store.StreamBodyRef]store.StreamCaseEvidence, error)
+	streamSharedEvidenceLoader func(context.Context, []store.StreamBodyRef) (map[store.StreamBodyRef]store.StreamCaseEvidence, error)
 }
 
 type operationsMutex struct {
@@ -460,6 +464,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		if found && (existing.Status == "closed" || existing.Status == "resolved") {
 			caseID, found = item.CaseID+"-"+shortToken(6), false
 		}
+		priorCase := existing
 		level, rulesetVersion := caseAssessmentLevel(item), caseRulesetVersion(item)
 		slaLevel, priority := "medium", "medium"
 		if kind == "shared_access" {
@@ -497,12 +502,40 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 			}
 		}
 		if !snapshotExists {
+			if item.SharedAccess != nil && item.SharedAccess.GenerationID != "" {
+				refReader, ok := s.reader.(interface {
+					ReadStreamSharedCaseRefs(context.Context, string, string) ([]store.StreamBodyRef, error)
+				})
+				if !ok {
+					return fmt.Errorf("shared stream case source reader unavailable")
+				}
+				refs, err := refReader.ReadStreamSharedCaseRefs(ctx, item.SharedAccess.ObservationID, item.SharedAccess.GenerationID)
+				if err != nil {
+					return fmt.Errorf("protect shared case source %s: %w", item.SharedAccess.ObservationID, err)
+				}
+				item.StreamSharedEvidenceRefs = refs
+				snapshot.Evidence = item
+			}
 			existing.EvidenceHistory = append(existing.EvidenceHistory, snapshot)
 			if existing.EvidenceSnapshot.CaseID != "" {
 				existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.evidence_appended", Before: map[string]any{"risk_score": previousScore}, After: map[string]any{"risk_score": item.RiskScore, "snapshot_id": snapshot.SnapshotID}, CreatedAt: now.Format(time.RFC3339Nano)})
 			}
 		}
+		if snapshotExists && found && item.SharedAccess != nil && priorCase.EvidenceSnapshot.SharedAccess != nil &&
+			item.SharedAccess.ObservationID == priorCase.EvidenceSnapshot.SharedAccess.ObservationID &&
+			item.SharedAccess.GenerationID == priorCase.EvidenceSnapshot.SharedAccess.GenerationID {
+			item.StreamSharedEvidenceRefs = append([]store.StreamBodyRef(nil), priorCase.EvidenceSnapshot.StreamSharedEvidenceRefs...)
+		}
 		existing.EvidenceSnapshot = item
+		if found {
+			previousUpdatedAt := priorCase.UpdatedAt
+			priorCase.UpdatedAt = ""
+			comparison := existing
+			comparison.UpdatedAt = ""
+			if operationFingerprint("case", priorCase) == operationFingerprint("case", comparison) {
+				existing.UpdatedAt = previousUpdatedAt
+			}
+		}
 		s.operations.doc.Cases[existing.CaseID] = existing
 	}
 	for caseID, existing := range s.operations.doc.Cases {
@@ -536,7 +569,7 @@ func (s *Server) startCaseSynchronizer() {
 		defer ticker.Stop()
 		for range ticker.C {
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			err := s.syncCasesContext(ctx, s.sensorID, "10m")
+			err := s.syncAutomaticCasesContext(ctx, s.sensorID, "10m")
 			cancel()
 			if err != nil {
 				s.operations.setCaseSyncHealthError(fmt.Errorf("automatic case synchronization: %w", err))
@@ -545,6 +578,21 @@ func (s *Server) startCaseSynchronizer() {
 			}
 		}
 	}()
+}
+
+func (s *Server) syncAutomaticCasesContext(ctx context.Context, sensorID, window string) error {
+	if s.operations == nil || s.operations.db == nil {
+		return s.syncCasesContext(ctx, sensorID, window)
+	}
+	// The automatic path only changes cases. Loading every retained action into
+	// the shared operations document on each tick made setup slower than its
+	// transaction budget and held the global write lock for unrelated requests.
+	state := &operationsState{db: s.operations.db, doc: emptyOperationsDocument(), caseOnly: true,
+		discoveryEvidenceLoader: s.operations.discoveryEvidenceLoader, streamEvidenceLoader: s.operations.streamEvidenceLoader,
+		streamSharedEvidenceLoader: s.operations.streamSharedEvidenceLoader}
+	state.mu.owner = state
+	scoped := &Server{reader: s.reader, exceptions: s.exceptions, operations: state, sharedConfig: s.sharedConfig}
+	return scoped.syncCasesContext(ctx, sensorID, window)
 }
 
 func activeCaseMatches(candidate RiskCase, item store.ProxyReviewCase, dedupeKey string) bool {
@@ -595,6 +643,12 @@ func newCaseEvidenceSnapshot(caseID, rulesetVersion string, evidence store.Proxy
 			RuleVersion  string   `json:"rule_version"`
 			EvidenceIDs  []string `json:"evidence_ids"`
 		}{evidence.RouterObservation.AssessmentID, evidence.RouterObservation.Status, evidence.RouterObservation.Confidence, evidence.RouterObservation.RuleVersion, components}
+	} else if evidence.SharedAccess != nil {
+		// The verified body locators are loaded only for a new snapshot. They
+		// cannot alter the identity of the assessment that selected them.
+		withoutRefs := evidence
+		withoutRefs.StreamSharedEvidenceRefs = nil
+		identity = withoutRefs
 	}
 	raw, _ := json.Marshal(identity)
 	sum := sha256.Sum256(append([]byte(caseID+"\x00"+rulesetVersion+"\x00"), raw...))

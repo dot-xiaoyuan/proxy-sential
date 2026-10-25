@@ -18,7 +18,9 @@ import (
 )
 
 type Options struct {
-	CaptureScope        *normalized.CaptureScope
+	CaptureScope *normalized.CaptureScope
+	// A trusted stream source may bind one log file to a controlled interface.
+	ControlledInterface string
 	CollectorInstanceID string
 	ProxyProducer       *proxyprotocol.Producer
 	SensorID            string
@@ -42,6 +44,12 @@ type logParser struct {
 
 func Convert(r io.Reader, w io.Writer, opts Options) (Stats, error) {
 	stats := Stats{ByType: map[string]int{}}
+	// Some established capture scopes bind the site/domain but leave the NIC
+	// unset. The stream cutover separately hashes the operator-verified NIC
+	// with the scope file. Reject only an explicit conflict here.
+	if opts.ControlledInterface != "" && (opts.CaptureScope == nil || (opts.CaptureScope.InterfaceName != "" && opts.CaptureScope.InterfaceName != opts.ControlledInterface)) {
+		return stats, fmt.Errorf("Zeek file interface binding does not match capture scope")
+	}
 	parser := logParser{separator: "\t", unsetField: "-", emptyField: "(empty)"}
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
@@ -76,6 +84,14 @@ func Convert(r io.Reader, w io.Writer, opts Options) (Stats, error) {
 				event.Observer = map[string]any{}
 			}
 			event.Observer["collector_instance_id"] = opts.CollectorInstanceID
+		}
+		if opts.ControlledInterface != "" {
+			if event.Observer == nil {
+				event.Observer = map[string]any{}
+			}
+			if existing, _ := event.Observer["interface"].(string); existing == "" {
+				event.Observer["interface"] = opts.ControlledInterface
+			}
 		}
 		event = opts.CaptureScope.Apply(event)
 		if err := encoder.Encode(event); err != nil {
@@ -432,8 +448,12 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 	}
 
 	subjectIP := first(fields, "assigned_addr", "requested_addr", "client_addr")
-	if subjectIP == "" || subjectIP == "0.0.0.0" {
-		return normalized.Event{}, fmt.Errorf("missing DHCP client address")
+	clientMAC := first(fields, "mac", "client_mac", "client_chaddr")
+	if subjectIP == "0.0.0.0" {
+		subjectIP = ""
+	}
+	if subjectIP == "" && clientMAC == "" {
+		return normalized.Event{}, fmt.Errorf("missing DHCP client address and MAC")
 	}
 
 	clientIP := first(fields, "client_addr", "requested_addr", "assigned_addr")
@@ -446,9 +466,12 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 	}
 
 	payload := dhcpPayload(fields)
-	subject := map[string]any{"ip": subjectIP, "vlan": first(fields, "capture_vlan", "vlan")}
-	if mac := first(fields, "mac", "client_mac", "client_chaddr"); mac != "" {
-		subject["mac"] = normalizeMAC(mac)
+	subject := map[string]any{"vlan": first(fields, "capture_vlan", "vlan")}
+	if subjectIP != "" {
+		subject["ip"] = subjectIP
+	}
+	if clientMAC != "" {
+		subject["mac"] = normalizeMAC(clientMAC)
 	}
 
 	observer := map[string]any{}

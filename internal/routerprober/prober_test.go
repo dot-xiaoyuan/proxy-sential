@@ -6,7 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/normalized"
 )
 
@@ -86,6 +89,44 @@ func TestBuildEvent_Fields(t *testing.T) {
 	}
 	if payload["assessment_id"] != "aaa-111" {
 		t.Errorf("payload.assessment_id = %v", payload["assessment_id"])
+	}
+	if payload["is_response"] != true {
+		t.Fatal("a successful management response was not marked as such")
+	}
+}
+
+func TestRouterProbeCarriesRegisteredScopeIntoDiscovery(t *testing.T) {
+	now := time.Now().UTC()
+	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor", CollectorInstanceID: "collector", CampusID: "campus", AccessDomain: "bond0", InterfaceName: "bond0", ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour)}
+	event := buildEvent(routerTarget{assessmentID: "assessment", ip: "10.0.0.1"}, "sensor", map[string]bool{"RouterOS": true}, nil, nil)
+	event, err := scopeRouterProbeEvent(event, scope, "bond0")
+	if err != nil || event.Observer["capture_scope_id"] != scope.ID() {
+		t.Fatalf("scope event=%+v err=%v", event, err)
+	}
+	adapted, err := discovery.AdaptDiscoveryEvent(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = discovery.FromEvent(adapted); err != nil {
+		t.Fatalf("scoped probe did not project: %v", err)
+	}
+}
+
+func TestRouterProbeTargetsRequireCurrentScopedAddressBinding(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor", CollectorInstanceID: "collector", CampusID: "campus", AccessDomain: "bond0", ValidFrom: time.Now().Add(-time.Hour), ValidUntil: time.Now().Add(time.Hour)}
+	mock.ExpectQuery("FROM router_assessments r").WithArgs(scope.ID(), scope.SensorID, scope.CampusID, scope.AccessDomain).
+		WillReturnRows(sqlmock.NewRows([]string{"assessment_id", "ip", "mac", "endpoint_id"}).AddRow("assessment", "10.0.0.1", "aa:bb:cc:dd:ee:ff", "endpoint"))
+	got, err := fetchTargets(t.Context(), db, scope)
+	if err != nil || len(got) != 1 || got[0].ip != "10.0.0.1" {
+		t.Fatalf("targets=%+v err=%v", got, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

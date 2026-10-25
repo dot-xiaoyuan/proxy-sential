@@ -72,7 +72,8 @@ func (s *Server) processSharedObservationWake(ctx context.Context) (bool, error)
  ORDER BY ip.wake_id LIMIT 1000 FOR UPDATE OF ip SKIP LOCKED
 ), matched AS (
  SELECT p.wake_id,j.job_id,p.received_at FROM picked p JOIN shared_observation_jobs j ON j.ip=p.ip
- WHERE NOT j.expired AND j.last_event_at+($3::integer*interval '1 second')>now()
+ WHERE NOT j.expired AND j.canceled_epoch='' AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')
+ AND j.last_event_at+($3::integer*interval '1 second')>now()
  AND EXISTS (SELECT 1 FROM shared_observation_mappings m WHERE m.active
   AND m.sensor_id=j.sensor_id AND m.campus_id=j.campus_id AND m.access_domain=j.access_domain
   AND m.identity_source=p.source AND m.identity_sensor_id=p.sensor_id AND m.identity_campus_id=p.campus_id
@@ -84,7 +85,8 @@ func (s *Server) processSharedObservationWake(ctx context.Context) (bool, error)
  last_dependency_at=GREATEST(j.last_dependency_at,i.received_at),
  dirty_since=CASE WHEN j.revision=j.completed_revision THEN i.received_at ELSE j.dirty_since END,
  lease_token='',lease_until=NULL
- FROM impacted i WHERE $2='async' AND j.job_id=i.job_id RETURNING j.job_id
+ FROM impacted i WHERE $2='async' AND j.job_id=i.job_id AND j.canceled_epoch=''
+ AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'') RETURNING j.job_id
 ), confirmed AS (
  UPDATE shared_observation_wakes w SET processed_at=clock_timestamp(),
  matched_jobs=(SELECT count(*) FROM matched m WHERE m.wake_id=w.wake_id),
@@ -101,7 +103,8 @@ func (s *Server) processSharedObservationWake(ctx context.Context) (bool, error)
 	}
 	jobSQL := `SELECT j.job_id FROM shared_observation_jobs j
  JOIN shared_observation_wakes w ON w.wake_id=$1
- WHERE j.job_id>$2 AND NOT j.expired AND j.last_event_at+($3::integer*interval '1 second')>now()
+ WHERE j.job_id>$2 AND NOT j.expired AND j.canceled_epoch='' AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')
+ AND j.last_event_at+($3::integer*interval '1 second')>now()
  AND (
   (w.kind='capture_scope' AND j.sensor_id=w.sensor_id AND j.campus_id=w.campus_id AND j.access_domain=w.access_domain
    AND (w.force_all OR (j.coverage_state<>'verified' AND j.last_event_at>w.previous_covered_to
@@ -161,7 +164,8 @@ func (s *Server) processSharedObservationWake(ctx context.Context) (bool, error)
  next_attempt_at=now(),last_dependency_at=GREATEST(j.last_dependency_at,w.received_at),
  dirty_since=CASE WHEN j.revision=j.completed_revision THEN w.received_at ELSE j.dirty_since END,
  lease_token='',lease_until=NULL
- FROM shared_observation_wakes w WHERE w.wake_id=$1 AND j.job_id=ANY($2::text[])`, id, ids)
+ FROM shared_observation_wakes w WHERE w.wake_id=$1 AND j.job_id=ANY($2::text[]) AND j.canceled_epoch=''
+ AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')`, id, ids)
 		if err != nil {
 			return true, err
 		}
@@ -191,13 +195,15 @@ func (s *Server) reconcileSharedObservationGaps(ctx context.Context) error {
 	// once a minute, and only for current, unresolved evidence.
 	_, err := s.operations.db.ExecContext(ctx, `WITH candidates AS (
  SELECT job_id FROM shared_observation_jobs
- WHERE NOT expired AND revision=completed_revision AND last_result='insufficient'
+ WHERE NOT expired AND canceled_epoch='' AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=shared_observation_jobs.sensor_id AND c.state='active'),'')
+ AND revision=completed_revision AND last_result='insufficient'
  AND completed_at<now()-interval '1 minute' AND next_attempt_at>now()
  AND last_event_at+($1::integer*interval '1 second')>now()
  ORDER BY completed_at,job_id LIMIT 100 FOR UPDATE SKIP LOCKED)
  UPDATE shared_observation_jobs j SET revision=j.revision+1,next_attempt_at=now(),dirty_since=now(),
  lease_token='',lease_until=NULL
- FROM candidates WHERE j.job_id=candidates.job_id`, s.sharedConfig.FreshnessSeconds)
+ FROM candidates WHERE j.job_id=candidates.job_id AND j.canceled_epoch=''
+ AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')`, s.sharedConfig.FreshnessSeconds)
 	return err
 }
 
@@ -210,7 +216,7 @@ func (s *Server) logSharedObservationMetrics(ctx context.Context) error {
  (j.revision>j.completed_revision OR (m.mode<>'async' AND j.last_event_at+($1::integer*interval '1 second')>now())) AS realtime_lane,
  (j.revision=j.completed_revision AND (m.mode='async' OR j.last_event_at+($1::integer*interval '1 second')<=now())) AS expiry_lane
  FROM shared_observation_jobs j CROSS JOIN shared_observation_wake_mode m
- WHERE m.singleton AND NOT j.expired
+ WHERE m.singleton AND NOT j.expired AND j.canceled_epoch='' AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')
  AND (j.sensor_id,j.campus_id,j.access_domain) IN
  (SELECT sensor_id,campus_id,access_domain FROM jsonb_to_recordset($2::jsonb) r(sensor_id text,campus_id text,access_domain text))
  ) SELECT

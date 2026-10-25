@@ -30,7 +30,7 @@ func (s *Server) processProxyProtocol(ctx context.Context, now time.Time) (bool,
 		return false, err
 	}
 	var sessions []policy.Session
-	if reader, ok := s.reader.(store.PolicyIdentityReader); ok {
+	if reader, ok := s.reader.(store.PolicyIdentityReader); ok && len(events) > 0 {
 		sessions, err = s.policySessions(ctx, reader, now)
 		if err != nil {
 			return false, err

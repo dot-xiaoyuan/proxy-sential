@@ -5,16 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"time"
 )
 
 func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.IdentityMapping, ip string, from, to time.Time, period int) ([]policy.Session, error) {
-	args := []any{m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, ip, from.Add(-time.Duration(3*period) * time.Second), to}
-	rows, err := s.pg.db.QueryContext(ctx, `SELECT session_data FROM policy_identity_observations
- WHERE session_data->>'source'=$1 AND session_data->>'sensor_id'=$2 AND session_data->>'campus_id'=$3 AND session_data->>'access_domain'=$4 AND session_data->>'ip'=$5
- AND observed_at BETWEEN $6 AND $7 ORDER BY observed_at,event_id LIMIT 2001`, args...)
+	rows, err := s.pg.querySharedIdentityFacts(ctx, m, ip, from.Add(-time.Duration(3*period)*time.Second), to)
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +204,28 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 		}
 	}
 	return out, nil
+}
+
+// Fresh-only policy reads must use the same active cutover as the identity
+// materializer. Compatibility reads include both generations until a source
+// has explicitly moved to its new origin.
+func (s *PostgresStore) querySharedIdentityFacts(ctx context.Context, m sharedaccess.IdentityMapping, ip string, from, to time.Time) (*sql.Rows, error) {
+	scope := IdentityScopeKey(IdentityScope{Source: m.Source, SensorID: m.IdentitySensorID, CampusID: m.IdentityCampusID, AccessDomain: m.IdentityAccessDomain})
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_POLICY_FRESH_ONLY") == "true" {
+		if err := s.assertFreshIdentityPolicyCutover(ctx); err != nil {
+			return nil, err
+		}
+		return s.db.QueryContext(ctx, `SELECT session_data FROM identity_stream_policy_facts
+ WHERE scope_key=$1 AND session_data->>'ip'=$2 AND observed_at BETWEEN $3 AND $4
+ ORDER BY observed_at,batch_sequence,ordinal,variant LIMIT 2001`, scope, ip, from, to)
+	}
+	return s.db.QueryContext(ctx, `SELECT session_data FROM (
+ SELECT observed_at,event_id,session_data FROM policy_identity_observations
+ WHERE session_data->>'source'=$1 AND session_data->>'sensor_id'=$2 AND session_data->>'campus_id'=$3 AND session_data->>'access_domain'=$4 AND session_data->>'ip'=$5
+ AND observed_at BETWEEN $6 AND $7
+ UNION ALL SELECT observed_at,event_id,session_data FROM identity_stream_policy_facts
+ WHERE scope_key=$8 AND session_data->>'ip'=$5 AND observed_at BETWEEN $6 AND $7
+ ) facts ORDER BY observed_at,event_id LIMIT 2001`, m.Source, m.IdentitySensorID, m.IdentityCampusID, m.IdentityAccessDomain, ip, from, to, scope)
 }
 
 // sharedSnapshotLogSQL reads the scope's snapshot timeline for one shared-observation window.

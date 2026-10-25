@@ -183,7 +183,7 @@ func TestConvertSoftwareLog(t *testing.T) {
 	}
 }
 
-func TestConvertSkipsMalformedAndMissingDHCPFields(t *testing.T) {
+func TestConvertPreservesMACOnlyAndRejectsMalformedDHCP(t *testing.T) {
 	input := bytes.NewBufferString("{bad json\n" +
 		"#separator \\x09\n" +
 		"#fields\tts\tclient_addr\tserver_addr\tmac\n" +
@@ -195,8 +195,15 @@ func TestConvertSkipsMalformedAndMissingDHCPFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Read != 5 || stats.Emitted != 1 || stats.Malformed != 1 || stats.Skipped != 3 {
+	if stats.Read != 5 || stats.Emitted != 2 || stats.Malformed != 1 || stats.Skipped != 2 {
 		t.Fatalf("unexpected stats: %+v", stats)
+	}
+	var firstEvent normalized.Event
+	if err := json.NewDecoder(&output).Decode(&firstEvent); err != nil {
+		t.Fatal(err)
+	}
+	if firstEvent.Subject["ip"] != nil || firstEvent.Subject["mac"] != "aa:bb:cc:dd:ee:01" {
+		t.Fatalf("MAC-only request gained a device address: %+v", firstEvent.Subject)
 	}
 }
 

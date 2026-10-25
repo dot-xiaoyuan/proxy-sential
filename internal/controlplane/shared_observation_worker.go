@@ -195,7 +195,7 @@ func (s *Server) processSharedObservation(ctx context.Context, now time.Time) (b
 
 func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time.Time, chSlots chan struct{}, lane string) (bool, error) {
 	started := time.Now()
-	var id string
+	var id, generation string
 	var scope store.SharedObservationScope
 	var revision int64
 	var previous []byte
@@ -211,7 +211,8 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	group, order := sharedObservationClaimOrder(lane)
 	claimSQL := fmt.Sprintf(`WITH candidate AS (
  SELECT j.job_id FROM shared_observation_jobs j CROSS JOIN shared_observation_wake_mode m WHERE m.singleton
- AND NOT j.expired AND j.next_attempt_at<=now()
+ AND NOT j.expired AND j.canceled_epoch='' AND j.next_attempt_at<=now()
+ AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')
  AND (j.lease_token='' OR j.lease_until<now())
  AND (($4='realtime' AND (j.revision>j.completed_revision OR (m.mode<>'async' AND j.last_event_at+($2::integer*interval '1 second')>now())))
    OR ($4='expiry' AND j.revision=j.completed_revision AND (m.mode='async' OR j.last_event_at+($2::integer*interval '1 second')<=now())))
@@ -221,7 +222,7 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
  ORDER BY %s LIMIT 1 FOR UPDATE OF j SKIP LOCKED)
  UPDATE shared_observation_jobs j SET lease_token=$3,lease_until=now()+interval '45 seconds'
  FROM candidate WHERE j.job_id=candidate.job_id
- RETURNING j.job_id,j.sensor_id,j.campus_id,j.access_domain,host(j.ip),j.revision,j.last_document,j.last_dependency_at,j.dirty_since<=j.last_dependency_at`, order)
+ RETURNING j.job_id,j.sensor_id,j.campus_id,j.access_domain,host(j.ip),j.revision,j.last_document,j.last_dependency_at,j.dirty_since<=j.last_dependency_at,j.generation_id`, order)
 	// Only a transient, random-token lease is changed here. Losing an unflushed
 	// claim on a database crash leaves the durable job pending; a replacement
 	// claim has a different token, so the old worker cannot publish or ACK it.
@@ -231,7 +232,7 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		return false, err
 	}
 	if _, err = claimTx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err == nil {
-		err = claimTx.QueryRowContext(ctx, claimSQL, scopeJSON, s.sharedConfig.FreshnessSeconds, token, group).Scan(&id, &scope.SensorID, &scope.CampusID, &scope.AccessDomain, &scope.IP, &revision, &previous, &dependencyAt, &newDependency)
+		err = claimTx.QueryRowContext(ctx, claimSQL, scopeJSON, s.sharedConfig.FreshnessSeconds, token, group).Scan(&id, &scope.SensorID, &scope.CampusID, &scope.AccessDomain, &scope.IP, &revision, &previous, &dependencyAt, &newDependency, &generation)
 	}
 	if err == nil {
 		err = claimTx.Commit()
@@ -367,6 +368,9 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	if decision.Result == "expired" {
 		item.Current = false
 	}
+	// The assessment and any case snapshot must retain the source generation
+	// that won the job lease. A later source cutover cannot relabel this proof.
+	item.GenerationID = generation
 	decision.IdentityEvidence = identityEvidence
 	doc = sharedObservationDocument{Window: w, Assessment: item, Result: result}
 	raw, err := json.Marshal(doc)
@@ -408,15 +412,15 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	// A concurrent enqueue may advance the revision meanwhile; rolling this
 	// transaction back then removes every stale observation and decision write.
 	var currentRevision int64
-	var currentToken string
-	if err = tx.QueryRowContext(ctx, `SELECT revision,lease_token FROM shared_observation_jobs WHERE job_id=$1 FOR UPDATE`, id).Scan(&currentRevision, &currentToken); err != nil {
+	var currentToken, currentGeneration, canceledEpoch string
+	if err = tx.QueryRowContext(ctx, `SELECT revision,lease_token,generation_id,canceled_epoch FROM shared_observation_jobs WHERE job_id=$1 FOR UPDATE`, id).Scan(&currentRevision, &currentToken, &currentGeneration, &canceledEpoch); err != nil {
 		_ = tx.Rollback()
 		return failure(err)
 	}
-	if currentRevision != revision || currentToken != token {
+	if currentRevision != revision || currentToken != token || currentGeneration != generation || canceledEpoch != "" {
 		sharedObservationVersionConflicts.Add(1)
 		_ = tx.Rollback()
-		if currentToken == token {
+		if currentToken == token && currentGeneration == generation && canceledEpoch == "" {
 			report, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			if _, err = s.operations.db.ExecContext(report, `UPDATE shared_observation_jobs SET lease_token='',lease_until=NULL,next_attempt_at=now() WHERE job_id=$1 AND lease_token=$2`, id, token); err != nil {

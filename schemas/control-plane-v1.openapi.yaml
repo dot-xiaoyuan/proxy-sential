@@ -109,6 +109,49 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DiscoveryHistoryPage' }
         '500': { description: Read failed; never replaced by an empty result }
+  /discovery/receipt:
+    get:
+      operationId: getStreamDiscoveryReceipt
+      description: Per-event fresh-stream projection receipt; requires identity:read. A repeated observation has its own receipt even when the device state update is coalesced.
+      parameters:
+        - { name: epoch, in: query, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: scope_id, in: query, required: true, schema: { type: string, maxLength: 256 } }
+        - { name: event_key, in: query, required: true, schema: { type: string, maxLength: 512 } }
+      responses:
+        '200':
+          description: The event's projection result and separate archive state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StreamDiscoveryReceipt' }
+        '400': { description: Invalid receipt locator }
+        '404': { description: Receipt not found }
+        '500': { description: Receipt read failed }
+  /discovery/receipts:
+    get:
+      operationId: getStreamDiscoveryReceipts
+      description: Bounded exact-key receipt lookup for fresh-stream visibility checks; requires identity:read. Missing keys are returned explicitly.
+      parameters:
+        - { name: epoch, in: query, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: scope_id, in: query, required: true, schema: { type: string, maxLength: 256 } }
+        - name: event_key
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema: { type: array, minItems: 1, maxItems: 50, items: { type: string, maxLength: 512 } }
+      responses:
+        '200':
+          description: Receipts in request order and missing event keys
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, missing_keys]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/StreamDiscoveryReceipt' } }
+                  missing_keys: { type: array, items: { type: string } }
+        '400': { description: Invalid or duplicate receipt locator }
+        '500': { description: Receipt read failed }
   /discovery/nodes:
     get:
       description: Discovery worker heartbeat; requires identity:read.
@@ -1646,6 +1689,36 @@ paths:
         '409': { description: Batch ID belongs to different content or protocol. }
         '429': { description: Inbox capacity reached. Retain messages and retry. }
         '503': { description: Durable acceptance unavailable or paused. Retain messages and retry. }
+  /integrations/identity/event-batches/{batch_id}:
+    get:
+      operationId: getDurableIdentityBatchStatus
+      description: Returns archive and projection progress independently. HTTP 202 from submission confirms durable acceptance only.
+      security:
+        - IdentityBearer: []
+      parameters:
+        - { name: batch_id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 256 } }
+      responses:
+        '200':
+          description: Current processing phases for this durable batch.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batch_id, content_sha256, durably_accepted, accepted_at, record_count, projected_count, archive_status, projection_status, failed]
+                properties:
+                  batch_id: { type: string }
+                  content_sha256: { type: string }
+                  durably_accepted: { type: boolean }
+                  accepted_at: { type: string, format: date-time }
+                  record_count: { type: integer }
+                  projected_count: { type: integer }
+                  archive_status: { type: string, enum: [pending, completed, failed] }
+                  projection_status: { type: string, enum: [pending, completed, failed] }
+                  failed: { type: boolean }
+                  error: { type: string }
+        '401': { description: Invalid integration bearer token. }
+        '404': { description: Batch ID does not exist. }
+        '503': { description: Batch status is temporarily unavailable. }
   /integrations/identity/snapshot-publication:
     get:
       operationId: identitySnapshotPublication
@@ -6378,6 +6451,28 @@ components:
               state: { type: string }
               count: { type: integer }
               updated_at: { type: string, format: date-time }
+    StreamDiscoveryReceipt:
+      type: object
+      required: [generation, epoch, scope_id, event_key, content_sha256, first_accepted_at, projected_at, result, archive_state, body_ref]
+      properties:
+        generation: { type: string, enum: [fresh] }
+        epoch: { type: string }
+        scope_id: { type: string }
+        event_key: { type: string }
+        content_sha256: { type: string }
+        first_accepted_at: { type: string, format: date-time }
+        projected_at: { type: string, format: date-time }
+        result: { type: string }
+        archive_state: { type: string, enum: [pending, confirmed, verified, failed] }
+        body_ref:
+          type: object
+          required: [class, month, scope, key, sha256]
+          properties:
+            class: { type: string }
+            month: { type: string }
+            scope: { type: string }
+            key: { type: string }
+            sha256: { type: string }
     DiscoveryHistoryPage:
       type: object
       required: [items, has_more, next_cursor]

@@ -4906,6 +4906,7 @@ pre.wrap-code {
   .device-center-page .router-mobile-list > .router-observation-card + .router-observation-card { border-top: 1px solid #e2e8f0; }
 }
 /* Discovery protocol coverage and evidence summaries. */
+.passive-discovery-panel { min-width: 0; max-width: 100%; }
 .iot-coverage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .iot-coverage-item { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; overflow-wrap: anywhere; }
 .discovery-statistics { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

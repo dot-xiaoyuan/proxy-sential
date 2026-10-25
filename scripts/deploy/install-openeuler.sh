@@ -341,6 +341,7 @@ restore_writers() {
 trap 'restore_writers; rm -rf "$stage_dir"' EXIT
 tar -C "$stage_dir" -xzf "$archive"
 (cd "$stage_dir" && sha256sum -c SHA256SUMS >/dev/null)
+python3 "$stage_dir/scripts/verify-service-expectations.py" --root "$root"
 chmod 0755 "$stage_dir/bin/proxy-sentinel" "$stage_dir/scripts/proxy-sentinelctl"
 
 had_storage=false
@@ -769,6 +770,7 @@ systemctl restart proxy-sentinel-control-plane.service
 # seconds and rolled a healthy release back. Allow up to five minutes before failing.
 for _ in $(seq 1 60); do
   if curl -fsS --max-time 3 "$health_url" >/dev/null 2>&1; then
+    python3 "$release_dir/scripts/verify-service-expectations.py" --root "$root"
     rm -rf "$unit_backup"
     trap - ERR
     log "release $version is healthy and active"

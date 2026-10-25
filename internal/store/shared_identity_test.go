@@ -34,7 +34,7 @@ func TestSharedIdentityUsesLatestCompleteBaseline(t *testing.T) {
 			m := sharedaccess.IdentityMapping{Source: "auth", IdentitySensorID: "auth", IdentityCampusID: "campus", IdentityAccessDomain: "auth"}
 			s := policy.Session{ID: "session", AccountID: "account", Status: "reconcile", IP: "192.0.2.4", Source: "auth", SensorID: "auth", CampusID: "campus", AccessDomain: "auth", StartedAt: now.Add(-time.Hour), ConfirmedAt: now.Add(-2 * time.Minute), HeartbeatSeconds: 60}
 			s.Confirmations = []time.Time{s.ConfirmedAt}
-			mock.ExpectQuery("SELECT session_data").WillReturnRows(sqlmock.NewRows([]string{"session_data"}))
+			mock.ExpectQuery("SELECT session_data FROM ").WillReturnRows(sqlmock.NewRows([]string{"session_data"}))
 			// The log lists every snapshot; only projected ones carry membership. An older unprojected
 			// snapshot was superseded and is skipped, so an unprojected baseline leaves the window uncovered.
 			headers := sqlmock.NewRows([]string{"snapshot_id", "observed_at", "projected"})

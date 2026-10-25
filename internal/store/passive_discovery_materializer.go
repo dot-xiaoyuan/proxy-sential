@@ -633,12 +633,36 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED") == "true" {
 		return
 	}
+	observer := discovery.NewPipelineObserver()
+	ctx = discovery.WithPipelineObserver(ctx, observer)
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for {
+			probe, stop := context.WithTimeout(ctx, 2*time.Second)
+			err := observer.Flush(probe, s.pg.db, sensorID+"/dhcp", "dhcp", "passive")
+			stop()
+			if err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "passive discovery heartbeat:", discovery.WorkErrorCode(err))
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+	defer func() { <-heartbeatDone }()
 	owner := fmt.Sprintf("passive-discovery-%d", os.Getpid())
 	for ctx.Err() == nil {
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		scope, err := parsePassiveDiscoveryScope(os.Getenv("PROXY_SENTINEL_DISCOVERY_CIDRS"))
 		claimed := false
 		batchEvents := 0
+		processedEvents := 0
+		stageStarted := time.Now()
 		if err == nil {
 			var cursor passiveDiscoveryCursor
 			cursor, claimed, err = s.claimPassiveDiscovery(workCtx, sensorID, owner)
@@ -646,6 +670,8 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 				var events []normalized.Event
 				var next passiveDiscoveryCursor
 				events, next, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, passiveDiscoveryBatchSize)
+				discovery.ObserveStage(workCtx, "dhcp_read", stageStarted, err)
+				stageStarted = time.Now()
 				batchEvents = len(events)
 				stats := passiveDiscoveryBatchStats{Protocols: map[string]int{}, Reasons: map[string]int{}}
 				if err == nil && len(events) > 0 {
@@ -654,15 +680,25 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 				if err == nil {
 					cursor = next
 				}
-				if finishErr := s.finishPassiveDiscovery(context.WithoutCancel(workCtx), sensorID, cursor, stats, err); err == nil {
+				finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(workCtx), 2*time.Second)
+				finishErr := s.finishPassiveDiscovery(finishCtx, sensorID, cursor, stats, err)
+				finishCancel()
+				if err == nil {
 					err = finishErr
 				}
+				if err == nil {
+					processedEvents = stats.Processed
+				}
+				discovery.ObserveStage(workCtx, "dhcp_publish", stageStarted, err)
 			}
 		}
+		discovery.RecordPipelineResult(workCtx, processedEvents, err, "dhcp")
 		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "passive discovery materialize failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "passive discovery materialize failed: %s\n", discovery.WorkErrorCode(err))
 			state, _ := json.Marshal(map[string]any{"status": "error", "error": err.Error(), "sensor_id": sensorID})
-			_, _ = s.pg.db.ExecContext(context.WithoutCancel(workCtx), `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('passive-discovery',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
+			reportCtx, reportCancel := context.WithTimeout(context.WithoutCancel(workCtx), 2*time.Second)
+			_, _ = s.pg.db.ExecContext(reportCtx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('passive-discovery',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
+			reportCancel()
 		}
 		cancel()
 		delay := 5 * time.Second

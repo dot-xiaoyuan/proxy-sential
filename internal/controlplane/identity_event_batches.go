@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -121,9 +122,79 @@ func (s *Server) handleDurableIdentityBatch(w http.ResponseWriter, r *http.Reque
 		if errors.Is(err, store.ErrIdentityInboxFull) {
 			status, code = http.StatusTooManyRequests, "identity_inbox_full"
 		}
+		if errors.Is(err, store.ErrIdentityCutoverNotActive) {
+			status, code = http.StatusServiceUnavailable, "identity_cutover_not_active"
+		}
 		w.Header().Set("Retry-After", "2")
 		writeError(w, status, code, "batch was not acknowledged; retain and retry the same batch")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, receipt)
+}
+
+// GET is a bounded, per-batch receipt. Durable HTTP 202 acknowledges only
+// acceptance; these two phases must never be inferred from that response.
+func (s *Server) handleDurableIdentityBatchStatus(w http.ResponseWriter, r *http.Request, id string) {
+	if s.identityIngest == nil || !s.identityIngest.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "integration_auth_failed", "valid integration bearer token is required")
+		return
+	}
+	if id == "" || len(id) > 256 || strings.Contains(id, "/") {
+		writeError(w, http.StatusBadRequest, "bad_identity_batch_id", "identity batch id is invalid")
+		return
+	}
+	if s.identityIngest.db == nil {
+		writeError(w, http.StatusServiceUnavailable, "identity_inbox_unavailable", "durable batch status requires PostgreSQL")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	var batchID, status, exportState, contentHash, errorMessage, exportError, payloadFormat string
+	var accepted time.Time
+	var count, projected, derivedPending, derivedFailed int
+	err := s.identityIngest.db.QueryRowContext(ctx, `SELECT b.batch_id,b.status,b.export_state,COALESCE(b.content_sha256,''),COALESCE(b.accepted_at,b.received_at),b.records_emitted,b.processed_offset,COALESCE(b.error_message,''),COALESCE(b.export_error,''),b.payload_format,COALESCE((SELECT sum(f.record_count) FROM identity_ingest_fragments f WHERE f.batch_id=b.batch_id AND f.derived_state<>'completed'),0),COALESCE((SELECT count(*) FROM identity_ingest_fragments f WHERE f.batch_id=b.batch_id AND f.derived_state='failed'),0) FROM identity_ingest_batches b WHERE b.batch_id=$1 AND b.protocol_version=2`, id).Scan(&batchID, &status, &exportState, &contentHash, &accepted, &count, &projected, &errorMessage, &exportError, &payloadFormat, &derivedPending, &derivedFailed)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "identity_batch_not_found", "identity batch not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "identity_batch_status_unavailable", "batch status is temporarily unavailable")
+		return
+	}
+	archive, projection := identityBatchPhases(status, exportState, projected, count)
+	if payloadFormat == "fragments" && derivedPending > 0 {
+		projection = "pending"
+		if derivedFailed > 0 {
+			projection = "failed"
+		}
+	}
+	if errorMessage == "" {
+		errorMessage = exportError
+	}
+	if errorMessage == "" && derivedFailed > 0 {
+		errorMessage = "identity_derived_failed"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"batch_id": batchID, "content_sha256": contentHash,
+		"durably_accepted": true, "accepted_at": accepted.UTC().Format(time.RFC3339Nano),
+		"record_count": count, "projected_count": projected,
+		"archive_status": archive, "projection_status": projection,
+		"failed": archive == "failed" || projection == "failed",
+		"error":  errorMessage,
+	})
+}
+
+func identityBatchPhases(status, exportState string, projected, count int) (archive, projection string) {
+	archive, projection = "pending", "pending"
+	if exportState == "completed" {
+		archive = "completed"
+	} else if exportState == "failed" {
+		archive = "failed"
+	}
+	if status == "completed" && projected >= count {
+		projection = "completed"
+	} else if status == "failed" {
+		projection = "failed"
+	}
+	return
 }

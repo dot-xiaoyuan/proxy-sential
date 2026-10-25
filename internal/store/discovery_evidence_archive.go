@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/normalized"
 	"time"
 )
@@ -43,7 +44,7 @@ func (s *ClickHouseStore) WriteDiscoveryEvidenceArchive(ctx context.Context, bat
 		found := map[int]string{}
 		for _, row := range rows {
 			if row.Ordinal < 0 || row.Ordinal >= len(events) || row.Hash != hashes[row.Ordinal] {
-				return nil, fmt.Errorf("archive batch content conflict")
+				return nil, discovery.ErrDiscoveryContentConflict
 			}
 			found[row.Ordinal] = row.Hash
 		}

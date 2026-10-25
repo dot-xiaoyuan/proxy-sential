@@ -26,10 +26,11 @@ type Store interface {
 }
 
 type Options struct {
-	SharedAccess bool
-	SensorID     string
-	Window       time.Duration
-	Limit        int
+	SharedAccess    bool
+	RouterDedicated bool
+	SensorID        string
+	Window          time.Duration
+	Limit           int
 }
 
 type Result struct {
@@ -98,7 +99,17 @@ func RunOnce(ctx context.Context, backend Store, opts Options) (Result, error) {
 		return result, fmt.Errorf("score risks: %w", err)
 	}
 	result.Snapshots = len(riskResult.Snapshots)
-	if writer, ok := backend.(store.RouterObservationWriter); ok {
+	if opts.RouterDedicated {
+		owner, ok := backend.(interface {
+			DedicatedRouterObservationsHealthy(context.Context, string, time.Time) error
+		})
+		if !ok {
+			return result, fmt.Errorf("dedicated router observation owner is unavailable")
+		}
+		if err := owner.DedicatedRouterObservationsHealthy(ctx, opts.SensorID, result.StartedAt); err != nil {
+			return result, fmt.Errorf("dedicated router observation owner is unhealthy: %w", err)
+		}
+	} else if writer, ok := backend.(store.RouterObservationWriter); ok {
 		routerOptions := evidence.RouterOptions{AsOf: result.StartedAt, ShadowMode: true}
 		if resolver, available := backend.(interface {
 			ResolveDeviceAt(context.Context, store.DomainObservation) (store.IdentityAttribution, bool, error)

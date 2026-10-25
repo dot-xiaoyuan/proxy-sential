@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -24,8 +25,11 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	_, ready := s.healthSnapshot(ctx)
-	status, err := s.reader.IngestStatus(ctx)
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	if os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true" {
+		s.discoveryPipelineMetrics(ctx, w)
+	}
+	status, err := s.reader.IngestStatus(ctx)
 	readyValue := 0
 	if ready {
 		readyValue = 1
@@ -167,6 +171,9 @@ func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth
 		components["authentication_oidc"] = componentHealth{Status: "disabled"}
 	}
 	if s.operations != nil && s.operations.db != nil {
+		if os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true" {
+			launch("discovery_pipeline", false, func() componentHealth { return s.discoveryPipelineHealth(ctx) })
+		}
 		launch("inventory_projection", false, func() componentHealth { return inventoryProjectionHealth(ctx, s.operations.db) })
 	}
 	if s.identityIngest != nil && s.identityIngest.db != nil {

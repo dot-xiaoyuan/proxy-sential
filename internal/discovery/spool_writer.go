@@ -9,6 +9,13 @@ import (
 // when disk falls behind, one fsync covers multiple queued capture windows.
 // The combined file stays within AcceptDiscoveryBatch's event and byte limits.
 func drainSpoolQueue(queue <-chan []byte, persist func([]byte) error) error {
+	return drainSpoolQueueBounded(queue, persist, 2000, 8<<20)
+}
+
+func drainSpoolQueueBounded(queue <-chan []byte, persist func([]byte) error, maxEvents, maxBytes int) error {
+	if maxEvents <= 0 || maxEvents > 2000 || maxBytes <= 0 || maxBytes > 8<<20 {
+		return fmt.Errorf("invalid capture batch budget")
+	}
 	var held []byte
 	closed := false
 	for {
@@ -26,12 +33,12 @@ func drainSpoolQueue(queue <-chan []byte, persist func([]byte) error) error {
 			return fmt.Errorf("invalid capture batch: %w", err)
 		}
 		count := len(records)
-		if count == 0 || count > 2000 || len(raw) > 8<<20 {
+		if count == 0 || count > maxEvents || len(raw) > maxBytes {
 			return fmt.Errorf("capture batch exceeds durable budget")
 		}
 		combined := append([]byte(nil), raw...)
 	gather:
-		for count < 2000 {
+		for count < maxEvents {
 			select {
 			case next, ok := <-queue:
 				if !ok {
@@ -42,7 +49,7 @@ func drainSpoolQueue(queue <-chan []byte, persist func([]byte) error) error {
 				if err := json.Unmarshal(next, &entries); err != nil {
 					return fmt.Errorf("invalid capture batch: %w", err)
 				}
-				if count+len(entries) > 2000 || len(combined)+len(next)-1 > 8<<20 {
+				if count+len(entries) > maxEvents || len(combined)+len(next)-1 > maxBytes {
 					held = next
 					break gather
 				}

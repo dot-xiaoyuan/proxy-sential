@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/policy"
@@ -163,7 +165,17 @@ func (s *DBStore) ListPolicySessionsForScope(ctx context.Context, at time.Time, 
 	return s.pg.ListPolicySessionsForScope(ctx, at, campus, domain)
 }
 func (s *PostgresStore) ListPolicySessions(ctx context.Context, at time.Time) ([]policy.Session, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT session_data FROM policy_identity_observations WHERE observed_at >= $1 AND observed_at <= $2 ORDER BY observed_at,event_id`, at.Add(-7*24*time.Hour), at)
+	fresh := os.Getenv("PROXY_SENTINEL_IDENTITY_POLICY_FRESH_ONLY") == "true"
+	if fresh {
+		if err := s.assertFreshIdentityPolicyCutover(ctx); err != nil {
+			return nil, err
+		}
+	}
+	query := `SELECT session_data FROM (SELECT observed_at,event_id,session_data FROM policy_identity_observations WHERE observed_at >= $1 AND observed_at <= $2 UNION ALL SELECT observed_at,event_id,session_data FROM identity_stream_policy_facts WHERE observed_at >= $1 AND observed_at <= $2) facts ORDER BY observed_at,event_id`
+	if fresh {
+		query = `SELECT session_data FROM identity_stream_policy_facts WHERE observed_at >= $1 AND observed_at <= $2 ORDER BY observed_at,batch_sequence,ordinal,variant`
+	}
+	rows, err := s.db.QueryContext(ctx, query, at.Add(-7*24*time.Hour), at)
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +196,9 @@ func (s *PostgresStore) ListPolicySessions(ctx context.Context, at time.Time) ([
 		return nil, err
 	}
 	rows.Close()
+	if fresh {
+		return policySessionsFromProjection(out, nil, nil, at), nil
+	}
 	log, members, err := projectionPolicyInputs(ctx, s.db, at, "", "")
 	if err != nil {
 		return nil, err
@@ -191,7 +206,17 @@ func (s *PostgresStore) ListPolicySessions(ctx context.Context, at time.Time) ([
 	return policySessionsFromProjection(out, log, members, at), nil
 }
 func (s *PostgresStore) ListPolicySessionsForScope(ctx context.Context, at time.Time, campus, domain string) ([]policy.Session, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT session_data FROM policy_identity_observations WHERE observed_at >= $1 AND observed_at <= $2 AND session_data->>'campus_id'=$3 AND session_data->>'access_domain'=$4 ORDER BY observed_at,event_id`, at.Add(-7*24*time.Hour), at, campus, domain)
+	fresh := os.Getenv("PROXY_SENTINEL_IDENTITY_POLICY_FRESH_ONLY") == "true"
+	if fresh {
+		if err := s.assertFreshIdentityPolicyCutover(ctx); err != nil {
+			return nil, err
+		}
+	}
+	query := `SELECT session_data FROM (SELECT observed_at,event_id,session_data FROM policy_identity_observations WHERE observed_at >= $1 AND observed_at <= $2 AND session_data->>'campus_id'=$3 AND session_data->>'access_domain'=$4 UNION ALL SELECT observed_at,event_id,session_data FROM identity_stream_policy_facts WHERE observed_at >= $1 AND observed_at <= $2 AND campus_id=$3 AND access_domain=$4) facts ORDER BY observed_at,event_id`
+	if fresh {
+		query = `SELECT session_data FROM identity_stream_policy_facts WHERE observed_at >= $1 AND observed_at <= $2 AND campus_id=$3 AND access_domain=$4 ORDER BY observed_at,batch_sequence,ordinal,variant`
+	}
+	rows, err := s.db.QueryContext(ctx, query, at.Add(-7*24*time.Hour), at, campus, domain)
 	if err != nil {
 		return nil, err
 	}
@@ -211,11 +236,26 @@ func (s *PostgresStore) ListPolicySessionsForScope(ctx context.Context, at time.
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
+	if fresh {
+		return policySessionsFromProjection(out, nil, nil, at), nil
+	}
 	log, members, err := projectionPolicyInputs(ctx, s.db, at, campus, domain)
 	if err != nil {
 		return nil, err
 	}
 	return policySessionsFromProjection(out, log, members, at), nil
+}
+
+func (s *PostgresStore) assertFreshIdentityPolicyCutover(ctx context.Context) error {
+	var active bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stream_source_cutovers WHERE source_kind='identity-http' AND state='active')`).Scan(&active)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return errors.New("fresh identity policy reads require an active source cutover")
+	}
+	return nil
 }
 
 // writePolicyIdentityEvents writes the batch's policy observations in one statement. The

@@ -16,6 +16,8 @@ class UpgradeRollbackReplay(unittest.TestCase):
                 p=root/'releases'/name;(p/'bin').mkdir(parents=True);(p/'frontend/dist/assets').mkdir(parents=True)
                 (p/'bin/proxy-sentinel').write_text('#!/bin/sh\nexit 0\n');(p/'bin/proxy-sentinel').chmod(0o755)
                 (p/'frontend/dist/index.html').write_text('<html>'+graph+'</html>');(p/'frontend/dist/assets'/('graph-'+graph+'.js')).write_text(graph)
+                (p/'scripts').mkdir(exist_ok=True)
+                shutil.copy2(Path(__file__).with_name('verify-service-expectations.py'),p/'scripts/verify-service-expectations.py')
                 (p/'release-manifest.json').write_text(json.dumps({'version':name,'os':'linux','arch':'amd64'}))
                 (p/'SHA256SUMS').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+str(f.relative_to(p))+'\n' for f in sorted(p.rglob('*')) if f.is_file()))
                 return p

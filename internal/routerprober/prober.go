@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -54,13 +55,20 @@ var (
 
 // Config holds everything the prober needs.
 type Config struct {
-	PostgresDSN string
-	SensorID    string
-	OutputPath  string
+	PostgresDSN  string
+	SensorID     string
+	OutputPath   string
+	CaptureScope *normalized.CaptureScope
+	Interface    string
 }
 
 // Run probes router IPs until ctx is cancelled.
 func Run(ctx context.Context, cfg Config) error {
+	if cfg.CaptureScope == nil || cfg.CaptureScope.SensorID != cfg.SensorID || cfg.CaptureScope.CollectorInstanceID == "" ||
+		cfg.Interface == "" || (cfg.CaptureScope.InterfaceName != "" && cfg.CaptureScope.InterfaceName != cfg.Interface) ||
+		time.Now().Before(cfg.CaptureScope.ValidFrom) || !time.Now().Before(cfg.CaptureScope.ValidUntil) {
+		return fmt.Errorf("router prober: valid registered capture scope and matching interface required")
+	}
 	db, err := sql.Open("pgx", cfg.PostgresDSN)
 	if err != nil {
 		return fmt.Errorf("router prober: open db: %w", err)
@@ -74,18 +82,19 @@ func Run(ctx context.Context, cfg Config) error {
 	defer out.Close()
 
 	enc := json.NewEncoder(out)
+	var encodeMu sync.Mutex
 
 	ticker := time.NewTicker(probeInterval)
 	defer ticker.Stop()
 
 	// probe once at startup, then on each tick
-	runRound(ctx, db, cfg.SensorID, enc)
+	runRound(ctx, db, cfg, enc, &encodeMu)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			runRound(ctx, db, cfg.SensorID, enc)
+			runRound(ctx, db, cfg, enc, &encodeMu)
 		}
 	}
 }
@@ -97,8 +106,8 @@ type routerTarget struct {
 	endpointID   string
 }
 
-func runRound(ctx context.Context, db *sql.DB, sensorID string, enc *json.Encoder) {
-	targets, err := fetchTargets(ctx, db)
+func runRound(ctx context.Context, db *sql.DB, cfg Config, enc *json.Encoder, encodeMu *sync.Mutex) {
+	targets, err := fetchTargets(ctx, db, cfg.CaptureScope)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "router prober: fetch targets: %v\n", err)
 		return
@@ -117,7 +126,7 @@ func runRound(ctx context.Context, db *sql.DB, sensorID string, enc *json.Encode
 		target := t
 		go func() {
 			defer func() { <-sem }()
-			probeTarget(ctx, target, sensorID, enc)
+			probeTarget(ctx, target, cfg, enc, encodeMu)
 		}()
 	}
 	// drain semaphore
@@ -126,19 +135,29 @@ func runRound(ctx context.Context, db *sql.DB, sensorID string, enc *json.Encode
 	}
 }
 
-func fetchTargets(ctx context.Context, db *sql.DB) ([]routerTarget, error) {
+func fetchTargets(ctx context.Context, db *sql.DB, scope *normalized.CaptureScope) ([]routerTarget, error) {
+	if scope == nil {
+		return nil, fmt.Errorf("router prober: capture scope required for targets")
+	}
 	// Select distinct IPs from likely/confirmed assessments that have a non-private or
-	// RFC-1918 IP (management interfaces can be on either). Limit per round so a large
-	// candidate pool doesn't dominate a single probe cycle.
+	// RFC-1918 IP (management interfaces can be on either). A current, explicit
+	// address binding in this registered scope is required before probing and
+	// attributing the response to that scope.
 	rows, err := db.QueryContext(ctx, `
 SELECT DISTINCT ON (ip)
-  assessment_id, ip::text, coalesce(mac,''), coalesce(endpoint_id,'')
-FROM router_assessments
-WHERE status IN ('likely','confirmed')
-  AND ip IS NOT NULL
-  AND expires_at > now()
-ORDER BY ip, last_seen DESC
-LIMIT 500`)
+  r.assessment_id, r.ip::text, coalesce(r.mac,''), coalesce(r.endpoint_id,'')
+FROM router_assessments r
+WHERE r.status IN ('likely','confirmed') AND r.role='router'
+  AND r.ip IS NOT NULL AND r.expires_at > now()
+  AND EXISTS (
+    SELECT 1 FROM stream_discovery_facts f
+    JOIN stream_source_cutovers c ON c.epoch=f.epoch AND c.state='active'
+    WHERE f.scope_id=$1 AND f.sensor_id=$2 AND f.site=$3 AND f.domain=$4
+      AND f.ip=host(r.ip) AND (r.mac='' OR f.mac='' OR lower(f.mac)=lower(r.mac))
+      AND f.address_binding AND NOT f.withdrawn AND f.valid_until>now()
+  )
+ORDER BY ip, r.last_seen DESC
+LIMIT 500`, scope.ID(), scope.SensorID, scope.CampusID, scope.AccessDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +186,7 @@ type probeResult struct {
 	location   string
 }
 
-func probeTarget(ctx context.Context, t routerTarget, sensorID string, enc *json.Encoder) {
+func probeTarget(ctx context.Context, t routerTarget, cfg Config, enc *json.Encoder, encodeMu *sync.Mutex) {
 	var results []probeResult
 	for _, p := range managementPorts {
 		r := tryPort(ctx, t.ip, p.port, p.tls)
@@ -195,10 +214,32 @@ func probeTarget(ctx context.Context, t routerTarget, sensorID string, enc *json
 		}
 	}
 
-	event := buildEvent(t, sensorID, servers, titles, locations)
+	event, err := scopeRouterProbeEvent(buildEvent(t, cfg.SensorID, servers, titles, locations), cfg.CaptureScope, cfg.Interface)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "router prober: scope event for %s: %v\n", t.ip, err)
+		return
+	}
+	encodeMu.Lock()
+	defer encodeMu.Unlock()
 	if err := enc.Encode(event); err != nil {
 		fmt.Fprintf(os.Stderr, "router prober: encode event for %s: %v\n", t.ip, err)
 	}
+}
+
+func scopeRouterProbeEvent(event normalized.Event, scope *normalized.CaptureScope, interfaceName string) (normalized.Event, error) {
+	if scope == nil || interfaceName == "" || (scope.InterfaceName != "" && scope.InterfaceName != interfaceName) {
+		return event, fmt.Errorf("missing registered router probe scope or interface")
+	}
+	if event.Observer == nil {
+		event.Observer = map[string]any{}
+	}
+	event.Observer["collector_instance_id"] = scope.CollectorInstanceID
+	event.Observer["interface"] = interfaceName
+	event = scope.Apply(event)
+	if issue, _ := event.Observer["capture_scope_issue"].(string); issue != "" {
+		return event, fmt.Errorf("router probe capture scope: %s", issue)
+	}
+	return event, nil
 }
 
 func tryPort(ctx context.Context, ip string, port int, isTLS bool) *probeResult {
@@ -273,6 +314,7 @@ func buildEvent(t routerTarget, sensorID string, servers, titles, locations map[
 	payload := map[string]any{
 		"origin":        "router-prober",
 		"assessment_id": t.assessmentID,
+		"is_response":   true,
 	}
 	if len(serverList) > 0 {
 		payload["server"] = strings.Join(serverList, " ")

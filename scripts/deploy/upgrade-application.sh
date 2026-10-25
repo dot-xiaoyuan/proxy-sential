@@ -36,6 +36,7 @@ m=json.load(open(sys.argv[1]))
 assert m['version']==sys.argv[2] and m['os']=='linux' and m['arch']=='amd64'
 PY
 [[ -x "$stage/bin/proxy-sentinel" ]]
+python3 "$stage/scripts/verify-service-expectations.py" --root "$root"
 python3 "$(dirname "$0")/verify-applied-migrations.py" "$stage"
 # Durable release directory is the rollback copy. Business DBs are untouched.
 units=()
@@ -89,6 +90,7 @@ ln -sfn "$release" "$root/current.next"
 mv -Tf "$root/current.next" "$root/current"
 restart_workers
 ready
+python3 "$release/scripts/verify-service-expectations.py" --root "$root"
 ln -sfn "$old_target" "$root/previous.next"
 mv -Tf "$root/previous.next" "$root/previous"
 trap - ERR

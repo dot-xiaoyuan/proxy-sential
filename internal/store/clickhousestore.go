@@ -122,6 +122,13 @@ func (s *ClickHouseStore) WriteNormalizedEvents(ctx context.Context, events []no
 	if len(events) == 0 {
 		return nil
 	}
+	return s.insertNormalizedEvents(ctx, events)
+}
+
+func (s *ClickHouseStore) insertNormalizedEvents(ctx context.Context, events []normalized.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
 	var body bytes.Buffer
 	body.WriteString(`INSERT INTO normalized_events FORMAT JSONEachRow`)
 	body.WriteByte('\n')

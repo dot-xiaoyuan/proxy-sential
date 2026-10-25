@@ -30,7 +30,7 @@ func AdaptDiscoveryEvent(event normalized.Event) (normalized.Event, error) {
 	}
 	kind := e.SourceEventType
 	switch kind {
-	case "dhcp", "dhcpv6", "arp", "ndp", "nbns", "llmnr", "lldp", "cdp", "ssdp", "ws_discovery", "snmp", "dns_sd", "mqtt", "coap", "bacnet", "ipp", "rtsp", "http", "tls":
+	case "dhcp", "dhcpv6", "arp", "ndp", "nbns", "llmnr", "lldp", "cdp", "ssdp", "ws_discovery", "snmp", "dns_sd", "mqtt", "coap", "bacnet", "ipp", "rtsp", "http", "tls", "ieee1905_client_association":
 	default:
 		return e, fmt.Errorf("not a discovery protocol")
 	}
@@ -41,6 +41,31 @@ func AdaptDiscoveryEvent(event normalized.Event) (normalized.Event, error) {
 	e.Subject["domain"] = firstText(str(e.Subject, "domain"), firstText(str(e.Payload, "access_domain"), str(e.Observer, "interface")))
 	if _, ok := e.Payload["ttl"]; !ok {
 		e.Payload["ttl"] = 600
+	}
+	if kind == "ssdp" && e.Source == "packet-sidecar" && e.Payload["is_response"] == nil {
+		// The sidecar records SSDP advertisements without an is_response field.
+		// Require the advertised unique service name as well as NT/ST so a
+		// search request cannot become device evidence.
+		if str(e.Payload, "usn") != "" && (str(e.Payload, "nt") != "" || str(e.Payload, "st") != "") {
+			e.Payload["is_response"] = true
+			e.Payload["device_type"] = firstText(str(e.Payload, "device_type"), firstText(str(e.Payload, "nt"), str(e.Payload, "st")))
+		}
+	}
+	if kind == "ieee1905_client_association" {
+		client := str(e.Payload, "client_mac")
+		if client == "" {
+			return e, fmt.Errorf("IEEE1905 association lacks client MAC")
+		}
+		switch strings.ToLower(str(e.Payload, "association_state")) {
+		case "joined":
+			e.Payload["ttl"] = 24 * 3600
+		case "left":
+			e.Payload["ttl"] = 0
+			e.Payload["withdrawn"] = true
+		default:
+			return e, fmt.Errorf("IEEE1905 association has unsupported state")
+		}
+		e.Subject["mac"] = client
 	}
 	if kind == "dhcp" || kind == "dhcpv6" {
 		if e.Payload["discovery_scope_conflict"] == true {

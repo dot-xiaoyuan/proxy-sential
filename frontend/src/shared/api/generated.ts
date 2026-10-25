@@ -191,6 +191,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Per-event fresh-stream projection receipt; requires identity:read. A repeated observation has its own receipt even when the device state update is coalesced. */
+        get: operations["getStreamDiscoveryReceipt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/receipts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Bounded exact-key receipt lookup for fresh-stream visibility checks; requires identity:read. Missing keys are returned explicitly. */
+        get: operations["getStreamDiscoveryReceipts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/nodes": {
         parameters: {
             query?: never;
@@ -1962,6 +1996,23 @@ export interface paths {
         put?: never;
         /** @description Version 2 durable inbox. A receipt acknowledges PostgreSQL commit only; identity processing and raw export are independent. Retry an identical request with the same key. Ordinary 2xx responses are not acknowledgements. */
         post: operations["acceptDurableIdentityBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/integrations/identity/event-batches/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Returns archive and projection progress independently. HTTP 202 from submission confirms durable acceptance only. */
+        get: operations["getDurableIdentityBatchStatus"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6230,6 +6281,28 @@ export interface components {
                 updated_at: string;
             }[];
         };
+        StreamDiscoveryReceipt: {
+            /** @enum {string} */
+            generation: "fresh";
+            epoch: string;
+            scope_id: string;
+            event_key: string;
+            content_sha256: string;
+            /** Format: date-time */
+            first_accepted_at: string;
+            /** Format: date-time */
+            projected_at: string;
+            result: string;
+            /** @enum {string} */
+            archive_state: "pending" | "confirmed" | "verified" | "failed";
+            body_ref: {
+                class: string;
+                month: string;
+                scope: string;
+                key: string;
+                sha256: string;
+            };
+        };
         DiscoveryHistoryPage: {
             has_more: boolean;
             next_cursor: string;
@@ -7476,6 +7549,92 @@ export interface operations {
                 };
             };
             /** @description Read failed; never replaced by an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getStreamDiscoveryReceipt: {
+        parameters: {
+            query: {
+                epoch: string;
+                scope_id: string;
+                event_key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event's projection result and separate archive state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamDiscoveryReceipt"];
+                };
+            };
+            /** @description Invalid receipt locator */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Receipt not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Receipt read failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getStreamDiscoveryReceipts: {
+        parameters: {
+            query: {
+                epoch: string;
+                scope_id: string;
+                event_key: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Receipts in request order and missing event keys */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["StreamDiscoveryReceipt"][];
+                        missing_keys: string[];
+                    };
+                };
+            };
+            /** @description Invalid or duplicate receipt locator */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Receipt read failed */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -10550,6 +10709,63 @@ export interface operations {
                 content?: never;
             };
             /** @description Durable acceptance unavailable or paused. Retain messages and retry. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDurableIdentityBatchStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current processing phases for this durable batch. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        batch_id: string;
+                        content_sha256: string;
+                        durably_accepted: boolean;
+                        /** Format: date-time */
+                        accepted_at: string;
+                        record_count: number;
+                        projected_count: number;
+                        /** @enum {string} */
+                        archive_status: "pending" | "completed" | "failed";
+                        /** @enum {string} */
+                        projection_status: "pending" | "completed" | "failed";
+                        failed: boolean;
+                        error?: string;
+                    };
+                };
+            };
+            /** @description Invalid integration bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Batch ID does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Batch status is temporarily unavailable. */
             503: {
                 headers: {
                     [name: string]: unknown;

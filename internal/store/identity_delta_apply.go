@@ -241,7 +241,9 @@ func (s *PostgresStore) applyIdentityDelta(ctx context.Context, r identityDeltaR
 	_, err = tx.ExecContext(ctx, `INSERT INTO shared_observation_wakes(kind,producer_mode,source,sensor_id,campus_id,access_domain,ip)
  SELECT 'snapshot_ip',mode,$1,$2,$3,$4,a.ip::inet FROM shared_observation_wake_mode CROSS JOIN unnest($5::text[]) a(ip) WHERE singleton AND mode IN ('shadow','async') AND EXISTS(
  SELECT 1 FROM shared_observation_jobs j JOIN shared_observation_mappings m ON m.active AND m.sensor_id=j.sensor_id AND m.campus_id=j.campus_id AND m.access_domain=j.access_domain
- WHERE j.ip=a.ip::inet AND NOT j.expired AND j.last_event_at>=now()-interval '1 hour'
+ WHERE j.ip=a.ip::inet AND NOT j.expired AND j.canceled_epoch=''
+ AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')
+ AND j.last_event_at>=now()-interval '1 hour'
  AND m.identity_source=$1 AND m.identity_sensor_id=$2 AND m.identity_campus_id=$3 AND m.identity_access_domain=$4 AND m.valid_from<=j.last_event_at AND m.valid_until>j.last_event_at)`, args...)
 	if err != nil {
 		return err

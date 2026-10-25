@@ -18,7 +18,7 @@ func sharedMapping() sharedaccess.IdentityMapping {
 }
 
 func expectSharedIdentityReads(mock sqlmock.Sqlmock, from, to time.Time, log *sqlmock.Rows, members *sqlmock.Rows) {
-	mock.ExpectQuery(`SELECT session_data FROM policy_identity_observations`).WillReturnRows(sqlmock.NewRows([]string{"session_data"}))
+	mock.ExpectQuery(`SELECT session_data FROM \(`).WillReturnRows(sqlmock.NewRows([]string{"session_data"}))
 	mock.ExpectQuery(regexp.QuoteMeta(sharedSnapshotLogSQL)).
 		WithArgs(reconcileScope.Source, reconcileScope.SensorID, reconcileScope.CampusID, reconcileScope.AccessDomain, from.Add(-90*time.Minute), to).
 		WillReturnRows(log)

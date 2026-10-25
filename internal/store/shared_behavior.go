@@ -126,7 +126,8 @@ func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBeha
 	// before applying user filters. Raw windows remain queryable through the
 	// detail history and are never deleted by this view.
 	latest := `SELECT DISTINCT ON(sensor_id,campus_id,access_domain,ip) *
- FROM shared_behavior_observations WHERE current=true AND rule_version='` + sharedaccess.BehaviorRuleVersion + `' AND expires_at>now()
+ FROM shared_behavior_observations o WHERE current=true AND rule_version='` + sharedaccess.BehaviorRuleVersion + `' AND expires_at>now()
+ AND o.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=o.sensor_id AND c.state='active'),'')
  ORDER BY sensor_id,campus_id,access_domain,ip,last_seen DESC,observation_id DESC`
 	if query.View == "history" {
 		latest = `SELECT DISTINCT ON(sensor_id,campus_id,access_domain,ip,endpoint_id) * FROM shared_behavior_observations ` + where + ` ORDER BY sensor_id,campus_id,access_domain,ip,endpoint_id,last_seen DESC,observation_id DESC`
@@ -165,7 +166,9 @@ func (s *PostgresStore) GetSharedBehavior(ctx context.Context, id string) (Share
 	var sensorID, campusID, accessDomain, ip string
 	var current bool
 	var windowStart, windowEnd, expires time.Time
-	if err := s.db.QueryRowContext(ctx, `SELECT observation,sensor_id,campus_id,access_domain,host(ip),current,window_start,window_end,expires_at FROM shared_behavior_observations WHERE observation_id=$1`, id).Scan(&raw, &sensorID, &campusID, &accessDomain, &ip, &current, &windowStart, &windowEnd, &expires); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT observation,sensor_id,campus_id,access_domain,host(ip),
+ current AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=o.sensor_id AND c.state='active'),''),
+ window_start,window_end,expires_at FROM shared_behavior_observations o WHERE observation_id=$1`, id).Scan(&raw, &sensorID, &campusID, &accessDomain, &ip, &current, &windowStart, &windowEnd, &expires); err != nil {
 		if err == sql.ErrNoRows {
 			return SharedBehaviorDetail{}, false, nil
 		}

@@ -122,20 +122,20 @@ func (s *Server) materializeSharedReviews() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	now := time.Now().UTC()
-	sessions, err := s.policySessions(ctx, reader, now)
+	windows, err := s.sharedWindows(ctx, now)
 	if err != nil {
 		return
 	}
-	windows, err := s.sharedWindows(ctx, now)
+	if len(windows) == 0 {
+		s.sharedReviews.Position = 0
+		return
+	}
+	sessions, err := s.policySessions(ctx, reader, now)
 	if err != nil {
 		return
 	}
 	// Bound writes per cycle. Unknown coverage never closes an episode, increases
 	// punishment rounds or grants an action; evidence revisions are append-only.
-	if len(windows) == 0 {
-		s.sharedReviews.Position = 0
-		return
-	}
 	position := s.sharedReviews.Position % len(windows)
 	for i := 0; i < len(windows) && i < 100; i++ {
 		window := windows[(position+i)%len(windows)]

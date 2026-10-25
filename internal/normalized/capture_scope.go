@@ -22,8 +22,18 @@ type CaptureScope struct {
 	CollectorInstanceID string    `json:"collector_instance_id"`
 	CampusID            string    `json:"campus_id"`
 	AccessDomain        string    `json:"access_domain"`
+	InterfaceName       string    `json:"interface_name,omitempty"`
 	ValidFrom           time.Time `json:"valid_from"`
 	ValidUntil          time.Time `json:"valid_until"`
+}
+
+func (s *CaptureScope) ID() string {
+	if s == nil {
+		return ""
+	}
+	raw, _ := json.Marshal(s)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:16])
 }
 
 func LoadCaptureScope(path string) (*CaptureScope, error) {
@@ -60,6 +70,9 @@ func LoadCaptureScope(path string) (*CaptureScope, error) {
 			return nil, fmt.Errorf("capture scope fields must be nonempty and trimmed")
 		}
 	}
+	if s.InterfaceName != "" && strings.TrimSpace(s.InterfaceName) != s.InterfaceName {
+		return nil, fmt.Errorf("capture interface must be trimmed")
+	}
 	for _, cidr := range s.UserCIDRs {
 		prefix, err := netip.ParsePrefix(cidr)
 		if err != nil || prefix != prefix.Masked() || prefix.Bits() == 0 {
@@ -88,6 +101,12 @@ func (s *CaptureScope) Apply(event Event) Event {
 	if sensor != s.SensorID || instance != s.CollectorInstanceID {
 		return fail("capture_scope_collector_mismatch")
 	}
+	if s.InterfaceName != "" {
+		iface, _ := event.Observer["interface"].(string)
+		if iface != s.InterfaceName {
+			return fail("capture_scope_interface_mismatch")
+		}
+	}
 	at, err := time.Parse(time.RFC3339Nano, event.Timestamp)
 	if err != nil || at.Before(s.ValidFrom) || !at.Before(s.ValidUntil) {
 		return fail("capture_scope_outside_validity")
@@ -97,11 +116,9 @@ func (s *CaptureScope) Apply(event Event) Event {
 	if campus != "" && campus != s.CampusID || domain != "" && domain != s.AccessDomain {
 		return fail("capture_scope_conflict")
 	}
-	raw, _ := json.Marshal(s)
-	sum := sha256.Sum256(raw)
 	event.Subject["campus_id"] = s.CampusID
 	event.Payload["access_domain"] = s.AccessDomain
-	event.Observer["capture_scope_id"] = hex.EncodeToString(sum[:16])
+	event.Observer["capture_scope_id"] = s.ID()
 	return event
 }
 

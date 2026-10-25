@@ -206,6 +206,39 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		}
 		s.appendAudit(ctx, "discovery.poll", source, "queued")
 		writeJSON(w, 202, map[string]string{"id": id, "status": "pending"})
+	case path == "/discovery/receipt" && r.Method == "GET":
+		epoch, scope, eventKey := r.URL.Query().Get("epoch"), r.URL.Query().Get("scope_id"), r.URL.Query().Get("event_key")
+		if epoch == "" || scope == "" || eventKey == "" || len(epoch) > 128 || len(scope) > 256 || len(eventKey) > 512 {
+			writeError(w, 400, "bad_receipt_key", "事件回执定位信息无效")
+			return
+		}
+		receipt, found, err := repo.StreamDiscoveryReceipt(ctx, epoch, scope, eventKey)
+		if err != nil {
+			writeError(w, 500, "receipt_read", "读取事件回执失败")
+			return
+		}
+		if !found {
+			writeError(w, 404, "receipt_not_found", "事件回执不存在")
+			return
+		}
+		writeJSON(w, 200, receipt)
+	case path == "/discovery/receipts" && r.Method == "GET":
+		epoch, scope := r.URL.Query().Get("epoch"), r.URL.Query().Get("scope_id")
+		keys := r.URL.Query()["event_key"]
+		if len(r.URL.RawQuery) > 8192 || len(keys) == 0 || len(keys) > 50 {
+			writeError(w, 400, "bad_receipt_key", "事件回执定位信息无效")
+			return
+		}
+		items, missing, err := repo.StreamDiscoveryReceipts(ctx, epoch, scope, keys)
+		if err != nil {
+			if strings.Contains(err.Error(), "invalid") {
+				writeError(w, 400, "bad_receipt_key", "事件回执定位信息无效")
+			} else {
+				writeError(w, 500, "receipt_read", "读取事件回执失败")
+			}
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items, "missing_keys": missing})
 	case path == "/discovery/devices" && r.Method == "GET":
 		if r.URL.Query().Get("offset") != "" {
 			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")

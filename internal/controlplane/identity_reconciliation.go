@@ -393,12 +393,51 @@ func (s *Server) handleIdentitySnapshotCommit(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusServiceUnavailable, "identity_upload_commit_failed", "identity upload completion could not be persisted")
 		return
 	}
-	_, _ = s.operations.db.ExecContext(context.Background(), `DELETE FROM identity_snapshot_upload_chunks WHERE upload_id=$1`, uploadID)
+	// A separate bounded worker reclaims chunks after the completion commit.
+	// Keeping this deletion out of the request avoids a large synchronous write
+	// and makes a failed cleanup retryable across process restarts.
 	// Unfinished uploads of this scope that began earlier can no longer become the newest snapshot.
 	_, _ = s.operations.db.ExecContext(context.Background(), supersededUploadsDeleteSQL, uploadID)
 	// Best effort: a directory refresh must never fail a completed inventory.
 	_ = s.refreshIdentityGroupCatalog(context.Background(), snapshot)
 	writeJSON(w, http.StatusAccepted, map[string]any{"upload_id": uploadID, "snapshot_id": snapshotID, "status": "completed", "session_count": len(snapshot.Events)})
+}
+
+const completedSnapshotChunkPruneSQL = `WITH selected AS (
+ SELECT c.ctid FROM identity_snapshot_upload_chunks c
+ JOIN identity_snapshot_uploads u ON u.upload_id=c.upload_id
+ WHERE u.status='completed' AND u.completed_at<now()-interval '1 minute'
+ LIMIT $1 FOR UPDATE OF c SKIP LOCKED
+)
+DELETE FROM identity_snapshot_upload_chunks c USING selected s WHERE c.ctid=s.ctid`
+
+func pruneCompletedIdentitySnapshotChunks(ctx context.Context, db *sql.DB, limit int) (int64, error) {
+	if db == nil || limit < 1 || limit > 16 {
+		return 0, errors.New("invalid completed snapshot chunk cleanup")
+	}
+	result, err := db.ExecContext(ctx, completedSnapshotChunkPruneSQL, limit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *Server) runCompletedIdentitySnapshotChunkCleanup(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			work, cancel := context.WithTimeout(ctx, 2*time.Second)
+			_, err := pruneCompletedIdentitySnapshotChunks(work, s.operations.db, 4)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "identity completed snapshot chunk cleanup:", err)
+			}
+		}
+	}
 }
 
 func (s *Server) handleIdentitySnapshot(w http.ResponseWriter, r *http.Request) {

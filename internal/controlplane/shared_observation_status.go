@@ -17,13 +17,17 @@ func (s *Server) sharedObservationStatus(w http.ResponseWriter, r *http.Request)
 	var last, captured, done, oldest sql.NullTime
 	gatewayPending, gatewayFailed := 0, 0
 	if s.sharedObservationEnabled {
-		err := s.operations.db.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE revision>completed_revision),count(*) FILTER(WHERE last_error<>''),count(*) FILTER(WHERE expired),count(*) FILTER(WHERE last_result='matched' AND NOT expired),count(*) FILTER(WHERE last_result='insufficient' AND NOT expired),count(*) FILTER(WHERE coverage_state<>'verified' AND NOT expired),count(*) FILTER(WHERE attribution_state='insufficient' AND NOT expired),max(last_received_at),max(last_event_at),max(completed_at),min(dirty_since) FILTER(WHERE revision>completed_revision) FROM shared_observation_jobs`).Scan(&pending, &failed, &expired, &matched, &insufficient, &coveragePartial, &attributionMissing, &last, &captured, &done, &oldest)
+		err := s.operations.db.QueryRowContext(ctx, `WITH generation AS (SELECT sensor_id,min(cancel_id) AS cancel_id FROM stream_shared_source_cutovers WHERE state='active' GROUP BY sensor_id)
+ SELECT count(*) FILTER(WHERE revision>completed_revision),count(*) FILTER(WHERE last_error<>''),count(*) FILTER(WHERE expired),count(*) FILTER(WHERE last_result='matched' AND NOT expired),count(*) FILTER(WHERE last_result='insufficient' AND NOT expired),count(*) FILTER(WHERE coverage_state<>'verified' AND NOT expired),count(*) FILTER(WHERE attribution_state='insufficient' AND NOT expired),max(last_received_at),max(last_event_at),max(completed_at),min(dirty_since) FILTER(WHERE revision>completed_revision)
+ FROM shared_observation_jobs j LEFT JOIN generation g USING(sensor_id) WHERE j.canceled_epoch='' AND j.generation_id=COALESCE(g.cancel_id,'')`).Scan(&pending, &failed, &expired, &matched, &insufficient, &coveragePartial, &attributionMissing, &last, &captured, &done, &oldest)
 		if err != nil {
 			writeError(w, 503, "shared_status_unavailable", "共享任务状态读取失败")
 			return
 		}
 		var gatewayEvent, gatewayReceived sql.NullTime
-		err = s.operations.db.QueryRowContext(ctx, `SELECT count(*) FILTER(WHERE revision>completed_revision AND NOT expired),count(*) FILTER(WHERE last_error='processing_failed' AND NOT expired),max(last_event_at),max(dirty_since) FROM shared_gateway_observation_jobs`).Scan(&gatewayPending, &gatewayFailed, &gatewayEvent, &gatewayReceived)
+		err = s.operations.db.QueryRowContext(ctx, `WITH generation AS (SELECT sensor_id,min(cancel_id) AS cancel_id FROM stream_shared_source_cutovers WHERE state='active' GROUP BY sensor_id)
+ SELECT count(*) FILTER(WHERE revision>completed_revision AND NOT expired),count(*) FILTER(WHERE last_error='processing_failed' AND NOT expired),max(last_event_at),max(dirty_since)
+ FROM shared_gateway_observation_jobs j LEFT JOIN generation g USING(sensor_id) WHERE j.canceled_epoch='' AND j.generation_id=COALESCE(g.cancel_id,'')`).Scan(&gatewayPending, &gatewayFailed, &gatewayEvent, &gatewayReceived)
 		if err != nil {
 			writeError(w, 503, "shared_status_unavailable", "共享接入关联任务状态读取失败")
 			return
@@ -57,7 +61,9 @@ func (s *Server) sharedObservationStatus(w http.ResponseWriter, r *http.Request)
 	}
 	collectors := []map[string]any{}
 	config, _ := json.Marshal(s.sharedConfig.Sources)
-	rows, err := s.operations.db.QueryContext(ctx, `SELECT c.sensor_id,c.campus_id,c.access_domain,c.source,p.collector_instance_id,p.covered_to,p.complete,COALESCE((p.document->>'stopped')::boolean,false) FROM jsonb_to_recordset($1::jsonb) c(sensor_id text,campus_id text,access_domain text,source text) LEFT JOIN LATERAL (SELECT collector_instance_id,covered_to,complete,document FROM shared_capture_progress WHERE sensor_id=c.sensor_id AND campus_id=c.campus_id AND access_domain=c.access_domain AND source=c.source ORDER BY covered_to DESC LIMIT 1) p ON true`, config)
+	rows, err := s.operations.db.QueryContext(ctx, `SELECT c.sensor_id,c.campus_id,c.access_domain,c.source,p.collector_instance_id,p.covered_to,p.complete,COALESCE((p.document->>'stopped')::boolean,false) FROM jsonb_to_recordset($1::jsonb) c(sensor_id text,campus_id text,access_domain text,source text) LEFT JOIN LATERAL
+ (SELECT collector_instance_id,covered_to,complete,document FROM shared_capture_progress WHERE sensor_id=c.sensor_id AND campus_id=c.campus_id AND access_domain=c.access_domain AND source=c.source
+ AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers g WHERE g.sensor_id=c.sensor_id AND g.state='active'),'') ORDER BY covered_to DESC LIMIT 1) p ON true`, config)
 	if err != nil {
 		writeError(w, 503, "shared_status_unavailable", "采集覆盖状态读取失败")
 		return

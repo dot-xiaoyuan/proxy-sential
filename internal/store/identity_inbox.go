@@ -9,7 +9,6 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"proxy-sentinel/internal/identityprotocol"
@@ -20,6 +19,7 @@ var ErrIdentityBatchConflict = errors.New("identity batch ID already has differe
 var ErrInvalidIdentityBatch = errors.New("invalid scoped identity batch")
 var ErrIdentityInboxFull = errors.New("identity inbox capacity reached")
 var ErrIdentityLeaseExpired = errors.New("identity worker lease expired")
+var ErrIdentityCutoverNotActive = errors.New("identity stream cutover is not active")
 
 func IdentityScopeKey(scope IdentityScope) string { raw, _ := json.Marshal(scope); return string(raw) }
 
@@ -69,6 +69,21 @@ func (s *PostgresStore) acceptIdentityBatch(ctx context.Context, id, hash string
 			return receipt, ErrInvalidIdentityBatch
 		}
 	}
+	format := "legacy_json"
+	streamEpoch := ""
+	var fragments []identityInboxFragment
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_FRAGMENT_WRITES") == "true" {
+		format = "fragments"
+		streamEpoch = os.Getenv("PROXY_SENTINEL_IDENTITY_STREAM_EPOCH")
+		if streamEpoch == "" {
+			return receipt, ErrInvalidIdentityBatch
+		}
+		var splitErr error
+		fragments, splitErr = splitIdentityInboxFragments(events)
+		if splitErr != nil {
+			return receipt, splitErr
+		}
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -115,13 +130,39 @@ func (s *PostgresStore) acceptIdentityBatch(ctx context.Context, id, hash string
 	if err != nil {
 		return receipt, err
 	}
-	raw, err := json.Marshal(events)
+	if format == "fragments" {
+		var active bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stream_source_cutovers WHERE epoch=$1 AND source_kind='identity-http' AND source_path=$2 AND sensor_id=$3 AND parser_version='identity-http-v2' AND state='active' AND start_offset<$4)`, streamEpoch, key, scope.SensorID, sequence).Scan(&active); err != nil {
+			return receipt, err
+		}
+		if !active {
+			return receipt, ErrIdentityCutoverNotActive
+		}
+	}
+	raw := []byte("[]")
+	if format == "legacy_json" {
+		raw, err = json.Marshal(events)
+		if err != nil {
+			return receipt, err
+		}
+	}
+	err = tx.QueryRowContext(ctx, `INSERT INTO identity_ingest_batches(batch_id,source,sensor_id,status,records_read,records_emitted,received_at,normalized_events,protocol_version,scope_key,content_sha256,accepted_at,sequence,export_state,payload_format,stream_epoch) VALUES($1,$2,$3,'accepted',$4,$5,now(),$6,2,$7,$8,now(),$9,'pending',$10,$11) RETURNING accepted_at`, id, scope.Source, scope.SensorID, count, len(events), raw, key, hash, sequence, format, streamEpoch).Scan(&accepted)
 	if err != nil {
 		return receipt, err
 	}
-	err = tx.QueryRowContext(ctx, `INSERT INTO identity_ingest_batches(batch_id,source,sensor_id,status,records_read,records_emitted,received_at,normalized_events,protocol_version,scope_key,content_sha256,accepted_at,sequence,export_state) VALUES($1,$2,$3,'accepted',$4,$5,now(),$6,2,$7,$8,now(),$9,'pending') RETURNING accepted_at`, id, scope.Source, scope.SensorID, count, len(events), raw, key, hash, sequence).Scan(&accepted)
-	if err != nil {
-		return receipt, err
+	if format == "fragments" {
+		rows := make([]map[string]any, 0, len(fragments))
+		for _, fragment := range fragments {
+			rows = append(rows, map[string]any{"first_ordinal": fragment.FirstOrdinal, "record_count": fragment.Count, "normalized_events": json.RawMessage(fragment.JSON), "content_sha256": fragment.SHA256})
+		}
+		encoded, marshalErr := json.Marshal(rows)
+		if marshalErr != nil {
+			return receipt, marshalErr
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO identity_ingest_fragments(batch_id,first_ordinal,record_count,normalized_events,content_sha256,archive_month,key_scheme) SELECT $1,r.first_ordinal,r.record_count,r.normalized_events,r.content_sha256,$3,'source_position_v1' FROM jsonb_to_recordset($2::jsonb) r(first_ordinal integer,record_count integer,normalized_events jsonb,content_sha256 text)`, id, encoded, accepted.UTC().Format("200601"))
+		if err != nil {
+			return receipt, err
+		}
 	}
 	if identitySplitProgressEnabled() {
 		if err = recordIdentityPendingIPs(ctx, tx, id, key, events); err != nil {
@@ -140,6 +181,7 @@ type identityInboxBatch struct {
 	Sequence   int64     `json:"sequence"`
 	Offset     int       `json:"offset"`
 	Count      int       `json:"count"`
+	Format     string    `json:"-"`
 }
 type identityInboxWork struct {
 	Batches    []identityInboxBatch
@@ -184,64 +226,86 @@ func (s *PostgresStore) claimIdentityInbox(ctx context.Context, sensor string, l
 			_, _ = s.db.ExecContext(release, identityConsumeSQL(`UPDATE identity_pipeline_scopes SET lease_until=NULL WHERE scope_key=$1 AND lease_epoch=$2`), w.Scope, w.Epoch)
 		}
 	}()
-	payloadSQL := `WITH candidates AS MATERIALIZED (SELECT batch_id,sequence,processed_offset,records_emitted FROM identity_ingest_batches WHERE scope_key=$1 AND sequence>=$2 AND protocol_version=2 ORDER BY sequence LIMIT 500), bounded AS (SELECT *,COALESCE(sum(records_emitted-processed_offset) OVER (ORDER BY sequence ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS preceding_records FROM candidates) SELECT b.batch_id,b.sequence,b.processed_offset,b.normalized_events FROM bounded c JOIN identity_ingest_batches b USING(batch_id) WHERE c.preceding_records<$3 ORDER BY b.sequence`
-	if identitySplitProgressEnabled() {
-		payloadSQL = strings.Replace(payloadSQL, "b.normalized_events FROM", "b.normalized_events,b.accepted_at FROM", 1)
-	}
+	// A compatibility reader understands both the legacy whole-batch JSONB and
+	// bounded fragment rows. The lateral limit prevents a 10,000-record HTTP
+	// envelope from becoming one unbounded PostgreSQL response.
+	payloadSQL := `WITH candidates AS MATERIALIZED (SELECT batch_id,sequence,processed_offset,records_emitted FROM identity_ingest_batches WHERE scope_key=$1 AND sequence>=$2 AND protocol_version=2 ORDER BY sequence LIMIT 500), bounded AS (SELECT *,COALESCE(sum(records_emitted-processed_offset) OVER (ORDER BY sequence ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS preceding_records FROM candidates) SELECT b.batch_id,b.sequence,b.processed_offset,b.records_emitted,b.payload_format,COALESCE(f.first_ordinal,0),CASE WHEN b.payload_format='fragments' THEN f.normalized_events ELSE b.normalized_events END,b.accepted_at FROM bounded c JOIN identity_ingest_batches b USING(batch_id) LEFT JOIN LATERAL (SELECT first_ordinal,normalized_events FROM identity_ingest_fragments WHERE batch_id=b.batch_id AND first_ordinal+record_count>b.processed_offset ORDER BY first_ordinal LIMIT 40) f ON b.payload_format='fragments' WHERE c.preceding_records<$3 ORDER BY b.sequence,f.first_ordinal LIMIT 100`
 	rows, err := s.db.QueryContext(ctx, payloadSQL, w.Scope, w.Sequence, limit)
 	if err != nil {
 		return w, err
 	}
 	bytes := 0
+	previousTotal := 0
 	for rows.Next() && len(w.Events) < limit {
 		var raw []byte
 		var batch identityInboxBatch
-		fields := []any{&batch.BatchID, &batch.Sequence, &batch.Offset, &raw}
-		if identitySplitProgressEnabled() {
-			fields = append(fields, &batch.AcceptedAt)
-		}
-		if err = rows.Scan(fields...); err != nil {
+		var total, fragmentFirst int
+		var format string
+		if err = rows.Scan(&batch.BatchID, &batch.Sequence, &batch.Offset, &total, &format, &fragmentFirst, &raw, &batch.AcceptedAt); err != nil {
 			rows.Close()
 			return w, err
 		}
-		if batch.Sequence != w.Sequence+int64(len(w.Batches)) {
+		batch.Format = format
+		newBatch := len(w.Batches) == 0 || batch.Sequence != w.Batches[len(w.Batches)-1].Sequence
+		if newBatch && len(w.Batches) > 0 {
+			previous := w.Batches[len(w.Batches)-1]
+			if previous.Offset+previous.Count < previousTotal {
+				break
+			}
+		}
+		if newBatch && batch.Sequence != w.Sequence+int64(len(w.Batches)) {
 			rows.Close()
 			return w, fmt.Errorf("inbox sequence gap")
 		}
+		if !newBatch {
+			previous := w.Batches[len(w.Batches)-1]
+			batch.Offset = previous.Offset + previous.Count
+			if batch.Offset >= total || fragmentFirst != batch.Offset {
+				rows.Close()
+				return w, fmt.Errorf("duplicate or out-of-order inbox fragment")
+			}
+		}
+		previousTotal = total
 		var events []normalized.Event
 		if err = json.Unmarshal(raw, &events); err != nil {
 			rows.Close()
 			return w, err
 		}
-		if batch.Offset < 0 || batch.Offset >= len(events) {
+		if format == "legacy_json" && fragmentFirst != 0 || format != "legacy_json" && format != "fragments" || batch.Offset < fragmentFirst || batch.Offset >= fragmentFirst+len(events) || fragmentFirst+len(events) > total {
 			rows.Close()
 			return w, fmt.Errorf("invalid inbox processing offset")
 		}
-		end := min(len(events), batch.Offset+limit-len(w.Events))
-		if identitySplitProgressEnabled() {
-			for i := batch.Offset; i < end; i++ {
-				item, e := json.Marshal(events[i])
-				if e != nil {
-					rows.Close()
-					return w, e
-				}
-				if len(item) > identityInboxMaxBytes {
-					rows.Close()
-					return w, fmt.Errorf("identity event exceeds processing byte limit")
-				}
-				if bytes+len(item) > identityInboxMaxBytes {
-					end = i
-					break
-				}
-				bytes += len(item)
+		start := batch.Offset - fragmentFirst
+		end := min(len(events), start+limit-len(w.Events))
+		for i := start; i < end; i++ {
+			item, e := json.Marshal(events[i])
+			if e != nil {
+				rows.Close()
+				return w, e
 			}
-			if end == batch.Offset {
+			if len(item) > identityInboxMaxBytes {
+				rows.Close()
+				return w, fmt.Errorf("identity event exceeds processing byte limit")
+			}
+			if bytes+len(item) > identityInboxMaxBytes {
+				end = i
 				break
 			}
+			bytes += len(item)
 		}
-		batch.Count = end - batch.Offset
-		w.Events = append(w.Events, events[batch.Offset:end]...)
-		w.Batches = append(w.Batches, batch)
+		if end == start {
+			break
+		}
+		batch.Count = end - start
+		w.Events = append(w.Events, events[start:end]...)
+		if newBatch {
+			w.Batches = append(w.Batches, batch)
+		} else {
+			w.Batches[len(w.Batches)-1].Count += batch.Count
+		}
+		if end < len(events) {
+			break
+		}
 	}
 	err = rows.Err()
 	rows.Close()
@@ -268,33 +332,45 @@ func (s *PostgresStore) applyIdentityInbox(ctx context.Context, w identityInboxW
 	if !valid {
 		return ErrIdentityLeaseExpired
 	}
-	if err = writePolicyIdentityEvents(ctx, tx, w.Events); err != nil {
-		return err
-	}
-	// Persist application deduplication in one round trip. Retain input order for
-	// conflicting online/offline events; RETURNING itself has no ordering contract.
-	documents := make([]map[string]any, 0, len(w.Events))
 	batches := w.Batches
 	if len(batches) == 0 {
 		batches = []identityInboxBatch{{BatchID: w.BatchID, Sequence: w.Sequence, Offset: w.Offset, Count: len(w.Events)}}
 	}
+	// The fresh inbox offset is an ordered receipt. Legacy batches still use
+	// event-ID deduplication, while fresh selected facts are keyed by position.
+	documents := make([]map[string]any, 0, len(w.Events))
+	legacyEvents := make([]normalized.Event, 0, len(w.Events))
+	freshFacts := make([]identityStreamPolicyInput, 0, len(w.Events))
 	index := 0
 	for _, batch := range batches {
 		for i := 0; i < batch.Count; i++ {
 			event := w.Events[index]
 			index++
-			documents = append(documents, map[string]any{"event_id": event.EventID, "sequence": batch.Sequence, "ordinal": batch.Offset + i, "observed_at": event.Timestamp})
+			if batch.Format == "fragments" {
+				freshFacts = append(freshFacts, identityStreamPolicyInput{Event: event, Sequence: batch.Sequence, Ordinal: batch.Offset + i, Accepted: batch.AcceptedAt})
+			} else {
+				legacyEvents = append(legacyEvents, event)
+				documents = append(documents, map[string]any{"event_id": event.EventID, "sequence": batch.Sequence, "ordinal": batch.Offset + i, "observed_at": event.Timestamp})
+			}
 		}
 	}
-	raw, err := json.Marshal(documents)
-	if err != nil {
+	if err = writePolicyIdentityEvents(ctx, tx, legacyEvents); err != nil {
+		return err
+	}
+	if err = writeIdentityStreamPolicyFacts(ctx, tx, w.Scope, freshFacts); err != nil {
 		return err
 	}
 	// Deduplication only. Event documents were stored for the old calibration replay, and the
 	// generation-keyed current-state tables it fed are no longer maintained per event: publication
 	// now happens with the complete snapshot (see publishSnapshotTx).
-	if _, err = tx.ExecContext(ctx, `INSERT INTO identity_applied_events(scope_key,event_id,batch_sequence,ordinal,observed_at) SELECT $1,r.event_id,r.sequence,r.ordinal,r.observed_at FROM jsonb_to_recordset($2::jsonb) r(event_id text,sequence bigint,ordinal integer,observed_at timestamptz) ORDER BY r.sequence,r.ordinal ON CONFLICT DO NOTHING`, w.Scope, raw); err != nil {
-		return err
+	if len(documents) != 0 {
+		raw, marshalErr := json.Marshal(documents)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO identity_applied_events(scope_key,event_id,batch_sequence,ordinal,observed_at) SELECT $1,r.event_id,r.sequence,r.ordinal,r.observed_at FROM jsonb_to_recordset($2::jsonb) r(event_id text,sequence bigint,ordinal integer,observed_at timestamptz) ORDER BY r.sequence,r.ordinal ON CONFLICT DO NOTHING`, w.Scope, raw); err != nil {
+			return err
+		}
 	}
 	batchJSON, err := json.Marshal(batches)
 	if err != nil {
@@ -349,6 +425,15 @@ func (s *PostgresStore) applyIdentityInbox(ctx context.Context, w identityInboxW
 	changed, _ := result.RowsAffected()
 	if changed != 1 {
 		return ErrIdentityLeaseExpired
+	}
+	batchIDs := make([]string, 0, len(batches))
+	for _, batch := range batches {
+		if batch.Format == "fragments" {
+			batchIDs = append(batchIDs, batch.BatchID)
+		}
+	}
+	if err = reclaimIdentityFragmentPayload(ctx, tx, batchIDs); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

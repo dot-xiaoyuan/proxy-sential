@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,13 @@ type caseSyncReader struct {
 	store.Reader
 	shared    []sharedaccess.BehaviorAssessment
 	sharedErr error
+}
+
+func (r *caseSyncReader) ReadStreamSharedCaseRefs(_ context.Context, observationID, generationID string) ([]store.StreamBodyRef, error) {
+	if observationID == "" || generationID == "" {
+		return nil, errors.New("missing case source generation")
+	}
+	return []store.StreamBodyRef{{Epoch: generationID, Class: "evidence", Month: "202610", Scope: "scope", Key: generationID + ":event-a", SHA256: strings.Repeat("a", 64)}}, nil
 }
 
 type routerCaseSyncReader struct {
@@ -41,7 +49,7 @@ func (r *caseSyncReader) GetSharedBehavior(context.Context, string) (store.Share
 func caseSyncFixture() (*Server, *caseSyncReader, sharedaccess.BehaviorAssessment) {
 	now := time.Now().UTC()
 	assessment := sharedaccess.BehaviorAssessment{
-		Current: true, ObservationID: "shared-observation", GenerationID: "generation-1", SensorID: "test",
+		Current: true, ObservationID: "shared-observation", SensorID: "test",
 		CampusID: "campus", AccessDomain: "vlan:20", IP: "192.0.2.82", Status: "confirmed", Confidence: 92,
 		CoverageState: "verified", RuleVersion: sharedaccess.BehaviorRuleVersion, StrongAnchor: "ieee1905_association",
 		DeviceLowerBound: 2, FirstSeen: now.Add(-10 * time.Minute), LastSeen: now, WindowStart: now.Add(-10 * time.Minute), WindowEnd: now,
@@ -51,6 +59,28 @@ func caseSyncFixture() (*Server, *caseSyncReader, sharedaccess.BehaviorAssessmen
 	r := &caseSyncReader{shared: []sharedaccess.BehaviorAssessment{assessment}}
 	s := &Server{reader: r, operations: &operationsState{doc: emptyOperationsDocument()}, exceptions: newExceptionManager(nil)}
 	return s, r, assessment
+}
+
+func TestFreshSharedCaseCarriesProtectedSourceReferences(t *testing.T) {
+	s, r, assessment := caseSyncFixture()
+	assessment.GenerationID = "generation-1"
+	r.shared = []sharedaccess.BehaviorAssessment{assessment}
+	if err := s.syncCasesContext(context.Background(), "test", "10m"); err != nil {
+		t.Fatal(err)
+	}
+	caseID := proxyReviewCaseForSharedAssessment(assessment).CaseID
+	got := s.operations.doc.Cases[caseID]
+	if len(got.EvidenceSnapshot.StreamSharedEvidenceRefs) != 1 ||
+		len(got.EvidenceHistory) != 1 || len(got.EvidenceHistory[0].Evidence.StreamSharedEvidenceRefs) != 1 {
+		t.Fatalf("fresh shared case lost its source originals: %+v", got.EvidenceSnapshot)
+	}
+	if err := s.syncCasesContext(context.Background(), "test", "10m"); err != nil {
+		t.Fatal(err)
+	}
+	got = s.operations.doc.Cases[caseID]
+	if len(got.EvidenceHistory) != 1 || len(got.EvidenceSnapshot.StreamSharedEvidenceRefs) != 1 {
+		t.Fatalf("unchanged fresh case rewrote its evidence: %+v", got)
+	}
 }
 
 func TestCaseSynchronizationOnlyCreatesConfirmedSharedAccess(t *testing.T) {
@@ -79,6 +109,25 @@ func TestCaseSynchronizationOnlyCreatesConfirmedSharedAccess(t *testing.T) {
 		if item.RiskKind != "shared_access" || item.RiskConfidence != .92 || item.EvidenceSnapshot.SharedAccess == nil {
 			t.Fatalf("shared case lost its decision basis: %+v", item)
 		}
+	}
+}
+
+func TestCaseSynchronizationDoesNotRewriteUnchangedCase(t *testing.T) {
+	s, _, _ := caseSyncFixture()
+	if err := s.syncCasesContext(context.Background(), "test", "10m"); err != nil {
+		t.Fatal(err)
+	}
+	var first RiskCase
+	for _, item := range s.operations.doc.Cases {
+		first = item
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := s.syncCasesContext(context.Background(), "test", "10m"); err != nil {
+		t.Fatal(err)
+	}
+	second := s.operations.doc.Cases[first.CaseID]
+	if second.UpdatedAt != first.UpdatedAt || len(second.EvidenceHistory) != len(first.EvidenceHistory) {
+		t.Fatalf("unchanged case was rewritten: first=%s second=%s", first.UpdatedAt, second.UpdatedAt)
 	}
 }
 

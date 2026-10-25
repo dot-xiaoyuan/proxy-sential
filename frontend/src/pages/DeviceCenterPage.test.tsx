@@ -6,6 +6,8 @@ import { DeviceCenterPage } from './DeviceCenterPage'
 vi.mock('./DevicesPage', () => ({ DevicesPage: () => <div data-testid="terminal-panel">终端列表</div> }))
 vi.mock('./RouterObservationsPanel', () => ({ RouterObservationsPanel: () => <div data-testid="network-panel">路由器列表</div> }))
 
+vi.mock('./PassiveDiscoveryPanel', () => ({ PassiveDiscoveryPanel: ({view}:{view:string}) => <div data-testid="discovery-panel">{view}</div> }))
+
 const renderAt = (path: string) => render(<MemoryRouter initialEntries={[path]}><DeviceCenterPage /></MemoryRouter>)
 
 describe('设备中心子菜单页面', () => {
@@ -18,10 +20,11 @@ describe('设备中心子菜单页面', () => {
     renderAt('/devices?tab=network')
     expect(screen.getByTestId('network-panel')).toBeVisible()
   })
-  it('暂停的哑终端与发现线索链接回落到终端列表', () => {
-    for (const tab of ['iot', 'records']) {
+  it('发现设备及旧链接展示发现面板', () => {
+    for (const tab of ['discovery', 'iot', 'records']) {
       const { unmount } = renderAt(`/devices?tab=${tab}`)
-      expect(screen.getByTestId('terminal-panel')).toBeVisible()
+      expect(screen.getByTestId('discovery-panel')).toHaveTextContent(tab === 'iot' ? 'iot' : 'records')
+      expect(screen.queryByTestId('terminal-panel')).toBeNull()
       unmount()
     }
   })

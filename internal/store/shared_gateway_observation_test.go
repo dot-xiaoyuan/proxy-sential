@@ -89,7 +89,7 @@ func TestSharedGatewayResolutionRetriesWithoutLosingWork(t *testing.T) {
 			now := time.Now().UTC()
 			at := now.Add(-time.Second)
 			mock.ExpectBegin()
-			mock.ExpectQuery("SELECT job_id").WillReturnRows(sqlmock.NewRows([]string{"id", "sensor", "campus", "domain", "mac", "previous", "at", "received", "revision"}).AddRow("job", "sensor", "campus", "mirror", "02:00:00:00:00:01", "", at, at, 1))
+			mock.ExpectQuery("SELECT job_id").WillReturnRows(sqlmock.NewRows([]string{"id", "sensor", "campus", "domain", "mac", "previous", "at", "received", "revision", "generation"}).AddRow("job", "sensor", "campus", "mirror", "02:00:00:00:00:01", "", at, at, 1, ""))
 			query := mock.ExpectQuery("SELECT DISTINCT host")
 			if mode == "database_failure" {
 				query.WillReturnError(errors.New("storage unavailable"))

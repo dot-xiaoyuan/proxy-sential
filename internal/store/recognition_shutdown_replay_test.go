@@ -46,7 +46,7 @@ func TestRecognitionFailureWriteShutdownReplay(t *testing.T) {
 			} else {
 				mock.ExpectBegin()
 				mock.ExpectExec("INSERT INTO router_recognition_state").WillReturnResult(sqlmock.NewResult(0, 0))
-				mock.ExpectQuery("SELECT cursor_timestamp").WillReturnRows(sqlmock.NewRows([]string{"cursor_timestamp", "cursor_event_id", "leased", "rule_version"}).AddRow(time.Now(), "previous-event", false, fingerprint.DefaultRouterRuleSet().Version))
+				mock.ExpectQuery("SELECT cursor_timestamp").WillReturnRows(sqlmock.NewRows([]string{"cursor_timestamp", "cursor_event_id", "leased", "rule_version", "sensor_id"}).AddRow(time.Now(), "previous-event", false, fingerprint.DefaultRouterRuleSet().Version, "fixture"))
 				mock.ExpectExec("UPDATE router_recognition_state SET lease_owner").WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit()
 				// A failed signal read may release its lease and report an error,

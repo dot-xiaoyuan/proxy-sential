@@ -328,6 +328,9 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 	}
 	start(s.runIdentityInbox)
 	start(s.runIdentityInboxExport)
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_FRAGMENT_DERIVED") == "true" {
+		start(s.runIdentityFragmentDerived)
+	}
 	// Snapshots publish when they commit (publishSnapshotTx); there is no background calibration.
 	if options.ProjectSnapshots {
 		start(s.runIdentitySnapshotMaterializer)

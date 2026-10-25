@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"proxy-sentinel/internal/discovery"
+	"time"
 )
 
 func (s *Server) handleDiscoveryCoverage(w http.ResponseWriter, r *http.Request, repo discovery.Repository) {
@@ -53,7 +54,7 @@ func (s *Server) handleDiscoveryCoverage(w http.ResponseWriter, r *http.Request,
 		writeError(w, 500, "coverage_read", "读取发现处理进度失败")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"enabled": true, "scope": discovery.PrivateDiscoveryCIDRs, "items": items, "freshness": freshness, "enrichment": enrichmentCoverage(ctx, repo)})
+	writeJSON(w, 200, map[string]any{"enabled": true, "scope": discovery.PrivateDiscoveryCIDRs, "items": items, "freshness": freshness, "enrichment": enrichmentCoverage(ctx, repo), "pipeline": discoveryCoveragePipeline(ctx, repo)})
 }
 
 func enrichmentCoverage(ctx context.Context, repo discovery.Repository) map[string]any {
@@ -62,4 +63,14 @@ func enrichmentCoverage(ctx context.Context, repo discovery.Repository) map[stri
 		return map[string]any{"status": "failed"}
 	}
 	return map[string]any{"pending": pending, "blocked": blocked, "failed": failed}
+}
+
+func discoveryCoveragePipeline(ctx context.Context, repo discovery.Repository) any {
+	c, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	status, err := repo.PipelineStatus(c)
+	if err != nil {
+		return map[string]any{"status": "unavailable", "error": "discovery_pipeline_read_failed"}
+	}
+	return status
 }

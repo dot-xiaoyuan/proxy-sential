@@ -21,6 +21,9 @@ import (
 
 type Options struct {
 	Window time.Duration
+	// AsOf fixes the live window when only affected subjects are replayed.
+	// The default preserves existing batch semantics for controlled replays.
+	AsOf time.Time
 }
 
 type Stats struct {
@@ -155,7 +158,11 @@ func Analyze(r io.Reader, opts Options) (Result, error) {
 	if !maxTime.IsZero() {
 		result.MaxTime = maxTime.Format(time.RFC3339Nano)
 	}
-	cutoff := maxTime.Add(-window)
+	cutoffBase := maxTime
+	if !opts.AsOf.IsZero() {
+		cutoffBase = opts.AsOf.UTC()
+	}
+	cutoff := cutoffBase.Add(-window)
 
 	ips := sortedKeys(eventsByIP)
 	for _, ip := range ips {

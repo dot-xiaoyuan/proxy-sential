@@ -85,7 +85,7 @@ func queueEnrichment(ctx context.Context, tx *sql.Tx, key string, o Observation)
 	}
 	raw, _ := json.Marshal(o)
 	fingerprint := contentHash([]string{location, o.ModelName, serviceInstance(o)})
-	_, e := tx.ExecContext(ctx, `INSERT INTO discovery_enrichment_work(device_key,protocol,fingerprint,observation) VALUES($1,$2,$3,$4) ON CONFLICT(device_key,protocol) DO UPDATE SET fingerprint=EXCLUDED.fingerprint,observation=EXCLUDED.observation,next_attempt_at=CASE WHEN discovery_enrichment_work.fingerprint<>EXCLUDED.fingerprint THEN greatest(now(),coalesce(discovery_enrichment_work.last_success+interval '1 hour',now())) ELSE discovery_enrichment_work.next_attempt_at END`, key, protocol, fingerprint, raw)
+	_, e := tx.ExecContext(ctx, `INSERT INTO discovery_enrichment_work(device_key,protocol,fingerprint,observation) VALUES($1,$2,$3,$4) ON CONFLICT(device_key,protocol) DO UPDATE SET fingerprint=EXCLUDED.fingerprint,observation=EXCLUDED.observation,next_attempt_at=greatest(now(),coalesce(discovery_enrichment_work.last_success+interval '1 hour',now())) WHERE discovery_enrichment_work.fingerprint<>EXCLUDED.fingerprint`, key, protocol, fingerprint, raw)
 	return e
 }
 func fetchEnrichment(ctx context.Context, protocol, location string, body []byte) ([]byte, error) {

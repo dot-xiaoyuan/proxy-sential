@@ -104,29 +104,72 @@ type sharedObservationEvent struct {
 }
 
 func (s *DBStore) ReadSharedObservation(ctx context.Context, scope SharedObservationScope, cfg sharedaccess.Config, now time.Time) (sharedaccess.Window, sharedaccess.BehaviorAssessment, error) {
-	// Raw column names must win over output aliases in PREWHERE and aggregates.
-	// ClickHouse otherwise substitutes min(timestamp) into the time predicate.
-	query := fmt.Sprintf(`SELECT formatDateTime(min(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS timestamp,event_id,source,collector_instance_id,subject_ip,min(payload_json) AS payload_json,uniqExact(payload_json) AS payload_versions FROM shared_observation_events_v2
+	var handshakeEpoch, handshakeScope, packetEpoch, packetScope string
+	if s.pg != nil {
+		cutover, active, err := s.activeStreamSharedCutover(ctx, scope.SensorID, "handshake-sidecar")
+		if err != nil {
+			return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, err
+		}
+		if active {
+			handshakeEpoch = cutover.Epoch
+			handshakeScope = cutover.ScopeID
+		}
+		cutover, active, err = s.activeStreamSharedCutover(ctx, scope.SensorID, "packet-sidecar")
+		if err != nil {
+			return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, err
+		}
+		if active {
+			packetEpoch = cutover.Epoch
+			packetScope = cutover.ScopeID
+		}
+	}
+	rows := []sharedObservationEvent{}
+	if handshakeEpoch != "" {
+		var err error
+		rows, _, err = s.readStreamSharedRows(ctx, scope, handshakeScope, "handshake-sidecar", handshakeEpoch, scope.IP, now.Add(-11*time.Minute), now)
+		if err != nil {
+			return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, err
+		}
+	} else {
+		// Raw column names must win over output aliases in PREWHERE and aggregates.
+		// ClickHouse otherwise substitutes min(timestamp) into the time predicate.
+		query := fmt.Sprintf(`SELECT formatDateTime(min(timestamp),'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS timestamp,event_id,source,collector_instance_id,subject_ip,min(payload_json) AS payload_json,uniqExact(payload_json) AS payload_versions FROM shared_observation_events_v2
  PREWHERE sensor_id=%s AND campus_id=%s AND access_domain=%s AND subject_ip IN ('',%s)
  AND timestamp>=parseDateTime64BestEffort(%s,6) AND timestamp<=parseDateTime64BestEffort(%s,6)
  GROUP BY event_id,source,collector_instance_id,subject_ip ORDER BY event_id LIMIT 2001
  SETTINGS prefer_column_name_to_alias=1,max_threads=1,max_memory_usage=134217728,max_execution_time=10 FORMAT JSONEachRow`, chQuote(scope.SensorID), chQuote(scope.CampusID), chQuote(scope.AccessDomain), chQuote(scope.IP), chQuote(now.Add(-11*time.Minute).Format(time.RFC3339Nano)), chQuote(now.Format(time.RFC3339Nano)))
-	raw, err := s.ch.query(ctx, query)
-	if err != nil {
-		return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, err
-	}
-	rows := []sharedObservationEvent{}
-	if err = decodeJSONEachRow(raw, &rows); err != nil {
-		return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, err
-	}
-	if len(rows) > 2000 {
-		return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, fmt.Errorf("shared observation query exceeded bound")
+		raw, err := s.ch.query(ctx, query)
+		if err != nil {
+			return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, err
+		}
+		if err = decodeJSONEachRow(raw, &rows); err != nil {
+			return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, err
+		}
+		if len(rows) > 2000 {
+			return sharedaccess.Window{}, sharedaccess.BehaviorAssessment{}, fmt.Errorf("shared observation query exceeded bound")
+		}
 	}
 	w, item, err := buildHandshakeObservation(scope, cfg, rows, now)
 	if err != nil {
 		return w, item, err
 	}
-	return s.includeSharedGateway(ctx, scope, cfg, w, item, now)
+	w, item, err = s.includeSharedGateway(ctx, scope, cfg, w, item, now)
+	if err != nil {
+		return w, item, err
+	}
+	if handshakeEpoch != "" || packetEpoch != "" {
+		w.SourceEpochs = map[string]string{}
+		w.SourceScopes = map[string]string{}
+		if handshakeEpoch != "" {
+			w.SourceEpochs["handshake-sidecar"] = handshakeEpoch
+			w.SourceScopes["handshake-sidecar"] = handshakeScope
+		}
+		if packetEpoch != "" {
+			w.SourceEpochs["packet-sidecar"] = packetEpoch
+			w.SourceScopes["packet-sidecar"] = packetScope
+		}
+	}
+	return w, item, nil
 }
 
 func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Config, rows []sharedObservationEvent, now time.Time) (sharedaccess.Window, sharedaccess.BehaviorAssessment, error) {
@@ -334,9 +377,9 @@ func PersistSharedObservationTx(ctx context.Context, tx *sql.Tx, item sharedacce
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO shared_behavior_observations(observation_id,sensor_id,campus_id,access_domain,ip,status,confidence,signal_groups,rule_version,coverage_state,first_seen,last_seen,window_start,window_end,expires_at,observation,current)
- VALUES($1,$2,$3,$4,$5::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
- ON CONFLICT(observation_id) DO UPDATE SET observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,coverage_state=EXCLUDED.coverage_state,updated_at=now()`, item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen, item.WindowStart, item.WindowEnd, item.ExpiresAt, raw, item.Current)
+	_, err = tx.ExecContext(ctx, `INSERT INTO shared_behavior_observations(observation_id,sensor_id,campus_id,access_domain,ip,status,confidence,signal_groups,rule_version,coverage_state,first_seen,last_seen,window_start,window_end,expires_at,observation,current,generation_id)
+ VALUES($1,$2,$3,$4,$5::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+ ON CONFLICT(observation_id) DO UPDATE SET observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,generation_id=EXCLUDED.generation_id,coverage_state=EXCLUDED.coverage_state,updated_at=now()`, item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen, item.WindowStart, item.WindowEnd, item.ExpiresAt, raw, item.Current, item.GenerationID)
 	return err
 }
 

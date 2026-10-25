@@ -1366,37 +1366,17 @@ func (s *PostgresStore) WriteEvidence(ctx context.Context, items []evidence.Evid
 	if len(items) == 0 {
 		return nil
 	}
+	runs, err := partitionEvidence(items)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	for _, item := range items {
-		samples, _ := json.Marshal(item.Samples)
-		metadata, err := json.Marshal(struct {
-			SharedAccess any `json:"shared_access,omitempty"`
-		}{SharedAccess: item.SharedAccess})
-		if err != nil {
-			return err
-		}
-		if item.SubjectType != "" && item.SubjectType != "ip" {
-			if _, err := tx.ExecContext(ctx, `
-INSERT INTO subject_evidence(evidence_id, subject_type, subject_id, account_id, endpoint_id, ip, type, "window", score, confidence, severity, reason, samples, created_at)
-VALUES($1,$2,$3,$4,$5,NULLIF($6, '')::inet,$7,$8,$9,$10,$11,$12,$13,$14)
-ON CONFLICT(evidence_id) DO UPDATE SET score = EXCLUDED.score, confidence = EXCLUDED.confidence, severity = EXCLUDED.severity, reason = EXCLUDED.reason, samples = EXCLUDED.samples`,
-				item.EvidenceID, item.SubjectType, item.SubjectID, item.AccountID, item.EndpointID, item.IP, item.Type, item.Window, item.Score, item.Confidence, item.Severity, item.Reason, samples, item.CreatedAt); err != nil {
-				return err
-			}
-			continue
-		}
-		if item.IP == "" {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO evidence(evidence_id, ip, type, "window", score, confidence, severity, reason, samples, created_at, metadata)
-VALUES($1,$2::inet,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-ON CONFLICT(evidence_id) DO UPDATE SET score = EXCLUDED.score, confidence = EXCLUDED.confidence, severity = EXCLUDED.severity, reason = EXCLUDED.reason, samples = EXCLUDED.samples, metadata = EXCLUDED.metadata`,
-			item.EvidenceID, item.IP, item.Type, item.Window, item.Score, item.Confidence, item.Severity, item.Reason, samples, item.CreatedAt, metadata); err != nil {
+	for _, run := range runs {
+		if err := writeEvidenceSets(ctx, tx, run); err != nil {
 			return err
 		}
 	}
@@ -1410,42 +1390,17 @@ func (s *PostgresStore) WriteRiskSnapshots(ctx context.Context, snapshots []risk
 	if len(snapshots) == 0 {
 		return nil
 	}
+	runs, err := partitionRiskSnapshots(snapshots)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	for _, snapshot := range snapshots {
-		evidenceIDs, _ := json.Marshal(snapshot.EvidenceIDs)
-		automationBlockers, _ := json.Marshal(snapshot.AutomationBlockers)
-		signalGroups, _ := json.Marshal(snapshot.IndependentSignalGroups)
-		payload, _ := json.Marshal(snapshot)
-		if snapshot.SubjectType != "" && snapshot.SubjectType != "ip" {
-			if _, err := tx.ExecContext(ctx, `
-INSERT INTO subject_risk_snapshots(subject_type, subject_id, account_id, endpoint_id, ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers, detection_basis, independent_signal_groups)
-VALUES($1,$2,$3,$4,NULLIF($5, '')::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULLIF($15, ''),$16,$17,$18,$19)
-ON CONFLICT(subject_type, subject_id) DO UPDATE SET account_id = EXCLUDED.account_id, endpoint_id = EXCLUDED.endpoint_id, ip = EXCLUDED.ip, score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(subject_risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups WHERE subject_risk_snapshots.updated_at <= EXCLUDED.updated_at`,
-				snapshot.SubjectType, snapshot.SubjectID, snapshot.AccountID, snapshot.EndpointID, snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers, snapshot.DetectionBasis, signalGroups); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `
-INSERT INTO subject_risk_snapshot_history(subject_type, subject_id, snapshot)
-VALUES($1, $2, $3)`, snapshot.SubjectType, snapshot.SubjectID, payload); err != nil {
-				return err
-			}
-			continue
-		}
-		if snapshot.IP == "" {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO risk_snapshots(ip, score, level, confidence, "window", evidence_ids, summary, recommended_action, updated_at, assessment_level, review_disposition, automation_eligible, automation_blockers, detection_basis, independent_signal_groups)
-VALUES($1::inet,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11, ''),$12,$13,$14,$15)
-ON CONFLICT(ip) DO UPDATE SET score = EXCLUDED.score, level = EXCLUDED.level, confidence = EXCLUDED.confidence, "window" = EXCLUDED."window", evidence_ids = EXCLUDED.evidence_ids, summary = EXCLUDED.summary, recommended_action = EXCLUDED.recommended_action, updated_at = EXCLUDED.updated_at, assessment_level = EXCLUDED.assessment_level, review_disposition = COALESCE(NULLIF(risk_snapshots.review_disposition,''), EXCLUDED.review_disposition), automation_eligible = EXCLUDED.automation_eligible, automation_blockers = EXCLUDED.automation_blockers, detection_basis = EXCLUDED.detection_basis, independent_signal_groups = EXCLUDED.independent_signal_groups WHERE risk_snapshots.updated_at <= EXCLUDED.updated_at`,
-			snapshot.IP, snapshot.Score, snapshot.Level, snapshot.Confidence, snapshot.Window, evidenceIDs, snapshot.Summary, snapshot.RecommendedAction, snapshot.UpdatedAt, snapshot.AssessmentLevel, snapshot.ReviewDisposition, snapshot.AutomationEligible, automationBlockers, snapshot.DetectionBasis, signalGroups); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO risk_snapshot_history(ip, snapshot) VALUES($1::inet, $2)`, snapshot.IP, payload); err != nil {
+	for _, run := range runs {
+		if err := writeRiskSnapshotSets(ctx, tx, run); err != nil {
 			return err
 		}
 	}

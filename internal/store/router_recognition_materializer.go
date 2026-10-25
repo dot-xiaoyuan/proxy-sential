@@ -20,6 +20,40 @@ type routerRecognitionCursor struct {
 	Owner     string
 }
 
+// The rolling risk materializer may omit its expensive duplicate router replay
+// only while this independent, cursor-based owner is making progress.
+func (s *DBStore) DedicatedRouterObservationsHealthy(ctx context.Context, sensorID string, at time.Time) error {
+	if sensorID == "" {
+		return fmt.Errorf("dedicated router owner requires a sensor")
+	}
+	var success sql.NullTime
+	var lastError string
+	var ownerSensor string
+	err := s.pg.db.QueryRowContext(ctx, `SELECT sensor_id,last_success_at,last_error FROM router_recognition_state WHERE singleton`).Scan(&ownerSensor, &success, &lastError)
+	if err != nil {
+		return err
+	}
+	if ownerSensor != sensorID || !success.Valid || success.Time.Before(at.Add(-2*time.Minute)) || lastError != "" {
+		return fmt.Errorf("router recognition cursor is stale or failed")
+	}
+	var streamSourceActive bool
+	if err := s.pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stream_source_cutovers
+ WHERE sensor_id=$1 AND state='active' AND source_kind IN ('zeek-dhcp-binding','device-signals','shared-device-signals'))`, sensorID).Scan(&streamSourceActive); err != nil {
+		return err
+	}
+	if streamSourceActive {
+		var streamSuccess sql.NullTime
+		var streamError string
+		if err := s.pg.db.QueryRowContext(ctx, `SELECT last_success_at,last_error FROM stream_router_recognition_state WHERE sensor_id=$1`, sensorID).Scan(&streamSuccess, &streamError); err != nil {
+			return err
+		}
+		if !streamSuccess.Valid || streamSuccess.Time.Before(at.Add(-2*time.Minute)) || streamError != "" {
+			return fmt.Errorf("stream router recognition cursor is stale or failed")
+		}
+	}
+	return nil
+}
+
 type routerSignalRow struct {
 	Timestamp       string  `json:"timestamp"`
 	EventID         string  `json:"event_id"`
@@ -37,7 +71,7 @@ type routerSignalRow struct {
 	Confidence      float64 `json:"confidence"`
 }
 
-func (s *DBStore) claimRouterRecognition(ctx context.Context, owner string) (routerRecognitionCursor, bool, error) {
+func (s *DBStore) claimRouterRecognition(ctx context.Context, owner, sensorID string) (routerRecognitionCursor, bool, error) {
 	tx, err := s.pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return routerRecognitionCursor{}, false, err
@@ -47,10 +81,13 @@ func (s *DBStore) claimRouterRecognition(ctx context.Context, owner string) (rou
 		return routerRecognitionCursor{}, false, err
 	}
 	var stamp sql.NullTime
-	var eventID, materializedRuleVersion string
+	var eventID, materializedRuleVersion, ownerSensor string
 	var leased bool
-	if err = tx.QueryRowContext(ctx, `SELECT cursor_timestamp,cursor_event_id,lease_until>now(),rule_version FROM router_recognition_state WHERE singleton FOR UPDATE`).Scan(&stamp, &eventID, &leased, &materializedRuleVersion); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT cursor_timestamp,cursor_event_id,lease_until>now(),rule_version,sensor_id FROM router_recognition_state WHERE singleton FOR UPDATE`).Scan(&stamp, &eventID, &leased, &materializedRuleVersion, &ownerSensor); err != nil {
 		return routerRecognitionCursor{}, false, err
+	}
+	if ownerSensor != "" && ownerSensor != sensorID {
+		return routerRecognitionCursor{}, false, fmt.Errorf("router recognition sensor owner mismatch")
 	}
 	if leased {
 		return routerRecognitionCursor{}, false, tx.Commit()
@@ -76,7 +113,7 @@ func (s *DBStore) claimRouterRecognition(ctx context.Context, owner string) (rou
 		}
 		stamp, eventID = sql.NullTime{Time: rebuildFrom, Valid: true}, ""
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE router_recognition_state SET lease_owner=$1,lease_until=now()+interval '90 seconds',updated_at=now() WHERE singleton`, owner); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE router_recognition_state SET lease_owner=$1,sensor_id=$2,lease_until=now()+interval '90 seconds',updated_at=now() WHERE singleton`, owner, sensorID); err != nil {
 		return routerRecognitionCursor{}, false, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -182,35 +219,13 @@ func (s *DBStore) runRouterRecognitionMaterializer(ctx context.Context, sensorID
 	owner := fmt.Sprintf("router-recognition-%d", os.Getpid())
 	for ctx.Err() == nil {
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		cursor, claimed, err := s.claimRouterRecognition(workCtx, owner)
+		cursor, claimed, err := s.claimRouterRecognition(workCtx, owner, sensorID)
 		if err == nil && claimed {
 			var events []normalized.Event
 			var next routerRecognitionCursor
 			events, next, err = s.routerSignalBatch(workCtx, sensorID, cursor, 2000)
 			if err == nil && len(events) > 0 {
-				result, analyzeErr := evidence.AnalyzeRouters(events, evidence.RouterOptions{
-					AsOf:       time.Now().UTC(),
-					ShadowMode: true,
-					Resolve: func(event normalized.Event) evidence.RouterAssociation {
-						item, found, resolveErr := s.ResolveDeviceAt(workCtx, DomainObservation{
-							IP: stringFromMap(event.Subject, "ip"), Timestamp: event.Timestamp,
-							SensorID: stringFromMap(event.Observer, "sensor_id"), CampusID: stringFromMap(event.Subject, "campus_id"),
-						})
-						if resolveErr != nil || !found {
-							return evidence.RouterAssociation{}
-						}
-						association := evidence.RouterAssociation{EndpointID: item.EndpointID, Quality: "dhcp_lease", Ambiguous: item.Conflict, Reason: item.ConflictReason}
-						if strings.HasPrefix(item.EndpointID, "mac:") {
-							association.MAC = strings.TrimPrefix(item.EndpointID, "mac:")
-						}
-						return association
-					},
-				})
-				if analyzeErr != nil {
-					err = analyzeErr
-				} else {
-					err = s.WriteRouterObservations(workCtx, result)
-				}
+				err = s.analyzeAndWriteRouterEvents(workCtx, events)
 			}
 			if err == nil {
 				_, err = s.pg.refreshExpiredRouterAssessments(workCtx, 50)
@@ -238,4 +253,29 @@ func (s *DBStore) runRouterRecognitionMaterializer(ctx context.Context, sensorID
 		case <-timer.C:
 		}
 	}
+}
+
+func (s *DBStore) analyzeAndWriteRouterEvents(ctx context.Context, events []normalized.Event) error {
+	result, err := evidence.AnalyzeRouters(events, evidence.RouterOptions{
+		AsOf:       time.Now().UTC(),
+		ShadowMode: true,
+		Resolve: func(event normalized.Event) evidence.RouterAssociation {
+			item, found, resolveErr := s.ResolveDeviceAt(ctx, DomainObservation{
+				IP: stringFromMap(event.Subject, "ip"), Timestamp: event.Timestamp,
+				SensorID: stringFromMap(event.Observer, "sensor_id"), CampusID: stringFromMap(event.Subject, "campus_id"),
+			})
+			if resolveErr != nil || !found {
+				return evidence.RouterAssociation{}
+			}
+			association := evidence.RouterAssociation{EndpointID: item.EndpointID, Quality: "dhcp_lease", Ambiguous: item.Conflict, Reason: item.ConflictReason}
+			if strings.HasPrefix(item.EndpointID, "mac:") {
+				association.MAC = strings.TrimPrefix(item.EndpointID, "mac:")
+			}
+			return association
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return s.WriteRouterObservations(ctx, result)
 }

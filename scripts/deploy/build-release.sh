@@ -27,6 +27,8 @@ release_dir="$build_root/release"
   cd "$repo_root"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$release_dir/bin/proxy-sentinel" ./cmd/proxy-sentinel
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/discovery-worker" ./cmd/discovery-worker
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/discovery-recovery" ./cmd/discovery-recovery
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/stream-repair" ./cmd/stream-repair
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/passive-discovery-worker" ./cmd/passive-discovery-worker
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/device-retention" ./cmd/device-retention
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-identity-snapshot" ./cmd/srun-identity-snapshot
@@ -66,7 +68,7 @@ JS
   cp scripts/deploy/activate-zeek-socks-stream.py "$release_dir/scripts/activate-zeek-socks-stream.py"
   cp scripts/deploy/router-pilot-watchdog.sh scripts/deploy/router-pilot-snmp-rollback.sh scripts/deploy/router-pilot-shared-rollback.sh "$release_dir/scripts/"
   cp scripts/deploy/ncu-identity-sync-rollback.sh "$release_dir/scripts/ncu-identity-sync-rollback.sh"
-  cp scripts/deploy/upgrade-application.sh scripts/deploy/manage-frontend-previous.py scripts/deploy/verify-applied-migrations.py scripts/deploy/validate-release-archive.py scripts/deploy/verify-application-runtime.py scripts/deploy/verify-application-cli.py scripts/deploy/retire-releases.py scripts/deploy/retire-acceptance-artifacts.py "$release_dir/scripts/"
+  cp scripts/deploy/verify-service-expectations.py scripts/deploy/upgrade-application.sh scripts/deploy/manage-frontend-previous.py scripts/deploy/verify-applied-migrations.py scripts/deploy/validate-release-archive.py scripts/deploy/verify-application-runtime.py scripts/deploy/verify-application-cli.py scripts/deploy/retire-releases.py scripts/deploy/retire-acceptance-artifacts.py "$release_dir/scripts/"
 )
 
 commit="$(git -C "$repo_root" rev-parse HEAD)"
