@@ -189,10 +189,8 @@ func resolveZeekSourceRaw(segment streamlog.Segment) ([]byte, error) {
 	length := segment.EndOffset - segment.StartOffset
 	if f, err := os.Open(segment.SourcePath); err == nil {
 		info, statErr := f.Stat()
-		if statErr == nil && fileIdentity(segment.SourcePath, info) == segment.FileID && info.Size() < segment.EndOffset {
-			_ = f.Close()
-			return nil, ErrStreamSourceGap
-		}
+		// Zeek may reuse the inode for a shorter replacement file. Its size
+		// cannot disprove the old descriptor; search the hashed rotation below.
 		if statErr == nil && fileIdentity(segment.SourcePath, info) == segment.FileID && info.Size() >= segment.EndOffset {
 			buf := make([]byte, length)
 			_, readErr := f.ReadAt(buf, segment.StartOffset)

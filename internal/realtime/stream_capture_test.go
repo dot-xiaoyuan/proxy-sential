@@ -455,7 +455,9 @@ func TestZeekBindingRawResolverSearchesArchiveAfterInodeReuse(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("new-first-record\nnew-second-record\n"), 0o600); err != nil {
+	// Zeek can reuse the inode while the replacement is still shorter than
+	// the old segment's offset. The rotated archive remains authoritative.
+	if err := os.WriteFile(path, []byte("new\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	resolved, err := resolveZeekSourceRaw(segment)
