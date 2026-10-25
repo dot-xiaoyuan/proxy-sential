@@ -25,6 +25,25 @@ func testStreamSegment() streamlog.Segment {
 	}
 }
 
+func TestStreamLanePreflightRejectsInvalidLocalArchiveWithoutSink(t *testing.T) {
+	segment := testStreamSegment()
+	segment.Events[0].Timestamp = "bad-time"
+	writer := StreamLaneWriter{}
+	if err := writer.Preflight(streamlog.Archive, segment); err == nil {
+		t.Fatal("invalid timestamp passed archive preflight")
+	}
+	segment.Events[0].Timestamp = "2026-10-24T10:00:00Z"
+	segment.Raw = []byte("unverified source")
+	segment.RawSHA256 = "wrong"
+	if err := writer.Preflight(streamlog.Archive, segment); !errors.Is(err, streamlog.ErrContentConflict) {
+		t.Fatalf("unverified source reached archive sink: %v", err)
+	}
+	segment.Raw = nil
+	if err := writer.Preflight(streamlog.Archive, segment); err != nil {
+		t.Fatalf("valid local archive rejected: %v", err)
+	}
+}
+
 func TestStreamLaneWriterNeverAcknowledgesMissingProjection(t *testing.T) {
 	writer := StreamLaneWriter{}
 	segment := streamlog.Segment{NeedsProjection: true}

@@ -16,6 +16,31 @@ type fakeLaneWriter struct {
 	failArchiveOnce bool
 }
 
+type rejectingPreflightWriter struct{ fakeLaneWriter }
+
+func (*rejectingPreflightWriter) Preflight(lane Lane, _ Segment) error {
+	if lane == Archive {
+		return errors.New("invalid local archive input")
+	}
+	return nil
+}
+
+func TestProcessorRejectsLocalArchiveBeforeDurableAttempt(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	w := &rejectingPreflightWriter{}
+	if err := (Processor{Journal: j, Writer: w}).DrainLane(context.Background(), id, Archive); err == nil {
+		t.Fatal("invalid archive input was accepted")
+	}
+	state, err := j.Load(id)
+	if err != nil || state.Acks[Archive] != Pending || w.archiveWrites != 0 {
+		t.Fatalf("local validation stranded an ambiguous sink attempt: %+v writes=%d err=%v", state.Acks, w.archiveWrites, err)
+	}
+}
+
 type expireAfterPreparation struct{ checks int }
 
 func (c *expireAfterPreparation) Deadline() (time.Time, bool) { return time.Time{}, false }

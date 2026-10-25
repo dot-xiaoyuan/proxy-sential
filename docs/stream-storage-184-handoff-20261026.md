@@ -1,27 +1,20 @@
 # 184 新存查链交接（2026-10-26）
 
-本文件供换电脑后继续本轮任务。目标仍是按 [端到端架构](stream-storage-query-architecture-20261024.md) 完成当前采集路径的切流和真实验收，再分批扩 Zeek。历史未处理输入仅在有不可变截止点、数量和哈希的取消清单后放弃；新起点后的输入不得暗中跳过。现场状态须每次重新只读核对。
+本轮目标和验收规则见[端到端架构](stream-storage-query-architecture-20261024.md)及[实施状态](stream-storage-query-implementation-status-20261024.md)。换电脑后先拉取远端分支 [`codex/stream-storage-handoff-20261026`](https://github.com/dot-xiaoyuan/proxy-sential/tree/codex/stream-storage-handoff-20261026)，核对现场后继续。184 上的 `/opt/proxy-sentinel/handoff/stream-storage-handoff-20261026.bundle` 是推送前的旧离线备份，**不能代替远端最新提交**。本地不启动 Docker/OrbStack 数据库栈；SSH 目标只用 `root@222.204.3.184`。
 
-代码已提交到 `codex/stream-storage-handoff-20261026`。GitHub 推送遇到本机 SSH/HTTP 代理断连，因此另将包含完整提交历史的 Git bundle 放在 184：`/opt/proxy-sentinel/handoff/stream-storage-handoff-20261026.bundle`，同目录有 `.sha256`。换电脑后先从 184 下载两文件，校验 SHA256，再用 `git fetch ./stream-storage-handoff-20261026.bundle refs/heads/codex/stream-storage-handoff-20261026:refs/heads/codex/stream-storage-handoff-20261026` 导入并切换分支。后续若远端网络恢复，再推送该分支。bundle 仅含代码、迁移、测试与文档，不含现场原始事件、发布包或口令。
+## 已发布和审计
 
-## 当前已完成
+- 2026-10-26 00:43 CST 发布 B57：`current=/opt/proxy-sentinel/releases/2026.10.26-stream-b57`，兼容回退 `previous=/opt/proxy-sentinel/releases/2026.10.25-stream-compat-a44`。B57 包 SHA256 为 `3f01c78b88187a6f415d39007032f0af8016ecb2a3172075896f0eee2589e0e4`，源码提交 `6147af8`；旧 B56/B55 和 A44 目录保留。应用升级器确认 PostgreSQL 191、ClickHouse 055 个候选迁移均已应用且哈希一致，无新迁移。控制面 `18080/readyz`、身份桥 `18082/readyz` 在 00:47 均为 200，根盘余量约 452 GiB。
+- DHCP B47 失败原因已定位：Zeek 16:00 UTC 的新文件复用 14:03 文件 inode，旧事件键只含路径/inode/偏移，导致同键不同正文。B56 新增有尾部哈希证明的轮转恢复、单调文件代次和代次事件键。首次真实接入发现 ClickHouse 归档入口遗漏 `generation-v2` 键，B57 加入校验与回归测试。Go 全量测试、构建、vet 通过。
+- 用户明确放弃未处理历史。旧 B47 以不可变清单 `artifacts/stream-b2-184/dhcp-b47-retirement-b56.json` 审计关闭：未处理 1,461 条/468,531 字节，清单 SHA256 `17ef75d08501aa586aaaba1051d22413f34a1799c8ac95863589b0018ef3b61d`。新起点 `2026-10-25T16:37:35Z` 的 `stream-prepare` 又审计取消 95 条/30,614 字节，清单 SHA256 `ed959c02fc397b298d28e3dc48652af77f3715c7cb46b616b7f6536a791695f8`。合计 1,556 条/499,145 字节均标为**取消未处理**，不计成功；原始文件和旧片段保留。新代次 `dhcp-binding-b56-fresh-20261025T163735Z` 从偏移 742359 开始，journal 为 `/opt/proxy-sentinel/data/stream-journal/dhcp-binding-b56-fresh14`，消费者单元名为 `proxy-sentinel-ingest-stream-dhcp-binding-b56.service`，旧 B47 单元仍 failed，不能重启。
+- B56 的第一个 50 条片段曾因本地键校验失败留下 `archive=attempted`，没有发出 ClickHouse 请求。B57 重启后按未知结果只读核对，正确地没有盲重发，故 60 秒无归档进展时已停消费者。针对片段 `ab19753c95848b711a4187309b0d417bce80f5874d521b161dd752b8b3e7b816` 核实原始哈希、ClickHouse 原文/正文均 0 行、异步插入 0、原 token 查询日志 0、同期间查询日志覆盖 296 条后，使用精确限定的小工具把这**一次已知未发送**的 archive attempt 恢复为 pending；没有伪造 ack 或清空片段。随后 B57 正常归档。00:47 CST PostgreSQL 16 片/541 条投影，541 条归档状态 confirmed，journal 片段已归零，源偏移与当时文件大小相同。此前停机片段已超过 5 秒，须单列失败，不得用于新鲜验收。
+- 本地随后新增流处理器纯本地预检：归档/检索入参、原文哈希在记录 attempted 之前验证，防止确定性本地错误再次滞留成未知结果。对应测试已通过；**此改动尚未发布到 184**，现场仍为 B57。换机后以远端最新提交为准，并按测试/迁移校验及受控应用升级发布。
 
-- 184 的 `current=/opt/proxy-sentinel/releases/2026.10.26-stream-b55`，兼容回退 `previous=/opt/proxy-sentinel/releases/2026.10.25-stream-compat-a44`。B55 发布包 SHA256 为 `3b04819acf1fb163eefe1358b7488dad244bc9ef7e212da44747bf3e5caed8fa`。PostgreSQL 已应用至 191，ClickHouse 至 055；应用升级器逐项核对所有迁移哈希，B55 无新迁移。旧 B54、B53 等发布目录保留。2026-10-26 00:26 CST 控制面 `18080/readyz` 与身份桥 `18082/readyz` 均为 200，旧 ingest 与身份桥活动；根盘余量约 451 GiB。
-- DHCP 绑定新链和身份新链接入了按来源位点的持久日志、ClickHouse 互斥正文及窄检索、独立归档和 PostgreSQL 投影回执。DHCP B47 与身份 B51 各通过两个连续 15 分钟真实输入窗口，逐条 API 没有 5 秒超限。验收仅覆盖当时输入与已启用路径，不代表当前容量或新增协议通过。对应分析和原始观察在 `artifacts/stream-b2-184/`，实施状态见 [持续记录](stream-storage-query-implementation-status-20261024.md)。
-- B55 修复侧车 SSDP 高扇出：单一 IP 在失败片段前已有 214 个事实键，新增 50 条里有 47 个不同 USN，旧代码超过 256 后整片回滚。B55 仍保存全部事实、回执和差量，设备摘要最多读取 256 条，维护精确事实数，并对摘要不完整的分类降级。Go 全量测试、构建、vet 通过。该修复**尚未在侧车真实输入上验收**。
+## 尚未通过的门槛
 
-## 现场停点与数据完整性
+1. DHCP B57 当前消费者已启动，仍须重新检查**当次**源偏移、journal 未确认片、ClickHouse 原文与窄索引、PostgreSQL 回执、逐条查询，以及两个完整连续 15 分钟窗口。00:47 的 541 条确认仅证明故障片段排空，不能作为实时 5 秒验收。尤其要观察 17:00 UTC Zeek 轮转后文件代次能否正确加 1，不能只看服务 active。风险新消费者和新增 Zeek 协议都保持关闭。
+2. packet/handshake 侧车的采集器及 B54 stream 消费者仍停止；旧采集入口受新 cutover 保护。packet 约 8 个、handshake 约 2 个未确认片段及其原始输入保留在 `/opt/proxy-sentinel/data/stream-journal/{packet,handshake}-b54-fresh`。旧 SSDP 高扇出触发 256 事实读取上限，B55/B57 已改有界摘要和增量事实数，但尚未在真实侧车片段上验收。先停采集器、恢复对应 stream 消费者排空已接收片段，单列旧 5 秒超限；再受控开放新输入与两个 15 分钟窗口。失败即停新增输入，保留证据。
+3. B47 失败片段在 ClickHouse 留有 6 条孤立正文、6 条检索、6 条风险特征及 1 条原始段，PostgreSQL 无成功投影。精确核验无案件引用、旧 14:03 正文可区别之后才能清理孤立重复行；不能广泛删除或把取消任务计作已处理。
+4. 身份新链此前通过两个连续 15 分钟真实窗口，目录接口曾返回 `remote_http_409`、业务状态 degraded；须复核当前状态。风险新链、packet/handshake、新 Zeek 协议尚未通过端到端验收，不能宣称新方案全量落实。协议扩展仍按原计划逐批执行，普通 conn/DNS/HTTP/SSL 及无适配器协议不直接开启。
 
-1. `proxy-sentinel-ingest-stream-packet-b54.service`、`proxy-sentinel-ingest-stream-handshake-b54.service` 及对应 `proxy-sentinel-device-signal.service`、`proxy-sentinel-handshake-signal.service` 均停止。packet/handshake 来源 cutover 仍 active，旧 ingest 会排除这两路；不能直接重开旧消费者造成双写。packet 约 8 个、handshake 约 2 个未确认持久片段，源文件和游标仍在现场。原 15:52–15:55 UTC 试运行失败，packet 最老片段达 33.59 秒、未读约 171 KiB，不能计通过。packet 源文件 `/opt/proxy-sentinel/data/device-signals/ttl.jsonl`，日志 `/opt/proxy-sentinel/data/stream-journal/packet-b54-fresh`；handshake 对应 `handshake.jsonl`、`handshake-b54-fresh`。因采集器停止，现无新增这两路文件输入；重启前先排空已接受片段并单列过去的 5 秒超限。
-2. `proxy-sentinel-ingest-stream-dhcp-binding.service` 处于 failed，**不要简单 restart**。B47 固定代次 `dhcp-binding-fresh-20261025T1402Z` 的片段 `4921960c4e69cd8dbf95c8e9d14c8f9352fe0a50927cbb987ddc3e4084ff4ced` 含 6 条 16:12 UTC 的真实 DHCP 记录，归档和检索已确认，PostgreSQL 投影因同事件键不同哈希拒绝，片段保存在 `/opt/proxy-sentinel/data/stream-journal/dhcp-binding-b47-fresh13/`。同一事件键的旧正文于 14:03 入库；16:00 新建的 Zeek 文件复用了旧文件 inode `46670368`，旧键只用路径、设备号、inode、偏移，发生碰撞。ClickHouse 对失败片段已有 6 条正文、6 条检索、6 条风险特征及 1 条原始段，PostgreSQL 无该片段的投影或回执；其中一个键在 ClickHouse 有旧新两种哈希。先保留全部证据，不把这 6 条算作成功。当前 Zeek 文件还会轮转，恢复时用压缩归档和原文哈希核对，不依赖当时的 `current/` inode。
-3. 本地 **B56 候选未发布**：`internal/realtime/zeek_archive.go` 已改为每次核对已提交尾部哈希，遇 inode 复用时搜索压缩归档；`internal/streamlog` 新增单调文件代次，`internal/realtime/stream_capture.go` 以代次参与固定事件键，`cmd/proxy-sentinel/ingest_stream*.go` 将 DHCP 绑定 parser 升至 v2。模拟同 inode 轮转、归档取回、位点恢复和不同代次键的测试、`go test ./...`、`go build ./...`、`go vet ./...` 均通过。**尚缺将 B47 未确认片段及后续未读新输入无损转入新代次的审计流程**，因此不要打包发布或启动 B56。新的代次应从失败片段起始偏移 243214 重新消费，先核验该范围与已存片段、压缩归档一致；不得把这段新输入写成“已处理”或悄悄取消。新代次完全确认后，核验旧段无案件引用，再针对旧代次孤立的 ClickHouse 正文、检索、风险特征和原始段做精确清理，保留 14:03 的旧正文和修复审计。普通 ClickHouse 重试仍须按固定键核对，不盲发。
-4. 风险常驻新消费者与新增 Zeek 协议均保持关闭。身份桥的目录接口曾持续返回 `remote_http_409`，桥 `ready=200` 但业务状态 degraded；与本次 DHCP/SSDP 修复分开核实。当前只证明 DHCP 和身份在先前限定窗口可运行，机械盘资源曾接近饱和，不能对更多协议作容量承诺。
-
-## 接下来
-
-1. 在新电脑取得本仓库的交接分支后，先确认 Git 工作区和 184 的 `current`/`previous`、服务、数据库迁移账本、四条停止来源及源文件归档。SSH 只连 `root@222.204.3.184`，不要使用默认指向其他节点的快捷命令；凭据不写入仓库或命令输出。本地不启动 Docker/OrbStack 数据库栈。
-2. 为 B47→B56 做受控无损代次转移：逐段核对原始哈希、旧回执和新代次起点；补测试覆盖同 inode 两代、停机、跨小时压缩归档、ClickHouse 部分写入、冲突正文清理、重新消费的幂等。若现场旧源范围无法验证，停在隔离状态并报告准确缺口。
-3. 本地测试、构建、vet 后，按现场规则构建唯一包；184 应用升级器会核对迁移 SHA。保留 A44 为 `previous`，不能覆盖旧发布目录。先仅恢复 DHCP 和失败片段，逐条记录首次入库、投影、归档、API 可见及旧异常；再单独排空 packet/handshake 的保留片段，完成短时保护试运行及两个完整 15 分钟窗口。任一超时、内容冲突、资源或积压门槛失败即停新增采集，不能跳新任务或靠加超时/并发通过。
-4. 当前已启用路径全数通过后，依原协议计划逐批开启 Zeek；普通 conn/DNS/HTTP/SSL、无适配器协议和受限 IoT 候选仍不能直接开启。每批以真实新输入的归档、投影、查询、资源和积压验收，而非服务 ready 或日志出现。
-
-本次记录不包含服务器口令。`artifacts/stream-b2-184/` 中包含本机观察、临时脚本和发布包，未必随 Git 交接；现场 `/tmp/ps184-b54/`、`/tmp/ps184-b55/` 及持久日志仍在 184。先重新核对现场，不把本文件的数值当作实时状态。
+现场凭据不写入此文档。每次操作前重新只读核对版本、服务、迁移和积压；保留 A44 的 `previous` 回退入口，不改写已应用迁移，不在现场造数，不将日志产生或 ready 当作业务验收。

@@ -25,6 +25,12 @@ type SegmentFinalizer interface {
 	FinalizeSegment(context.Context, string, Segment) error
 }
 
+// LanePreflight checks local, deterministic input before an attempted marker
+// makes a sink write ambiguous. It must not contact an external sink.
+type LanePreflight interface {
+	Preflight(Lane, Segment) error
+}
+
 type Processor struct {
 	Journal *Journal
 	Writer  Writer
@@ -186,6 +192,11 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 	}
 	switch state.Acks[lane] {
 	case Pending:
+		if preflight, ok := p.Writer.(LanePreflight); ok {
+			if err := preflight.Preflight(lane, state.Segment); err != nil {
+				return fmt.Errorf("stream lane %s local preflight: %w", lane, err)
+			}
+		}
 		if lane != Projection || !state.Segment.SourceBackedRaw {
 			started := time.Now()
 			if err = p.Journal.BeginAttempt(id, lane); err != nil {

@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 
 	"proxy-sentinel/internal/streamlog"
@@ -34,6 +36,32 @@ type StreamLaneWriter struct {
 	Projector   StreamProjector
 	RiskQueue   StreamRiskQueue
 	SharedQueue StreamSharedQueue
+}
+
+// Preflight performs only local validation. A failure here must leave the
+// journal lane pending because no ClickHouse request has been attempted.
+func (w StreamLaneWriter) Preflight(lane streamlog.Lane, segment streamlog.Segment) error {
+	switch lane {
+	case streamlog.Archive:
+		if _, err := prepareStreamEvents(segment); err != nil {
+			return err
+		}
+		if streamRawArchiveRequired(segment) {
+			sum := sha256.Sum256(segment.Raw)
+			if segment.RawSHA256 != hex.EncodeToString(sum[:]) {
+				return streamlog.ErrContentConflict
+			}
+		}
+	case streamlog.Search:
+		if _, err := prepareStreamEvents(segment); err != nil {
+			return err
+		}
+		if segment.RiskFeaturesRequired {
+			_, err := prepareStreamRiskFeatures(segment)
+			return err
+		}
+	}
+	return nil
 }
 
 func (w StreamLaneWriter) WriteBody(ctx context.Context, id string, segment streamlog.Segment) error {
