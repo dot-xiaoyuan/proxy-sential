@@ -2,6 +2,8 @@
 
 本文件供换电脑后继续本轮任务。目标仍是按 [端到端架构](stream-storage-query-architecture-20261024.md) 完成当前采集路径的切流和真实验收，再分批扩 Zeek。历史未处理输入仅在有不可变截止点、数量和哈希的取消清单后放弃；新起点后的输入不得暗中跳过。现场状态须每次重新只读核对。
 
+代码已提交到 `codex/stream-storage-handoff-20261026`。GitHub 推送遇到本机 SSH/HTTP 代理断连，因此另将包含完整提交历史的 Git bundle 放在 184：`/opt/proxy-sentinel/handoff/stream-storage-handoff-20261026.bundle`，同目录有 `.sha256`。换电脑后先从 184 下载两文件，校验 SHA256，再用 `git fetch ./stream-storage-handoff-20261026.bundle refs/heads/codex/stream-storage-handoff-20261026:refs/heads/codex/stream-storage-handoff-20261026` 导入并切换分支。后续若远端网络恢复，再推送该分支。bundle 仅含代码、迁移、测试与文档，不含现场原始事件、发布包或口令。
+
 ## 当前已完成
 
 - 184 的 `current=/opt/proxy-sentinel/releases/2026.10.26-stream-b55`，兼容回退 `previous=/opt/proxy-sentinel/releases/2026.10.25-stream-compat-a44`。B55 发布包 SHA256 为 `3b04819acf1fb163eefe1358b7488dad244bc9ef7e212da44747bf3e5caed8fa`。PostgreSQL 已应用至 191，ClickHouse 至 055；应用升级器逐项核对所有迁移哈希，B55 无新迁移。旧 B54、B53 等发布目录保留。2026-10-26 00:26 CST 控制面 `18080/readyz` 与身份桥 `18082/readyz` 均为 200，旧 ingest 与身份桥活动；根盘余量约 451 GiB。
