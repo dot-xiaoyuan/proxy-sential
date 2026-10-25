@@ -162,6 +162,34 @@ func TestPositionKeysKeepRepeatedIdentityRecordsAndPartialRepairStable(t *testin
 	}
 }
 
+func TestGenerationKeysKeepZeekBindingArchiveWritable(t *testing.T) {
+	segment := testStreamSegment()
+	segment.Source = "zeek-dhcp-binding"
+	segment.ParserVersion = "zeek-dhcp-binding-v2"
+	segment.KeyScheme = "generation-v2"
+	segment.PreviousGeneration = 1
+	segment.SourceGeneration = 1
+	segment.Events[0].EventID = "stream-generation-one"
+	first, err := prepareStreamEvents(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment.PreviousGeneration = 2
+	segment.SourceGeneration = 2
+	segment.Events[0].EventID = "stream-generation-two"
+	second, err := prepareStreamEvents(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first[0].key == second[0].key {
+		t.Fatalf("different Zeek file generations shared archive key: %q", first[0].key)
+	}
+	segment.Source = "device-signals"
+	if _, err := prepareStreamEvents(segment); err == nil {
+		t.Fatal("unrelated source accepted Zeek generation key scheme")
+	}
+}
+
 func TestStreamWriteRetainsRawSourceOncePerSegment(t *testing.T) {
 	segment := testStreamSegment()
 	segment.Raw = []byte("#path dhcp\nrecord\n")

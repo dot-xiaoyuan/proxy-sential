@@ -39,8 +39,11 @@ func prepareStreamEvents(segment streamlog.Segment) ([]preparedStreamEvent, erro
 	if len(segment.EventOffsets) != 0 && len(segment.EventOffsets) != len(segment.Events) {
 		return nil, errors.New("stream event offsets do not match event count")
 	}
-	if segment.KeyScheme != "" && segment.KeyScheme != "event_id_v1" && segment.KeyScheme != "source_position_v1" {
+	if segment.KeyScheme != "" && segment.KeyScheme != "event_id_v1" && segment.KeyScheme != "source_position_v1" && segment.KeyScheme != "generation-v2" {
 		return nil, errors.New("unknown stream event key scheme")
+	}
+	if segment.KeyScheme == "generation-v2" && (segment.Source != "zeek-dhcp-binding" || segment.ParserVersion != "zeek-dhcp-binding-v2" || segment.PreviousGeneration == 0 || segment.SourceGeneration < segment.PreviousGeneration || segment.SourceGeneration > segment.PreviousGeneration+1) {
+		return nil, errors.New("invalid Zeek binding stream generation")
 	}
 	for index, event := range segment.Events {
 		if event.EventID == "" {
