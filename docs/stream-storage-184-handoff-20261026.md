@@ -8,13 +8,15 @@
 - DHCP B47 失败原因已定位：Zeek 16:00 UTC 的新文件复用 14:03 文件 inode，旧事件键只含路径/inode/偏移，导致同键不同正文。B56 新增有尾部哈希证明的轮转恢复、单调文件代次和代次事件键。首次真实接入发现 ClickHouse 归档入口遗漏 `generation-v2` 键，B57 加入校验与回归测试。Go 全量测试、构建、vet 通过。
 - 用户明确放弃未处理历史。旧 B47 以不可变清单 `artifacts/stream-b2-184/dhcp-b47-retirement-b56.json` 审计关闭：未处理 1,461 条/468,531 字节，清单 SHA256 `17ef75d08501aa586aaaba1051d22413f34a1799c8ac95863589b0018ef3b61d`。新起点 `2026-10-25T16:37:35Z` 的 `stream-prepare` 又审计取消 95 条/30,614 字节，清单 SHA256 `ed959c02fc397b298d28e3dc48652af77f3715c7cb46b616b7f6536a791695f8`。合计 1,556 条/499,145 字节均标为**取消未处理**，不计成功；原始文件和旧片段保留。新代次 `dhcp-binding-b56-fresh-20261025T163735Z` 从偏移 742359 开始，journal 为 `/opt/proxy-sentinel/data/stream-journal/dhcp-binding-b56-fresh14`，消费者单元名为 `proxy-sentinel-ingest-stream-dhcp-binding-b56.service`，旧 B47 单元仍 failed，不能重启。
 - B56 的第一个 50 条片段曾因本地键校验失败留下 `archive=attempted`，没有发出 ClickHouse 请求。B57 重启后按未知结果只读核对，正确地没有盲重发，故 60 秒无归档进展时已停消费者。针对片段 `ab19753c95848b711a4187309b0d417bce80f5874d521b161dd752b8b3e7b816` 核实原始哈希、ClickHouse 原文/正文均 0 行、异步插入 0、原 token 查询日志 0、同期间查询日志覆盖 296 条后，使用精确限定的小工具把这**一次已知未发送**的 archive attempt 恢复为 pending；没有伪造 ack 或清空片段。随后 B57 正常归档。00:47 CST PostgreSQL 16 片/541 条投影，541 条归档状态 confirmed，journal 片段已归零，源偏移与当时文件大小相同。此前停机片段已超过 5 秒，须单列失败，不得用于新鲜验收。
-- 本地随后新增流处理器纯本地预检：归档/检索入参、原文哈希在记录 attempted 之前验证，防止确定性本地错误再次滞留成未知结果。对应测试已通过；**此改动尚未发布到 184**，现场仍为 B57。换机后以远端最新提交为准，并按测试/迁移校验及受控应用升级发布。
+- 本地随后新增流处理器纯本地预检：归档/检索入参、原文哈希在记录 attempted 之前验证，防止确定性本地错误再次滞留成未知结果。`go test ./...`、`go build ./...`、`go vet ./...` 均通过；候选 B58 包 SHA256 为 `a2986aa0edf14d736a44b148057e3e71acda4a0dcf4fbf02bf19adef5d70febe`，已上传到 184 `/tmp/ps184-b57/`，**尚未发布**，现场仍为 B57。换机后以远端最新提交为准，并按迁移校验及受控应用升级发布。
+- 00:58 CST 另发现 DNS-SD B3 服务虽然 active，但自 2026-10-24 15:29 UTC 起有 66 个片段滞留；首片 79 条正文存在、检索 0 行、原 token 在 ClickHouse 查询日志 0 次、异步插入 0，且同期日志有 180 条插入覆盖。已停止新抓取，只对这一精确片段把已知未发送的检索尝试恢复为 pending；使用 `discovery-worker --mode=stream-drain` 排空全部 66 片。现场核对 4,916 条 PostgreSQL 投影与归档确认、ClickHouse 正文与窄检索均对齐，保留片段归零。**这些片段逾期约一天，不能计作实时验收。** DNS-SD 抓取仍停止，`service-expectations.json` 已记录停止状态，原文件备份在 `/tmp/ps184-b57/service-expectations-before-dns-pause.json`。
 
 ## 尚未通过的门槛
 
 1. DHCP B57 当前消费者已启动，仍须重新检查**当次**源偏移、journal 未确认片、ClickHouse 原文与窄索引、PostgreSQL 回执、逐条查询，以及两个完整连续 15 分钟窗口。00:47 的 541 条确认仅证明故障片段排空，不能作为实时 5 秒验收。尤其要观察 17:00 UTC Zeek 轮转后文件代次能否正确加 1，不能只看服务 active。风险新消费者和新增 Zeek 协议都保持关闭。
-2. packet/handshake 侧车的采集器及 B54 stream 消费者仍停止；旧采集入口受新 cutover 保护。packet 约 8 个、handshake 约 2 个未确认片段及其原始输入保留在 `/opt/proxy-sentinel/data/stream-journal/{packet,handshake}-b54-fresh`。旧 SSDP 高扇出触发 256 事实读取上限，B55/B57 已改有界摘要和增量事实数，但尚未在真实侧车片段上验收。先停采集器、恢复对应 stream 消费者排空已接收片段，单列旧 5 秒超限；再受控开放新输入与两个 15 分钟窗口。失败即停新增输入，保留证据。
-3. B47 失败片段在 ClickHouse 留有 6 条孤立正文、6 条检索、6 条风险特征及 1 条原始段，PostgreSQL 无成功投影。精确核验无案件引用、旧 14:03 正文可区别之后才能清理孤立重复行；不能广泛删除或把取消任务计作已处理。
-4. 身份新链此前通过两个连续 15 分钟真实窗口，目录接口曾返回 `remote_http_409`、业务状态 degraded；须复核当前状态。风险新链、packet/handshake、新 Zeek 协议尚未通过端到端验收，不能宣称新方案全量落实。协议扩展仍按原计划逐批执行，普通 conn/DNS/HTTP/SSL 及无适配器协议不直接开启。
+2. DNS-SD B3 的旧片段已排空，但新抓取停止。DHCP 门槛通过后才恢复真实新输入，重新逐条验收两个完整 15 分钟窗口；不能用旧片段排空代替。
+3. packet/handshake 侧车的采集器及 B54 stream 消费者仍停止；旧采集入口受新 cutover 保护。packet 约 8 个、handshake 约 2 个未确认片段及其原始输入保留在 `/opt/proxy-sentinel/data/stream-journal/{packet,handshake}-b54-fresh`。旧 SSDP 高扇出触发 256 事实读取上限，B55/B57 已改有界摘要和增量事实数，但尚未在真实侧车片段上验收。先停采集器、恢复对应 stream 消费者排空已接收片段，单列旧 5 秒超限；再受控开放新输入与两个 15 分钟窗口。失败即停新增输入，保留证据。
+4. B47 失败片段在 ClickHouse 留有 6 条孤立正文、6 条检索、6 条风险特征及 1 条原始段，PostgreSQL 无成功投影。精确核验无案件引用、旧 14:03 正文可区别之后才能清理孤立重复行；不能广泛删除或把取消任务计作已处理。
+5. 身份新链此前通过两个连续 15 分钟真实窗口，目录接口曾返回 `remote_http_409`、业务状态 degraded；须复核当前状态。风险新链、packet/handshake、新 Zeek 协议尚未通过端到端验收，不能宣称新方案全量落实。协议扩展仍按原计划逐批执行，普通 conn/DNS/HTTP/SSL 及无适配器协议不直接开启。
 
 现场凭据不写入此文档。每次操作前重新只读核对版本、服务、迁移和积压；保留 A44 的 `previous` 回退入口，不改写已应用迁移，不在现场造数，不将日志产生或 ready 当作业务验收。
