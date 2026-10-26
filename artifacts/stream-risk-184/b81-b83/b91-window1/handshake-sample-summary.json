@@ -1,0 +1,20 @@
+{
+  "sample_accepted_at": "2026-10-26T12:27:00.32382759Z",
+  "source_count": 50,
+  "body_count": 50,
+  "index_count": 50,
+  "paired_count": 50,
+  "accepted_to_index_s": {
+    "max": 3.30762,
+    "p95": 3.30762,
+    "over5": 0
+  },
+  "accepted_to_archive_s": {
+    "min": 1.696858,
+    "max": 1.696858
+  },
+  "archive_to_index_s": {
+    "min": 1.610762,
+    "max": 1.610762
+  }
+}

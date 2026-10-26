@@ -1,0 +1,16 @@
+{
+  "segment_id": "ee55f93b0fa36b5af8910d00ac6f6b7c4f121d3528991b6e6b7c8dbef74e99b1",
+  "sample_accepted_at": "2026-10-26T12:21:38.742694511Z",
+  "early_processing": true,
+  "source_count": 33,
+  "body_count": 33,
+  "index_count": 33,
+  "paired_count": 33,
+  "accepted_to_index_s": {
+    "max": 3.91467,
+    "over5": 0
+  },
+  "archive_to_index_s": {
+    "max": 1.955368
+  }
+}
