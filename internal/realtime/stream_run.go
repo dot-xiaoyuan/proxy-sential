@@ -16,6 +16,8 @@ import (
 type StreamRunOptions struct {
 	Capture            Options
 	MaxPendingSegments int
+	ArchiveWorkers     int
+	SearchWorkers      int
 	DrainOnly          bool
 	OnSourceError      func(Source, error)
 }
@@ -36,6 +38,12 @@ func RunStream(ctx context.Context, journal *streamlog.Journal, writer streamlog
 	}
 	if opts.MaxPendingSegments <= 0 || opts.MaxPendingSegments > 64 {
 		opts.MaxPendingSegments = 16
+	}
+	if opts.ArchiveWorkers < 1 || opts.ArchiveWorkers > 2 {
+		opts.ArchiveWorkers = 1
+	}
+	if opts.SearchWorkers < 1 || opts.SearchWorkers > 2 {
+		opts.SearchWorkers = 1
 	}
 	if opts.OnSourceError == nil {
 		opts.OnSourceError = func(source Source, err error) {
@@ -152,17 +160,18 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 		lastReport = time.Now()
 		opts.OnSourceError(source, err)
 	}
-	// Each lane preserves source order, while projection can advance past a
-	// segment whose independent ClickHouse archive or search is still pending.
+	// Projection preserves source order. Independent archive and search workers
+	// may complete later segments first, while each search still waits for its
+	// own archived body and finalization stays in source order.
 	// A permit is returned only after finalization, bounding durable in-flight
-	// segments as well as memory. Recovery uses the same bound and lane order.
+	// segments as well as memory. Recovery uses the same bound.
 	queues := map[streamlog.Lane]chan string{
 		streamlog.Archive: make(chan string, opts.MaxPendingSegments), streamlog.Search: make(chan string, opts.MaxPendingSegments),
 		streamlog.Projection: make(chan string, opts.MaxPendingSegments),
 	}
 	finalize := make(chan string, opts.MaxPendingSegments)
 	permits := make(chan struct{}, opts.MaxPendingSegments)
-	workerErrors := make(chan error, len(queues)+1)
+	workerErrors := make(chan error, opts.ArchiveWorkers+opts.SearchWorkers+2)
 	processor := streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: opts.Capture.StoreTimeout}
 	startWorker := func(queue <-chan string, name string, run func(context.Context, string) error, release bool) {
 		drainWorker.Add(1)
@@ -205,10 +214,19 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 		}()
 	}
 	for lane, queue := range queues {
-		lane := lane
-		startWorker(queue, string(lane), func(ctx context.Context, id string) error {
-			return processor.DrainLane(ctx, id, lane)
-		}, false)
+		count := 1
+		switch lane {
+		case streamlog.Archive:
+			count = opts.ArchiveWorkers
+		case streamlog.Search:
+			count = opts.SearchWorkers
+		}
+		for range count {
+			lane := lane
+			startWorker(queue, string(lane), func(ctx context.Context, id string) error {
+				return processor.DrainLane(ctx, id, lane)
+			}, false)
+		}
 	}
 	drainWorker.Add(1)
 	go func() {

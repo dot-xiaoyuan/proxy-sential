@@ -174,9 +174,15 @@ func runIngestStream(args []string) error {
 	}
 	projector := discovery.StreamDiscoveryProjector{DB: db}
 	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector, SharedQueue: store.StreamSharedJobQueue{DB: db}}
+	archiveWorkers, searchWorkers := 1, 1
+	if *ttlPath != "" || *handshakePath != "" {
+		archiveWorkers, searchWorkers = 2, 2
+	}
 	return realtime.RunStream(ctx, journal, writer, realtime.StreamRunOptions{
 		Capture:            realtime.Options{SensorID: *sensor, Sources: sources, PollInterval: *poll, MaxBatchBytes: *maxBytes, StoreTimeout: *storeTimeout},
 		MaxPendingSegments: *pending,
+		ArchiveWorkers:     archiveWorkers,
+		SearchWorkers:      searchWorkers,
 		DrainOnly:          *drainOnly,
 	})
 }

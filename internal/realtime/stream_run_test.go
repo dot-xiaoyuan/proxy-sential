@@ -106,6 +106,88 @@ type projectionAheadWriter struct {
 	projected chan string
 }
 
+type parallelArchiveWriter struct {
+	streamRunWriter
+	firstID string
+	unblock chan struct{}
+	started chan string
+}
+
+func (w *parallelArchiveWriter) WriteBody(ctx context.Context, id string, _ streamlog.Segment) error {
+	w.started <- id
+	if id != w.firstID {
+		return nil
+	}
+	select {
+	case <-w.unblock:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestRunStreamArchivesLaterSegmentWhileEarlierArchiveWaits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.jsonl")
+	if err := os.WriteFile(path, []byte("one\ntwo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileID := fileIdentity(path, info)
+	j, err := streamlog.Open(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := Source{Kind: "suricata", Path: path}
+	if err := j.StartFreshSource(streamlog.SourceCursor{Epoch: "fresh", Source: source.Kind, Path: path, FileID: fileID, Offset: 0, ParserVersion: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for index, raw := range [][]byte{[]byte("one\n"), []byte("two\n")} {
+		start := int64(index * 4)
+		sum := sha256.Sum256(raw)
+		id, err := j.Append(streamlog.Segment{
+			Epoch: "fresh", Source: source.Kind, SourcePath: path, FileID: fileID,
+			PreviousFileID: fileID, PreviousOffset: start, StartOffset: start, EndOffset: start + int64(len(raw)),
+			ParserVersion: "v1", RawSHA256: hex.EncodeToString(sum[:]), Raw: raw,
+			ArchiveMonth: time.Now().UTC().Format("200601"), AcceptedAt: time.Now().UTC(),
+			Events: []normalized.Event{{EventID: string(raw), Type: "discovery"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := j.CommitSource(source.Kind, path, id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	w := &parallelArchiveWriter{firstID: ids[0], unblock: make(chan struct{}), started: make(chan string, 2)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	defer func() { cancel(); <-done }()
+	go func() {
+		done <- RunStream(ctx, j, w, StreamRunOptions{
+			Capture:            Options{SensorID: "sensor-a", Sources: []Source{source}, PollInterval: 10 * time.Millisecond, StoreTimeout: time.Second},
+			MaxPendingSegments: 2, ArchiveWorkers: 2, SearchWorkers: 2,
+		})
+	}()
+	seen := make(map[string]bool, len(ids))
+	for range ids {
+		select {
+		case got := <-w.started:
+			seen[got] = true
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("second archive waited for the first segment")
+		}
+	}
+	if !seen[ids[0]] || !seen[ids[1]] {
+		t.Fatalf("both archives were not started: %+v", seen)
+	}
+	close(w.unblock)
+}
+
 func (w *projectionAheadWriter) WriteBody(ctx context.Context, id string, _ streamlog.Segment) error {
 	if id == w.firstID {
 		select {
