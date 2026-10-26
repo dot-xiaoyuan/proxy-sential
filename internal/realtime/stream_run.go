@@ -325,7 +325,7 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 		}
 		stagingStarted, staged := false, false
 		var onReady func(string) error
-		if source.Kind == "device-signals" || source.Kind == "shared-device-signals" {
+		if streamSourceOffersEarlyLanes(source.Kind) {
 			onReady = func(id string) error {
 				stagingStarted = true
 				if err := enqueueLanes(id); err != nil {
@@ -404,6 +404,10 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 			return nil
 		}
 	}
+}
+
+func streamSourceOffersEarlyLanes(kind string) bool {
+	return kind == "device-signals" || kind == "shared-device-signals" || kind == "zeek-dhcp-binding"
 }
 
 // Coalescing a small, still-growing Zeek file for at most two seconds avoids

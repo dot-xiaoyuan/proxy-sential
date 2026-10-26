@@ -202,6 +202,87 @@ func TestRunStreamArchivesLaterSegmentWhileEarlierArchiveWaits(t *testing.T) {
 	close(w.unblock)
 }
 
+func TestStreamRunOffersEarlyDHCPSource(t *testing.T) {
+	for _, kind := range []string{"device-signals", "shared-device-signals", "zeek-dhcp-binding"} {
+		if !streamSourceOffersEarlyLanes(kind) {
+			t.Fatalf("durable source %s still waits for the cursor before sinks", kind)
+		}
+	}
+	if streamSourceOffersEarlyLanes("suricata") {
+		t.Fatal("unverified source was offered before cursor commit")
+	}
+}
+
+type blockedEarlyDHCPWriter struct {
+	streamRunWriter
+	started chan string
+	release chan struct{}
+}
+
+func (w *blockedEarlyDHCPWriter) WriteBody(ctx context.Context, id string, _ streamlog.Segment) error {
+	select {
+	case w.started <- id:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-w.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestRunStreamDHCPUsesEarlySourceDescriptor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "device_dhcp_binding.log")
+	line := []byte(`{"ts":1792890000,"uid":"C1","xid":707,"capture_vlan":"42","mac":"02:00:00:00:00:10","assigned_addr":"192.0.2.82","msg_types":"ACK"}` + "\n")
+	raw := make([]byte, 0, len(line)*150)
+	for range 150 {
+		raw = append(raw, line...)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := streamlog.Open(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := Source{Kind: "zeek-dhcp-binding", Path: path}
+	if err := j.StartFreshSource(streamlog.SourceCursor{Epoch: "fresh-binding", Source: source.Kind, Path: path, FileID: fileIdentity(path, info), ParserVersion: "zeek-dhcp-binding-v1"}); err != nil {
+		t.Fatal(err)
+	}
+	w := &blockedEarlyDHCPWriter{started: make(chan string, 1), release: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunStream(ctx, j, w, StreamRunOptions{Capture: Options{SensorID: "sensor-a", Sources: []Source{source}, PollInterval: 10 * time.Millisecond, StoreTimeout: time.Second}, MaxPendingSegments: 2})
+	}()
+	var id string
+	select {
+	case id = <-w.started:
+	case err := <-done:
+		cancel()
+		t.Fatalf("DHCP stream stopped before body processing: %v", err)
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("DHCP body lane was not started")
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.Segment.EarlyProcessing || !state.Segment.SourceBackedRaw {
+		cancel()
+		t.Fatalf("running DHCP source missed early descriptor path: %+v %v", state, err)
+	}
+	close(w.release)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (w *projectionAheadWriter) WriteBody(ctx context.Context, id string, _ streamlog.Segment) error {
 	if id == w.firstID {
 		select {
