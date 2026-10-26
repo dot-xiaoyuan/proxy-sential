@@ -46,6 +46,28 @@
       "accepted_to_index_s": 5.342182,
       "append_duration_s": 1.033,
       "durable_to_index_upper_bound_s": 4.309182
+    },
+    {
+      "source": "packet",
+      "accepted_at": "2026-10-26T11:11:23.782369109Z",
+      "segment_id": "4fa55cc25033ebc13582dc6e1ef11d8370dad27caa2bbfb263f6c369b26c1270",
+      "event_count": 50,
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 7.155458,
+      "append_duration_s": 1.353,
+      "durable_to_index_upper_bound_s": 5.802458
+    },
+    {
+      "source": "handshake",
+      "accepted_at": "2026-10-26T11:11:24.32583706Z",
+      "segment_id": "fdfeecca487e475aead4c68c46b85e967727140c49fb4a9118fc51fe4bbac50c",
+      "event_count": 50,
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 5.444897,
+      "append_duration_s": 1.453,
+      "durable_to_index_upper_bound_s": 3.991897
     }
   ]
 }
