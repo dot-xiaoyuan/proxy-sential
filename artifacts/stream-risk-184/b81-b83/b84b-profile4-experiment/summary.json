@@ -1,0 +1,21 @@
+{
+  "start": "2026-10-26T09:59:27",
+  "end": "2026-10-26T10:07:52",
+  "profile_samples": 190,
+  "first_profile": [
+    "2026-10-26T09:59:43Z",
+    236,
+    21.21506,
+    0
+  ],
+  "last_profile": [
+    "2026-10-26T10:07:49Z",
+    917,
+    102.727778,
+    0
+  ],
+  "max_pending": 996,
+  "max_oldest_age_s": 180.147682,
+  "profile_age_over5_samples": 190,
+  "max_profile_wal_wait": 4
+}
