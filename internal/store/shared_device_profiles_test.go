@@ -116,6 +116,28 @@ func TestSharedProfileHistoryIgnoresMaterializerHeartbeatOnly(t *testing.T) {
 	}
 }
 
+func TestSharedProfileClaimKeepsLeaseAdvisoryUntilResultCommit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL synchronous_commit = off`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`WITH picked AS`).WithArgs(sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"subject_key", "sensor_id", "campus_id", "endpoint_id", "mac", "ip", "vlan", "observed_at", "dirty_generation", "attempts", "lease_owner"}).
+			AddRow("subject-a", "sensor-a", "campus-a", "endpoint-a", "", "192.0.2.1", "", now, int64(7), 0, "worker:token"))
+	mock.ExpectCommit()
+	job, found, err := (&DBStore{pg: &PostgresStore{db: db}}).claimSharedDeviceProfileJob(context.Background(), "worker")
+	if err != nil || !found || job.SubjectKey != "subject-a" || job.DirtyGeneration != 7 {
+		t.Fatalf("claim failed: %+v found=%t err=%v", job, found, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSharedDeviceProfileListUsesOnePostgresSnapshotQuery(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

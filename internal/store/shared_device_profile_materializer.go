@@ -99,7 +99,17 @@ WHERE sensor_id=$1 AND endpoint_id=$2 AND action='ack' AND observed_at<=$3 AND v
 
 func (s *DBStore) claimSharedDeviceProfileJob(ctx context.Context, worker string) (sharedDeviceProfileJob, bool, error) {
 	owner := worker + ":" + appToken()
-	row := s.pg.db.QueryRowContext(ctx, `WITH picked AS (
+	tx, err := s.pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return sharedDeviceProfileJob{}, false, err
+	}
+	defer tx.Rollback()
+	// A lost claim commit leaves the durable job due for retry. The later
+	// synchronous result commit flushes the earlier lease WAL as well.
+	if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
+		return sharedDeviceProfileJob{}, false, err
+	}
+	row := tx.QueryRowContext(ctx, `WITH picked AS (
  SELECT subject_key FROM shared_device_profile_jobs
  WHERE ((processed_generation<dirty_generation AND not_before<=now()) OR next_run_at<=now())
  AND lease_until<now() ORDER BY CASE WHEN processed_generation<dirty_generation THEN 0 ELSE 1 END,
@@ -115,6 +125,9 @@ RETURNING j.subject_key,j.sensor_id,j.campus_id,j.endpoint_id,j.mac,coalesce(hos
 		if errors.Is(err, sql.ErrNoRows) {
 			return sharedDeviceProfileJob{}, false, nil
 		}
+		return sharedDeviceProfileJob{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
 		return sharedDeviceProfileJob{}, false, err
 	}
 	return job, true, nil

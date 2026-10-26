@@ -18,6 +18,7 @@ func TestRiskDirtyQueueClaimsAndAcknowledgesOnlyClaimedGeneration(t *testing.T) 
 	observed := time.Now().UTC().Truncate(time.Second)
 	lease := observed.Add(15 * time.Second)
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL synchronous_commit = off`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`WITH picked AS`).WithArgs("sensor-a", 128).WillReturnRows(
 		sqlmock.NewRows([]string{"sensor_id", "subject_type", "subject_id", "claimed_generation", "claim_until", "last_observed_at", "first_dirty_at"}).AddRow("sensor-a", "ip", "192.0.2.8", int64(47), lease, observed, observed))
 	mock.ExpectCommit()
@@ -45,6 +46,7 @@ func TestRiskClaimReadErrorRollsBackLease(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL synchronous_commit = off`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`WITH picked AS`).WithArgs("sensor-a", 64).WillReturnRows(
 		sqlmock.NewRows([]string{"sensor_id", "subject_type", "subject_id", "claimed_generation", "claim_until", "last_observed_at", "first_dirty_at"}).
 			AddRow("sensor-a", "ip", "192.0.2.8", int64(47), time.Now(), time.Now(), time.Now()).

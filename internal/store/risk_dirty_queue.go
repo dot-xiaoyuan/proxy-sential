@@ -52,6 +52,11 @@ func (s *DBStore) ClaimRiskSubjects(ctx context.Context, sensor string, limit in
 		return nil, err
 	}
 	defer tx.Rollback()
+	// A lost claim commit leaves the durable dirty row available for retry.
+	// The later synchronous result transaction also flushes this earlier WAL.
+	if _, err := tx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
+		return nil, err
+	}
 	rows, err := tx.QueryContext(ctx, `WITH picked AS (
  SELECT sensor_id,subject_type,subject_id FROM risk_feature_dirty_subjects
  WHERE sensor_id=$1 AND (claim_until IS NULL OR claim_until<now())
