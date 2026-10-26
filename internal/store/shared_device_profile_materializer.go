@@ -33,9 +33,7 @@ type sharedProfileSource struct {
 	Shared     *sharedaccess.BehaviorAssessment
 }
 
-// Compatibility profiles share PostgreSQL WAL and storage with realtime work.
-// Bound concurrent commits so the profile queue cannot occupy every WAL writer.
-const sharedDeviceProfileWorkerCount = 4
+const sharedDeviceProfileWorkerCount = 8
 
 func normalizedSharedProfileMAC(value string) string {
 	parsed, err := net.ParseMAC(strings.TrimSpace(value))
