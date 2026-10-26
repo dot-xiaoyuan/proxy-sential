@@ -1,0 +1,24 @@
+{
+  "start": "2026-10-26T12:20:00Z",
+  "end": "2026-10-26T12:35:00Z",
+  "sda_util_percent": {
+    "samples": 180,
+    "p95": 94.54,
+    "max": 97.94
+  },
+  "sda_read_await_ms": {
+    "samples": 180,
+    "p95": 98.91,
+    "max": 130.7
+  },
+  "sda_write_await_ms": {
+    "samples": 180,
+    "p95": 46.01,
+    "max": 85.02
+  },
+  "cpu_iowait_percent": {
+    "samples": 180,
+    "p95": 23.88,
+    "max": 26.8
+  }
+}

@@ -2,12 +2,12 @@
   "release": "2026.10.26-stream-b91-dhcp-ready-run",
   "window_start": "2026-10-26T12:20:00Z",
   "window_end": "2026-10-26T12:35:00Z",
-  "measurement": "Post-durable journal emission to PG risk receipt queued_at is a lower bound to risk queue insertion. queued_at precedes transaction commit and risk/API visibility.",
+  "measurement": "The stream capture durable message records append_returned_at immediately after durable append. PG receipt queued_at minus append_returned_at is a lower bound to risk queue insertion. queued_at precedes transaction commit and risk/API visibility.",
   "risk_segment_receipts": 254,
   "matched_post_durable_logs": 254,
   "unmatched_segment_ids": [],
   "proven_queue_after_5s": 0,
-  "max_proven_lower_bound_s": 4.660405,
+  "max_proven_lower_bound_s": 4.660505,
   "accepted_to_queue_s": {
     "max": 7.003173,
     "p95": 4.833683,
@@ -17,62 +17,72 @@
   "slowest_post_durable_examples": [
     {
       "segment_id": "a8ea716ff4dc58900832ae5f24e3ae8a928e7043a32a05f60fc6e30aab7398bd",
-      "post_durable_to_queue_lower_bound_s": 4.660405,
+      "post_durable_to_queue_lower_bound_s": 4.660505,
       "accepted_to_queue_upper_bound_s": 7.003173,
+      "append_returned_to_journal_s": 9.9e-05,
       "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
     },
     {
       "segment_id": "d91db3ab7029f452159a1c57ac64aaa177a999de9859e14dd3306f08f469d3d4",
-      "post_durable_to_queue_lower_bound_s": 4.334123,
+      "post_durable_to_queue_lower_bound_s": 4.334128,
       "accepted_to_queue_upper_bound_s": 5.970487,
+      "append_returned_to_journal_s": 5e-06,
       "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
     },
     {
       "segment_id": "efd1304ae3913403187d04eabfb8104521afee5ad3c455ee8da789a76cf9b404",
-      "post_durable_to_queue_lower_bound_s": 4.268738,
+      "post_durable_to_queue_lower_bound_s": 4.268793,
       "accepted_to_queue_upper_bound_s": 5.35246,
+      "append_returned_to_journal_s": 5.5e-05,
       "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
     },
     {
       "segment_id": "ba42aa09010df94d93c9e8cc1eda7ced9eadaea1d2f1168d8c39957622f0cb5b",
-      "post_durable_to_queue_lower_bound_s": 4.114327,
+      "post_durable_to_queue_lower_bound_s": 4.114423,
       "accepted_to_queue_upper_bound_s": 5.209148,
+      "append_returned_to_journal_s": 9.6e-05,
       "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
     },
     {
       "segment_id": "a3911b97f6aced20f5a1dfb5f50273420617f10000d7c0b893f1dcbb2da21833",
-      "post_durable_to_queue_lower_bound_s": 3.830461,
+      "post_durable_to_queue_lower_bound_s": 3.830525,
       "accepted_to_queue_upper_bound_s": 4.861005,
+      "append_returned_to_journal_s": 6.4e-05,
       "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
     },
     {
       "segment_id": "7f8f8a39434510240753adead1b0a9e5f0ed0fe6f3073806eb83d614b6a631b0",
-      "post_durable_to_queue_lower_bound_s": 3.577261,
+      "post_durable_to_queue_lower_bound_s": 3.577527,
       "accepted_to_queue_upper_bound_s": 5.197014,
+      "append_returned_to_journal_s": 0.000266,
       "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
     },
     {
       "segment_id": "ac8d853eaec635ea634f85886e669f58103593b59a7570b20fbb865607ce957a",
-      "post_durable_to_queue_lower_bound_s": 3.563681,
+      "post_durable_to_queue_lower_bound_s": 3.563695,
       "accepted_to_queue_upper_bound_s": 4.785449,
+      "append_returned_to_journal_s": 1.4e-05,
       "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
     },
     {
       "segment_id": "eee65051590b19344d7f285bb6e38545caaa25f0bd2d4fe35d920a3174664d9b",
-      "post_durable_to_queue_lower_bound_s": 3.556589,
+      "post_durable_to_queue_lower_bound_s": 3.557278,
       "accepted_to_queue_upper_bound_s": 4.92032,
+      "append_returned_to_journal_s": 0.00069,
       "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
     },
     {
       "segment_id": "2ab2e1a701903dc1b9de9eee3662b26f745163b06a91b7541b9df2fdaa14a6a9",
-      "post_durable_to_queue_lower_bound_s": 3.543595,
+      "post_durable_to_queue_lower_bound_s": 3.54362,
       "accepted_to_queue_upper_bound_s": 4.500183,
+      "append_returned_to_journal_s": 2.5e-05,
       "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
     },
     {
       "segment_id": "e45b9456f3930cdbb0ab4872d14672a59d87f7398f1c7c34ee4105f376e24c27",
-      "post_durable_to_queue_lower_bound_s": 3.506971,
+      "post_durable_to_queue_lower_bound_s": 3.506979,
       "accepted_to_queue_upper_bound_s": 4.466206,
+      "append_returned_to_journal_s": 8e-06,
       "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
     }
   ]

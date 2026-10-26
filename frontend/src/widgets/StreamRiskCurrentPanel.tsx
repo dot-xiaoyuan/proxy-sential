@@ -16,7 +16,13 @@ export function StreamRiskCurrentPanel() {
   const query: StreamRiskCurrentQuery = {
     subject_type: subjectType, level: level || undefined, cursor: cursor || undefined, limit: 20,
   }
-  const current = useQuery({ queryKey: ['stream-risk-current', query], queryFn: () => api.streamRiskCurrent(query) })
+  const current = useQuery({
+    queryKey: ['stream-risk-current', query],
+    queryFn: () => api.streamRiskCurrent(query),
+    staleTime: 0,
+    refetchInterval: 3_000,
+    refetchIntervalInBackground: false,
+  })
   const fact = useQuery({
     queryKey: ['stream-risk-evidence', selectedEvidence],
     queryFn: () => api.streamRiskEvidence(selectedEvidence!.kind, selectedEvidence!.subject, selectedEvidence!.id),
@@ -29,11 +35,11 @@ export function StreamRiskCurrentPanel() {
     <div className="stream-risk-controls">
       <label>对象类型<Select aria-label="对象类型" value={subjectType} onChange={value => { setSubjectType(value); changeFilter() }} options={[{ value: 'ip', label: 'IP' }, { value: 'account', label: '账号' }]} /></label>
       <label>风险等级<Select aria-label="风险等级" value={level} onChange={value => { setLevel(value); changeFilter() }} options={[{ value: '', label: '全部等级' }, { value: 'confirmed', label: '确认代理' }, { value: 'high', label: '高风险' }, { value: 'suspicious', label: '疑点' }, { value: 'normal', label: '正常' }]} /></label>
-      <Button onClick={() => void current.refetch()} loading={current.isFetching}>刷新结果</Button>
+      <Button onClick={() => void current.refetch()}>刷新结果</Button>
     </div>
     {current.isError && <AppErrorAlert title="新流风险结果读取失败" message={current.error.message} />}
-    {current.isFetching && <p>正在查询风险结果…</p>}
-    {!current.isFetching && !current.isError && current.data && <>
+    {current.isPending && <p>正在查询风险结果…</p>}
+    {!current.isError && current.data && <>
       <p className="stream-risk-cutoff">新鲜起点：{formatDateTime(current.data.accepted_after)}</p>
       {current.data.items.length === 0 && <p>当前筛选没有风险结果。</p>}
       <div className="stream-risk-cards">

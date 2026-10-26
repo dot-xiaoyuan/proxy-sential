@@ -338,7 +338,8 @@ export function useStreamRiskCutover() {
   return useQuery({
     queryKey: queryKeys.streamRiskCutover(),
     queryFn: api.streamRiskCutover,
-    refetchInterval: 30_000,
+    staleTime: 0,
+    refetchInterval: 5_000,
     refetchIntervalInBackground: false,
   });
 }
