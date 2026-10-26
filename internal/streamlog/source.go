@@ -217,11 +217,14 @@ func validateSourceSegment(cursor SourceCursor, segment Segment, source, path st
 }
 
 // AppendSourceReady proves the source predecessor before the immutable body is
-// written. Its durable body is the readiness marker, so sink lanes can start
+// written. Inline standard-event bytes or a verified Zeek source reference
+// make the durable descriptor a readiness marker, so sink lanes can start
 // without a second producer-side state fsync. Release still waits for the
 // durable cursor and all sink acknowledgements.
 func (j *Journal) AppendSourceReady(segment Segment) (string, error) {
-	if !segment.RawIsStandardEvents || (segment.Source != "device-signals" && segment.Source != "shared-device-signals") {
+	inline := segment.RawIsStandardEvents && (segment.Source == "device-signals" || segment.Source == "shared-device-signals")
+	verifiedSource := segment.Source == "zeek-dhcp-binding" && segment.SourceBackedRaw
+	if !inline && !verifiedSource {
 		return "", ErrContentConflict
 	}
 	lock, err := j.lockFile(".cursor-lock-" + sourceCursorID(segment.Source, segment.SourcePath))

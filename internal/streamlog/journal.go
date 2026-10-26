@@ -173,7 +173,7 @@ func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 	if s.RawIsStandardEvents && (s.Source != "device-signals" && s.Source != "shared-device-signals" || len(s.Raw) == 0 || len(s.Events) == 0 || s.SourceBackedRaw || s.Quarantined) {
 		return "", errors.New("standard-event raw source requires inline device events")
 	}
-	if s.EarlyProcessing && (!allowEarly || !s.RawIsStandardEvents) {
+	if s.EarlyProcessing && (!allowEarly || (!s.RawIsStandardEvents && !s.SourceBackedRaw)) {
 		return "", ErrContentConflict
 	}
 	if len(s.Raw) > 0 {
@@ -300,7 +300,7 @@ func (j *Journal) load(id string) (State, error) {
 		if bodyErr != nil {
 			return State{}, bodyErr
 		}
-		state = State{ID: id, ContentSHA256: hash, Segment: segment, ProcessingReady: segment.EarlyProcessing, Committed: segment.SourceBackedRaw, Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending}}
+		state = State{ID: id, ContentSHA256: hash, Segment: segment, ProcessingReady: segment.EarlyProcessing, Committed: segment.SourceBackedRaw && !segment.EarlyProcessing, Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending}}
 		if len(segment.Events) == 0 {
 			state.Acks[Archive], state.Acks[Search] = NotApplicable, NotApplicable
 		}

@@ -1,0 +1,13 @@
+{
+  "release": "2026.10.26-stream-b89b-body-ready-trace",
+  "source": "zeek-dhcp-binding",
+  "segment_id": "69859a6a884ec601d0ce29d3ddafb410593e0ddffeb33e3e0ed3825a2e9221a7",
+  "accepted_at": "2026-10-26T11:51:25.796553368Z",
+  "event_count": 17,
+  "body_count": 17,
+  "index_count": 17,
+  "paired_count": 17,
+  "accepted_to_index_max_s": 4.040992,
+  "accepted_to_index_over5": 0,
+  "caveat": "The accepted timestamp precedes first durable standard-event segment write. The result is a conservative upper bound for these ClickHouse keys, not authenticated API visibility or a full-window result."
+}

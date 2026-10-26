@@ -308,6 +308,56 @@ func TestDurableSourceBodyLetsSinkStartBeforeCursorWithoutExtraStateWrite(t *tes
 	}
 }
 
+func TestSourceBackedDHCPBodyWaitsForCursorBeforeRelease(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("verified DHCP source bytes\n")
+	segment := testSegment()
+	segment.Source, segment.SourcePath = "zeek-dhcp-binding", "/logs/device_dhcp_binding.log"
+	segment.SourceBackedRaw = true
+	segment.Raw = raw
+	segment.EndOffset = segment.StartOffset + int64(len(raw))
+	sum := sha256.Sum256(raw)
+	segment.RawSHA256 = hex.EncodeToString(sum[:])
+	j.SetRawResolver(func(Segment) ([]byte, error) { return append([]byte(nil), raw...), nil })
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.AppendSourceReady(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.ProcessingReady || state.Committed || !state.AckLogSealed || len(state.Segment.Raw) != len(raw) {
+		t.Fatalf("source-backed descriptor was not recoverably ready: %+v %v", state, err)
+	}
+	if err := j.BeginAttempt(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Ack(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Release(id); !errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("source-backed body released before cursor: %v", err)
+	}
+	j, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.SetRawResolver(func(Segment) ([]byte, error) { return append([]byte(nil), raw...), nil })
+	ids, err := j.RecoverSource(segment.Source, segment.SourcePath)
+	if err != nil || len(ids) != 1 || ids[0] != id {
+		t.Fatalf("source-backed body was not recovered: %v %v", ids, err)
+	}
+	state, err = j.Load(id)
+	if err != nil || !state.Committed || state.ProcessingReady || state.Acks[Archive] != Acked {
+		t.Fatalf("source-backed sink acknowledgement was lost: %+v %v", state, err)
+	}
+}
+
 func TestAppendSourceReadyRejectsUnprovenPredecessor(t *testing.T) {
 	j, err := Open(t.TempDir())
 	if err != nil {

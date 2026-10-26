@@ -155,7 +155,7 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		segment.SourceBackedRaw = source.Kind == "zeek-dhcp-binding" && journal.HasRawResolver()
 		appendStarted := time.Now()
 		var id string
-		bodyReady := onReady != nil && (source.Kind == "device-signals" || source.Kind == "shared-device-signals")
+		bodyReady := onReady != nil && (segment.RawIsStandardEvents || segment.SourceBackedRaw)
 		if bodyReady {
 			id, err = journal.AppendSourceReady(segment)
 		} else {

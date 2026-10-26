@@ -239,6 +239,47 @@ func TestStreamCaptureDHCPBindingKeepsVerifiedPositionAndBound(t *testing.T) {
 	}
 }
 
+func TestStreamCaptureDHCPBindingOffersSourceBackedBodyBeforeCursor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "device_dhcp_binding.log")
+	raw := []byte(`{"ts":1792890000,"uid":"C1","xid":707,"capture_vlan":"42","mac":"02:00:00:00:00:10","assigned_addr":"192.0.2.82","msg_types":"ACK"}` + "\n")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := streamlog.Open(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.SetRawResolver(func(streamlog.Segment) ([]byte, error) { return append([]byte(nil), raw...), nil })
+	source := Source{Kind: "zeek-dhcp-binding", Path: path}
+	if err := j.StartFreshSource(streamlog.SourceCursor{Epoch: "fresh-binding", Source: source.Kind, Path: path, FileID: fileIdentity(path, info), ParserVersion: "zeek-dhcp-binding-v1"}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	id, captured, err := captureStreamOnceWithReady(context.Background(), j, Options{SensorID: "sensor-a"}, source, func(readyID string) error {
+		called = true
+		state, err := j.Load(readyID)
+		if err != nil || !state.ProcessingReady || state.Committed || !state.Segment.SourceBackedRaw {
+			t.Fatalf("DHCP descriptor was not ready before cursor: %+v %v", state, err)
+		}
+		cursor, err := j.LoadSource(source.Kind, source.Path)
+		if err != nil || cursor.Offset != 0 || cursor.LastSegmentID != "" {
+			t.Fatalf("DHCP cursor moved before sink was offered: %+v %v", cursor, err)
+		}
+		return j.BeginAttempt(readyID, streamlog.Archive)
+	})
+	if err != nil || !captured || !called {
+		t.Fatalf("DHCP segment was not offered before cursor: %s %t %t %v", id, captured, called, err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.Committed || state.ProcessingReady || state.Acks[streamlog.Archive] != streamlog.Attempted {
+		t.Fatalf("DHCP cursor commit lost attempted sink: %+v %v", state, err)
+	}
+}
+
 func TestStreamCaptureDrainsVerifiedCompressedZeekRotation(t *testing.T) {
 	dir := t.TempDir()
 	currentDir := filepath.Join(dir, "current")

@@ -1,0 +1,24 @@
+{
+  "release": "2026.10.26-stream-b89b-body-ready-trace",
+  "window_start": "2026-10-26T11:45:00Z",
+  "window_end": "2026-10-26T12:00:00Z",
+  "measurement": "Join each immutable segment ID in PostgreSQL risk_feature_segment_receipts with the UTC microsecond time of its post-append journal message. The message is emitted after the durable segment write, so queued_at minus that message time is a lower bound from first durable standard-event input to risk queue insertion. PostgreSQL queued_at is earlier than transaction commit and risk evaluation.",
+  "risk_segment_receipts": 331,
+  "matched_post_durable_logs": 311,
+  "proven_queue_after_5s": 6,
+  "max_proven_lower_bound_s": 5.779,
+  "accepted_to_queue_s": {
+    "max": 7.709,
+    "p95": 5.494,
+    "over5": 52,
+    "caveat": "accepted_at precedes durable input and is not itself a failure count"
+  },
+  "examples": [
+    {"segment_id": "51a27e015d4487f2ed4dcf80383ef45b9980700f3a11f9d30b353b99deacc7a7", "post_durable_to_queue_lower_bound_s": 5.779},
+    {"segment_id": "8bda4af66c112dfe1bf7e0275eabaea98c01d8991e148402e3274fc434899068", "post_durable_to_queue_lower_bound_s": 5.408},
+    {"segment_id": "5039aa02c66f6cb2d46000597e924e93db27bad64a331834bde9ec576e272397", "post_durable_to_queue_lower_bound_s": 5.338, "post_durable_log_at": "2026-10-26T11:45:21.071439Z", "queued_at": "2026-10-26T11:45:26.409568Z"},
+    {"segment_id": "b58c3ef2f267ebeed983f3d138ee9424cb26b34db902efdfd090b55d365ad263", "post_durable_to_queue_lower_bound_s": 5.289},
+    {"segment_id": "dd8869fd5011da8085d8304b2347ae90aa7f236ac0568b84a1eeabf61f15e7f2", "post_durable_to_queue_lower_bound_s": 5.227}
+  ],
+  "result": "failed_before_risk_evaluation_or_authenticated_api_query"
+}

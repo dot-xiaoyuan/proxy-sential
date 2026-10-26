@@ -1,0 +1,60 @@
+{
+  "start": "2026-10-26T11:45:00",
+  "end": "2026-10-26T12:00:00",
+  "risk": {
+    "samples": 388,
+    "pending_over5_samples": 0,
+    "max_pending": 994,
+    "query_errors": 0,
+    "main_non200": 0,
+    "identity_non200": 0
+  },
+  "profile": {
+    "samples": 387,
+    "age_over5_samples": 0,
+    "max_age_s": 1.834397
+  },
+  "source": {
+    "dhcp": {
+      "samples": 179,
+      "age_over5_samples": 55,
+      "max_age_s": 8.331,
+      "max_unread_bytes": 15071,
+      "errors": 0
+    },
+    "packet": {
+      "samples": 179,
+      "age_over5_samples": 12,
+      "max_age_s": 6.509,
+      "max_unread_bytes": 1768491,
+      "errors": 0
+    },
+    "handshake": {
+      "samples": 179,
+      "age_over5_samples": 3,
+      "max_age_s": 5.686,
+      "max_unread_bytes": 2335647,
+      "errors": 0
+    }
+  },
+  "unindexed_source": {
+    "dhcp": {
+      "samples": 179,
+      "unindexed_over5_samples": 6,
+      "max_unindexed_age_s": 6.041,
+      "read_errors": 0
+    },
+    "packet": {
+      "samples": 179,
+      "unindexed_over5_samples": 0,
+      "max_unindexed_age_s": 4.071,
+      "read_errors": 0
+    },
+    "handshake": {
+      "samples": 179,
+      "unindexed_over5_samples": 0,
+      "max_unindexed_age_s": 4.268,
+      "read_errors": 0
+    }
+  }
+}
