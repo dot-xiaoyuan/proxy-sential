@@ -2612,6 +2612,29 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /risks/stream-subject:
+    get:
+      operationId: getStreamRiskSubjectState
+      description: Distinguish pending, current, expired and absent risk interpretation for one sensor-owned subject.
+      parameters:
+        - name: subject_type
+          in: query
+          schema: { type: string, enum: [ip, account], default: ip }
+        - name: subject_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        "200":
+          description: State of one scoped risk subject.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamRiskSubjectState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /ips/{ip}/risk:
     get:
       operationId: getIpRisk
@@ -5758,6 +5781,15 @@ components:
             $ref: "#/components/schemas/RiskSnapshot"
         next_cursor: { type: string }
         accepted_after: { type: string, format: date-time }
+    StreamRiskSubjectState:
+      type: object
+      required: [state]
+      properties:
+        state: { type: string, enum: [not_started, processing, current, expired, no_record] }
+        accepted_after: { type: string, format: date-time }
+        pending_since: { type: string, format: date-time }
+        snapshot:
+          $ref: "#/components/schemas/RiskSnapshot"
     RiskListResponse:
       type: object
       required: [items, page]

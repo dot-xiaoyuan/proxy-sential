@@ -71,11 +71,14 @@ func (s *PostgresStore) ListStreamRiskCurrent(ctx context.Context, sensor, subje
 		}
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT snapshot,content_sha256,observed_at,subject_type,subject_id,level,score
- FROM stream_risk_current
- WHERE sensor_id=$1 AND subject_type=$2 AND evaluated_at>=$3
- AND ($4::text='' OR level=$4)
- AND (NOT $5::boolean OR (level>$6 OR (level=$6 AND (score<$7 OR (score=$7 AND subject_id>$8)))))
- ORDER BY level ASC,score DESC,subject_id ASC LIMIT $9`,
+ FROM stream_risk_current c
+ WHERE c.sensor_id=$1 AND c.subject_type=$2 AND c.evaluated_at>=$3
+ AND observed_at>=now()-interval '10 minutes'
+ AND NOT EXISTS (SELECT 1 FROM risk_feature_dirty_subjects q
+                 WHERE q.sensor_id=c.sensor_id AND q.subject_type=c.subject_type AND q.subject_id=c.subject_id)
+ AND ($4::text='' OR c.level=$4)
+ AND (NOT $5::boolean OR (c.level>$6 OR (c.level=$6 AND (c.score<$7 OR (c.score=$7 AND c.subject_id>$8)))))
+ ORDER BY c.level ASC,c.score DESC,c.subject_id ASC LIMIT $9`,
 		sensor, subjectType, cutoff, level, cursor != "", after.Level, after.Score, after.ID, limit+1)
 	if err != nil {
 		return StreamRiskCurrentPage{}, err

@@ -2672,6 +2672,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/risks/stream-subject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Distinguish pending, current, expired and absent risk interpretation for one sensor-owned subject. */
+        get: operations["getStreamRiskSubjectState"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ips/{ip}/risk": {
         parameters: {
             query?: never;
@@ -5757,6 +5774,15 @@ export interface components {
             next_cursor?: string;
             /** Format: date-time */
             accepted_after: string;
+        };
+        StreamRiskSubjectState: {
+            /** @enum {string} */
+            state: "not_started" | "processing" | "current" | "expired" | "no_record";
+            /** Format: date-time */
+            accepted_after?: string;
+            /** Format: date-time */
+            pending_since?: string;
+            snapshot?: components["schemas"]["RiskSnapshot"];
         };
         RiskListResponse: {
             items: components["schemas"]["RiskSnapshot"][];
@@ -12145,6 +12171,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StreamRiskCurrentPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getStreamRiskSubjectState: {
+        parameters: {
+            query: {
+                subject_type?: "ip" | "account";
+                subject_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description State of one scoped risk subject. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamRiskSubjectState"];
                 };
             };
             400: components["responses"]["BadRequest"];
