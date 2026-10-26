@@ -24,7 +24,7 @@ type IncrementalStore interface {
 	QueueExpiredStreamRiskSubjects(context.Context, string, time.Time, int) error
 	ClaimRiskSubjects(context.Context, string, int) ([]store.RiskSubjectClaim, error)
 	ListStreamRiskFeatureEvents(context.Context, string, []store.RiskSubjectClaim, time.Time, time.Time, time.Time, int) ([]normalized.Event, error)
-	ApplyStreamRiskEvaluation(context.Context, string, []store.RiskSubjectClaim, []evidence.Evidence, []risk.Snapshot, time.Time) error
+	ApplyStreamRiskEvaluation(context.Context, string, []store.RiskSubjectClaim, []evidence.Evidence, []risk.Snapshot, time.Time) (int, error)
 	ReleaseRiskSubjects(context.Context, []store.RiskSubjectClaim) error
 }
 
@@ -41,6 +41,8 @@ type IncrementalResult struct {
 	Features       int
 	Evidence       int
 	Snapshots      int
+	Committed      int
+	Retried        int
 	OldestClaimAge time.Duration
 }
 
@@ -80,8 +82,12 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	result = IncrementalResult{Claims: len(claims)}
 	claimedAt := time.Now().UTC()
 	for _, claim := range claims {
-		if !claim.FirstDirty.IsZero() && claimedAt.After(claim.FirstDirty) && claimedAt.Sub(claim.FirstDirty) > result.OldestClaimAge {
-			result.OldestClaimAge = claimedAt.Sub(claim.FirstDirty)
+		firstDirty := claim.FirstDirty
+		if firstDirty.Before(freshCutoff) {
+			firstDirty = freshCutoff
+		}
+		if !firstDirty.IsZero() && claimedAt.After(firstDirty) && claimedAt.Sub(firstDirty) > result.OldestClaimAge {
+			result.OldestClaimAge = claimedAt.Sub(firstDirty)
 		}
 	}
 	committed := false
@@ -153,9 +159,15 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 		}
 	}
 	result.Snapshots = len(scored.Snapshots)
-	if err := backend.ApplyStreamRiskEvaluation(ctx, opts.SensorID, claims, kept, scored.Snapshots, opts.AsOf); err != nil {
+	committedCount, err := backend.ApplyStreamRiskEvaluation(ctx, opts.SensorID, claims, kept, scored.Snapshots, opts.AsOf)
+	if err != nil {
 		return result, fmt.Errorf("commit affected risk facts: %w", err)
 	}
+	if committedCount < 0 || committedCount > len(claims) {
+		return result, errors.New("invalid incremental risk commit count")
+	}
+	result.Committed = committedCount
+	result.Retried = len(claims) - committedCount
 	committed = true
 	return result, nil
 }

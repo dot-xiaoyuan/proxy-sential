@@ -12,6 +12,7 @@ type RiskSubjectClaim struct {
 	Type       string    `json:"subject_type"`
 	ID         string    `json:"subject_id"`
 	Generation int64     `json:"generation"`
+	ClaimUntil time.Time `json:"claim_until"`
 	ObservedAt time.Time `json:"observed_at"`
 	FirstDirty time.Time `json:"first_dirty_at"`
 }
@@ -50,7 +51,7 @@ func (s *DBStore) ClaimRiskSubjects(ctx context.Context, sensor string, limit in
 )
 UPDATE risk_feature_dirty_subjects q SET claim_until=now()+interval '2 minutes',claimed_generation=q.generation
 FROM picked p WHERE q.sensor_id=p.sensor_id AND q.subject_type=p.subject_type AND q.subject_id=p.subject_id
-RETURNING q.sensor_id,q.subject_type,q.subject_id,q.claimed_generation,q.last_observed_at,q.first_dirty_at`, sensor, limit)
+RETURNING q.sensor_id,q.subject_type,q.subject_id,q.claimed_generation,q.claim_until,q.last_observed_at,q.first_dirty_at`, sensor, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +59,7 @@ RETURNING q.sensor_id,q.subject_type,q.subject_id,q.claimed_generation,q.last_ob
 	result := make([]RiskSubjectClaim, 0, limit)
 	for rows.Next() {
 		var item RiskSubjectClaim
-		if err := rows.Scan(&item.SensorID, &item.Type, &item.ID, &item.Generation, &item.ObservedAt, &item.FirstDirty); err != nil {
+		if err := rows.Scan(&item.SensorID, &item.Type, &item.ID, &item.Generation, &item.ClaimUntil, &item.ObservedAt, &item.FirstDirty); err != nil {
 			return nil, err
 		}
 		result = append(result, item)
@@ -91,17 +92,17 @@ func (s *DBStore) finishRiskSubjects(ctx context.Context, claims []RiskSubjectCl
 	}
 	defer tx.Rollback()
 	if completed {
-		_, err = tx.ExecContext(ctx, `DELETE FROM risk_feature_dirty_subjects q USING jsonb_to_recordset($1::jsonb) AS r(sensor_id text,subject_type text,subject_id text,generation bigint)
+		_, err = tx.ExecContext(ctx, `DELETE FROM risk_feature_dirty_subjects q USING jsonb_to_recordset($1::jsonb) AS r(sensor_id text,subject_type text,subject_id text,generation bigint,claim_until timestamptz)
  WHERE q.sensor_id=r.sensor_id AND q.subject_type=r.subject_type AND q.subject_id=r.subject_id
- AND q.generation=r.generation AND q.claimed_generation=r.generation`, encoded)
+ AND q.generation=r.generation AND q.claimed_generation=r.generation AND q.claim_until=r.claim_until`, encoded)
 		if err != nil {
 			return err
 		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE risk_feature_dirty_subjects q SET claim_until=NULL,claimed_generation=NULL
- FROM jsonb_to_recordset($1::jsonb) AS r(sensor_id text,subject_type text,subject_id text,generation bigint)
+	 FROM jsonb_to_recordset($1::jsonb) AS r(sensor_id text,subject_type text,subject_id text,generation bigint,claim_until timestamptz)
  WHERE q.sensor_id=r.sensor_id AND q.subject_type=r.subject_type AND q.subject_id=r.subject_id
- AND q.claimed_generation=r.generation`, encoded)
+ AND q.claimed_generation=r.generation AND q.claim_until=r.claim_until`, encoded)
 	if err != nil {
 		return err
 	}

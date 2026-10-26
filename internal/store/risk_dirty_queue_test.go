@@ -15,11 +15,12 @@ func TestRiskDirtyQueueClaimsAndAcknowledgesOnlyClaimedGeneration(t *testing.T) 
 	}
 	defer db.Close()
 	observed := time.Now().UTC().Truncate(time.Second)
+	lease := observed.Add(2 * time.Minute)
 	mock.ExpectQuery(`WITH picked AS`).WithArgs("sensor-a", 128).WillReturnRows(
-		sqlmock.NewRows([]string{"sensor_id", "subject_type", "subject_id", "claimed_generation", "last_observed_at", "first_dirty_at"}).AddRow("sensor-a", "ip", "192.0.2.8", int64(47), observed, observed))
+		sqlmock.NewRows([]string{"sensor_id", "subject_type", "subject_id", "claimed_generation", "claim_until", "last_observed_at", "first_dirty_at"}).AddRow("sensor-a", "ip", "192.0.2.8", int64(47), lease, observed, observed))
 	s := &DBStore{pg: &PostgresStore{db: db}}
 	claims, err := s.ClaimRiskSubjects(context.Background(), "sensor-a", 128)
-	if err != nil || len(claims) != 1 || claims[0].Generation != 47 {
+	if err != nil || len(claims) != 1 || claims[0].Generation != 47 || !claims[0].ClaimUntil.Equal(lease) {
 		t.Fatalf("incorrect bounded risk claim: %+v %v", claims, err)
 	}
 	mock.ExpectBegin()

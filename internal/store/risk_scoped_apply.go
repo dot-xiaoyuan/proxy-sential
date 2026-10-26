@@ -56,18 +56,18 @@ func (s *DBStore) ListStreamRiskFeatureEvents(ctx context.Context, sensor string
 	return s.ch.ListStreamRiskFeatureEvents(ctx, sensor, claims, from, to, acceptedAfter, limit)
 }
 
-func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, claims []RiskSubjectClaim, facts []evidence.Evidence, snapshots []risk.Snapshot, asOf time.Time) error {
+func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, claims []RiskSubjectClaim, facts []evidence.Evidence, snapshots []risk.Snapshot, asOf time.Time) (int, error) {
 	if s == nil || s.pg == nil || sensor == "" || asOf.IsZero() || len(claims) == 0 || len(claims) > maxRiskSubjectClaim {
-		return errors.New("invalid scoped risk commit")
+		return 0, errors.New("invalid scoped risk commit")
 	}
 	claimKeys := make(map[string]bool, len(claims))
 	for _, claim := range claims {
-		if claim.SensorID != sensor || claim.ID == "" || claim.Generation <= 0 || (claim.Type != "ip" && claim.Type != "account") {
-			return errors.New("scoped risk claim mismatch")
+		if claim.SensorID != sensor || claim.ID == "" || claim.Generation <= 0 || claim.ClaimUntil.IsZero() || (claim.Type != "ip" && claim.Type != "account") {
+			return 0, errors.New("scoped risk claim mismatch")
 		}
 		key := claim.Type + "\x00" + claim.ID
 		if claimKeys[key] {
-			return errors.New("duplicate scoped risk claim")
+			return 0, errors.New("duplicate scoped risk claim")
 		}
 		claimKeys[key] = true
 	}
@@ -79,17 +79,17 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
 		}
 		key := kind + "\x00" + id
 		if !claimKeys[key] || rowsByKey[key].ID != "" {
-			return errors.New("unclaimed or duplicate scoped risk snapshot")
+			return 0, errors.New("unclaimed or duplicate scoped risk snapshot")
 		}
 		observed, err := time.Parse(time.RFC3339Nano, snapshot.UpdatedAt)
 		if err != nil || observed.After(asOf.Add(time.Second)) {
-			return errors.New("scoped risk snapshot has invalid observation time")
+			return 0, errors.New("scoped risk snapshot has invalid observation time")
 		}
 		semantic := snapshot
 		semantic.UpdatedAt = ""
 		digest, err := riskJSONHash(semantic)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		rowsByKey[key] = scopedRiskRow{Sensor: sensor, Type: kind, ID: id, IP: snapshot.IP, Score: snapshot.Score, Level: snapshot.Level, Observed: observed.UTC(), AsOf: asOf.UTC(), Hash: digest, Snapshot: &snapshot}
 	}
@@ -101,38 +101,78 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
 			kind, id = "ip", fact.IP
 		}
 		if !claimKeys[kind+"\x00"+id] || fact.EvidenceID == "" || evidenceIDs[fact.EvidenceID] {
-			return errors.New("unclaimed or duplicate scoped risk evidence")
+			return 0, errors.New("unclaimed or duplicate scoped risk evidence")
 		}
 		evidenceIDs[fact.EvidenceID] = true
 		created, err := time.Parse(time.RFC3339Nano, fact.CreatedAt)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		digest, err := riskJSONHash(fact)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		evidenceRows = append(evidenceRows, scopedEvidenceRow{Sensor: sensor, ID: fact.EvidenceID, Type: kind, Subject: id, Hash: digest, Evidence: fact, Created: created.UTC(), AsOf: asOf.UTC()})
 	}
 	claimJSON, err := json.Marshal(claims)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	tx, err := s.pg.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
-	var locked int
-	err = tx.QueryRowContext(ctx, `WITH locked AS (SELECT q.sensor_id FROM risk_feature_dirty_subjects q JOIN jsonb_to_recordset($1::jsonb) r(sensor_id text,subject_type text,subject_id text,generation bigint)
+	lockedRows, err := tx.QueryContext(ctx, `WITH locked AS (SELECT q.subject_type,q.subject_id FROM risk_feature_dirty_subjects q JOIN jsonb_to_recordset($1::jsonb) r(sensor_id text,subject_type text,subject_id text,generation bigint,claim_until timestamptz)
  ON q.sensor_id=r.sensor_id AND q.subject_type=r.subject_type AND q.subject_id=r.subject_id
- WHERE q.generation=r.generation AND q.claimed_generation=r.generation AND q.claim_until>now() FOR UPDATE OF q)
- SELECT count(*) FROM locked`, claimJSON).Scan(&locked)
-	if err != nil || locked != len(claims) {
-		if err != nil {
-			return fmt.Errorf("lock incremental risk claims: %w", err)
+ WHERE q.generation=r.generation AND q.claimed_generation=r.generation AND q.claim_until=r.claim_until AND q.claim_until>now() FOR UPDATE OF q)
+ SELECT subject_type,subject_id FROM locked`, claimJSON)
+	if err != nil {
+		return 0, fmt.Errorf("lock incremental risk claims: %w", err)
+	}
+	lockedKeys := make(map[string]bool, len(claims))
+	for lockedRows.Next() {
+		var kind, id string
+		if err := lockedRows.Scan(&kind, &id); err != nil {
+			lockedRows.Close()
+			return 0, err
 		}
-		return fmt.Errorf("incremental risk lease changed: locked=%d claims=%d", locked, len(claims))
+		lockedKeys[kind+"\x00"+id] = true
+	}
+	err = lockedRows.Err()
+	lockedRows.Close()
+	if err != nil {
+		return 0, err
+	}
+	stable := make([]RiskSubjectClaim, 0, len(lockedKeys))
+	changed := make([]RiskSubjectClaim, 0, len(claims)-len(lockedKeys))
+	for _, claim := range claims {
+		if lockedKeys[claim.Type+"\x00"+claim.ID] {
+			stable = append(stable, claim)
+		} else {
+			changed = append(changed, claim)
+		}
+	}
+	stableJSON, err := json.Marshal(stable)
+	if err != nil {
+		return 0, err
+	}
+	// A producer can advance the generation while this batch reads features.
+	// Release only the original lease; the newer generation stays pending.
+	if len(changed) > 0 {
+		changedJSON, marshalErr := json.Marshal(changed)
+		if marshalErr != nil {
+			return 0, marshalErr
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE risk_feature_dirty_subjects q SET claim_until=NULL,claimed_generation=NULL
+ FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,subject_type text,subject_id text,generation bigint,claim_until timestamptz)
+ WHERE q.sensor_id=r.sensor_id AND q.subject_type=r.subject_type AND q.subject_id=r.subject_id
+ AND q.claimed_generation=r.generation AND q.claim_until=r.claim_until`, changedJSON); err != nil {
+			return 0, err
+		}
+	}
+	if len(stable) == 0 {
+		return 0, tx.Commit()
 	}
 	previous := map[string]struct {
 		hash     string
@@ -141,16 +181,16 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
 	priorRows, err := tx.QueryContext(ctx, `SELECT q.subject_type,q.subject_id,q.content_sha256,q.observed_at FROM stream_risk_current q
  JOIN jsonb_to_recordset($1::jsonb) r(sensor_id text,subject_type text,subject_id text)
  ON q.sensor_id=r.sensor_id AND q.subject_type=r.subject_type AND q.subject_id=r.subject_id
- WHERE q.evaluated_at>=(SELECT max(accepted_after) FROM stream_risk_fresh_cutovers WHERE sensor_id=q.sensor_id) FOR UPDATE OF q`, claimJSON)
+ WHERE q.evaluated_at>=(SELECT max(accepted_after) FROM stream_risk_fresh_cutovers WHERE sensor_id=q.sensor_id) FOR UPDATE OF q`, stableJSON)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for priorRows.Next() {
 		var kind, id, hash string
 		var observed time.Time
 		if err := priorRows.Scan(&kind, &id, &hash, &observed); err != nil {
 			priorRows.Close()
-			return err
+			return 0, err
 		}
 		previous[kind+"\x00"+id] = struct {
 			hash     string
@@ -160,13 +200,13 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
 	err = priorRows.Err()
 	priorRows.Close()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	upserts := make([]scopedRiskRow, 0, len(snapshots))
 	expires := make([]scopedRiskRow, 0)
 	changes := make([]scopedRiskChange, 0)
 	late := make(map[string]bool)
-	for _, claim := range claims {
+	for _, claim := range stable {
 		key := claim.Type + "\x00" + claim.ID
 		prior, existed := previous[key]
 		row, present := rowsByKey[key]
@@ -194,7 +234,7 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
 	if len(evidenceRows) > 0 {
 		currentEvidence := evidenceRows[:0]
 		for _, item := range evidenceRows {
-			if !late[item.Type+"\x00"+item.Subject] {
+			if lockedKeys[item.Type+"\x00"+item.Subject] && !late[item.Type+"\x00"+item.Subject] {
 				currentEvidence = append(currentEvidence, item)
 			}
 		}
@@ -203,7 +243,7 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
 	if len(evidenceRows) > 0 {
 		raw, marshalErr := json.Marshal(evidenceRows)
 		if marshalErr != nil {
-			return marshalErr
+			return 0, marshalErr
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO stream_risk_evidence(sensor_id,evidence_id,subject_type,subject_id,content_sha256,evidence,created_at,evaluated_at)
  SELECT sensor_id,evidence_id,subject_type,subject_id,content_sha256,evidence,created_at,evaluated_at
@@ -212,13 +252,13 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
  WHERE stream_risk_evidence.content_sha256 IS DISTINCT FROM EXCLUDED.content_sha256
  OR stream_risk_evidence.evaluated_at IS NULL
 	 OR stream_risk_evidence.evaluated_at<(SELECT max(accepted_after) FROM stream_risk_fresh_cutovers WHERE sensor_id=EXCLUDED.sensor_id)`, raw); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if len(upserts) > 0 {
 		raw, marshalErr := json.Marshal(upserts)
 		if marshalErr != nil {
-			return marshalErr
+			return 0, marshalErr
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO stream_risk_current(sensor_id,subject_type,subject_id,ip,score,level,observed_at,evaluated_at,content_sha256,snapshot)
  SELECT sensor_id,subject_type,subject_id,NULLIF(ip,'')::inet,score,level,observed_at,evaluated_at,content_sha256,snapshot
@@ -229,43 +269,46 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
  ((stream_risk_current.content_sha256,stream_risk_current.observed_at,stream_risk_current.snapshot) IS DISTINCT FROM
  (EXCLUDED.content_sha256,EXCLUDED.observed_at,EXCLUDED.snapshot)
  ))`, raw); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if len(expires) > 0 {
 		raw, marshalErr := json.Marshal(expires)
 		if marshalErr != nil {
-			return marshalErr
+			return 0, marshalErr
 		}
 		if _, err = tx.ExecContext(ctx, `DELETE FROM stream_risk_current q USING jsonb_to_recordset($1::jsonb) r(sensor_id text,subject_type text,subject_id text)
  WHERE q.sensor_id=r.sensor_id AND q.subject_type=r.subject_type AND q.subject_id=r.subject_id`, raw); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if len(changes) > 0 {
 		raw, marshalErr := json.Marshal(changes)
 		if marshalErr != nil {
-			return marshalErr
+			return 0, marshalErr
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO stream_risk_changes(sensor_id,subject_type,subject_id,previous_sha256,current_sha256,reason,evidence_ids,observed_at)
  SELECT sensor_id,subject_type,subject_id,previous_sha256,current_sha256,reason,coalesce(evidence_ids,'[]'::jsonb),observed_at
  FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,subject_type text,subject_id text,previous_sha256 text,current_sha256 text,reason text,evidence_ids jsonb,observed_at timestamptz)`, raw); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	deleted, err := tx.ExecContext(ctx, `DELETE FROM risk_feature_dirty_subjects q USING jsonb_to_recordset($1::jsonb) r(sensor_id text,subject_type text,subject_id text,generation bigint)
- WHERE q.sensor_id=r.sensor_id AND q.subject_type=r.subject_type AND q.subject_id=r.subject_id AND q.generation=r.generation AND q.claimed_generation=r.generation`, claimJSON)
+	deleted, err := tx.ExecContext(ctx, `DELETE FROM risk_feature_dirty_subjects q USING jsonb_to_recordset($1::jsonb) r(sensor_id text,subject_type text,subject_id text,generation bigint,claim_until timestamptz)
+ WHERE q.sensor_id=r.sensor_id AND q.subject_type=r.subject_type AND q.subject_id=r.subject_id AND q.generation=r.generation AND q.claimed_generation=r.generation AND q.claim_until=r.claim_until`, stableJSON)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	affected, err := deleted.RowsAffected()
-	if err != nil || affected != int64(len(claims)) {
+	if err != nil || affected != int64(len(stable)) {
 		if err != nil {
-			return fmt.Errorf("count incremental risk acknowledgements: %w", err)
+			return 0, fmt.Errorf("count incremental risk acknowledgements: %w", err)
 		}
-		return fmt.Errorf("incremental risk acknowledgement lost: deleted=%d claims=%d", affected, len(claims))
+		return 0, fmt.Errorf("incremental risk acknowledgement lost: deleted=%d claims=%d", affected, len(stable))
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(stable), nil
 }
 
 func riskJSONHash(value any) (string, error) {

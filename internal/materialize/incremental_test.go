@@ -41,11 +41,11 @@ func (f *incrementalFake) ListStreamRiskFeatureEvents(_ context.Context, _ strin
 	f.readCutoff = acceptedAfter
 	return f.events, f.readErr
 }
-func (f *incrementalFake) ApplyStreamRiskEvaluation(_ context.Context, _ string, _ []store.RiskSubjectClaim, facts []evidence.Evidence, snapshots []risk.Snapshot, _ time.Time) error {
+func (f *incrementalFake) ApplyStreamRiskEvaluation(_ context.Context, _ string, claims []store.RiskSubjectClaim, facts []evidence.Evidence, snapshots []risk.Snapshot, _ time.Time) (int, error) {
 	f.applied++
 	f.facts = facts
 	f.saved = snapshots
-	return nil
+	return len(claims), nil
 }
 
 func TestIncrementalRiskKeepsStableEvidenceKeyAcrossRepeatedObservation(t *testing.T) {

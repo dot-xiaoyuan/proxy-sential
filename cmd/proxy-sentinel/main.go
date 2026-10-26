@@ -1146,7 +1146,7 @@ func runRiskMaterialize(args []string) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stderr, "risk incremental: claims=%d features=%d evidence=%d snapshots=%d oldest_claim_age=%s\n", result.Claims, result.Features, result.Evidence, result.Snapshots, result.OldestClaimAge.Round(time.Millisecond))
+			fmt.Fprintf(os.Stderr, "risk incremental: claims=%d committed=%d retried=%d features=%d evidence=%d snapshots=%d oldest_claim_age=%s\n", result.Claims, result.Committed, result.Retried, result.Features, result.Evidence, result.Snapshots, result.OldestClaimAge.Round(time.Millisecond))
 			return nil
 		}
 		result, err := materialize.RunOnce(runCtx, backend, materialize.Options{SharedAccess: *sharedAccess, RouterDedicated: *routerDedicated, SensorID: *sensorID, Window: *window, Limit: *limit})
