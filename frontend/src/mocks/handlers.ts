@@ -289,6 +289,18 @@ export const handlers = [
     url.searchParams.set('src_ip', normalizeIp(String(params.ip)))
     return HttpResponse.json(filterMockFlows(url))
   }),
+  http.get('/api/v1/risks/stream-cutover', () => HttpResponse.json({
+    active: true,
+    status: {
+      sensor_id: 'mock-sensor',
+      cancel_id: 'mock-audit-1',
+      accepted_after: '2026-10-26T02:24:31Z',
+      canceled_subjects: 40504,
+      audited_at: '2026-10-26T02:24:39Z',
+      pending_subjects: 18,
+      pending_older_than_5s: 3,
+    },
+  })),
   http.get('/api/v1/risks', ({ request }) => {
     const url = new URL(request.url)
     const level = url.searchParams.get('level')

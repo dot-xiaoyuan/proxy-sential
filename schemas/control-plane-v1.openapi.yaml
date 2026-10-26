@@ -2571,6 +2571,47 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /risks/stream-cutover:
+    get:
+      operationId: getStreamRiskCutover
+      description: Read the immutable cancellation gap and the separate live pending-subject state for this sensor.
+      responses:
+        "200":
+          description: Audited fresh risk cutover, when active.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamRiskCutoverResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /risks/stream-current:
+    get:
+      operationId: listStreamRiskCurrent
+      description: Bounded cursor page of fresh scoped risk results. This does not change the legacy risk list read source.
+      parameters:
+        - name: subject_type
+          in: query
+          schema: { type: string, enum: [ip, account], default: ip }
+        - name: level
+          in: query
+          schema: { type: string, enum: [normal, suspicious, high, confirmed] }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: Current scoped risk interpretations from the audited fresh generation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamRiskCurrentPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /ips/{ip}/risk:
     get:
       operationId: getIpRisk
@@ -5688,6 +5729,35 @@ components:
           type: integer
         level_cap:
           $ref: "#/components/schemas/RiskLevel"
+    StreamRiskCutoverStatus:
+      type: object
+      required: [sensor_id, cancel_id, accepted_after, canceled_subjects, audited_at, pending_subjects, pending_older_than_5s]
+      properties:
+        sensor_id: { type: string }
+        cancel_id: { type: string }
+        accepted_after: { type: string, format: date-time }
+        canceled_subjects: { type: integer, format: int64 }
+        audited_at: { type: string, format: date-time }
+        pending_subjects: { type: integer, format: int64 }
+        pending_older_than_5s: { type: integer, format: int64 }
+        oldest_pending_at: { type: string, format: date-time }
+    StreamRiskCutoverResponse:
+      type: object
+      required: [active]
+      properties:
+        active: { type: boolean }
+        status:
+          $ref: "#/components/schemas/StreamRiskCutoverStatus"
+    StreamRiskCurrentPage:
+      type: object
+      required: [items, accepted_after]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskSnapshot"
+        next_cursor: { type: string }
+        accepted_after: { type: string, format: date-time }
     RiskListResponse:
       type: object
       required: [items, page]

@@ -79,6 +79,7 @@ export type RecommendedAction = components['schemas']['RecommendedAction']
 export type RiskSnapshot = components['schemas']['RiskSnapshot'] & { assessment_level?: RiskLevel; review_disposition?: string; automation_eligible?: boolean; automation_blockers?: string[] }
 export type NegativeEvidence = components['schemas']['NegativeEvidence']
 export type RiskListResponse = components['schemas']['RiskListResponse']
+export type StreamRiskCutoverResponse = components['schemas']['StreamRiskCutoverResponse']
 export type EventListResponse = components['schemas']['EventListResponse']
 export type Evidence = components['schemas']['Evidence']
 export type NormalizedEventSummary = components['schemas']['NormalizedEventSummary']

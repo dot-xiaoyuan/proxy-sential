@@ -47,6 +47,7 @@ import type {
   ProxyReviewQuery,
   ProxyReviewResponse,
   RiskListResponse,
+  StreamRiskCutoverResponse,
   RiskQuery,
   RiskSnapshot,
   RuleReloadResult,
@@ -181,6 +182,7 @@ export const api = {
   deviceFingerprintConflicts: (query: DeviceQuery) =>
     request<{ items: DeviceConflict[] }>(`/device-fingerprint-conflicts${search(query)}`),
   risks: (query: RiskQuery) => request<RiskListResponse>(`/risks${search(query)}`),
+  streamRiskCutover: () => request<StreamRiskCutoverResponse>('/risks/stream-cutover'),
   ipRisk: (ip: string) => request<RiskSnapshot>(`/ips/${encodeURIComponent(ip)}/risk`),
   ipEvidence: (ip: string, query: EvidenceQuery = {}) =>
     request<{ evidence: Evidence[] }>(`/ips/${encodeURIComponent(ip)}/evidence${search(query)}`),

@@ -20,6 +20,7 @@ import type { RiskCase } from '../shared/api/types'
 import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type UniversityDimensions, UniversityDimensionFilters, useServerPagination } from '../shared/ui'
 import { CaseAssessment } from '../entities/risk/CaseAssessment'
 import { can } from '../shared/auth/permissions'
+import { StreamRiskCutoverNotice } from '../widgets/StreamRiskCutoverNotice'
 
 const statusNames: Record<string,string> = {new:'新建',assigned:'已分派',investigating:'调查中',waiting_data:'等待数据',resolved:'已解决',closed:'已关闭',reopened:'重新打开'}
 
@@ -47,6 +48,7 @@ export function CasesPage() {
   if(query.isLoading)return <AppLoadingState rows={8}/>
   if(query.isError||!query.data)return <AppErrorAlert title="风险处置队列读取失败"/>
   return <main className="page">
+    <StreamRiskCutoverNotice />
     <AppTableBar searchPlaceholder="搜索 IP、账号、终端或院系" searchValue={q} onSearchChange={value=>{setQ(value)}} extra={<Space wrap><span className="case-router-toggle"><Switch aria-label="显示路由器观察" checked={includeRouterObservations} onChange={setIncludeRouterObservations}/><Typography.Text>显示路由器观察</Typography.Text></span><Select aria-label="案件状态" value={status} onChange={value=>{setStatus(value)}} options={[{value:'',label:'全部状态'},...Object.entries(statusNames).map(([value,label])=>({value,label}))]} /></Space>} />
     {writable&&<section className="surface case-batch-toolbar"><Typography.Text>已选 {selected.length} 项</Typography.Text><Input aria-label="批量负责人" placeholder="负责人账号" value={assignee} onChange={event=>setAssignee(event.target.value)}/><Button disabled={selected.length===0||!assignee.trim()} loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'assign',assigneeId:assignee.trim()},{onSuccess:()=>{setSelected([]);void message.success('案件已批量分派')}})}>批量分派</Button><Button danger disabled={selected.length===0} loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'close'},{onSuccess:()=>{setSelected([]);void message.success('已批量关闭符合条件的案件')}})}>批量关闭</Button></section>}
     <details className="surface filter-disclosure"><summary>高校维度筛选</summary><div className="filter-disclosure-content"><UniversityDimensionFilters value={dimensions} onChange={(next)=>{setDimensions(next)}} /></div></details>

@@ -5388,3 +5388,23 @@ pre.wrap-code {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.risk-cutover-status {
+  border-color: #e2e8f0;
+  border-radius: 8px;
+  padding: 20px;
+  background: var(--ps-bg-body);
+}
+.risk-cutover-status strong {
+  display: block;
+  color: #334155;
+  font-size: 16px;
+  font-weight: 600;
+}
+.risk-cutover-status p {
+  margin: 8px 0 0;
+  color: #475569;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+  .risk-cutover-status { padding: 14px; }
+}

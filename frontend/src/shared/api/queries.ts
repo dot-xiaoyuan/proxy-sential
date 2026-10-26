@@ -98,6 +98,7 @@ export const queryKeys = {
   deviceFingerprintConflicts: (query: DeviceQuery) =>
     ["device-fingerprint-conflicts", query] as const,
   risks: (query: RiskQuery) => ["risks", query] as const,
+  streamRiskCutover: () => ["risks", "stream-cutover"] as const,
   ipRisk: (ip: string) => ["ip-risk", ip] as const,
   ipEvidence: (ip: string, query: EvidenceQuery) =>
     ["ip-evidence", ip, query] as const,
@@ -331,6 +332,15 @@ export function useDeviceFingerprintConflicts(query: DeviceQuery) {
 
 export function useRisks(query: RiskQuery) {
   return usePagedQuery(query, queryKeys.risks, api.risks);
+}
+
+export function useStreamRiskCutover() {
+  return useQuery({
+    queryKey: queryKeys.streamRiskCutover(),
+    queryFn: api.streamRiskCutover,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  });
 }
 
 export function useIpRisk(ip: string, enabled = true) {

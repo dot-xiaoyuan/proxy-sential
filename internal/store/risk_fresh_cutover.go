@@ -22,6 +22,59 @@ func (s *DBStore) StreamRiskFreshCutoff(ctx context.Context, sensor string) (tim
 	return cutoff.UTC(), err
 }
 
+// StreamRiskCutoverStatus exposes the immutable canceled-work gap alongside
+// current pending work. Pending counts are operational state, not completed
+// events or evidence that the 5-second event SLA has passed.
+type StreamRiskCutoverStatus struct {
+	SensorID             string     `json:"sensor_id"`
+	CancelID             string     `json:"cancel_id"`
+	AcceptedAfter        time.Time  `json:"accepted_after"`
+	CanceledSubjects     int64      `json:"canceled_subjects"`
+	AuditedAt            time.Time  `json:"audited_at"`
+	PendingSubjects      int64      `json:"pending_subjects"`
+	PendingOlderThan5Sec int64      `json:"pending_older_than_5s"`
+	OldestPendingAt      *time.Time `json:"oldest_pending_at,omitempty"`
+}
+
+func (s *DBStore) GetStreamRiskCutoverStatus(ctx context.Context, sensor string) (StreamRiskCutoverStatus, bool, error) {
+	if s == nil || s.pg == nil {
+		return StreamRiskCutoverStatus{}, false, errors.New("risk cutover status store unavailable")
+	}
+	return s.pg.GetStreamRiskCutoverStatus(ctx, sensor)
+}
+
+func (s *PostgresStore) GetStreamRiskCutoverStatus(ctx context.Context, sensor string) (StreamRiskCutoverStatus, bool, error) {
+	if s == nil || s.db == nil || sensor == "" {
+		return StreamRiskCutoverStatus{}, false, errors.New("invalid risk cutover status lookup")
+	}
+	status := StreamRiskCutoverStatus{SensorID: sensor}
+	err := s.db.QueryRowContext(ctx, `SELECT cancel_id,accepted_after,canceled_subjects,created_at
+ FROM stream_risk_fresh_cutovers WHERE sensor_id=$1 ORDER BY accepted_after DESC LIMIT 1`, sensor).
+		Scan(&status.CancelID, &status.AcceptedAfter, &status.CanceledSubjects, &status.AuditedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StreamRiskCutoverStatus{}, false, nil
+	}
+	if err != nil {
+		return StreamRiskCutoverStatus{}, false, err
+	}
+	var oldest sql.NullTime
+	err = s.db.QueryRowContext(ctx, `SELECT count(*),
+ count(*) FILTER (WHERE GREATEST(first_dirty_at,$2::timestamptz)<now()-interval '5 seconds'),
+ min(GREATEST(first_dirty_at,$2::timestamptz))
+ FROM risk_feature_dirty_subjects WHERE sensor_id=$1`, sensor, status.AcceptedAfter).
+		Scan(&status.PendingSubjects, &status.PendingOlderThan5Sec, &oldest)
+	if err != nil {
+		return StreamRiskCutoverStatus{}, false, err
+	}
+	if oldest.Valid {
+		value := oldest.Time.UTC()
+		status.OldestPendingAt = &value
+	}
+	status.AcceptedAfter = status.AcceptedAfter.UTC()
+	status.AuditedAt = status.AuditedAt.UTC()
+	return status, true, nil
+}
+
 // StartStreamRiskFreshCutover audits all pre-cutoff dirty work. It removes only
 // rows with no fresh input; a subject dirtied again after the cutoff stays
 // queued and is flagged as retained in the immutable audit. The caller must

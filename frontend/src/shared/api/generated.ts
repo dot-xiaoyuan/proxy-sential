@@ -2638,6 +2638,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/risks/stream-cutover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read the immutable cancellation gap and the separate live pending-subject state for this sensor. */
+        get: operations["getStreamRiskCutover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/risks/stream-current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Bounded cursor page of fresh scoped risk results. This does not change the legacy risk list read source. */
+        get: operations["listStreamRiskCurrent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ips/{ip}/risk": {
         parameters: {
             query?: never;
@@ -5697,6 +5731,32 @@ export interface components {
             score_delta: number;
             max_score?: number;
             level_cap?: components["schemas"]["RiskLevel"];
+        };
+        StreamRiskCutoverStatus: {
+            sensor_id: string;
+            cancel_id: string;
+            /** Format: date-time */
+            accepted_after: string;
+            /** Format: int64 */
+            canceled_subjects: number;
+            /** Format: date-time */
+            audited_at: string;
+            /** Format: int64 */
+            pending_subjects: number;
+            /** Format: int64 */
+            pending_older_than_5s: number;
+            /** Format: date-time */
+            oldest_pending_at?: string;
+        };
+        StreamRiskCutoverResponse: {
+            active: boolean;
+            status?: components["schemas"]["StreamRiskCutoverStatus"];
+        };
+        StreamRiskCurrentPage: {
+            items: components["schemas"]["RiskSnapshot"][];
+            next_cursor?: string;
+            /** Format: date-time */
+            accepted_after: string;
         };
         RiskListResponse: {
             items: components["schemas"]["RiskSnapshot"][];
@@ -12037,6 +12097,54 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RiskListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getStreamRiskCutover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audited fresh risk cutover, when active. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamRiskCutoverResponse"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listStreamRiskCurrent: {
+        parameters: {
+            query?: {
+                subject_type?: "ip" | "account";
+                level?: "normal" | "suspicious" | "high" | "confirmed";
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current scoped risk interpretations from the audited fresh generation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamRiskCurrentPage"];
                 };
             };
             400: components["responses"]["BadRequest"];

@@ -884,6 +884,10 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleFingerprintLibraryValidate(w, r)
 	case r.Method == http.MethodGet && path == "/risks":
 		s.handleRisks(w, r)
+	case r.Method == http.MethodGet && path == "/risks/stream-cutover":
+		s.handleStreamRiskCutover(w, r)
+	case r.Method == http.MethodGet && path == "/risks/stream-current":
+		s.handleStreamRiskCurrent(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/ips/"):
 		s.handleIP(w, r, strings.TrimPrefix(path, "/ips/"))
 	case r.Method == http.MethodGet && path == "/events":
