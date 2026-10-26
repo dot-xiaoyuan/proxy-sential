@@ -767,20 +767,46 @@ func (s *DBStore) finishSharedDeviceProfileJob(ctx context.Context, job sharedDe
 }
 
 func (s *DBStore) processSharedDeviceProfileJob(ctx context.Context, worker string) (bool, error) {
+	started := time.Now()
 	job, found, err := s.claimSharedDeviceProfileJob(ctx, worker)
+	claimDuration := time.Since(started)
 	if err != nil || !found {
+		if claimDuration >= 2*time.Second {
+			fmt.Fprintf(os.Stderr, "shared device profile slow claim_ms=%d claimed=%t failed=%t\n", claimDuration.Milliseconds(), found, err != nil)
+		}
 		return found, err
 	}
+	var buildDuration, publishDuration, finishDuration time.Duration
+	outcome := ""
+	defer func() {
+		if elapsed := time.Since(started); elapsed >= 2*time.Second {
+			fmt.Fprintf(os.Stderr, "shared device profile slow total_ms=%d claim_ms=%d build_ms=%d publish_ms=%d finish_ms=%d outcome=%s\n",
+				elapsed.Milliseconds(), claimDuration.Milliseconds(), buildDuration.Milliseconds(), publishDuration.Milliseconds(), finishDuration.Milliseconds(), outcome)
+		}
+	}()
+	stageStarted := time.Now()
 	profile, keys, nextTransition, publish, runErr := s.buildSharedDeviceProfile(ctx, job)
+	buildDuration = time.Since(stageStarted)
 	if runErr == nil && publish {
+		stageStarted = time.Now()
 		runErr = s.publishSharedDeviceProfile(ctx, job, profile, keys, nextTransition)
+		publishDuration = time.Since(stageStarted)
 		if runErr == nil {
+			outcome = "published"
 			return true, nil
 		}
 	}
+	stageStarted = time.Now()
 	finishErr := s.finishSharedDeviceProfileJob(ctx, job, runErr)
+	finishDuration = time.Since(stageStarted)
 	if runErr != nil {
+		outcome = "failed"
 		return true, runErr
+	}
+	if finishErr != nil {
+		outcome = "failed"
+	} else {
+		outcome = "unchanged"
 	}
 	return true, finishErr
 }

@@ -1,0 +1,89 @@
+{
+  "release": "2026.10.26-stream-b91-dhcp-ready-run",
+  "window_start": "2026-10-26T12:35:00Z",
+  "window_end": "2026-10-26T12:50:00Z",
+  "measurement": "The stream capture durable message records append_returned_at immediately after durable append. PG receipt queued_at minus append_returned_at is a lower bound to risk queue insertion. queued_at precedes transaction commit and risk/API visibility.",
+  "risk_segment_receipts": 232,
+  "matched_post_durable_logs": 232,
+  "unmatched_segment_ids": [],
+  "proven_queue_after_5s": 0,
+  "max_proven_lower_bound_s": 4.495811,
+  "accepted_to_queue_s": {
+    "max": 7.223887,
+    "p95": 5.489259,
+    "over5": 39,
+    "caveat": "accepted_at precedes durable input, so over5 is not a proven violation"
+  },
+  "slowest_post_durable_examples": [
+    {
+      "segment_id": "435d93a94c1c39e76f85f6de1e61efaf9ff229628b5ad60008a17fcb0c566507",
+      "post_durable_to_queue_lower_bound_s": 4.495811,
+      "accepted_to_queue_upper_bound_s": 6.071553,
+      "append_returned_to_journal_s": 3e-06,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "80508f0663139593ff4b5466e69eccf765699b8f8c176024a7484df78cfe8faa",
+      "post_durable_to_queue_lower_bound_s": 4.348661,
+      "accepted_to_queue_upper_bound_s": 5.657436,
+      "append_returned_to_journal_s": 7e-06,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "47ea63d17e27f4459666f05b91b27707035061da056bc7f2d6b69359b4c33c36",
+      "post_durable_to_queue_lower_bound_s": 4.320899,
+      "accepted_to_queue_upper_bound_s": 6.39076,
+      "append_returned_to_journal_s": 0.000454,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "d34ea06e57346e88e360ed5060c76bbd1cc610c00ecd42a78e3e3c64b55c520e",
+      "post_durable_to_queue_lower_bound_s": 4.300462,
+      "accepted_to_queue_upper_bound_s": 7.223887,
+      "append_returned_to_journal_s": 1.2e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "ab3408ebd2ecd45ab7b3144a8bed7a0dc638cd402bed28ae269e5d455ae66beb",
+      "post_durable_to_queue_lower_bound_s": 4.268186,
+      "accepted_to_queue_upper_bound_s": 6.163315,
+      "append_returned_to_journal_s": 1.9e-05,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "9fc72bb339320441bf8280af6d761c333112808115650c78e3c76fa8d25de6b5",
+      "post_durable_to_queue_lower_bound_s": 4.256824,
+      "accepted_to_queue_upper_bound_s": 6.127878,
+      "append_returned_to_journal_s": 8e-06,
+      "unit": "proxy-sentinel-ingest-stream-handshake-b76.service"
+    },
+    {
+      "segment_id": "c9f96eb62ad7f677e82cebb732be3b5a3b9f26c3ff71531c2e837e1cdce53596",
+      "post_durable_to_queue_lower_bound_s": 4.191648,
+      "accepted_to_queue_upper_bound_s": 5.227313,
+      "append_returned_to_journal_s": 6.3e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "fd45803bc281ed1ecfad206eec6367b850642b4c504f2109a590c7ee9189f022",
+      "post_durable_to_queue_lower_bound_s": 4.171718,
+      "accepted_to_queue_upper_bound_s": 5.61157,
+      "append_returned_to_journal_s": 6.5e-05,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "798056e142f4ba7138b69c02670b85d7fea8a258eb2313eab4607edfeb33fc7e",
+      "post_durable_to_queue_lower_bound_s": 4.045379,
+      "accepted_to_queue_upper_bound_s": 5.489259,
+      "append_returned_to_journal_s": 1e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "6dff255214783a4a18ec281dfaaddf4ec3eb92f850ca330d4ca37757ca483dda",
+      "post_durable_to_queue_lower_bound_s": 4.000891,
+      "accepted_to_queue_upper_bound_s": 6.610238,
+      "append_returned_to_journal_s": 1.6e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    }
+  ]
+}
