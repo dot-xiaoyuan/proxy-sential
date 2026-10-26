@@ -36,6 +36,7 @@ func runIngestStreamSharedActivate(args []string) error {
 	controlledInterface := fs.String("controlled-interface", "", "verified capture interface")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	cancelID := fs.String("cancel-id", "", "immutable fresh generation and old-job cancellation ID")
+	previousCancelID := fs.String("previous-cancel-id", "", "closed shared generation whose unfinished jobs must be canceled")
 	cutoffText := fs.String("cutoff-at", "", "fixed old-input cutoff")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -89,7 +90,7 @@ func runIngestStreamSharedActivate(args []string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(2)
-	if err := activateStreamSharedSources(ctx, db, *sensor, scope, scopeHash, sources, *cancelID, cutoff); err != nil {
+	if err := activateStreamSharedSources(ctx, db, *sensor, scope, scopeHash, sources, *cancelID, cutoff, *previousCancelID); err != nil {
 		return err
 	}
 	manifest, counts, err := readSharedCancellationManifest(ctx, db, *sensor, sources, *cancelID, cutoff, scope.ID())
@@ -99,9 +100,19 @@ func runIngestStreamSharedActivate(args []string) error {
 	return json.NewEncoder(os.Stdout).Encode(map[string]any{"sensor_id": *sensor, "cancel_id": *cancelID, "cutoff_at": cutoff, "source_epochs": sources, "canceled_jobs": counts, "manifest_sha256": manifest})
 }
 
-func activateStreamSharedSources(ctx context.Context, db *sql.DB, sensor string, scope *normalized.CaptureScope, scopeHash string, sources []sharedSourceActivation, cancelID string, cutoff time.Time) error {
+func activateStreamSharedSources(ctx context.Context, db *sql.DB, sensor string, scope *normalized.CaptureScope, scopeHash string, sources []sharedSourceActivation, cancelID string, cutoff time.Time, previous ...string) error {
 	if db == nil || scope == nil || sensor == "" || len(sources) != 2 || cancelID == "" || len(scopeHash) != 64 || cutoff.IsZero() || scope.ID() == "" {
 		return errors.New("invalid shared source activation")
+	}
+	oldGeneration := ""
+	if len(previous) > 1 {
+		return errors.New("multiple previous shared generations")
+	}
+	if len(previous) == 1 {
+		oldGeneration = previous[0]
+	}
+	if oldGeneration == cancelID {
+		return errors.New("new shared generation must differ from the retired generation")
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -109,6 +120,15 @@ func activateStreamSharedSources(ctx context.Context, db *sql.DB, sensor string,
 	}
 	defer tx.Rollback()
 	for _, src := range sources {
+		if oldGeneration != "" {
+			var retired int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM stream_shared_source_cutovers WHERE sensor_id=$1 AND source_owner=$2 AND source_path=$3 AND cancel_id=$4 AND state='closed'`, sensor, src.Owner, src.Path, oldGeneration).Scan(&retired); err != nil {
+				return err
+			}
+			if retired != 1 {
+				return errors.New("prior shared source is not uniquely closed")
+			}
+		}
 		var recordedSensor, recordedHash, recordedCancel, state string
 		var recordedCutoff time.Time
 		err = tx.QueryRowContext(ctx, `SELECT sensor_id,capture_scope_sha256,legacy_cancel_id,state,legacy_cutoff_at FROM stream_source_cutovers
@@ -144,13 +164,13 @@ func activateStreamSharedSources(ctx context.Context, db *sql.DB, sensor string,
 		}
 		for {
 			query := fmt.Sprintf(`WITH picked AS (SELECT job_id,revision,last_event_at,dirty_since FROM %s
- WHERE sensor_id=$1 AND generation_id='' AND canceled_epoch='' AND revision>completed_revision AND NOT expired
+ WHERE sensor_id=$1 AND generation_id IN ('',$5) AND canceled_epoch='' AND revision>completed_revision AND NOT expired
  ORDER BY job_id LIMIT 500 FOR UPDATE), marked AS (
 	 UPDATE %s j SET canceled_epoch=$2%s FROM picked p WHERE j.job_id=p.job_id
  RETURNING j.job_id,j.revision,j.last_event_at,j.dirty_since)
  INSERT INTO stream_shared_canceled_jobs(sensor_id,source_owner,epoch,job_kind,job_id,canceled_revision,last_event_at,dirty_since)
 	 SELECT $1,$3,$2,$4,job_id,revision,last_event_at,dirty_since FROM marked`, table, table, map[bool]string{true: ",lease_token='',lease_until=NULL", false: ""}[src.Owner == "handshake-sidecar"])
-			result, err := db.ExecContext(ctx, query, sensor, src.Epoch, src.Owner, kind)
+			result, err := db.ExecContext(ctx, query, sensor, src.Epoch, src.Owner, kind, oldGeneration)
 			if err != nil {
 				return err
 			}
@@ -178,7 +198,7 @@ func activateStreamSharedSources(ctx context.Context, db *sql.DB, sensor string,
 			table = "shared_gateway_observation_jobs"
 		}
 		var pending bool
-		if err := final.QueryRowContext(ctx, fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE sensor_id=$1 AND generation_id='' AND canceled_epoch='' AND revision>completed_revision AND NOT expired LIMIT 1)`, table), sensor).Scan(&pending); err != nil {
+		if err := final.QueryRowContext(ctx, fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE sensor_id=$1 AND generation_id IN ('',$2) AND canceled_epoch='' AND revision>completed_revision AND NOT expired LIMIT 1)`, table), sensor, oldGeneration).Scan(&pending); err != nil {
 			return err
 		}
 		if pending {

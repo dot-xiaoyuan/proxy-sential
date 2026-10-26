@@ -1,6 +1,7 @@
 import {
   Notice as Alert } from '../shared/ui/Notice'
 import { RouterSharingCandidates } from './RouterSharingCandidates'
+import { StreamRiskCutoverNotice } from '../widgets/StreamRiskCutoverNotice'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { detailPath,
   safeReturnTo } from '../app/navigation'
@@ -125,6 +126,7 @@ export function SharedAccessPage() {
     {title:'阻断原因',key:'blocker',width:180,render:(_,source)=>blockers[source.blocker]??''},
   ]
   return <section className="page shared-access-page">
+    {can(session.data,'risks:read') && <StreamRiskCutoverNotice />}
     <Tabs className="page-section-tabs" activeKey={tab} onChange={setTab} items={[{key:'routers',label:'路由器核验'},{key:'associations',label:'多终端接入'},{key:'devices',label:'共享终端档案'},{key:'history',label:'历史观察'},{key:'reviews',label:'账号归属核验'}]}/>
     {tab==='devices'&&<SharedDeviceProfiles/>}
     {tab==='routers'&&<RouterSharingCandidates/>}

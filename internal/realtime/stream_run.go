@@ -16,6 +16,7 @@ import (
 type StreamRunOptions struct {
 	Capture            Options
 	MaxPendingSegments int
+	DrainOnly          bool
 	OnSourceError      func(Source, error)
 }
 
@@ -246,6 +247,18 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 		if err := enqueue(id); err != nil {
 			return err
 		}
+	}
+	if opts.DrainOnly {
+		for len(permits) != 0 {
+			select {
+			case err := <-workerErrors:
+				return err
+			case <-sourceCtx.Done():
+				return sourceCtx.Err()
+			case <-time.After(opts.Capture.PollInterval):
+			}
+		}
+		return nil
 	}
 	var archivePendingSince time.Time
 	var smallZeekBatchSince time.Time

@@ -26,7 +26,7 @@ var ErrStreamArchivePending = errors.New("Zeek rotated archive is not yet availa
 const streamReadLimit = 1 << 20
 const streamLineLimit = streamlog.MaxSegmentEvents
 const discoveryStreamLineLimit = 50
-const deviceSignalProjectionLineLimit = 200
+const deviceSignalProjectionLineLimit = 500
 
 // CaptureStreamOnce only advances a pre-established fresh source cursor after
 // its exact raw bytes and normalized events are fsynced in an immutable segment.

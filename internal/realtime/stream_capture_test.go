@@ -694,7 +694,7 @@ func TestControlledDeviceSignalRequiresOriginalMatchingScope(t *testing.T) {
 	}
 }
 
-func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtTwoHundred(t *testing.T) {
+func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtFiveHundred(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "signals.jsonl")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -712,7 +712,7 @@ func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtTwoHundred(t *tes
 	}
 	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "signal-owner", CampusID: "campus-a", AccessDomain: "bond0", InterfaceName: "bond0", ValidFrom: time.Now().Add(-time.Hour), ValidUntil: time.Now().Add(time.Hour)}
 	var input bytes.Buffer
-	for i := 0; i < 225; i++ {
+	for i := 0; i < 525; i++ {
 		event := normalized.Event{SchemaVersion: "v1", EventID: "signal-" + strconv.Itoa(i), Source: "device-signals", SourceEventType: "ssdp", Type: "device", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a", "collector_instance_id": "signal-owner", "interface": "bond0"}, Subject: map[string]any{"ip": "192.0.2.8"}, Payload: map[string]any{"origin": "ssdp"}}
 		if err := json.NewEncoder(&input).Encode(scope.Apply(event)); err != nil {
 			t.Fatal(err)
@@ -722,7 +722,7 @@ func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtTwoHundred(t *tes
 		t.Fatal(err)
 	}
 	source := Source{Kind: "device-signals", Path: path, CaptureScope: scope, ControlledInterface: "bond0"}
-	for _, want := range []int{200, 25} {
+	for _, want := range []int{500, 25} {
 		id, captured, err := CaptureStreamOnce(context.Background(), journal, Options{SensorID: "sensor-a"}, source)
 		if err != nil || !captured {
 			t.Fatalf("capture signal segment: id=%s captured=%t err=%v", id, captured, err)

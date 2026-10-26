@@ -74,38 +74,71 @@ func scanZeekCutoverBytes(file *os.File, from, size int64) (zeekCutoverBytes, er
 }
 
 func scanFileCutoverBytes(file *os.File, from, size int64, zeek bool) (zeekCutoverBytes, error) {
+	result, _, err := scanFileCutoverChunks(file, from, size, zeek, 0)
+	return result, err
+}
+
+// Chunk hashes make a large canceled range independently verifiable without
+// treating any of its records as successfully consumed.
+func scanFileCutoverChunks(file *os.File, from, size int64, zeek bool, chunkLimit int64) (zeekCutoverBytes, []zeekCutoverBytes, error) {
 	if file == nil || from < 0 || size < from {
-		return zeekCutoverBytes{}, errors.New("invalid file cutover range")
+		return zeekCutoverBytes{}, nil, errors.New("invalid file cutover range")
 	}
 	if _, err := file.Seek(from, io.SeekStart); err != nil {
-		return zeekCutoverBytes{}, err
+		return zeekCutoverBytes{}, nil, err
 	}
 	reader := bufio.NewReaderSize(io.LimitReader(file, size-from), 1<<20)
 	hash := sha256.New()
 	result := zeekCutoverBytes{Offset: from}
+	chunkHash := sha256.New()
+	chunk := zeekCutoverBytes{Offset: from}
+	chunks := []zeekCutoverBytes{}
+	finishChunk := func() {
+		if chunk.Bytes == 0 {
+			return
+		}
+		chunk.SHA256 = hex.EncodeToString(chunkHash.Sum(nil))
+		chunks = append(chunks, chunk)
+		chunk = zeekCutoverBytes{Offset: result.Offset}
+		chunkHash.Reset()
+	}
 	for {
 		line, err := reader.ReadSlice('\n')
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if errors.Is(err, bufio.ErrBufferFull) {
-			return zeekCutoverBytes{}, errors.New("source line exceeds cutover audit bound")
+			return zeekCutoverBytes{}, nil, errors.New("source line exceeds cutover audit bound")
 		}
 		if err != nil {
-			return zeekCutoverBytes{}, err
+			return zeekCutoverBytes{}, nil, err
 		}
 		if _, err := hash.Write(line); err != nil {
-			return zeekCutoverBytes{}, err
+			return zeekCutoverBytes{}, nil, err
+		}
+		if chunkLimit > 0 {
+			_, _ = chunkHash.Write(line)
+			chunk.Bytes += int64(len(line))
+			chunk.Offset += int64(len(line))
 		}
 		result.Offset += int64(len(line))
 		result.Bytes += int64(len(line))
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) > 0 && (!zeek || trimmed[0] != '#') {
 			result.Records++
+			if chunkLimit > 0 {
+				chunk.Records++
+			}
+		}
+		if chunkLimit > 0 && chunk.Bytes >= chunkLimit {
+			finishChunk()
 		}
 	}
+	if chunkLimit > 0 {
+		finishChunk()
+	}
 	result.SHA256 = hex.EncodeToString(hash.Sum(nil))
-	return result, nil
+	return result, chunks, nil
 }
 
 type zeekDiscardEntry struct {
@@ -123,7 +156,7 @@ func legacyZeekDiscardEntries(ctx context.Context, db *sql.DB, sensor, path, fil
 	return legacyFileDiscardEntries(ctx, db, "zeek-dhcp", sensor, path, fileID, from, scan, cutoff)
 }
 
-func legacyFileDiscardEntries(ctx context.Context, db *sql.DB, kind, sensor, path, fileID string, from int64, scan zeekCutoverBytes, cutoff time.Time) ([]zeekDiscardEntry, error) {
+func legacyFileDiscardEntries(ctx context.Context, db *sql.DB, kind, sensor, path, fileID string, from int64, scan zeekCutoverBytes, cutoff time.Time, chunks ...zeekCutoverBytes) ([]zeekDiscardEntry, error) {
 	legacyKind := "unread_zeek_file"
 	if kind == "device-signals" || kind == "shared-device-signals" {
 		legacyKind = "unread_device_signal_file"
@@ -133,6 +166,14 @@ func legacyFileDiscardEntries(ctx context.Context, db *sql.DB, kind, sensor, pat
 		LegacyStatus: "cancelled_unprocessed", ContentSHA256: scan.SHA256,
 		UnprocessedRecords: scan.Records, UnprocessedBytes: scan.Bytes,
 	}}
+	if len(chunks) > 0 {
+		entries = entries[:0]
+		start := from
+		for _, chunk := range chunks {
+			entries = append(entries, zeekDiscardEntry{LegacyKind: legacyKind + "_chunk", LegacyReference: fileID + ":" + strconv.FormatInt(start, 10) + ":" + strconv.FormatInt(chunk.Offset, 10), LegacyStatus: "cancelled_unprocessed", ContentSHA256: chunk.SHA256, UnprocessedRecords: chunk.Records, UnprocessedBytes: chunk.Bytes})
+			start = chunk.Offset
+		}
+	}
 	rows, err := db.QueryContext(ctx, `SELECT batch_id,status,checksum,start_offset,end_offset,event_count,started_at
  FROM ingest_batches WHERE sensor_id=$1 AND source_kind=$2 AND source_path=$3
  AND status<>'committed' AND started_at<=$4 ORDER BY batch_id LIMIT 501`, sensor, kind, path, cutoff)
@@ -202,7 +243,7 @@ func prepareControlledFileStreamAfterClosed(ctx context.Context, db *sql.DB, jou
 
 func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db *sql.DB, journal *streamlog.Journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash string, cutoff time.Time, priorEpoch, priorManifest, rotationArchive string) (zeekCutoverBytes, string, error) {
 	parser := streamParserForSource(kind)
-	if parser == "" || db == nil || journal == nil || sensor == "" || path == "" || epoch == "" || len(epoch) > 128 || cancelID == "" || previousRelease == "" || len(scopeHash) != 64 || cutoff.IsZero() || cutoff.After(time.Now()) || (priorEpoch == "") != (priorManifest == "") || (priorEpoch != "" && (kind != "zeek-dhcp-binding" || priorEpoch == epoch || len(priorManifest) != 64)) || (rotationArchive != "" && priorEpoch == "") {
+	if parser == "" || db == nil || journal == nil || sensor == "" || path == "" || epoch == "" || len(epoch) > 128 || cancelID == "" || previousRelease == "" || len(scopeHash) != 64 || cutoff.IsZero() || cutoff.After(time.Now()) || (priorEpoch == "") != (priorManifest == "") || (priorEpoch != "" && (kind != "zeek-dhcp-binding" && kind != "device-signals" || priorEpoch == epoch || len(priorManifest) != 64)) || (rotationArchive != "" && (priorEpoch == "" || kind != "zeek-dhcp-binding" && kind != "device-signals")) {
 		return zeekCutoverBytes{}, "", errors.New("invalid controlled file fresh-cutover parameters")
 	}
 	existing, found, err := loadFileCutover(ctx, db, kind, epoch, path)
@@ -280,7 +321,7 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 			return zeekCutoverBytes{}, "", errors.New("prior closed stream has no unique audited retirement cursor")
 		}
 		if rotationArchive != "" {
-			if oldFile == fileID || priorRetiredFile != "" {
+			if oldFile == fileID || kind == "zeek-dhcp-binding" && priorRetiredFile != "" || kind == "device-signals" && (rotationArchive != path+".1" || priorRetiredFile == "") {
 				return zeekCutoverBytes{}, "", streamlog.ErrContentConflict
 			}
 		}
@@ -295,7 +336,11 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 	}
 	rotationEntries := []zeekDiscardEntry{}
 	if rotationArchive != "" {
-		rotationEntries, err = verifyClosedRotationArchive(ctx, db, path, rotationArchive, oldFile, from, priorEpoch)
+		if kind == "device-signals" {
+			rotationEntries, err = verifyClosedDeviceRotation(ctx, db, path, rotationArchive, priorRetiredFile, from, priorEpoch)
+		} else {
+			rotationEntries, err = verifyClosedRotationArchive(ctx, db, path, rotationArchive, oldFile, from, priorEpoch)
+		}
 		if err != nil {
 			return zeekCutoverBytes{}, "", err
 		}
@@ -308,7 +353,11 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 	if size < from || size > before.Size() {
 		return zeekCutoverBytes{}, "", streamlog.ErrContentConflict
 	}
-	scan, err := scanFileCutoverBytes(file, from, size, kind == "zeek-dhcp" || kind == "zeek-dhcp-binding")
+	chunkLimit := int64(0)
+	if kind == "device-signals" && priorEpoch != "" {
+		chunkLimit = 8 << 20
+	}
+	scan, chunks, err := scanFileCutoverChunks(file, from, size, kind == "zeek-dhcp" || kind == "zeek-dhcp-binding", chunkLimit)
 	if err != nil {
 		return zeekCutoverBytes{}, "", err
 	}
@@ -319,7 +368,7 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 	if err != nil || !os.SameFile(before, after) || after.Size() < before.Size() {
 		return zeekCutoverBytes{}, "", errors.New("file source changed during cutover audit")
 	}
-	entries, err := legacyFileDiscardEntries(ctx, db, kind, sensor, path, fileID, from, scan, cutoff)
+	entries, err := legacyFileDiscardEntries(ctx, db, kind, sensor, path, fileID, from, scan, cutoff, chunks...)
 	if err != nil {
 		return zeekCutoverBytes{}, "", err
 	}
@@ -433,7 +482,7 @@ func runIngestStreamPrepare(args []string) error {
 	cutoffText := fs.String("cutoff-at", "", "fixed RFC3339 old-input cutoff")
 	priorEpoch := fs.String("resume-closed-epoch", "", "prior closed stream on this exact file")
 	priorManifest := fs.String("prior-retirement-sha256", "", "verified immutable retirement manifest")
-	rotationArchive := fs.String("rotation-archive", "", "Zeek gzip archive proving the closed file's tail across rotation")
+	rotationArchive := fs.String("rotation-archive", "", "verified retained file across rotation (Zeek gzip or device .1)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

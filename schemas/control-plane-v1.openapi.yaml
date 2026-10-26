@@ -5851,6 +5851,17 @@ components:
         pending_subjects: { type: integer, format: int64 }
         pending_older_than_5s: { type: integer, format: int64 }
         oldest_pending_at: { type: string, format: date-time }
+        source_gap:
+          type: object
+          required: [epoch, source_owner, canceled_records, canceled_bytes, audit_batches, manifest_sha256, cutoff_at]
+          properties:
+            epoch: { type: string }
+            source_owner: { type: string }
+            canceled_records: { type: integer, format: int64 }
+            canceled_bytes: { type: integer, format: int64 }
+            audit_batches: { type: integer, format: int64 }
+            manifest_sha256: { type: string }
+            cutoff_at: { type: string, format: date-time }
     StreamRiskCutoverResponse:
       type: object
       required: [active]

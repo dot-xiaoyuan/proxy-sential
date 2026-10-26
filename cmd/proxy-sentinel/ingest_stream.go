@@ -95,6 +95,7 @@ func runIngestStream(args []string) error {
 	maxBytes := fs.Int64("max-batch-bytes", 1<<20, "source bytes per durable segment")
 	storeTimeout := fs.Duration("store-timeout", 3*time.Second, "individual storage attempt budget")
 	pending := fs.Int("max-pending-segments", 16, "bounded queued segments")
+	drainOnly := fs.Bool("drain-only", false, "finish only previously accepted journal segments")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -176,5 +177,6 @@ func runIngestStream(args []string) error {
 	return realtime.RunStream(ctx, journal, writer, realtime.StreamRunOptions{
 		Capture:            realtime.Options{SensorID: *sensor, Sources: sources, PollInterval: *poll, MaxBatchBytes: *maxBytes, StoreTimeout: *storeTimeout},
 		MaxPendingSegments: *pending,
+		DrainOnly:          *drainOnly,
 	})
 }

@@ -38,6 +38,38 @@ func TestZeekFreshCutoverAuditsOnlyCompleteOldRecords(t *testing.T) {
 	}
 }
 
+func TestDeviceSignalCancellationIsAuditedInVerifiableChunks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ttl.jsonl")
+	raw := []byte("one\ntwo\nthree\npartial")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	total, chunks, err := scanFileCutoverChunks(file, 0, int64(len(raw)), false, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total.Offset != int64(len("one\ntwo\nthree\n")) || total.Records != 3 || len(chunks) != 2 {
+		t.Fatalf("total=%+v chunks=%+v", total, chunks)
+	}
+	start := int64(0)
+	for _, chunk := range chunks {
+		body := raw[start:chunk.Offset]
+		sum := sha256.Sum256(body)
+		if chunk.SHA256 != hex.EncodeToString(sum[:]) || chunk.Bytes != int64(len(body)) {
+			t.Fatalf("invalid chunk %+v", chunk)
+		}
+		start = chunk.Offset
+	}
+	if start != total.Offset {
+		t.Fatalf("chunk ranges stop at %d, want %d", start, total.Offset)
+	}
+}
+
 func TestZeekFreshCutoverRecordsGapBeforeActivatingCursor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dhcp.log")
 	if err := os.WriteFile(path, []byte("#path dhcp\nold\npartial"), 0o600); err != nil {

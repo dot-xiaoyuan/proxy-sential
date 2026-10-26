@@ -22,9 +22,10 @@ func TestStreamRiskCutoverStatusKeepsCancellationSeparateFromPending(t *testing.
 			AddRow("audit-1", cutoff, int64(40504), audited))
 	mock.ExpectQuery(`SELECT count\(\*\),`).WithArgs("sensor-a", cutoff).
 		WillReturnRows(sqlmock.NewRows([]string{"pending", "older", "oldest"}).AddRow(int64(12), int64(3), oldest))
+	mock.ExpectQuery(`SELECT c.epoch,s.source_owner`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"epoch", "owner", "cutoff", "manifest", "batches", "records", "bytes"}).AddRow("packet-fresh", "packet-sidecar", cutoff, "sha", int64(3), int64(100), int64(4000)))
 	status, active, err := (&PostgresStore{db: db}).GetStreamRiskCutoverStatus(context.Background(), "sensor-a")
 	if err != nil || !active || status.CanceledSubjects != 40504 || status.PendingSubjects != 12 ||
-		status.PendingOlderThan5Sec != 3 || status.OldestPendingAt == nil || !status.OldestPendingAt.Equal(oldest) {
+		status.PendingOlderThan5Sec != 3 || status.OldestPendingAt == nil || !status.OldestPendingAt.Equal(oldest) || status.SourceGap == nil || status.SourceGap.CanceledRecords != 100 {
 		t.Fatalf("cutover audit or pending work was lost: %+v active=%v err=%v", status, active, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

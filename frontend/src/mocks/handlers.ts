@@ -299,6 +299,7 @@ export const handlers = [
       audited_at: '2026-10-26T02:24:39Z',
       pending_subjects: 18,
       pending_older_than_5s: 3,
+      source_gap: { epoch: 'packet-fresh', source_owner: 'packet-sidecar', canceled_records: 120000, canceled_bytes: 553000000, audit_batches: 67, manifest_sha256: 'a'.repeat(64), cutoff_at: '2026-10-26T06:25:00Z' },
     },
   })),
   http.get('/api/v1/risks', ({ request }) => {
