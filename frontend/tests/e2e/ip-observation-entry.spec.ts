@@ -4,9 +4,11 @@ import { writeFile } from 'node:fs/promises'
 for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
   test(`终端列表到详情的 IP 观测路径 ${viewport.width}`, async ({ page }, testInfo) => {
     const errors: string[] = []
+    let legacySignalRequests = 0
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
     page.on('response', response => { if (response.url().includes('/api/v1/') && response.status() >= 400) errors.push(`${response.status()} ${new URL(response.url()).pathname}`) })
+    page.on('request', request => { if (new URL(request.url()).pathname === '/api/v1/device-signals') legacySignalRequests++ })
     await page.setViewportSize(viewport)
     await page.goto('/devices?tab=terminal&view=recent&window=24h&q=10.157.2.191')
     await expect(page.getByText('当前检索条件下没有终端身份结果')).toBeVisible()
@@ -22,6 +24,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(page.getByText(/身份摘要中没有该 IP 的地址关联/)).toBeVisible()
     const detailPanel = page.getByLabel('IP 流量观察', { exact: true })
     await expect(detailPanel.getByText('本页 2 条观测摘要')).toBeVisible()
+    expect(legacySignalRequests).toBe(0)
+    await expect(page.getByRole('heading', { name: '终端信号' })).toHaveCount(0)
     const probe = await page.evaluate(() => {
       const lookup = document.querySelector('.endpoint-traffic-lookup')!
       const input = lookup.querySelector('.endpoint-traffic-lookup-form .ant-input')!

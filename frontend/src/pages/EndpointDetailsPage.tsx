@@ -133,18 +133,15 @@ export function EndpointDetailsPage() {
   const mergeStatus = Form.useWatch("merge_status", registrationForm);
   const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? "";
   const latestAccess = profile?.recognition?.current_access_id ?? "";
-  // 终端信号按 IP 或 MAC 存储，终端 ID 不参与匹配；按最近观测 IP 查询，缺失时退回 MAC。
-  const signalQuery = latestIP
-    ? { ip: latestIP }
-    : { q: profile.endpoint.primary_mac ?? "" };
+  // 旧终端信号只按 IP 有界匹配。MAC 证据由上方流量观测独立查询。
   const signals = useDeviceSignals(
     {
       window: "24h",
-      ...signalQuery,
+      ip: latestIP,
       include_weak: true,
       limit: 50,
     },
-    activeTab === "signals" && Boolean(latestIP || profile.endpoint.primary_mac),
+    activeTab === "signals" && Boolean(latestIP),
   );
   const signalItems = signals.data?.items ?? [];
   const signalPageCount=Math.max(1,Math.ceil(signalItems.length/signalPageSize))
@@ -536,7 +533,7 @@ export function EndpointDetailsPage() {
       {activeTab === "signals" && (
         <>
         {can(session.data, 'events:read') && <EndpointTrafficPanel recentIP={latestIP} primaryMac={profile.endpoint.primary_mac} identityLastSeen={profile.last_seen} />}
-        <section className="surface">
+        {latestIP && <section className="surface">
           <div className="surface-title-row">
             <Typography.Title className="surface-title" level={4}>
               终端信号
@@ -545,9 +542,7 @@ export function EndpointDetailsPage() {
               按最近观测 IP 查询近 24 小时的 DHCP、TLS/HTTP 握手、指纹等线索
             </Typography.Text>
           </div>
-          {!latestIP && !profile.endpoint.primary_mac ? (
-            <Typography.Text type="secondary">该终端没有可用于查询的 IP 或 MAC，无法匹配终端信号。</Typography.Text>
-          ) : signals.isError ? (
+          {signals.isError ? (
             <Alert showIcon title="终端信号读取失败" type="warning" />
           ) : (
             <>
@@ -565,7 +560,7 @@ export function EndpointDetailsPage() {
               {signalItems.length>0&&<AppServerPagination page={visibleSignalPage} pageSize={signalPageSize} total={signalItems.length} onChange={(nextPage,nextSize)=>{setSignalPageSize(nextSize);setSignalPage(nextPage)}} totalText={`共 ${signalItems.length} 条`} />}
             </>
           )}
-        </section>
+        </section>}
         </>
       )}
     </main>
