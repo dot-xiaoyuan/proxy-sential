@@ -1,0 +1,51 @@
+{
+  "release": "2026.10.26-stream-b88-ready-lanes",
+  "measurement": "50 real event keys per batch; ClickHouse body and narrow index present",
+  "caveat": "accepted_at precedes the first durable segment write; the computed durable-to-index value is an upper bound, not authenticated API visibility",
+  "samples": [
+    {
+      "source": "packet",
+      "accepted_at": "2026-10-26T11:02:13.289270026Z",
+      "segment_id": "f36cb2250beaf19db9d81b2aa6f26591ca48c4f258397d9f7138afe7a2f06c4e",
+      "event_count": 50,
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 7.404242,
+      "append_duration_s": 1.033,
+      "durable_to_index_upper_bound_s": 6.371242
+    },
+    {
+      "source": "handshake",
+      "accepted_at": "2026-10-26T11:02:13.258699705Z",
+      "segment_id": "df2cb516162b8fc6316893f9005d98d971fa18722112e14f901952ec9b1e2904",
+      "event_count": 50,
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 7.124013,
+      "append_duration_s": 1.063,
+      "durable_to_index_upper_bound_s": 6.061013
+    },
+    {
+      "source": "packet",
+      "accepted_at": "2026-10-26T11:04:17.782580966Z",
+      "segment_id": "ccfe7c984acd2af6e2de5bfb282bf51fbbabf888f2292d3b621e06fa697e369a",
+      "event_count": 50,
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 5.568298,
+      "append_duration_s": 1.309,
+      "durable_to_index_upper_bound_s": 4.259298
+    },
+    {
+      "source": "handshake",
+      "accepted_at": "2026-10-26T11:04:24.146505866Z",
+      "segment_id": "471b2787e5391a67db05b5014dfaf64d9233977283f04981fba7f05b87bfef63",
+      "event_count": 50,
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 5.342182,
+      "append_duration_s": 1.033,
+      "durable_to_index_upper_bound_s": 4.309182
+    }
+  ]
+}

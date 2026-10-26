@@ -154,7 +154,13 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		segment.RawIsStandardEvents = source.Kind == "device-signals" || source.Kind == "shared-device-signals"
 		segment.SourceBackedRaw = source.Kind == "zeek-dhcp-binding" && journal.HasRawResolver()
 		appendStarted := time.Now()
-		id, err := journal.Append(segment)
+		var id string
+		bodyReady := onReady != nil && (source.Kind == "device-signals" || source.Kind == "shared-device-signals")
+		if bodyReady {
+			id, err = journal.AppendSourceReady(segment)
+		} else {
+			id, err = journal.Append(segment)
+		}
 		appendElapsed := time.Since(appendStarted)
 		if appendElapsed >= 500*time.Millisecond {
 			log.Printf("stream capture stage source=%s events=%d stage=append duration=%s segment=%s accepted_at=%s", source.Kind, len(events), appendElapsed.Round(time.Millisecond), id, segment.AcceptedAt.UTC().Format(time.RFC3339Nano))
@@ -169,12 +175,10 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 			return "", false, err
 		}
 		if onReady != nil {
-			prepareStarted := time.Now()
-			if err := journal.PrepareSource(source.Kind, source.Path, id); err != nil {
-				return id, false, err
-			}
-			if elapsed := time.Since(prepareStarted); elapsed >= 500*time.Millisecond {
-				log.Printf("stream capture stage source=%s events=%d stage=prepare duration=%s segment=%s accepted_at=%s append_duration=%s", source.Kind, len(events), elapsed.Round(time.Millisecond), id, segment.AcceptedAt.UTC().Format(time.RFC3339Nano), appendElapsed.Round(time.Millisecond))
+			if !bodyReady {
+				if err := journal.PrepareSource(source.Kind, source.Path, id); err != nil {
+					return id, false, err
+				}
 			}
 			if err := onReady(id); err != nil {
 				return id, false, err

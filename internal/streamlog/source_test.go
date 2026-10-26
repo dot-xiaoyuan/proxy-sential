@@ -1,6 +1,8 @@
 package streamlog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"testing"
@@ -260,6 +262,110 @@ func TestPreparedSourcePreservesSinkAckAcrossCursorRecovery(t *testing.T) {
 	if err != nil || !state.Committed || state.Acks[Archive] != Acked {
 		t.Fatalf("sink acknowledgement was lost during cursor recovery: %+v %v", state, err)
 	}
+}
+
+func TestDurableSourceBodyLetsSinkStartBeforeCursorWithoutExtraStateWrite(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testReadyDeviceSegment()
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.AppendSourceReady(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(j.path(id, ".state")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("early readiness required another state fsync: %v", err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.ProcessingReady || state.Committed || !state.AckLog || !state.AckLogSealed {
+		t.Fatalf("durable body was not eligible: %+v %v", state, err)
+	}
+	if err := j.BeginAttempt(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Ack(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Release(id); !errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("body released before cursor confirmation: %v", err)
+	}
+	j, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := j.RecoverSource(segment.Source, segment.SourcePath)
+	if err != nil || len(ids) != 1 || ids[0] != id {
+		t.Fatalf("durable body was not recoverable: %v %v", ids, err)
+	}
+	state, err = j.Load(id)
+	if err != nil || !state.Committed || state.Acks[Archive] != Acked {
+		t.Fatalf("early sink acknowledgement was lost: %+v %v", state, err)
+	}
+}
+
+func TestAppendSourceReadyRejectsUnprovenPredecessor(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testReadyDeviceSegment()
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset + 1, ParserVersion: segment.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.AppendSourceReady(segment); !errors.Is(err, ErrContentConflict) {
+		t.Fatalf("unproven source was offered to sinks: %v", err)
+	}
+}
+
+func TestReadyBodyRecoverySealsCursorAfterInterruptedStateWrite(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testReadyDeviceSegment()
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.AppendSourceReady(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := j.LoadSource(segment.Source, segment.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor.FileID, cursor.Offset, cursor.LastSegmentID = segment.FileID, segment.EndOffset, id
+	if err := atomicJSON(j.sourcePath(segment.Source, segment.SourcePath), cursor); err != nil {
+		t.Fatal(err)
+	}
+	j, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.RecoverSource(segment.Source, segment.SourcePath); err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.Committed || state.ProcessingReady {
+		t.Fatalf("durable cursor did not seal early body: %+v %v", state, err)
+	}
+}
+
+func testReadyDeviceSegment() Segment {
+	segment := testSegment()
+	segment.Source, segment.SourcePath = "device-signals", "/logs/packet.jsonl"
+	segment.Raw = []byte("one durable standard event\n")
+	segment.RawIsStandardEvents = true
+	segment.EndOffset = segment.StartOffset + int64(len(segment.Raw))
+	sum := sha256.Sum256(segment.Raw)
+	segment.RawSHA256 = hex.EncodeToString(sum[:])
+	return segment
 }
 
 func TestRecoverSourceSealsCursorAfterPreparedStateWriteWasInterrupted(t *testing.T) {

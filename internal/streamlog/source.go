@@ -216,6 +216,30 @@ func validateSourceSegment(cursor SourceCursor, segment Segment, source, path st
 	return nil
 }
 
+// AppendSourceReady proves the source predecessor before the immutable body is
+// written. Its durable body is the readiness marker, so sink lanes can start
+// without a second producer-side state fsync. Release still waits for the
+// durable cursor and all sink acknowledgements.
+func (j *Journal) AppendSourceReady(segment Segment) (string, error) {
+	if !segment.RawIsStandardEvents || (segment.Source != "device-signals" && segment.Source != "shared-device-signals") {
+		return "", ErrContentConflict
+	}
+	lock, err := j.lockFile(".cursor-lock-" + sourceCursorID(segment.Source, segment.SourcePath))
+	if err != nil {
+		return "", err
+	}
+	defer unlock(lock)
+	cursor, err := j.loadSource(segment.Source, segment.SourcePath)
+	if err != nil {
+		return "", err
+	}
+	if err := validateSourceSegment(cursor, segment, segment.Source, segment.SourcePath); err != nil {
+		return "", err
+	}
+	segment.EarlyProcessing = true
+	return j.append(segment, true)
+}
+
 // CommitSource moves the read cursor only after the matching immutable segment
 // is durably present. Consumers own independent acknowledgement positions.
 func (j *Journal) CommitSource(source, path, segmentID string) error {

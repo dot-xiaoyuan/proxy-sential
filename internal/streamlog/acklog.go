@@ -139,7 +139,7 @@ func (j *Journal) appendAck(id string, lane Lane, status Status, entrySealed boo
 	}
 	// An empty file left by a crash during the first record may not yet have
 	// a durable directory entry. Seal it before permitting a sink write.
-	if valid == 0 && !entrySealed {
+	if !entrySealed {
 		return syncDir(j.dir)
 	}
 	return nil

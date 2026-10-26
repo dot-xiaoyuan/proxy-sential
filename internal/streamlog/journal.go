@@ -65,6 +65,7 @@ type Segment struct {
 	RawSHA256            string             `json:"raw_sha256,omitempty"`
 	SourceBackedRaw      bool               `json:"source_backed_raw,omitempty"`
 	RawIsStandardEvents  bool               `json:"raw_is_standard_events,omitempty"`
+	EarlyProcessing      bool               `json:"early_processing,omitempty"`
 	RawTailBytes         int                `json:"raw_tail_bytes,omitempty"`
 	RawTailSHA256        string             `json:"raw_tail_sha256,omitempty"`
 	ArchiveMonth         string             `json:"archive_month"`
@@ -137,6 +138,7 @@ func contentHash(s Segment) (string, error) {
 		RawSHA256            string             `json:"raw_sha256"`
 		SourceBackedRaw      bool               `json:"source_backed_raw,omitempty"`
 		RawIsStandardEvents  bool               `json:"raw_is_standard_events,omitempty"`
+		EarlyProcessing      bool               `json:"early_processing,omitempty"`
 		RawTailBytes         int                `json:"raw_tail_bytes,omitempty"`
 		RawTailSHA256        string             `json:"raw_tail_sha256,omitempty"`
 		Raw                  []byte             `json:"raw,omitempty"`
@@ -145,7 +147,7 @@ func contentHash(s Segment) (string, error) {
 		Quarantined          bool               `json:"quarantined,omitempty"`
 		QuarantineReason     string             `json:"quarantine_reason,omitempty"`
 		Events               []normalized.Event `json:"events"`
-	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.Quarantined, s.QuarantineReason, s.Events})
+	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.Quarantined, s.QuarantineReason, s.Events})
 	if err != nil {
 		return "", err
 	}
@@ -154,6 +156,10 @@ func contentHash(s Segment) (string, error) {
 }
 
 func (j *Journal) Append(s Segment) (string, error) {
+	return j.append(s, false)
+}
+
+func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 	if s.Epoch == "" || s.Source == "" || s.SourcePath == "" || s.FileID == "" || s.ParserVersion == "" || s.EndOffset <= s.StartOffset || (len(s.Events) == 0 && s.NeedsProjection) {
 		return "", errors.New("stream segment requires epoch, source, path, file, parser, positive offsets and projection events")
 	}
@@ -166,6 +172,9 @@ func (j *Journal) Append(s Segment) (string, error) {
 	}
 	if s.RawIsStandardEvents && (s.Source != "device-signals" && s.Source != "shared-device-signals" || len(s.Raw) == 0 || len(s.Events) == 0 || s.SourceBackedRaw || s.Quarantined) {
 		return "", errors.New("standard-event raw source requires inline device events")
+	}
+	if s.EarlyProcessing && (!allowEarly || !s.RawIsStandardEvents) {
+		return "", ErrContentConflict
 	}
 	if len(s.Raw) > 0 {
 		rawHash := sha256.Sum256(s.Raw)
@@ -219,9 +228,21 @@ func (j *Journal) Append(s Segment) (string, error) {
 		if old.ContentSHA256 != hash || old.Segment.ParserVersion != s.ParserVersion || old.Segment.RawSHA256 != s.RawSHA256 {
 			return "", ErrContentConflict
 		}
+		// A previous directory sync may have failed after the body rename.
+		// Reconfirm the immutable entry before offering it to a sink.
+		if err := syncDir(j.dir); err != nil {
+			return "", err
+		}
 		return id, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
+	}
+	if s.EarlyProcessing {
+		// The body rename's directory barrier also seals this empty log. Sink
+		// attempts can then append records without another directory sync.
+		if err := j.prepareEmptyAckLog(id); err != nil {
+			return "", err
+		}
 	}
 	if err := atomicJSON(j.path(id, ".segment"), s); err != nil {
 		return "", err
@@ -279,7 +300,7 @@ func (j *Journal) load(id string) (State, error) {
 		if bodyErr != nil {
 			return State{}, bodyErr
 		}
-		state = State{ID: id, ContentSHA256: hash, Segment: segment, Committed: segment.SourceBackedRaw, Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending}}
+		state = State{ID: id, ContentSHA256: hash, Segment: segment, ProcessingReady: segment.EarlyProcessing, Committed: segment.SourceBackedRaw, Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending}}
 		if len(segment.Events) == 0 {
 			state.Acks[Archive], state.Acks[Search] = NotApplicable, NotApplicable
 		}
@@ -288,6 +309,7 @@ func (j *Journal) load(id string) (State, error) {
 		}
 		if _, ackErr := os.Stat(j.path(id, ".acklog")); ackErr == nil {
 			state.AckLog = true
+			state.AckLogSealed = segment.EarlyProcessing
 		} else if !errors.Is(ackErr, os.ErrNotExist) {
 			return State{}, ackErr
 		}
@@ -453,7 +475,7 @@ func (j *Journal) setAck(id string, lane Lane, status Status) error {
 		}
 		return j.appendAck(id, lane, status, state.AckLogSealed)
 	}
-	if state.Segment.SourceBackedRaw {
+	if state.Segment.SourceBackedRaw || state.Segment.EarlyProcessing {
 		return j.createAckLogWithRecord(id, lane, status)
 	}
 	state.Acks[lane] = status
