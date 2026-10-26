@@ -26,6 +26,7 @@ var ErrStreamArchivePending = errors.New("Zeek rotated archive is not yet availa
 const streamReadLimit = 1 << 20
 const streamLineLimit = streamlog.MaxSegmentEvents
 const discoveryStreamLineLimit = 50
+const dhcpBindingStreamLineLimit = 100
 const deviceSignalProjectionLineLimit = 500
 
 // CaptureStreamOnce only advances a pre-established fresh source cursor after
@@ -94,8 +95,12 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 	// DHCP always updates the device projection. Other controlled signal
 	// sources may contain only archive or risk events and can use larger
 	// ClickHouse batches; a selected discovery event below still caps them.
-	if source.Kind == "zeek-dhcp" || source.Kind == "zeek-dhcp-binding" {
+	if source.Kind == "zeek-dhcp" {
 		lineLimit = discoveryStreamLineLimit
+	} else if source.Kind == "zeek-dhcp-binding" {
+		// A larger bounded binding segment amortizes mechanical-disk journal
+		// barriers while keeping projection work under its own event ceiling.
+		lineLimit = dhcpBindingStreamLineLimit
 	}
 	if end := lineBoundary(chunk, lineLimit); end < len(chunk) {
 		chunk = chunk[:end]
@@ -118,6 +123,8 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 			// projection, but 50 records per segment cannot keep pace with the
 			// verified source. Keep a separate event bound and the byte ceiling.
 			projectionLimit = deviceSignalProjectionLineLimit
+		} else if source.Kind == "zeek-dhcp-binding" {
+			projectionLimit = dhcpBindingStreamLineLimit
 		}
 		if len(events) > projectionLimit && needsStreamProjection(events) {
 			if end := lineBoundary(chunk, projectionLimit); end < len(chunk) {

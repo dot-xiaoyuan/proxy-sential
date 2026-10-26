@@ -231,7 +231,7 @@ func TestStreamCaptureDHCPBindingKeepsVerifiedPositionAndBound(t *testing.T) {
 		t.Fatalf("verified DHCP binding capture failed: %s %t %v", id, captured, err)
 	}
 	state, err := j.Load(id)
-	if err != nil || len(state.Segment.Events) != 50 || state.Segment.EndOffset != int64(50*len(line)) {
+	if err != nil || len(state.Segment.Events) != 100 || state.Segment.EndOffset != int64(100*len(line)) {
 		t.Fatalf("verified DHCP binding bound failed: events=%d end=%d err=%v", len(state.Segment.Events), state.Segment.EndOffset, err)
 	}
 	if got := state.Segment.Events[0].Payload["msg_types"]; got != "ACK" {

@@ -1,0 +1,42 @@
+{
+  "scope": "local mock; not live authenticated site acceptance",
+  "route": "/shared-access?tab=devices",
+  "viewport_probes": [
+    {
+      "width": 390,
+      "height": 844,
+      "document_scroll_width": 390,
+      "notice_scroll_width": 364,
+      "notice_client_width": 364,
+      "text_color": "rgb(15, 23, 42)",
+      "background_color": "rgb(248, 250, 252)",
+      "inline_style_count": 0,
+      "console_or_network_errors": 0,
+      "screenshot": "ps-b93-cutover-390.png"
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "document_scroll_width": 1280,
+      "notice_scroll_width": 1014,
+      "notice_client_width": 1014,
+      "text_color": "rgb(15, 23, 42)",
+      "background_color": "rgb(248, 250, 252)",
+      "inline_style_count": 0,
+      "console_or_network_errors": 0,
+      "screenshot": "ps-b93-cutover-1280.png"
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "document_scroll_width": 1440,
+      "notice_scroll_width": 1174,
+      "notice_client_width": 1174,
+      "text_color": "rgb(15, 23, 42)",
+      "background_color": "rgb(248, 250, 252)",
+      "inline_style_count": 0,
+      "console_or_network_errors": 0,
+      "screenshot": "ps-b93-cutover-1440.png"
+    }
+  ]
+}
