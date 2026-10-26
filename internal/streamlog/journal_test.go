@@ -158,6 +158,47 @@ func TestJournalPersistsIndependentAcksAndReleasesOnlyAfterAll(t *testing.T) {
 	}
 }
 
+func TestJournalDefersAckLogUntilFirstSinkAttempt(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testSegment()
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.Append(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(j.path(id, ".acklog")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("capture wrote an empty acknowledgement log: %v", err)
+	}
+	if err := j.CommitSource(segment.Source, segment.SourcePath, id); err != nil {
+		t.Fatal(err)
+	}
+	j, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.Committed || !state.AckLog || state.Acks[Archive] != Pending {
+		t.Fatalf("committed segment cannot recover before its first sink attempt: %+v %v", state, err)
+	}
+	if err := j.BeginAttempt(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	j, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = j.Load(id)
+	if err != nil || state.Acks[Archive] != Attempted || state.Acks[Search] != Pending {
+		t.Fatalf("first durable sink attempt not recovered: %+v %v", state, err)
+	}
+}
+
 func TestJournalAckLogSurvivesRestartAndIgnoresTornTail(t *testing.T) {
 	dir := t.TempDir()
 	j, err := Open(dir)
@@ -165,11 +206,11 @@ func TestJournalAckLogSurvivesRestartAndIgnoresTornTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := appendCommitted(t, j, testSegment())
-	if _, err := os.Stat(filepath.Join(dir, id+".acklog")); err != nil {
-		t.Fatalf("new segment lacks its durable ack log: %v", err)
-	}
 	if err := j.BeginAttempt(id, Archive); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, id+".acklog")); err != nil {
+		t.Fatalf("first attempt lacks its durable ack log: %v", err)
 	}
 	f, err := os.OpenFile(filepath.Join(dir, id+".acklog"), os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
@@ -216,7 +257,7 @@ func TestJournalContinuesLegacyStateFileWithoutAckLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.AckLog = false
-	if err := os.Remove(j.path(id, ".acklog")); err != nil {
+	if err := os.Remove(j.path(id, ".acklog")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
 	if err := atomicJSON(j.path(id, ".state"), stateWithoutEvents(state)); err != nil {

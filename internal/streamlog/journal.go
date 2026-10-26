@@ -224,14 +224,9 @@ func (j *Journal) Append(s Segment) (string, error) {
 	if err := atomicJSON(j.path(id, ".segment"), s); err != nil {
 		return "", err
 	}
-	if !s.SourceBackedRaw {
-		if err := j.createAckLog(id); err != nil {
-			return "", err
-		}
-	}
-	// The body and empty acknowledgement log are already durable. CommitSource
-	// writes the first compact state after checking the source predecessor;
-	// a crash here reconstructs pending lanes from the immutable body.
+	// The immutable body is durable. CommitSource writes the first compact
+	// state; the acknowledgement log is created with its first sink attempt.
+	// A crash here reconstructs pending lanes from the body.
 	return id, nil
 }
 
@@ -330,7 +325,11 @@ func (j *Journal) load(id string) (State, error) {
 	}
 	state.Segment = segment
 	if state.AckLog {
-		if _, err := j.applyAckLog(id, &state); err != nil {
+		if _, err := os.Stat(j.path(id, ".acklog")); err == nil {
+			if _, err := j.applyAckLog(id, &state); err != nil {
+				return State{}, err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return State{}, err
 		}
 	}
@@ -445,6 +444,11 @@ func (j *Journal) setAck(id string, lane Lane, status Status) error {
 		return nil
 	}
 	if state.AckLog {
+		if _, err := os.Stat(j.path(id, ".acklog")); errors.Is(err, os.ErrNotExist) {
+			return j.createAckLogWithRecord(id, lane, status)
+		} else if err != nil {
+			return err
+		}
 		return j.appendAck(id, lane, status)
 	}
 	if state.Segment.SourceBackedRaw {
@@ -542,6 +546,15 @@ func (j *Journal) lockFile(name string) (*os.File, error) {
 func unlock(f *os.File) { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }
 
 func atomicJSON(path string, value any) error {
+	if err := atomicJSONBeforeDirectoryBarrier(path, value); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// The caller must sync this directory before treating the rename as durable.
+// CommitSource uses the cursor's subsequent atomicJSON for that barrier.
+func atomicJSONBeforeDirectoryBarrier(path string, value any) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -565,7 +578,7 @@ func atomicJSON(path string, value any) error {
 	if err = os.Rename(file.Name(), path); err != nil {
 		return err
 	}
-	return syncDir(filepath.Dir(path))
+	return nil
 }
 
 func syncDir(dir string) error {

@@ -203,7 +203,14 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 	// moving the cursor first could leave an eligible segment unmarked forever.
 	if !state.Committed {
 		state.Committed = true
-		if err := atomicJSON(j.path(segmentID, ".state"), stateWithoutEvents(state)); err != nil {
+		// The first sink attempt creates the log with its attempted marker.
+		// The committed state may safely name it before the file exists:
+		// no sink write starts until that marker and directory are durable.
+		state.AckLog = true
+		// The cursor is in this same directory. Its final directory sync
+		// seals both renames; a crash before then is recovered from the
+		// already durable immutable segment and the old cursor.
+		if err := atomicJSONBeforeDirectoryBarrier(j.path(segmentID, ".state"), stateWithoutEvents(state)); err != nil {
 			return err
 		}
 	}

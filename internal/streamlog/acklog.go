@@ -11,28 +11,9 @@ import (
 )
 
 // New segments keep lane transitions in an append-only, fsynced file. The
-// segment's durable state names this file; old segments retain the atomic
-// state-file format. One file sync per transition avoids a second directory
-// sync and rename on the hot path, while a torn final record is recoverable.
-func (j *Journal) createAckLog(id string) error {
-	path := j.path(id, ".acklog")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return syncDir(j.dir)
-}
-
-// A source-backed segment has no empty ack file on the capture path. Its first
-// sink attempt atomically makes the acknowledgement file durable before any
-// ClickHouse write can start with an unknown outcome.
+// segment's committed state names it before creation. Its first sink attempt
+// durably writes the initial record before any external write can start.
+// Old segments retain the atomic state-file format.
 func (j *Journal) createAckLogWithRecord(id string, lane Lane, status Status) error {
 	f, err := os.OpenFile(j.path(id, ".acklog"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
