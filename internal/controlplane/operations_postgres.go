@@ -87,11 +87,35 @@ func (s *operationsState) setCaseSyncHealthError(err error) {
 	s.healthMu.Unlock()
 }
 
+func (s *operationsState) setQueuedNotificationHealthError(err error) {
+	if err != nil {
+		err = fmt.Errorf("queued notification observation: %w", err)
+	}
+	s.healthMu.Lock()
+	s.queuedNotificationHealthErr = err
+	s.healthMu.Unlock()
+}
+
+func (s *operationsState) setQueuedBehaviorReportHealthError(err error) {
+	if err != nil {
+		err = fmt.Errorf("queued behavior report observation: %w", err)
+	}
+	s.healthMu.Lock()
+	s.queuedBehaviorReportHealthErr = err
+	s.healthMu.Unlock()
+}
+
 func (s *operationsState) health(ctx context.Context) error {
 	s.healthMu.RLock()
 	err := s.healthErr
 	if err == nil {
 		err = s.caseSyncHealthErr
+	}
+	if err == nil {
+		err = s.queuedNotificationHealthErr
+	}
+	if err == nil {
+		err = s.queuedBehaviorReportHealthErr
 	}
 	s.healthMu.RUnlock()
 	if err != nil {

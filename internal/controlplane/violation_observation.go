@@ -103,9 +103,7 @@ func (s *Server) observeQueuedNotifications() {
 		INSERT INTO violation_observations(observation_key,kind,target,facts)
 		SELECT 'notification:'||notification_id,'拟提醒',account_id,jsonb_build_object('notification_id',notification_id,'reason','observation_only') FROM moved WHERE true
 		ON CONFLICT(observation_key) DO NOTHING`)
-	if err != nil {
-		s.operations.setHealthError(err)
-	}
+	s.operations.setQueuedNotificationHealthError(err)
 }
 
 func (s *Server) observeQueuedBehaviorReports() {
@@ -121,7 +119,5 @@ func (s *Server) observeQueuedBehaviorReports() {
 		INSERT INTO violation_observations(observation_key,kind,target,facts)
 		SELECT 'behavior-report:'||report_id,'拟行为上报',account_id,jsonb_build_object('report_id',report_id,'reason','observation_only') FROM moved WHERE true
 		ON CONFLICT(observation_key) DO NOTHING`)
-	if err != nil {
-		s.operations.setHealthError(err)
-	}
+	s.operations.setQueuedBehaviorReportHealthError(err)
 }

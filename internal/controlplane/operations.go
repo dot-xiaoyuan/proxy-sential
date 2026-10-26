@@ -165,27 +165,29 @@ type operationsDocument struct {
 }
 
 type operationsState struct {
-	recordBaseline             map[[2]string][32]byte
-	recordVersionBaseline      map[[2]string]string
-	caseVersionBaseline        map[string]string
-	readView                   bool
-	caseOnly                   bool
-	shadowMetricsPrepared      bool
-	organizationBaseline       map[[2]string]string
-	persistedHistory           map[[2]string]bool
-	mu                         operationsMutex
-	path                       string
-	doc                        operationsDocument
-	db                         *sql.DB
-	tx                         *sql.Tx
-	txCancel                   context.CancelFunc
-	lockErr                    error
-	healthMu                   sync.RWMutex
-	healthErr                  error
-	caseSyncHealthErr          error
-	discoveryEvidenceLoader    func(context.Context, []store.DiscoveryCaseEvidenceRef) (map[store.DiscoveryCaseEvidenceRef]store.DiscoveryCaseEvidence, error)
-	streamEvidenceLoader       func(context.Context, []store.StreamBodyRef) (map[store.StreamBodyRef]store.StreamCaseEvidence, error)
-	streamSharedEvidenceLoader func(context.Context, []store.StreamBodyRef) (map[store.StreamBodyRef]store.StreamCaseEvidence, error)
+	recordBaseline                map[[2]string][32]byte
+	recordVersionBaseline         map[[2]string]string
+	caseVersionBaseline           map[string]string
+	readView                      bool
+	caseOnly                      bool
+	shadowMetricsPrepared         bool
+	organizationBaseline          map[[2]string]string
+	persistedHistory              map[[2]string]bool
+	mu                            operationsMutex
+	path                          string
+	doc                           operationsDocument
+	db                            *sql.DB
+	tx                            *sql.Tx
+	txCancel                      context.CancelFunc
+	lockErr                       error
+	healthMu                      sync.RWMutex
+	healthErr                     error
+	caseSyncHealthErr             error
+	queuedNotificationHealthErr   error
+	queuedBehaviorReportHealthErr error
+	discoveryEvidenceLoader       func(context.Context, []store.DiscoveryCaseEvidenceRef) (map[store.DiscoveryCaseEvidenceRef]store.DiscoveryCaseEvidence, error)
+	streamEvidenceLoader          func(context.Context, []store.StreamBodyRef) (map[store.StreamBodyRef]store.StreamCaseEvidence, error)
+	streamSharedEvidenceLoader    func(context.Context, []store.StreamBodyRef) (map[store.StreamBodyRef]store.StreamCaseEvidence, error)
 }
 
 type operationsMutex struct {
