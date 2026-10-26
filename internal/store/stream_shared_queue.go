@@ -80,11 +80,13 @@ func prepareStreamSharedJobs(segment streamlog.Segment) (preparedStreamSharedJob
 		if event.Source != "handshake-sidecar" && event.Source != "packet-sidecar" {
 			return p, fmt.Errorf("unexpected source owner in shared segment: %w", streamlog.ErrContentConflict)
 		}
-		// The handshake capture also emits packet TTL context into its own
-		// file. Those observations remain archived and indexed, but they do
-		// not claim packet-sidecar shared work or change the file's owner.
-		packetContext := event.Source == "packet-sidecar" && (event.SourceEventType == "ttl" || event.SourceEventType == "hop_limit")
-		if !packetContext {
+		// Shared ownership comes from events that can create a shared job or
+		// coverage record. The handshake file also carries packet context
+		// such as TTL, NDP and SSDP; those events retain their body and index
+		// without claiming packet-sidecar shared work.
+		sharedOwnerEvent := event.Source == "handshake-sidecar" && (event.SourceEventType == "handshake" || event.SourceEventType == "capture_coverage") ||
+			event.Source == "packet-sidecar" && (event.SourceEventType == "ieee1905_client_association" || event.SourceEventType == "ieee1905_client_snapshot" || event.SourceEventType == "capture_coverage")
+		if sharedOwnerEvent {
 			if p.Owner == "" {
 				p.Owner = event.Source
 			} else if p.Owner != event.Source {

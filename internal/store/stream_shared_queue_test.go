@@ -91,16 +91,35 @@ func TestPrepareStreamSharedJobsRejectsMixedOwners(t *testing.T) {
 	}
 }
 
-func TestPrepareStreamSharedJobsAllowsHandshakeFilePacketTTLContext(t *testing.T) {
+func TestPrepareStreamSharedJobsAllowsHandshakeFilePacketPassiveContext(t *testing.T) {
 	at := time.Date(2026, 10, 25, 15, 40, 0, 0, time.UTC)
 	base := normalized.Event{Type: "device", Timestamp: at.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor", "capture_scope_id": "scope", "collector_instance_id": "collector"}, Subject: map[string]any{"campus_id": "campus", "ip": "10.0.0.2"}, Payload: map[string]any{"access_domain": "bond0"}}
 	ttl := base
 	ttl.Source, ttl.SourceEventType, ttl.EventID = "packet-sidecar", "ttl", "ttl-one"
+	ndp := base
+	ndp.Source, ndp.SourceEventType, ndp.EventID = "packet-sidecar", "ndp", "ndp-one"
+	ssdp := base
+	ssdp.Source, ssdp.SourceEventType, ssdp.EventID = "packet-sidecar", "ssdp", "ssdp-one"
 	handshake := base
 	handshake.Source, handshake.SourceEventType, handshake.EventID = "handshake-sidecar", "handshake", "handshake-one"
-	segment := streamlog.Segment{Epoch: "fresh", Source: "device-signals", SourcePath: "/signals/handshake.jsonl", Events: []normalized.Event{ttl, handshake}}
+	segment := streamlog.Segment{Epoch: "fresh", Source: "device-signals", SourcePath: "/signals/handshake.jsonl", Events: []normalized.Event{ttl, ndp, ssdp, handshake}}
 	got, err := prepareStreamSharedJobs(segment)
 	if err != nil || got.Owner != "handshake-sidecar" || len(got.Handshakes) != 1 || len(got.Gateways) != 0 {
-		t.Fatalf("handshake file packet TTL context must not change shared owner: %+v %v", got, err)
+		t.Fatalf("handshake file packet context must not change shared owner: %+v %v", got, err)
+	}
+}
+
+func TestPrepareStreamSharedJobsKeepsPacketOwnerWithPassiveContext(t *testing.T) {
+	at := time.Date(2026, 10, 25, 15, 40, 0, 0, time.UTC)
+	base := normalized.Event{Type: "device", Timestamp: at.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor", "capture_scope_id": "scope", "collector_instance_id": "collector"}, Subject: map[string]any{"campus_id": "campus"}, Payload: map[string]any{"access_domain": "bond0"}}
+	ndp := base
+	ndp.Source, ndp.SourceEventType, ndp.EventID = "packet-sidecar", "ndp", "ndp-one"
+	association := base
+	association.Source, association.SourceEventType, association.EventID = "packet-sidecar", "ieee1905_client_association", "association-one"
+	association.Subject = map[string]any{"campus_id": "campus", "mac": "02:00:00:00:00:01"}
+	segment := streamlog.Segment{Epoch: "fresh", Source: "device-signals", SourcePath: "/signals/ttl.jsonl", Events: []normalized.Event{ndp, association}}
+	got, err := prepareStreamSharedJobs(segment)
+	if err != nil || got.Owner != "packet-sidecar" || len(got.Gateways) != 1 {
+		t.Fatalf("packet owner or gateway wake lost: %+v %v", got, err)
 	}
 }
