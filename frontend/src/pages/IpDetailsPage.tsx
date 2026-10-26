@@ -3,6 +3,7 @@ import {
 import { safeReturnTo } from '../app/navigation'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { ApplicationActivity } from "../features/applications/ApplicationActivity";
+import { IpTrafficObservations } from '../widgets/IpTrafficObservations'
 
 import { Link,
   useParams,
@@ -200,6 +201,8 @@ export function IpDetailsPage() {
           )}
         </section>
       )}
+
+      {activeTab === "devices" && can(session.data, 'events:read') && <IpTrafficObservations key={ip} ip={ip} sensorId={params.get('sensor_id') || undefined} identityLastSeen={deviceInventory?.last_seen} />}
 
       {activeTab === "activity" && (
         <section className="surface">
@@ -480,6 +483,7 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
   );
   return (
     <Space className="full-width" orientation="vertical" size="middle">
+      {inventory.last_seen && <Typography.Text type="secondary">设备识别摘要最后观测：{formatDateTime(inventory.last_seen)}</Typography.Text>}
       <Alert
         showIcon
         description={inventory.summary}
@@ -601,10 +605,11 @@ function renderDeviceSignal(signal: DeviceSignal, historicalInference = false) {
         {historicalInference ? '历史推测' : signalStrengthText(signal.strength)}
       </Tag>
       <Tag>{signalSourceText(signal.source)}</Tag>
-      {signal.seen_count ? <Tag>出现 {signal.seen_count} 次</Tag> : null}
+      {signal.seen_count ? <Tag title="同类信号的累计观测次数，不代表报文数或设备数">累计观测 {signal.seen_count} 次</Tag> : null}
       <Typography.Text className="mono wrap-text" title={signal.event_ids.join(' / ') || undefined} type={historicalInference ? 'secondary' : undefined}>
         {signal.kind}: {signal.value}
       </Typography.Text>
+      {signal.last_seen && <Typography.Text className="device-signal-last-seen" type="secondary">最后观测 {formatDateTime(signal.last_seen)}</Typography.Text>}
     </span>
   );
 }

@@ -2770,6 +2770,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ips/{ip}/traffic-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires events:read. Reads the site's currently registered source generation, exact subject IP and at most 15 minutes. These observations do not establish device identity. No historical generation fallback. */
+        get: operations["getIpTrafficObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ips/{ip}/events": {
         parameters: {
             query?: never;
@@ -5946,6 +5963,27 @@ export interface components {
         StreamEventIndexPage: {
             events: components["schemas"]["StreamEventIndexItem"][];
             next_cursor?: string;
+        };
+        IpTrafficObservationPage: components["schemas"]["StreamEventIndexPage"] & {
+            ip: string;
+            /** @enum {string} */
+            source_owner: "handshake-sidecar" | "packet-sidecar";
+            /** @enum {string} */
+            status: "ready" | "source_unavailable" | "before_cutover";
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            /** Format: date-time */
+            queried_at: string;
+            source?: {
+                epoch: string;
+                scope_id: string;
+                /** Format: date-time */
+                cutoff_at: string;
+                /** @enum {string} */
+                state: "prepared" | "active" | "paused" | "closed";
+            };
         };
         EventListResponse: {
             events: components["schemas"]["NormalizedEventSummary"][];
@@ -12438,6 +12476,45 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    getIpTrafficObservations: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                source_owner?: "handshake-sidecar" | "packet-sidecar";
+                protocol?: "handshake" | "ttl" | "hop_limit";
+                /** @description If present must equal the configured site sensor. */
+                sensor_id?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                ip: components["parameters"]["IpPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A bounded page and explicit source/cutover coverage. Empty events only means no indexed observations in the returned range; it does not prove capture completeness. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IpTrafficObservationPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Source metadata, event index or query budget unavailable; never represented as an empty success. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getIpEvents: {

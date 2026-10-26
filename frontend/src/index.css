@@ -5408,6 +5408,38 @@ pre.wrap-code {
 @media (max-width: 560px) {
   .risk-cutover-status { padding: 14px; }
 }
+.ip-traffic-observations { min-width: 0; }
+.ip-traffic-description, .ip-traffic-coverage, .device-signal-last-seen { color: var(--ps-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.ip-traffic-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end; }
+.ip-traffic-form label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ip-traffic-form select { width: 100%; min-height: 32px; padding: 4px 10px; color: var(--ps-text-primary); background: var(--ps-bg-surface); border: 1px solid #e2e8f0; border-radius: 6px; font: inherit; }
+.ip-traffic-form .ant-input { min-width: 0; width: 100%; }
+.ip-traffic-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ip-traffic-actions .ant-btn, .ip-traffic-card-heading .ant-btn { white-space: nowrap; flex-shrink: 0; }
+.ip-traffic-coverage { margin-top: 16px; padding: 12px; background: var(--ps-bg-subtle, #f8fafc); border: 1px solid #e2e8f0; border-radius: 8px; }
+.ip-traffic-coverage p { margin: 0 0 6px; }
+.ip-traffic-coverage p:last-child { margin-bottom: 0; }
+.ip-traffic-page-count { font-weight: 500; margin: 16px 0 10px; }
+.ip-traffic-list { display: grid; gap: 10px; }
+.ip-traffic-card { min-width: 0; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; overflow-wrap: anywhere; }
+.ip-traffic-card-heading { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.ip-traffic-card-heading strong { font-size: 14px; }
+.ip-traffic-card-heading time { color: var(--ps-text-secondary); font-size: 13px; }
+.ip-traffic-detail { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
+.ip-traffic-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 12px; }
+.ip-traffic-facts dt { color: var(--ps-text-secondary); font-size: 12px; }
+.ip-traffic-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.ip-traffic-values { margin-top: 12px; }
+.ip-traffic-values ul { margin: 6px 0 0; padding-left: 20px; }
+.ip-traffic-values li, .ip-traffic-detail p { overflow-wrap: anywhere; }
+.ip-traffic-raw { margin-top: 12px; }
+.ip-traffic-raw summary { cursor: pointer; font-weight: 500; }
+.ip-traffic-raw pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; }
+.ip-traffic-pagination { margin-top: 12px; }
+@media (max-width: 560px) {
+  .ip-traffic-form, .ip-traffic-facts { grid-template-columns: minmax(0, 1fr); }
+  .ip-traffic-card { padding: 14px; }
+}
 .stream-events-panel { padding-top: 14px; }
 .stream-events-explanation { color: var(--ps-text-secondary); margin: 0 0 12px; }
 .stream-events-form {

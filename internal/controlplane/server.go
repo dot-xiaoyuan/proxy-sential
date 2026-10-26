@@ -1358,6 +1358,8 @@ func requiredPermission(method, path string) string {
 		return "audit:read"
 	case strings.HasPrefix(path, "/events"):
 		return "events:read"
+	case strings.HasPrefix(path, "/ips/") && strings.HasSuffix(path, "/traffic-observations"):
+		return "events:read"
 	case path == "/ai-relay/indicators":
 		return "risks:read"
 	case strings.HasPrefix(path, "/ai-relay/"):
@@ -1969,6 +1971,13 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleIP(w http.ResponseWriter, r *http.Request, rest string) {
 	switch {
+	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/traffic-observations"):
+		ip, err := pathIP(strings.TrimSuffix(rest, "/traffic-observations"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_ip", err.Error())
+			return
+		}
+		s.handleIPTrafficObservations(w, r, ip)
 	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/risk"):
 		ip, err := pathIP(strings.TrimSuffix(rest, "/risk"))
 		if err != nil {

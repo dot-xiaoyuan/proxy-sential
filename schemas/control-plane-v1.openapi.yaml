@@ -2759,6 +2759,29 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /ips/{ip}/traffic-observations:
+    get:
+      operationId: getIpTrafficObservations
+      description: Requires events:read. Reads the site's currently registered source generation, exact subject IP and at most 15 minutes. These observations do not establish device identity. No historical generation fallback.
+      parameters:
+        - $ref: "#/components/parameters/IpPath"
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: source_owner, in: query, schema: { type: string, enum: [handshake-sidecar, packet-sidecar], default: handshake-sidecar } }
+        - { name: protocol, in: query, schema: { type: string, enum: [handshake, ttl, hop_limit] } }
+        - { name: sensor_id, in: query, description: If present must equal the configured site sensor., schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 1024 } }
+      responses:
+        "200":
+          description: A bounded page and explicit source/cutover coverage. Empty events only means no indexed observations in the returned range; it does not prove capture completeness.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IpTrafficObservationPage" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: Source metadata, event index or query budget unavailable; never represented as an empty success.
   /ips/{ip}/events:
     get:
       operationId: getIpEvents
@@ -6015,6 +6038,26 @@ components:
           type: array
           items: { $ref: "#/components/schemas/StreamEventIndexItem" }
         next_cursor: { type: string }
+    IpTrafficObservationPage:
+      allOf:
+        - $ref: "#/components/schemas/StreamEventIndexPage"
+        - type: object
+          required: [ip, source_owner, status, from, to, queried_at]
+          properties:
+            ip: { type: string }
+            source_owner: { type: string, enum: [handshake-sidecar, packet-sidecar] }
+            status: { type: string, enum: [ready, source_unavailable, before_cutover] }
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+            queried_at: { type: string, format: date-time }
+            source:
+              type: object
+              required: [epoch, scope_id, cutoff_at, state]
+              properties:
+                epoch: { type: string }
+                scope_id: { type: string }
+                cutoff_at: { type: string, format: date-time }
+                state: { type: string, enum: [prepared, active, paused, closed] }
     EventListResponse:
       type: object
       required: [events, page]

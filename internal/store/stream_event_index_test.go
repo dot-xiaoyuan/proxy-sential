@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +27,24 @@ func TestStreamEventIndexNeedsBoundedScopeAndTime(t *testing.T) {
 	} {
 		if _, err := ch.ListStreamEventIndex(context.Background(), query); err == nil {
 			t.Fatalf("accepted unbounded query: %+v", query)
+		}
+	}
+}
+
+func TestIPTrafficCursorCannotCrossIPOrGeneration(t *testing.T) {
+	ch, _ := NewClickHouseStore(ClickHouseOptions{DSN: "http://127.0.0.1:1"})
+	from := time.Date(2026, 10, 26, 6, 40, 0, 0, time.UTC)
+	q := StreamEventIndexQuery{ScopeID: "scope-a", SensorID: "sensor-a", SubjectIP: "10.157.2.191", Epoch: "generation-a", ObservationOnly: true, From: from, To: from.Add(15 * time.Minute), Limit: 20}
+	cursor, _ := json.Marshal(streamIndexCursor{Filter: streamIndexFilter(q), Observed: from.Add(time.Minute).Format(time.RFC3339Nano), Key: "generation-a:event-one", Hash: strings.Repeat("a", 64)})
+	q.Cursor = base64.RawURLEncoding.EncodeToString(cursor)
+	for _, change := range []func(*StreamEventIndexQuery){
+		func(q *StreamEventIndexQuery) { q.SubjectIP = "10.157.2.192" }, func(q *StreamEventIndexQuery) { q.Epoch = "generation-b" },
+		func(q *StreamEventIndexQuery) { q.SensorID = "sensor-b" }, func(q *StreamEventIndexQuery) { q.From = q.From.Add(time.Second) },
+	} {
+		changed := q
+		change(&changed)
+		if _, err := ch.ListStreamEventIndex(context.Background(), changed); !errors.Is(err, ErrInvalidStreamEventIndexQuery) {
+			t.Fatalf("cursor crossed query boundary: %+v %v", changed, err)
 		}
 	}
 }

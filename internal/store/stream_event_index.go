@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -20,12 +21,16 @@ import (
 // A scope and at most fifteen minutes are required to keep ClickHouse reads
 // bounded as additional protocols are enabled.
 type StreamEventIndexQuery struct {
-	ScopeID  string
-	Protocol string
-	From     time.Time
-	To       time.Time
-	Limit    int
-	Cursor   string
+	SensorID        string
+	SubjectIP       string
+	Epoch           string
+	ObservationOnly bool
+	ScopeID         string
+	Protocol        string
+	From            time.Time
+	To              time.Time
+	Limit           int
+	Cursor          string
 }
 
 type StreamEventIndexItem struct {
@@ -64,12 +69,25 @@ type streamIndexCursor struct {
 var ErrInvalidStreamEventIndexQuery = errors.New("invalid bounded stream event query")
 
 func streamIndexFilter(query StreamEventIndexQuery) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{query.ScopeID, query.Protocol,
-		query.From.UTC().Format(time.RFC3339Nano), query.To.UTC().Format(time.RFC3339Nano)}, "\x00")))
+	parts := []string{query.ScopeID, query.Protocol, query.From.UTC().Format(time.RFC3339Nano), query.To.UTC().Format(time.RFC3339Nano)}
+	if query.SubjectIP != "" || query.SensorID != "" || query.Epoch != "" || query.ObservationOnly {
+		parts = append(parts, query.SubjectIP, query.SensorID, query.Epoch, fmt.Sprint(query.ObservationOnly))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
 func (s *ClickHouseStore) ListStreamEventIndex(ctx context.Context, query StreamEventIndexQuery) (StreamEventIndexPage, error) {
+	if query.SubjectIP != "" {
+		ip, err := netip.ParseAddr(query.SubjectIP)
+		if err != nil || ip.Zone() != "" {
+			return StreamEventIndexPage{}, ErrInvalidStreamEventIndexQuery
+		}
+	}
+	if len(query.SensorID) > 256 || len(query.Epoch) > 256 || strings.ContainsAny(query.Epoch, "\x00:") ||
+		(query.ObservationOnly && (query.SubjectIP == "" || query.SensorID == "" || query.Epoch == "" || (query.Protocol != "" && !trafficObservationProtocol(query.Protocol)))) {
+		return StreamEventIndexPage{}, ErrInvalidStreamEventIndexQuery
+	}
 	if s == nil || query.ScopeID == "" || len(query.ScopeID) > 256 || len(query.Protocol) > 128 ||
 		query.From.IsZero() || !query.To.After(query.From) || query.To.Sub(query.From) > 15*time.Minute ||
 		query.Limit < 1 || query.Limit > 100 {
@@ -80,6 +98,18 @@ func (s *ClickHouseStore) ListStreamEventIndex(ctx context.Context, query Stream
 		" AND observed_at<parseDateTime64BestEffort(" + chQuote(query.To.UTC().Format(time.RFC3339Nano)) + ",6)"
 	if query.Protocol != "" {
 		where += " AND protocol=" + chQuote(query.Protocol)
+	}
+	if query.SubjectIP != "" {
+		where += " AND subject_ip=" + chQuote(query.SubjectIP)
+	}
+	if query.SensorID != "" {
+		where += " AND sensor_id=" + chQuote(query.SensorID)
+	}
+	if query.Epoch != "" {
+		where += " AND startsWith(event_key," + chQuote(query.Epoch+":") + ")"
+	}
+	if query.ObservationOnly {
+		where += " AND protocol IN ('handshake','ttl','hop_limit')"
 	}
 	if query.Cursor != "" {
 		if len(query.Cursor) > 1024 {
@@ -102,10 +132,14 @@ func (s *ClickHouseStore) ListStreamEventIndex(ctx context.Context, query Stream
 			" AND (event_key<" + chQuote(cursor.Key) + " OR (event_key=" + chQuote(cursor.Key) +
 			" AND content_sha256<" + chQuote(cursor.Hash) + "))))"
 	}
+	readBudget := ""
+	if query.ObservationOnly {
+		readBudget = ",max_rows_to_read=1000000,max_bytes_to_read=134217728,read_overflow_mode='throw'"
+	}
 	sql := fmt.Sprintf(`SELECT DISTINCT observed_at,event_key,content_sha256,scope_id,protocol,event_type,source,sensor_id,subject_ip,subject_mac,src_ip,dst_ip,src_port,dst_port,archive_month,retention_class,body_ref
 FROM stream_event_search PREWHERE %s
 ORDER BY observed_at DESC,event_key DESC,content_sha256 DESC LIMIT %d
-SETTINGS max_threads=1,max_memory_usage=134217728,max_execution_time=5 FORMAT JSONEachRow`, where, query.Limit+1)
+SETTINGS max_threads=1,max_memory_usage=134217728,max_execution_time=5%s FORMAT JSONEachRow`, where, query.Limit+1, readBudget)
 	data, err := s.query(ctx, sql)
 	if err != nil {
 		return StreamEventIndexPage{}, err
@@ -147,6 +181,8 @@ SETTINGS max_threads=1,max_memory_usage=134217728,max_execution_time=5 FORMAT JS
 			return StreamEventIndexPage{}, err
 		}
 		if row.Scope != query.ScopeID || (query.Protocol != "" && row.Protocol != query.Protocol) || observed.Before(query.From) || !observed.Before(query.To) ||
+			(query.SubjectIP != "" && row.SubjectIP != query.SubjectIP) || (query.SensorID != "" && row.SensorID != query.SensorID) ||
+			(query.Epoch != "" && !strings.HasPrefix(row.EventKey, query.Epoch+":")) || (query.ObservationOnly && !trafficObservationProtocol(row.Protocol)) ||
 			ref.Scope != row.Scope || ref.Key != row.EventKey || ref.SHA256 != row.Hash || ref.Month != fmt.Sprint(row.Month) || ref.Class != row.Class {
 			return StreamEventIndexPage{}, streamlog.ErrContentConflict
 		}
