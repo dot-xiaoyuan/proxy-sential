@@ -97,20 +97,8 @@ func (s *PostgresStore) ListStreamRiskCurrent(ctx context.Context, sensor, subje
 		if err := rows.Scan(&raw, &hash, &observed, &kind, &id, &rowLevel, &score); err != nil {
 			return StreamRiskCurrentPage{}, err
 		}
-		var snapshot risk.Snapshot
-		if err := json.Unmarshal(raw, &snapshot); err != nil {
-			return StreamRiskCurrentPage{}, err
-		}
-		identity := snapshot.SubjectID
-		if kind == "ip" {
-			identity = snapshot.IP
-		}
-		stamp, err := time.Parse(time.RFC3339Nano, snapshot.UpdatedAt)
-		semantic := snapshot
-		semantic.UpdatedAt = ""
-		actualHash, hashErr := riskJSONHash(semantic)
-		if err != nil || hashErr != nil || identity != id || kind != subjectType ||
-			snapshot.Level != rowLevel || snapshot.Score != score || !stamp.Equal(observed.UTC()) || actualHash != hash {
+		snapshot, err := parseScopedRiskSnapshot(raw, observed, hash, kind, id)
+		if err != nil || kind != subjectType || snapshot.Level != rowLevel || snapshot.Score != score {
 			return StreamRiskCurrentPage{}, fmt.Errorf("scoped risk list content conflict: %s", id)
 		}
 		items = append(items, entry{snapshot: snapshot, cursor: streamRiskCursor{Cutoff: cutoff, Type: kind, Level: rowLevel, Score: score, ID: id}})

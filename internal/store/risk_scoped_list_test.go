@@ -70,3 +70,37 @@ func TestStreamRiskListRejectsCursorAcrossFreshCutover(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStreamRiskListAcceptsPostgresTimestampPrecision(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cutoff := time.Date(2026, 10, 26, 2, 24, 31, 0, time.UTC)
+	observed := cutoff.Add(time.Minute).Add(795478 * time.Microsecond)
+	item := risk.Snapshot{IP: "192.0.2.8", Score: 27, Level: "normal", UpdatedAt: observed.Add(105 * time.Nanosecond).Format(time.RFC3339Nano)}
+	semantic := item
+	semantic.UpdatedAt = ""
+	hash, err := riskJSONHash(semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`SELECT accepted_after FROM stream_risk_fresh_cutovers`).WithArgs("sensor-a").
+		WillReturnRows(sqlmock.NewRows([]string{"accepted_after"}).AddRow(cutoff))
+	mock.ExpectQuery(`SELECT snapshot,content_sha256,observed_at,subject_type,subject_id,level,score`).WithArgs(
+		"sensor-a", "ip", cutoff, "", false, "", 0, "", 21).
+		WillReturnRows(sqlmock.NewRows([]string{"snapshot", "content_sha256", "observed_at", "subject_type", "subject_id", "level", "score"}).
+			AddRow(raw, hash, observed, "ip", item.IP, item.Level, item.Score))
+	page, err := (&PostgresStore{db: db}).ListStreamRiskCurrent(context.Background(), "sensor-a", "ip", "", "", 20)
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("PostgreSQL microsecond precision rejected a list row: %+v %v", page, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

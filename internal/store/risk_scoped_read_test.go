@@ -52,3 +52,24 @@ func TestScopedRiskReadKeepsSensorAndSubjectBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestScopedRiskReadAcceptsPostgresTimestampPrecision(t *testing.T) {
+	observed := time.Date(2026, 10, 26, 4, 9, 59, 795478000, time.UTC)
+	item := risk.Snapshot{IP: "192.0.2.8", Score: 27, Level: "normal", UpdatedAt: observed.Add(105 * time.Nanosecond).Format(time.RFC3339Nano)}
+	raw, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	semantic := item
+	semantic.UpdatedAt = ""
+	digest, err := riskJSONHash(semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseScopedRiskSnapshot(raw, observed, digest, "ip", item.IP); err != nil {
+		t.Fatalf("PostgreSQL microsecond precision rejected a valid snapshot: %v", err)
+	}
+	if _, err := parseScopedRiskSnapshot(raw, observed.Add(time.Microsecond), digest, "ip", item.IP); err == nil {
+		t.Fatal("a different stored observation was accepted")
+	}
+}

@@ -123,7 +123,10 @@ func parseScopedRiskSnapshot(raw []byte, observed time.Time, storedHash, subject
 		identity = item.IP
 	}
 	stamp, err := time.Parse(time.RFC3339Nano, item.UpdatedAt)
-	if err != nil || identity != subjectID || !stamp.Equal(observed.UTC()) {
+	// PostgreSQL timestamptz stores microseconds while source events may carry
+	// nanoseconds. Compare at the stored precision, retaining the semantic hash
+	// check below so only the timestamp representation is normalized.
+	if err != nil || identity != subjectID || !stamp.Round(time.Microsecond).Equal(observed.UTC()) {
 		return risk.Snapshot{}, errors.New("scoped risk snapshot identity or observation conflict")
 	}
 	semantic := item

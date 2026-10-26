@@ -85,6 +85,10 @@ func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, 
 		if err != nil || observed.After(asOf.Add(time.Second)) {
 			return 0, errors.New("scoped risk snapshot has invalid observation time")
 		}
+		// Keep the JSON timestamp and PostgreSQL timestamptz at one precision.
+		// Existing rows are accepted by the reader's precision-aware check.
+		observed = observed.UTC().Round(time.Microsecond)
+		snapshot.UpdatedAt = observed.Format(time.RFC3339Nano)
 		semantic := snapshot
 		semantic.UpdatedAt = ""
 		digest, err := riskJSONHash(semantic)
