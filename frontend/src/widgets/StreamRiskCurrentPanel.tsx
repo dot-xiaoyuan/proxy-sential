@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Button, Select } from 'antd'
+import { Button, Drawer, Select } from 'antd'
 
 import { api } from '../shared/api/client'
 import type { RiskLevel, StreamRiskCurrentQuery } from '../shared/api/types'
@@ -8,6 +8,7 @@ import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { AppErrorAlert, formatDateTime } from '../shared/ui'
 
 export function StreamRiskCurrentPanel() {
+  const [selectedEvidence, setSelectedEvidence] = useState<{ kind: 'ip' | 'account'; subject: string; id: string; number: number } | null>(null)
   const [subjectType, setSubjectType] = useState<'ip' | 'account'>('ip')
   const [level, setLevel] = useState<RiskLevel | ''>('')
   const [cursor, setCursor] = useState('')
@@ -16,6 +17,11 @@ export function StreamRiskCurrentPanel() {
     subject_type: subjectType, level: level || undefined, cursor: cursor || undefined, limit: 20,
   }
   const current = useQuery({ queryKey: ['stream-risk-current', query], queryFn: () => api.streamRiskCurrent(query) })
+  const fact = useQuery({
+    queryKey: ['stream-risk-evidence', selectedEvidence],
+    queryFn: () => api.streamRiskEvidence(selectedEvidence!.kind, selectedEvidence!.subject, selectedEvidence!.id),
+    enabled: selectedEvidence !== null,
+  })
   const changeFilter = () => { setCursor(''); setPrevious([]) }
 
   return <section className="stream-risk-panel" aria-label="新流风险结果">
@@ -35,6 +41,9 @@ export function StreamRiskCurrentPanel() {
           <div className="stream-risk-card-head"><strong className="mono">{item.subject_id || item.ip}</strong><RiskLevelTag level={item.level} /><span>评分 {item.score}</span></div>
           <p>{item.summary}</p>
           <div className="stream-risk-card-meta"><span>置信度 {Math.round(item.confidence * 100)}%</span><span>证据 {item.evidence_ids.length} 条</span><span>{formatDateTime(item.updated_at)}</span></div>
+          {item.evidence_ids.length > 0 && <div className="stream-risk-card-evidence" aria-label={`${item.subject_id || item.ip} 的证据`}>
+            {item.evidence_ids.map((id, index) => <Button key={id} size="small" onClick={() => setSelectedEvidence({ kind: subjectType, subject: item.subject_id || item.ip, id, number: index + 1 })} title={id}>查看证据 {index + 1}</Button>)}
+          </div>}
         </article>)}
       </div>
       <div className="stream-events-pagination">
@@ -43,5 +52,10 @@ export function StreamRiskCurrentPanel() {
         <Button disabled={!current.data.next_cursor} onClick={() => { setPrevious([...previous, cursor]); setCursor(current.data!.next_cursor!) }}>下一页</Button>
       </div>
     </>}
+    <Drawer title={selectedEvidence ? `风险证据 ${selectedEvidence.number}` : '风险证据'} open={selectedEvidence !== null} onClose={() => setSelectedEvidence(null)} rootClassName="stream-risk-evidence-drawer">
+      {fact.isPending && <p>正在读取证据…</p>}
+      {fact.isError && <AppErrorAlert title="当前证据读取失败" message={fact.error.message} />}
+      {fact.data && !fact.isError && <><p className="stream-risk-evidence-id">{fact.data.evidence_id}</p><p>{fact.data.reason}</p><pre className="stream-risk-evidence-json">{JSON.stringify(fact.data, null, 2)}</pre></>}
+    </Drawer>
   </section>
 }

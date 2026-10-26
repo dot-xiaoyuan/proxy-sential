@@ -22,6 +22,16 @@ func (s *DBStore) GetStreamRiskSnapshot(ctx context.Context, sensor, subjectType
 	return s.pg.GetStreamRiskSnapshot(ctx, sensor, subjectType, subjectID)
 }
 
+// GetStreamRiskEvidence reads one fact only while it is referenced by the
+// current, unexpired interpretation. The current row and fact are selected in
+// one statement so a concurrent evaluation cannot mix two generations.
+func (s *DBStore) GetStreamRiskEvidence(ctx context.Context, sensor, subjectType, subjectID, evidenceID string) (evidence.Evidence, bool, error) {
+	if s == nil || s.pg == nil {
+		return evidence.Evidence{}, false, errors.New("scoped risk evidence reader unavailable")
+	}
+	return s.pg.GetStreamRiskEvidence(ctx, sensor, subjectType, subjectID, evidenceID)
+}
+
 type StreamRiskSubjectState struct {
 	State         string         `json:"state"`
 	AcceptedAfter *time.Time     `json:"accepted_after,omitempty"`
@@ -136,6 +146,48 @@ func parseScopedRiskSnapshot(raw []byte, observed time.Time, storedHash, subject
 		return risk.Snapshot{}, errors.New("scoped risk snapshot content conflict")
 	}
 	return item, nil
+}
+
+func (s *PostgresStore) GetStreamRiskEvidence(ctx context.Context, sensor, subjectType, subjectID, evidenceID string) (evidence.Evidence, bool, error) {
+	if s == nil || s.db == nil || sensor == "" || subjectID == "" || evidenceID == "" ||
+		(subjectType != "ip" && subjectType != "account") {
+		return evidence.Evidence{}, false, errors.New("invalid scoped risk evidence read")
+	}
+	var snapshotRaw, factRaw []byte
+	var observed time.Time
+	var snapshotHash, factID, factHash string
+	err := s.db.QueryRowContext(ctx, `SELECT c.snapshot,c.observed_at,c.content_sha256,e.evidence_id,e.content_sha256,e.evidence
+FROM stream_risk_current c
+JOIN stream_risk_evidence e ON e.sensor_id=c.sensor_id AND e.subject_type=c.subject_type
+ AND e.subject_id=c.subject_id AND e.evidence_id=$4
+WHERE c.sensor_id=$1 AND c.subject_type=$2 AND c.subject_id=$3
+ AND c.evaluated_at>=(SELECT max(accepted_after) FROM stream_risk_fresh_cutovers WHERE sensor_id=c.sensor_id)
+ AND e.evaluated_at>=(SELECT max(accepted_after) FROM stream_risk_fresh_cutovers WHERE sensor_id=c.sensor_id)
+ AND c.observed_at>=now()-interval '10 minutes'
+ AND NOT EXISTS (SELECT 1 FROM risk_feature_dirty_subjects q
+                 WHERE q.sensor_id=c.sensor_id AND q.subject_type=c.subject_type AND q.subject_id=c.subject_id)
+ AND jsonb_exists(c.snapshot->'evidence_ids',$4)`, sensor, subjectType, subjectID, evidenceID).
+		Scan(&snapshotRaw, &observed, &snapshotHash, &factID, &factHash, &factRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return evidence.Evidence{}, false, nil
+	}
+	if err != nil {
+		return evidence.Evidence{}, false, err
+	}
+	if _, err = parseScopedRiskSnapshot(snapshotRaw, observed, snapshotHash, subjectType, subjectID); err != nil {
+		return evidence.Evidence{}, false, err
+	}
+	var item evidence.Evidence
+	if err := json.Unmarshal(factRaw, &item); err != nil {
+		return evidence.Evidence{}, false, err
+	}
+	actualHash, err := riskJSONHash(item)
+	if err != nil || item.EvidenceID != evidenceID || factID != evidenceID || actualHash != factHash ||
+		(item.SubjectType != "" && item.SubjectType != subjectType) ||
+		(item.SubjectID != "" && item.SubjectID != subjectID) {
+		return evidence.Evidence{}, false, fmt.Errorf("scoped risk evidence content conflict: %s", evidenceID)
+	}
+	return item, true, nil
 }
 
 // ListStreamRiskEvidence reads a bounded set of current interpretations for

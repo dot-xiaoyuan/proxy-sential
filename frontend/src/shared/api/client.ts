@@ -189,6 +189,8 @@ export const api = {
   risks: (query: RiskQuery) => request<RiskListResponse>(`/risks${search(query)}`),
   streamRiskCutover: () => request<StreamRiskCutoverResponse>('/risks/stream-cutover'),
   streamRiskCurrent: (query: StreamRiskCurrentQuery) => request<StreamRiskCurrentPage>(`/risks/stream-current${search(query)}`),
+  streamRiskEvidence: (subjectType: 'ip' | 'account', subjectId: string, evidenceId: string) =>
+    request<Evidence>(`/risks/stream-evidence${search({ subject_type: subjectType, subject_id: subjectId, evidence_id: evidenceId })}`),
   ipRisk: (ip: string) => request<RiskSnapshot>(`/ips/${encodeURIComponent(ip)}/risk`),
   ipEvidence: (ip: string, query: EvidenceQuery = {}) =>
     request<{ evidence: Evidence[] }>(`/ips/${encodeURIComponent(ip)}/evidence${search(query)}`),

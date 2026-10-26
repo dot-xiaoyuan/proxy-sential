@@ -638,6 +638,13 @@ export const handlers = [
     const account = url.searchParams.get('subject_type') === 'account'
     return HttpResponse.json({ items: [{ ...riskSnapshots[0], ip: account ? '' : '192.0.2.8', subject_type: account ? 'account' : 'ip', subject_id: account ? 'mock-account' : '192.0.2.8', updated_at: now }], accepted_after: '2026-10-26T02:24:31.585894Z', next_cursor: 'mock-next' })
   }),
+  http.get('/api/v1/risks/stream-evidence', ({ request }) => {
+    const url = new URL(request.url)
+    const id = url.searchParams.get('evidence_id')
+    if (!id || !riskSnapshots[0].evidence_ids.includes(id)) return HttpResponse.json({ code: 'stream_risk_evidence_not_current', message: 'risk evidence is not current' }, { status: 404 })
+    const account = url.searchParams.get('subject_type') === 'account'
+    return HttpResponse.json({ ...evidenceByIp['10.255.0.59'][1], evidence_id: id, ip: account ? '' : '192.0.2.8', subject_type: account ? 'account' : 'ip', subject_id: account ? 'mock-account' : '192.0.2.8' })
+  }),
   http.get('/api/v1/events', ({ request }) => {
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()

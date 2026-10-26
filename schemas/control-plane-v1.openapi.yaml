@@ -2635,6 +2635,35 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /risks/stream-evidence:
+    get:
+      operationId: getStreamRiskEvidence
+      description: Read one evidence item referenced by a current, unexpired scoped risk snapshot. Pending and stale results are unavailable.
+      parameters:
+        - name: subject_type
+          in: query
+          schema: { type: string, enum: [ip, account], default: ip }
+        - name: subject_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: evidence_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        "200":
+          description: Verified evidence of the current scoped risk result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Evidence"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /ips/{ip}/risk:
     get:
       operationId: getIpRisk

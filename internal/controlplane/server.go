@@ -890,6 +890,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleStreamRiskCurrent(w, r)
 	case r.Method == http.MethodGet && path == "/risks/stream-subject":
 		s.handleStreamRiskSubject(w, r)
+	case r.Method == http.MethodGet && path == "/risks/stream-evidence":
+		s.handleStreamRiskEvidence(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/ips/"):
 		s.handleIP(w, r, strings.TrimPrefix(path, "/ips/"))
 	case r.Method == http.MethodGet && path == "/events":

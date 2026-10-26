@@ -2689,6 +2689,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/risks/stream-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read one evidence item referenced by a current, unexpired scoped risk snapshot. Pending and stale results are unavailable. */
+        get: operations["getStreamRiskEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ips/{ip}/risk": {
         parameters: {
             query?: never;
@@ -12270,6 +12287,33 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getStreamRiskEvidence: {
+        parameters: {
+            query: {
+                subject_type?: "ip" | "account";
+                subject_id: string;
+                evidence_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified evidence of the current scoped risk result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Evidence"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };

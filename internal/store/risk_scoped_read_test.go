@@ -73,3 +73,42 @@ func TestScopedRiskReadAcceptsPostgresTimestampPrecision(t *testing.T) {
 		t.Fatal("a different stored observation was accepted")
 	}
 }
+
+func TestScopedRiskEvidenceOnlyReadsCurrentSnapshotReference(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	stamp := time.Now().UTC().Truncate(time.Microsecond)
+	snapshot := risk.Snapshot{IP: "192.0.2.8", SubjectType: "ip", SubjectID: "192.0.2.8", UpdatedAt: stamp.Format(time.RFC3339Nano), EvidenceIDs: []string{"current-fact"}}
+	snapshotRaw, _ := json.Marshal(snapshot)
+	semantic := snapshot
+	semantic.UpdatedAt = ""
+	snapshotHash, _ := riskJSONHash(semantic)
+	fact := evidence.Evidence{EvidenceID: "current-fact", IP: snapshot.IP, SubjectType: "ip", SubjectID: snapshot.IP, CreatedAt: stamp.Format(time.RFC3339Nano)}
+	factRaw, _ := json.Marshal(fact)
+	factHash, _ := riskJSONHash(fact)
+	currentFactQuery := `(?s)FROM stream_risk_current c.*e.evaluated_at>=.*NOT EXISTS.*jsonb_exists\(c.snapshot->'evidence_ids',\$4\)`
+	mock.ExpectQuery(currentFactQuery).WithArgs("sensor-a", "ip", snapshot.IP, fact.EvidenceID).WillReturnRows(
+		sqlmock.NewRows([]string{"snapshot", "observed_at", "content_sha256", "evidence_id", "evidence_sha256", "evidence"}).AddRow(snapshotRaw, stamp, snapshotHash, fact.EvidenceID, factHash, factRaw))
+	s := &PostgresStore{db: db}
+	got, found, err := s.GetStreamRiskEvidence(context.Background(), "sensor-a", "ip", snapshot.IP, fact.EvidenceID)
+	if err != nil || !found || got.EvidenceID != fact.EvidenceID {
+		t.Fatalf("current evidence missing: %+v %t %v", got, found, err)
+	}
+	mock.ExpectQuery(currentFactQuery).WithArgs("sensor-a", "ip", snapshot.IP, "old-fact").WillReturnRows(
+		sqlmock.NewRows([]string{"snapshot", "observed_at", "content_sha256", "evidence_id", "evidence_sha256", "evidence"}))
+	_, found, err = s.GetStreamRiskEvidence(context.Background(), "sensor-a", "ip", snapshot.IP, "old-fact")
+	if err != nil || found {
+		t.Fatalf("old evidence was exposed: found=%t err=%v", found, err)
+	}
+	mock.ExpectQuery(currentFactQuery).WithArgs("sensor-a", "ip", snapshot.IP, fact.EvidenceID).WillReturnRows(
+		sqlmock.NewRows([]string{"snapshot", "observed_at", "content_sha256", "evidence_id", "evidence_sha256", "evidence"}).AddRow(snapshotRaw, stamp, snapshotHash, fact.EvidenceID, "wrong", factRaw))
+	if _, _, err := s.GetStreamRiskEvidence(context.Background(), "sensor-a", "ip", snapshot.IP, fact.EvidenceID); err == nil {
+		t.Fatal("evidence content conflict was accepted")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
