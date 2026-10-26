@@ -209,7 +209,14 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 			return processor.DrainLane(ctx, id, lane)
 		}, false)
 	}
-	startWorker(finalize, "finalize", processor.FinalizeAfterLanes, true)
+	drainWorker.Add(1)
+	go func() {
+		defer drainWorker.Done()
+		if err := runStreamFinalizer(sourceCtx, finalize, opts.Capture.PollInterval,
+			processor.FinalizeAfterLanes, func(string) { <-permits }, reportTransient); err != nil {
+			workerErrors <- fmt.Errorf("stream finalize: %w", err)
+		}
+	}()
 	enqueue := func(id string) error {
 		for _, queue := range []chan string{queues[streamlog.Archive], queues[streamlog.Projection], queues[streamlog.Search], finalize} {
 			select {
