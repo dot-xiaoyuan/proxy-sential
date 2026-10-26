@@ -2,11 +2,63 @@ package streamlog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"testing"
 	"time"
 )
+
+func TestSourceBackedRawIsReadOnlyByArchiveLane(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("bounded zeek source bytes\n")
+	segment := testSegment()
+	segment.Source = "zeek-dhcp-binding"
+	segment.SourceBackedRaw = true
+	segment.Raw = raw
+	segment.EndOffset = segment.StartOffset + int64(len(raw))
+	sum := sha256.Sum256(raw)
+	segment.RawSHA256 = hex.EncodeToString(sum[:])
+	loads := 0
+	j.SetRawResolver(func(Segment) ([]byte, error) {
+		loads++
+		return append([]byte(nil), raw...), nil
+	})
+	id := appendCommitted(t, j, segment)
+	loads = 0
+	p := Processor{Journal: j, Writer: &fakeLaneWriter{}}
+	if err := p.DrainLane(context.Background(), id, Projection); err != nil {
+		t.Fatal(err)
+	}
+	if loads != 0 {
+		t.Fatalf("projection reread source raw %d times", loads)
+	}
+	if err := p.DrainLane(context.Background(), id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if loads != 1 {
+		t.Fatalf("archive should verify raw once, got %d reads", loads)
+	}
+	if err := p.DrainLane(context.Background(), id, Archive); err != nil || loads != 1 {
+		t.Fatalf("acknowledged archive reread source raw: reads=%d err=%v", loads, err)
+	}
+	if err := p.DrainLane(context.Background(), id, Search); err != nil {
+		t.Fatal(err)
+	}
+	if loads != 1 {
+		t.Fatalf("search reread source raw %d times", loads)
+	}
+	if err := p.FinalizeAfterLanes(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if loads != 1 {
+		t.Fatalf("finalizer reread source raw %d times", loads)
+	}
+}
 
 type fakeLaneWriter struct {
 	archiveWrites   int

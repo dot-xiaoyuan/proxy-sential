@@ -53,7 +53,9 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 	if p.Journal == nil || p.Writer == nil {
 		return errors.New("stream processor requires journal and writer")
 	}
-	state, err := p.Journal.Load(id)
+	// Only the archive sink needs the source-backed raw bytes. Search,
+	// projection and finalization use the already verified event descriptor.
+	state, err := p.Journal.load(id)
 	if err != nil {
 		return err
 	}
@@ -65,6 +67,15 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 	}
 	if state.Segment.Quarantined {
 		return ErrQuarantined
+	}
+	if lane == Archive && state.Segment.SourceBackedRaw {
+		state, err = p.Journal.Load(id)
+		if err != nil {
+			return err
+		}
+		if state.Released || state.Acks[lane] == Acked || state.Acks[lane] == NotApplicable {
+			return nil
+		}
 	}
 	switch lane {
 	case Archive:
@@ -87,7 +98,7 @@ func (p Processor) FinalizeAfterLanes(ctx context.Context, id string) error {
 	if p.Journal == nil || p.Writer == nil {
 		return errors.New("stream processor requires journal and writer")
 	}
-	state, err := p.Journal.Load(id)
+	state, err := p.Journal.load(id)
 	if err != nil {
 		return err
 	}
@@ -114,7 +125,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 	if p.Journal == nil || p.Writer == nil {
 		return errors.New("stream processor requires journal and writer")
 	}
-	state, err := p.Journal.Load(id)
+	state, err := p.Journal.load(id)
 	if err != nil {
 		return err
 	}
@@ -127,6 +138,13 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 	if !state.Committed {
 		return ErrUnconfirmed
 	}
+	archiveState := state
+	if state.Acks[Archive] != Acked && state.Acks[Archive] != NotApplicable && state.Segment.SourceBackedRaw {
+		archiveState, err = p.Journal.Load(id)
+		if err != nil {
+			return err
+		}
+	}
 	var failures []error
 	// Projection must be able to make the current state visible even when the
 	// independent ClickHouse archive call is slow or its result is unknown.
@@ -138,7 +156,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 		}()
 	}
 	if state.Acks[Archive] != Acked && state.Acks[Archive] != NotApplicable {
-		if err := p.runLane(ctx, id, Archive, state, p.Writer.WriteBody, p.Writer.ReconcileBody); err != nil {
+		if err := p.runLane(ctx, id, Archive, archiveState, p.Writer.WriteBody, p.Writer.ReconcileBody); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -147,7 +165,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 			failures = append(failures, err)
 		}
 	}
-	state, err = p.Journal.Load(id)
+	state, err = p.Journal.load(id)
 	if err != nil {
 		return err
 	}
@@ -159,7 +177,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 	if len(failures) > 0 {
 		return errors.Join(failures...)
 	}
-	state, err = p.Journal.Load(id)
+	state, err = p.Journal.load(id)
 	if err != nil {
 		return err
 	}

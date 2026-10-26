@@ -44,27 +44,45 @@ func (s *DBStore) ClaimRiskSubjects(ctx context.Context, sensor string, limit in
 	if s == nil || s.pg == nil || sensor == "" || limit < 1 || limit > maxRiskSubjectClaim {
 		return nil, errors.New("invalid incremental risk claim")
 	}
-	rows, err := s.pg.db.QueryContext(ctx, `WITH picked AS (
+	// The lease must not commit if the RETURNING stream is interrupted. An
+	// autocommit UPDATE could leave claims invisible to this worker until the
+	// lease expires even though it returned no usable claim token.
+	tx, err := s.pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `WITH picked AS (
  SELECT sensor_id,subject_type,subject_id FROM risk_feature_dirty_subjects
  WHERE sensor_id=$1 AND (claim_until IS NULL OR claim_until<now())
  ORDER BY last_dirty_at,subject_type,subject_id LIMIT $2 FOR UPDATE SKIP LOCKED
 )
-UPDATE risk_feature_dirty_subjects q SET claim_until=now()+interval '2 minutes',claimed_generation=q.generation
+UPDATE risk_feature_dirty_subjects q SET claim_until=now()+interval '15 seconds',claimed_generation=q.generation
 FROM picked p WHERE q.sensor_id=p.sensor_id AND q.subject_type=p.subject_type AND q.subject_id=p.subject_id
 RETURNING q.sensor_id,q.subject_type,q.subject_id,q.claimed_generation,q.claim_until,q.last_observed_at,q.first_dirty_at`, sensor, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := make([]RiskSubjectClaim, 0, limit)
 	for rows.Next() {
 		var item RiskSubjectClaim
 		if err := rows.Scan(&item.SensorID, &item.Type, &item.ID, &item.Generation, &item.ClaimUntil, &item.ObservedAt, &item.FirstDirty); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *DBStore) AckRiskSubjects(ctx context.Context, claims []RiskSubjectClaim) error {
