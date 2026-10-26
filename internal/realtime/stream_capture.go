@@ -174,6 +174,12 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		if err != nil {
 			return "", false, err
 		}
+		if bodyReady {
+			// The timestamp is taken after the body and acknowledgement-log
+			// directory barrier. It gives a conservative lower bound when
+			// comparing durable input with downstream index timestamps.
+			log.Printf("stream capture durable source=%s events=%d segment=%s accepted_at=%s append_returned_at=%s", source.Kind, len(events), id, segment.AcceptedAt.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+		}
 		if onReady != nil {
 			if !bodyReady {
 				if err := journal.PrepareSource(source.Kind, source.Path, id); err != nil {
