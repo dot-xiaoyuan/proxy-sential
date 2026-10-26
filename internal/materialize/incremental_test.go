@@ -13,16 +13,17 @@ import (
 )
 
 type incrementalFake struct {
-	claims     []store.RiskSubjectClaim
-	events     []normalized.Event
-	readErr    error
-	applied    int
-	released   int
-	saved      []risk.Snapshot
-	facts      []evidence.Evidence
-	claimed    []store.RiskSubjectClaim
-	cutoff     time.Time
-	readCutoff time.Time
+	claims      []store.RiskSubjectClaim
+	events      []normalized.Event
+	readErr     error
+	applied     int
+	released    int
+	saved       []risk.Snapshot
+	facts       []evidence.Evidence
+	claimed     []store.RiskSubjectClaim
+	cutoff      time.Time
+	readCutoff  time.Time
+	expiryCalls int
 }
 
 func (f *incrementalFake) StreamRiskFreshCutoff(_ context.Context, _ string) (time.Time, error) {
@@ -30,7 +31,16 @@ func (f *incrementalFake) StreamRiskFreshCutoff(_ context.Context, _ string) (ti
 }
 
 func (f *incrementalFake) QueueExpiredStreamRiskSubjects(_ context.Context, _ string, _ time.Time, _ int) error {
+	f.expiryCalls++
 	return nil
+}
+
+func TestIncrementalRiskCanKeepExpiryOutOfRealtimeBatch(t *testing.T) {
+	now := time.Now().UTC()
+	f := &incrementalFake{cutoff: now.Add(-time.Minute)}
+	if _, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, SkipExpiry: true}); err != nil || f.expiryCalls != 0 {
+		t.Fatalf("realtime batch ran expiry scan: calls=%d err=%v", f.expiryCalls, err)
+	}
 }
 
 func (f *incrementalFake) ClaimRiskSubjects(_ context.Context, _ string, _ int) ([]store.RiskSubjectClaim, error) {

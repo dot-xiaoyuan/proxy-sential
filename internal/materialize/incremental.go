@@ -34,6 +34,7 @@ type IncrementalOptions struct {
 	Window       time.Duration
 	ClaimLimit   int
 	FeatureLimit int
+	SkipExpiry   bool
 }
 
 type IncrementalResult struct {
@@ -72,8 +73,10 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	if freshCutoff.IsZero() || freshCutoff.After(opts.AsOf) {
 		return IncrementalResult{}, errors.New("incremental risk requires an audited fresh cutoff")
 	}
-	if err := backend.QueueExpiredStreamRiskSubjects(ctx, opts.SensorID, opts.AsOf.Add(-opts.Window), opts.ClaimLimit); err != nil {
-		return IncrementalResult{}, fmt.Errorf("queue expired risk subjects: %w", err)
+	if !opts.SkipExpiry {
+		if err := backend.QueueExpiredStreamRiskSubjects(ctx, opts.SensorID, opts.AsOf.Add(-opts.Window), opts.ClaimLimit); err != nil {
+			return IncrementalResult{}, fmt.Errorf("queue expired risk subjects: %w", err)
+		}
 	}
 	claims, err := backend.ClaimRiskSubjects(ctx, opts.SensorID, opts.ClaimLimit)
 	if err != nil || len(claims) == 0 {

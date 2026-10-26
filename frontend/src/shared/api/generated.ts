@@ -3062,6 +3062,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/events/stream-index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read one capture scope and at most fifteen minutes from the narrow stream index. */
+        get: operations["listStreamEventIndex"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/stream-body": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getStreamEventBody"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/events/{event_id}": {
         parameters: {
             query?: never;
@@ -5851,6 +5884,35 @@ export interface components {
             source: string;
             sensor_id: string;
         };
+        StreamBodyRef: {
+            epoch?: string;
+            /** @enum {string} */
+            class: "short" | "evidence";
+            month: string;
+            scope: string;
+            key: string;
+            sha256: string;
+        };
+        StreamEventIndexItem: {
+            /** Format: date-time */
+            observed_at: string;
+            event_key: string;
+            protocol: string;
+            event_type: string;
+            source: string;
+            sensor_id: string;
+            subject_ip?: string;
+            subject_mac?: string;
+            src_ip?: string;
+            dst_ip?: string;
+            src_port?: number;
+            dst_port?: number;
+            body_ref: components["schemas"]["StreamBodyRef"];
+        };
+        StreamEventIndexPage: {
+            events: components["schemas"]["StreamEventIndexItem"][];
+            next_cursor?: string;
+        };
         EventListResponse: {
             events: components["schemas"]["NormalizedEventSummary"][];
             page: {
@@ -7337,6 +7399,15 @@ export interface components {
         };
         /** @description Internal server error. */
         InternalError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Query source is temporarily unavailable. */
+        ServiceUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -12944,6 +13015,61 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listStreamEventIndex: {
+        parameters: {
+            query: {
+                scope_id: string;
+                from: string;
+                to: string;
+                protocol?: string;
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One cursor page of narrow stream event rows. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamEventIndexPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getStreamEventBody: {
+        parameters: {
+            query: {
+                /** @description Exact JSON body reference returned by the stream index. */
+                ref: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified authoritative normalized event body. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NormalizedEventSummary"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };

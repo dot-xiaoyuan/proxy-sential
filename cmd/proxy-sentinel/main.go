@@ -1136,13 +1136,32 @@ func runRiskMaterialize(args []string) error {
 	defer backend.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if *incremental && !*once {
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case now := <-ticker.C:
+					expiryCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+					err := backend.QueueExpiredStreamRiskSubjects(expiryCtx, *sensorID, now.Add(-*window), min(*claimLimit, 64))
+					cancel()
+					if err != nil && ctx.Err() == nil {
+						fmt.Fprintf(os.Stderr, "risk expiry queue failed: %v\n", err)
+					}
+				}
+			}
+		}()
+	}
 	runOnce := func() error {
 		runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		if *incremental {
 			boundedCtx, stopBatch := context.WithTimeout(runCtx, 4*time.Second)
 			defer stopBatch()
-			result, err := materialize.RunIncrementalOnce(boundedCtx, backend, materialize.IncrementalOptions{SensorID: *sensorID, Window: *window, ClaimLimit: *claimLimit, FeatureLimit: *featureLimit})
+			result, err := materialize.RunIncrementalOnce(boundedCtx, backend, materialize.IncrementalOptions{SensorID: *sensorID, Window: *window, ClaimLimit: *claimLimit, FeatureLimit: *featureLimit, SkipExpiry: !*once})
 			if err != nil {
 				return err
 			}

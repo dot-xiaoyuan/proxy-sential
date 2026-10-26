@@ -13,6 +13,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { useEvents } from '../shared/api/queries'
 import type { EventQuery, NormalizedEventSummary } from '../shared/api/types'
 import { AppErrorAlert, AppListHeader, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, UniversityDimensionFilters } from '../shared/ui'
+import { StreamEventsPanel } from '../widgets/StreamEventsPanel'
 
 export function EventsPage() {
   const location=useLocation();
@@ -88,6 +89,7 @@ export function EventsPage() {
       />
 
       {events.isError && <AppErrorAlert title="标准事件列表读取失败" />}
+      <details className="surface filter-disclosure"><summary>新流事件检索</summary><StreamEventsPanel /></details>
 
       <AppTableBar
         filterOptions={filterOptions}

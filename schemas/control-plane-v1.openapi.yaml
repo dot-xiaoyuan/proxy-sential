@@ -3330,6 +3330,58 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /events/stream-index:
+    get:
+      operationId: listStreamEventIndex
+      description: Read one capture scope and at most fifteen minutes from the narrow stream index.
+      parameters:
+        - name: scope_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: protocol
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: One cursor page of narrow stream event rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StreamEventIndexPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /events/stream-body:
+    get:
+      operationId: getStreamEventBody
+      parameters:
+        - name: ref
+          in: query
+          required: true
+          description: Exact JSON body reference returned by the stream index.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Verified authoritative normalized event body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NormalizedEventSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /events/{event_id}:
     get:
       operationId: getEvent
@@ -3924,6 +3976,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     InternalError:
       description: Internal server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Query source is temporarily unavailable.
       content:
         application/json:
           schema:
@@ -5875,6 +5933,41 @@ components:
         domain: { type: string }
         source: { type: string }
         sensor_id: { type: string }
+    StreamBodyRef:
+      type: object
+      required: [class, month, scope, key, sha256]
+      properties:
+        epoch: { type: string }
+        class: { type: string, enum: [short, evidence] }
+        month: { type: string }
+        scope: { type: string }
+        key: { type: string }
+        sha256: { type: string }
+    StreamEventIndexItem:
+      type: object
+      required: [observed_at, event_key, protocol, event_type, source, sensor_id, body_ref]
+      properties:
+        observed_at: { type: string, format: date-time }
+        event_key: { type: string }
+        protocol: { type: string }
+        event_type: { type: string }
+        source: { type: string }
+        sensor_id: { type: string }
+        subject_ip: { type: string }
+        subject_mac: { type: string }
+        src_ip: { type: string }
+        dst_ip: { type: string }
+        src_port: { type: integer }
+        dst_port: { type: integer }
+        body_ref: { $ref: "#/components/schemas/StreamBodyRef" }
+    StreamEventIndexPage:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/StreamEventIndexItem" }
+        next_cursor: { type: string }
     EventListResponse:
       type: object
       required: [events, page]

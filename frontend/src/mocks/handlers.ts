@@ -614,6 +614,23 @@ export const handlers = [
     const next = offset + items.length < visible.length ? String(offset + items.length) : null
     return HttpResponse.json({ items, page: { limit, next_cursor: next, total: visible.length }, indicator_version: 'mock-v1' })
   }),
+  http.get('/api/v1/events/stream-index', ({ request }) => {
+    const url = new URL(request.url)
+    const scope = url.searchParams.get('scope_id') ?? ''
+    if (!scope) return HttpResponse.json({ code: 'bad_stream_query', message: 'scope_id is required' }, { status: 400 })
+    if (url.searchParams.get('cursor')) return HttpResponse.json({ events: [] })
+    const observed = new Date(Date.now() - 60_000).toISOString()
+    return HttpResponse.json({ events: [{
+      observed_at: observed, event_key: 'mock-stream-event-1', protocol: url.searchParams.get('protocol') || 'ssdp',
+      event_type: 'device', source: 'zeek', sensor_id: 'mock-sensor', subject_ip: '192.0.2.8',
+      src_ip: '192.0.2.8', dst_ip: '239.255.255.250', body_ref: {
+        class: 'evidence', month: observed.slice(0, 7).replace('-', ''), scope, key: 'mock-stream-event-1', sha256: 'a'.repeat(64),
+      },
+    }] })
+  }),
+  http.get('/api/v1/events/stream-body', () => HttpResponse.json({
+    ...eventsByIp['10.255.0.59'][0], event_id: 'mock-stream-event-1', timestamp: new Date(Date.now() - 60_000).toISOString(),
+  })),
   http.get('/api/v1/events', ({ request }) => {
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()
