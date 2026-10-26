@@ -2,6 +2,8 @@
 
 B81–B83 的八批真实来源精确键样本见 [latency-samples.json](b81-b83/latency-samples.json)。每批 50/50 条正文和索引齐全；其中四批的 `accepted_at→索引` 高于 5 秒。该时间起点早于首次持久写盘，且尚非鉴权 API 可见时刻；持续窗口与真实资源观察保存在现场 `/tmp/ps184-b83-observe/`，见[交接文档](../../docs/stream-storage-184-handoff-20261026.md)的最新状态。
 
+B83 的 09:43–09:58 UTC 对照窗已冻结在 [b83-window1](b81-b83/b83-window1/summary.json)，四份原始 TSV 与现场 SHA256 一致。画像 388 次采样中有 179 次最老待办超过 5 秒、最高 32.039 秒，画像 WAL 等待线程 P95 为 8；风险待办超 5 秒出现 3 次采样。检索未确认片段年龄超过 5 秒的采样数为 DHCP 10、packet 5、握手 9。该口径仍不等于逐事件 API 可见时间。
+
 B79/B80 的真实 packet 事件逐键数据库时间戳汇总见 [latency-samples.json](b79-b80/latency-samples.json)：B78b 两批与 B79 维护积压各有 50/50 条超过 5 秒；B79 来源追平后的 50 条为 4.364 秒且 0 超限。后者只是单批样本，完整逐事件 API 与持续窗口尚未通过。B80 修复混合握手文件中的 packet NDP 被误判为共享作业第二来源；原失败片段恢复后正常释放，积压继续处理，完整状态见 [交接文档](../../docs/stream-storage-184-handoff-20261026.md)。
 
 
