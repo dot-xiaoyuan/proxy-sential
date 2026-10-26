@@ -81,7 +81,7 @@ func TestStreamDiscoveryReceiptIsQueryVisiblePerEvent(t *testing.T) {
 	}
 	defer db.Close()
 	now := time.Now().UTC()
-	mock.ExpectQuery("FROM stream_discovery_event_keys k JOIN stream_discovery_receipts r").WithArgs("fresh-1", "scope-a", "fresh-1:event-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}).AddRow("hash", now, now, "repeat_observation", "pending", []byte(`{"class":"evidence","key":"fresh-1:event-a"}`)))
+	mock.ExpectQuery("FROM stream_discovery_event_keys k JOIN LATERAL").WithArgs("fresh-1", "scope-a", "fresh-1:event-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}).AddRow("hash", now, now, "repeat_observation", "pending", []byte(`{"class":"evidence","key":"fresh-1:event-a"}`)))
 	receipt, found, err := (Repository{DB: db}).StreamDiscoveryReceipt(context.Background(), "fresh-1", "scope-a", "fresh-1:event-a")
 	if err != nil || !found || receipt["result"] != "repeat_observation" || receipt["archive_state"] != "pending" {
 		t.Fatalf("receipt visibility: %+v %v %v", receipt, found, err)
@@ -98,7 +98,7 @@ func TestStreamDiscoveryReceiptsReturnsBoundedResultsInRequestOrder(t *testing.T
 	}
 	defer db.Close()
 	now := time.Now().UTC()
-	mock.ExpectQuery("FROM stream_discovery_event_keys k JOIN stream_discovery_receipts r").
+	mock.ExpectQuery("FROM jsonb_array_elements_text.*CROSS JOIN LATERAL.*OFFSET 0.*CROSS JOIN LATERAL").
 		WithArgs("fresh-1", "scope-a", []byte(`["key-b","key-a","missing"]`)).
 		WillReturnRows(sqlmock.NewRows([]string{"event_key", "content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}).
 			AddRow("key-a", "hash-a", now, now, "corrected", "confirmed", []byte(`{"class":"evidence"}`)).

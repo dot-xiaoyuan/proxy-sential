@@ -20,8 +20,10 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
 	var accepted, projected time.Time
 	var bodyRef json.RawMessage
 	err := r.DB.QueryRowContext(ctx, `SELECT k.content_sha256,k.first_accepted_at,r.projected_at,r.result,r.archive_state,r.body_ref
- FROM stream_discovery_event_keys k JOIN stream_discovery_receipts r
- ON r.accepted_month=k.accepted_month AND r.epoch=k.epoch AND r.scope_id=k.scope_id AND r.event_key=k.event_key
+ FROM stream_discovery_event_keys k JOIN LATERAL (
+ SELECT r.projected_at,r.result,r.archive_state,r.body_ref FROM stream_discovery_receipts r
+ WHERE r.accepted_month=k.accepted_month AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=$3
+ OFFSET 0) r ON true
  WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=$3`, epoch, scope, eventKey).Scan(&hash, &accepted, &projected, &result, &archive, &bodyRef)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
@@ -51,10 +53,18 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 	if err != nil {
 		return nil, nil, err
 	}
+	// Preserve both lookup boundaries: an epoch missing from sampled planner
+	// statistics must not turn a short key list into repeated history scans.
+	// The original month from each ledger row also prunes receipt partitions.
 	rows, err := r.DB.QueryContext(ctx, `SELECT k.event_key,k.content_sha256,k.first_accepted_at,r.projected_at,r.result,r.archive_state,r.body_ref
- FROM stream_discovery_event_keys k JOIN stream_discovery_receipts r
- ON r.accepted_month=k.accepted_month AND r.epoch=k.epoch AND r.scope_id=k.scope_id AND r.event_key=k.event_key
- WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key IN (SELECT value FROM jsonb_array_elements_text($3::jsonb) AS value)`, epoch, scope, raw)
+ FROM jsonb_array_elements_text($3::jsonb) AS v(value)
+ CROSS JOIN LATERAL (
+ SELECT k.event_key,k.content_sha256,k.first_accepted_at,k.accepted_month FROM stream_discovery_event_keys k
+ WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=v.value OFFSET 0) k
+ CROSS JOIN LATERAL (
+ SELECT r.projected_at,r.result,r.archive_state,r.body_ref FROM stream_discovery_receipts r
+ WHERE r.accepted_month=k.accepted_month AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=k.event_key
+ OFFSET 0) r`, epoch, scope, raw)
 	if err != nil {
 		return nil, nil, err
 	}
