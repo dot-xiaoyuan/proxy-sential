@@ -5,15 +5,19 @@ import type { ColumnsType } from 'antd/es/table'
 import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import { Link, useSearchParams } from 'react-router-dom'
 import { isIPAddress } from '../shared/ipAddress'
+import { can } from '../shared/auth/permissions'
+import { IpTrafficObservations } from '../widgets/IpTrafficObservations'
 import { InfoCircleOutlined, SettingOutlined } from '@ant-design/icons'
 
 import { DeviceMAC, DeviceLedgerRecognition, DeviceLedgerOS, deviceDetailsURL } from '../entities/device/DeviceInventoryCells'
-import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices } from '../shared/api/queries'
+import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices, useSession } from '../shared/api/queries'
 import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
 import { AppCursorPagination, AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useMediaQuery, useServerPagination } from '../shared/ui'
 
 export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const [params, setParams] = useSearchParams()
+  const session = useSession()
+  const canReadTraffic = can(session.data, 'events:read')
   const pagination = useServerPagination()
   const showProfile = useMediaQuery('(min-width: 1440px)') || useMediaQuery('(max-width: 559px)')
   const showContext = useMediaQuery('(min-width: 1200px)') || useMediaQuery('(max-width: 559px)')
@@ -129,12 +133,13 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {devices.data?.read_model_state&&!devices.data.read_model_state.complete&&<Alert type="info" showIcon title="历史关联正在回填" description="当前显示已生成的终端摘要；历史检索和关联统计尚不完整，更新延迟以处理状态为准。"/>}
       {devices.data?.read_model_state?.error&&<Alert type="warning" showIcon title="检索投影更新异常" description="保留上次已物化结果；关联变更可能尚未完成更新。"/>}
       {matchSearch&&<Typography.Paragraph className="device-list-note" type="secondary">精确 IP 匹配 · {view==='recent'?'所选时间内的观测与会话':'全部历史关联'}</Typography.Paragraph>}
-      {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && <Alert type="info" showIcon title="当前检索条件下没有终端身份结果" description={<>流量观测按 IP 独立查询。<Link to={`/devices?tab=ip&ip=${encodeURIComponent(query.trim())}`}>查看该 IP 的流量观察</Link></>} />}
+      {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && <Alert type="info" showIcon title="当前检索条件下没有终端身份结果" description={canReadTraffic ? '下方按 IP 展示流量观测；握手 MAC 是终端候选线索，需结合身份与接入证据核实归属。' : '当前身份与地址索引中没有该 IP 的关联记录。'} />}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表读取失败" message={devices.error.message} /> : <>
         <AppTable rowKey="endpoint_id" columns={deviceColumns} dataSource={items} scroll={{ x: 145 + 175 + (showMac ? 175 : 0) + (showProfile ? 205 : 0) + (showContext ? 225 : 0) + 105 + 85 }} locale={{ emptyText: '没有匹配的终端' }} />
         {total!==undefined?<AppServerPagination cursorMode page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={updatePagination}/>:<AppCursorPagination disabled={devices.isPlaceholderData} previous={pagination.page>1} next={Boolean(devices.data?.page.next_cursor)} label={`第 ${pagination.page} 页${metadata.isError?'':' · 总数统计中'}`} onPrevious={()=>updatePagination(pagination.page-1,pagination.pageSize)} onNext={()=>updatePagination(pagination.page+1,pagination.pageSize)} />}
       </>}
     </section>
+    {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && canReadTraffic && <IpTrafficObservations key={query.trim()} ip={query.trim()} />}
     <details className="surface filter-disclosure device-diagnostics" onToggle={event=>setDiagnosticsOpen(event.currentTarget.open)}><summary>识别质量与接入诊断</summary>{diagnosticsOpen&&<div className="filter-disclosure-content recognition-summary-surface">
 		{recognitionSummary.isLoading&&<AppLoadingState rows={3} />}
 		{recognitionSummary.isError&&<AppErrorAlert title="识别诊断读取失败" message={recognitionSummary.error.message} />}

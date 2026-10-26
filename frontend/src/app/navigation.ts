@@ -1,7 +1,7 @@
 import type { Permission, Session } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
 
-export type NavigationItem = { key: string; title: string; to: string; permission?: Permission; readAlternatives?: {permission: Permission; to: string}[]; owns: (path: string, params: URLSearchParams) => boolean }
+export type NavigationItem = { key: string; title: string; to: string; permission?: Permission; hidden?: boolean; readAlternatives?: {permission: Permission; to: string}[]; owns: (path: string, params: URLSearchParams) => boolean }
 export type NavigationGroup = { key: string; title: string; items: NavigationItem[]; hidden?: boolean }
 export const deviceCenterTabs = ['terminal','network','discovery','ip'] as const
 export type DeviceCenterTab = typeof deviceCenterTabs[number]
@@ -19,7 +19,7 @@ export const navigation: NavigationGroup[] = [
     {...item('devices','终端列表','/devices?tab=terminal','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'terminal') || (p.startsWith('/devices/') && !p.startsWith('/devices/network/'))},
     {...item('routers','路由器','/devices?tab=network','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'network') || p.startsWith('/devices/network/') || p.startsWith('/discovery/routers/')},
     {...item('discovered-devices','发现设备','/devices?tab=discovery','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'discovery') || p === '/discovery'},
-    {...item('ip-observations','IP 流量观察','/devices?tab=ip','events:read'), owns: (p,q) => p === '/devices' && deviceCenterTab(q) === 'ip'},
+    {...item('ip-observations','IP 流量观察','/devices?tab=ip','events:read'), hidden: true, owns: (p,q) => p === '/devices' && deviceCenterTab(q) === 'ip'},
   ] },
   { key: 'network', title: '网络分析', hidden: true, items: [
     ...(['applications','access','technical'] as const).map((section,index) => ({...item(section,['应用访问','访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['applications','access','technical'].includes(q.get('section')||'')?q.get('section'):'applications') === section})),
@@ -71,6 +71,7 @@ export function routePermission(path: string, search: string): Permission | unde
 }
 export function visibleNavigation(session: Session) {
  return navigation.map(group => ({...group,items:group.items.flatMap(entry => {
+  if(entry.hidden)return []
   if(!entry.permission || can(session,entry.permission))return [entry]
   const alternative=entry.readAlternatives?.find(option=>can(session,option.permission))
   return alternative?[{...entry,...alternative}]:[]

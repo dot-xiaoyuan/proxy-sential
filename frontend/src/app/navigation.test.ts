@@ -5,7 +5,7 @@ import type { Session } from '../shared/api/types'
 describe('menu and investigation navigation',()=>{
  it('has six nonempty groups with stable detail ownership',()=>{
  expect(navigation.map(g=>g.title)).toEqual(['运营工作台','AI 中转站','风险运营','设备中心','网络分析','策略与验证','系统管理'])
- expect(navigation.find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['终端列表','路由器','发现设备','IP 流量观察'])
+ expect(visibleNavigation({user:{id:'admin',name:'admin'},role:'admin',permissions:['identity:read','events:read']} as Session).find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['终端列表','路由器','发现设备'])
  expect(navigation.find(g=>g.key==='risk')?.items.map(item=>item.title)).toEqual(['共享发现与核验','策略与处置记录'])
  expect(routeOwner('/discovery','')?.entry.key).toBe('discovered-devices')
  expect(routeOwner('/devices','')?.entry.key).toBe('devices')
@@ -33,8 +33,7 @@ describe('menu and investigation navigation',()=>{
  })
  it('hides empty groups and preserves protected read permissions',()=>{
  const session={user:{id:'viewer',name:'viewer'},role:'viewer',permissions:['events:read']} as Session
- expect(visibleNavigation(session).map(g=>g.key)).toEqual(['ai-relay','assets'])
- expect(visibleNavigation(session).find(g=>g.key==='assets')?.items.map(item=>item.key)).toContain('ip-observations')
+ expect(visibleNavigation(session).map(g=>g.key)).toEqual(['ai-relay'])
  expect(routePermission('/ai-relay','')).toBe('events:read')
  expect(safeReturnTo('/ai-relay')).toBe('/ai-relay')
  expect(navigation.find(g=>g.key==='network')).toBeTruthy()

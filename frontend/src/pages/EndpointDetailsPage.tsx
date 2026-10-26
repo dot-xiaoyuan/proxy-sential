@@ -42,6 +42,7 @@ import type {
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
 import { AppErrorAlert, AppFactBar, AppServerPagination, AppTable, formatDateTime } from '../shared/ui'
+import { EndpointTrafficPanel } from './EndpointTrafficPanel'
 
 const ecosystemColumns: ColumnsType<EndpointDomainEvidence> = [
   {
@@ -236,10 +237,10 @@ export function EndpointDetailsPage() {
           onChange={setActiveTab}
           items={[
             { key: "overview", label: "概览" },
-            { key: "identity", label: "身份溯源" },
             { key: "recognition", label: "终端识别" },
-            { key: "registration", label: "登记管理" },
             { key: "signals", label: "技术信号" },
+            { key: "identity", label: "身份溯源" },
+            { key: "registration", label: "登记管理" },
           ]}
         />
       </section>
@@ -533,6 +534,8 @@ export function EndpointDetailsPage() {
       {activeTab === "identity" && <EndpointTracePanel endpointId={endpointId}/>}
 
       {activeTab === "signals" && (
+        <>
+        {can(session.data, 'events:read') && <EndpointTrafficPanel recentIP={latestIP} primaryMac={profile.endpoint.primary_mac} identityLastSeen={profile.last_seen} />}
         <section className="surface">
           <div className="surface-title-row">
             <Typography.Title className="surface-title" level={4}>
@@ -563,6 +566,7 @@ export function EndpointDetailsPage() {
             </>
           )}
         </section>
+        </>
       )}
     </main>
   );

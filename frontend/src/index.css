@@ -5417,6 +5417,13 @@ pre.wrap-code {
 .ip-observation-lookup-form .ant-input { width: min(100%, 360px); min-width: 0; }
 .ip-observation-lookup-form .ant-btn { white-space: nowrap; flex-shrink: 0; }
 .ip-observation-lookup-error { color: var(--ps-danger, #b91c1c) !important; }
+.endpoint-traffic-lookup { min-width: 0; }
+.endpoint-traffic-lookup h4 { margin-top: 0; }
+.endpoint-traffic-lookup p { color: var(--ps-text-secondary); overflow-wrap: anywhere; }
+.endpoint-traffic-lookup-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
+.endpoint-traffic-lookup-form .ant-input { width: min(100%, 360px); min-width: 0; }
+.endpoint-traffic-lookup-form .ant-btn { white-space: nowrap; flex-shrink: 0; }
+.endpoint-traffic-lookup-error { color: var(--ps-danger, #b91c1c) !important; }
 .ip-traffic-description, .ip-traffic-coverage, .device-signal-last-seen { color: var(--ps-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
 .ip-traffic-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: end; }
 .ip-traffic-form label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -5433,6 +5440,9 @@ pre.wrap-code {
 .ip-traffic-card-heading { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .ip-traffic-card-heading strong { font-size: 14px; }
 .ip-traffic-card-heading time { color: var(--ps-text-secondary); font-size: 13px; }
+.ip-traffic-mac { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; overflow-wrap: anywhere; }
+.ip-traffic-match-note, .ip-traffic-router-clue { color: var(--ps-text-secondary); font-size: 13px; }
+.ip-traffic-mac a { white-space: nowrap; flex-shrink: 0; }
 .ip-traffic-detail { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
 .ip-traffic-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 12px; }
 .ip-traffic-facts dt { color: var(--ps-text-secondary); font-size: 12px; }

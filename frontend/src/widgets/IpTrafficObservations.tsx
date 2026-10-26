@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Input, Typography } from 'antd'
+import { Link, useLocation } from 'react-router-dom'
 import { api } from '../shared/api/client'
 import type { IpTrafficObservationQuery, NormalizedEventSummary, StreamEventIndexItem } from '../shared/api/types'
 import { AppErrorAlert, formatDateTime } from '../shared/ui'
@@ -18,7 +19,8 @@ function localTime(value: string) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
-export function IpTrafficObservations({ ip, sensorId, identityLastSeen }: { ip: string; sensorId?: string; identityLastSeen?: string }) {
+export function IpTrafficObservations({ ip, sensorId, identityLastSeen, contextMac }: { ip: string; sensorId?: string; identityLastSeen?: string; contextMac?: string }) {
+  const location = useLocation()
   const [initial] = useState(recentQuery)
   const [query, setQuery] = useState(initial)
   const [from, setFrom] = useState(localTime(initial.from))
@@ -81,9 +83,13 @@ export function IpTrafficObservations({ ip, sensorId, identityLastSeen }: { ip: 
         <div className="ip-traffic-list">
           {page.events.map(item => {
             const expanded = selected?.event_key === item.event_key && selected.body_ref.sha256 === item.body_ref.sha256
+            const matchingMac = Boolean(contextMac && item.subject_mac && contextMac.toLowerCase() === item.subject_mac.toLowerCase())
+            const candidateURL = item.subject_mac && /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(item.subject_mac)
+              ? `/devices/${encodeURIComponent(`mac:${item.subject_mac.toLowerCase()}`)}?${new URLSearchParams({tab:'signals',ip,return_to:`${location.pathname}${location.search}`})}`
+              : ''
             return <article className="ip-traffic-card" key={item.event_key + item.body_ref.sha256}>
               <div className="ip-traffic-card-heading"><strong>{protocolLabels[item.protocol] ?? item.protocol}</strong><time dateTime={item.observed_at}>{formatDateTime(item.observed_at)}</time><Button size="small" aria-expanded={expanded} onClick={() => setSelected(expanded ? null : item)}>{expanded ? '收起观测内容' : '查看观测内容'}</Button></div>
-              {item.subject_mac && <p className="mono">MAC {item.subject_mac}</p>}
+              {item.subject_mac && <p className="ip-traffic-mac"><span className="mono">MAC {item.subject_mac}</span>{matchingMac && item.protocol === 'handshake' && <span className="ip-traffic-match-note">握手 MAC 与本终端一致</span>}{candidateURL && <Link to={candidateURL}>查看该 MAC 的终端详情</Link>}</p>}
               {expanded && <div className="ip-traffic-detail">
                 {body.isFetching && <p role="status">正在读取观测内容…</p>}
                 {body.isError && <AppErrorAlert title="观测内容读取失败" message={body.error.message} />}
@@ -104,6 +110,10 @@ export function IpTrafficObservations({ ip, sensorId, identityLastSeen }: { ip: 
 function scalar(value: unknown): string { return typeof value === 'string' || typeof value === 'number' ? String(value) : '' }
 function TrafficObservationDetail({ event }: { event: NormalizedEventSummary }) {
   const payload = event.payload ?? {}, flow = event.flow ?? {}
+  const miwifiDomain = ['snis','hosts','sni','host'].some(key => {
+    const value = payload[key]
+    return (Array.isArray(value) ? value : [value]).some(item => typeof item === 'string' && item.trim().toLowerCase().replace(/\.$/, '') === 'api.miwifi.com')
+  })
   const fields = [
     ['摘要累计观测数', scalar(payload.observed_count)], ['MAC', scalar(payload.mac ?? event.subject?.mac)],
     ['TTL', scalar(payload.ttl ?? flow.ttl)], ['IPv6 Hop Limit', scalar(payload.hop_limit ?? flow.hop_limit)],
@@ -111,6 +121,7 @@ function TrafficObservationDetail({ event }: { event: NormalizedEventSummary }) 
   ].filter(([, value]) => value)
   return <>
     <dl className="ip-traffic-facts">{fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    {miwifiDomain && <p className="ip-traffic-router-clue">访问 api.miwifi.com：MiWiFi 服务访问是小米路由器候选线索，需结合 MAC 厂商与共享或设备角色证据核实；单次访问不能确认设备类型。</p>}
     {payload.neighbor_role === 'unverified' && <p>链路邻居归属尚未核实，TTL 仅作为路径观测。</p>}
     {(['snis', 'hosts', 'user_agents'] as const).map(key => {
       const values = Array.isArray(payload[key]) ? (payload[key] as unknown[]).map(scalar).filter(Boolean) : []

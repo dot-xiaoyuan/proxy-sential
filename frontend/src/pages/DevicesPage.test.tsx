@@ -3,23 +3,33 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { DevicesPage } from './DevicesPage'
 
-const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,metadataError:false,readState:undefined as {complete:boolean;updating:boolean;as_of:string;available?:boolean}|undefined,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnosticsData:undefined as unknown,diagnostics:vi.fn((_enabled?:boolean)=>({data:undefined as unknown}))}))
+vi.mock('../widgets/IpTrafficObservations', () => ({ IpTrafficObservations: ({ip}:{ip:string}) => <output data-testid="ip-observations">{ip}</output> }))
+
+const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,eventsRead:true,metadataError:false,readState:undefined as {complete:boolean;updating:boolean;as_of:string;available?:boolean}|undefined,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnosticsData:undefined as unknown,diagnostics:vi.fn((_enabled?:boolean)=>({data:undefined as unknown}))}))
 vi.mock('../shared/api/queries', () => ({
   useOrganization: fixture.organization,
+  useSession: () => ({data:{user:{id:'admin'},permissions:fixture.eventsRead?['identity:read','events:read']:['identity:read']}}),
   useDeviceRecognitionSummary: (enabled?:boolean)=>{fixture.diagnostics(enabled);return {data:fixture.diagnosticsData}},
   useDevices: () => ({ data: { items: fixture.items, read_model_state:fixture.readState, page: {next_cursor:'20'}, facets: { brands: [], os_families: [] } },dataUpdatedAt:Date.now(), isFetching: false,isPlaceholderData:false,refresh:fixture.refresh }),
   useDeviceInventoryMetadata:()=>({data:fixture.total===undefined?undefined:{total:fixture.total,facets:{brands:[],os_families:[]}},isError:fixture.metadataError,refresh:fixture.metadataRefresh}),
 }))
-afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.metadataError=false;fixture.readState=undefined;fixture.diagnosticsData=undefined;localStorage.clear();vi.clearAllMocks()})
+afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.eventsRead=true;fixture.metadataError=false;fixture.readState=undefined;fixture.diagnosticsData=undefined;localStorage.clear();vi.clearAllMocks()})
 function Location() { return <output data-testid="location">{useLocation().search}</output> }
 function setup(url = '/devices') { render(<MemoryRouter initialEntries={[url]}><DevicesPage /><Location /></MemoryRouter>) }
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) }) }
 
 describe('终端列表分页与搜索', () => {
-  it('精确 IP 没有终端结果时提供独立观测入口', () => {
+  it('精确 IP 没有终端结果时在列表内展示有界流量观测', () => {
     fixture.total=0
     setup('/devices?tab=terminal&view=recent&window=24h&q=10.157.2.191')
-    expect(screen.getByRole('link', {name:'查看该 IP 的流量观察'})).toHaveAttribute('href','/devices?tab=ip&ip=10.157.2.191')
+    expect(screen.getByTestId('ip-observations')).toHaveTextContent('10.157.2.191')
+    expect(screen.queryByRole('link', {name:'查看该 IP 的流量观察'})).not.toBeInTheDocument()
+  })
+  it('没有事件读取权限时不加载流量观测', () => {
+    fixture.total=0;fixture.eventsRead=false
+    setup('/devices?tab=terminal&view=recent&window=24h&q=10.157.2.191')
+    expect(screen.queryByTestId('ip-observations')).not.toBeInTheDocument()
+    expect(screen.getByText('当前身份与地址索引中没有该 IP 的关联记录。')).toBeInTheDocument()
   })
   it('翻页后保持第二页，继续翻页不会触发搜索重置', async () => {
     setup()

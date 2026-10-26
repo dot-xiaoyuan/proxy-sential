@@ -5,6 +5,13 @@ import { deviceInventoriesByIp } from './fixtures'
 import type { InventoryAssociation, InventoryDetail, EndpointObservation } from '../shared/api/types'
 
 function detailFor(id:string):InventoryDetail|undefined {
+ if(id==='mac:90:fb:5d:a7:40:4b'){
+  const seen='2026-10-25T15:51:00Z',mac='90:fb:5d:a7:40:4b'
+  return {profile:{...domainOnlyProfile,endpoint_id:id,summary:'MAC 厂商线索与 IP 流量观测待核对',brand_inference:undefined,
+   endpoint:{...domainOnlyProfile.endpoint,endpoint_id:id,primary_mac:mac,first_seen:seen,last_seen:seen},
+   recognition:{...domainOnlyDevice,endpoint_id:id,primary_mac:mac,current_ip:'',ips:[],brand_inference:undefined,brand_reference:{brand:'Xiaomi',vendor:'Xiaomi Communications Co.,Ltd.',source:'mac_vendor',confidence:.6,explanation:'MAC 注册厂商：小米；不确认整机品牌和路由角色'},vendor:'Xiaomi Communications Co.,Ltd.',randomized_mac:false,last_seen:seen}},
+   associations:[],association_counts:{account:0,ip:0,access:0},state:{complete:true,updating:false,as_of:new Date().toISOString()}}
+ }
  const reference=manufacturerReferenceDevices.find(v=>v.endpoint_id===id)
  if(reference||id===macOSDevice.endpoint_id||id===domainOnlyDevice.endpoint_id){const original=id===domainOnlyDevice.endpoint_id?domainOnlyProfile:macOSProfile;const recognition=reference||original.recognition;const last=recognition?.last_seen||new Date().toISOString();const first=recognition?.first_seen||last;const associations=[recognition?.current_account&&{kind:'account' as const,value:recognition.current_account,source:'srun4k',first_seen:first,last_seen:last,observation_count:42,session_count:2,confidence:.94},recognition?.current_ip&&{kind:'ip' as const,value:recognition.current_ip,source:'dhcp',first_seen:first,last_seen:last,observation_count:18,session_count:1,confidence:.88},recognition?.current_access_id&&{kind:'access' as const,value:recognition.current_access_id,source:'radius',first_seen:first,last_seen:last,observation_count:7,session_count:0,confidence:.8}].filter(Boolean) as InventoryAssociation[];return {profile:{...original,endpoint_id:id,endpoint:{...original.endpoint,endpoint_id:id},recognition,sessions:[],ip_history:[],access_history:[]},associations,association_counts:{account:recognition?.current_account?1:0,ip:recognition?.current_ip?1:0,access:recognition?.current_access_id?1:0},state:{complete:true,updating:false,as_of:new Date().toISOString()}}}
  for(const inventory of Object.values(deviceInventoriesByIp)){
