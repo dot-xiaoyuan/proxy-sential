@@ -151,8 +151,9 @@ func CaptureStreamOnce(ctx context.Context, journal *streamlog.Journal, opts Opt
 		segment.SourceBackedRaw = source.Kind == "zeek-dhcp-binding" && journal.HasRawResolver()
 		appendStarted := time.Now()
 		id, err := journal.Append(segment)
-		if elapsed := time.Since(appendStarted); elapsed >= 500*time.Millisecond {
-			log.Printf("stream capture stage source=%s events=%d stage=append duration=%s", source.Kind, len(events), elapsed.Round(time.Millisecond))
+		appendElapsed := time.Since(appendStarted)
+		if appendElapsed >= 500*time.Millisecond {
+			log.Printf("stream capture stage source=%s events=%d stage=append duration=%s segment=%s accepted_at=%s", source.Kind, len(events), appendElapsed.Round(time.Millisecond), id, segment.AcceptedAt.UTC().Format(time.RFC3339Nano))
 		}
 		if errors.Is(err, streamlog.ErrSegmentTooLarge) {
 			if chunk, err = smallerWholeLineChunk(chunk); err != nil {
@@ -168,7 +169,7 @@ func CaptureStreamOnce(ctx context.Context, journal *streamlog.Journal, opts Opt
 			return id, false, err
 		}
 		if elapsed := time.Since(commitStarted); elapsed >= 500*time.Millisecond {
-			log.Printf("stream capture stage source=%s events=%d stage=commit_cursor duration=%s", source.Kind, len(events), elapsed.Round(time.Millisecond))
+			log.Printf("stream capture stage source=%s events=%d stage=commit_cursor duration=%s segment=%s accepted_at=%s append_duration=%s", source.Kind, len(events), elapsed.Round(time.Millisecond), id, segment.AcceptedAt.UTC().Format(time.RFC3339Nano), appendElapsed.Round(time.Millisecond))
 		}
 		return id, true, nil
 	}
