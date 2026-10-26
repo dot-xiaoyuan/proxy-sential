@@ -108,9 +108,10 @@ type projectionAheadWriter struct {
 
 type parallelArchiveWriter struct {
 	streamRunWriter
-	firstID string
-	unblock chan struct{}
-	started chan string
+	firstID  string
+	unblock  chan struct{}
+	started  chan string
+	searched chan string
 }
 
 func (w *parallelArchiveWriter) WriteBody(ctx context.Context, id string, _ streamlog.Segment) error {
@@ -124,6 +125,11 @@ func (w *parallelArchiveWriter) WriteBody(ctx context.Context, id string, _ stre
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (w *parallelArchiveWriter) WriteSearch(_ context.Context, id string, _ streamlog.Segment) error {
+	w.searched <- id
+	return nil
 }
 
 func TestRunStreamArchivesLaterSegmentWhileEarlierArchiveWaits(t *testing.T) {
@@ -163,7 +169,7 @@ func TestRunStreamArchivesLaterSegmentWhileEarlierArchiveWaits(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	w := &parallelArchiveWriter{firstID: ids[0], unblock: make(chan struct{}), started: make(chan string, 2)}
+	w := &parallelArchiveWriter{firstID: ids[0], unblock: make(chan struct{}), started: make(chan string, 2), searched: make(chan string, 2)}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	defer func() { cancel(); <-done }()
@@ -184,6 +190,14 @@ func TestRunStreamArchivesLaterSegmentWhileEarlierArchiveWaits(t *testing.T) {
 	}
 	if !seen[ids[0]] || !seen[ids[1]] {
 		t.Fatalf("both archives were not started: %+v", seen)
+	}
+	select {
+	case got := <-w.searched:
+		if got != ids[1] {
+			t.Fatalf("search advanced past unarchived body: %s", got)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("second search waited for the first archive")
 	}
 	close(w.unblock)
 }
