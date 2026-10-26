@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { DeviceCenterPage } from './DeviceCenterPage'
 
 vi.mock('./DevicesPage', () => ({ DevicesPage: () => <div data-testid="terminal-panel">终端列表</div> }))
+vi.mock('./IpTrafficLookupPanel', () => ({ IpTrafficLookupPanel: () => <div data-testid="ip-observation-panel">IP 流量观察</div> }))
 vi.mock('./RouterObservationsPanel', () => ({ RouterObservationsPanel: () => <div data-testid="network-panel">路由器列表</div> }))
 
 vi.mock('./PassiveDiscoveryPanel', () => ({ PassiveDiscoveryPanel: ({view}:{view:string}) => <div data-testid="discovery-panel">{view}</div> }))
@@ -19,6 +20,11 @@ describe('设备中心子菜单页面', () => {
   it('路由器独立展示', () => {
     renderAt('/devices?tab=network')
     expect(screen.getByTestId('network-panel')).toBeVisible()
+  })
+  it('IP 流量观察独立展示', () => {
+    renderAt('/devices?tab=ip&ip=10.157.2.191')
+    expect(screen.getByTestId('ip-observation-panel')).toBeVisible()
+    expect(screen.queryByTestId('terminal-panel')).toBeNull()
   })
   it('发现设备及旧链接展示发现面板', () => {
     for (const tab of ['discovery', 'iot', 'records']) {

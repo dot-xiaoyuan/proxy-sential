@@ -3,9 +3,9 @@ import { can } from '../shared/auth/permissions'
 
 export type NavigationItem = { key: string; title: string; to: string; permission?: Permission; readAlternatives?: {permission: Permission; to: string}[]; owns: (path: string, params: URLSearchParams) => boolean }
 export type NavigationGroup = { key: string; title: string; items: NavigationItem[]; hidden?: boolean }
-export const deviceCenterTabs = ['terminal','network','discovery'] as const
+export const deviceCenterTabs = ['terminal','network','discovery','ip'] as const
 export type DeviceCenterTab = typeof deviceCenterTabs[number]
-export const deviceCenterTab = (params: URLSearchParams): DeviceCenterTab => params.get('tab') === 'network' ? 'network' : ['discovery','records','iot'].includes(params.get('tab') || '') ? 'discovery' : 'terminal'
+export const deviceCenterTab = (params: URLSearchParams): DeviceCenterTab => params.get('tab') === 'network' ? 'network' : params.get('tab') === 'ip' ? 'ip' : ['discovery','records','iot'].includes(params.get('tab') || '') ? 'discovery' : 'terminal'
 const item = (key: string, title: string, to: string, permission?: Permission, prefix = to.split('?')[0]): NavigationItem => ({ key, title, to, permission, owns: path => path === prefix || path.startsWith(`${prefix}/`) })
 export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
@@ -19,6 +19,7 @@ export const navigation: NavigationGroup[] = [
     {...item('devices','终端列表','/devices?tab=terminal','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'terminal') || (p.startsWith('/devices/') && !p.startsWith('/devices/network/'))},
     {...item('routers','路由器','/devices?tab=network','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'network') || p.startsWith('/devices/network/') || p.startsWith('/discovery/routers/')},
     {...item('discovered-devices','发现设备','/devices?tab=discovery','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'discovery') || p === '/discovery'},
+    {...item('ip-observations','IP 流量观察','/devices?tab=ip','events:read'), owns: (p,q) => p === '/devices' && deviceCenterTab(q) === 'ip'},
   ] },
   { key: 'network', title: '网络分析', hidden: true, items: [
     ...(['applications','access','technical'] as const).map((section,index) => ({...item(section,['应用访问','访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['applications','access','technical'].includes(q.get('section')||'')?q.get('section'):'applications') === section})),

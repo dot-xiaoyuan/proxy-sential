@@ -16,6 +16,11 @@ function setup(url = '/devices') { render(<MemoryRouter initialEntries={[url]}><
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) }) }
 
 describe('终端列表分页与搜索', () => {
+  it('精确 IP 没有终端结果时提供独立观测入口', () => {
+    fixture.total=0
+    setup('/devices?tab=terminal&view=recent&window=24h&q=10.157.2.191')
+    expect(screen.getByRole('link', {name:'查看该 IP 的流量观察'})).toHaveAttribute('href','/devices?tab=ip&ip=10.157.2.191')
+  })
   it('翻页后保持第二页，继续翻页不会触发搜索重置', async () => {
     setup()
     fireEvent.click(screen.getByTitle('2'))
