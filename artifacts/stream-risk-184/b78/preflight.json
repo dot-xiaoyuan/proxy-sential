@@ -1,0 +1,8 @@
+{
+  "checked_at": "2026-10-26T07:47:56.350013+00:00",
+  "current": "/opt/proxy-sentinel/releases/2026.10.26-ip-observations1",
+  "previous": "/opt/proxy-sentinel/releases/2026.10.26-stream-b77c-risk-ready",
+  "runtime_env_sha256": "1ab730cbf8eff7f8e889895a01177336537ffb88c5d98cabc643b000d70aef32",
+  "ready_18080": "200",
+  "ready_18082": "200"
+}

@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-10-26T07:54:39.793975+00:00",
+  "current": "/opt/proxy-sentinel/releases/2026.10.26-stream-b78b-key-query",
+  "previous": "/opt/proxy-sentinel/releases/2026.10.26-ip-observations1",
+  "preexisting_segments": 8,
+  "preexisting_events": 2327,
+  "remaining_preexisting_segments": 0,
+  "runtime_env_unchanged": true,
+  "ready_18080": "200",
+  "ready_18082": "200"
+}

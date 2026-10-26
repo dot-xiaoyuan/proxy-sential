@@ -1,0 +1,61 @@
+{
+  "captured_at": "2026-10-26T07:42:50.359882+00:00",
+  "pending_segments": [
+    {
+      "id": "51fa7bb0ee7dd4f35c72f195b80cf12511e28f1d12c08c75bc100dade90a8552",
+      "accepted_at": "2026-10-26T07:42:14.209879979Z",
+      "epoch": "packet-sidecar-b76-fresh-20261026T0638Z",
+      "events": 500,
+      "discovery_events": 0
+    },
+    {
+      "id": "871e84c3734002b431175e30fcb939d1ba6a95eb2acdea13558cc4470caac2eb",
+      "accepted_at": "2026-10-26T07:17:38.544039371Z",
+      "epoch": "packet-sidecar-b76-fresh-20261026T0638Z",
+      "events": 500,
+      "discovery_events": 291
+    },
+    {
+      "id": "8c542eb9961546e9f2fccf756c45c41e05f08b4497e2c54abb8acc7fcb2a819f",
+      "accepted_at": "2026-10-26T07:07:18.260902297Z",
+      "epoch": "packet-sidecar-b76-fresh-20261026T0638Z",
+      "events": 391,
+      "discovery_events": 279
+    },
+    {
+      "id": "81acd5b90112dcad7b898f4b0f90427e6ccf53dca1302f657af331bb6fbbfef4",
+      "accepted_at": "2026-10-26T07:11:23.135285494Z",
+      "epoch": "packet-sidecar-b76-fresh-20261026T0638Z",
+      "events": 500,
+      "discovery_events": 253
+    },
+    {
+      "id": "b1860f07fce9f96dc837c5c27ce5587288acd4e80d782c793bef3ceea60e00f0",
+      "accepted_at": "2026-10-26T07:21:34.430512166Z",
+      "epoch": "packet-sidecar-b76-fresh-20261026T0638Z",
+      "events": 500,
+      "discovery_events": 374
+    },
+    {
+      "id": "0ffe6f4c8375b3e9b4c8ee87cfd6ffbfb2cea43cae6a34c8237e482bf10298b9",
+      "accepted_at": "2026-10-26T07:19:06.641559261Z",
+      "epoch": "packet-sidecar-b76-fresh-20261026T0638Z",
+      "events": 500,
+      "discovery_events": 391
+    },
+    {
+      "id": "0ff467d3d36a0428b7dff28c06b5093662f35e568eaa42a1d772bd1208b12746",
+      "accepted_at": "2026-10-26T07:03:02.691420251Z",
+      "epoch": "packet-sidecar-b76-fresh-20261026T0638Z",
+      "events": 499,
+      "discovery_events": 498
+    },
+    {
+      "id": "800aed9b937330a730be29866fd83dbc384a1bdbb8dcbca583b9d9fe64ff09c7",
+      "accepted_at": "2026-10-26T07:10:46.999917315Z",
+      "epoch": "packet-sidecar-b76-fresh-20261026T0638Z",
+      "events": 500,
+      "discovery_events": 241
+    }
+  ]
+}
