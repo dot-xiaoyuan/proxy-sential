@@ -82,6 +82,35 @@ func TestStreamCaptureStartsAtAuditedFreshOffsetAndRecoversPending(t *testing.T)
 	}
 }
 
+func TestStreamCaptureOffersDurableSegmentBeforeCursorCommit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "eve.json")
+	if err := os.WriteFile(path, []byte(streamSuricataLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j := startStreamFixture(t, path, 0)
+	source := Source{Kind: "suricata", Path: path}
+	called := false
+	id, captured, err := captureStreamOnceWithReady(context.Background(), j, Options{SensorID: "sensor-a"}, source, func(readyID string) error {
+		called = true
+		state, err := j.Load(readyID)
+		if err != nil || !state.ProcessingReady || state.Committed {
+			t.Fatalf("segment is not durably ready before cursor: %+v %v", state, err)
+		}
+		cursor, err := j.LoadSource(source.Kind, source.Path)
+		if err != nil || cursor.LastSegmentID != "" || cursor.Offset != 0 {
+			t.Fatalf("cursor advanced before lanes could start: %+v %v", cursor, err)
+		}
+		return j.BeginAttempt(readyID, streamlog.Archive)
+	})
+	if err != nil || !captured || !called {
+		t.Fatalf("source was not staged before cursor: id=%s captured=%t callback=%t err=%v", id, captured, called, err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.Committed || state.Acks[streamlog.Archive] != streamlog.Attempted {
+		t.Fatalf("attempt was lost during source commit: %+v %v", state, err)
+	}
+}
+
 func TestStreamCaptureStopsWhenUnreadRotatedFileIsMissing(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "eve.json")

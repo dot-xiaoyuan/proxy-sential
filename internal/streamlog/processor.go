@@ -62,7 +62,7 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 	if state.Released || state.Acks[lane] == Acked || state.Acks[lane] == NotApplicable {
 		return nil
 	}
-	if !state.Committed {
+	if !state.Committed && !state.ProcessingReady {
 		return ErrUnconfirmed
 	}
 	if state.Segment.Quarantined {

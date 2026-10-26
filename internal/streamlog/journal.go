@@ -78,14 +78,15 @@ type Segment struct {
 }
 
 type State struct {
-	ID            string          `json:"id"`
-	ContentSHA256 string          `json:"content_sha256"`
-	Segment       Segment         `json:"segment"`
-	Acks          map[Lane]Status `json:"acks"`
-	AckLog        bool            `json:"ack_log,omitempty"`
-	AckLogSealed  bool            `json:"ack_log_sealed,omitempty"`
-	Committed     bool            `json:"committed"`
-	Released      bool            `json:"released"`
+	ID              string          `json:"id"`
+	ContentSHA256   string          `json:"content_sha256"`
+	Segment         Segment         `json:"segment"`
+	Acks            map[Lane]Status `json:"acks"`
+	AckLog          bool            `json:"ack_log,omitempty"`
+	AckLogSealed    bool            `json:"ack_log_sealed,omitempty"`
+	ProcessingReady bool            `json:"processing_ready,omitempty"`
+	Committed       bool            `json:"committed"`
+	Released        bool            `json:"released"`
 }
 
 type Journal struct {
@@ -438,7 +439,7 @@ func (j *Journal) setAck(id string, lane Lane, status Status) error {
 	if state.Released || state.Acks[lane] == NotApplicable {
 		return errors.New("stream lane is not pending")
 	}
-	if !state.Committed {
+	if !state.Committed && !state.ProcessingReady {
 		return ErrUnconfirmed
 	}
 	if state.Acks[lane] == Acked {

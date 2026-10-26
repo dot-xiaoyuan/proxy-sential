@@ -32,6 +32,10 @@ const deviceSignalProjectionLineLimit = 500
 // its exact raw bytes and normalized events are fsynced in an immutable segment.
 // It does not establish a fresh cutoff or process downstream acknowledgements.
 func CaptureStreamOnce(ctx context.Context, journal *streamlog.Journal, opts Options, source Source) (string, bool, error) {
+	return captureStreamOnceWithReady(ctx, journal, opts, source, nil)
+}
+
+func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal, opts Options, source Source, onReady func(string) error) (string, bool, error) {
 	if journal == nil || opts.SensorID == "" || source.Kind == "" || source.Path == "" {
 		return "", false, errors.New("stream capture requires journal, sensor and source")
 	}
@@ -163,6 +167,18 @@ func CaptureStreamOnce(ctx context.Context, journal *streamlog.Journal, opts Opt
 		}
 		if err != nil {
 			return "", false, err
+		}
+		if onReady != nil {
+			prepareStarted := time.Now()
+			if err := journal.PrepareSource(source.Kind, source.Path, id); err != nil {
+				return id, false, err
+			}
+			if elapsed := time.Since(prepareStarted); elapsed >= 500*time.Millisecond {
+				log.Printf("stream capture stage source=%s events=%d stage=prepare duration=%s segment=%s accepted_at=%s append_duration=%s", source.Kind, len(events), elapsed.Round(time.Millisecond), id, segment.AcceptedAt.UTC().Format(time.RFC3339Nano), appendElapsed.Round(time.Millisecond))
+			}
+			if err := onReady(id); err != nil {
+				return id, false, err
+			}
 		}
 		commitStarted := time.Now()
 		if err := journal.CommitSource(source.Kind, source.Path, id); err != nil {

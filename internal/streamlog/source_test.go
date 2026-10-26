@@ -214,6 +214,92 @@ func TestRecoverSourceFinishesInterruptedCursorWrite(t *testing.T) {
 	}
 }
 
+func TestPreparedSourcePreservesSinkAckAcrossCursorRecovery(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testSegment()
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.Append(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.PrepareSource(segment.Source, segment.SourcePath, id); err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.ProcessingReady || state.Committed {
+		t.Fatalf("prepared segment cannot be consumed independently: %+v %v", state, err)
+	}
+	if err := j.BeginAttempt(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Ack(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Release(id); !errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("source body released before cursor: %v", err)
+	}
+	cursor, err := j.LoadSource(segment.Source, segment.SourcePath)
+	if err != nil || cursor.LastSegmentID != "" {
+		t.Fatalf("preparation advanced the source: %+v %v", cursor, err)
+	}
+	j, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := j.RecoverSource(segment.Source, segment.SourcePath)
+	if err != nil || len(ids) != 1 || ids[0] != id {
+		t.Fatalf("prepared source was not recovered: %v %v", ids, err)
+	}
+	state, err = j.Load(id)
+	if err != nil || !state.Committed || state.Acks[Archive] != Acked {
+		t.Fatalf("sink acknowledgement was lost during cursor recovery: %+v %v", state, err)
+	}
+}
+
+func TestRecoverSourceSealsCursorAfterPreparedStateWriteWasInterrupted(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testSegment()
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.Append(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.PrepareSource(segment.Source, segment.SourcePath, id); err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := j.LoadSource(segment.Source, segment.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor.FileID, cursor.Offset, cursor.LastSegmentID = segment.FileID, segment.EndOffset, id
+	if err := atomicJSON(j.sourcePath(segment.Source, segment.SourcePath), cursor); err != nil {
+		t.Fatal(err)
+	}
+	j, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.RecoverSource(segment.Source, segment.SourcePath); err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.Committed {
+		t.Fatalf("durable cursor did not finish the prepared state: %+v %v", state, err)
+	}
+}
+
 func TestSourceLeasePreventsConcurrentReader(t *testing.T) {
 	j, err := Open(t.TempDir())
 	if err != nil {

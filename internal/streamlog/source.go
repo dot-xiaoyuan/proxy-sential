@@ -142,9 +142,10 @@ func (j *Journal) StartFreshSource(cursor SourceCursor) error {
 	return atomicJSON(j.sourcePath(cursor.Source, cursor.Path), cursor)
 }
 
-// CommitSource moves the read cursor only after the matching immutable segment
-// is durably present. Consumers own independent acknowledgement positions.
-func (j *Journal) CommitSource(source, path, segmentID string) error {
+// PrepareSource makes the durable segment eligible for independent sink lanes
+// while the source cursor is still at its predecessor. A crash can recover the
+// cursor from this body and preserve any sink acknowledgements already written.
+func (j *Journal) PrepareSource(source, path, segmentID string) error {
 	lock, err := j.lockFile(".cursor-lock-" + sourceCursorID(source, path))
 	if err != nil {
 		return err
@@ -153,9 +154,6 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 	cursor, err := j.loadSource(source, path)
 	if err != nil {
 		return err
-	}
-	if cursor.LastSegmentID == segmentID {
-		return nil
 	}
 	segmentLock, err := j.lockSegment(segmentID)
 	if err != nil {
@@ -170,6 +168,23 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 		return ErrContentConflict
 	}
 	segment := state.Segment
+	if err := validateSourceSegment(cursor, segment, source, path); err != nil {
+		return err
+	}
+	if state.ProcessingReady {
+		return syncDir(j.dir)
+	}
+	if state.Committed {
+		return nil
+	}
+	if err := j.prepareEmptyAckLog(segmentID); err != nil {
+		return err
+	}
+	state.ProcessingReady, state.AckLog, state.AckLogSealed = true, true, true
+	return atomicJSON(j.path(segmentID, ".state"), stateWithoutEvents(state))
+}
+
+func validateSourceSegment(cursor SourceCursor, segment Segment, source, path string) error {
 	if segment.Quarantined {
 		return ErrQuarantined
 	}
@@ -198,10 +213,53 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 			return fmt.Errorf("stream rotated file must start at zero: %w", ErrContentConflict)
 		}
 	}
+	return nil
+}
+
+// CommitSource moves the read cursor only after the matching immutable segment
+// is durably present. Consumers own independent acknowledgement positions.
+func (j *Journal) CommitSource(source, path, segmentID string) error {
+	lock, err := j.lockFile(".cursor-lock-" + sourceCursorID(source, path))
+	if err != nil {
+		return err
+	}
+	defer unlock(lock)
+	cursor, err := j.loadSource(source, path)
+	if err != nil {
+		return err
+	}
+	if cursor.LastSegmentID == segmentID {
+		// A prior cursor rename may have succeeded while its directory sync
+		// returned an error. Seal it before the segment can be released.
+		if err := syncDir(j.dir); err != nil {
+			return err
+		}
+		return j.finishPreparedSource(segmentID, true)
+	}
+	segmentLock, err := j.lockSegment(segmentID)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if segmentLock != nil {
+			unlock(segmentLock)
+		}
+	}()
+	state, err := j.load(segmentID)
+	if err != nil {
+		return err
+	}
+	if state.Released {
+		return ErrContentConflict
+	}
+	segment := state.Segment
+	if err := validateSourceSegment(cursor, segment, source, path); err != nil {
+		return err
+	}
 	// Mark the immutable segment eligible before moving the cursor. A crash
 	// between these two durable writes can replay this exact predecessor;
 	// moving the cursor first could leave an eligible segment unmarked forever.
-	if !state.Committed {
+	if !state.Committed && !state.ProcessingReady {
 		// The empty file's data is synced here; the cursor's directory sync
 		// seals its entry together with the compact state rename. The first
 		// attempted record then needs only its own file sync.
@@ -234,7 +292,43 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 	} else {
 		cursor.TailBytes, cursor.TailSHA256 = 0, ""
 	}
+	if state.ProcessingReady && !state.Committed {
+		// Sink lanes use only the prepared state and acknowledgement log. Do not
+		// hold their segment lock through the slower cursor fsync.
+		unlock(segmentLock)
+		segmentLock = nil
+		if err := atomicJSON(j.sourcePath(source, path), cursor); err != nil {
+			return err
+		}
+		return j.finishPreparedSource(segmentID, false)
+	}
 	return atomicJSON(j.sourcePath(source, path), cursor)
+}
+
+func (j *Journal) finishPreparedSource(id string, allowRetired bool) error {
+	lock, err := j.lockSegment(id)
+	if err != nil {
+		return err
+	}
+	defer unlock(lock)
+	state, err := j.load(id)
+	if errors.Is(err, os.ErrNotExist) {
+		if allowRetired {
+			return nil // a previously committed segment was already released
+		}
+		return ErrContentConflict
+	}
+	if err != nil {
+		return err
+	}
+	if state.Released || state.Committed {
+		return nil
+	}
+	if !state.ProcessingReady {
+		return ErrContentConflict
+	}
+	state.ProcessingReady, state.Committed = false, true
+	return atomicJSON(j.path(id, ".state"), stateWithoutEvents(state))
 }
 
 // RecoverSource finishes the source-cursor write for an immutable segment
@@ -266,7 +360,11 @@ func (j *Journal) RecoverSource(source, path string) ([]string, error) {
 		if segment.Epoch != cursor.Epoch || segment.ParserVersion != cursor.ParserVersion || segment.KeyScheme != cursor.KeyScheme {
 			return nil, ErrContentConflict
 		}
-		if segment.PreviousFileID == cursor.FileID && segment.PreviousOffset == cursor.Offset {
+		if cursor.LastSegmentID == id && state.ProcessingReady && !state.Committed {
+			if err := j.CommitSource(source, path, id); err != nil {
+				return nil, err
+			}
+		} else if segment.PreviousFileID == cursor.FileID && segment.PreviousOffset == cursor.Offset {
 			if err := j.CommitSource(source, path, id); err != nil {
 				return nil, err
 			}

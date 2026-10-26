@@ -236,8 +236,8 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 			workerErrors <- fmt.Errorf("stream finalize: %w", err)
 		}
 	}()
-	enqueue := func(id string) error {
-		for _, queue := range []chan string{queues[streamlog.Archive], queues[streamlog.Projection], queues[streamlog.Search], finalize} {
+	enqueueLanes := func(id string) error {
+		for _, queue := range []chan string{queues[streamlog.Archive], queues[streamlog.Projection], queues[streamlog.Search]} {
 			select {
 			case queue <- id:
 			case err := <-workerErrors:
@@ -247,6 +247,22 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 			}
 		}
 		return nil
+	}
+	enqueueFinalizer := func(id string) error {
+		select {
+		case finalize <- id:
+			return nil
+		case err := <-workerErrors:
+			return err
+		case <-sourceCtx.Done():
+			return sourceCtx.Err()
+		}
+	}
+	enqueue := func(id string) error {
+		if err := enqueueLanes(id); err != nil {
+			return err
+		}
+		return enqueueFinalizer(id)
 	}
 	acquire := func() error {
 		select {
@@ -307,8 +323,46 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 				smallZeekBatchSince = time.Time{}
 			}
 		}
-		id, captured, err := CaptureStreamOnce(sourceCtx, journal, opts.Capture, source)
+		stagingStarted, staged := false, false
+		var onReady func(string) error
+		if source.Kind == "device-signals" || source.Kind == "shared-device-signals" {
+			onReady = func(id string) error {
+				stagingStarted = true
+				if err := enqueueLanes(id); err != nil {
+					return err
+				}
+				staged = true
+				return nil
+			}
+		}
+		id, captured, err := captureStreamOnceWithReady(sourceCtx, journal, opts.Capture, source, onReady)
 		if err != nil {
+			if stagingStarted && !staged {
+				// Some lanes may already hold the segment. Stop without requeueing it;
+				// startup recovery will finish the durable predecessor.
+				return fmt.Errorf("enqueue staged stream source %s: %w", source.Kind, err)
+			}
+			if staged {
+				// The lanes were queued once. Retry only the idempotent cursor
+				// commit; recapturing would enqueue the same segment twice.
+				for err != nil && sourceCtx.Err() == nil {
+					if streamPermanentError(err) {
+						return err
+					}
+					reportTransient(fmt.Errorf("retry staged source cursor %s: %w", id, err))
+					if !waitStreamPoll(sourceCtx, opts.Capture.PollInterval) {
+						return nil
+					}
+					err = journal.CommitSource(source.Kind, source.Path, id)
+				}
+				if sourceCtx.Err() != nil {
+					return nil
+				}
+				if err := enqueueFinalizer(id); err != nil {
+					return err
+				}
+				continue
+			}
 			<-permits
 			if sourceCtx.Err() != nil {
 				return nil
@@ -335,7 +389,12 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 		archivePendingSince = time.Time{}
 		if captured {
 			smallZeekBatchSince = time.Time{}
-			if err := enqueue(id); err != nil {
+			if staged {
+				err = enqueueFinalizer(id)
+			} else {
+				err = enqueue(id)
+			}
+			if err != nil {
 				return err
 			}
 			continue
