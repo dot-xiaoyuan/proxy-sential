@@ -68,8 +68,8 @@ export function StreamEventsPanel() {
     </form>
     {validation && <p className="stream-events-validation" role="alert">{validation}</p>}
     {index.isError && <AppErrorAlert title="新流事件检索失败" message={index.error.message} />}
-    {index.isLoading && <p>正在查询事件…</p>}
-    {index.data && <>
+    {index.isFetching && <p>正在查询事件…</p>}
+    {!index.isFetching && index.data && <>
       {index.data.events.length === 0 && <p>该范围内没有事件。</p>}
       <div className="stream-event-list">
         {index.data.events.map(item => <article className="stream-event-card" key={item.event_key + item.body_ref.sha256}>
@@ -82,9 +82,9 @@ export function StreamEventsPanel() {
           </div>
           <div className="stream-event-key mono" title={item.event_key}>{item.event_key}</div>
           {selected?.event_key === item.event_key && selected.body_ref.sha256 === item.body_ref.sha256 && <div className="stream-event-detail">
-            {body.isLoading && <p>正在读取正文…</p>}
+            {body.isFetching && <p>正在读取正文…</p>}
             {body.isError && <AppErrorAlert title="事件正文读取失败" message={body.error.message} />}
-            {body.data && <pre>{JSON.stringify(body.data, null, 2)}</pre>}
+            {!body.isFetching && body.data && <pre>{JSON.stringify(body.data, null, 2)}</pre>}
           </div>}
         </article>)}
       </div>

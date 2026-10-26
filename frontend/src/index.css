@@ -5435,3 +5435,19 @@ pre.wrap-code {
   .stream-events-form { grid-template-columns: minmax(0, 1fr); }
   .stream-event-card { padding: 14px; }
 }
+.stream-risk-panel { padding-top: 14px; }
+.stream-risk-panel > p:first-child { color: var(--ps-text-secondary); margin: 0 0 12px; }
+.stream-risk-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.stream-risk-controls label { display: grid; gap: 5px; min-width: 150px; color: var(--ps-text-secondary); }
+.stream-risk-controls .ant-btn, .stream-risk-card-head .ant-tag { white-space: nowrap; flex-shrink: 0; }
+.stream-risk-cutoff { margin: 14px 0 10px; color: var(--ps-text-secondary); }
+.stream-risk-cards { display: grid; gap: 10px; }
+.stream-risk-card { min-width: 0; border: 1px solid var(--ps-border-color); border-radius: 8px; background: var(--ps-bg-surface); padding: 20px; }
+.stream-risk-card-head, .stream-risk-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.stream-risk-card-head strong { overflow-wrap: anywhere; min-width: 0; }
+.stream-risk-card p { margin: 8px 0; overflow-wrap: anywhere; }
+.stream-risk-card-meta { color: var(--ps-text-secondary); font-size: 12px; }
+@media (max-width: 560px) {
+  .stream-risk-controls label { flex: 1 1 100%; min-width: 0; }
+  .stream-risk-card { padding: 14px; }
+}

@@ -631,6 +631,13 @@ export const handlers = [
   http.get('/api/v1/events/stream-body', () => HttpResponse.json({
     ...eventsByIp['10.255.0.59'][0], event_id: 'mock-stream-event-1', timestamp: new Date(Date.now() - 60_000).toISOString(),
   })),
+  http.get('/api/v1/risks/stream-current', ({ request }) => {
+    const url = new URL(request.url)
+    if (url.searchParams.get('cursor')) return HttpResponse.json({ items: [], accepted_after: '2026-10-26T02:24:31.585894Z' })
+    const now = new Date().toISOString()
+    const account = url.searchParams.get('subject_type') === 'account'
+    return HttpResponse.json({ items: [{ ...riskSnapshots[0], ip: account ? '' : '192.0.2.8', subject_type: account ? 'account' : 'ip', subject_id: account ? 'mock-account' : '192.0.2.8', updated_at: now }], accepted_after: '2026-10-26T02:24:31.585894Z', next_cursor: 'mock-next' })
+  }),
   http.get('/api/v1/events', ({ request }) => {
     const url = new URL(request.url)
     const q = url.searchParams.get('q')?.toLowerCase()
