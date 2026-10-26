@@ -26,6 +26,7 @@ var ErrStreamArchivePending = errors.New("Zeek rotated archive is not yet availa
 const streamReadLimit = 1 << 20
 const streamLineLimit = streamlog.MaxSegmentEvents
 const discoveryStreamLineLimit = 50
+const deviceSignalProjectionLineLimit = 200
 
 // CaptureStreamOnce only advances a pre-established fresh source cursor after
 // its exact raw bytes and normalized events are fsynced in an immutable segment.
@@ -107,8 +108,15 @@ func CaptureStreamOnce(ctx context.Context, journal *streamlog.Journal, opts Opt
 		if stats.Skipped > benign {
 			return quarantineStreamChunk(journal, cursor, source, read, chunk, "rejected_record", fmt.Errorf("source %s at offset %d has %d unsupported or rejected records", source.Kind, read.start, stats.Skipped-benign))
 		}
-		if len(events) > discoveryStreamLineLimit && needsStreamProjection(events) {
-			if end := lineBoundary(chunk, discoveryStreamLineLimit); end < len(chunk) {
+		projectionLimit := discoveryStreamLineLimit
+		if source.Kind == "device-signals" {
+			// Selected packet-sidecar discovery records need a PostgreSQL
+			// projection, but 50 records per segment cannot keep pace with the
+			// verified source. Keep a separate event bound and the byte ceiling.
+			projectionLimit = deviceSignalProjectionLineLimit
+		}
+		if len(events) > projectionLimit && needsStreamProjection(events) {
+			if end := lineBoundary(chunk, projectionLimit); end < len(chunk) {
 				chunk = chunk[:end]
 			} else if chunk, err = smallerWholeLineChunk(chunk); err != nil {
 				return "", false, err
