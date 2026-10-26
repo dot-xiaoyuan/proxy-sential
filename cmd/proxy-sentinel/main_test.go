@@ -1,12 +1,41 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"proxy-sentinel/internal/realtime"
 )
+
+func TestRiskWorkerLoopsProcessIndependentBatches(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{}, 2)
+	done := make(chan struct{})
+	go func() {
+		runRiskWorkerLoops(ctx, time.Hour, 2, func() {
+			started <- struct{}{}
+			<-ctx.Done()
+		})
+		close(done)
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("risk worker waited for the other batch")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("risk workers did not stop after cancellation")
+	}
+}
 
 // The ingest service is not a capture framework, so the collector it registers
 // must name the dominant producer of the configured input.

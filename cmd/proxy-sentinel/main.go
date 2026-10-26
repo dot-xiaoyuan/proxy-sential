@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -1180,27 +1181,42 @@ func runRiskMaterialize(args []string) error {
 		fmt.Fprintf(os.Stderr, "risk materialize: events=%d evidence=%d snapshots=%d duration=%s\n", result.Events, result.Evidence, result.Snapshots, result.CompletedAt.Sub(result.StartedAt).Round(time.Millisecond))
 		return nil
 	}
-	if err := runOnce(); err != nil {
-		if *once {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "risk materialize failed: %v\n", err)
-	}
 	if *once {
-		return nil
+		return runOnce()
 	}
-	ticker := time.NewTicker(*interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := runOnce(); err != nil && ctx.Err() == nil {
-				fmt.Fprintf(os.Stderr, "risk materialize failed: %v\n", err)
-			}
+	workers := 1
+	if *incremental {
+		// Distinct subjects are leased with SKIP LOCKED. Two bounded runners
+		// absorb real source bursts without sharing one evaluation transaction.
+		workers = 2
+	}
+	runRiskWorkerLoops(ctx, *interval, workers, func() {
+		if err := runOnce(); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "risk materialize failed: %v\n", err)
 		}
+	})
+	return nil
+}
+
+func runRiskWorkerLoops(ctx context.Context, interval time.Duration, workers int, run func()) {
+	var group sync.WaitGroup
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for ctx.Err() == nil {
+				run()
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
 	}
+	group.Wait()
 }
 
 func runRiskRecalculate(args []string) error {
