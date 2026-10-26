@@ -80,22 +80,35 @@ func TestStreamRiskFeatureWriteAndReconcileRequireIndependentConfirmation(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer := StreamLaneWriter{ClickHouse: ch}
+	queue := &recordingRiskQueue{}
+	writer := StreamLaneWriter{ClickHouse: ch, RiskQueue: queue}
 	if err := writer.WriteSearch(context.Background(), "segment-a", segment); err != nil {
 		t.Fatal(err)
 	}
 	if len(inserts) != 2 || !strings.HasPrefix(inserts[0], "INSERT INTO stream_event_search") || !strings.HasPrefix(inserts[1], "INSERT INTO stream_risk_features_v1") {
 		t.Fatalf("search and feature inserts were not both issued: %v", inserts)
 	}
+	if queue.calls != 1 {
+		t.Fatalf("confirmed risk input still waits for projection/finalization: calls=%d", queue.calls)
+	}
 	if err := writer.ReconcileSearch(context.Background(), "segment-a", segment); !errors.Is(err, streamlog.ErrUnconfirmed) {
 		t.Fatalf("missing risk feature was acknowledged: %v", err)
+	}
+	if queue.calls != 1 {
+		t.Fatal("unconfirmed features scheduled risk work")
 	}
 	featurePresent = true
 	if err := writer.ReconcileSearch(context.Background(), "segment-a", segment); err != nil {
 		t.Fatalf("late feature flush not confirmed: %v", err)
 	}
+	if queue.calls != 2 {
+		t.Fatal("confirmed retry did not recover the risk wake")
+	}
 	featureConflict = true
 	if err := writer.ReconcileSearch(context.Background(), "segment-a", segment); !errors.Is(err, streamlog.ErrContentConflict) {
 		t.Fatalf("same-key feature conflict accepted: %v", err)
+	}
+	if queue.calls != 2 {
+		t.Fatal("conflicting features scheduled risk work")
 	}
 }

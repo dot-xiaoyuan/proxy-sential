@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/streamlog"
 )
 
@@ -135,7 +136,7 @@ type streamRiskDirtySubject struct {
 func (p StreamDiscoveryProjector) MarkStreamRiskSubjectsDirty(ctx context.Context, id string, segment streamlog.Segment) error {
 	subjects := map[string]streamRiskDirtySubject{}
 	for _, event := range segment.Events {
-		if event.Type == "discovery" || str(event.Subject, "ip") == "" {
+		if !evidence.StreamRiskFeatureEligible(event) {
 			continue
 		}
 		sensor := str(event.Observer, "sensor_id")

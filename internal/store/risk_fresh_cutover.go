@@ -26,15 +26,17 @@ func (s *DBStore) StreamRiskFreshCutoff(ctx context.Context, sensor string) (tim
 // current pending work. Pending counts are operational state, not completed
 // events or evidence that the 5-second event SLA has passed.
 type StreamRiskCutoverStatus struct {
-	SensorID             string                  `json:"sensor_id"`
-	CancelID             string                  `json:"cancel_id"`
-	AcceptedAfter        time.Time               `json:"accepted_after"`
-	CanceledSubjects     int64                   `json:"canceled_subjects"`
-	AuditedAt            time.Time               `json:"audited_at"`
-	PendingSubjects      int64                   `json:"pending_subjects"`
-	PendingOlderThan5Sec int64                   `json:"pending_older_than_5s"`
-	OldestPendingAt      *time.Time              `json:"oldest_pending_at,omitempty"`
-	SourceGap            *StreamSourceHistoryGap `json:"source_gap,omitempty"`
+	SensorID              string                   `json:"sensor_id"`
+	CancelID              string                   `json:"cancel_id"`
+	AcceptedAfter         time.Time                `json:"accepted_after"`
+	CanceledSubjects      int64                    `json:"canceled_subjects"`
+	PriorCanceledSubjects int64                    `json:"prior_canceled_subjects"`
+	AuditedAt             time.Time                `json:"audited_at"`
+	PendingSubjects       int64                    `json:"pending_subjects"`
+	PendingOlderThan5Sec  int64                    `json:"pending_older_than_5s"`
+	OldestPendingAt       *time.Time               `json:"oldest_pending_at,omitempty"`
+	SourceGap             *StreamSourceHistoryGap  `json:"source_gap,omitempty"`
+	SourceGaps            []StreamSourceHistoryGap `json:"source_gaps,omitempty"`
 }
 
 type StreamSourceHistoryGap struct {
@@ -68,6 +70,11 @@ func (s *PostgresStore) GetStreamRiskCutoverStatus(ctx context.Context, sensor s
 	if err != nil {
 		return StreamRiskCutoverStatus{}, false, err
 	}
+	if err := s.db.QueryRowContext(ctx, `SELECT coalesce(sum(canceled_subjects),0)
+ FROM stream_risk_fresh_cutovers WHERE sensor_id=$1 AND accepted_after<$2`, sensor, status.AcceptedAfter).
+		Scan(&status.PriorCanceledSubjects); err != nil {
+		return StreamRiskCutoverStatus{}, false, err
+	}
 	var oldest sql.NullTime
 	err = s.db.QueryRowContext(ctx, `SELECT count(*),
  count(*) FILTER (WHERE GREATEST(first_dirty_at,$2::timestamptz)<now()-interval '5 seconds'),
@@ -81,21 +88,34 @@ func (s *PostgresStore) GetStreamRiskCutoverStatus(ctx context.Context, sensor s
 		value := oldest.Time.UTC()
 		status.OldestPendingAt = &value
 	}
-	var gap StreamSourceHistoryGap
-	err = s.db.QueryRowContext(ctx, `SELECT c.epoch,s.source_owner,c.legacy_cutoff_at,c.cancel_manifest_sha256,
+	rows, err := s.db.QueryContext(ctx, `SELECT c.epoch,s.source_owner,c.legacy_cutoff_at,c.cancel_manifest_sha256,
  count(d.legacy_reference),coalesce(sum(d.unprocessed_records),0),coalesce(sum(d.unprocessed_bytes),0)
  FROM stream_source_cutovers c JOIN stream_shared_source_cutovers s ON s.epoch=c.epoch AND s.source_path=c.source_path AND s.state='active'
  JOIN stream_discard_manifest d ON d.epoch=c.epoch AND d.source_kind=c.source_kind AND d.source_path=c.source_path
 	  AND d.legacy_kind IN ('unread_device_signal_file_chunk','rotated_closed_device_chunk')
- WHERE c.sensor_id=$1 AND c.state='active' AND s.source_owner='packet-sidecar'
+ WHERE c.sensor_id=$1 AND c.state='active' AND s.source_owner IN ('packet-sidecar','handshake-sidecar')
  GROUP BY c.epoch,s.source_owner,c.legacy_cutoff_at,c.cancel_manifest_sha256
- ORDER BY c.legacy_cutoff_at DESC LIMIT 1`, sensor).Scan(&gap.Epoch, &gap.SourceOwner, &gap.CutoffAt, &gap.ManifestSHA256, &gap.AuditBatches, &gap.CanceledRecords, &gap.CanceledBytes)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	ORDER BY s.source_owner,c.legacy_cutoff_at DESC LIMIT 2`, sensor)
+	if err != nil {
 		return StreamRiskCutoverStatus{}, false, err
 	}
-	if err == nil {
+	defer rows.Close()
+	for rows.Next() {
+		var gap StreamSourceHistoryGap
+		if err := rows.Scan(&gap.Epoch, &gap.SourceOwner, &gap.CutoffAt, &gap.ManifestSHA256, &gap.AuditBatches, &gap.CanceledRecords, &gap.CanceledBytes); err != nil {
+			return StreamRiskCutoverStatus{}, false, err
+		}
 		gap.CutoffAt = gap.CutoffAt.UTC()
-		status.SourceGap = &gap
+		status.SourceGaps = append(status.SourceGaps, gap)
+	}
+	if err := rows.Err(); err != nil {
+		return StreamRiskCutoverStatus{}, false, err
+	}
+	for i := range status.SourceGaps {
+		if status.SourceGaps[i].SourceOwner == "packet-sidecar" {
+			status.SourceGap = &status.SourceGaps[i]
+			break
+		}
 	}
 	status.AcceptedAfter = status.AcceptedAfter.UTC()
 	status.AuditedAt = status.AuditedAt.UTC()

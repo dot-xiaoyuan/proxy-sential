@@ -107,7 +107,14 @@ func (w StreamLaneWriter) WriteSearch(ctx context.Context, id string, segment st
 	if !segment.RiskFeaturesRequired {
 		return nil
 	}
-	return w.ClickHouse.WriteStreamRiskFeatures(ctx, id, segment)
+	if err := w.ClickHouse.WriteStreamRiskFeatures(ctx, id, segment); err != nil {
+		return err
+	}
+	// Search runs only after the authoritative body is acknowledged. Once
+	// features are confirmed, its subjects can be queued without waiting for
+	// unrelated device projection, journal acknowledgement or shared jobs.
+	// The immutable segment remains retained until all lanes finalize.
+	return w.enqueueRisk(ctx, id, segment)
 }
 
 func (w StreamLaneWriter) ReconcileSearch(ctx context.Context, id string, segment streamlog.Segment) error {
@@ -131,7 +138,7 @@ func (w StreamLaneWriter) ReconcileSearch(ctx context.Context, id string, segmen
 		}
 		return streamlog.ErrUnconfirmed
 	}
-	return nil
+	return w.enqueueRisk(ctx, id, segment)
 }
 
 func (w StreamLaneWriter) Project(ctx context.Context, id string, segment streamlog.Segment) error {
@@ -170,6 +177,12 @@ func (w StreamLaneWriter) FinalizeSegment(ctx context.Context, id string, segmen
 			break
 		}
 	}
+	return w.enqueueRisk(ctx, id, segment)
+}
+
+// Finalization repeats this idempotent receipt for journals produced by older
+// releases and for a crash after feature confirmation but before the PG wake.
+func (w StreamLaneWriter) enqueueRisk(ctx context.Context, id string, segment streamlog.Segment) error {
 	if !segment.RiskFeaturesRequired {
 		return nil
 	}

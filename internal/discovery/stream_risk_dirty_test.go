@@ -44,6 +44,8 @@ func TestRiskSubjectsQueueOnlyOncePerConfirmedSegment(t *testing.T) {
 	segment := streamlog.Segment{Epoch: "fresh", AcceptedAt: now, Events: []normalized.Event{
 		{Type: "device", Timestamp: now.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a"}, Subject: map[string]any{"ip": "192.0.2.8", "account_id": "account-a"}},
 		{Type: "device", Timestamp: now.Add(time.Second).Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a"}, Subject: map[string]any{"ip": "192.0.2.8", "account_id": "account-a"}},
+		{Type: "device", Source: "handshake-sidecar", SourceEventType: "handshake", Timestamp: now.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a"}, Subject: map[string]any{"ip": "192.0.2.9", "account_id": "shared-only"}},
+		{Type: "device", Source: "packet-sidecar", SourceEventType: "ssdp", Timestamp: now.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a"}, Subject: map[string]any{"ip": "192.0.2.10"}},
 	}}
 	projector := StreamDiscoveryProjector{DB: db}
 	mock.ExpectBegin()

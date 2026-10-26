@@ -293,13 +293,18 @@ export const handlers = [
     active: true,
     status: {
       sensor_id: 'mock-sensor',
-      cancel_id: 'mock-audit-1',
-      accepted_after: '2026-10-26T02:24:31Z',
-      canceled_subjects: 40504,
-      audited_at: '2026-10-26T02:24:39Z',
+      cancel_id: 'mock-audit-2',
+      accepted_after: '2026-10-26T06:40:03Z',
+      canceled_subjects: 4563,
+      prior_canceled_subjects: 40504,
+      audited_at: '2026-10-26T06:40:04Z',
       pending_subjects: 18,
       pending_older_than_5s: 3,
-      source_gap: { epoch: 'packet-fresh', source_owner: 'packet-sidecar', canceled_records: 120000, canceled_bytes: 553000000, audit_batches: 67, manifest_sha256: 'a'.repeat(64), cutoff_at: '2026-10-26T06:25:00Z' },
+      source_gap: { epoch: 'packet-fresh', source_owner: 'packet-sidecar', canceled_records: 742819, canceled_bytes: 567763339, audit_batches: 68, manifest_sha256: 'a'.repeat(64), cutoff_at: '2026-10-26T06:38:56Z' },
+      source_gaps: [
+        { epoch: 'handshake-fresh', source_owner: 'handshake-sidecar', canceled_records: 44764, canceled_bytes: 52332842, audit_batches: 7, manifest_sha256: 'b'.repeat(64), cutoff_at: '2026-10-26T06:38:56Z' },
+        { epoch: 'packet-fresh', source_owner: 'packet-sidecar', canceled_records: 742819, canceled_bytes: 567763339, audit_batches: 68, manifest_sha256: 'a'.repeat(64), cutoff_at: '2026-10-26T06:38:56Z' },
+      ],
     },
   })),
   http.get('/api/v1/risks', ({ request }) => {

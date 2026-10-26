@@ -27,15 +27,7 @@ func prepareStreamRiskFeatures(segment streamlog.Segment) ([]preparedRiskFeature
 	}
 	result := make([]preparedRiskFeature, 0, len(prepared))
 	for _, item := range prepared {
-		// These summaries are consumed by the scoped discovery/shared readers.
-		// The generic risk projection retains no samples, SSDP fields or
-		// IEEE1905 topology fields from them, so scheduling risk work here
-		// would create a second large write path without any rule input.
-		if item.event.Source == "handshake-sidecar" && item.event.SourceEventType == "handshake" ||
-			item.event.Source == "packet-sidecar" && (item.event.SourceEventType == "ssdp" || item.event.SourceEventType == "ieee1905_topology") {
-			continue
-		}
-		if item.event.Type == "discovery" || stringFromMap(item.event.Subject, "ip") == "" {
+		if !evidence.StreamRiskFeatureEligible(item.event) {
 			continue
 		}
 		encoded, err := json.Marshal(evidence.FeatureEvent(item.event))

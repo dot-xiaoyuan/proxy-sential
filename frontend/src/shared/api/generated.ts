@@ -5806,6 +5806,8 @@ export interface components {
             accepted_after: string;
             /** Format: int64 */
             canceled_subjects: number;
+            /** Format: int64 */
+            prior_canceled_subjects: number;
             /** Format: date-time */
             audited_at: string;
             /** Format: int64 */
@@ -5814,19 +5816,21 @@ export interface components {
             pending_older_than_5s: number;
             /** Format: date-time */
             oldest_pending_at?: string;
-            source_gap?: {
-                epoch: string;
-                source_owner: string;
-                /** Format: int64 */
-                canceled_records: number;
-                /** Format: int64 */
-                canceled_bytes: number;
-                /** Format: int64 */
-                audit_batches: number;
-                manifest_sha256: string;
-                /** Format: date-time */
-                cutoff_at: string;
-            };
+            source_gap?: components["schemas"]["StreamSourceHistoryGap"];
+            source_gaps?: components["schemas"]["StreamSourceHistoryGap"][];
+        };
+        StreamSourceHistoryGap: {
+            epoch: string;
+            source_owner: string;
+            /** Format: int64 */
+            canceled_records: number;
+            /** Format: int64 */
+            canceled_bytes: number;
+            /** Format: int64 */
+            audit_batches: number;
+            manifest_sha256: string;
+            /** Format: date-time */
+            cutoff_at: string;
         };
         StreamRiskCutoverResponse: {
             active: boolean;

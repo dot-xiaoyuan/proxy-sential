@@ -10,7 +10,9 @@ test('audited source gap stays readable at the three required viewports', async 
       await page.goto(route)
       const notice = page.getByLabel('新存查链历史缺口')
       await expect(notice).toBeVisible()
-      await expect(notice).toContainText('553,000,000 字节')
+      await expect(notice).toContainText('567,763,339 字节')
+      await expect(notice).toContainText('44,764 条')
+      await expect(notice).toContainText('此前审计取消 40,504 个主体')
       const probe = await notice.evaluate(element => {
         const style = getComputedStyle(element)
         return { documentOverflow: document.documentElement.scrollWidth > innerWidth + 2, noticeOverflow: element.scrollWidth > element.clientWidth + 2, padding: style.paddingLeft, border: style.borderTopColor, textWrap: getComputedStyle(element.querySelector('p')!).overflowWrap }
