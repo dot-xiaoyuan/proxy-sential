@@ -40,7 +40,7 @@ python3 "$stage/scripts/verify-service-expectations.py" --root "$root"
 python3 "$(dirname "$0")/verify-applied-migrations.py" "$stage"
 # Durable release directory is the rollback copy. Business DBs are untouched.
 units=()
-for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-inventory proxy-sentinel-inventory-backfill proxy-sentinel-identity-materializer proxy-sentinel-ncu-identity-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery proxy-sentinel-passive-discovery proxy-sentinel-ncu-identity-sync; do
+for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-binding-b56 proxy-sentinel-ingest-stream-packet-b54 proxy-sentinel-ingest-stream-handshake-b54 proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-inventory proxy-sentinel-inventory-backfill proxy-sentinel-identity-materializer proxy-sentinel-ncu-identity-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery proxy-sentinel-passive-discovery proxy-sentinel-ncu-identity-sync; do
   if systemctl is-active --quiet "$unit.service"; then units+=("$unit.service"); fi
 done
 (( ${#units[@]} > 0 )) || { echo "no active application services" >&2; exit 1; }

@@ -7,6 +7,9 @@ import subprocess
 UNIT_BINARIES={
  'proxy-sentinel-control-plane.service':'proxy-sentinel',
  'proxy-sentinel-ingest.service':'proxy-sentinel',
+ 'proxy-sentinel-ingest-stream-dhcp-binding-b56.service':'proxy-sentinel',
+ 'proxy-sentinel-ingest-stream-packet-b54.service':'proxy-sentinel',
+ 'proxy-sentinel-ingest-stream-handshake-b54.service':'proxy-sentinel',
  'proxy-sentinel-risk-materializer.service':'proxy-sentinel',
  'proxy-sentinel-device-signal.service':'proxy-sentinel',
  'proxy-sentinel-read-model-realtime.service':'proxy-sentinel',
