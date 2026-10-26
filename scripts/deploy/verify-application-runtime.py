@@ -12,6 +12,8 @@ UNIT_BINARIES={
  'proxy-sentinel-ingest-stream-handshake-b54.service':'proxy-sentinel',
  'proxy-sentinel-risk-materializer.service':'proxy-sentinel',
  'proxy-sentinel-device-signal.service':'proxy-sentinel',
+ 'proxy-sentinel-handshake-signal.service':'proxy-sentinel',
+ 'proxy-sentinel-router-prober.service':'proxy-sentinel',
  'proxy-sentinel-read-model-realtime.service':'proxy-sentinel',
  'proxy-sentinel-read-model-coarse.service':'proxy-sentinel',
  'proxy-sentinel-recognition-materializer.service':'proxy-sentinel',

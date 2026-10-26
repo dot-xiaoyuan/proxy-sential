@@ -11,6 +11,13 @@ import runpy
 import shlex
 import subprocess
 
+REQUIRED_UNIT_FLAGS = {
+    # The scope file on 184 does not bind an interface. A candidate that
+    # requires an explicit capture scope must not be switched under the old
+    # unit, whose missing flags would only fail after the release cutover.
+    "proxy-sentinel-router-prober.service": {"capture-scope-config", "controlled-interface"},
+}
+
 
 def invocation(value):
     match = re.search(r"argv\[\]=(.*?) ; ignore_errors=", value)
@@ -36,6 +43,9 @@ def verify(stage, units):
         executable, prefix, flags = invocation(value)
         if Path(executable).name != binaries[unit]:
             raise ValueError("unexpected executable: " + unit)
+        required_missing = sorted(REQUIRED_UNIT_FLAGS.get(unit, set()) - flags)
+        if required_missing:
+            raise ValueError("unit lacks required safety flags: " + unit + ": " + ", ".join(required_missing))
         help_result = subprocess.run([str(Path(stage) / "bin" / binaries[unit]), *prefix, "--help"], capture_output=True, text=True, timeout=15)
         supported = set(re.findall(r"^\s+--?([\w-]+)(?:\s|=|$)", help_result.stdout + help_result.stderr, re.M))
         missing = sorted(flags - supported)

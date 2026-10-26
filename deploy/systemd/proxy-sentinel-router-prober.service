@@ -14,7 +14,9 @@ EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
 ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel router-prober run \
   --postgres-dsn ${PROXY_SENTINEL_POSTGRES_DSN} \
   --sensor-id ${PROXY_SENTINEL_SENSOR_ID} \
-  --output /opt/proxy-sentinel/data/device-signals/router-probe.jsonl
+  --output /opt/proxy-sentinel/data/device-signals/router-probe.jsonl \
+  --capture-scope-config /opt/proxy-sentinel/config/router-capture-scope.json \
+  --controlled-interface bond0
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30
