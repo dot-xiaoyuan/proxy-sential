@@ -83,6 +83,7 @@ type State struct {
 	Segment       Segment         `json:"segment"`
 	Acks          map[Lane]Status `json:"acks"`
 	AckLog        bool            `json:"ack_log,omitempty"`
+	AckLogSealed  bool            `json:"ack_log_sealed,omitempty"`
 	Committed     bool            `json:"committed"`
 	Released      bool            `json:"released"`
 }
@@ -415,7 +416,7 @@ func (j *Journal) AbortUnsentAttempt(id string, lane Lane) error {
 		return ErrContentConflict
 	}
 	if state.AckLog {
-		return j.appendAck(id, lane, Pending)
+		return j.appendAck(id, lane, Pending, state.AckLogSealed)
 	}
 	state.Acks[lane] = Pending
 	return atomicJSON(j.path(id, ".state"), stateWithoutEvents(state))
@@ -449,7 +450,7 @@ func (j *Journal) setAck(id string, lane Lane, status Status) error {
 		} else if err != nil {
 			return err
 		}
-		return j.appendAck(id, lane, status)
+		return j.appendAck(id, lane, status, state.AckLogSealed)
 	}
 	if state.Segment.SourceBackedRaw {
 		return j.createAckLogWithRecord(id, lane, status)

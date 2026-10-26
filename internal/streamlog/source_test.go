@@ -193,8 +193,13 @@ func TestRecoverSourceFinishesInterruptedCursorWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := j.prepareEmptyAckLog(id); err != nil {
+		t.Fatal(err)
+	}
 	state.Committed = true
-	if err := atomicJSON(j.path(id, ".state"), stateWithoutEvents(state)); err != nil {
+	state.AckLog = true
+	state.AckLogSealed = true
+	if err := atomicJSONBeforeDirectoryBarrier(j.path(id, ".state"), stateWithoutEvents(state)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := j.RecoverSource(segment.Source, segment.SourcePath); err != nil {
@@ -203,6 +208,9 @@ func TestRecoverSourceFinishesInterruptedCursorWrite(t *testing.T) {
 	cursor, err := j.LoadSource(segment.Source, segment.SourcePath)
 	if err != nil || cursor.LastSegmentID != id {
 		t.Fatalf("interrupted commit was not finished: %+v %v", cursor, err)
+	}
+	if err := j.BeginAttempt(id, Archive); err != nil {
+		t.Fatalf("recovered cursor did not seal the first sink attempt: %v", err)
 	}
 }
 

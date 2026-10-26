@@ -202,11 +202,15 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 	// between these two durable writes can replay this exact predecessor;
 	// moving the cursor first could leave an eligible segment unmarked forever.
 	if !state.Committed {
+		// The empty file's data is synced here; the cursor's directory sync
+		// seals its entry together with the compact state rename. The first
+		// attempted record then needs only its own file sync.
+		if err := j.prepareEmptyAckLog(segmentID); err != nil {
+			return err
+		}
 		state.Committed = true
-		// The first sink attempt creates the log with its attempted marker.
-		// The committed state may safely name it before the file exists:
-		// no sink write starts until that marker and directory are durable.
 		state.AckLog = true
+		state.AckLogSealed = true
 		// The cursor is in this same directory. Its final directory sync
 		// seals both renames; a crash before then is recovered from the
 		// already durable immutable segment and the old cursor.

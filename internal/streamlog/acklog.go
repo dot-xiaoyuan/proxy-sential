@@ -10,10 +10,34 @@ import (
 	"strings"
 )
 
-// New segments keep lane transitions in an append-only, fsynced file. The
-// segment's committed state names it before creation. Its first sink attempt
-// durably writes the initial record before any external write can start.
-// Old segments retain the atomic state-file format.
+// New segments keep lane transitions in an append-only, fsynced file. Its
+// empty inode is prepared before the source cursor commits; that cursor's
+// directory sync seals the entry. An attempted marker is then file-synced
+// before any external write. Old segments retain the atomic state format.
+func (j *Journal) prepareEmptyAckLog(id string) error {
+	path := j.path(id, ".acklog")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		f, err = os.OpenFile(path, os.O_WRONLY, 0)
+	}
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil || info.Size() != 0 {
+		_ = f.Close()
+		if err != nil {
+			return err
+		}
+		return ErrContentConflict
+	}
+	if err = f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 func (j *Journal) createAckLogWithRecord(id string, lane Lane, status Status) error {
 	f, err := os.OpenFile(j.path(id, ".acklog"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -85,7 +109,7 @@ func (j *Journal) applyAckLog(id string, state *State) (int64, error) {
 	}
 }
 
-func (j *Journal) appendAck(id string, lane Lane, status Status) error {
+func (j *Journal) appendAck(id string, lane Lane, status Status, entrySealed bool) error {
 	// The caller holds the segment lock. Validate and truncate only an
 	// incomplete final write; complete corrupt records stop the source.
 	state := State{Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending}}
@@ -115,7 +139,7 @@ func (j *Journal) appendAck(id string, lane Lane, status Status) error {
 	}
 	// An empty file left by a crash during the first record may not yet have
 	// a durable directory entry. Seal it before permitting a sink write.
-	if valid == 0 {
+	if valid == 0 && !entrySealed {
 		return syncDir(j.dir)
 	}
 	return nil

@@ -158,7 +158,7 @@ func TestJournalPersistsIndependentAcksAndReleasesOnlyAfterAll(t *testing.T) {
 	}
 }
 
-func TestJournalDefersAckLogUntilFirstSinkAttempt(t *testing.T) {
+func TestJournalSealsEmptyAckLogWithSourceCursor(t *testing.T) {
 	dir := t.TempDir()
 	j, err := Open(dir)
 	if err != nil {
@@ -178,12 +178,16 @@ func TestJournalDefersAckLogUntilFirstSinkAttempt(t *testing.T) {
 	if err := j.CommitSource(segment.Source, segment.SourcePath, id); err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(j.path(id, ".acklog"))
+	if err != nil || info.Size() != 0 {
+		t.Fatalf("committed cursor did not seal an empty acknowledgement log: %+v %v", info, err)
+	}
 	j, err = Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	state, err := j.Load(id)
-	if err != nil || !state.Committed || !state.AckLog || state.Acks[Archive] != Pending {
+	if err != nil || !state.Committed || !state.AckLog || !state.AckLogSealed || state.Acks[Archive] != Pending {
 		t.Fatalf("committed segment cannot recover before its first sink attempt: %+v %v", state, err)
 	}
 	if err := j.BeginAttempt(id, Archive); err != nil {
