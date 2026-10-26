@@ -27,7 +27,7 @@ export function StreamRiskCurrentPanel() {
     </div>
     {current.isError && <AppErrorAlert title="新流风险结果读取失败" message={current.error.message} />}
     {current.isFetching && <p>正在查询风险结果…</p>}
-    {!current.isFetching && current.data && <>
+    {!current.isFetching && !current.isError && current.data && <>
       <p className="stream-risk-cutoff">新鲜起点：{formatDateTime(current.data.accepted_after)}</p>
       {current.data.items.length === 0 && <p>当前筛选没有风险结果。</p>}
       <div className="stream-risk-cards">
