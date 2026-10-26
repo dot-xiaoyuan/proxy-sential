@@ -136,7 +136,7 @@ func TestStreamCaptureBoundsLargeInputByWholeLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	j := startStreamFixture(t, path, 0)
-	if err := os.WriteFile(path, []byte(strings.Repeat(streamSuricataLine, 700)), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Repeat(streamSuricataLine, 1400)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	id, captured, err := CaptureStreamOnce(context.Background(), j, Options{SensorID: "sensor-a", MaxBatchBytes: 1 << 20}, Source{Kind: "suricata", Path: path})
@@ -147,7 +147,7 @@ func TestStreamCaptureBoundsLargeInputByWholeLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Segment.Events) > streamlog.MaxSegmentEvents || state.Segment.EndOffset >= int64(700*len(streamSuricataLine)) {
+	if len(state.Segment.Events) != streamlog.MaxSegmentEvents || state.Segment.EndOffset >= int64(1400*len(streamSuricataLine)) {
 		t.Fatalf("segment did not bound input: %d events, offset %d", len(state.Segment.Events), state.Segment.EndOffset)
 	}
 }
