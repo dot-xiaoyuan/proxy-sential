@@ -1159,7 +1159,10 @@ func runRiskMaterialize(args []string) error {
 		return nil
 	}
 	if err := runOnce(); err != nil {
-		return err
+		if *once {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "risk materialize failed: %v\n", err)
 	}
 	if *once {
 		return nil
