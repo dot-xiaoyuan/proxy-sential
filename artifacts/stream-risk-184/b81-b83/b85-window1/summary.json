@@ -1,0 +1,64 @@
+{
+  "start": "2026-10-26T10:12:00",
+  "end": "2026-10-26T10:27:00",
+  "source": {
+    "dhcp": {
+      "samples": 179,
+      "age_over5": 30,
+      "max_age": 7.512,
+      "max_unread": 22901,
+      "errors": 0
+    },
+    "packet": {
+      "samples": 179,
+      "age_over5": 25,
+      "max_age": 7.996,
+      "max_unread": 1437928,
+      "errors": 0
+    },
+    "handshake": {
+      "samples": 179,
+      "age_over5": 21,
+      "max_age": 6.935,
+      "max_unread": 2398508,
+      "errors": 0
+    }
+  },
+  "risk": {
+    "samples": 386,
+    "pending_over5_samples": 2,
+    "max_pending": 1186,
+    "main_non200": 0,
+    "identity_non200": 0,
+    "service_not_active": 0,
+    "query_errors": 0
+  },
+  "unindexed_source": {
+    "dhcp": {
+      "samples": 179,
+      "unindexed_over5_samples": 1,
+      "max_unindexed_age_s": 5.059,
+      "read_errors": 2
+    },
+    "packet": {
+      "samples": 179,
+      "unindexed_over5_samples": 2,
+      "max_unindexed_age_s": 5.343,
+      "read_errors": 1
+    },
+    "handshake": {
+      "samples": 179,
+      "unindexed_over5_samples": 2,
+      "max_unindexed_age_s": 5.918,
+      "read_errors": 0
+    }
+  },
+  "profile": {
+    "samples": 386,
+    "pending_max": 56,
+    "oldest_age_max_s": 4.777529,
+    "age_over5_samples": 0,
+    "profile_wal_wait_max": 8,
+    "profile_wal_wait_p95": 8
+  }
+}
