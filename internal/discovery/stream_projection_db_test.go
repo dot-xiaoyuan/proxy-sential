@@ -138,3 +138,50 @@ func TestExpireStreamDiscoveryStatesUsesBoundedDueKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStreamArchiveConfirmationUsesOriginalMonthAndAtomicReceiptChecks(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		matched bool
+	}{
+		{"cross_month_and_idempotent", true},
+		{"missing_or_conflicting_receipt_rolls_back", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			segment := streamlog.Segment{Epoch: "fresh", ArchiveMonth: "202611", AcceptedAt: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), Events: []normalized.Event{
+				streamDiscoveryEvent("first", "2026-10-24T10:00:00Z", 600),
+				streamDiscoveryEvent("second", "2026-10-24T10:00:00Z", 600),
+			}}
+			items, err := prepareStreamDiscovery(segment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mock.ExpectBegin()
+			stmt := mock.ExpectPrepare(`WITH receipt AS MATERIALIZED.*accepted_month=\(SELECT k.accepted_month FROM stream_discovery_event_keys k.*FOR UPDATE.*archive_state NOT IN \('confirmed','verified'\).*SELECT EXISTS`)
+			for i, item := range items {
+				stmt.ExpectQuery().WithArgs(segment.Epoch, item.Receipt.Scope, item.Receipt.Key, item.Receipt.Hash).
+					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(i == 0 || tc.matched))
+			}
+			if tc.matched {
+				mock.ExpectCommit()
+			} else {
+				mock.ExpectRollback()
+			}
+			err = (StreamDiscoveryProjector{DB: db}).MarkStreamArchiveConfirmed(context.Background(), "november-retry", segment)
+			if tc.matched && err != nil {
+				t.Fatal(err)
+			}
+			if !tc.matched && !errors.Is(err, streamlog.ErrUnconfirmed) {
+				t.Fatalf("missing receipt accepted: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
