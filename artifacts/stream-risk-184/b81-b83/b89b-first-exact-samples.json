@@ -1,0 +1,67 @@
+{
+  "release": "2026.10.26-stream-b89b-body-ready-trace",
+  "measurement": "50 real event keys per source; authoritative body and narrow index present",
+  "caveat": "accepted_at precedes the first durable write; append_returned_at is recorded after its directory barrier. Both timestamps bound first-durable-to-index time, but neither is authenticated API visibility.",
+  "samples": [
+    {
+      "source": "packet",
+      "segment_id": "bae8f5eadf64d00e688d98b10789a3e4daaa52792a7652dd2f11aac672acd3ef",
+      "accepted_at": "2026-10-26T11:35:18.151089958Z",
+      "append_returned_at": "2026-10-26T11:35:19.302698704Z",
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 4.228442,
+      "append_returned_to_index_s_approx": 3.077
+    },
+    {
+      "source": "handshake",
+      "segment_id": "a0208767f0de2a54902f51bef2e250c4574556ab70256e23f8d43ae81dfacc4a",
+      "accepted_at": "2026-10-26T11:35:24.582601002Z",
+      "append_returned_at": "2026-10-26T11:35:25.750933372Z",
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 3.261221,
+      "append_returned_to_index_s_approx": 2.093
+    },
+    {
+      "source": "packet",
+      "segment_id": "e98f2cd90832e0ac55109499de2420464e63cf65ee60b51faeba30efc541fd28",
+      "accepted_at": "2026-10-26T11:40:18.444201822Z",
+      "append_returned_at": "2026-10-26T11:40:19.998467446Z",
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 5.666242,
+      "append_returned_to_index_s_approx": 4.112
+    },
+    {
+      "source": "handshake",
+      "segment_id": "df0dc0b47fe1c6f3fadf119ee63ad976f9915b3b4bc30803211a8592a0d8c607",
+      "accepted_at": "2026-10-26T11:40:24.567021547Z",
+      "append_returned_at": "2026-10-26T11:40:25.938759984Z",
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 4.370256,
+      "append_returned_to_index_s_approx": 2.999
+    },
+    {
+      "source": "packet",
+      "segment_id": "4cf99daadc7a4b6d089fef072264c48ee8e1edb384cc4bfca14ea8793c478a5f",
+      "accepted_at": "2026-10-26T11:45:48.642128822Z",
+      "append_returned_at": "2026-10-26T11:45:50.119266965Z",
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 4.527117,
+      "append_returned_to_index_s_approx": 3.05
+    },
+    {
+      "source": "handshake",
+      "segment_id": "fd35f5e44be4354dc00387b7df3ed5a25caee938711d78465d0a30605c3ff040",
+      "accepted_at": "2026-10-26T11:46:57.62768341Z",
+      "append_returned_at": "2026-10-26T11:46:59.266499309Z",
+      "body_count": 50,
+      "index_count": 50,
+      "accepted_to_index_s": 3.626741,
+      "append_returned_to_index_s_approx": 1.988
+    }
+  ]
+}
