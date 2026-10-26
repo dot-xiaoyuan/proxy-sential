@@ -33,7 +33,7 @@ func TestStreamRouterFreshCutoverRejectsUnsettledNewIndexRows(t *testing.T) {
 	defer db.Close()
 	mock.ExpectBegin()
 	mock.ExpectExec(`pg_advisory_xact_lock`).WithArgs("sensor-a").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`SELECT fresh_cutoff_at,lease_until>now\(\),processed_events FROM stream_router_recognition_state`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"fresh_cutoff_at", "leased", "processed_events"}))
+	mock.ExpectQuery(`SELECT fresh_cutoff_at,lease_until>now\(\),processed_events,cursor_indexed_at,cursor_event_key FROM stream_router_recognition_state`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"fresh_cutoff_at", "leased", "processed_events", "cursor_indexed_at", "cursor_event_key"}))
 	mock.ExpectRollback()
 	store := &DBStore{pg: &PostgresStore{db: db}, ch: ch}
 	if _, err := store.StartStreamRouterFreshCutover(context.Background(), "sensor-a", "cancel-1", cutoff); err == nil {
@@ -64,7 +64,7 @@ func TestStreamRouterFreshCutoverStoresExactCanceledCount(t *testing.T) {
 	cutoff := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
 	mock.ExpectBegin()
 	mock.ExpectExec(`pg_advisory_xact_lock`).WithArgs("sensor-a").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`SELECT fresh_cutoff_at,lease_until>now\(\),processed_events FROM stream_router_recognition_state`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"fresh_cutoff_at", "leased", "processed_events"}))
+	mock.ExpectQuery(`SELECT fresh_cutoff_at,lease_until>now\(\),processed_events,cursor_indexed_at,cursor_event_key FROM stream_router_recognition_state`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"fresh_cutoff_at", "leased", "processed_events", "cursor_indexed_at", "cursor_event_key"}))
 	mock.ExpectExec(`INSERT INTO stream_router_fresh_cutovers`).WithArgs("sensor-a", "cancel-1", cutoff, uint64(5), int64(0)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO stream_router_recognition_state`).WithArgs("sensor-a", cutoff, "cancel-1", fingerprint.DefaultRouterRuleSet().Version).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -99,14 +99,16 @@ func TestStreamRouterFreshCutoverReseedsStoppedSecondGeneration(t *testing.T) {
 	prior := cutoff.Add(-time.Hour)
 	mock.ExpectBegin()
 	mock.ExpectExec(`pg_advisory_xact_lock`).WithArgs("sensor-a").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`SELECT fresh_cutoff_at,lease_until>now\(\),processed_events FROM stream_router_recognition_state`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"fresh_cutoff_at", "leased", "processed_events"}).AddRow(prior, false, int64(42)))
+	cursor := prior.Add(30 * time.Minute)
+	mock.ExpectQuery(`SELECT fresh_cutoff_at,lease_until>now\(\),processed_events,cursor_indexed_at,cursor_event_key FROM stream_router_recognition_state`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"fresh_cutoff_at", "leased", "processed_events", "cursor_indexed_at", "cursor_event_key"}).AddRow(prior, false, int64(42), cursor, "processed-event"))
 	mock.ExpectExec(`INSERT INTO stream_router_fresh_cutovers`).WithArgs("sensor-a", "cancel-2", cutoff, uint64(9), int64(42)).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE stream_router_recognition_state SET fresh_cutoff_at`).WithArgs("sensor-a", cutoff, "cancel-2", fingerprint.DefaultRouterRuleSet().Version).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	store := &DBStore{pg: &PostgresStore{db: db}, ch: ch}
 	count, err := store.StartStreamRouterFreshCutover(context.Background(), "sensor-a", "cancel-2", cutoff)
-	if err != nil || count != 9 || !strings.Contains(query, "indexed_at>=") {
-		t.Fatalf("second router generation was not bounded by prior cutoff: count=%d err=%v query=%s", count, err, query)
+	if err != nil || count != 9 || !strings.Contains(query, "indexed_at>=") ||
+		!strings.Contains(query, "indexed_at>parseDateTime64BestEffort(") || !strings.Contains(query, "event_key>'processed-event'") {
+		t.Fatalf("second router generation counted already processed positions: count=%d err=%v query=%s", count, err, query)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

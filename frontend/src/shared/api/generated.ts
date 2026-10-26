@@ -5835,6 +5835,20 @@ export interface components {
             oldest_pending_at?: string;
             source_gap?: components["schemas"]["StreamSourceHistoryGap"];
             source_gaps?: components["schemas"]["StreamSourceHistoryGap"][];
+            router_gap?: components["schemas"]["StreamRouterHistoryGap"];
+            /** Format: int64 */
+            prior_router_canceled_index_rows: number;
+        };
+        StreamRouterHistoryGap: {
+            cancel_id: string;
+            /** Format: date-time */
+            indexed_after: string;
+            /** Format: int64 */
+            canceled_index_rows: number;
+            /** Format: int64 */
+            prior_processed_events: number;
+            /** Format: date-time */
+            audited_at: string;
         };
         StreamSourceHistoryGap: {
             epoch: string;

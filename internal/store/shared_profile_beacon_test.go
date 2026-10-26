@@ -13,7 +13,10 @@ import (
 // queued on its lock: 3.8 million per-job updates cost the most database time on the field.
 func TestFinishedSharedProfileJobDoesNotWriteRuntimeRow(t *testing.T) {
 	db, mock := newReconcileMock(t)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL synchronous_commit = off`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`UPDATE shared_device_profile_jobs SET processed_generation`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	store := &DBStore{pg: &PostgresStore{db: db}}
 	job := sharedDeviceProfileJob{SubjectKey: "subject-1", DirtyGeneration: 3, LeaseOwner: "worker-1"}
 	if err := store.finishSharedDeviceProfileJob(context.Background(), job, nil); err != nil {
@@ -24,6 +27,25 @@ func TestFinishedSharedProfileJobDoesNotWriteRuntimeRow(t *testing.T) {
 	}
 	if got := store.pg.profileBeacon.pendingJobs; got != 1 {
 		t.Fatalf("pending jobs=%d want 1 buffered in memory", got)
+	}
+}
+
+func TestUnchangedProfileAckCommitFailureIsNotReportedAsSuccess(t *testing.T) {
+	db, mock := newReconcileMock(t)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL synchronous_commit = off`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE shared_device_profile_jobs SET processed_generation`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
+	store := &DBStore{pg: &PostgresStore{db: db}}
+	job := sharedDeviceProfileJob{SubjectKey: "subject-1", DirtyGeneration: 3, LeaseOwner: "worker-1"}
+	if err := store.finishSharedDeviceProfileJob(context.Background(), job, nil); err == nil {
+		t.Fatal("unknown completion commit was reported as durable success")
+	}
+	if got := store.pg.profileBeacon.pendingJobs; got != 0 {
+		t.Fatalf("successful completions=%d after failed commit", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

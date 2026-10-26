@@ -27,10 +27,18 @@ func TestStreamRiskCutoverStatusKeepsCancellationSeparateFromPending(t *testing.
 	mock.ExpectQuery(`SELECT c.epoch,s.source_owner`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"epoch", "owner", "cutoff", "manifest", "batches", "records", "bytes"}).
 		AddRow("handshake-fresh", "handshake-sidecar", cutoff, "sha2", int64(7), int64(44764), int64(52332842)).
 		AddRow("packet-fresh", "packet-sidecar", cutoff, "sha", int64(68), int64(742819), int64(567763339)))
+	routerCutoff := cutoff.Add(2 * time.Hour)
+	mock.ExpectQuery(`SELECT cancel_id,indexed_after,canceled_index_rows,prior_processed_events,created_at FROM stream_router_fresh_cutovers`).WithArgs("sensor-a").
+		WillReturnRows(sqlmock.NewRows([]string{"cancel_id", "indexed_after", "canceled_index_rows", "prior_processed_events", "created_at"}).
+			AddRow("router-audit-2", routerCutoff, int64(500), int64(58050), audited))
+	mock.ExpectQuery(`SELECT coalesce\(sum\(canceled_index_rows\),0\) FROM stream_router_fresh_cutovers`).WithArgs("sensor-a", routerCutoff).
+		WillReturnRows(sqlmock.NewRows([]string{"sum"}).AddRow(int64(42)))
 	status, active, err := (&PostgresStore{db: db}).GetStreamRiskCutoverStatus(context.Background(), "sensor-a")
 	if err != nil || !active || status.CanceledSubjects != 4563 || status.PriorCanceledSubjects != 40504 || status.PendingSubjects != 12 ||
 		status.PendingOlderThan5Sec != 3 || status.OldestPendingAt == nil || !status.OldestPendingAt.Equal(oldest) ||
-		status.SourceGap == nil || status.SourceGap.CanceledRecords != 742819 || len(status.SourceGaps) != 2 || status.SourceGaps[0].CanceledRecords != 44764 {
+		status.SourceGap == nil || status.SourceGap.CanceledRecords != 742819 || len(status.SourceGaps) != 2 || status.SourceGaps[0].CanceledRecords != 44764 ||
+		status.RouterGap == nil || status.RouterGap.CanceledIndexRows != 500 || status.RouterGap.PriorProcessedEvents != 58050 ||
+		status.PriorRouterCanceledIndexRows != 42 {
 		t.Fatalf("cutover audit or pending work was lost: %+v active=%v err=%v", status, active, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

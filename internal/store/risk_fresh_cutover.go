@@ -26,17 +26,19 @@ func (s *DBStore) StreamRiskFreshCutoff(ctx context.Context, sensor string) (tim
 // current pending work. Pending counts are operational state, not completed
 // events or evidence that the 5-second event SLA has passed.
 type StreamRiskCutoverStatus struct {
-	SensorID              string                   `json:"sensor_id"`
-	CancelID              string                   `json:"cancel_id"`
-	AcceptedAfter         time.Time                `json:"accepted_after"`
-	CanceledSubjects      int64                    `json:"canceled_subjects"`
-	PriorCanceledSubjects int64                    `json:"prior_canceled_subjects"`
-	AuditedAt             time.Time                `json:"audited_at"`
-	PendingSubjects       int64                    `json:"pending_subjects"`
-	PendingOlderThan5Sec  int64                    `json:"pending_older_than_5s"`
-	OldestPendingAt       *time.Time               `json:"oldest_pending_at,omitempty"`
-	SourceGap             *StreamSourceHistoryGap  `json:"source_gap,omitempty"`
-	SourceGaps            []StreamSourceHistoryGap `json:"source_gaps,omitempty"`
+	SensorID                     string                   `json:"sensor_id"`
+	CancelID                     string                   `json:"cancel_id"`
+	AcceptedAfter                time.Time                `json:"accepted_after"`
+	CanceledSubjects             int64                    `json:"canceled_subjects"`
+	PriorCanceledSubjects        int64                    `json:"prior_canceled_subjects"`
+	AuditedAt                    time.Time                `json:"audited_at"`
+	PendingSubjects              int64                    `json:"pending_subjects"`
+	PendingOlderThan5Sec         int64                    `json:"pending_older_than_5s"`
+	OldestPendingAt              *time.Time               `json:"oldest_pending_at,omitempty"`
+	SourceGap                    *StreamSourceHistoryGap  `json:"source_gap,omitempty"`
+	SourceGaps                   []StreamSourceHistoryGap `json:"source_gaps,omitempty"`
+	RouterGap                    *StreamRouterHistoryGap  `json:"router_gap,omitempty"`
+	PriorRouterCanceledIndexRows int64                    `json:"prior_router_canceled_index_rows"`
 }
 
 type StreamSourceHistoryGap struct {
@@ -47,6 +49,14 @@ type StreamSourceHistoryGap struct {
 	AuditBatches    int64     `json:"audit_batches"`
 	ManifestSHA256  string    `json:"manifest_sha256"`
 	CutoffAt        time.Time `json:"cutoff_at"`
+}
+
+type StreamRouterHistoryGap struct {
+	CancelID             string    `json:"cancel_id"`
+	IndexedAfter         time.Time `json:"indexed_after"`
+	CanceledIndexRows    int64     `json:"canceled_index_rows"`
+	PriorProcessedEvents int64     `json:"prior_processed_events"`
+	AuditedAt            time.Time `json:"audited_at"`
 }
 
 func (s *DBStore) GetStreamRiskCutoverStatus(ctx context.Context, sensor string) (StreamRiskCutoverStatus, bool, error) {
@@ -115,6 +125,23 @@ func (s *PostgresStore) GetStreamRiskCutoverStatus(ctx context.Context, sensor s
 		if status.SourceGaps[i].SourceOwner == "packet-sidecar" {
 			status.SourceGap = &status.SourceGaps[i]
 			break
+		}
+	}
+	var routerGap StreamRouterHistoryGap
+	err = s.db.QueryRowContext(ctx, `SELECT cancel_id,indexed_after,canceled_index_rows,prior_processed_events,created_at FROM stream_router_fresh_cutovers
+ WHERE sensor_id=$1 ORDER BY indexed_after DESC LIMIT 1`, sensor).
+		Scan(&routerGap.CancelID, &routerGap.IndexedAfter, &routerGap.CanceledIndexRows, &routerGap.PriorProcessedEvents, &routerGap.AuditedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return StreamRiskCutoverStatus{}, false, err
+	}
+	if err == nil {
+		routerGap.IndexedAfter = routerGap.IndexedAfter.UTC()
+		routerGap.AuditedAt = routerGap.AuditedAt.UTC()
+		status.RouterGap = &routerGap
+		if err := s.db.QueryRowContext(ctx, `SELECT coalesce(sum(canceled_index_rows),0) FROM stream_router_fresh_cutovers
+ WHERE sensor_id=$1 AND indexed_after<$2`, sensor, routerGap.IndexedAfter).
+			Scan(&status.PriorRouterCanceledIndexRows); err != nil {
+			return StreamRiskCutoverStatus{}, false, err
 		}
 	}
 	status.AcceptedAfter = status.AcceptedAfter.UTC()

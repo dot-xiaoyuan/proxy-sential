@@ -302,6 +302,8 @@ export const handlers = [
       audited_at: '2026-10-26T06:40:04Z',
       pending_subjects: 18,
       pending_older_than_5s: 3,
+      router_gap: { cancel_id: 'mock-router-audit', indexed_after: '2026-10-26T06:42:00Z', canceled_index_rows: 5060, prior_processed_events: 58050, audited_at: '2026-10-26T06:42:02Z' },
+      prior_router_canceled_index_rows: 0,
       source_gap: { epoch: 'packet-fresh', source_owner: 'packet-sidecar', canceled_records: 742819, canceled_bytes: 567763339, audit_batches: 68, manifest_sha256: 'a'.repeat(64), cutoff_at: '2026-10-26T06:38:56Z' },
       source_gaps: [
         { epoch: 'handshake-fresh', source_owner: 'handshake-sidecar', canceled_records: 44764, canceled_bytes: 52332842, audit_batches: 7, manifest_sha256: 'b'.repeat(64), cutoff_at: '2026-10-26T06:38:56Z' },

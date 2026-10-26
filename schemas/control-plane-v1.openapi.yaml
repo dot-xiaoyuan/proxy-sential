@@ -5864,7 +5864,7 @@ components:
           $ref: "#/components/schemas/RiskLevel"
     StreamRiskCutoverStatus:
       type: object
-      required: [sensor_id, cancel_id, accepted_after, canceled_subjects, prior_canceled_subjects, audited_at, pending_subjects, pending_older_than_5s]
+      required: [sensor_id, cancel_id, accepted_after, canceled_subjects, prior_canceled_subjects, audited_at, pending_subjects, pending_older_than_5s, prior_router_canceled_index_rows]
       properties:
         sensor_id: { type: string }
         cancel_id: { type: string }
@@ -5881,6 +5881,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StreamSourceHistoryGap"
+        router_gap:
+          $ref: "#/components/schemas/StreamRouterHistoryGap"
+        prior_router_canceled_index_rows: { type: integer, format: int64 }
+    StreamRouterHistoryGap:
+      type: object
+      required: [cancel_id, indexed_after, canceled_index_rows, prior_processed_events, audited_at]
+      properties:
+        cancel_id: { type: string }
+        indexed_after: { type: string, format: date-time }
+        canceled_index_rows: { type: integer, format: int64 }
+        prior_processed_events: { type: integer, format: int64 }
+        audited_at: { type: string, format: date-time }
     StreamSourceHistoryGap:
       type: object
       required: [epoch, source_owner, canceled_records, canceled_bytes, audit_batches, manifest_sha256, cutoff_at]

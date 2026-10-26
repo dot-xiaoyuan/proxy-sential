@@ -28,9 +28,11 @@ func (s *DBStore) StartStreamRouterFreshCutover(ctx context.Context, sensor, can
 		return 0, err
 	}
 	var prior sql.NullTime
+	var cursor sql.NullTime
+	var cursorKey string
 	var leased bool
 	var processed int64
-	err = tx.QueryRowContext(ctx, `SELECT fresh_cutoff_at,lease_until>now(),processed_events FROM stream_router_recognition_state WHERE sensor_id=$1 FOR UPDATE`, sensor).Scan(&prior, &leased, &processed)
+	err = tx.QueryRowContext(ctx, `SELECT fresh_cutoff_at,lease_until>now(),processed_events,cursor_indexed_at,cursor_event_key FROM stream_router_recognition_state WHERE sensor_id=$1 FOR UPDATE`, sensor).Scan(&prior, &leased, &processed, &cursor, &cursorKey)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
@@ -41,6 +43,12 @@ func (s *DBStore) StartStreamRouterFreshCutover(ctx context.Context, sensor, can
 	lower := ""
 	if prior.Valid {
 		lower = "indexed_at>=parseDateTime64BestEffort(" + chQuote(prior.Time.UTC().Format(time.RFC3339Nano)) + ",6) AND "
+	}
+	// Only positions after the durable cursor are canceled. Earlier indexed
+	// rows were already processed and must not inflate the immutable gap.
+	if cursor.Valid {
+		point := "parseDateTime64BestEffort(" + chQuote(cursor.Time.UTC().Format(time.RFC3339Nano)) + ",6)"
+		lower += "(indexed_at>" + point + " OR (indexed_at=" + point + " AND event_key>" + chQuote(cursorKey) + ")) AND "
 	}
 	query := fmt.Sprintf(`SELECT countIf(%sindexed_at<%s),countIf(indexed_at>=%s) FROM stream_router_signal_index
 	 WHERE sensor_id=%s SETTINGS max_threads=1,max_execution_time=10 FORMAT TSV`, lower, stamp, stamp, chQuote(sensor))

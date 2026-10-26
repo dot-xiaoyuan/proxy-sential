@@ -741,14 +741,31 @@ func (s *PostgresStore) writeAdvisoryState(ctx context.Context, statement string
 
 func (s *DBStore) finishSharedDeviceProfileJob(ctx context.Context, job sharedDeviceProfileJob, runErr error) error {
 	if runErr == nil {
-		result, err := s.pg.db.ExecContext(ctx, `UPDATE shared_device_profile_jobs SET processed_generation=GREATEST(processed_generation,$2),attempts=0,
+		// A no-change acknowledgement may be replayed after a crash. A lost
+		// asynchronous commit leaves the durable job pending; changed profiles
+		// publish their result and acknowledgement in one synchronous transaction.
+		tx, err := s.pg.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE shared_device_profile_jobs SET processed_generation=GREATEST(processed_generation,$2),attempts=0,
  lease_owner='',lease_until='-infinity',last_error='',updated_at=now() WHERE subject_key=$1 AND lease_owner=$3`, job.SubjectKey, job.DirtyGeneration, job.LeaseOwner)
 		if err != nil {
 			return err
 		}
-		changed, _ := result.RowsAffected()
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
 		if changed != 1 {
 			return errRecognitionLeaseLost
+		}
+		if err = tx.Commit(); err != nil {
+			return err
 		}
 		s.pg.profileBeacon.success()
 		return nil
