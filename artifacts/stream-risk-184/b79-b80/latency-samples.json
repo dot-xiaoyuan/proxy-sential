@@ -1,0 +1,57 @@
+{
+  "method": "184 real immutable packet segments; 50 exact event keys per sample; ClickHouse authoritative body accepted_at/first_archived_at and bounded search indexed_at; aggregate only, no event content",
+  "boundary": "These database timestamps and later authenticated body API reads do not prove every event met the five-second API visibility requirement.",
+  "samples": [
+    {
+      "release": "2026.10.26-stream-b78b-key-query",
+      "accepted_at_utc": "2026-10-26T08:18:53.319516273Z",
+      "protocol": "ssdp",
+      "events": 50,
+      "body_rows": 50,
+      "index_rows": 50,
+      "accepted_to_body_seconds": 7.468407,
+      "body_to_index_seconds": 2.653638,
+      "accepted_to_index_seconds": 10.122045,
+      "over_five_seconds": 50
+    },
+    {
+      "release": "2026.10.26-stream-b78b-key-query",
+      "accepted_at_utc": "2026-10-26T08:22:57.816746457Z",
+      "protocol": "ssdp",
+      "events": 50,
+      "body_rows": 50,
+      "index_rows": 50,
+      "accepted_to_body_seconds": 5.817818,
+      "body_to_index_seconds": 1.541502,
+      "accepted_to_index_seconds": 7.35932,
+      "over_five_seconds": 50,
+      "authenticated_body_api_later": {"http_200": 50, "requests": 50, "max_response_milliseconds": 107}
+    },
+    {
+      "release": "2026.10.26-stream-b79-journal-sync",
+      "accepted_at_utc": "2026-10-26T08:31:32.338147029Z",
+      "protocol": "ttl",
+      "events": 50,
+      "body_rows": 50,
+      "index_rows": 50,
+      "accepted_to_body_seconds": 6.146736,
+      "body_to_index_seconds": 1.562728,
+      "accepted_to_index_seconds": 7.709464,
+      "over_five_seconds": 50,
+      "context": "application restart backlog"
+    },
+    {
+      "release": "2026.10.26-stream-b79-journal-sync",
+      "accepted_at_utc": "2026-10-26T08:33:21.789704622Z",
+      "protocol": "ssdp",
+      "events": 50,
+      "body_rows": 50,
+      "index_rows": 50,
+      "accepted_to_body_seconds": 3.310536,
+      "body_to_index_seconds": 1.052987,
+      "accepted_to_index_seconds": 4.363523,
+      "over_five_seconds": 0,
+      "context": "packet source unread bytes were zero near this sample"
+    }
+  ]
+}
