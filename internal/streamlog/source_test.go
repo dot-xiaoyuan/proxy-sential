@@ -308,6 +308,32 @@ func TestDurableSourceBodyLetsSinkStartBeforeCursorWithoutExtraStateWrite(t *tes
 	}
 }
 
+func TestPendingLanesForSourceReadyPacketBeforeCursorCommit(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testReadyDeviceSegment()
+	segment.NeedsProjection = false
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.AppendSourceReady(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(j.path(id, ".state")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("source-ready packet unexpectedly wrote a state file: %v", err)
+	}
+	lanes, err := j.PendingLanes(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lanes) != 2 || lanes[0] != Archive || lanes[1] != Search {
+		t.Fatalf("packet source-ready segment queued for wrong lanes: %v", lanes)
+	}
+}
+
 func TestSourceBackedDHCPBodyWaitsForCursorBeforeRelease(t *testing.T) {
 	dir := t.TempDir()
 	j, err := Open(dir)
