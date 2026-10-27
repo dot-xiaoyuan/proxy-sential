@@ -292,7 +292,7 @@ func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) err
 }
 
 func (s *DBStore) reconcileDomainWindow(ctx context.Context) error {
-	if os.Getenv("PROXY_SENTINEL_APPLICATION_HISTORY_DISABLED") == "true" {
+	if applicationHistoryDisabled() {
 		return nil
 	}
 	library := fingerprint.Default()

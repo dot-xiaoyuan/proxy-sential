@@ -91,7 +91,7 @@ func (s *DBStore) ApplicationReadModelHealth(ctx context.Context) error {
 }
 
 func applicationLegacyBackfillRequired() bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_APPLICATION_HISTORY_DISABLED")), "true") {
+	if applicationHistoryDisabled() {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_RUN_LEGACY_BACKFILL")), "true")

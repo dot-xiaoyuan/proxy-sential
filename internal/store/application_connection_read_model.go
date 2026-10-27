@@ -46,6 +46,15 @@ func (s *DBStore) updateApplicationConnectionBatch(ctx context.Context, limit in
 	if err = json.Unmarshal(raw, &cursor); err != nil {
 		return false, err
 	}
+	if applicationHistoryDisabled() && cursor.WrittenAt == "" {
+		cursor, raw, err = freshApplicationConnectionCursor(time.Now().UTC())
+		if err != nil {
+			return false, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE application_connection_read_model_v2_cursor SET cursor_document=$1,updated_at=now() WHERE id=1 AND cursor_document='{}'::jsonb`, raw); err != nil {
+			return false, err
+		}
+	}
 	where := "1"
 	if cursor.WrittenAt != "" {
 		where = "(l.written_at,l.sensor_id,l.campus_id,l.connection_id)>(parseDateTime64BestEffort(" + chQuote(cursor.WrittenAt) + ",9)," + chQuote(cursor.SensorID) + "," + chQuote(cursor.CampusID) + "," + chQuote(cursor.ConnectionID) + ")"

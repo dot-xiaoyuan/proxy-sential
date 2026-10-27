@@ -33,6 +33,15 @@ func (s *DBStore) updateApplicationObservationReadModel(ctx context.Context) (bo
 	if err = json.Unmarshal(raw, &cursor); err != nil {
 		return false, err
 	}
+	if applicationHistoryDisabled() && cursor.WrittenAt == "" {
+		cursor, raw, err = freshApplicationObservationCursor(time.Now().UTC())
+		if err != nil {
+			return false, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE application_observation_read_model_cursor_v2 SET cursor_document=$1,updated_at=now() WHERE id=1 AND cursor_document='{}'::jsonb`, raw); err != nil {
+			return false, err
+		}
+	}
 	where := "1"
 	if cursor.WrittenAt != "" {
 		where = "(application_observation_dirty_log.written_at,application_observation_dirty_log.window_start,sensor_id,campus_id)>(parseDateTime64BestEffort(" + chQuote(cursor.WrittenAt) + ",9),parseDateTimeBestEffort(" + chQuote(cursor.WindowStart) + ")," + chQuote(cursor.SensorID) + "," + chQuote(cursor.CampusID) + ")"
