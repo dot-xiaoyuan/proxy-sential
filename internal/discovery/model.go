@@ -212,15 +212,6 @@ func FromEvent(e normalized.Event) (Observation, error) {
 		s := str(e.Payload, "service_type")
 		if capabilities, ok := ServiceCapabilities(s); ok {
 			o.Capabilities = capabilities
-		} else {
-			switch s {
-			case "_ipp._tcp", "_ipps._tcp", "_printer._tcp":
-				o.Capabilities = []string{"printing"}
-			case "_uscan._tcp", "_uscans._tcp", "_scanner._tcp":
-				o.Capabilities = []string{"scanning"}
-			case "_airplay._tcp", "_raop._tcp", "_googlecast._tcp":
-				o.Capabilities = []string{"casting"}
-			}
 		}
 		o.Explanation = "服务能力公告，不确认整机类型"
 	case "ssdp":

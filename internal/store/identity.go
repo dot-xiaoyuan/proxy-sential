@@ -633,7 +633,7 @@ func endpointRecognitionSignals(mac string, attributes map[string]any) fingerpri
 		DHCPRequestedOptions: stringFromMap(attributes, "requested_options"),
 		Hostnames:            []string{stringFromMap(attributes, "hostname"), stringFromMap(attributes, "client_fqdn")},
 		Software:             []string{stringFromMap(attributes, "software_name")},
-		Hints:                []string{stringFromMap(attributes, "device_hint"), stringFromMap(attributes, "model"), stringFromMap(attributes, "os"), stringFromMap(attributes, "os_family"), stringFromMap(attributes, "server"), stringFromMap(attributes, "certificate_subject")},
+		Hints:                []string{stringFromMap(attributes, "device_hint"), stringFromMap(attributes, "model"), stringFromMap(attributes, "os"), stringFromMap(attributes, "os_family")},
 	}
 }
 
