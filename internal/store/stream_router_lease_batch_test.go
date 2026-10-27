@@ -66,3 +66,28 @@ func TestRouterWeakOnlyBatchDoesNotWriteUnchangedProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStreamRouterPurePacketTTLBatchNeedsNoLeaseRead(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	event := normalized.Event{
+		SchemaVersion: "v1", EventID: "ttl-only", Timestamp: "2026-10-27T02:00:00Z",
+		Type: "device", Source: "packet-sidecar", SourceEventType: "ttl",
+		Observer: map[string]any{"sensor_id": "sensor-a"},
+		Subject:  map[string]any{"ip": "192.0.2.1"},
+		Payload:  map[string]any{"origin": "ttl", "neighbor_mac": "02:00:00:00:00:01", "neighbor_role": "unverified", "ttl": 64},
+	}
+	if err := (&DBStore{pg: &PostgresStore{db: db}}).analyzeAndWriteStreamRouterEvents(context.Background(), []normalized.Event{event}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+	event.Payload["hostname"] = "router.example"
+	if isPurePacketRouterTTL(event) {
+		t.Fatal("TTL event with router fingerprint must be analyzed")
+	}
+}

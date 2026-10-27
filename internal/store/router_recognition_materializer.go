@@ -273,6 +273,20 @@ func (s *DBStore) analyzeAndWriteRouterEvents(ctx context.Context, events []norm
 }
 
 func (s *DBStore) analyzeAndWriteStreamRouterEvents(ctx context.Context, events []normalized.Event) error {
+	// The packet sidecar emits TTL-only observations without a verified MAC or
+	// router fingerprint. A batch made only of those observations cannot create
+	// a router fact, regardless of which DHCP lease owns each address. The
+	// indexed events are still read and the caller advances its durable cursor.
+	pureTTL := len(events) > 0
+	for _, event := range events {
+		if !isPurePacketRouterTTL(event) {
+			pureTTL = false
+			break
+		}
+	}
+	if pureTTL {
+		return nil
+	}
 	started := time.Now()
 	associations, err := s.pg.resolveRouterLeaseBatch(ctx, events)
 	leaseDuration := time.Since(started)
@@ -289,6 +303,28 @@ func (s *DBStore) analyzeAndWriteStreamRouterEvents(ctx context.Context, events 
 			len(events), leaseDuration.Milliseconds(), time.Since(writeStarted).Milliseconds(), err)
 	}
 	return err
+}
+
+func isPurePacketRouterTTL(event normalized.Event) bool {
+	if event.Source != "packet-sidecar" || event.SourceEventType != "ttl" || event.Type != "device" ||
+		stringFromMap(event.Subject, "endpoint_id") != "" || stringFromMap(event.Subject, "mac") != "" {
+		return false
+	}
+	for key := range event.Payload {
+		switch key {
+		case "origin", "neighbor_mac", "neighbor_role", "ttl", "ip_version", "observed_count", "access_domain":
+		default:
+			return false
+		}
+	}
+	for key := range event.Flow {
+		switch key {
+		case "src_ip", "direction", "ip_version":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *DBStore) analyzeAndWriteRouterEventsWithResolver(ctx context.Context, events []normalized.Event, resolve func(normalized.Event) evidence.RouterAssociation) error {
