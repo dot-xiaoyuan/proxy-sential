@@ -419,13 +419,16 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	if len(profile.DiscoveryRecognitionHints) > 0 {
 		enrichedEvidence := append(append([]fingerprint.EvidenceSignal{}, baseEvidence...), passiveRecognitionSignals(profile.DiscoveryRecognitionHints)...)
 		enriched := fingerprint.Default().IdentifyEvidence(endpoint.PrimaryMAC, enrichedEvidence, now)
-		if passiveRecognitionChanged(recognition, enriched) {
-			recognition = enriched
-			recognition.Source = "passive_discovery"
+		changed := passiveRecognitionChanged(recognition, enriched)
+		if changed {
 			for _, hint := range profile.DiscoveryRecognitionHints {
-				recognition.Evidence = append(recognition.Evidence, passiveRecognitionEvidence(hint))
+				enriched.Evidence = append(enriched.Evidence, passiveRecognitionEvidence(hint))
 			}
+			enriched.Source = "passive_discovery"
+		} else {
+			enriched.Source = recognition.Source
 		}
+		recognition = enriched
 	}
 	item.Vendor = firstNonEmpty(stringFromMap(endpoint.Attributes, "vendor"), stringFromMap(endpoint.Attributes, "oui_vendor"), recognition.Vendor)
 	item.Brand = firstNonEmpty(stringFromMap(endpoint.Attributes, "brand"), recognition.Brand)

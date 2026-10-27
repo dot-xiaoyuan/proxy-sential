@@ -34,6 +34,30 @@ func TestPassiveDiscoveryHintEnrichesEndpointRecognition(t *testing.T) {
 	}
 }
 
+func TestSameConclusionStillKeepsDiscoveryEvidenceReference(t *testing.T) {
+	profile := EndpointIdentityProfile{
+		EndpointID: "mac:02:00:00:00:00:19",
+		Endpoint: EndpointEntity{
+			EndpointID: "mac:02:00:00:00:00:19", PrimaryMAC: "02:00:00:00:00:19",
+			EntityRole: "endpoint", Attributes: map[string]any{"hostname": "Mac mini"},
+		},
+		DiscoveryRecognitionHints: []DiscoveryRecognitionHint{{
+			Value: "Mac mini", Field: "hostname", Origin: "dns_sd",
+			ObservationID: "current-dns-sd-event", ObservedAt: time.Now().UTC(),
+		}},
+	}
+	item := BuildEndpointDeviceInventory(profile)
+	if item.Model != "Mac mini" {
+		t.Fatalf("expected model recognition: %+v", item)
+	}
+	if len(item.EvidenceRefs) == 0 || item.EvidenceRefs[0].EventID != "current-dns-sd-event" {
+		t.Fatalf("matching discovery observation lost its event reference: %+v", item.EvidenceRefs)
+	}
+	if item.RecognitionDiagnostics.AcceptedSignals < 2 {
+		t.Fatalf("matching discovery observation absent from diagnostics: %+v", item.RecognitionDiagnostics)
+	}
+}
+
 func TestPassiveDiscoveryHintKeepsExplicitConflictVisible(t *testing.T) {
 	profile := EndpointIdentityProfile{
 		EndpointID: "mac:00:11:22:33:44:55",
