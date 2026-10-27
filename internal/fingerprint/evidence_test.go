@@ -55,3 +55,19 @@ func TestClientCatalogMatchCannotEstablishHardware(t *testing.T) {
 		t.Fatalf("client signature established hardware: %+v", got)
 	}
 }
+
+func TestHighConfidenceRuleConflictIsDimensionScoped(t *testing.T) {
+	rules := []byte(`[
+ {"pattern":"AX55","input":"ssdp_model","brand":"TP-Link","model":"Archer AX55","device_type":"router","confidence":0.94},
+ {"pattern":"switch","input":"snmp_model","brand":"TP-Link","model":"Switch 8","device_type":"switch","confidence":0.9}
+]`)
+	library := MustLoad("conflict-test", []byte("Assignment,Organization Name\n000000,Test\n"), rules)
+	now := time.Now().UTC()
+	got := library.IdentifyEvidence("02:00:00:00:00:01", []EvidenceSignal{
+		{Protocol: "ssdp", Field: "ssdp_model", Value: "AX55", Direction: "device", Association: "mac", ObservedAt: now, ValidUntil: now.Add(time.Minute)},
+		{Protocol: "snmp", Field: "snmp_model", Value: "switch", Direction: "device", Association: "mac", ObservedAt: now, ValidUntil: now.Add(time.Minute)},
+	}, now)
+	if got.Brand != "TP-Link" || got.DeviceType != "router" || !got.Conflict || len(got.ConflictDimensions) != 2 || got.ConflictDimensions[0] != "model" || got.ConflictDimensions[1] != "device_type" {
+		t.Fatalf("conflict crossed dimensions or overwrote winner: %+v", got)
+	}
+}

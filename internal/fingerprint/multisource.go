@@ -99,7 +99,7 @@ type Catalog struct {
 }
 
 // Fields are directional standard-event fields, never collector-specific data.
-var supportedCatalogFields = map[string]bool{"user_agent": true, "dhcp_vendor_class": true, "dhcp_requested_options": true, "hostname": true, "http_server": true, "http_title": true, "tls_subject": true, "tls_issuer": true, "tls_san": true, "mdns_model": true, "snmp_sysdescr": true, "snmp_sysoid": true, "snmp_model": true, "ssdp_model": true, "ssdp_manufacturer": true, "dns_sd_model": true, "ssh_banner": true, "sip_server": true, "sip_user_agent": true, "http_www_authenticate": true, "http_body": true, "favicon_md5": true, "tcp_signature": true}
+var supportedCatalogFields = map[string]bool{"user_agent": true, "dhcp_vendor_class": true, "dhcp_requested_options": true, "hostname": true, "http_server": true, "http_title": true, "tls_subject": true, "tls_issuer": true, "tls_san": true, "mdns_model": true, "snmp_sysdescr": true, "snmp_sysoid": true, "snmp_model": true, "ssdp_model": true, "ssdp_manufacturer": true, "dns_sd_model": true, "ssh_banner": true, "sip_server": true, "sip_user_agent": true, "http_www_authenticate": true, "http_body": true, "favicon_md5": true, "tcp_signature": true, "printer_make_and_model": true, "onvif_model": true, "onvif_manufacturer": true, "wsd_model": true, "wsd_manufacturer": true, "mqtt_model": true, "coap_device_type": true, "bacnet_model": true, "lldp_system_name": true, "lldp_system_description": true, "cdp_device_id": true, "cdp_platform": true, "service_type": true}
 
 // PrepareCatalog classifies every rule; it is used only by the offline converter.
 // Runtime loading rejects unsupported enabled rules instead of silently dropping them.
@@ -615,6 +615,31 @@ func SourceDirectory(status Status) []FingerprintSource {
 	add("project", "项目自有规则", "internal://proxy-sentinel", "internal-rule", "legacy_rules", status.RuleCount+status.RouterRuleCount)
 	out[len(out)-1].Reason = "包含旧包合并存储的 UA 规则及自有路由器规则；不计入外部转换规则数"
 	add("fingerbank-historical", "Fingerbank 历史公开快照", "https://github.com/karottc/fingerbank", "ODbL-1.0/DbCL-1.0", "legacy_rules", status.DHCPRuleCount)
+	for _, table := range []struct{ key, name, source string }{
+		{"snmp_enterprise", "SNMP 企业号目录", "SNMP enterprise numbers"},
+		{"vendor_prior", "厂商设备类型先验", "Device type priors"},
+		{"model_catalog", "已核验型号目录", "Verified model catalog"},
+		{"service_type", "DNS-SD 服务类型目录", "Service type catalog"},
+	} {
+		if status.SignatureTableCounts == nil {
+			break
+		}
+		for _, provenance := range status.Sources {
+			if provenance.Name != table.source {
+				continue
+			}
+			count := status.SignatureTableCounts[table.key]
+			models := 0
+			if table.key == "model_catalog" {
+				models = count
+			}
+			out = append(out, FingerprintSource{ID: table.key, Name: table.name, URL: provenance.URL, License: provenance.License,
+				Version: provenance.Version, Status: "loaded", Kind: "signature_table", RawCount: count,
+				ModelCount: models, Dispositions: map[string]int{"dictionary": count}, Protocols: []string{}, Categories: []string{},
+				Reason: "V7 包清单校验的精确查表数据"})
+			break
+		}
+	}
 	for _, entry := range []struct{ id, name, url, license string }{{"nextdns", "NextDNS", "https://github.com/nextdns/native-tracking-domains", "MIT"}, {"hagezi", "HaGeZi", "https://github.com/hagezi/dns-blocklists", "GPL-3.0"}} {
 		count := 0
 		for _, d := range status.DomainSources {

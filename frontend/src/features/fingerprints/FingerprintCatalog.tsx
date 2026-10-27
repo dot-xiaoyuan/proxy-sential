@@ -106,10 +106,14 @@ export function FingerprintCatalog({canViewRules=false}:{canViewRules?:boolean})
   const list = sources.data?.items ?? [];
   const sum = (key: "executable_count" | "model_count" | "raw_count") =>
     list.filter((x) => !x.kind).reduce((n, x) => n + x[key], 0);
+  const tableCount = (id: string) => list.find((item) => item.id === id && item.kind === 'signature_table')?.raw_count ?? 0;
   const overviewStats = [
     { label: "实际加载来源", value: list.filter((s) => s.status === "loaded").length },
     { label: "可执行规则", value: sum("executable_count") },
-    { label: "型号字典条目", value: sum("model_count") },
+    { label: "型号字典条目", value: sum("model_count") + tableCount('model_catalog') },
+    { label: "SNMP 企业号", value: tableCount('snmp_enterprise') },
+    { label: "厂商类型先验", value: tableCount('vendor_prior') },
+    { label: "DNS-SD 服务类型", value: tableCount('service_type') },
     { label: "已纳入转换条目", value: sum("raw_count") },
     { label: "OUI 条目", value: list.filter((s) => s.kind === "oui").reduce((n, s) => n + s.raw_count, 0) },
     { label: "近 24 小时命中终端", value: coverage.data?.matched_endpoints },

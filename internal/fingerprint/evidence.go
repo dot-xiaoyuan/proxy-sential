@@ -47,6 +47,7 @@ var physicalEvidenceFields = map[string]string{
 	"cdp_device_id": "device", "cdp_platform": "device", "service_type": "device",
 	"printer_make_and_model": "device", "onvif_model": "device", "onvif_manufacturer": "device",
 	"mqtt_model": "device", "coap_device_type": "device", "bacnet_model": "device",
+	"wsd_model": "device", "wsd_manufacturer": "device",
 	"http_server": "server", "http_title": "server", "http_www_authenticate": "server", "http_body": "server", "favicon_md5": "server",
 	"tls_subject": "server", "tls_issuer": "server", "tls_san": "server", "ssh_banner": "server", "sip_server": "server",
 }
@@ -176,6 +177,8 @@ func evidenceProtocolAllowsField(protocol, field string) bool {
 		return field == "printer_make_and_model" || field == "service_type"
 	case "onvif":
 		return strings.HasPrefix(field, "onvif_") || field == "service_type"
+	case "ws_discovery":
+		return strings.HasPrefix(field, "wsd_") || field == "service_type"
 	case "mqtt":
 		return field == "mqtt_model" || field == "service_type"
 	case "coap":

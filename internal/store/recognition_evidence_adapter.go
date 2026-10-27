@@ -91,6 +91,8 @@ func recognitionProtocolDirection(field string) (string, string) {
 		return "ipp", "device"
 	case strings.HasPrefix(field, "onvif_"):
 		return "onvif", "device"
+	case strings.HasPrefix(field, "wsd_"):
+		return "ws_discovery", "device"
 	case strings.HasPrefix(field, "mqtt_"):
 		return "mqtt", "device"
 	case strings.HasPrefix(field, "coap_"):

@@ -40,6 +40,9 @@ func streamRecognitionFields(o Observation) map[string]string {
 	case "onvif":
 		add("onvif_model", o.ModelName)
 		add("onvif_manufacturer", o.Manufacturer)
+	case "ws_discovery":
+		add("wsd_model", o.ModelName)
+		add("wsd_manufacturer", o.Manufacturer)
 	case "mqtt":
 		add("mqtt_model", o.ModelName)
 	case "coap":
@@ -59,8 +62,14 @@ func streamRecognitionFields(o Observation) map[string]string {
 		add("tls_subject", firstText(str(p, "certificate_subject"), str(p, "subject")))
 		add("tls_issuer", firstText(str(p, "certificate_issuer"), str(p, "issuer")))
 		add("tls_san", firstText(str(p, "certificate_san"), str(p, "san")))
-	case "ws_discovery":
-		// WS-Discovery currently has no reviewed product field mapping.
+	case "ssh":
+		if str(p, "attribution_side") == "server" {
+			add("ssh_banner", str(p, "banner"))
+		}
+	case "sip":
+		if str(p, "attribution_side") == "server" {
+			add("sip_server", str(p, "server"))
+		}
 	case "rtsp":
 		// RTSP banner recognition requires a reviewed server-side parser.
 	}

@@ -480,6 +480,18 @@ func TestV7BundleCarriesVerifiedSignatureTablesAndReadsV6(t *testing.T) {
 	if err != nil || status.Version != "layered-v7" {
 		t.Fatalf("v7 import failed: status=%+v err=%v", status, err)
 	}
+	if status.SignatureTableCounts["model_catalog"] == 0 || status.SignatureTableCounts["snmp_enterprise"] == 0 {
+		t.Fatalf("v7 tables absent from active status: %+v", status.SignatureTableCounts)
+	}
+	seenModel := false
+	for _, source := range SourceDirectory(status) {
+		if source.ID == "model_catalog" && source.RawCount == status.SignatureTableCounts["model_catalog"] {
+			seenModel = true
+		}
+	}
+	if !seenModel {
+		t.Fatal("verified model table absent from source directory")
+	}
 	reloaded := NewManager(manager.dir)
 	if reloaded.Status().Version != "layered-v7" {
 		t.Fatalf("v7 restart lost active pack: %+v", reloaded.Status())

@@ -5430,6 +5430,9 @@ export interface components {
             rule_count?: number;
             oui_count?: number;
             dhcp_rule_count?: number;
+            signature_table_counts?: {
+                [key: string]: number;
+            };
             sources?: components["schemas"]["DeviceFingerprintBundleSource"][];
             licenses?: string[];
             backfill_status?: string;

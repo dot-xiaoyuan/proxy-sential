@@ -90,6 +90,15 @@ func activateSignatureTables(tables bundleSignatureTables) {
 	SetServiceTypeCatalog(tables.service)
 }
 
+func signatureTableCounts(tables bundleSignatureTables) map[string]int {
+	return map[string]int{
+		"snmp_enterprise": len(tables.snmp.Entries),
+		"vendor_prior":    len(tables.prior.Entries),
+		"model_catalog":   len(tables.model.Entries),
+		"service_type":    len(tables.service.Entries),
+	}
+}
+
 // BuildV7Bundle upgrades a verified v6 pack without changing its existing
 // public source payloads. Signature tables become manifest-verified data.
 func BuildV7Bundle(baseData []byte, output, version string, now time.Time) (BundleManifest, error) {

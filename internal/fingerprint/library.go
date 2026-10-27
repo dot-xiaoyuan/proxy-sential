@@ -544,6 +544,7 @@ func ruleMatchConflictDimensions(result Result, match ruleMatch) []string {
 	conflicts := []string{}
 	for _, item := range []struct{ field, current, candidate string }{
 		{"brand", result.Brand, values.brand},
+		{"model", result.Model, values.model},
 		{"device_type", result.DeviceType, values.deviceType},
 		{"os_family", result.OSFamily, values.osFamily},
 	} {

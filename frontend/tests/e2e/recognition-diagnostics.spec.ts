@@ -18,6 +18,15 @@ test('recognition diagnostics remain readable at required viewports', async ({ p
     }))
     expect(probe).toEqual({ documentOverflow: false, longFieldOverflow: false, compressedButtons: false })
     await page.screenshot({ path: testInfo.outputPath(`recognition-${viewport.width}x${viewport.height}.png`), fullPage: true })
+
+    await page.goto('/settings/rules?tab=fingerprints')
+    await expect(page.getByText('实际加载来源')).toBeVisible()
+    const catalogProbe = await page.evaluate(() => ({
+      documentOverflow: document.documentElement.scrollWidth > innerWidth + 2,
+      compressedButtons: [...document.querySelectorAll('.ant-btn')].some(node => getComputedStyle(node).whiteSpace !== 'nowrap'),
+    }))
+    expect(catalogProbe).toEqual({ documentOverflow: false, compressedButtons: false })
+    await page.screenshot({ path: testInfo.outputPath(`catalog-${viewport.width}x${viewport.height}.png`), fullPage: true })
   }
   expect(errors).toEqual([])
 })

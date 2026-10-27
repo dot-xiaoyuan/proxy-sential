@@ -30,7 +30,7 @@ func AdaptDiscoveryEvent(event normalized.Event) (normalized.Event, error) {
 	}
 	kind := e.SourceEventType
 	switch kind {
-	case "dhcp", "dhcpv6", "arp", "ndp", "nbns", "llmnr", "lldp", "cdp", "ssdp", "ws_discovery", "snmp", "dns_sd", "mqtt", "coap", "bacnet", "ipp", "rtsp", "http", "tls", "ieee1905_client_association":
+	case "dhcp", "dhcpv6", "arp", "ndp", "nbns", "llmnr", "lldp", "cdp", "ssdp", "ws_discovery", "snmp", "dns_sd", "mqtt", "coap", "bacnet", "ipp", "onvif", "rtsp", "http", "tls", "ssh", "sip", "ieee1905_client_association":
 	default:
 		return e, fmt.Errorf("not a discovery protocol")
 	}

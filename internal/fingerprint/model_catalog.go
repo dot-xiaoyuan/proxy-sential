@@ -145,6 +145,9 @@ func modelCandidates(signals Signals) []string {
 	out = append(out, signals.ProtocolFields["snmp_model"]...)
 	out = append(out, signals.ProtocolFields["dns_sd_model"]...)
 	out = append(out, signals.ProtocolFields["mdns_model"]...)
+	for _, field := range []string{"printer_make_and_model", "onvif_model", "wsd_model", "mqtt_model", "coap_device_type", "bacnet_model", "cdp_platform"} {
+		out = append(out, signals.ProtocolFields[field]...)
+	}
 	out = append(out, signals.Hostnames...)
 	out = append(out, signals.Hints...)
 	out = append(out, signals.Software...)

@@ -233,7 +233,7 @@ func FromEvent(e normalized.Event) (Observation, error) {
 			o.Capabilities = []string{"routing"}
 			o.DeviceType = "gateway"
 		}
-	case "ws_discovery", "snmp", "bacnet", "coap", "mqtt", "ipp", "onvif", "http", "tls", "rtsp":
+	case "ws_discovery", "snmp", "bacnet", "coap", "mqtt", "ipp", "onvif", "http", "tls", "rtsp", "ssh", "sip":
 		if e.Payload["is_response"] != true {
 			return o, errors.New("protocol query is not device evidence")
 		}

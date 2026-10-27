@@ -45,6 +45,7 @@ type Status struct {
 	ApplicationRuleCount    int                  `json:"application_rule_count"`
 	OUICount                int                  `json:"oui_count"`
 	DHCPRuleCount           int                  `json:"dhcp_rule_count"`
+	SignatureTableCounts    map[string]int       `json:"signature_table_counts,omitempty"`
 	Sources                 []BundleSource       `json:"sources,omitempty"`
 	Licenses                []string             `json:"licenses,omitempty"`
 	BackfillStatus          string               `json:"backfill_status,omitempty"`
@@ -146,6 +147,9 @@ func (m *Manager) ImportWithGuard(data []byte, check func() error) (Status, erro
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	m.mu.Lock()
 	status := libraryStatus(library, Status{Version: bundle.Manifest.Version, Status: "ready", Source: "offline-bundle", Checksum: bundleChecksum(bundle), UpdatedAt: now, LastCheckedAt: now, OfflineMode: m.status.OfflineMode, Sources: bundle.Manifest.Sources, Licenses: bundleLicenses(bundle.Manifest), BackfillStatus: "pending", DomainBackfillStatus: domainBackfillInitialStatus(bundle.Manifest)})
+	if bundle.Manifest.SchemaVersion == BundleSchemaVersionV7 {
+		status.SignatureTableCounts = signatureTableCounts(tables)
+	}
 	m.status = status
 	m.mu.Unlock()
 	m.persistStatus(status)
@@ -618,6 +622,10 @@ func (m *Manager) loadCurrent() {
 		m.status.Status = "degraded"
 		m.status.LastError = err.Error()
 		return
+	}
+	status.SignatureTableCounts = nil
+	if installedSchema == BundleSchemaVersionV7 {
+		status.SignatureTableCounts = signatureTableCounts(tables)
 	}
 	SetDefault(library)
 	activateSignatureTables(tables)

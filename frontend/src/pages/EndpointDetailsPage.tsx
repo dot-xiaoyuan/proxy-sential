@@ -358,6 +358,7 @@ export function EndpointDetailsPage() {
               {recognition?.recognition_diagnostics?.reason && <Descriptions.Item label="当前识别状态">{recognitionReasons[recognition.recognition_diagnostics.reason] ?? recognition.recognition_diagnostics.reason}</Descriptions.Item>}
               {!!recognition?.conflict_dimensions?.length && <Descriptions.Item label="冲突字段">{recognition.conflict_dimensions.map(field => recognitionStages[field] ?? field).join('、')}</Descriptions.Item>}
               {!!recognition?.recognition_diagnostics?.protocols?.length && <Descriptions.Item label="可用协议">{recognition.recognition_diagnostics.protocols.join('、')}</Descriptions.Item>}
+              {recognition?.recognition_diagnostics && <Descriptions.Item label="分层处理">有效信号 {recognition.recognition_diagnostics.accepted_signals} 条 · 候选规则 {recognition.recognition_diagnostics.candidate_rules} 条</Descriptions.Item>}
               {!!recognition?.evidence_refs?.length && <Descriptions.Item label="可用信号事件">{recognition.evidence_refs.map(ref=><div className="fingerprint-ident" key={`${ref.event_id}:${ref.field}`}>{ref.protocol} · {ref.field} · {ref.event_id}</div>)}</Descriptions.Item>}
             </Descriptions>
           </section>

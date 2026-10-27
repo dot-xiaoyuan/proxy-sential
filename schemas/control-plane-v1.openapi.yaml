@@ -5404,6 +5404,9 @@ components:
         rule_count: { type: integer }
         oui_count: { type: integer }
         dhcp_rule_count: { type: integer }
+        signature_table_counts:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
         sources:
           type: array
           items: { $ref: "#/components/schemas/DeviceFingerprintBundleSource" }
