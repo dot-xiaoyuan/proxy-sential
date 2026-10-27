@@ -1,0 +1,28 @@
+{
+  "version": "service-type-catalog-2026-10-27.1",
+  "source": "mDNS/DNS-SD service type registry",
+  "source_url": "https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml",
+  "license": "public-registry",
+  "entries": {
+    "_ipp._tcp":         {"capabilities": ["printing"], "product_kind": "printer"},
+    "_ipps._tcp":        {"capabilities": ["printing"], "product_kind": "printer"},
+    "_printer._tcp":     {"capabilities": ["printing"], "product_kind": "printer"},
+    "_uscan._tcp":       {"capabilities": ["scanning"], "product_kind": "scanner"},
+    "_uscans._tcp":      {"capabilities": ["scanning"], "product_kind": "scanner"},
+    "_scanner._tcp":     {"capabilities": ["scanning"], "product_kind": "scanner"},
+    "_airplay._tcp":     {"capabilities": ["casting"], "product_kind": "media_player"},
+    "_raop._tcp":        {"capabilities": ["casting"], "product_kind": "media_player"},
+    "_googlecast._tcp":  {"capabilities": ["casting"], "product_kind": "media_player"},
+    "_companion-link._tcp": {"capabilities": ["casting"], "product_kind": "media_player"},
+    "_sonos._tcp":       {"capabilities": ["casting"], "product_kind": "media_player"},
+    "_spotify-connect._tcp": {"capabilities": ["casting"], "product_kind": "media_player"},
+    "_smb._tcp":         {"capabilities": ["file_sharing"], "product_kind": "nas"},
+    "_afpovertcp._tcp":  {"capabilities": ["file_sharing"], "product_kind": "nas"},
+    "_nfs._tcp":         {"capabilities": ["file_sharing"], "product_kind": "nas"},
+    "_rtsp._tcp":        {"capabilities": ["streaming"], "product_kind": "camera"},
+    "_axis-video._tcp":  {"capabilities": ["streaming"], "product_kind": "camera"},
+    "_hap._tcp":         {"capabilities": [], "product_kind": "iot"},
+    "_matter._tcp":      {"capabilities": [], "product_kind": "iot"},
+    "_esphomelib._tcp":  {"capabilities": [], "product_kind": "iot"}
+  }
+}

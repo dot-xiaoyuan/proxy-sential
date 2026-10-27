@@ -1,0 +1,16 @@
+{
+  "version": "product-rules-2026-10-27.1",
+  "source": "migrated from internal/discovery/product_rules.go",
+  "source_url": "internal://proxy-sentinel/product-rules",
+  "license": "internal-rule",
+  "entries": [
+    {"pattern": "(?i)\\bDS-2CD[0-9A-Z-]+\\b", "product_kind": "camera", "manufacturer": "Hikvision"},
+    {"pattern": "(?i)\\bDS-(?:76|77|96)[0-9A-Z-]*NI[0-9A-Z-]*\\b", "product_kind": "recorder", "manufacturer": "Hikvision"},
+    {"pattern": "(?i)\\bDS-K1T[0-9A-Z-]+\\b", "product_kind": "access_control", "manufacturer": "Hikvision"},
+    {"pattern": "(?i)\\b(?:DH-)?IPC-H[DFW][0-9A-Z-]+\\b", "product_kind": "camera", "manufacturer": "Dahua"},
+    {"pattern": "(?i)\\b(?:DH-)?NVR[0-9][0-9A-Z-]+\\b", "product_kind": "recorder", "manufacturer": "Dahua"},
+    {"pattern": "(?i)\\bAppleTV[0-9]+,[0-9]+\\b", "product_kind": "media_player", "manufacturer": "Apple"},
+    {"pattern": "(?i)\\bChromecast(?: Ultra| HD| Audio)?\\b", "product_kind": "media_player", "manufacturer": "Google"},
+    {"pattern": "(?i)\\bZKTeco[ _-]+(?:UA[0-9]+|iClock[0-9]+)\\b", "product_kind": "attendance", "manufacturer": "ZKTeco"}
+  ]
+}
