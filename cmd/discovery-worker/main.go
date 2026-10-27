@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"proxy-sentinel/internal/discovery"
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/store"
 	"strconv"
 	"strings"
@@ -42,6 +43,15 @@ func main() {
 	node := flag.String("node", "", "configured discovery node ID")
 	describe := flag.Bool("ssdp-describe", true, "read UPnP descriptions of on-link SSDP announcers whose neighbor MAC matches")
 	flag.Parse()
+	library, err := fingerprint.OpenInstalledRuntime()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if library != nil {
+		watchCtx, stopWatch := context.WithCancel(context.Background())
+		defer stopWatch()
+		go library.WatchInstalled(watchCtx)
+	}
 	if strings.TrimSpace(*node) == "" {
 		log.Fatal("discovery node required")
 	}

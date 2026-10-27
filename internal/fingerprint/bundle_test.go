@@ -498,6 +498,73 @@ func TestV7BundleCarriesVerifiedSignatureTablesAndReadsV6(t *testing.T) {
 	}
 }
 
+func TestV7InstalledServiceDirectoryActivatesAfterRestart(t *testing.T) {
+	legacyPath := filepath.Join(t.TempDir(), "legacy-v6.tar.gz")
+	if _, err := BuildEmbeddedBundle(legacyPath, "legacy-v6", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v7Path := filepath.Join(t.TempDir(), "v7.tar.gz")
+	if _, err := BuildV7Bundle(legacy, v7Path, "service-v7", time.Unix(2, 0)); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := VerifyBundleFile(v7Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog ServiceTypeCatalog
+	if err := json.Unmarshal(bundle.Files["service-type-catalog.json"], &catalog); err != nil {
+		t.Fatal(err)
+	}
+	const service = "_sentinel-runtime-test._tcp"
+	catalog.Entries[service] = ServiceTypeEntry{Capabilities: []string{"runtime-tested"}, ProductKind: "printer"}
+	bundle.Files["service-type-catalog.json"], err = json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.Manifest.Files["service-type-catalog.json"] = bundleFile(bundle.Files["service-type-catalog.json"])
+	data, err := encodeBundle(bundle.Manifest, bundle.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyBundleBytes(data); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		SetDefault(mustLoadEmbedded())
+		activateSignatureTables(mustParseEmbeddedSignatureTables())
+	}()
+	dir := t.TempDir()
+	if _, err := NewManager(dir).Import(data); err != nil {
+		t.Fatal(err)
+	}
+	SetServiceTypeCatalog(mustLoadServiceTypes(embeddedServiceTypes))
+	if _, ok := ServiceCapabilities(service); ok {
+		t.Fatal("test service should be absent before installed library reload")
+	}
+	t.Setenv("PROXY_SENTINEL_DEVICE_FINGERPRINT_DIR", dir)
+	runtimeManager, err := OpenInstalledRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := runtimeManager.Status(); status.Status != "ready" || status.Version != "service-v7" {
+		t.Fatalf("installed V7 library failed to reload: %+v", status)
+	}
+	if caps, ok := ServiceCapabilities(service); !ok || len(caps) != 1 || caps[0] != "runtime-tested" {
+		t.Fatalf("installed service directory was not activated: %v, %t", caps, ok)
+	}
+}
+
+func TestInstalledRuntimeRejectsMissingExplicitLibrary(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_DEVICE_FINGERPRINT_DIR", t.TempDir())
+	if _, err := OpenInstalledRuntime(); err == nil {
+		t.Fatal("explicit installed library must not silently use embedded data")
+	}
+}
+
 func mustParseEmbeddedSignatureTables() bundleSignatureTables {
 	tables, err := parseBundleSignatureTables(v7SignatureFiles)
 	if err != nil {

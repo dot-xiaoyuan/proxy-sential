@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/discovery"
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/realtime"
 	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
@@ -108,6 +109,10 @@ func runIngestStream(args []string) error {
 	if *maxBytes <= 0 || *maxBytes > 1<<20 || *poll <= 0 || *storeTimeout <= 0 || *storeTimeout > 3*time.Second || *pending < 1 || *pending > 64 {
 		return errors.New("stream-run bounds are invalid")
 	}
+	library, err := fingerprint.OpenInstalledRuntime()
+	if err != nil {
+		return err
+	}
 	scope, scopeHash, err := loadCaptureScopeWithHash(*scopeFile)
 	if err != nil {
 		return err
@@ -136,6 +141,9 @@ func runIngestStream(args []string) error {
 	db.SetMaxIdleConns(store.PostgresPoolLimit(2))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if library != nil {
+		go library.WatchInstalled(ctx)
+	}
 	// The legacy reader uses this same advisory lease. It must be stopped before
 	// the source is activated, so the file never feeds both physical body tables.
 	leaseStore, err := store.NewPostgresStore(store.PostgresOptions{DSN: *postgresDSN, SensorID: *sensor})

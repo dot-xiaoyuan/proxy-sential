@@ -73,6 +73,35 @@ type Manager struct {
 	uapRawURL    string
 }
 
+const defaultRuntimeLibraryDir = "/opt/proxy-sentinel/data/device-fingerprints"
+
+// OpenInstalledRuntime activates the verified offline library for a processing
+// process. A developer checkout without an installation keeps the embedded
+// catalogue; a configured or incomplete installation must fail visibly.
+func OpenInstalledRuntime() (*Manager, error) {
+	dir, explicit := os.LookupEnv("PROXY_SENTINEL_DEVICE_FINGERPRINT_DIR")
+	if explicit && strings.TrimSpace(dir) == "" {
+		return nil, fmt.Errorf("configured device fingerprint directory is empty")
+	}
+	if !explicit {
+		dir = defaultRuntimeLibraryDir
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "current")); err != nil {
+		if os.IsNotExist(err) && !explicit {
+			if _, rootErr := os.Stat("/opt/proxy-sentinel"); os.IsNotExist(rootErr) {
+				return nil, nil
+			}
+		}
+		return nil, fmt.Errorf("installed device fingerprint library: %w", err)
+	}
+	manager := NewManager(dir)
+	status := manager.Status()
+	if status.Status != "ready" || status.Source == "embedded" {
+		return nil, fmt.Errorf("installed device fingerprint library is not ready: %s: %s", status.Status, status.LastError)
+	}
+	return manager, nil
+}
+
 func NewManager(dir string) *Manager {
 	var builtin []Rule
 	_ = json.Unmarshal(embeddedRules, &builtin)
