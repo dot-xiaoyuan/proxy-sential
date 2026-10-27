@@ -82,6 +82,28 @@ func TestStreamDiscoveryFactHandlesLateCorrectionAndWithdrawal(t *testing.T) {
 	}
 }
 
+func TestRecognitionWakeOnlyTracksFactsWithProductFields(t *testing.T) {
+	changed := map[string]bool{}
+	previous := streamDiscoveryFact{MAC: "02:00:00:00:00:01"}
+	next := streamDiscoveryFact{MAC: "02:00:00:00:00:02"}
+	addRecognitionDirtyMACs(changed, &previous, next)
+	if len(changed) != 0 {
+		t.Fatalf("association-only fact woke recognition: %v", changed)
+	}
+	next.RecognitionFields = map[string]string{"ssdp_model": "AX55"}
+	addRecognitionDirtyMACs(changed, &previous, next)
+	if len(changed) != 1 || !changed[next.MAC] {
+		t.Fatalf("new product field did not wake its endpoint: %v", changed)
+	}
+	changed = map[string]bool{}
+	previous.RecognitionFields = map[string]string{"ssdp_model": "AX55"}
+	next.RecognitionFields = nil
+	addRecognitionDirtyMACs(changed, &previous, next)
+	if len(changed) != 1 || !changed[previous.MAC] {
+		t.Fatalf("withdrawn product field did not wake its previous endpoint: %v", changed)
+	}
+}
+
 func TestPrepareStreamDiscoveryRejectsSameKeyDifferentContent(t *testing.T) {
 	one := streamDiscoveryEvent("same", "2026-10-24T10:00:00Z", 600)
 	two := streamDiscoveryEvent("same", "2026-10-24T10:00:00Z", 600)

@@ -79,7 +79,7 @@ func (p StreamDiscoveryProjector) ExpireStreamDiscoveryStates(ctx context.Contex
 	expiredMACs := map[string]bool{}
 	for _, epoch := range epochs {
 		macRows, queryErr := tx.QueryContext(ctx, `SELECT DISTINCT mac FROM stream_discovery_facts
- WHERE epoch=$1 AND device_key=ANY($2::text[]) AND mac<>''`, epoch, groups[epoch])
+	 WHERE epoch=$1 AND device_key=ANY($2::text[]) AND mac<>'' AND recognition_fields<>'{}'::jsonb`, epoch, groups[epoch])
 		if queryErr != nil {
 			return 0, queryErr
 		}
@@ -409,12 +409,7 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 		}
 		versions[identity] = item.Fact
 		factWrites[identity] = item.Fact
-		if item.Fact.MAC != "" {
-			changedMACs[item.Fact.MAC] = true
-		}
-		if hasPrior && prior.MAC != "" {
-			changedMACs[prior.MAC] = true
-		}
+		addRecognitionDirtyMACs(changedMACs, priorPtr, item.Fact)
 		changedDevices[item.Fact.Device] = true
 		if decision.VisibleChanged {
 			before := ""
@@ -523,7 +518,7 @@ func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.device_key,f.fact_key,f.event_key,f.visible_event_key,f.revision,f.first_observed_at,f.observed_at,f.valid_until,f.withdrawn,f.semantic_hash,f.mac
+	rows, err := tx.QueryContext(ctx, `SELECT f.device_key,f.fact_key,f.event_key,f.visible_event_key,f.revision,f.first_observed_at,f.observed_at,f.valid_until,f.withdrawn,f.semantic_hash,f.mac,f.recognition_fields
  FROM jsonb_to_recordset($2::jsonb) AS v(device_key text,fact_key text)
  JOIN stream_discovery_facts f ON f.epoch=$1 AND f.device_key=v.device_key AND f.fact_key=v.fact_key`, epoch, raw)
 	if err != nil {
@@ -532,13 +527,26 @@ func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items
 	defer rows.Close()
 	for rows.Next() {
 		var fact streamDiscoveryFact
-		if err := rows.Scan(&fact.Device, &fact.Key, &fact.Event, &fact.EvidenceEvent, &fact.Revision, &fact.FirstObserved, &fact.Observed, &fact.ValidUntil, &fact.Withdrawn, &fact.SemanticHash, &fact.MAC); err != nil {
+		var recognitionFields []byte
+		if err := rows.Scan(&fact.Device, &fact.Key, &fact.Event, &fact.EvidenceEvent, &fact.Revision, &fact.FirstObserved, &fact.Observed, &fact.ValidUntil, &fact.Withdrawn, &fact.SemanticHash, &fact.MAC, &recognitionFields); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(recognitionFields, &fact.RecognitionFields); err != nil {
 			return nil, err
 		}
 		fact.Epoch = epoch
 		result[fact.Device+"\x00"+fact.Key] = fact
 	}
 	return result, rows.Err()
+}
+
+func addRecognitionDirtyMACs(changed map[string]bool, previous *streamDiscoveryFact, next streamDiscoveryFact) {
+	if len(next.RecognitionFields) > 0 && next.MAC != "" {
+		changed[next.MAC] = true
+	}
+	if previous != nil && len(previous.RecognitionFields) > 0 && previous.MAC != "" {
+		changed[previous.MAC] = true
+	}
 }
 
 func writeStreamDiscoveryFacts(ctx context.Context, tx *sql.Tx, facts map[string]streamDiscoveryFact) error {
