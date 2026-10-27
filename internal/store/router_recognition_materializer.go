@@ -319,7 +319,7 @@ func isPurePacketRouterTTL(event normalized.Event) bool {
 	}
 	for key := range event.Flow {
 		switch key {
-		case "src_ip", "direction", "ip_version":
+		case "src_ip", "direction", "ip_version", "traffic_scope":
 		default:
 			return false
 		}

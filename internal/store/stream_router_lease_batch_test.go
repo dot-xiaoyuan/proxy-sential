@@ -79,8 +79,13 @@ func TestStreamRouterPurePacketTTLBatchNeedsNoLeaseRead(t *testing.T) {
 		Observer: map[string]any{"sensor_id": "sensor-a"},
 		Subject:  map[string]any{"ip": "192.0.2.1"},
 		Payload:  map[string]any{"origin": "ttl", "neighbor_mac": "02:00:00:00:00:01", "neighbor_role": "unverified", "ttl": 64},
+		Flow:     map[string]any{"src_ip": "192.0.2.1", "direction": "egress", "ip_version": 4, "traffic_scope": "campus"},
 	}
-	if err := (&DBStore{pg: &PostgresStore{db: db}}).analyzeAndWriteStreamRouterEvents(context.Background(), []normalized.Event{event}); err != nil {
+	batch := make([]normalized.Event, 100)
+	for index := range batch {
+		batch[index] = event
+	}
+	if err := (&DBStore{pg: &PostgresStore{db: db}}).analyzeAndWriteStreamRouterEvents(context.Background(), batch); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
