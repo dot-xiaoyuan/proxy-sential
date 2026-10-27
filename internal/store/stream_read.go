@@ -131,20 +131,62 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 	for _, group := range order {
 		expected := groups[group]
 		keys := make([]string, 0, len(expected))
+		bodyKeys := make([]string, 0, len(expected))
 		for _, ref := range expected {
 			keys = append(keys, "("+chQuote(ref.Scope)+","+chQuote(ref.Key)+")")
+			bodyKeys = append(bodyKeys, "("+chQuote(ref.Scope)+","+chQuote(ref.Key)+","+chQuote(ref.SHA256)+")")
 		}
 		sort.Strings(keys)
+		sort.Strings(bodyKeys)
 		limit := 101 * len(expected)
-		query := "SELECT scope_id,event_key,content_sha256,body FROM stream_event_body_" + group.class +
-			" WHERE archive_month=" + group.month + " AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ")" +
+		// Read only the narrow key columns first. Selecting body in this query
+		// made a 100-reference lookup pull hundreds of megabytes when a table
+		// contained repeated physical rows. The first pass also preserves the
+		// conflict check for a key that has more than one content hash.
+		metadataQuery := "SELECT scope_id,event_key,content_sha256 FROM stream_event_body_" + group.class +
+			" PREWHERE archive_month=" + group.month + " AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ")" +
 			fmt.Sprintf(" LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow", limit)
-		data, err := s.query(ctx, query)
+		data, err := s.query(ctx, metadataQuery)
 		if err != nil {
 			return nil, err
 		}
 		seen := make(map[string]int, len(expected))
 		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+			if len(line) == 0 {
+				continue
+			}
+			var row struct {
+				Scope string `json:"scope_id"`
+				Key   string `json:"event_key"`
+				Hash  string `json:"content_sha256"`
+			}
+			if err := json.Unmarshal(line, &row); err != nil {
+				return nil, err
+			}
+			key := row.Scope + "\x00" + row.Key
+			ref, found := expected[key]
+			if !found || row.Hash != ref.SHA256 || seen[key] >= 100 {
+				return nil, streamlog.ErrContentConflict
+			}
+			seen[key]++
+		}
+		if len(seen) != len(expected) {
+			return nil, streamlog.ErrUnconfirmed
+		}
+
+		// Fetch one body for each already verified triple. LIMIT BY keeps a
+		// duplicate physical copy from forcing the wide body column through the
+		// response; duplicates and conflicting hashes were checked above.
+		bodyQuery := "SELECT scope_id,event_key,content_sha256,body FROM stream_event_body_" + group.class +
+			" PREWHERE archive_month=" + group.month + " AND (scope_id,event_key,content_sha256) IN (" + strings.Join(bodyKeys, ",") + ")" +
+			" LIMIT 1 BY scope_id,event_key,content_sha256" +
+			" SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow"
+		bodyData, err := s.query(ctx, bodyQuery)
+		if err != nil {
+			return nil, err
+		}
+		bodySeen := make(map[string]bool, len(expected))
+		for _, line := range bytes.Split(bytes.TrimSpace(bodyData), []byte{'\n'}) {
 			if len(line) == 0 {
 				continue
 			}
@@ -159,7 +201,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 			}
 			key := row.Scope + "\x00" + row.Key
 			ref, found := expected[key]
-			if !found || row.Hash != ref.SHA256 || seen[key] >= 100 {
+			if !found || row.Hash != ref.SHA256 || bodySeen[key] {
 				return nil, streamlog.ErrContentConflict
 			}
 			sum := sha256.Sum256([]byte(row.Body))
@@ -170,13 +212,13 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 			if err := json.Unmarshal([]byte(row.Body), &event); err != nil {
 				return nil, err
 			}
-			if event.EventID == "" || (seen[key] > 0 && result[ref].Event.EventID != event.EventID) {
+			if event.EventID == "" {
 				return nil, streamlog.ErrContentConflict
 			}
 			result[ref] = StreamEvidence{Event: event, Body: json.RawMessage(row.Body), BodySHA256: ref.SHA256}
-			seen[key]++
+			bodySeen[key] = true
 		}
-		if len(seen) != len(expected) {
+		if len(bodySeen) != len(expected) {
 			return nil, streamlog.ErrUnconfirmed
 		}
 	}

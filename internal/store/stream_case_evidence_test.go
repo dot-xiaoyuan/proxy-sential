@@ -116,7 +116,7 @@ func TestReadStreamSharedCaseEvidenceBatchesProtectedOriginals(t *testing.T) {
 	queries := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(query), "(scope_id,event_key) IN") {
+		if !strings.Contains(string(query), "(scope_id,event_key) IN") && !strings.Contains(string(query), "(scope_id,event_key,content_sha256) IN") {
 			t.Errorf("case body lookup was not bounded to exact keys: %s", query)
 		}
 		queries++
@@ -130,7 +130,7 @@ func TestReadStreamSharedCaseEvidenceBatchesProtectedOriginals(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := (&DBStore{ch: ch}).ReadStreamSharedCaseEvidence(context.Background(), refs)
-	if err != nil || len(got) != 2 || queries != 1 || string(got[refs[0]].Document) != rows[0]["body"] || string(got[refs[1]].Document) != rows[1]["body"] {
+	if err != nil || len(got) != 2 || queries != 2 || string(got[refs[0]].Document) != rows[0]["body"] || string(got[refs[1]].Document) != rows[1]["body"] {
 		t.Fatalf("batch case originals got=%d queries=%d err=%v", len(got), queries, err)
 	}
 }

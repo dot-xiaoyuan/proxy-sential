@@ -528,7 +528,7 @@ func runIngestStreamPrepare(args []string) error {
 		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(4)
+	db.SetMaxOpenConns(store.PostgresPoolLimit(2))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	leaseStore, err := store.NewPostgresStore(store.PostgresOptions{DSN: *postgresDSN, SensorID: *sensor})

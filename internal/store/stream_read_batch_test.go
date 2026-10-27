@@ -46,8 +46,8 @@ func TestStreamBodiesBatchReadUsesBoundedPhysicalLocator(t *testing.T) {
 	if err != nil || len(got) != 2 || got[refs[0]].EventID != "a" || got[refs[1]].EventID != "b" {
 		t.Fatalf("batched evidence mismatch: got=%+v err=%v", got, err)
 	}
-	if len(queries) != 1 || !strings.Contains(queries[0], "archive_month=202610") || !strings.Contains(queries[0], "stream_event_body_evidence") || !strings.Contains(queries[0], "(scope_id,event_key) IN") {
-		t.Fatalf("body read was not one scoped query: %+v", queries)
+	if len(queries) != 2 || !strings.Contains(queries[0], "archive_month=202610") || !strings.Contains(queries[0], "stream_event_body_evidence") || !strings.Contains(queries[0], "(scope_id,event_key) IN") || !strings.Contains(queries[1], "(scope_id,event_key,content_sha256) IN") || !strings.Contains(queries[1], "LIMIT 1 BY scope_id,event_key,content_sha256") {
+		t.Fatalf("body read did not use narrow metadata and exact body queries: %+v", queries)
 	}
 	rows[1]["content_sha256"] = strings.Repeat("f", 64)
 	if _, err := ch.GetStreamEventsByRefs(context.Background(), refs); !errors.Is(err, streamlog.ErrContentConflict) {

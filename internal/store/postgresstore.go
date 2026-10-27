@@ -54,8 +54,8 @@ func NewPostgresStore(opts PostgresOptions) (*PostgresStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(30)
-	db.SetMaxIdleConns(10)
+	db.SetMaxOpenConns(PostgresPoolLimit(8))
+	db.SetMaxIdleConns(PostgresPoolLimit(4))
 	db.SetConnMaxIdleTime(5 * time.Minute)
 	db.SetConnMaxLifetime(30 * time.Minute)
 	sensorID := opts.SensorID

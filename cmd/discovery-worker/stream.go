@@ -75,8 +75,8 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(4)
+	db.SetMaxOpenConns(store.PostgresPoolLimit(2))
+	db.SetMaxIdleConns(store.PostgresPoolLimit(2))
 	ch, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN")})
 	if err != nil {
 		return err

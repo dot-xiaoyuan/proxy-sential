@@ -35,3 +35,11 @@ func TestFreshOnlyApplicationCursorsStartAtCurrentInput(t *testing.T) {
 		t.Fatalf("observation cursor=%+v raw=%s err=%v", observation, raw, err)
 	}
 }
+
+func TestFreshIdentityPolicyDisablesApplicationHistory(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_APPLICATION_HISTORY_DISABLED", "")
+	t.Setenv("PROXY_SENTINEL_IDENTITY_POLICY_FRESH_ONLY", "true")
+	if !applicationHistoryDisabled() {
+		t.Fatal("fresh-only identity policy must disable historical application reconciliation")
+	}
+}

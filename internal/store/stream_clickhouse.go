@@ -488,13 +488,15 @@ func (s *ClickHouseStore) missingStreamSearchEvents(ctx context.Context, segment
 			maxTime = item.observed
 		}
 	}
-	query := "SELECT scope_id,event_key,content_sha256,archive_month,retention_class FROM stream_event_search WHERE observed_at >= " +
+	query := "SELECT scope_id,event_key,content_sha256,archive_month,retention_class FROM stream_event_search PREWHERE observed_at >= " +
 		chQuote(minTime.Format("2006-01-02 15:04:05.000000")) + " AND observed_at <= " + chQuote(maxTime.Format("2006-01-02 15:04:05.000000")) +
-		" AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ") FORMAT JSONEachRow"
+		" AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ")" +
+		fmt.Sprintf(" LIMIT %d SETTINGS max_threads=1,max_memory_usage=134217728,max_execution_time=5 FORMAT JSONEachRow", 101*len(prepared))
 	data, err := s.query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
+	seen := make(map[string]int, len(expected))
 	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
 		if len(line) == 0 {
 			continue
@@ -511,9 +513,10 @@ func (s *ClickHouseStore) missingStreamSearchEvents(ctx context.Context, segment
 		}
 		key := row.Scope + "\x00" + row.Key
 		index, found := expected[key]
-		if !found || prepared[index].hash != row.Hash || fmt.Sprint(row.Month) != segment.ArchiveMonth || prepared[index].retention != row.Class {
+		if !found || prepared[index].hash != row.Hash || fmt.Sprint(row.Month) != segment.ArchiveMonth || prepared[index].retention != row.Class || seen[key] >= 100 {
 			return nil, streamlog.ErrContentConflict
 		}
+		seen[key]++
 		delete(remaining, key)
 	}
 	missing := make([]int, 0, len(remaining))

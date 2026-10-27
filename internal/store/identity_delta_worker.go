@@ -24,8 +24,8 @@ func (s *DBStore) runIdentityDeltaMaterializer(ctx context.Context) {
 		return
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(2)
-	db.SetMaxIdleConns(2)
+	db.SetMaxOpenConns(PostgresPoolLimit(2))
+	db.SetMaxIdleConns(PostgresPoolLimit(2))
 	db.SetConnMaxLifetime(30 * time.Minute)
 	worker := &PostgresStore{db: db, dsn: s.pg.dsn, sensorID: s.pg.sensorID, identityDeltaEnabled: true}
 	notifyDone := make(chan struct{})

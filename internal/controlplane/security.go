@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"proxy-sentinel/internal/store"
 )
 
 const sessionCookieName = "proxy_sentinel_session"
@@ -82,8 +84,8 @@ func newAuthManager(path string, secure bool, postgresDSN string) (*authManager,
 		if err != nil {
 			return nil, err
 		}
-		db.SetMaxOpenConns(10)
-		db.SetMaxIdleConns(2)
+		db.SetMaxOpenConns(store.PostgresPoolLimit(4))
+		db.SetMaxIdleConns(store.PostgresPoolLimit(2))
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := db.PingContext(ctx); err != nil {

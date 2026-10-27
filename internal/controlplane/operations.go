@@ -217,8 +217,8 @@ func newOperationsState(path, postgresDSN string) (*operationsState, error) {
 		if err != nil {
 			return nil, err
 		}
-		db.SetMaxOpenConns(20)
-		db.SetMaxIdleConns(5)
+		db.SetMaxOpenConns(store.PostgresPoolLimit(8))
+		db.SetMaxIdleConns(store.PostgresPoolLimit(4))
 		db.SetConnMaxIdleTime(5 * time.Minute)
 		state.db = db
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

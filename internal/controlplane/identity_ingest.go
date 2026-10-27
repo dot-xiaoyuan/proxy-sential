@@ -58,8 +58,8 @@ func newIdentityIngestState(key, postgresDSN string) (*identityIngestState, erro
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(2)
+	db.SetMaxOpenConns(store.PostgresPoolLimit(4))
+	db.SetMaxIdleConns(store.PostgresPoolLimit(2))
 	ctx, cancel := contextWithRequestTimeout(context.Background())
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {

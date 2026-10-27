@@ -10,7 +10,13 @@ import (
 const applicationFreshCursorOverlap = 2 * time.Second
 
 func applicationHistoryDisabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_APPLICATION_HISTORY_DISABLED")), "true")
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_APPLICATION_HISTORY_DISABLED")), "true") {
+		return true
+	}
+	// Fresh-only identity cutovers also exclude the historical application
+	// reconciliation loop. This prevents a fresh deployment from starting a
+	// seven-day normalized_events scan in the control plane.
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_IDENTITY_POLICY_FRESH_ONLY")), "true")
 }
 
 func freshApplicationConnectionCursor(now time.Time) (applicationConnectionCursor, []byte, error) {

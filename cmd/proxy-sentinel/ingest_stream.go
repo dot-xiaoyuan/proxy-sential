@@ -132,8 +132,8 @@ func runIngestStream(args []string) error {
 		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(4)
+	db.SetMaxOpenConns(store.PostgresPoolLimit(2))
+	db.SetMaxIdleConns(store.PostgresPoolLimit(2))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// The legacy reader uses this same advisory lease. It must be stopped before

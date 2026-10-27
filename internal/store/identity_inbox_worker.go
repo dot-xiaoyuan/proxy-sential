@@ -316,8 +316,8 @@ func (s *DBStore) identityLane(connections int) (*DBStore, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	db.SetMaxOpenConns(connections)
-	db.SetMaxIdleConns(connections)
+	db.SetMaxOpenConns(PostgresPoolLimit(connections))
+	db.SetMaxIdleConns(PostgresPoolLimit(connections))
 	db.SetConnMaxLifetime(30 * time.Minute)
 	pg := &PostgresStore{db: db, dsn: s.pg.dsn, sensorID: s.pg.sensorID, identityDeltaEnabled: s.pg.identityDeltaEnabled}
 	return &DBStore{pg: pg, ch: s.ch}, func() { db.Close() }, nil

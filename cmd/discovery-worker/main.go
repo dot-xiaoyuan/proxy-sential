@@ -73,15 +73,15 @@ func main() {
 		log.Fatal("database configuration failed")
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(8)
+	db.SetMaxOpenConns(store.PostgresPoolLimit(4))
+	db.SetMaxIdleConns(store.PostgresPoolLimit(4))
 	openPool := func(size int) *sql.DB {
 		pool, e := sql.Open("pgx", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"))
 		if e != nil {
 			log.Fatal("database configuration failed")
 		}
-		pool.SetMaxOpenConns(size)
-		pool.SetMaxIdleConns(size)
+		pool.SetMaxOpenConns(store.PostgresPoolLimit(size))
+		pool.SetMaxIdleConns(store.PostgresPoolLimit(size))
 		return pool
 	}
 	backfillDB, runtimeDB := openPool(2), openPool(2)

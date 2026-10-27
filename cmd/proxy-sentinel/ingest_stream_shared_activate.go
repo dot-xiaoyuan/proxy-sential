@@ -89,7 +89,7 @@ func runIngestStreamSharedActivate(args []string) error {
 		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(2)
+	db.SetMaxOpenConns(store.PostgresPoolLimit(2))
 	if err := activateStreamSharedSources(ctx, db, *sensor, scope, scopeHash, sources, *cancelID, cutoff, *previousCancelID); err != nil {
 		return err
 	}

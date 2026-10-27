@@ -17,6 +17,7 @@ import (
 
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
 )
 
@@ -268,7 +269,7 @@ func runPassiveStreamPrepare(opts passiveStreamOptions, epoch, cancelID, previou
 		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(2)
+	db.SetMaxOpenConns(store.PostgresPoolLimit(2))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	source := discovery.Source{ID: "passive-" + opts.Node, Node: opts.Node, Site: opts.Site, Domain: opts.Domain, Address: opts.Interface, ConfigVersion: 1}
