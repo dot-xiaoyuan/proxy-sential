@@ -159,11 +159,13 @@ func (s *DBStore) runStreamRouterRecognitionMaterializer(ctx context.Context, se
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "stream router recognition failed: %v\n", err)
 		}
-		delay := 5 * time.Second
 		if claimed && err == nil && processed > 0 {
-			delay = time.Second
+			// Each bounded batch already waits for both stores and a durable
+			// cursor. An extra one-second pause caps this lane below the live
+			// index rate even when all storage calls are instantaneous.
+			continue
 		}
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(5 * time.Second)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
