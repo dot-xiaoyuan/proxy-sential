@@ -273,36 +273,47 @@ func (s *DBStore) analyzeAndWriteRouterEvents(ctx context.Context, events []norm
 }
 
 func (s *DBStore) analyzeAndWriteStreamRouterEvents(ctx context.Context, events []normalized.Event) error {
-	// The packet sidecar emits TTL-only observations without a verified MAC or
-	// router fingerprint. A batch made only of those observations cannot create
-	// a router fact, regardless of which DHCP lease owns each address. The
-	// indexed events are still read and the caller advances its durable cursor.
-	pureTTL := len(events) > 0
-	for _, event := range events {
-		if !isPurePacketRouterTTL(event) {
-			pureTTL = false
-			break
-		}
-	}
-	if pureTTL {
+	// The packet sidecar's TTL-only observation has no verified subject or
+	// router fingerprint. It is retained in the standard-event store and read
+	// through the durable cursor, but does not contribute to router scoring.
+	// Filtering it from mixed batches also avoids pointless DHCP lease reads.
+	scoring, excluded := routerScoringEvents(events)
+	if len(scoring) == 0 {
+		fmt.Fprintf(os.Stderr, "stream router scoring batch input=%d weak_ttl_excluded=%d scoring=0\n", len(events), excluded)
 		return nil
 	}
 	started := time.Now()
-	associations, err := s.pg.resolveRouterLeaseBatch(ctx, events)
+	associations, err := s.pg.resolveRouterLeaseBatch(ctx, scoring)
 	leaseDuration := time.Since(started)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "stream router lease batch events=%d lease_ms=%d error=%v\n", len(events), leaseDuration.Milliseconds(), err)
+		fmt.Fprintf(os.Stderr, "stream router lease batch events=%d lease_ms=%d error=%v\n", len(scoring), leaseDuration.Milliseconds(), err)
 		return err
 	}
 	writeStarted := time.Now()
-	err = s.analyzeAndWriteRouterEventsWithResolver(ctx, events, func(event normalized.Event) evidence.RouterAssociation {
+	err = s.analyzeAndWriteRouterEventsWithResolver(ctx, scoring, func(event normalized.Event) evidence.RouterAssociation {
 		return associations[routerLeaseKeyFromEvent(event)]
 	})
 	if leaseDuration+time.Since(writeStarted) >= 2*time.Second || err != nil {
 		fmt.Fprintf(os.Stderr, "stream router analysis events=%d lease_ms=%d write_ms=%d error=%v\n",
-			len(events), leaseDuration.Milliseconds(), time.Since(writeStarted).Milliseconds(), err)
+			len(scoring), leaseDuration.Milliseconds(), time.Since(writeStarted).Milliseconds(), err)
+	}
+	if err == nil && excluded > 0 {
+		fmt.Fprintf(os.Stderr, "stream router scoring batch input=%d weak_ttl_excluded=%d scoring=%d\n", len(events), excluded, len(scoring))
 	}
 	return err
+}
+
+func routerScoringEvents(events []normalized.Event) ([]normalized.Event, int) {
+	scoring := make([]normalized.Event, 0, len(events))
+	excluded := 0
+	for _, event := range events {
+		if isPurePacketRouterTTL(event) {
+			excluded++
+			continue
+		}
+		scoring = append(scoring, event)
+	}
+	return scoring, excluded
 }
 
 func isPurePacketRouterTTL(event normalized.Event) bool {

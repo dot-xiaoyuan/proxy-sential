@@ -96,3 +96,21 @@ func TestStreamRouterPurePacketTTLBatchNeedsNoLeaseRead(t *testing.T) {
 		t.Fatal("TTL event with router fingerprint must be analyzed")
 	}
 }
+
+func TestStreamRouterMixedBatchKeepsRouterEvidenceWithoutPureTTL(t *testing.T) {
+	weak := normalized.Event{
+		Type: "device", Source: "packet-sidecar", SourceEventType: "ttl",
+		Subject: map[string]any{"ip": "192.0.2.1"},
+		Payload: map[string]any{"origin": "ttl", "neighbor_role": "unverified", "ttl": 64},
+		Flow:    map[string]any{"src_ip": "192.0.2.1", "traffic_scope": "campus"},
+	}
+	strong := normalized.Event{
+		Type: "router", Source: "zeek", SourceEventType: "lldp",
+		Subject: map[string]any{"ip": "192.0.2.2"},
+		Payload: map[string]any{"capabilities": "Router"},
+	}
+	got, excluded := routerScoringEvents([]normalized.Event{weak, strong})
+	if excluded != 1 || len(got) != 1 || got[0].SourceEventType != "lldp" {
+		t.Fatalf("mixed stream must retain router evidence while excluding pure TTL: excluded=%d events=%+v", excluded, got)
+	}
+}
