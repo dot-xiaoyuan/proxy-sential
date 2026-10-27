@@ -273,13 +273,22 @@ func (s *DBStore) analyzeAndWriteRouterEvents(ctx context.Context, events []norm
 }
 
 func (s *DBStore) analyzeAndWriteStreamRouterEvents(ctx context.Context, events []normalized.Event) error {
+	started := time.Now()
 	associations, err := s.pg.resolveRouterLeaseBatch(ctx, events)
+	leaseDuration := time.Since(started)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "stream router lease batch events=%d lease_ms=%d error=%v\n", len(events), leaseDuration.Milliseconds(), err)
 		return err
 	}
-	return s.analyzeAndWriteRouterEventsWithResolver(ctx, events, func(event normalized.Event) evidence.RouterAssociation {
+	writeStarted := time.Now()
+	err = s.analyzeAndWriteRouterEventsWithResolver(ctx, events, func(event normalized.Event) evidence.RouterAssociation {
 		return associations[routerLeaseKeyFromEvent(event)]
 	})
+	if leaseDuration+time.Since(writeStarted) >= 2*time.Second || err != nil {
+		fmt.Fprintf(os.Stderr, "stream router analysis events=%d lease_ms=%d write_ms=%d error=%v\n",
+			len(events), leaseDuration.Milliseconds(), time.Since(writeStarted).Milliseconds(), err)
+	}
+	return err
 }
 
 func (s *DBStore) analyzeAndWriteRouterEventsWithResolver(ctx context.Context, events []normalized.Event, resolve func(normalized.Event) evidence.RouterAssociation) error {

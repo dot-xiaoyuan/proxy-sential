@@ -1,0 +1,15 @@
+{
+  "verified_at": "2026-10-27T02:17:45.381151+00:00",
+  "audit": {
+    "sensor_id": "ncu-184-router-pilot",
+    "cancel_id": "router-fresh-20261027T015625Z",
+    "indexed_after": "2026-10-27T01:56:25+00:00",
+    "canceled_index_rows": 7226714,
+    "prior_processed_events": 58050,
+    "created_at": "2026-10-27T01:57:24.56652+00:00"
+  },
+  "indexed_before_cutoff_retained": 7284764,
+  "indexed_after_cutoff_new": 138902,
+  "latest_indexed_at": "2026-10-27 02:17:42.473762",
+  "conservation_checked": true
+}

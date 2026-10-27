@@ -1,0 +1,89 @@
+{
+  "release": "2026.10.26-stream-b94-dhcp-batch100",
+  "window_start": "2026-10-27T02:05:00Z",
+  "window_end": "2026-10-27T02:20:00Z",
+  "measurement": "The stream capture durable message records append_returned_at immediately after durable append. PG receipt queued_at minus append_returned_at is a lower bound to risk queue insertion. queued_at precedes transaction commit and risk/API visibility.",
+  "risk_segment_receipts": 272,
+  "matched_post_durable_logs": 272,
+  "unmatched_segment_ids": [],
+  "proven_queue_after_5s": 1,
+  "max_proven_lower_bound_s": 5.378115,
+  "accepted_to_queue_s": {
+    "max": 7.352141,
+    "p95": 5.511317,
+    "over5": 39,
+    "caveat": "accepted_at precedes durable input, so over5 is not a proven violation"
+  },
+  "slowest_post_durable_examples": [
+    {
+      "segment_id": "db2f13acd4013bcc68e74f136215df19b0c486b5f7e96bbdb12661d9a616d85f",
+      "post_durable_to_queue_lower_bound_s": 5.378115,
+      "accepted_to_queue_upper_bound_s": 6.67372,
+      "append_returned_to_journal_s": 0.000105,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "84f32970e656670d163753b8de15e35a69b9ddf901bb9f450b2246855b2f9697",
+      "post_durable_to_queue_lower_bound_s": 4.9569,
+      "accepted_to_queue_upper_bound_s": 7.352141,
+      "append_returned_to_journal_s": 0.000229,
+      "unit": "proxy-sentinel-ingest-stream-handshake-b76.service"
+    },
+    {
+      "segment_id": "24929109583be002eda8a1c59094aeb19e51763fd79f86aad547ba1007c6be09",
+      "post_durable_to_queue_lower_bound_s": 4.93486,
+      "accepted_to_queue_upper_bound_s": 6.892706,
+      "append_returned_to_journal_s": 0.000205,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "7473bf85ad72e00ab5279f4b83aa00d1bbe08c9d81a139c43796041dcc097b66",
+      "post_durable_to_queue_lower_bound_s": 4.667017,
+      "accepted_to_queue_upper_bound_s": 6.43374,
+      "append_returned_to_journal_s": 2.6e-05,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "9ea3090cb9902e4b01e06fc32295bec38dae548cc1b5ae152011da2faea2c3d8",
+      "post_durable_to_queue_lower_bound_s": 4.406893,
+      "accepted_to_queue_upper_bound_s": 6.056944,
+      "append_returned_to_journal_s": 4.6e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "1bc3e9b26b8549351b2bd66d54fa79f3c42ce7913b62abcfc5148b3923749d14",
+      "post_durable_to_queue_lower_bound_s": 4.361617,
+      "accepted_to_queue_upper_bound_s": 6.002475,
+      "append_returned_to_journal_s": 8e-06,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "e6af106741b64760f282401828f9d6c5a47e107d37e7924bedbab75715a0b09e",
+      "post_durable_to_queue_lower_bound_s": 4.291313,
+      "accepted_to_queue_upper_bound_s": 5.511317,
+      "append_returned_to_journal_s": 0.000486,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "a0f1c17ea7bfb1a0b41e1ee9e677638dc6b8473e6da85c0d75068b12b4b02cdb",
+      "post_durable_to_queue_lower_bound_s": 4.240639,
+      "accepted_to_queue_upper_bound_s": 6.105518,
+      "append_returned_to_journal_s": 1e-05,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "e0df2eef43bfaec7d20c4d060128e04d442e5e610802c00629f13b325c1dfad9",
+      "post_durable_to_queue_lower_bound_s": 4.212842,
+      "accepted_to_queue_upper_bound_s": 6.235238,
+      "append_returned_to_journal_s": 6.6e-05,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "93e2d3e5ce1773e64652f154783314558fd6ebaf228035d4dc2c61a88a2b809d",
+      "post_durable_to_queue_lower_bound_s": 4.163074,
+      "accepted_to_queue_upper_bound_s": 5.412675,
+      "append_returned_to_journal_s": 3.2e-05,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    }
+  ]
+}

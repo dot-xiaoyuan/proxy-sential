@@ -73,19 +73,28 @@ func (s *PostgresStore) resolveRouterLeaseBatch(ctx context.Context, events []no
 	if err != nil {
 		return nil, err
 	}
+	// A later ACK supersedes every earlier ACK for this address, including
+	// one whose validity has already expired. Seek that one timestamp first;
+	// probing every historical lease for every packet is unbounded on 184.
 	rows, err := s.db.QueryContext(ctx, `WITH request AS (
  SELECT e.ordinality AS ordinal,e.item->>'sensor_id' AS sensor_id,e.item->>'campus_id' AS campus_id,
         e.item->>'ip' AS ip,(e.item->>'at')::timestamptz AS at
  FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS e(item,ordinality)
 )
 SELECT request.ordinal,lease.endpoint_id FROM request LEFT JOIN LATERAL (
- SELECT DISTINCT l.endpoint_id FROM device_address_leases l
- WHERE l.sensor_id=request.sensor_id AND l.campus_id=request.campus_id AND l.ip=request.ip::inet AND l.action='ack'
- AND l.observed_at<=request.at AND l.valid_until>request.at
- AND NOT EXISTS (SELECT 1 FROM device_address_leases n
-   WHERE n.sensor_id=l.sensor_id AND n.campus_id=l.campus_id AND n.ip=l.ip AND n.observed_at<=request.at
-   AND ((n.action='ack' AND n.observed_at>l.observed_at)
-     OR (n.action='stop' AND n.endpoint_id=l.endpoint_id AND n.observed_at>=l.observed_at)))
+ SELECT DISTINCT l.endpoint_id FROM (
+  SELECT ack.observed_at FROM device_address_leases ack
+  WHERE ack.sensor_id=request.sensor_id AND ack.campus_id=request.campus_id
+    AND ack.ip=request.ip::inet AND ack.action='ack' AND ack.observed_at<=request.at
+  ORDER BY ack.observed_at DESC LIMIT 1
+ ) latest_ack JOIN device_address_leases l
+   ON l.sensor_id=request.sensor_id AND l.campus_id=request.campus_id
+  AND l.ip=request.ip::inet AND l.observed_at=latest_ack.observed_at
+ WHERE l.action='ack' AND l.valid_until>request.at
+ AND NOT EXISTS (SELECT 1 FROM device_address_leases stop
+   WHERE stop.sensor_id=l.sensor_id AND stop.campus_id=l.campus_id AND stop.ip=l.ip
+     AND stop.action='stop' AND stop.endpoint_id=l.endpoint_id
+     AND stop.observed_at>=l.observed_at AND stop.observed_at<=request.at)
  ORDER BY l.endpoint_id LIMIT 2
 ) lease ON true ORDER BY request.ordinal,lease.endpoint_id`, payload)
 	if err != nil {
