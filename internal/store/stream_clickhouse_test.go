@@ -135,6 +135,47 @@ func TestSharedStreamSearchCarriesOnlyNarrowScopeFields(t *testing.T) {
 	}
 }
 
+func TestStreamSearchMarksOnlyPurePacketTTLAsRouterExcluded(t *testing.T) {
+	var rows []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		for _, line := range strings.Split(strings.TrimSpace(strings.SplitN(string(body), "\n", 2)[1]), "\n") {
+			var row map[string]any
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
+				t.Errorf("decode search row: %v", err)
+				continue
+			}
+			rows = append(rows, row)
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := normalized.Event{SchemaVersion: "v1", Source: "packet-sidecar", SourceEventType: "ttl", Type: "device", Timestamp: "2026-10-27T02:00:00Z", Observer: map[string]any{"sensor_id": "sensor-a", "capture_scope_id": "scope-a"}, Subject: map[string]any{"ip": "192.0.2.1"}, Payload: map[string]any{"origin": "ttl", "ttl": 64}}
+	pure := base
+	pure.EventID = "pure"
+	enriched := base
+	enriched.EventID = "enriched"
+	enriched.Payload = map[string]any{"origin": "ttl", "ttl": 64, "hostname": "router.example"}
+	dhcp := base
+	dhcp.EventID = "dhcp"
+	dhcp.SourceEventType = "dhcp"
+	segment := streamlog.Segment{Epoch: "fresh", Source: "device-signals", ArchiveMonth: "202610", AcceptedAt: time.Date(2026, 10, 27, 2, 0, 0, 0, time.UTC), Events: []normalized.Event{pure, enriched, dhcp}}
+	if err := ch.WriteStreamSearch(context.Background(), "segment-one", segment); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("search rows=%d want 3", len(rows))
+	}
+	for i, want := range []float64{0, 1, 1} {
+		if rows[i]["router_score_possible"] != want {
+			t.Errorf("row %d router_score_possible=%v want %v", i, rows[i]["router_score_possible"], want)
+		}
+	}
+}
+
 func TestPositionKeysKeepRepeatedIdentityRecordsAndPartialRepairStable(t *testing.T) {
 	segment := testStreamSegment()
 	segment.KeyScheme = "source_position_v1"

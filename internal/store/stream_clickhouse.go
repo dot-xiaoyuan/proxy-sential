@@ -226,12 +226,17 @@ func (s *ClickHouseStore) WriteStreamSearch(ctx context.Context, segmentID strin
 	body.WriteString("INSERT INTO stream_event_search FORMAT JSONEachRow\n")
 	for _, item := range prepared {
 		ref, _ := json.Marshal(StreamBodyRef{Class: item.retention, Month: segment.ArchiveMonth, Scope: item.scope, Key: item.key, SHA256: item.hash})
+		routerScorePossible := uint8(1)
+		if isPurePacketRouterTTL(item.event) {
+			routerScorePossible = 0
+		}
 		row := map[string]any{
 			"scope_id": item.scope, "event_key": item.key, "content_sha256": item.hash,
 			"archive_month": archiveMonth, "retention_class": item.retention,
 			"observed_at": item.observed.Format("2006-01-02 15:04:05.000000"),
 			"protocol":    firstNonEmpty(item.event.SourceEventType, item.event.Source),
 			"event_type":  item.event.Type, "source": item.event.Source,
+			"router_score_possible": routerScorePossible,
 			"sensor_id":             stringFromMap(item.event.Observer, "sensor_id"),
 			"campus_id":             stringFromMap(item.event.Subject, "campus_id"),
 			"access_domain":         stringFromMap(item.event.Payload, "access_domain"),

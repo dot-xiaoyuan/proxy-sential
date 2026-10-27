@@ -19,6 +19,47 @@ type streamRouterCursor struct {
 	Owner     string
 }
 
+const maxRouterWeakBatchesPerClaim = 5
+
+type streamRouterBatchRead func(context.Context, streamRouterCursor) ([]normalized.Event, streamRouterCursor, error)
+
+// A claim can advance across a bounded run of pure packet TTL rows without
+// writing a PostgreSQL lease and cursor for every 100 weak observations.
+// Any failure returns the original cursor, so the next owner replays the run.
+func runStreamRouterClaimBatches(ctx context.Context, start streamRouterCursor, read streamRouterBatchRead, analyze func(context.Context, []normalized.Event) error) (streamRouterCursor, int, int, time.Duration, time.Duration, error) {
+	cursor := start
+	processed, weak := 0, 0
+	var readDuration, analyzeDuration time.Duration
+	started := time.Now()
+	for batch := 0; batch < maxRouterWeakBatchesPerClaim; batch++ {
+		stage := time.Now()
+		events, next, err := read(ctx, cursor)
+		readDuration += time.Since(stage)
+		if err != nil {
+			return start, 0, 0, readDuration, analyzeDuration, err
+		}
+		if len(events) == 0 {
+			break
+		}
+		scoring, excluded := routerScoringEvents(events)
+		if len(scoring) > 0 {
+			stage = time.Now()
+			if err := analyze(ctx, events); err != nil {
+				analyzeDuration += time.Since(stage)
+				return start, 0, 0, readDuration, analyzeDuration, err
+			}
+			analyzeDuration += time.Since(stage)
+		}
+		cursor, processed, weak = next, processed+len(events), weak+excluded
+		// A scored batch ends the claim. Earlier batches only contained weak TTL,
+		// so replay after a failed scoring write cannot duplicate scored work.
+		if len(scoring) > 0 || time.Since(started) >= 10*time.Second {
+			break
+		}
+	}
+	return cursor, processed, weak, readDuration, analyzeDuration, nil
+}
+
 var ErrStreamRouterIndexGap = errors.New("stream router cursor is older than retained index coverage")
 
 func (s *DBStore) claimStreamRouterRecognition(ctx context.Context, sensor, owner string) (streamRouterCursor, bool, error) {
@@ -126,32 +167,30 @@ func (s *DBStore) runStreamRouterRecognitionMaterializer(ctx context.Context, se
 		processed := 0
 		var readDuration, analyzeDuration, expiryDuration, finishDuration time.Duration
 		if err == nil && claimed {
-			var events []normalized.Event
 			var next streamRouterCursor
-			stage := time.Now()
-			events, next, err = s.streamRouterSignalBatch(workCtx, sensor, cursor)
-			readDuration = time.Since(stage)
-			if err == nil && len(events) > 0 {
-				stage = time.Now()
-				err = s.analyzeAndWriteStreamRouterEvents(workCtx, events)
-				analyzeDuration = time.Since(stage)
-			}
+			var weak int
+			next, processed, weak, readDuration, analyzeDuration, err = runStreamRouterClaimBatches(workCtx, cursor,
+				func(ctx context.Context, at streamRouterCursor) ([]normalized.Event, streamRouterCursor, error) {
+					return s.streamRouterSignalBatch(ctx, sensor, at)
+				}, s.analyzeAndWriteStreamRouterEvents)
 			if err == nil {
-				stage = time.Now()
+				stage := time.Now()
 				_, err = s.pg.refreshExpiredRouterAssessments(workCtx, 50)
 				expiryDuration = time.Since(stage)
 			}
 			if err == nil {
-				cursor, processed = next, len(events)
+				cursor = next
+			} else {
+				processed = 0
 			}
-			stage = time.Now()
+			stage := time.Now()
 			if finishErr := s.finishStreamRouterRecognition(ctx, sensor, cursor, processed, err); err == nil {
 				err = finishErr
 			}
 			finishDuration = time.Since(stage)
 			if total := time.Since(started); total >= 2*time.Second {
-				fmt.Fprintf(os.Stderr, "stream router batch events=%d total_ms=%d claim_ms=%d read_ms=%d analyze_ms=%d expiry_ms=%d finish_ms=%d\n",
-					processed, total.Milliseconds(), claimDuration.Milliseconds(), readDuration.Milliseconds(),
+				fmt.Fprintf(os.Stderr, "stream router batch events=%d weak_ttl_excluded=%d total_ms=%d claim_ms=%d read_ms=%d analyze_ms=%d expiry_ms=%d finish_ms=%d\n",
+					processed, weak, total.Milliseconds(), claimDuration.Milliseconds(), readDuration.Milliseconds(),
 					analyzeDuration.Milliseconds(), expiryDuration.Milliseconds(), finishDuration.Milliseconds())
 			}
 		}
