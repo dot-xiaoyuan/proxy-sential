@@ -168,6 +168,38 @@ func TestCaseSynchronizationIncludesNonAmbiguousRouterCandidates(t *testing.T) {
 	}
 }
 
+func TestCaseSynchronizationPrefersExactCaseAndKeepsMergedDedupeKey(t *testing.T) {
+	now := time.Now().UTC()
+	assessment := evidence.RouterAssessment{
+		AssessmentID: "router-exact",
+		IP:           "192.0.2.1",
+		Role:         "router",
+		Status:       "candidate",
+		Confidence:   25,
+		RuleVersion:  "router-rules-v1",
+		FirstSeen:    now.Add(-time.Hour).Format(time.RFC3339Nano),
+		LastSeen:     now.Format(time.RFC3339Nano),
+	}
+	item := proxyReviewCaseForRouterAssessment(assessment)
+	reader := &routerCaseSyncReader{caseSyncReader: &caseSyncReader{}, routers: []evidence.RouterAssessment{assessment}}
+	s := &Server{reader: reader, operations: &operationsState{doc: emptyOperationsDocument()}, exceptions: newExceptionManager(nil)}
+	other := RiskCase{CaseID: "router-other", SubjectType: "ip", SubjectID: assessment.IP, IP: assessment.IP, Status: "new", DedupeKey: "router-observation:router-other", RulesetVersion: "router-observation/router-rules-v1", FirstSeen: assessment.FirstSeen, LastSeen: assessment.LastSeen}
+	exact := RiskCase{CaseID: item.CaseID, SubjectType: "ip", SubjectID: assessment.IP, IP: assessment.IP, Status: "new", DedupeKey: "router-observation:merged-history", RulesetVersion: "router-observation/router-rules-v1", FirstSeen: assessment.FirstSeen, LastSeen: assessment.LastSeen}
+	s.operations.doc.Cases[other.CaseID] = other
+	s.operations.doc.Cases[exact.CaseID] = exact
+
+	if err := s.syncCasesContext(context.Background(), "test", "10m"); err != nil {
+		t.Fatal(err)
+	}
+	got := s.operations.doc.Cases[item.CaseID]
+	if got.DedupeKey != exact.DedupeKey {
+		t.Fatalf("exact case changed its durable dedupe key: got=%q want=%q", got.DedupeKey, exact.DedupeKey)
+	}
+	if s.operations.doc.Cases[other.CaseID].Status != "closed" {
+		t.Fatalf("unmatched duplicate case remained open: %+v", s.operations.doc.Cases[other.CaseID])
+	}
+}
+
 func TestCaseSynchronizationReadFailureDoesNotCloseCurrentCase(t *testing.T) {
 	s, r, _ := caseSyncFixture()
 	if err := s.syncCasesContext(context.Background(), "test", "10m"); err != nil {

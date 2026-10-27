@@ -433,7 +433,13 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 	now := time.Now().UTC()
 	s.operations.mu.Lock()
 	defer s.operations.mu.Unlock()
-	active := map[string]bool{}
+	// Track the durable case IDs that were matched by this current read. The
+	// dedupe key is a durable investigation identity and may legitimately be
+	// older than the source assessment ID after evidence was merged into an
+	// existing case. Using the incoming source key for closure decisions made
+	// those cases look stale, and rewriting it could collide with another open
+	// case during the same synchronization transaction.
+	activeCaseIDs := map[string]bool{}
 	for _, item := range items {
 		kind := caseRiskKind(item)
 		if kind == "" {
@@ -454,18 +460,28 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 			continue
 		}
 		dedupeKey := strings.ReplaceAll(kind, "_", "-") + ":" + item.CaseID
-		active[dedupeKey] = true
 		caseID := item.CaseID
 		existing, found := s.operations.doc.Cases[caseID]
-		for candidateID, candidate := range s.operations.doc.Cases {
-			if activeCaseMatches(candidate, item, dedupeKey) {
-				caseID, existing, found = candidateID, candidate, true
-				break
+		// Prefer an active exact source case ID. A second open case for the
+		// same IP can still exist while an older assessment is being merged;
+		// letting an arbitrary map iteration replace this exact match moved the
+		// incoming dedupe key onto the other case and hit the partial unique
+		// index in PostgreSQL.
+		if found && !activeCaseMatches(existing, item, dedupeKey) {
+			found = false
+		}
+		if !found {
+			for candidateID, candidate := range s.operations.doc.Cases {
+				if activeCaseMatches(candidate, item, dedupeKey) {
+					caseID, existing, found = candidateID, candidate, true
+					break
+				}
 			}
 		}
 		if found && (existing.Status == "closed" || existing.Status == "resolved") {
 			caseID, found = item.CaseID+"-"+shortToken(6), false
 		}
+		activeCaseIDs[caseID] = true
 		priorCase := existing
 		level, rulesetVersion := caseAssessmentLevel(item), caseRulesetVersion(item)
 		slaLevel, priority := "medium", "medium"
@@ -490,7 +506,12 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		existing.RulesetVersion = rulesetVersion
 		existing.LastSeen = item.LastSeen
 		existing.UpdatedAt = now.Format(time.RFC3339Nano)
-		existing.DedupeKey = dedupeKey
+		// Keep the existing durable key when evidence is merged into a case.
+		// The source assessment ID is allowed to change; the investigation key
+		// must remain stable and unique among open cases.
+		if !found || existing.DedupeKey == "" {
+			existing.DedupeKey = dedupeKey
+		}
 		// Shared exits and router observations are IP/device investigations in
 		// this phase. Stale account-session blockers from the retired generic
 		// proxy synchronizer must not be presented as a condition of this case.
@@ -542,7 +563,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 	}
 	for caseID, existing := range s.operations.doc.Cases {
 		kind := riskKindForRuleset(existing.RulesetVersion)
-		if !closableKinds[kind] || existing.Status == "closed" || existing.Status == "resolved" || active[existing.DedupeKey] {
+		if !closableKinds[kind] || existing.Status == "closed" || existing.Status == "resolved" || activeCaseIDs[caseID] {
 			continue
 		}
 		before := existing.Status
