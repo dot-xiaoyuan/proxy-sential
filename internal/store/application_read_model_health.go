@@ -66,15 +66,33 @@ func (s *DBStore) activityStatisticsReadModelHealth(ctx context.Context) error {
 func (s *DBStore) ApplicationReadModelHealth(ctx context.Context) error {
 	var completed bool
 	var refreshed time.Time
-	err := s.pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_read_model_backfills WHERE name IN('latest-observations-v1','application-observation-buckets-v2') AND status='completed' GROUP BY status HAVING count(*)=2),least(c.updated_at,o.updated_at) FROM application_connection_read_model_v2_cursor c JOIN application_observation_read_model_cursor_v2 o USING(id) WHERE c.id=1`).Scan(&completed, &refreshed)
+	err := s.pg.db.QueryRowContext(ctx, `SELECT least(c.updated_at,o.updated_at) FROM application_connection_read_model_v2_cursor c JOIN application_observation_read_model_cursor_v2 o USING(id) WHERE c.id=1`).Scan(&refreshed)
 	if err != nil {
 		return fmt.Errorf("application read model not prepared: %w", err)
 	}
-	if !completed {
+	legacyBackfill := applicationLegacyBackfillRequired()
+	// The current deployment uses bounded fresh-only application read models.
+	// Historical V2 backfill is opt-in and must not keep /readyz degraded when
+	// PROXY_SENTINEL_RUN_LEGACY_BACKFILL is unset or history is explicitly
+	// disabled. The cursor freshness check below still protects the live lane.
+	if legacyBackfill {
+		err = s.pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_read_model_backfills WHERE name IN('latest-observations-v1','application-observation-buckets-v2') AND status='completed' GROUP BY status HAVING count(*)=2)`).Scan(&completed)
+		if err != nil {
+			return fmt.Errorf("application read model backfill status unavailable: %w", err)
+		}
+	}
+	if legacyBackfill && !completed {
 		return fmt.Errorf("application read model historical backfill not completed")
 	}
 	if time.Since(refreshed) > 60*time.Second {
 		return fmt.Errorf("application read model refresh is older than one minute")
 	}
 	return nil
+}
+
+func applicationLegacyBackfillRequired() bool {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_APPLICATION_HISTORY_DISABLED")), "true") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_RUN_LEGACY_BACKFILL")), "true")
 }
