@@ -615,6 +615,107 @@ func appendCatalogBundleSources(sources []BundleSource) []BundleSource {
 	return sources
 }
 
+// RefreshOfflineBundle combines the current verified source pack with the OUI
+// registry from another verified pack. It refreshes project device rules while
+// retaining third-party rules and every unrelated source payload.
+func RefreshOfflineBundle(baseData, ieeeData []byte, output, version string, now time.Time) (BundleManifest, error) {
+	base, err := VerifyBundleBytes(baseData)
+	if err != nil {
+		return BundleManifest{}, fmt.Errorf("current fingerprint bundle: %w", err)
+	}
+	ieee, err := VerifyBundleBytes(ieeeData)
+	if err != nil {
+		return BundleManifest{}, fmt.Errorf("IEEE source bundle: %w", err)
+	}
+	if base.Manifest.SchemaVersion != BundleSchemaVersionV6 || ieee.Manifest.SchemaVersion != BundleSchemaVersionV6 {
+		return BundleManifest{}, fmt.Errorf("refresh requires verified v6 bundles")
+	}
+	if strings.TrimSpace(version) == "" || version == base.Manifest.Version {
+		return BundleManifest{}, fmt.Errorf("new bundle version is required")
+	}
+	baseOUI, err := parseOUI(base.Files["oui.csv"])
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	ieeeOUI, err := parseOUI(ieee.Files["oui.csv"])
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	if len(ieeeOUI) < len(baseOUI) {
+		return BundleManifest{}, fmt.Errorf("IEEE source has fewer OUI assignments than current bundle: %d < %d", len(ieeeOUI), len(baseOUI))
+	}
+	var currentRules, projectRules []Rule
+	if err := json.Unmarshal(base.Files["device-rules.json"], &currentRules); err != nil {
+		return BundleManifest{}, err
+	}
+	if err := json.Unmarshal(embeddedRules, &projectRules); err != nil {
+		return BundleManifest{}, err
+	}
+	seen := map[string]bool{}
+	for _, rule := range projectRules {
+		seen[rule.Input+"\x00"+rule.Pattern] = true
+	}
+	for _, rule := range currentRules {
+		key := rule.Input + "\x00" + rule.Pattern
+		if !seen[key] {
+			projectRules = append(projectRules, rule)
+			seen[key] = true
+		}
+	}
+	rulesData, err := EncodeRules(projectRules)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	delete(base.Files, "manifest.json")
+	base.Files["oui.csv"] = ieee.Files["oui.csv"]
+	base.Files["device-rules.json"] = rulesData
+	manifest := base.Manifest
+	manifest.Version = version
+	manifest.CreatedAt = now.UTC().Format(time.RFC3339Nano)
+	ieeeSourceFound := false
+	for _, source := range ieee.Manifest.Sources {
+		if source.Name != "IEEE MA-L/MA-M/MA-S" {
+			continue
+		}
+		ieeeSourceFound = true
+		found := false
+		for i := range manifest.Sources {
+			if manifest.Sources[i].Name == source.Name {
+				manifest.Sources[i] = source
+				found = true
+				break
+			}
+		}
+		if !found {
+			return BundleManifest{}, fmt.Errorf("current bundle lacks IEEE source provenance")
+		}
+		break
+	}
+	if !ieeeSourceFound {
+		return BundleManifest{}, fmt.Errorf("IEEE source bundle lacks IEEE source provenance")
+	}
+	for i := range manifest.Sources {
+		if manifest.Sources[i].Name == "Proxy Sentinel field-directed device rules" {
+			manifest.Sources[i].Version = EmbeddedVersion
+		}
+	}
+	manifest.Files = make(map[string]BundleFile, len(base.Files))
+	for name, data := range base.Files {
+		manifest.Files[name] = bundleFile(data)
+	}
+	data, err := encodeBundle(manifest, base.Files)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	if _, err := VerifyBundleBytes(data); err != nil {
+		return BundleManifest{}, err
+	}
+	if err := writeBundleAtomic(output, data); err != nil {
+		return BundleManifest{}, err
+	}
+	return manifest, nil
+}
+
 // ExtendOfflineBundle adds the audited catalog to a verified existing offline
 // pack. Existing OUI, UA, DHCP and domain data is preserved byte-for-byte.
 func ExtendOfflineBundle(base []byte, output, version string, now time.Time) (BundleManifest, error) {

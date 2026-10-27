@@ -32,7 +32,7 @@ func TestCampusSelfReportedDeviceRules(t *testing.T) {
 		{"honor pinyin phone", Signals{Hostnames: []string{"rong-yaoMagic6"}}, "mobile", "Honor", "", ""},
 		{"busybox client is platform only", Signals{DHCPVendorClass: "udhcp 1.19.4"}, "", "", "", "Embedded Linux"},
 		{"arm dhcpcd is not a desktop", Signals{DHCPVendorClass: "dhcpcd-9.4.1:Linux-5.10.160:armv7l:Rockchip"}, "", "", "", "Embedded Linux"},
-		{"generic android unchanged", Signals{Hostnames: []string{"vivo-S19"}, DHCPVendorClass: "android-dhcp-15", Hints: []string{"android"}}, "mobile", "", "", "Android"},
+		{"vivo hostname preserves android OS", Signals{Hostnames: []string{"vivo-S19"}, DHCPVendorClass: "android-dhcp-15", Hints: []string{"android"}}, "mobile", "vivo", "vivo S19", "Android"},
 	}
 	for _, tc := range cases {
 		got := Default().IdentifySignals(tc.signals)

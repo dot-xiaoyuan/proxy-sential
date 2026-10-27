@@ -114,6 +114,11 @@ func (m *Manager) ImportWithGuard(data []byte, check func() error) (Status, erro
 	if current.Version == bundle.Manifest.Version && current.Checksum != "" && current.Checksum != bundleChecksum(bundle) {
 		return m.fail(fmt.Errorf("rule version already exists with different content"))
 	}
+	// An embedded bootstrap pack can carry only a handful of OUI rows. Do not
+	// silently replace a previously installed public registry with that pack.
+	if current.Source == "offline-bundle" && current.OUICount >= 1000 && len(library.ouis) < current.OUICount/2 {
+		return m.fail(fmt.Errorf("OUI registry shrank from %d to %d assignments", current.OUICount, len(library.ouis)))
+	}
 	if check != nil {
 		if err := check(); err != nil {
 			return m.Status(), err

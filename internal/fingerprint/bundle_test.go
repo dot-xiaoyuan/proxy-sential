@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -322,4 +323,115 @@ func TestExtendKeepsLegacyPayloadAndRejectsBadBase(t *testing.T) {
 	if after, err := VerifyBundleFile(output); err != nil || after.Manifest.Version != "extended" {
 		t.Fatal("failed extension changed valid bundle", err)
 	}
+}
+
+func TestRefreshOfflineBundleRestoresVerifiedOUIAndKeepsOtherSources(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "base.tar.gz")
+	if _, err := BuildEmbeddedBundle(basePath, "base", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	baseData, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := VerifyBundleBytes(baseData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := VerifyBundleBytes(baseData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The real failure was an embedded 11-row OUI replacing a much larger
+	// previously verified IEEE registry while the other source files survived.
+	var oui strings.Builder
+	oui.WriteString("Assignment,Organization Name\n")
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&oui, "%06X,Test Vendor %d\n", i*4, i)
+	}
+	prior.Files["oui.csv"] = []byte(oui.String())
+	prior.Manifest.Files["oui.csv"] = bundleFile(prior.Files["oui.csv"])
+	for i := range prior.Manifest.Sources {
+		if prior.Manifest.Sources[i].Name == "IEEE MA-L/MA-M/MA-S" {
+			prior.Manifest.Sources[i].Version = "verified-ieee-snapshot"
+		}
+	}
+	priorData, err := encodeBundle(prior.Manifest, prior.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "refresh.tar.gz")
+	if _, err := RefreshOfflineBundle(baseData, priorData, output, "refreshed", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := VerifyBundleFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Files["oui.csv"], prior.Files["oui.csv"]) {
+		t.Fatal("verified IEEE OUI was not restored")
+	}
+	for _, name := range []string{"multisource-catalog.json", "multisource-provenance.json", "fingerbank-dhcp.json", "domain-signatures.json", "brand-aliases.json"} {
+		if !bytes.Equal(got.Files[name], base.Files[name]) {
+			t.Fatalf("existing source was changed: %s", name)
+		}
+	}
+	if got.Manifest.Sources[0].Version != "verified-ieee-snapshot" {
+		t.Fatalf("OUI source provenance was not carried forward: %+v", got.Manifest.Sources[0])
+	}
+	if _, err := RefreshOfflineBundle(priorData, baseData, filepath.Join(t.TempDir(), "shrunk.tar.gz"), "shrunk", time.Unix(1, 0)); err == nil || !strings.Contains(err.Error(), "fewer OUI assignments") {
+		t.Fatalf("a smaller IEEE source must be rejected: %v", err)
+	}
+	var rules []Rule
+	if err := json.Unmarshal(got.Files["device-rules.json"], &rules); err != nil || len(rules) < len(mustEmbeddedRulesForTest(t)) {
+		t.Fatalf("refreshed device rules invalid: count=%d err=%v", len(rules), err)
+	}
+}
+
+func TestImportRejectsAccidentalLargeOUIShrink(t *testing.T) {
+	previous := Default()
+	defer SetDefault(previous)
+	path := filepath.Join(t.TempDir(), "embedded.tar.gz")
+	if _, err := BuildEmbeddedBundle(path, "small", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	smallData, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := VerifyBundleBytes(smallData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oui strings.Builder
+	oui.WriteString("Assignment,Organization Name\n")
+	for i := 0; i < 1200; i++ {
+		fmt.Fprintf(&oui, "%06X,Test Vendor %d\n", i*4, i)
+	}
+	full.Files["oui.csv"] = []byte(oui.String())
+	full.Manifest.Files["oui.csv"] = bundleFile(full.Files["oui.csv"])
+	full.Manifest.Version = "full"
+	fullData, err := encodeBundle(full.Manifest, full.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(t.TempDir())
+	if _, err := manager.Import(fullData); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Import(smallData); err == nil || !strings.Contains(err.Error(), "OUI") {
+		t.Fatalf("smaller bootstrap library must be rejected: %v", err)
+	}
+	if manager.Status().Version != "full" || Default().Version() != "full" {
+		t.Fatal("rejected import replaced the full library")
+	}
+}
+
+func mustEmbeddedRulesForTest(t *testing.T) []Rule {
+	t.Helper()
+	var rules []Rule
+	if err := json.Unmarshal(embeddedRules, &rules); err != nil {
+		t.Fatal(err)
+	}
+	return rules
 }

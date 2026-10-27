@@ -17,6 +17,24 @@ go run ./cmd/proxy-sentinel device-fingerprint extend \
 
 管理员在“规则与特征库 → 设备特征库”导入包。系统验证路径白名单、重复文件、大小、SHA256、清单、来源版本、许可证材料、规则格式和正则后原子切换；加载失败保留上一有效版本，保留最近有效版本供回退。识别工作进程轮询本地激活版本，不访问外网。应用发布另按 `application-only-upgrade.md` 和项目 AGENTS.md 执行迁移核对与健康检查。
 
+### 2026-10-27 来源恢复与实时增量
+
+184 当前离线包的 OUI 仅有 11 条；现场保留的一份已校验旧包包含约 5.4 万条 IEEE 分配。更新项目规则时，先从当前包与该旧包分别重建并校验 v6 归档，再合成新包：
+
+```bash
+go run ./cmd/proxy-sentinel device-fingerprint refresh \
+  --base /path/to/current-verified-v6.tar.gz \
+  --ieee-base /path/to/verified-full-ieee-v6.tar.gz \
+  --output /path/to/refreshed-v6.tar.gz \
+  --version offline-YYYY.MM.DD-identification-refresh
+go run ./cmd/proxy-sentinel device-fingerprint verify \
+  --bundle /path/to/refreshed-v6.tar.gz
+```
+
+`refresh` 保留当前包的其他来源与规则，用旧包中的已校验 OUI 和来源记录恢复完整登记表，并加入本项目的新规则。导入时还会拒绝将已安装的完整 OUI 表大幅缩减。IEEE 分配只能支持厂商线索，不能据此确定设备类型或路由器身份；本地管理或随机 MAC 也不能按其前缀推断厂商。新增的 DHCP 主机名规则仅匹配设备自报、格式明确的型号，不把客户端 UA 当作物理设备证据。
+
+本次按用户要求只处理新鲜实时输入，不自动启动历史识别回填。旧摘要保留旧规则结果；在实时事件恢复前，不能用存量空品牌或空类型比例评估新规则效果。
+
 仅多来源规则变化时，按变化字段筛选最近七天端点，历史任务每批最多 100 个、间隔五秒入队，独立队列通道限额消费。原有数据变更继续走原回填机制。实时任务优先并合并重复更新，租约期间新增事件不会被已完成批次覆盖。
 
 ## 固定快照的实际结果（2026-10-12）

@@ -242,6 +242,13 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			}
 		}
 	}
+	// A device-reported Android DHCP class still identifies its OS when a more
+	// specific hostname rule wins brand and model selection.
+	if result.OSFamily == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(signals.DHCPVendorClass)), "android-dhcp-") {
+		result.OSFamily = "Android"
+		result.OSFamilyConfidence = .82
+		result.Evidence = append(result.Evidence, "DHCP vendor class: Android")
+	}
 	// Darwin alone does not distinguish Apple's operating systems. A Mac hostname
 	// corroborates only a tentative macOS clue; neither signal establishes brand.
 	// Keep this standard-signal fallback available with installed offline bundles.
