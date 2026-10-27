@@ -73,5 +73,16 @@
   {"pattern":"\\b(Sonos)\\b","brand":"Sonos","model_replacement":"$1","device_type":"media_device","confidence":0.8},
   {"pattern":"\\b(Echo (?:Dot|Show|Plus))\\b","brand":"Amazon","model_replacement":"$1","device_type":"media_device","confidence":0.8},
   {"pattern":"\\b(Kindle)\\b","brand":"Amazon","model_replacement":"$1","device_type":"tablet","confidence":0.8},
-  {"pattern":"\\b(Steam Deck)\\b","brand":"Valve","model_replacement":"$1","device_type":"desktop","confidence":0.85,"os_family":"SteamOS"}
+  {"pattern":"\\b(Steam Deck)\\b","brand":"Valve","model_replacement":"$1","device_type":"desktop","confidence":0.85,"os_family":"SteamOS"},
+
+  {"pattern":"\\bHP[- ]?(LaserJet|JetDirect|OfficeJet|DeskJet|PageWide|Color LaserJet)[- A-Za-z0-9]*","input":"tls_subject","brand":"HP","model_replacement":"HP $1","device_type":"printer","confidence":0.90},
+  {"pattern":"\\b(EPSON|Canon|Brother|Ricoh|Xerox|Lexmark)[- ]?[A-Z]{0,3}[0-9][A-Za-z0-9-]*","input":"tls_subject","brand_replacement":"$1","device_type":"printer","confidence":0.85},
+  {"pattern":"\\b(DS-[0-9A-Z]{6,}|IPC-[A-Z]{2,4}[0-9]{4}[A-Za-z0-9-]*)","input":"tls_subject","device_type":"camera","confidence":0.80},
+
+  {"pattern":"HP HTTP Server|HP[- ]?(LaserJet|JetDirect|OfficeJet)[- A-Za-z0-9]*","input":"http_server","brand":"HP","device_type":"printer","confidence":0.88},
+  {"pattern":"\\b(EPSON|Canon|Brother|Ricoh|Xerox)[- ]HTTP","input":"http_server","brand_replacement":"$1","device_type":"printer","confidence":0.82},
+
+  {"pattern":"\\bHP[- ]?(LaserJet|OfficeJet|DeskJet|Color LaserJet)[- A-Za-z0-9]*","input":"http_title","brand":"HP","device_type":"printer","confidence":0.85},
+  {"pattern":"\\b(Hikvision|海康威视)\\b","input":"http_title","brand":"Hikvision","device_type":"camera","confidence":0.80},
+  {"pattern":"\\bDahua\\b","input":"http_title","brand":"Dahua","device_type":"camera","confidence":0.80}
 ]
