@@ -24,38 +24,39 @@ type streamDiscoveryReceipt struct {
 }
 
 type streamDiscoveryFact struct {
-	Epoch           string    `json:"epoch"`
-	Device          string    `json:"device_key"`
-	Key             string    `json:"fact_key"`
-	Scope           string    `json:"scope_id"`
-	Source          string    `json:"source_id"`
-	Protocol        string    `json:"protocol"`
-	ServiceInstance string    `json:"service_instance"`
-	Event           string    `json:"event_key"`
-	EvidenceEvent   string    `json:"visible_event_key"`
-	Revision        int64     `json:"revision"`
-	Observed        time.Time `json:"observed_at"`
-	FirstObserved   time.Time `json:"first_observed_at"`
-	ValidUntil      time.Time `json:"valid_until"`
-	Withdrawn       bool      `json:"withdrawn"`
-	SemanticHash    string    `json:"semantic_hash"`
-	IP              string    `json:"ip"`
-	MAC             string    `json:"mac"`
-	Name            string    `json:"name"`
-	Manufacturer    string    `json:"manufacturer"`
-	Model           string    `json:"model_name"`
-	DeviceType      string    `json:"device_type"`
-	CandidateType   string    `json:"candidate_type"`
-	CandidateReason string    `json:"candidate_reason"`
-	Excluded        bool      `json:"excluded"`
-	Capabilities    []string  `json:"capabilities"`
-	AddressBinding  bool      `json:"address_binding"`
-	Sensor          string    `json:"sensor_id"`
-	Site            string    `json:"site"`
-	Domain          string    `json:"domain"`
-	VLAN            string    `json:"vlan"`
-	VRF             string    `json:"vrf"`
-	Interface       string    `json:"interface_name"`
+	Epoch             string            `json:"epoch"`
+	Device            string            `json:"device_key"`
+	Key               string            `json:"fact_key"`
+	Scope             string            `json:"scope_id"`
+	Source            string            `json:"source_id"`
+	Protocol          string            `json:"protocol"`
+	ServiceInstance   string            `json:"service_instance"`
+	Event             string            `json:"event_key"`
+	EvidenceEvent     string            `json:"visible_event_key"`
+	Revision          int64             `json:"revision"`
+	Observed          time.Time         `json:"observed_at"`
+	FirstObserved     time.Time         `json:"first_observed_at"`
+	ValidUntil        time.Time         `json:"valid_until"`
+	Withdrawn         bool              `json:"withdrawn"`
+	SemanticHash      string            `json:"semantic_hash"`
+	IP                string            `json:"ip"`
+	MAC               string            `json:"mac"`
+	Name              string            `json:"name"`
+	Manufacturer      string            `json:"manufacturer"`
+	Model             string            `json:"model_name"`
+	DeviceType        string            `json:"device_type"`
+	CandidateType     string            `json:"candidate_type"`
+	CandidateReason   string            `json:"candidate_reason"`
+	Excluded          bool              `json:"excluded"`
+	Capabilities      []string          `json:"capabilities"`
+	RecognitionFields map[string]string `json:"recognition_fields"`
+	AddressBinding    bool              `json:"address_binding"`
+	Sensor            string            `json:"sensor_id"`
+	Site              string            `json:"site"`
+	Domain            string            `json:"domain"`
+	VLAN              string            `json:"vlan"`
+	VRF               string            `json:"vrf"`
+	Interface         string            `json:"interface_name"`
 }
 
 type streamPreparedDiscovery struct {
@@ -139,7 +140,8 @@ func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscover
 			Name: o.Name, Manufacturer: o.Manufacturer, Model: o.ModelName, DeviceType: o.DeviceType,
 			CandidateType: candidate, CandidateReason: reason, Excluded: excludedStreamDeviceType(o.DeviceType),
 			Capabilities: append([]string(nil), o.Capabilities...), AddressBinding: o.Evidence.Payload["address_binding"] == true, Sensor: o.Node, Site: o.Site,
-			Domain: o.Domain, VLAN: o.VLAN, VRF: o.VRF, Interface: o.Interface,
+			RecognitionFields: streamRecognitionFields(o),
+			Domain:            o.Domain, VLAN: o.VLAN, VRF: o.VRF, Interface: o.Interface,
 		}
 		item.HasFact = true
 		prepared = append(prepared, item)

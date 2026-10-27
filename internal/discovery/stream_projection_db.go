@@ -76,10 +76,32 @@ func (p StreamDiscoveryProjector) ExpireStreamDiscoveryStates(ctx context.Contex
 		epochs = append(epochs, epoch)
 	}
 	sort.Strings(epochs)
+	expiredMACs := map[string]bool{}
 	for _, epoch := range epochs {
+		macRows, queryErr := tx.QueryContext(ctx, `SELECT DISTINCT mac FROM stream_discovery_facts
+ WHERE epoch=$1 AND device_key=ANY($2::text[]) AND mac<>''`, epoch, groups[epoch])
+		if queryErr != nil {
+			return 0, queryErr
+		}
+		for macRows.Next() {
+			var mac string
+			if err := macRows.Scan(&mac); err != nil {
+				macRows.Close()
+				return 0, err
+			}
+			expiredMACs[mac] = true
+		}
+		if err := macRows.Err(); err != nil {
+			macRows.Close()
+			return 0, err
+		}
+		macRows.Close()
 		if err := publishStreamDiscoveryStates(ctx, tx, epoch, groups[epoch], nil); err != nil {
 			return 0, err
 		}
+	}
+	if err := markStreamRecognitionDirty(ctx, tx, expiredMACs); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -358,6 +380,7 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 	}
 	mark("merge_facts")
 	factWrites := map[string]streamDiscoveryFact{}
+	changedMACs := map[string]bool{}
 	newFactCounts := map[string]int{}
 	changedDevices := map[string]bool{}
 	changes := make([]streamDiscoveryChange, 0)
@@ -386,6 +409,12 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 		}
 		versions[identity] = item.Fact
 		factWrites[identity] = item.Fact
+		if item.Fact.MAC != "" {
+			changedMACs[item.Fact.MAC] = true
+		}
+		if hasPrior && prior.MAC != "" {
+			changedMACs[prior.MAC] = true
+		}
 		changedDevices[item.Fact.Device] = true
 		if decision.VisibleChanged {
 			before := ""
@@ -397,6 +426,9 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 	}
 	mark("write_facts")
 	if err := writeStreamDiscoveryFacts(ctx, tx, factWrites); err != nil {
+		return err
+	}
+	if err := markStreamRecognitionDirty(ctx, tx, changedMACs); err != nil {
 		return err
 	}
 	mark("publish_state")
@@ -491,7 +523,7 @@ func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.device_key,f.fact_key,f.event_key,f.visible_event_key,f.revision,f.first_observed_at,f.observed_at,f.valid_until,f.withdrawn,f.semantic_hash
+	rows, err := tx.QueryContext(ctx, `SELECT f.device_key,f.fact_key,f.event_key,f.visible_event_key,f.revision,f.first_observed_at,f.observed_at,f.valid_until,f.withdrawn,f.semantic_hash,f.mac
  FROM jsonb_to_recordset($2::jsonb) AS v(device_key text,fact_key text)
  JOIN stream_discovery_facts f ON f.epoch=$1 AND f.device_key=v.device_key AND f.fact_key=v.fact_key`, epoch, raw)
 	if err != nil {
@@ -500,7 +532,7 @@ func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items
 	defer rows.Close()
 	for rows.Next() {
 		var fact streamDiscoveryFact
-		if err := rows.Scan(&fact.Device, &fact.Key, &fact.Event, &fact.EvidenceEvent, &fact.Revision, &fact.FirstObserved, &fact.Observed, &fact.ValidUntil, &fact.Withdrawn, &fact.SemanticHash); err != nil {
+		if err := rows.Scan(&fact.Device, &fact.Key, &fact.Event, &fact.EvidenceEvent, &fact.Revision, &fact.FirstObserved, &fact.Observed, &fact.ValidUntil, &fact.Withdrawn, &fact.SemanticHash, &fact.MAC); err != nil {
 			return nil, err
 		}
 		fact.Epoch = epoch
@@ -526,12 +558,29 @@ func writeStreamDiscoveryFacts(ctx context.Context, tx *sql.Tx, facts map[string
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_facts(epoch,device_key,fact_key,scope_id,source_id,protocol,service_instance,event_key,visible_event_key,revision,first_observed_at,observed_at,valid_until,withdrawn,semantic_hash,ip,mac,name,manufacturer,model_name,device_type,candidate_type,candidate_reason,excluded,capabilities,address_binding,sensor_id,site,domain,vlan,vrf,interface_name)
- SELECT v.epoch,v.device_key,v.fact_key,v.scope_id,v.source_id,v.protocol,v.service_instance,v.event_key,v.visible_event_key,v.revision,v.first_observed_at,v.observed_at,v.valid_until,v.withdrawn,v.semantic_hash,v.ip,v.mac,v.name,v.manufacturer,v.model_name,v.device_type,v.candidate_type,v.candidate_reason,v.excluded,coalesce(v.capabilities,'{}'::text[]),v.address_binding,v.sensor_id,v.site,v.domain,v.vlan,v.vrf,v.interface_name
- FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,device_key text,fact_key text,scope_id text,source_id text,protocol text,service_instance text,event_key text,visible_event_key text,revision bigint,first_observed_at timestamptz,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,semantic_hash text,ip text,mac text,name text,manufacturer text,model_name text,device_type text,candidate_type text,candidate_reason text,excluded boolean,capabilities text[],address_binding boolean,sensor_id text,site text,domain text,vlan text,vrf text,interface_name text)
- ON CONFLICT(epoch,device_key,fact_key) DO UPDATE SET scope_id=EXCLUDED.scope_id,source_id=EXCLUDED.source_id,protocol=EXCLUDED.protocol,service_instance=EXCLUDED.service_instance,event_key=EXCLUDED.event_key,visible_event_key=EXCLUDED.visible_event_key,revision=EXCLUDED.revision,first_observed_at=least(stream_discovery_facts.first_observed_at,EXCLUDED.first_observed_at),observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,semantic_hash=EXCLUDED.semantic_hash,ip=EXCLUDED.ip,mac=EXCLUDED.mac,name=EXCLUDED.name,manufacturer=EXCLUDED.manufacturer,model_name=EXCLUDED.model_name,device_type=EXCLUDED.device_type,candidate_type=EXCLUDED.candidate_type,candidate_reason=EXCLUDED.candidate_reason,excluded=EXCLUDED.excluded,capabilities=EXCLUDED.capabilities,address_binding=EXCLUDED.address_binding,sensor_id=EXCLUDED.sensor_id,site=EXCLUDED.site,domain=EXCLUDED.domain,vlan=EXCLUDED.vlan,vrf=EXCLUDED.vrf,interface_name=EXCLUDED.interface_name
+	_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_facts(epoch,device_key,fact_key,scope_id,source_id,protocol,service_instance,event_key,visible_event_key,revision,first_observed_at,observed_at,valid_until,withdrawn,semantic_hash,ip,mac,name,manufacturer,model_name,device_type,candidate_type,candidate_reason,excluded,capabilities,address_binding,sensor_id,site,domain,vlan,vrf,interface_name,recognition_fields)
+ SELECT v.epoch,v.device_key,v.fact_key,v.scope_id,v.source_id,v.protocol,v.service_instance,v.event_key,v.visible_event_key,v.revision,v.first_observed_at,v.observed_at,v.valid_until,v.withdrawn,v.semantic_hash,v.ip,v.mac,v.name,v.manufacturer,v.model_name,v.device_type,v.candidate_type,v.candidate_reason,v.excluded,coalesce(v.capabilities,'{}'::text[]),v.address_binding,v.sensor_id,v.site,v.domain,v.vlan,v.vrf,v.interface_name,coalesce(v.recognition_fields,'{}'::jsonb)
+ FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,device_key text,fact_key text,scope_id text,source_id text,protocol text,service_instance text,event_key text,visible_event_key text,revision bigint,first_observed_at timestamptz,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,semantic_hash text,ip text,mac text,name text,manufacturer text,model_name text,device_type text,candidate_type text,candidate_reason text,excluded boolean,capabilities text[],address_binding boolean,sensor_id text,site text,domain text,vlan text,vrf text,interface_name text,recognition_fields jsonb)
+ ON CONFLICT(epoch,device_key,fact_key) DO UPDATE SET scope_id=EXCLUDED.scope_id,source_id=EXCLUDED.source_id,protocol=EXCLUDED.protocol,service_instance=EXCLUDED.service_instance,event_key=EXCLUDED.event_key,visible_event_key=EXCLUDED.visible_event_key,revision=EXCLUDED.revision,first_observed_at=least(stream_discovery_facts.first_observed_at,EXCLUDED.first_observed_at),observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,semantic_hash=EXCLUDED.semantic_hash,ip=EXCLUDED.ip,mac=EXCLUDED.mac,name=EXCLUDED.name,manufacturer=EXCLUDED.manufacturer,model_name=EXCLUDED.model_name,device_type=EXCLUDED.device_type,candidate_type=EXCLUDED.candidate_type,candidate_reason=EXCLUDED.candidate_reason,excluded=EXCLUDED.excluded,capabilities=EXCLUDED.capabilities,address_binding=EXCLUDED.address_binding,sensor_id=EXCLUDED.sensor_id,site=EXCLUDED.site,domain=EXCLUDED.domain,vlan=EXCLUDED.vlan,vrf=EXCLUDED.vrf,interface_name=EXCLUDED.interface_name,recognition_fields=EXCLUDED.recognition_fields
  WHERE (EXCLUDED.event_key=stream_discovery_facts.event_key AND EXCLUDED.revision>stream_discovery_facts.revision)
  OR (EXCLUDED.event_key<>stream_discovery_facts.event_key AND (EXCLUDED.observed_at,EXCLUDED.event_key)>(stream_discovery_facts.observed_at,stream_discovery_facts.event_key))`, raw)
+	return err
+}
+
+func markStreamRecognitionDirty(ctx context.Context, tx *sql.Tx, macs map[string]bool) error {
+	if len(macs) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(macs))
+	for mac := range macs {
+		values = append(values, mac)
+	}
+	sort.Strings(values)
+	_, err := tx.ExecContext(ctx, `SELECT mark_endpoint_recognition_dirty(e.endpoint_id)
+ FROM endpoint_entities e
+ JOIN (SELECT DISTINCT lower(mac) AS mac FROM unnest($1::text[]) AS m(mac)) changed
+   ON lower(e.primary_mac)=changed.mac
+ WHERE e.entity_role='endpoint'`, values)
 	return err
 }
 

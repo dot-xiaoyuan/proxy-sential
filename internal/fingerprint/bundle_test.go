@@ -435,3 +435,70 @@ func mustEmbeddedRulesForTest(t *testing.T) []Rule {
 	}
 	return rules
 }
+
+func TestV7BundleCarriesVerifiedSignatureTablesAndReadsV6(t *testing.T) {
+	legacyPath := filepath.Join(t.TempDir(), "legacy-v6.tar.gz")
+	if _, err := BuildEmbeddedBundle(legacyPath, "legacy-v6", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyBundleBytes(legacy); err != nil {
+		t.Fatalf("v6 reader compatibility: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "v7.tar.gz")
+	if _, err := BuildV7Bundle(legacy, path, "layered-v7", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := VerifyBundleFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Manifest.SchemaVersion != BundleSchemaVersionV7 {
+		t.Fatalf("wrong schema: %s", bundle.Manifest.SchemaVersion)
+	}
+	for _, name := range []string{"snmp-enterprise-oid.json", "device-type-prior.json", "model-catalog.json", "service-type-catalog.json"} {
+		if len(bundle.Files[name]) == 0 || bundle.Manifest.Files[name] != bundleFile(bundle.Files[name]) {
+			t.Fatalf("unverified signature payload %s", name)
+		}
+	}
+	if !bytes.Equal(bundle.Files["oui.csv"], mustVerifyBundleBytesForTest(t, legacy).Files["oui.csv"]) {
+		t.Fatal("v7 conversion replaced the existing IEEE source")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		SetDefault(mustLoadEmbedded())
+		activateSignatureTables(mustParseEmbeddedSignatureTables())
+	}()
+	manager := NewManager(t.TempDir())
+	status, err := manager.Import(data)
+	if err != nil || status.Version != "layered-v7" {
+		t.Fatalf("v7 import failed: status=%+v err=%v", status, err)
+	}
+	reloaded := NewManager(manager.dir)
+	if reloaded.Status().Version != "layered-v7" {
+		t.Fatalf("v7 restart lost active pack: %+v", reloaded.Status())
+	}
+}
+
+func mustParseEmbeddedSignatureTables() bundleSignatureTables {
+	tables, err := parseBundleSignatureTables(v7SignatureFiles)
+	if err != nil {
+		panic(err)
+	}
+	return tables
+}
+
+func mustVerifyBundleBytesForTest(t *testing.T, data []byte) Bundle {
+	t.Helper()
+	bundle, err := VerifyBundleBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bundle
+}

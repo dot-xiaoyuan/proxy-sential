@@ -30,6 +30,8 @@ var macHostnameClue = regexp.MustCompile(`(?i)(^|[-_. ])(mac(book|intosh)?|imac)
 
 type Result struct {
 	SourceMatches        []SourceMatch `json:"source_matches,omitempty"`
+	EvidenceRefs         []EvidenceRef `json:"evidence_refs,omitempty"`
+	Diagnostics          Diagnostics   `json:"recognition_diagnostics"`
 	Vendor               string        `json:"vendor,omitempty"`
 	Brand                string        `json:"brand,omitempty"`
 	Model                string        `json:"model,omitempty"`
@@ -45,6 +47,7 @@ type Result struct {
 	Version              string        `json:"fingerprint_version,omitempty"`
 	RandomizedMAC        bool          `json:"randomized_mac"`
 	Conflict             bool          `json:"recognition_conflict"`
+	ConflictDimensions   []string      `json:"conflict_dimensions,omitempty"`
 	Evidence             []string      `json:"recognition_evidence,omitempty"`
 }
 
@@ -78,6 +81,7 @@ type Library struct {
 	version     string
 	ouis        map[string]string
 	rules       []Rule
+	ruleIndex   map[string][]int
 	dhcp        map[string][]DHCPFingerprint
 	aliases     map[string]string
 	domains     []DomainSignature
@@ -139,6 +143,10 @@ func LoadWithDomainData(version string, ouiCSV, rulesJSON, fingerbankJSON, alias
 		}
 		rules[index].compiled = compiled
 	}
+	ruleIndex := make(map[string][]int)
+	for index, rule := range rules {
+		ruleIndex[rule.Input] = append(ruleIndex[rule.Input], index)
+	}
 	var fingerprints []DHCPFingerprint
 	if err := json.Unmarshal(fingerbankJSON, &fingerprints); err != nil {
 		return nil, fmt.Errorf("decode Fingerbank data: %w", err)
@@ -157,7 +165,7 @@ func LoadWithDomainData(version string, ouiCSV, rulesJSON, fingerbankJSON, alias
 	if err != nil {
 		return nil, err
 	}
-	return &Library{version: version, ouis: ouis, rules: rules, dhcp: dhcp, aliases: aliases, domains: domains, domainIndex: domainIndex}, nil
+	return &Library{version: version, ouis: ouis, rules: rules, ruleIndex: ruleIndex, dhcp: dhcp, aliases: aliases, domains: domains, domainIndex: domainIndex}, nil
 }
 
 func (l *Library) Version() string { return l.version }
@@ -226,19 +234,18 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 		result.Confidence = modelEntry.Confidence
 		result.Evidence = append(result.Evidence, "型号库: "+modelCode+" → "+modelEntry.Model)
 	}
-	matches := l.matchRules(signals, joined)
+	matches, evaluatedRules := l.matchRules(signals, joined)
+	result.Diagnostics.CandidateRules = evaluatedRules
 	if len(matches) > 0 {
 		if hasModel {
 			applyRuleExtras(&result, expandRuleValues(matches[0]))
 		} else {
 			applyRuleMatch(&result, matches[0], expandRuleValues(matches[0]))
 		}
-		// Only the winning rule populates the profile. Lower-ranked matches are
-		// used for conflict reporting alone: filling dimensions from them would
-		// let weak rules leak brand/model/os into an otherwise clean result.
 		for _, extra := range matches[1:] {
-			if ruleMatchConflicts(result, extra) {
+			for _, dimension := range ruleMatchConflictDimensions(result, extra) {
 				result.Conflict = true
+				result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, dimension)
 			}
 		}
 	}
@@ -273,6 +280,7 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 		if ok {
 			if result.OSFamily != "" && candidate.OSFamily != "" && !strings.EqualFold(result.OSFamily, candidate.OSFamily) {
 				result.Conflict = true
+				result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, "os_family")
 			}
 			if result.DeviceType == "" {
 				result.DeviceType = candidate.DeviceType
@@ -301,7 +309,9 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			result.Brand = normalized
 		}
 	}
-	applySourceMatches(&result, l.Catalog().Match(catalogSignalValues(signals)))
+	sourceMatches, catalogEvaluated := l.Catalog().MatchWithStats(catalogSignalValues(signals))
+	result.Diagnostics.CandidateRules += catalogEvaluated
+	applySourceMatches(&result, sourceMatches)
 	return result
 }
 
@@ -399,28 +409,42 @@ type ruleValues struct {
 	osFamily   string
 }
 
-func (l *Library) matchRules(signals Signals, joined string) []ruleMatch {
+func (l *Library) matchRules(signals Signals, joined string) ([]ruleMatch, int) {
 	out := make([]ruleMatch, 0, 4)
-	for index := range l.rules {
-		rule := &l.rules[index]
-		if rule.Input == "user_agent" {
-			// UA identifies a client/runtime, not a physical endpoint. Keep the
-			// parser rules in the offline bundle for technical inspection, but
-			// never promote their brand/model/device result into the endpoint
-			// profile without an independent standard device signal.
+	evaluated := 0
+	inputs := make([]string, 0, len(l.ruleIndex))
+	for input := range l.ruleIndex {
+		if input != "user_agent" {
+			inputs = append(inputs, input)
+		}
+	}
+	sort.Strings(inputs)
+	for _, input := range inputs {
+		values, specificity := ruleInputValues(signals, joined, input)
+		if len(values) == 0 {
 			continue
 		}
-		values, specificity := ruleInputValues(signals, joined, rule.Input)
-		for _, value := range values {
-			if strings.TrimSpace(value) == "" {
+		for _, index := range l.ruleIndex[input] {
+			rule := &l.rules[index]
+			if rule.Input == "user_agent" {
+				// UA identifies a client/runtime, not a physical endpoint. Keep the
+				// parser rules in the offline bundle for technical inspection, but
+				// never promote their brand/model/device result into the endpoint
+				// profile without an independent standard device signal.
 				continue
 			}
-			loc := rule.compiled.FindStringSubmatchIndex(value)
-			if loc == nil {
-				continue
+			for _, value := range values {
+				if strings.TrimSpace(value) == "" {
+					continue
+				}
+				evaluated++
+				loc := rule.compiled.FindStringSubmatchIndex(value)
+				if loc == nil {
+					continue
+				}
+				out = append(out, ruleMatch{rule: rule, input: rule.Input, value: value, loc: loc, specificity: specificity, order: index})
+				break
 			}
-			out = append(out, ruleMatch{rule: rule, input: rule.Input, value: value, loc: loc, specificity: specificity, order: index})
-			break
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -432,7 +456,7 @@ func (l *Library) matchRules(signals Signals, joined string) []ruleMatch {
 		}
 		return out[i].order < out[j].order
 	})
-	return out
+	return out, evaluated
 }
 
 // ruleInputValues returns the values a rule is allowed to inspect. Rules without
@@ -509,20 +533,34 @@ func applyRuleMatch(result *Result, match ruleMatch, values ruleValues) {
 // ruleMatchConflicts reports a high-confidence disagreement between the winning
 // rule and a lower-ranked rule without letting the loser overwrite any field.
 func ruleMatchConflicts(result Result, match ruleMatch) bool {
+	return len(ruleMatchConflictDimensions(result, match)) > 0
+}
+
+func ruleMatchConflictDimensions(result Result, match ruleMatch) []string {
 	if match.rule.Confidence < .85 {
-		return false
+		return nil
 	}
 	values := expandRuleValues(match)
-	for _, pair := range [][2]string{
-		{result.Brand, values.brand},
-		{result.DeviceType, values.deviceType},
-		{result.OSFamily, values.osFamily},
+	conflicts := []string{}
+	for _, item := range []struct{ field, current, candidate string }{
+		{"brand", result.Brand, values.brand},
+		{"device_type", result.DeviceType, values.deviceType},
+		{"os_family", result.OSFamily, values.osFamily},
 	} {
-		if pair[0] != "" && pair[1] != "" && !strings.EqualFold(pair[0], pair[1]) {
-			return true
+		if item.current != "" && item.candidate != "" && !strings.EqualFold(item.current, item.candidate) {
+			conflicts = append(conflicts, item.field)
 		}
 	}
-	return false
+	return conflicts
+}
+
+func appendConflictDimension(current []string, field string) []string {
+	for _, present := range current {
+		if present == field {
+			return current
+		}
+	}
+	return append(current, field)
 }
 
 func firstNonEmpty(values ...string) string {

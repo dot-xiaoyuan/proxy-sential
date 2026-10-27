@@ -677,7 +677,10 @@ type EndpointDeviceInventory struct {
 	FingerprintVersion     string                      `json:"fingerprint_version,omitempty"`
 	RandomizedMAC          bool                        `json:"randomized_mac"`
 	RecognitionConflict    bool                        `json:"recognition_conflict"`
+	ConflictDimensions     []string                    `json:"conflict_dimensions,omitempty"`
 	RecognitionEvidence    []string                    `json:"recognition_evidence,omitempty"`
+	EvidenceRefs           []fingerprint.EvidenceRef   `json:"evidence_refs,omitempty"`
+	RecognitionDiagnostics fingerprint.Diagnostics     `json:"recognition_diagnostics"`
 	EcosystemHint          string                      `json:"ecosystem_hint,omitempty"`
 	EcosystemConfidence    float64                     `json:"ecosystem_confidence"`
 	EcosystemConflict      bool                        `json:"ecosystem_conflict"`

@@ -721,9 +721,30 @@ func runMigrate(args []string) error {
 
 func runDeviceFingerprint(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: proxy-sentinel device-fingerprint <build|build-embedded|extend|refresh|verify|install>")
+		return fmt.Errorf("usage: proxy-sentinel device-fingerprint <build|build-embedded|extend|refresh|upgrade-v7|verify|install>")
 	}
 	switch args[0] {
+	case "upgrade-v7":
+		fs := flag.NewFlagSet("device-fingerprint upgrade-v7", flag.ContinueOnError)
+		basePath := fs.String("base", "", "verified v6 bundle")
+		output := fs.String("output", "", "new v7 bundle")
+		version := fs.String("version", "", "new version")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *basePath == "" || *output == "" || *version == "" {
+			return fmt.Errorf("--base, --output and --version are required")
+		}
+		baseData, err := os.ReadFile(*basePath)
+		if err != nil {
+			return err
+		}
+		manifest, err := fingerprint.BuildV7Bundle(baseData, *output, *version, time.Now())
+		if err != nil {
+			return err
+		}
+		fmt.Printf("upgraded offline bundle: %s\n", manifest.Version)
+		return nil
 	case "refresh":
 		fs := flag.NewFlagSet("device-fingerprint refresh", flag.ContinueOnError)
 		basePath := fs.String("base", "", "verified current v6 bundle")

@@ -413,22 +413,12 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 		IdentityConfidence: endpoint.IdentityConfidence,
 	}
 	applyLatestInventoryAssociations(&item, profile, time.Now().UTC())
-	baseSignals := endpointRecognitionSignals(endpoint.PrimaryMAC, endpoint.Attributes)
-	recognition := fingerprint.Default().IdentifySignals(baseSignals)
+	baseEvidence := endpointRecognitionEvidence(endpoint.PrimaryMAC, endpoint.Attributes)
+	now := time.Now().UTC()
+	recognition := fingerprint.Default().IdentifyEvidence(endpoint.PrimaryMAC, baseEvidence, now)
 	if len(profile.DiscoveryRecognitionHints) > 0 {
-		// Copy slices and the protocol map: hint enrichment must never mutate the
-		// base signals shared with the unenriched recognition above.
-		enrichedSignals := baseSignals
-		enrichedSignals.Hints = append([]string{}, baseSignals.Hints...)
-		enrichedSignals.ProtocolFields = cloneProtocolFieldValues(baseSignals.ProtocolFields)
-		for _, hint := range profile.DiscoveryRecognitionHints {
-			if hint.Field != "" {
-				enrichedSignals.ProtocolFields[hint.Field] = append(enrichedSignals.ProtocolFields[hint.Field], hint.Value)
-				continue
-			}
-			enrichedSignals.Hints = append(enrichedSignals.Hints, hint.Value)
-		}
-		enriched := fingerprint.Default().IdentifySignals(enrichedSignals)
+		enrichedEvidence := append(append([]fingerprint.EvidenceSignal{}, baseEvidence...), passiveRecognitionSignals(profile.DiscoveryRecognitionHints)...)
+		enriched := fingerprint.Default().IdentifyEvidence(endpoint.PrimaryMAC, enrichedEvidence, now)
 		if passiveRecognitionChanged(recognition, enriched) {
 			recognition = enriched
 			recognition.Source = "passive_discovery"
@@ -452,11 +442,15 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	item.FingerprintVersion = recognition.Version
 	item.RandomizedMAC = recognition.RandomizedMAC
 	item.RecognitionConflict = recognition.Conflict
+	item.ConflictDimensions = recognition.ConflictDimensions
 	item.RecognitionEvidence = recognition.Evidence
+	item.EvidenceRefs = recognition.EvidenceRefs
+	item.RecognitionDiagnostics = recognition.Diagnostics
 	item.SourceMatches = recognition.SourceMatches
 	explicitOS := firstNonEmpty(stringFromMap(endpoint.Attributes, "os_family"), stringFromMap(endpoint.Attributes, "os"))
 	if explicitOS != "" && recognition.OSFamily != "" && !strings.EqualFold(explicitOS, recognition.OSFamily) {
 		item.RecognitionConflict = true
+		item.ConflictDimensions = append(item.ConflictDimensions, "os_family")
 		item.RecognitionEvidence = append(item.RecognitionEvidence, "设备识别规则与终端操作系统字段冲突")
 	}
 	if stringFromMap(endpoint.Attributes, "brand") != "" || stringFromMap(endpoint.Attributes, "model") != "" || stringFromMap(endpoint.Attributes, "device_type") != "" {

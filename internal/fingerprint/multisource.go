@@ -291,9 +291,17 @@ func ruleMatches(r SourceRule, values map[string][]string) bool {
 	return true
 }
 func (c *Catalog) Match(values map[string][]string) []SourceMatch {
+	matches, _ := c.MatchWithStats(values)
+	return matches
+}
+
+// MatchWithStats reports the size of the field-routed candidate set. The value
+// is stable across cache hits, so storing it cannot rewrite an unchanged read
+// model simply because another endpoint warmed the cache first.
+func (c *Catalog) MatchWithStats(values map[string][]string) ([]SourceMatch, int) {
 	out := []SourceMatch{}
 	if c == nil {
-		return out
+		return out, 0
 	}
 	fields := make([]string, 0, len(values))
 	for f, inputs := range values {
@@ -309,7 +317,11 @@ func (c *Catalog) Match(values map[string][]string) []SourceMatch {
 	}
 	sort.Strings(fields)
 	if len(fields) == 0 {
-		return out
+		return out, 0
+	}
+	candidateCount := 0
+	for _, field := range fields {
+		candidateCount += len(c.index[field])
 	}
 	var keyBuilder strings.Builder
 	for _, f := range fields {
@@ -331,12 +343,14 @@ func (c *Catalog) Match(values map[string][]string) []SourceMatch {
 		cached, found := c.cache[cacheKey]
 		c.cacheMu.RUnlock()
 		if found {
-			return cloneSourceMatches(cached)
+			return cloneSourceMatches(cached), candidateCount
 		}
 	}
+	evaluated := 0
 	for _, f := range fields {
 		for _, i := range c.index[f] {
 			r := c.Rules[i]
+			evaluated++
 			if !ruleMatches(r, values) {
 				continue
 			}
@@ -398,7 +412,7 @@ func (c *Catalog) Match(values map[string][]string) []SourceMatch {
 		c.cache[cacheKey] = cloneSourceMatches(out)
 		c.cacheMu.Unlock()
 	}
-	return out
+	return out, evaluated
 }
 func (l *Library) Catalog() *Catalog {
 	if l == nil || l.catalog == nil {
@@ -433,6 +447,19 @@ func applySourceMatches(result *Result, matches []SourceMatch) {
 		if m.Strength != "self_report" {
 			continue
 		}
+		// Client/runtime fingerprints describe the requester, not the hardware
+		// hosting a service. Preserve them for inspection without promoting a
+		// physical brand, model or role.
+		clientOnly := false
+		for _, field := range m.Fields {
+			if field == "user_agent" || field == "sip_user_agent" || field == "ja3" || field == "ja4" || field == "tcp_signature" {
+				clientOnly = true
+				break
+			}
+		}
+		if clientOnly {
+			continue
+		}
 		if m.Role != "" {
 			roles[m.Role] = true
 		}
@@ -445,7 +472,7 @@ func applySourceMatches(result *Result, matches []SourceMatch) {
 	}
 	if len(roles) > 1 || (result.DeviceType != "" && len(roles) > 0 && !roles[result.DeviceType]) {
 		result.Conflict = true
-		return
+		result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, "device_type")
 	}
 	if len(roles) == 1 && result.DeviceType == "" {
 		result.DeviceType = sortedKeys(roles)[0]
@@ -457,9 +484,17 @@ func applySourceMatches(result *Result, matches []SourceMatch) {
 		result.Brand = sortedKeys(brands)[0]
 		result.BrandConfidence = .8
 	}
+	if len(brands) > 1 || (result.Brand != "" && len(brands) > 0 && !brands[result.Brand]) {
+		result.Conflict = true
+		result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, "brand")
+	}
 	if len(models) == 1 && result.Model == "" {
 		result.Model = sortedKeys(models)[0]
 		result.ModelConfidence = .8
+	}
+	if len(models) > 1 || (result.Model != "" && len(models) > 0 && !models[result.Model]) {
+		result.Conflict = true
+		result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, "model")
 	}
 }
 

@@ -44,7 +44,7 @@ go test ./internal/fingerprint/ -run TestV6BuilderPreservesLegacyBundleReaders -
    这是刻意设计：Apple、Samsung 等厂商同时生产多类设备，先验会造成误判。
 3. `model-catalog.json` 首版 33 条，少于计划中的 200 条。实施方选择不编造型号码映射，
    验收时应确认这是可接受的取舍，而不是遗漏。
-4. `service-type-catalog.json` 与 `product-rules.json` 位于 `internal/discovery/data/`，
+4. `service-type-catalog.json` 位于 `internal/fingerprint/data/`，`product-rules.json` 位于 `internal/discovery/data/`，
    不属于 fingerprint bundle 的载荷，因此 bundle 白名单未包含它们。
 
 ## 4. 不通过判定

@@ -695,7 +695,11 @@ fi
 [[ -s "$release_dir/assets/device-fingerprints/bootstrap.tar.gz" ]] || die "release contains no device fingerprint pack"
 [[ -s "$release_dir/assets/applications/bootstrap.tar.gz" ]] || die "release contains no application bootstrap pack"
 "$release_dir/bin/proxy-sentinel" device-fingerprint verify --bundle "$release_dir/assets/device-fingerprints/bootstrap.tar.gz" >/dev/null
-"$release_dir/bin/proxy-sentinel" device-fingerprint install --bundle "$release_dir/assets/device-fingerprints/bootstrap.tar.gz" --dir "$root/data/device-fingerprints" >/dev/null
+if [[ -f "$root/data/device-fingerprints/current/manifest.json" ]]; then
+  log "preserving installed device fingerprint pack; bootstrap is for first install only"
+else
+  "$release_dir/bin/proxy-sentinel" device-fingerprint install --bundle "$release_dir/assets/device-fingerprints/bootstrap.tar.gz" --dir "$root/data/device-fingerprints" >/dev/null
+fi
 
 if [[ "$manage_zeek" == true ]]; then
   command -v zeek >/dev/null || die "Zeek is required when PROXY_SENTINEL_MANAGE_ZEEK=true"

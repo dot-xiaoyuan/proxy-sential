@@ -483,8 +483,12 @@ func (s *PostgresStore) getEndpointIdentity(ctx context.Context, endpointID stri
 		if hintErr != nil {
 			return profile, false, hintErr
 		}
+		streamHints, streamErr := s.StreamDiscoveryRecognitionHints(ctx, []string{endpointID}, now)
+		if streamErr != nil {
+			return profile, false, streamErr
+		}
 		profile.DeviceName = names[endpointID]
-		profile.DiscoveryRecognitionHints = hints[endpointID]
+		profile.DiscoveryRecognitionHints = append(hints[endpointID], streamHints[endpointID]...)
 		item := BuildEndpointDeviceInventory(profile)
 		if err := s.enrichDomainRecognition(ctx, &item); err != nil {
 			return profile, false, err

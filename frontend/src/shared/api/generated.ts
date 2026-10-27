@@ -6639,6 +6639,9 @@ export interface components {
             current_account_observed_at?: string;
             current_access_conflict?: boolean;
             source_matches?: components["schemas"]["FingerprintSourceMatch"][];
+            evidence_refs?: components["schemas"]["RecognitionEvidenceRef"][];
+            recognition_diagnostics?: components["schemas"]["RecognitionDiagnostics"];
+            conflict_dimensions?: ("brand" | "model" | "device_type" | "os_family")[];
             router_observation?: components["schemas"]["RouterAssessment"];
             discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
             ip_match?: components["schemas"]["DeviceIPMatch"];
@@ -6692,6 +6695,23 @@ export interface components {
             ecosystem_conflict?: boolean;
             ecosystem_evidence_count?: number;
             summary: string;
+        };
+        RecognitionEvidenceRef: {
+            event_id: string;
+            protocol: string;
+            field: string;
+            source_family: string;
+            /** Format: date-time */
+            observed_at?: string;
+        };
+        RecognitionDiagnostics: {
+            /** @enum {string} */
+            stage: "none" | "vendor" | "brand" | "device_type" | "model" | "os_family";
+            /** @enum {string} */
+            reason?: "no_current_signal" | "unattributed" | "insufficient_specificity" | "conflict" | "processing" | "stale";
+            protocols?: string[];
+            accepted_signals: number;
+            candidate_rules: number;
         };
         EndpointEntity: {
             endpoint_id: string;

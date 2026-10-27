@@ -12,7 +12,7 @@
 | SNMP 企业号 | `internal/fingerprint/data/snmp-enterprise-oid.json` | 67,377 条 / 2.01 MB | IANA Private Enterprise Numbers（2026-10-26） | `sysObjectID` → 厂商 |
 | 厂商类型先验 | `internal/fingerprint/data/device-type-prior.json` | 51 条 | 人工按产品线整理 | 哑终端兜底类型 |
 | 型号目录 | `internal/fingerprint/data/model-catalog.json` | 33 条 | 厂商型号码公开资料（经验证子集） | 型号码 → 商品名 |
-| 服务类型目录 | `internal/discovery/data/service-type-catalog.json` | 20 条 | IANA 服务名注册表 | mDNS 服务 → 能力/品类 |
+| 服务类型目录 | `internal/fingerprint/data/service-type-catalog.json` | 20 条 | IANA 服务名注册表 | mDNS 服务 → 能力/品类 |
 | 产品规则 | `internal/discovery/data/product-rules.json` | 8 条 | 由代码迁出 | SSDP/SNMP 型号 → 产品族 |
 
 ## 新增 Go API

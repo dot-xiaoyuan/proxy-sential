@@ -110,6 +110,10 @@ func (m *Manager) ImportWithGuard(data []byte, check func() error) (Status, erro
 	if err := library.LoadCatalog(bundle.Files["multisource-catalog.json"]); err != nil {
 		return m.fail(err)
 	}
+	tables, err := signatureTablesForBundle(bundle)
+	if err != nil {
+		return m.fail(err)
+	}
 	current := m.Status()
 	if current.Version == bundle.Manifest.Version && current.Checksum != "" && current.Checksum != bundleChecksum(bundle) {
 		return m.fail(fmt.Errorf("rule version already exists with different content"))
@@ -138,6 +142,7 @@ func (m *Manager) ImportWithGuard(data []byte, check func() error) (Status, erro
 	}
 	SetDefault(library)
 	SetDefaultRouterRuleSet(routerRuleSet)
+	activateSignatureTables(tables)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	m.mu.Lock()
 	status := libraryStatus(library, Status{Version: bundle.Manifest.Version, Status: "ready", Source: "offline-bundle", Checksum: bundleChecksum(bundle), UpdatedAt: now, LastCheckedAt: now, OfflineMode: m.status.OfflineMode, Sources: bundle.Manifest.Sources, Licenses: bundleLicenses(bundle.Manifest), BackfillStatus: "pending", DomainBackfillStatus: domainBackfillInitialStatus(bundle.Manifest)})
@@ -290,7 +295,7 @@ func bundleLicenses(manifest BundleManifest) []string {
 	return result
 }
 func domainBackfillInitialStatus(manifest BundleManifest) string {
-	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 {
+	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
 		return "pending"
 	}
 	return "not_required"
@@ -517,6 +522,7 @@ func (m *Manager) loadCurrent() {
 	statusData, _ := os.ReadFile(filepath.Join(m.dir, "status.json"))
 	status := m.status
 	_ = json.Unmarshal(statusData, &status)
+	installedSchema := ""
 	if manifestData, readErr := os.ReadFile(filepath.Join(base, "manifest.json")); readErr == nil {
 		var manifest BundleManifest
 		if err := json.Unmarshal(manifestData, &manifest); err != nil {
@@ -524,7 +530,8 @@ func (m *Manager) loadCurrent() {
 			m.status.LastError = "invalid installed manifest"
 			return
 		}
-		if manifest.SchemaVersion == BundleSchemaVersionV6 {
+		installedSchema = manifest.SchemaVersion
+		if manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
 			files := map[string][]byte{}
 			total := 0
 			for name, metadata := range manifest.Files {
@@ -593,7 +600,27 @@ func (m *Manager) loadCurrent() {
 		m.status.LastError = err.Error()
 		return
 	}
+	tableFiles := v7SignatureFiles
+	if installedSchema == BundleSchemaVersionV7 {
+		tableFiles = make(map[string][]byte, len(v7SignatureFiles))
+		for name := range v7SignatureFiles {
+			payload, readErr := os.ReadFile(filepath.Join(base, name))
+			if readErr != nil {
+				m.status.Status = "degraded"
+				m.status.LastError = "installed signature table missing: " + name
+				return
+			}
+			tableFiles[name] = payload
+		}
+	}
+	tables, err := parseBundleSignatureTables(tableFiles)
+	if err != nil {
+		m.status.Status = "degraded"
+		m.status.LastError = err.Error()
+		return
+	}
 	SetDefault(library)
+	activateSignatureTables(tables)
 	if loaded, loadErr := LoadRouterRuleSet(routerData); loadErr == nil {
 		SetDefaultRouterRuleSet(loaded)
 	}

@@ -6871,6 +6871,9 @@ components:
         current_account_observed_at: { type: string, format: date-time }
         current_access_conflict: { type: boolean }
         source_matches: { type: array, items: { $ref: "#/components/schemas/FingerprintSourceMatch" } }
+        evidence_refs: { type: array, items: { $ref: "#/components/schemas/RecognitionEvidenceRef" } }
+        recognition_diagnostics: { $ref: "#/components/schemas/RecognitionDiagnostics" }
+        conflict_dimensions: { type: array, items: { type: string, enum: [brand, model, device_type, os_family] } }
         router_observation:
           $ref: '#/components/schemas/RouterAssessment'
         discovery:
@@ -6969,6 +6972,24 @@ components:
         ecosystem_evidence_count: { type: integer }
         summary:
           type: string
+    RecognitionEvidenceRef:
+      type: object
+      required: [event_id, protocol, field, source_family]
+      properties:
+        event_id: { type: string }
+        protocol: { type: string }
+        field: { type: string }
+        source_family: { type: string }
+        observed_at: { type: string, format: date-time }
+    RecognitionDiagnostics:
+      type: object
+      required: [stage, accepted_signals, candidate_rules]
+      properties:
+        stage: { type: string, enum: [none, vendor, brand, device_type, model, os_family] }
+        reason: { type: string, enum: [no_current_signal, unattributed, insufficient_specificity, conflict, processing, stale] }
+        protocols: { type: array, items: { type: string } }
+        accepted_signals: { type: integer, minimum: 0 }
+        candidate_rules: { type: integer, minimum: 0 }
     EndpointEntity:
       type: object
       required: [endpoint_id, entity_role, first_seen, last_seen, identity_confidence]

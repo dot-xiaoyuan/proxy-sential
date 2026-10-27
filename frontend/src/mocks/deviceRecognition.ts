@@ -11,6 +11,8 @@ export const macOSDevice: EndpointDeviceInventory = {
   brand: '', brand_confidence: 0, vendor: 'Intel Corporation', vendor_confidence: .9,
   os_family: 'macOS', os_family_confidence: .65, recognition_source: 'dhcp_hostname_hint',
   recognition_evidence: ['macOS 推测: DHCP vendor class darwin + Mac 主机名 office-mac41.local'],
+  recognition_diagnostics: { stage: 'os_family', protocols: ['dhcp'], accepted_signals: 2, candidate_rules: 1 },
+  evidence_refs: [{ event_id: 'dhcp-demo-41', protocol: 'dhcp', field: 'dhcp_vendor_class', source_family: 'dhcp', observed_at: seen }],
   randomized_mac: false, summary: 'macOS 系统线索', last_seen: seen,
 }
 

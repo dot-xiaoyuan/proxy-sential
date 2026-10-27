@@ -110,6 +110,18 @@ function attributionText(value: string) {
         : value;
 }
 
+const recognitionStages: Record<string, string> = {
+  vendor: '厂商线索', brand: '品牌', device_type: '设备类型', model: '型号', os_family: '系统线索',
+};
+const recognitionReasons: Record<string, string> = {
+  no_current_signal: '当前没有可用设备信号',
+  unattributed: '协议信号无法可靠归属到此终端',
+  insufficient_specificity: '现有信号不足以确认更具体的设备信息',
+  conflict: '不同来源的设备证据存在冲突',
+  processing: '识别处理中',
+  stale: '识别结果已过期',
+};
+
 export function EndpointDetailsPage() {
   const [params,setParams]=useSearchParams()
   const returnTo=params.get('return_to')||''
@@ -342,6 +354,11 @@ export function EndpointDetailsPage() {
               <Descriptions.Item label="识别证据">
                 {recognition?.recognition_evidence?.join("；") || ""}
               </Descriptions.Item>
+              {recognition?.recognition_diagnostics?.stage && recognition.recognition_diagnostics.stage !== 'none' && <Descriptions.Item label="识别层级">{recognitionStages[recognition.recognition_diagnostics.stage] ?? recognition.recognition_diagnostics.stage}</Descriptions.Item>}
+              {recognition?.recognition_diagnostics?.reason && <Descriptions.Item label="当前识别状态">{recognitionReasons[recognition.recognition_diagnostics.reason] ?? recognition.recognition_diagnostics.reason}</Descriptions.Item>}
+              {!!recognition?.conflict_dimensions?.length && <Descriptions.Item label="冲突字段">{recognition.conflict_dimensions.map(field => recognitionStages[field] ?? field).join('、')}</Descriptions.Item>}
+              {!!recognition?.recognition_diagnostics?.protocols?.length && <Descriptions.Item label="可用协议">{recognition.recognition_diagnostics.protocols.join('、')}</Descriptions.Item>}
+              {!!recognition?.evidence_refs?.length && <Descriptions.Item label="可用信号事件">{recognition.evidence_refs.map(ref=><div className="fingerprint-ident" key={`${ref.event_id}:${ref.field}`}>{ref.protocol} · {ref.field} · {ref.event_id}</div>)}</Descriptions.Item>}
             </Descriptions>
           </section>
           <section className="surface">
