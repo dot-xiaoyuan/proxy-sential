@@ -132,7 +132,7 @@ func (s *PostgresStore) refreshBrandInference(ctx context.Context, endpointID, v
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO endpoint_brand_inferences(endpoint_id,rule_version,result) VALUES($1,$2,$3) ON CONFLICT(endpoint_id,rule_version) DO UPDATE SET result=EXCLUDED.result,updated_at=now()`, endpointID, version, result)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO endpoint_brand_inferences(endpoint_id,rule_version,result) VALUES($1,$2,$3) ON CONFLICT(endpoint_id,rule_version) DO UPDATE SET result=EXCLUDED.result,updated_at=now() WHERE endpoint_brand_inferences.result IS DISTINCT FROM EXCLUDED.result`, endpointID, version, result)
 	return err
 }
 

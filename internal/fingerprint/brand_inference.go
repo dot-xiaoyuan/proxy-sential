@@ -29,7 +29,7 @@ type BrandInference struct {
 // InferBrand consumes windowed, deduplicated observations. A service may be
 // visible through several protocols or hostnames; it remains one service.
 func InferBrand(items []DomainEvidence, version string, now time.Time, knownBrand string, knownConfidence float64) BrandInference {
-	result := BrandInference{Status: "insufficient", RuleVersion: version, Window: "7d", AsOf: now.UTC().Format(time.RFC3339Nano), Candidates: []BrandCandidate{}, Explanation: "设备服务证据未达到品牌推测门槛"}
+	result := BrandInference{Status: "insufficient", RuleVersion: version, Window: "7d", Candidates: []BrandCandidate{}, Explanation: "设备服务证据未达到品牌推测门槛"}
 	groups := map[string][]DomainEvidence{}
 	for _, item := range items {
 		last, err := time.Parse(time.RFC3339Nano, item.LastSeen)
@@ -38,6 +38,7 @@ func InferBrand(items []DomainEvidence, version string, now time.Time, knownBran
 		}
 		groups[item.Match.Ecosystem] = append(groups[item.Match.Ecosystem], item)
 	}
+	var latestEvidence time.Time
 	for brand, evidence := range groups {
 		type service struct {
 			count       int
@@ -66,6 +67,9 @@ func InferBrand(items []DomainEvidence, version string, now time.Time, knownBran
 			if last.After(v.last) {
 				v.last = last
 			}
+			if last.After(latestEvidence) {
+				latestEvidence = last
+			}
 			services[key] = v
 			score = max(score, item.Match.Confidence)
 		}
@@ -88,6 +92,9 @@ func InferBrand(items []DomainEvidence, version string, now time.Time, knownBran
 			score += .05
 		}
 		result.Candidates = append(result.Candidates, BrandCandidate{Brand: brand, Confidence: min(score, .70), Evidence: evidence})
+	}
+	if !latestEvidence.IsZero() {
+		result.AsOf = latestEvidence.UTC().Format(time.RFC3339Nano)
 	}
 	sort.Slice(result.Candidates, func(i, j int) bool { return result.Candidates[i].Brand < result.Candidates[j].Brand })
 	if len(result.Candidates) == 1 {

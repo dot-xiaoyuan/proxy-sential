@@ -129,7 +129,19 @@ ON CONFLICT(endpoint_id) DO UPDATE SET brand=EXCLUDED.brand,model=EXCLUDED.model
  rule_version=EXCLUDED.rule_version,summary=EXCLUDED.summary,first_seen=EXCLUDED.first_seen,last_seen=EXCLUDED.last_seen,
  primary_mac=EXCLUDED.primary_mac,current_ip=EXCLUDED.current_ip,current_account=EXCLUDED.current_account,
  current_access_id=EXCLUDED.current_access_id,device_name=EXCLUDED.device_name,filter_brand=EXCLUDED.filter_brand,
- filter_os_family=EXCLUDED.filter_os_family,ecosystem_hint=EXCLUDED.ecosystem_hint,list_item=EXCLUDED.list_item,updated_at=now()`,
+ filter_os_family=EXCLUDED.filter_os_family,ecosystem_hint=EXCLUDED.ecosystem_hint,list_item=EXCLUDED.list_item,updated_at=now()
+WHERE (endpoint_recognition_summary.brand,endpoint_recognition_summary.model,endpoint_recognition_summary.os_family,
+ endpoint_recognition_summary.role,endpoint_recognition_summary.confidence,endpoint_recognition_summary.conflict,
+ endpoint_recognition_summary.evidence_count,endpoint_recognition_summary.rule_version,endpoint_recognition_summary.summary,
+ endpoint_recognition_summary.first_seen,endpoint_recognition_summary.last_seen,endpoint_recognition_summary.primary_mac,
+ endpoint_recognition_summary.current_ip,endpoint_recognition_summary.current_account,endpoint_recognition_summary.current_access_id,
+ endpoint_recognition_summary.device_name,endpoint_recognition_summary.filter_brand,endpoint_recognition_summary.filter_os_family,
+ endpoint_recognition_summary.ecosystem_hint,endpoint_recognition_summary.list_item)
+IS DISTINCT FROM
+(EXCLUDED.brand,EXCLUDED.model,EXCLUDED.os_family,EXCLUDED.role,EXCLUDED.confidence,EXCLUDED.conflict,
+ EXCLUDED.evidence_count,EXCLUDED.rule_version,EXCLUDED.summary,EXCLUDED.first_seen,EXCLUDED.last_seen,
+ EXCLUDED.primary_mac,EXCLUDED.current_ip,EXCLUDED.current_account,EXCLUDED.current_access_id,EXCLUDED.device_name,
+ EXCLUDED.filter_brand,EXCLUDED.filter_os_family,EXCLUDED.ecosystem_hint,EXCLUDED.list_item)`,
 			job.EndpointID, item.Brand, item.Model, item.OSFamily, item.DeviceType, item.RecognitionConfidence,
 			item.RecognitionConflict, evidenceCount, item.FingerprintVersion, raw, recognitionTimestamp(item.FirstSeen), recognitionTimestamp(item.LastSeen),
 			item.PrimaryMAC, item.CurrentIP, item.CurrentAccount, item.CurrentAccessID, deviceName, filterBrand, filterOSFamily, item.EcosystemHint, listRaw)

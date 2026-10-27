@@ -21,7 +21,7 @@ export function BrandInferenceDetails({ value }: { value?: BrandInference }) {
     <Typography.Title level={4}>推测品牌与依据</Typography.Title>
     <BrandInferenceLabel value={value} />
     <Alert showIcon type={value.status === 'conflict' ? 'warning' : 'info'} title={value.explanation} />
-    <Typography.Paragraph type="secondary" className="brand-evidence-wrap">最近 7 天 · 规则 {value.rule_version || '尚未生效'} · 截至 {formatDateTime(value.as_of)}。域名推测不确认具体型号，评分不是统计概率。</Typography.Paragraph>
+    <Typography.Paragraph type="secondary" className="brand-evidence-wrap">最近 7 天 · 规则 {value.rule_version || '尚未生效'}{value.as_of ? ` · 最近证据 ${formatDateTime(value.as_of)}` : ''}。域名推测不确认具体型号，评分不是统计概率。</Typography.Paragraph>
     <div className="endpoint-scroll-list">{value.candidates.map(candidate => <div key={candidate.brand} className="brand-candidate">
       <Typography.Title level={5}>{candidate.brand} · 评分 {Math.round(candidate.confidence * 100)}%</Typography.Title>
       <ul className="brand-evidence-list">{candidate.evidence.map((evidence, index) => <li key={`${evidence.match.domain}-${evidence.event_source}-${index}`}>

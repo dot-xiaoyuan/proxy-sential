@@ -2,19 +2,21 @@ import { expect, test } from '@playwright/test'
 
 for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
   test(`brand inference evidence and design audit ${viewport.width}`, async ({ page }, testInfo) => {
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('response', response => { if (response.status() >= 500) errors.push(`${response.status()} ${response.url()}`) })
     await page.setViewportSize(viewport)
-    await page.goto('/devices')
-    const list=viewport.width<992?'.device-mobile-cards':'.device-desktop-table'
-    await page.locator(`${list} .device-ledger-clues`).first().hover()
-    await expect(page.getByRole('tooltip')).toContainText(/品牌推测|MAC 厂商线索/)
+    await page.goto('/devices?view=history')
+    await expect(page.locator('.device-inventory-surface .ant-table')).toBeVisible()
+    await expect(page.locator('.device-inventory-surface tr').filter({ hasText: '198.18.90.8' })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath(`devices-${viewport.width}.png`), fullPage: false })
     if (viewport.width < 560) {
-      await expect(page.locator('.device-mobile-cards')).toBeVisible()
-      await expect(page.locator('.device-desktop-table')).toBeHidden()
+      await expect(page.locator('.device-inventory-surface .ant-table')).toBeVisible()
     }
     await page.goto('/devices/mac%3A02%3A00%3A00%3A00%3A90%3A08')
-    await page.getByRole('tab', { name: '设备识别', exact: true }).click()
+    await page.getByRole('tab', { name: '终端识别', exact: true }).click()
     await expect(page.getByRole('heading', { name: '推测品牌与依据' })).toBeVisible()
+    await expect(page.locator('.brand-inference-details')).toContainText('最近证据')
     await expect(page.locator('.brand-inference-details').getByText('albert.apple.com', { exact: true }).first()).toBeVisible()
     await expect(page.locator('.brand-inference-details').getByText('推测 Apple', { exact: true })).toBeVisible()
     await page.locator('.brand-evidence-list > li').first().scrollIntoViewIfNeeded()
@@ -36,8 +38,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await testInfo.attach('dom-style-probe', { body: JSON.stringify(probe, null, 2), contentType: 'application/json' })
     await page.goto('/settings/rules')
     await page.getByRole('tab', { name: '设备特征库', exact: true }).click()
-    await expect(page.getByText('域名来源明细', { exact: true })).toBeVisible()
+    await expect(page.getByText('域名来源明细', { exact: true })).toHaveCount(1)
     await page.screenshot({ path: testInfo.outputPath(`rules-${viewport.width}.png`), fullPage: false })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2)).toBe(true)
+    expect(errors).toEqual([])
   })
 }

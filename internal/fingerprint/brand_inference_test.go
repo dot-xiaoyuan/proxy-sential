@@ -1,6 +1,7 @@
 package fingerprint
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -56,5 +57,27 @@ func TestBrandInferenceServiceThresholds(t *testing.T) {
 func TestEcosystemFusionRequiresDisplayableEvidence(t *testing.T) {
 	if _, _, promoted := FuseEcosystemBrand("Apple", .7, "device_rule", EcosystemResult{Hint: "Apple", Confidence: .6}); promoted {
 		t.Fatal("insufficient domain evidence promoted brand")
+	}
+}
+
+func TestBrandInferenceKeepsEvidenceTimestampAcrossReevaluation(t *testing.T) {
+	now := time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC)
+	observed := now.Add(-time.Hour)
+	item := DomainEvidence{
+		Match:       DomainMatch{Domain: "push.apple.com", RuleDomain: "push.apple.com", Ecosystem: "Apple", Confidence: .65, BrandEligible: true, Service: "push"},
+		RuleVersion: "v4", FirstSeen: observed.Add(-10 * time.Minute).Format(time.RFC3339Nano), LastSeen: observed.Format(time.RFC3339Nano), Count: 3,
+	}
+	first := InferBrand([]DomainEvidence{item}, "v4", now, "", 0)
+	again := InferBrand([]DomainEvidence{item}, "v4", now.Add(time.Minute), "", 0)
+	if first.Status != "inferred" || first.AsOf != item.LastSeen || !reflect.DeepEqual(first, again) {
+		t.Fatalf("unchanged evidence changed inference: first=%+v again=%+v", first, again)
+	}
+	noEvidence := InferBrand(nil, "v4", now, "", 0)
+	if noEvidence.AsOf != "" || !reflect.DeepEqual(noEvidence, InferBrand(nil, "v4", now.Add(time.Minute), "", 0)) {
+		t.Fatalf("empty evidence changed inference: %+v", noEvidence)
+	}
+	expired := InferBrand([]DomainEvidence{item}, "v4", now.Add(8*24*time.Hour), "", 0)
+	if expired.Status != "insufficient" || expired.AsOf != "" {
+		t.Fatalf("expired evidence kept inference: %+v", expired)
 	}
 }

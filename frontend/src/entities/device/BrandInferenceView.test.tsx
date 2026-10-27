@@ -26,10 +26,11 @@ it.each([null, undefined])('waits for full evidence when the inventory summary h
   expect(screen.getByText('albert.apple.com', { selector: 'strong' })).toBeInTheDocument()
 })
 
-it('keeps an explicit insufficient-evidence explanation from a complete response', () => {
-  render(<BrandInferenceDetails value={{ ...complete, status: 'insufficient', brand: undefined, confidence: 0, candidates: [], explanation: '设备服务证据未达到品牌推测门槛' }} />)
+it('keeps an explicit insufficient-evidence explanation without an empty timestamp', () => {
+  render(<BrandInferenceDetails value={{ ...complete, status: 'insufficient', brand: undefined, confidence: 0, as_of: '', candidates: [], explanation: '设备服务证据未达到品牌推测门槛' }} />)
   expect(screen.getByText('设备服务证据未达到品牌推测门槛')).toBeInTheDocument()
   expect(screen.queryByText('推测 Apple')).not.toBeInTheDocument()
+  expect(screen.queryByText(/截至/)).not.toBeInTheDocument()
 })
 
 it.each([null, undefined])('shows the conflict status without requiring candidate details (%s)', candidates => {
