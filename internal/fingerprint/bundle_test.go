@@ -269,6 +269,34 @@ func TestV6BuilderPreservesLegacyBundleReaders(t *testing.T) {
 	}
 }
 
+// The v7 signature tables stay out of the bundle payload until a schema bump
+// adds both their manifest checksums and a loader. A v6 bundle that smuggles one
+// in must be rejected instead of being accepted and silently ignored.
+func TestV6BundleRejectsSignatureTablePayload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bundle.tar.gz")
+	if _, err := BuildEmbeddedBundle(path, "signature-payload", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := VerifyBundleFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"snmp-enterprise-oid.json", "device-type-prior.json", "model-catalog.json"} {
+		files := make(map[string][]byte, len(bundle.Files))
+		for existing, data := range bundle.Files {
+			files[existing] = data
+		}
+		files[name] = []byte(`{}`)
+		data, err := encodeBundle(bundle.Manifest, files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := VerifyBundleBytes(data); err == nil || !strings.Contains(err.Error(), "unsupported entry") {
+			t.Fatalf("%s must be rejected as an unsupported v6 entry, got %v", name, err)
+		}
+	}
+}
+
 func TestExtendKeepsLegacyPayloadAndRejectsBadBase(t *testing.T) {
 	base := testBundleBytes(t)
 	old, err := VerifyBundleBytes(base)

@@ -24,7 +24,7 @@ var embeddedBrandAliases []byte
 //go:embed data/domain_signatures.json
 var embeddedDomainSignatures []byte
 
-const EmbeddedVersion = "embedded-2026-10.1"
+const EmbeddedVersion = "embedded-2026-10.2"
 
 var macHostnameClue = regexp.MustCompile(`(?i)(^|[-_. ])(mac(book|intosh)?|imac)($|[-_. 0-9])`)
 
@@ -186,44 +186,61 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			}
 		}
 	}
+	// A device that reports its sysObjectID names its own vendor. This outranks
+	// a MAC OUI, which often identifies the NIC vendor rather than the device
+	// brand, but it never confirms a model or a physical role.
+	if result.Vendor == "" {
+		for _, oid := range signals.ProtocolFields["snmp_sysoid"] {
+			vendor, confidence, ok := LookupSNMPVendor(oid)
+			if !ok {
+				continue
+			}
+			result.Vendor = vendor
+			result.VendorConfidence = confidence
+			result.Source = "snmp_sysoid"
+			result.Evidence = append(result.Evidence, "SNMP sysObjectID: "+strings.TrimSpace(oid)+" → "+vendor)
+			break
+		}
+	}
 	// The DHCP vendor class is self-reported like the hostname (for example
 	// "HP LaserJet" or "HUAWEI:openharmony:<model>"), so rules see it too.
 	joined := strings.Join(append(append(append([]string{}, signals.Hostnames...), append(signals.Software, signals.Hints...)...), signals.DHCPVendorClass), " ")
-	for _, rule := range l.rules {
-		input := joined
-		if rule.Input == "user_agent" {
-			// UA identifies a client/runtime, not a physical endpoint. Keep the
-			// parser rules in the offline bundle for technical inspection, but
-			// never promote their brand/model/device result into the endpoint
-			// profile without an independent standard device signal.
-			continue
+	// Rules may target one structured field (ssdp_model, dhcp_vendor_class, ...)
+	// or fall back to the concatenated self-reported text. Field-scoped matches
+	// outrank the concatenated blob, and the highest-confidence match wins
+	// instead of the first one in file order.
+	// A verified model code outranks regular-expression rules: the code and the
+	// product name share no textual similarity, so no rule can derive one from
+	// the other. Rules may still contribute an operating system.
+	modelEntry, modelCode, hasModel := l.modelFromSignals(signals, result.Vendor)
+	if hasModel {
+		result.Brand = modelEntry.Brand
+		result.BrandConfidence = modelEntry.Confidence
+		result.Model = modelEntry.Model
+		result.ModelConfidence = modelEntry.Confidence
+		if modelEntry.DeviceType != "" {
+			result.DeviceType = modelEntry.DeviceType
+			result.DeviceTypeConfidence = modelEntry.Confidence
 		}
-		match := rule.compiled.FindStringSubmatchIndex(input)
-		if match == nil {
-			continue
+		result.Source = "model_catalog"
+		result.Confidence = modelEntry.Confidence
+		result.Evidence = append(result.Evidence, "型号库: "+modelCode+" → "+modelEntry.Model)
+	}
+	matches := l.matchRules(signals, joined)
+	if len(matches) > 0 {
+		if hasModel {
+			applyRuleExtras(&result, expandRuleValues(matches[0]))
+		} else {
+			applyRuleMatch(&result, matches[0], expandRuleValues(matches[0]))
 		}
-		if value := expandRule(rule.compiled, input, match, firstNonEmpty(rule.BrandReplacement, rule.Brand)); value != "" {
-			result.Brand = value
-			result.BrandConfidence = rule.Confidence
+		// Only the winning rule populates the profile. Lower-ranked matches are
+		// used for conflict reporting alone: filling dimensions from them would
+		// let weak rules leak brand/model/os into an otherwise clean result.
+		for _, extra := range matches[1:] {
+			if ruleMatchConflicts(result, extra) {
+				result.Conflict = true
+			}
 		}
-		if value := expandRule(rule.compiled, input, match, firstNonEmpty(rule.ModelReplacement, rule.Model, rule.DeviceReplacement)); value != "" {
-			result.Model = value
-			result.ModelConfidence = rule.Confidence
-		}
-		if rule.DeviceType != "" {
-			result.DeviceType = rule.DeviceType
-			result.DeviceTypeConfidence = rule.Confidence
-		}
-		if rule.OSFamily != "" {
-			result.OSFamily = rule.OSFamily
-			result.OSFamilyConfidence = rule.Confidence
-		}
-		if rule.Confidence >= result.Confidence || result.Source == "ieee_oui" {
-			result.Confidence = rule.Confidence
-			result.Source = "device_rule"
-		}
-		result.Evidence = append(result.Evidence, "设备规则: "+rule.Pattern)
-		break
 	}
 	// Darwin alone does not distinguish Apple's operating systems. A Mac hostname
 	// corroborates only a tentative macOS clue; neither signal establishes brand.
@@ -263,6 +280,13 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 				result.Confidence = candidate.Confidence
 			}
 			result.Evidence = append(result.Evidence, "Fingerbank DHCP: "+candidate.Description)
+		}
+	}
+	if result.DeviceType == "" && result.Vendor != "" {
+		if deviceType, confidence, ok := LookupVendorPrior(result.Vendor); ok {
+			result.DeviceType = deviceType
+			result.DeviceTypeConfidence = confidence
+			result.Evidence = append(result.Evidence, "厂商类型先验: "+result.Vendor+" → "+deviceType)
 		}
 	}
 	if result.Brand != "" {
@@ -349,6 +373,149 @@ func expandRule(compiled *regexp.Regexp, input string, match []int, replacement 
 		return ""
 	}
 	return strings.TrimSpace(string(compiled.ExpandString(nil, replacement, input, match)))
+}
+
+// ruleMatch is one rule hit against one input value.
+type ruleMatch struct {
+	rule        *Rule
+	input       string // "" means the concatenated self-reported text
+	value       string
+	loc         []int
+	specificity int
+	order       int
+}
+
+type ruleValues struct {
+	brand      string
+	model      string
+	deviceType string
+	osFamily   string
+}
+
+func (l *Library) matchRules(signals Signals, joined string) []ruleMatch {
+	out := make([]ruleMatch, 0, 4)
+	for index := range l.rules {
+		rule := &l.rules[index]
+		if rule.Input == "user_agent" {
+			// UA identifies a client/runtime, not a physical endpoint. Keep the
+			// parser rules in the offline bundle for technical inspection, but
+			// never promote their brand/model/device result into the endpoint
+			// profile without an independent standard device signal.
+			continue
+		}
+		values, specificity := ruleInputValues(signals, joined, rule.Input)
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			loc := rule.compiled.FindStringSubmatchIndex(value)
+			if loc == nil {
+				continue
+			}
+			out = append(out, ruleMatch{rule: rule, input: rule.Input, value: value, loc: loc, specificity: specificity, order: index})
+			break
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].specificity != out[j].specificity {
+			return out[i].specificity > out[j].specificity
+		}
+		if out[i].rule.Confidence != out[j].rule.Confidence {
+			return out[i].rule.Confidence > out[j].rule.Confidence
+		}
+		return out[i].order < out[j].order
+	})
+	return out
+}
+
+// ruleInputValues returns the values a rule is allowed to inspect. Rules without
+// an explicit input keep the historical behaviour of matching the concatenated
+// self-reported text; rules declaring an input never see other fields.
+func ruleInputValues(signals Signals, joined, input string) ([]string, int) {
+	switch input {
+	case "":
+		return []string{joined}, 0
+	case "hostname":
+		return signals.Hostnames, 1
+	case "dhcp_vendor_class":
+		return nonEmptyValue(signals.DHCPVendorClass), 1
+	default:
+		return signals.ProtocolFields[input], 1
+	}
+}
+
+func nonEmptyValue(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return []string{value}
+}
+
+func expandRuleValues(match ruleMatch) ruleValues {
+	rule := match.rule
+	return ruleValues{
+		brand:      expandRule(rule.compiled, match.value, match.loc, firstNonEmpty(rule.BrandReplacement, rule.Brand)),
+		model:      expandRule(rule.compiled, match.value, match.loc, firstNonEmpty(rule.ModelReplacement, rule.Model, rule.DeviceReplacement)),
+		deviceType: strings.TrimSpace(rule.DeviceType),
+		osFamily:   strings.TrimSpace(rule.OSFamily),
+	}
+}
+
+// applyRuleExtras lets rules contribute only when a verified model code already
+// established brand, model and device type.
+func applyRuleExtras(result *Result, values ruleValues) {
+	if values.osFamily != "" && result.OSFamily == "" {
+		result.OSFamily = values.osFamily
+		result.OSFamilyConfidence = .85
+	}
+	if values.deviceType != "" && result.DeviceType == "" {
+		result.DeviceType = values.deviceType
+		result.DeviceTypeConfidence = .6
+	}
+}
+
+func applyRuleMatch(result *Result, match ruleMatch, values ruleValues) {
+	if values.brand != "" {
+		result.Brand = values.brand
+		result.BrandConfidence = match.rule.Confidence
+	}
+	if values.model != "" {
+		result.Model = values.model
+		result.ModelConfidence = match.rule.Confidence
+	}
+	if values.deviceType != "" {
+		result.DeviceType = values.deviceType
+		result.DeviceTypeConfidence = match.rule.Confidence
+	}
+	if values.osFamily != "" {
+		result.OSFamily = values.osFamily
+		result.OSFamilyConfidence = match.rule.Confidence
+	}
+	result.Confidence = match.rule.Confidence
+	result.Source = "device_rule"
+	if match.input != "" {
+		result.Source = "device_rule:" + match.input
+	}
+	result.Evidence = append(result.Evidence, "设备规则: "+match.rule.Pattern)
+}
+
+// ruleMatchConflicts reports a high-confidence disagreement between the winning
+// rule and a lower-ranked rule without letting the loser overwrite any field.
+func ruleMatchConflicts(result Result, match ruleMatch) bool {
+	if match.rule.Confidence < .85 {
+		return false
+	}
+	values := expandRuleValues(match)
+	for _, pair := range [][2]string{
+		{result.Brand, values.brand},
+		{result.DeviceType, values.deviceType},
+		{result.OSFamily, values.osFamily},
+	} {
+		if pair[0] != "" && pair[1] != "" && !strings.EqualFold(pair[0], pair[1]) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstNonEmpty(values ...string) string {

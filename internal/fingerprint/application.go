@@ -12,7 +12,7 @@ import (
 //go:embed data/application_signatures.json
 var embeddedApplicationSignatures []byte
 
-const ApplicationSignatureVersion = "legacy-essentials-2026-09"
+const ApplicationSignatureVersion = "legacy-essentials-2026-10"
 
 type ApplicationSignature struct {
 	Pattern    string  `json:"pattern"`

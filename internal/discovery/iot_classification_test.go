@@ -42,6 +42,31 @@ func TestIoTClassificationRequiresProductEvidence(t *testing.T) {
 	}
 }
 
+func TestIOTClassificationUsesServiceCatalog(t *testing.T) {
+	now := time.Now().UTC()
+	cases := []struct {
+		name, service, txt, want string
+	}{
+		{"printer product", "_ipp._tcp", "ty=HP LaserJet Pro", "printer"},
+		{"scanner product", "_uscan._tcp", "product=Canon DR-C225", "printer"},
+		{"casting product", "_googlecast._tcp", "product=Chromecast", "media"},
+		{"no product marker", "_ipp._tcp", "rp=ipp/print", ""},
+		{"unknown service", "_acme._tcp", "product=Widget", ""},
+		{"known kind outside iot catalogue", "_smb._tcp", "product=NAS", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			observation := Observation{
+				Origin: "dns_sd", ObservedAt: now, ValidUntil: now.Add(time.Hour),
+				Evidence: normalized.Event{Payload: map[string]any{"service_type": tc.service, "txt": tc.txt}},
+			}
+			if got := ClassifyIoT([]Observation{observation}, now); got.Category != tc.want {
+				t.Fatalf("got %+v want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWSDiscoveryNamespacesAndRequestRejection(t *testing.T) {
 	for _, body := range []string{
 		`<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:x="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing"><s:Body><x:Hello><a:EndpointReference><a:Address>urn:uuid:camera-1</a:Address></a:EndpointReference><x:Types>dn:NetworkVideoTransmitter</x:Types><x:XAddrs>http://10.1.2.3/onvif/device_service</x:XAddrs></x:Hello></s:Body></s:Envelope>`,

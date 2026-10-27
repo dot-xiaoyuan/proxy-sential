@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/fingerprint"
 )
 
 func TestPassiveDiscoveryHintEnrichesEndpointRecognition(t *testing.T) {
@@ -47,6 +49,114 @@ func TestPassiveDiscoveryHintKeepsExplicitConflictVisible(t *testing.T) {
 	item := BuildEndpointDeviceInventory(profile)
 	if item.OSFamily != "Linux" || !item.RecognitionConflict {
 		t.Fatalf("explicit evidence must remain authoritative and conflict visible: %+v", item)
+	}
+}
+
+func TestTypedDiscoveryModelHintResolvesMarketingName(t *testing.T) {
+	profile := EndpointIdentityProfile{
+		EndpointID: "mac:02:11:22:33:44:55",
+		Endpoint: EndpointEntity{
+			EndpointID: "mac:02:11:22:33:44:55",
+			PrimaryMAC: "02:11:22:33:44:55",
+			EntityRole: "endpoint",
+			Attributes: map[string]any{},
+		},
+		DiscoveryRecognitionHints: []DiscoveryRecognitionHint{{
+			Value: "ADY-AL00", Field: "ssdp_model", Origin: "ssdp", ObservationID: "ssdp-model-test", ObservedAt: time.Now().UTC(),
+		}},
+	}
+
+	item := BuildEndpointDeviceInventory(profile)
+	if item.Brand != "Huawei" || item.Model != "Pura 70" || item.DeviceType != "mobile" {
+		t.Fatalf("ssdp_model hint did not resolve the marketing name: %+v", item)
+	}
+	if item.RecognitionSource != "passive_discovery" {
+		t.Fatalf("typed hint source was not recorded: %+v", item)
+	}
+	evidence := strings.Join(item.RecognitionEvidence, " ")
+	if !strings.Contains(evidence, "SSDP") || !strings.Contains(evidence, "ssdp_model") {
+		t.Fatalf("typed hint evidence is not traceable: %+v", item.RecognitionEvidence)
+	}
+}
+
+func TestSNMPSelfReportHintResolvesVendor(t *testing.T) {
+	profile := EndpointIdentityProfile{
+		EndpointID: "mac:02:11:22:33:44:56",
+		Endpoint: EndpointEntity{
+			EndpointID: "mac:02:11:22:33:44:56",
+			PrimaryMAC: "02:11:22:33:44:56",
+			EntityRole: "endpoint",
+			Attributes: map[string]any{},
+		},
+		// A locally administered address skips the OUI lookup, so the device's
+		// own sysObjectID is the only vendor evidence.
+		DiscoveryRecognitionHints: []DiscoveryRecognitionHint{{
+			Value: "1.3.6.1.4.1.2011.2.23", Field: "snmp_sysoid", Origin: "snmp", ObservationID: "snmp-sysoid-test", ObservedAt: time.Now().UTC(),
+		}},
+	}
+
+	item := BuildEndpointDeviceInventory(profile)
+	if item.Vendor == "" {
+		t.Fatalf("sysObjectID hint did not resolve a vendor: %+v", item)
+	}
+	if item.RecognitionSource != "passive_discovery" {
+		t.Fatalf("vendor-only self-report must still be attributed: %+v", item)
+	}
+	if !strings.Contains(strings.Join(item.RecognitionEvidence, " "), "snmp_sysoid") {
+		t.Fatalf("sysObjectID evidence is not traceable: %+v", item.RecognitionEvidence)
+	}
+}
+
+func TestTypedDiscoveryHintRoutesToFieldScopedRule(t *testing.T) {
+	previous := fingerprint.Default()
+	library := fingerprint.MustLoad("typed-hint", []byte("Assignment,Organization Name\n000000,Test\n"), []byte(`[
+		{"pattern":"\\bTP-Link\\b","input":"ssdp_manufacturer","brand":"TP-Link","device_type":"router","confidence":0.9}
+	]`))
+	fingerprint.SetDefault(library)
+	defer fingerprint.SetDefault(previous)
+
+	base := EndpointIdentityProfile{
+		EndpointID: "mac:02:11:22:33:44:57",
+		Endpoint: EndpointEntity{
+			EndpointID: "mac:02:11:22:33:44:57",
+			PrimaryMAC: "02:11:22:33:44:57",
+			EntityRole: "endpoint",
+			Attributes: map[string]any{},
+		},
+	}
+	typed := base
+	typed.DiscoveryRecognitionHints = []DiscoveryRecognitionHint{{Value: "TP-Link", Field: "ssdp_manufacturer", Origin: "ssdp"}}
+	if item := BuildEndpointDeviceInventory(typed); item.Brand != "TP-Link" {
+		t.Fatalf("ssdp_manufacturer rule was not routed its own field: %+v", item)
+	}
+
+	generic := base
+	generic.DiscoveryRecognitionHints = []DiscoveryRecognitionHint{{Value: "TP-Link", Origin: "ssdp"}}
+	if item := BuildEndpointDeviceInventory(generic); item.Brand != "" {
+		t.Fatalf("field-scoped rule must not inspect generic hints: %+v", item)
+	}
+}
+
+func TestUsableRecognitionFieldValueBounds(t *testing.T) {
+	cases := []struct {
+		field, value string
+		want         bool
+	}{
+		{"ssdp_model", "ADY-AL00", true},
+		{"ssdp_model", "  ADY-AL00  ", true},
+		{"ssdp_model", "", false},
+		{"ssdp_model", strings.Repeat("m", 128), true},
+		{"ssdp_model", strings.Repeat("m", 129), false},
+		{"snmp_sysdescr", strings.Repeat("d", 512), true},
+		{"snmp_sysdescr", strings.Repeat("d", 513), false},
+		{"snmp_sysoid", "1.3.6.1.4.1.2011.2.23", true},
+		{"snmp_sysoid", "1.3.6.1.4.1.\n2011", false},
+		{"ssdp_model", "AX55\x01", false},
+	}
+	for _, tc := range cases {
+		if got := usableRecognitionFieldValue(tc.field, tc.value); got != tc.want {
+			t.Fatalf("usableRecognitionFieldValue(%q, %q) = %v, want %v", tc.field, tc.value, got, tc.want)
+		}
 	}
 }
 

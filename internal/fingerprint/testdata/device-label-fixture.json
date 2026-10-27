@@ -1,0 +1,299 @@
+{
+ "source": "iKuai 终端监控 2026-10-27 采样，MAC 仅保留 OUI、主机名仅保留设备形态",
+ "devices": [
+  {
+   "mac": "00:0c:29:00:00:00",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:01",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:02",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:03",
+   "vendor": "VMware",
+   "client_type": "Windows7",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "d0:11:e5:00:00:04",
+   "vendor": "Apple",
+   "client_type": "NAT",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "20:3a:eb:00:00:05",
+   "vendor": "ZTE",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": "中兴问天 BE7200 Pro+"
+  },
+  {
+   "mac": "00:0c:29:00:00:06",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:07",
+   "vendor": "VMware",
+   "client_type": "Linux",
+   "hostname": "路由",
+   "model": ""
+  },
+  {
+   "mac": "50:2b:73:00:00:08",
+   "vendor": "Unknown",
+   "client_type": "Windows10",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:e0:70:00:00:09",
+   "vendor": "Dahua",
+   "client_type": "Windows10",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:0a",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "14:98:77:00:00:0b",
+   "vendor": "Apple",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": "Apple Mac mini"
+  },
+  {
+   "mac": "ec:d6:8a:00:00:0c",
+   "vendor": "JMicron",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "70:85:c2:00:00:0d",
+   "vendor": "ASRock",
+   "client_type": "Windows10",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:0e",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "50:2b:73:00:00:0f",
+   "vendor": "Unknown",
+   "client_type": "Windows",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "50:2b:73:00:00:10",
+   "vendor": "Unknown",
+   "client_type": "Windows10",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "50:2b:73:00:00:11",
+   "vendor": "Unknown",
+   "client_type": "Windows10",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "d2:f6:3c:00:00:12",
+   "vendor": "Apple",
+   "client_type": "iOS",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:13",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:14",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "14:ea:63:00:00:15",
+   "vendor": "Unknown",
+   "client_type": "Android",
+   "hostname": "",
+   "model": "智能交互设备"
+  },
+  {
+   "mac": "d0:11:e5:00:00:16",
+   "vendor": "Apple",
+   "client_type": "MacOS",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "c4:8b:66:00:00:17",
+   "vendor": "Unknown",
+   "client_type": "Windows10",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "68:1d:ef:00:00:18",
+   "vendor": "Unknown",
+   "client_type": "Windows10",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "0c:91:60:00:00:19",
+   "vendor": "Unknown",
+   "client_type": "Android",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "d0:76:e7:00:00:1a",
+   "vendor": "TP-Link",
+   "client_type": "NAT",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "50:2b:73:00:00:1b",
+   "vendor": "Unknown",
+   "client_type": "Windows10",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "0e:df:fe:00:00:1c",
+   "vendor": "Apple",
+   "client_type": "MacOS",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:1d",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:1e",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "cos7",
+   "model": ""
+  },
+  {
+   "mac": "22:07:44:00:00:1f",
+   "vendor": "Huawei",
+   "client_type": "HarmonyOS",
+   "hostname": "",
+   "model": "华为Pura 70"
+  },
+  {
+   "mac": "00:0c:29:00:00:20",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "28:a4:4a:00:00:21",
+   "vendor": "Unknown",
+   "client_type": "Windows",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "ec:53:82:00:00:22",
+   "vendor": "Honor",
+   "client_type": "HarmonyOS",
+   "hostname": "",
+   "model": "荣耀100"
+  },
+  {
+   "mac": "6c:1f:f7:00:00:23",
+   "vendor": "Unknown",
+   "client_type": "MacOSX",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "6c:4b:90:00:00:24",
+   "vendor": "LITE-ON",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "84:5b:12:00:00:25",
+   "vendor": "Huawei",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:26",
+   "vendor": "VMware",
+   "client_type": "Linux",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:27",
+   "vendor": "VMware",
+   "client_type": "Windows7",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "00:0c:29:00:00:28",
+   "vendor": "VMware",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  },
+  {
+   "mac": "84:a9:c4:00:00:29",
+   "vendor": "Huawei",
+   "client_type": "Unknown",
+   "hostname": "",
+   "model": ""
+  }
+ ]
+}

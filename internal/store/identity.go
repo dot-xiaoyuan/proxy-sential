@@ -161,7 +161,11 @@ type EndpointIdentityProfile struct {
 }
 
 type DiscoveryRecognitionHint struct {
-	Value         string
+	Value string
+	// Field names the recognition input a self-reported value belongs to
+	// ("ssdp_model", "snmp_sysoid", ...). An empty field keeps the historical
+	// hostname-style hint behaviour.
+	Field         string
 	Origin        string
 	ObservationID string
 	ObservedAt    time.Time
@@ -412,8 +416,16 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	baseSignals := endpointRecognitionSignals(endpoint.PrimaryMAC, endpoint.Attributes)
 	recognition := fingerprint.Default().IdentifySignals(baseSignals)
 	if len(profile.DiscoveryRecognitionHints) > 0 {
+		// Copy slices and the protocol map: hint enrichment must never mutate the
+		// base signals shared with the unenriched recognition above.
 		enrichedSignals := baseSignals
+		enrichedSignals.Hints = append([]string{}, baseSignals.Hints...)
+		enrichedSignals.ProtocolFields = cloneProtocolFieldValues(baseSignals.ProtocolFields)
 		for _, hint := range profile.DiscoveryRecognitionHints {
+			if hint.Field != "" {
+				enrichedSignals.ProtocolFields[hint.Field] = append(enrichedSignals.ProtocolFields[hint.Field], hint.Value)
+				continue
+			}
 			enrichedSignals.Hints = append(enrichedSignals.Hints, hint.Value)
 		}
 		enriched := fingerprint.Default().IdentifySignals(enrichedSignals)
@@ -421,11 +433,7 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 			recognition = enriched
 			recognition.Source = "passive_discovery"
 			for _, hint := range profile.DiscoveryRecognitionHints {
-				label := map[string]string{"dns_sd": "DNS-SD", "dhcp": "DHCP"}[hint.Origin]
-				if label == "" {
-					label = hint.Origin
-				}
-				recognition.Evidence = append(recognition.Evidence, "被动发现 "+label+": "+hint.Value)
+				recognition.Evidence = append(recognition.Evidence, passiveRecognitionEvidence(hint))
 			}
 		}
 	}
@@ -482,7 +490,43 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 }
 
 func passiveRecognitionChanged(before, after fingerprint.Result) bool {
-	return before.Brand != after.Brand || before.Model != after.Model || before.DeviceType != after.DeviceType || before.OSFamily != after.OSFamily || before.Conflict != after.Conflict
+	return before.Vendor != after.Vendor || before.Brand != after.Brand || before.Model != after.Model || before.DeviceType != after.DeviceType || before.OSFamily != after.OSFamily || before.Conflict != after.Conflict
+}
+
+func cloneProtocolFieldValues(values map[string][]string) map[string][]string {
+	if values == nil {
+		return map[string][]string{}
+	}
+	cloned := make(map[string][]string, len(values))
+	for field, items := range values {
+		cloned[field] = append([]string{}, items...)
+	}
+	return cloned
+}
+
+func passiveRecognitionEvidence(hint DiscoveryRecognitionHint) string {
+	label := map[string]string{"dns_sd": "DNS-SD", "dhcp": "DHCP", "ssdp": "SSDP", "snmp": "SNMP"}[hint.Origin]
+	if label == "" {
+		label = hint.Origin
+	}
+	if hint.Field == "" {
+		return "被动发现 " + label + ": " + hint.Value
+	}
+	return "被动发现 " + label + " " + hint.Field + ": " + truncateRecognitionValue(hint.Value, 80)
+}
+
+// truncateRecognitionValue bounds evidence text so a long self-reported
+// description cannot inflate the recognition summary.
+func truncateRecognitionValue(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "…"
 }
 
 func BuildEndpointDeviceInventories(state IdentityState, query Query) []EndpointDeviceInventory {
@@ -579,7 +623,9 @@ func endpointRecognitionSignals(mac string, attributes map[string]any) fingerpri
 			"tls_subject": {stringFromMap(attributes, "certificate_subject")}, "tls_issuer": {stringFromMap(attributes, "certificate_issuer")},
 			"snmp_sysdescr": {stringFromMap(attributes, "snmp_sysdescr")}, "snmp_sysoid": {stringFromMap(attributes, "snmp_sysoid")},
 			"mdns_model": {stringFromMap(attributes, "mdns_model")}, "ssh_banner": {stringFromMap(attributes, "ssh_banner")},
-			"http_body": {stringFromMap(attributes, "http_body")}, "favicon_md5": {stringFromMap(attributes, "favicon_md5")}, "tls_san": {stringFromMap(attributes, "certificate_san")}, "sip_user_agent": {stringFromMap(attributes, "sip_user_agent")}, "sip_server": {stringFromMap(attributes, "sip_server")}, "http_www_authenticate": {stringFromMap(attributes, "http_www_authenticate")},
+			"ssdp_model": {stringFromMap(attributes, "ssdp_model")}, "ssdp_manufacturer": {stringFromMap(attributes, "ssdp_manufacturer")},
+			"snmp_model": {stringFromMap(attributes, "snmp_model")},
+			"http_body":  {stringFromMap(attributes, "http_body")}, "favicon_md5": {stringFromMap(attributes, "favicon_md5")}, "tls_san": {stringFromMap(attributes, "certificate_san")}, "sip_user_agent": {stringFromMap(attributes, "sip_user_agent")}, "sip_server": {stringFromMap(attributes, "sip_server")}, "http_www_authenticate": {stringFromMap(attributes, "http_www_authenticate")},
 		},
 		MAC:                  mac,
 		UserAgents:           []string{stringFromMap(attributes, "user_agent")},

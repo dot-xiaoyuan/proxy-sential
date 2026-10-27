@@ -88,6 +88,10 @@ func BuildEmbeddedBundle(output, version string, now time.Time) (BundleManifest,
 	if strings.TrimSpace(version) == "" {
 		version = EmbeddedVersion + "-offline"
 	}
+	// The SNMP enterprise table, the device-type prior and the model catalogue
+	// ship embedded only. Carrying them in the payload requires a schema bump:
+	// older readers reject unknown entries, and their checksums are not part of
+	// the manifest yet.
 	files := map[string][]byte{
 		"multisource-catalog.json":    embeddedCatalog,
 		"multisource-provenance.json": embeddedProvenance,
@@ -322,6 +326,11 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	reader := tar.NewReader(gz)
 	files := map[string][]byte{}
 	total := int64(0)
+	// Only files that some reader actually consumes belong here. The SNMP
+	// enterprise table, the device-type prior and the model catalogue are
+	// deliberately absent: accepting them before a schema bump would let a
+	// bundle carry unverified bytes that newer readers ignore and older readers
+	// reject outright. They join this list together with the v7 payload.
 	allowed := map[string]bool{"multisource-catalog.json": true, "multisource-provenance.json": true, "manifest.json": true, "oui.csv": true, "device-rules.json": true, "router-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "domain-signatures.json": true, "application-signatures.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NextDNS-MIT.txt": true, "licenses/NOTICE.txt": true, "licenses/HaGeZi-GPL-3.0.txt": true, "sources/hagezi.json": true}
 	for {
 		header, err := reader.Next()

@@ -25,7 +25,9 @@ func TestCampusSelfReportedDeviceRules(t *testing.T) {
 		{"youdao dictionary pen", Signals{Hostnames: []string{"YoudaoDictionaryPen-435"}, DHCPVendorClass: "udhcp 1.34.1"}, "iot", "Youdao", "有道词典笔", ""},
 		{"alpha egg pen vendor class", Signals{DHCPVendorClass: "Alpha Egg:Smart Pen:TYS01"}, "iot", "iFlytek", "阿尔法蛋词典笔", ""},
 		{"huawei harmony tablet", Signals{DHCPVendorClass: "HUAWEI:openharmony:SLG-W50"}, "tablet", "Huawei", "SLG-W50", "HarmonyOS"},
-		{"huawei harmony phone", Signals{DHCPVendorClass: "HUAWEI:openharmony:ALN-AL00"}, "mobile", "Huawei", "ALN-AL00", "HarmonyOS"},
+		// ALN-AL00 is the Mate 60 Pro model code; the model catalogue resolves it
+		// to the marketing name while the rule still contributes HarmonyOS.
+		{"huawei harmony phone", Signals{DHCPVendorClass: "HUAWEI:openharmony:ALN-AL00"}, "mobile", "Huawei", "Mate 60 Pro", "HarmonyOS"},
 		{"honor pinyin tablet", Signals{Hostnames: []string{"rong-yao-ping-banV8-Pro"}}, "tablet", "Honor", "", ""},
 		{"honor pinyin phone", Signals{Hostnames: []string{"rong-yaoMagic6"}}, "mobile", "Honor", "", ""},
 		{"busybox client is platform only", Signals{DHCPVendorClass: "udhcp 1.19.4"}, "", "", "", "Embedded Linux"},

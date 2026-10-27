@@ -185,3 +185,19 @@ func TestPassiveDNSServiceTargetMergesIPv4AndIPv6(t *testing.T) {
 		t.Fatal("DNS-SD service target addresses were split into separate devices")
 	}
 }
+
+func TestPassiveSelfReportReadsUPnPDescription(t *testing.T) {
+	manufacturer, model := passiveSelfReport(map[string]any{
+		"description": map[string]any{
+			"manufacturer": "TP-Link",
+			"model_name":   "Archer AX55",
+			"model_number": "v1",
+		},
+	})
+	if manufacturer != "TP-Link" || model != "Archer AX55 v1" {
+		t.Fatalf("unexpected self-report: %q %q", manufacturer, model)
+	}
+	if manufacturer, model := passiveSelfReport(map[string]any{"st": "urn:schemas-upnp-org:device:InternetGatewayDevice:1"}); manufacturer != "" || model != "" {
+		t.Fatalf("service type must not invent a self-report: %q %q", manufacturer, model)
+	}
+}

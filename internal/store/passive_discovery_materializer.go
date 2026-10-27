@@ -170,6 +170,23 @@ func passiveString(m map[string]any, key string) string {
 	return strings.TrimSpace(fmt.Sprint(value))
 }
 
+// passiveSelfReport extracts the manufacturer and product model a device
+// advertises about itself. The nested UPnP description only counts when the
+// top-level payload does not already carry the field.
+func passiveSelfReport(payload map[string]any) (string, string) {
+	manufacturer := passiveString(payload, "manufacturer")
+	model := passiveString(payload, "product_model")
+	if description, ok := payload["description"].(map[string]any); ok {
+		if manufacturer == "" {
+			manufacturer = passiveString(description, "manufacturer")
+		}
+		if model == "" {
+			model = strings.TrimSpace(passiveString(description, "model_name") + " " + passiveString(description, "model_number"))
+		}
+	}
+	return discovery.CleanReportedText(manufacturer), discovery.CleanReportedText(model)
+}
+
 func passiveInterface(event normalized.Event) string {
 	if value := passiveString(event.Observer, "interface"); value != "" {
 		return value
@@ -268,6 +285,13 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		}
 		service := strings.ToLower(passiveString(event.Payload, "st") + " " + passiveString(event.Payload, "nt"))
 		o.Origin, o.Explanation, o.ValidUntil = "ssdp", "SSDP 设备响应或公告", at.Add(30*time.Minute)
+		// A description-enriched advertisement carries the device's own
+		// manufacturer and model. Keep them as self-report evidence; they do not
+		// confirm a whole-device type on their own.
+		if manufacturer, model := passiveSelfReport(event.Payload); manufacturer != "" || model != "" {
+			o.Manufacturer, o.ModelName = manufacturer, model
+			o.Explanation = "SSDP 设备描述自报型号，不确认整机类型"
+		}
 		if strings.Contains(service, "internetgatewaydevice") {
 			o.DeviceType, o.Capabilities = "gateway", []string{"routing"}
 		} else if strings.Contains(service, "mediarenderer") {
@@ -501,7 +525,7 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])
 		evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
 		evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-		o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, Confidence: "strong", Explanation: "DNS-SD 服务响应与地址记录自动关联", RuleVersion: discovery.RuleVersion, ObservedAt: observed, ValidUntil: until, Interface: iface, Evidence: evidence}
+		o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: discovery.DNSSDModelFromTXT(textValue), Confidence: "strong", Explanation: "DNS-SD 服务响应与地址记录自动关联", RuleVersion: discovery.RuleVersion, ObservedAt: observed, ValidUntil: until, Interface: iface, Evidence: evidence}
 		if o.Site == "" {
 			o.Site = sensor
 		}

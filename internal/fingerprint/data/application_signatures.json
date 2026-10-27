@@ -2,5 +2,9 @@
   {"pattern":"(?i)(网易|net\\s*ease)?\\s*uu\\s*(game\\s*)?加速器|uu-booster","name":"网易UU加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.85,"source":"legacy-curated","license":"internal-rule"},
   {"pattern":"(?i)腾讯(网游)?加速器|tencent\\s*(game\\s*)?accelerator","name":"腾讯游戏加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.85,"source":"legacy-curated","license":"internal-rule"},
   {"pattern":"(?i)迅游(网游)?加速器|xunyou","name":"迅游加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.82,"source":"legacy-curated","license":"internal-rule"},
-  {"pattern":"(?i)biubiu\\s*加速器","name":"biubiu加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.82,"source":"legacy-curated","license":"internal-rule"}
+  {"pattern":"(?i)biubiu\\s*加速器","name":"biubiu加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.82,"source":"legacy-curated","license":"internal-rule"},
+  {"pattern":"(?i)(雷神加速器|leigod)","name":"雷神加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.85,"source":"vendor-curated","license":"internal-rule"},
+  {"pattern":"(?i)(奇游加速器|qiyou)","name":"奇游加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.82,"source":"vendor-curated","license":"internal-rule"},
+  {"pattern":"(?i)(小黑盒加速器|xiaoheihe)","name":"小黑盒加速器","category":"game_accelerator","effect":"negative_evidence","confidence":0.8,"source":"vendor-curated","license":"internal-rule"},
+  {"pattern":"(?i)steam\\s*\\+\\+|\\bwatt\\s*toolkit\\b","name":"Watt Toolkit","category":"game_accelerator","effect":"negative_evidence","confidence":0.78,"source":"vendor-curated","license":"internal-rule"}
 ]

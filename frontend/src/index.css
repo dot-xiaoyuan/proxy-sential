@@ -12,6 +12,11 @@
   --ps-primary-color: #0284c7;
   --ps-primary-hover: #0369a1;
   --ps-primary-bg: #f0f9ff;
+  --ps-login-bg-start: #fbfaf7;
+  --ps-login-bg-mid: #f5f9fa;
+  --ps-login-bg-end: #edf5f8;
+  --ps-login-accent: #1875d1;
+  --ps-login-accent-hover: #0d63b4;
 
   /* Restrained Stable Risk Colors */
   --ps-risk-confirmed: #dc2626;
@@ -3334,33 +3339,84 @@ pre.wrap-code {
 }
 
 .login-page {
+  position: relative;
+  display: flex;
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: #f1f5f9;
+  min-height: 100svh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 30px clamp(24px, 4vw, 64px) 22px;
+  background:
+    url('/login-traffic-network.svg') center / cover no-repeat,
+    linear-gradient(125deg, var(--ps-login-bg-start) 0%, var(--ps-login-bg-mid) 48%, var(--ps-login-bg-end) 100%);
 }
 
+.login-layout {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: min(1240px, 100%);
+  margin-inline: auto;
+}
+
+.login-topbar { display: flex; align-items: center; gap: 12px; }
+.login-brand-copy { display: grid; gap: 2px; }
+.login-brand-copy strong { color: #17324a; font-size: 18px; font-weight: 700; letter-spacing: .01em; }
+.login-brand-copy > span { color: #526b7b; font-size: 12px; }
+.login-mark { display: grid; flex-shrink: 0; place-items: center; width: 48px; height: 48px; border: 1px solid rgba(255, 255, 255, .24); border-radius: 8px; background: #1878d4; color: #fff; font-size: 24px; box-shadow: 0 10px 28px rgba(3, 20, 43, .2); }
+
+.login-main { display: flex; flex: 1; align-items: center; justify-content: center; margin-block: 36px; }
 .login-card {
-  width: min(420px, 100%);
-  padding: 28px;
+  position: relative;
+  width: min(440px, 100%);
+  padding: 40px;
+  overflow: hidden;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 24px 60px rgba(39, 87, 117, .13);
 }
 
-.login-brand {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 24px;
-  color: var(--ps-primary);
-  font-size: 30px;
+.login-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, #1677cc, #6fc5fc);
 }
 
-.login-brand h3 {
-  margin: 0 !important;
+.login-card-heading { display: grid; gap: 8px; margin-bottom: 32px; }
+.login-card-heading h1 { margin: 0 !important; color: #0f172a; font-size: 28px !important; font-weight: 700 !important; line-height: 1.3 !important; }
+.login-card-heading .ant-typography-secondary { color: #64748b; font-size: 13px; }
+.login-form .ant-form-item { margin-bottom: 22px; }
+.login-form .ant-form-item-label > label { color: #334155; font-size: 13px; font-weight: 600; }
+.login-form .ant-input-affix-wrapper { min-height: 46px; border-color: #cbd5e1; border-radius: 6px; padding-inline: 13px; }
+.login-form .ant-input-prefix { margin-inline-end: 10px; color: #71869c; }
+.login-form .ant-btn-primary { height: 48px; margin-top: 8px; border-radius: 6px; background: var(--ps-login-accent); box-shadow: none; font-size: 15px; font-weight: 650; white-space: nowrap; }
+.login-form .ant-btn-primary:hover { background: var(--ps-login-accent-hover) !important; }
+.login-form .ant-btn { flex-shrink: 0; }
+
+.login-session-check { display: flex; align-items: center; gap: 14px; min-height: 168px; color: #475569; }
+.login-caps-hint { color: #9a5908; font-size: 12px; }
+
+@media (max-width: 800px) {
+  .login-page { padding: 22px 24px 18px; background-position: 14% center; }
+  .login-main { justify-content: center; margin-block: 42px 32px; }
+  .login-card { max-width: 440px; }
+}
+
+@media (max-width: 560px) {
+  .login-page { padding: 16px 16px 18px; }
+  .login-topbar { gap: 10px; }
+  .login-mark { width: 42px; height: 42px; font-size: 21px; }
+  .login-brand-copy strong { font-size: 16px; }
+  .login-brand-copy > span { font-size: 11px; }
+  .login-main { align-content: center; gap: 28px; margin-block: 38px 22px; }
+  .login-card { padding: 30px 24px 28px; }
+  .login-card-heading { margin-bottom: 26px; }
+  .login-card-heading h1 { font-size: 24px !important; }
 }
 
 .case-layout,
@@ -4906,7 +4962,8 @@ pre.wrap-code {
   .device-center-page .router-mobile-list > .router-observation-card + .router-observation-card { border-top: 1px solid #e2e8f0; }
 }
 /* Discovery protocol coverage and evidence summaries. */
-.passive-discovery-panel { min-width: 0; max-width: 100%; }
+.passive-discovery-panel { width:100%; min-width: 0; max-width: 1920px; margin-inline:auto; }
+.discovery-evidence-modal .ant-modal-body { max-height: 65vh; overflow:auto; }
 .iot-coverage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .iot-coverage-item { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; overflow-wrap: anywhere; }
 .discovery-statistics { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -5388,6 +5445,7 @@ pre.wrap-code {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+<<<<<<< HEAD
 .risk-cutover-status {
   border-color: #e2e8f0;
   border-radius: 8px;
@@ -5504,4 +5562,7 @@ pre.wrap-code {
 @media (max-width: 560px) {
   .stream-risk-controls label { flex: 1 1 100%; min-width: 0; }
   .stream-risk-card { padding: 14px; }
+}
+@media (max-width: 560px) {
+  .compact-list-table .ant-table-tbody > tr > td.mobile-empty-cell { display: none !important; }
 }

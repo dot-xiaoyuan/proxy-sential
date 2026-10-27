@@ -19,7 +19,6 @@ import type { MenuProps } from 'antd'
 
 import { useLogout, useSession } from '../shared/api/queries'
 import { LoginPage } from '../pages/LoginPage'
-import { AppLoadingState } from '../shared/ui'
 import { can } from '../shared/auth/permissions'
 import { routeOwner, routePermission, visibleNavigation } from './navigation'
 
@@ -67,7 +66,7 @@ export function AppShell() {
     contentRef.current?.scrollTo({ top: 0, behavior: 'auto' })
   }, [location.pathname, location.search])
 
-  if (session.isLoading) return <AppLoadingState rows={6} />
+  if (session.isLoading) return <LoginPage />
   if (session.isError || !session.data) return <LoginPage />
 	const navItems = buildNavItems(session.data)
 

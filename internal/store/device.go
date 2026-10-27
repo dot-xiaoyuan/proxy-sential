@@ -365,6 +365,18 @@ func signalDrafts(event normalized.Event) []deviceSignalDraft {
 		add(source, "http_title", stringFromMap(event.Payload, "title"), "medium", 0.6, 44)
 		add(source, "tls_subject", stringFromMap(event.Payload, "certificate_subject"), "medium", 0.62, 46)
 		add(source, "tls_issuer", stringFromMap(event.Payload, "certificate_issuer"), "medium", 0.58, 42)
+		// UPnP and SNMP self-report a manufacturer and a model name. They stay
+		// separate attribute keys so the recognition layer can tell a device's
+		// own claim apart from a DHCP or user-agent guess.
+		switch source {
+		case "ssdp":
+			add(source, "ssdp_manufacturer", stringFromMap(event.Payload, "manufacturer"), "strong", 0.86, 74)
+			add(source, "ssdp_model", stringFromMap(event.Payload, "product_model"), "strong", 0.86, 74)
+		case "snmp":
+			add(source, "snmp_sysdescr", stringFromMap(event.Payload, "system_description"), "strong", 0.88, 78)
+			add(source, "snmp_sysoid", stringFromMap(event.Payload, "system_object_id"), "strong", 0.88, 78)
+			add(source, "snmp_model", stringFromMap(event.Payload, "product_model"), "strong", 0.86, 74)
+		}
 	}
 
 	ua := stringFromMap(event.Payload, "user_agent")

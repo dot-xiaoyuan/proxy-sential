@@ -70,11 +70,10 @@ func observationIoTType(o Observation) (string, string) {
 	case "dns_sd":
 		hasProduct := strings.Contains(txt, "product=") || strings.Contains(txt, "ty=") || strings.Contains(txt, "usb_mdl=")
 		if hasProduct {
-			switch service {
-			case "_ipp._tcp", "_ipps._tcp", "_printer._tcp":
-				return "printer", "打印服务与产品声明一致"
-			case "_uscan._tcp", "_uscans._tcp", "_scanner._tcp":
-				return "scanner", "扫描服务与产品声明一致"
+			// The service-type catalogue owns the product kind, so adding a
+			// printer or media family is a data change instead of a code change.
+			if kind, ok := ServiceProductKind(service); ok && iotCategory(kind) != "" {
+				return kind, "服务类型与产品声明一致"
 			}
 		}
 		if strings.Contains(txt, "model=appletv") || strings.Contains(txt, "md=chromecast") {

@@ -67,6 +67,13 @@ func cleanDescriptionText(v string) string {
 	return v
 }
 
+// CleanReportedText sanitizes and bounds protocol self-report text. It is the
+// same normalisation the discovery parser applies, exposed for the passive
+// materializer, which builds observations outside FromEvent.
+func CleanReportedText(v string) string {
+	return cleanDescriptionText(v)
+}
+
 type DescribeStats struct {
 	Fetched, NotOnLink, MACMismatch, Failed, Dropped int
 }

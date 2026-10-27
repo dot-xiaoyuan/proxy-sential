@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-labelledby="title description">
+  <title id="title">浅色抽象数据流背景</title>
+  <desc id="description">浅蓝色节点从左侧汇聚，沿柔和的波带延伸至右侧网络，一条细琥珀色曲线穿过其中。</desc>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#fbfaf7"/>
+      <stop offset=".54" stop-color="#f8faf9"/>
+      <stop offset="1" stop-color="#eff7f9"/>
+    </linearGradient>
+    <linearGradient id="wide-ribbon" x1="270" y1="760" x2="1540" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c8e0e9" stop-opacity=".12"/>
+      <stop offset=".38" stop-color="#a9cedf" stop-opacity=".45"/>
+      <stop offset=".73" stop-color="#b9d9e6" stop-opacity=".34"/>
+      <stop offset="1" stop-color="#c9e2eb" stop-opacity=".27"/>
+    </linearGradient>
+    <linearGradient id="narrow-ribbon" x1="260" y1="780" x2="1600" y2="530" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b0d0df" stop-opacity=".1"/>
+      <stop offset=".43" stop-color="#85b4ca" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#a9d0df" stop-opacity=".22"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="260" y1="780" x2="1400" y2="440" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d89f38" stop-opacity=".42"/>
+      <stop offset=".55" stop-color="#d79b2f" stop-opacity=".78"/>
+      <stop offset="1" stop-color="#d99f35" stop-opacity=".92"/>
+    </linearGradient>
+    <pattern id="grid" width="78" height="78" patternUnits="userSpaceOnUse">
+      <path d="M78 0H0V78" fill="none" stroke="#b7d2dc" stroke-opacity=".24" stroke-width=".7"/>
+      <circle r="1" fill="#98bfcd" fill-opacity=".2"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#paper)"/>
+  <rect width="1600" height="1000" fill="url(#grid)"/>
+
+  <!-- Fine construction lines keep the image crisp at large sizes. -->
+  <g fill="none" stroke="#a8cbd9" stroke-opacity=".28" stroke-width=".8">
+    <path d="M0 250H1600M0 500H1600M0 750H1600"/>
+    <path d="M190 0V1000M950 0V1000M1430 0V1000"/>
+    <circle cx="1165" cy="455" r="285"/>
+    <circle cx="1165" cy="455" r="398" stroke-dasharray="2 7"/>
+    <path d="M255 776C500 525 760 458 1070 505S1420 638 1640 535"/>
+    <path d="M255 776C560 930 870 818 1080 838S1435 946 1660 788"/>
+  </g>
+
+  <!-- Seven incoming strands gather into one point without depicting hardware. -->
+  <g fill="none" stroke="#9ec4d3" stroke-opacity=".53" stroke-width=".85">
+    <path d="M-20 628C86 625 145 691 255 776"/>
+    <path d="M-20 676C95 664 161 712 255 776"/>
+    <path d="M-20 724C93 709 167 734 255 776"/>
+    <path d="M-20 778C82 763 153 764 255 776"/>
+    <path d="M-20 838C92 810 162 793 255 776"/>
+    <path d="M-20 894C100 856 169 817 255 776"/>
+    <path d="M-20 950C104 892 170 837 255 776"/>
+    <path d="M32 770 78 719 125 708 145 752 108 807 65 846 32 770Z"/>
+    <path d="M78 719 110 750 145 752 195 775 255 776M65 846 110 750 195 775M125 708 195 775"/>
+  </g>
+  <g fill="#8cb8c9" stroke="#72a9bf" stroke-width=".6">
+    <circle cx="32" cy="770" r="3.6"/><circle cx="78" cy="719" r="5.5"/>
+    <circle cx="125" cy="708" r="3.2"/><circle cx="145" cy="752" r="4.6"/>
+    <circle cx="110" cy="750" r="2.8"/><circle cx="108" cy="807" r="5.1"/>
+    <circle cx="65" cy="846" r="6.2"/><circle cx="195" cy="775" r="3"/>
+    <circle cx="215" cy="731" r="2.2"/><circle cx="255" cy="776" r="5.1" fill="#d9a139" stroke="#c68a21"/>
+  </g>
+
+  <!-- Layered ribbons stay translucent, with defined edges rather than blur. -->
+  <path d="M255 776C435 777 485 614 650 565C805 518 895 636 1048 654C1215 673 1378 478 1640 385L1640 540C1415 564 1270 738 1063 743C890 747 795 647 660 640C494 632 432 835 255 776Z" fill="url(#wide-ribbon)"/>
+  <path d="M255 776C451 782 515 665 665 622C833 574 914 691 1065 699C1235 708 1400 560 1640 490L1640 561C1424 595 1285 740 1060 755C877 768 787 668 655 678C500 689 425 836 255 776Z" fill="url(#narrow-ribbon)"/>
+  <g fill="none" stroke="#88b5c8" stroke-opacity=".42" stroke-width=".9">
+    <path d="M255 776C435 777 485 614 650 565C805 518 895 636 1048 654C1215 673 1378 478 1640 385"/>
+    <path d="M255 776C432 835 494 632 660 640C795 647 890 747 1063 743C1270 738 1415 564 1640 540"/>
+    <path d="M255 776C510 658 640 583 796 611C974 643 1009 733 1156 692C1320 646 1431 535 1640 508" stroke-opacity=".23"/>
+  </g>
+
+  <!-- The network is an abstract field of relationships, without protocol labels. -->
+  <g fill="none" stroke="#8db7c8" stroke-opacity=".42" stroke-width=".8">
+    <path d="M850 171 1030 388 1096 250 1170 357 1237 287 1278 339 1398 439 1518 170"/>
+    <path d="M923 499 1030 388 1041 498 1170 357 1194 430 1278 339 1398 439 1516 512"/>
+    <path d="M923 499 1041 498 1078 680 1125 638 1194 430 1274 567 1398 439 1439 569 1516 512"/>
+    <path d="M1041 498 1125 638 1167 754 1274 567 1306 761 1439 569 1471 851 1516 512"/>
+    <path d="M850 171 1096 250 1237 287 1398 439 1439 569M1078 680 1167 754 1306 761 1471 851"/>
+    <path d="M923 499 968 801 1125 638M1041 498 1194 430 1306 761M1237 287 1518 170"/>
+  </g>
+  <g fill="none" stroke="#91bdcc" stroke-opacity=".3" stroke-width=".7" stroke-dasharray="2 6">
+    <path d="M776 508 850 171 1030 388 968 801 1167 754 1398 439 1518 170"/>
+    <path d="M791 227 1096 250 1278 339 1516 512 1471 851"/>
+  </g>
+  <g fill="#8fb9ca" stroke="#70a6ba" stroke-width=".7">
+    <circle cx="850" cy="171" r="2.7"/><circle cx="923" cy="499" r="2.6"/>
+    <circle cx="1030" cy="388" r="5"/><circle cx="1096" cy="250" r="6.2"/>
+    <circle cx="1170" cy="357" r="5.9"/><circle cx="1237" cy="287" r="4.5"/>
+    <circle cx="1278" cy="339" r="4.1"/><circle cx="1398" cy="439" r="6.8"/>
+    <circle cx="1518" cy="170" r="3.1"/><circle cx="1041" cy="498" r="6"/>
+    <circle cx="1194" cy="430" r="4.6"/><circle cx="1516" cy="512" r="3.6"/>
+    <circle cx="1078" cy="680" r="4.3"/><circle cx="1125" cy="638" r="3.4"/>
+    <circle cx="1274" cy="567" r="3.7"/><circle cx="1439" cy="569" r="4.7"/>
+    <circle cx="1167" cy="754" r="3.4"/><circle cx="1306" cy="761" r="3.9"/>
+    <circle cx="1471" cy="851" r="3.2"/><circle cx="968" cy="801" r="4"/>
+  </g>
+
+  <!-- A single warm thread gives the flow a clear direction. -->
+  <path d="M255 776C436 826 547 714 704 689C875 644 1007 671 1097 630C1205 579 1262 480 1398 439" fill="none" stroke="url(#amber)" stroke-width="1.6" stroke-linecap="round"/>
+  <g fill="#dfaa4b" stroke="#c99533" stroke-width=".7">
+    <circle cx="704" cy="689" r="2.5"/><circle cx="1097" cy="630" r="2.3"/>
+    <circle cx="1398" cy="439" r="7"/>
+  </g>
+  <g fill="none" stroke="#d8aa58" stroke-opacity=".32" stroke-width=".8">
+    <circle cx="1398" cy="439" r="31"/>
+    <circle cx="1398" cy="439" r="58" stroke-dasharray="2 6"/>
+  </g>
+
+  <g fill="#8ebaca" fill-opacity=".64">
+    <circle cx="29" cy="680" r="2"/><circle cx="91" cy="682" r="1.6"/>
+    <circle cx="280" cy="680" r="1.8"/><circle cx="369" cy="651" r="2"/>
+    <circle cx="447" cy="706" r="1.9"/><circle cx="557" cy="817" r="1.3"/>
+    <circle cx="678" cy="435" r="1.5"/><circle cx="746" cy="352" r="2"/>
+    <circle cx="779" cy="225" r="1.7"/><circle cx="910" cy="170" r="2.2"/>
+    <circle cx="975" cy="595" r="1.8"/><circle cx="1106" cy="566" r="1.5"/>
+    <circle cx="1161" cy="208" r="1.6"/><circle cx="1321" cy="57" r="2.2"/>
+    <circle cx="1377" cy="229" r="2"/><circle cx="1524" cy="620" r="2.2"/>
+    <circle cx="1556" cy="32" r="1.8"/><circle cx="1462" cy="883" r="1.7"/>
+  </g>
+</svg>

@@ -99,7 +99,7 @@ type Catalog struct {
 }
 
 // Fields are directional standard-event fields, never collector-specific data.
-var supportedCatalogFields = map[string]bool{"user_agent": true, "dhcp_vendor_class": true, "dhcp_requested_options": true, "hostname": true, "http_server": true, "http_title": true, "tls_subject": true, "tls_issuer": true, "tls_san": true, "mdns_model": true, "snmp_sysdescr": true, "snmp_sysoid": true, "ssh_banner": true, "sip_server": true, "sip_user_agent": true, "http_www_authenticate": true, "http_body": true, "favicon_md5": true, "tcp_signature": true}
+var supportedCatalogFields = map[string]bool{"user_agent": true, "dhcp_vendor_class": true, "dhcp_requested_options": true, "hostname": true, "http_server": true, "http_title": true, "tls_subject": true, "tls_issuer": true, "tls_san": true, "mdns_model": true, "snmp_sysdescr": true, "snmp_sysoid": true, "snmp_model": true, "ssdp_model": true, "ssdp_manufacturer": true, "dns_sd_model": true, "ssh_banner": true, "sip_server": true, "sip_user_agent": true, "http_www_authenticate": true, "http_body": true, "favicon_md5": true, "tcp_signature": true}
 
 // PrepareCatalog classifies every rule; it is used only by the offline converter.
 // Runtime loading rejects unsupported enabled rules instead of silently dropping them.

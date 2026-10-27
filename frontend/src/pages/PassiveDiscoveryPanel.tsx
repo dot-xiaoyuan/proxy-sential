@@ -1,6 +1,6 @@
 import {
   AppErrorAlert,
-  AppCursorPagination,
+  AppServerPagination,
   AppListHeader,
   AppTable, AppTableBar } from '../shared/ui'
 import { Notice as Alert } from '../shared/ui/Notice'
@@ -17,6 +17,7 @@ import { Button,
   Typography,
 } from 'antd'
 import { useSearchParams } from 'react-router-dom'
+import { ReloadOutlined } from '@ant-design/icons'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
@@ -37,7 +38,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const search = params.get('discovery_search') || ''
   const [draft,setDraft] = useState(search)
   const [moreOpen,setMoreOpen] = useState(false)
-  const filterKey = [view,search,...['category','type','protocol','state','domain','vlan','window'].map(k=>params.get(`discovery_${k}`)||'')].join('|')
+  const [pageSize,setPageSize] = useState(20)
+  const filterKey = [view,search,pageSize,...['category','type','protocol','state','domain','vlan','window'].map(k=>params.get(`discovery_${k}`)||'')].join('|')
   const [paging,setPaging] = useState({key:filterKey,cursors:[''],page:0})
   const cursors=paging.key===filterKey?paging.cursors:['']
   const page=paging.key===filterKey?paging.page:0
@@ -48,15 +50,15 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const change = (key:string,value:string) => {
     setParams(current=>{const next=new URLSearchParams(current);if(value)next.set(`discovery_${key}`,value);else next.delete(`discovery_${key}`);if(key==='type')next.delete('discovery_category');return next},{replace:true})
   }
-  const query = new URLSearchParams({mode:'passive',limit:'20'})
+  const query = new URLSearchParams({mode:'passive',limit:String(pageSize)})
   if(view==='iot')query.set('view','iot')
   if(search)query.set('search',search)
   for(const key of ['category','type','protocol','state','domain','vlan','window']){const value=params.get(`discovery_${key}`);if(value)query.set(key,value)}
   if(cursors[page])query.set('cursor',cursors[page])
-  const devices = useQuery({queryKey:['discovery-center',query.toString()],queryFn:({signal})=>request<Page>(`/discovery/devices?${query}`,{signal}),refetchInterval:5000})
+  const devices = useQuery({queryKey:['discovery-center',query.toString()],queryFn:({signal})=>request<Page>(`/discovery/devices?${query}`,{signal})})
   const catalogue=useQuery({queryKey:['discovery-types'],queryFn:({signal})=>request<Catalogue>('/discovery/types',{signal})})
-  const coverage=useQuery({queryKey:['discovery-coverage'],queryFn:({signal})=>request<Coverage>('/discovery/coverage',{signal}),refetchInterval:10000})
-  const statistics=useQuery({queryKey:['discovery-statistics'],queryFn:({signal})=>request<Statistics>('/discovery/statistics',{signal}),refetchInterval:10000,enabled:coverage.data?.enabled===true})
+  const coverage=useQuery({queryKey:['discovery-coverage'],queryFn:({signal})=>request<Coverage>('/discovery/coverage',{signal})})
+  const statistics=useQuery({queryKey:['discovery-statistics'],queryFn:({signal})=>request<Statistics>('/discovery/statistics',{signal}),enabled:coverage.data?.enabled===true})
   const history=useQuery({queryKey:['discovery-history',selected?.id,historyCursor],queryFn:({signal})=>request<History>(`/discovery/history?device_id=${encodeURIComponent(selected!.id)}&cursor=${historyCursor}&limit=20`,{signal}),enabled:!!selected&&coverage.data?.enabled===true})
   const types=Object.fromEntries((catalogue.data?.items??[]).map(t=>[t.id,t.label]))
   const items=devices.data?.items??[]
@@ -68,7 +70,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const show=(item:Device)=>{setHistoryCursor('');setSelected(item)}
   const columns=[
     {title:'地址 / 名称 / MAC',key:'identity',render:(_:unknown,item:Device)=>identity(item)},
-    {title:'设备类型 / 型号',key:'type',render:(_:unknown,item:Device)=>kind(item)},
+    {title:'设备类型 / 型号',key:'type',onCell:(item:Device)=>({className:item.device_type||item.last_device_type||item.manufacturer||item.model_name?'':'mobile-empty-cell'}),render:(_:unknown,item:Device)=>kind(item)},
     {title:'发现依据',key:'clues',render:(_:unknown,item:Device)=>clues(item)},
     {title:'证据状态',key:'state',render:(_:unknown,item:Device)=>state(item)},
     {title:'最近观测',key:'seen',width:115,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
@@ -93,7 +95,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       </div>:undefined}
     />
     <section className="surface center-list-toolbar">
-      <Typography.Paragraph type="secondary">{view==='iot'?'展示有明确设备类型依据的档案；一般服务能力和待核实记录可在发现设备中查看。':'展示已发现的设备与关联线索，可按类型、协议和证据状态筛选。'}服务证据有效不代表设备在线。名称少于三个字符按前缀搜索，三个及以上按包含搜索。</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">{view==='iot'?'展示有明确类型依据的设备档案。':'展示发现设备与关联线索；证据有效不代表设备在线。'}名称搜索：少于三个字符按前缀，三个及以上按包含。</Typography.Paragraph>
       {catalogue.isError&&<AppErrorAlert title="读取设备类型失败" message={catalogue.error.message} />}
       {fresh&&fresh.status!=='ready'&&<Alert type={fresh.status==='failed'?'error':'warning'} showIcon title={fresh.status==='failed'?'设备数据处理失败':fresh.status==='delayed'?'设备数据更新延迟':'设备数据处理中'} description={fresh.oldest_pending_at?`最早待处理时间：${observedTimeTitle(fresh.oldest_pending_at)}`:undefined}/>}
       {statistics.isError&&<AppErrorAlert title="读取设备统计失败" message={statistics.error.message} />}
@@ -101,11 +103,17 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       <Collapse ghost items={[{key:'coverage',label:'采集覆盖与处理状态',children:coverage.isError?<AppErrorAlert title="读取采集状态失败" />:coverage.data?.enabled===false?<Typography.Text>当前运行旧版发现路径</Typography.Text>:<div className="iot-coverage-grid">{coverage.data?.items.map(p=><article className="iot-coverage-item" key={`${p.sensor_id}:${p.protocol}`}><strong>{protocols[p.protocol]??p.protocol}</strong><Typography.Text type="secondary">{p.sensor_id}</Typography.Text><span>{p.error?'采集异常':!p.enabled?'未启用':p.received===0?'暂未捕获协议流量':'已捕获协议流量'}</span><span>捕获 {p.received} · 解析 {p.parsed} · 处理 {p.admitted}</span></article>)}</div>}]} />
     </section>
     {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
-      <AppListHeader title="发现设备" count={`本页 ${items.length} 条`} />
+      <AppListHeader title="发现设备" count={`本页 ${items.length} 条`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
       <AppTable rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:960}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
-      <AppCursorPagination previous={page!==0} next={Boolean(devices.data?.has_more&&devices.data.next_cursor)} label={`第 ${page+1} 页`} onPrevious={()=>setPaging({key:filterKey,cursors,page:page-1})} onNext={()=>setPaging({key:filterKey,cursors:[...cursors.slice(0,page+1),devices.data!.next_cursor],page:page+1})} />
+      <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
+        if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,cursors:[''],page:0});return}
+        const current=page+1
+        if(nextPage===current)return
+        if(nextPage<current){setPaging({key:filterKey,cursors,page:nextPage-1});return}
+        if(nextPage===current+1&&devices.data?.next_cursor)setPaging({key:filterKey,cursors:[...cursors.slice(0,page+1),devices.data.next_cursor],page:page+1})
+      }} totalText={`第 ${page+1} 页 · 已加载 ${page*pageSize+items.length} 条`} />
     </section>}
-    <Modal title="设备证据与变化历史" open={!!selected} footer={null} onCancel={()=>setSelected(undefined)}>{selected&&<>{identity(selected)}{kind(selected)}<Typography.Paragraph>{selected.classification?.reason}</Typography.Paragraph><Typography.Paragraph type="secondary">最近证据摘要</Typography.Paragraph>{selected.observations.map(o=><article key={o.id} className="discovery-card"><strong>{protocols[o.origin]??o.origin}</strong><span className="discovery-identifier">{[o.ip,o.mac,o.name].filter(Boolean).join(' · ')}</span><span>{o.explanation}</span><Typography.Text type="secondary">{observedTimeTitle(o.observed_at)}</Typography.Text>{o.withdrawn&&<Tag color="warning">已撤销</Tag>}</article>)}
+    <Modal className="discovery-evidence-modal" title="设备证据与变化历史" open={!!selected} footer={null} onCancel={()=>setSelected(undefined)}>{selected&&<>{identity(selected)}{kind(selected)}<Typography.Paragraph>{selected.classification?.reason}</Typography.Paragraph><Typography.Paragraph type="secondary">最近证据摘要</Typography.Paragraph>{selected.observations.map(o=><article key={o.id} className="discovery-card"><strong>{protocols[o.origin]??o.origin}</strong><span className="discovery-identifier">{[o.ip,o.mac,o.name].filter(Boolean).join(' · ')}</span><span>{o.explanation}</span><Typography.Text type="secondary">{observedTimeTitle(o.observed_at)}</Typography.Text>{o.withdrawn&&<Tag color="warning">已撤销</Tag>}</article>)}
       {history.isError&&<AppErrorAlert title="读取设备历史失败" />}
       {history.data&&<><Typography.Title level={5}>变化历史</Typography.Title>{history.data.items.map(row=><article className="discovery-card" key={row.id}><strong>{protocols[row.evidence.origin]??row.evidence.origin}</strong><span>{row.evidence.explanation}</span><Typography.Text type="secondary">观测于 {observedTimeTitle(row.observed_at)}</Typography.Text></article>)}<Space wrap><Button disabled={historyCursor===''||history.isFetching} onClick={()=>setHistoryCursor('')}>最新记录</Button><Button disabled={!history.data.has_more||history.isFetching} onClick={()=>setHistoryCursor(history.data!.next_cursor)}>更早记录</Button></Space></>}
     </>}</Modal>
