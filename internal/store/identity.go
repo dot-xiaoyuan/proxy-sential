@@ -887,7 +887,7 @@ func mergeAccountSession(current, incoming AccountSession) AccountSession {
 
 func identityAttributes(fact identityFact) map[string]any {
 	attrs := map[string]any{}
-	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class", "requested_options", "user_agent", "software_name", "device_hint", "vendor", "oui_vendor", "brand", "model", "device_type", "os", "os_family", "server", "title", "certificate_subject", "certificate_issuer", "certificate_san", "person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type", "snmp_sysdescr", "snmp_sysoid", "mdns_model", "ssh_banner", "sip_server", "sip_user_agent", "http_www_authenticate", "http_body", "favicon_md5"} {
+	for _, key := range []string{"auth_method", "vlan", "ap", "switch_id", "switch_port", "nas_ip", "nas_port_id", "hostname", "client_fqdn", "vendor_class", "requested_options", "user_agent", "software_name", "device_hint", "vendor", "oui_vendor", "brand", "model", "device_type", "os", "os_family", "server", "title", "certificate_subject", "certificate_issuer", "certificate_san", "person_type", "department", "campus_id", "building_id", "network_zone_id", "ssid", "session_status", "access_type", "snmp_sysdescr", "snmp_sysoid", "snmp_model", "mdns_model", "ssdp_model", "ssdp_manufacturer", "ssh_banner", "sip_server", "sip_user_agent", "http_www_authenticate", "http_body", "favicon_md5"} {
 		if value := stringFromMap(fact.Payload, key); value != "" {
 			attrs[key] = value
 		}
