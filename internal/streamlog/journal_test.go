@@ -372,6 +372,43 @@ func TestJournalTracksHeaderOnlyInputWithoutSinkWrites(t *testing.T) {
 	}
 }
 
+func TestPendingLanesExcludeNotApplicableAndAcknowledgedWork(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testSegment()
+	segment.NeedsProjection = false
+	id := appendCommitted(t, j, segment)
+	lanes, err := j.PendingLanes(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lanes) != 2 || lanes[0] != Archive || lanes[1] != Search {
+		t.Fatalf("non-projected segment queued for unexpected lanes: %v", lanes)
+	}
+	if err := j.Ack(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	lanes, err = j.PendingLanes(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lanes) != 1 || lanes[0] != Search {
+		t.Fatalf("acknowledged archive or non-applicable projection requeued: %v", lanes)
+	}
+	projected := testSegment()
+	projected.SourcePath = "/logs/projected.log"
+	projectedID := appendCommitted(t, j, projected)
+	lanes, err = j.PendingLanes(projectedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lanes) != 3 || lanes[0] != Archive || lanes[1] != Projection || lanes[2] != Search {
+		t.Fatalf("required projection was omitted: %v", lanes)
+	}
+}
+
 func TestPendingSegmentsIncludeUnfinishedBodyWithoutState(t *testing.T) {
 	dir := t.TempDir()
 	j, err := Open(dir)

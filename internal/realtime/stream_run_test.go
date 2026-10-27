@@ -68,6 +68,52 @@ func TestRunStreamReportsTransientSinkFailure(t *testing.T) {
 	}
 }
 
+func TestRunStreamDrainOnlyFinalizesSegmentWithoutSinkLanes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.jsonl")
+	if err := os.WriteFile(path, []byte("# header\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := streamlog.Open(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := Source{Kind: "suricata", Path: path}
+	fileID := fileIdentity(path, info)
+	raw := []byte("# header\n")
+	sum := sha256.Sum256(raw)
+	if err := j.StartFreshSource(streamlog.SourceCursor{Epoch: "fresh", Source: source.Kind, Path: path, FileID: fileID, ParserVersion: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.Append(streamlog.Segment{
+		Epoch: "fresh", Source: source.Kind, SourcePath: path, FileID: fileID,
+		PreviousFileID: fileID, StartOffset: 0, EndOffset: int64(info.Size()),
+		ParserVersion: "v1", ArchiveMonth: time.Now().UTC().Format("200601"),
+		Raw: raw, RawSHA256: hex.EncodeToString(sum[:]),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.CommitSource(source.Kind, path, id); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := RunStream(ctx, j, &streamRunWriter{}, StreamRunOptions{
+		Capture:   Options{SensorID: "sensor-a", Sources: []Source{source}, PollInterval: 10 * time.Millisecond, StoreTimeout: time.Second},
+		DrainOnly: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := j.PendingSegments()
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("segment without sink work was not finalized: %v %v", ids, err)
+	}
+}
+
 func TestHoldSmallZeekBindingBatchStopsAtBoundAndDrainsBacklog(t *testing.T) {
 	start := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	var first time.Time

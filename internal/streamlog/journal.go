@@ -410,6 +410,30 @@ func (j *Journal) PendingSegments() ([]string, error) {
 	return result, nil
 }
 
+// PendingLanes returns only unfinished sink work. In particular, a lane marked
+// not applicable must never enter a worker queue: finalization may retire its
+// segment before that worker reads the queued ID.
+func (j *Journal) PendingLanes(id string) ([]Lane, error) {
+	state, err := j.load(id)
+	if err != nil {
+		return nil, err
+	}
+	if state.Released {
+		return nil, nil
+	}
+	lanes := make([]Lane, 0, 3)
+	for _, lane := range []Lane{Archive, Projection, Search} {
+		switch state.Acks[lane] {
+		case Pending, Attempted:
+			lanes = append(lanes, lane)
+		case Acked, NotApplicable:
+		default:
+			return nil, fmt.Errorf("stream segment %s has invalid %s lane status %q: %w", id, lane, state.Acks[lane], ErrContentConflict)
+		}
+	}
+	return lanes, nil
+}
+
 func (j *Journal) BeginAttempt(id string, lane Lane) error { return j.setAck(id, lane, Attempted) }
 func (j *Journal) Ack(id string, lane Lane) error          { return j.setAck(id, lane, Acked) }
 

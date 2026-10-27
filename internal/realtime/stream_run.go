@@ -237,7 +237,12 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 		}
 	}()
 	enqueueLanes := func(id string) error {
-		for _, queue := range []chan string{queues[streamlog.Archive], queues[streamlog.Projection], queues[streamlog.Search]} {
+		lanes, err := journal.PendingLanes(id)
+		if err != nil {
+			return fmt.Errorf("inspect stream segment %s lanes: %w", id, err)
+		}
+		for _, lane := range lanes {
+			queue := queues[lane]
 			select {
 			case queue <- id:
 			case err := <-workerErrors:
