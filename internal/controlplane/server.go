@@ -1451,6 +1451,9 @@ func (s *Server) handleFingerprintLibraryImport(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) startFingerprintBackfill(version string) {
+	if !fingerprint.HistoryBackfillEnabled() {
+		return
+	}
 	if domainBackfiller, ok := s.reader.(store.DomainEvidenceVersionBackfiller); ok {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
@@ -1480,6 +1483,9 @@ func (s *Server) startFingerprintBackfill(version string) {
 }
 
 func (s *Server) startDeviceProfileBackfill(version string) {
+	if !fingerprint.HistoryBackfillEnabled() {
+		return
+	}
 	if backfiller, ok := s.reader.(store.DeviceProfileVersionBackfiller); ok {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

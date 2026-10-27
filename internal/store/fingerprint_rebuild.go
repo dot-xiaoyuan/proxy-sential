@@ -13,6 +13,9 @@ import (
 
 // Bounded enqueue only: heavy recognition is handled by the reserved queue lane.
 func (s *DBStore) runFingerprintRebuild(ctx context.Context) {
+	if !fingerprint.HistoryBackfillEnabled() {
+		return
+	}
 	for ctx.Err() == nil {
 		c := fingerprint.Default().Catalog()
 		raw, _ := json.Marshal(c.Sources)

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"proxy-sentinel/internal/fingerprint"
 )
 
 type recognitionJob struct {
@@ -57,6 +59,9 @@ func (s *DBStore) claimRecognitionJob(ctx context.Context, worker string) (recog
 	owner := worker + ":" + appToken()
 	lane := 0
 	if strings.HasSuffix(worker, "-3") {
+		if !fingerprint.HistoryBackfillEnabled() {
+			return recognitionJob{}, false, nil
+		}
 		lane = 1
 	}
 	row := s.pg.db.QueryRowContext(ctx, `WITH picked AS (
