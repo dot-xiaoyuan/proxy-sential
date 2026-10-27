@@ -281,7 +281,7 @@ func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Legacy full-JSON exports remain low priority while current facts
 			// are queued. Fresh fragments archive independently of PG projection.
-			if s.deferIdentityDerivedWork(ctx) {
+			if s.deferIdentityDerivedWorkWithQuota(ctx) {
 				cancel()
 				continue
 			}

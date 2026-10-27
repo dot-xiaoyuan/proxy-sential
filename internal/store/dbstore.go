@@ -20,15 +20,19 @@ import (
 )
 
 type DBStore struct {
-	fingerprintMatches      fingerprintMatchMeter
-	pg                      *PostgresStore
-	ch                      *ClickHouseStore
-	storageMode             Mode
-	domainOnce              sync.Once
-	domainQueue             chan domainBatch
-	domainDropped           atomic.Int64
-	identityDeviceOnly      bool
-	identitySkipHistory     bool
+	fingerprintMatches  fingerprintMatchMeter
+	pg                  *PostgresStore
+	ch                  *ClickHouseStore
+	storageMode         Mode
+	domainOnce          sync.Once
+	domainQueue         chan domainBatch
+	domainDropped       atomic.Int64
+	identityDeviceOnly  bool
+	identitySkipHistory bool
+	// identityDerivedQuotaAt is shared by the low-priority identity workers. It
+	// gives derived/export work a bounded time slot while current inbox work is
+	// behind, without allowing every worker to bypass the realtime gate.
+	identityDerivedQuotaAt  atomic.Int64
 	skipCaptureVerification bool
 	minDeviceBound          int
 	domainCancel            context.CancelFunc

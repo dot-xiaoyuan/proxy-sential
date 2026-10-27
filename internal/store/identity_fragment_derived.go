@@ -16,7 +16,7 @@ import (
 // from the same bounded durable fragments after the primary facts are applied.
 func (s *DBStore) runIdentityFragmentDerived(ctx context.Context) {
 	for ctx.Err() == nil {
-		if s.deferIdentityDerivedWork(ctx) {
+		if s.deferIdentityDerivedWorkWithQuota(ctx) {
 			continue
 		}
 		work, cancel := context.WithTimeout(ctx, identityWorkBudget)

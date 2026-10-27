@@ -350,7 +350,7 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 	batchSize := identitySignalBatchSize
 	var lastHealth time.Time
 	for ctx.Err() == nil {
-		if s.deferIdentityDerivedWork(ctx) {
+		if s.deferIdentityDerivedWorkWithQuota(ctx) {
 			continue
 		}
 		began := time.Now()
@@ -413,7 +413,7 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 // campus cannot delay newly arrived online/offline events.
 func (s *DBStore) runCurrentDeviceInventoryRefresh(ctx context.Context) {
 	for ctx.Err() == nil {
-		if s.deferIdentityDerivedWork(ctx) {
+		if s.deferIdentityDerivedWorkWithQuota(ctx) {
 			continue
 		}
 		work, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -466,7 +466,7 @@ func (s *DBStore) runIdentitySnapshotMaterializer(ctx context.Context) {
 		return
 	}
 	for ctx.Err() == nil {
-		if s.deferIdentityDerivedWork(ctx) {
+		if s.deferIdentityDerivedWorkWithQuota(ctx) {
 			continue
 		}
 		work, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -501,7 +501,20 @@ func (s *DBStore) IdentityMaterializerStatus(ctx context.Context) (map[string]an
 // Current identities have priority over history projection. Keeping the cursor
 // unchanged makes this a pause, never a backlog skip. The indexed summary avoids
 // reading evidence/history merely to decide whether work should be deferred.
+// Callers that must keep the gate strict can use this method directly; worker
+// loops use deferIdentityDerivedWorkWithQuota so old work cannot starve forever.
 func (s *DBStore) deferIdentityDerivedWork(ctx context.Context) bool {
+	return s.deferIdentityDerivedWorkInternal(ctx, false)
+}
+
+// deferIdentityDerivedWorkWithQuota gives one low-priority worker a bounded
+// slot after repeated pauses. A failed backlog probe remains a pause: allowing
+// extra work while PostgreSQL is unavailable would amplify the incident.
+func (s *DBStore) deferIdentityDerivedWorkWithQuota(ctx context.Context) bool {
+	return s.deferIdentityDerivedWorkInternal(ctx, true)
+}
+
+func (s *DBStore) deferIdentityDerivedWorkInternal(ctx context.Context, quota bool) bool {
 	check, cancel := context.WithTimeout(ctx, time.Second)
 	var backlog bool
 	// Only this sensor's inbox gates its own derived work. The unscoped check let the NCU
@@ -509,6 +522,10 @@ func (s *DBStore) deferIdentityDerivedWork(ctx context.Context) bool {
 	err := s.pg.db.QueryRowContext(check, IdentityScopeStatusSQL(`SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds'))`), s.pg.sensorID).Scan(&backlog)
 	cancel()
 	if err == nil && !backlog {
+		s.identityDerivedQuotaAt.Store(0)
+		return false
+	}
+	if err == nil && quota && identityDerivedQuotaAllow(&s.identityDerivedQuotaAt, time.Now()) {
 		return false
 	}
 	select {
