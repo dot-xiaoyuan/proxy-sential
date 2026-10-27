@@ -119,24 +119,40 @@ func (s *DBStore) streamRouterSignalBatch(ctx context.Context, sensor string, cu
 func (s *DBStore) runStreamRouterRecognitionMaterializer(ctx context.Context, sensor string) {
 	owner := fmt.Sprintf("stream-router-%d-%d", os.Getpid(), time.Now().UnixNano())
 	for ctx.Err() == nil {
+		started := time.Now()
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		cursor, claimed, err := s.claimStreamRouterRecognition(workCtx, sensor, owner)
+		claimDuration := time.Since(started)
 		processed := 0
+		var readDuration, analyzeDuration, expiryDuration, finishDuration time.Duration
 		if err == nil && claimed {
 			var events []normalized.Event
 			var next streamRouterCursor
+			stage := time.Now()
 			events, next, err = s.streamRouterSignalBatch(workCtx, sensor, cursor)
+			readDuration = time.Since(stage)
 			if err == nil && len(events) > 0 {
-				err = s.analyzeAndWriteRouterEvents(workCtx, events)
+				stage = time.Now()
+				err = s.analyzeAndWriteStreamRouterEvents(workCtx, events)
+				analyzeDuration = time.Since(stage)
 			}
 			if err == nil {
+				stage = time.Now()
 				_, err = s.pg.refreshExpiredRouterAssessments(workCtx, 50)
+				expiryDuration = time.Since(stage)
 			}
 			if err == nil {
 				cursor, processed = next, len(events)
 			}
+			stage = time.Now()
 			if finishErr := s.finishStreamRouterRecognition(ctx, sensor, cursor, processed, err); err == nil {
 				err = finishErr
+			}
+			finishDuration = time.Since(stage)
+			if total := time.Since(started); total >= 2*time.Second {
+				fmt.Fprintf(os.Stderr, "stream router batch events=%d total_ms=%d claim_ms=%d read_ms=%d analyze_ms=%d expiry_ms=%d finish_ms=%d\n",
+					processed, total.Milliseconds(), claimDuration.Milliseconds(), readDuration.Milliseconds(),
+					analyzeDuration.Milliseconds(), expiryDuration.Milliseconds(), finishDuration.Milliseconds())
 			}
 		}
 		cancel()

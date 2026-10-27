@@ -256,26 +256,43 @@ func (s *DBStore) runRouterRecognitionMaterializer(ctx context.Context, sensorID
 }
 
 func (s *DBStore) analyzeAndWriteRouterEvents(ctx context.Context, events []normalized.Event) error {
+	return s.analyzeAndWriteRouterEventsWithResolver(ctx, events, func(event normalized.Event) evidence.RouterAssociation {
+		item, found, resolveErr := s.ResolveDeviceAt(ctx, DomainObservation{
+			IP: stringFromMap(event.Subject, "ip"), Timestamp: event.Timestamp,
+			SensorID: stringFromMap(event.Observer, "sensor_id"), CampusID: stringFromMap(event.Subject, "campus_id"),
+		})
+		if resolveErr != nil || !found {
+			return evidence.RouterAssociation{}
+		}
+		association := evidence.RouterAssociation{EndpointID: item.EndpointID, Quality: "dhcp_lease", Ambiguous: item.Conflict, Reason: item.ConflictReason}
+		if strings.HasPrefix(item.EndpointID, "mac:") {
+			association.MAC = strings.TrimPrefix(item.EndpointID, "mac:")
+		}
+		return association
+	})
+}
+
+func (s *DBStore) analyzeAndWriteStreamRouterEvents(ctx context.Context, events []normalized.Event) error {
+	associations, err := s.pg.resolveRouterLeaseBatch(ctx, events)
+	if err != nil {
+		return err
+	}
+	return s.analyzeAndWriteRouterEventsWithResolver(ctx, events, func(event normalized.Event) evidence.RouterAssociation {
+		return associations[routerLeaseKeyFromEvent(event)]
+	})
+}
+
+func (s *DBStore) analyzeAndWriteRouterEventsWithResolver(ctx context.Context, events []normalized.Event, resolve func(normalized.Event) evidence.RouterAssociation) error {
 	result, err := evidence.AnalyzeRouters(events, evidence.RouterOptions{
 		AsOf:       time.Now().UTC(),
 		ShadowMode: true,
-		Resolve: func(event normalized.Event) evidence.RouterAssociation {
-			item, found, resolveErr := s.ResolveDeviceAt(ctx, DomainObservation{
-				IP: stringFromMap(event.Subject, "ip"), Timestamp: event.Timestamp,
-				SensorID: stringFromMap(event.Observer, "sensor_id"), CampusID: stringFromMap(event.Subject, "campus_id"),
-			})
-			if resolveErr != nil || !found {
-				return evidence.RouterAssociation{}
-			}
-			association := evidence.RouterAssociation{EndpointID: item.EndpointID, Quality: "dhcp_lease", Ambiguous: item.Conflict, Reason: item.ConflictReason}
-			if strings.HasPrefix(item.EndpointID, "mac:") {
-				association.MAC = strings.TrimPrefix(item.EndpointID, "mac:")
-			}
-			return association
-		},
+		Resolve:    resolve,
 	})
 	if err != nil {
 		return err
+	}
+	if len(result.Evidence) == 0 && len(result.Assessments) == 0 {
+		return nil
 	}
 	return s.WriteRouterObservations(ctx, result)
 }
