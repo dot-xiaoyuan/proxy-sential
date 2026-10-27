@@ -1,0 +1,89 @@
+{
+  "release": "2026.10.26-stream-b93-profile-ack-gap",
+  "window_start": "2026-10-26T13:37:00Z",
+  "window_end": "2026-10-26T13:52:00Z",
+  "measurement": "The stream capture durable message records append_returned_at immediately after durable append. PG receipt queued_at minus append_returned_at is a lower bound to risk queue insertion. queued_at precedes transaction commit and risk/API visibility.",
+  "risk_segment_receipts": 223,
+  "matched_post_durable_logs": 223,
+  "unmatched_segment_ids": [],
+  "proven_queue_after_5s": 1,
+  "max_proven_lower_bound_s": 7.514205,
+  "accepted_to_queue_s": {
+    "max": 10.658936,
+    "p95": 5.228408,
+    "over5": 23,
+    "caveat": "accepted_at precedes durable input, so over5 is not a proven violation"
+  },
+  "slowest_post_durable_examples": [
+    {
+      "segment_id": "e143aa31bf9c4ab13818bd12b8ffc69888eda2974d5c0188eeabb5906e37f754",
+      "post_durable_to_queue_lower_bound_s": 7.514205,
+      "accepted_to_queue_upper_bound_s": 10.658936,
+      "append_returned_to_journal_s": 1.3e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "53f81d5ab9379cbc1f24536665a5f55a48a3d46e380bf2d49ab426a3272efbfb",
+      "post_durable_to_queue_lower_bound_s": 4.56619,
+      "accepted_to_queue_upper_bound_s": 5.84255,
+      "append_returned_to_journal_s": 2.7e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "f11889a4a3fa812c845c8d530199c78739f1cf8fe0ea226a1ec259d0c67fd1b5",
+      "post_durable_to_queue_lower_bound_s": 4.288102,
+      "accepted_to_queue_upper_bound_s": 6.607547,
+      "append_returned_to_journal_s": 6.4e-05,
+      "unit": "proxy-sentinel-ingest-stream-packet-b76.service"
+    },
+    {
+      "segment_id": "0096d34443ce6720aad26f0511f7c656d01eef578619397a19845d882cf44c59",
+      "post_durable_to_queue_lower_bound_s": 4.163158,
+      "accepted_to_queue_upper_bound_s": 5.850904,
+      "append_returned_to_journal_s": 1.3e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "73c90a27173c55ccdfda4c4e5b3a28435d102b28e15019b7bdbd116b094fb193",
+      "post_durable_to_queue_lower_bound_s": 4.058602,
+      "accepted_to_queue_upper_bound_s": 5.432322,
+      "append_returned_to_journal_s": 1e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "1201bfea880e6fdf4a379f45cffdef01062a11552915e56da584bbbee47ccf27",
+      "post_durable_to_queue_lower_bound_s": 4.001919,
+      "accepted_to_queue_upper_bound_s": 5.448347,
+      "append_returned_to_journal_s": 1.6e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "e164fe2d75fd025bd1397cd38e1382758a7cf042e2ba80dacca89513f6ab200c",
+      "post_durable_to_queue_lower_bound_s": 3.889176,
+      "accepted_to_queue_upper_bound_s": 5.096224,
+      "append_returned_to_journal_s": 1.3e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "2923c09d9307f0bfadb6d8ce4f7a4c3cea5d011469d9216735d1a6e5839db331",
+      "post_durable_to_queue_lower_bound_s": 3.841639,
+      "accepted_to_queue_upper_bound_s": 5.238888,
+      "append_returned_to_journal_s": 0.000548,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "cc97b85dbdbef20ab0d0a3cb59292136189f8e90cec396309a72631a96dbcf21",
+      "post_durable_to_queue_lower_bound_s": 3.831959,
+      "accepted_to_queue_upper_bound_s": 5.227236,
+      "append_returned_to_journal_s": 0.000568,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    },
+    {
+      "segment_id": "5708825bd8f7919c1502881875d17f67e36d85e15a0c0a32586574d93f030d6a",
+      "post_durable_to_queue_lower_bound_s": 3.791414,
+      "accepted_to_queue_upper_bound_s": 5.201775,
+      "append_returned_to_journal_s": 5.8e-05,
+      "unit": "proxy-sentinel-ingest-stream-dhcp-binding-b56.service"
+    }
+  ]
+}

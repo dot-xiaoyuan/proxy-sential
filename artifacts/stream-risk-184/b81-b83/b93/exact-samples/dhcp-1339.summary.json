@@ -1,0 +1,23 @@
+{
+  "segment_id": "1705483550a40bbdcb6194b7dd8a77e5557a3141d0b511ff49f555b1a2b68ab7",
+  "sample_accepted_at": "2026-10-26T13:39:02.226317779Z",
+  "source_count": 20,
+  "body_count": 20,
+  "index_count": 20,
+  "paired_count": 20,
+  "body_conflicting_keys": 0,
+  "index_conflicting_keys": 0,
+  "accepted_to_index_conservative_upper_s": {
+    "max": 4.10642,
+    "over5": 0
+  },
+  "archive_to_index_s": {
+    "max": 2.142385
+  },
+  "append_returned_at": "2026-10-26T13:39:03.583802914Z",
+  "post_durable_to_index_lower_bound_s": {
+    "max": 2.748935,
+    "proven_over5": 0
+  },
+  "caveat": "accepted_at precedes durable input; this database sample does not prove authenticated API visibility or all-event 5-second compliance"
+}
