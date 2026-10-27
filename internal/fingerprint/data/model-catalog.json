@@ -36,6 +36,37 @@
     "IPC-HFW2431T-ZS": {"brand": "Dahua", "model": "IPC-HFW2431T-ZS", "device_type": "camera", "confidence": 0.95},
     "HL-L2350DW": {"brand": "Brother", "model": "HL-L2350DW", "device_type": "printer", "confidence": 0.95},
     "DCP-L2550DW": {"brand": "Brother", "model": "DCP-L2550DW", "device_type": "printer", "confidence": 0.95},
-    "MFC-L2710DW": {"brand": "Brother", "model": "MFC-L2710DW", "device_type": "printer", "confidence": 0.95}
+    "MFC-L2710DW": {"brand": "Brother", "model": "MFC-L2710DW", "device_type": "printer", "confidence": 0.95},
+
+    "REL-AN00": {"brand": "Honor", "model": "Honor 200", "device_type": "mobile", "confidence": 0.90},
+    "RMO-AN00": {"brand": "Honor", "model": "Honor Magic6", "device_type": "mobile", "confidence": 0.90},
+    "ANY-AN00": {"brand": "Honor", "model": "Honor 90", "device_type": "mobile", "confidence": 0.90},
+    "CRT-AN00": {"brand": "Honor", "model": "Honor X50", "device_type": "mobile", "confidence": 0.90},
+    "FNE-AN00": {"brand": "Honor", "model": "Honor Magic5 Pro", "device_type": "mobile", "confidence": 0.90},
+    "LGE-AN00": {"brand": "Honor", "model": "Honor 100 Pro", "device_type": "mobile", "confidence": 0.90},
+    "BVL-AN10": {"brand": "Honor", "model": "Honor 60 Pro", "device_type": "mobile", "confidence": 0.90},
+    "MGI-AN00": {"brand": "Honor", "model": "Honor Magic V2", "device_type": "mobile", "confidence": 0.90},
+
+    "PFFM10": {"brand": "OPPO", "model": "Find X6 Pro", "device_type": "mobile", "confidence": 0.90},
+    "PHQ110": {"brand": "OPPO", "model": "Find X7 Ultra", "device_type": "mobile", "confidence": 0.90},
+    "PHK110": {"brand": "OPPO", "model": "Find X7", "device_type": "mobile", "confidence": 0.90},
+    "PJD110": {"brand": "OPPO", "model": "Reno12 Pro", "device_type": "mobile", "confidence": 0.90},
+    "PGFM10": {"brand": "OPPO", "model": "Reno10 Pro+", "device_type": "mobile", "confidence": 0.90},
+
+    "V2309A": {"brand": "vivo", "model": "X100", "device_type": "mobile", "confidence": 0.90},
+    "V2330A": {"brand": "vivo", "model": "X200", "device_type": "mobile", "confidence": 0.90},
+    "V2254A": {"brand": "vivo", "model": "X90 Pro+", "device_type": "mobile", "confidence": 0.90},
+    "V2324A": {"brand": "vivo", "model": "iQOO 12", "device_type": "mobile", "confidence": 0.90},
+    "V2241A": {"brand": "vivo", "model": "S17 Pro", "device_type": "mobile", "confidence": 0.90},
+
+    "RMX3890": {"brand": "Realme", "model": "GT5 Pro", "device_type": "mobile", "confidence": 0.90},
+    "RMX3888": {"brand": "Realme", "model": "GT5", "device_type": "mobile", "confidence": 0.90},
+    "RMX3835": {"brand": "Realme", "model": "12 Pro+", "device_type": "mobile", "confidence": 0.90},
+
+    "SM-S926B": {"brand": "Samsung", "model": "Galaxy S24+", "device_type": "mobile", "confidence": 0.95},
+    "SM-S928B": {"brand": "Samsung", "model": "Galaxy S24 Ultra", "device_type": "mobile", "confidence": 0.95},
+    "SM-A155F": {"brand": "Samsung", "model": "Galaxy A15", "device_type": "mobile", "confidence": 0.90},
+    "SM-A356B": {"brand": "Samsung", "model": "Galaxy A35 5G", "device_type": "mobile", "confidence": 0.90},
+    "SM-F946B": {"brand": "Samsung", "model": "Galaxy Z Fold5", "device_type": "mobile", "confidence": 0.90}
   }
 }

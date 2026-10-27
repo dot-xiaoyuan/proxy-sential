@@ -275,7 +275,7 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 				result.OSFamily = candidate.OSFamily
 				result.OSFamilyConfidence = candidate.Confidence
 			}
-			if result.Source == "" || result.Source == "ieee_oui" {
+			if result.Source == "" || result.Source == "ieee_oui" || result.Source == "dhcp_hostname_hint" {
 				result.Source = "fingerbank_dhcp"
 				result.Confidence = candidate.Confidence
 			}

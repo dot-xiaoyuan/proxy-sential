@@ -54,6 +54,14 @@
     {"vendor": "TP-Link", "match": "contains", "device_type": "router", "confidence": 0.40},
     {"vendor": "MikroTik", "match": "contains", "device_type": "router", "confidence": 0.55},
     {"vendor": "DrayTek", "match": "contains", "device_type": "router", "confidence": 0.55},
-    {"vendor": "iKuai", "match": "contains", "device_type": "router", "confidence": 0.55}
+    {"vendor": "iKuai", "match": "contains", "device_type": "router", "confidence": 0.55},
+
+    {"vendor": "Yealink", "match": "contains", "device_type": "iot", "confidence": 0.70},
+    {"vendor": "Fanvil", "match": "contains", "device_type": "iot", "confidence": 0.70},
+    {"vendor": "Grandstream", "match": "contains", "device_type": "iot", "confidence": 0.70},
+    {"vendor": "Polycom", "match": "contains", "device_type": "iot", "confidence": 0.70},
+    {"vendor": "Snom", "match": "contains", "device_type": "iot", "confidence": 0.70},
+    {"vendor": "dormakaba", "match": "contains", "device_type": "iot", "confidence": 0.55},
+    {"vendor": "HID Global", "match": "contains", "device_type": "iot", "confidence": 0.55}
   ]
 }

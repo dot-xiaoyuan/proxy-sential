@@ -94,6 +94,25 @@ func TestRandomizedMACDoesNotUseOUI(t *testing.T) {
 	}
 }
 
+func TestDarwinDoesNotBlockFingerbankDHCPSource(t *testing.T) {
+	dhcpJSON := `[{"requested_options":"1,3,6,15,119,252","vendor_classes":["darwin"],"device_type":"laptop","os_family":"macOS","description":"macOS DHCP","confidence":0.8}]`
+	lib, err := LoadWithData("test", embeddedOUI, embeddedRules, []byte(dhcpJSON), []byte("{}"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got := lib.IdentifySignals(Signals{
+		DHCPVendorClass:      "darwin",
+		DHCPRequestedOptions: "1,3,6,15,119,252",
+		Hostnames:            []string{"office-mac41.local"},
+	})
+	if got.Source != "fingerbank_dhcp" {
+		t.Fatalf("Fingerbank DHCP should override Darwin hint Source, got %q", got.Source)
+	}
+	if got.Confidence < 0.9 {
+		t.Fatalf("vendor class match should yield confidence >= 0.9, got %v", got.Confidence)
+	}
+}
+
 func TestDarwinMacOSClueRequiresDHCPAndMacHostname(t *testing.T) {
 	for _, c := range []struct {
 		name    string
