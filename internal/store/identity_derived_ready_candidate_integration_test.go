@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -336,5 +338,105 @@ func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) 
 	}
 	if err = db.QueryRowContext(ctx, `SELECT cursor_batch FROM identity_derived_ready_scan WHERE id=true`).Scan(&cursor); err != nil || cursor != "c" {
 		t.Fatalf("second byte-limited cursor=%q err=%v", cursor, err)
+	}
+}
+
+func TestIdentityDerivedReadyCandidateStartsWithNonBlockingWriterBarrier(t *testing.T) {
+	raw, err := os.ReadFile("testdata/identity_derived_ready_candidate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	lock := strings.Index(script, "LOCK TABLE identity_ingest_batches, identity_ingest_fragments IN SHARE ROW EXCLUSIVE MODE NOWAIT")
+	firstDDL := strings.Index(script, "CREATE TABLE identity_derived_ready")
+	if lock < 0 || firstDDL < 0 || lock > firstDDL {
+		t.Fatal("candidate must fail immediately if either live writer table is locked before any DDL")
+	}
+}
+
+func TestIdentityDerivedReadyBarrierFailsFastAndLeavesWriterUnblocked(t *testing.T) {
+	cfg := identityDerivedReadyTestConfig(t)
+	admin := stdlib.OpenDB(*cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	schema := fmt.Sprintf("identity_ready_barrier_%d", time.Now().UnixNano())
+	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	isolated := cfg.Copy()
+	if isolated.RuntimeParams == nil {
+		isolated.RuntimeParams = map[string]string{}
+	}
+	isolated.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*isolated)
+	defer func() {
+		db.Close()
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if _, err := admin.ExecContext(cleanup, `DROP SCHEMA `+schema+` CASCADE`); err != nil {
+			t.Errorf("drop isolated test schema: %v", err)
+		}
+		admin.Close()
+	}()
+	_, err := db.ExecContext(ctx, `CREATE TABLE identity_ingest_batches(batch_id text PRIMARY KEY,protocol_version int NOT NULL,payload_format text NOT NULL,processed_offset int NOT NULL,sensor_id text NOT NULL,accepted_at timestamptz,received_at timestamptz NOT NULL);
+ CREATE TABLE identity_ingest_fragments(batch_id text NOT NULL REFERENCES identity_ingest_batches,first_ordinal int NOT NULL,record_count int NOT NULL CHECK(record_count BETWEEN 1 AND 50),derived_state text NOT NULL,PRIMARY KEY(batch_id,first_ordinal));
+ INSERT INTO identity_ingest_batches VALUES('a',2,'fragments',0,'sensor',now(),now());
+ INSERT INTO identity_ingest_fragments VALUES('a',0,1,'pending'),('a',1,1,'pending');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile("testdata/identity_derived_ready_candidate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Rollback()
+	if _, err = writer.ExecContext(ctx, `UPDATE identity_ingest_fragments SET derived_state='attempted' WHERE batch_id='a'`); err != nil {
+		t.Fatal(err)
+	}
+	// The exporter owns the fragment table and may next update the batch. A
+	// migration must not hold the batch lock while waiting for this writer.
+	attempt, stop := context.WithTimeout(ctx, 2*time.Second)
+	_, err = db.ExecContext(attempt, string(fixture))
+	stop()
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatalf("expected immediate lock-not-available, got %v", err)
+	}
+	var exists bool
+	if err = db.QueryRowContext(ctx, `SELECT to_regclass('identity_derived_ready') IS NOT NULL`).Scan(&exists); err != nil || exists {
+		t.Fatalf("failed barrier left partial schema: exists=%v err=%v", exists, err)
+	}
+	progress, stop := context.WithTimeout(ctx, time.Second)
+	_, err = db.ExecContext(progress, `UPDATE identity_ingest_batches SET processed_offset=processed_offset WHERE batch_id='a'`)
+	stop()
+	if err != nil {
+		t.Fatalf("failed barrier left batch writer blocked: %v", err)
+	}
+	if err = writer.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	// Progress committed before the trigger barrier must be discovered by the
+	// pending-key scan; progress committed afterwards must be trigger-enqueued.
+	if _, err = db.ExecContext(ctx, `UPDATE identity_ingest_batches SET processed_offset=1 WHERE batch_id='a'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, string(fixture)); err != nil {
+		t.Fatalf("barrier did not recover after writer ended: %v", err)
+	}
+	page, err := (&PostgresStore{db: db}).scanIdentityDerivedReadyPage(ctx, 256)
+	if err != nil || page.Scanned != 2 || page.Eligible != 1 {
+		t.Fatalf("pre-barrier pending scan: %+v %v", page, err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE identity_ingest_batches SET processed_offset=2 WHERE batch_id='a'`); err != nil {
+		t.Fatal(err)
+	}
+	var existing, fresh int
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE first_ordinal=0 AND priority=1),count(*) FILTER (WHERE first_ordinal=1 AND priority=0) FROM identity_derived_ready WHERE batch_id='a'`).Scan(&existing, &fresh); err != nil || existing != 1 || fresh != 1 {
+		t.Fatalf("cutover lost keys: old=%d new=%d err=%v", existing, fresh, err)
 	}
 }

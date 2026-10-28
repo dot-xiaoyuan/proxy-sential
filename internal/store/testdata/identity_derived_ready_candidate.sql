@@ -1,5 +1,9 @@
 -- Candidate only: not part of the migration sequence until concurrency and
 -- rollback behavior have been verified against an isolated PostgreSQL server.
+-- Both legacy writers and progress transactions must be outside their write
+-- sections before trigger installation. NOWAIT avoids a batch->fragment DDL
+-- lock wait deadlocking an old fragment->batch export transaction.
+LOCK TABLE identity_ingest_batches, identity_ingest_fragments IN SHARE ROW EXCLUSIVE MODE NOWAIT;
 CREATE TABLE identity_derived_ready (
  batch_id text NOT NULL,
  first_ordinal integer NOT NULL,
