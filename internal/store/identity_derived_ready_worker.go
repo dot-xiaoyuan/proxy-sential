@@ -78,16 +78,19 @@ func (s *DBStore) runIdentityDerivedReadyStatus(ctx context.Context) {
 
 func (s *DBStore) runIdentityDerivedReadyScanner(ctx context.Context) {
 	var lastErrorReport, lastProgressReport time.Time
+	pageLimit := 256
 	for ctx.Err() == nil {
+		started := time.Now()
 		work, cancel := context.WithTimeout(ctx, 2*time.Second)
-		page, err := s.pg.scanIdentityDerivedReadyPage(work, 256)
+		page, err := s.pg.scanIdentityDerivedReadyPage(work, pageLimit)
 		cancel()
+		pageLimit = nextIdentityDerivedReadyScanLimit(pageLimit, page, err, time.Since(started))
 		if err == nil && page.Done {
 			fmt.Fprintln(os.Stderr, "identity derived ready pending-key scan completed")
 			return
 		}
 		if err == nil && !page.Deferred && time.Since(lastProgressReport) >= 30*time.Second {
-			fmt.Fprintf(os.Stderr, "identity derived ready scan page scanned=%d eligible=%d\n", page.Scanned, page.Eligible)
+			fmt.Fprintf(os.Stderr, "identity derived ready scan page scanned=%d eligible=%d next_limit=%d\n", page.Scanned, page.Eligible, pageLimit)
 			lastProgressReport = time.Now()
 		}
 		delay := time.Second
@@ -104,4 +107,25 @@ func (s *DBStore) runIdentityDerivedReadyScanner(ctx context.Context) {
 		case <-time.After(delay):
 		}
 	}
+}
+
+func nextIdentityDerivedReadyScanLimit(current int, page identityDerivedReadyPage, runErr error, elapsed time.Duration) int {
+	current = max(16, min(current, 256))
+	if runErr != nil {
+		var pgError interface{ SQLState() string }
+		if errors.Is(runErr, context.DeadlineExceeded) || errors.As(runErr, &pgError) && pgError.SQLState() == "57014" {
+			return max(16, current/2)
+		}
+		return current
+	}
+	if page.Deferred || page.Done {
+		return current
+	}
+	if elapsed >= time.Second {
+		return max(16, current/2)
+	}
+	if page.Scanned >= current && elapsed < 250*time.Millisecond {
+		return min(256, current+32)
+	}
+	return current
 }

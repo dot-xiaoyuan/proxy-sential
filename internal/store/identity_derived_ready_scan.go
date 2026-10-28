@@ -2,10 +2,15 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
 )
+
+const identityDerivedReadyScanMaxBytes = 128 * 1024
+
+var errIdentityDerivedReadyKeyTooLarge = errors.New("identity derived ready key exceeds scan byte limit")
 
 // identityDerivedReadyPage only describes the indexing of already accepted,
 // incomplete fragment keys. It does not process events or move source offsets.
@@ -52,22 +57,55 @@ func (s *PostgresStore) scanIdentityDerivedReadyPage(ctx context.Context, limit 
  FROM identity_ingest_fragments f
  WHERE f.derived_state<>'completed' AND (f.batch_id,f.first_ordinal)>($1,$2)
  ORDER BY f.batch_id,f.first_ordinal LIMIT $3
+), metadata AS MATERIALIZED (
+ SELECT c.batch_id AS sort_batch,c.first_ordinal,
+ CASE WHEN size.estimated_bytes>$4 THEN NULL ELSE c.batch_id END AS batch_id,
+ CASE WHEN size.estimated_bytes>$4 THEN NULL ELSE b.sensor_id END AS sensor_id,
+ COALESCE(b.accepted_at,b.received_at) AS accepted_at,
+ (b.protocol_version=2 AND b.payload_format='fragments' AND c.derived_state IN ('pending','attempted') AND b.processed_offset>=c.first_ordinal+c.record_count) AS ready,
+ size.estimated_bytes
+ FROM candidates c JOIN identity_ingest_batches b USING(batch_id)
+ CROSS JOIN LATERAL (SELECT 256::bigint+6::bigint*(octet_length(c.batch_id)::bigint+octet_length(b.sensor_id)::bigint) AS estimated_bytes) size
+), bounded AS (
+ SELECT *,COALESCE(sum(estimated_bytes) OVER (ORDER BY sort_batch,first_ordinal ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS preceding_bytes
+ FROM metadata
 )
-SELECT c.batch_id,c.first_ordinal,b.sensor_id,COALESCE(b.accepted_at,b.received_at),
- (b.protocol_version=2 AND b.payload_format='fragments' AND c.derived_state IN ('pending','attempted') AND b.processed_offset>=c.first_ordinal+c.record_count)
-FROM candidates c JOIN identity_ingest_batches b USING(batch_id)
-ORDER BY c.batch_id,c.first_ordinal`, batch, ordinal, limit)
+SELECT batch_id,first_ordinal,sensor_id,accepted_at,ready FROM bounded
+WHERE preceding_bytes=0 OR preceding_bytes+estimated_bytes<=$4
+ORDER BY sort_batch,first_ordinal`, batch, ordinal, limit, identityDerivedReadyScanMaxBytes)
 	if err != nil {
 		return page, err
 	}
 	keys := make([]identityDerivedReadyKey, 0, limit)
+	bytes := 2 // JSON array delimiters; include every scanned key conservatively.
 	for rows.Next() {
 		var key identityDerivedReadyKey
 		var ready bool
-		if err = rows.Scan(&key.BatchID, &key.First, &key.SensorID, &key.Accepted, &ready); err != nil {
+		var batchID, sensorID sql.NullString
+		if err = rows.Scan(&batchID, &key.First, &sensorID, &key.Accepted, &ready); err != nil {
 			rows.Close()
 			return page, err
 		}
+		if !batchID.Valid || !sensorID.Valid {
+			rows.Close()
+			return page, errIdentityDerivedReadyKeyTooLarge
+		}
+		key.BatchID, key.SensorID = batchID.String, sensorID.String
+		encoded, marshalErr := json.Marshal(key)
+		if marshalErr != nil {
+			rows.Close()
+			return page, marshalErr
+		}
+		entryBytes := len(encoded) + 1 // Include a possible array separator.
+		if bytes+entryBytes > identityDerivedReadyScanMaxBytes {
+			if page.Scanned == 0 {
+				rows.Close()
+				return page, errIdentityDerivedReadyKeyTooLarge
+			}
+			// Do not advance over this row; the next keyset page reads it again.
+			break
+		}
+		bytes += entryBytes
 		page.Scanned++
 		batch, ordinal = key.BatchID, key.First
 		if ready {

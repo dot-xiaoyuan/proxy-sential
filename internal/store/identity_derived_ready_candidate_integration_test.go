@@ -308,4 +308,33 @@ func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) 
 	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM identity_derived_ready WHERE batch_id='a' AND first_ordinal=0`).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("completed key retained: %d %v", remaining, err)
 	}
+	// Oversized pages must stop at the last consumed key and continue from the
+	// next one. These fragments are not yet eligible, so no queue key is added.
+	longSensor := strings.Repeat("s", 12*1024)
+	_, err = db.ExecContext(ctx, `INSERT INTO identity_ingest_batches VALUES('b',2,'fragments',0,$1,$2,$2,'scope','source','epoch'),('c',2,'fragments',0,$1,$2,$2,'scope','source','epoch')`, longSensor, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO identity_ingest_fragments(batch_id,first_ordinal,record_count,derived_state,archive_month,content_sha256,key_scheme,normalized_events) VALUES('b',0,1,'pending','202610','hash','source_position_v1','[{}]'),('c',0,1,'pending','202610','hash','source_position_v1','[{}]'); UPDATE identity_derived_ready_scan SET cursor_batch='a',cursor_ordinal=1,done=false,next_scan_at='-infinity' WHERE id=true`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.scanIdentityDerivedReadyPage(ctx, 256)
+	if err != nil || page.Scanned != 1 || page.Eligible != 0 {
+		t.Fatalf("first byte-limited page: %+v %v", page, err)
+	}
+	var cursor string
+	if err = db.QueryRowContext(ctx, `SELECT cursor_batch FROM identity_derived_ready_scan WHERE id=true`).Scan(&cursor); err != nil || cursor != "b" {
+		t.Fatalf("first byte-limited cursor=%q err=%v", cursor, err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE identity_derived_ready_scan SET next_scan_at='-infinity' WHERE id=true`); err != nil {
+		t.Fatal(err)
+	}
+	page, err = store.scanIdentityDerivedReadyPage(ctx, 256)
+	if err != nil || page.Scanned != 1 || page.Eligible != 0 {
+		t.Fatalf("second byte-limited page: %+v %v", page, err)
+	}
+	if err = db.QueryRowContext(ctx, `SELECT cursor_batch FROM identity_derived_ready_scan WHERE id=true`).Scan(&cursor); err != nil || cursor != "c" {
+		t.Fatalf("second byte-limited cursor=%q err=%v", cursor, err)
+	}
 }
