@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -96,5 +97,48 @@ func TestCaptureCoalescerWithdrawalAndRestoreReachProjection(t *testing.T) {
 	restore := mergeStreamDiscoveryFact(&items[1].Fact, items[2].Fact)
 	if withdraw.Result != "withdrawn" || !withdraw.VisibleChanged || restore.Result != "restored" || !restore.VisibleChanged {
 		t.Fatalf("withdrawal or restoration missing: %+v %+v", withdraw, restore)
+	}
+}
+
+func TestCaptureCoalescerPreservesInvalidTTLObservations(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		firstTTL, lastTTL int
+		invalidIndex      int
+	}{
+		{"invalid_then_valid", 604801, 120, 0},
+		{"valid_then_invalid", 120, 604801, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCaptureCoalescer()
+			first := streamDiscoveryEvent("first", "2026-10-28T10:00:00Z", tc.firstTTL)
+			last := streamDiscoveryEvent("last", "2026-10-28T10:00:00.5Z", tc.lastTTL)
+			c.add(first)
+			if c.add(last) {
+				t.Fatal("invalid TTL was collapsed with a valid observation")
+			}
+			segment := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", AcceptedAt: time.Date(2026, 10, 28, 10, 0, 1, 0, time.UTC), Events: c.drain()}
+			items, err := prepareStreamDiscovery(segment)
+			if err != nil || len(items) != 2 {
+				t.Fatalf("lost input: items=%d err=%v", len(items), err)
+			}
+			if items[tc.invalidIndex].Parsed || !strings.Contains(items[tc.invalidIndex].Receipt.Result, "invalid TTL") || !items[1-tc.invalidIndex].Parsed {
+				t.Fatalf("invalid or valid input hidden: %+v %+v", items[0].Receipt, items[1].Receipt)
+			}
+		})
+	}
+}
+
+func TestCaptureCoalescerDoesNotBridgeTTLExpiration(t *testing.T) {
+	c := newCaptureCoalescer()
+	first := streamDiscoveryEvent("first", "2026-10-28T10:00:00Z", 1)
+	last := streamDiscoveryEvent("last", "2026-10-28T10:00:01Z", 120)
+	c.add(first)
+	if c.add(last) {
+		t.Fatal("observations separated by an expiry were combined")
+	}
+	got := c.drain()
+	if len(got) != 2 || got[0].EventID != "first" || got[1].EventID != "last" {
+		t.Fatalf("expiry boundary lost: %+v", got)
 	}
 }

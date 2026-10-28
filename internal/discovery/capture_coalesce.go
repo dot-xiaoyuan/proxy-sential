@@ -21,7 +21,11 @@ func newCaptureCoalescer() *captureCoalescer {
 }
 
 func captureCoalesceKey(event normalized.Event) (string, bool) {
-	if len(event.RawRef) != 0 || event.Payload == nil || event.Payload["withdrawn"] == true || number(event.Payload, "ttl") <= 0 {
+	if len(event.RawRef) != 0 || event.Payload == nil || event.Payload["withdrawn"] == true {
+		return "", false
+	}
+	ttl := number(event.Payload, "ttl")
+	if ttl <= 0 || ttl > discoveryMaxTTLSeconds {
 		return "", false
 	}
 	payload := make(map[string]any, len(event.Payload))
@@ -65,7 +69,9 @@ func (c *captureCoalescer) add(event normalized.Event) bool {
 			firstAt, firstErr := time.Parse(time.RFC3339Nano, first)
 			previousAt, previousErr := time.Parse(time.RFC3339Nano, previous.Timestamp)
 			currentAt, currentErr := time.Parse(time.RFC3339Nano, event.Timestamp)
+			previousTTL := number(previous.Payload, "ttl")
 			if firstErr == nil && previousErr == nil && currentErr == nil && !currentAt.Before(previousAt) &&
+				previousTTL > 0 && previousTTL <= discoveryMaxTTLSeconds && currentAt.Before(previousAt.Add(time.Duration(previousTTL)*time.Second)) &&
 				currentAt.Sub(firstAt) <= passiveCaptureCoalesceWindow {
 				event.RawRef = cloneStreamFields(event.RawRef)
 				event.RawRef["coalesced_count"] = count + 1

@@ -21,6 +21,8 @@ import (
 
 const RuleVersion = "discovery-2026.09.21.1"
 
+const discoveryMaxTTLSeconds = 7 * 24 * 60 * 60
+
 type Observation struct {
 	ID            string           `json:"id"`
 	EventID       string           `json:"event_id"`
@@ -183,7 +185,7 @@ func FromEvent(e normalized.Event) (Observation, error) {
 	}
 
 	ttl := number(e.Payload, "ttl")
-	if ttl < 0 || ttl > 604800 {
+	if ttl < 0 || ttl > discoveryMaxTTLSeconds {
 		return o, errors.New("invalid TTL")
 	}
 	o.ValidUntil = o.ObservedAt.Add(time.Duration(ttl) * time.Second)
