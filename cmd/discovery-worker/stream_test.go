@@ -142,15 +142,17 @@ func TestPassiveFinalizerRetriesMissingReceiptWithoutBlockingOtherSegments(t *te
 			return nil
 		}, 100*time.Millisecond, 4)
 	}()
-	for i, want := range []string{"missing", "healthy", "missing"} {
+	seen := map[string]int{}
+	for i := 0; i < 3; i++ {
 		select {
 		case got := <-calls:
-			if got != want {
-				t.Fatalf("call %d: got %q, want %q", i, got, want)
-			}
+			seen[got]++
 		case <-time.After(2 * time.Second):
 			t.Fatal("finalization stalled")
 		}
+	}
+	if seen["missing"] != 2 || seen["healthy"] != 1 {
+		t.Fatalf("expected one healthy call and a retry of missing: %v", seen)
 	}
 	cancel()
 	if err := <-done; err != nil {
@@ -420,5 +422,237 @@ func TestPreparePassiveStreamCutoverRejectsExpiredScopeBeforeAuditing(t *testing
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPassiveFinalizerSlowSegmentDoesNotBlockOtherSegment(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queue := make(chan passiveFinalizerSignal, 6)
+	notifyAllLanes(queue, "slow")
+	notifyAllLanes(queue, "healthy")
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	defer close(release)
+	done := make(chan error, 1)
+	go func() {
+		done <- runPassiveFinalizer(ctx, queue, func(ctx context.Context, id string) error {
+			started <- id
+			if id == "slow" {
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		}, time.Second, 4)
+	}()
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case id := <-started:
+			seen[id] = true
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("healthy segment blocked behind slow finalization")
+		}
+	}
+	if !seen["slow"] || !seen["healthy"] {
+		t.Fatalf("unexpected segments: %v", seen)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPassiveFinalizerBoundsConcurrentCallsAndCancelsWorkers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	queue := make(chan passiveFinalizerSignal, 9)
+	for _, id := range []string{"one", "two", "three"} {
+		notifyAllLanes(queue, id)
+	}
+	started := make(chan string, 3)
+	release := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- runPassiveFinalizer(ctx, queue, func(ctx context.Context, id string) error {
+			started <- id
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}, time.Second, 4)
+	}()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("expected two finalizations")
+		}
+	}
+	select {
+	case id := <-started:
+		t.Fatalf("third finalization exceeded limit: %s", id)
+	case <-time.After(50 * time.Millisecond):
+	}
+	release <- struct{}{}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("available slot did not start queued work")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type blockedSegmentFinalizer struct {
+	passiveBudgetWriter
+	blocked string
+	started chan string
+	release <-chan struct{}
+}
+
+func (w *blockedSegmentFinalizer) FinalizeSegment(ctx context.Context, id string, _ streamlog.Segment) error {
+	w.started <- id
+	if id == w.blocked {
+		select {
+		case <-w.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func TestPassiveFinalizerParallelRecoveryRetainsOnlyUnfinishedJournal(t *testing.T) {
+	j, err := streamlog.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", SourcePath: "packet://bond0/passive-node", FileID: "boot", PreviousFileID: "boot", StartOffset: 0, EndOffset: 1, ParserVersion: discovery.PassiveStreamParserVersion, NeedsProjection: true, Events: []normalized.Event{{EventID: "first", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Type: "discovery"}}}
+	if err = j.StartFreshSource(streamlog.SourceCursor{Epoch: first.Epoch, Source: first.Source, Path: first.SourcePath, FileID: first.FileID, ParserVersion: first.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	firstID, err := j.Append(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = j.CommitSource(first.Source, first.SourcePath, firstID); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.PreviousOffset, second.StartOffset, second.EndOffset = 1, 1, 2
+	second.Events = []normalized.Event{{EventID: "second", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Type: "discovery"}}
+	secondID, err := j.Append(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = j.CommitSource(second.Source, second.SourcePath, secondID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{firstID, secondID} {
+		for _, lane := range []streamlog.Lane{streamlog.Archive, streamlog.Search, streamlog.Projection} {
+			if err = j.BeginAttempt(id, lane); err != nil {
+				t.Fatal(err)
+			}
+			if err = j.Ack(id, lane); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	release := make(chan struct{})
+	defer close(release)
+	writer := &blockedSegmentFinalizer{blocked: firstID, started: make(chan string, 2), release: release}
+	processor := streamlog.Processor{Journal: j, Writer: writer, FinalizeTimeout: 5 * time.Second}
+	queue := make(chan passiveFinalizerSignal, 6)
+	notifyAllLanes(queue, firstID)
+	notifyAllLanes(queue, secondID)
+	finished := make(chan string, 2)
+	blockedStopped := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- runPassiveFinalizer(ctx, queue, func(ctx context.Context, id string) error {
+			err := processor.FinalizeAfterLanes(ctx, id)
+			if id == firstID {
+				close(blockedStopped)
+			}
+			if err == nil {
+				finished <- id
+			}
+			return err
+		}, time.Second, 4)
+	}()
+	select {
+	case id := <-finished:
+		if id != secondID {
+			t.Fatalf("unexpected segment released first: %s", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("healthy journal segment remained blocked")
+	}
+	if _, err = j.Load(secondID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("healthy segment not retired: %v", err)
+	}
+	state, err := j.Load(firstID)
+	if err != nil || state.Released || state.Acks[streamlog.Projection] != streamlog.Acked {
+		t.Fatalf("slow segment lost its recovery state: %+v %v", state, err)
+	}
+	cancel()
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-blockedStopped:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled finalization did not stop")
+	}
+	state, err = j.Load(firstID)
+	if err != nil || state.Released {
+		t.Fatalf("cancelled segment lost: %+v %v", state, err)
+	}
+}
+
+func TestPassiveFinalizerConflictCancelsOtherInFlightWork(t *testing.T) {
+	queue := make(chan passiveFinalizerSignal, 6)
+	notifyAllLanes(queue, "conflict")
+	notifyAllLanes(queue, "slow")
+	slowStarted := make(chan struct{})
+	slowStopped := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- runPassiveFinalizer(context.Background(), queue, func(ctx context.Context, id string) error {
+			if id == "slow" {
+				close(slowStarted)
+				<-ctx.Done()
+				close(slowStopped)
+				return ctx.Err()
+			}
+			select {
+			case <-slowStarted:
+				return streamlog.ErrContentConflict
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}, time.Second, 4)
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, streamlog.ErrContentConflict) {
+			t.Fatalf("conflict hidden: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("conflict did not stop finalizer")
+	}
+	select {
+	case <-slowStopped:
+	case <-time.After(time.Second):
+		t.Fatal("other in-flight finalization was not cancelled")
 	}
 }

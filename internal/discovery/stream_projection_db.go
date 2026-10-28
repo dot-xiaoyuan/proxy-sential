@@ -129,6 +129,7 @@ func (p StreamDiscoveryProjector) ExpireStreamDiscoveryStates(ctx context.Contex
 const confirmStreamArchiveReceiptsSQL = `WITH input AS MATERIALIZED (
  SELECT v.ordinal,v.scope_id,v.event_key,v.content_sha256
  FROM jsonb_to_recordset($2::jsonb) AS v(ordinal integer,scope_id text,event_key text,content_sha256 text)
+ ORDER BY v.ordinal
 ), receipt AS MATERIALIZED (
  SELECT r.accepted_month,r.epoch,r.scope_id,r.event_key,r.content_sha256
  FROM input i

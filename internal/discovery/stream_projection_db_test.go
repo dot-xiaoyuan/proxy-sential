@@ -195,7 +195,7 @@ func TestStreamArchiveConfirmationUsesOriginalMonthAndAtomicReceiptChecks(t *tes
 			if !tc.matched {
 				matched = 1
 			}
-			mock.ExpectQuery(`WITH input AS MATERIALIZED.*jsonb_to_recordset.*FOR UPDATE.*UPDATE stream_discovery_receipts.*SELECT count\(\*\) FROM receipt`).
+			mock.ExpectQuery(`WITH input AS MATERIALIZED.*jsonb_to_recordset.*ORDER BY v\.ordinal.*FOR UPDATE.*UPDATE stream_discovery_receipts.*SELECT count\(\*\) FROM receipt`).
 				WithArgs(segment.Epoch, streamArchiveKeys{items[0].Receipt, items[1].Receipt}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(matched))
 			if tc.matched {
 				mock.ExpectCommit()
