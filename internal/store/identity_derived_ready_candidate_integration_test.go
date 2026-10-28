@@ -178,7 +178,10 @@ func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) 
 		admin.Close()
 	}()
 	_, err := db.ExecContext(ctx, `CREATE TABLE identity_ingest_batches(batch_id text PRIMARY KEY,protocol_version int NOT NULL,payload_format text NOT NULL,processed_offset int NOT NULL,sensor_id text NOT NULL,accepted_at timestamptz,received_at timestamptz NOT NULL,scope_key text NOT NULL,source text NOT NULL,stream_epoch text NOT NULL);
- CREATE TABLE identity_ingest_fragments(batch_id text NOT NULL REFERENCES identity_ingest_batches,first_ordinal int NOT NULL,record_count int NOT NULL CHECK(record_count BETWEEN 1 AND 50),derived_state text NOT NULL,derived_lease_until timestamptz,derived_lease_epoch bigint NOT NULL DEFAULT 0,archive_month text NOT NULL,content_sha256 text NOT NULL,key_scheme text NOT NULL,normalized_events jsonb NOT NULL,PRIMARY KEY(batch_id,first_ordinal));`)
+ CREATE TABLE identity_ingest_fragments(batch_id text NOT NULL REFERENCES identity_ingest_batches,first_ordinal int NOT NULL,record_count int NOT NULL CHECK(record_count BETWEEN 1 AND 50),derived_state text NOT NULL,derived_lease_until timestamptz,derived_lease_epoch bigint NOT NULL DEFAULT 0,archive_month text NOT NULL,content_sha256 text NOT NULL,key_scheme text NOT NULL,normalized_events jsonb NOT NULL,PRIMARY KEY(batch_id,first_ordinal));
+ CREATE TABLE read_model_runtime_state(name text PRIMARY KEY,state jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
+ CREATE TABLE identity_materializer_cursors(sensor_id text NOT NULL);
+ CREATE TABLE identity_snapshot_projection_jobs(id integer);`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,6 +226,38 @@ func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) 
 	if scanned != 1 || deferred != 1 {
 		t.Fatalf("shared scanner budget bypassed: scanned=%d deferred=%d", scanned, deferred)
 	}
+	store := &PostgresStore{db: db, sensorID: "sensor"}
+	if _, err = db.ExecContext(ctx, `UPDATE identity_derived_ready SET last_error='identity_ready_not_eligible' WHERE batch_id='a' AND first_ordinal=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.publishIdentityDerivedReadyStatus(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, `UPDATE read_model_runtime_state SET state=jsonb_set(state,'{sampled_at}',to_jsonb(now()-interval '5 minutes')),updated_at=now() WHERE name='identity-derived-ready:sensor'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := (&DBStore{pg: store}).IdentityMaterializerStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, ok := status["derived_ready"].(map[string]any)
+	if !ok || ready["stale"] != true || ready["state"] != "indexing" || ready["index_error_keys_present"] != true {
+		t.Fatalf("old sample presented as fresh: %+v", status)
+	}
+	if err = store.publishIdentityDerivedReadyStatus(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, persistIdentityDerivedReadyStatusSQL, "identity-derived-ready:sensor", `{"state":"ready_index_empty","sampled_at":"2000-01-01T00:00:00Z"}`); err != nil {
+		t.Fatal(err)
+	}
+	var retained string
+	if err = db.QueryRowContext(ctx, `SELECT state->>'state' FROM read_model_runtime_state WHERE name='identity-derived-ready:sensor'`).Scan(&retained); err != nil || retained != "indexing" {
+		t.Fatalf("older sample overwrote newer status: %q %v", retained, err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE identity_derived_ready SET last_error='' WHERE batch_id='a' AND first_ordinal=1`); err != nil {
+		t.Fatal(err)
+	}
 
 	// A legacy worker owns fragment zero. SKIP LOCKED must allow fragment one
 	// through without stealing or changing the first fragment.
@@ -234,7 +269,6 @@ func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) 
 	if _, err = old.ExecContext(ctx, `SELECT 1 FROM identity_ingest_fragments WHERE batch_id='a' AND first_ordinal=0 FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
-	store := &PostgresStore{db: db, sensorID: "sensor"}
 	second, err := store.claimIdentityDerivedReady(ctx, 0)
 	if err != nil || second.First != 1 || second.DerivedLeaseEpoch != 1 {
 		t.Fatalf("skip locked: %+v %v", second, err)

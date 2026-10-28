@@ -489,7 +489,7 @@ func (s *DBStore) runIdentitySnapshotMaterializer(ctx context.Context) {
 
 func (s *DBStore) IdentityMaterializerStatus(ctx context.Context) (map[string]any, error) {
 	var raw []byte
-	err := s.pg.db.QueryRowContext(ctx, `SELECT jsonb_build_object('health',COALESCE((SELECT state FROM read_model_runtime_state WHERE name='identity-materializer'),'{}'::jsonb),'cursors',COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM identity_materializer_cursors c WHERE sensor_id=$1),'[]'::jsonb),'pending_snapshots',(SELECT count(*) FROM identity_snapshot_projection_jobs))`, s.pg.sensorID).Scan(&raw)
+	err := s.pg.db.QueryRowContext(ctx, `SELECT jsonb_build_object('health',COALESCE((SELECT state FROM read_model_runtime_state WHERE name='identity-materializer'),'{}'::jsonb),'cursors',COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM identity_materializer_cursors c WHERE sensor_id=$1),'[]'::jsonb),'pending_snapshots',(SELECT count(*) FROM identity_snapshot_projection_jobs),'derived_ready',(SELECT state || jsonb_build_object('updated_at',updated_at,'stale',COALESCE((state->>'sampled_at')::timestamptz,updated_at)<now()-interval '90 seconds') FROM read_model_runtime_state WHERE name='identity-derived-ready:'||$1))`, s.pg.sensorID).Scan(&raw)
 	if err != nil {
 		return nil, err
 	}

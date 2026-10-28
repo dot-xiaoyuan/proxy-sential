@@ -18,11 +18,16 @@ func identityDerivedReadyEnabled() bool {
 
 func (s *DBStore) runIdentityFragmentDerivedReady(ctx context.Context) {
 	scannerDone := make(chan struct{})
+	statusDone := make(chan struct{})
 	go func() {
 		defer close(scannerDone)
 		s.runIdentityDerivedReadyScanner(ctx)
 	}()
-	defer func() { <-scannerDone }()
+	go func() {
+		defer close(statusDone)
+		s.runIdentityDerivedReadyStatus(ctx)
+	}()
+	defer func() { <-scannerDone; <-statusDone }()
 	scheduler := identityDerivedReadyScheduler{claim: s.pg.claimIdentityDerivedReady}
 	for ctx.Err() == nil {
 		// Keep the existing shared primary-inbox resource gate until a measured
@@ -49,6 +54,24 @@ func (s *DBStore) runIdentityFragmentDerivedReady(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(delay):
+		}
+	}
+}
+
+func (s *DBStore) runIdentityDerivedReadyStatus(ctx context.Context) {
+	var lastErrorReport time.Time
+	for ctx.Err() == nil {
+		work, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := s.pg.publishIdentityDerivedReadyStatus(work)
+		cancel()
+		if err != nil && ctx.Err() == nil && time.Since(lastErrorReport) >= 30*time.Second {
+			fmt.Fprintln(os.Stderr, "identity derived ready status:", err)
+			lastErrorReport = time.Now()
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(30 * time.Second):
 		}
 	}
 }

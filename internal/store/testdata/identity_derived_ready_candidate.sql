@@ -12,6 +12,9 @@ CREATE TABLE identity_derived_ready (
  FOREIGN KEY(batch_id,first_ordinal) REFERENCES identity_ingest_fragments(batch_id,first_ordinal)
 );
 CREATE INDEX identity_derived_ready_claim ON identity_derived_ready(sensor_id,priority,available_at,accepted_at,batch_id,first_ordinal);
+-- Error-only index supports a bounded status probe without scanning the queue.
+-- It grows only with keys carrying an unresolved index eligibility error.
+CREATE INDEX identity_derived_ready_error ON identity_derived_ready(sensor_id) WHERE last_error<>'';
 CREATE TABLE identity_derived_ready_scan (
  id boolean PRIMARY KEY DEFAULT true CHECK(id),
  cursor_batch text NOT NULL DEFAULT '',
