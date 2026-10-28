@@ -321,7 +321,7 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 			return zeekCutoverBytes{}, "", errors.New("prior closed stream has no unique audited retirement cursor")
 		}
 		if rotationArchive != "" {
-			if oldFile == fileID || kind == "zeek-dhcp-binding" && priorRetiredFile != "" || kind == "device-signals" && (rotationArchive != path+".1" || priorRetiredFile == "") {
+			if oldFile == fileID || priorRetiredFile == fileID || kind == "device-signals" && (rotationArchive != path+".1" || priorRetiredFile == "") {
 				return zeekCutoverBytes{}, "", streamlog.ErrContentConflict
 			}
 		}
@@ -338,6 +338,8 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 	if rotationArchive != "" {
 		if kind == "device-signals" {
 			rotationEntries, err = verifyClosedDeviceRotation(ctx, db, path, rotationArchive, priorRetiredFile, from, priorEpoch)
+		} else if priorRetiredFile != "" {
+			rotationEntries, err = verifyRetiredBindingRotationArchive(ctx, db, path, rotationArchive, priorRetiredFile, from, priorEpoch)
 		} else {
 			rotationEntries, err = verifyClosedRotationArchive(ctx, db, path, rotationArchive, oldFile, from, priorEpoch)
 		}
