@@ -527,10 +527,15 @@ func streamDiscoveryBodyRef(segment streamlog.Segment, receipt streamDiscoveryRe
 	return ref
 }
 
+type streamDiscoveryLookupKey struct {
+	Scope string `json:"scope_id"`
+	Key   string `json:"event_key"`
+}
+
 func loadStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, epoch string, items []streamPreparedDiscovery) (map[string]string, error) {
-	input := make([]streamDiscoveryReceipt, 0, len(items))
+	input := make([]streamDiscoveryLookupKey, 0, len(items))
 	for _, item := range items {
-		input = append(input, item.Receipt)
+		input = append(input, streamDiscoveryLookupKey{Scope: item.Receipt.Scope, Key: item.Receipt.Key})
 	}
 	raw, err := json.Marshal(input)
 	if err != nil {
