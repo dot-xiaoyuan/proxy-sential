@@ -7,6 +7,7 @@ CREATE TABLE identity_derived_ready (
  accepted_at timestamptz NOT NULL,
  priority smallint NOT NULL CHECK(priority IN (0,1)),
  available_at timestamptz NOT NULL DEFAULT '-infinity',
+ last_error text NOT NULL DEFAULT '',
  PRIMARY KEY(batch_id,first_ordinal),
  FOREIGN KEY(batch_id,first_ordinal) REFERENCES identity_ingest_fragments(batch_id,first_ordinal)
 );
@@ -31,7 +32,9 @@ BEGIN
     AND f.first_ordinal+f.record_count>OLD.processed_offset
     AND f.first_ordinal+f.record_count<=NEW.processed_offset
     AND f.derived_state IN ('pending','attempted')
-  ON CONFLICT(batch_id,first_ordinal) DO NOTHING;
+  ON CONFLICT(batch_id,first_ordinal) DO UPDATE
+  SET available_at='-infinity',last_error=''
+  WHERE identity_derived_ready.last_error='identity_ready_not_eligible';
  END IF;
  RETURN NEW;
 END $$;
@@ -42,6 +45,14 @@ CREATE FUNCTION identity_derived_ready_on_terminal() RETURNS trigger LANGUAGE pl
 BEGIN
  IF NEW.derived_state IN ('completed','failed') THEN
   DELETE FROM identity_derived_ready WHERE batch_id=NEW.batch_id AND first_ordinal=NEW.first_ordinal;
+ ELSIF OLD.derived_state='failed' AND NEW.derived_state IN ('pending','attempted') THEN
+  -- A repaired failure was previously eligible. Register it even if progress
+  -- advances concurrently; the claimant independently checks the offset.
+  INSERT INTO identity_derived_ready(batch_id,first_ordinal,sensor_id,accepted_at,priority)
+  SELECT b.batch_id,NEW.first_ordinal,b.sensor_id,COALESCE(b.accepted_at,b.received_at),1
+  FROM identity_ingest_batches b
+  WHERE b.batch_id=NEW.batch_id AND b.protocol_version=2 AND b.payload_format='fragments'
+  ON CONFLICT(batch_id,first_ordinal) DO NOTHING;
  END IF;
  RETURN NEW;
 END $$;

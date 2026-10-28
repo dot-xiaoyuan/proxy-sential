@@ -56,6 +56,20 @@ LIMIT 1 FOR UPDATE OF f SKIP LOCKED`, s.sensorID, priority).Scan(&batch, &first,
 		return fragment, errIdentityDerivedReadyDeferred
 	}
 	if !valid || (state != "pending" && state != "attempted") || count < 1 || count > 50 || first < 0 || offset < first+count {
+		// Preserve and report the bad key, but delay its next attempt so one
+		// inconsistent row does not block every later ready fragment.
+		result, updateErr := tx.ExecContext(ctx, `UPDATE identity_derived_ready SET available_at=now()+interval '30 seconds',last_error=$3 WHERE batch_id=$1 AND first_ordinal=$2`, batch, first, "identity_ready_not_eligible")
+		if updateErr != nil {
+			return fragment, updateErr
+		}
+		if changed, rowsErr := result.RowsAffected(); rowsErr != nil {
+			return fragment, rowsErr
+		} else if changed != 1 {
+			return fragment, errors.New("identity derived ready key disappeared during deferral")
+		}
+		if err = tx.Commit(); err != nil {
+			return fragment, err
+		}
 		return fragment, fmt.Errorf("identity derived ready key is not eligible: batch=%s ordinal=%d", batch, first)
 	}
 	if active {
@@ -91,7 +105,7 @@ LIMIT 1 FOR UPDATE OF f SKIP LOCKED`, s.sensorID, priority).Scan(&batch, &first,
 }
 
 func updateIdentityDerivedReadyDue(ctx context.Context, tx *sql.Tx, batch string, first int, until time.Time) error {
-	result, err := tx.ExecContext(ctx, `UPDATE identity_derived_ready SET available_at=$3 WHERE batch_id=$1 AND first_ordinal=$2`, batch, first, until)
+	result, err := tx.ExecContext(ctx, `UPDATE identity_derived_ready SET available_at=$3,last_error='' WHERE batch_id=$1 AND first_ordinal=$2`, batch, first, until)
 	if err != nil {
 		return err
 	}

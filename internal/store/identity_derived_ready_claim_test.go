@@ -80,10 +80,31 @@ func TestIdentityDerivedReadyClaimNeverSkipsUnreadyKey(t *testing.T) {
 	defer db.Close()
 	mock.ExpectBegin()
 	mock.ExpectQuery(`WITH candidates AS MATERIALIZED`).WithArgs("sensor-a", 0).WillReturnRows(sqlmock.NewRows([]string{"batch_id", "first_ordinal", "derived_state", "lease_until", "lease_active", "processed_offset", "record_count", "valid_batch"}).AddRow("batch-a", 0, "pending", nil, false, 0, 1, true))
-	mock.ExpectRollback()
+	mock.ExpectExec(`UPDATE identity_derived_ready SET available_at=now\(\)\+interval '30 seconds',last_error=\$3`).WithArgs("batch-a", 0, "identity_ready_not_eligible").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	_, err = (&PostgresStore{db: db, sensorID: "sensor-a"}).claimIdentityDerivedReady(context.Background(), 0)
 	if err == nil || errors.Is(err, sql.ErrNoRows) || errors.Is(err, errIdentityDerivedReadyDeferred) {
 		t.Fatalf("expected visible integrity error, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdentityDerivedReadyClaimDoesNotHideQuarantineWriteFailure(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	failure := errors.New("cannot persist retry state")
+	mock.ExpectBegin()
+	mock.ExpectQuery(`WITH candidates AS MATERIALIZED`).WithArgs("sensor-a", 0).WillReturnRows(sqlmock.NewRows([]string{"batch_id", "first_ordinal", "derived_state", "lease_until", "lease_active", "processed_offset", "record_count", "valid_batch"}).AddRow("batch-a", 0, "pending", nil, false, 0, 1, true))
+	mock.ExpectExec(`UPDATE identity_derived_ready SET available_at=now\(\)\+interval '30 seconds',last_error=\$3`).WithArgs("batch-a", 0, "identity_ready_not_eligible").WillReturnError(failure)
+	mock.ExpectRollback()
+	_, err = (&PostgresStore{db: db, sensorID: "sensor-a"}).claimIdentityDerivedReady(context.Background(), 0)
+	if !errors.Is(err, failure) {
+		t.Fatalf("expected persisted state failure, got %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

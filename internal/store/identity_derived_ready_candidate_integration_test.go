@@ -123,6 +123,33 @@ func TestIdentityDerivedReadyProgressCandidate(t *testing.T) {
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM identity_derived_ready WHERE batch_id='a'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("terminal key was not retired: %d %v", count, err)
 	}
+	// A deliberate repair of a failed fragment must re-register it even when
+	// primary progress has already moved past the fragment.
+	if _, err = tx.ExecContext(ctx, `UPDATE identity_ingest_fragments SET derived_state='failed' WHERE batch_id='a' AND first_ordinal=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM identity_derived_ready WHERE batch_id='a'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("failed key retained: %d %v", count, err)
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE identity_ingest_fragments SET derived_state='pending' WHERE batch_id='a' AND first_ordinal=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT first_ordinal,priority,accepted_at FROM identity_derived_ready WHERE batch_id='a'`).Scan(&ordinal, &priority, &recorded); err != nil || ordinal != 1 || priority != 1 || !recorded.Equal(accepted) {
+		t.Fatalf("repaired fragment was not registered: %d %d %v %v", ordinal, priority, recorded, err)
+	}
+	// If a repaired key was deferred before primary progress arrived, the
+	// progress trigger must wake it as soon as the offset crosses the end.
+	if _, err = tx.ExecContext(ctx, `INSERT INTO identity_ingest_batches VALUES('b',2,'fragments',0,'sensor',$1,$1)`, accepted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO identity_ingest_fragments VALUES('b',0,1,'failed'); UPDATE identity_ingest_fragments SET derived_state='pending' WHERE batch_id='b'; UPDATE identity_derived_ready SET available_at=now()+interval '30 seconds',last_error='identity_ready_not_eligible' WHERE batch_id='b'; UPDATE identity_ingest_batches SET processed_offset=1 WHERE batch_id='b'`); err != nil {
+		t.Fatal(err)
+	}
+	var ready bool
+	var lastError string
+	if err = tx.QueryRowContext(ctx, `SELECT available_at<=now(),last_error FROM identity_derived_ready WHERE batch_id='b'`).Scan(&ready, &lastError); err != nil || !ready || lastError != "" {
+		t.Fatalf("progress did not wake deferred key: ready=%v error=%q err=%v", ready, lastError, err)
+	}
 }
 
 func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) {
