@@ -5,21 +5,28 @@ package recognitiondiag
 import (
 	"strings"
 	"time"
+
+	"proxy-sentinel/internal/streamidentity"
 )
 
 type Input struct {
-	Protocol      string    `json:"protocol"`
-	Parsed        bool      `json:"parsed"`
-	Features      int       `json:"features"`
-	MAC           string    `json:"mac,omitempty"`
-	IP            string    `json:"ip,omitempty"`
-	Sensor        string    `json:"sensor,omitempty"`
-	Site          string    `json:"site,omitempty"`
-	Observed      time.Time `json:"observed"`
-	ValidUntil    time.Time `json:"valid_until"`
-	Withdrawn     bool      `json:"withdrawn,omitempty"`
-	EvidenceEvent string    `json:"evidence_event,omitempty"`
-	Targets       []Target  `json:"targets,omitempty"`
+	Protocol       string    `json:"protocol"`
+	Parsed         bool      `json:"parsed"`
+	Features       int       `json:"features"`
+	MAC            string    `json:"mac,omitempty"`
+	IP             string    `json:"ip,omitempty"`
+	Sensor         string    `json:"sensor,omitempty"`
+	Site           string    `json:"site,omitempty"`
+	Domain         string    `json:"domain,omitempty"`
+	VLAN           string    `json:"vlan,omitempty"`
+	VRF            string    `json:"vrf,omitempty"`
+	Interface      string    `json:"interface,omitempty"`
+	AddressBinding bool      `json:"address_binding,omitempty"`
+	Observed       time.Time `json:"observed"`
+	ValidUntil     time.Time `json:"valid_until"`
+	Withdrawn      bool      `json:"withdrawn,omitempty"`
+	EvidenceEvent  string    `json:"evidence_event,omitempty"`
+	Targets        []Target  `json:"targets,omitempty"`
 }
 type Target struct {
 	Endpoint   string `json:"endpoint_id"`
@@ -122,23 +129,17 @@ func truncate(s string, n int) string {
 	return s
 }
 
-// TargetsLateralSQL expects v.recognition_input. Both projection and background
-// rechecks use the same scoped event-time association, capped at two matches.
-// Ambiguous ownership stays unattributed; no full event body is read.
+// TargetsLateralSQL runs only in the background observer. Old annotations that
+// lack physical scope cannot acquire IP ownership through a wildcard match.
 const TargetsLateralSQL = `LEFT JOIN LATERAL (
  SELECT CASE WHEN count(*)=1 THEN jsonb_agg(jsonb_build_object('endpoint_id',endpoint_id,'generation',dirty_generation)) ELSE '[]'::jsonb END AS targets
  FROM (
   SELECT e.endpoint_id,j.dirty_generation
-  FROM endpoint_entities e JOIN endpoint_recognition_jobs j USING(endpoint_id)
-  WHERE jsonb_array_length(COALESCE(v.recognition_input->'targets','[]'::jsonb))=0
-   AND e.entity_role='endpoint' AND e.primary_mac=lower(v.recognition_input->>'mac')
-   AND COALESCE(v.recognition_input->>'mac','')<>''
-   AND (COALESCE(v.recognition_input->>'ip','')='' OR EXISTS (
-    SELECT 1 FROM device_address_leases l
-    WHERE l.sensor_id=v.recognition_input->>'sensor' AND l.campus_id=v.recognition_input->>'site'
-     AND l.ip=NULLIF(v.recognition_input->>'ip','')::inet AND l.action='ack'
-     AND l.endpoint_id=e.endpoint_id AND l.observed_at<=(v.recognition_input->>'observed')::timestamptz
-     AND l.valid_until>(v.recognition_input->>'observed')::timestamptz))
+  FROM (SELECT v.recognition_input AS association) v ` + streamidentity.MACLateralSQL + `
+  JOIN endpoint_entities e ON e.primary_mac=identity.mac
+  JOIN endpoint_recognition_jobs j USING(endpoint_id)
+  WHERE jsonb_array_length(COALESCE(v.association->'targets','[]'::jsonb))=0
+   AND e.entity_role='endpoint'
   ORDER BY e.endpoint_id LIMIT 2
  ) owners
 ) ownership ON true`

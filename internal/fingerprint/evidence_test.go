@@ -5,6 +5,19 @@ import (
 	"time"
 )
 
+func TestEvidenceAcceptsVerifiedStreamBindingAndKeepsExpiry(t *testing.T) {
+	now := time.Now().UTC()
+	items := []EvidenceSignal{{Protocol: "ssdp", Field: "ssdp_model", Value: "Archer AX55", Direction: "device", Association: "unique_stream_binding", EventID: "stream-event", ObservedAt: now.Add(-time.Second), ValidUntil: now.Add(time.Minute)}}
+	got := Default().IdentifyEvidence("", items, now)
+	if got.Diagnostics.AcceptedSignals != 1 {
+		t.Fatalf("verified compact binding rejected: %+v", got)
+	}
+	got = Default().IdentifyEvidence("", items, now.Add(2*time.Minute))
+	if got.Diagnostics.AcceptedSignals != 0 {
+		t.Fatalf("expired compact binding retained: %+v", got)
+	}
+}
+
 func TestIdentifyEvidenceKeepsDirectionAndLifetime(t *testing.T) {
 	library := MustLoad("typed-test", []byte("Assignment,Organization Name\n000000,Test\n"), []byte(`[{"pattern":"AX55","input":"ssdp_model","brand":"TP-Link","model":"Archer AX55","device_type":"router","confidence":0.9}]`))
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)

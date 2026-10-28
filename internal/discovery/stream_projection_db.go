@@ -77,20 +77,33 @@ func (p StreamDiscoveryProjector) ExpireStreamDiscoveryStates(ctx context.Contex
 		epochs = append(epochs, epoch)
 	}
 	sort.Strings(epochs)
-	expiredMACs := map[string]bool{}
+	dirty := newStreamRecognitionDirty()
 	for _, epoch := range epochs {
-		macRows, queryErr := tx.QueryContext(ctx, `SELECT DISTINCT mac FROM stream_discovery_facts
-	 WHERE epoch=$1 AND device_key=ANY($2::text[]) AND mac<>'' AND recognition_fields<>'{}'::jsonb`, epoch, groups[epoch])
+		macRows, queryErr := tx.QueryContext(ctx, `SELECT mac,ip,sensor_id,site,domain,vlan,vrf,interface_name,protocol,address_binding,recognition_fields<>'{}'::jsonb
+	 FROM stream_discovery_facts WHERE epoch=$1 AND device_key=ANY($2::text[])
+	 AND (recognition_fields<>'{}'::jsonb OR protocol IN ('dhcp','dhcpv6','arp','ndp')) LIMIT 25601`, epoch, groups[epoch])
 		if queryErr != nil {
 			return 0, queryErr
 		}
+		factCount := 0
 		for macRows.Next() {
-			var mac string
-			if err := macRows.Scan(&mac); err != nil {
+			var f streamDiscoveryFact
+			var hasFields bool
+			if err := macRows.Scan(&f.MAC, &f.IP, &f.Sensor, &f.Site, &f.Domain, &f.VLAN, &f.VRF, &f.Interface, &f.Protocol, &f.AddressBinding, &hasFields); err != nil {
 				macRows.Close()
 				return 0, err
 			}
-			expiredMACs[mac] = true
+			factCount++
+			if factCount > 25600 {
+				macRows.Close()
+				return 0, errors.New("stream recognition expiry fact budget exceeded; repair required")
+			}
+			if hasFields {
+				// Dirty tracking needs presence only; never transfer all product
+				// values for up to 25,600 compact expiry facts.
+				f.RecognitionFields = map[string]string{"present": ""}
+			}
+			dirty.add(nil, f)
 		}
 		if err := macRows.Err(); err != nil {
 			macRows.Close()
@@ -101,7 +114,7 @@ func (p StreamDiscoveryProjector) ExpireStreamDiscoveryStates(ctx context.Contex
 			return 0, err
 		}
 	}
-	if err := markStreamRecognitionDirty(ctx, tx, expiredMACs); err != nil {
+	if err := dirty.mark(ctx, tx); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -381,7 +394,7 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 	}
 	mark("merge_facts")
 	factWrites := map[string]streamDiscoveryFact{}
-	changedMACs := map[string]bool{}
+	dirty := newStreamRecognitionDirty()
 	newFactCounts := map[string]int{}
 	changedDevices := map[string]bool{}
 	changes := make([]streamDiscoveryChange, 0)
@@ -410,7 +423,7 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 		}
 		versions[identity] = item.Fact
 		factWrites[identity] = item.Fact
-		addRecognitionDirtyMACs(changedMACs, priorPtr, item.Fact)
+		dirty.add(priorPtr, item.Fact)
 		changedDevices[item.Fact.Device] = true
 		if decision.VisibleChanged {
 			before := ""
@@ -424,7 +437,7 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 	if err := writeStreamDiscoveryFacts(ctx, tx, factWrites); err != nil {
 		return err
 	}
-	if err := markStreamRecognitionDirty(ctx, tx, changedMACs); err != nil {
+	if err := dirty.mark(ctx, tx); err != nil {
 		return err
 	}
 	mark("publish_state")
@@ -519,7 +532,8 @@ func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.device_key,f.fact_key,f.event_key,f.visible_event_key,f.revision,f.first_observed_at,f.observed_at,f.valid_until,f.withdrawn,f.semantic_hash,f.mac,f.recognition_fields
+	rows, err := tx.QueryContext(ctx, `SELECT f.device_key,f.fact_key,f.event_key,f.visible_event_key,f.revision,f.first_observed_at,f.observed_at,f.valid_until,f.withdrawn,f.semantic_hash,f.mac,f.recognition_fields,
+ f.ip,f.sensor_id,f.site,f.domain,f.vlan,f.vrf,f.interface_name,f.protocol,f.address_binding
  FROM jsonb_to_recordset($2::jsonb) AS v(device_key text,fact_key text)
  JOIN stream_discovery_facts f ON f.epoch=$1 AND f.device_key=v.device_key AND f.fact_key=v.fact_key`, epoch, raw)
 	if err != nil {
@@ -529,7 +543,8 @@ func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items
 	for rows.Next() {
 		var fact streamDiscoveryFact
 		var recognitionFields []byte
-		if err := rows.Scan(&fact.Device, &fact.Key, &fact.Event, &fact.EvidenceEvent, &fact.Revision, &fact.FirstObserved, &fact.Observed, &fact.ValidUntil, &fact.Withdrawn, &fact.SemanticHash, &fact.MAC, &recognitionFields); err != nil {
+		if err := rows.Scan(&fact.Device, &fact.Key, &fact.Event, &fact.EvidenceEvent, &fact.Revision, &fact.FirstObserved, &fact.Observed, &fact.ValidUntil, &fact.Withdrawn, &fact.SemanticHash, &fact.MAC, &recognitionFields,
+			&fact.IP, &fact.Sensor, &fact.Site, &fact.Domain, &fact.VLAN, &fact.VRF, &fact.Interface, &fact.Protocol, &fact.AddressBinding); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(recognitionFields, &fact.RecognitionFields); err != nil {
@@ -588,7 +603,7 @@ func markStreamRecognitionDirty(ctx context.Context, tx *sql.Tx, macs map[string
 	_, err := tx.ExecContext(ctx, `SELECT mark_endpoint_recognition_dirty(e.endpoint_id)
  FROM endpoint_entities e
  JOIN (SELECT DISTINCT lower(mac) AS mac FROM unnest($1::text[]) AS m(mac)) changed
-   ON lower(e.primary_mac)=changed.mac
+   ON e.primary_mac=changed.mac
  WHERE e.entity_role='endpoint'`, values)
 	return err
 }

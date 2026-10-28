@@ -96,7 +96,7 @@ func (l *Library) IdentifyEvidenceMeasured(mac string, evidence []EvidenceSignal
 			continue
 		}
 		valid = true
-		if item.Association != "direct" && item.Association != "mac" && item.Association != "unique_lease" {
+		if item.Association != "direct" && item.Association != "mac" && item.Association != "unique_lease" && item.Association != "unique_stream_binding" {
 			ambiguous = true
 			continue
 		}

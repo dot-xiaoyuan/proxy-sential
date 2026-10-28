@@ -112,7 +112,7 @@ rollback() {
   ln -sfn "$current_target" "$root/previous.next"
   mv -Tf "$root/previous.next" "$root/previous"
   systemctl daemon-reload
-  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery; do
+  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery; do
     if systemctl is-active --quiet "$unit.service"; then systemctl restart "$unit.service"; fi
   done
   wait_ready || { echo "rollback health check failed" >&2; exit 1; }

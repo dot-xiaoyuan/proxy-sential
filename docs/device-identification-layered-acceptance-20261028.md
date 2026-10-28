@@ -73,3 +73,24 @@ Apple M1，对 HEAD `aa7a1e05` 与候选实现使用相同的 12 类新鲜归属
 新增 `ingest stream-cancel`，对已停止且持有本地/数据库来源租约的旧代次先预览再原子审计关闭。固定游标、片段状态、未读范围、记录数、字节数和 SHA256 形成紧凑清单，状态为取消未处理；已归档的旧片段、确认日志和原始来源保留。文件来源使用同 inode 硬链接保护原文，无额外原文副本；跨轮转缺代、锚点不唯一、来源被替换/改写、原始归档未确认或超出扫描边界时拒绝取消。当前文件追加不会移动已保存的截止点。新鲜续接仍走原有 prepare/shared-activate 审计流程，接口统计保留已关闭代次的历史缺口。
 
 本地相关四包测试、Go 构建、vet 和 streamlog race 测试通过；回放包含响应丢失、中断恢复、旧格式兼容、禁止盲重发、禁止提前释放、压缩轮转、原文硬链接保护和范围改写拒绝。r7 发布、固定截止审计及新输入观察结果在执行后补充，不宣称 5 秒或容量已达标。
+
+## r8 现场续接与 r9 归属修复
+
+2026-10-28 14:04 CST 只读预检：current 为 `2026.10.28-layered-identification-r8`，previous 为 r7；控制面、发现和三路新鲜流服务 active，18080 readyz 返回 ready，但 discovery_pipeline 为 delayed。可用空间约 307 GiB。PostgreSQL 198、ClickHouse 56 迁移已应用，本轮不新增迁移。
+
+已按用户明确选择审计取消旧任务，不能再次取消或重建本轮新鲜起点：
+
+- DHCP 使用 `dhcp-layered-r8-20261028`；原文起点 offset 4789130，旧段到起点之间 27498 条、8932145 字节已审计取消。prepare SHA256 为 `3cea25784baea98e99d2659a2f3a4410cbb11b0bccf7ff23ece163b6faa24107`。
+- 被动发现使用 `discovery-layered-r7-20261028`；旧 66 段、26342 条、29129402 字节已审计取消，固定截止 `2026-10-28T05:39:22Z`。prepare SHA256 为 `59f607a88f8d57c96bd34556fc810dcf169a8832357cfeee10303cc2e4a64bd4`。SSDP describe 关闭，无新增主动探测。
+- packet、handshake 沿用 `packet-layered-r7-20261028` 和 `handshake-layered-r7-20261028`；审计及原文保留于现场 `data/stream-audit/layered-r7-20261028`。
+- 当前指纹包为 `offline-2026.10.28-layered-v7-r2`，加载 checksum 为 `2397b36b2f74e77eff907f77615acfde0814893731d65099c1abedc534585670`；应用更新不重新导入该包。
+
+现场定位确认，receipt INSERT 同步执行旧租约归属查询，冷读接近 2.6 秒，叠加写事实导致 3 秒事务超时并整批重试。旧 device_address_leases 最新数据仍为 10 月 25 日，而新 DHCP 已写紧凑 stream_discovery_facts。r9 将诊断归属移至独立有界观察器，实时事实事务只写紧凑诊断输入；新流识别与观察器统一读取有效紧凑绑定，不再依赖旧租约。
+
+IP 归属严格匹配 sensor、site、domain、VLAN、VRF 和 interface，且须覆盖观测时刻与当前时刻；晚于服务观测的续租不能反推连续归属。最多读取 65 条绑定，饱和或多 MAC 时拒绝归属；同 MAC 多来源不重复计权。协议级 DHCP 客户端 MAC 可直接归属，镜像网关 MAC 不能替代产品设备。关联变化仅唤醒受影响范围的旧、新端点，撤销和过期保留移除证据能力，不读原文、不扫描全量历史。识别每端点最多读取 40 个直接事实、16 个绑定候选及各范围 40 个 IP 事实，最终最多 40 项字段；限额不足不能当作完整覆盖。
+
+DHCP 的现场 domain 为 `bond0-router-minimal-overnight`、VLAN 多为 992/996；DNS-SD 的 domain 为 `bond0-passive-pilot`、VLAN 大多空值或 4。二者没有相同物理范围的证据，不放宽为只按 IP 归属，因此这部分继续显示真实归属缺口。
+
+r9 发布前验证：`go test ./internal/... ./cmd/...`、`go build ./...`、`go vet ./cmd/... ./internal/...` 和 diff 检查通过。全仓 vet 会被无关未跟踪 artifacts 下的旧诊断测试阻挡，未删除这些文件。共享生产归属 SQL 使用 CTE 在 184 READ ONLY 事务回放 33 个场景、0 失败，未创建表或写入模拟流量；候选 hints、observer、dirty、receipt SQL 的 READ ONLY PREPARE 通过。单个 IP 归属分支样本使用现有 IP partial 索引，执行 1.196 ms；hints 样本执行 6.283 ms、planning 14.413 ms。这些是局部 SQL 验证，不能代替端到端、CPU/WAL 或容量验收。
+
+发布脚本将三路 layered 新鲜流单元纳入 CLI 预检、重启、进程发布目录核对与失败回退；不会更换其 journal、epoch 或 accepted_at。部署工具相关 Python 测试及 shell 语法检查通过。本轮无前端源码变更，前端仍需随发布构建并完成现场页面验收。r9 实际部署与自然新输入结果待执行后补充。

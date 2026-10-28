@@ -169,6 +169,8 @@ type DiscoveryRecognitionHint struct {
 	Origin        string
 	ObservationID string
 	ObservedAt    time.Time
+	ValidUntil    time.Time
+	Association   string
 }
 
 func BuildIdentityState(events []normalized.Event) IdentityState {

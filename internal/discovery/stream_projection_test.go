@@ -104,6 +104,29 @@ func TestRecognitionWakeOnlyTracksFactsWithProductFields(t *testing.T) {
 	}
 }
 
+func TestRecognitionWakeIncludesScopedIPProductsAndBindingChanges(t *testing.T) {
+	dirty := newStreamRecognitionDirty()
+	product := streamDiscoveryFact{IP: "10.2.3.4", Sensor: "s", Site: "site", Domain: "access", VLAN: "992", Interface: "bond0", RecognitionFields: map[string]string{"dns_sd_model": "Mac14,15"}}
+	dirty.add(nil, product)
+	if len(dirty.ips) != 1 || len(dirty.macs) != 0 {
+		t.Fatalf("IP-only product was lost: %+v", dirty)
+	}
+	old := product
+	old.Protocol, old.MAC, old.AddressBinding, old.RecognitionFields = "dhcp", "02:00:00:00:00:01", true, nil
+	next := old
+	next.MAC, next.Withdrawn, next.AddressBinding = "02:00:00:00:00:02", true, false
+	dirty.add(&old, next)
+	if len(dirty.ips) != 1 || !dirty.macs[old.MAC] || !dirty.macs[next.MAC] {
+		t.Fatalf("reassignment/withdrawal lost an affected endpoint: %+v", dirty)
+	}
+	other := product
+	other.VLAN = "993"
+	dirty.add(nil, other)
+	if len(dirty.ips) != 2 {
+		t.Fatalf("VLAN scopes collapsed: %+v", dirty)
+	}
+}
+
 func TestPrepareStreamDiscoveryRejectsSameKeyDifferentContent(t *testing.T) {
 	one := streamDiscoveryEvent("same", "2026-10-24T10:00:00Z", 600)
 	two := streamDiscoveryEvent("same", "2026-10-24T10:00:00Z", 600)

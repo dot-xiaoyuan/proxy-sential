@@ -59,3 +59,19 @@ func TestRecognitionAnnotationsStayCompactWithoutCopyingProductValues(t *testing
 		t.Fatalf("oversized association metadata must be explicit, without truncating an identity: status=%s bytes=%d", status, len(raw))
 	}
 }
+
+func TestRecognitionInputPreservesBindingScopeWithoutHotOwnershipReads(t *testing.T) {
+	item := streamPreparedDiscovery{Protocol: "dhcp", Parsed: true, HasFact: true}
+	item.Fact = streamDiscoveryFact{Protocol: "dhcp", MAC: "02:00:00:00:00:01", IP: "10.0.0.2", Sensor: "s", Site: "campus", Domain: "access", VLAN: "992", VRF: "student", Interface: "bond0", AddressBinding: true, RecognitionFields: map[string]string{"hostname": "phone"}}
+	input, status := recognitionInput(item)
+	if status != "unattributed" || input.Domain != "access" || input.VLAN != "992" || input.VRF != "student" || input.Interface != "bond0" || !input.AddressBinding {
+		t.Fatalf("binding scope lost: %+v %s", input, status)
+	}
+	// Ownership observation must not stall or roll back the authoritative fact
+	// transaction on a cold legacy lease/index page.
+	for _, table := range []string{"device_address_leases", "endpoint_entities", "endpoint_recognition_jobs", "stream_discovery_facts"} {
+		if strings.Contains(insertRecognitionReceiptsSQL, table) {
+			t.Fatalf("receipt insert performs synchronous ownership lookup: %s", table)
+		}
+	}
+}

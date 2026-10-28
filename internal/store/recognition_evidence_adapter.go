@@ -2,7 +2,6 @@ package store
 
 import (
 	"strings"
-	"time"
 
 	"proxy-sentinel/internal/fingerprint"
 )
@@ -56,10 +55,14 @@ func passiveRecognitionSignals(hints []DiscoveryRecognitionHint) []fingerprint.E
 		if hint.Origin != "" {
 			protocol = hint.Origin
 		}
+		association := hint.Association
+		if association == "" {
+			association = "unique_lease"
+		}
 		out = append(out, fingerprint.EvidenceSignal{
 			Protocol: protocol, Field: field, Value: hint.Value, Direction: direction,
-			Association: "unique_lease", SourceFamily: protocol, EventID: hint.ObservationID,
-			ObservedAt: hint.ObservedAt, ValidUntil: time.Time{},
+			Association: association, SourceFamily: protocol, EventID: hint.ObservationID,
+			ObservedAt: hint.ObservedAt, ValidUntil: hint.ValidUntil,
 		})
 	}
 	return out
