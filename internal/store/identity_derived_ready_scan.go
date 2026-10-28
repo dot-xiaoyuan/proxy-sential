@@ -11,7 +11,7 @@ import (
 // incomplete fragment keys. It does not process events or move source offsets.
 type identityDerivedReadyPage struct {
 	Scanned, Eligible int
-	Done              bool
+	Done, Deferred    bool
 }
 
 type identityDerivedReadyKey struct {
@@ -36,10 +36,15 @@ func (s *PostgresStore) scanIdentityDerivedReadyPage(ctx context.Context, limit 
 	defer tx.Rollback()
 	var batch string
 	var ordinal int
-	if err = tx.QueryRowContext(ctx, `SELECT cursor_batch,cursor_ordinal,done FROM identity_derived_ready_scan WHERE id=true FOR UPDATE`).Scan(&batch, &ordinal, &page.Done); err != nil {
+	var due bool
+	if err = tx.QueryRowContext(ctx, `SELECT cursor_batch,cursor_ordinal,done,next_scan_at<=clock_timestamp() FROM identity_derived_ready_scan WHERE id=true FOR UPDATE`).Scan(&batch, &ordinal, &page.Done, &due); err != nil {
 		return page, err
 	}
 	if page.Done {
+		return page, tx.Commit()
+	}
+	if !due {
+		page.Deferred = true
 		return page, tx.Commit()
 	}
 	rows, err := tx.QueryContext(ctx, `WITH candidates AS MATERIALIZED (
@@ -92,7 +97,7 @@ ORDER BY c.batch_id,c.first_ordinal`, batch, ordinal, limit)
 		_, err = tx.ExecContext(ctx, `UPDATE identity_derived_ready_scan SET done=true WHERE id=true`)
 		page.Done = true
 	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE identity_derived_ready_scan SET cursor_batch=$1,cursor_ordinal=$2 WHERE id=true`, batch, ordinal)
+		_, err = tx.ExecContext(ctx, `UPDATE identity_derived_ready_scan SET cursor_batch=$1,cursor_ordinal=$2,next_scan_at=clock_timestamp()+interval '1 second' WHERE id=true`, batch, ordinal)
 	}
 	if err != nil {
 		return page, err

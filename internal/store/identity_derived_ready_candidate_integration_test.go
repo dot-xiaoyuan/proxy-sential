@@ -198,6 +198,31 @@ func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Competing scanner instances share one transactional page clock. Even
+	// though both start at once, only one may advance a page in this interval.
+	scanResults := make(chan identityDerivedReadyPage, 2)
+	scanErrors := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			page, err := (&PostgresStore{db: db}).scanIdentityDerivedReadyPage(ctx, 1)
+			scanResults <- page
+			scanErrors <- err
+		}()
+	}
+	var scanned, deferred int
+	for i := 0; i < 2; i++ {
+		page := <-scanResults
+		if err := <-scanErrors; err != nil {
+			t.Fatal(err)
+		}
+		scanned += page.Scanned
+		if page.Deferred {
+			deferred++
+		}
+	}
+	if scanned != 1 || deferred != 1 {
+		t.Fatalf("shared scanner budget bypassed: scanned=%d deferred=%d", scanned, deferred)
+	}
 
 	// A legacy worker owns fragment zero. SKIP LOCKED must allow fragment one
 	// through without stealing or changing the first fragment.

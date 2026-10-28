@@ -38,7 +38,7 @@ func TestIdentityDerivedReadyScanRegistersOnlyEligibleKeysAndAdvancesAtomically(
 	defer db.Close()
 	at := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT cursor_batch,cursor_ordinal,done FROM identity_derived_ready_scan`).WillReturnRows(sqlmock.NewRows([]string{"cursor_batch", "cursor_ordinal", "done"}).AddRow("", -1, false))
+	mock.ExpectQuery(`SELECT cursor_batch,cursor_ordinal,done,`).WillReturnRows(sqlmock.NewRows([]string{"cursor_batch", "cursor_ordinal", "done", "due"}).AddRow("", -1, false, true))
 	mock.ExpectQuery(`WITH candidates AS MATERIALIZED`).WithArgs("", -1, 2).WillReturnRows(sqlmock.NewRows([]string{"batch_id", "first_ordinal", "sensor_id", "accepted_at", "ready"}).AddRow("a", 0, "sensor-a", at, true).AddRow("b", 50, "sensor-b", at, false))
 	mock.ExpectExec(`INSERT INTO identity_derived_ready`).WithArgs(readyKeysMatch{{BatchID: "a", First: 0, SensorID: "sensor-a", Accepted: at}}).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE identity_derived_ready_scan SET cursor_batch=\$1,cursor_ordinal=\$2`).WithArgs("b", 50).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -60,7 +60,7 @@ func TestIdentityDerivedReadyScanDoesNotAdvanceIfRegistrationFails(t *testing.T)
 	defer db.Close()
 	failure := errors.New("write failed")
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT cursor_batch,cursor_ordinal,done FROM identity_derived_ready_scan`).WillReturnRows(sqlmock.NewRows([]string{"cursor_batch", "cursor_ordinal", "done"}).AddRow("a", 0, false))
+	mock.ExpectQuery(`SELECT cursor_batch,cursor_ordinal,done,`).WillReturnRows(sqlmock.NewRows([]string{"cursor_batch", "cursor_ordinal", "done", "due"}).AddRow("a", 0, false, true))
 	mock.ExpectQuery(`WITH candidates AS MATERIALIZED`).WithArgs("a", 0, 2).WillReturnRows(sqlmock.NewRows([]string{"batch_id", "first_ordinal", "sensor_id", "accepted_at", "ready"}).AddRow("b", 0, "sensor", time.Now(), true))
 	mock.ExpectExec(`INSERT INTO identity_derived_ready`).WithArgs(sqlmock.AnyArg()).WillReturnError(failure)
 	mock.ExpectRollback()
@@ -79,13 +79,31 @@ func TestIdentityDerivedReadyScanFinishesWithoutRevisitingCompletedWork(t *testi
 	}
 	defer db.Close()
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT cursor_batch,cursor_ordinal,done FROM identity_derived_ready_scan`).WillReturnRows(sqlmock.NewRows([]string{"cursor_batch", "cursor_ordinal", "done"}).AddRow("z", 50, false))
+	mock.ExpectQuery(`SELECT cursor_batch,cursor_ordinal,done,`).WillReturnRows(sqlmock.NewRows([]string{"cursor_batch", "cursor_ordinal", "done", "due"}).AddRow("z", 50, false, true))
 	mock.ExpectQuery(`WITH candidates AS MATERIALIZED`).WithArgs("z", 50, 2).WillReturnRows(sqlmock.NewRows([]string{"batch_id", "first_ordinal", "sensor_id", "accepted_at", "ready"}))
 	mock.ExpectExec(`UPDATE identity_derived_ready_scan SET done=true`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	page, err := (&PostgresStore{db: db}).scanIdentityDerivedReadyPage(context.Background(), 2)
 	if err != nil || page.Scanned != 0 || !page.Done {
 		t.Fatalf("page %+v: %v", page, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdentityDerivedReadyScanHonorsSharedRateLimit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT cursor_batch,cursor_ordinal,done,`).WillReturnRows(sqlmock.NewRows([]string{"cursor_batch", "cursor_ordinal", "done", "due"}).AddRow("a", 0, false, false))
+	mock.ExpectCommit()
+	page, err := (&PostgresStore{db: db}).scanIdentityDerivedReadyPage(context.Background(), 256)
+	if err != nil || !page.Deferred || page.Scanned != 0 {
+		t.Fatalf("shared rate limit bypassed: %+v %v", page, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

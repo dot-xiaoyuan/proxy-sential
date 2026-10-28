@@ -16,6 +16,7 @@ CREATE TABLE identity_derived_ready_scan (
  id boolean PRIMARY KEY DEFAULT true CHECK(id),
  cursor_batch text NOT NULL DEFAULT '',
  cursor_ordinal integer NOT NULL DEFAULT -1,
+ next_scan_at timestamptz NOT NULL DEFAULT '-infinity',
  done boolean NOT NULL DEFAULT false
 );
 INSERT INTO identity_derived_ready_scan(id) VALUES(true);

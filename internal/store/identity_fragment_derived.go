@@ -15,6 +15,10 @@ import (
 // view. This independent lane updates the endpoint/session compatibility rows
 // from the same bounded durable fragments after the primary facts are applied.
 func (s *DBStore) runIdentityFragmentDerived(ctx context.Context) {
+	if identityDerivedReadyEnabled() {
+		s.runIdentityFragmentDerivedReady(ctx)
+		return
+	}
 	for ctx.Err() == nil {
 		if s.deferIdentityDerivedWorkWithQuota(ctx) {
 			continue
@@ -40,7 +44,11 @@ func (s *DBStore) runIdentityFragmentDerived(ctx context.Context) {
 }
 
 func (s *DBStore) projectIdentityFragmentDerived(ctx context.Context) (err error) {
-	fragment, err := s.pg.claimIdentityDerivedFragment(ctx)
+	return s.projectIdentityFragmentDerivedWithClaim(ctx, s.pg.claimIdentityDerivedFragment)
+}
+
+func (s *DBStore) projectIdentityFragmentDerivedWithClaim(ctx context.Context, claim func(context.Context) (identityExportFragment, error)) (err error) {
+	fragment, err := claim(ctx)
 	if err != nil {
 		return err
 	}
