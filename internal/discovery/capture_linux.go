@@ -24,7 +24,7 @@ func Capture(ctx context.Context, iface, spool string, source Source, allow []ne
 	return CaptureConfigured(ctx, iface, spool, source, allow, DefaultCollectionConfig())
 }
 func CaptureConfigured(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig) (result error) {
-	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, func(b []byte) error {
+	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, 100*time.Millisecond, func(b []byte) error {
 		h := sha256.Sum256(b)
 		path := filepath.Join(spool, hex.EncodeToString(h[:16])+".json")
 		if e := writeDurableSpool(path+".tmp", b); e != nil {
@@ -46,19 +46,23 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 	if journal == nil || scope == nil {
 		return fmt.Errorf("passive stream capture needs durable journal and scope")
 	}
-	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, func(b []byte) error {
+	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, passiveCaptureCoalesceWindow, func(b []byte) error {
 		var events []normalized.Event
 		if err := json.Unmarshal(b, &events); err != nil {
 			return err
 		}
 		id, err := AppendPassiveStreamBatch(ctx, journal, source, scope, events)
-		if err != nil { return err }
-		if onSegment != nil { return onSegment(id) }
+		if err != nil {
+			return err
+		}
+		if onSegment != nil {
+			return onSegment(id)
+		}
 		return nil
 	})
 }
 
-func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes int, persist func([]byte) error) (result error) {
+func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes int, coalesceWindow time.Duration, persist func([]byte) error) (result error) {
 	if len(allow) == 0 {
 		return fmt.Errorf("passive capture requires allowed CIDRs")
 	}
@@ -95,21 +99,19 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	decoder := &FrameDecoder{}
 	stats := NewCaptureStats()
 	stats.Config = config
-	pending := []normalized.Event{}
-	positions := map[string]int{}
+	pending := newCaptureCoalescer()
 	lastFlush, lastStats := time.Now(), time.Now()
 	flush := func() error {
-		if len(pending) == 0 {
+		if pending.len() == 0 {
 			return nil
 		}
-		b, e := json.Marshal(pending)
+		b, e := json.Marshal(pending.events)
 		if e != nil {
 			return e
 		}
 		select {
 		case queue <- b:
-			pending = nil
-			positions = map[string]int{}
+			pending.drain()
 			lastFlush = time.Now()
 			return nil
 		default:
@@ -126,8 +128,10 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 		}
 		n, _, err := syscall.Recvfrom(fd, buffer, 0)
 		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK || err == syscall.EINTR {
-			if e = flush(); e != nil {
-				return e
+			if time.Since(lastFlush) >= coalesceWindow {
+				if e = flush(); e != nil {
+					return e
+				}
 			}
 			if time.Since(lastStats) >= time.Second {
 				stats.FragmentDrops = decoder.FragmentDrops
@@ -149,27 +153,14 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 			if !config.Enabled(event.SourceEventType) {
 				continue
 			}
-			payload := map[string]any{}
-			for k, v := range event.Payload {
-				if k != "ttl" {
-					payload[k] = v
-				}
-			}
-			key := contentHash([]any{event.SourceEventType, event.Subject, payload})
-			if at, ok := positions[key]; ok {
-				pending[at] = event
-				stats.Coalesced++
-			} else {
-				positions[key] = len(pending)
-				pending = append(pending, event)
-			}
-			if len(pending) >= 250 {
+			stats.recordEligible(event.SourceEventType, pending.add(event))
+			if pending.len() >= 250 {
 				if e = flush(); e != nil {
 					return e
 				}
 			}
 		}
-		if time.Since(lastFlush) >= 100*time.Millisecond {
+		if time.Since(lastFlush) >= coalesceWindow {
 			if e = flush(); e != nil {
 				return e
 			}

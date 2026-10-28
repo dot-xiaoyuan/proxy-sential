@@ -10,9 +10,11 @@ import (
 )
 
 type ProtocolCaptureStats struct {
-	Received uint64 `json:"received"`
-	Parsed   uint64 `json:"parsed"`
-	Rejected uint64 `json:"rejected"`
+	Received  uint64 `json:"received"`
+	Parsed    uint64 `json:"parsed"`
+	Rejected  uint64 `json:"rejected"`
+	Eligible  uint64 `json:"eligible"`
+	Coalesced uint64 `json:"coalesced"`
 }
 type CaptureStats struct {
 	Config        CollectionConfig                 `json:"config"`
@@ -20,6 +22,7 @@ type CaptureStats struct {
 	UpdatedAt     time.Time                        `json:"updated_at"`
 	Protocols     map[string]*ProtocolCaptureStats `json:"protocols"`
 	FragmentDrops uint64                           `json:"fragment_drops"`
+	Eligible      uint64                           `json:"eligible"`
 	Coalesced     uint64                           `json:"coalesced"`
 }
 
@@ -43,6 +46,19 @@ func (s *CaptureStats) record(protocol string, n int) {
 		p.Parsed += uint64(n)
 	} else {
 		p.Rejected++
+	}
+}
+func (s *CaptureStats) recordEligible(protocol string, coalesced bool) {
+	p := s.Protocols[protocol]
+	if p == nil {
+		p = &ProtocolCaptureStats{}
+		s.Protocols[protocol] = p
+	}
+	s.Eligible++
+	p.Eligible++
+	if coalesced {
+		s.Coalesced++
+		p.Coalesced++
 	}
 }
 func (s *CaptureStats) persist(dir string) error {

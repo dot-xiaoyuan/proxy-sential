@@ -147,6 +147,14 @@ func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscover
 			RecognitionFields: streamRecognitionFields(o),
 			Domain:            o.Domain, VLAN: o.VLAN, VRF: o.VRF, Interface: o.Interface,
 		}
+		if segment.Source == "passive-discovery" {
+			if first, ok := event.RawRef["coalesced_first_observed_at"].(string); ok {
+				if firstAt, parseErr := time.Parse(time.RFC3339Nano, first); parseErr == nil &&
+					!firstAt.After(o.ObservedAt) && o.ObservedAt.Sub(firstAt) <= passiveCaptureCoalesceWindow {
+					item.Fact.FirstObserved = firstAt
+				}
+			}
+		}
 		item.HasFact = true
 		prepared = append(prepared, item)
 	}
