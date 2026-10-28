@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -140,5 +141,73 @@ func TestCaptureCoalescerDoesNotBridgeTTLExpiration(t *testing.T) {
 	got := c.drain()
 	if len(got) != 2 || got[0].EventID != "first" || got[1].EventID != "last" {
 		t.Fatalf("expiry boundary lost: %+v", got)
+	}
+}
+
+func TestCaptureCoalescerPreservesEqualTimestampConflictOrdering(t *testing.T) {
+	first := streamDiscoveryEvent("z", "2026-10-28T10:00:00Z", 120)
+	last := streamDiscoveryEvent("a", "2026-10-28T10:00:00Z", 180)
+	c := newCaptureCoalescer()
+	c.add(first)
+	if c.add(last) {
+		t.Fatal("equal-time events with different validity were combined")
+	}
+	segment := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", AcceptedAt: time.Date(2026, 10, 28, 10, 0, 1, 0, time.UTC), Events: c.drain()}
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("lost equal-time input: %d %v", len(items), err)
+	}
+	decision := mergeStreamDiscoveryFact(&items[0].Fact, items[1].Fact)
+	if decision.Result != "late_history" || decision.WriteFact {
+		t.Fatalf("event-key tie-break lost: %+v", decision)
+	}
+	if items[0].Fact.ValidUntil.Sub(items[0].Fact.Observed) != 120*time.Second {
+		t.Fatal("winning validity changed")
+	}
+}
+
+func TestEqualTimestampTieSurvivesPassiveSourceIdentityAssignment(t *testing.T) {
+	j, err := streamlog.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 28, 10, 0, 0, 0, time.UTC)
+	source := Source{ID: "passive-sensor-a", Node: "sensor-a", Site: "site-a", Domain: "domain-a", Address: "bond0"}
+	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "boot-a", CampusID: "site-a", AccessDomain: "domain-a", InterfaceName: "bond0", ValidFrom: at.Add(-time.Hour), ValidUntil: at.Add(time.Hour)}
+	path := PassiveStreamSourcePath(source)
+	if err = j.StartFreshSource(streamlog.SourceCursor{Epoch: "fresh-4", Source: "passive-discovery", Path: path, FileID: "boot-a", ParserVersion: PassiveStreamParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	first := streamDiscoveryEvent("first", at.Format(time.RFC3339Nano), 120)
+	last := streamDiscoveryEvent("last", at.Format(time.RFC3339Nano), 180)
+	for _, event := range []*normalized.Event{&first, &last} {
+		event.Observer["capture_scope_id"] = ""
+		event.Observer["interface"] = "bond0"
+		event.Subject["site"] = "site-a"
+		event.Subject["domain"] = "domain-a"
+	}
+	c := newCaptureCoalescer()
+	c.add(first)
+	if c.add(last) {
+		t.Fatal("same-time inputs were collapsed")
+	}
+	id, err := AppendPassiveStreamBatch(context.Background(), j, source, scope, c.drain())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || len(state.Segment.Events) != 2 {
+		t.Fatalf("source receipt lost input: %v %v", len(state.Segment.Events), err)
+	}
+	if state.Segment.Events[0].EventID <= state.Segment.Events[1].EventID {
+		t.Fatal("fixture must exercise descending generated event-key tie")
+	}
+	items, err := prepareStreamDiscovery(state.Segment)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("prepare source events: %v", err)
+	}
+	decision := mergeStreamDiscoveryFact(&items[0].Fact, items[1].Fact)
+	if decision.Result != "late_history" || decision.WriteFact || items[0].Fact.ValidUntil.Sub(items[0].Fact.Observed) != 120*time.Second {
+		t.Fatalf("source tie changed winning validity: %+v", decision)
 	}
 }

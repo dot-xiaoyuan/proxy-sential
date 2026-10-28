@@ -70,7 +70,9 @@ func (c *captureCoalescer) add(event normalized.Event) bool {
 			previousAt, previousErr := time.Parse(time.RFC3339Nano, previous.Timestamp)
 			currentAt, currentErr := time.Parse(time.RFC3339Nano, event.Timestamp)
 			previousTTL := number(previous.Payload, "ttl")
-			if firstErr == nil && previousErr == nil && currentErr == nil && !currentAt.Before(previousAt) &&
+			// Equal timestamps are resolved by the final event key downstream;
+			// dropping either event could change which TTL wins that tie.
+			if firstErr == nil && previousErr == nil && currentErr == nil && currentAt.After(previousAt) &&
 				previousTTL > 0 && previousTTL <= discoveryMaxTTLSeconds && currentAt.Before(previousAt.Add(time.Duration(previousTTL)*time.Second)) &&
 				currentAt.Sub(firstAt) <= passiveCaptureCoalesceWindow {
 				event.RawRef = cloneStreamFields(event.RawRef)
