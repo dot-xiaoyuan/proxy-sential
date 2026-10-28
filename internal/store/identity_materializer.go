@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -489,7 +490,7 @@ func (s *DBStore) runIdentitySnapshotMaterializer(ctx context.Context) {
 
 func (s *DBStore) IdentityMaterializerStatus(ctx context.Context) (map[string]any, error) {
 	var raw []byte
-	err := s.pg.db.QueryRowContext(ctx, `SELECT jsonb_build_object('health',COALESCE((SELECT state FROM read_model_runtime_state WHERE name='identity-materializer'),'{}'::jsonb),'cursors',COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM identity_materializer_cursors c WHERE sensor_id=$1),'[]'::jsonb),'pending_snapshots',(SELECT count(*) FROM identity_snapshot_projection_jobs))`, s.pg.sensorID).Scan(&raw)
+	err := s.pg.db.QueryRowContext(ctx, `SELECT jsonb_build_object('health',COALESCE((SELECT state FROM read_model_runtime_state WHERE name='identity-materializer'),'{}'::jsonb),'cursors',COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM identity_materializer_cursors c WHERE sensor_id=$1),'[]'::jsonb),'pending_snapshots',(SELECT count(*) FROM identity_snapshot_projection_jobs),'derived_ready',(SELECT state || jsonb_build_object('updated_at',updated_at,'stale',COALESCE((state->>'sampled_at')::timestamptz,updated_at)<now()-interval '90 seconds') FROM read_model_runtime_state WHERE name='identity-derived-ready:'||$1))`, s.pg.sensorID).Scan(&raw)
 	if err != nil {
 		return nil, err
 	}
@@ -521,6 +522,14 @@ func (s *DBStore) deferIdentityDerivedWorkInternal(ctx context.Context, quota bo
 	// inbox backlog pause the router-pilot materializer and export as well, silently.
 	err := s.pg.db.QueryRowContext(check, IdentityScopeStatusSQL(`SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds'))`), s.pg.sensorID).Scan(&backlog)
 	cancel()
+	if err != nil && ctx.Err() == nil && identityDerivedGateReportDue(&s.identityDerivedGateErrorAt, time.Now()) {
+		var pgError interface{ SQLState() string }
+		state := ""
+		if errors.As(err, &pgError) {
+			state = pgError.SQLState()
+		}
+		log.Printf("identity derived priority check failed; derived work deferred: error_type=%T sqlstate=%s", err, state)
+	}
 	if err == nil && !backlog {
 		s.identityDerivedQuotaAt.Store(0)
 		return false

@@ -32,11 +32,12 @@ type DBStore struct {
 	// identityDerivedQuotaAt is shared by the low-priority identity workers. It
 	// gives derived/export work a bounded time slot while current inbox work is
 	// behind, without allowing every worker to bypass the realtime gate.
-	identityDerivedQuotaAt  atomic.Int64
-	skipCaptureVerification bool
-	minDeviceBound          int
-	domainCancel            context.CancelFunc
-	domainDone              chan struct{}
+	identityDerivedQuotaAt     atomic.Int64
+	identityDerivedGateErrorAt atomic.Int64
+	skipCaptureVerification    bool
+	minDeviceBound             int
+	domainCancel               context.CancelFunc
+	domainDone                 chan struct{}
 }
 
 func (s *DBStore) SetSharedBehaviorOptions(skipCapture bool, minBound int) {

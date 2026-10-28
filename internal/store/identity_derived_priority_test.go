@@ -43,3 +43,29 @@ func TestIdentityDerivedQuotaIsSharedAcrossWorkers(t *testing.T) {
 		t.Fatalf("concurrent workers admitted %d slots, want one", got)
 	}
 }
+
+func TestIdentityDerivedGateErrorReportIsRateLimitedAcrossWorkers(t *testing.T) {
+	var last atomic.Int64
+	started := time.Unix(100, 0)
+	var reports atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if identityDerivedGateReportDue(&last, started) {
+				reports.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := reports.Load(); got != 1 {
+		t.Fatalf("concurrent workers logged %d errors, want one", got)
+	}
+	if identityDerivedGateReportDue(&last, started.Add(29*time.Second)) || !identityDerivedGateReportDue(&last, started.Add(30*time.Second)) {
+		t.Fatal("error reports must remain visible without flooding the log")
+	}
+	if !identityDerivedGateReportDue(&last, started.Add(-time.Second)) {
+		t.Fatal("clock adjustment must not silence subsequent error reports")
+	}
+}
