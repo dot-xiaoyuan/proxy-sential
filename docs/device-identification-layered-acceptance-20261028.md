@@ -93,4 +93,16 @@ DHCP 的现场 domain 为 `bond0-router-minimal-overnight`、VLAN 多为 992/996
 
 r9 发布前验证：`go test ./internal/... ./cmd/...`、`go build ./...`、`go vet ./cmd/... ./internal/...` 和 diff 检查通过。全仓 vet 会被无关未跟踪 artifacts 下的旧诊断测试阻挡，未删除这些文件。共享生产归属 SQL 使用 CTE 在 184 READ ONLY 事务回放 33 个场景、0 失败，未创建表或写入模拟流量；候选 hints、observer、dirty、receipt SQL 的 READ ONLY PREPARE 通过。单个 IP 归属分支样本使用现有 IP partial 索引，执行 1.196 ms；hints 样本执行 6.283 ms、planning 14.413 ms。这些是局部 SQL 验证，不能代替端到端、CPU/WAL 或容量验收。
 
-发布脚本将三路 layered 新鲜流单元纳入 CLI 预检、重启、进程发布目录核对与失败回退；不会更换其 journal、epoch 或 accepted_at。部署工具相关 Python 测试及 shell 语法检查通过。本轮无前端源码变更，前端仍需随发布构建并完成现场页面验收。r9 实际部署与自然新输入结果待执行后补充。
+发布脚本将三路 layered 新鲜流单元纳入 CLI 预检、重启、进程发布目录核对与失败回退；不会更换其 journal、epoch 或 accepted_at。部署工具相关 Python 测试及 shell 语法检查通过。本轮无前端源码变更，前端仍需随发布构建并完成现场页面验收。
+
+## r9 部署与 r10 定位修复
+
+2026-10-28 14:09 CST 已切换到 `2026.10.28-layered-identification-r9`，previous 为 r8；18 个服务进程均来自 r9。源码为 `247423172231db3d3d03267fc7609342512b1f12`，发布归档 SHA256 为 `7bb86f8f176c918d25dc188a0e4dad900503f670c2387446baa191107460ec67`。迁移账本与包内 PG 198 / CH 56 项匹配，没有新增迁移。18080 ready，discovery_pipeline 仍 delayed，不能视为业务验收通过。
+
+身份桥接 18082 在重启后首次快照发布前短暂返回 503；14:16 CST 已自行恢复 ready，快照失败数为 0。目录读取仍报告 `remote_http_409`，不将快照恢复解释为目录错误已解决。
+
+r9 的后台 receipt 观察器每 100 条仍因 5 秒超时回滚。READ ONLY EXPLAIN 确认，PostgreSQL 将归属 CASE 内联到 endpoint JOIN，导致每条 receipt 反复顺序扫描约 13 万个 endpoint。r10 在单条 receipt 内物化一次解析所得 MAC，复用现有 MAC 索引，仍限定唯一端点且最多读取 2 个候选，不新增表、索引或缓存。184 上同一生产查询的 100 条样本执行 45.108 ms、规划 12.148 ms；唯一端点、重复 MAC、错误角色、缺任务、错 MAC、已有目标、大写客户端 MAC、无绑定服务等 8 个 CTE 回放通过。该时间仅代表观察 SQL，不是端到端可见耗时。
+
+DNS-SD 自 13:50 CST 停止新输入，r9 重启后恢复队列未能开始抓包。核对 66 段状态并覆盖 append-only acklog 后，最早一段 archive 为 attempted、projection 为 acked、search 为 pending；后续 64 段只完成 projection，最后一段尚未投影。13:46:11 日志显示最早段本地 begin_attempt 耗时 2.292 秒，随后总计 3 秒预算过期，ClickHouse transport 报 deadline exceeded。14:23 CST 只读核对其 888 条 body 全部不存在、对应原始去重令牌没有接收记录、该表无异步排队请求，同时间段其他写入日志正常。后续恢复必须由持有来源租约的现有 `stream-repair` 再次验证这些条件并复用原始令牌，不手工改 ack 或盲目重放。
+
+r10 将被动发现与现有文件来源采用相同的 RPC 计时方式：本地解码、持久 attempt fsync 之后才开始独立 3 秒数据库请求预算；保留外层进程取消。持续未确认状态也每 30 秒记录一次，避免静默停收。新增预算回放先在旧实现失败，再验证本地准备不会占用请求预算。此项不延后 receipt 的原始 accepted_at、不调整新鲜起点、不取消任务；现场恢复和真实新输入结果另行记录。

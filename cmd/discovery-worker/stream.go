@@ -31,6 +31,12 @@ type passiveStreamOptions struct {
 	DrainOnly  bool
 }
 
+func passiveStreamProcessor(journal *streamlog.Journal, writer streamlog.Writer) streamlog.Processor {
+	// Start each RPC budget after local decode and durable attempt fsync. A
+	// shared-disk stall must not strand an unsent request as an ambiguous write.
+	return streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 3 * time.Second}
+}
+
 func verifyPassiveStreamCutover(ctx context.Context, db *sql.DB, cursor streamlog.SourceCursor, sensor string) error {
 	if cursor.Source != "passive-discovery" || cursor.Epoch == "" || cursor.Path == "" || cursor.ParserVersion != discovery.PassiveStreamParserVersion || cursor.Offset < 0 {
 		return errors.New("invalid passive stream cursor")
@@ -136,7 +142,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 		}
 		return nil
 	}
-	processor := streamlog.Processor{Journal: journal, Writer: writer}
+	processor := passiveStreamProcessor(journal, writer)
 	archiveQueue := make(chan string, 64)
 	searchQueue := make(chan string, 64)
 	projectionQueue := make(chan string, 64)
@@ -173,9 +179,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 				return
 			case id := <-queue:
 				for {
-					attemptCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-					err := processor.DrainLane(attemptCtx, id, lane)
-					cancel()
+					err := processor.DrainLane(ctx, id, lane)
 					if err == nil {
 						break
 					}
@@ -188,7 +192,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 						stop()
 						return
 					}
-					if !errors.Is(err, streamlog.ErrUnconfirmed) && time.Since(lastReport) >= 30*time.Second {
+					if time.Since(lastReport) >= 30*time.Second {
 						log.Printf("passive stream %s lane segment %s remains unconfirmed: %v", lane, id, err)
 						lastReport = time.Now()
 					}
@@ -230,9 +234,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 					continue
 				}
 				for {
-					attemptCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-					err := processor.FinalizeAfterLanes(attemptCtx, id)
-					cancel()
+					err := processor.FinalizeAfterLanes(ctx, id)
 					if err == nil {
 						finalized[id] = true
 						if signals[id] == 3 {

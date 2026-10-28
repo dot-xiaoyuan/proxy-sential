@@ -131,14 +131,22 @@ func truncate(s string, n int) string {
 
 // TargetsLateralSQL runs only in the background observer. Old annotations that
 // lack physical scope cannot acquire IP ownership through a wildcard match.
+// Materialize the resolved MAC once per receipt so PostgreSQL can use the MAC
+// index rather than inline the resolver into a full endpoint scan.
 const TargetsLateralSQL = `LEFT JOIN LATERAL (
  SELECT CASE WHEN count(*)=1 THEN jsonb_agg(jsonb_build_object('endpoint_id',endpoint_id,'generation',dirty_generation)) ELSE '[]'::jsonb END AS targets
  FROM (
   SELECT e.endpoint_id,j.dirty_generation
-  FROM (SELECT v.recognition_input AS association) v ` + streamidentity.MACLateralSQL + `
+  FROM (
+   WITH resolved_mac AS MATERIALIZED (
+    SELECT identity.mac
+    FROM (SELECT v.recognition_input AS association) v ` + streamidentity.MACLateralSQL + `
+   )
+   SELECT mac FROM resolved_mac
+  ) identity
   JOIN endpoint_entities e ON e.primary_mac=identity.mac
   JOIN endpoint_recognition_jobs j USING(endpoint_id)
-  WHERE jsonb_array_length(COALESCE(v.association->'targets','[]'::jsonb))=0
+  WHERE jsonb_array_length(COALESCE(v.recognition_input->'targets','[]'::jsonb))=0
    AND e.entity_role='endpoint'
   ORDER BY e.endpoint_id LIMIT 2
  ) owners

@@ -14,8 +14,58 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
 )
+
+type passiveBudgetWriter struct {
+	store.StreamLaneWriter
+	remaining time.Duration
+	deadline  bool
+}
+
+func (*passiveBudgetWriter) Preflight(streamlog.Lane, streamlog.Segment) error {
+	// Local validation and durable journal preparation precede the RPC.
+	time.Sleep(80 * time.Millisecond)
+	return nil
+}
+
+func (w *passiveBudgetWriter) WriteBody(ctx context.Context, _ string, _ streamlog.Segment) error {
+	deadline, ok := ctx.Deadline()
+	w.remaining, w.deadline = time.Until(deadline), ok
+	return ctx.Err()
+}
+
+func TestPassiveStreamSinkRetainsBudgetAfterLocalPreparation(t *testing.T) {
+	j, err := streamlog.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", SourcePath: "packet://bond0/passive-node", FileID: "boot", PreviousFileID: "boot", StartOffset: 0, EndOffset: 1, ParserVersion: discovery.PassiveStreamParserVersion,
+		Events: []normalized.Event{{EventID: "event", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Type: "discovery"}}}
+	if err := j.StartFreshSource(streamlog.SourceCursor{Epoch: s.Epoch, Source: s.Source, Path: s.SourcePath, FileID: s.FileID, ParserVersion: s.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.Append(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.CommitSource(s.Source, s.SourcePath, id); err != nil {
+		t.Fatal(err)
+	}
+	w := &passiveBudgetWriter{}
+	p := passiveStreamProcessor(j, w)
+	if err := p.DrainLane(context.Background(), id, streamlog.Archive); err != nil {
+		t.Fatal(err)
+	}
+	if !w.deadline || w.remaining < 2950*time.Millisecond || w.remaining > 3*time.Second {
+		t.Fatalf("RPC must receive its own bounded 3-second budget after local preparation: deadline=%t remaining=%s", w.deadline, w.remaining)
+	}
+	state, err := j.Load(id)
+	if err != nil || state.Acks[streamlog.Archive] != streamlog.Acked {
+		t.Fatalf("confirmed archive did not retain its acknowledgement: %+v %v", state.Acks, err)
+	}
+}
 
 func TestVerifyPassiveStreamCutoverRequiresAuditedFreshStart(t *testing.T) {
 	db, mock, err := sqlmock.New()
