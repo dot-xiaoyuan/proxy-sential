@@ -306,6 +306,36 @@ func (p StreamDiscoveryProjector) MarkStreamRiskSubjectsDirty(ctx context.Contex
 }
 
 func (p StreamDiscoveryProjector) ReconcileStreamProjection(ctx context.Context, id string, segment streamlog.Segment) error {
+	if p.DB == nil || id == "" || segment.ArchiveMonth == "" {
+		return errors.New("stream discovery projector needs DB, segment ID and archive month")
+	}
+	for _, event := range segment.Events {
+		if event.Type == "identity" || event.Type == "risk" || event.Type == "router" {
+			return fmt.Errorf("%s: %w", event.Type, ErrUnsupportedStreamProjection)
+		}
+	}
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		return err
+	}
+	if len(prepared) == 0 {
+		return ErrUnsupportedStreamProjection
+	}
+	// This marker is inserted in the same transaction as the projection. A
+	// visible matching row proves that transaction committed, including the
+	// receipts; a missing row may still race an in-flight transaction, so the
+	// ordinary idempotent insertion remains the authority for that case.
+	var prior string
+	err = p.DB.QueryRowContext(ctx, `SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=$1`, id).Scan(&prior)
+	if err == nil {
+		if prior != streamProjectionSegmentHash(segment, prepared) {
+			return streamlog.ErrContentConflict
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	return p.ProjectStreamSegment(ctx, id, segment)
 }
 
@@ -334,11 +364,7 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 		return ErrUnsupportedStreamProjection
 	}
 	mark("begin_tx")
-	segmentHash := contentHash(struct {
-		Epoch, Source, Path, File, RawSHA string
-		Start, End                        int64
-		Events                            []streamDiscoveryReceipt
-	}{segment.Epoch, segment.Source, segment.SourcePath, segment.FileID, segment.RawSHA256, segment.StartOffset, segment.EndOffset, streamReceiptList(prepared)})
+	segmentHash := streamProjectionSegmentHash(segment, prepared)
 	month := streamAcceptedMonth(segment.AcceptedAt)
 	tx, err := p.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -485,6 +511,14 @@ func streamReceiptList(items []streamPreparedDiscovery) []streamDiscoveryReceipt
 		out = append(out, item.Receipt)
 	}
 	return out
+}
+
+func streamProjectionSegmentHash(segment streamlog.Segment, prepared []streamPreparedDiscovery) string {
+	return contentHash(struct {
+		Epoch, Source, Path, File, RawSHA string
+		Start, End                        int64
+		Events                            []streamDiscoveryReceipt
+	}{segment.Epoch, segment.Source, segment.SourcePath, segment.FileID, segment.RawSHA256, segment.StartOffset, segment.EndOffset, streamReceiptList(prepared)})
 }
 
 func streamDiscoveryBodyRef(segment streamlog.Segment, receipt streamDiscoveryReceipt) json.RawMessage {

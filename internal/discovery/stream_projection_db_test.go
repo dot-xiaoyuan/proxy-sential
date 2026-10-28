@@ -215,3 +215,110 @@ func TestStreamArchiveConfirmationUsesOriginalMonthAndAtomicReceiptChecks(t *tes
 		})
 	}
 }
+
+func TestReconcileStreamProjectionReadsCommittedMarkerWithoutRewriting(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "dns-sd", SourcePath: "/log/dns.log", ArchiveMonth: "202611", AcceptedAt: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), Events: []normalized.Event{streamDiscoveryEvent("fixed-position", "2026-10-24T10:00:00Z", 600)}}
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := contentHash(struct {
+		Epoch, Source, Path, File, RawSHA string
+		Start, End                        int64
+		Events                            []streamDiscoveryReceipt
+	}{segment.Epoch, segment.Source, segment.SourcePath, segment.FileID, segment.RawSHA256, segment.StartOffset, segment.EndOffset, streamReceiptList(prepared)})
+	mock.ExpectQuery(`SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=\$1`).WithArgs("segment-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}).AddRow(digest))
+	if err := (StreamDiscoveryProjector{DB: db}).ReconcileStreamProjection(context.Background(), "segment-a", segment); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileStreamProjectionDetectsConflictingCommittedMarker(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "dns-sd", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("fixed-position", "2026-10-24T10:00:00Z", 600)}}
+	mock.ExpectQuery(`SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=\$1`).WithArgs("segment-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}).AddRow("other"))
+	if err := (StreamDiscoveryProjector{DB: db}).ReconcileStreamProjection(context.Background(), "segment-a", segment); !errors.Is(err, streamlog.ErrContentConflict) {
+		t.Fatalf("expected content conflict, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileStreamProjectionMissingMarkerRetriesProjection(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "dns-sd", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("fixed-position", "2026-10-24T10:00:00Z", 600)}}
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=\$1`).WithArgs("segment-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}))
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO stream_projection_segments").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("FROM stream_discovery_event_keys r").WithArgs("fresh", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
+	mock.ExpectCommit()
+	if err := (StreamDiscoveryProjector{DB: db}).ReconcileStreamProjection(context.Background(), "segment-a", segment); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileStreamProjectionMissingMarkerRacesCommittedWriter(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "dns-sd", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("fixed-position", "2026-10-24T10:00:00Z", 600)}}
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := streamProjectionSegmentHash(segment, prepared)
+	mock.ExpectQuery(`SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=\$1`).WithArgs("segment-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}))
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO stream_projection_segments").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=\$1 FOR UPDATE`).WithArgs("segment-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}).AddRow(digest))
+	mock.ExpectCommit()
+	if err := (StreamDiscoveryProjector{DB: db}).ReconcileStreamProjection(context.Background(), "segment-a", segment); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileStreamProjectionReadFailureDoesNotAssumeMissing(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "dns-sd", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("fixed-position", "2026-10-24T10:00:00Z", 600)}}
+	readErr := errors.New("database unavailable")
+	mock.ExpectQuery(`SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=\$1`).WithArgs("segment-a").WillReturnError(readErr)
+	if err := (StreamDiscoveryProjector{DB: db}).ReconcileStreamProjection(context.Background(), "segment-a", segment); !errors.Is(err, readErr) {
+		t.Fatalf("expected read failure, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
