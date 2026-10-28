@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -521,6 +522,14 @@ func (s *DBStore) deferIdentityDerivedWorkInternal(ctx context.Context, quota bo
 	// inbox backlog pause the router-pilot materializer and export as well, silently.
 	err := s.pg.db.QueryRowContext(check, IdentityScopeStatusSQL(`SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds'))`), s.pg.sensorID).Scan(&backlog)
 	cancel()
+	if err != nil && ctx.Err() == nil && identityDerivedGateReportDue(&s.identityDerivedGateErrorAt, time.Now()) {
+		var pgError interface{ SQLState() string }
+		state := ""
+		if errors.As(err, &pgError) {
+			state = pgError.SQLState()
+		}
+		log.Printf("identity derived priority check failed; derived work deferred: error_type=%T sqlstate=%s", err, state)
+	}
 	if err == nil && !backlog {
 		s.identityDerivedQuotaAt.Store(0)
 		return false
