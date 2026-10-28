@@ -11,6 +11,7 @@ import (
 // Coverage is refreshed by a background worker from the recognition read model.
 // Counts describe current rule/endpoint relationships, not packet or scan counts.
 func (s *DBStore) runFingerprintCoverage(ctx context.Context) {
+	var retryDelay time.Duration
 	for ctx.Err() == nil {
 		work, cancel := context.WithTimeout(ctx, 20*time.Second)
 		err := s.flushFingerprintMatchCounts(work)
@@ -21,10 +22,11 @@ func (s *DBStore) runFingerprintCoverage(ctx context.Context) {
 			err = s.refreshFreshRecognitionCoverage(work)
 		}
 		cancel()
+		retryDelay = nextFingerprintCoverageDelay(retryDelay, err == nil)
 		if err != nil && ctx.Err() == nil {
-			fmt.Printf("fingerprint coverage update failed: %v\n", err)
+			fmt.Printf("fingerprint coverage update failed: %v; retry in %s\n", err, retryDelay)
 		}
-		timer := time.NewTimer(time.Minute)
+		timer := time.NewTimer(retryDelay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -32,6 +34,19 @@ func (s *DBStore) runFingerprintCoverage(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+// The 24-hour aggregation can spill to disk under resource pressure. Avoid
+// retrying it every minute after repeated failures; the stored snapshot is
+// explicitly marked stale by the read path until a refresh succeeds.
+func nextFingerprintCoverageDelay(previous time.Duration, success bool) time.Duration {
+	if success || previous < time.Minute {
+		return time.Minute
+	}
+	if previous >= 5*time.Minute/2 {
+		return 5 * time.Minute
+	}
+	return 2 * previous
 }
 func (s *DBStore) FingerprintSourceCoverage(ctx context.Context) (map[string]any, error) {
 	var raw []byte
