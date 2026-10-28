@@ -1,0 +1,25 @@
+# 新鲜事件存查的性能研究与验收
+
+## 公开实践与适用边界
+
+- [Google Dataflow：exactly-once](https://docs.cloud.google.com/dataflow/docs/concepts/exactly-once) 使用稳定事件身份和持久去重状态；处理函数可能多次执行，外部副作用仍须自己保证幂等。事件时间晚到与去重是不同问题。这里应沿用现有固定事件键、来源位置、原接收时间和幂等落点，不能只凭相同内容丢弃状态变化。
+- [Google Dataflow：Pub/Sub 接入](https://docs.cloud.google.com/dataflow/docs/concepts/streaming-with-cloud-pubsub) 区分传输重试重复与业务源产生的相似记录。针对本项目，重复投递按事件身份去重；周期性续播按来源、作用域、事实和顺序处理，并保留首次、末次、次数与变化。
+- [Apache Flink：有状态流处理](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/stateful-stream-processing/) 将处理状态和可重放来源位置一起恢复；无对齐检查点会带来额外 I/O，不能解决存储本身的瓶颈。这里采用已有 journal 的持久位点和独立 ack，不引入 Flink 或新的队列。
+- [AWS：安全重试](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/) 采用稳定请求标识和语义一致的重试结果。这里保留原 token、原接收时间及未确认状态，未知写入结果先核对，不凭超时重新生成身份。
+- [AWS：限制队列](https://docs.aws.amazon.com/wellarchitected/2022-03-31/framework/rel_mitigate_interaction_failure_fail_fast.html) 指出队列须处理过载与消费失败。被动抓包无法对网络发回压力：本地有界缓存耗尽时必须记录采集缺口；耐久接收后的待办不能静默丢弃。
+
+## 本分支目标
+
+按真实新鲜输入解决合并顺序缺陷，减少 journal 状态操作对整段正文的重复读取，定位并消除 NCU 派生领取的全局排序与临时写，隔离发现投影和最终确认的阻塞。沿用 PostgreSQL、ClickHouse 和现有 journal；不启动历史回填，不取消新鲜待办，不重置接收时间。旧 NCU 待办保留明确状态，其处置单独按审计边界决定。
+
+按事件数、字节数限制处理，证明重复、乱序、更正、撤销、过期、进程中断、未知提交结果与重启恢复；保持已接收事件及来源位置可追溯。对同一时段的现场输入记录各 lane 吞吐、队列年龄、重复比例、正文读取与写放大、临时文件、WAL、CPU、内存及逐事件可见耗时。逐条报告超过 5 秒与暂容 10 秒的事件；状态接口检查 P95 不超过 500 毫秒、P99 不超过 1 秒。短时追平或 `/readyz` 成功不等同于容量达标。
+
+## 首个安全修复
+
+r14 内容分组会跨越撤销或更正合并，导致 `出现 → 撤销 → 恢复` 重排。首轮只合并连续且内容相同的正 TTL 观测，所有交错事件都建立边界。此法保留顺序，但可能比按事实键的正确状态机合并更少；在取得可证明事实归属的键和现场样本前不扩大范围。需要回放正例、撤销、恢复、更正、不同作用域、晚到和恢复，且将预期下降的合并比例计入现场对照。
+
+## 首个 journal 检查优化
+
+search 尚未等到 archive，或最终确认尚未等到所有必需 lane 时，只读取紧凑状态和校验过的 ack log；状态缺失时仍使用原正文恢复路径。真正交付 sink 或释放段之前继续执行原有正文完整性校验。正文损坏的检测可能推迟到 lane 具备执行条件时，但损坏正文不能被交付或释放。此修改只减少等待重试时的整段读写，成功路径的 ack、来源提交和最终释放仍有重复正文加载，不能宣称完成了全部 journal 优化。
+
+本地 Apple M1、Darwin arm64、热缓存、1,000 个合成事件约 1 MB 的基准中，旧式完整读取约 7.79 ms、5.62 MB 分配；等待状态检查约 0.043 ms、8.3 KB 分配。该微基准仅覆盖 search 等待 archive 的单次检查，并非 184 吞吐或端到端延迟。回放覆盖正文损坏时不写入 sink、不释放，状态缺失仍走原恢复；后端相关测试、构建、vet 和 Linux amd64 discovery-worker 构建通过。现场尚未发布，也尚未测量保守合并对现场吞吐的影响。

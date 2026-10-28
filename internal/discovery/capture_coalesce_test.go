@@ -52,3 +52,49 @@ func TestCaptureCoalescerPreservesScopeChangesWithdrawalsAndLateInputs(t *testin
 		t.Fatalf("distinct observations lost: %d", got)
 	}
 }
+
+func TestCaptureCoalescerPreservesInterleavedTransitions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		middle func(normalized.Event) normalized.Event
+	}{
+		{"withdrawal", func(e normalized.Event) normalized.Event { e.Payload["ttl"] = 0; return e }},
+		{"correction", func(e normalized.Event) normalized.Event { e.Payload["txt"] = "ty=Changed"; return e }},
+		{"other scope", func(e normalized.Event) normalized.Event { e.Subject["vlan"] = "other"; return e }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCaptureCoalescer()
+			first := streamDiscoveryEvent("first", "2026-10-28T10:00:00Z", 120)
+			middle := tc.middle(streamDiscoveryEvent("middle", "2026-10-28T10:00:00.2Z", 120))
+			last := streamDiscoveryEvent("last", "2026-10-28T10:00:00.4Z", 120)
+			c.add(first)
+			c.add(middle)
+			c.add(last)
+			got := c.drain()
+			if len(got) != 3 || got[0].EventID != "first" || got[1].EventID != "middle" || got[2].EventID != "last" {
+				ids := make([]string, 0, len(got))
+				for _, e := range got {
+					ids = append(ids, e.EventID)
+				}
+				t.Fatalf("interleaved events lost ordering: %v", ids)
+			}
+		})
+	}
+}
+
+func TestCaptureCoalescerWithdrawalAndRestoreReachProjection(t *testing.T) {
+	c := newCaptureCoalescer()
+	c.add(streamDiscoveryEvent("first", "2026-10-28T10:00:00Z", 120))
+	c.add(streamDiscoveryEvent("withdrawn", "2026-10-28T10:00:00.2Z", 0))
+	c.add(streamDiscoveryEvent("restored", "2026-10-28T10:00:00.4Z", 120))
+	segment := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", AcceptedAt: time.Date(2026, 10, 28, 10, 0, 1, 0, time.UTC), Events: c.drain()}
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil || len(items) != 3 {
+		t.Fatalf("prepare transition sequence: %v %v", items, err)
+	}
+	withdraw := mergeStreamDiscoveryFact(&items[0].Fact, items[1].Fact)
+	restore := mergeStreamDiscoveryFact(&items[1].Fact, items[2].Fact)
+	if withdraw.Result != "withdrawn" || !withdraw.VisibleChanged || restore.Result != "restored" || !restore.VisibleChanged {
+		t.Fatalf("withdrawal or restoration missing: %+v %+v", withdraw, restore)
+	}
+}

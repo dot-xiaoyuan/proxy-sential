@@ -13,6 +13,7 @@ const passiveCaptureCoalesceWindow = time.Second
 type captureCoalescer struct {
 	events    []normalized.Event
 	positions map[string]int
+	lastKey   string
 }
 
 func newCaptureCoalescer() *captureCoalescer {
@@ -34,6 +35,16 @@ func captureCoalesceKey(event normalized.Event) (string, bool) {
 
 func (c *captureCoalescer) add(event normalized.Event) bool {
 	key, eligible := captureCoalesceKey(event)
+	// Replacing an older observation across an intervening event can reorder a
+	// withdrawal or correction. Only consecutive identical events may combine.
+	if !eligible || key != c.lastKey {
+		clear(c.positions)
+	}
+	if eligible {
+		c.lastKey = key
+	} else {
+		c.lastKey = ""
+	}
 	if eligible {
 		if at, found := c.positions[key]; found {
 			previous := c.events[at]
@@ -76,5 +87,6 @@ func (c *captureCoalescer) drain() []normalized.Event {
 	events := c.events
 	c.events = nil
 	c.positions = map[string]int{}
+	c.lastKey = ""
 	return events
 }

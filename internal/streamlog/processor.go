@@ -73,6 +73,15 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 	}
 	// Only the archive sink needs the source-backed raw bytes. Search,
 	// projection and finalization use the already verified event descriptor.
+	if lane == Search {
+		status, err := p.Journal.loadPendingStatus(id)
+		if err != nil {
+			return err
+		}
+		if !status.Released && status.Acks[Archive] != Acked && status.Acks[Archive] != NotApplicable {
+			return ErrUnconfirmed
+		}
+	}
 	state, err := p.Journal.load(id)
 	if err != nil {
 		return err
@@ -128,6 +137,18 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 func (p Processor) FinalizeAfterLanes(ctx context.Context, id string) error {
 	if p.Journal == nil || p.Writer == nil {
 		return errors.New("stream processor requires journal and writer")
+	}
+	status, err := p.Journal.loadPendingStatus(id)
+	if err != nil {
+		return err
+	}
+	if !status.Committed || status.Segment.Quarantined {
+		return ErrUnconfirmed
+	}
+	for _, lane := range requiredLanes(status.Segment) {
+		if status.Acks[lane] != Acked && status.Acks[lane] != NotApplicable {
+			return ErrUnconfirmed
+		}
 	}
 	state, err := p.Journal.load(id)
 	if err != nil {

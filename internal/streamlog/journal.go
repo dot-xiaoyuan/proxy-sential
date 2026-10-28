@@ -283,6 +283,39 @@ func (j *Journal) Load(id string) (State, error) {
 	return state, nil
 }
 
+// loadPendingStatus only gates work which cannot proceed yet. Before any sink
+// write or release the caller must still load and verify the immutable body.
+func (j *Journal) loadPendingStatus(id string) (State, error) {
+	if !validID(id) {
+		return State{}, errors.New("invalid segment id")
+	}
+	data, err := os.ReadFile(j.path(id, ".state"))
+	if errors.Is(err, os.ErrNotExist) {
+		// Recovery must reconstruct an interrupted state rename from the body.
+		return j.load(id)
+	}
+	if err != nil {
+		return State{}, err
+	}
+	var state State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return State{}, err
+	}
+	if state.ID != id || segmentID(state.Segment) != id {
+		return State{}, ErrContentConflict
+	}
+	if state.AckLog && !state.Released {
+		if _, err := os.Stat(j.path(id, ".acklog")); err == nil {
+			if _, err := j.applyAckLog(id, &state); err != nil {
+				return State{}, err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return State{}, err
+		}
+	}
+	return state, nil
+}
+
 func (j *Journal) load(id string) (State, error) {
 	if !validID(id) {
 		return State{}, errors.New("invalid segment id")

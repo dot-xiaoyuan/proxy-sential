@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -320,6 +322,93 @@ func TestFinalizeAfterLanesKeepsSegmentUntilAllAcks(t *testing.T) {
 	if _, err := j.Load(id); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("fully acknowledged event still retained: %v", err)
 	}
+}
+
+func TestPendingLanesAvoidBodyReadButVerifyBeforeUseAndRelease(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	path := j.path(id, ".segment")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("broken segment"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := &fakeLaneWriter{}
+	p := Processor{Journal: j, Writer: w}
+	if err := p.DrainLane(context.Background(), id, Search); !errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("search should wait for archive without reading body: %v", err)
+	}
+	if err := p.FinalizeAfterLanes(context.Background(), id); !errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("finalization should wait for lanes without reading body: %v", err)
+	}
+	if err := p.DrainLane(context.Background(), id, Archive); err == nil || w.archiveWrites != 0 {
+		t.Fatalf("corrupt body reached archive: err=%v writes=%d", err, w.archiveWrites)
+	}
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, lane := range []Lane{Archive, Search, Projection} {
+		if err := p.DrainLane(context.Background(), id, lane); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, []byte("broken segment"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.FinalizeAfterLanes(context.Background(), id); err == nil {
+		t.Fatal("finalizer released a corrupt body")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("corrupt segment was removed: %v", err)
+	}
+}
+
+func BenchmarkPendingSearchGate(b *testing.B) {
+	j, err := Open(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	segment := testSegment()
+	base := segment.Events[0]
+	segment.Events = nil
+	for i := 0; i < 1000; i++ {
+		event := base
+		event.EventID = fmt.Sprintf("event-%d", i)
+		event.Payload = map[string]any{"data": strings.Repeat("x", 900)}
+		segment.Events = append(segment.Events, event)
+	}
+	if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath, FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
+		b.Fatal(err)
+	}
+	id, err := j.Append(segment)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := j.CommitSource(segment.Source, segment.SourcePath, id); err != nil {
+		b.Fatal(err)
+	}
+	p := Processor{Journal: j, Writer: &fakeLaneWriter{}}
+	b.Run("full_body", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, err := j.load(id); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("pending_status", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if err := p.DrainLane(context.Background(), id, Search); !errors.Is(err, ErrUnconfirmed) {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 func (f *fakeLaneWriter) WriteBody(context.Context, string, Segment) error {
