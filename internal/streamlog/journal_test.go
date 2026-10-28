@@ -203,6 +203,72 @@ func TestJournalSealsEmptyAckLogWithSourceCursor(t *testing.T) {
 	}
 }
 
+func TestSplitFeaturesCheckpointSurvivesBodyOnlyRecovery(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testSegment()
+	s.Source, s.RawIsStandardEvents, s.EarlyProcessing = "device-signals", true, true
+	s.Raw = []byte("standard event\n")
+	sum := sha256.Sum256(s.Raw)
+	s.RawSHA256 = hex.EncodeToString(sum[:])
+	s.RiskFeaturesRequired, s.SplitRiskFeatures = true, true
+	if err := j.StartFreshSource(SourceCursor{Epoch: s.Epoch, Source: s.Source, Path: s.SourcePath, FileID: s.PreviousFileID, Offset: s.PreviousOffset, ParserVersion: s.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.append(s, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Crash before the source cursor/state commit, with independently durable
+	// sink acknowledgements in the log sealed by the early-processing body.
+	for _, lane := range []Lane{Archive, Search, Projection} {
+		if err := j.Ack(id, lane); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j, err = Open(j.Directory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := j.RecoverSource(s.Source, s.SourcePath)
+	if err != nil || len(ids) != 1 || ids[0] != id {
+		t.Fatalf("early body not recovered: %v %v", ids, err)
+	}
+	lanes, err := j.PendingLanes(id)
+	if err != nil || len(lanes) != 1 || lanes[0] != Search {
+		t.Fatalf("unsent features lost at restart: %v %v", lanes, err)
+	}
+	if err := j.Release(id); !errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("unconfirmed features released: %v", err)
+	}
+	if err := j.BeginAttempt(id, RiskFeatures); err != nil {
+		t.Fatal(err)
+	}
+	j, err = Open(j.Directory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || state.Acks[RiskFeatures] != Attempted || state.Acks[Search] != Acked {
+		t.Fatalf("feature attempt lost: %+v %v", state.Acks, err)
+	}
+	if err := j.Ack(id, RiskFeatures); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Release(id); err != nil {
+		t.Fatal(err)
+	}
+	// Legacy bodies retain their original lanes and cannot gain a feature ack.
+	s = testSegment()
+	s.RiskFeaturesRequired = true
+	id = appendCommitted(t, j, s)
+	if err := j.BeginAttempt(id, RiskFeatures); err == nil {
+		t.Fatal("legacy segment gained an unaudited feature lane")
+	}
+}
+
 func TestJournalAckLogSurvivesRestartAndIgnoresTornTail(t *testing.T) {
 	dir := t.TempDir()
 	j, err := Open(dir)

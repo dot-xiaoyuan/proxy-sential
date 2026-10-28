@@ -31,6 +31,14 @@ type LanePreflight interface {
 	Preflight(Lane, Segment) error
 }
 
+// RiskFeatureWriter separates two ClickHouse requests so a search timeout
+// cannot strand a feature insert that has never been sent. Legacy segments
+// retain their combined ambiguous acknowledgement and are never replayed.
+type RiskFeatureWriter interface {
+	WriteRiskFeatures(context.Context, string, Segment) error
+	ReconcileRiskFeatures(context.Context, string, Segment) error
+}
+
 type Processor struct {
 	Journal *Journal
 	Writer  Writer
@@ -59,7 +67,8 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 	if err != nil {
 		return err
 	}
-	if state.Released || state.Acks[lane] == Acked || state.Acks[lane] == NotApplicable {
+	searchFeaturesPending := lane == Search && state.Segment.SplitRiskFeatures && state.Acks[RiskFeatures] != Acked
+	if state.Released || (state.Acks[lane] == Acked || state.Acks[lane] == NotApplicable) && !searchFeaturesPending {
 		return nil
 	}
 	if !state.Committed && !state.ProcessingReady {
@@ -84,7 +93,19 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 		if state.Acks[Archive] != Acked && state.Acks[Archive] != NotApplicable {
 			return ErrUnconfirmed
 		}
-		return p.runLane(ctx, id, lane, state, p.Writer.WriteSearch, p.Writer.ReconcileSearch)
+		if state.Acks[Search] != Acked {
+			if err := p.runLane(ctx, id, lane, state, p.Writer.WriteSearch, p.Writer.ReconcileSearch); err != nil {
+				return err
+			}
+		}
+		if !state.Segment.SplitRiskFeatures || state.Acks[RiskFeatures] == Acked {
+			return nil
+		}
+		writer, ok := p.Writer.(RiskFeatureWriter)
+		if !ok {
+			return errors.New("stream risk-feature writer is not configured")
+		}
+		return p.runLane(ctx, id, RiskFeatures, state, writer.WriteRiskFeatures, writer.ReconcileRiskFeatures)
 	case Projection:
 		return p.runLane(ctx, id, lane, state, p.Writer.Project, p.Writer.ReconcileProjection)
 	default:
@@ -105,7 +126,7 @@ func (p Processor) FinalizeAfterLanes(ctx context.Context, id string) error {
 	if !state.Committed || state.Segment.Quarantined {
 		return ErrUnconfirmed
 	}
-	for _, lane := range []Lane{Archive, Search, Projection} {
+	for _, lane := range requiredLanes(state.Segment) {
 		if state.Acks[lane] != Acked && state.Acks[lane] != NotApplicable {
 			return ErrUnconfirmed
 		}
@@ -169,8 +190,8 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if (state.Acks[Archive] == Acked || state.Acks[Archive] == NotApplicable) && state.Acks[Search] != Acked && state.Acks[Search] != NotApplicable {
-		if err := p.runLane(ctx, id, Search, state, p.Writer.WriteSearch, p.Writer.ReconcileSearch); err != nil {
+	if state.Acks[Archive] == Acked || state.Acks[Archive] == NotApplicable {
+		if err := p.DrainLane(ctx, id, Search); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -181,7 +202,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	for _, lane := range []Lane{Archive, Search, Projection} {
+	for _, lane := range requiredLanes(state.Segment) {
 		if state.Acks[lane] != Acked && state.Acks[lane] != NotApplicable {
 			return ErrUnconfirmed
 		}

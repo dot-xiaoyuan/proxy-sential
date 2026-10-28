@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 
 	"proxy-sentinel/internal/streamlog"
 )
@@ -56,10 +57,13 @@ func (w StreamLaneWriter) Preflight(lane streamlog.Lane, segment streamlog.Segme
 		if _, err := prepareStreamEvents(segment); err != nil {
 			return err
 		}
-		if segment.RiskFeaturesRequired {
+		if segment.RiskFeaturesRequired && !segment.SplitRiskFeatures {
 			_, err := prepareStreamRiskFeatures(segment)
 			return err
 		}
+	case streamlog.RiskFeatures:
+		_, err := prepareStreamRiskFeatures(segment)
+		return err
 	}
 	return nil
 }
@@ -104,7 +108,7 @@ func (w StreamLaneWriter) WriteSearch(ctx context.Context, id string, segment st
 	if err := w.ClickHouse.WriteStreamSearch(ctx, id, segment); err != nil {
 		return err
 	}
-	if !segment.RiskFeaturesRequired {
+	if !segment.RiskFeaturesRequired || segment.SplitRiskFeatures {
 		return nil
 	}
 	if err := w.ClickHouse.WriteStreamRiskFeatures(ctx, id, segment); err != nil {
@@ -126,9 +130,9 @@ func (w StreamLaneWriter) ReconcileSearch(ctx context.Context, id string, segmen
 		if err != nil {
 			return err
 		}
-		return streamlog.ErrUnconfirmed
+		return fmt.Errorf("search index confirmation missing: %w", streamlog.ErrUnconfirmed)
 	}
-	if !segment.RiskFeaturesRequired {
+	if !segment.RiskFeaturesRequired || segment.SplitRiskFeatures {
 		return nil
 	}
 	present, err = w.ClickHouse.VerifyStreamRiskFeatures(ctx, segment)
@@ -136,7 +140,37 @@ func (w StreamLaneWriter) ReconcileSearch(ctx context.Context, id string, segmen
 		if err != nil {
 			return err
 		}
-		return streamlog.ErrUnconfirmed
+		return fmt.Errorf("legacy risk feature confirmation missing: %w", streamlog.ErrUnconfirmed)
+	}
+	return w.enqueueRisk(ctx, id, segment)
+}
+
+func (w StreamLaneWriter) WriteRiskFeatures(ctx context.Context, id string, segment streamlog.Segment) error {
+	if w.ClickHouse == nil {
+		return errors.New("stream ClickHouse writer is unavailable")
+	}
+	if !segment.SplitRiskFeatures || !segment.RiskFeaturesRequired {
+		return errors.New("stream segment has no independent risk-feature sink")
+	}
+	if err := w.ClickHouse.WriteStreamRiskFeatures(ctx, id, segment); err != nil {
+		return err
+	}
+	return w.enqueueRisk(ctx, id, segment)
+}
+
+func (w StreamLaneWriter) ReconcileRiskFeatures(ctx context.Context, id string, segment streamlog.Segment) error {
+	if w.ClickHouse == nil {
+		return errors.New("stream ClickHouse writer is unavailable")
+	}
+	if !segment.SplitRiskFeatures || !segment.RiskFeaturesRequired {
+		return errors.New("stream segment has no independent risk-feature sink")
+	}
+	present, err := w.ClickHouse.VerifyStreamRiskFeatures(ctx, segment)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return fmt.Errorf("risk feature confirmation missing: %w", streamlog.ErrUnconfirmed)
 	}
 	return w.enqueueRisk(ctx, id, segment)
 }
@@ -177,11 +211,16 @@ func (w StreamLaneWriter) FinalizeSegment(ctx context.Context, id string, segmen
 			break
 		}
 	}
+	if segment.SplitRiskFeatures {
+		// Its independently acknowledged feature step already includes the PG
+		// wake receipt. Finalization cannot reach here until that ack is durable.
+		return nil
+	}
 	return w.enqueueRisk(ctx, id, segment)
 }
 
-// Finalization repeats this idempotent receipt for journals produced by older
-// releases and for a crash after feature confirmation but before the PG wake.
+// Legacy finalization repeats this idempotent receipt. Split feature recovery
+// owns both confirmation and the PG wake before acknowledging its own step.
 func (w StreamLaneWriter) enqueueRisk(ctx context.Context, id string, segment streamlog.Segment) error {
 	if !segment.RiskFeaturesRequired {
 		return nil

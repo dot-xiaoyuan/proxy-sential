@@ -24,7 +24,7 @@ func TestStreamRiskCutoverStatusKeepsCancellationSeparateFromPending(t *testing.
 		WillReturnRows(sqlmock.NewRows([]string{"sum"}).AddRow(int64(40504)))
 	mock.ExpectQuery(`SELECT count\(\*\),`).WithArgs("sensor-a", cutoff).
 		WillReturnRows(sqlmock.NewRows([]string{"pending", "older", "oldest"}).AddRow(int64(12), int64(3), oldest))
-	mock.ExpectQuery(`SELECT c.epoch,s.source_owner`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"epoch", "owner", "cutoff", "manifest", "batches", "records", "bytes"}).
+	mock.ExpectQuery(`WITH canonical AS`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"epoch", "owner", "cutoff", "manifest", "batches", "records", "bytes"}).
 		AddRow("handshake-fresh", "handshake-sidecar", cutoff, "sha2", int64(7), int64(44764), int64(52332842)).
 		AddRow("packet-fresh", "packet-sidecar", cutoff, "sha", int64(68), int64(742819), int64(567763339)))
 	routerCutoff := cutoff.Add(2 * time.Hour)

@@ -37,6 +37,8 @@ const (
 	Archive    Lane = "archive"
 	Search     Lane = "search"
 	Projection Lane = "projection"
+	// RiskFeatures is checkpointed independently but scheduled by Search.
+	RiskFeatures Lane = "risk_features"
 )
 
 type Status string
@@ -72,6 +74,7 @@ type Segment struct {
 	AcceptedAt           time.Time          `json:"accepted_at"`
 	NeedsProjection      bool               `json:"needs_projection"`
 	RiskFeaturesRequired bool               `json:"risk_features_required,omitempty"`
+	SplitRiskFeatures    bool               `json:"split_risk_features,omitempty"`
 	Quarantined          bool               `json:"quarantined,omitempty"`
 	QuarantineReason     string             `json:"quarantine_reason,omitempty"`
 	Raw                  []byte             `json:"raw,omitempty"`
@@ -144,10 +147,11 @@ func contentHash(s Segment) (string, error) {
 		Raw                  []byte             `json:"raw,omitempty"`
 		NeedsProjection      bool               `json:"needs_projection"`
 		RiskFeaturesRequired bool               `json:"risk_features_required,omitempty"`
+		SplitRiskFeatures    bool               `json:"split_risk_features,omitempty"`
 		Quarantined          bool               `json:"quarantined,omitempty"`
 		QuarantineReason     string             `json:"quarantine_reason,omitempty"`
 		Events               []normalized.Event `json:"events"`
-	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.Quarantined, s.QuarantineReason, s.Events})
+	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.SplitRiskFeatures, s.Quarantined, s.QuarantineReason, s.Events})
 	if err != nil {
 		return "", err
 	}
@@ -169,6 +173,9 @@ func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 	}
 	if s.Quarantined && (len(s.Raw) == 0 || len(s.Events) != 0 || s.NeedsProjection || s.RiskFeaturesRequired || s.QuarantineReason == "") {
 		return "", errors.New("quarantined segment requires raw bytes, reason and no projected events")
+	}
+	if s.SplitRiskFeatures && (!s.RiskFeaturesRequired || len(s.Events) == 0) {
+		return "", errors.New("split risk features require events and a risk-feature sink")
 	}
 	if s.RawIsStandardEvents && (s.Source != "device-signals" && s.Source != "shared-device-signals" || len(s.Raw) == 0 || len(s.Events) == 0 || s.SourceBackedRaw || s.Quarantined) {
 		return "", errors.New("standard-event raw source requires inline device events")
@@ -301,6 +308,9 @@ func (j *Journal) load(id string) (State, error) {
 			return State{}, bodyErr
 		}
 		state = State{ID: id, ContentSHA256: hash, Segment: segment, ProcessingReady: segment.EarlyProcessing, Committed: segment.SourceBackedRaw && !segment.EarlyProcessing, Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending}}
+		if segment.SplitRiskFeatures {
+			state.Acks[RiskFeatures] = Pending
+		}
 		if len(segment.Events) == 0 {
 			state.Acks[Archive], state.Acks[Search] = NotApplicable, NotApplicable
 		}
@@ -431,7 +441,31 @@ func (j *Journal) PendingLanes(id string) ([]Lane, error) {
 			return nil, fmt.Errorf("stream segment %s has invalid %s lane status %q: %w", id, lane, state.Acks[lane], ErrContentConflict)
 		}
 	}
+	// The existing bounded search worker also owns the feature substep. After
+	// a restart, an acknowledged search must still enqueue pending features.
+	if state.Segment.SplitRiskFeatures {
+		switch state.Acks[RiskFeatures] {
+		case Pending, Attempted:
+			if state.Acks[Search] == Acked {
+				lanes = append(lanes, Search)
+			}
+		case Acked:
+		default:
+			return nil, fmt.Errorf("stream segment %s has invalid risk feature status: %w", id, ErrContentConflict)
+		}
+	}
 	return lanes, nil
+}
+
+func requiredLanes(segment Segment) []Lane {
+	if segment.SplitRiskFeatures {
+		return []Lane{Archive, Search, Projection, RiskFeatures}
+	}
+	return []Lane{Archive, Search, Projection}
+}
+
+func validLane(lane Lane) bool {
+	return lane == Archive || lane == Search || lane == Projection || lane == RiskFeatures
 }
 
 func (j *Journal) BeginAttempt(id string, lane Lane) error { return j.setAck(id, lane, Attempted) }
@@ -441,7 +475,7 @@ func (j *Journal) Ack(id string, lane Lane) error          { return j.setAck(id,
 // A slow local fsync can exhaust the request context after BeginAttempt; in
 // that case an attempted marker must not strand a write that never began.
 func (j *Journal) AbortUnsentAttempt(id string, lane Lane) error {
-	if lane != Archive && lane != Search && lane != Projection {
+	if !validLane(lane) {
 		return errors.New("invalid stream lane")
 	}
 	lock, err := j.lockSegment(id)
@@ -470,7 +504,7 @@ func (j *Journal) AbortUnsentAttempt(id string, lane Lane) error {
 }
 
 func (j *Journal) setAck(id string, lane Lane, status Status) error {
-	if lane != Archive && lane != Search && lane != Projection {
+	if !validLane(lane) {
 		return errors.New("invalid stream lane")
 	}
 	lock, err := j.lockSegment(id)
@@ -482,7 +516,7 @@ func (j *Journal) setAck(id string, lane Lane, status Status) error {
 	if err != nil {
 		return err
 	}
-	if state.Released || state.Acks[lane] == NotApplicable {
+	if state.Released || state.Acks[lane] == NotApplicable || state.Acks[lane] == "" {
 		return errors.New("stream lane is not pending")
 	}
 	if !state.Committed && !state.ProcessingReady {
@@ -525,7 +559,7 @@ func (j *Journal) Release(id string) error {
 	if !state.Committed {
 		return ErrUnconfirmed
 	}
-	for _, lane := range []Lane{Archive, Search, Projection} {
+	for _, lane := range requiredLanes(state.Segment) {
 		if status := state.Acks[lane]; status != Acked && status != NotApplicable {
 			return ErrUnconfirmed
 		}

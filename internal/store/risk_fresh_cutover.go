@@ -98,14 +98,30 @@ func (s *PostgresStore) GetStreamRiskCutoverStatus(ctx context.Context, sensor s
 		value := oldest.Time.UTC()
 		status.OldestPendingAt = &value
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.epoch,s.source_owner,c.legacy_cutoff_at,c.cancel_manifest_sha256,
- count(d.legacy_reference),coalesce(sum(d.unprocessed_records),0),coalesce(sum(d.unprocessed_bytes),0)
- FROM stream_source_cutovers c JOIN stream_shared_source_cutovers s ON s.epoch=c.epoch AND s.source_path=c.source_path AND s.state='active'
+	rows, err := s.db.QueryContext(ctx, `WITH canonical AS (
+ SELECT DISTINCT ON (c.source_kind,c.source_path,d.legacy_reference,d.content_sha256,
+   CASE WHEN d.legacy_kind='stream_pending_segment' THEN 'segment' ELSE 'file_range' END)
+ c.epoch,coalesce(s.source_owner,c.source_kind) AS source_owner,c.legacy_cutoff_at,
+ coalesce(m.content_sha256,c.cancel_manifest_sha256) AS manifest_sha256,
+ d.legacy_reference,d.unprocessed_records,d.unprocessed_bytes
+ FROM stream_source_cutovers c
+ LEFT JOIN stream_shared_source_cutovers s ON s.epoch=c.epoch AND s.source_path=c.source_path AND s.sensor_id=c.sensor_id
  JOIN stream_discard_manifest d ON d.epoch=c.epoch AND d.source_kind=c.source_kind AND d.source_path=c.source_path
-	  AND d.legacy_kind IN ('unread_device_signal_file_chunk','rotated_closed_device_chunk')
- WHERE c.sensor_id=$1 AND c.state='active' AND s.source_owner IN ('packet-sidecar','handshake-sidecar')
- GROUP BY c.epoch,s.source_owner,c.legacy_cutoff_at,c.cancel_manifest_sha256
-	ORDER BY s.source_owner,c.legacy_cutoff_at DESC LIMIT 2`, sensor)
+ LEFT JOIN stream_discard_manifest m ON m.epoch=c.epoch AND m.source_kind=c.source_kind AND m.source_path=c.source_path
+   AND m.legacy_kind='stream_retirement_manifest'
+ WHERE c.sensor_id=$1 AND c.state IN ('active','closed') AND d.legacy_kind IN
+ ('unread_device_signal_file_chunk','rotated_closed_device_chunk','stream_retirement_unread_chunk','stream_pending_segment')
+ ORDER BY c.source_kind,c.source_path,d.legacy_reference,d.content_sha256,
+ CASE WHEN d.legacy_kind='stream_pending_segment' THEN 'segment' ELSE 'file_range' END,c.legacy_cutoff_at DESC
+ ), totals AS (
+ SELECT source_owner,count(*) AS batches,sum(unprocessed_records) AS records,sum(unprocessed_bytes) AS bytes
+ FROM canonical GROUP BY source_owner
+ ), latest AS (
+ SELECT DISTINCT ON (source_owner) epoch,source_owner,legacy_cutoff_at,manifest_sha256
+ FROM canonical ORDER BY source_owner,legacy_cutoff_at DESC,epoch DESC
+ )
+ SELECT l.epoch,l.source_owner,l.legacy_cutoff_at,l.manifest_sha256,t.batches,t.records,t.bytes
+ FROM latest l JOIN totals t USING(source_owner) ORDER BY l.source_owner`, sensor)
 	if err != nil {
 		return StreamRiskCutoverStatus{}, false, err
 	}

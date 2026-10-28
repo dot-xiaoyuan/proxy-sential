@@ -409,6 +409,9 @@ func deriveCollectorKind(sources []realtime.Source) string {
 }
 
 func runIngest(args []string) error {
+	if len(args) > 0 && args[0] == "stream-cancel" {
+		return runIngestStreamCancel(args[1:])
+	}
 	if len(args) > 0 && args[0] == "stream-retire" {
 		return runIngestStreamRetire(args[1:])
 	}
