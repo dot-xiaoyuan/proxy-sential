@@ -537,6 +537,12 @@ func (j *Journal) AbortUnsentAttempt(id string, lane Lane) error {
 }
 
 func (j *Journal) setAck(id string, lane Lane, status Status) error {
+	return j.setAckWithProof(id, lane, status, "")
+}
+
+// verifiedHash comes only from a body already loaded and verified by the
+// processor. Public acknowledgement calls retain the full verification path.
+func (j *Journal) setAckWithProof(id string, lane Lane, status Status, verifiedHash string) error {
 	if !validLane(lane) {
 		return errors.New("invalid stream lane")
 	}
@@ -545,7 +551,15 @@ func (j *Journal) setAck(id string, lane Lane, status Status) error {
 		return err
 	}
 	defer unlock(lock)
-	state, err := j.load(id)
+	var state State
+	if verifiedHash == "" {
+		state, err = j.load(id)
+	} else {
+		state, err = j.loadPendingStatus(id)
+		if err == nil && state.ContentSHA256 != verifiedHash {
+			return ErrContentConflict
+		}
+	}
 	if err != nil {
 		return err
 	}

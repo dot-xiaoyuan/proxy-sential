@@ -269,7 +269,7 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 		}
 		if lane != Projection || !state.Segment.SourceBackedRaw {
 			started := time.Now()
-			if err = p.Journal.BeginAttempt(id, lane); err != nil {
+			if err = p.Journal.setAckWithProof(id, lane, Attempted, state.ContentSHA256); err != nil {
 				return errors.Join(err, p.Journal.AbortUnsentAttempt(id, lane))
 			}
 			reportSlow("begin_attempt", started)
@@ -295,7 +295,7 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 		return fmt.Errorf("stream lane %s segment %s: %w", lane, id, err)
 	}
 	started := time.Now()
-	err = p.Journal.Ack(id, lane)
+	err = p.Journal.setAckWithProof(id, lane, Acked, state.ContentSHA256)
 	reportSlow("ack", started)
 	return err
 }

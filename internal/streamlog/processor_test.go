@@ -70,6 +70,55 @@ type fakeLaneWriter struct {
 	failArchiveOnce bool
 }
 
+type mutateAfterArchiveWriter struct {
+	fakeLaneWriter
+	path string
+}
+
+func (w *mutateAfterArchiveWriter) WriteBody(_ context.Context, _ string, segment Segment) error {
+	if len(segment.Events) != 1 || segment.Events[0].EventID != "event-1" {
+		return errors.New("sink did not receive verified event")
+	}
+	return os.WriteFile(w.path, []byte("corrupt after delivery"), 0600)
+}
+
+func TestVerifiedAckKeepsCorruptJournalBodyForRecovery(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	p := Processor{Journal: j, Writer: &mutateAfterArchiveWriter{path: j.path(id, ".segment")}}
+	if err := p.DrainLane(context.Background(), id, Archive); err != nil {
+		t.Fatalf("a completed sink write should retain its durable acknowledgement: %v", err)
+	}
+	status, err := j.loadPendingStatus(id)
+	if err != nil || status.Acks[Archive] != Acked {
+		t.Fatalf("ack lost: %+v %v", status.Acks, err)
+	}
+	if _, err := j.Load(id); err == nil {
+		t.Fatal("corrupt journal body was accepted")
+	}
+	if _, err := os.Stat(j.path(id, ".segment")); err != nil {
+		t.Fatalf("corrupt body removed: %v", err)
+	}
+}
+
+func TestVerifiedAckRejectsDifferentContentProof(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	if err := j.setAckWithProof(id, Archive, Attempted, strings.Repeat("0", 64)); !errors.Is(err, ErrContentConflict) {
+		t.Fatalf("mismatched proof was accepted: %v", err)
+	}
+	state, err := j.Load(id)
+	if err != nil || state.Acks[Archive] != Pending {
+		t.Fatalf("mismatched proof changed state: %+v %v", state.Acks, err)
+	}
+}
+
 type rejectingPreflightWriter struct{ fakeLaneWriter }
 
 func (*rejectingPreflightWriter) Preflight(lane Lane, _ Segment) error {
@@ -405,6 +454,29 @@ func BenchmarkPendingSearchGate(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			if err := p.DrainLane(context.Background(), id, Search); !errors.Is(err, ErrUnconfirmed) {
+				b.Fatal(err)
+			}
+		}
+	})
+	if err := p.DrainLane(context.Background(), id, Archive); err != nil {
+		b.Fatal(err)
+	}
+	verified, err := j.load(id)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("ack_full_body", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if err := j.Ack(id, Archive); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("ack_verified_status", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if err := j.setAckWithProof(id, Archive, Acked, verified.ContentSHA256); err != nil {
 				b.Fatal(err)
 			}
 		}
