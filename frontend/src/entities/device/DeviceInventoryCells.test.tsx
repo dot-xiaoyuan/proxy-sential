@@ -2,9 +2,22 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { domainOnlyDevice, domainOnlyInference } from '../../mocks/brandInference'
+import type { EndpointDeviceInventory } from '../../shared/api/types'
 import { DeviceBrandSummary, DeviceIdentityCell, DeviceLedgerIdentity, DeviceLedgerRecognition, DeviceLedgerOS, DeviceSemanticIcon, DeviceMAC, virtualPlatform } from './DeviceInventoryCells'
 
 afterEach(cleanup)
+
+it('keeps independent brand and OS visible when model and type conflict', () => {
+ const device: EndpointDeviceInventory = {...domainOnlyDevice, brand:'Dell', brand_confidence:.95, model:'Latitude', model_confidence:.95, device_type:'laptop', device_type_confidence:.95, os_family:'Windows', os_family_confidence:.95, recognition_conflict:true, conflict_dimensions:['model','device_type'], brand_inference:undefined}
+ const {rerender} = render(<><DeviceLedgerRecognition device={device}/><DeviceLedgerOS device={device}/></>)
+ expect(screen.getByText('戴尔')).toBeVisible()
+ expect(screen.getByText('Windows')).toBeVisible()
+ expect(screen.queryByText(/Latitude|笔记本电脑/)).not.toBeInTheDocument()
+ expect(screen.getByText('线索冲突')).toBeVisible()
+ rerender(<><DeviceLedgerRecognition device={{...device,conflict_dimensions:['brand']}}/><DeviceLedgerOS device={{...device,conflict_dimensions:['brand']}}/></>)
+ expect(screen.queryByText('戴尔')).not.toBeInTheDocument()
+ expect(screen.getByText('Windows')).toBeVisible()
+})
 
 it('ledger identity always locates an unnamed device by IP and MAC',()=>{
  render(<MemoryRouter><DeviceLedgerIdentity device={domainOnlyDevice} href="/devices/test?return_to=inventory"/></MemoryRouter>)

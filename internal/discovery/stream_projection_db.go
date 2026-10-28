@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/recognitiondiag"
 	"proxy-sentinel/internal/streamlog"
 )
 
@@ -621,11 +622,14 @@ func writeStreamDiscoveryChanges(ctx context.Context, tx *sql.Tx, changes []stre
 func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Time, segment streamlog.Segment, items []streamPreparedDiscovery) error {
 	type row struct {
 		streamDiscoveryReceipt
-		BodyRef json.RawMessage `json:"body_ref"`
+		BodyRef json.RawMessage       `json:"body_ref"`
+		Input   recognitiondiag.Input `json:"recognition_input"`
+		Status  string                `json:"recognition_status"`
 	}
 	input := make([]row, 0, len(items))
 	for _, item := range items {
-		input = append(input, row{item.Receipt, streamDiscoveryBodyRef(segment, item.Receipt)})
+		metadata, status := recognitionInput(item)
+		input = append(input, row{item.Receipt, streamDiscoveryBodyRef(segment, item.Receipt), metadata, status})
 	}
 	raw, err := json.Marshal(input)
 	if err != nil {
@@ -645,10 +649,7 @@ func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Ti
 	if keyCount != int64(len(items)) {
 		return fmt.Errorf("stream discovery key raced with another segment: %w", streamlog.ErrUnconfirmed)
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO stream_discovery_receipts(accepted_month,epoch,scope_id,event_key,content_sha256,accepted_at,result,body_ref)
- SELECT $1,$2,v.scope_id,v.event_key,v.content_sha256,v.accepted_at,v.result,v.body_ref
- FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz,result text,body_ref jsonb)
- ON CONFLICT DO NOTHING`, month, segment.Epoch, raw)
+	result, err := tx.ExecContext(ctx, insertRecognitionReceiptsSQL, month, segment.Epoch, raw)
 	if err != nil {
 		return err
 	}

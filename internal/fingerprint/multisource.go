@@ -439,20 +439,19 @@ func catalogSignalValues(s Signals) map[string][]string {
 }
 func applySourceMatches(result *Result, matches []SourceMatch) {
 	result.SourceMatches = matches
-	// Multiple libraries observing one protocol are not independent votes.
-	roles := map[string]bool{}
-	brands := map[string]bool{}
-	models := map[string]bool{}
+	// Equivalent values from multiple libraries are one candidate, never
+	// independent votes. Client/runtime matches remain inspection-only.
+	values := map[string]map[string]string{}
+	for _, field := range []string{"brand", "model", "device_type", "os_family"} {
+		values[field] = map[string]string{}
+	}
 	for _, m := range matches {
 		if m.Strength != "self_report" {
 			continue
 		}
-		// Client/runtime fingerprints describe the requester, not the hardware
-		// hosting a service. Preserve them for inspection without promoting a
-		// physical brand, model or role.
 		clientOnly := false
 		for _, field := range m.Fields {
-			if field == "user_agent" || field == "sip_user_agent" || field == "ja3" || field == "ja4" || field == "tcp_signature" {
+			if clientEvidenceFields[field] {
 				clientOnly = true
 				break
 			}
@@ -460,41 +459,40 @@ func applySourceMatches(result *Result, matches []SourceMatch) {
 		if clientOnly {
 			continue
 		}
-		if m.Role != "" {
-			roles[m.Role] = true
+		addProductCandidate(result, ProductCandidate{Brand: m.Brand, Model: m.Model, DeviceType: m.Role, Source: m.SourceID, Confidence: .8})
+		for _, field := range m.Fields {
+			recordDimensionEvidence(result, "protocol_catalog", field, m.SourceID+":"+m.RuleID, ruleValues{brand: m.Brand, model: m.Model, deviceType: m.Role, osFamily: m.OS}, .8)
+			for i := range result.DimensionEvidence {
+				if result.DimensionEvidence[i].Layer == "protocol_catalog" && result.DimensionEvidence[i].RuleID == m.SourceID+":"+m.RuleID && result.DimensionEvidence[i].Field == field {
+					result.DimensionEvidence[i].matchValue = m.Observed[field]
+				}
+			}
 		}
-		if m.Brand != "" && !strings.Contains(m.Brand, "$") {
-			brands[m.Brand] = true
+		for field, value := range map[string]string{"brand": m.Brand, "model": m.Model, "device_type": m.Role, "os_family": m.OS} {
+			value = strings.TrimSpace(value)
+			if value == "" || strings.Contains(value, "$") {
+				continue
+			}
+			key := strings.ToLower(value)
+			if values[field][key] == "" {
+				values[field][key] = value
+			}
 		}
-		if m.Model != "" && !strings.Contains(m.Model, "$") {
-			models[m.Model] = true
+	}
+	for _, field := range []string{"brand", "model", "device_type", "os_family"} {
+		candidates := values[field]
+		if len(candidates) > 1 {
+			result.Conflict = true
+			result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, field)
+			continue
 		}
-	}
-	if len(roles) > 1 || (result.DeviceType != "" && len(roles) > 0 && !roles[result.DeviceType]) {
-		result.Conflict = true
-		result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, "device_type")
-	}
-	if len(roles) == 1 && result.DeviceType == "" {
-		result.DeviceType = sortedKeys(roles)[0]
-		result.DeviceTypeConfidence = .8
-		result.Confidence = max(result.Confidence, .8)
-		result.Source = "multisource"
-	}
-	if len(brands) == 1 && result.Brand == "" {
-		result.Brand = sortedKeys(brands)[0]
-		result.BrandConfidence = .8
-	}
-	if len(brands) > 1 || (result.Brand != "" && len(brands) > 0 && !brands[result.Brand]) {
-		result.Conflict = true
-		result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, "brand")
-	}
-	if len(models) == 1 && result.Model == "" {
-		result.Model = sortedKeys(models)[0]
-		result.ModelConfidence = .8
-	}
-	if len(models) > 1 || (result.Model != "" && len(models) > 0 && !models[result.Model]) {
-		result.Conflict = true
-		result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, "model")
+		for _, value := range candidates {
+			mergeDimension(result, field, value, .8, .8)
+			result.Confidence = max(result.Confidence, .8)
+			if result.Source == "" || result.Source == "ieee_oui" {
+				result.Source = "multisource"
+			}
+		}
 	}
 }
 

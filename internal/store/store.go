@@ -117,6 +117,7 @@ type DeviceInventoryListItem struct {
 	OSFamilyConfidence       float64                      `json:"os_family_confidence"`
 	RandomizedMAC            bool                         `json:"randomized_mac"`
 	RecognitionConflict      bool                         `json:"recognition_conflict"`
+	ConflictDimensions       []string                     `json:"conflict_dimensions,omitempty"`
 	Libraries                []string                     `json:"libraries,omitempty"`
 }
 
@@ -149,6 +150,7 @@ func ProjectDeviceInventoryListItem(item EndpointDeviceInventory) DeviceInventor
 		ModelConfidence: item.ModelConfidence, DeviceTypeConfidence: item.DeviceTypeConfidence,
 		OSFamilyConfidence: item.OSFamilyConfidence, RandomizedMAC: item.RandomizedMAC,
 		RecognitionConflict: item.RecognitionConflict,
+		ConflictDimensions:  append([]string(nil), item.ConflictDimensions...),
 		Libraries:           fingerprint.LibrarySourceIDs(item.SourceMatches),
 	}
 	if item.BrandInference != nil {
@@ -641,51 +643,55 @@ type EndpointDeviceInventory struct {
 	// Shared recognition snapshot; never serialized or used for identity fields.
 	domainEvidence []fingerprint.DomainEvidence
 
-	BrandReference         *fingerprint.BrandReference `json:"brand_reference,omitempty"`
-	BrandInference         *fingerprint.BrandInference `json:"brand_inference,omitempty"`
-	EndpointID             string                      `json:"endpoint_id"`
-	PrimaryMAC             string                      `json:"primary_mac,omitempty"`
-	EntityRole             string                      `json:"entity_role"`
-	RegistrationStatus     string                      `json:"registration_status"`
-	OwnerAccount           string                      `json:"owner_account,omitempty"`
-	OwnerName              string                      `json:"owner_name,omitempty"`
-	OwnerDepartment        string                      `json:"owner_department,omitempty"`
-	AssetTag               string                      `json:"asset_tag,omitempty"`
-	OwnershipClass         string                      `json:"ownership_class"`
-	MergeStatus            string                      `json:"merge_status"`
-	CurrentAccount         string                      `json:"current_account,omitempty"`
-	CurrentIP              string                      `json:"current_ip,omitempty"` // Most recently observed address; does not imply online status.
-	CurrentAccessID        string                      `json:"current_access_id,omitempty"`
-	Accounts               []string                    `json:"accounts"`
-	IPs                    []string                    `json:"ips"`
-	AccessIDs              []string                    `json:"access_ids"`
-	FirstSeen              string                      `json:"first_seen,omitempty"`
-	LastSeen               string                      `json:"last_seen,omitempty"`
-	IdentityConfidence     float64                     `json:"identity_confidence"`
-	Vendor                 string                      `json:"vendor,omitempty"`
-	Brand                  string                      `json:"brand,omitempty"`
-	Model                  string                      `json:"model,omitempty"`
-	DeviceType             string                      `json:"device_type,omitempty"`
-	OSFamily               string                      `json:"os_family,omitempty"`
-	RecognitionConfidence  float64                     `json:"recognition_confidence"`
-	VendorConfidence       float64                     `json:"vendor_confidence"`
-	BrandConfidence        float64                     `json:"brand_confidence"`
-	ModelConfidence        float64                     `json:"model_confidence"`
-	DeviceTypeConfidence   float64                     `json:"device_type_confidence"`
-	OSFamilyConfidence     float64                     `json:"os_family_confidence"`
-	RecognitionSource      string                      `json:"recognition_source,omitempty"`
-	FingerprintVersion     string                      `json:"fingerprint_version,omitempty"`
-	RandomizedMAC          bool                        `json:"randomized_mac"`
-	RecognitionConflict    bool                        `json:"recognition_conflict"`
-	ConflictDimensions     []string                    `json:"conflict_dimensions,omitempty"`
-	RecognitionEvidence    []string                    `json:"recognition_evidence,omitempty"`
-	EvidenceRefs           []fingerprint.EvidenceRef   `json:"evidence_refs,omitempty"`
-	RecognitionDiagnostics fingerprint.Diagnostics     `json:"recognition_diagnostics"`
-	EcosystemHint          string                      `json:"ecosystem_hint,omitempty"`
-	EcosystemConfidence    float64                     `json:"ecosystem_confidence"`
-	EcosystemConflict      bool                        `json:"ecosystem_conflict"`
-	EcosystemEvidenceCount int                         `json:"ecosystem_evidence_count"`
-	Summary                string                      `json:"summary"`
+	BrandReference          *fingerprint.BrandReference     `json:"brand_reference,omitempty"`
+	BrandInference          *fingerprint.BrandInference     `json:"brand_inference,omitempty"`
+	EndpointID              string                          `json:"endpoint_id"`
+	PrimaryMAC              string                          `json:"primary_mac,omitempty"`
+	EntityRole              string                          `json:"entity_role"`
+	RegistrationStatus      string                          `json:"registration_status"`
+	OwnerAccount            string                          `json:"owner_account,omitempty"`
+	OwnerName               string                          `json:"owner_name,omitempty"`
+	OwnerDepartment         string                          `json:"owner_department,omitempty"`
+	AssetTag                string                          `json:"asset_tag,omitempty"`
+	OwnershipClass          string                          `json:"ownership_class"`
+	MergeStatus             string                          `json:"merge_status"`
+	CurrentAccount          string                          `json:"current_account,omitempty"`
+	CurrentIP               string                          `json:"current_ip,omitempty"` // Most recently observed address; does not imply online status.
+	CurrentAccessID         string                          `json:"current_access_id,omitempty"`
+	Accounts                []string                        `json:"accounts"`
+	IPs                     []string                        `json:"ips"`
+	AccessIDs               []string                        `json:"access_ids"`
+	FirstSeen               string                          `json:"first_seen,omitempty"`
+	LastSeen                string                          `json:"last_seen,omitempty"`
+	IdentityConfidence      float64                         `json:"identity_confidence"`
+	Vendor                  string                          `json:"vendor,omitempty"`
+	Brand                   string                          `json:"brand,omitempty"`
+	Model                   string                          `json:"model,omitempty"`
+	DeviceType              string                          `json:"device_type,omitempty"`
+	OSFamily                string                          `json:"os_family,omitempty"`
+	RecognitionConfidence   float64                         `json:"recognition_confidence"`
+	VendorConfidence        float64                         `json:"vendor_confidence"`
+	BrandConfidence         float64                         `json:"brand_confidence"`
+	ModelConfidence         float64                         `json:"model_confidence"`
+	DeviceTypeConfidence    float64                         `json:"device_type_confidence"`
+	OSFamilyConfidence      float64                         `json:"os_family_confidence"`
+	RecognitionSource       string                          `json:"recognition_source,omitempty"`
+	FingerprintVersion      string                          `json:"fingerprint_version,omitempty"`
+	RandomizedMAC           bool                            `json:"randomized_mac"`
+	RecognitionConflict     bool                            `json:"recognition_conflict"`
+	ConflictDimensions      []string                        `json:"conflict_dimensions,omitempty"`
+	RecognitionEvidence     []string                        `json:"recognition_evidence,omitempty"`
+	ProductFamily           string                          `json:"product_family,omitempty"`
+	ProductFamilyConfidence float64                         `json:"product_family_confidence"`
+	ProductCandidates       []fingerprint.ProductCandidate  `json:"product_candidates,omitempty"`
+	DimensionEvidence       []fingerprint.DimensionEvidence `json:"dimension_evidence,omitempty"`
+	EvidenceRefs            []fingerprint.EvidenceRef       `json:"evidence_refs,omitempty"`
+	RecognitionDiagnostics  fingerprint.Diagnostics         `json:"recognition_diagnostics"`
+	EcosystemHint           string                          `json:"ecosystem_hint,omitempty"`
+	EcosystemConfidence     float64                         `json:"ecosystem_confidence"`
+	EcosystemConflict       bool                            `json:"ecosystem_conflict"`
+	EcosystemEvidenceCount  int                             `json:"ecosystem_evidence_count"`
+	Summary                 string                          `json:"summary"`
 }
 
 type Reader interface {

@@ -20,7 +20,10 @@ type recognitionJob struct {
 	DirtyGeneration int64
 	Attempts        int
 	LeaseOwner      string
+	Timings         map[string]float64
 }
+
+type recognitionTimingContextKey struct{}
 
 var errRecognitionLeaseLost = errors.New("endpoint recognition lease is no longer current")
 
@@ -94,7 +97,19 @@ func recognitionTimestamp(raw string) any {
 }
 
 func (s *DBStore) materializeRecognition(ctx context.Context, job recognitionJob) error {
+	started := time.Now()
+	var compute time.Duration
+	if job.Timings != nil {
+		ctx = context.WithValue(ctx, recognitionTimingContextKey{}, func(stage string, elapsed time.Duration) {
+			job.Timings[stage+"_ms"] += float64(elapsed) / float64(time.Millisecond)
+			compute += elapsed
+		})
+		defer func() { job.Timings["total_ms"] = float64(time.Since(started)) / float64(time.Millisecond) }()
+	}
 	profile, found, err := s.pg.getEndpointIdentity(ctx, job.EndpointID, Query{Limit: 200}, true)
+	if job.Timings != nil {
+		job.Timings["read_and_prepare_ms"] = float64(max(time.Duration(0), time.Since(started)-compute)) / float64(time.Millisecond)
+	}
 	if err != nil {
 		return err
 	}
@@ -119,6 +134,7 @@ func (s *DBStore) materializeRecognition(ctx context.Context, job recognitionJob
 		return err
 	}
 	evidenceCount := len(item.RecognitionEvidence) + len(profile.EcosystemEvidence)
+	writeStarted := time.Now()
 	err = s.withRecognitionLease(ctx, job, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO endpoint_recognition_summary(
  endpoint_id,brand,model,os_family,role,confidence,conflict,evidence_count,rule_version,summary,first_seen,last_seen,
@@ -147,6 +163,9 @@ IS DISTINCT FROM
 			item.PrimaryMAC, item.CurrentIP, item.CurrentAccount, item.CurrentAccessID, deviceName, filterBrand, filterOSFamily, item.EcosystemHint, listRaw)
 		return err
 	})
+	if job.Timings != nil {
+		job.Timings["write_ms"] = float64(time.Since(writeStarted)) / float64(time.Millisecond)
+	}
 	if err == nil {
 		s.fingerprintMatches.record(time.Now(), job.Historical, item.SourceMatches)
 	}
@@ -160,9 +179,10 @@ func (s *DBStore) finishRecognitionJob(ctx context.Context, job recognitionJob, 
 	var result sql.Result
 	var err error
 	if runErr == nil {
+		timings, _ := json.Marshal(job.Timings)
 		result, err = s.pg.db.ExecContext(ctx, `UPDATE endpoint_recognition_jobs SET processed_generation=GREATEST(processed_generation,$2),
- attempts=0,lease_owner='',lease_until='-infinity',last_error='',updated_at=now()
- WHERE endpoint_id=$1 AND lease_owner=$3 AND lease_until>clock_timestamp()`, job.EndpointID, job.DirtyGeneration, job.LeaseOwner)
+ attempts=0,lease_owner='',lease_until='-infinity',last_error='',processed_at=clock_timestamp(),timings=$4::jsonb,updated_at=now()
+ WHERE endpoint_id=$1 AND lease_owner=$3 AND lease_until>clock_timestamp()`, job.EndpointID, job.DirtyGeneration, job.LeaseOwner, timings)
 	} else {
 		attempts := job.Attempts + 1
 		delay := time.Second * time.Duration(1<<min(attempts, 8))
@@ -192,6 +212,8 @@ func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 	go func() { defer workers.Done(); s.runFingerprintRebuild(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); s.runFingerprintCoverage(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); s.runRecognitionFreshObserver(ctx) }()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
@@ -259,6 +281,7 @@ func (s *DBStore) runRecognitionMaterializerWorker(ctx context.Context, worker s
 		workCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		job, found, err := s.claimRecognitionJob(workCtx, worker)
 		if err == nil && found {
+			job.Timings = map[string]float64{}
 			err = s.materializeRecognition(workCtx, job)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "recognition materialize failed for %s: %v\n", job.EndpointID, err)

@@ -57,6 +57,12 @@ var clientEvidenceFields = map[string]bool{"user_agent": true, "ja3": true, "ja4
 // IdentifyEvidence turns protocol-specific observations into the existing
 // recognition engine's field inputs. It never guesses ownership from an IP.
 func (l *Library) IdentifyEvidence(mac string, evidence []EvidenceSignal, now time.Time) Result {
+	return l.IdentifyEvidenceMeasured(mac, evidence, now, nil)
+}
+
+// IdentifyEvidenceMeasured reports timings outside the deterministic result so
+// observing a run cannot create a changed summary or a redundant state write.
+func (l *Library) IdentifyEvidenceMeasured(mac string, evidence []EvidenceSignal, now time.Time, observe func(string, time.Duration)) Result {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -64,6 +70,25 @@ func (l *Library) IdentifyEvidence(mac string, evidence []EvidenceSignal, now ti
 	refs := make([]EvidenceRef, 0, min(len(evidence), 16))
 	protocols := map[string]bool{}
 	seen := map[string]bool{}
+	acceptedEvidence := make([]EvidenceSignal, 0, min(len(evidence), 128))
+	// Input and reference order is stable even when adapters iterate a map.
+	evidence = append([]EvidenceSignal(nil), evidence...)
+	sort.SliceStable(evidence, func(i, j int) bool {
+		a, b := evidence[i], evidence[j]
+		if a.Protocol != b.Protocol {
+			return a.Protocol < b.Protocol
+		}
+		if a.Field != b.Field {
+			return a.Field < b.Field
+		}
+		if a.EventID != b.EventID {
+			return a.EventID < b.EventID
+		}
+		return a.Value < b.Value
+	})
+	if len(evidence) > 128 {
+		evidence = evidence[:128]
+	}
 	valid, ambiguous, accepted := false, false, false
 	acceptedSignals := 0
 	for _, item := range evidence {
@@ -101,6 +126,7 @@ func (l *Library) IdentifyEvidence(mac string, evidence []EvidenceSignal, now ti
 		seen[key] = true
 		accepted = true
 		acceptedSignals++
+		acceptedEvidence = append(acceptedEvidence, item)
 		protocols[item.Protocol] = true
 		switch field {
 		case "hostname":
@@ -130,9 +156,10 @@ func (l *Library) IdentifyEvidence(mac string, evidence []EvidenceSignal, now ti
 			refs = append(refs, ref)
 		}
 	}
-	result := l.IdentifySignals(signals)
+	result := l.identifySignalsMeasured(signals, observe)
 	result.Diagnostics.AcceptedSignals = acceptedSignals
 	result.EvidenceRefs = refs
+	attachDimensionRefs(&result, acceptedEvidence)
 	result.Diagnostics.Protocols = make([]string, 0, len(protocols))
 	for protocol := range protocols {
 		result.Diagnostics.Protocols = append(result.Diagnostics.Protocols, protocol)
@@ -213,5 +240,33 @@ func recognitionStage(result Result) string {
 		return "os_family"
 	default:
 		return "none"
+	}
+}
+
+func attachDimensionRefs(result *Result, evidence []EvidenceSignal) {
+	for i := range result.DimensionEvidence {
+		entry := &result.DimensionEvidence[i]
+		for _, item := range evidence {
+			if item.EventID == "" || item.Field != entry.Field {
+				continue
+			}
+			if entry.matchValue != "" && !strings.EqualFold(item.Value, entry.matchValue) && !(entry.Layer == "model_catalog" && containsModelToken(strings.ToUpper(item.Value), strings.ToUpper(entry.matchValue))) {
+				continue
+			}
+			ref := EvidenceRef{EventID: item.EventID, Protocol: item.Protocol, Field: item.Field, SourceFamily: item.SourceFamily}
+			if !item.ObservedAt.IsZero() {
+				ref.ObservedAt = item.ObservedAt.UTC().Format(time.RFC3339Nano)
+			}
+			duplicate := false
+			for _, prior := range entry.Refs {
+				if prior == ref {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate && len(entry.Refs) < 4 {
+				entry.Refs = append(entry.Refs, ref)
+			}
+		}
 	}
 }

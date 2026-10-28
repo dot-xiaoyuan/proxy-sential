@@ -384,6 +384,10 @@ func BuildEndpointIdentityProfile(state IdentityState, endpointID string) (Endpo
 }
 
 func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDeviceInventory {
+	return buildEndpointDeviceInventoryMeasured(profile, nil)
+}
+
+func buildEndpointDeviceInventoryMeasured(profile EndpointIdentityProfile, observe func(string, time.Duration)) EndpointDeviceInventory {
 	if profile.Recognition != nil {
 		return *profile.Recognition
 	}
@@ -415,10 +419,10 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	applyLatestInventoryAssociations(&item, profile, time.Now().UTC())
 	baseEvidence := endpointRecognitionEvidence(endpoint.PrimaryMAC, endpoint.Attributes)
 	now := time.Now().UTC()
-	recognition := fingerprint.Default().IdentifyEvidence(endpoint.PrimaryMAC, baseEvidence, now)
+	recognition := fingerprint.Default().IdentifyEvidenceMeasured(endpoint.PrimaryMAC, baseEvidence, now, observe)
 	if len(profile.DiscoveryRecognitionHints) > 0 {
 		enrichedEvidence := append(append([]fingerprint.EvidenceSignal{}, baseEvidence...), passiveRecognitionSignals(profile.DiscoveryRecognitionHints)...)
-		enriched := fingerprint.Default().IdentifyEvidence(endpoint.PrimaryMAC, enrichedEvidence, now)
+		enriched := fingerprint.Default().IdentifyEvidenceMeasured(endpoint.PrimaryMAC, enrichedEvidence, now, observe)
 		changed := passiveRecognitionChanged(recognition, enriched)
 		if changed {
 			for _, hint := range profile.DiscoveryRecognitionHints {
@@ -447,14 +451,39 @@ func BuildEndpointDeviceInventory(profile EndpointIdentityProfile) EndpointDevic
 	item.RecognitionConflict = recognition.Conflict
 	item.ConflictDimensions = recognition.ConflictDimensions
 	item.RecognitionEvidence = recognition.Evidence
+	item.ProductFamily = recognition.ProductFamily
+	item.ProductFamilyConfidence = recognition.ProductFamilyConfidence
+	item.ProductCandidates = recognition.ProductCandidates
+	item.DimensionEvidence = recognition.DimensionEvidence
 	item.EvidenceRefs = recognition.EvidenceRefs
 	item.RecognitionDiagnostics = recognition.Diagnostics
 	item.SourceMatches = recognition.SourceMatches
-	explicitOS := firstNonEmpty(stringFromMap(endpoint.Attributes, "os_family"), stringFromMap(endpoint.Attributes, "os"))
-	if explicitOS != "" && recognition.OSFamily != "" && !strings.EqualFold(explicitOS, recognition.OSFamily) {
-		item.RecognitionConflict = true
-		item.ConflictDimensions = append(item.ConflictDimensions, "os_family")
-		item.RecognitionEvidence = append(item.RecognitionEvidence, "设备识别规则与终端操作系统字段冲突")
+	for _, explicit := range []struct {
+		field, value, previous string
+		confidence             float64
+	}{
+		{"brand", stringFromMap(endpoint.Attributes, "brand"), recognition.Brand, recognition.BrandConfidence},
+		{"model", stringFromMap(endpoint.Attributes, "model"), recognition.Model, recognition.ModelConfidence},
+		{"device_type", stringFromMap(endpoint.Attributes, "device_type"), recognition.DeviceType, recognition.DeviceTypeConfidence},
+		{"os_family", firstNonEmpty(stringFromMap(endpoint.Attributes, "os_family"), stringFromMap(endpoint.Attributes, "os")), recognition.OSFamily, recognition.OSFamilyConfidence},
+	} {
+		if explicit.value == "" {
+			continue
+		}
+		item.DimensionEvidence = append(item.DimensionEvidence, fingerprint.DimensionEvidence{Dimension: explicit.field, Value: explicit.value, Layer: "explicit_standard_field", Field: explicit.field, Confidence: 1})
+		if explicit.previous != "" && explicit.confidence >= .8 && !strings.EqualFold(explicit.value, explicit.previous) {
+			item.RecognitionConflict = true
+			present := false
+			for _, field := range item.ConflictDimensions {
+				if field == explicit.field {
+					present = true
+				}
+			}
+			if !present {
+				item.ConflictDimensions = append(item.ConflictDimensions, explicit.field)
+			}
+			item.RecognitionEvidence = append(item.RecognitionEvidence, "直接设备属性与识别证据冲突: "+explicit.field)
+		}
 	}
 	if stringFromMap(endpoint.Attributes, "brand") != "" || stringFromMap(endpoint.Attributes, "model") != "" || stringFromMap(endpoint.Attributes, "device_type") != "" {
 		item.RecognitionConfidence = 1

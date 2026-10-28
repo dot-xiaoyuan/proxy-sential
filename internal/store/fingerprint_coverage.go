@@ -17,6 +17,9 @@ func (s *DBStore) runFingerprintCoverage(ctx context.Context) {
 		if err == nil {
 			err = s.refreshFingerprintCoverage(work)
 		}
+		if err == nil {
+			err = s.refreshFreshRecognitionCoverage(work)
+		}
 		cancel()
 		if err != nil && ctx.Err() == nil {
 			fmt.Printf("fingerprint coverage update failed: %v\n", err)
@@ -33,16 +36,14 @@ func (s *DBStore) runFingerprintCoverage(ctx context.Context) {
 func (s *DBStore) FingerprintSourceCoverage(ctx context.Context) (map[string]any, error) {
 	var raw []byte
 	err := s.pg.db.QueryRowContext(ctx, `SELECT state FROM read_model_runtime_state WHERE name='fingerprint-source-coverage'`).Scan(&raw)
-	if err == sql.ErrNoRows {
-		return map[string]any{"status": "pending", "items": []any{}, "window": "24h"}, nil
-	}
-	if err != nil {
+	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
-	var out map[string]any
-	err = json.Unmarshal(raw, &out)
-	if err != nil {
-		return nil, err
+	out := map[string]any{"status": "pending", "items": []any{}, "window": "24h"}
+	if len(raw) > 0 {
+		if err = json.Unmarshal(raw, &out); err != nil {
+			return nil, err
+		}
 	}
 	if stamp, ok := out["as_of"].(string); ok {
 		if at, e := time.Parse(time.RFC3339Nano, stamp); e == nil && time.Since(at) > 3*time.Minute {
@@ -61,12 +62,27 @@ func (s *DBStore) FingerprintSourceCoverage(ctx context.Context) (map[string]any
 	if err = s.attachFingerprintMatchCounts(ctx, out); err != nil {
 		return nil, err
 	}
+	var fresh []byte
+	if e := s.pg.db.QueryRowContext(ctx, `SELECT state FROM read_model_runtime_state WHERE name='recognition-fresh-coverage'`).Scan(&fresh); e == nil {
+		var state map[string]any
+		if e = json.Unmarshal(fresh, &state); e != nil {
+			return nil, e
+		}
+		if stamp, ok := state["as_of"].(string); ok {
+			if at, e := time.Parse(time.RFC3339Nano, stamp); e == nil && time.Since(at) > 3*time.Minute {
+				state["status"] = "stale"
+			}
+		}
+		out["fresh"] = state
+	} else if e != sql.ErrNoRows {
+		return nil, e
+	}
 	return out, nil
 }
 
 func (s *DBStore) refreshFingerprintCoverage(ctx context.Context) error {
 	_, err := s.pg.db.ExecContext(ctx, `WITH matches AS (
- SELECT endpoint_id,conflict,(NOT conflict AND confidence>=0.8 AND role=m->>'role' AND m->>'strength'='self_report') confirmed,m->>'source_id' source_id,m->>'rule_id' rule_id
+ SELECT endpoint_id,conflict,(NOT (CASE WHEN jsonb_array_length(COALESCE(summary->'conflict_dimensions','[]'::jsonb))>0 THEN summary->'conflict_dimensions' ? 'device_type' ELSE conflict END) AND COALESCE((summary->>'device_type_confidence')::double precision,0)>=0.8 AND role=m->>'role' AND m->>'strength'='self_report') confirmed,m->>'source_id' source_id,m->>'rule_id' rule_id
  FROM endpoint_recognition_summary CROSS JOIN LATERAL jsonb_array_elements(COALESCE(summary->'source_matches','[]'::jsonb)) m
  WHERE last_seen>now()-interval '24 hours'
  ), counts AS (SELECT source_id,count(*) match_count,count(DISTINCT endpoint_id) endpoint_count,count(DISTINCT endpoint_id) FILTER(WHERE conflict) conflict_count,count(DISTINCT endpoint_id) FILTER(WHERE confirmed) confirmed_count FROM matches GROUP BY source_id),

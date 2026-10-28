@@ -12,6 +12,28 @@ import (
 	"proxy-sentinel/internal/normalized"
 )
 
+func TestDeviceConflictDimensionsPreserveIndependentConclusions(t *testing.T) {
+	item := EndpointDeviceInventory{Brand: "Dell", OSFamily: "Windows", RecognitionConflict: true, ConflictDimensions: []string{"model", "device_type"}}
+	if brand, os := deviceFilterValues(item); brand != "Dell" || os != "Windows" {
+		t.Fatalf("unrelated conflict suppressed conclusions: %s/%s", brand, os)
+	}
+	raw, err := json.Marshal(ProjectDeviceInventoryListItem(item))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projected map[string]any
+	if err := json.Unmarshal(raw, &projected); err != nil {
+		t.Fatal(err)
+	}
+	if dimensions, ok := projected["conflict_dimensions"].([]any); !ok || len(dimensions) != 2 {
+		t.Fatalf("list projection lost conflict scope: %s", raw)
+	}
+	item.ConflictDimensions = []string{"brand"}
+	if brand, os := deviceFilterValues(item); brand != "unknown" || os != "Windows" {
+		t.Fatalf("brand conflict must not suppress OS: %s/%s", brand, os)
+	}
+}
+
 func TestDeviceFiltersCombineCluesAndKeepUnidentified(t *testing.T) {
 	items := []EndpointDeviceInventory{
 		{Brand: "Dell", OSFamily: "Windows"},

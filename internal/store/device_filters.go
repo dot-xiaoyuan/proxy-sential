@@ -15,10 +15,14 @@ type DeviceFilterFacets struct {
 }
 
 func deviceFilterValues(item EndpointDeviceInventory) (brand, osFamily string) {
-	if !item.RecognitionConflict {
-		brand, osFamily = strings.TrimSpace(item.Brand), strings.TrimSpace(item.OSFamily)
+	brandConflict := deviceDimensionConflict(item, "brand")
+	if !brandConflict {
+		brand = strings.TrimSpace(item.Brand)
 	}
-	if item.BrandInference != nil && item.BrandInference.Status == "inferred" && (item.BrandConfidence < .8 || item.RecognitionConflict) {
+	if !deviceDimensionConflict(item, "os_family") {
+		osFamily = strings.TrimSpace(item.OSFamily)
+	}
+	if item.BrandInference != nil && item.BrandInference.Status == "inferred" && (item.BrandConfidence < .8 || brandConflict) {
 		brand = item.BrandInference.Brand
 	}
 	if brand == "" || strings.EqualFold(brand, "unknown") {
@@ -27,7 +31,7 @@ func deviceFilterValues(item EndpointDeviceInventory) (brand, osFamily string) {
 			brand = item.BrandInference.Brand
 		}
 	}
-	if !item.RecognitionConflict && item.BrandReference != nil && (brand == "" || item.BrandConfidence < .8) && (item.BrandInference == nil || item.BrandInference.Status == "insufficient") {
+	if !brandConflict && item.BrandReference != nil && (brand == "" || item.BrandConfidence < .8) && (item.BrandInference == nil || item.BrandInference.Status == "insufficient") {
 		brand = item.BrandReference.Brand
 	}
 	if brand == "" {
@@ -37,6 +41,20 @@ func deviceFilterValues(item EndpointDeviceInventory) (brand, osFamily string) {
 		osFamily = "unknown"
 	}
 	return
+}
+
+// Old summaries carry only a global conflict flag; keep their conservative
+// interpretation until a fresh observation supplies dimension-level evidence.
+func deviceDimensionConflict(item EndpointDeviceInventory, dimension string) bool {
+	if len(item.ConflictDimensions) == 0 {
+		return item.RecognitionConflict
+	}
+	for _, field := range item.ConflictDimensions {
+		if field == dimension {
+			return true
+		}
+	}
+	return false
 }
 
 func deviceRecognitionMatches(item EndpointDeviceInventory, query Query) bool {

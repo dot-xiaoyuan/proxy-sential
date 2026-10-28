@@ -33,8 +33,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       }
     })
     await page.goto('/devices/mac%3A02%3A00%3A00%3A00%3A90%3A08')
-    await page.getByRole('tab', { name: '设备识别', exact: true }).click()
-    await expect(page.getByRole('heading', { name: '设备识别', exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: '终端识别', exact: true }).click()
+    await expect(page.getByRole('heading', { name: '终端识别', exact: true })).toBeVisible()
     await expect(page.locator('.brand-inference-details')).toHaveCount(0)
     await expect(page.getByText('Unexpected Application Error!')).toHaveCount(0)
     await expect(page.getByText('Invalid Date')).toHaveCount(0)

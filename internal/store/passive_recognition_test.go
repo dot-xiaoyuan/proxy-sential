@@ -198,3 +198,19 @@ func TestEmptyMaterializedRecognitionCannotErasePassiveResult(t *testing.T) {
 		t.Fatal("equivalent materialized recognition should remain reusable")
 	}
 }
+
+func TestExplicitAttributesKeepConflictsScopedAndEvidence(t *testing.T) {
+	item := BuildEndpointDeviceInventory(EndpointIdentityProfile{Endpoint: EndpointEntity{Attributes: map[string]any{"brand": "Dell", "model": "Latitude", "os_family": "Windows"}}, DiscoveryRecognitionHints: []DiscoveryRecognitionHint{{Value: "iPhone14,5", Field: "ssdp_model", Origin: "ssdp", ObservationID: "iphone"}}})
+	if item.Brand != "Dell" || item.Model != "Latitude" || item.OSFamily != "Windows" || item.BrandConfidence != 1 || !deviceDimensionConflict(item, "brand") || !deviceDimensionConflict(item, "model") || deviceDimensionConflict(item, "os_family") {
+		t.Fatalf("explicit fields lost scope: %+v", item)
+	}
+	found := false
+	for _, entry := range item.DimensionEvidence {
+		if entry.Dimension == "brand" && entry.Layer == "explicit_standard_field" && entry.Value == "Dell" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("explicit conclusion has no dimension evidence")
+	}
+}

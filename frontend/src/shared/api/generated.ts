@@ -6361,6 +6361,7 @@ export interface components {
             os_family_confidence: number;
             randomized_mac: boolean;
             recognition_conflict: boolean;
+            conflict_dimensions?: ("brand" | "product_family" | "model" | "device_type" | "os_family")[];
             /** @description Open-source library IDs that recognised part of this device. Labels only; they never change a score. */
             libraries?: string[];
         };
@@ -6644,7 +6645,11 @@ export interface components {
             source_matches?: components["schemas"]["FingerprintSourceMatch"][];
             evidence_refs?: components["schemas"]["RecognitionEvidenceRef"][];
             recognition_diagnostics?: components["schemas"]["RecognitionDiagnostics"];
-            conflict_dimensions?: ("brand" | "model" | "device_type" | "os_family")[];
+            product_family?: string;
+            product_family_confidence?: number;
+            product_candidates?: components["schemas"]["RecognitionProductCandidate"][];
+            dimension_evidence?: components["schemas"]["RecognitionDimensionEvidence"][];
+            conflict_dimensions?: ("brand" | "product_family" | "model" | "device_type" | "os_family")[];
             router_observation?: components["schemas"]["RouterAssessment"];
             discovery?: components["schemas"]["DiscoveryRecognitionSummary"];
             ip_match?: components["schemas"]["DeviceIPMatch"];
@@ -6698,6 +6703,25 @@ export interface components {
             ecosystem_conflict?: boolean;
             ecosystem_evidence_count?: number;
             summary: string;
+        };
+        RecognitionProductCandidate: {
+            family?: string;
+            vendor?: string;
+            brand?: string;
+            model?: string;
+            device_type?: string;
+            source: string;
+            field?: string;
+            confidence: number;
+        };
+        RecognitionDimensionEvidence: {
+            dimension: string;
+            value: string;
+            layer: string;
+            field?: string;
+            rule_id?: string;
+            confidence: number;
+            refs?: components["schemas"]["RecognitionEvidenceRef"][];
         };
         RecognitionEvidenceRef: {
             event_id: string;
@@ -7433,6 +7457,7 @@ export interface components {
             page_size: number;
         };
         FingerprintCoverage: {
+            fresh?: components["schemas"]["FreshRecognitionCoverage"];
             rebuild?: {
                 version?: string;
                 enqueued?: number;
@@ -7459,6 +7484,50 @@ export interface components {
                 conflict_count: number;
                 confirmed_count?: number;
             }[];
+        };
+        FreshRecognitionCoverage: {
+            /** @enum {string} */
+            status: "ready" | "stale";
+            /** Format: date-time */
+            since: string;
+            /** Format: date-time */
+            as_of: string;
+            window: string;
+            /** @enum {string} */
+            input_semantics: "accepted_standard_discovery_events";
+            /** @enum {string} */
+            completion_semantics: "generation_commit_upper_bound";
+            /** @enum {string} */
+            http_visibility: "requires_authenticated_probe";
+            /** @enum {string} */
+            history_policy: "excluded_without_backfill";
+            items: components["schemas"]["FreshRecognitionProtocol"][];
+        };
+        FreshRecognitionProtocol: {
+            protocol: string;
+            purpose: string;
+            /** @enum {string} */
+            status: "observed" | "no_input";
+            inputs: number;
+            parsed: number;
+            attributed: number;
+            features: number;
+            candidates: number;
+            conclusions: number;
+            conflict: number;
+            processing: number;
+            unattributed: number;
+            insufficient: number;
+            /** @description Parse failures and processing errors seen by the observer; not a complete attempt log. */
+            errors: number;
+            overdue: number;
+            timed?: number;
+            read_and_prepare_ms?: number;
+            lookup_ms?: number;
+            rules_ms?: number;
+            write_ms?: number;
+            /** @description Conservative generation completion bound */
+            processing_upper_p95_ms?: number;
         };
         FingerprintSourceMatch: {
             observed?: {

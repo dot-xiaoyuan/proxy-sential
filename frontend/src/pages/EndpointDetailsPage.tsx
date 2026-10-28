@@ -110,7 +110,9 @@ function attributionText(value: string) {
         : value;
 }
 
+const recognitionLayers: Record<string,string> = { model_catalog:'型号精确表',fingerbank_dhcp:'DHCP 精确表',device_rule:'字段规则',protocol_catalog:'协议目录',explicit_standard_field:'直接设备属性' }
 const recognitionStages: Record<string, string> = {
+  product_family:'产品族',
   vendor: '厂商线索', brand: '品牌', device_type: '设备类型', model: '型号', os_family: '系统线索',
 };
 const recognitionReasons: Record<string, string> = {
@@ -329,7 +331,7 @@ export function EndpointDetailsPage() {
             <AppFactBar label="生态线索口径" items={['生态线索表示终端访问过相关厂商服务','不代表硬件品牌、型号或设备类型已确认']}/>
             <Descriptions column={{ xs: 1, md: 2 }} size="small">
               <Descriptions.Item label="识别摘要">{recognition&&<DeviceBrandSummary device={recognition}/>}</Descriptions.Item>
-              {recognition?.vendor&&<Descriptions.Item label="MAC 注册厂商">{recognition.vendor}</Descriptions.Item>}
+              {recognition?.vendor&&<Descriptions.Item label={recognition.product_candidates?.some(candidate=>candidate.source==='snmp_sysoid') && !recognition.product_candidates.some(candidate=>candidate.source==='ieee_oui') ? 'SNMP 企业号厂商' : 'MAC 注册厂商'}>{recognition.vendor}</Descriptions.Item>}
               {recognition?.brand_reference&&<Descriptions.Item label="MAC 品牌参考">{recognition.brand_reference.explanation}</Descriptions.Item>}
               <Descriptions.Item label="终端 ID"><Typography.Text className="detail-value-wrap" copyable>{profile.endpoint_id}</Typography.Text></Descriptions.Item>
               <Descriptions.Item label="规则版本">
@@ -359,6 +361,9 @@ export function EndpointDetailsPage() {
               {!!recognition?.conflict_dimensions?.length && <Descriptions.Item label="冲突字段">{recognition.conflict_dimensions.map(field => recognitionStages[field] ?? field).join('、')}</Descriptions.Item>}
               {!!recognition?.recognition_diagnostics?.protocols?.length && <Descriptions.Item label="可用协议">{recognition.recognition_diagnostics.protocols.join('、')}</Descriptions.Item>}
               {recognition?.recognition_diagnostics && <Descriptions.Item label="分层处理">有效信号 {recognition.recognition_diagnostics.accepted_signals} 条 · 候选规则 {recognition.recognition_diagnostics.candidate_rules} 条</Descriptions.Item>}
+              {recognition?.product_family && !recognition.conflict_dimensions?.includes('product_family') && <Descriptions.Item label="产品族">{recognition.product_family}</Descriptions.Item>}
+              {!!recognition?.product_candidates?.length && <Descriptions.Item label="产品候选"><div className="recognition-evidence-grid">{recognition.product_candidates.map((candidate,index)=><div className="fingerprint-ident" key={index}>{[candidate.family,candidate.brand,candidate.model,candidate.vendor,candidate.device_type].filter(Boolean).join(' · ')}<Typography.Text type="secondary"> · {recognitionLayers[candidate.source] ?? candidate.source}</Typography.Text></div>)}</div></Descriptions.Item>}
+              {!!recognition?.dimension_evidence?.length && <Descriptions.Item label="分维度依据"><div className="recognition-evidence-grid">{recognition.dimension_evidence.map((entry,index)=><div className="fingerprint-ident" key={index}><strong>{recognitionStages[entry.dimension] ?? entry.dimension}：{entry.value}</strong><div>{recognitionLayers[entry.layer] ?? entry.layer}{entry.field && ` · ${entry.field}`} · {confidenceText(entry.confidence)}</div>{entry.refs?.map(ref=><div key={`${ref.event_id}:${ref.field}`}>{ref.protocol} · {ref.event_id}</div>)}</div>)}</div></Descriptions.Item>}
               {!!recognition?.evidence_refs?.length && <Descriptions.Item label="可用信号事件">{recognition.evidence_refs.map(ref=><div className="fingerprint-ident" key={`${ref.event_id}:${ref.field}`}>{ref.protocol} · {ref.field} · {ref.event_id}</div>)}</Descriptions.Item>}
             </Descriptions>
           </section>

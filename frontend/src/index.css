@@ -5565,3 +5565,19 @@ pre.wrap-code {
 @media (max-width: 560px) {
   .compact-list-table .ant-table-tbody > tr > td.mobile-empty-cell { display: none !important; }
 }
+
+.recognition-evidence-grid { display: grid; gap: 8px; min-width: 0; }
+.fresh-recognition-coverage { margin-bottom: 24px; }
+.fresh-recognition-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.fresh-recognition-card { background: var(--surface, #f8fafc); border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; min-width: 0; }
+.fresh-recognition-title, .fresh-recognition-issues { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fresh-recognition-title h5 { margin: 0; }
+.fresh-recognition-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.fresh-recognition-counts dt { color: #475569; font-size: 12px; }
+.fresh-recognition-counts dd { margin: 2px 0 0; font-weight: 600; font-size: 18px; overflow-wrap: anywhere; }
+.fresh-recognition-timings { margin-top: 12px; color: #475569; font-size: 12px; }
+.fresh-recognition-timings summary { cursor: pointer; }
+.fresh-recognition-timings p { margin: 8px 0 0; overflow-wrap: anywhere; }
+.fresh-recognition-absent { margin-top: 20px; }
+@media (max-width: 767px) { .fresh-recognition-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 559px) { .fresh-recognition-card { padding: 14px; } }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 //go:embed data/oui.csv
@@ -29,26 +30,30 @@ const EmbeddedVersion = "embedded-2026-10.2"
 var macHostnameClue = regexp.MustCompile(`(?i)(^|[-_. ])(mac(book|intosh)?|imac)($|[-_. 0-9])`)
 
 type Result struct {
-	SourceMatches        []SourceMatch `json:"source_matches,omitempty"`
-	EvidenceRefs         []EvidenceRef `json:"evidence_refs,omitempty"`
-	Diagnostics          Diagnostics   `json:"recognition_diagnostics"`
-	Vendor               string        `json:"vendor,omitempty"`
-	Brand                string        `json:"brand,omitempty"`
-	Model                string        `json:"model,omitempty"`
-	DeviceType           string        `json:"device_type,omitempty"`
-	OSFamily             string        `json:"os_family,omitempty"`
-	Confidence           float64       `json:"recognition_confidence"`
-	VendorConfidence     float64       `json:"vendor_confidence"`
-	BrandConfidence      float64       `json:"brand_confidence"`
-	ModelConfidence      float64       `json:"model_confidence"`
-	DeviceTypeConfidence float64       `json:"device_type_confidence"`
-	OSFamilyConfidence   float64       `json:"os_family_confidence"`
-	Source               string        `json:"recognition_source,omitempty"`
-	Version              string        `json:"fingerprint_version,omitempty"`
-	RandomizedMAC        bool          `json:"randomized_mac"`
-	Conflict             bool          `json:"recognition_conflict"`
-	ConflictDimensions   []string      `json:"conflict_dimensions,omitempty"`
-	Evidence             []string      `json:"recognition_evidence,omitempty"`
+	SourceMatches           []SourceMatch       `json:"source_matches,omitempty"`
+	EvidenceRefs            []EvidenceRef       `json:"evidence_refs,omitempty"`
+	DimensionEvidence       []DimensionEvidence `json:"dimension_evidence,omitempty"`
+	ProductCandidates       []ProductCandidate  `json:"product_candidates,omitempty"`
+	Diagnostics             Diagnostics         `json:"recognition_diagnostics"`
+	Vendor                  string              `json:"vendor,omitempty"`
+	Brand                   string              `json:"brand,omitempty"`
+	Model                   string              `json:"model,omitempty"`
+	ProductFamily           string              `json:"product_family,omitempty"`
+	ProductFamilyConfidence float64             `json:"product_family_confidence"`
+	DeviceType              string              `json:"device_type,omitempty"`
+	OSFamily                string              `json:"os_family,omitempty"`
+	Confidence              float64             `json:"recognition_confidence"`
+	VendorConfidence        float64             `json:"vendor_confidence"`
+	BrandConfidence         float64             `json:"brand_confidence"`
+	ModelConfidence         float64             `json:"model_confidence"`
+	DeviceTypeConfidence    float64             `json:"device_type_confidence"`
+	OSFamilyConfidence      float64             `json:"os_family_confidence"`
+	Source                  string              `json:"recognition_source,omitempty"`
+	Version                 string              `json:"fingerprint_version,omitempty"`
+	RandomizedMAC           bool                `json:"randomized_mac"`
+	Conflict                bool                `json:"recognition_conflict"`
+	ConflictDimensions      []string            `json:"conflict_dimensions,omitempty"`
+	Evidence                []string            `json:"recognition_evidence,omitempty"`
 }
 
 type Signals struct {
@@ -63,16 +68,18 @@ type Signals struct {
 }
 
 type Rule struct {
-	Pattern           string  `json:"pattern"`
-	Input             string  `json:"input,omitempty"`
-	Brand             string  `json:"brand,omitempty"`
-	Model             string  `json:"model,omitempty"`
-	DeviceType        string  `json:"device_type,omitempty"`
-	OSFamily          string  `json:"os_family,omitempty"`
-	BrandReplacement  string  `json:"brand_replacement,omitempty"`
-	ModelReplacement  string  `json:"model_replacement,omitempty"`
-	DeviceReplacement string  `json:"device_replacement,omitempty"`
-	Confidence        float64 `json:"confidence"`
+	Pattern           string   `json:"pattern"`
+	Input             string   `json:"input,omitempty"`
+	Brand             string   `json:"brand,omitempty"`
+	Model             string   `json:"model,omitempty"`
+	ProductFamily     string   `json:"product_family,omitempty"`
+	ProductFamilies   []string `json:"product_families,omitempty"`
+	DeviceType        string   `json:"device_type,omitempty"`
+	OSFamily          string   `json:"os_family,omitempty"`
+	BrandReplacement  string   `json:"brand_replacement,omitempty"`
+	ModelReplacement  string   `json:"model_replacement,omitempty"`
+	DeviceReplacement string   `json:"device_replacement,omitempty"`
+	Confidence        float64  `json:"confidence"`
 	compiled          *regexp.Regexp
 }
 
@@ -175,6 +182,11 @@ func (l *Library) Identify(mac string, values ...string) Result {
 }
 
 func (l *Library) IdentifySignals(signals Signals) Result {
+	return l.identifySignalsMeasured(signals, nil)
+}
+
+func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, time.Duration)) Result {
+	lookupStarted := time.Now()
 	mac := signals.MAC
 	result := Result{Version: l.version, RandomizedMAC: IsRandomizedMAC(mac)}
 	if !result.RandomizedMAC {
@@ -194,60 +206,115 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			}
 		}
 	}
-	// A device that reports its sysObjectID names its own vendor. This outranks
-	// a MAC OUI, which often identifies the NIC vendor rather than the device
-	// brand, but it never confirms a model or a physical role.
-	if result.Vendor == "" {
+	// Keep MAC registration separate from product-vendor candidates. Neither
+	// an OUI nor an enterprise number alone confirms a model or physical role.
+	if result.Vendor != "" {
+		addProductCandidate(&result, ProductCandidate{Vendor: result.Vendor, Source: "ieee_oui", Confidence: result.VendorConfidence})
+	}
+	{
 		for _, oid := range signals.ProtocolFields["snmp_sysoid"] {
 			vendor, confidence, ok := LookupSNMPVendor(oid)
 			if !ok {
 				continue
 			}
-			result.Vendor = vendor
-			result.VendorConfidence = confidence
-			result.Source = "snmp_sysoid"
+			addProductCandidate(&result, ProductCandidate{Vendor: vendor, Source: "snmp_sysoid", Field: "snmp_sysoid", Confidence: confidence})
+			if result.Vendor == "" {
+				result.Vendor, result.VendorConfidence, result.Source = vendor, confidence, "snmp_sysoid"
+			}
 			result.Evidence = append(result.Evidence, "SNMP sysObjectID: "+strings.TrimSpace(oid)+" → "+vendor)
 			break
 		}
 	}
-	// The DHCP vendor class is self-reported like the hostname (for example
-	// "HP LaserJet" or "HUAWEI:openharmony:<model>"), so rules see it too.
-	joined := strings.Join(append(append(append([]string{}, signals.Hostnames...), append(signals.Software, signals.Hints...)...), signals.DHCPVendorClass), " ")
-	// Rules may target one structured field (ssdp_model, dhcp_vendor_class, ...)
-	// or fall back to the concatenated self-reported text. Field-scoped matches
-	// outrank the concatenated blob, and the highest-confidence match wins
-	// instead of the first one in file order.
-	// A verified model code outranks regular-expression rules: the code and the
-	// product name share no textual similarity, so no rule can derive one from
-	// the other. Rules may still contribute an operating system.
-	modelEntry, modelCode, hasModel := l.modelFromSignals(signals, result.Vendor)
-	if hasModel {
-		result.Brand = modelEntry.Brand
-		result.BrandConfidence = modelEntry.Confidence
-		result.Model = modelEntry.Model
-		result.ModelConfidence = modelEntry.Confidence
-		if modelEntry.DeviceType != "" {
-			result.DeviceType = modelEntry.DeviceType
-			result.DeviceTypeConfidence = modelEntry.Confidence
-		}
+	// Exact tables establish candidates before any regular expressions run.
+	// Each dimension keeps its own confidence and conflict scope.
+	models := l.modelsFromSignals(signals, result.Vendor)
+	hasModel := len(models) > 0
+	for _, candidate := range models {
+		entry := candidate.entry
+		addProductCandidate(&result, ProductCandidate{Family: entry.ProductFamily, Brand: entry.Brand, Model: entry.Model, DeviceType: entry.DeviceType, Source: "model_catalog", Field: candidate.field, Confidence: entry.Confidence})
+		mergeDimension(&result, "product_family", entry.ProductFamily, entry.Confidence, .85)
+		mergeDimension(&result, "brand", entry.Brand, entry.Confidence, .85)
+		mergeDimension(&result, "model", entry.Model, entry.Confidence, .85)
+		mergeDimension(&result, "device_type", entry.DeviceType, entry.Confidence, .85)
 		result.Source = "model_catalog"
-		result.Confidence = modelEntry.Confidence
-		result.Evidence = append(result.Evidence, "型号库: "+modelCode+" → "+modelEntry.Model)
-	}
-	matches, evaluatedRules := l.matchRules(signals, joined)
-	result.Diagnostics.CandidateRules = evaluatedRules
-	if len(matches) > 0 {
-		if hasModel {
-			applyRuleExtras(&result, expandRuleValues(matches[0]))
-		} else {
-			applyRuleMatch(&result, matches[0], expandRuleValues(matches[0]))
-		}
-		for _, extra := range matches[1:] {
-			for _, dimension := range ruleMatchConflictDimensions(result, extra) {
-				result.Conflict = true
-				result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, dimension)
+		result.Confidence = max(result.Confidence, entry.Confidence)
+		result.Evidence = append(result.Evidence, "型号库: "+candidate.code+" → "+entry.Model)
+		recordDimensionEvidence(&result, "model_catalog", candidate.field, candidate.code, ruleValues{brand: entry.Brand, model: entry.Model, deviceType: entry.DeviceType, productFamily: entry.ProductFamily}, entry.Confidence)
+		for i := range result.DimensionEvidence {
+			if result.DimensionEvidence[i].Layer == "model_catalog" && result.DimensionEvidence[i].RuleID == candidate.code {
+				result.DimensionEvidence[i].matchValue = candidate.code
 			}
 		}
+	}
+	if candidates := l.dhcp[normalizeDHCPOptions(signals.DHCPRequestedOptions)]; len(candidates) > 0 {
+		if candidate, ok := bestDHCPFingerprint(candidates, signals.DHCPVendorClass); ok {
+			addProductCandidate(&result, ProductCandidate{DeviceType: candidate.DeviceType, Source: "fingerbank_dhcp", Field: "dhcp_requested_options", Confidence: candidate.Confidence})
+			mergeDimension(&result, "device_type", candidate.DeviceType, candidate.Confidence, .85)
+			mergeDimension(&result, "os_family", candidate.OSFamily, candidate.Confidence, .85)
+			if result.Source == "" || result.Source == "ieee_oui" {
+				result.Source, result.Confidence = "fingerbank_dhcp", candidate.Confidence
+			}
+			result.Evidence = append(result.Evidence, "Fingerbank DHCP: "+candidate.Description)
+			recordDimensionEvidence(&result, "fingerbank_dhcp", "dhcp_requested_options", candidate.Description, ruleValues{deviceType: candidate.DeviceType, osFamily: candidate.OSFamily}, candidate.Confidence)
+		}
+	}
+	if observe != nil {
+		observe("lookup", time.Since(lookupStarted))
+	}
+	rulesStarted := time.Now()
+	matches, evaluatedRules := l.matchRules(signals, result.ProductCandidates)
+	if observe != nil {
+		observe("rules", time.Since(rulesStarted))
+	}
+	result.Diagnostics.CandidateRules = evaluatedRules
+	for index, match := range matches {
+		values := expandRuleValues(match)
+		// A raw model code and its marketing name describe the same product.
+		if entry, _, ok := lookupModelInText(values.model); ok && (values.brand == "" || strings.EqualFold(values.brand, entry.Brand)) {
+			values.model = entry.Model
+			if values.productFamily == "" {
+				values.productFamily = entry.ProductFamily
+			}
+		}
+		// A broad, weaker secondary rule must not invent missing product/OS
+		// details. Independent strong fields may contribute their own dimension.
+		if index > 0 && match.rule.Confidence < .85 {
+			continue
+		}
+		if index > 0 && match.input == matches[0].input {
+			// A second interpretation of the same field can expose conflict,
+			// but cannot turn a broad family label into a missing model/OS.
+			if result.Brand == "" {
+				values.brand = ""
+			}
+			if result.Model == "" {
+				values.model = ""
+			}
+			if result.DeviceType == "" {
+				values.deviceType = ""
+			}
+			if result.OSFamily == "" {
+				values.osFamily = ""
+			}
+		}
+		mergeDimension(&result, "brand", values.brand, match.rule.Confidence, .85)
+		mergeDimension(&result, "model", values.model, match.rule.Confidence, .85)
+		mergeDimension(&result, "device_type", values.deviceType, match.rule.Confidence, .85)
+		mergeDimension(&result, "os_family", values.osFamily, match.rule.Confidence, .85)
+		mergeDimension(&result, "product_family", values.productFamily, match.rule.Confidence, .85)
+		recordDimensionEvidence(&result, "device_rule", firstNonEmpty(match.input, modelCandidateField(signals, match.value)), match.rule.Pattern, values, match.rule.Confidence)
+		if index == 0 && !hasModel && result.Source != "fingerbank_dhcp" {
+			result.Confidence, result.Source = match.rule.Confidence, "device_rule"
+			if match.input != "" {
+				result.Source += ":" + match.input
+			}
+		}
+		for i := range result.DimensionEvidence {
+			if result.DimensionEvidence[i].Layer == "device_rule" && result.DimensionEvidence[i].RuleID == match.rule.Pattern && result.DimensionEvidence[i].Field == firstNonEmpty(match.input, modelCandidateField(signals, match.value)) {
+				result.DimensionEvidence[i].matchValue = match.value
+			}
+		}
+		result.Evidence = append(result.Evidence, "设备规则: "+match.rule.Pattern)
 	}
 	// A device-reported Android DHCP class still identifies its OS when a more
 	// specific hostname rule wins brand and model selection.
@@ -275,28 +342,6 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			break
 		}
 	}
-	if candidates := l.dhcp[normalizeDHCPOptions(signals.DHCPRequestedOptions)]; len(candidates) > 0 {
-		candidate, ok := bestDHCPFingerprint(candidates, signals.DHCPVendorClass)
-		if ok {
-			if result.OSFamily != "" && candidate.OSFamily != "" && !strings.EqualFold(result.OSFamily, candidate.OSFamily) {
-				result.Conflict = true
-				result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, "os_family")
-			}
-			if result.DeviceType == "" {
-				result.DeviceType = candidate.DeviceType
-				result.DeviceTypeConfidence = candidate.Confidence
-			}
-			if result.OSFamily == "" {
-				result.OSFamily = candidate.OSFamily
-				result.OSFamilyConfidence = candidate.Confidence
-			}
-			if result.Source == "" || result.Source == "ieee_oui" || result.Source == "dhcp_hostname_hint" {
-				result.Source = "fingerbank_dhcp"
-				result.Confidence = candidate.Confidence
-			}
-			result.Evidence = append(result.Evidence, "Fingerbank DHCP: "+candidate.Description)
-		}
-	}
 	if result.DeviceType == "" && result.Vendor != "" {
 		if deviceType, confidence, ok := LookupVendorPrior(result.Vendor); ok {
 			result.DeviceType = deviceType
@@ -309,7 +354,11 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 			result.Brand = normalized
 		}
 	}
+	rulesStarted = time.Now()
 	sourceMatches, catalogEvaluated := l.Catalog().MatchWithStats(catalogSignalValues(signals))
+	if observe != nil {
+		observe("rules", time.Since(rulesStarted))
+	}
 	result.Diagnostics.CandidateRules += catalogEvaluated
 	applySourceMatches(&result, sourceMatches)
 	return result
@@ -395,7 +444,7 @@ func expandRule(compiled *regexp.Regexp, input string, match []int, replacement 
 // ruleMatch is one rule hit against one input value.
 type ruleMatch struct {
 	rule        *Rule
-	input       string // "" means the concatenated self-reported text
+	input       string // "" means one legacy self-reported value
 	value       string
 	loc         []int
 	specificity int
@@ -403,13 +452,14 @@ type ruleMatch struct {
 }
 
 type ruleValues struct {
-	brand      string
-	model      string
-	deviceType string
-	osFamily   string
+	brand         string
+	model         string
+	deviceType    string
+	osFamily      string
+	productFamily string
 }
 
-func (l *Library) matchRules(signals Signals, joined string) ([]ruleMatch, int) {
+func (l *Library) matchRules(signals Signals, candidates []ProductCandidate) ([]ruleMatch, int) {
 	out := make([]ruleMatch, 0, 4)
 	evaluated := 0
 	inputs := make([]string, 0, len(l.ruleIndex))
@@ -420,12 +470,15 @@ func (l *Library) matchRules(signals Signals, joined string) ([]ruleMatch, int) 
 	}
 	sort.Strings(inputs)
 	for _, input := range inputs {
-		values, specificity := ruleInputValues(signals, joined, input)
+		values, specificity := ruleInputValues(signals, "", input)
 		if len(values) == 0 {
 			continue
 		}
 		for _, index := range l.ruleIndex[input] {
 			rule := &l.rules[index]
+			if !ruleAcceptsFamilies(rule.ProductFamilies, candidates) {
+				continue
+			}
 			if rule.Input == "user_agent" {
 				// UA identifies a client/runtime, not a physical endpoint. Keep the
 				// parser rules in the offline bundle for technical inspection, but
@@ -460,12 +513,12 @@ func (l *Library) matchRules(signals Signals, joined string) ([]ruleMatch, int) 
 }
 
 // ruleInputValues returns the values a rule is allowed to inspect. Rules without
-// an explicit input keep the historical behaviour of matching the concatenated
-// self-reported text; rules declaring an input never see other fields.
+// an explicit input inspect each legacy self-reported value independently.
+// Rules declaring an input never see other fields.
 func ruleInputValues(signals Signals, joined, input string) ([]string, int) {
 	switch input {
 	case "":
-		return []string{joined}, 0
+		return append(append(append(append([]string{}, signals.Hostnames...), signals.Software...), signals.Hints...), nonEmptyValue(signals.DHCPVendorClass)...), 0
 	case "hostname":
 		return signals.Hostnames, 1
 	case "dhcp_vendor_class":
@@ -485,74 +538,12 @@ func nonEmptyValue(value string) []string {
 func expandRuleValues(match ruleMatch) ruleValues {
 	rule := match.rule
 	return ruleValues{
-		brand:      expandRule(rule.compiled, match.value, match.loc, firstNonEmpty(rule.BrandReplacement, rule.Brand)),
-		model:      expandRule(rule.compiled, match.value, match.loc, firstNonEmpty(rule.ModelReplacement, rule.Model, rule.DeviceReplacement)),
-		deviceType: strings.TrimSpace(rule.DeviceType),
-		osFamily:   strings.TrimSpace(rule.OSFamily),
+		brand:         expandRule(rule.compiled, match.value, match.loc, firstNonEmpty(rule.BrandReplacement, rule.Brand)),
+		model:         expandRule(rule.compiled, match.value, match.loc, firstNonEmpty(rule.ModelReplacement, rule.Model, rule.DeviceReplacement)),
+		deviceType:    strings.TrimSpace(rule.DeviceType),
+		osFamily:      strings.TrimSpace(rule.OSFamily),
+		productFamily: strings.TrimSpace(rule.ProductFamily),
 	}
-}
-
-// applyRuleExtras lets rules contribute only when a verified model code already
-// established brand, model and device type.
-func applyRuleExtras(result *Result, values ruleValues) {
-	if values.osFamily != "" && result.OSFamily == "" {
-		result.OSFamily = values.osFamily
-		result.OSFamilyConfidence = .85
-	}
-	if values.deviceType != "" && result.DeviceType == "" {
-		result.DeviceType = values.deviceType
-		result.DeviceTypeConfidence = .6
-	}
-}
-
-func applyRuleMatch(result *Result, match ruleMatch, values ruleValues) {
-	if values.brand != "" {
-		result.Brand = values.brand
-		result.BrandConfidence = match.rule.Confidence
-	}
-	if values.model != "" {
-		result.Model = values.model
-		result.ModelConfidence = match.rule.Confidence
-	}
-	if values.deviceType != "" {
-		result.DeviceType = values.deviceType
-		result.DeviceTypeConfidence = match.rule.Confidence
-	}
-	if values.osFamily != "" {
-		result.OSFamily = values.osFamily
-		result.OSFamilyConfidence = match.rule.Confidence
-	}
-	result.Confidence = match.rule.Confidence
-	result.Source = "device_rule"
-	if match.input != "" {
-		result.Source = "device_rule:" + match.input
-	}
-	result.Evidence = append(result.Evidence, "设备规则: "+match.rule.Pattern)
-}
-
-// ruleMatchConflicts reports a high-confidence disagreement between the winning
-// rule and a lower-ranked rule without letting the loser overwrite any field.
-func ruleMatchConflicts(result Result, match ruleMatch) bool {
-	return len(ruleMatchConflictDimensions(result, match)) > 0
-}
-
-func ruleMatchConflictDimensions(result Result, match ruleMatch) []string {
-	if match.rule.Confidence < .85 {
-		return nil
-	}
-	values := expandRuleValues(match)
-	conflicts := []string{}
-	for _, item := range []struct{ field, current, candidate string }{
-		{"brand", result.Brand, values.brand},
-		{"model", result.Model, values.model},
-		{"device_type", result.DeviceType, values.deviceType},
-		{"os_family", result.OSFamily, values.osFamily},
-	} {
-		if item.current != "" && item.candidate != "" && !strings.EqualFold(item.current, item.candidate) {
-			conflicts = append(conflicts, item.field)
-		}
-	}
-	return conflicts
 }
 
 func appendConflictDimension(current []string, field string) []string {

@@ -60,6 +60,8 @@ type streamDiscoveryFact struct {
 }
 
 type streamPreparedDiscovery struct {
+	Protocol    string
+	Parsed      bool
 	Receipt     streamDiscoveryReceipt
 	Fact        streamDiscoveryFact
 	HasFact     bool
@@ -106,6 +108,7 @@ func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscover
 		}
 		seen[identity] = hash
 		item := streamPreparedDiscovery{Receipt: streamDiscoveryReceipt{Scope: scope, Key: key, Hash: hash, Accepted: segment.AcceptedAt, Result: "applied"}}
+		item.Protocol = firstText(str(event.Payload, "origin"), event.SourceEventType)
 		adapted, err := AdaptDiscoveryEvent(event)
 		if err == nil {
 			item.Observation, err = FromEvent(adapted)
@@ -115,6 +118,7 @@ func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscover
 			prepared = append(prepared, item)
 			continue
 		}
+		item.Parsed = true
 		o := item.Observation
 		if o.IP != "" && !IsPrivateDiscoveryAddress(o.IP) {
 			item.Receipt.Result = "outside_private_scope"

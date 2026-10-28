@@ -6573,6 +6573,7 @@ components:
         os_family_confidence: { type: number, minimum: 0, maximum: 1 }
         randomized_mac: { type: boolean }
         recognition_conflict: { type: boolean }
+        conflict_dimensions: { type: array, items: { type: string, enum: [brand, product_family, model, device_type, os_family] } }
         libraries: { type: array, items: { type: string }, description: "Open-source library IDs that recognised part of this device. Labels only; they never change a score." }
     InventoryProjectionState:
       type: object
@@ -6876,7 +6877,11 @@ components:
         source_matches: { type: array, items: { $ref: "#/components/schemas/FingerprintSourceMatch" } }
         evidence_refs: { type: array, items: { $ref: "#/components/schemas/RecognitionEvidenceRef" } }
         recognition_diagnostics: { $ref: "#/components/schemas/RecognitionDiagnostics" }
-        conflict_dimensions: { type: array, items: { type: string, enum: [brand, model, device_type, os_family] } }
+        product_family: { type: string }
+        product_family_confidence: { type: number, minimum: 0, maximum: 1 }
+        product_candidates: { type: array, maxItems: 16, items: { $ref: "#/components/schemas/RecognitionProductCandidate" } }
+        dimension_evidence: { type: array, maxItems: 48, items: { $ref: "#/components/schemas/RecognitionDimensionEvidence" } }
+        conflict_dimensions: { type: array, items: { type: string, enum: [brand, product_family, model, device_type, os_family] } }
         router_observation:
           $ref: '#/components/schemas/RouterAssessment'
         discovery:
@@ -6975,6 +6980,29 @@ components:
         ecosystem_evidence_count: { type: integer }
         summary:
           type: string
+    RecognitionProductCandidate:
+      type: object
+      required: [source, confidence]
+      properties:
+        family: { type: string }
+        vendor: { type: string }
+        brand: { type: string }
+        model: { type: string }
+        device_type: { type: string }
+        source: { type: string }
+        field: { type: string }
+        confidence: { type: number }
+    RecognitionDimensionEvidence:
+      type: object
+      required: [dimension, value, layer, confidence]
+      properties:
+        dimension: { type: string }
+        value: { type: string }
+        layer: { type: string }
+        field: { type: string }
+        rule_id: { type: string }
+        confidence: { type: number }
+        refs: { type: array, maxItems: 4, items: { $ref: "#/components/schemas/RecognitionEvidenceRef" } }
     RecognitionEvidenceRef:
       type: object
       required: [event_id, protocol, field, source_family]
@@ -8304,6 +8332,7 @@ components:
       type: object
       required: [status, window, items]
       properties:
+        fresh: { $ref: '#/components/schemas/FreshRecognitionCoverage' }
         rebuild:
           type: object
           properties:
@@ -8335,6 +8364,47 @@ components:
               endpoint_count: { type: integer }
               conflict_count: { type: integer }
               confirmed_count: { type: integer }
+
+    FreshRecognitionCoverage:
+      type: object
+      required: [status, since, as_of, window, input_semantics, completion_semantics, http_visibility, history_policy, items]
+      properties:
+        status: { type: string, enum: [ready, stale] }
+        since: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        window: { type: string }
+        input_semantics: { type: string, enum: [accepted_standard_discovery_events] }
+        completion_semantics: { type: string, enum: [generation_commit_upper_bound] }
+        http_visibility: { type: string, enum: [requires_authenticated_probe] }
+        history_policy: { type: string, enum: [excluded_without_backfill] }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/FreshRecognitionProtocol' }
+    FreshRecognitionProtocol:
+      type: object
+      required: [protocol, purpose, status, inputs, parsed, attributed, features, candidates, conclusions, conflict, processing, unattributed, insufficient, errors, overdue]
+      properties:
+        protocol: { type: string }
+        purpose: { type: string }
+        status: { type: string, enum: [observed, no_input] }
+        inputs: { type: integer }
+        parsed: { type: integer }
+        attributed: { type: integer }
+        features: { type: integer }
+        candidates: { type: integer }
+        conclusions: { type: integer }
+        conflict: { type: integer }
+        processing: { type: integer }
+        unattributed: { type: integer }
+        insufficient: { type: integer }
+        errors: { type: integer, description: Parse failures and processing errors seen by the observer; not a complete attempt log. }
+        overdue: { type: integer }
+        timed: { type: integer }
+        read_and_prepare_ms: { type: number }
+        lookup_ms: { type: number }
+        rules_ms: { type: number }
+        write_ms: { type: number }
+        processing_upper_p95_ms: { type: number, description: Conservative generation completion bound, not authenticated API visibility. }
 
     FingerprintSourceMatch:
       type: object

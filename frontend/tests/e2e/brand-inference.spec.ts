@@ -40,6 +40,37 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await page.getByRole('tab', { name: '设备特征库', exact: true }).click()
     await expect(page.getByText('域名来源明细', { exact: true })).toHaveCount(1)
     await page.screenshot({ path: testInfo.outputPath(`rules-${viewport.width}.png`), fullPage: false })
+    await page.getByRole('tab', { name: '现场覆盖', exact: true }).click()
+    await expect(page.getByText('新鲜输入链路', { exact: true })).toBeVisible()
+    await expect(page.getByText('RTSP · 字段待接入', { exact: true })).toBeVisible()
+    await page.locator('.fresh-recognition-card').first().scrollIntoViewIfNeeded()
+    await page.screenshot({ path: testInfo.outputPath(`coverage-${viewport.width}.png`), fullPage: false })
+    const freshProbe = await page.evaluate(() => {
+      const card = getComputedStyle(document.querySelector('.fresh-recognition-card')!)
+      const tab = document.querySelector('.ant-tabs-tab-active .ant-tabs-tab-btn')!
+      const selected = getComputedStyle(tab)
+      let node: Element | null = tab
+      let background = 'rgb(255, 255, 255)'
+      while (node) {
+        const color = getComputedStyle(node).backgroundColor
+        if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') { background = color; break }
+        node = node.parentElement
+      }
+      const luminance = (color: string) => {
+        const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(v => {
+          const n = v / 255; return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4
+        })
+        return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722
+      }
+      const [lo, hi] = [luminance(selected.color), luminance(background)].sort((a, b) => a - b)
+      return { selectedContrast: (hi + .05) / (lo + .05), overflow: document.documentElement.scrollWidth > innerWidth + 2, radius: card.borderRadius, padding: card.padding, border: card.borderColor, selectedColor: selected.color, selectedBackground: selected.backgroundColor }
+    })
+    expect(freshProbe.overflow).toBe(false)
+    expect(freshProbe.selectedContrast).toBeGreaterThanOrEqual(4.5)
+    expect(freshProbe.radius).toBe('8px')
+    expect(freshProbe.padding).toBe(viewport.width < 560 ? '14px' : '20px')
+    expect(freshProbe.border).toBe('rgb(226, 232, 240)')
+    await testInfo.attach('fresh-dom-style-probe', { body: JSON.stringify(freshProbe, null, 2), contentType: 'application/json' })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2)).toBe(true)
     expect(errors).toEqual([])
   })

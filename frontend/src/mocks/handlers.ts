@@ -1,3 +1,5 @@
+import { recognitionDimensionConflict } from '../entities/device/recognitionConflict'
+import { freshRecognition } from './freshRecognition'
 import fingerprintCatalog from "./fingerprintCatalog.json"
 import { ipTrafficObservationHandlers } from './ipTrafficObservations'
 import { inventoryTraceHandlers } from './inventoryTrace'
@@ -428,15 +430,15 @@ export const handlers = [
     const allItems = [...endpointItems, domainOnlyDevice, macOSDevice, ...manufacturerReferenceDevices].filter(item=>view!=='recent'||(Date.parse(item.last_seen||'')>=cutoff&&Date.parse(item.last_seen||'')<=now))
     const brandValue = (item: typeof allItems[number]) => {
       const inference = 'brand_inference' in item ? item.brand_inference : undefined
-      if (inference?.status === 'inferred' && ((item.brand_confidence ?? 0) < .8 || item.recognition_conflict)) return inference.brand || 'unknown'
-      if (!item.recognition_conflict && (item.brand_confidence ?? 0) >= .8 && item.brand && item.brand.toLowerCase() !== 'unknown') return item.brand
+      if (inference?.status === 'inferred' && ((item.brand_confidence ?? 0) < .8 || recognitionDimensionConflict(item, 'brand'))) return inference.brand || 'unknown'
+      if (!recognitionDimensionConflict(item, 'brand') && (item.brand_confidence ?? 0) >= .8 && item.brand && item.brand.toLowerCase() !== 'unknown') return item.brand
       if (inference?.status === 'inferred') return inference.brand || 'unknown'
       const reference = 'brand_reference' in item ? item.brand_reference : undefined
-      if (!item.recognition_conflict && reference && inference?.status !== 'conflict') return reference.brand
-      if (!item.recognition_conflict && item.brand && item.brand.toLowerCase() !== 'unknown') return item.brand
+      if (!recognitionDimensionConflict(item, 'brand') && reference && inference?.status !== 'conflict') return reference.brand
+      if (!recognitionDimensionConflict(item, 'brand') && item.brand && item.brand.toLowerCase() !== 'unknown') return item.brand
       return 'unknown'
     }
-    const osValue = (item: typeof allItems[number]) => !item.recognition_conflict && item.os_family ? item.os_family : 'unknown'
+    const osValue = (item: typeof allItems[number]) => !recognitionDimensionConflict(item, 'os_family') && item.os_family ? item.os_family : 'unknown'
     const facets = { brands: [...new Set(allItems.map(brandValue))].sort(), os_families: [...new Set(allItems.map(osValue))].sort() }
     const filtered = allItems
       .filter(item => !brand || brandValue(item).toLowerCase() === brand)
@@ -720,7 +722,7 @@ export const handlers = [
     const items=fingerprintCatalog.rules.filter(r=>(!q.get('source')||r.source_id===q.get('source'))&&(!q.get('protocol')||r.protocol===q.get('protocol'))&&(!q.get('status')||r.status===q.get('status'))&&(!q.get('role')||r.role===q.get('role'))&&JSON.stringify(r).toLowerCase().includes((q.get('q')??'').toLowerCase()));
     return HttpResponse.json({items:items.slice((page-1)*size,page*size),total:items.length,page,page_size:size});
   }),
-  http.get('/api/v1/device-fingerprint-library/coverage', () => HttpResponse.json({status:'ready',window:'24h',as_of:'2026-10-12T08:00:00Z',count_semantics:'current_rule_endpoint_relationships',overlap_endpoints:2,items:[{source_id:'recog',match_count:12,endpoint_count:8,conflict_count:1,evaluation_match_count:24,realtime_match_count:18,history_match_count:6}]})),
+  http.get('/api/v1/device-fingerprint-library/coverage', () => HttpResponse.json({status:'ready',window:'24h',as_of:'2026-10-12T08:00:00Z',fresh:freshRecognition,count_semantics:'current_rule_endpoint_relationships',overlap_endpoints:2,items:[{source_id:'recog',match_count:12,endpoint_count:8,conflict_count:1,evaluation_match_count:24,realtime_match_count:18,history_match_count:6}]})),
   http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ domain_available:true,brand_eligible_rule_count:3,domain_sources:[{name:'Apple enterprise networks',version:'reviewed-2026-09-08',rule_count:3,brand_eligible_rule_count:3},{name:'HaGeZi',version:'mock-pinned',rule_count:100,brand_eligible_rule_count:0}],version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,domain_rule_count:128,domain_ecosystem_count:8,domain_source_version:'abcdef123456',domain_backfill_status:'completed',domain_backfill_processed:3200,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0','MIT (NextDNS)'],backfill_status:'completed',backfill_processed:110 })),
   http.post('/api/v1/device-fingerprint-library/update', () => HttpResponse.json({ code:'offline_update_required',message:'import a verified bundle' },{status:409})),
   http.post('/api/v1/device-fingerprint-library/validate', () => HttpResponse.json({schema_version:'device-fingerprint-bundle/v1',version:'offline-20260831-mock',created_at:new Date().toISOString(),sources:[{name:'IEEE MA-L/MA-M/MA-S',version:'2026-08-31',url:'https://standards-oui.ieee.org/',license:'IEEE public registry'},{name:'uap-core',version:'mocksha',url:'https://github.com/ua-parser/uap-core',license:'Apache-2.0'},{name:'Fingerbank public snapshot',version:'6.8.2-20140609',url:'https://github.com/karottc/fingerbank',license:'ODbL-1.0/DbCL-1.0'}],files:{}})),

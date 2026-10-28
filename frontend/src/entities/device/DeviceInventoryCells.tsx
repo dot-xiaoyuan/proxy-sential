@@ -6,6 +6,7 @@ import { BrandLogo } from './BrandLogo'
 import { DeviceNameView } from './DeviceNameView'
 import { OperatingSystemLabel } from './OperatingSystemLabel'
 import { resolveDeviceBrand } from './brandMatcher'
+import { recognitionDimensionConflict } from './recognitionConflict'
 import { routerLibraryLabels } from './libraryLabels'
 
 type DeviceDisplayItem = EndpointDeviceInventory | DeviceInventoryListItem
@@ -24,15 +25,15 @@ export function DeviceMAC({ device, href }: { device: DeviceDisplayItem; href?:s
 }
 
 export function DeviceBrandSummary({ device }: { device: DeviceDisplayItem }) {
-  const safe = !device.recognition_conflict
-  const brand = safe && (device.brand_confidence ?? 0) >= 0.8 ? device.brand : ''
+  const brandSafe = !recognitionDimensionConflict(device, 'brand')
+  const brand = brandSafe && (device.brand_confidence ?? 0) >= 0.8 ? device.brand : ''
   const inference = device.brand_inference
   const inferred = !brand && inference?.status === 'inferred'
-  const model = safe && (device.model_confidence ?? 0) >= 0.8 ? device.model : ''
-  const reference = safe && !brand && inference?.status !== 'conflict' && (!inferred || device.brand_reference?.brand.toLowerCase() === inference.brand?.toLowerCase()) ? device.brand_reference : undefined
-  const platform = virtualPlatform(device) || (safe && (device.brand_confidence ?? 0) >= .8 && /^vmware(?:[\s,.]|$)/i.test(device.brand?.trim() || '') ? 'VMware' : undefined)
+  const model = !recognitionDimensionConflict(device, 'model') && (device.model_confidence ?? 0) >= 0.8 ? device.model : ''
+  const reference = brandSafe && !brand && inference?.status !== 'conflict' && (!inferred || device.brand_reference?.brand.toLowerCase() === inference.brand?.toLowerCase()) ? device.brand_reference : undefined
+  const platform = virtualPlatform(device) || (brandSafe && (device.brand_confidence ?? 0) >= .8 && /^vmware(?:[\s,.]|$)/i.test(device.brand?.trim() || '') ? 'VMware' : undefined)
   const label = brand || (inferred ? inference.brand : reference?.brand || '')
-  const os = safe && device.os_family?.toLowerCase() !== 'unknown' ? device.os_family : ''
+  const os = !recognitionDimensionConflict(device, 'os_family') && device.os_family?.toLowerCase() !== 'unknown' ? device.os_family : ''
   const conflict = device.recognition_conflict || inference?.status === 'conflict'
   return <div className="device-brand-summary">
     <div className={`device-brand-heading${!brand ? ' device-brand-tentative' : ''}`}>
@@ -53,13 +54,13 @@ export function DeviceBrandSummary({ device }: { device: DeviceDisplayItem }) {
 }
 
 export function DeviceIdentityCell({ device, showName = true }: { device: DeviceDisplayItem; showName?: boolean }) {
-  const safe = !device.recognition_conflict
+  const brandSafe = !recognitionDimensionConflict(device, 'brand')
   const platform = virtualPlatform(device)
-  const type = safe && (device.device_type_confidence ?? 0) >= .8 && !isEmptyRecognition(device.device_type) ? device.device_type : ''
-  const brandValue = safe && !platform && (device.brand_confidence ?? 0) >= .8 && !isEmptyRecognition(device.brand) ? device.brand : ''
+  const type = !recognitionDimensionConflict(device, 'device_type') && (device.device_type_confidence ?? 0) >= .8 && !isEmptyRecognition(device.device_type) ? device.device_type : ''
+  const brandValue = brandSafe && !platform && (device.brand_confidence ?? 0) >= .8 && !isEmptyRecognition(device.brand) ? device.brand : ''
   const brand = brandValue ? resolveDeviceBrand({ brand: brandValue }) : undefined
-  const model = safe && (device.model_confidence ?? 0) >= .8 && !isEmptyRecognition(device.model) ? device.model : ''
-  const os = safe && (device.os_family_confidence ?? 0) >= .8 && !isEmptyRecognition(device.os_family) ? device.os_family : ''
+  const model = !recognitionDimensionConflict(device, 'model') && (device.model_confidence ?? 0) >= .8 && !isEmptyRecognition(device.model) ? device.model : ''
+  const os = !recognitionDimensionConflict(device, 'os_family') && (device.os_family_confidence ?? 0) >= .8 && !isEmptyRecognition(device.os_family) ? device.os_family : ''
   const inference = device.brand_inference
   const inferred = !brandValue && inference?.status === 'inferred' ? inference : undefined
   const reference = !brandValue && inference?.status !== 'conflict' ? device.brand_reference : undefined
@@ -76,7 +77,7 @@ export function DeviceIdentityCell({ device, showName = true }: { device: Device
       <div className="device-identity-clues">
         {inferred && <Tooltip title={`域名证据评分 ${Math.round(inferred.confidence * 100)}%，不确认硬件品牌。`}><Tag className="device-inference-tag">{resolveDeviceBrand({ brand: inferred.brand }).name || inferred.brand} · 品牌推测</Tag></Tooltip>}
         {reference && (!inferred || reference.brand.toLowerCase() !== inferred.brand?.toLowerCase()) && <Tooltip title={`${reference.explanation} · 参考评分 ${Math.round(reference.confidence * 100)}%`}><Tag className="device-inference-tag">{resolveDeviceBrand({ brand: reference.brand }).name || reference.brand} · MAC 厂商线索</Tag></Tooltip>}
-        {safe && !os && !isEmptyRecognition(device.os_family) && <Tooltip title={`置信度 ${Math.round((device.os_family_confidence ?? 0) * 100)}%`}><Tag className="device-inference-tag">{device.os_family} · 系统线索</Tag></Tooltip>}
+        {!recognitionDimensionConflict(device, 'os_family') && !os && !isEmptyRecognition(device.os_family) && <Tooltip title={`置信度 ${Math.round((device.os_family_confidence ?? 0) * 100)}%`}><Tag className="device-inference-tag">{device.os_family} · 系统线索</Tag></Tooltip>}
         {platform && <Tooltip title="VMware 注册厂商仅提示虚拟网卡或虚拟化平台，不确认宿主机品牌。"><Tag className="device-platform-tag"><CloudServerOutlined />VMware 虚拟平台线索</Tag></Tooltip>}
         {(device.recognition_conflict || inference?.status === 'conflict') && <Tooltip title="识别线索存在冲突，查看详情核对证据"><Tag className="device-conflict-tag">线索冲突</Tag></Tooltip>}
         {device.discovery?.conflict && <Tag className="device-conflict-tag">发现线索冲突</Tag>}
@@ -88,8 +89,8 @@ export function DeviceIdentityCell({ device, showName = true }: { device: Device
 }
 
 export function DeviceSemanticIcon({ device }: { device: DeviceDisplayItem }) {
-  const confidentType = !device.recognition_conflict && (device.device_type_confidence ?? 0) >= .8 ? (device.device_type || '').toLowerCase() : ''
-  const confidentOS = !device.recognition_conflict && (device.os_family_confidence ?? 0) >= .8 ? (device.os_family || '').toLowerCase() : ''
+  const confidentType = !recognitionDimensionConflict(device, 'device_type') && (device.device_type_confidence ?? 0) >= .8 ? (device.device_type || '').toLowerCase() : ''
+  const confidentOS = !recognitionDimensionConflict(device, 'os_family') && (device.os_family_confidence ?? 0) >= .8 ? (device.os_family || '').toLowerCase() : ''
   const Icon = /printer|打印/.test(confidentType) ? PrinterOutlined
     : /router|switch|gateway|路由|交换/.test(confidentType) ? ApartmentOutlined
     : /access_point|接入点/.test(confidentType) ? WifiOutlined
@@ -122,16 +123,16 @@ export function DeviceLedgerIdentity({device,href,showName=true}:{device:DeviceD
 }
 
 export function DeviceLedgerRecognition({device}:{device:DeviceDisplayItem}) {
- const safe=!device.recognition_conflict
+ const brandSafe=!recognitionDimensionConflict(device, 'brand')
  const platform=virtualPlatform(device)||(/^vmware(?:[\s,.]|$)/i.test(device.brand||'')?'VMware':undefined)
- const type=safe&&(device.device_type_confidence??0)>=.8&&!isEmptyRecognition(device.device_type)?deviceTypeLabel(device.device_type!):''
- const brand=safe&&!platform&&(device.brand_confidence??0)>=.8&&!isEmptyRecognition(device.brand)?resolveDeviceBrand({brand:device.brand}).name:''
- const model=safe&&(device.model_confidence??0)>=.8&&!isEmptyRecognition(device.model)?device.model:''
+ const type=!recognitionDimensionConflict(device, 'device_type')&&(device.device_type_confidence??0)>=.8&&!isEmptyRecognition(device.device_type)?deviceTypeLabel(device.device_type!):''
+ const brand=brandSafe&&!platform&&(device.brand_confidence??0)>=.8&&!isEmptyRecognition(device.brand)?resolveDeviceBrand({brand:device.brand}).name:''
+ const model=!recognitionDimensionConflict(device, 'model')&&(device.model_confidence??0)>=.8&&!isEmptyRecognition(device.model)?device.model:''
  const clues=[
   device.brand_inference?.status==='inferred'&&!isEmptyRecognition(device.brand_inference.brand)?`${device.brand_inference.brand} · 品牌推测（${Math.round(device.brand_inference.confidence*100)}%）`:'',
   device.brand_reference&&!isEmptyRecognition(device.brand_reference.brand)?`${device.brand_reference.brand} · MAC 厂商线索：${device.brand_reference.explanation}`:'',
-  safe&&(device.os_family_confidence??0)<.8&&!isEmptyRecognition(device.os_family)?`${device.os_family} · 系统线索（${Math.round((device.os_family_confidence??0)*100)}%）`:'',
-  safe&&(device.device_type_confidence??0)<.8&&!isEmptyRecognition(device.device_type)?`${deviceTypeLabel(device.device_type!)} · 类型线索`:'',
+  !recognitionDimensionConflict(device, 'os_family')&&(device.os_family_confidence??0)<.8&&!isEmptyRecognition(device.os_family)?`${device.os_family} · 系统线索（${Math.round((device.os_family_confidence??0)*100)}%）`:'',
+  !recognitionDimensionConflict(device, 'device_type')&&(device.device_type_confidence??0)<.8&&!isEmptyRecognition(device.device_type)?`${deviceTypeLabel(device.device_type!)} · 类型线索`:'',
  ].filter(Boolean)
  return <div className="device-ledger-recognition">
   {type&&<Typography.Text>{type}</Typography.Text>}
@@ -147,7 +148,7 @@ export function DeviceLedgerRecognition({device}:{device:DeviceDisplayItem}) {
 }
 
 export function DeviceLedgerOS({device}:{device:DeviceDisplayItem}) {
- return !device.recognition_conflict&&(device.os_family_confidence??0)>=.8&&!isEmptyRecognition(device.os_family)?<OperatingSystemLabel family={device.os_family!} confirmed/>:null
+ return !recognitionDimensionConflict(device, 'os_family')&&(device.os_family_confidence??0)>=.8&&!isEmptyRecognition(device.os_family)?<OperatingSystemLabel family={device.os_family!} confirmed/>:null
 }
 
 function isEmptyRecognition(value?: string) {

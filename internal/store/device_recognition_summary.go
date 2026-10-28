@@ -81,12 +81,12 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 	result.AsOf = catalogAsOf.UTC().Format(time.RFC3339Nano)
 	counts := map[string]int{}
 	for _, item := range items {
-		if !item.RecognitionConflict {
+		{
 			for key, v := range map[string]struct {
 				value string
 				score float64
 			}{"vendor": {item.Vendor, item.VendorConfidence}, "brand": {item.Brand, item.BrandConfidence}, "model": {item.Model, item.ModelConfidence}, "device_type": {item.DeviceType, item.DeviceTypeConfidence}, "os_family": {item.OSFamily, item.OSFamilyConfidence}} {
-				if v.value != "" && v.value != "unknown" && v.score >= .8 {
+				if !deviceDimensionConflict(item, key) && v.value != "" && v.value != "unknown" && v.score >= .8 {
 					counts[key]++
 				}
 			}

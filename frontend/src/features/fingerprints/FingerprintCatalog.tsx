@@ -13,6 +13,7 @@ import { request } from "../../shared/api/client";
 import type { ColumnsType } from 'antd/es/table';
 import type { components } from "../../shared/api/generated";
 import { AppEmptyState, AppErrorAlert, AppFactBar, AppListHeader, AppServerPagination, AppTable, AppTableBar, formatCount, formatDateTime } from '../../shared/ui'
+import { FreshRecognitionCoverage } from './FreshRecognitionCoverage'
 
 type Source = components["schemas"]["FingerprintSource"];
 type Rule = components["schemas"]["FingerprintSourceRule"];
@@ -309,6 +310,7 @@ export function FingerprintCatalog({canViewRules=false}:{canViewRules?:boolean})
               failure(coverage.error)
             ) : (
               <>
+                <FreshRecognitionCoverage data={coverage.data?.fresh} />
                 <AppFactBar label="识别结果统计口径" items={['统计每分钟异步更新','匹配次数按成功画像累计，区分实时与历史重算，不是报文次数','异常退出可能丢失尚未刷新的一分钟计数']}/>
                 {coverage.data?.as_of && (
                   <Typography.Paragraph type="secondary">
