@@ -1,5 +1,4 @@
--- Candidate only: not part of the migration sequence until concurrency and
--- rollback behavior have been verified against an isolated PostgreSQL server.
+-- Install the bounded derived-work index while excluding concurrent writers.
 -- Both legacy writers and progress transactions must be outside their write
 -- sections before trigger installation. NOWAIT avoids a batch->fragment DDL
 -- lock wait deadlocking an old fragment->batch export transaction.

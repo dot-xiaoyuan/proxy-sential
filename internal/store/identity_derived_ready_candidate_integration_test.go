@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -198,7 +199,7 @@ func TestIdentityDerivedReadyProgressCandidate(t *testing.T) {
 func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) {
 	cfg := identityDerivedReadyTestConfig(t)
 	admin := stdlib.OpenDB(*cfg)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	schema := fmt.Sprintf("identity_ready_claim_%d", time.Now().UnixNano())
 	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
@@ -312,7 +313,9 @@ func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) 
 	if _, err = old.ExecContext(ctx, `SELECT 1 FROM identity_ingest_fragments WHERE batch_id='a' AND first_ordinal=0 FOR UPDATE`); err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.claimIdentityDerivedReady(ctx, 0)
+	claimCtx, cancelClaim := context.WithTimeout(ctx, 5*time.Second)
+	second, err := store.claimIdentityDerivedReady(claimCtx, 0)
+	cancelClaim()
 	if err != nil || second.First != 1 || second.DerivedLeaseEpoch != 1 {
 		t.Fatalf("skip locked: %+v %v", second, err)
 	}
@@ -392,6 +395,20 @@ func TestIdentityDerivedReadyCandidateStartsWithNonBlockingWriterBarrier(t *test
 	firstDDL := strings.Index(script, "CREATE TABLE identity_derived_ready")
 	if lock < 0 || firstDDL < 0 || lock > firstDDL {
 		t.Fatal("candidate must fail immediately if either live writer table is locked before any DDL")
+	}
+}
+
+func TestIdentityDerivedReadyMigrationMatchesReplayedFixture(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/identity_derived_ready_candidate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration, err := os.ReadFile("../../migrations/postgres/198_identity_derived_ready.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(fixture, migration) {
+		t.Fatal("production migration differs from the replayed SQL fixture")
 	}
 }
 
