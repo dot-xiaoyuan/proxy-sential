@@ -38,8 +38,21 @@ func identityDerivedReadyTestConfig(t *testing.T) *pgx.ConnConfig {
 	if err != nil {
 		t.Fatal(err)
 	}
+	interfaces, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatalf("cannot verify local interface addresses: %v", err)
+	}
+	local := make([]net.IP, 0, len(interfaces))
+	for _, address := range interfaces {
+		switch addr := address.(type) {
+		case *net.IPNet:
+			local = append(local, addr.IP)
+		case *net.IPAddr:
+			local = append(local, addr.IP)
+		}
+	}
 	for _, address := range resolved {
-		if address.IsLoopback() || address.Equal(net.ParseIP("222.204.3.184")) {
+		if identityReadyForbiddenAddress(address, local) {
 			t.Fatal("identity ready fixture resolves to the local host or 184")
 		}
 	}
@@ -51,6 +64,34 @@ func identityDerivedReadyTestConfig(t *testing.T) *pgx.ConnConfig {
 		}
 	}
 	return cfg
+}
+
+func identityReadyForbiddenAddress(address net.IP, local []net.IP) bool {
+	if address.IsLoopback() || address.IsUnspecified() || address.Equal(net.ParseIP("222.204.3.184")) {
+		return true
+	}
+	for _, localAddress := range local {
+		if address.Equal(localAddress) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestIdentityDerivedReadyTestRejectsLocalInterfaceAndFieldHost(t *testing.T) {
+	local := []net.IP{net.ParseIP("192.0.2.9"), net.ParseIP("2001:db8::1")}
+	for _, tc := range []struct {
+		host      string
+		forbidden bool
+	}{
+		{"127.0.0.1", true}, {"::1", true}, {"0.0.0.0", true},
+		{"222.204.3.184", true}, {"192.0.2.9", true}, {"2001:db8::1", true},
+		{"192.0.2.10", false},
+	} {
+		if got := identityReadyForbiddenAddress(net.ParseIP(tc.host), local); got != tc.forbidden {
+			t.Errorf("address %s forbidden=%v, want %v", tc.host, got, tc.forbidden)
+		}
+	}
 }
 
 func TestIdentityDerivedReadyProgressCandidate(t *testing.T) {
@@ -438,5 +479,76 @@ func TestIdentityDerivedReadyBarrierFailsFastAndLeavesWriterUnblocked(t *testing
 	var existing, fresh int
 	if err = db.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE first_ordinal=0 AND priority=1),count(*) FILTER (WHERE first_ordinal=1 AND priority=0) FROM identity_derived_ready WHERE batch_id='a'`).Scan(&existing, &fresh); err != nil || existing != 1 || fresh != 1 {
 		t.Fatalf("cutover lost keys: old=%d new=%d err=%v", existing, fresh, err)
+	}
+}
+
+// The progress trigger inserts a foreign-keyed ready row while the primary
+// transaction holds the batch. The exporter completes in the reverse order:
+// it updates a fragment and then the batch. Ordinary non-key UPDATE row locks
+// must remain compatible with the foreign key check, or this can deadlock.
+func TestIdentityDerivedReadyProgressWithConcurrentExportCompletion(t *testing.T) {
+	cfg := identityDerivedReadyTestConfig(t)
+	admin := stdlib.OpenDB(*cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	schema := fmt.Sprintf("identity_ready_export_%d", time.Now().UnixNano())
+	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	isolated := cfg.Copy()
+	if isolated.RuntimeParams == nil {
+		isolated.RuntimeParams = map[string]string{}
+	}
+	isolated.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*isolated)
+	defer func() {
+		db.Close()
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if _, err := admin.ExecContext(cleanup, `DROP SCHEMA `+schema+` CASCADE`); err != nil {
+			t.Errorf("drop isolated test schema: %v", err)
+		}
+		admin.Close()
+	}()
+	_, err := db.ExecContext(ctx, `CREATE TABLE identity_ingest_batches(batch_id text PRIMARY KEY,protocol_version int NOT NULL,payload_format text NOT NULL,processed_offset int NOT NULL,sensor_id text NOT NULL,accepted_at timestamptz,received_at timestamptz NOT NULL,export_marker boolean NOT NULL DEFAULT false);
+ CREATE TABLE identity_ingest_fragments(batch_id text NOT NULL REFERENCES identity_ingest_batches,first_ordinal int NOT NULL,record_count int NOT NULL CHECK(record_count BETWEEN 1 AND 50),derived_state text NOT NULL,export_marker boolean NOT NULL DEFAULT false,PRIMARY KEY(batch_id,first_ordinal));
+ INSERT INTO identity_ingest_batches(batch_id,protocol_version,payload_format,processed_offset,sensor_id,accepted_at,received_at) VALUES('a',2,'fragments',0,'sensor',now(),now());
+ INSERT INTO identity_ingest_fragments(batch_id,first_ordinal,record_count,derived_state) VALUES('a',0,1,'pending');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile("testdata/identity_derived_ready_candidate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, string(fixture)); err != nil {
+		t.Fatal(err)
+	}
+	exporter, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Rollback()
+	if _, err = exporter.ExecContext(ctx, `UPDATE identity_ingest_fragments SET export_marker=true WHERE batch_id='a' AND first_ordinal=0`); err != nil {
+		t.Fatal(err)
+	}
+	// The progress transaction must finish while the exporter still owns its
+	// fragment UPDATE lock; a timeout is a failure, not evidence of safety.
+	progress, stop := context.WithTimeout(ctx, 2*time.Second)
+	_, err = db.ExecContext(progress, `UPDATE identity_ingest_batches SET processed_offset=1 WHERE batch_id='a'`)
+	stop()
+	if err != nil {
+		t.Fatalf("progress trigger waited for non-key export update: %v", err)
+	}
+	if _, err = exporter.ExecContext(ctx, `UPDATE identity_ingest_batches SET export_marker=true WHERE batch_id='a'`); err != nil {
+		t.Fatal(err)
+	}
+	if err = exporter.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var pending, progressDone, exported bool
+	if err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_derived_ready WHERE batch_id='a' AND first_ordinal=0),processed_offset=1,export_marker FROM identity_ingest_batches WHERE batch_id='a'`).Scan(&pending, &progressDone, &exported); err != nil || !pending || !progressDone || !exported {
+		t.Fatalf("concurrent progress/export: pending=%v progress=%v export=%v err=%v", pending, progressDone, exported, err)
 	}
 }

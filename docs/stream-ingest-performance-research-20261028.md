@@ -162,3 +162,9 @@ search 尚未等到 archive，或最终确认尚未等到所有必需 lane 时�
 该方向目前只是方案，尚未改实现。重要并发边界是 PostgreSQL 的 [Read Committed 规则](https://www.postgresql.org/docs/18/transaction-iso.html)：`ON CONFLICT DO NOTHING` 可能因其他事务的提交而跳过插入，即使冲突行对该条语句的快照不可见；而 [INSERT 的 RETURNING](https://www.postgresql.org/docs/18/sql-insert.html) 只返回实际插入或更新的行。因此不能在同一条语句的普通读取中假定查得到所有冲突行；缺失键需在下一条语句的新快照中逐一核对，仍读不到就回滚并重试。也不能通过无意义的冲突更新来取得返回值，否则会增加写入并改变锁和审计语义。
 
 插入提前还会改变锁获取次序，并可能与旧版本并存或重叠段形成死锁和等待。是否排序、如何保证各事务一致锁序、旧版本混跑、隔离级别、跨月重复、同键不同内容、并发未提交和回滚、段提交结果不明及查询可见性，都需要独立 PostgreSQL 的实际并发回放；mock 和只读执行计划不能替代。还须测量 `RETURNING` 增加的结果传输、排序 CPU、事务持锁、WAL、索引页读写及实时输入队列年龄，才可判断是否比原路径更快。无独立测试库时不将该方案部署到 184。
+
+## NCU 进度登记与归档完成的锁兼容回放
+
+NCU 候选进度触发器会在持有批次更新锁时插入带片段外键的就绪键；现有归档完成事务则先更新片段的非键字段，再更新批次。PostgreSQL 对外键检查使用片段行的 `FOR KEY SHARE`，与一般非键字段更新所用的 `FOR NO KEY UPDATE` 兼容，但与显式 `FOR UPDATE` 不兼容。前者提供了可测试的锁兼容依据，不代表所有代码路径和未来变更都不会死锁。参考 [PostgreSQL 18 源码](https://github.com/postgres/postgres/blob/REL_18_STABLE/src/backend/utils/adt/ri_triggers.c)和[行锁说明](https://www.postgresql.org/docs/18/explicit-locking.html)。
+
+新增专用远程测试库回放：归档事务先更新片段非键字段并保持事务，进度事务推进批次、触发外键登记并须在限时内完成，随后归档事务更新批次并提交，最后核对进度、就绪键和归档更新。该用例目前因没有独立测试库而跳过；不能将跳过算作锁兼容验证，也不能排除显式行锁或其他事务路径的等待。测试库保护同时增加本机所有网络接口地址和不定地址的拒绝检查，避免通过非 loopback 本机地址绕过用户停用本地数据库的约束；仍禁止 184。
