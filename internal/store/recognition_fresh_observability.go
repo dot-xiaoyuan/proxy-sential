@@ -83,6 +83,13 @@ type freshJobSnapshot struct {
 	} `json:"summary"`
 }
 
+func freshRecognitionCheckDelay(status string, accepted, now time.Time) time.Duration {
+	if status == "unattributed" || status == "processing" && !now.Before(accepted.Add(10*time.Second)) {
+		return 30 * time.Second
+	}
+	return 2 * time.Second
+}
+
 // Count only this event's contributing evidence. A pre-existing OUI or another
 // protocol's conclusion must never inflate the new protocol's funnel.
 func freshSnapshotJob(snapshot freshJobSnapshot, event string) recognitiondiag.Job {
@@ -163,11 +170,7 @@ func (s *DBStore) observeFreshRecognition(ctx context.Context) (int, error) {
 			row.Completed = d.CompletedAt
 		}
 		if d.Status == "processing" || d.Status == "unattributed" {
-			delay := 2 * time.Second
-			if d.Status == "unattributed" {
-				delay = 30 * time.Second
-			}
-			row.CheckAfter = now.Add(delay)
+			row.CheckAfter = now.Add(freshRecognitionCheckDelay(d.Status, accepted, now))
 		}
 		// Preserve the last observed processing error even after a successful retry.
 		result := map[string]any{}

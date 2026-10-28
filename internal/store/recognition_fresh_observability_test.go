@@ -35,6 +35,19 @@ func TestFreshSnapshotCountsOnlyContributingEventAndDimension(t *testing.T) {
 	}
 }
 
+func TestFreshObserverStopsRapidPollingAfterFixedDeadline(t *testing.T) {
+	accepted := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	if got := freshRecognitionCheckDelay("processing", accepted, accepted.Add(9*time.Second)); got != 2*time.Second {
+		t.Fatalf("fresh processing delay=%s", got)
+	}
+	if got := freshRecognitionCheckDelay("processing", accepted, accepted.Add(11*time.Second)); got != 30*time.Second {
+		t.Fatalf("overdue processing delay=%s", got)
+	}
+	if got := freshRecognitionCheckDelay("unattributed", accepted, accepted.Add(3*time.Second)); got != 30*time.Second {
+		t.Fatalf("unattributed delay=%s", got)
+	}
+}
+
 func TestFreshObserverRollsBackFailedReceiptWrite(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
