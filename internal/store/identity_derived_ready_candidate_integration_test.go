@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // This is deliberately not the general project test DSN: a dedicated remote
 // PostgreSQL test instance is required. Never run this fixture on 184 or on
 // the locally disabled PostgreSQL stack.
-func TestIdentityDerivedReadyProgressCandidate(t *testing.T) {
+func identityDerivedReadyTestConfig(t *testing.T) *pgx.ConnConfig {
+	t.Helper()
 	dsn := os.Getenv("PROXY_SENTINEL_TEST_IDENTITY_READY_DSN")
 	if dsn == "" {
 		t.Skip("dedicated remote PostgreSQL test instance required")
@@ -39,6 +41,19 @@ func TestIdentityDerivedReadyProgressCandidate(t *testing.T) {
 			t.Fatal("identity ready fixture resolves to the local host or 184")
 		}
 	}
+	if len(cfg.Fallbacks) > 0 {
+		for _, fallback := range cfg.Fallbacks {
+			if fallback.Host != cfg.Host {
+				t.Fatal("identity ready test DSN must not contain fallback hosts")
+			}
+		}
+	}
+	return cfg
+}
+
+func TestIdentityDerivedReadyProgressCandidate(t *testing.T) {
+	cfg := identityDerivedReadyTestConfig(t)
+	dsn := cfg.ConnString()
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -107,5 +122,104 @@ func TestIdentityDerivedReadyProgressCandidate(t *testing.T) {
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM identity_derived_ready WHERE batch_id='a'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("terminal key was not retired: %d %v", count, err)
+	}
+}
+
+func TestIdentityDerivedReadyClaimCandidateWithConcurrentOldLease(t *testing.T) {
+	cfg := identityDerivedReadyTestConfig(t)
+	admin := stdlib.OpenDB(*cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	schema := fmt.Sprintf("identity_ready_claim_%d", time.Now().UnixNano())
+	if _, err := admin.ExecContext(ctx, `CREATE SCHEMA `+schema); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	isolated := cfg.Copy()
+	if isolated.RuntimeParams == nil {
+		isolated.RuntimeParams = map[string]string{}
+	}
+	isolated.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*isolated)
+	defer func() {
+		db.Close()
+		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if _, err := admin.ExecContext(cleanup, `DROP SCHEMA `+schema+` CASCADE`); err != nil {
+			t.Errorf("drop isolated test schema: %v", err)
+		}
+		admin.Close()
+	}()
+	_, err := db.ExecContext(ctx, `CREATE TABLE identity_ingest_batches(batch_id text PRIMARY KEY,protocol_version int NOT NULL,payload_format text NOT NULL,processed_offset int NOT NULL,sensor_id text NOT NULL,accepted_at timestamptz,received_at timestamptz NOT NULL,scope_key text NOT NULL,source text NOT NULL,stream_epoch text NOT NULL);
+ CREATE TABLE identity_ingest_fragments(batch_id text NOT NULL REFERENCES identity_ingest_batches,first_ordinal int NOT NULL,record_count int NOT NULL CHECK(record_count BETWEEN 1 AND 50),derived_state text NOT NULL,derived_lease_until timestamptz,derived_lease_epoch bigint NOT NULL DEFAULT 0,archive_month text NOT NULL,content_sha256 text NOT NULL,key_scheme text NOT NULL,normalized_events jsonb NOT NULL,PRIMARY KEY(batch_id,first_ordinal));`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile("testdata/identity_derived_ready_candidate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, string(fixture)); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	_, err = db.ExecContext(ctx, `INSERT INTO identity_ingest_batches VALUES('a',2,'fragments',0,'sensor',$1,$1,'scope','source','epoch')`, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO identity_ingest_fragments(batch_id,first_ordinal,record_count,derived_state,archive_month,content_sha256,key_scheme,normalized_events) VALUES('a',0,1,'pending','202610','hash','source_position_v1','[{}]'),('a',1,1,'pending','202610','hash','source_position_v1','[{}]'); UPDATE identity_ingest_batches SET processed_offset=2 WHERE batch_id='a'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A legacy worker owns fragment zero. SKIP LOCKED must allow fragment one
+	// through without stealing or changing the first fragment.
+	old, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Rollback()
+	if _, err = old.ExecContext(ctx, `SELECT 1 FROM identity_ingest_fragments WHERE batch_id='a' AND first_ordinal=0 FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	store := &PostgresStore{db: db, sensorID: "sensor"}
+	second, err := store.claimIdentityDerivedReady(ctx, 0)
+	if err != nil || second.First != 1 || second.DerivedLeaseEpoch != 1 {
+		t.Fatalf("skip locked: %+v %v", second, err)
+	}
+	if err = old.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.claimIdentityDerivedReady(ctx, 0)
+	if err != nil || first.First != 0 || first.DerivedLeaseEpoch != 1 {
+		t.Fatalf("first lease: %+v %v", first, err)
+	}
+	// Simulate lease expiry without changing accepted_at. A new generation
+	// fences the old claimant, even if its completion response was delayed.
+	_, err = db.ExecContext(ctx, `UPDATE identity_ingest_fragments SET derived_lease_until=now()-interval '1 second' WHERE batch_id='a' AND first_ordinal=0; UPDATE identity_derived_ready SET available_at=now()-interval '1 second' WHERE batch_id='a' AND first_ordinal=0`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := store.claimIdentityDerivedReady(ctx, 0)
+	if err != nil || replacement.First != 0 || replacement.DerivedLeaseEpoch != 2 || !replacement.Accepted.Equal(at) {
+		t.Fatalf("replacement lease: %+v %v", replacement, err)
+	}
+	result, err := db.ExecContext(ctx, `UPDATE identity_ingest_fragments SET derived_state='completed' WHERE batch_id='a' AND first_ordinal=0 AND derived_state='attempted' AND derived_lease_epoch=$1`, first.DerivedLeaseEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := result.RowsAffected(); n != 0 {
+		t.Fatal("expired claimant committed")
+	}
+	result, err = db.ExecContext(ctx, `UPDATE identity_ingest_fragments SET derived_state='completed' WHERE batch_id='a' AND first_ordinal=0 AND derived_state='attempted' AND derived_lease_epoch=$1`, replacement.DerivedLeaseEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		t.Fatal("current claimant could not commit")
+	}
+	var remaining int
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM identity_derived_ready WHERE batch_id='a' AND first_ordinal=0`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("completed key retained: %d %v", remaining, err)
 	}
 }
