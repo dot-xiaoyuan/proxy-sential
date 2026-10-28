@@ -567,3 +567,113 @@ func TestProcessorRefusesUncommittedSourceSegment(t *testing.T) {
 		t.Fatalf("sink observed uncommitted source: %+v", w)
 	}
 }
+
+type projectionRetryBudgetWriter struct {
+	fakeLaneWriter
+	first, retry time.Duration
+}
+
+func (w *projectionRetryBudgetWriter) Project(ctx context.Context, _ string, _ Segment) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return errors.New("projection lacks deadline")
+	}
+	w.first = time.Until(deadline)
+	return context.DeadlineExceeded
+}
+
+func (w *projectionRetryBudgetWriter) ReconcileProjection(ctx context.Context, _ string, _ Segment) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return errors.New("projection retry lacks deadline")
+	}
+	w.retry = time.Until(deadline)
+	return nil
+}
+
+func TestProjectionRetryReceivesIndependentBoundedBudget(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := testSegment()
+	original.AcceptedAt = time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	id := appendCommitted(t, j, original)
+	w := &projectionRetryBudgetWriter{}
+	p := Processor{Journal: j, Writer: w, SinkTimeout: 300 * time.Millisecond, ProjectionRetryTimeout: 800 * time.Millisecond}
+	if err := p.DrainLane(context.Background(), id, Projection); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first attempt: %v", err)
+	}
+	state, err := j.Load(id)
+	if err != nil || state.Acks[Projection] != Attempted || !state.Segment.AcceptedAt.Equal(original.AcceptedAt) {
+		t.Fatalf("attempt was lost or time reset: %+v %v", state.Acks, err)
+	}
+	if err := p.DrainLane(context.Background(), id, Projection); err != nil {
+		t.Fatal(err)
+	}
+	if w.first < 200*time.Millisecond || w.first > 300*time.Millisecond || w.retry < 700*time.Millisecond || w.retry > 800*time.Millisecond {
+		t.Fatalf("unexpected budgets first=%v retry=%v", w.first, w.retry)
+	}
+	state, err = j.Load(id)
+	if err != nil || state.Acks[Projection] != Acked || !state.Segment.AcceptedAt.Equal(original.AcceptedAt) {
+		t.Fatalf("reconciled state: %+v %v", state.Acks, err)
+	}
+}
+
+func TestProjectionRetryDoesNotExceedParentDeadline(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	if err := j.BeginAttempt(id, Projection); err != nil {
+		t.Fatal(err)
+	}
+	w := &projectionRetryBudgetWriter{}
+	p := Processor{Journal: j, Writer: w, SinkTimeout: 300 * time.Millisecond, ProjectionRetryTimeout: 800 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	if err := p.DrainLane(ctx, id, Projection); err != nil {
+		t.Fatal(err)
+	}
+	if w.retry <= 0 || w.retry > 150*time.Millisecond {
+		t.Fatalf("parent deadline ignored: %v", w.retry)
+	}
+}
+
+type slowProjectionRetryWriter struct{ fakeLaneWriter }
+
+func (*slowProjectionRetryWriter) Project(ctx context.Context, _ string, _ Segment) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (*slowProjectionRetryWriter) ReconcileProjection(ctx context.Context, _ string, _ Segment) error {
+	select {
+	case <-time.After(120 * time.Millisecond):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestProjectionRetryCanFinishAfterShortFirstAttempt(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testSegment()
+	segment.AcceptedAt = time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	id := appendCommitted(t, j, segment)
+	p := Processor{Journal: j, Writer: &slowProjectionRetryWriter{}, SinkTimeout: 50 * time.Millisecond, ProjectionRetryTimeout: 400 * time.Millisecond}
+	if err = p.DrainLane(context.Background(), id, Projection); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected timeout: %v", err)
+	}
+	if err = p.DrainLane(context.Background(), id, Projection); err != nil {
+		t.Fatalf("retry did not finish: %v", err)
+	}
+	state, err := j.Load(id)
+	if err != nil || state.Acks[Projection] != Acked || !state.Segment.AcceptedAt.Equal(segment.AcceptedAt) {
+		t.Fatalf("retry lost state: %+v %v", state.Acks, err)
+	}
+}

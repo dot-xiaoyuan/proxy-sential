@@ -269,6 +269,9 @@ func TestPassiveStreamSinkRetainsBudgetAfterLocalPreparation(t *testing.T) {
 	}
 	w := &passiveBudgetWriter{}
 	p := passiveStreamProcessor(j, w)
+	if p.SinkTimeout != 3*time.Second || p.ProjectionRetryTimeout != 8*time.Second {
+		t.Fatalf("unexpected passive budgets: first=%s projection_retry=%s", p.SinkTimeout, p.ProjectionRetryTimeout)
+	}
 	if err := p.DrainLane(context.Background(), id, streamlog.Archive); err != nil {
 		t.Fatal(err)
 	}
