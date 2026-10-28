@@ -123,26 +123,32 @@ func (p StreamDiscoveryProjector) ExpireStreamDiscoveryStates(ctx context.Contex
 	return count, nil
 }
 
-// Exact key lookups keep confirmation bounded even when a newly activated
-// epoch is absent from the planner's statistics. The ledger, rather than the
-// retry segment's month, locates the original receipt. Already confirmed rows
-// are checked without producing another row version or downgrading verified.
-const confirmStreamArchiveReceiptSQL = `WITH receipt AS MATERIALIZED (
- SELECT r.accepted_month FROM stream_discovery_receipts r
- WHERE r.accepted_month=(SELECT k.accepted_month FROM stream_discovery_event_keys k
-  WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=$3 AND k.content_sha256=$4)
- AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=$3 AND r.content_sha256=$4
- FOR UPDATE
+// One bounded request confirms the whole segment. The key ledger locates the
+// original partition even across month boundaries. A missing or conflicting
+// receipt makes the matched count incomplete and rolls back every update.
+const confirmStreamArchiveReceiptsSQL = `WITH input AS MATERIALIZED (
+ SELECT v.ordinal,v.scope_id,v.event_key,v.content_sha256
+ FROM jsonb_to_recordset($2::jsonb) AS v(ordinal integer,scope_id text,event_key text,content_sha256 text)
+), receipt AS MATERIALIZED (
+ SELECT r.accepted_month,r.epoch,r.scope_id,r.event_key,r.content_sha256
+ FROM input i
+ JOIN LATERAL (SELECT accepted_month,epoch,scope_id,event_key,content_sha256
+  FROM stream_discovery_receipts r WHERE r.accepted_month=(SELECT k.accepted_month FROM stream_discovery_event_keys k
+   WHERE k.epoch=$1 AND k.scope_id=i.scope_id AND k.event_key=i.event_key
+   AND k.content_sha256=i.content_sha256)
+  AND r.epoch=$1 AND r.scope_id=i.scope_id AND r.event_key=i.event_key
+  AND r.content_sha256=i.content_sha256 FOR UPDATE) r ON true
+ ORDER BY i.ordinal
 ), confirmed AS (
  UPDATE stream_discovery_receipts r
  SET archive_state=CASE WHEN r.archive_state='verified' THEN 'verified' ELSE 'confirmed' END,
  archive_confirmed_at=coalesce(r.archive_confirmed_at,now())
- WHERE r.accepted_month=(SELECT accepted_month FROM receipt)
- AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=$3 AND r.content_sha256=$4
+ FROM receipt m WHERE r.accepted_month=m.accepted_month
+ AND r.epoch=m.epoch AND r.scope_id=m.scope_id AND r.event_key=m.event_key AND r.content_sha256=m.content_sha256
  AND (r.archive_state NOT IN ('confirmed','verified') OR r.archive_confirmed_at IS NULL)
  RETURNING 1
 )
-SELECT EXISTS(SELECT 1 FROM receipt)`
+SELECT count(*) FROM receipt`
 
 // Called only after archive, search and projection acknowledgements are all
 // durable. Confirmation is distinct from case-time archive hash verification.
@@ -162,11 +168,6 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.PrepareContext(ctx, confirmStreamArchiveReceiptSQL)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
 	// Stable lock order also makes overlapping recovery segments safe. All
 	// receipts commit together; a missing/conflicting one keeps the journal.
 	sort.Slice(items, func(i, j int) bool {
@@ -175,15 +176,27 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 		}
 		return items[i].Receipt.Key < items[j].Receipt.Key
 	})
-	for _, item := range items {
+	type receiptKey struct {
+		Ordinal int    `json:"ordinal"`
+		Scope   string `json:"scope_id"`
+		Key     string `json:"event_key"`
+		Hash    string `json:"content_sha256"`
+	}
+	keys := make([]receiptKey, 0, len(items))
+	for ordinal, item := range items {
 		r := item.Receipt
-		var matched bool
-		if err := stmt.QueryRowContext(ctx, segment.Epoch, r.Scope, r.Key, r.Hash).Scan(&matched); err != nil {
-			return err
-		}
-		if !matched {
-			return fmt.Errorf("stream archive confirmation missing receipt: %w", streamlog.ErrUnconfirmed)
-		}
+		keys = append(keys, receiptKey{ordinal, r.Scope, r.Key, r.Hash})
+	}
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return err
+	}
+	var matched int
+	if err := tx.QueryRowContext(ctx, confirmStreamArchiveReceiptsSQL, segment.Epoch, raw).Scan(&matched); err != nil {
+		return err
+	}
+	if matched != len(items) {
+		return fmt.Errorf("stream archive confirmation missing receipt: %w", streamlog.ErrUnconfirmed)
 	}
 	return tx.Commit()
 }

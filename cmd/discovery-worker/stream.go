@@ -34,7 +34,7 @@ type passiveStreamOptions struct {
 func passiveStreamProcessor(journal *streamlog.Journal, writer streamlog.Writer) streamlog.Processor {
 	// Start each RPC budget after local decode and durable attempt fsync. A
 	// shared-disk stall must not strand an unsent request as an ambiguous write.
-	return streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 3 * time.Second}
+	return streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 3 * time.Second, FinalizeTimeout: 30 * time.Second}
 }
 
 func verifyPassiveStreamCutover(ctx context.Context, db *sql.DB, cursor streamlog.SourceCursor, sensor string) error {

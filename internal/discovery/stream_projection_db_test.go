@@ -16,6 +16,35 @@ import (
 
 type streamJSONFields map[string]string
 
+type streamArchiveKeys []streamDiscoveryReceipt
+
+func (want streamArchiveKeys) Match(v driver.Value) bool {
+	raw, ok := v.([]byte)
+	if !ok {
+		if value, isString := v.(string); isString {
+			raw, ok = []byte(value), true
+		}
+	}
+	if !ok {
+		return false
+	}
+	var rows []struct {
+		Ordinal int    `json:"ordinal"`
+		Scope   string `json:"scope_id"`
+		Key     string `json:"event_key"`
+		Hash    string `json:"content_sha256"`
+	}
+	if json.Unmarshal(raw, &rows) != nil || len(rows) != len(want) {
+		return false
+	}
+	for i, row := range rows {
+		if row.Ordinal != i || row.Scope != want[i].Scope || row.Key != want[i].Key || row.Hash != want[i].Hash {
+			return false
+		}
+	}
+	return true
+}
+
 func (want streamJSONFields) Match(v driver.Value) bool {
 	raw, ok := v.(string)
 	if !ok {
@@ -162,11 +191,12 @@ func TestStreamArchiveConfirmationUsesOriginalMonthAndAtomicReceiptChecks(t *tes
 				t.Fatal(err)
 			}
 			mock.ExpectBegin()
-			stmt := mock.ExpectPrepare(`WITH receipt AS MATERIALIZED.*accepted_month=\(SELECT k.accepted_month FROM stream_discovery_event_keys k.*FOR UPDATE.*archive_state NOT IN \('confirmed','verified'\).*SELECT EXISTS`)
-			for i, item := range items {
-				stmt.ExpectQuery().WithArgs(segment.Epoch, item.Receipt.Scope, item.Receipt.Key, item.Receipt.Hash).
-					WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(i == 0 || tc.matched))
+			matched := 2
+			if !tc.matched {
+				matched = 1
 			}
+			mock.ExpectQuery(`WITH input AS MATERIALIZED.*jsonb_to_recordset.*FOR UPDATE.*UPDATE stream_discovery_receipts.*SELECT count\(\*\) FROM receipt`).
+				WithArgs(segment.Epoch, streamArchiveKeys{items[0].Receipt, items[1].Receipt}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(matched))
 			if tc.matched {
 				mock.ExpectCommit()
 			} else {

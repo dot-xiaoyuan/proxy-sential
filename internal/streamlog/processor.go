@@ -45,6 +45,9 @@ type Processor struct {
 	// SinkTimeout starts after local source recovery and fsynced attempt state.
 	// A slow journal disk must not consume the database request's own budget.
 	SinkTimeout time.Duration
+	// FinalizeTimeout covers bounded receipt confirmation after all sinks ack.
+	// It may need more disk I/O than one archive or projection request.
+	FinalizeTimeout time.Duration
 }
 
 func (p Processor) sinkContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -52,6 +55,13 @@ func (p Processor) sinkContext(ctx context.Context) (context.Context, context.Ca
 		return context.WithTimeout(ctx, p.SinkTimeout)
 	}
 	return context.WithCancel(ctx)
+}
+
+func (p Processor) finalizeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if p.FinalizeTimeout > 0 {
+		return context.WithTimeout(ctx, p.FinalizeTimeout)
+	}
+	return p.sinkContext(ctx)
 }
 
 // DrainLane lets a source advance its projection even if a different segment
@@ -132,7 +142,7 @@ func (p Processor) FinalizeAfterLanes(ctx context.Context, id string) error {
 		}
 	}
 	if finalizer, ok := p.Writer.(SegmentFinalizer); ok {
-		sinkCtx, cancel := p.sinkContext(ctx)
+		sinkCtx, cancel := p.finalizeContext(ctx)
 		err := finalizer.FinalizeSegment(sinkCtx, id, state.Segment)
 		cancel()
 		if err != nil {
@@ -208,7 +218,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 		}
 	}
 	if finalizer, ok := p.Writer.(SegmentFinalizer); ok {
-		sinkCtx, cancel := p.sinkContext(ctx)
+		sinkCtx, cancel := p.finalizeContext(ctx)
 		err := finalizer.FinalizeSegment(sinkCtx, id, state.Segment)
 		cancel()
 		if err != nil {

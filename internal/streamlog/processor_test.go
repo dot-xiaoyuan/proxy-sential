@@ -138,15 +138,38 @@ type finalizingWriter struct {
 	fakeLaneWriter
 	finalizations int
 	failOnce      bool
+	minimumBudget time.Duration
 }
 
-func (w *finalizingWriter) FinalizeSegment(context.Context, string, Segment) error {
+func (w *finalizingWriter) FinalizeSegment(ctx context.Context, _ string, _ Segment) error {
 	w.finalizations++
+	if w.minimumBudget > 0 {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) < w.minimumBudget {
+			return errors.New("finalization reused the short sink budget")
+		}
+	}
 	if w.failOnce {
 		w.failOnce = false
 		return errors.New("confirmation state unavailable")
 	}
 	return nil
+}
+
+func TestProcessorUsesIndependentFinalizationBudget(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	w := &finalizingWriter{minimumBudget: time.Second}
+	p := Processor{Journal: j, Writer: w, SinkTimeout: 100 * time.Millisecond, FinalizeTimeout: 2 * time.Second}
+	if err := p.Drain(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if w.finalizations != 1 {
+		t.Fatalf("finalizations=%d", w.finalizations)
+	}
 }
 
 func TestProcessorRetainsSegmentUntilArchiveStatusFinalized(t *testing.T) {
