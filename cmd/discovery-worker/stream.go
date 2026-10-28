@@ -146,7 +146,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 	archiveQueue := make(chan string, 64)
 	searchQueue := make(chan string, 64)
 	projectionQueue := make(chan string, 64)
-	finalizeQueue := make(chan string, 256)
+	finalizeQueue := make(chan passiveFinalizerSignal, 256)
 	laneResults := make(chan error, 4)
 	maintenanceResult := make(chan error, 1)
 	go func() {
@@ -204,7 +204,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 					}
 				}
 				select {
-				case finalizeQueue <- id:
+				case finalizeQueue <- passiveFinalizerSignal{id: id, lane: lane}:
 				case <-ctx.Done():
 					laneResults <- nil
 					return
@@ -216,58 +216,11 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 	go runLane(streamlog.Search, searchQueue)
 	go runLane(streamlog.Projection, projectionQueue)
 	go func() {
-		finalized := map[string]bool{}
-		signals := map[string]uint8{}
-		var lastReport time.Time
-		for {
-			select {
-			case <-ctx.Done():
-				laneResults <- nil
-				return
-			case id := <-finalizeQueue:
-				signals[id]++
-				if finalized[id] {
-					if signals[id] == 3 {
-						delete(finalized, id)
-						delete(signals, id)
-					}
-					continue
-				}
-				for {
-					err := processor.FinalizeAfterLanes(ctx, id)
-					if err == nil {
-						finalized[id] = true
-						if signals[id] == 3 {
-							delete(finalized, id)
-							delete(signals, id)
-						}
-						break
-					}
-					if errors.Is(err, streamlog.ErrUnconfirmed) {
-						break // A later lane acknowledgement will enqueue this ID again.
-					}
-					if ctx.Err() != nil {
-						laneResults <- nil
-						return
-					}
-					if errors.Is(err, streamlog.ErrContentConflict) || errors.Is(err, streamlog.ErrQuarantined) {
-						laneResults <- err
-						stop()
-						return
-					}
-					if time.Since(lastReport) >= 30*time.Second {
-						log.Printf("passive stream segment %s finalization remains unconfirmed: %v", id, err)
-						lastReport = time.Now()
-					}
-					select {
-					case <-ctx.Done():
-						laneResults <- nil
-						return
-					case <-time.After(200 * time.Millisecond):
-					}
-				}
-			}
+		err := runPassiveFinalizer(ctx, finalizeQueue, processor.FinalizeAfterLanes, time.Second, 256)
+		if err != nil {
+			stop()
 		}
+		laneResults <- err
 	}()
 	enqueue := func(id string) error {
 		for _, queue := range []chan string{archiveQueue, searchQueue, projectionQueue} {
