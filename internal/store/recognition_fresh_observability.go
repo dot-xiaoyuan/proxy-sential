@@ -84,6 +84,9 @@ type freshJobSnapshot struct {
 }
 
 func freshRecognitionCheckDelay(status string, accepted, now time.Time) time.Duration {
+	if status == "processing" && !now.Before(accepted.Add(5*time.Minute)) {
+		return 5 * time.Minute
+	}
 	if status == "unattributed" || status == "processing" && !now.Before(accepted.Add(10*time.Second)) {
 		return 30 * time.Second
 	}

@@ -43,6 +43,9 @@ func TestFreshObserverStopsRapidPollingAfterFixedDeadline(t *testing.T) {
 	if got := freshRecognitionCheckDelay("processing", accepted, accepted.Add(11*time.Second)); got != 30*time.Second {
 		t.Fatalf("overdue processing delay=%s", got)
 	}
+	if got := freshRecognitionCheckDelay("processing", accepted, accepted.Add(5*time.Minute)); got != 5*time.Minute {
+		t.Fatalf("aged processing delay=%s", got)
+	}
 	if got := freshRecognitionCheckDelay("unattributed", accepted, accepted.Add(3*time.Second)); got != 30*time.Second {
 		t.Fatalf("unattributed delay=%s", got)
 	}
