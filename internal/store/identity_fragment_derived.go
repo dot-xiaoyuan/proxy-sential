@@ -68,6 +68,20 @@ func (s *DBStore) projectIdentityFragmentDerivedWithClaim(ctx context.Context, c
 }
 
 func (s *DBStore) applyIdentityDerivedFragments(ctx context.Context, fragments []identityExportFragment, events []normalized.Event) (err error) {
+	return s.applyIdentityDerivedFragmentsMeasured(ctx, fragments, events, nil)
+}
+
+func (s *DBStore) applyIdentityDerivedFragmentsMeasured(ctx context.Context, fragments []identityExportFragment, events []normalized.Event, phases map[string]int64) (err error) {
+	phase, phaseStart := "endpoint", time.Now()
+	advance := func(next string) {
+		if phases != nil {
+			phases[phase] = time.Since(phaseStart).Milliseconds()
+		}
+		phase = next
+		phaseStart = time.Now()
+	}
+	defer func() { advance("done") }()
+
 	if s.identitySkipHistory {
 		// Endpoint rows commit first so account-session locks cannot block device
 		// signals. A retry is safe because these updates are idempotent.
@@ -75,6 +89,7 @@ func (s *DBStore) applyIdentityDerivedFragments(ctx context.Context, fragments [
 			return err
 		}
 	}
+	advance("session")
 	tx, err := s.pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -83,6 +98,7 @@ func (s *DBStore) applyIdentityDerivedFragments(ctx context.Context, fragments [
 	if _, err = writeIdentityEventsShapedTx(ctx, tx, events, !s.identitySkipHistory, !s.identitySkipHistory); err != nil {
 		return err
 	}
+	advance("signals")
 	signals := make([]DeviceSignal, 0, len(events))
 	for _, item := range BuildDeviceInventories("latest-run", events, nil) {
 		signals = append(signals, item.Signals...)
@@ -90,6 +106,7 @@ func (s *DBStore) applyIdentityDerivedFragments(ctx context.Context, fragments [
 	if err = upsertDeviceSignalFactsBatch(ctx, tx, s.pg.sensorID, signals); err != nil {
 		return err
 	}
+	advance("complete")
 	batchIDs := []string{}
 	seen := map[string]bool{}
 	for _, fragment := range fragments {

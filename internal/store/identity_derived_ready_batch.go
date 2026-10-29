@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	identityDerivedBatchMaxFragments = 16
-	identityDerivedBatchMaxRecords   = 200
+	identityDerivedBatchMaxFragments = 4
+	identityDerivedBatchMaxRecords   = 50
 	identityDerivedBatchMaxBytes     = 1 << 20
 )
 
@@ -23,7 +23,7 @@ type identityDerivedBatchBudget struct{ Records, Bytes int }
 var errIdentityDerivedBatchFull = errors.New("identity derived batch budget exhausted")
 var errIdentityDerivedReadyIneligible = errors.New("identity derived ready key is not eligible")
 
-// Lease at most 16 fragments in one commit. Inspect only the next fragment's
+// Lease at most four fragments in one commit. Inspect only the next fragment's
 // size before reading its body; leave it untouched if either budget is full.
 // All selected epochs commit together, or all are rolled back on SQL failure.
 func (s *PostgresStore) claimIdentityDerivedReadyBatch(ctx context.Context, priority int) ([]identityExportFragment, error) {
@@ -103,7 +103,8 @@ func (s *DBStore) projectIdentityDerivedReadyBatch(ctx context.Context, priority
 	if len(valid) == 0 {
 		return invalidErr
 	}
-	err = s.applyIdentityDerivedFragments(ctx, valid, events)
+	phases := map[string]int64{}
+	err = s.applyIdentityDerivedFragmentsMeasured(ctx, valid, events, phases)
 	completed := time.Now()
 	for i, fragment := range valid {
 		if err != nil {
@@ -118,7 +119,7 @@ func (s *DBStore) projectIdentityDerivedReadyBatch(ctx context.Context, priority
 		if completed.Sub(fragment.Accepted) > 5*time.Second {
 			overdue = eventIDs[i]
 		}
-		metric := map[string]any{"metric": "identity_derived_queryable", "sensor": s.pg.sensorID, "batch_id": fragment.BatchID, "offset": fragment.First, "records": fragment.Count, "accepted_at": fragment.Accepted, "completed_at": completed, "latency_ms": completed.Sub(fragment.Accepted).Milliseconds(), "claim_ms": claimedAt.Sub(started).Milliseconds(), "apply_ms": completed.Sub(claimedAt).Milliseconds(), "group_fragments": len(valid), "group_records": len(events), "failed": err != nil, "overdue_event_ids": overdue}
+		metric := map[string]any{"metric": "identity_derived_queryable", "sensor": s.pg.sensorID, "batch_id": fragment.BatchID, "offset": fragment.First, "records": fragment.Count, "accepted_at": fragment.Accepted, "completed_at": completed, "latency_ms": completed.Sub(fragment.Accepted).Milliseconds(), "claim_ms": claimedAt.Sub(started).Milliseconds(), "apply_ms": completed.Sub(claimedAt).Milliseconds(), "phases_ms": phases, "group_fragments": len(valid), "group_records": len(events), "failed": err != nil, "overdue_event_ids": overdue}
 		if err == nil {
 			metric["queryable_at"] = completed
 		}
