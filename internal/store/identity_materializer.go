@@ -519,11 +519,22 @@ func (s *DBStore) deferIdentityDerivedWorkWithQuota(ctx context.Context) bool {
 }
 
 func (s *DBStore) deferIdentityDerivedWorkInternal(ctx context.Context, quota bool) bool {
+	return s.deferIdentityDerivedWorkOnPressure(ctx, quota, `pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds')`)
+}
+
+// Bounded durable-fragment consumers reserve independent concurrency. A few
+// seconds of primary latency must not repeatedly stop the complete derived
+// lane; retain a volume guard and the recovery quota for a large primary queue.
+func (s *DBStore) deferIdentityReadyWorkWithQuota(ctx context.Context) bool {
+	return s.deferIdentityDerivedWorkOnPressure(ctx, true, `pending_records>=1000`)
+}
+
+func (s *DBStore) deferIdentityDerivedWorkOnPressure(ctx context.Context, quota bool, pressure string) bool {
 	check, cancel := context.WithTimeout(ctx, time.Second)
 	var backlog bool
 	// Only this sensor's inbox gates its own derived work. The unscoped check let the NCU
 	// inbox backlog pause the router-pilot materializer and export as well, silently.
-	err := s.pg.db.QueryRowContext(check, IdentityScopeStatusSQL(`SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND pending_records>0 AND (pending_records>=100 OR oldest_pending_at<now()-interval '5 seconds'))`), s.pg.sensorID).Scan(&backlog)
+	err := s.pg.db.QueryRowContext(check, IdentityScopeStatusSQL(`SELECT EXISTS(SELECT 1 FROM identity_pipeline_scopes WHERE sensor_id=$1 AND enabled AND (`+pressure+`))`), s.pg.sensorID).Scan(&backlog)
 	cancel()
 	if err != nil && ctx.Err() == nil && identityDerivedGateReportDue(&s.identityDerivedGateErrorAt, time.Now()) {
 		var pgError interface{ SQLState() string }

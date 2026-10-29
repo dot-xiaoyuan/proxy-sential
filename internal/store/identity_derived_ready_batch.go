@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	identityDerivedBatchMaxFragments = 4
+	identityDerivedBatchMaxFragments = 16
 	identityDerivedBatchMaxRecords   = 50
 	identityDerivedBatchMaxBytes     = 1 << 20
 )
@@ -23,7 +23,7 @@ type identityDerivedBatchBudget struct{ Records, Bytes int }
 var errIdentityDerivedBatchFull = errors.New("identity derived batch budget exhausted")
 var errIdentityDerivedReadyIneligible = errors.New("identity derived ready key is not eligible")
 
-// Lease at most four fragments in one commit. Inspect only the next fragment's
+// Lease at most sixteen fragments in one commit. Inspect only the next fragment's
 // size before reading its body; leave it untouched if either budget is full.
 // All selected epochs commit together, or all are rolled back on SQL failure.
 func (s *PostgresStore) claimIdentityDerivedReadyBatch(ctx context.Context, priority int) ([]identityExportFragment, error) {

@@ -13,6 +13,28 @@ import (
 // original fragment as completed.
 var errIdentityDerivedReadyDeferred = errors.New("identity derived ready key deferred")
 
+// Unattempted rows use -infinity. One ascending range let a continuous supply
+// of those rows starve expired leases forever. Probe both index ranges with
+// fixed limits and give already-due retries the first opportunity.
+const identityDerivedReadyCandidateSQL = `WITH candidates AS MATERIALIZED (
+ (SELECT batch_id,first_ordinal,available_at,accepted_at,0 AS retry_rank
+  FROM identity_derived_ready
+  WHERE sensor_id=$1 AND priority=$2 AND available_at>'-infinity' AND available_at<=now()
+  ORDER BY available_at,accepted_at,batch_id,first_ordinal LIMIT 8)
+ UNION ALL
+ (SELECT batch_id,first_ordinal,available_at,accepted_at,1 AS retry_rank
+  FROM identity_derived_ready
+  WHERE sensor_id=$1 AND priority=$2 AND available_at='-infinity'
+  ORDER BY accepted_at,batch_id,first_ordinal LIMIT 24)
+)
+SELECT f.batch_id,f.first_ordinal,f.derived_state,f.derived_lease_until,
+ COALESCE(f.derived_lease_until>now(),false),b.processed_offset,f.record_count,
+ (b.protocol_version=2 AND b.payload_format='fragments' AND b.sensor_id=$1)
+FROM candidates c JOIN identity_ingest_fragments f USING(batch_id,first_ordinal)
+ JOIN identity_ingest_batches b USING(batch_id)
+ORDER BY c.retry_rank,c.available_at,c.accepted_at,c.batch_id,c.first_ordinal
+LIMIT 1 FOR UPDATE OF f SKIP LOCKED`
+
 // claimIdentityDerivedReady first limits the compact queue to 32 keys, then
 // locks a fragment before modifying the ready key. Completion and terminal
 // cleanup also take the fragment lock first. Only a valid leased fragment has
@@ -41,19 +63,7 @@ func (s *PostgresStore) claimIdentityDerivedReadyTx(ctx context.Context, tx *sql
 	var first, offset, count int
 	var lease sql.NullTime
 	var active, valid bool
-	err = tx.QueryRowContext(ctx, `WITH candidates AS MATERIALIZED (
- SELECT batch_id,first_ordinal,available_at,accepted_at
- FROM identity_derived_ready
- WHERE sensor_id=$1 AND priority=$2 AND available_at<=now()
- ORDER BY available_at,accepted_at,batch_id,first_ordinal LIMIT 32
-)
-SELECT f.batch_id,f.first_ordinal,f.derived_state,f.derived_lease_until,
- COALESCE(f.derived_lease_until>now(),false),b.processed_offset,f.record_count,
- (b.protocol_version=2 AND b.payload_format='fragments' AND b.sensor_id=$1)
-FROM candidates c JOIN identity_ingest_fragments f USING(batch_id,first_ordinal)
- JOIN identity_ingest_batches b USING(batch_id)
-ORDER BY c.available_at,c.accepted_at,c.batch_id,c.first_ordinal
-LIMIT 1 FOR UPDATE OF f SKIP LOCKED`, s.sensorID, priority).Scan(&batch, &first, &state, &lease, &active, &offset, &count, &valid)
+	err = tx.QueryRowContext(ctx, identityDerivedReadyCandidateSQL, s.sensorID, priority).Scan(&batch, &first, &state, &lease, &active, &offset, &count, &valid)
 	if err != nil {
 		return fragment, err
 	}

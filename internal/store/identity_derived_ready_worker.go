@@ -54,7 +54,7 @@ func (s *DBStore) runIdentityDerivedReadyConsumer(ctx context.Context) {
 	turn := 0
 	for ctx.Err() == nil {
 		// The bounded consumers still yield under primary inbox pressure.
-		if s.deferIdentityDerivedWorkWithQuota(ctx) {
+		if s.deferIdentityReadyWorkWithQuota(ctx) {
 			continue
 		}
 		work, cancel := context.WithTimeout(ctx, identityWorkBudget)
@@ -88,7 +88,7 @@ func (s *DBStore) runIdentityDerivedReadyConsumer(ctx context.Context) {
 func (s *DBStore) runIdentityDerivedReadyStatus(ctx context.Context) {
 	var lastErrorReport time.Time
 	for ctx.Err() == nil {
-		work, cancel := context.WithTimeout(ctx, 2*time.Second)
+		work, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := s.pg.publishIdentityDerivedReadyStatus(work)
 		cancel()
 		if err != nil && ctx.Err() == nil && time.Since(lastErrorReport) >= 30*time.Second {
@@ -108,7 +108,9 @@ func (s *DBStore) runIdentityDerivedReadyScanner(ctx context.Context) {
 	pageLimit := 256
 	for ctx.Err() == nil {
 		started := time.Now()
-		work, cancel := context.WithTimeout(ctx, 2*time.Second)
+		// Small keyset pages still encounter cold disk reads and WAL flushes.
+		// Do not repeatedly roll back the same bounded page after two seconds.
+		work, cancel := context.WithTimeout(ctx, 10*time.Second)
 		page, err := s.pg.scanIdentityDerivedReadyPage(work, pageLimit)
 		cancel()
 		pageLimit = nextIdentityDerivedReadyScanLimit(pageLimit, page, err, time.Since(started))
