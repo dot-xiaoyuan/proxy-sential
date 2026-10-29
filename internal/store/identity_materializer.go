@@ -217,7 +217,10 @@ func (s *DBStore) processIdentitySignalBatch(ctx context.Context, phase string, 
 	// An expired wait is reported as an error: returning success hid a frozen lane behind
 	// an empty last_error on the field.
 	var stats identityHistoryStats
-	if s.identityDeviceOnly {
+	if len(events) == 0 {
+		// Empty legacy polls only advance their cursor; they have no identity writes
+		// and must not queue behind, or occupy, the shared identity write lock.
+	} else if s.identityDeviceOnly {
 		// Device lanes write only lease, endpoint and recognition inputs, in endpoint order,
 		// and never take the global identity write lock.
 		err = writeDeviceEventsTx(ctx, tx, events)

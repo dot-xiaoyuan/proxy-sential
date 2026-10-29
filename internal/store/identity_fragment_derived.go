@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/streamlog"
 )
 
@@ -63,10 +64,14 @@ func (s *DBStore) projectIdentityFragmentDerivedWithClaim(ctx context.Context, c
 	if err != nil {
 		return err
 	}
+	return s.applyIdentityDerivedFragments(ctx, []identityExportFragment{fragment}, segment.Events)
+}
+
+func (s *DBStore) applyIdentityDerivedFragments(ctx context.Context, fragments []identityExportFragment, events []normalized.Event) (err error) {
 	if s.identitySkipHistory {
 		// Endpoint rows commit first so account-session locks cannot block device
 		// signals. A retry is safe because these updates are idempotent.
-		if err = s.pg.commitIdentityEndpoints(ctx, segment.Events); err != nil {
+		if err = s.pg.commitIdentityEndpoints(ctx, events); err != nil {
 			return err
 		}
 	}
@@ -75,24 +80,36 @@ func (s *DBStore) projectIdentityFragmentDerivedWithClaim(ctx context.Context, c
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = writeIdentityEventsShapedTx(ctx, tx, segment.Events, !s.identitySkipHistory, !s.identitySkipHistory); err != nil {
+	if _, err = writeIdentityEventsShapedTx(ctx, tx, events, !s.identitySkipHistory, !s.identitySkipHistory); err != nil {
 		return err
 	}
-	signals := make([]DeviceSignal, 0, len(segment.Events))
-	for _, item := range BuildDeviceInventories("latest-run", segment.Events, nil) {
+	signals := make([]DeviceSignal, 0, len(events))
+	for _, item := range BuildDeviceInventories("latest-run", events, nil) {
 		signals = append(signals, item.Signals...)
 	}
 	if err = upsertDeviceSignalFactsBatch(ctx, tx, s.pg.sensorID, signals); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE identity_ingest_fragments SET derived_state='completed',derived_error='',derived_lease_until=NULL WHERE batch_id=$1 AND first_ordinal=$2 AND derived_lease_epoch=$3 AND derived_state='attempted'`, fragment.BatchID, fragment.First, fragment.DerivedLeaseEpoch)
-	if err != nil {
-		return err
+	batchIDs := []string{}
+	seen := map[string]bool{}
+	for _, fragment := range fragments {
+		result, err := tx.ExecContext(ctx, `UPDATE identity_ingest_fragments SET derived_state='completed',derived_error='',derived_lease_until=NULL WHERE batch_id=$1 AND first_ordinal=$2 AND derived_lease_epoch=$3 AND derived_state='attempted'`, fragment.BatchID, fragment.First, fragment.DerivedLeaseEpoch)
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return ErrIdentityLeaseExpired
+		}
+		if !seen[fragment.BatchID] {
+			batchIDs = append(batchIDs, fragment.BatchID)
+			seen[fragment.BatchID] = true
+		}
 	}
-	if changed, _ := result.RowsAffected(); changed != 1 {
-		return ErrIdentityLeaseExpired
-	}
-	if err = reclaimIdentityFragmentPayload(ctx, tx, []string{fragment.BatchID}); err != nil {
+	if err = reclaimIdentityFragmentPayload(ctx, tx, batchIDs); err != nil {
 		return err
 	}
 	return tx.Commit()

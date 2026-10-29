@@ -28,7 +28,7 @@ func (s *DBStore) runIdentityFragmentDerivedReady(ctx context.Context) {
 		s.runIdentityDerivedReadyStatus(ctx)
 	}()
 	defer func() { <-scannerDone; <-statusDone }()
-	scheduler := identityDerivedReadyScheduler{claim: s.pg.claimIdentityDerivedReady}
+	turn := 0
 	for ctx.Err() == nil {
 		// Keep the existing shared primary-inbox resource gate until a measured
 		// realtime budget can safely replace it. This may still miss 5 seconds.
@@ -36,7 +36,12 @@ func (s *DBStore) runIdentityFragmentDerivedReady(ctx context.Context) {
 			continue
 		}
 		work, cancel := context.WithTimeout(ctx, identityWorkBudget)
-		err := s.projectIdentityFragmentDerivedWithClaim(work, scheduler.next)
+		priority := 0
+		if turn == 3 {
+			priority = 1
+		}
+		turn = (turn + 1) % 4
+		err := s.projectIdentityDerivedReadyBatch(work, priority)
 		cancel()
 		delay := 20 * time.Millisecond
 		switch {

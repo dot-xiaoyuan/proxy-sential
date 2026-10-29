@@ -18,14 +18,25 @@ var errIdentityDerivedReadyDeferred = errors.New("identity derived ready key def
 // cleanup also take the fragment lock first. Only a valid leased fragment has
 // its original payload read. The existing fragment epoch fences old workers.
 func (s *PostgresStore) claimIdentityDerivedReady(ctx context.Context, priority int) (fragment identityExportFragment, err error) {
-	if priority != 0 && priority != 1 {
-		return fragment, errors.New("invalid identity derived ready priority")
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fragment, err
 	}
 	defer tx.Rollback()
+	fragment, err = s.claimIdentityDerivedReadyTx(ctx, tx, priority, nil)
+	if err != nil && !errors.Is(err, errIdentityDerivedReadyDeferred) && !errors.Is(err, errIdentityDerivedReadyIneligible) {
+		return fragment, err
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return identityExportFragment{}, commitErr
+	}
+	return fragment, err
+}
+
+func (s *PostgresStore) claimIdentityDerivedReadyTx(ctx context.Context, tx *sql.Tx, priority int, budget *identityDerivedBatchBudget) (fragment identityExportFragment, err error) {
+	if priority != 0 && priority != 1 {
+		return fragment, errors.New("invalid identity derived ready priority")
+	}
 	var batch, state string
 	var first, offset, count int
 	var lease sql.NullTime
@@ -50,9 +61,6 @@ LIMIT 1 FOR UPDATE OF f SKIP LOCKED`, s.sensorID, priority).Scan(&batch, &first,
 		if _, err = tx.ExecContext(ctx, `DELETE FROM identity_derived_ready WHERE batch_id=$1 AND first_ordinal=$2`, batch, first); err != nil {
 			return fragment, err
 		}
-		if err = tx.Commit(); err != nil {
-			return fragment, err
-		}
 		return fragment, errIdentityDerivedReadyDeferred
 	}
 	if !valid || (state != "pending" && state != "attempted") || count < 1 || count > 50 || first < 0 || offset < first+count {
@@ -67,10 +75,7 @@ LIMIT 1 FOR UPDATE OF f SKIP LOCKED`, s.sensorID, priority).Scan(&batch, &first,
 		} else if changed != 1 {
 			return fragment, errors.New("identity derived ready key disappeared during deferral")
 		}
-		if err = tx.Commit(); err != nil {
-			return fragment, err
-		}
-		return fragment, fmt.Errorf("identity derived ready key is not eligible: batch=%s ordinal=%d", batch, first)
+		return fragment, fmt.Errorf("%w: batch=%s ordinal=%d", errIdentityDerivedReadyIneligible, batch, first)
 	}
 	if active {
 		if !lease.Valid {
@@ -79,10 +84,19 @@ LIMIT 1 FOR UPDATE OF f SKIP LOCKED`, s.sensorID, priority).Scan(&batch, &first,
 		if err = updateIdentityDerivedReadyDue(ctx, tx, batch, first, lease.Time); err != nil {
 			return fragment, err
 		}
-		if err = tx.Commit(); err != nil {
+		return fragment, errIdentityDerivedReadyDeferred
+	}
+	if budget != nil {
+		if count > budget.Records {
+			return fragment, errIdentityDerivedBatchFull
+		}
+		var bytes int
+		if err = tx.QueryRowContext(ctx, `SELECT octet_length(COALESCE(normalized_events::text,'')) FROM identity_ingest_fragments WHERE batch_id=$1 AND first_ordinal=$2`, batch, first).Scan(&bytes); err != nil {
 			return fragment, err
 		}
-		return fragment, errIdentityDerivedReadyDeferred
+		if bytes > budget.Bytes {
+			return fragment, errIdentityDerivedBatchFull
+		}
 	}
 	var until sql.NullTime
 	err = tx.QueryRowContext(ctx, `UPDATE identity_ingest_fragments SET derived_state='attempted',derived_lease_epoch=derived_lease_epoch+1,derived_lease_until=now()+interval '70 seconds' WHERE batch_id=$1 AND first_ordinal=$2 RETURNING derived_lease_epoch,derived_lease_until`, batch, first).Scan(&fragment.DerivedLeaseEpoch, &until)
@@ -101,7 +115,7 @@ LIMIT 1 FOR UPDATE OF f SKIP LOCKED`, s.sensorID, priority).Scan(&batch, &first,
 	if err != nil {
 		return fragment, err
 	}
-	return fragment, tx.Commit()
+	return fragment, err
 }
 
 func updateIdentityDerivedReadyDue(ctx context.Context, tx *sql.Tx, batch string, first int, until time.Time) error {
