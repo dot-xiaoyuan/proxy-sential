@@ -63,11 +63,12 @@ func (s *PostgresStore) claimIdentityDerivedReadyTx(ctx context.Context, tx *sql
 	var first, offset, count int
 	var lease sql.NullTime
 	var active, valid bool
-	err = tx.QueryRowContext(ctx, identityDerivedReadyCandidateSQL, s.sensorID, priority).Scan(&batch, &first, &state, &lease, &active, &offset, &count, &valid)
+	statement, args := identityDerivedCandidateQuery(s.sensorID, priority, s.identityDerivedAfter)
+	err = tx.QueryRowContext(ctx, statement, args...).Scan(&batch, &first, &state, &lease, &active, &offset, &count, &valid)
 	if err != nil {
 		return fragment, err
 	}
-	if state == "completed" || state == "failed" {
+	if state == "completed" || state == "failed" || state == "cancelled" {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM identity_derived_ready WHERE batch_id=$1 AND first_ordinal=$2`, batch, first); err != nil {
 			return fragment, err
 		}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,9 @@ type identityDerivedReadyStatus struct {
 	ExistingIndexKeysPresent bool      `json:"existing_index_keys_present"`
 	IndexErrorKeysPresent    bool      `json:"index_error_keys_present"`
 	SampledAt                time.Time `json:"sampled_at"`
+	FreshStartID             string    `json:"fresh_start_id,omitempty"`
+	AcceptedAfter            string    `json:"accepted_after,omitempty"`
+	HistoricalIndexRetired   bool      `json:"historical_index_retired,omitempty"`
 }
 
 const persistIdentityDerivedReadyStatusSQL = `INSERT INTO read_model_runtime_state(name,state) VALUES($1,$2)
@@ -26,7 +30,13 @@ const persistIdentityDerivedReadyStatusSQL = `INSERT INTO read_model_runtime_sta
 func (s *PostgresStore) publishIdentityDerivedReadyStatus(ctx context.Context) error {
 	var done, fresh, older, hasError bool
 	var sampled time.Time
-	err := s.db.QueryRowContext(ctx, `SELECT s.done,EXISTS(SELECT 1 FROM identity_derived_ready q WHERE q.sensor_id=$1 AND q.priority=0),EXISTS(SELECT 1 FROM identity_derived_ready q WHERE q.sensor_id=$1 AND q.priority=1),EXISTS(SELECT 1 FROM identity_derived_ready q WHERE q.sensor_id=$1 AND q.last_error<>''),clock_timestamp() FROM identity_derived_ready_scan s WHERE s.id=true`, s.sensorID).Scan(&done, &fresh, &older, &hasError, &sampled)
+	query := `SELECT s.done,EXISTS(SELECT 1 FROM identity_derived_ready q WHERE q.sensor_id=$1 AND q.priority=0),EXISTS(SELECT 1 FROM identity_derived_ready q WHERE q.sensor_id=$1 AND q.priority=1),EXISTS(SELECT 1 FROM identity_derived_ready q WHERE q.sensor_id=$1 AND q.last_error<>''),clock_timestamp() FROM identity_derived_ready_scan s WHERE s.id=true`
+	args := []any{s.sensorID}
+	if !s.identityDerivedAfter.IsZero() {
+		query = strings.ReplaceAll(query, "q.sensor_id=$1", "q.sensor_id=$1 AND q.accepted_at >= $2")
+		args = append(args, s.identityDerivedAfter)
+	}
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&done, &fresh, &older, &hasError, &sampled)
 	if err != nil {
 		return err
 	}
@@ -38,7 +48,20 @@ func (s *PostgresStore) publishIdentityDerivedReadyStatus(ctx context.Context) e
 	} else if done {
 		state = "ready_index_empty"
 	}
-	raw, err := json.Marshal(identityDerivedReadyStatus{State: state, Scope: "ready_index_only", PendingKeyScanComplete: done, FreshIndexKeysPresent: fresh, ExistingIndexKeysPresent: older, IndexErrorKeysPresent: hasError, SampledAt: sampled.UTC()})
+	status := identityDerivedReadyStatus{State: state, Scope: "ready_index_only", PendingKeyScanComplete: done, FreshIndexKeysPresent: fresh, ExistingIndexKeysPresent: older, IndexErrorKeysPresent: hasError, SampledAt: sampled.UTC()}
+	if !s.identityDerivedAfter.IsZero() {
+		status.Scope, status.State = "fresh_index_only", "fresh_index_empty"
+		if fresh || older {
+			status.State = "fresh_index_keys_present"
+		}
+		if hasError {
+			status.State = "fresh_index_errors"
+		}
+		status.FreshStartID = s.identityDerivedCutoverID
+		status.AcceptedAfter = s.identityDerivedAfter.UTC().Format(time.RFC3339Nano)
+		status.HistoricalIndexRetired = true
+	}
+	raw, err := json.Marshal(status)
 	if err != nil {
 		return err
 	}

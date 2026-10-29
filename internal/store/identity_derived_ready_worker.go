@@ -31,7 +31,9 @@ func (s *DBStore) runIdentityFragmentDerivedReady(ctx context.Context) {
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(scannerDone)
-		s.runIdentityDerivedReadyScanner(ctx)
+		if s.pg == nil || s.pg.identityDerivedCutoverID == "" {
+			s.runIdentityDerivedReadyScanner(ctx)
+		}
 	}()
 	go func() {
 		defer close(statusDone)

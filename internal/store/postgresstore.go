@@ -31,6 +31,8 @@ type PostgresOptions struct {
 }
 
 type PostgresStore struct {
+	identityDerivedCutoverID string
+	identityDerivedAfter     time.Time
 	identityDeltaSnapshot    *IdentitySnapshot
 	identityDeltaSnapshotRun int64
 	identityDeltaEnabled     bool

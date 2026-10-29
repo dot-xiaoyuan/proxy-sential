@@ -321,6 +321,19 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 	}
 	s.identityDeviceOnly = options.DeviceOnly
 	s.identitySkipHistory = options.SkipHistory
+	if id := os.Getenv("PROXY_SENTINEL_IDENTITY_DERIVED_CUTOVER"); id != "" {
+		if !options.SkipHistory || !identityDerivedReadyEnabled() || os.Getenv("PROXY_SENTINEL_IDENTITY_FRAGMENT_DERIVED") != "true" {
+			fmt.Fprintln(os.Stderr, "identity fresh cutover requires bounded fragment consumer and skip-history mode")
+			return
+		}
+		work, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := s.pg.loadIdentityDerivedCutover(work, id)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "identity fresh cutover admission:", err)
+			return // Never fall back to processing abandoned history.
+		}
+	}
 	done := []<-chan struct{}{}
 	start := func(run func(context.Context)) {
 		finished := make(chan struct{})
@@ -351,6 +364,12 @@ func (s *DBStore) RunIdentityMaterializerWithOptions(ctx context.Context, option
 			<-finished
 		}
 	}()
+	if s.pg.identityDerivedCutoverID != "" {
+		// The immutable ledger records retirement of the old identity cursor.
+		// New durable fragments own derivation; do not poll the legacy CH stream.
+		s.runIdentityFreshHealth(ctx, options.HealthName)
+		return
+	}
 	batchSize := identitySignalBatchSize
 	var lastHealth time.Time
 	for ctx.Err() == nil {
