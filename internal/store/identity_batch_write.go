@@ -369,6 +369,15 @@ func upsertAccountSessionsBatch(ctx context.Context, tx *sql.Tx, items []Account
 }
 
 func upsertAccountSessionsBatchWithSQL(ctx context.Context, tx *sql.Tx, items []AccountSession, statement string) error {
+	args := accountSessionBatchArguments(items)
+	if len(args) == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, statement, args...)
+	return err
+}
+
+func accountSessionBatchArguments(items []AccountSession) []any {
 	if len(items) == 0 {
 		return nil
 	}
@@ -414,15 +423,19 @@ func upsertAccountSessionsBatchWithSQL(ctx context.Context, tx *sql.Tx, items []
 			endedAt[index], endedValid[index] = ended, true
 		}
 		confidence[index], rawRef[index] = item.IdentityConfidence, jsonText(item.RawRef)
+		if item.RawRef == nil {
+			// JSON null concatenates into an array, so null || null would
+			// manufacture a changed provenance value on every identical replay.
+			rawRef[index] = "{}"
+		}
 		personType[index], department[index], campusID[index] = item.PersonType, item.Department, item.CampusID
 		buildingID[index], networkZoneID[index], ssid[index] = item.BuildingID, item.NetworkZoneID, item.SSID
 		vlan[index], ap[index], nasIP[index], sessionStatus[index] = item.VLAN, item.AP, item.NASIP, item.SessionStatus
 		metadata[index] = jsonText(item)
 	}
-	_, err := tx.ExecContext(ctx, statement,
+	return []any{
 		sessionID, accountID, endpointID, ip, mac, accessID, source, startedAt, endedAt, endedValid, confidence, rawRef,
-		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus, metadata)
-	return err
+		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus, metadata}
 }
 
 func insertDeviceLeasesBatch(ctx context.Context, tx *sql.Tx, leases []deviceLease) error {
@@ -915,6 +928,7 @@ CROSS JOIN LATERAL (SELECT
 WHERE p.merged_into_profile_id IS NULL
   AND (p.endpoint_id = ANY($1::text[]) OR regexp_replace(lower(p.mac),'[^0-9a-f]','','g') = ANY($2::text[]))
   AND $3 >= (SELECT cutover_at FROM shared_device_profile_runtime WHERE singleton)
+ORDER BY k.key,p.profile_id
 ON CONFLICT(subject_key) DO UPDATE SET
   sensor_id = CASE WHEN EXCLUDED.sensor_id<>'' THEN EXCLUDED.sensor_id ELSE shared_device_profile_jobs.sensor_id END,
   campus_id = CASE WHEN EXCLUDED.campus_id<>'' THEN EXCLUDED.campus_id ELSE shared_device_profile_jobs.campus_id END,
@@ -926,7 +940,20 @@ ON CONFLICT(subject_key) DO UPDATE SET
   dirty_since = CASE WHEN shared_device_profile_jobs.processed_generation>=shared_device_profile_jobs.dirty_generation THEN now() ELSE shared_device_profile_jobs.dirty_since END,
   dirty_generation = shared_device_profile_jobs.dirty_generation+1,
   not_before = least(shared_device_profile_jobs.not_before, now()),
-  updated_at = now()`, endpoints, macs, observedAt)
+  updated_at = now()
+-- An unclaimed dirty job will read the latest committed session state. It
+-- already represents all pending changes for this subject; adding another
+-- generation or refreshing its scheduling timestamp does no useful work.
+-- A live lease is different: its reader may have taken a snapshot already,
+-- so a concurrent change must leave a newer generation pending.
+WHERE shared_device_profile_jobs.processed_generation>=shared_device_profile_jobs.dirty_generation
+ OR shared_device_profile_jobs.lease_until>=now()
+ OR shared_device_profile_jobs.not_before>now()
+ OR (shared_device_profile_jobs.sensor_id,shared_device_profile_jobs.campus_id,
+     shared_device_profile_jobs.endpoint_id,shared_device_profile_jobs.mac,
+     shared_device_profile_jobs.ip,shared_device_profile_jobs.vlan)
+    IS DISTINCT FROM (EXCLUDED.sensor_id,EXCLUDED.campus_id,EXCLUDED.endpoint_id,
+     EXCLUDED.mac,EXCLUDED.ip,EXCLUDED.vlan)`, endpoints, macs, observedAt)
 	return err
 }
 

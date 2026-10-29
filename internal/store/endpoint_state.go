@@ -119,6 +119,10 @@ func (s *DBStore) RunEndpointStateUpdater(ctx context.Context) {
 
 // endpointStateRound runs one bootstrap step, the change-set pass and one sweep slice.
 func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
+	departures, err := s.refreshAuthenticationDepartures(ctx)
+	if err != nil {
+		return 0, err
+	}
 	var raw []byte
 	var bootstrapCursor string
 	var bootstrapComplete bool
@@ -145,7 +149,7 @@ func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
 			return 0, err
 		}
 	}
-	refreshed := 0
+	refreshed := departures
 	if !bootstrapComplete {
 		started := time.Now()
 		ids, err := s.endpointIDsAfter(ctx, bootstrapCursor, endpointStateSweep)
@@ -302,7 +306,7 @@ sess_agg AS (
    'dims',jsonb_strip_nulls(jsonb_build_object('campus_id',nullif(s.campus_id::text,''),'department',nullif(s.department::text,''),'person_type',nullif(s.person_type::text,''),
      'ssid',nullif(s.ssid::text,''),'vlan',nullif(s.vlan::text,''),'ap',nullif(s.ap::text,''),'nas_ip',host(s.nas_ip))))) AS sessions
  FROM account_sessions s JOIN ids ON s.endpoint_id=ids.id
- WHERE s.ended_at IS NULL AND s.updated_at>now()-$2::interval
+ WHERE s.ended_at IS NULL AND (s.last_confirmed_at>now()-$2::interval OR (s.last_confirmed_at IS NULL AND s.updated_at>now()-$2::interval))
  GROUP BY s.endpoint_id
 ),
 proj_agg AS (

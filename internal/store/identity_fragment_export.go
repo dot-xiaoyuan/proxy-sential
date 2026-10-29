@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
@@ -83,7 +84,8 @@ func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragme
 		return fragment, err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, `SELECT f.batch_id,b.scope_key,b.source,b.stream_epoch,f.archive_month,f.content_sha256,f.key_scheme,f.first_ordinal,f.record_count,b.accepted_at,f.normalized_events,f.body_state,f.search_state FROM identity_ingest_fragments f JOIN identity_ingest_batches b USING(batch_id) WHERE b.protocol_version=2 AND b.sensor_id=$1 AND b.payload_format='fragments' AND b.export_state<>'completed' AND f.body_state IN ('pending','attempted','completed') AND f.search_state IN ('pending','attempted','completed') AND (f.body_state<>'completed' OR f.search_state<>'completed') AND (f.lease_until IS NULL OR f.lease_until<now()) ORDER BY b.accepted_at,f.batch_id,f.first_ordinal LIMIT 1 FOR UPDATE OF f SKIP LOCKED`, s.sensorID).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState)
+	query, args := identityExportCandidateQuery(s.sensorID, s.identityDerivedAfter)
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState)
 	if err != nil {
 		return fragment, err
 	}
@@ -95,6 +97,16 @@ func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragme
 		return fragment, err
 	}
 	return fragment, tx.Commit()
+}
+
+func identityExportCandidateQuery(sensor string, after time.Time) (string, []any) {
+	query := `SELECT f.batch_id,b.scope_key,b.source,b.stream_epoch,f.archive_month,f.content_sha256,f.key_scheme,f.first_ordinal,f.record_count,b.accepted_at,f.normalized_events,f.body_state,f.search_state FROM identity_ingest_fragments f JOIN identity_ingest_batches b USING(batch_id) WHERE b.protocol_version=2 AND b.sensor_id=$1 AND b.payload_format='fragments' AND b.export_state<>'completed' AND f.body_state IN ('pending','attempted','completed') AND f.search_state IN ('pending','attempted','completed') AND (f.body_state<>'completed' OR f.search_state<>'completed') AND (f.lease_until IS NULL OR f.lease_until<now()) ORDER BY b.accepted_at,f.batch_id,f.first_ordinal LIMIT 1 FOR UPDATE OF f SKIP LOCKED`
+	args := []any{sensor}
+	if !after.IsZero() {
+		query = strings.Replace(query, "b.sensor_id=$1", "b.sensor_id=$1 AND b.accepted_at >= $2", 1)
+		args = append(args, after)
+	}
+	return query, args
 }
 
 func identityFragmentSegment(fragment identityExportFragment) (streamlog.Segment, string, error) {

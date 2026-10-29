@@ -40,6 +40,8 @@ func (s *DBStore) runIdentityFreshHealth(ctx context.Context, name string) {
 				"accepted_after": s.pg.identityDerivedAfter, "cancel_id": s.pg.identityDerivedCutoverID,
 				"historical_state": "cancelled_unprocessed", "historical_cancelled_events": events,
 				"historical_cancellation_audit_complete": done, "legacy_polling": "retired",
+				"historical_archive": "paused_unprocessed", "archive_mode": "fixed_fresh_boundary",
+				"authentication_projection": "sessions_and_endpoint_evidence", "device_profiles": "asynchronous_on_change",
 			})
 			_, err = s.pg.db.ExecContext(work, `INSERT INTO read_model_runtime_state(name,state) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, name, state)
 		}

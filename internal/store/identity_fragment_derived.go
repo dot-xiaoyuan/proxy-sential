@@ -81,11 +81,17 @@ func (s *DBStore) applyIdentityDerivedFragmentsMeasured(ctx context.Context, fra
 		phaseStart = time.Now()
 	}
 	defer func() { advance("done") }()
+	authentication := s.identitySkipHistory && !s.pg.identityDerivedAfter.IsZero() && authenticationEventsOnly(events)
 
 	if s.identitySkipHistory {
 		// Endpoint rows commit first so account-session locks cannot block device
 		// signals. A retry is safe because these updates are idempotent.
-		if err = s.pg.commitIdentityEndpoints(ctx, events); err != nil {
+		if authentication {
+			err = s.pg.commitAuthenticationEndpoints(ctx, events)
+		} else {
+			err = s.pg.commitIdentityEndpoints(ctx, events)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -95,7 +101,9 @@ func (s *DBStore) applyIdentityDerivedFragmentsMeasured(ctx context.Context, fra
 		return err
 	}
 	defer tx.Rollback()
-	if s.identitySkipHistory {
+	if authentication {
+		err = writeAuthenticationSessionsTx(ctx, tx, events)
+	} else if s.identitySkipHistory {
 		err = writeIdentityFragmentCompatibilityTx(ctx, tx, events)
 	} else {
 		_, err = writeIdentityEventsShapedTx(ctx, tx, events, true, true)
@@ -105,8 +113,10 @@ func (s *DBStore) applyIdentityDerivedFragmentsMeasured(ctx context.Context, fra
 	}
 	advance("signals")
 	signals := make([]DeviceSignal, 0, len(events))
-	for _, item := range BuildDeviceInventories("latest-run", events, nil) {
-		signals = append(signals, item.Signals...)
+	if !authentication {
+		for _, item := range BuildDeviceInventories("latest-run", events, nil) {
+			signals = append(signals, item.Signals...)
+		}
 	}
 	if err = upsertDeviceSignalFactsBatch(ctx, tx, s.pg.sensorID, signals); err != nil {
 		return err

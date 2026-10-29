@@ -18,10 +18,25 @@ func identityBackgroundWorkers(age time.Duration, failed bool) int {
 // consumers leave their jobs durable and unclaimed. Shared observation decision
 // workers have their own unchanged budget.
 func (s *DBStore) identityBackgroundPriority(ctx context.Context, index int, p *identityDeltaPressure) bool {
-	if !s.pg.identityDeltaEnabled || index == 0 {
+	if !s.pg.identityDeltaEnabled {
 		return true
 	}
 	probe, cancel := context.WithTimeout(ctx, time.Second)
+	authAge, authErr := s.pg.cachedAuthenticationPendingAge(probe)
+	cancel()
+	if authErr != nil || authAge > authenticationBackgroundYieldAge {
+		// Even the reserved compatibility worker yields: it is not required
+		// for committing the authoritative authentication relationship.
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+		return false
+	}
+	if index == 0 {
+		return true
+	}
+	probe, cancel = context.WithTimeout(ctx, time.Second)
 	var age float64
 	err := s.pg.db.QueryRowContext(probe, IdentityScopeStatusSQL(`SELECT COALESCE(max(extract(epoch FROM now()-oldest_pending_at)) FILTER (WHERE enabled AND pending_records>0),0) FROM identity_pipeline_scopes`)).Scan(&age)
 	cancel()

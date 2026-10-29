@@ -663,7 +663,7 @@ WHERE COALESCE(auth_projection.document->>'ended_at','')='' AND COALESCE(auth_pr
 AND auth_source.observed_at >= now()-make_interval(secs=>GREATEST(60,LEAST(86400,COALESCE(NULLIF(auth_projection.document->>'reconcile_interval_seconds','')::int,1800)))*3)
 UNION
 SELECT auth_session.endpoint_id FROM account_sessions auth_session
-WHERE auth_session.ended_at IS NULL AND auth_session.updated_at>=now()-interval '90 minutes' AND COALESCE(auth_session.endpoint_id,'')<>'' AND COALESCE(auth_session.account_id,'')<>''
+WHERE auth_session.ended_at IS NULL AND (auth_session.last_confirmed_at>=now()-interval '90 minutes' OR (auth_session.last_confirmed_at IS NULL AND auth_session.updated_at>=now()-interval '90 minutes')) AND COALESCE(auth_session.endpoint_id,'')<>'' AND COALESCE(auth_session.account_id,'')<>''
 )) OR (router_assessments.mac<>'' AND regexp_replace(lower(router_assessments.mac),'[^0-9a-f]','','g') IN (
 SELECT regexp_replace(lower(COALESCE(auth_projection.document->>'mac','')),'[^0-9a-f]','','g') FROM account_identity_session_projection auth_projection
 JOIN account_identity_projection_sources auth_source USING(source,sensor_id,campus_id,access_domain)
@@ -671,7 +671,7 @@ WHERE COALESCE(auth_projection.document->>'ended_at','')='' AND COALESCE(auth_pr
 AND auth_source.observed_at >= now()-make_interval(secs=>GREATEST(60,LEAST(86400,COALESCE(NULLIF(auth_projection.document->>'reconcile_interval_seconds','')::int,1800)))*3)
 UNION
 SELECT regexp_replace(lower(COALESCE(auth_session.mac,'')),'[^0-9a-f]','','g') FROM account_sessions auth_session
-WHERE auth_session.ended_at IS NULL AND auth_session.updated_at>=now()-interval '90 minutes' AND COALESCE(auth_session.mac,'')<>'' AND COALESCE(auth_session.account_id,'')<>''
+WHERE auth_session.ended_at IS NULL AND (auth_session.last_confirmed_at>=now()-interval '90 minutes' OR (auth_session.last_confirmed_at IS NULL AND auth_session.updated_at>=now()-interval '90 minutes')) AND COALESCE(auth_session.mac,'')<>'' AND COALESCE(auth_session.account_id,'')<>''
 )))`
 		if !*query.HasAuthBinding {
 			predicate = "NOT " + predicate
@@ -725,9 +725,9 @@ SELECT document,` + projectionConfirmedSQL + ` FROM projection p
 JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
 WHERE src.observed_at >= now()-make_interval(secs=>GREATEST(60,LEAST(86400,COALESCE(NULLIF(document->>'reconcile_interval_seconds','')::int,1800)))*3)
 UNION ALL
-SELECT to_jsonb(s)||COALESCE(s.policy_metadata,'{}'::jsonb),s.updated_at FROM account_sessions s
-WHERE s.ended_at IS NULL AND s.endpoint_id IS NOT NULL AND s.endpoint_id<>'' AND s.endpoint_id=ANY($2::text[]) AND s.updated_at>=now()-interval '90 minutes'
+SELECT to_jsonb(s)||COALESCE(s.policy_metadata,'{}'::jsonb),` + accountSessionConfirmedSQL + ` FROM account_sessions s
+WHERE s.ended_at IS NULL AND s.endpoint_id IS NOT NULL AND s.endpoint_id<>'' AND s.endpoint_id=ANY($2::text[]) AND (s.last_confirmed_at>=now()-interval '90 minutes' OR (s.last_confirmed_at IS NULL AND s.updated_at>=now()-interval '90 minutes'))
 UNION ALL
-SELECT to_jsonb(s)||COALESCE(s.policy_metadata,'{}'::jsonb),s.updated_at FROM account_sessions s
+SELECT to_jsonb(s)||COALESCE(s.policy_metadata,'{}'::jsonb),` + accountSessionConfirmedSQL + ` FROM account_sessions s
 WHERE s.ended_at IS NULL AND s.mac IS NOT NULL AND s.mac<>'' AND regexp_replace(lower(COALESCE(s.mac,'')),'[^0-9a-f]','','g')=ANY($1::text[])
- AND NOT COALESCE(s.endpoint_id,'')=ANY($2::text[]) AND s.updated_at>=now()-interval '90 minutes'`
+ AND NOT COALESCE(s.endpoint_id,'')=ANY($2::text[]) AND (s.last_confirmed_at>=now()-interval '90 minutes' OR (s.last_confirmed_at IS NULL AND s.updated_at>=now()-interval '90 minutes'))`

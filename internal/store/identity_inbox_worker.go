@@ -278,7 +278,7 @@ func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
 	for ctx.Err() == nil {
 		work, cancel := context.WithTimeout(ctx, 45*time.Second)
 		err := s.exportIdentityInboxFragment(work)
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) && s.pg.identityDerivedAfter.IsZero() {
 			// Legacy full-JSON exports remain low priority while current facts
 			// are queued. Fresh fragments archive independently of PG projection.
 			if s.deferIdentityDerivedWorkWithQuota(ctx) {
@@ -319,6 +319,7 @@ func (s *DBStore) identityLane(connections int) (*DBStore, func(), error) {
 	db.SetMaxOpenConns(PostgresPoolLimit(connections))
 	db.SetMaxIdleConns(PostgresPoolLimit(connections))
 	db.SetConnMaxLifetime(30 * time.Minute)
-	pg := &PostgresStore{db: db, dsn: s.pg.dsn, sensorID: s.pg.sensorID, identityDeltaEnabled: s.pg.identityDeltaEnabled}
+	pg := &PostgresStore{db: db, dsn: s.pg.dsn, sensorID: s.pg.sensorID, identityDeltaEnabled: s.pg.identityDeltaEnabled,
+		identityDerivedAfter: s.pg.identityDerivedAfter, identityDerivedCutoverID: s.pg.identityDerivedCutoverID}
 	return &DBStore{pg: pg, ch: s.ch}, func() { db.Close() }, nil
 }

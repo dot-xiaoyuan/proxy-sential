@@ -474,11 +474,8 @@ func (s *DBStore) buildSharedDeviceProfile(ctx context.Context, job sharedDevice
 	if err != nil {
 		return profile, keys, time.Time{}, false, err
 	}
-	profile.AuthBindings = []evidence.RouterAuthBinding{}
+	profile = applySharedProfileAccount(profile, account)
 	if account.Binding.AccountID != "" {
-		profile.AuthBindings = []evidence.RouterAuthBinding{account.Binding}
-		profile.LatestAccountID, profile.LatestAccountAt, profile.LatestAccountActive = account.Binding.AccountID, &account.At, account.Active
-		profile.LatestAccountMatchBasis, profile.AccountConflict = account.Binding.MatchBasis, account.Conflict
 		lastObserved = latestProfileTime(lastObserved, account.At)
 	}
 	nextTransition = earliestProfileTime(nextTransition, account.NextTransition)
@@ -644,10 +641,13 @@ func (s *DBStore) publishSharedDeviceProfile(ctx context.Context, job sharedDevi
 		}
 		return err
 	}
-	profile.IdentityConflict = profile.IdentityConflict || false
+	missingKeys := false
 	for _, key := range keys {
 		var owner string
 		err = tx.QueryRowContext(ctx, `SELECT profile_id FROM shared_device_profile_keys WHERE sensor_id=$1 AND campus_id=$2 AND key_type=$3 AND key_value=$4`, profile.SensorID, profile.CampusID, key[0], key[1]).Scan(&owner)
+		if errors.Is(err, sql.ErrNoRows) {
+			missingKeys = true
+		}
 		if err == nil && owner != profile.ProfileID {
 			profile.IdentityConflict = true
 		}
@@ -664,7 +664,9 @@ func (s *DBStore) publishSharedDeviceProfile(ctx context.Context, job sharedDevi
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO shared_device_profiles(
+	changed := sharedProfileProjectionChanged(previous, profile)
+	if changed {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO shared_device_profiles(
  profile_id,sensor_id,campus_id,endpoint_id,mac,primary_ip,vlan,display_name,role,brand,model,recognition_status,confidence,
  identity_conflict,latest_account_id,latest_account_at,latest_account_active,latest_account_match_basis,account_conflict,
  identity_current,identity_at,identity_expires_at,current_shared,shared_confidence,last_shared_at,last_observed_at,first_seen,
@@ -682,25 +684,28 @@ ON CONFLICT(profile_id) DO UPDATE SET sensor_id=EXCLUDED.sensor_id,campus_id=EXC
  source_assessment_id=EXCLUDED.source_assessment_id,source_evidence_id=EXCLUDED.source_evidence_id,
  source_shared_observation_id=EXCLUDED.source_shared_observation_id,address_state=EXCLUDED.address_state,address_only=EXCLUDED.address_only,
  list_item=EXCLUDED.list_item,next_transition_at=EXCLUDED.next_transition_at,materialized_at=now(),updated_at=now()`,
-		profile.ProfileID, profile.SensorID, profile.CampusID, profile.EndpointID, profile.MAC, profile.IP, profile.VLAN,
-		profile.DisplayName, profile.Role, profile.Brand, profile.Model, profile.IdentityState, profile.Confidence, profile.IdentityConflict,
-		profile.LatestAccountID, profile.LatestAccountAt, profile.LatestAccountActive, profile.LatestAccountMatchBasis, profile.AccountConflict,
-		profile.IdentityCurrent, profile.IdentityAt, profile.IdentityExpiresAt, profile.CurrentShared, profile.SharedConfidence,
-		profile.LastSharedAt, profile.LastObservedAt, profile.FirstSeen, profile.RuleVersion, profile.IdentityAssessmentID,
-		profile.IdentityEvidenceID, profile.LastSharedObservationID, profile.AddressState, profile.AddressOnly, raw, nullTimeValue(sql.NullTime{Time: nextTransition, Valid: !nextTransition.IsZero()})); err != nil {
-		return err
-	}
-	for _, key := range keys {
-		reliable := key[0] != "address"
-		_, err = tx.ExecContext(ctx, `INSERT INTO shared_device_profile_keys(sensor_id,campus_id,key_type,key_value,profile_id,reliable,first_seen,last_seen)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(sensor_id,campus_id,key_type,key_value) DO UPDATE SET
- reliable=shared_device_profile_keys.reliable OR EXCLUDED.reliable,last_seen=GREATEST(shared_device_profile_keys.last_seen,EXCLUDED.last_seen)
- WHERE shared_device_profile_keys.profile_id=EXCLUDED.profile_id`, profile.SensorID, profile.CampusID, key[0], key[1], profile.ProfileID, reliable, profile.FirstSeen, profile.LastObservedAt)
-		if err != nil {
+			profile.ProfileID, profile.SensorID, profile.CampusID, profile.EndpointID, profile.MAC, profile.IP, profile.VLAN,
+			profile.DisplayName, profile.Role, profile.Brand, profile.Model, profile.IdentityState, profile.Confidence, profile.IdentityConflict,
+			profile.LatestAccountID, profile.LatestAccountAt, profile.LatestAccountActive, profile.LatestAccountMatchBasis, profile.AccountConflict,
+			profile.IdentityCurrent, profile.IdentityAt, profile.IdentityExpiresAt, profile.CurrentShared, profile.SharedConfidence,
+			profile.LastSharedAt, profile.LastObservedAt, profile.FirstSeen, profile.RuleVersion, profile.IdentityAssessmentID,
+			profile.IdentityEvidenceID, profile.LastSharedObservationID, profile.AddressState, profile.AddressOnly, raw, nullTimeValue(sql.NullTime{Time: nextTransition, Valid: !nextTransition.IsZero()})); err != nil {
 			return err
 		}
 	}
-	if sharedProfileProjectionChanged(previous, profile) {
+	if changed || missingKeys {
+		for _, key := range keys {
+			reliable := key[0] != "address"
+			_, err = tx.ExecContext(ctx, `INSERT INTO shared_device_profile_keys(sensor_id,campus_id,key_type,key_value,profile_id,reliable,first_seen,last_seen)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(sensor_id,campus_id,key_type,key_value) DO UPDATE SET
+ reliable=shared_device_profile_keys.reliable OR EXCLUDED.reliable,last_seen=GREATEST(shared_device_profile_keys.last_seen,EXCLUDED.last_seen)
+ WHERE shared_device_profile_keys.profile_id=EXCLUDED.profile_id`, profile.SensorID, profile.CampusID, key[0], key[1], profile.ProfileID, reliable, profile.FirstSeen, profile.LastObservedAt)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if changed {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO shared_device_profile_history(profile_id,change_kind,observed_at,source_id,payload) VALUES($1,'projection',$2,$3,$4)`, profile.ProfileID, profile.LastObservedAt, job.SubjectKey, raw); err != nil {
 			return err
 		}
@@ -913,6 +918,23 @@ const latestSharedProfileAccountSQL = `WITH projection AS (
   ELSE p.confirmed_at END active_until FROM projection p
  LEFT JOIN account_identity_projection_sources src USING(source,sensor_id,campus_id,access_domain)
  UNION ALL
- SELECT to_jsonb(s)||coalesce(s.policy_metadata,'{}'::jsonb),s.updated_at,
-  CASE WHEN s.ended_at IS NULL THEN s.updated_at+interval '90 minutes' ELSE s.updated_at END FROM sessions s
+ SELECT to_jsonb(s)||coalesce(s.policy_metadata,'{}'::jsonb),` + accountSessionConfirmedSQL + `,
+  CASE WHEN s.ended_at IS NULL THEN ` + accountSessionConfirmedSQL + `+interval '90 minutes' ELSE ` + accountSessionConfirmedSQL + ` END FROM sessions s
 ) SELECT document,confirmed_at,active_until FROM candidates ORDER BY confirmed_at DESC,document->>'account_id',document->>'session_id' LIMIT 16`
+
+// Confirmation is source time, not the time a compatibility row was rewritten.
+const accountSessionConfirmedSQL = `COALESCE(s.last_confirmed_at,s.updated_at)`
+
+// Rebuilding a departed endpoint must clear an association with no supporting
+// sessions; otherwise a correctly consumed invalidation leaves a stale account.
+func applySharedProfileAccount(profile SharedDeviceProfile, account sharedProfileAccount) SharedDeviceProfile {
+	profile.AuthBindings = []evidence.RouterAuthBinding{}
+	profile.LatestAccountID, profile.LatestAccountAt, profile.LatestAccountActive = "", nil, false
+	profile.LatestAccountMatchBasis, profile.AccountConflict = "", account.Conflict
+	if account.Binding.AccountID != "" {
+		profile.AuthBindings = []evidence.RouterAuthBinding{account.Binding}
+		profile.LatestAccountID, profile.LatestAccountAt, profile.LatestAccountActive = account.Binding.AccountID, &account.At, account.Active
+		profile.LatestAccountMatchBasis = account.Binding.MatchBasis
+	}
+	return profile
+}
