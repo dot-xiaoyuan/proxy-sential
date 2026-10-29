@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -14,6 +16,14 @@ import (
 // redirected back to the expensive global claim query.
 func identityDerivedReadyEnabled() bool {
 	return os.Getenv("PROXY_SENTINEL_IDENTITY_DERIVED_READY") == "true"
+}
+
+func identityDerivedWorkerCount() int {
+	n, err := strconv.Atoi(os.Getenv("PROXY_SENTINEL_IDENTITY_DERIVED_WORKERS"))
+	if err != nil || n < 1 {
+		return 1
+	}
+	return min(n, 6)
 }
 
 func (s *DBStore) runIdentityFragmentDerivedReady(ctx context.Context) {
@@ -28,10 +38,22 @@ func (s *DBStore) runIdentityFragmentDerivedReady(ctx context.Context) {
 		s.runIdentityDerivedReadyStatus(ctx)
 	}()
 	defer func() { <-scannerDone; <-statusDone }()
+	workers := identityDerivedWorkerCount()
+	if !s.identitySkipHistory {
+		workers = 1 // Legacy history writers retain their serialization contract.
+	}
+	var group sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		group.Add(1)
+		go func() { defer group.Done(); s.runIdentityDerivedReadyConsumer(ctx) }()
+	}
+	group.Wait()
+}
+
+func (s *DBStore) runIdentityDerivedReadyConsumer(ctx context.Context) {
 	turn := 0
 	for ctx.Err() == nil {
-		// Keep the existing shared primary-inbox resource gate until a measured
-		// realtime budget can safely replace it. This may still miss 5 seconds.
+		// The bounded consumers still yield under primary inbox pressure.
 		if s.deferIdentityDerivedWorkWithQuota(ctx) {
 			continue
 		}

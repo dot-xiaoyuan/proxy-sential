@@ -95,7 +95,12 @@ func (s *DBStore) applyIdentityDerivedFragmentsMeasured(ctx context.Context, fra
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = writeIdentityEventsShapedTx(ctx, tx, events, !s.identitySkipHistory, !s.identitySkipHistory); err != nil {
+	if s.identitySkipHistory {
+		err = writeIdentityFragmentCompatibilityTx(ctx, tx, events)
+	} else {
+		_, err = writeIdentityEventsShapedTx(ctx, tx, events, true, true)
+	}
+	if err != nil {
 		return err
 	}
 	advance("signals")
@@ -130,6 +135,26 @@ func (s *DBStore) applyIdentityDerivedFragmentsMeasured(ctx context.Context, fra
 		return err
 	}
 	return tx.Commit()
+}
+
+// Only durable fragments whose primary offset has committed reach this path.
+// Their authority facts already belong to the inbox; endpoint rows committed
+// separately above. Session upserts lock rows in session-ID order and do not
+// need the global lock used by legacy authority/history writers. Keeping that
+// lock here serialized unrelated NCU sessions and prevented bounded workers
+// from using the database's available concurrency.
+func writeIdentityFragmentCompatibilityTx(ctx context.Context, tx *sql.Tx, events []normalized.Event) error {
+	if err := boundIdentityStatements(ctx, tx); err != nil {
+		return err
+	}
+	if err := writeDeviceLeases(ctx, tx, events); err != nil {
+		return err
+	}
+	sessions := fragmentCompatibilitySessions(events)
+	if err := upsertAccountSessionsBatchWithSQL(ctx, tx, sessions, fragmentSessionUpsertSQL); err != nil {
+		return err
+	}
+	return enqueueSharedDeviceProfileJobs(ctx, tx, sessions, time.Now())
 }
 
 func (s *PostgresStore) claimIdentityDerivedFragment(ctx context.Context) (fragment identityExportFragment, err error) {

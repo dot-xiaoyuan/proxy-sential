@@ -327,7 +327,48 @@ const accountSessionValuesChangedSQL = `account_sessions.account_id IS DISTINCT 
 
 const accountSessionMetadataNewerSQL = `COALESCE(NULLIF(account_sessions.policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz) <= COALESCE(NULLIF(EXCLUDED.policy_metadata->>'last_confirmed_at','')::timestamptz,'-infinity'::timestamptz)`
 
+const upsertAccountSessionsSQL = `
+INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status, policy_metadata)
+SELECT t.session_id, t.account_id, t.endpoint_id, NULLIF(t.ip,'')::inet, t.mac, t.access_id, t.source, t.started_at, CASE WHEN t.ended_valid THEN t.ended_at ELSE NULL END, t.confidence, t.raw_ref::jsonb, NULLIF(t.person_type,''), NULLIF(t.department,''), NULLIF(t.campus_id,''), NULLIF(t.building_id,''), NULLIF(t.network_zone_id,''), NULLIF(t.ssid,''), NULLIF(t.vlan,''), NULLIF(t.ap,''), NULLIF(t.nas_ip,'')::inet, NULLIF(t.session_status,''), t.metadata::jsonb
+FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::timestamptz[], $9::timestamptz[], $10::boolean[], $11::float8[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[], $18::text[], $19::text[], $20::text[], $21::text[], $22::text[], $23::text[])
+  AS t(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, ended_valid, confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status, metadata)
+ON CONFLICT(session_id) DO UPDATE SET
+  account_id = EXCLUDED.account_id,
+  endpoint_id = EXCLUDED.endpoint_id,
+  ip = EXCLUDED.ip,
+  mac = EXCLUDED.mac,
+  access_id = EXCLUDED.access_id,
+  source = EXCLUDED.source,
+  started_at = LEAST(account_sessions.started_at, EXCLUDED.started_at),
+  ended_at = COALESCE(EXCLUDED.ended_at, account_sessions.ended_at),
+  identity_confidence = GREATEST(account_sessions.identity_confidence, EXCLUDED.identity_confidence),
+  raw_ref = account_sessions.raw_ref || EXCLUDED.raw_ref,
+  person_type = COALESCE(EXCLUDED.person_type, account_sessions.person_type),
+  department = COALESCE(EXCLUDED.department, account_sessions.department),
+  campus_id = COALESCE(EXCLUDED.campus_id, account_sessions.campus_id),
+  building_id = COALESCE(EXCLUDED.building_id, account_sessions.building_id),
+  network_zone_id = COALESCE(EXCLUDED.network_zone_id, account_sessions.network_zone_id),
+  ssid = COALESCE(EXCLUDED.ssid, account_sessions.ssid),
+  vlan = COALESCE(EXCLUDED.vlan, account_sessions.vlan),
+  ap = COALESCE(EXCLUDED.ap, account_sessions.ap),
+  nas_ip = COALESCE(EXCLUDED.nas_ip, account_sessions.nas_ip),
+  session_status = COALESCE(EXCLUDED.session_status, account_sessions.session_status),
+  policy_metadata = CASE WHEN ` + accountSessionMetadataNewerSQL + ` THEN EXCLUDED.policy_metadata ELSE account_sessions.policy_metadata END,
+  updated_at = CASE WHEN (` + accountSessionValuesChangedSQL + `) THEN now() ELSE account_sessions.updated_at END
+-- No-op guard. account_sessions carries inventory_projection_change, and this upsert runs on
+-- every identity event, so an unchanged replay wrote a full row version plus every index
+-- entry and re-dirtied the projection. Assignments that preserve the stored value when the
+-- incoming one is NULL reduce to "the incoming value is present and different"; the rest
+-- mirror their assignment directly. updated_at is deliberately absent: it must only move
+-- when something else does.
+WHERE (` + accountSessionValuesChangedSQL + `)
+ OR ((` + accountSessionMetadataNewerSQL + `) AND account_sessions.policy_metadata IS DISTINCT FROM EXCLUDED.policy_metadata)`
+
 func upsertAccountSessionsBatch(ctx context.Context, tx *sql.Tx, items []AccountSession) error {
+	return upsertAccountSessionsBatchWithSQL(ctx, tx, items, upsertAccountSessionsSQL)
+}
+
+func upsertAccountSessionsBatchWithSQL(ctx context.Context, tx *sql.Tx, items []AccountSession, statement string) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -378,42 +419,7 @@ func upsertAccountSessionsBatch(ctx context.Context, tx *sql.Tx, items []Account
 		vlan[index], ap[index], nasIP[index], sessionStatus[index] = item.VLAN, item.AP, item.NASIP, item.SessionStatus
 		metadata[index] = jsonText(item)
 	}
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO account_sessions(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, identity_confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status, policy_metadata)
-SELECT t.session_id, t.account_id, t.endpoint_id, NULLIF(t.ip,'')::inet, t.mac, t.access_id, t.source, t.started_at, CASE WHEN t.ended_valid THEN t.ended_at ELSE NULL END, t.confidence, t.raw_ref::jsonb, NULLIF(t.person_type,''), NULLIF(t.department,''), NULLIF(t.campus_id,''), NULLIF(t.building_id,''), NULLIF(t.network_zone_id,''), NULLIF(t.ssid,''), NULLIF(t.vlan,''), NULLIF(t.ap,''), NULLIF(t.nas_ip,'')::inet, NULLIF(t.session_status,''), t.metadata::jsonb
-FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::timestamptz[], $9::timestamptz[], $10::boolean[], $11::float8[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[], $18::text[], $19::text[], $20::text[], $21::text[], $22::text[], $23::text[])
-  AS t(session_id, account_id, endpoint_id, ip, mac, access_id, source, started_at, ended_at, ended_valid, confidence, raw_ref, person_type, department, campus_id, building_id, network_zone_id, ssid, vlan, ap, nas_ip, session_status, metadata)
-ON CONFLICT(session_id) DO UPDATE SET
-  account_id = EXCLUDED.account_id,
-  endpoint_id = EXCLUDED.endpoint_id,
-  ip = EXCLUDED.ip,
-  mac = EXCLUDED.mac,
-  access_id = EXCLUDED.access_id,
-  source = EXCLUDED.source,
-  started_at = LEAST(account_sessions.started_at, EXCLUDED.started_at),
-  ended_at = COALESCE(EXCLUDED.ended_at, account_sessions.ended_at),
-  identity_confidence = GREATEST(account_sessions.identity_confidence, EXCLUDED.identity_confidence),
-  raw_ref = account_sessions.raw_ref || EXCLUDED.raw_ref,
-  person_type = COALESCE(EXCLUDED.person_type, account_sessions.person_type),
-  department = COALESCE(EXCLUDED.department, account_sessions.department),
-  campus_id = COALESCE(EXCLUDED.campus_id, account_sessions.campus_id),
-  building_id = COALESCE(EXCLUDED.building_id, account_sessions.building_id),
-  network_zone_id = COALESCE(EXCLUDED.network_zone_id, account_sessions.network_zone_id),
-  ssid = COALESCE(EXCLUDED.ssid, account_sessions.ssid),
-  vlan = COALESCE(EXCLUDED.vlan, account_sessions.vlan),
-  ap = COALESCE(EXCLUDED.ap, account_sessions.ap),
-  nas_ip = COALESCE(EXCLUDED.nas_ip, account_sessions.nas_ip),
-  session_status = COALESCE(EXCLUDED.session_status, account_sessions.session_status),
-  policy_metadata = CASE WHEN `+accountSessionMetadataNewerSQL+` THEN EXCLUDED.policy_metadata ELSE account_sessions.policy_metadata END,
-  updated_at = CASE WHEN (`+accountSessionValuesChangedSQL+`) THEN now() ELSE account_sessions.updated_at END
--- No-op guard. account_sessions carries inventory_projection_change, and this upsert runs on
--- every identity event, so an unchanged replay wrote a full row version plus every index
--- entry and re-dirtied the projection. Assignments that preserve the stored value when the
--- incoming one is NULL reduce to "the incoming value is present and different"; the rest
--- mirror their assignment directly. updated_at is deliberately absent: it must only move
--- when something else does.
-WHERE (`+accountSessionValuesChangedSQL+`)
- OR ((`+accountSessionMetadataNewerSQL+`) AND account_sessions.policy_metadata IS DISTINCT FROM EXCLUDED.policy_metadata)`,
+	_, err := tx.ExecContext(ctx, statement,
 		sessionID, accountID, endpointID, ip, mac, accessID, source, startedAt, endedAt, endedValid, confidence, rawRef,
 		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus, metadata)
 	return err
