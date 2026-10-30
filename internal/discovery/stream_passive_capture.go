@@ -15,6 +15,14 @@ import (
 
 const PassiveStreamParserVersion = "passive-frame-v1"
 
+// CapturedSegment is the durable segment plus its journal id. Capture passes it
+// to the segment callback so an optional shadow publisher does not have to
+// re-read a segment that a lane may already have released.
+type CapturedSegment struct {
+	ID      string
+	Segment streamlog.Segment
+}
+
 func PassiveStreamSourcePath(source Source) string {
 	return "packet://" + source.Address + "/" + source.ID
 }
@@ -23,23 +31,28 @@ func PassiveStreamSourcePath(source Source) string {
 // observations. The segment owns the standard events once; packet bytes were
 // never retained, so this source must not claim packet-level provenance.
 func AppendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, source Source, scope *normalized.CaptureScope, events []normalized.Event) (string, error) {
+	captured, err := appendPassiveStreamBatch(ctx, journal, source, scope, events)
+	return captured.ID, err
+}
+
+func appendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, source Source, scope *normalized.CaptureScope, events []normalized.Event) (CapturedSegment, error) {
 	if journal == nil || scope == nil || source.ID == "" || source.Address == "" || len(events) == 0 || len(events) > streamlog.MaxSegmentEvents {
-		return "", errors.New("passive stream requires a bounded batch, source and capture scope")
+		return CapturedSegment{}, errors.New("passive stream requires a bounded batch, source and capture scope")
 	}
 	if source.Node != scope.SensorID || source.Site != scope.CampusID || source.Domain != scope.AccessDomain || source.Address != scope.InterfaceName || scope.CollectorInstanceID == "" ||
 		scope.SchemaVersion != "capture-scope/v1" || !scope.ValidUntil.After(scope.ValidFrom) {
-		return "", errors.New("passive stream source does not match controlled capture scope")
+		return CapturedSegment{}, errors.New("passive stream source does not match controlled capture scope")
 	}
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return CapturedSegment{}, err
 	}
 	path := PassiveStreamSourcePath(source)
 	cursor, err := journal.LoadSource("passive-discovery", path)
 	if err != nil {
-		return "", err
+		return CapturedSegment{}, err
 	}
 	if cursor.ParserVersion != PassiveStreamParserVersion || cursor.Epoch == "" {
-		return "", streamlog.ErrContentConflict
+		return CapturedSegment{}, streamlog.ErrContentConflict
 	}
 	start := cursor.Offset
 	if cursor.FileID != scope.CollectorInstanceID {
@@ -48,23 +61,23 @@ func AppendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, s
 	prepared := make([]normalized.Event, 0, len(events))
 	for _, event := range events {
 		if event.Type != "discovery" || event.EventID == "" || event.Timestamp == "" {
-			return "", errors.New("passive stream batch contains unsupported event")
+			return CapturedSegment{}, errors.New("passive stream batch contains unsupported event")
 		}
 		copy := event
 		copy.Observer = cloneStreamFields(event.Observer)
 		copy.Observer["collector_instance_id"] = scope.CollectorInstanceID
 		copy = scope.Apply(copy)
 		if issue, _ := copy.Observer["capture_scope_issue"].(string); issue != "" {
-			return "", fmt.Errorf("passive stream capture scope: %s", issue)
+			return CapturedSegment{}, fmt.Errorf("passive stream capture scope: %s", issue)
 		}
 		if copy.Observer["capture_scope_id"] == "" {
-			return "", errors.New("passive stream event has no capture scope")
+			return CapturedSegment{}, errors.New("passive stream event has no capture scope")
 		}
 		prepared = append(prepared, copy)
 	}
 	raw, err := json.Marshal(prepared)
 	if err != nil {
-		return "", err
+		return CapturedSegment{}, err
 	}
 	for index := range prepared {
 		original := prepared[index].EventID
@@ -86,12 +99,12 @@ func AppendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, s
 		NeedsProjection: true, Events: prepared}
 	id, err := journal.Append(segment)
 	if err != nil {
-		return "", err
+		return CapturedSegment{}, err
 	}
 	if err := journal.CommitSource("passive-discovery", path, id); err != nil {
-		return id, err
+		return CapturedSegment{ID: id, Segment: segment}, err
 	}
-	return id, nil
+	return CapturedSegment{ID: id, Segment: segment}, nil
 }
 
 func cloneStreamFields(fields map[string]any) map[string]any {

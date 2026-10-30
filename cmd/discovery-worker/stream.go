@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/discovery"
+	"proxy-sentinel/internal/eventbus"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
@@ -142,6 +143,21 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 		}
 		return nil
 	}
+	statsDir := filepath.Join(opts.Spool, "stream-capture-stats")
+	shadow, shadowErr := eventbus.NewShadowFromEnv(ctx, opts.Node, statsDir, discovery.StreamPartitionKey)
+	if shadowErr != nil {
+		log.Printf("event-bus shadow disabled: %v", shadowErr)
+		eventbus.WriteDisabledStats(statsDir, shadowErr)
+	}
+	if shadow != nil {
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := shadow.Close(closeCtx); err != nil {
+				log.Printf("event-bus shadow close: %v", err)
+			}
+		}()
+	}
 	processor := passiveStreamProcessor(journal, writer)
 	archiveQueue := make(chan string, 64)
 	searchQueue := make(chan string, 64)
@@ -237,9 +253,11 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 			return err
 		}
 	}
-	statsDir := filepath.Join(opts.Spool, "stream-capture-stats")
-	captureErr := discovery.CaptureStreamConfigured(ctx, opts.Interface, statsDir, source, allow, opts.Collection, journal, scope, func(id string) error {
-		return enqueue(id)
+	captureErr := discovery.CaptureStreamConfigured(ctx, opts.Interface, statsDir, source, allow, opts.Collection, journal, scope, func(captured discovery.CapturedSegment) error {
+		if shadow != nil {
+			shadow.Publish(captured.ID, captured.Segment)
+		}
+		return enqueue(captured.ID)
 	})
 	stop()
 	var consumerErr error
