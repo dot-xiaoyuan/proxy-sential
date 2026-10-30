@@ -150,6 +150,24 @@ WHERE ended_at IS NULL
 
 结论：direct shadow 代码已保留但默认关闭；account 路径仍需单独 profiling（认证/锁等待/影子查询计划），不能直接启用。
 
+## 最近 IP/接入历史
+
+2026-10-30 20:15 CST 身份影子读返回的 profile 增加了从影子 session 派生、限定最近窗口的历史：
+
+- `ip_history`：按 endpoint+IP+MAC+source 去重；
+- `access_history`：按 endpoint+VLAN+NAS IP 去重；
+- 首次/末次时间取影子 session 的 started/last_confirmed；
+- 不再查旧的 IP/access 历史大表。
+
+验证：
+
+```text
+account 093360: 200 sessions, ip_history=1, access_history=1
+endpoint <mac>: 1 session, ip_history=1, access_history=1
+```
+
+这里的 history 是影子窗口内的推导历史，不是旧表全量历史。
+
 ## 边界
 
 - 这是**新鲜起点**：relay 从当前 `updated_at - 1min` 开始，没有重放 214 万历史 session；
