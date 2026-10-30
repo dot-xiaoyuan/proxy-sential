@@ -108,7 +108,14 @@ func (r Repository) PipelineStatus(ctx context.Context) (PipelineStatus, error) 
 		if err = json.Unmarshal(raw, &s.Stages); err != nil {
 			return PipelineStatus{}, err
 		}
-		s.State = s.Status(time.Now())
+		now := time.Now()
+		// Rows left behind by a retired lane must not keep the current pipeline
+		// permanently "delayed". Active lanes update every few seconds; a lane
+		// untouched for a day is historical residue, not current backlog.
+		if s.UpdatedAt.IsZero() || now.Sub(s.UpdatedAt) > 24*time.Hour {
+			continue
+		}
+		s.State = s.Status(now)
 		if s.State != "idle" && s.State != "processing" {
 			out.Status = "delayed"
 		}
