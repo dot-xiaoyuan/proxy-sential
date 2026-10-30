@@ -1,0 +1,19 @@
+[Unit]
+Description=Proxy Sentinel identity session Kafka relay
+After=network-online.target proxy-sentinel-eventbus-host.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/identity-event-relay --brokers=127.0.0.1:19092
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+LimitNOFILE=65536
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
