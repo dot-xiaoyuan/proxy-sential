@@ -1,6 +1,6 @@
 # 事件总线 Phase 2：影子收据消费者
 
-状态：Phase 2a 影子收据消费者和 Phase 2b 影子事实表均已在 184 上线；不改读取路径，不写 PostgreSQL 当前态，不写 Redis，不做新旧投影比对。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
+状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实均已在 184 上线；不改读取路径，不写最终 `device_current`，不写 Redis，不做新旧投影比对。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
 
 ## 目标与边界
 
@@ -11,6 +11,7 @@ ps.discovery.events.v1
   -> Go consumer group（有界批次）
   -> ClickHouse eventbus_discovery_receipts（影子收据）
   -> ClickHouse eventbus_discovery_facts_shadow（影子事实，Phase 2b）
+  -> PostgreSQL discovery_service_facts_shadow（影子事实，Phase 2c）
   -> Kafka offset commit
 ```
 
@@ -36,13 +37,16 @@ ps.discovery.events.v1
 | ClickHouse 影子事实表迁移 | `migrations/clickhouse/058_eventbus_discovery_facts_shadow.sql` |
 | 事实派生（复用旧适配器） | `internal/eventbus/facts.go`、`internal/discovery/stream_facts.go` |
 | ClickHouse 事实写入 | `internal/eventbus/clickhouse_facts.go` |
+| PostgreSQL 事实写入 | `internal/eventbus/postgres_facts.go` |
+| 多 sink 组合 | `internal/eventbus/multi_sink.go` |
+| PostgreSQL 表迁移 | `migrations/postgres/202_discovery_facts_shadow.sql` |
 | systemd 单元 | `deploy/systemd/proxy-sentinel-eventbus-consumer.service` |
 
 消费语义：
 
-- 当前事实阶段使用消费组 `ps-discovery-eventbus-facts-shadow-v1`，从最早 offset 开始；收据阶段旧组 `ps-discovery-eventbus-shadow-v1` 保留作历史；
+- 当前 PG 事实阶段使用消费组 `ps-discovery-eventbus-facts-pg-v1`，从最早 offset 开始；`ps-discovery-eventbus-shadow-v1`、`ps-discovery-eventbus-facts-shadow-v1` 保留作历史；
 - 一次最多 1,000 条或 500 ms 批次；
-- 先写 ClickHouse 收据，再写影子事实，两者成功后提交该批 Kafka offset；
+- 先写 ClickHouse 收据和事实，再写 PostgreSQL 事实，三者成功后提交该批 Kafka offset；
 - 重复消费由 `eventbus_discovery_receipts` 的 `ReplacingMergeTree` 和 `event_id` 去重；
 - 历史非法消息不会阻塞整个消费者：记录日志、跳过并随批次提交；生产中应改为 DLQ，这是本阶段明确的测试边界；
 - 遇到 sink/commit 错误直接退出，由 systemd 重启并从已提交 offset 重放。
@@ -52,11 +56,11 @@ ps.discovery.events.v1
 ## 184 部署
 
 - 发布目录：`/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2`
-- 二进制 SHA256：`c38ba1a7d8cc0d34b795c7194738b60359d6c840e0e79d06361b9e3b55f2b504`
-- 源码提交：`a3ef42b3`
+- 二进制 SHA256：`cbcc2d2bb6da167ee73c7d121f3fd6fac9b238c8acddbb9bafef7be8e67333e2`
+- 源码提交：`14733541`
 - systemd：`proxy-sentinel-eventbus-consumer.service`，enabled + active
 - 环境：复用 `/opt/proxy-sentinel/config/runtime.env` 中的 `PROXY_SENTINEL_CLICKHOUSE_DSN`，不在命令行和文档中展开凭据
-- 表迁移：`057_eventbus_discovery_receipts.sql` 与 `058_eventbus_discovery_facts_shadow.sql` 已创建；账本 checksum 分别为 `0405391d8f77ad8e7cafeb30e765c4f4fed286795f4bbb96bf9dab75eab468b8`、`b31a1924207abbb66b13ed0b6bc452526afd1a9d94befcc47f34e473e60cc71d`
+- 表迁移：`057_eventbus_discovery_receipts.sql`、`058_eventbus_discovery_facts_shadow.sql`、`202_discovery_facts_shadow.sql` 已创建；账本 checksum 分别为 `0405391d8f77ad8e7cafeb30e765c4f4fed286795f4bbb96bf9dab75eab468b8`、`b31a1924207abbb66b13ed0b6bc452526afd1a9d94befcc47f34e473e60cc71d`、`6cd6109564ba9f321dcde4ba84366813b01eb6f6ed257827a8c6bf89b673d7b2`
 
 启动/检查：
 
@@ -138,9 +142,43 @@ kafka_offset=3904
 
 重放边界：为了给已有事件补事实，消费者更换了新的消费组；收据表因此出现 at-least-once 重复行，`uniqExact(event_id)` 仍是逻辑事件数，`ReplacingMergeTree` 会按 consumed_at 合并。这个重复是重放的预期行为，不是事件重复采集。
 
+## Phase 2c：PostgreSQL 影子事实
+
+2026-10-30 13:43 CST 在 ClickHouse 事实之后追加 PostgreSQL 事实级影子表：
+
+- 表 `discovery_service_facts_shadow`，迁移 `202_discovery_facts_shadow.sql`；
+- 主键 `(device_key, fact_key)`，按 `version`（observed_at 纳秒）和 `event_id` 只允许新版本覆盖旧版本；
+- 同一批内先按 `(device_key,fact_key)` 去重，避免 PostgreSQL `ON CONFLICT` 在同一语句中重复命中；
+- 仍是事实级影子，不是最终 `device_current`；设备当前态还需要把多个事实合并后单独建表。
+
+2026-10-30 13:44 CST 核验：
+
+| 指标 | 值 |
+| --- | --- |
+| 消费组 | `ps-discovery-eventbus-facts-pg-v1`，Stable，TOTAL-LAG=0 |
+| ClickHouse 事实 `count() FINAL` | 810 |
+| ClickHouse 唯一 `(device_key,fact_key)` | 810 |
+| PostgreSQL 事实行数 | 810 |
+| PostgreSQL 唯一 `(device_key,fact_key)` | 810 |
+| 涉及设备 | 482 |
+| 收据唯一事件数 | 40,135 |
+
+ClickHouse 和 PostgreSQL 的事实键、行数和设备数一致；消费者重启后仍为 Stable、TOTAL-LAG=0，PG 行数保持 810。
+
+PG 样本：
+
+```text
+device_key=e4340538084b1009b26e6c9da4c24598
+fact_key=bf6849d3fc7752b17c5c9c4091b6bea4...
+event_id=stream-7f45aa5ad41ec6d1632663e36ea2d2cf
+protocol=dns_sd
+ip=10.202.6.139
+observed_at=2026-10-30 05:43:35.035156+00
+```
+
 ## 下一阶段
 
-Phase 2c 才进入真正的发现当前态：
+Phase 2d 才进入真正的发现当前态：
 
 1. 写 `discovery_receipts`、`discovery_changes`、`discovery_facts_current`；
 2. 建 PostgreSQL `device_current` 影子表，只写变化设备；
