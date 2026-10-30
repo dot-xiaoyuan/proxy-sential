@@ -1728,6 +1728,11 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 		writeError(w, http.StatusNotFound, "endpoint_identity_not_found", "endpoint identity profile not found")
 		return
 	}
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
+		if err := s.overlayEndpointRegistration(ctx, &profile, endpointID); err != nil {
+			log.Printf("control-plane: identity shadow registration overlay failed endpoint=%s: %v", endpointID, err)
+		}
+	}
 	if evidenceReader, supported := s.reader.(store.DomainEvidenceReader); supported && profile.EcosystemEvidence == nil {
 		evidence, evidenceErr := evidenceReader.ListEndpointDomainEvidence(ctx, endpointID, 200)
 		if evidenceErr != nil {

@@ -174,3 +174,52 @@ type accountIdentityShadowReader interface {
 type endpointIdentityShadowReader interface {
 	GetEndpointIdentityShadow(context.Context, string, store.Query) (store.EndpointIdentityProfile, bool, error)
 }
+
+// overlayEndpointRegistration fills registration/ownership metadata that still
+// lives in endpoint_entities. It is a primary-key lookup, not the legacy
+// identity history join.
+func (s *Server) overlayEndpointRegistration(ctx context.Context, profile *store.EndpointIdentityProfile, endpointID string) error {
+	if s.operations == nil || s.operations.db == nil || endpointID == "" {
+		return nil
+	}
+	var primaryMAC, role, firstSeen, lastSeen, registrationStatus, ownerAccount, ownerName, ownerDepartment, assetTag, ownershipClass, registeredAt, note, mergeStatus, mergedInto, splitFrom, registrationUpdatedAt string
+	err := s.operations.db.QueryRowContext(ctx, `SELECT coalesce(primary_mac,''),coalesce(entity_role,''),
+coalesce(first_seen::text,''),coalesce(last_seen::text,''),coalesce(registration_status,''),
+coalesce(owner_account,''),coalesce(owner_name,''),coalesce(owner_department,''),coalesce(asset_tag,''),
+coalesce(ownership_class,''),coalesce(registered_at::text,''),coalesce(registration_note,''),
+coalesce(merge_status,''),coalesce(merged_into_endpoint_id,''),coalesce(split_from_endpoint_id,''),
+coalesce(registration_updated_at::text,'')
+FROM endpoint_entities WHERE endpoint_id=$1`, endpointID).Scan(&primaryMAC, &role, &firstSeen, &lastSeen,
+		&registrationStatus, &ownerAccount, &ownerName, &ownerDepartment, &assetTag, &ownershipClass,
+		&registeredAt, &note, &mergeStatus, &mergedInto, &splitFrom, &registrationUpdatedAt)
+	if err != nil {
+		return nil
+	}
+	if profile.Endpoint.PrimaryMAC == "" {
+		profile.Endpoint.PrimaryMAC = primaryMAC
+	}
+	if profile.Endpoint.EntityRole == "" {
+		profile.Endpoint.EntityRole = role
+	}
+	if profile.Endpoint.FirstSeen == "" {
+		profile.Endpoint.FirstSeen = firstSeen
+	}
+	if profile.Endpoint.LastSeen == "" {
+		profile.Endpoint.LastSeen = lastSeen
+	}
+	if profile.Endpoint.OwnerAccount == "" {
+		profile.Endpoint.OwnerAccount = ownerAccount
+	}
+	profile.Endpoint.RegistrationStatus = registrationStatus
+	profile.Endpoint.OwnerName = ownerName
+	profile.Endpoint.OwnerDepartment = ownerDepartment
+	profile.Endpoint.AssetTag = assetTag
+	profile.Endpoint.OwnershipClass = ownershipClass
+	profile.Endpoint.RegisteredAt = registeredAt
+	profile.Endpoint.RegistrationNote = note
+	profile.Endpoint.MergeStatus = mergeStatus
+	profile.Endpoint.MergedIntoEndpointID = mergedInto
+	profile.Endpoint.SplitFromEndpointID = splitFrom
+	profile.Endpoint.RegistrationUpdatedAt = registrationUpdatedAt
+	return nil
+}
