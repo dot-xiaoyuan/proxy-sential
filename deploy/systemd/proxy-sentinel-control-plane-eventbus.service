@@ -11,7 +11,7 @@ Environment=PROXY_SENTINEL_DISCOVERY_V2=false
 Environment=PROXY_SENTINEL_IDENTITY_FRAGMENT_WRITES=true
 Environment=PROXY_SENTINEL_IDENTITY_STREAM_EPOCH=identity-fresh-b2-20261025
 Environment=PROXY_SENTINEL_IDENTITY_POLICY_FRESH_ONLY=true
-Environment=PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ=true
+Environment=PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ=false
 Environment=PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3=true
 Environment=PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true
 ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-identity-eventbus control-plane serve --addr 0.0.0.0:18080 --shadow-dir /opt/proxy-sentinel/data/shadow --sensor-id ncu-184-router-pilot --frontend-dir /opt/proxy-sentinel/current/frontend/dist --storage-mode db --read-only=false --applications-dir /opt/proxy-sentinel/data/applications --device-fingerprint-dir /opt/proxy-sentinel/data/device-fingerprints --device-fingerprint-auto-update=false --postgres-migrations-dir /opt/proxy-sentinel/current/migrations/postgres
