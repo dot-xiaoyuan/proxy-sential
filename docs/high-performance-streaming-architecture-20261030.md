@@ -1,6 +1,6 @@
 # 高性能流式存储与投影方案
 
-状态：设计提案；Phase 1 的影子发布和 Phase 2 的 shadow receipts 消费者已分别在 2026-10-30 上线 184（真实发现事件 → Redpanda → ClickHouse 收据，消费者 lag 已归零；见 [事件总线 Phase 1](event-bus-phase1.md) 与 [Phase 2](event-bus-phase2-shadow-receipts.md)）。当前态投影、Redis、CH facts/changes 和读取切换仍未开始，未做容量验收。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
+状态：设计提案；Phase 1 影子发布、Phase 2a shadow receipts 消费者和 Phase 2b 影子事实表已分别在 2026-10-30 上线 184（真实发现事件 → Redpanda → ClickHouse 收据/事实，消费者 lag 已归零；见 [事件总线 Phase 1](event-bus-phase1.md) 与 [Phase 2](event-bus-phase2-shadow-receipts.md)）。PostgreSQL 当前态、Redis、changes 和读取切换仍未开始，未做容量验收。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
 
 ## 1. 目标与判断
 
