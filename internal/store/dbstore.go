@@ -212,10 +212,12 @@ func (s *DBStore) activityV3Freshness(ctx context.Context, window time.Duration,
 		if lag < 0 {
 			lag = 0
 		}
+		// Activity facts are published in five-minute buckets. A one-bucket
+		// lag is normal freshness, not a processing backlog.
 		switch {
-		case lag <= 60:
+		case lag <= 180:
 			status = "fresh"
-		case lag <= 300:
+		case lag <= 600:
 			status = "delayed"
 		default:
 			status = "stale"
