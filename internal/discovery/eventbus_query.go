@@ -136,6 +136,7 @@ ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 			rows.Close()
 			return nil, err
 		}
+		normalizeEventBusDocument(item)
 		items = append(items, item)
 		keys = append(keys, eventBusStateCursor{signature, last, key, 1})
 	}
@@ -153,4 +154,21 @@ ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 	}
 	freshness := map[string]any{"status": "ready", "source": "eventbus", "lag_seconds": 0, "result_version": 0}
 	return map[string]any{"items": items, "has_more": more, "next_cursor": cursor, "limit": q.Limit, "window": q.Window.String(), "freshness": freshness}, nil
+}
+
+// normalizeEventBusDocument keeps the API shape stable for documents that were
+// built before a field was present. The device center assumes these collection
+// fields exist; a missing key used to crash the discovery page.
+func normalizeEventBusDocument(item map[string]any) {
+	for _, key := range []string{"capabilities", "protocols", "observations", "addresses", "current_addresses"} {
+		if value, ok := item[key]; !ok || value == nil {
+			item[key] = []any{}
+		}
+	}
+	if value, ok := item["classification"]; !ok || value == nil {
+		item["classification"] = map[string]any{}
+	}
+	if value, ok := item["facts"]; !ok || value == nil {
+		item["facts"] = map[string]any{}
+	}
 }
