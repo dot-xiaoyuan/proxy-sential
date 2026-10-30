@@ -1,0 +1,20 @@
+[Unit]
+Description=Proxy Sentinel shadow device_current aggregator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/event-bus-current-shadow --interval=5s
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+NoNewPrivileges=true
+WorkingDirectory=/var/lib/proxy-sentinel
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
