@@ -226,7 +226,7 @@ observed_at=2026-10-30 05:43:35.035156+00
 - 配置：`/etc/redis-eventbus.conf`，无 RDB/AOF、`maxmemory 512mb`、`allkeys-lru`；
 - 服务：`proxy-sentinel-eventbus-redis.service`，enabled + active；
 - 聚合器启动时先 warm 全部当前态设备，再对变化设备增量写 Redis；
-- key 前缀：`ps:disc:current:<device_key>`；value 是当前态 JSON；TTL 5 分钟；
+- key 前缀：`ps:disc:current:<device_key>`；value 是当前态 JSON；TTL 24 小时（覆盖历史设备）；
 - PostgreSQL 仍是持久化真值，Redis 只是缓存；Redis 重启后需要聚合器重 warm 或重启聚合器恢复。
 
 2026-10-30 13:58 CST 核验：
@@ -237,7 +237,7 @@ observed_at=2026-10-30 05:43:35.035156+00
 | PostgreSQL 当前态设备数 | 580 |
 | 有效事实 | 397 |
 | 过期/撤销事实 | 575 |
-| 单个 key TTL | 约 288 秒（5 分钟 TTL 的剩余值） |
+| 单个 key TTL | 约 24 小时 |
 | 消费组 | Stable，TOTAL-LAG=0 |
 
 Redis value 样本：
@@ -286,7 +286,7 @@ GET /v1/shadow/current/95c933... -> 200, X-Shadow-Source: redis
 重启 current-shadow 做 warm -> key 恢复，API 再次返回 redis
 ```
 
-Redis 命中值和 PostgreSQL 回退值的字段一致；单 key TTL 约 5 分钟。这个 API 只是新方案的只读验证入口，不是控制面生产读接口，也没有切换任何查询路径。
+Redis 命中值和 PostgreSQL 回退值的字段一致；单 key TTL 约 24 小时。这个 API 只是新方案的只读验证入口，不是控制面生产读接口，也没有切换任何查询路径。
 
 ## 新旧影子比对（只读）
 
