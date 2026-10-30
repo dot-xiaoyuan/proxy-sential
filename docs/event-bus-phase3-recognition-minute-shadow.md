@@ -36,6 +36,7 @@
 1. 一次大 SQL 聚合 24 小时：查询长期处于 `WALWrite/AioIoCompletion`，主机 load 30+，SSH 重置；已 `pg_cancel_backend`。
 2. 逐分钟回填 1,440 次：约 7 分钟只推进到 2h38m，load 升到 38，SSH 再次重置；已终止。
 3. 按小时 counts-only 回填：单小时运行超过 3 分钟仍未完成，load 约 35；已 kill 进程并取消 PG 查询。
+4. 单小时 `COPY (SELECT ... ) TO STDOUT` 流式读取：90 秒仍未完成，说明瓶颈是 184 的 PG/HDD 顺序读取本身，不是 GROUP BY 或 percentile 排序；已取消。
 
 当前分钟表约 562 行、216k inputs，分钟服务继续运行；旧 `recognition-fresh-coverage` 没有切换。
 
