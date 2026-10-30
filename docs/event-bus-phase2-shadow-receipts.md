@@ -245,6 +245,23 @@ Redis value 样本：
 
 Redis key 数与 PostgreSQL 当前态设备数一致；TTL 已生效。当前 Redis 只写不读，没有改变任何查询路径。
 
+## Phase 2f：Redis 读取一致性
+
+2026-10-30 14:00 CST 新增只读检查命令 `cmd/event-bus-read-shadow`：
+
+- 逐设备读取 PostgreSQL `discovery_device_current_shadow`；
+- 读取 Redis `ps:disc:current:<device_key>`；
+- 比较 device_key、last_seen、fact_count、expired_fact_count、facts、updated_at；
+- 发现 missing/mismatch 时退出非零。
+
+184 实测：
+
+```text
+checked=580 missing=0 mismatches=0
+```
+
+说明 Redis 缓存当前与 PG 影子当前态一致。该命令仍是一次性只读校验，不是控制面读取接口，也没有切换任何查询路径。
+
 ## 新旧影子比对（只读）
 
 2026-10-30 13:48 CST 对 PostgreSQL 旧当前态做了只读计数比对：
