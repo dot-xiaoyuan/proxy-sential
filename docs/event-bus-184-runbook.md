@@ -192,3 +192,19 @@ identity group  TOTAL-LAG=0
 ```
 
 发现数据从滞后 45 分钟恢复到约 35 秒，慢段已 commit。
+
+### 2026-10-30 22:52 最终验证
+
+在 500 事件段、capture `SinkTimeout=30s`/`ProjectionRetryTimeout=30s`、worker `SinkTimeout=30s`/`ProjectionRetryTimeout=120s` 下：
+
+```text
+discovery max(last_seen) age ≈ 40s
+activity as_of age ≈ 2m39s（5m 桶正常）
+application cursor age ≈ 5.7s
+discovery group TOTAL-LAG=0
+identity group  TOTAL-LAG=0
+EVE rotate timer active
+load ≈ 18–22
+```
+
+旧 949/987 事件慢段已逐个 commit，发现数据恢复当前。
