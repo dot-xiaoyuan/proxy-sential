@@ -66,6 +66,24 @@ GET /v1/shadow/identity/endpoints/<endpoint_id>
 
 该接口是只读影子入口，不是控制面生产身份接口，也没有切旧会话读。
 
+## 24h 活跃 session 引导
+
+2026-10-30 20:02 CST 对 `account_sessions` 做了**最近 24h 开放 session** 的引导，不重放 214 万全量：
+
+```sql
+WHERE ended_at IS NULL
+  AND COALESCE(last_confirmed_at,updated_at) > now()-interval '24 hours'
+```
+
+结果：
+
+- 插入 34,947 个 session；
+- `identity_session_shadow` 现有 35,247 个 session，其中 34,951 个 open；
+- 从这些 open session 重建 `identity_endpoint_current_shadow`，得到 18,158 个 endpoint；
+- 旧 `account_sessions` 仍有 644,004 个 open，但其中大部分是超过 24h 未确认的历史状态；新的影子只保留最近 24h 活跃集合。
+
+这比之前的 215 个 open session 更接近可用当前态，但还不是完整 644k 历史的等价物。
+
 ## 边界
 
 - 这是**新鲜起点**：relay 从当前 `updated_at - 1min` 开始，没有重放 214 万历史 session；
