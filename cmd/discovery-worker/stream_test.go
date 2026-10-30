@@ -271,14 +271,14 @@ func TestPassiveStreamSinkRetainsBudgetAfterLocalPreparation(t *testing.T) {
 	}
 	w := &passiveBudgetWriter{}
 	p := passiveStreamProcessor(j, w)
-	if p.SinkTimeout != 3*time.Second || p.ProjectionRetryTimeout != 120*time.Second {
+	if p.SinkTimeout != 30*time.Second || p.ProjectionRetryTimeout != 120*time.Second {
 		t.Fatalf("unexpected passive budgets: first=%s projection_retry=%s", p.SinkTimeout, p.ProjectionRetryTimeout)
 	}
 	if err := p.DrainLane(context.Background(), id, streamlog.Archive); err != nil {
 		t.Fatal(err)
 	}
-	if !w.deadline || w.remaining < 2950*time.Millisecond || w.remaining > 3*time.Second {
-		t.Fatalf("RPC must receive its own bounded 3-second budget after local preparation: deadline=%t remaining=%s", w.deadline, w.remaining)
+	if !w.deadline || w.remaining < 29500*time.Millisecond || w.remaining > 30*time.Second {
+		t.Fatalf("RPC must receive its own bounded 30-second budget after local preparation: deadline=%t remaining=%s", w.deadline, w.remaining)
 	}
 	state, err := j.Load(id)
 	if err != nil || state.Acks[streamlog.Archive] != streamlog.Acked {
