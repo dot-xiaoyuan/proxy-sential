@@ -100,11 +100,12 @@ func aggregate(ctx context.Context, pool *pgxpool.Pool) error {
 		return tx.Commit(ctx)
 	}
 	_, err = tx.Exec(ctx, `
-INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,facts,updated_at)
+INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,expired_fact_count,facts,updated_at)
 SELECT f.device_key,
        max(f.observed_at),
-       count(*)::int,
-       jsonb_object_agg(f.fact_key, jsonb_build_object(
+       count(*) FILTER (WHERE f.withdrawn = FALSE AND (f.valid_until IS NULL OR f.valid_until > now()))::int,
+       count(*) FILTER (WHERE f.withdrawn = TRUE OR (f.valid_until IS NOT NULL AND f.valid_until <= now()))::int,
+       coalesce(jsonb_object_agg(f.fact_key, jsonb_build_object(
            'event_id', f.event_id,
            'protocol', f.protocol,
            'ip', f.ip,
@@ -113,7 +114,8 @@ SELECT f.device_key,
            'valid_until', f.valid_until,
            'withdrawn', f.withdrawn,
            'content_hash', f.content_hash,
-           'version', f.version)),
+           'version', f.version))
+           FILTER (WHERE f.withdrawn = FALSE AND (f.valid_until IS NULL OR f.valid_until > now())), '{}'::jsonb),
        now()
 FROM discovery_service_facts_shadow f
 WHERE f.device_key = ANY($1::text[])
@@ -121,6 +123,7 @@ GROUP BY f.device_key
 ON CONFLICT (device_key) DO UPDATE SET
     last_seen = EXCLUDED.last_seen,
     fact_count = EXCLUDED.fact_count,
+    expired_fact_count = EXCLUDED.expired_fact_count,
     facts = EXCLUDED.facts,
     updated_at = now()`, devices)
 	if err != nil {
