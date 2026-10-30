@@ -187,6 +187,14 @@ endpoint <mac>: 1 session, ip_history=1, access_history=1
 
 验证 endpoint identity 返回 200，字段包含 `registration_status=unregistered`、`owner_account=092962`、`merge_status=active`。
 
+## 品牌证据推断
+
+端点身份影子读在已有 `EcosystemEvidence` 时，用当前 domain library 版本调用 `fingerprint.InferBrand`，只基于已加载的 domain evidence，不触发旧 endpoint identity 查询。
+
+- 有足够证据时返回 `brand_inference`；
+- 证据不足时由 `InferBrand` 返回 `insufficient`；
+- 当前抽样 endpoint 没有 domain evidence，因此响应里没有 `brand_inference`，这是预期。
+
 ## 边界
 
 - 这是**新鲜起点**：relay 从当前 `updated_at - 1min` 开始，没有重放 214 万历史 session；
