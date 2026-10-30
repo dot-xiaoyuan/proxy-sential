@@ -259,7 +259,9 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
 		var page map[string]any
 		var err error
-		if repo.PipelineV2 {
+		if os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+			page, err = repo.DevicesEventBus(ctx, query)
+		} else if repo.PipelineV2 {
 			page, err = repo.DevicesState(ctx, query)
 		} else {
 			page, err = repo.DevicesIndexed(ctx, query)
