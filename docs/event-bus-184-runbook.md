@@ -66,6 +66,15 @@ recognition ready / available_since=2026-10-30T06:19:00Z / gap≈64,831s
 | `proxy-sentinel-recognition-materializer-eventbus.service` | 识别物化/覆盖切读 |
 | `proxy-sentinel-recognition-materializer.service` | 旧识别物化，disabled |
 
+## 页面验证（2026-10-30 20:35 CST）
+
+- `/overview`：200，运营工作台可打开；风险统计快照仍显示 2026-10-25，属于旧的 activity 统计读模型，不是发现 eventbus 数据。
+- `/devices?tab=discovery`：200，20 行，最近观测 2–5 分钟，无 console/page error；
+- `/devices?tab=terminal`：200，20 行，最近观测 1 分钟；
+- `/settings/rules?tab=fingerprints` → 现场覆盖：200，SSDP 193,451 条、LLDP 24 条，统计时间 20:35。
+
+发现页曾因部分 shadow document 缺少 `capabilities/protocols/observations` 数组报 `Cannot read properties of undefined (reading 'filter')`；已由 `DevicesEventBus` 统一补空数组修复。
+
 ## 回退
 
 ### 发现回退
