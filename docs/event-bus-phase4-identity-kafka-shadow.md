@@ -45,6 +45,27 @@ account_sessions(updated_at > cursor)
 - 实际消息包含 `session_id/account_id/endpoint_id/ip/mac/started_at/ended_at/session_status/policy_metadata`；
 - 消息 key 为 session_id，保证同一会话顺序。
 
+## 身份影子读取接口
+
+2026-10-30 20:00 CST 在 `event-bus-shadow-api` 增加身份只读接口：
+
+```text
+GET /v1/shadow/identity/sessions?state=open&limit=50&cursor=...
+GET /v1/shadow/identity/sessions/<session_id>
+GET /v1/shadow/identity/endpoints?limit=50
+GET /v1/shadow/identity/endpoints/<endpoint_id>
+```
+
+验证：
+
+- 会话列表返回真实登录 session（account_id、IPv6、MAC、VLAN、NAS IP、login/logout）；
+- `limit=5` 连续两页，交集为 0；
+- 详情接口返回同一 session；
+- endpoint 列表返回当前 endpoint 和最新 session；
+- 服务 `proxy-sentinel-eventbus-shadow-api.service` active。
+
+该接口是只读影子入口，不是控制面生产身份接口，也没有切旧会话读。
+
 ## 边界
 
 - 这是**新鲜起点**：relay 从当前 `updated_at - 1min` 开始，没有重放 214 万历史 session；
