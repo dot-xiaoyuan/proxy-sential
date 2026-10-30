@@ -244,3 +244,15 @@ discovery group TOTAL-LAG=0
 ```
 
 旧历史缺口保留在已关闭 epoch 和审计清单中，不计作完成。
+
+## 2026-10-30 23:52 后续收敛
+
+- 在发现采集配置中启用 `ssdp` 和 `lldp`（原先仅 `dns_sd`）；
+- DHCP R8 追平，`stream_discovery_facts.dhcp` 已到秒级；
+- `discovery_service_facts_shadow` 的 SSDP 已随新 epoch 恢复当前，DNS-SD/SSDP 事实影子为秒级；
+- ClickHouse 系统日志清理：
+  - `system.text_log` 从约 142 GiB 清空；
+  - `system.query_log` 从约 89 GiB 清空；
+  - 根盘从 91%（157 GB 可用）降到 77%（404 GB 可用）；
+- LLDP 已启用，但 8 秒 `tcpdump ether proto 0x88cc` 捕获 0 包，当前环境没有 LLDP 输入；
+- `discovery_service_facts_shadow` 的 DHCP/LLDP/IEEE1905 仍是旧协议影子（新 DHCP 走 R8/stream facts，页面不依赖该旧影子）。
