@@ -96,9 +96,11 @@ func statisticsFreshnessResponse(value statisticsResponse) statisticsResponse {
 		lag = 0
 	}
 	status := "fresh"
-	if lag > 300 {
+	// Statistics are materialized in five-minute buckets. One bucket of lag is
+	// normal freshness for this route.
+	if lag > 600 {
 		status = "stale"
-	} else if lag > 60 {
+	} else if lag > 300 {
 		status = "delayed"
 	}
 	freshness := map[string]any{"status": status, "as_of": value.asOf.UTC().Format(time.RFC3339Nano), "lag_seconds": lag, "partial": false}

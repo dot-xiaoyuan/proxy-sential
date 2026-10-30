@@ -55,7 +55,7 @@ func TestStatisticsCacheServesLastSuccessfulSnapshotAfterFailure(t *testing.T) {
 	c.serve(httptest.NewRecorder(), r, "/overview", good)
 	key := statisticsKey(r, "/overview")
 	c.mu.Lock()
-	c.entries[key].value.asOf = time.Now().Add(-61 * time.Second)
+	c.entries[key].value.asOf = time.Now().Add(-301 * time.Second)
 	c.mu.Unlock()
 	w := httptest.NewRecorder()
 	c.serve(w, r, "/overview", func(w http.ResponseWriter, r *http.Request, path string) {
@@ -66,7 +66,7 @@ func TestStatisticsCacheServesLastSuccessfulSnapshotAfterFailure(t *testing.T) {
 	}
 	w = httptest.NewRecorder()
 	c.serve(w, r, "/overview", func(w http.ResponseWriter, r *http.Request, path string) {
-		writeJSON(w, 200, map[string]any{"as_of": time.Now().Add(-61 * time.Second).Format(time.RFC3339Nano)})
+		writeJSON(w, 200, map[string]any{"as_of": time.Now().Add(-301 * time.Second).Format(time.RFC3339Nano)})
 	})
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"delayed"`) {
 		t.Fatalf("stale snapshot was not identified: %d %s", w.Code, w.Body.String())
