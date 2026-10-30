@@ -448,7 +448,7 @@ Redis 不作为唯一权威：AOF `everysec` + 副本；Redis 丢数据时从 Po
 
 ### Phase 1 落盘状态
 
-Phase 1 已实现发现事件的 Kafka 影子发布：`internal/eventbus`、发现分区键、`CapturedSegment` 回调、`discovery-worker` 接线、`cmd/event-bus-probe`、本地 Redpanda compose/脚本和测试。默认关闭，不改读取路径，不写业务表。运行方式、环境变量和回退见 [事件总线 Phase 1](event-bus-phase1.md)。本阶段不代表投影、Redis、ClickHouse 账本或读取切换已完成。
+Phase 1 已实现发现事件的 Kafka 影子发布：`internal/eventbus`、发现分区键、`CapturedSegment` 回调、`discovery-worker` 接线、`cmd/event-bus-probe`、本地 Redpanda compose/脚本和测试。默认关闭，不改读取路径，不写业务表。2026-10-30 在 184 用主机二进制 + systemd 单节点 Redpanda 完成部署验证（cluster healthy、主题创建、probe produce/consume、重启恢复）；Docker 18.09 的创建路径在本机卡住，旧 compose 单元已移除。运行方式、环境变量、184 命令和回退见 [事件总线 Phase 1](event-bus-phase1.md)。本阶段不代表投影、Redis、ClickHouse 账本或读取切换已完成。
 
 ## 15. 参考
 

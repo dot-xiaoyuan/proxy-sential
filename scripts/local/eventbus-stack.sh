@@ -61,7 +61,7 @@ load_env() {
 }
 
 compose() {
-  docker compose --env-file "$env_file" -f "$compose_file" "$@"
+  docker compose -p proxy-sentinel-eventbus --env-file "$env_file" -f "$compose_file" "$@"
 }
 
 wait_health() {

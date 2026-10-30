@@ -91,6 +91,38 @@ make eventbus-down
 
 `make eventbus-up` 会创建 `ps.discovery.events.v1`（本地 6 分区、副本 1）。生产主题需要按容量设计预先创建，通常 24 分区、副本 3。`make eventbus-status` 默认读取 `<repo>/data/run/eventbus.stats`；如果 worker 的 spool 在别处，用 `EVENTBUS_STATS_PATH=<spool>/stream-capture-stats/eventbus.stats` 指向实际文件。
 
+## 184 单节点部署验证
+
+184 的 Docker 18.09 在本次部署时无法创建新容器（已有容器继续运行），因此 184 采用**主机二进制 + systemd** 的单节点 Redpanda 验证方式；本地开发仍可用 `deploy/compose/eventbus.yml` 的 Docker 方式。两种方式都只是测试拓扑。
+
+已部署事实：
+
+- 运行时：`redpandadata/redpanda:v25.3.18` 镜像中的 `/opt/redpanda` 发行目录，安装到 `/opt/redpanda`；`rpk version` 为 `v25.3.18`。
+- 配置：`/etc/redpanda/redpanda.yaml`，Kafka `127.0.0.1:19092`、Admin `127.0.0.1:19644`、RPC `127.0.0.1:33145`，数据 `/opt/proxy-sentinel/data/eventbus/redpanda`。
+- 服务：`proxy-sentinel-eventbus-host.service`，已 enable，`Restart=on-failure`，`LimitNOFILE=65536`。
+- 主题：`ps.discovery.events.v1`，6 分区、副本 1。
+- 验证：`rpk cluster health` 为 `Healthy: true`；`eventbus-184.sh smoke` produce/consume 通过；`cmd/event-bus-probe` 在 184 上 produce/consume 通过。
+
+运维命令（在 184 上）：
+
+```bash
+/opt/proxy-sentinel/scripts/eventbus-184.sh up
+/opt/proxy-sentinel/scripts/eventbus-184.sh status
+/opt/proxy-sentinel/scripts/eventbus-184.sh smoke
+/opt/proxy-sentinel/scripts/eventbus-184.sh restart
+/opt/proxy-sentinel/scripts/eventbus-184.sh logs
+/opt/proxy-sentinel/scripts/eventbus-184.sh topics
+/opt/proxy-sentinel/scripts/eventbus-184.sh down
+```
+
+边界与风险：
+
+- 这是**单 broker、PLAINTEXT、回环绑定、HDD 数据目录**的测试部署；端口不对外暴露，生产必须使用 3 broker、TLS/SASL、SSD/NVMe 和容量验证。
+- 配置开启 `developer_mode`，Redpanda 进程实际带 `--overprovisioned` 和 `--unsafe-bypass-fsync=true`；这降低了测试环境的持久化保证，不能用于生产。
+- 184 目前只剩约 192 GB 可用，且数据库/投影共享同一块 HDD；本部署只证明“能部署、能生产消费、能重启恢复”，不证明容量或吞吐。
+- Docker 18.09 的容器创建路径在这次验证中卡住，旧 Docker compose 单元已移除；不要在同一主机同时运行 Docker 版和主机版 Redpanda。
+- 部署脚本和配置在仓库的 `deploy/redpanda/redpanda.yaml`、`deploy/redpanda/eventbus-184.env.example`、`deploy/systemd/proxy-sentinel-eventbus-host.service`、`scripts/deploy/eventbus-184.sh`，便于复核和重建。
+
 ## 打开影子发布
 
 在**本地**验证时：

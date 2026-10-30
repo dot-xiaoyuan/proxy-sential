@@ -1,0 +1,19 @@
+[Unit]
+Description=Proxy Sentinel event bus (single-node Redpanda host binary, test)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/redpanda/bin/rpk --config /etc/redpanda/redpanda.yaml redpanda start --install-dir /opt/redpanda --overprovisioned --smp 1 --memory 1G --reserve-memory 0M --check=false
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+NoNewPrivileges=true
+WorkingDirectory=/opt/proxy-sentinel/data/eventbus
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

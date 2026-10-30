@@ -1,0 +1,38 @@
+# Single-node Redpanda test configuration for 184 event-bus validation.
+# Production requires at least three brokers, TLS/SASL, SSD/NVMe and a
+# capacity-tested retention policy. This file is not a production template.
+redpanda:
+  data_directory: "/opt/proxy-sentinel/data/eventbus/redpanda"
+  node_id: 0
+  seed_servers: []
+  rpc_server:
+    address: "127.0.0.1"
+    port: 33145
+  advertised_rpc_api:
+    address: "127.0.0.1"
+    port: 33145
+  kafka_api:
+    - address: "127.0.0.1"
+      port: 19092
+  advertised_kafka_api:
+    - address: "127.0.0.1"
+      port: 19092
+  admin:
+    address: "127.0.0.1"
+    port: 19644
+  developer_mode: true
+  auto_create_topics_enabled: true
+
+rpk:
+  tune_network: false
+  tune_disk_scheduler: false
+  tune_disk_nomerges: false
+  tune_disk_irq: false
+  tune_fstrim: false
+  tune_cpu: false
+  tune_aio_events: false
+  tune_clocksource: false
+  tune_swappiness: false
+  enable_memory_locking: false
+  tune_coredump: false
+  coredump_dir: "/opt/proxy-sentinel/data/eventbus/coredump"
