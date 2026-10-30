@@ -114,7 +114,7 @@ func (a *shadowAPI) devices(w http.ResponseWriter, r *http.Request) {
 	if search != "" {
 		pattern = "%" + search + "%"
 	}
-	var cursorTime *time.Time
+	var cursorTime string
 	var cursorKey string
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
 		decoded, err := base64.RawURLEncoding.DecodeString(raw)
@@ -130,7 +130,7 @@ func (a *shadowAPI) devices(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid cursor", http.StatusBadRequest)
 			return
 		}
-		cursorTime = &cursor.Time
+		cursorTime = cursor.Time.UTC().Format(time.RFC3339Nano)
 		cursorKey = cursor.Key
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -159,7 +159,7 @@ LEFT JOIN LATERAL (
 WHERE c.last_seen >= now() - ($1::text)::interval
   AND ($2 = '' OR s.document->>'name' ILIKE $2 OR s.document->>'manufacturer' ILIKE $2
        OR s.document->>'model_name' ILIKE $2 OR c.facts::text ILIKE $2)
-  AND ($3::timestamptz IS NULL OR (c.last_seen, c.device_key) < ($3, $4))
+  AND ($3::text = '' OR c.last_seen < $3::timestamptz OR (c.last_seen = $3::timestamptz AND c.device_key > $4))
 ORDER BY c.last_seen DESC, c.device_key
 LIMIT $5`, fmt.Sprintf("%d seconds", int(window.Seconds())), pattern, cursorTime, cursorKey, limit+1)
 	if err != nil {
