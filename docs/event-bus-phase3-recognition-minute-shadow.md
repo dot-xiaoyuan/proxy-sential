@@ -1,6 +1,6 @@
 # 识别覆盖分钟增量影子
 
-状态：已在 184 运行分钟级影子表；旧 `recognition-fresh-coverage` 读路径**未切换**。
+状态：已在 184 运行分钟级影子表；`recognition-fresh-coverage` 已切到分钟表，按新鲜起点展示 24h 历史缺口。
 
 ## 目标
 
@@ -45,6 +45,19 @@
 - 184 的单块 HDD 已不适合再做识别 24h 回填；继续重试会拖垮控制面和采集；
 - 识别覆盖需要迁到 ClickHouse `AggregatingMergeTree`，或在 SSD/独立节点做一次离线回填，再切读；
 - 识别覆盖读代码已提交，但识别物化服务未部署该二进制。
+
+## 切读（2026-10-30 20:16 CST）
+
+- 新识别物化服务 `proxy-sentinel-recognition-materializer-eventbus.service` active、enabled；
+- 旧 `proxy-sentinel-recognition-materializer.service` inactive、disabled；
+- `recognition-fresh-coverage` 改为读 `recognition_coverage_minute_shadow`；
+- 状态中新增：
+  - `available_since=2026-10-30T06:19:00Z`
+  - `history_gap_seconds=64964`（约 18h）
+  - `history_policy=excluded_without_backfill`
+- `/api/v1/device-fingerprint-library/coverage` 返回 200，`fresh.items` 23 项，耗时约 0.02s。
+
+这是新鲜起点切读：24h 窗口内只有分钟表实际覆盖的时间段，未回填的历史在状态中明确展示为缺口，不再重跑 184 上的 24h 扫描。
 
 ## 后续
 
