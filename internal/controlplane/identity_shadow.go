@@ -166,3 +166,11 @@ func sortedSessions(byID map[string]store.AccountSession) []store.AccountSession
 	})
 	return out
 }
+
+type accountIdentityShadowReader interface {
+	GetAccountIdentityShadow(context.Context, string, store.Query) (store.AccountIdentityProfile, bool, error)
+}
+
+type endpointIdentityShadowReader interface {
+	GetEndpointIdentityShadow(context.Context, string, store.Query) (store.EndpointIdentityProfile, bool, error)
+}

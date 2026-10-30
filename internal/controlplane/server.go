@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -1653,7 +1652,17 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest stri
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	profile, ok, err := s.reader.GetAccountIdentity(ctx, accountID, query)
+	var profile store.AccountIdentityProfile
+	var ok bool
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
+		if shadow, supported := s.reader.(accountIdentityShadowReader); supported {
+			profile, ok, err = shadow.GetAccountIdentityShadow(ctx, accountID, query)
+		} else {
+			profile, ok, err = s.reader.GetAccountIdentity(ctx, accountID, query)
+		}
+	} else {
+		profile, ok, err = s.reader.GetAccountIdentity(ctx, accountID, query)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_account_identity_failed", err.Error())
 		return
@@ -1661,11 +1670,6 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest stri
 	if !ok {
 		writeError(w, http.StatusNotFound, "account_identity_not_found", "account identity profile not found")
 		return
-	}
-	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
-		if err := s.overlayAccountIdentity(ctx, &profile, accountID); err != nil {
-			log.Printf("control-plane: identity shadow overlay failed account=%s: %v", accountID, err)
-		}
 	}
 	writeJSON(w, http.StatusOK, profile)
 }
@@ -1700,7 +1704,17 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	profile, ok, err := s.reader.GetEndpointIdentity(ctx, endpointID, query)
+	var profile store.EndpointIdentityProfile
+	var ok bool
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
+		if shadow, supported := s.reader.(endpointIdentityShadowReader); supported {
+			profile, ok, err = shadow.GetEndpointIdentityShadow(ctx, endpointID, query)
+		} else {
+			profile, ok, err = s.reader.GetEndpointIdentity(ctx, endpointID, query)
+		}
+	} else {
+		profile, ok, err = s.reader.GetEndpointIdentity(ctx, endpointID, query)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "read_endpoint_identity_failed", err.Error())
 		return
@@ -1721,11 +1735,6 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 	if s.operations != nil && s.operations.db != nil {
 		if summaries, err := (discovery.Repository{DB: s.operations.db}).Summaries(ctx, []string{endpointID}); err == nil {
 			profile.Discovery = summaries[endpointID]
-		}
-	}
-	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
-		if err := s.overlayEndpointIdentity(ctx, &profile, endpointID); err != nil {
-			log.Printf("control-plane: identity shadow overlay failed endpoint=%s: %v", endpointID, err)
 		}
 	}
 	writeJSON(w, http.StatusOK, profile)
