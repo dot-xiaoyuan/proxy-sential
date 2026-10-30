@@ -290,35 +290,24 @@ Redis 命中值和 PostgreSQL 回退值的字段一致；单 key TTL 约 5 分�
 
 ## 新旧影子比对（只读）
 
-2026-10-30 13:48 CST 对 PostgreSQL 旧当前态做了只读计数比对：
+先纠正一个比对基线：184 的 `PROXY_SENTINEL_DISCOVERY_V2=true`，控制面 `/discovery/devices` 实际走 `DevicesState`，读的是 **`stream_discovery_device_state` + `stream_discovery_facts` 的新鲜流式投影**，不是已停止更新的 `discovery_device_state_v2`。旧表 27,560 个设备、最后更新 2026-10-24，只是历史遗留，不能作为生产读路径的真值。
 
-| 对比项 | 结果 |
+以实际读路径为基线重新核对：
+
+| 指标 | 结果 |
 | --- | --- |
-| 旧 `discovery_device_state_v2` 设备数 | 27,560 |
-| 新 `discovery_device_current_shadow` 设备数 | 547 |
-| 新旧设备键交集 | 186 |
-| 仅新影子有的设备 | 370 |
-| 新旧事实键交集 | 227 / 918 |
+| 活跃 `stream_discovery_device_state` 去重设备数 | 87,591 |
+| 新 `discovery_device_current_shadow` 设备数 | 606 |
+| 新影子与活跃流式状态有交集的设备 | 559 |
+| 仅新影子有的设备 | 47 |
+| 新影子覆盖范围 | 本次 Kafka 新鲜窗口 |
 
-这不是“新旧已一致”。进一步核对数据新鲜度：
+结论：
 
-| 表 | 设备数 | max(last_seen) | max(updated_at) |
-| --- | --- | --- | --- |
-| 旧 `discovery_device_state_v2` | 27,560 | 2026-10-24 07:07 UTC | 2026-10-24 08:36 UTC |
-| 新 `discovery_device_current_shadow` | 559 | 2026-10-30 05:45 UTC | 持续更新 |
-
-旧当前态已经约 6 天没有更新。用 [eventbus-shadow-audit.sql](../../scripts/maintenance/eventbus-shadow-audit.sql) 复核：
-
-| 审计项 | 结果 |
-| --- | --- |
-| 新当前态设备数 | 570 |
-| 新旧设备键交集 | 189 |
-| 仅新影子有的设备 | 381 |
-| 仅新影子设备中旧事实表也有的 | **0** |
-| 新旧事实键交集 | 230 |
-| 交集中 event_id 与 content_hash 完全相同的 | **0** |
-
-“仅新影子有的 381 个设备”在旧事实表里也没有记录，进一步说明旧投影没有处理这批新鲜设备，而不是新路径凭空造出设备或发生键碰撞。但这仍只是时间线证据，不能据此判定每个设备键的正确性；需要逐批审计后才能切读。当前**不能切读**。
+- 新影子与新鲜流式投影在近期设备上高度重合（559/606）；
+- 但活跃流式状态有 87,591 个历史设备，新影子只有 606 个，直接切读会丢失大量历史可见设备；
+- 之前用 `discovery_device_state_v2` 得出的“381 个新设备、旧投影 6 天没更新”只能说明遗留表状态，不能说明生产读路径；
+- 新方案要落地，必须先做受控回填（或由用户明确选择新鲜起点并展示历史缺口），再做完整窗口比对；当前不能切读。
 
 ## 下一阶段
 

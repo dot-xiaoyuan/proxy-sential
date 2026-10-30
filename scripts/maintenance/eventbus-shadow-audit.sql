@@ -37,3 +37,26 @@ SELECT count(*) AS same_event_hash
 FROM discovery_service_facts_shadow n
 JOIN discovery_service_facts_v2 o USING (device_key, fact_key)
 WHERE n.event_id = o.event_id AND n.content_hash = o.content_hash;
+
+\echo '== actual fresh read path vs event-bus shadow =='
+SELECT count(DISTINCT s.device_key) AS active_fresh_devices
+FROM stream_discovery_device_state s
+WHERE EXISTS (SELECT 1 FROM stream_source_cutovers c WHERE c.epoch = s.epoch AND c.state = 'active');
+
+SELECT count(*) AS shadow_devices FROM discovery_device_current_shadow;
+
+SELECT count(DISTINCT n.device_key) AS overlap_devices
+FROM discovery_device_current_shadow n
+WHERE EXISTS (
+  SELECT 1 FROM stream_discovery_device_state s
+  JOIN stream_source_cutovers c ON c.epoch = s.epoch AND c.state = 'active'
+  WHERE s.device_key = n.device_key
+);
+
+SELECT count(DISTINCT n.device_key) AS shadow_only_devices
+FROM discovery_device_current_shadow n
+WHERE NOT EXISTS (
+  SELECT 1 FROM stream_discovery_device_state s
+  JOIN stream_source_cutovers c ON c.epoch = s.epoch AND c.state = 'active'
+  WHERE s.device_key = n.device_key
+);
