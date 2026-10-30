@@ -168,6 +168,25 @@ endpoint <mac>: 1 session, ip_history=1, access_history=1
 
 这里的 history 是影子窗口内的推导历史，不是旧表全量历史。
 
+## 端点注册/归属字段
+
+2026-10-30 20:18 CST 端点影子读增加 `endpoint_entities` 主键查询，只补注册/归属字段，不跑旧身份历史 join：
+
+- `registration_status`
+- `owner_account`
+- `owner_name`
+- `owner_department`
+- `asset_tag`
+- `ownership_class`
+- `registered_at`
+- `registration_note`
+- `merge_status`
+- `merged_into_endpoint_id`
+- `split_from_endpoint_id`
+- `registration_updated_at`
+
+验证 endpoint identity 返回 200，字段包含 `registration_status=unregistered`、`owner_account=092962`、`merge_status=active`。
+
 ## 边界
 
 - 这是**新鲜起点**：relay 从当前 `updated_at - 1min` 开始，没有重放 214 万历史 session；
