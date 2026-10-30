@@ -57,6 +57,7 @@ FROM identity_session_shadow WHERE account_id=$1 ORDER BY updated_at DESC LIMIT 
 	}
 	profile.FirstSeen = first
 	profile.LastSeen = last
+	profile.IPHistory, profile.AccessHistory = shadowHistory(profile.Sessions, "account")
 	return profile, true, nil
 }
 
@@ -115,6 +116,7 @@ FROM identity_session_shadow WHERE endpoint_id=$1 ORDER BY updated_at DESC LIMIT
 	}
 	profile.FirstSeen = first
 	profile.LastSeen = last
+	profile.IPHistory, profile.AccessHistory = shadowHistory(profile.Sessions, "endpoint")
 	return profile, true, nil
 }
 
@@ -152,4 +154,50 @@ func shadowMax(a, b string) string {
 		return b
 	}
 	return a
+}
+
+// shadowHistory derives bounded IP/access history from the shadow sessions.
+// It is recent-window history, not the legacy full history table.
+func shadowHistory(sessions []AccountSession, role string) ([]IdentityIPMACHistory, []IdentityAccessHistory) {
+	ipIndex := map[string]int{}
+	accessIndex := map[string]int{}
+	ipHistory := []IdentityIPMACHistory{}
+	accessHistory := []IdentityAccessHistory{}
+	for _, session := range sessions {
+		if session.IP != "" || session.MAC != "" {
+			key := session.EndpointID + "|" + session.IP + "|" + session.MAC + "|" + session.Source
+			if index, ok := ipIndex[key]; ok {
+				item := &ipHistory[index]
+				item.FirstSeen = shadowMin(item.FirstSeen, session.StartedAt)
+				item.LastSeen = shadowMax(item.LastSeen, session.LastConfirmedAt)
+				if len(item.EventIDsSample) < 5 {
+					item.EventIDsSample = append(item.EventIDsSample, session.SessionID)
+				}
+			} else {
+				ipIndex[key] = len(ipHistory)
+				ipHistory = append(ipHistory, IdentityIPMACHistory{
+					EventID: session.SessionID, EndpointID: session.EndpointID, AccountID: session.AccountID,
+					EntityRole: role, IP: session.IP, MAC: session.MAC, Source: session.Source,
+					FirstSeen: session.StartedAt, LastSeen: session.LastConfirmedAt,
+					IdentityConfidence: session.IdentityConfidence, EventIDsSample: []string{session.SessionID},
+				})
+			}
+		}
+		if session.VLAN != "" || session.NASIP != "" {
+			key := session.EndpointID + "|" + session.VLAN + "|" + session.NASIP
+			if index, ok := accessIndex[key]; ok {
+				item := &accessHistory[index]
+				item.FirstSeen = shadowMin(item.FirstSeen, session.StartedAt)
+				item.LastSeen = shadowMax(item.LastSeen, session.LastConfirmedAt)
+			} else {
+				accessIndex[key] = len(accessHistory)
+				accessHistory = append(accessHistory, IdentityAccessHistory{
+					EventID: session.SessionID, EndpointID: session.EndpointID, AccountID: session.AccountID,
+					EntityRole: role, AccessType: "session", VLAN: session.VLAN, Source: session.Source,
+					FirstSeen: session.StartedAt, LastSeen: session.LastConfirmedAt,
+				})
+			}
+		}
+	}
+	return ipHistory, accessHistory
 }
