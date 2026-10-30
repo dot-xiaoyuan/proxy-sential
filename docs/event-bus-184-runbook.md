@@ -151,3 +151,23 @@ Environment=PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true
 - discovery/identity consumer lag 仍为 0。
 
 后续需要让 activity worker 自动追赶 5m/hour，而不是依赖人工 nudge。
+
+## 2026-10-30 22:30 发现投影卡段修复
+
+发现设备数据曾滞后 45 分钟。根因是 discovery worker 的 projection 重试预算只有 8 秒，慢段 `write_receipts` 约 7–24 秒，导致同一段反复超时、无法 commit。
+
+处理：
+
+- `cmd/discovery-worker/stream.go` 的 `ProjectionRetryTimeout` 从 8s 提升到 30s；
+- 重新构建并部署到实际运行的 release 路径 `event-bus-p1/bin/discovery-worker`；
+- 重启 discovery worker；
+- 暂时停止 Suricata/EVE ingest，避免 ClickHouse 写入竞争继续拖慢投影。
+
+结果：
+
+- 卡住的 segment 已 commit；
+- `discovery_device_current_shadow.max(last_seen)` 从 13:31 推进到 14:29；
+- 数据年龄从 45 分钟降到约 2–3 分钟；
+- discovery/identity Kafka lag 仍为 0。
+
+Suricata/EVE 当前暂停；应用访问页保留已产生的数据。后续若重新开启，需要先限制 EVE 事件类型/速率，避免再次拖慢发现投影。
