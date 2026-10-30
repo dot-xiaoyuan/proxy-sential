@@ -1,0 +1,20 @@
+[Unit]
+Description=Proxy Sentinel recognition materializer (minute coverage read)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+Environment=PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED=true
+ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-eventbus read-model run --lane recognition --sensor-id ${PROXY_SENTINEL_SENSOR_ID}
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

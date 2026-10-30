@@ -240,26 +240,17 @@ type freshProtocolCount struct {
 }
 
 func (s *DBStore) refreshFreshRecognitionCoverage(ctx context.Context) error {
-	rows, err := s.pg.db.QueryContext(ctx, `SELECT recognition_input->>'protocol',count(*),
- count(*) FILTER(WHERE (recognition_input->>'parsed')::boolean),
- count(*) FILTER(WHERE jsonb_array_length(COALESCE(recognition_input->'targets','[]'::jsonb))>0),
- count(*) FILTER(WHERE (recognition_input->>'features')::integer>0),
- count(*) FILTER(WHERE COALESCE((recognition_result->>'candidates')::integer,0)>0),
- count(*) FILTER(WHERE COALESCE((recognition_result->>'conclusions')::integer,0)>0),
- count(*) FILTER(WHERE recognition_status='conflict'),
- count(*) FILTER(WHERE recognition_status='processing'),
- count(*) FILTER(WHERE recognition_status IN ('unattributed','unattributed_expired')),
- count(*) FILTER(WHERE recognition_status IN ('no_features','insufficient_evidence')),
- count(*) FILTER(WHERE recognition_status IN ('parse_error','diagnostic_limit') OR recognition_result ? 'last_error'),
- count(*) FILTER(WHERE recognition_overdue OR (recognition_status IN ('processing','unattributed') AND accepted_at<now()-interval '5 seconds')),
- count(*) FILTER(WHERE recognition_result->'timings' IS NOT NULL),
- COALESCE(avg((recognition_result->'timings'->>'read_and_prepare_ms')::double precision),0),
- COALESCE(avg((recognition_result->'timings'->>'lookup_ms')::double precision),0),
- COALESCE(avg((recognition_result->'timings'->>'rules_ms')::double precision),0),
- COALESCE(avg((recognition_result->'timings'->>'write_ms')::double precision),0),
- COALESCE(percentile_cont(.95) WITHIN GROUP(ORDER BY extract(epoch FROM recognition_completed_at-accepted_at)*1000) FILTER(WHERE recognition_completed_at IS NOT NULL),0)
- FROM stream_discovery_receipts WHERE recognition_input IS NOT NULL AND accepted_at>=now()-interval '24 hours'
- GROUP BY recognition_input->>'protocol'`)
+	rows, err := s.pg.db.QueryContext(ctx, `SELECT protocol,sum(inputs),
+ sum(parsed),sum(attributed),sum(features),sum(candidates),sum(conclusions),sum(conflict),
+ sum(processing),sum(unattributed),sum(insufficient),sum(errors),sum(overdue),sum(timed),
+ CASE WHEN sum(inputs)>0 THEN sum(read_ms*inputs)/sum(inputs) ELSE 0 END,
+ CASE WHEN sum(inputs)>0 THEN sum(lookup_ms*inputs)/sum(inputs) ELSE 0 END,
+ CASE WHEN sum(inputs)>0 THEN sum(rules_ms*inputs)/sum(inputs) ELSE 0 END,
+ CASE WHEN sum(inputs)>0 THEN sum(write_ms*inputs)/sum(inputs) ELSE 0 END,
+ max(p95_ms)
+ FROM recognition_coverage_minute_shadow
+ WHERE minute>=now()-interval '24 hours'
+ GROUP BY protocol`)
 	if err != nil {
 		return err
 	}
