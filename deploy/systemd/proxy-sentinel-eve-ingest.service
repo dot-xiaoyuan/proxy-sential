@@ -1,0 +1,20 @@
+[Unit]
+Description=Proxy Sentinel Suricata EVE normalized ingest
+After=network-online.target proxy-sentinel-suricata.service
+Wants=network-online.target proxy-sentinel-suricata.service
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel ingest run --sensor-id ncu-184-router-pilot --eve /opt/proxy-sentinel/data/suricata/eve.json --capture-scope-config /opt/proxy-sentinel/config/router-capture-scope.json --collector-instance-id ncu184-suricata-20261030 --poll-interval 2s --max-batch-bytes 4194304 --store-timeout 2m --heartbeat-interval 30s
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=262144
+CPUQuota=200%
+MemoryMax=4G
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
