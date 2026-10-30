@@ -392,11 +392,15 @@ Redis keys 87,638
 / -> 200
 DevicesEventBus 集成测试（184 PostgreSQL）-> PASS
 分页 cursor 不重复
+/api/v1/discovery/devices?limit=5&window=24h -> 200
+  freshness.source=eventbus, freshness.status=ready
 ```
+
+控制面读取验证使用了一次临时测试会话（只读，验证后已从 `local_auth_sessions` 删除），未修改任何业务数据。
 
 说明：
 
-- 控制面 `/discovery/devices` 需要登录，未认证 curl 返回 401，这是预期；读方法本身已用 184 DB 集成测试验证；
+- 控制面 `/discovery/devices` 需要登录，未认证 curl 仍返回 401；带临时测试会话时已确认走 eventbus 读路径并返回 200；
 - 新单元没有 `ProtectSystem`/`ReadWritePaths` sandbox，因为旧单元在重启时再次触发 systemd mount D 状态死锁；旧单元已 disabled，新单元正常服务；
 - 旧单元留下的 D 状态进程 PID 147901 仍在，需重启主机才能清除；它不占用 18080，不影响新控制面；
 - 读路径优先使用新当前态，历史设备 document 从活跃流式状态补齐；新 Kafka 事件由 shadow 当前态提供最新行。
