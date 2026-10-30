@@ -120,8 +120,18 @@ make eventbus-down
 - 这是**单 broker、PLAINTEXT、回环绑定、HDD 数据目录**的测试部署；端口不对外暴露，生产必须使用 3 broker、TLS/SASL、SSD/NVMe 和容量验证。
 - 配置开启 `developer_mode`，Redpanda 进程实际带 `--overprovisioned` 和 `--unsafe-bypass-fsync=true`；这降低了测试环境的持久化保证，不能用于生产。
 - 184 目前只剩约 192 GB 可用，且数据库/投影共享同一块 HDD；本部署只证明“能部署、能生产消费、能重启恢复”，不证明容量或吞吐。
-- Docker 18.09 的容器创建路径在这次验证中卡住，旧 Docker compose 单元已移除；旧 sandbox systemd 单元移除后仍有一个 `mount` 辅助进程处于 D 状态（孤儿），需要主机维护窗口重启才能清除；它不属于 eventbus host 服务，当前不影响 Kafka 健康。不要在同一主机同时运行 Docker 版和主机版 Redpanda。
+- Docker 18.09 的容器创建路径在这次验证中卡住，旧 Docker compose 单元已移除。旧 sandbox systemd 单元留下的 `mount` D 状态孤儿进程已于 2026-10-30 维护窗口重启清除；不要在同一主机同时运行 Docker 版和主机版 Redpanda。
 - 部署脚本和配置在仓库的 `deploy/redpanda/redpanda.yaml`、`deploy/redpanda/eventbus-184.env.example`、`deploy/systemd/proxy-sentinel-eventbus-host.service`、`scripts/deploy/eventbus-184.sh`，便于复核和重建。
+
+### 2026-10-30 维护重启后状态
+
+为清除孤儿进程执行了一次重启，结果如下：
+
+- 孤儿进程已消失；`proxy-sentinel-eventbus-host.service` 随系统启动，`cluster health` 为 healthy，主题仍在。
+- PostgreSQL 执行崩溃恢复，约 28 分钟后接受连接；`/readyz` 恢复为 200，控制面、发现、识别、NCU、inventory、read-model 等核心服务已恢复 active。
+- Kafka 重新执行 `eventbus-184.sh smoke` 和 `event-bus-probe` 均通过。
+- `proxy-sentinel-ingest-stream-dhcp-layered-r8.service` 在重启后报 `stream source has an unconfirmed file gap or truncation`，当前仍失败；这是 DHCP 源文件位点/截断缺口，与本 Kafka 部署无关，需要按源审计流程处理。
+- 重启后 Docker 的 `dpi-*` 旧容器未自动恢复（`Exited (255)`）；不属于 Proxy Sentinel 核心服务，本次未启动。
 
 ## 打开影子发布
 
