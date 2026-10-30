@@ -57,6 +57,10 @@ func main() {
 	mux.HandleFunc("/healthz", api.health)
 	mux.HandleFunc("/v1/shadow/current/", api.current)
 	mux.HandleFunc("/v1/shadow/devices", api.devices)
+	mux.HandleFunc("/v1/shadow/identity/sessions", api.identitySessions)
+	mux.HandleFunc("/v1/shadow/identity/sessions/", api.identitySession)
+	mux.HandleFunc("/v1/shadow/identity/endpoints", api.identityEndpoints)
+	mux.HandleFunc("/v1/shadow/identity/endpoints/", api.identityEndpoint)
 	server := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
@@ -84,6 +88,208 @@ func (a *shadowAPI) health(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+type identitySessionRow struct {
+	SessionID       string          `json:"session_id"`
+	AccountID       string          `json:"account_id"`
+	EndpointID      string          `json:"endpoint_id"`
+	IP              string          `json:"ip"`
+	MAC             string          `json:"mac"`
+	Source          string          `json:"source"`
+	SensorID        string          `json:"sensor_id"`
+	StartedAt       *time.Time      `json:"started_at,omitempty"`
+	EndedAt         *time.Time      `json:"ended_at,omitempty"`
+	LastConfirmedAt *time.Time      `json:"last_confirmed_at,omitempty"`
+	IdentityConf    float64         `json:"identity_confidence"`
+	VLAN            string          `json:"vlan"`
+	NASIP           string          `json:"nas_ip"`
+	SessionStatus   string          `json:"session_status"`
+	PolicyMetadata  json.RawMessage `json:"policy_metadata,omitempty"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+}
+
+type identityEndpointRow struct {
+	EndpointID      string     `json:"endpoint_id"`
+	SessionID       string     `json:"session_id"`
+	AccountID       string     `json:"account_id"`
+	IP              string     `json:"ip"`
+	MAC             string     `json:"mac"`
+	Source          string     `json:"source"`
+	VLAN            string     `json:"vlan"`
+	NASIP           string     `json:"nas_ip"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	LastConfirmedAt *time.Time `json:"last_confirmed_at,omitempty"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+func (a *shadowAPI) identitySessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 200 {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = value
+	}
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		state = "open"
+	}
+	if state != "open" && state != "all" {
+		http.Error(w, "invalid state", http.StatusBadRequest)
+		return
+	}
+	var cursorTime *time.Time
+	var cursorKey string
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(raw)
+		if err != nil {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
+		var c struct {
+			Time time.Time `json:"t"`
+			Key  string    `json:"k"`
+		}
+		if err := json.Unmarshal(decoded, &c); err != nil || c.Key == "" || c.Time.IsZero() {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
+		cursorTime, cursorKey = &c.Time, c.Key
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	rows, err := a.pool.Query(ctx, `SELECT session_id,account_id,endpoint_id,ip,mac,source,sensor_id,started_at,ended_at,
+last_confirmed_at,identity_confidence,vlan,nas_ip,session_status,coalesce(policy_metadata,'{}'::jsonb),updated_at
+FROM identity_session_shadow
+WHERE ($1='all' OR ended_at IS NULL)
+  AND ($2::timestamptz IS NULL OR (COALESCE(last_confirmed_at,updated_at),session_id) < ($2,$3))
+ORDER BY COALESCE(last_confirmed_at,updated_at) DESC,session_id DESC LIMIT $4`, state, cursorTime, cursorKey, limit+1)
+	if err != nil {
+		http.Error(w, "identity query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	items := []identitySessionRow{}
+	for rows.Next() {
+		var x identitySessionRow
+		var policy []byte
+		if err := rows.Scan(&x.SessionID, &x.AccountID, &x.EndpointID, &x.IP, &x.MAC, &x.Source, &x.SensorID,
+			&x.StartedAt, &x.EndedAt, &x.LastConfirmedAt, &x.IdentityConf, &x.VLAN, &x.NASIP, &x.SessionStatus, &policy, &x.UpdatedAt); err != nil {
+			http.Error(w, "identity decode failed", http.StatusInternalServerError)
+			return
+		}
+		x.PolicyMetadata = json.RawMessage(policy)
+		items = append(items, x)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, "identity read failed", http.StatusInternalServerError)
+		return
+	}
+	more := len(items) > limit
+	next := ""
+	if more {
+		items = items[:limit]
+		last := items[len(items)-1]
+		ts := last.UpdatedAt
+		if last.LastConfirmedAt != nil {
+			ts = *last.LastConfirmedAt
+		}
+		cursor, _ := json.Marshal(map[string]any{"t": ts, "k": last.SessionID})
+		next = base64.RawURLEncoding.EncodeToString(cursor)
+	}
+	writeJSON(w, map[string]any{"items": items, "has_more": more, "next_cursor": next, "limit": limit, "state": state})
+}
+
+func (a *shadowAPI) identitySession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/shadow/identity/sessions/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		http.Error(w, "session id required", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	var x identitySessionRow
+	var policy []byte
+	err := a.pool.QueryRow(ctx, `SELECT session_id,account_id,endpoint_id,ip,mac,source,sensor_id,started_at,ended_at,
+last_confirmed_at,identity_confidence,vlan,nas_ip,session_status,coalesce(policy_metadata,'{}'::jsonb),updated_at
+FROM identity_session_shadow WHERE session_id=$1`, id).Scan(&x.SessionID, &x.AccountID, &x.EndpointID, &x.IP, &x.MAC, &x.Source, &x.SensorID,
+		&x.StartedAt, &x.EndedAt, &x.LastConfirmedAt, &x.IdentityConf, &x.VLAN, &x.NASIP, &x.SessionStatus, &policy, &x.UpdatedAt)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	x.PolicyMetadata = json.RawMessage(policy)
+	writeJSON(w, x)
+}
+
+func (a *shadowAPI) identityEndpoints(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 200 {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = value
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	rows, err := a.pool.Query(ctx, `SELECT endpoint_id,session_id,account_id,ip,mac,source,vlan,nas_ip,started_at,last_confirmed_at,updated_at
+FROM identity_endpoint_current_shadow ORDER BY updated_at DESC,endpoint_id LIMIT $1`, limit)
+	if err != nil {
+		http.Error(w, "endpoint query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	items := []identityEndpointRow{}
+	for rows.Next() {
+		var x identityEndpointRow
+		if err := rows.Scan(&x.EndpointID, &x.SessionID, &x.AccountID, &x.IP, &x.MAC, &x.Source, &x.VLAN, &x.NASIP,
+			&x.StartedAt, &x.LastConfirmedAt, &x.UpdatedAt); err != nil {
+			http.Error(w, "endpoint decode failed", http.StatusInternalServerError)
+			return
+		}
+		items = append(items, x)
+	}
+	writeJSON(w, map[string]any{"items": items, "limit": limit})
+}
+
+func (a *shadowAPI) identityEndpoint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/shadow/identity/endpoints/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		http.Error(w, "endpoint id required", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	var x identityEndpointRow
+	err := a.pool.QueryRow(ctx, `SELECT endpoint_id,session_id,account_id,ip,mac,source,vlan,nas_ip,started_at,last_confirmed_at,updated_at
+FROM identity_endpoint_current_shadow WHERE endpoint_id=$1`, id).Scan(&x.EndpointID, &x.SessionID, &x.AccountID, &x.IP, &x.MAC, &x.Source, &x.VLAN, &x.NASIP,
+		&x.StartedAt, &x.LastConfirmedAt, &x.UpdatedAt)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, x)
 }
 
 func (a *shadowAPI) devices(w http.ResponseWriter, r *http.Request) {
