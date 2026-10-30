@@ -99,6 +99,24 @@ WHERE ended_at IS NULL
 
 结论：身份读切换不能靠“旧查询后叠加影子”，必须**直接替换** `GetAccountIdentity` / `GetEndpointIdentity` 的读取实现，或者先让旧查询只读小表。当前身份影子仍只通过 `/v1/shadow/identity/*` 只读 API 暴露。
 
+## 直接影子读取尝试（已关闭）
+
+第二次读切换改为完全绕过旧 `GetAccountIdentity` / `GetEndpointIdentity`：
+
+- 新增 `GetAccountIdentityShadow` / `GetEndpointIdentityShadow`，只查 `identity_session_shadow`；
+- 增加 account/endpoint 影子索引迁移 `211_identity_shadow_lookup_indexes.sql`；
+- 控制面 `PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true` 时直接调用影子方法，不再先跑旧查询。
+
+实测：
+
+- endpoint identity 返回 200，读取 17 个 session；
+- account identity 仍然 8 秒超时；
+- 请求期间 PG 活跃查询是 commit/IO，没有看到完整的影子 account 查询输出；
+- 为避免继续占用 184，已再次关闭开关并重启控制面；
+- 控制面恢复 active，`/readyz=200`。
+
+结论：direct shadow 代码已保留但默认关闭；account 路径仍需单独 profiling（认证/锁等待/影子查询计划），不能直接启用。
+
 ## 边界
 
 - 这是**新鲜起点**：relay 从当前 `updated_at - 1min` 开始，没有重放 214 万历史 session；
