@@ -379,7 +379,9 @@ Redis keys 87,638
 
 2026-10-30 14:20 CST 将 `/discovery/devices` 切到事件总线当前态：
 
-- 新增 `internal/discovery.DevicesEventBus`，从 `discovery_device_current_shadow` 分页，并左连接活跃 `stream_discovery_device_state` 的 document 保留展示字段；
+- 新增 `internal/discovery.DevicesEventBus`，从 `discovery_device_current_shadow` 分页；
+- 当前态已新增并回填 `document JSONB`（87,591 个活跃设备），读取只查当前态 document，不再 join `stream_discovery_device_state`；
+- addresses/protocols/facts/last_seen/evidence_count 由当前事实动态覆盖；
 - 控制面开关 `PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ=true` 时走新方法，否则保留原 `DevicesIndexed`/`DevicesState`；
 - 新二进制：`/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-eventbus`；
 - 新 systemd 单元：`proxy-sentinel-control-plane-eventbus.service`，enabled + active，监听 `0.0.0.0:18080`；
@@ -394,6 +396,7 @@ DevicesEventBus 集成测试（184 PostgreSQL）-> PASS
 分页 cursor 不重复
 /api/v1/discovery/devices?limit=5&window=24h -> 200
   freshness.source=eventbus, freshness.status=ready
+  items[0].addresses=['10.163.48.87']
 ```
 
 控制面读取验证使用了一次临时测试会话（只读，验证后已从 `local_auth_sessions` 删除），未修改任何业务数据。
@@ -403,7 +406,8 @@ DevicesEventBus 集成测试（184 PostgreSQL）-> PASS
 - 控制面 `/discovery/devices` 需要登录，未认证 curl 仍返回 401；带临时测试会话时已确认走 eventbus 读路径并返回 200；
 - 新单元没有 `ProtectSystem`/`ReadWritePaths` sandbox，因为旧单元在重启时再次触发 systemd mount D 状态死锁；旧单元已 disabled，新单元正常服务；
 - 旧单元留下的 D 状态进程 PID 147901 仍在，需重启主机才能清除；它不占用 18080，不影响新控制面；
-- 读路径优先使用新当前态，历史设备 document 从活跃流式状态补齐；新 Kafka 事件由 shadow 当前态提供最新行。
+- 读路径使用新当前态存储的 document；历史 document 只做一次性回填，不再在查询时读取旧流式状态；
+- 新 Kafka 事件由 shadow 当前态提供最新行、地址、协议和事实。
 
 ## 下一阶段
 
