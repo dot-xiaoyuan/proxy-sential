@@ -128,7 +128,7 @@ make eventbus-down
 - 发布目录：`/opt/proxy-sentinel/releases/2026.10.30-eventbus-p1`；`bin/discovery-worker` SHA256 `f14db7b6bbdd9d75b2958b73371dd68b268b819dc62a624537b985bacfcd4c9f`，源码提交 `f8fb061f`。
 - systemd drop-in：`/etc/systemd/system/proxy-sentinel-discovery.service.d/zz-eventbus-p1.conf`，把 discovery-worker 固定到该发布目录，并设置 `PROXY_SENTINEL_EVENT_BUS_SHADOW=true`、`_BROKERS=127.0.0.1:19092`、`_CLIENT_ID=discovery-ncu-184-router-pilot`、`_DISCOVERY_TOPIC=ps.discovery.events.v1`、`_QUEUE=8192`。
 - 进程核对：`MainPID` 的可执行文件指向 `2026.10.30-eventbus-p1/bin/discovery-worker`；`proxy-sentinel-discovery.service` active。
-- 实际写入：`eventbus.stats` 为 `enabled=true`，在 2026-10-30 13:23:39 CST 时 `published=2911`、`failed=0`、`dropped=0`、`segments=4`、`queue_depth=0`。Kafka 主题 6 个分区的 high-watermark 已从 probe 时的 2/0/0/1/0/0 增长到 166/144/206/103/73/296。
+- 实际写入：`eventbus.stats` 为 `enabled=true`。2026-10-30 13:29:39 CST 时 `published=13986`、`failed=0`、`dropped=0`、`segments=16`、`queue_depth=0`；6 个分区 high-watermark 合计 13989，等于 13986 条影子消息加 3 条 probe 消息，未观察到丢失。
 - 消息核对：实际消费到 `sensor_id=ncu-184-router-pilot`、`source=passive-discovery`、`partition_key_source=device`、带 `event_id`、`content_hash`、`segment_id` 的 `schema_version=1` 信封；分区键来自设备键。
 - 健康核对：`/readyz=200`，旧投影/查询路径未改；`eventbus.stats` 无失败和丢弃。
 
