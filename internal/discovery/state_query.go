@@ -126,8 +126,14 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
  SELECT device_key,last_seen,result_version,epoch,'legacy'::text AS generation FROM legacy
  ORDER BY last_seen DESC,device_key LIMIT ` + limit + `
 )
-SELECT p.device_key,p.last_seen,p.result_version,f.document||jsonb_build_object('generation','fresh','freshness','new')
- FROM page p JOIN stream_discovery_device_state f ON f.epoch=p.epoch AND f.device_key=p.device_key WHERE p.generation='fresh'
+SELECT p.device_key,p.last_seen,p.result_version,
+ COALESCE(c.document,'{}'::jsonb)||jsonb_build_object(
+  'last_seen',f.last_seen,
+  'addresses',CASE WHEN jsonb_array_length(COALESCE(f.document->'addresses','[]'::jsonb))>0 THEN f.document->'addresses' ELSE COALESCE(c.document->'addresses','[]'::jsonb) END,
+  'current_addresses',CASE WHEN jsonb_array_length(COALESCE(f.document->'addresses','[]'::jsonb))>0 THEN f.document->'addresses' ELSE COALESCE(c.document->'current_addresses',c.document->'addresses','[]'::jsonb) END,
+  'generation','fresh','freshness','new')
+ FROM page p JOIN stream_discovery_device_state f ON f.epoch=p.epoch AND f.device_key=p.device_key
+ LEFT JOIN discovery_device_current_shadow c ON c.device_key=p.device_key WHERE p.generation='fresh'
 UNION ALL
 SELECT p.device_key,p.last_seen,p.result_version,l.document||jsonb_build_object('generation','legacy','freshness',
  CASE WHEN EXISTS(SELECT 1 FROM stream_source_cutovers WHERE state='active') THEN 'stale' ELSE 'legacy' END)
