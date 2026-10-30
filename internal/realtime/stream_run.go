@@ -172,7 +172,7 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 	finalize := make(chan string, opts.MaxPendingSegments)
 	permits := make(chan struct{}, opts.MaxPendingSegments)
 	workerErrors := make(chan error, opts.ArchiveWorkers+opts.SearchWorkers+2)
-	processor := streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: opts.Capture.StoreTimeout}
+	processor := streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: opts.Capture.StoreTimeout, ProjectionRetryTimeout: 30 * time.Second}
 	startWorker := func(queue <-chan string, name string, run func(context.Context, string) error, release bool) {
 		drainWorker.Add(1)
 		go func() {
