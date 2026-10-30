@@ -22,13 +22,22 @@ func (r Repository) streamDiscoveryFreshness(ctx context.Context) (map[string]an
 		result["status"] = "initializing"
 	} else {
 		result["processed_at"] = projected.Time
+		// The page reads the maintained current state. Archive publication is a
+		// separate historical lane and must not label current stream data stale.
+		if time.Since(projected.Time) <= 5*time.Minute {
+			result["status"] = "ready"
+		} else {
+			result["status"] = "delayed"
+		}
 	}
 	if oldest.Valid {
 		lag := time.Since(oldest.Time).Seconds()
 		result["archive_oldest_pending_at"] = oldest.Time
 		result["archive_lag_seconds"] = lag
 		if lag > 5 {
-			result["status"] = "delayed"
+			result["archive_status"] = "delayed"
+		} else {
+			result["archive_status"] = "ready"
 		}
 	}
 	return result, nil
