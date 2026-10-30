@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -1661,6 +1662,11 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest stri
 		writeError(w, http.StatusNotFound, "account_identity_not_found", "account identity profile not found")
 		return
 	}
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
+		if err := s.overlayAccountIdentity(ctx, &profile, accountID); err != nil {
+			log.Printf("control-plane: identity shadow overlay failed account=%s: %v", accountID, err)
+		}
+	}
 	writeJSON(w, http.StatusOK, profile)
 }
 
@@ -1715,6 +1721,11 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 	if s.operations != nil && s.operations.db != nil {
 		if summaries, err := (discovery.Repository{DB: s.operations.db}).Summaries(ctx, []string{endpointID}); err == nil {
 			profile.Discovery = summaries[endpointID]
+		}
+	}
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
+		if err := s.overlayEndpointIdentity(ctx, &profile, endpointID); err != nil {
+			log.Printf("control-plane: identity shadow overlay failed endpoint=%s: %v", endpointID, err)
 		}
 	}
 	writeJSON(w, http.StatusOK, profile)
