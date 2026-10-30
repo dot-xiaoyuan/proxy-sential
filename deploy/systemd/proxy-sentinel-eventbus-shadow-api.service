@@ -1,0 +1,19 @@
+[Unit]
+Description=Proxy Sentinel read-only shadow current API
+After=network-online.target proxy-sentinel-eventbus-current-shadow.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/event-bus-shadow-api --addr=127.0.0.1:18084 --redis-addr=127.0.0.1:16401 --redis-db=15
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+LimitNOFILE=65536
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
