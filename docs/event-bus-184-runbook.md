@@ -136,3 +136,17 @@ Environment=PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true
 - 旧表尚未退役；
 - 184 单节点 Redpanda/HDD 不是生产容量验收结论；
 - 旧控制面 D 状态进程需要维护重启清理。
+
+## 标准事件回写与活动统计（2026-10-30 20:45 CST）
+
+发现 event bus consumer 增加 `ClickHouseNormalizedSink`：把 envelope 中的标准事件回写到 `normalized_events`，用于恢复旧 activity/risk 统计的输入；这不是重新启用 legacy 文件 ingest。
+
+验证：
+
+- `activity_chart_dirty_log` 已从 2026-10-25 推进到 `2026-10-30T12:48:57Z`；
+- `activity-v3-5m` 已推进到 `2026-10-30T12:40:00Z`；
+- `/overview` 的 stats 从 2026-10-25 变为当前时间附近，标准事件已出现；
+- 仍有 pending 的 5m/hour activity job，但这是统计窗口的延迟，不是 Kafka 消息积压；
+- discovery/identity consumer lag 仍为 0。
+
+后续需要让 activity worker 自动追赶 5m/hour，而不是依赖人工 nudge。
