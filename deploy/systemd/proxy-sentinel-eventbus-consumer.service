@@ -1,0 +1,20 @@
+[Unit]
+Description=Proxy Sentinel discovery event bus shadow receipts consumer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/event-bus-consumer --brokers 127.0.0.1:19092 --topic ps.discovery.events.v1 --group ps-discovery-eventbus-shadow-v1 --batch-size 1000 --flush-interval 500ms
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+NoNewPrivileges=true
+WorkingDirectory=/var/lib/proxy-sentinel
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
