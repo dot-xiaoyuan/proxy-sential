@@ -375,14 +375,40 @@ Redis keys 87,638
 
 该列表 API 仍是独立只读入口，不是控制面 `/discovery/devices`，也没有切换生产读路径。
 
+## Phase 2j：控制面发现读切换
+
+2026-10-30 14:20 CST 将 `/discovery/devices` 切到事件总线当前态：
+
+- 新增 `internal/discovery.DevicesEventBus`，从 `discovery_device_current_shadow` 分页，并左连接活跃 `stream_discovery_device_state` 的 document 保留展示字段；
+- 控制面开关 `PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ=true` 时走新方法，否则保留原 `DevicesIndexed`/`DevicesState`；
+- 新二进制：`/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-eventbus`；
+- 新 systemd 单元：`proxy-sentinel-control-plane-eventbus.service`，enabled + active，监听 `0.0.0.0:18080`；
+- 旧 `proxy-sentinel-control-plane.service` 已 disabled，保留为回退入口。
+
+验证：
+
+```text
+/readyz -> 200
+/ -> 200
+DevicesEventBus 集成测试（184 PostgreSQL）-> PASS
+分页 cursor 不重复
+```
+
+说明：
+
+- 控制面 `/discovery/devices` 需要登录，未认证 curl 返回 401，这是预期；读方法本身已用 184 DB 集成测试验证；
+- 新单元没有 `ProtectSystem`/`ReadWritePaths` sandbox，因为旧单元在重启时再次触发 systemd mount D 状态死锁；旧单元已 disabled，新单元正常服务；
+- 旧单元留下的 D 状态进程 PID 147901 仍在，需重启主机才能清除；它不占用 18080，不影响新控制面；
+- 读路径优先使用新当前态，历史设备 document 从活跃流式状态补齐；新 Kafka 事件由 shadow 当前态提供最新行。
+
 ## 下一阶段
 
 剩余工作：
 
-1. Redis 读取路径和版本比较（当前只写缓存）；
+1. 观察切换后的 `/discovery/devices` 实际查询延迟、错误率和分页/筛选结果；
 2. `discovery_changes`；
-3. 对 381 个仅新影子设备逐条审计，确认旧投影未物化还是身份规则差异；
+3. 对 47 个仅新影子设备做字段/身份审计；
 4. 观察一个完整影子窗口并做最终当前态语义定稿；
-5. 通过后再讨论读取切换；当前不切读。
+5. 旧单元/旧表退役与回退演练。
 
 上述 1—4 尚未全部完成，因此不能切读。

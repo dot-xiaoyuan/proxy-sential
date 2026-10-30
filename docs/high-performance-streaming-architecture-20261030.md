@@ -1,6 +1,6 @@
 # 高性能流式存储与投影方案
 
-状态：设计提案；Phase 1 影子发布、Phase 2a 收据、Phase 2b ClickHouse 事实、Phase 2c PostgreSQL 事实、Phase 2d 影子设备当前态、Phase 2e Redis 热态和 Phase 2g 只读影子 API 均已上线 184（真实发现事件 → Redpanda → ClickHouse/PG 影子事实 → PG 影子当前态 → Redis 缓存/只读 API，消费者 lag 已归零；见 [事件总线 Phase 1](event-bus-phase1.md) 与 [Phase 2](event-bus-phase2-shadow-receipts.md)）。生产读取切换、changes、完整比对仍未开始，未做容量验收。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
+状态：设计提案；Phase 1 影子发布、Phase 2a 收据、Phase 2b ClickHouse 事实、Phase 2c PostgreSQL 事实、Phase 2d 影子设备当前态、Phase 2e Redis 热态、Phase 2g 只读 API 和 Phase 2j 控制面发现读切换均已在 184 上线（真实发现事件 → Redpanda → ClickHouse/PG 影子事实 → PG 影子当前态 → Redis → `/discovery/devices`）。changes、身份/统计链路和容量验收仍未完成。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
 
 ## 1. 目标与判断
 
