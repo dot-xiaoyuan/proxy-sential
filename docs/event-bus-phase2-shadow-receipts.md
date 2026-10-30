@@ -1,6 +1,6 @@
 # 事件总线 Phase 2：影子收据消费者
 
-状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实、Phase 2d PostgreSQL 影子设备当前态、Phase 2e Redis 热态均已在 184 上线；不改读取路径，不写最终 `device_current`；已做只读新旧计数/新鲜度比对，未做读取切换。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
+状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实、Phase 2d PostgreSQL 影子设备当前态、Phase 2e Redis 热态、Phase 2f Redis/PG 读取一致性、Phase 2g 只读影子 API 均已在 184 上线；不改生产读取路径，不写最终 `device_current`；已做只读新旧计数/新鲜度比对，未做读取切换。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
 
 ## 目标与边界
 
@@ -14,6 +14,7 @@ ps.discovery.events.v1
   -> PostgreSQL discovery_service_facts_shadow（影子事实，Phase 2c）
   -> PostgreSQL discovery_device_current_shadow（影子当前态，Phase 2d）
   -> Redis ps:disc:current:*（热态缓存，Phase 2e）
+  -> event-bus-shadow-api（只读校验 API，Phase 2g）
   -> Kafka offset commit
 ```
 
@@ -43,6 +44,8 @@ ps.discovery.events.v1
 | 设备当前态聚合 | `cmd/event-bus-current-shadow/main.go` |
 | Redis 热态配置 | `deploy/redis/redis-eventbus.conf` |
 | Redis systemd 单元 | `deploy/systemd/proxy-sentinel-eventbus-redis.service` |
+| 只读影子 API | `cmd/event-bus-shadow-api/main.go` |
+| 只读 API systemd 单元 | `deploy/systemd/proxy-sentinel-eventbus-shadow-api.service` |
 | 多 sink 组合 | `internal/eventbus/multi_sink.go` |
 | PostgreSQL 事实表迁移 | `migrations/postgres/202_discovery_facts_shadow.sql` |
 | PostgreSQL 当前态表迁移 | `migrations/postgres/203_discovery_device_current_shadow.sql` |
@@ -261,6 +264,29 @@ checked=580 missing=0 mismatches=0
 ```
 
 说明 Redis 缓存当前与 PG 影子当前态一致。该命令仍是一次性只读校验，不是控制面读取接口，也没有切换任何查询路径。
+
+## Phase 2g：只读影子 API
+
+2026-10-30 14:01 CST 上线了独立的只读影子 API，不改控制面生产路由：
+
+- 监听 `127.0.0.1:18084`，只绑回环；
+- `GET /healthz` 检查 PostgreSQL 和 Redis；
+- `GET /v1/shadow/current/<device_key>` 返回当前态；
+- 优先读 Redis，未命中时回退 PostgreSQL；
+- 响应头 `X-Shadow-Source: redis|postgres` 标明来源；
+- 服务 `proxy-sentinel-eventbus-shadow-api.service`，enabled + active；
+- 二进制 SHA256 `705b9723d9f17dd9811d6997f350c1a13fdb742232eb0749221fe086988a0766`，源码提交 `0f30aa31`。
+
+验证：
+
+```text
+GET /healthz -> 200 {"status":"ok"}
+GET /v1/shadow/current/95c933... -> 200, X-Shadow-Source: redis
+删除该 Redis key 后 -> 200, X-Shadow-Source: postgres
+重启 current-shadow 做 warm -> key 恢复，API 再次返回 redis
+```
+
+Redis 命中值和 PostgreSQL 回退值的字段一致；单 key TTL 约 5 分钟。这个 API 只是新方案的只读验证入口，不是控制面生产读接口，也没有切换任何查询路径。
 
 ## 新旧影子比对（只读）
 
