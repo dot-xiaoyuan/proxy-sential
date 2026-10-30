@@ -1,6 +1,6 @@
 # 事件总线 Phase 2：影子收据消费者
 
-状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实、Phase 2d PostgreSQL 影子设备当前态均已在 184 上线；不改读取路径，不写最终 `device_current`，不写 Redis，不做新旧投影比对。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
+状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实、Phase 2d PostgreSQL 影子设备当前态均已在 184 上线；不改读取路径，不写最终 `device_current`，不写 Redis；已做只读新旧计数/新鲜度比对，未做读取切换。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
 
 ## 目标与边界
 
@@ -21,7 +21,7 @@ ps.discovery.events.v1
 - `discovery_changes`、最终版 `discovery_facts_current`（当前只有 `eventbus_discovery_facts_shadow`，不是完整事实集合成）；
 - PostgreSQL `device_current` 影子表；
 - Redis 热状态和版本比较；
-- 新旧投影结果比对；
+- 读取切换前的完整新旧差异审计（当前只有只读计数/新鲜度比对）；
 - 读取切换、旧表退役；
 - 生产多 broker、TLS/SASL、容量验收。
 
@@ -223,16 +223,23 @@ observed_at=2026-10-30 05:43:35.035156+00
 | 仅新影子有的设备 | 370 |
 | 新旧事实键交集 | 227 / 918 |
 
-这不是“新旧已一致”。旧表包含长期历史设备；新当前态只覆盖本次 Kafka 新鲜窗口，且旧投影本身存在积压/未物化，因此仅新影子有的 356 个设备需要逐批审计，不能直接判定哪边正确，也不能据此切读。下一步必须做设备键和事实键的逐条差异审计，并至少观察一个完整影子窗口。
+这不是“新旧已一致”。进一步核对数据新鲜度：
+
+| 表 | 设备数 | max(last_seen) | max(updated_at) |
+| --- | --- | --- | --- |
+| 旧 `discovery_device_state_v2` | 27,560 | 2026-10-24 07:07 UTC | 2026-10-24 08:36 UTC |
+| 新 `discovery_device_current_shadow` | 559 | 2026-10-30 05:45 UTC | 持续更新 |
+
+旧当前态已经约 6 天没有更新，说明“仅新影子有的 370 个设备”很可能包含旧投影未物化的新鲜设备，而不是新路径凭空造出设备。但这只是时间线证据，仍不能据此判定每个设备键的正确性；需要逐批审计后才能切读。当前**不能切读**。
 
 ## 下一阶段
 
-Phase 2e 才进入最终当前态和读取验证：
+剩余工作：
 
-1. 写 `discovery_receipts`、`discovery_changes`、`discovery_facts_current`；
-2. 建 PostgreSQL `device_current` 影子表，只写变化设备；
-3. Redis 热状态和版本比较；
-4. 新旧投影结果按设备/事件比对；
-5. 24 小时无缺口后再讨论读取切换。
+1. 专用 Redis 热状态和版本比较；
+2. `discovery_changes`；
+3. 对 370 个仅新影子设备逐条审计，确认旧投影未物化还是身份规则差异；
+4. 观察一个完整影子窗口并做最终当前态语义定稿；
+5. 通过后再讨论读取切换；当前不切读。
 
-本阶段不宣称上述任何一项已完成。
+上述 1—4 尚未全部完成，因此不能切读。
