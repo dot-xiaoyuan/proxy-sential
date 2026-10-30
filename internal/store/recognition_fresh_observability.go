@@ -240,6 +240,10 @@ type freshProtocolCount struct {
 }
 
 func (s *DBStore) refreshFreshRecognitionCoverage(ctx context.Context) error {
+	var availableSince *time.Time
+	if err := s.pg.db.QueryRowContext(ctx, `SELECT min(minute) FROM recognition_coverage_minute_shadow WHERE minute>=now()-interval '24 hours'`).Scan(&availableSince); err != nil {
+		return err
+	}
 	rows, err := s.pg.db.QueryContext(ctx, `SELECT protocol,sum(inputs),
  sum(parsed),sum(attributed),sum(features),sum(candidates),sum(conclusions),sum(conflict),
  sum(processing),sum(unattributed),sum(insufficient),sum(errors),sum(overdue),sum(timed),
@@ -290,8 +294,9 @@ func (s *DBStore) refreshFreshRecognitionCoverage(ctx context.Context) error {
 	}
 	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at)
  SELECT 'recognition-fresh-coverage',jsonb_build_object('status','ready','as_of',now(),'since',state->>'since','window','24h',
+ 'available_since',$2::timestamptz,'history_gap_seconds',CASE WHEN $2::timestamptz IS NULL THEN NULL ELSE GREATEST(0,extract(epoch FROM now()-$2::timestamptz))::bigint END,
  'input_semantics','accepted_standard_discovery_events','completion_semantics','generation_commit_upper_bound','http_visibility','requires_authenticated_probe',
  'history_policy','excluded_without_backfill','items',$1::jsonb),now() FROM read_model_runtime_state WHERE name='recognition-fresh-cutoff'
- ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=EXCLUDED.updated_at`, raw)
+ ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=EXCLUDED.updated_at`, raw, availableSince)
 	return err
 }
