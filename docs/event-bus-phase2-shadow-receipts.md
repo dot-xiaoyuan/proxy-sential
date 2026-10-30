@@ -1,6 +1,6 @@
 # 事件总线 Phase 2：影子收据消费者
 
-状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实均已在 184 上线；不改读取路径，不写最终 `device_current`，不写 Redis，不做新旧投影比对。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
+状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实、Phase 2d PostgreSQL 影子设备当前态均已在 184 上线；不改读取路径，不写最终 `device_current`，不写 Redis，不做新旧投影比对。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
 
 ## 目标与边界
 
@@ -12,6 +12,7 @@ ps.discovery.events.v1
   -> ClickHouse eventbus_discovery_receipts（影子收据）
   -> ClickHouse eventbus_discovery_facts_shadow（影子事实，Phase 2b）
   -> PostgreSQL discovery_service_facts_shadow（影子事实，Phase 2c）
+  -> PostgreSQL discovery_device_current_shadow（影子当前态，Phase 2d）
   -> Kafka offset commit
 ```
 
@@ -38,8 +39,10 @@ ps.discovery.events.v1
 | 事实派生（复用旧适配器） | `internal/eventbus/facts.go`、`internal/discovery/stream_facts.go` |
 | ClickHouse 事实写入 | `internal/eventbus/clickhouse_facts.go` |
 | PostgreSQL 事实写入 | `internal/eventbus/postgres_facts.go` |
+| 设备当前态聚合 | `cmd/event-bus-current-shadow/main.go` |
 | 多 sink 组合 | `internal/eventbus/multi_sink.go` |
-| PostgreSQL 表迁移 | `migrations/postgres/202_discovery_facts_shadow.sql` |
+| PostgreSQL 事实表迁移 | `migrations/postgres/202_discovery_facts_shadow.sql` |
+| PostgreSQL 当前态表迁移 | `migrations/postgres/203_discovery_device_current_shadow.sql` |
 | systemd 单元 | `deploy/systemd/proxy-sentinel-eventbus-consumer.service` |
 
 消费语义：
@@ -56,8 +59,8 @@ ps.discovery.events.v1
 ## 184 部署
 
 - 发布目录：`/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2`
-- 二进制 SHA256：`cbcc2d2bb6da167ee73c7d121f3fd6fac9b238c8acddbb9bafef7be8e67333e2`
-- 源码提交：`14733541`
+- 消费者二进制 SHA256：`cbcc2d2bb6da167ee73c7d121f3fd6fac9b238c8acddbb9bafef7be8e67333e2`，源码提交 `14733541`
+- 当前态聚合二进制 SHA256：`d477863e0ecfe87fc91a0fabb3d1a2fb31f73a4bad4a2ceac78cb2b39fe67486`，源码提交 `cb99c07f`
 - systemd：`proxy-sentinel-eventbus-consumer.service`，enabled + active
 - 环境：复用 `/opt/proxy-sentinel/config/runtime.env` 中的 `PROXY_SENTINEL_CLICKHOUSE_DSN`，不在命令行和文档中展开凭据
 - 表迁移：`057_eventbus_discovery_receipts.sql`、`058_eventbus_discovery_facts_shadow.sql`、`202_discovery_facts_shadow.sql` 已创建；账本 checksum 分别为 `0405391d8f77ad8e7cafeb30e765c4f4fed286795f4bbb96bf9dab75eab468b8`、`b31a1924207abbb66b13ed0b6bc452526afd1a9d94befcc47f34e473e60cc71d`、`6cd6109564ba9f321dcde4ba84366813b01eb6f6ed257827a8c6bf89b673d7b2`
@@ -176,9 +179,39 @@ ip=10.202.6.139
 observed_at=2026-10-30 05:43:35.035156+00
 ```
 
+## Phase 2d：影子设备当前态
+
+2026-10-30 13:46 CST 上线了从影子事实增量聚合的设备当前态：
+
+- 表 `discovery_device_current_shadow`：`device_key` 主键、`last_seen`、`fact_count`、`facts JSONB`；
+- 状态表 `discovery_device_current_shadow_state` 记录已处理到的 `updated_at`；
+- `cmd/event-bus-current-shadow` 每 5 秒只选取 `discovery_service_facts_shadow.updated_at` 有变化的设备，再对该设备的事实做聚合，不是每次全表重建；
+- 服务 `proxy-sentinel-eventbus-current-shadow.service`，enabled + active；
+- 迁移 `203_discovery_device_current_shadow.sql`，checksum `8cb1a067432288c5a2495c78f6fd93e16cd59798192cd90623abc66905757708`。
+
+2026-10-30 13:47 CST 核验：
+
+| 指标 | 值 |
+| --- | --- |
+| 当前态设备数 | 527 |
+| `sum(fact_count)` | 889 |
+| 事实表行数 | 889 |
+| 当前态首次运行 | upserted=517 |
+| 后续增量 | upserted=82 changed devices |
+| 当前态聚合服务 | active、enabled |
+
+`sum(fact_count)` 与事实表行数一致，说明当前态没有丢失设备事实；聚合器日志显示首次全量后只处理变化设备。`facts` 是事实键到最新事实对象的 JSONB 映射，不是旧 `discovery_device_state_v2` 的文档副本。
+
+边界：
+
+- 当前态影子仍包含所有事实（包括 withdrawn/过期事实），读取方需要按 `valid_until/withdrawn` 解释；还没有做最终生产式的有效事实过滤；
+- 不是最终 `device_current`，没有接 Redis，没有接读取路径；
+- 聚合依赖 `updated_at` 高水位；时钟/并发提交的极端顺序仍需做故障测试；
+- 当前态表不是新方案的读模型切换点。
+
 ## 下一阶段
 
-Phase 2d 才进入真正的发现当前态：
+Phase 2e 才进入最终当前态和读取验证：
 
 1. 写 `discovery_receipts`、`discovery_changes`、`discovery_facts_current`；
 2. 建 PostgreSQL `device_current` 影子表，只写变化设备；
