@@ -1,0 +1,25 @@
+[Unit]
+Description=Proxy Sentinel control plane (event bus read cutover)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+EnvironmentFile=-/opt/proxy-sentinel/config/proxy-source.env
+Environment=PROXY_SENTINEL_DISCOVERY_V2=false
+Environment=PROXY_SENTINEL_IDENTITY_FRAGMENT_WRITES=true
+Environment=PROXY_SENTINEL_IDENTITY_STREAM_EPOCH=identity-fresh-b2-20261025
+Environment=PROXY_SENTINEL_IDENTITY_POLICY_FRESH_ONLY=true
+Environment=PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ=true
+ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-eventbus control-plane serve --addr 0.0.0.0:18080 --shadow-dir /opt/proxy-sentinel/data/shadow --sensor-id ncu-184-router-pilot --frontend-dir /opt/proxy-sentinel/current/frontend/dist --storage-mode db --read-only=false --applications-dir /opt/proxy-sentinel/data/applications --device-fingerprint-dir /opt/proxy-sentinel/data/device-fingerprints --device-fingerprint-auto-update=false --postgres-migrations-dir /opt/proxy-sentinel/current/migrations/postgres
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
