@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Proxy Sentinel Suricata EVE rotation every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Unit=proxy-sentinel-eve-rotate.service
+
+[Install]
+WantedBy=timers.target

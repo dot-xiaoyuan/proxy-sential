@@ -1,0 +1,6 @@
+[Unit]
+Description=Rotate Proxy Sentinel Suricata EVE log
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate -f /etc/logrotate.d/proxy-sentinel-suricata

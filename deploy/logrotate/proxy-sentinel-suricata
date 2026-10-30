@@ -1,0 +1,10 @@
+/opt/proxy-sentinel/data/suricata/eve.json {
+    size 500M
+    rotate 3
+    compress
+    missingok
+    notifempty
+    postrotate
+        /bin/systemctl kill -s HUP proxy-sentinel-suricata.service 2>/dev/null || true
+    endscript
+}
