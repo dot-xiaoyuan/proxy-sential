@@ -49,13 +49,13 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 		where = append(where, "EXISTS(SELECT 1 FROM discovery_service_facts_shadow f WHERE f.device_key=c.device_key AND "+condition+")")
 	}
 	if q.View == "iot" {
-		where = append(where, "(s.document->>'last_device_type') <> '' AND (s.document->>'classification_status') IN ('identified','expired','conflict')")
+		where = append(where, "(c.document->>'last_device_type') <> '' AND (c.document->>'classification_status') IN ('identified','expired','conflict')")
 	}
 	if q.Category != "" {
-		where = append(where, "(s.document->>'category')="+add(q.Category))
+		where = append(where, "(c.document->>'category')="+add(q.Category))
 	}
 	if q.DeviceType != "" {
-		where = append(where, "(s.document->>'device_type')="+add(q.DeviceType))
+		where = append(where, "(c.document->>'device_type')="+add(q.DeviceType))
 	}
 	if q.State != "" {
 		switch q.State {
@@ -63,13 +63,13 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 		default:
 			return nil, fmt.Errorf("invalid discovery state")
 		}
-		where = append(where, "(s.document->>'classification_status')="+add(q.State))
+		where = append(where, "(c.document->>'classification_status')="+add(q.State))
 	}
 	if q.Domain != "" {
-		where = append(where, "(s.document->>'domain')="+add(q.Domain))
+		where = append(where, "(c.document->>'domain')="+add(q.Domain))
 	}
 	if q.VLAN != "" {
-		where = append(where, "(s.document->>'vlan')="+add(q.VLAN))
+		where = append(where, "(c.document->>'vlan')="+add(q.VLAN))
 	}
 	if q.Protocol != "" {
 		addFact("f.protocol=" + add(q.Protocol))
@@ -89,7 +89,7 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 				pattern = "%" + pattern
 			}
 			p := add(pattern)
-			where = append(where, "((s.document->>'name') ILIKE "+p+" OR (s.document->>'manufacturer') ILIKE "+p+" OR (s.document->>'model_name') ILIKE "+p+" OR c.facts::text ILIKE "+p+")")
+			where = append(where, "((c.document->>'name') ILIKE "+p+" OR (c.document->>'manufacturer') ILIKE "+p+" OR (c.document->>'model_name') ILIKE "+p+" OR c.facts::text ILIKE "+p+")")
 		}
 	}
 	if q.Cursor != "" {
@@ -103,16 +103,18 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 	}
 	limit := add(q.Limit + 1)
 	query := `SELECT c.device_key,c.last_seen,
-coalesce(s.document,'{}'::jsonb)||jsonb_build_object(
+coalesce(nullif(c.document,'{}'::jsonb),jsonb_build_object('id',c.device_key))||jsonb_build_object(
  'id',c.device_key,'last_seen',c.last_seen,'current',true,'generation','eventbus','freshness','new',
- 'fact_count',c.fact_count,'expired_fact_count',c.expired_fact_count,'facts',c.facts)
+ 'fact_count',c.fact_count,'expired_fact_count',c.expired_fact_count,'facts',c.facts,
+ 'evidence_count',c.fact_count+c.expired_fact_count,
+ 'addresses',coalesce(fa.addresses,'[]'::jsonb),'current_addresses',coalesce(fa.addresses,'[]'::jsonb),
+ 'protocols',coalesce(fa.protocols,'[]'::jsonb))
 FROM discovery_device_current_shadow c
 LEFT JOIN LATERAL (
- SELECT s.document FROM stream_discovery_device_state s
- WHERE s.device_key=c.device_key
-   AND EXISTS(SELECT 1 FROM stream_source_cutovers x WHERE x.epoch=s.epoch AND x.state='active')
- ORDER BY s.last_seen DESC LIMIT 1
-) s ON true
+ SELECT jsonb_agg(DISTINCT f.value->>'ip') FILTER (WHERE coalesce(f.value->>'ip','')<>'') AS addresses,
+        jsonb_agg(DISTINCT f.value->>'protocol') FILTER (WHERE coalesce(f.value->>'protocol','')<>'') AS protocols
+ FROM jsonb_each(c.facts) f
+) fa ON true
 WHERE ` + strings.Join(where, " AND ") + `
 ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 	rows, err := r.DB.QueryContext(ctx, query, args...)
