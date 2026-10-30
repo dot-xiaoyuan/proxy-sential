@@ -171,3 +171,24 @@ Environment=PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true
 - discovery/identity Kafka lag 仍为 0。
 
 Suricata/EVE 当前暂停；应用访问页保留已产生的数据。后续若重新开启，需要先限制 EVE 事件类型/速率，避免再次拖慢发现投影。
+
+## 2026-10-30 22:40 发现投影恢复
+
+继续处理发现滞后：
+
+- 流式段事件上限从 1000 降到 500，降低单段投影耗时；
+- 流式采集 `SinkTimeout` 提到 30s、`ProjectionRetryTimeout` 提到 30s；
+- discovery worker `ProjectionRetryTimeout` 提到 120s，覆盖历史 1000 事件慢段；
+- 重新部署到实际运行的 release 路径并重启 packet/handshake capture 和 discovery worker；
+- Suricata EVE 只保留 DNS/HTTP/TLS/stats，去掉 flow/snmp 等高体积事件。
+
+验证：
+
+```text
+discovery_device_current_shadow.max(last_seen) = 2026-10-30T14:39:44Z
+now - max(last_seen) ≈ 35s
+discovery group TOTAL-LAG=0
+identity group  TOTAL-LAG=0
+```
+
+发现数据从滞后 45 分钟恢复到约 35 秒，慢段已 commit。
