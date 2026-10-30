@@ -222,3 +222,25 @@ load ≈ 18–22
 - 发现页面继续使用合并新鲜状态；eventbus current 旧段仍在后台排空。
 
 注意：DHCP cursor/cutover 是现场修复动作，已保留旧 cursor 备份；后续正式轮转应走 prepare/rotation-archive 审计流程，不再手工改 cursor。
+
+## 2026-10-30 23:43 发现流式新代次切流
+
+旧被动发现 epoch `discovery-layered-r7-20261028` 的投影队列持续积压，导致 eventbus current / DNS-SD 滞后。按固定新起点完成切流：
+
+- 旧 epoch 使用 `ingest stream-cancel` 审计关闭，状态 `closed_cancelled_unprocessed`，旧 journal 保留；
+- 新 epoch `discovery-fresh-20261030T154207Z` 通过 `discovery-worker --mode=stream-prepare` 激活；
+- 新 journal `/var/lib/proxy-sentinel/discovery-fresh-20261030T154207Z`；
+- discovery service 切换到新 journal，旧 1000 事件段不再投影；
+- 新段 17 events 的 projection/commit 约 2s。
+
+切流后：
+
+```text
+stream_discovery_device_state age ≈ 9s
+discovery_device_current_shadow age ≈ 11s
+stream facts dns_sd ≈ 11s
+stream facts ssdp ≈ 1m
+discovery group TOTAL-LAG=0
+```
+
+旧历史缺口保留在已关闭 epoch 和审计清单中，不计作完成。
