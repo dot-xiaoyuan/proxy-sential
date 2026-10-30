@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -1655,11 +1656,15 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest stri
 	var profile store.AccountIdentityProfile
 	var ok bool
 	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
+		started := time.Now()
+		log.Printf("control-plane: identity shadow account start account=%s", accountID)
 		if shadow, supported := s.reader.(accountIdentityShadowReader); supported {
 			profile, ok, err = shadow.GetAccountIdentityShadow(ctx, accountID, query)
 		} else {
+			log.Printf("control-plane: identity shadow reader unsupported account=%s type=%T", accountID, s.reader)
 			profile, ok, err = s.reader.GetAccountIdentity(ctx, accountID, query)
 		}
+		log.Printf("control-plane: identity shadow account done account=%s ok=%t err=%v elapsed=%s", accountID, ok, err, time.Since(started))
 	} else {
 		profile, ok, err = s.reader.GetAccountIdentity(ctx, accountID, query)
 	}
