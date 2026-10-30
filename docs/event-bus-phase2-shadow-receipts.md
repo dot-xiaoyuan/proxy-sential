@@ -1,6 +1,6 @@
 # 事件总线 Phase 2：影子收据消费者
 
-状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实、Phase 2d PostgreSQL 影子设备当前态均已在 184 上线；不改读取路径，不写最终 `device_current`，不写 Redis；已做只读新旧计数/新鲜度比对，未做读取切换。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
+状态：Phase 2a 收据、Phase 2b ClickHouse 影子事实、Phase 2c PostgreSQL 影子事实、Phase 2d PostgreSQL 影子设备当前态、Phase 2e Redis 热态均已在 184 上线；不改读取路径，不写最终 `device_current`；已做只读新旧计数/新鲜度比对，未做读取切换。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
 
 ## 目标与边界
 
@@ -13,6 +13,7 @@ ps.discovery.events.v1
   -> ClickHouse eventbus_discovery_facts_shadow（影子事实，Phase 2b）
   -> PostgreSQL discovery_service_facts_shadow（影子事实，Phase 2c）
   -> PostgreSQL discovery_device_current_shadow（影子当前态，Phase 2d）
+  -> Redis ps:disc:current:*（热态缓存，Phase 2e）
   -> Kafka offset commit
 ```
 
@@ -20,7 +21,7 @@ ps.discovery.events.v1
 
 - `discovery_changes`、最终版 `discovery_facts_current`（当前只有 `eventbus_discovery_facts_shadow`，不是完整事实集合成）；
 - PostgreSQL `device_current` 影子表；
-- Redis 热状态和版本比较；
+- 读取路径使用 Redis（当前只写热态缓存，不读）；
 - 读取切换前的完整新旧差异审计（当前只有只读计数/新鲜度比对）；
 - 读取切换、旧表退役；
 - 生产多 broker、TLS/SASL、容量验收。
@@ -40,6 +41,8 @@ ps.discovery.events.v1
 | ClickHouse 事实写入 | `internal/eventbus/clickhouse_facts.go` |
 | PostgreSQL 事实写入 | `internal/eventbus/postgres_facts.go` |
 | 设备当前态聚合 | `cmd/event-bus-current-shadow/main.go` |
+| Redis 热态配置 | `deploy/redis/redis-eventbus.conf` |
+| Redis systemd 单元 | `deploy/systemd/proxy-sentinel-eventbus-redis.service` |
 | 多 sink 组合 | `internal/eventbus/multi_sink.go` |
 | PostgreSQL 事实表迁移 | `migrations/postgres/202_discovery_facts_shadow.sql` |
 | PostgreSQL 当前态表迁移 | `migrations/postgres/203_discovery_device_current_shadow.sql` |
@@ -60,7 +63,7 @@ ps.discovery.events.v1
 
 - 发布目录：`/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2`
 - 消费者二进制 SHA256：`cbcc2d2bb6da167ee73c7d121f3fd6fac9b238c8acddbb9bafef7be8e67333e2`，源码提交 `14733541`
-- 当前态聚合二进制 SHA256：`70404fdd99db0f5e95ca7b9ccec4ddeb463f9f8dcc9604698cb49d46e9020c9b`，源码提交 `7d8e474e`
+- 当前态聚合二进制 SHA256：`137760ddfe9c0d05494e13f4bd0155cb2bf7b6278bcf5cbd6f6eea9cb12aa7d4`，源码提交 `ab141a4d`
 - systemd：`proxy-sentinel-eventbus-consumer.service`，enabled + active
 - 环境：复用 `/opt/proxy-sentinel/config/runtime.env` 中的 `PROXY_SENTINEL_CLICKHOUSE_DSN`，不在命令行和文档中展开凭据
 - 表迁移：`057_eventbus_discovery_receipts.sql`、`058_eventbus_discovery_facts_shadow.sql`、`202_discovery_facts_shadow.sql` 已创建；账本 checksum 分别为 `0405391d8f77ad8e7cafeb30e765c4f4fed286795f4bbb96bf9dab75eab468b8`、`b31a1924207abbb66b13ed0b6bc452526afd1a9d94befcc47f34e473e60cc71d`、`6cd6109564ba9f321dcde4ba84366813b01eb6f6ed257827a8c6bf89b673d7b2`
@@ -207,9 +210,40 @@ observed_at=2026-10-30 05:43:35.035156+00
 边界：
 
 - 当前态 `facts` 已过滤 withdrawn/过期事实，过期数量单独记录在 `expired_fact_count`；最终读取语义仍未切换；
-- 不是最终 `device_current`，没有接 Redis，没有接读取路径；
+- 不是最终 `device_current`，没有接读取路径；Phase 2e 之后 Redis 只作为写缓存，不参与查询；
 - 聚合依赖 `updated_at` 高水位；时钟/并发提交的极端顺序仍需做故障测试；
 - 当前态表不是新方案的读模型切换点。
+
+## Phase 2e：Redis 热态
+
+2026-10-30 13:58 CST 部署了独立的 Redis 热态缓存：
+
+- 运行时：Redis `8.0.2`，从现有镜像提取的主机二进制，安装到 `/opt/redis`；依赖库放在 `/opt/redis/lib`；
+- 监听：`127.0.0.1:16401`，只绑回环；
+- 配置：`/etc/redis-eventbus.conf`，无 RDB/AOF、`maxmemory 512mb`、`allkeys-lru`；
+- 服务：`proxy-sentinel-eventbus-redis.service`，enabled + active；
+- 聚合器启动时先 warm 全部当前态设备，再对变化设备增量写 Redis；
+- key 前缀：`ps:disc:current:<device_key>`；value 是当前态 JSON；TTL 5 分钟；
+- PostgreSQL 仍是持久化真值，Redis 只是缓存；Redis 重启后需要聚合器重 warm 或重启聚合器恢复。
+
+2026-10-30 13:58 CST 核验：
+
+| 指标 | 值 |
+| --- | --- |
+| Redis 当前态 key 数 | 580 |
+| PostgreSQL 当前态设备数 | 580 |
+| 有效事实 | 397 |
+| 过期/撤销事实 | 575 |
+| 单个 key TTL | 约 288 秒（5 分钟 TTL 的剩余值） |
+| 消费组 | Stable，TOTAL-LAG=0 |
+
+Redis value 样本：
+
+```json
+{"device_key":"95c9332008b21cb3731903c8bdd6928d","expired_fact_count":1,"fact_count":0,"facts":{},"last_seen":"2026-10-30T05:21:36.14419Z","updated_at":"2026-10-30T05:50:43.718727Z"}
+```
+
+Redis key 数与 PostgreSQL 当前态设备数一致；TTL 已生效。当前 Redis 只写不读，没有改变任何查询路径。
 
 ## 新旧影子比对（只读）
 
@@ -247,9 +281,9 @@ observed_at=2026-10-30 05:43:35.035156+00
 
 剩余工作：
 
-1. 专用 Redis 热状态和版本比较；
+1. Redis 读取路径和版本比较（当前只写缓存）；
 2. `discovery_changes`；
-3. 对 370 个仅新影子设备逐条审计，确认旧投影未物化还是身份规则差异；
+3. 对 381 个仅新影子设备逐条审计，确认旧投影未物化还是身份规则差异；
 4. 观察一个完整影子窗口并做最终当前态语义定稿；
 5. 通过后再讨论读取切换；当前不切读。
 
