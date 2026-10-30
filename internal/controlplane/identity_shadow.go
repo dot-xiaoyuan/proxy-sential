@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/store"
 )
 
@@ -222,4 +223,39 @@ FROM endpoint_entities WHERE endpoint_id=$1`, endpointID).Scan(&primaryMAC, &rol
 	profile.Endpoint.SplitFromEndpointID = splitFrom
 	profile.Endpoint.RegistrationUpdatedAt = registrationUpdatedAt
 	return nil
+}
+
+// applyShadowBrandEvidence computes brand inference from the already-loaded
+// domain evidence; it does not fall back to the legacy endpoint profile query.
+func (s *Server) applyShadowBrandEvidence(profile *store.EndpointIdentityProfile) {
+	if s.fingerprints == nil || len(profile.EcosystemEvidence) == 0 {
+		return
+	}
+	status := s.fingerprints.Status()
+	version := status.ActiveDomainVersion
+	if version == "" {
+		version = status.Version
+	}
+	if version == "" {
+		return
+	}
+	evidence := make([]fingerprint.DomainEvidence, 0, len(profile.EcosystemEvidence))
+	for _, item := range profile.EcosystemEvidence {
+		evidence = append(evidence, fingerprint.DomainEvidence{
+			AttributionMethod: item.AttributionMethod,
+			RuleVersion:       item.RuleVersion,
+			EventSource:       item.EventSource,
+			FirstSeen:         item.FirstSeen,
+			LastSeen:          item.LastSeen,
+			Count:             item.Count,
+			Match: fingerprint.DomainMatch{
+				SourceURL: item.SourceURL, SourceVersion: item.SourceVersion,
+				Service: item.Service, Purpose: item.Purpose, BrandEligible: item.BrandEligible,
+				Domain: item.Domain, RuleDomain: item.RuleDomain, Ecosystem: item.Ecosystem,
+				Category: item.Category, Confidence: item.Confidence, Source: item.RuleSource,
+			},
+		})
+	}
+	inference := fingerprint.InferBrand(evidence, version, time.Now().UTC(), "", 0)
+	profile.BrandInference = &inference
 }

@@ -1741,6 +1741,9 @@ func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest str
 		}
 		profile.EcosystemEvidence = evidence
 	}
+	if os.Getenv("PROXY_SENTINEL_IDENTITY_EVENTBUS_READ") == "true" {
+		s.applyShadowBrandEvidence(&profile)
+	}
 	profile.DeviceNamesDisabled = os.Getenv("PROXY_SENTINEL_DEVICE_NAMES_DISABLED") == "true"
 	if s.operations != nil && s.operations.db != nil {
 		if summaries, err := (discovery.Repository{DB: s.operations.db}).Summaries(ctx, []string{endpointID}); err == nil {
