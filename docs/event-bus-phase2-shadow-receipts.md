@@ -343,6 +343,38 @@ Redis key 数与 PG 当前态设备数一致，消费组仍为 Stable、TOTAL-LA
 
 这一步解决了“新影子只有几百设备、切读会丢历史”的问题；但读取接口仍未切换，当前只完成全量数据对齐。
 
+## Phase 2i：影子列表读取
+
+2026-10-30 14:16 CST 为只读影子 API 增加分页列表：
+
+- `GET /v1/shadow/devices?limit=50&window=24h&cursor=...&search=...`
+- 基于 `discovery_device_current_shadow` 分页；
+- 对每个设备左连接活跃 `stream_discovery_device_state` 的 document，保留完整展示字段；
+- 新影子 47 个无旧 document 的设备返回最小 document；
+- 游标严格按 `(last_seen DESC, device_key ASC)`，过滤条件：
+  - `last_seen < cursor_time`
+  - 或 `last_seen = cursor_time AND device_key > cursor_key`
+- 修复了初版游标只排除 cursor 设备、导致跨页重复的问题。
+
+验证：
+
+```text
+limit=100 连续 3 页：300 行，unique=300
+search=10.163.48.87：1 行
+```
+
+当前影子数据：
+
+```text
+当前态设备 87,638
+活跃流式设备 87,591
+覆盖 87,591 / 87,591
+仅新影子设备 47
+Redis keys 87,638
+```
+
+该列表 API 仍是独立只读入口，不是控制面 `/discovery/devices`，也没有切换生产读路径。
+
 ## 下一阶段
 
 剩余工作：
