@@ -121,7 +121,11 @@ func flush(ctx context.Context, pool *pgxpool.Pool, client *kgo.Client, records 
 		return err
 	}
 	defer tx.Rollback(ctx)
+	endpoints := map[string]struct{}{}
 	for _, event := range events {
+		if event.EndpointID != "" {
+			endpoints[event.EndpointID] = struct{}{}
+		}
 		_, err := tx.Exec(ctx, `INSERT INTO identity_session_shadow(
  session_id,account_id,endpoint_id,ip,mac,source,sensor_id,started_at,ended_at,last_confirmed_at,
  identity_confidence,vlan,nas_ip,session_status,policy_metadata,updated_at)
@@ -137,6 +141,19 @@ ON CONFLICT(session_id) DO UPDATE SET
 			event.StartedAt, event.EndedAt, event.LastConfirmedAt, event.IdentityConf, event.VLAN, event.NASIP,
 			event.SessionStatus, event.PolicyMetadata, event.UpdatedAt)
 		if err != nil {
+			return err
+		}
+	}
+	for endpoint := range endpoints {
+		if _, err := tx.Exec(ctx, `DELETE FROM identity_endpoint_current_shadow WHERE endpoint_id=$1`, endpoint); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO identity_endpoint_current_shadow(
+ endpoint_id,session_id,account_id,ip,mac,source,vlan,nas_ip,started_at,last_confirmed_at,updated_at)
+ SELECT endpoint_id,session_id,account_id,ip,mac,source,vlan,nas_ip,started_at,last_confirmed_at,updated_at
+ FROM identity_session_shadow
+ WHERE endpoint_id=$1 AND ended_at IS NULL
+ ORDER BY COALESCE(last_confirmed_at,updated_at) DESC,session_id DESC LIMIT 1`, endpoint); err != nil {
 			return err
 		}
 	}
