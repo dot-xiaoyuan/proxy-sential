@@ -1,6 +1,6 @@
 # 事件总线 Phase 1：发现影子发布
 
-状态：Phase 1 代码已落盘，并已在 184 以不可变二进制发布 + systemd drop-in 上线影子发布；真实发现事件已写入 Redpanda。尚未接入投影/Redis/ClickHouse 新表，读取路径未切换。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
+状态：Phase 1 已上线 184 影子发布；Phase 2 影子收据消费者也已上线（Kafka → ClickHouse 收据），但尚未接入当前态投影/Redis/读取切换。Phase 2 见 [事件总线 Phase 2：影子收据消费者](event-bus-phase2-shadow-receipts.md)。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
 
 ## 范围
 
@@ -132,7 +132,7 @@ make eventbus-down
 - 消息核对：实际消费到 `sensor_id=ncu-184-router-pilot`、`source=passive-discovery`、`partition_key_source=device`、带 `event_id`、`content_hash`、`segment_id` 的 `schema_version=1` 信封；分区键来自设备键。
 - 健康核对：`/readyz=200`，旧投影/查询路径未改；`eventbus.stats` 无失败和丢弃。
 
-回退：删除 `zz-eventbus-p1.conf`，执行 `systemctl daemon-reload && systemctl restart proxy-sentinel-discovery.service`；`current` 和旧发布目录未改。该阶段只证明“真实发现事件 → Kafka”跑通，**不证明**消费者投影、CH 收据/变化、Redis 热态或读取切换。
+回退：删除 `zz-eventbus-p1.conf`，执行 `systemctl daemon-reload && systemctl restart proxy-sentinel-discovery.service`；`current` 和旧发布目录未改。该阶段只证明“真实发现事件 → Kafka”跑通，**不证明**消费者投影、CH 变化、Redis 热态或读取切换。Phase 2 的 Kafka → CH 影子收据链路见 [事件总线 Phase 2：影子收据消费者](event-bus-phase2-shadow-receipts.md)。
 
 ### 2026-10-30 维护重启后状态
 
