@@ -29,15 +29,21 @@
 - 旧 `recognition-fresh-coverage` 仍是原路径，没有切换；
 - 识别覆盖读代码已改为分钟表，但未部署到识别服务。
 
-## 未完成：24h 回填失败并已取消
+## 未完成：24h 回填在 184 上不可行
 
-尝试用一次大 SQL 把最近 24 小时收据聚合进分钟表，查询在 184 上长时间 `WALWrite/AioIoCompletion`，主机 load 升到 30+，SSH 一度重置。已对 PostgreSQL 执行 `pg_cancel_backend` 取消两个回填查询；主机随后恢复 SSH 和 `/readyz=200`。
+三次回填尝试：
+
+1. 一次大 SQL 聚合 24 小时：查询长期处于 `WALWrite/AioIoCompletion`，主机 load 30+，SSH 重置；已 `pg_cancel_backend`。
+2. 逐分钟回填 1,440 次：约 7 分钟只推进到 2h38m，load 升到 38，SSH 再次重置；已终止。
+3. 按小时 counts-only 回填：单小时运行超过 3 分钟仍未完成，load 约 35；已 kill 进程并取消 PG 查询。
+
+当前分钟表约 562 行、216k inputs，分钟服务继续运行；旧 `recognition-fresh-coverage` 没有切换。
 
 结论：
 
-- 单次 24h 回填仍是重查询，不能作为上线步骤；
-- 下一步必须按小时/小窗口分批回填，每批限时、可重试、可取消；
-- 在分钟表补齐 24h 之前，不切换 `recognition-fresh-coverage` 的读路径。
+- 184 的单块 HDD 已不适合再做识别 24h 回填；继续重试会拖垮控制面和采集；
+- 识别覆盖需要迁到 ClickHouse `AggregatingMergeTree`，或在 SSD/独立节点做一次离线回填，再切读；
+- 识别覆盖读代码已提交，但识别物化服务未部署该二进制。
 
 ## 后续
 
