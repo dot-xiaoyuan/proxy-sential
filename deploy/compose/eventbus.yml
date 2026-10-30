@@ -1,0 +1,35 @@
+# Local-only Redpanda stack for the event bus Phase 1 shadow publisher.
+# Production must use the site's Kafka/Redpanda topology with TLS/SASL and
+# multiple brokers; this file is not a production deployment template.
+name: proxy-sentinel-eventbus
+
+services:
+  redpanda:
+    image: ${REDPANDA_IMAGE:-redpandadata/redpanda:v25.3.18}
+    container_name: proxy-sentinel-redpanda
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 1g
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://127.0.0.1:${EVENTBUS_KAFKA_PORT:-19092}
+      - --set
+      - redpanda.auto_create_topics_enabled=true
+    ports:
+      - "127.0.0.1:${EVENTBUS_KAFKA_PORT:-19092}:9092"
+      - "127.0.0.1:${EVENTBUS_ADMIN_PORT:-19644}:9644"
+    volumes:
+      - ${PROXY_SENTINEL_EVENTBUS_DATA_DIR:-./data/eventbus}/redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 3s
+      retries: 24

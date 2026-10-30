@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-ui deploy-backend deploy-dev package package-airgap deploy-airgap status doctor logs backup rollback local-doctor local-pull local-sync local-up local-down local-status local-logs local-reset local-test
+.PHONY: deploy deploy-ui deploy-backend deploy-dev package package-airgap deploy-airgap status doctor logs backup rollback local-doctor local-pull local-sync local-up local-down local-status local-logs local-reset local-test eventbus-up eventbus-down eventbus-status eventbus-smoke
 
 VERSION ?= $(shell git rev-parse --short HEAD)
 
@@ -64,6 +64,19 @@ local-reset:
 
 local-test:
 	@python3 -m unittest discover -s scripts/local -p 'test_*.py' -v
+
+# 本地 Redpanda 单节点：只用于事件总线 Phase 1 验证，不接触 184。
+eventbus-up:
+	@./scripts/local/eventbus-stack.sh up
+
+eventbus-down:
+	@./scripts/local/eventbus-stack.sh down
+
+eventbus-status:
+	@./scripts/local/eventbus-stack.sh status
+
+eventbus-smoke:
+	@./scripts/local/eventbus-stack.sh smoke
 
 # 184 快照 + 本地前后端联调；capture 只读访问现场，其余命令只操作本机。
 .PHONY: dev184-snapshot dev184-up dev184-restart dev184-down dev184-status

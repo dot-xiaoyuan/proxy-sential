@@ -1,6 +1,6 @@
 # 高性能流式存储与投影方案
 
-状态：设计提案，未实现、未部署、未做容量验收。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
+状态：设计提案；Phase 1 的影子发布已在 `codex/high-performance-streaming-20261030` 落盘（见 [事件总线 Phase 1](event-bus-phase1.md)），但尚未部署、未接投影、未做容量验收。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
 
 ## 1. 目标与判断
 
@@ -445,6 +445,10 @@ Redis 不作为唯一权威：AOF `everysec` + 副本；Redis 丢数据时从 Po
 3. 通过后先切发现投影（收益最大、风险最集中），再切归档，再切身份会话，最后切统计。
 4. 每个阶段保留旧路径和回退开关；不一次性全量切换。
 5. 所有容量结论附硬件、数据分布、负载和观察窗口；不以本地 mock 或短样本替代现场验收。
+
+### Phase 1 落盘状态
+
+Phase 1 已实现发现事件的 Kafka 影子发布：`internal/eventbus`、发现分区键、`CapturedSegment` 回调、`discovery-worker` 接线、`cmd/event-bus-probe`、本地 Redpanda compose/脚本和测试。默认关闭，不改读取路径，不写业务表。运行方式、环境变量和回退见 [事件总线 Phase 1](event-bus-phase1.md)。本阶段不代表投影、Redis、ClickHouse 账本或读取切换已完成。
 
 ## 15. 参考
 
