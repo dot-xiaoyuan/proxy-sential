@@ -35,7 +35,7 @@ func main() {
 		FetchMaxBytes: *fetchBytes,
 		FlushInterval: *flushInterval,
 	}
-	sink, err := eventbus.NewClickHouseReceiptSink(*dsn)
+	sink, err := eventbus.NewClickHouseDiscoverySink(*dsn)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
 		os.Exit(2)
