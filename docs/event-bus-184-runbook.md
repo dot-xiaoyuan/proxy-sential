@@ -118,16 +118,17 @@ Environment=PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true
 - 验收只看固定起点之后的持续输入、处理延迟、失败和缺口；不宣称历史已追平。
 - 不因历史缺口阻塞切读，但状态接口保留 `available_since` / `history_gap_seconds`，避免把缺口伪装成完整。
 
-## 运营总览旧统计
+## 运营总览旧统计（已接回，追赶中）
 
-`/overview` 的风险卡片仍显示 `2026-10-25` 的快照。原因不是 eventbus 积压：
+`/overview` 曾停在 `2026-10-25` 快照。原因是 legacy normalized ingest 在 2026-10-30 13:00 将来源转交给 stream owner，activity 输入中断。
 
-- `proxy-sentinel-ingest.service` 在 2026-10-30 13:00 将 legacy 来源转交给 audited stream owner；
-- `normalized_events` 最新只到 2026-10-25 23:51 UTC；
-- `activity_chart_dirty_log` 最新只到 2026-10-25 15:51 UTC；
-- 因此 `activity-5m-v3` 没有新 job，旧 activity 统计保持静止。
+2026-10-30 20:45 已在 event bus consumer 增加标准事件回写：
 
-发现/身份/识别覆盖的 eventbus 新路径不受影响。要把 `/overview` 风险统计恢复，需要把新 stream 的事件接入 activity/risk 统计，而不是清 Kafka。
+- `normalized_events` 恢复写入；
+- `activity_chart_dirty_log` 已推进到当前窗口；
+- `activity-v3-5m` 已从 2026-10-25 推进到 2026-10-30T12:40Z；
+- `/overview` 标准事件和统计时间已恢复为当前快照；
+- 仍有少量 5m/hour activity pending job 在追赶，但不是 Kafka 消息积压。
 
 ## 已知边界
 
