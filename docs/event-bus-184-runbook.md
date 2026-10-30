@@ -97,6 +97,18 @@ Environment=PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true
 - 当前态以 PostgreSQL 为准，Redis 只是缓存；
 - 不要清空 Kafka topic 或 offsets 作为恢复手段。
 
+## 新鲜起点政策（2026-10-30 用户确认）
+
+用户明确：**不处理历史数据，从新鲜起点开始，不要求追平旧表。**
+
+执行口径：
+
+- 识别覆盖：`recognition_coverage_minute_shadow` 从 `2026-10-30T06:19:00Z` 起算；此前历史不回填，`history_policy=excluded_without_backfill`。
+- 身份：Kafka relay 从启用时开始增量消费；另加载了最近 24h 活跃 open session 作为当前态启动快照，不重放 644k 全量历史。
+- 旧 `account_sessions` / `stream_discovery_receipts` / 旧投影表只保留回退和未迁移功能使用，不作为新读路径的历史补齐目标。
+- 验收只看固定起点之后的持续输入、处理延迟、失败和缺口；不宣称历史已追平。
+- 不因历史缺口阻塞切读，但状态接口保留 `available_since` / `history_gap_seconds`，避免把缺口伪装成完整。
+
 ## 已知边界
 
 - 身份影子是最近 24h 活跃集合，不是全量 644k 历史；
