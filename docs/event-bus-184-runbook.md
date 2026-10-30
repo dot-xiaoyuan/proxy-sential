@@ -208,3 +208,17 @@ load ≈ 18–22
 ```
 
 旧 949/987 事件慢段已逐个 commit，发现数据恢复当前。
+
+## 2026-10-30 23:35 采集链路恢复记录
+
+- 启用并启动 `proxy-sentinel-handshake-signal.service`；`handshake.jsonl` 从 1.615 GB 继续增长，handshake sidecar 恢复输入。
+- EVE 轮转服务去掉 `logrotate -f`，改为按 500 MB 阈值轮转；避免每分钟强制轮转导致 EVE ingest 持续报 source failed。重启后 EVE ingest 不再报错。
+- DHCP binding R8 的旧 cursor 指向已轮转 inode，导致 `unconfirmed file gap or truncation`；
+  - 备份旧 cursor；
+  - 将 cursor 重新定位到当前 `device_dhcp_binding.log` inode 的 0 偏移；
+  - 同步修正 `stream_source_cutovers` 的 file_id/start_offset；
+  - 改用带 30s projection 预算的 capture 二进制；
+  - R8 恢复 active，DHCP 流式段开始 commit。
+- 发现页面继续使用合并新鲜状态；eventbus current 旧段仍在后台排空。
+
+注意：DHCP cursor/cutover 是现场修复动作，已保留旧 cursor 备份；后续正式轮转应走 prepare/rotation-archive 审计流程，不再手工改 cursor。
