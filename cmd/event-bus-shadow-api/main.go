@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -54,6 +56,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", api.health)
 	mux.HandleFunc("/v1/shadow/current/", api.current)
+	mux.HandleFunc("/v1/shadow/devices", api.devices)
 	server := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
@@ -81,6 +84,131 @@ func (a *shadowAPI) health(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (a *shadowAPI) devices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 200 {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = value
+	}
+	window := 24 * time.Hour
+	if raw := r.URL.Query().Get("window"); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil || value < 10*time.Minute || value > 30*24*time.Hour {
+			http.Error(w, "invalid window", http.StatusBadRequest)
+			return
+		}
+		window = value
+	}
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	pattern := ""
+	if search != "" {
+		pattern = "%" + search + "%"
+	}
+	var cursorTime *time.Time
+	var cursorKey string
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(raw)
+		if err != nil {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
+		var cursor struct {
+			Time time.Time `json:"t"`
+			Key  string    `json:"k"`
+		}
+		if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.Key == "" || cursor.Time.IsZero() {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
+		cursorTime = &cursor.Time
+		cursorKey = cursor.Key
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	rows, err := a.pool.Query(ctx, `
+SELECT c.device_key,
+       c.last_seen,
+       coalesce(s.document, '{}'::jsonb) || jsonb_build_object(
+           'id', c.device_key,
+           'last_seen', c.last_seen,
+           'current', true,
+           'generation', 'eventbus',
+           'freshness', 'new',
+           'fact_count', c.fact_count,
+           'expired_fact_count', c.expired_fact_count,
+           'facts', c.facts)
+FROM discovery_device_current_shadow c
+LEFT JOIN LATERAL (
+    SELECT s.document
+    FROM stream_discovery_device_state s
+    WHERE s.device_key = c.device_key
+      AND EXISTS (SELECT 1 FROM stream_source_cutovers x WHERE x.epoch = s.epoch AND x.state = 'active')
+    ORDER BY s.last_seen DESC
+    LIMIT 1
+) s ON true
+WHERE c.last_seen >= now() - ($1::text)::interval
+  AND ($2 = '' OR s.document->>'name' ILIKE $2 OR s.document->>'manufacturer' ILIKE $2
+       OR s.document->>'model_name' ILIKE $2 OR c.facts::text ILIKE $2)
+  AND ($3::timestamptz IS NULL OR (c.last_seen, c.device_key) < ($3, $4))
+ORDER BY c.last_seen DESC, c.device_key
+LIMIT $5`, fmt.Sprintf("%d seconds", int(window.Seconds())), pattern, cursorTime, cursorKey, limit+1)
+	if err != nil {
+		http.Error(w, "shadow query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	keys := []struct {
+		Time time.Time
+		Key  string
+	}{}
+	for rows.Next() {
+		var key string
+		var lastSeen time.Time
+		var raw []byte
+		if err := rows.Scan(&key, &lastSeen, &raw); err != nil {
+			http.Error(w, "shadow decode failed", http.StatusInternalServerError)
+			return
+		}
+		var item map[string]any
+		if err := json.Unmarshal(raw, &item); err != nil {
+			http.Error(w, "shadow decode failed", http.StatusInternalServerError)
+			return
+		}
+		items = append(items, item)
+		keys = append(keys, struct {
+			Time time.Time
+			Key  string
+		}{lastSeen, key})
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, "shadow read failed", http.StatusInternalServerError)
+		return
+	}
+	more := len(items) > limit
+	nextCursor := ""
+	if more {
+		items = items[:limit]
+		cursor, _ := json.Marshal(map[string]any{"t": keys[limit-1].Time, "k": keys[limit-1].Key})
+		nextCursor = base64.RawURLEncoding.EncodeToString(cursor)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, map[string]any{"items": items, "has_more": more, "next_cursor": nextCursor, "limit": limit, "window": window.String()})
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(value)
 }
 
 func (a *shadowAPI) current(w http.ResponseWriter, r *http.Request) {
