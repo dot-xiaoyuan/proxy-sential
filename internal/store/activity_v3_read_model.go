@@ -533,12 +533,16 @@ func (s *DBStore) RunActivityV3Realtime(ctx context.Context) {
 func (s *DBStore) activityV3RealtimeLag(ctx context.Context, now time.Time) (float64, error) {
 	var lag float64
 	var heartbeat sql.NullTime
-	var status, lastError string
+	var status, lastError, asOfRaw, dispatchWindow string
 	var backlog bool
 	err := s.pg.db.QueryRowContext(ctx, `SELECT EXTRACT(EPOCH FROM $1::timestamptz-(live.state->>'as_of')::timestamptz),health.updated_at,COALESCE(health.state->>'status',''),COALESCE(health.state->>'last_error',''),
  EXISTS(SELECT 1 FROM read_model_jobs j WHERE j.model='activity-5m-v3' AND j.processed_generation<j.dirty_generation
- AND (j.not_before<=$1::timestamptz OR j.attempts>0 OR j.bucket_start+interval '6 minutes 30 seconds'<=$1::timestamptz))
- FROM read_model_runtime_state live LEFT JOIN read_model_runtime_state health ON health.name='activity-v3-realtime-health' WHERE live.name='activity-v3-5m'`, now).Scan(&lag, &heartbeat, &status, &lastError, &backlog)
+ AND (j.not_before<=$1::timestamptz OR j.attempts>0 OR j.bucket_start+interval '6 minutes 30 seconds'<=$1::timestamptz)),
+ COALESCE(live.state->>'as_of',''),COALESCE(dispatch.state->>'window_start','')
+ FROM read_model_runtime_state live
+ LEFT JOIN read_model_runtime_state health ON health.name='activity-v3-realtime-health'
+ LEFT JOIN read_model_runtime_state dispatch ON dispatch.name='activity-v3-dispatch'
+ WHERE live.name='activity-v3-5m'`, now).Scan(&lag, &heartbeat, &status, &lastError, &backlog, &asOfRaw, &dispatchWindow)
 	if err != nil {
 		return 0, err
 	}
@@ -552,6 +556,14 @@ func (s *DBStore) activityV3RealtimeLag(ctx context.Context, now time.Time) (flo
 		}
 		if !backlog {
 			return 0, nil
+		}
+		// A pending rebuild of a bucket that the published coverage already
+		// includes is late-data cleanup, not a wall-clock backlog. The input
+		// itself can be quiet while a historical bucket is rebuilt.
+		if asOf, asErr := parseReadModelTime(asOfRaw); asErr == nil {
+			if window, wErr := parseReadModelTime(dispatchWindow); wErr == nil && !asOf.Before(window.Add(5*time.Minute)) {
+				return 0, nil
+			}
 		}
 	}
 	return max(0, lag), nil
