@@ -60,7 +60,7 @@ ps.discovery.events.v1
 
 - 发布目录：`/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2`
 - 消费者二进制 SHA256：`cbcc2d2bb6da167ee73c7d121f3fd6fac9b238c8acddbb9bafef7be8e67333e2`，源码提交 `14733541`
-- 当前态聚合二进制 SHA256：`d477863e0ecfe87fc91a0fabb3d1a2fb31f73a4bad4a2ceac78cb2b39fe67486`，源码提交 `cb99c07f`
+- 当前态聚合二进制 SHA256：`70404fdd99db0f5e95ca7b9ccec4ddeb463f9f8dcc9604698cb49d46e9020c9b`，源码提交 `7d8e474e`
 - systemd：`proxy-sentinel-eventbus-consumer.service`，enabled + active
 - 环境：复用 `/opt/proxy-sentinel/config/runtime.env` 中的 `PROXY_SENTINEL_CLICKHOUSE_DSN`，不在命令行和文档中展开凭据
 - 表迁移：`057_eventbus_discovery_receipts.sql`、`058_eventbus_discovery_facts_shadow.sql`、`202_discovery_facts_shadow.sql` 已创建；账本 checksum 分别为 `0405391d8f77ad8e7cafeb30e765c4f4fed286795f4bbb96bf9dab75eab468b8`、`b31a1924207abbb66b13ed0b6bc452526afd1a9d94befcc47f34e473e60cc71d`、`6cd6109564ba9f321dcde4ba84366813b01eb6f6ed257827a8c6bf89b673d7b2`
@@ -187,24 +187,26 @@ observed_at=2026-10-30 05:43:35.035156+00
 - 状态表 `discovery_device_current_shadow_state` 记录已处理到的 `updated_at`；
 - `cmd/event-bus-current-shadow` 每 5 秒只选取 `discovery_service_facts_shadow.updated_at` 有变化的设备，再对该设备的事实做聚合，不是每次全表重建；
 - 服务 `proxy-sentinel-eventbus-current-shadow.service`，enabled + active；
-- 迁移 `203_discovery_device_current_shadow.sql`，checksum `8cb1a067432288c5a2495c78f6fd93e16cd59798192cd90623abc66905757708`。
+- 迁移 `203_discovery_device_current_shadow.sql`，checksum `8cb1a067432288c5a2495c78f6fd93e16cd59798192cd90623abc66905757708`；
+- 迁移 `204_discovery_device_current_valid_facts.sql`，checksum `8102eabda21db322fabe75f850b975636ccee48a97b3c78dd0a77126131549b9`。
 
 2026-10-30 13:47 CST 核验：
 
 | 指标 | 值 |
 | --- | --- |
-| 当前态设备数 | 527 |
-| `sum(fact_count)` | 889 |
-| 事实表行数 | 889 |
-| 当前态首次运行 | upserted=517 |
-| 后续增量 | upserted=82 changed devices |
+| 当前态设备数 | 547 |
+| 有效事实 `sum(fact_count)` | 366 |
+| 过期/撤销事实 `sum(expired_fact_count)` | 552 |
+| 事实表行数 | 918 |
+| 无有效事实但仍保留的设备 | 337 |
+| 当前态首次重算 | upserted=547 |
 | 当前态聚合服务 | active、enabled |
 
-`sum(fact_count)` 与事实表行数一致，说明当前态没有丢失设备事实；聚合器日志显示首次全量后只处理变化设备。`facts` 是事实键到最新事实对象的 JSONB 映射，不是旧 `discovery_device_state_v2` 的文档副本。
+`sum(fact_count) + sum(expired_fact_count) = 918`，与事实表行数一致；`facts` 只包含 `withdrawn=false AND (valid_until IS NULL OR valid_until > now())` 的事实，`fact_count` 与 JSONB 键数一致。没有有效事实的设备仍保留 `last_seen`，`facts` 为空对象，读取方需要明确这种状态。
 
 边界：
 
-- 当前态影子仍包含所有事实（包括 withdrawn/过期事实），读取方需要按 `valid_until/withdrawn` 解释；还没有做最终生产式的有效事实过滤；
+- 当前态 `facts` 已过滤 withdrawn/过期事实，过期数量单独记录在 `expired_fact_count`；最终读取语义仍未切换；
 - 不是最终 `device_current`，没有接 Redis，没有接读取路径；
 - 聚合依赖 `updated_at` 高水位；时钟/并发提交的极端顺序仍需做故障测试；
 - 当前态表不是新方案的读模型切换点。
