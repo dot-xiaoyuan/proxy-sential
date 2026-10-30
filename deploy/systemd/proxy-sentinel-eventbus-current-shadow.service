@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
-ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/event-bus-current-shadow --interval=5s
+ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/event-bus-current-shadow --interval=5s --redis-addr=127.0.0.1:16401 --redis-db=15 --redis-ttl=5m
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

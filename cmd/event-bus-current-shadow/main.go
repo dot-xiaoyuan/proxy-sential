@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,12 +14,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
 	dsn := flag.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	interval := flag.Duration("interval", 5*time.Second, "aggregation interval")
 	once := flag.Bool("once", false, "run one aggregation and exit")
+	redisAddr := flag.String("redis-addr", "", "optional Redis address for hot state")
+	redisDB := flag.Int("redis-db", 15, "Redis database for hot state")
+	redisTTL := flag.Duration("redis-ttl", 5*time.Minute, "Redis hot-state TTL")
 	flag.Parse()
 	if strings.TrimSpace(*dsn) == "" || *interval < time.Second {
 		fmt.Fprintln(os.Stderr, "event-bus-current-shadow requires postgres-dsn and interval >= 1s")
@@ -42,8 +47,32 @@ func main() {
 		fmt.Fprintln(os.Stderr, "event-bus-current-shadow:", err)
 		os.Exit(2)
 	}
+	var rdb *redis.Client
+	if strings.TrimSpace(*redisAddr) != "" {
+		if *redisDB < 0 || *redisDB > 15 {
+			fmt.Fprintln(os.Stderr, "event-bus-current-shadow: redis-db must be 0..15")
+			os.Exit(2)
+		}
+		rdb = redis.NewClient(&redis.Options{
+			Addr:         strings.TrimSpace(*redisAddr),
+			DB:           *redisDB,
+			DialTimeout:  2 * time.Second,
+			ReadTimeout:  2 * time.Second,
+			WriteTimeout: 2 * time.Second,
+		})
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			log.Printf("event-bus-current-shadow: Redis unavailable, continuing without hot state: %v", err)
+			_ = rdb.Close()
+			rdb = nil
+		} else {
+			defer rdb.Close()
+			if err := warmRedis(ctx, pool, rdb, *redisTTL); err != nil {
+				log.Printf("event-bus-current-shadow: Redis warm failed: %v", err)
+			}
+		}
+	}
 	if *once {
-		if err := aggregate(ctx, pool); err != nil {
+		if err := aggregate(ctx, pool, rdb, *redisTTL); err != nil {
 			fmt.Fprintln(os.Stderr, "event-bus-current-shadow:", err)
 			os.Exit(1)
 		}
@@ -52,7 +81,7 @@ func main() {
 	ticker := time.NewTicker(*interval)
 	defer ticker.Stop()
 	for {
-		if err := aggregate(ctx, pool); err != nil && !errors.Is(err, context.Canceled) {
+		if err := aggregate(ctx, pool, rdb, *redisTTL); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("event-bus-current-shadow: %v", err)
 		}
 		select {
@@ -63,7 +92,7 @@ func main() {
 	}
 }
 
-func aggregate(ctx context.Context, pool *pgxpool.Pool) error {
+func aggregate(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, ttl time.Duration) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -135,6 +164,83 @@ ON CONFLICT (device_key) DO UPDATE SET
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	if rdb != nil {
+		if err := writeRedis(ctx, pool, rdb, devices, ttl); err != nil {
+			log.Printf("event-bus-current-shadow: Redis write failed: %v", err)
+		}
+	}
 	log.Printf("event-bus-current-shadow: upserted=%d through=%s", len(devices), maxUpdated.UTC().Format(time.RFC3339Nano))
+	return nil
+}
+
+func warmRedis(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, ttl time.Duration) error {
+	rows, err := pool.Query(ctx, `SELECT device_key FROM discovery_device_current_shadow`)
+	if err != nil {
+		return err
+	}
+	devices := []string{}
+	for rows.Next() {
+		var device string
+		if err := rows.Scan(&device); err != nil {
+			rows.Close()
+			return err
+		}
+		devices = append(devices, device)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if len(devices) == 0 {
+		return nil
+	}
+	return writeRedis(ctx, pool, rdb, devices, ttl)
+}
+
+func writeRedis(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, devices []string, ttl time.Duration) error {
+	if len(devices) == 0 {
+		return nil
+	}
+	rows, err := pool.Query(ctx, `SELECT device_key,last_seen,fact_count,expired_fact_count,facts,updated_at
+FROM discovery_device_current_shadow WHERE device_key = ANY($1::text[])`, devices)
+	if err != nil {
+		return err
+	}
+	pipe := rdb.Pipeline()
+	count := 0
+	for rows.Next() {
+		var device string
+		var lastSeen, updatedAt time.Time
+		var factCount, expired int
+		var facts []byte
+		if err := rows.Scan(&device, &lastSeen, &factCount, &expired, &facts, &updatedAt); err != nil {
+			rows.Close()
+			return err
+		}
+		payload, err := json.Marshal(map[string]any{
+			"device_key":         device,
+			"last_seen":          lastSeen.UTC(),
+			"fact_count":         factCount,
+			"expired_fact_count": expired,
+			"facts":              json.RawMessage(facts),
+			"updated_at":         updatedAt.UTC(),
+		})
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		pipe.Set(ctx, "ps:disc:current:"+device, payload, ttl)
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	log.Printf("event-bus-current-shadow: redis keys=%d ttl=%s", count, ttl)
 	return nil
 }

@@ -1,0 +1,19 @@
+[Unit]
+Description=Proxy Sentinel event bus hot-state Redis (test)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=LD_LIBRARY_PATH=/opt/redis/lib
+ExecStart=/opt/redis/redis-server /etc/redis-eventbus.conf
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+LimitNOFILE=65535
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
