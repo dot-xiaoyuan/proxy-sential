@@ -1,6 +1,6 @@
 # 身份会话 Kafka 影子链路
 
-状态：真实身份会话更新已经进入 Kafka，并写入了身份会话影子表；生产身份读路径**未切换**。
+状态：真实身份会话更新已经进入 Kafka，并写入了身份会话影子表；身份 account/endpoint 读路径已切到影子并保留旧路径回退。
 
 ## 数据源修正
 
@@ -44,6 +44,39 @@ account_sessions(updated_at > cursor)
 - `identity_endpoint_current_shadow` 已有 188 个 endpoint；
 - 实际消息包含 `session_id/account_id/endpoint_id/ip/mac/started_at/ended_at/session_status/policy_metadata`；
 - 消息 key 为 session_id，保证同一会话顺序。
+
+## 身份读切换（2026-10-30 20:12 CST）
+
+之前 account identity 一直超时，根因不是影子查询，而是：
+
+- 旧 `proxy-sentinel-control-plane.service` 仍然 active，PID 449389 持有 `0.0.0.0:18080`；
+- 新 `proxy-sentinel-control-plane-eventbus.service` 一直 `bind: address already in use`，反复重启；
+- 实际服务 18080 的是旧 r24 二进制，新的影子读开关从未生效。
+
+处理：
+
+- 停止并 disable 旧 `proxy-sentinel-control-plane.service`；
+- 确认 18080 空闲；
+- 启动并 enable 新 `proxy-sentinel-control-plane-eventbus.service`；
+- **enable** `PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true`；
+- 新控制面进程 `/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-identity-eventbus` 持有 18080。
+
+切读验证：
+
+```text
+/discovery/devices                200, freshness.source=eventbus
+/accounts/093360/identity         200, 0.037s, 200 sessions, 1 endpoint
+/endpoints/<mac>/identity         200, 0.024s, 1 session, 1 account
+```
+
+控制面日志：
+
+```text
+identity shadow account start account=093360
+identity shadow account done account=093360 ok=true err=<nil> elapsed=34.889047ms
+```
+
+身份 account/endpoint identity 现在直接查 `identity_session_shadow`，不再先执行旧的 account_sessions/IP-history 重查询；影子没有命中时仍回退旧 reader。
 
 ## 身份影子读取接口
 
