@@ -137,11 +137,16 @@ func (p *Projector) Run(ctx context.Context) error {
 		for _, record := range fetches.Records() {
 			receipt, err := receiptFromRecord(record)
 			if err != nil {
-				return err
+				// Malformed records must not stop the whole shadow stream. The
+				// record is committed with the batch and its position is logged;
+				// a production projector will route these to a DLQ instead.
+				log.Printf("event-bus projector: skipping invalid record partition=%d offset=%d: %v", record.Partition, record.Offset, err)
+				records = append(records, record)
+			} else {
+				receipts = append(receipts, receipt)
+				records = append(records, record)
 			}
-			records = append(records, record)
-			receipts = append(receipts, receipt)
-			if len(receipts) >= p.opts.BatchSize {
+			if len(records) >= p.opts.BatchSize {
 				if err := p.flush(ctx, records, receipts); err != nil {
 					return err
 				}
@@ -149,12 +154,12 @@ func (p *Projector) Run(ctx context.Context) error {
 				receipts = receipts[:0]
 			}
 		}
-		if len(receipts) == 0 {
+		if len(records) == 0 {
 			continue
 		}
 		// The poll context deadline is the batch timer. If no more records
 		// arrive before it expires, publish what has accumulated.
-		if errors.Is(pollErr, context.DeadlineExceeded) || len(receipts) >= p.opts.BatchSize {
+		if errors.Is(pollErr, context.DeadlineExceeded) || len(records) >= p.opts.BatchSize {
 			if err := p.flush(ctx, records, receipts); err != nil {
 				return err
 			}
@@ -165,16 +170,18 @@ func (p *Projector) Run(ctx context.Context) error {
 }
 
 func (p *Projector) flush(ctx context.Context, records []*kgo.Record, receipts []Receipt) error {
-	if len(receipts) == 0 {
+	if len(records) == 0 {
 		return nil
 	}
-	if err := p.sink.WriteReceipts(ctx, receipts); err != nil {
-		return fmt.Errorf("event bus projector sink: %w", err)
+	if len(receipts) > 0 {
+		if err := p.sink.WriteReceipts(ctx, receipts); err != nil {
+			return fmt.Errorf("event bus projector sink: %w", err)
+		}
 	}
 	if err := p.client.CommitRecords(ctx, records...); err != nil {
 		return fmt.Errorf("event bus projector commit: %w", err)
 	}
-	log.Printf("event-bus projector: wrote=%d topic=%s group=%s", len(receipts), p.opts.Topic, p.opts.Group)
+	log.Printf("event-bus projector: wrote=%d skipped=%d topic=%s group=%s", len(receipts), len(records)-len(receipts), p.opts.Topic, p.opts.Group)
 	return nil
 }
 
