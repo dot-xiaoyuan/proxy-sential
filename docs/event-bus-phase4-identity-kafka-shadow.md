@@ -29,6 +29,7 @@ account_sessions(updated_at > cursor)
 - topic：`ps.identity.events.v1`，6 分区；
 - consumer：`cmd/identity-event-consumer`，消费组 `ps-identity-eventbus-shadow-v1`；
 - 表：`identity_session_shadow`，迁移 `209_identity_session_shadow.sql`；
+- 表：`identity_endpoint_current_shadow`，迁移 `210_identity_endpoint_current_shadow.sql`；
 - 视图：`identity_session_open_shadow`；
 - 服务：
   - `proxy-sentinel-identity-event-relay.service`
@@ -40,6 +41,7 @@ account_sessions(updated_at > cursor)
 - Kafka topic 6 分区均有数据；
 - consumer active，消费组 `Stable`，`TOTAL-LAG=0`；
 - `identity_session_shadow` 已写 322 个 session，其中 140 个 open；
+- `identity_endpoint_current_shadow` 已有 188 个 endpoint；
 - 实际消息包含 `session_id/account_id/endpoint_id/ip/mac/started_at/ended_at/session_status/policy_metadata`；
 - 消息 key 为 session_id，保证同一会话顺序。
 
