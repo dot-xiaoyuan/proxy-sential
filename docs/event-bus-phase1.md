@@ -1,6 +1,6 @@
 # 事件总线 Phase 1：发现影子发布
 
-状态：代码已落盘；仅本地影子验证，未部署 184，未接入投影/Redis/ClickHouse 新表。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
+状态：Phase 1 代码已落盘，并已在 184 以不可变二进制发布 + systemd drop-in 上线影子发布；真实发现事件已写入 Redpanda。尚未接入投影/Redis/ClickHouse 新表，读取路径未切换。总体方案见 [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)。
 
 ## 范围
 
@@ -122,6 +122,17 @@ make eventbus-down
 - 184 目前只剩约 192 GB 可用，且数据库/投影共享同一块 HDD；本部署只证明“能部署、能生产消费、能重启恢复”，不证明容量或吞吐。
 - Docker 18.09 的容器创建路径在这次验证中卡住，旧 Docker compose 单元已移除。旧 sandbox systemd 单元留下的 `mount` D 状态孤儿进程已于 2026-10-30 维护窗口重启清除；不要在同一主机同时运行 Docker 版和主机版 Redpanda。
 - 部署脚本和配置在仓库的 `deploy/redpanda/redpanda.yaml`、`deploy/redpanda/eventbus-184.env.example`、`deploy/systemd/proxy-sentinel-eventbus-host.service`、`scripts/deploy/eventbus-184.sh`，便于复核和重建。
+
+### 2026-10-30 Phase 1 影子发布上线
+
+- 发布目录：`/opt/proxy-sentinel/releases/2026.10.30-eventbus-p1`；`bin/discovery-worker` SHA256 `f14db7b6bbdd9d75b2958b73371dd68b268b819dc62a624537b985bacfcd4c9f`，源码提交 `f8fb061f`。
+- systemd drop-in：`/etc/systemd/system/proxy-sentinel-discovery.service.d/zz-eventbus-p1.conf`，把 discovery-worker 固定到该发布目录，并设置 `PROXY_SENTINEL_EVENT_BUS_SHADOW=true`、`_BROKERS=127.0.0.1:19092`、`_CLIENT_ID=discovery-ncu-184-router-pilot`、`_DISCOVERY_TOPIC=ps.discovery.events.v1`、`_QUEUE=8192`。
+- 进程核对：`MainPID` 的可执行文件指向 `2026.10.30-eventbus-p1/bin/discovery-worker`；`proxy-sentinel-discovery.service` active。
+- 实际写入：`eventbus.stats` 为 `enabled=true`，在 2026-10-30 13:23:39 CST 时 `published=2911`、`failed=0`、`dropped=0`、`segments=4`、`queue_depth=0`。Kafka 主题 6 个分区的 high-watermark 已从 probe 时的 2/0/0/1/0/0 增长到 166/144/206/103/73/296。
+- 消息核对：实际消费到 `sensor_id=ncu-184-router-pilot`、`source=passive-discovery`、`partition_key_source=device`、带 `event_id`、`content_hash`、`segment_id` 的 `schema_version=1` 信封；分区键来自设备键。
+- 健康核对：`/readyz=200`，旧投影/查询路径未改；`eventbus.stats` 无失败和丢弃。
+
+回退：删除 `zz-eventbus-p1.conf`，执行 `systemctl daemon-reload && systemctl restart proxy-sentinel-discovery.service`；`current` 和旧发布目录未改。该阶段只证明“真实发现事件 → Kafka”跑通，**不证明**消费者投影、CH 收据/变化、Redis 热态或读取切换。
 
 ### 2026-10-30 维护重启后状态
 

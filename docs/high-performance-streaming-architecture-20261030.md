@@ -1,6 +1,6 @@
 # 高性能流式存储与投影方案
 
-状态：设计提案；Phase 1 的影子发布已在 `codex/high-performance-streaming-20261030` 落盘（见 [事件总线 Phase 1](event-bus-phase1.md)），但尚未部署、未接投影、未做容量验收。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
+状态：设计提案；Phase 1 的影子发布已在 `codex/high-performance-streaming-20261030` 落盘，并已于 2026-10-30 在 184 上线（真实发现事件写入 Redpanda，`failed=0`、`dropped=0`；见 [事件总线 Phase 1](event-bus-phase1.md)）。投影、Redis、CH 账本和读取切换仍未开始，未做容量验收。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
 
 ## 1. 目标与判断
 
