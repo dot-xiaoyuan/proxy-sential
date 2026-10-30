@@ -101,7 +101,7 @@ make eventbus-down
 - 配置：`/etc/redpanda/redpanda.yaml`，Kafka `127.0.0.1:19092`、Admin `127.0.0.1:19644`、RPC `127.0.0.1:33145`，数据 `/opt/proxy-sentinel/data/eventbus/redpanda`。
 - 服务：`proxy-sentinel-eventbus-host.service`，已 enable，`Restart=on-failure`，`LimitNOFILE=65536`。
 - 主题：`ps.discovery.events.v1`，6 分区、副本 1。
-- 验证：`rpk cluster health` 为 `Healthy: true`；`eventbus-184.sh smoke` produce/consume 通过；`cmd/event-bus-probe` 在 184 上 produce/consume 通过。
+- 验证：`rpk cluster health` 为 `Healthy: true`；`eventbus-184.sh smoke` produce/consume 通过；`cmd/event-bus-probe` 在 184 上 produce/consume 通过；`TestRedpandaShadowPublishes` 测试二进制在 184 上通过；`down`/`up`/`smoke` 完整周期通过，主题和 offset 在重启后保留。
 
 运维命令（在 184 上）：
 
@@ -120,7 +120,7 @@ make eventbus-down
 - 这是**单 broker、PLAINTEXT、回环绑定、HDD 数据目录**的测试部署；端口不对外暴露，生产必须使用 3 broker、TLS/SASL、SSD/NVMe 和容量验证。
 - 配置开启 `developer_mode`，Redpanda 进程实际带 `--overprovisioned` 和 `--unsafe-bypass-fsync=true`；这降低了测试环境的持久化保证，不能用于生产。
 - 184 目前只剩约 192 GB 可用，且数据库/投影共享同一块 HDD；本部署只证明“能部署、能生产消费、能重启恢复”，不证明容量或吞吐。
-- Docker 18.09 的容器创建路径在这次验证中卡住，旧 Docker compose 单元已移除；不要在同一主机同时运行 Docker 版和主机版 Redpanda。
+- Docker 18.09 的容器创建路径在这次验证中卡住，旧 Docker compose 单元已移除；旧 sandbox systemd 单元移除后仍有一个 `mount` 辅助进程处于 D 状态（孤儿），需要主机维护窗口重启才能清除；它不属于 eventbus host 服务，当前不影响 Kafka 健康。不要在同一主机同时运行 Docker 版和主机版 Redpanda。
 - 部署脚本和配置在仓库的 `deploy/redpanda/redpanda.yaml`、`deploy/redpanda/eventbus-184.env.example`、`deploy/systemd/proxy-sentinel-eventbus-host.service`、`scripts/deploy/eventbus-184.sh`，便于复核和重建。
 
 ## 打开影子发布
