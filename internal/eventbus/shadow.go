@@ -187,14 +187,16 @@ func (s *Shadow) publish(job eventJob) {
 		"partition_key_source": source,
 		"event_type":           envelope.EventType,
 	}
+	// The producer returns before delivery completes. Keep the context alive
+	// until the delivery callback; canceling it immediately aborts the record.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	err = s.producer.Produce(ctx, Record{
 		Topic:   s.cfg.DiscoveryTopic,
 		Key:     envelope.Key(),
 		Value:   raw,
 		Headers: headers,
 	}, func(deliveryErr error) {
+		cancel()
 		if deliveryErr != nil {
 			s.stats.RecordFailed(deliveryErr)
 			s.report("delivery failed: " + deliveryErr.Error())
@@ -203,6 +205,7 @@ func (s *Shadow) publish(job eventJob) {
 		s.stats.RecordPublished()
 	})
 	if err != nil {
+		cancel()
 		s.fail(job, err)
 	}
 }
