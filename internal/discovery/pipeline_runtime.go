@@ -121,9 +121,6 @@ func (r Repository) PipelineStatus(ctx context.Context) (PipelineStatus, error) 
 		}
 		out.Lanes = append(out.Lanes, s)
 	}
-	if len(out.Lanes) == 0 {
-		out.Status = "initializing"
-	}
 	if err = rows.Err(); err != nil {
 		return PipelineStatus{}, err
 	}
@@ -137,6 +134,9 @@ func (r Repository) PipelineStatus(ctx context.Context) (PipelineStatus, error) 
 		if c.State != "running" {
 			out.Status = "delayed"
 		}
+	}
+	if len(out.Lanes) == 0 && len(consumers) == 0 {
+		out.Status = "initializing"
 	}
 	return out, nil
 }
