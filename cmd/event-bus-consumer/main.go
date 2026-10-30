@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/eventbus"
+	"proxy-sentinel/internal/store"
 )
 
 func main() {
@@ -43,13 +44,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
 		os.Exit(2)
 	}
+	chStore, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: *dsn})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
+		os.Exit(2)
+	}
+	normalizedSink := eventbus.NewClickHouseNormalizedSink(chStore)
 	pgSink, err := eventbus.NewPostgresFactSink(ctx, *pgDSN)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
 		os.Exit(2)
 	}
 	defer pgSink.Close()
-	sink := eventbus.NewMultiSink(chSink, pgSink)
+	sink := eventbus.NewMultiSink(chSink, pgSink, normalizedSink)
 	projector, err := eventbus.NewProjector(cfg, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
