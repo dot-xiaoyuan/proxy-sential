@@ -84,6 +84,21 @@ WHERE ended_at IS NULL
 
 这比之前的 215 个 open session 更接近可用当前态，但还不是完整 644k 历史的等价物。
 
+## 身份读覆盖尝试与回退
+
+2026-10-30 20:03 CST 曾把 `PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true` 启用，在旧 `GetAccountIdentity` / `GetEndpointIdentity` 返回后叠加 Kafka 影子 session。
+
+实测失败：
+
+- `/api/v1/accounts/<id>/identity` 先执行旧的 account identity 查询；
+- 旧查询出现 `WITH ids AS (...)` 的长时间 IO 等待，超过 1 分钟；
+- 只叠加影子不能绕过旧查询，反而继续占用 184 的 PG/HDD；
+- 已取消查询、删除临时测试会话，并把 `PROXY_SENTINEL_IDENTITY_EVENTBUS_READ` 从控制面单元移除；
+- 控制面恢复 active，`/readyz=200`；
+- 影子 API 和 Kafka 消费链路不受影响。
+
+结论：身份读切换不能靠“旧查询后叠加影子”，必须**直接替换** `GetAccountIdentity` / `GetEndpointIdentity` 的读取实现，或者先让旧查询只读小表。当前身份影子仍只通过 `/v1/shadow/identity/*` 只读 API 暴露。
+
 ## 边界
 
 - 这是**新鲜起点**：relay 从当前 `updated_at - 1min` 开始，没有重放 214 万历史 session；
