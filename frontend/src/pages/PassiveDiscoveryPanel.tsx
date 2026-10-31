@@ -73,15 +73,19 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const fresh=devices.data?.freshness
   const dumbFilter=params.get('discovery_capability')==='dumb'
   const identity=(item:Device)=><><DeviceAddress ip={item.current_addresses?item.current_addresses[0]:item.primary_ip} name={item.name} mac={item.mac} addresses={item.current_addresses??item.addresses}/>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后观测地址 · {item.last_observed_ip}</Typography.Text>}</>
-  const kind=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text strong={item.classification_status!=='expired'}>{types[item.device_type||item.last_device_type||'']??(dumbTerminal(item)?`哑终端线索 · ${dumbTerminal(item)}`:'待分类')}</Typography.Text><Typography.Text type="secondary">{[item.manufacturer,item.model_name].filter(Boolean).join(' · ')}</Typography.Text></Space>
+  const kind=(item:Device)=><Typography.Text strong={item.classification_status!=='expired'}>{types[item.device_type||item.last_device_type||'']??(dumbTerminal(item)?`哑终端线索 · ${dumbTerminal(item)}`:'待分类')}</Typography.Text>
+  const vendor=(item:Device)=><Typography.Text type="secondary">{[item.manufacturer,item.model_name].filter(Boolean).join(' · ')}</Typography.Text>
+  const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.domain}</Typography.Text><Typography.Text type="secondary">{[item.vlan&&`VLAN ${item.vlan}`,item.sensor_id].filter(Boolean).join(' · ')}</Typography.Text></Space>
   const clues=(item:Device)=><Space wrap>{(item.capabilities??[]).filter(c=>capabilities[c]).map(c=><Tag key={c}>{capabilities[c]}</Tag>)}{(item.protocols??[]).map(p=><Tag key={p}>{protocols[p]??p}</Tag>)}</Space>
   const state=(item:Device)=><Typography.Text type={item.classification_status==='conflict'?'warning':'secondary'}>{states[item.classification_status??'']??(item.current?'证据有效':'证据已过期')}</Typography.Text>
   const show=(item:Device)=>{setHistoryCursor('');setSelected(item)}
   const columns=[
-    {title:'地址 / 名称 / MAC',key:'identity',render:(_:unknown,item:Device)=>identity(item)},
-    {title:'设备类型 / 型号',key:'type',onCell:(item:Device)=>({className:item.device_type||item.last_device_type||item.manufacturer||item.model_name?'':'mobile-empty-cell'}),render:(_:unknown,item:Device)=>kind(item)},
-    {title:'发现依据',key:'clues',render:(_:unknown,item:Device)=>clues(item)},
-    {title:'证据状态',key:'state',render:(_:unknown,item:Device)=>state(item)},
+    {title:'地址 / 名称 / MAC',key:'identity',width:220,render:(_:unknown,item:Device)=>identity(item)},
+    {title:'终端类型',key:'type',width:120,onCell:(item:Device)=>({className:item.device_type||item.last_device_type||item.manufacturer||item.model_name?'':'mobile-empty-cell'}),render:(_:unknown,item:Device)=>kind(item)},
+    {title:'制造商 / 型号',key:'vendor',width:150,render:(_:unknown,item:Device)=>vendor(item)},
+    {title:'网络位置',key:'location',width:180,render:(_:unknown,item:Device)=>location(item)},
+    {title:'发现依据',key:'clues',width:150,render:(_:unknown,item:Device)=>clues(item)},
+    {title:'证据状态',key:'state',width:90,render:(_:unknown,item:Device)=>state(item)},
     {title:'最近观测',key:'seen',width:115,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
     {title:'操作',key:'action',width:100,render:(_:unknown,item:Device)=><Button type="link" onClick={()=>show(item)}>查看证据</Button>},
   ]
@@ -114,7 +118,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     </section>
     {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
       <AppListHeader title="发现设备" count={devices.data?.total!==undefined?`共 ${devices.data.total} 个设备`:`本页 ${items.length} 条`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
-      <AppTable rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:960}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
+      <AppTable rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1120}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={devices.data?.total ?? page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,cursors:[''],page:0});return}
         const current=page+1

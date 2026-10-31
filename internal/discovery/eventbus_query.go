@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"proxy-sentinel/internal/fingerprint"
 )
 
 type eventBusStateCursor struct {
@@ -199,6 +201,13 @@ ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 // built before a field was present. The device center assumes these collection
 // fields exist; a missing key used to crash the discovery page.
 func normalizeEventBusDocument(item map[string]any) {
+	if manufacturer, ok := item["manufacturer"].(string); !ok || strings.TrimSpace(manufacturer) == "" {
+		if mac, ok := item["mac"].(string); ok && strings.TrimSpace(mac) != "" {
+			if vendor := fingerprint.Default().Identify(mac).Vendor; vendor != "" {
+				item["manufacturer"] = vendor
+			}
+		}
+	}
 	for _, key := range []string{"capabilities", "protocols", "observations", "addresses", "current_addresses"} {
 		if value, ok := item[key]; !ok || value == nil {
 			item[key] = []any{}
