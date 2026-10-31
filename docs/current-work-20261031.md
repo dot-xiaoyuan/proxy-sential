@@ -13,7 +13,7 @@
 
 ## 2026-11-01 现场进展（184 测试联调环境）
 
-下方“本地进展、待部署”段落保留当时的实施记录；本节是截至 2026-11-01 03:05（北京时间）的现场状态，不代表长期容量验收。
+下方“本地进展、待部署”段落保留当时的实施记录；本节记录 2026-11-01 03:42（北京时间）前的现场检查，不代表长期容量验收。
 
 - 应用 `2026.11.01-mirror-discovery-r9` 已部署到 `/opt/proxy-sentinel/current`，`previous` 保留 r8；源码提交 `36f4ce44`，发布包 SHA256 `183d0f404972d9c690213875e6f5da88496a6ea6140546df537807655fdaf577`。PostgreSQL 候选迁移 214 项、ClickHouse 59 项与现场账本校验一致；本次 r9 为应用更新，未重新执行迁移。此次工作已执行 PostgreSQL 212/213 与 ClickHouse 059 迁移，按测试环境约定跳过备份。
 - DHCP 旧 `device_dhcp_binding.log` reader 已审计退役；逐消息源 `dhcp-message-fresh-20261101T180643Z` 使用 `zeek-dhcp-message-v1` 持续读取 `device_dhcp_message.log`。旧源未完成输入按固定截止点和逐批清单标记为取消、未处理，原始文件及既有有效租约事实保留。REQUEST 只产生客户端识别线索，ACK 才产生地址绑定。
@@ -21,8 +21,10 @@
 - 一段已归档但未确认的发现 journal 曾使 ARP/DNS-SD/SSDP 停滞；已用原始 token 核验的 `stream-repair` 只重放该段的 archive lane，未删除原文。恢复后协议最近成功时间继续前进，隔离未处理数为 0。历史重置后的 TTL/握手文件源与共享任务代次不一致，已以旧/新代次哈希审计关闭两条旧共享源并激活新源 `shared-history-reset-recovered-20261101`；旧共享待办取消数均为 0，两条 reader 恢复逐批确认。
 - 03:02 的只读健康核对：Redpanda 健康、两个消费组 lag 均为 0、控制面 `/readyz` 为 200、发现隔离未处理数为 0，current 台账 26,845 行，`missing_stream=0`。03:04 的台账快照有 26,856 行、25,467 行带 IP 与 MAC、14,250 个不同 MAC、14,310 行带名称；这些是带代次和作用域的**台账行**，不能视为唯一物理设备数。数字随事实自然过期和持续输入变化。
 - 390×844、1280×800、1440×900 的现场截图与 DOM 探针通过：页面宽度均等于文档滚动宽度，表格容器宽度分别为 336、982、1142 px，文字按钮未折成竖排，控制台 0 条消息；现场 DHCP 覆盖卡显示逐消息源。应用相关 Go 测试、构建、vet，前端测试、类型检查及生产构建通过。
+- `2026.11.01-mirror-discovery-r11` 已按应用更新流程发布，`current` 为 r11、`previous` 为 r10；源码提交 `df641e31`，发布包 SHA256 `85ee1afcea424ae07b92043fe26c0ef1d1b74b0584dd6e80b1e144da2f45babf`。PostgreSQL 214 项、ClickHouse 59 项候选迁移均与现场账本匹配，未执行新迁移。现场登记 `/opt/proxy-sentinel/config/discovery-handshake-scope-map.json`，SHA256 `d22d685556878957f17ef6b46e6921a7ce3b721db6f065744822165bd2c808d5`；它仅把同一 `ncu-184-router-pilot` 传感器的发现域 `bond0-passive-pilot` 与握手域 `bond0-router-minimal-overnight` 在 `10.202.0.0/16` 内显式对应，已与两份采集范围配置逐字段核验。控制面 systemd drop-in `zzzzzz-mirror-handshake-r11.conf` 指向该映射文件；回退应用时可移除该 drop-in 与映射，再重载并重启控制面。
+- 握手侧车已有的 HTTP User-Agent、JA3 原文现可在发现设备详情按当前 IP 受限读取：只查询活动代次、同传感器映射范围、最近 11 分钟的索引和已核验归档原文，最多展示 12 条，保留标准事件号与观测时间，明确标成 IP 弱线索。列表仍只读 current 投影。现场详情接口实际请求返回 200，浏览器记录的该次请求约 98 毫秒；但所选 IP 暂无可展示样本，尚不能宣称 UA/JA3 现场非空覆盖。r11 的 390×844、1280×800、1440×900 现场截图与 DOM 探针再次通过：文档宽度分别等于 390、1280、1440，表格容器宽 336、982、1142 px，文字按钮未竖排，控制台 0 条消息。
 
-**仍需如实保留的缺口：** 旧 TTL/握手侧车在新共享代次恢复后正追读已积累的原始文件，03:05 时 cursor 分别到文件的 13.6%/16.7%，不可宣称这两路已追平；原始日志保留、reader 活动、后续处理进度需继续观察。当前 Zeek 采集过滤器仅含 DHCP 67/68，Suricata EVE 当前仅有 DNS 与统计事件；握手侧车原文**已有 HTTP User-Agent 与 JA3 样本**，但发现台账尚未按当前 IP 受限读取该链路，不能把这部分原文说成台账覆盖。现场未见 JA4、SMB native OS 或非 DHCP observed flow，页面不推断精确 OS 版本、开放端口或物理接入端口。NCU 身份同步本机 `/18082/readyz` 仍为 503，属于本次发现链路之外的现场遗留问题；其现行 binary 没有文档提及的 `--read-only=true` 参数，需另行核对该项现场约定，不将本次发现验收写成整站全部服务通过。
+**仍需如实保留的缺口：** 旧 TTL/握手侧车在新共享代次恢复后正追读已积累的原始文件；03:41 时两个 reader 均在逐批确认，握手 cursor 在 1.65 GB 的轮转原文中到约 79%，TTL cursor 也仍在轮转原文中，不能宣称这两路已追平或详情已有 UA/JA3 非空覆盖。原始日志保留、reader 活动、后续处理进度需继续观察。当前 Zeek 采集过滤器仅含 DHCP 67/68，Suricata EVE 当前仅有 DNS 与统计事件；握手侧车原文**已有 HTTP User-Agent 与 JA3 样本**，详情读取需要这些样本进入活动时间窗后再核验。现场未见 JA4、SMB native OS 或非 DHCP observed flow，页面不推断精确 OS 版本、开放端口或物理接入端口。NCU 身份同步本机 `/18082/readyz` 仍为 503，属于本次发现链路之外的现场遗留问题；其现行 binary 没有文档提及的 `--read-only=true` 参数，需另行核对该项现场约定，不将本次发现验收写成整站全部服务通过。
 
 03:15 复核：TTL cursor 已到约 26%；握手源在 03:14 按日志轮转规则重命名为 `handshake.jsonl-20261101-031402`，旧 inode 和 1.6 GiB 原文仍保留，reader 按文件身份继续读取，尚未读完；轮转后的新文件不能作为旧 cursor 的进度分母。恢复后两条 reader 的最终确认错误数仍为 0。现场 Suricata 的 BPF 仅纳入 ARP、发现类多播和指定 UDP/VRRP，Zeek 的 BPF 仅纳入 DHCP；对 `bond0` 上 TCP 80/443/445 的短时只读抓包可见大量报文，未做资源与丢包验收前不能直接放开全量 TCP 捕获。
 
@@ -63,6 +65,7 @@
 - 发现页：`frontend/src/pages/PassiveDiscoveryPanel.tsx`
 - 发现查询：`internal/discovery/eventbus_query.go`
 - 被动信号 API：`internal/controlplane/passive_signals.go`
+- 镜像握手详情读取与采集域映射：`internal/store/discovery_handshake_clues.go`、`internal/controlplane/discovery_handshake_scope.go`；现场映射由 `PROXY_SENTINEL_DISCOVERY_HANDSHAKE_SCOPE_MAP` 指定，未配置时不返回跨域握手线索。
 - 服务线索读取：`internal/store/discovery_services.go`
 - 当前切流/清库说明：`docs/discovery-data-reset-20261031.md`
 - 高性能流式架构：`docs/high-performance-streaming-architecture-20261030.md`
