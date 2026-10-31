@@ -22,7 +22,7 @@ import { request } from '../shared/api/client'
 import { RouterObservationsPanel } from './RouterObservationsPanel'
 import { routerRoleLabels } from './routerLabels'
 import type { ColumnsType } from 'antd/es/table'
-import { AppCursorPagination, AppErrorAlert, AppFactBar, AppListHeader, AppTable, formatDateTime } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppListHeader, AppServerPagination, AppTable, formatDateTime } from '../shared/ui'
 
 type Source = {id:string;name:string;node:string;site:string;domain:string;address:string;snmp_version:string;username?:string;interval_seconds:number;enabled:boolean;config_version:number}
 type Observation = {id:string;ip?:string;mac?:string;name?:string;origin:string;port?:string;vlan?:string;observed_at:string;valid_until:string;explanation:string;device_type?:string;capabilities?:string[];manufacturer?:string;model_name?:string}
@@ -94,7 +94,7 @@ export function DiscoveryPage({configuration=false,embedded=false}:{configuratio
  {key:'devices',label:'发现记录',children:<>
         <AppListHeader title="发现记录" count={`${devices.data?.items.length ?? 0} 条`} />
         <AppTable rowKey="id" columns={cols} dataSource={devices.data?.items??[]} pagination={false} locale={{emptyText:'暂无发现记录'}} scroll={{x:1150}}/>
-        <AppCursorPagination previous={devicePage!==1} next={Boolean(devices.data?.has_more)} label={`第 ${devicePage} 页`} onPrevious={()=>setDevicePage(devicePage-1)} onNext={()=>{const next=devices.data?.next_cursor;if(next){setDeviceCursors([...deviceCursors,next]);setDevicePage(devicePage+1)}}} />
+        {(()=>{const items=devices.data?.items.length??0;const total=devices.data?.has_more?devicePage*20+1:(devicePage-1)*20+items;return <AppServerPagination cursorMode page={devicePage} pageSize={20} total={total} totalText={`第 ${devicePage} 页 · 已加载 ${(devicePage-1)*20+items} 条`} onChange={(next)=>{if(next>devicePage){const value=devices.data?.next_cursor;if(value){setDeviceCursors([...deviceCursors,value]);setDevicePage(next)}}else setDevicePage(next)}}/>})()} 
       </>},
  {key:'sources',label:'基础设施接入',children:<>
         <AppListHeader title="基础设施接入" count={`${sources.data?.items.length ?? 0} 条`} actions={<Button disabled={!manage} onClick={()=>edit(null)}>新增接入源</Button>} />

@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import {
+  AppServerPagination,
   AppTable } from '../../shared/ui'
 import { ApartmentOutlined,
   SearchOutlined } from '@ant-design/icons'
@@ -19,6 +21,9 @@ interface FingerprintConflictMatrixProps {
 
 export function FingerprintConflictMatrix({ items, onInspectIp }: FingerprintConflictMatrixProps) {
   const totalConflicts = items.length
+  const [page, setPage] = useState(1)
+  const pageSize = 10
+  const pageItems = items.slice((page - 1) * pageSize, page * pageSize)
 	const columns: ColumnsType<FingerprintConflictItem> = [
 		{ title: 'IP', dataIndex: 'ip', width: 150, render: (value: string) => <span className="list-cell-nowrap mono" title={value}>{value}</span> },
 		{ title: '风险', dataIndex: 'risk_level', width: 90, render: (value) => <RiskLevelTag level={value} /> },
@@ -49,7 +54,7 @@ export function FingerprintConflictMatrix({ items, onInspectIp }: FingerprintCon
           当前窗口下暂无需要复核的多源指纹差异
         </Typography.Text>
       ) : (
-		<AppTable className="compact-list-table" columns={columns} dataSource={items} pagination={{ pageSize: 10, showSizeChanger: false }} rowKey="id" size="small" />
+		<><AppTable className="compact-list-table" columns={columns} dataSource={pageItems} pagination={false} rowKey="id" size="small" /><AppServerPagination page={page} pageSize={pageSize} total={items.length} onChange={(next)=>setPage(next)} showSizeChanger={false}/></>
       )}
     </Card>
   )

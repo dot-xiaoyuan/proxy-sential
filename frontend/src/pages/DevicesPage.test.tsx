@@ -106,7 +106,7 @@ it('shows the list before statistics without displaying a zero count',()=>{
  fixture.items=[{endpoint_id:'test',current_ip:'192.0.2.1',primary_mac:'00:11:22:33:44:55',current_account:'student-1',current_access_id:'Campus-AP-1'}]
  setup('/devices?view=recent&window=24h')
  expect(screen.getAllByRole('link',{name:'192.0.2.1'}).length).toBeGreaterThan(0)
- expect(screen.getByRole('button',{name:'下一页'})).toBeEnabled()
+ expect(document.querySelector('.ant-pagination-next')).not.toHaveClass('ant-pagination-disabled')
  expect(screen.queryByText('0 个终端身份')).not.toBeInTheDocument()
  expect(screen.getAllByText('student-1').length).toBeGreaterThan(0)
  expect(fixture.organization).not.toHaveBeenCalled()

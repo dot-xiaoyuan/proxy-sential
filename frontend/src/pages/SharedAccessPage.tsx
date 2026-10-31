@@ -89,6 +89,7 @@ export function SharedAccessPage() {
   const [tab,setTab]=useUrlState('tab','routers',['devices','routers','associations','history','reviews'],['status','history_basis','observations_cursors','observations_page','observations_limit']);
   const location=useLocation();const session=useSession();const [healthOpen,setHealthOpen]=useState(false);
   const cursor = useCursor('reviews')
+  const [reviewPage,setReviewPage]=useState(1)
   const behaviorPagination = useServerPagination('observations_')
   const [behaviorStatus, setBehaviorStatus] = useUrlState('status','',undefined,['observations_cursors','observations_page'])
   const [historyBasis,setHistoryBasis] = useUrlState('history_basis','shared',['shared','clues'],['status','observations_cursors','observations_page'])
@@ -147,7 +148,7 @@ export function SharedAccessPage() {
       <AppListSection isError={reviews.isError} errorTitle="复核队列读取失败" isLoading={reviews.isLoading} loadingRows={3} isEmpty={!reviews.data?.items.length} emptyText="暂无人工账号归属复核记录。只读观察模式不生成此队列；认证关联可在共享终端档案查看，策略命中与处置记录可在风险运营查看。">
         <AppTable rowKey="review_id" columns={reviewColumns} dataSource={reviews.data?.items ?? []} scroll={{ x: 980 }} />
       </AppListSection>
-      <AppCursorPagination previous={cursor.previous} next={Boolean(reviews.data?.next_cursor)} onPrevious={cursor.back} onNext={() => cursor.next(reviews.data?.next_cursor ?? '')} />
+      {(()=>{const items=reviews.data?.items.length??0;const total=reviews.data?.next_cursor?reviewPage*20+1:(reviewPage-1)*20+items;return <AppServerPagination cursorMode page={reviewPage} pageSize={20} total={total} totalText={`第 ${reviewPage} 页 · 已加载 ${(reviewPage-1)*20+items} 条`} onChange={(next)=>{if(next>reviewPage){const value=reviews.data?.next_cursor;if(value){cursor.next(value);setReviewPage(next)}}else{cursor.back();setReviewPage(next)}}}/>})()} 
     </section>}
     <details onToggle={e=>setHealthOpen(e.currentTarget.open)} className="surface filter-disclosure shared-health-disclosure"><summary>链路与处置说明</summary><div className="filter-disclosure-content"><AppFactBar items={['共享确认记录策略只记录，不执行下线','账号按事件窗口归责，覆盖不足和身份冲突会说明原因','执行功能关闭为预期配置']} />
     {status.isError ? <AppErrorAlert title="链路状态读取失败" /> : status.isLoading ? <AppLoadingState rows={2} /> : status.data && <Card className="shared-health-card" title="链路状态" extra={<span className="shared-access-muted">检查时间：{time(status.data.checked_at)}</span>}>

@@ -12,7 +12,7 @@ import { InfoCircleOutlined, SettingOutlined } from '@ant-design/icons'
 import { DeviceMAC, DeviceLedgerRecognition, DeviceLedgerOS, deviceDetailsURL } from '../entities/device/DeviceInventoryCells'
 import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices, useSession } from '../shared/api/queries'
 import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
-import { AppCursorPagination, AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useMediaQuery, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useMediaQuery, useServerPagination } from '../shared/ui'
 
 export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const [params, setParams] = useSearchParams()
@@ -136,7 +136,7 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && <Alert type="info" showIcon title="当前检索条件下没有终端身份结果" description={canReadTraffic ? '下方按 IP 展示流量观测；握手 MAC 是终端候选线索，需结合身份与接入证据核实归属。' : '当前身份与地址索引中没有该 IP 的关联记录。'} />}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表读取失败" message={devices.error.message} /> : <>
         <AppTable rowKey="endpoint_id" columns={deviceColumns} dataSource={items} scroll={{ x: 145 + 175 + (showMac ? 175 : 0) + (showProfile ? 205 : 0) + (showContext ? 225 : 0) + 105 + 85 }} locale={{ emptyText: '没有匹配的终端' }} />
-        {total!==undefined?<AppServerPagination cursorMode page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={updatePagination}/>:<AppCursorPagination disabled={devices.isPlaceholderData} previous={pagination.page>1} next={Boolean(devices.data?.page.next_cursor)} label={`第 ${pagination.page} 页${metadata.isError?'':' · 总数统计中'}`} onPrevious={()=>updatePagination(pagination.page-1,pagination.pageSize)} onNext={()=>updatePagination(pagination.page+1,pagination.pageSize)} />}
+        {(()=>{const derivedTotal=devices.data?.page.next_cursor?pagination.page*pagination.pageSize+1:(pagination.page-1)*pagination.pageSize+items.length;return <AppServerPagination cursorMode disabled={devices.isPlaceholderData} page={pagination.page} pageSize={pagination.pageSize} total={total??derivedTotal} totalText={total===undefined?`第 ${pagination.page} 页 · 已加载 ${(pagination.page-1)*pagination.pageSize+items.length} 条`:`共 ${total} 条`} onChange={updatePagination}/>})()}
       </>}
     </section>
     {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && canReadTraffic && <IpTrafficObservations key={query.trim()} ip={query.trim()} />}

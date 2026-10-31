@@ -17,7 +17,7 @@ import { useSession } from '../../shared/api/queries'
 import { can } from '../../shared/auth/permissions'
 import { applicationAPI, type AppItem } from './api'
 import { formatBytes } from '../../shared/ui/formatBytes'
-import { AppCursorPagination, AppErrorAlert, AppFactBar, AppListHeader, AppTable, formatDateTime } from '../../shared/ui'
+import { AppCursorPagination, AppErrorAlert, AppFactBar, AppListHeader, AppServerPagination, AppTable, formatDateTime } from '../../shared/ui'
 export function ApplicationActivity({ip,window='24h'}:{ip?:string;window?:string}) {
  const session=useSession();const location=useLocation();const [sensor,setSensor]=useUrlState('sensor_id','');const [campus,setCampus]=useUrlState('campus_id','');const [filterIP,setFilterIP]=useUrlState('ip',ip||'');const [app,setApp]=useUrlState('application_id','');const [inspect,setInspect]=useState<string>();const [page,setPage]=useState(1);const [exportError,setExportError]=useState('')
  const [reportPage,setReportPage]=useUrlState('application_page','1');
@@ -58,7 +58,7 @@ export function ApplicationActivity({ip,window='24h'}:{ip?:string;window?:string
  <AppFactBar label="流量统计口径" items={[data.traffic_basis]}/>
  <div className="application-toolbar"><Typography.Text>识别版本：</Typography.Text>{Object.entries(data.versions).map(([v,n])=><Tag key={v}>{v} · {n}</Tag>)}</div>
  <AppListHeader title="应用访问" count={`${data.items.length} 个应用`} />
- <AppTable rowKey="application_id" columns={columns} dataSource={data.items} pagination={{current:Math.max(1,Number(reportPage)||1),pageSize:10,showSizeChanger:false,onChange:value=>setReportPage(String(value))}} loading={report.isFetching} scroll={{x:960}}/>
+ {(()=>{const current=Math.max(1,Number(reportPage)||1);const pageItems=data.items.slice((current-1)*10,current*10);return <><AppTable rowKey="application_id" columns={columns} dataSource={pageItems} pagination={false} loading={report.isFetching} scroll={{x:960}}/><AppServerPagination page={current} pageSize={10} total={data.items.length} onChange={(next)=>setReportPage(String(next))} showSizeChanger={false}/></>})()}
  <Typography.Paragraph type="secondary">待补特征连接 {data.unknown.connection_count}，上行 {formatBytes(data.unknown.upload_bytes)} / 下行 {formatBytes(data.unknown.download_bytes)}；多应用连接上行 {formatBytes(data.multi_application.upload_bytes)} / 下行 {formatBytes(data.multi_application.download_bytes)}，不重复分配至应用。</Typography.Paragraph>
  </>}
  <Drawer title="应用观测依据" open={!!inspect} onClose={()=>setInspect(undefined)} size="large" className="application-drawer">
