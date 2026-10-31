@@ -112,6 +112,53 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			return
 		}
 		writeJSON(w, 200, page)
+	case path == "/discovery/snmp-candidates" && r.Method == "GET":
+		rows, err := repo.DB.QueryContext(ctx, `WITH frequent AS (
+ SELECT document->>'mac' AS mac
+ FROM discovery_device_current_shadow
+ WHERE coalesce(document->>'last_observed_ip','')<>'' AND coalesce(document->>'mac','')<>''
+ GROUP BY 1 HAVING count(DISTINCT document->>'last_observed_ip')>3
+), candidates AS (
+ SELECT document->>'last_observed_ip' AS ip,
+        max(document->>'name') AS name,
+        max(document->>'mac') AS mac,
+        max(document->>'manufacturer') AS manufacturer,
+        max(document->>'vlan') AS vlan,
+        max(document->>'domain') AS domain,
+        max(document->>'sensor_id') AS sensor_id,
+        max(document->>'site') AS site,
+        max(last_seen) AS last_seen,
+        count(*) AS observations,
+        CASE WHEN split_part(document->>'last_observed_ip','.',4) IN ('1','254') THEN '网段网关候选' ELSE '高频基础设施 MAC' END AS reason
+ FROM discovery_device_current_shadow
+ WHERE coalesce(document->>'last_observed_ip','')<>''
+   AND (split_part(document->>'last_observed_ip','.',4) IN ('1','254') OR document->>'mac' IN (SELECT mac FROM frequent))
+ GROUP BY document->>'last_observed_ip',
+          CASE WHEN split_part(document->>'last_observed_ip','.',4) IN ('1','254') THEN '网段网关候选' ELSE '高频基础设施 MAC' END
+)
+SELECT ip,coalesce(name,''),coalesce(mac,''),coalesce(manufacturer,''),coalesce(vlan,''),coalesce(domain,''),coalesce(sensor_id,''),coalesce(site,''),last_seen,observations,reason
+FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
+		if err != nil {
+			writeError(w, 500, "discovery_read", "读取 SNMP 候选失败")
+			return
+		}
+		defer rows.Close()
+		items := []map[string]any{}
+		for rows.Next() {
+			var ip, name, mac, manufacturer, vlan, domain, sensor, site, reason string
+			var lastSeen time.Time
+			var observations int
+			if err = rows.Scan(&ip, &name, &mac, &manufacturer, &vlan, &domain, &sensor, &site, &lastSeen, &observations, &reason); err != nil {
+				writeError(w, 500, "discovery_read", "读取 SNMP 候选失败")
+				return
+			}
+			items = append(items, map[string]any{"ip": ip, "name": name, "mac": mac, "manufacturer": manufacturer, "vlan": vlan, "domain": domain, "sensor_id": sensor, "site": site, "last_seen": lastSeen, "observations": observations, "reason": reason})
+		}
+		if rows.Err() != nil {
+			writeError(w, 500, "discovery_read", "读取 SNMP 候选失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items})
 	case path == "/discovery/sources" && r.Method == "GET":
 		rows, err := repo.DB.QueryContext(ctx, `SELECT config FROM discovery_sources ORDER BY id`)
 		if err != nil {
