@@ -47,22 +47,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "event-bus-current-shadow:", err)
 		os.Exit(2)
 	}
-	backfillCtx, stopBackfill := context.WithCancel(ctx)
-	defer stopBackfill()
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-backfillCtx.Done():
-				return
-			case <-ticker.C:
-				if err := backfillStreamInsert(backfillCtx, pool); err != nil && !errors.Is(err, context.Canceled) {
-					log.Printf("event-bus-current-shadow: stream insert backfill: %v", err)
-				}
-			}
-		}
-	}()
 	var rdb *redis.Client
 	if strings.TrimSpace(*redisAddr) != "" {
 		if *redisDB < 0 || *redisDB > 15 {
@@ -106,16 +90,6 @@ func main() {
 		case <-ticker.C:
 		}
 	}
-}
-
-func backfillStreamInsert(ctx context.Context, pool *pgxpool.Pool) error {
-	_, err := pool.Exec(ctx, `INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,expired_fact_count,facts,document,updated_at)
-SELECT s.device_key,s.last_seen,0,0,'{}'::jsonb,s.document,now()
-FROM stream_discovery_device_state s
-JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active'
-WHERE s.document->>'current'='true'
-ON CONFLICT(device_key) DO NOTHING`)
-	return err
 }
 
 func aggregate(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, ttl time.Duration) error {

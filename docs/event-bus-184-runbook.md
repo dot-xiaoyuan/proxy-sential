@@ -394,3 +394,17 @@ current-shadow 聚合/补入间隔从 2s 调整为 1s（仍单事务串行）：
 - 无新增 deadlock。
 
 聚合事务仍负责 last_seen、facts、清理和历史标记。
+
+## 2026-10-31 16:10 回退独立补入 goroutine
+
+500ms insert-only 补入与 current-shadow 聚合事务在高并发下发生 deadlock：
+
+```text
+backfill stream-only current devices: deadlock detected (SQLSTATE 40P01)
+```
+
+已回退独立 goroutine，只保留 1 秒聚合事务内的补入。回退后：
+
+- 无新增 deadlock；
+- 瞬时缺失会随聚合追平，最终可回到 0；
+- 不再使用独立并发补入。
