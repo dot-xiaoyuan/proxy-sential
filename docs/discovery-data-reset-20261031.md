@@ -136,3 +136,11 @@ ClickHouse `normalized_events.timestamp` 是 Asia/Shanghai 时区，第一次按
 - 查询限制 2 小时、最多 50 个 MAC、结果缓存 60 秒。
 
 这些是镜像流量里实际出现的服务公告，不是主动端口扫描。
+
+## 修复发现采集范围过期
+
+现场 `discovery-capture-scope-layered-r7.json` 的 `valid_until` 为 2026-10-31T12:46:19Z，20:46 CST 后 discovery worker 持续报“capture scope is outside its validity interval”，采集停止约 39 分钟。
+
+已将有效性延长到 `2026-12-31T00:00:00Z` 并重启 discovery；current 最新时间恢复，页面继续增长。
+
+同时发现页增加“服务/端口”列，直接从镜像 DNS-SD/SSDP payload 提取服务公告；不会伪造 OS、交换机端口或主动扫描开放端口。
