@@ -6831,6 +6831,7 @@ components:
       properties:
         sensor_id: { type: string }
         mac: { type: string }
+        source_ip: { type: string }
         service_type: { type: string }
         service_name: { type: string }
         service_target: { type: string }

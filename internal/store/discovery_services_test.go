@@ -16,7 +16,7 @@ func TestDiscoveryServiceClueQueryScopesMACToSensorAndKeepsEvidence(t *testing.T
 	if len(requested) != 2 || !requested["sensor-a|00:11:22:33:44:55"] || !requested["sensor-b|00:11:22:33:44:66"] {
 		t.Fatalf("unexpected requested pairs: %#v", requested)
 	}
-	for _, want := range []string{"sensor_id IN ('sensor-a','sensor-b')", "'00:11:22:33:44:55'", "argMax(event_id,timestamp) AS evidence_id"} {
+	for _, want := range []string{"sensor_id IN ('sensor-a','sensor-b')", "'00:11:22:33:44:55'", "src_ip AS source_ip", "argMax(event_id,timestamp) AS evidence_id"} {
 		if !strings.Contains(query, want) {
 			t.Fatalf("query missing %q: %s", want, query)
 		}

@@ -6599,6 +6599,7 @@ export interface components {
         DiscoveryServiceClue: {
             sensor_id: string;
             mac: string;
+            source_ip?: string;
             service_type: string;
             service_name?: string;
             service_target?: string;

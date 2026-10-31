@@ -300,6 +300,7 @@ type EndpointRegistrationUpdate struct {
 type DiscoveryServiceClue struct {
 	SensorID      string `json:"sensor_id"`
 	MAC           string `json:"mac"`
+	SourceIP      string `json:"source_ip,omitempty"`
 	ServiceType   string `json:"service_type"`
 	ServiceName   string `json:"service_name,omitempty"`
 	ServiceTarget string `json:"service_target,omitempty"`

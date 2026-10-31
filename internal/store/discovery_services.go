@@ -80,6 +80,7 @@ func discoveryServiceCluesQuery(targets []string, since time.Time) (string, map[
 	}
 	sql := fmt.Sprintf(`SELECT sensor_id,
  lower(JSONExtractString(payload_json,'ethernet_source_mac')) AS mac,
+ src_ip AS source_ip,
  JSONExtractString(payload_json,'service_type') AS service_type,
  JSONExtractString(payload_json,'service_instance') AS service_name,
  JSONExtractString(payload_json,'service_target') AS service_target,
@@ -91,7 +92,7 @@ WHERE timestamp >= toDateTime64('%s',6,'UTC')
  AND sensor_id IN (%s)
  AND lower(JSONExtractString(payload_json,'ethernet_source_mac')) IN (%s)
  AND JSONHas(payload_json,'service_port')
-GROUP BY sensor_id,mac,service_type,service_name,service_target,port
+GROUP BY sensor_id,mac,source_ip,service_type,service_name,service_target,port
 ORDER BY last_seen DESC LIMIT 1000 FORMAT JSONEachRow`, since.UTC().Format("2006-01-02 15:04:05"), strings.Join(quotedSensors, ","), strings.Join(quotedMACs, ","))
 	return sql, requested
 }
