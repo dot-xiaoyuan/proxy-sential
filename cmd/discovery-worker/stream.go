@@ -84,6 +84,13 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 	defer db.Close()
 	db.SetMaxOpenConns(store.PostgresPoolLimit(2))
 	db.SetMaxIdleConns(store.PostgresPoolLimit(2))
+	runtimeDB, err := sql.Open("pgx", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"))
+	if err != nil {
+		return err
+	}
+	defer runtimeDB.Close()
+	runtimeDB.SetMaxOpenConns(2)
+	runtimeDB.SetMaxIdleConns(2)
 	ch, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN")})
 	if err != nil {
 		return err
@@ -143,7 +150,31 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 		}
 		return nil
 	}
+	runtimeRepo := discovery.Repository{DB: runtimeDB}
+	if _, err := runtimeDB.ExecContext(ctx, `UPDATE discovery_protocol_runtime SET received=0,parsed=0,rejected=0,admitted=0,last_seen=NULL,last_success=NULL,error='' WHERE sensor_id=$1 AND owner='discovery-worker'`, opts.Node); err != nil {
+		return fmt.Errorf("reset stream protocol runtime: %w", err)
+	}
+	if err := runtimeRepo.ConfigureProtocolRuntime(ctx, opts.Node, opts.Collection); err != nil {
+		return fmt.Errorf("configure stream protocol runtime: %w", err)
+	}
 	statsDir := filepath.Join(opts.Spool, "stream-capture-stats")
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := runtimeRepo.UpdateCaptureRuntime(ctx, statsDir, opts.Node); err != nil && ctx.Err() == nil {
+					log.Printf("stream capture runtime: %v", err)
+				}
+				if _, err := runtimeDB.ExecContext(ctx, `UPDATE discovery_protocol_runtime SET admitted=parsed,last_success=CASE WHEN parsed>0 THEN now() ELSE last_success END WHERE sensor_id=$1 AND owner='discovery-worker'`, opts.Node); err != nil && ctx.Err() == nil {
+					log.Printf("stream admitted runtime: %v", err)
+				}
+			}
+		}
+	}()
 	shadow, shadowErr := eventbus.NewShadowFromEnv(ctx, opts.Node, statsDir, discovery.StreamPartitionKey)
 	if shadowErr != nil {
 		log.Printf("event-bus shadow disabled: %v", shadowErr)

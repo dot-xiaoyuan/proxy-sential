@@ -256,3 +256,23 @@ discovery group TOTAL-LAG=0
   - 根盘从 91%（157 GB 可用）降到 77%（404 GB 可用）；
 - LLDP 已启用，但 8 秒 `tcpdump ether proto 0x88cc` 捕获 0 包，当前环境没有 LLDP 输入；
 - `discovery_service_facts_shadow` 的 DHCP/LLDP/IEEE1905 仍是旧协议影子（新 DHCP 走 R8/stream facts，页面不依赖该旧影子）。
+
+## 2026-10-31 15:27 协议运行时接回新发现代次
+
+发现 worker 现在在启动时：
+
+- 重置 `discovery_protocol_runtime` 中 owner=discovery-worker 的旧计数；
+- 按当前采集配置写入 owner/enabled；
+- 每秒从 `stream-capture-stats/capture.stats` 更新 received/parsed/rejected/last_seen；
+- 用当前解析计数刷新 admitted/last_success。
+
+当前启用：
+
+```text
+dns_sd  enabled
+ssdp    enabled
+lldp    enabled（现场无 LLDP 输入）
+ieee1905_client_association 尝试启用后 168 包全部 rejected，已回退 disabled
+```
+
+验证时 DNS-SD/SSDP 的 runtime 计数和 last_seen 已跟随新代次刷新。
