@@ -89,18 +89,12 @@ for (let iteration = 1; iteration <= iterations; iteration++) {
     let navigationMs = null
     let timedOut = false
     let error = ''
-    let networkIdle = true
     try {
       await page.goto(baseURL + route, { waitUntil: 'domcontentloaded', timeout })
       navigationMs = nowMs() - started
-      try {
-        await page.waitForLoadState('networkidle', { timeout: Math.min(timeout, 3000) })
-      } catch {
-        networkIdle = false
-      }
-      // Give route-level data queries a bounded settle window without waiting
-      // forever for background pollers.
-      await page.waitForTimeout(1000)
+      // Bounded render settle after the JS entry has loaded. Do not include
+      // background pollers in the page-load metric.
+      await page.waitForTimeout(1200)
     } catch (cause) {
       timedOut = true
       error = cause instanceof Error ? cause.message : String(cause)
@@ -108,7 +102,7 @@ for (let iteration = 1; iteration <= iterations; iteration++) {
     const totalMs = nowMs() - started
     const slowApis = apiSamples.filter((item) => item.ms !== null && item.ms >= 500).sort((a, b) => b.ms - a.ms)
     const failedApis = apiSamples.filter((item) => item.status >= 400)
-    samples.push({ iteration, route, timedOut, error, navigationMs, totalMs, networkIdle, apiCount: apiSamples.length, failedApis, slowApis, pageErrors, consoleErrors, requestFailures })
+    samples.push({ iteration, route, timedOut, error, navigationMs, totalMs, apiCount: apiSamples.length, failedApis, slowApis, pageErrors, consoleErrors, requestFailures })
     await page.close()
   }
 }
@@ -121,6 +115,7 @@ for (const sample of samples) {
 }
 const summary = [...byRoute.entries()].map(([route, items]) => {
   const totals = items.map((item) => item.totalMs)
+  const navigations = items.map((item) => item.navigationMs).filter((value) => value !== null)
   return {
     route,
     runs: items.length,
@@ -128,6 +123,8 @@ const summary = [...byRoute.entries()].map(([route, items]) => {
     p50Ms: percentile(totals, 50),
     p95Ms: percentile(totals, 95),
     maxMs: Math.max(...totals),
+    navP50Ms: percentile(navigations, 50),
+    navP95Ms: percentile(navigations, 95),
     failedApis: [...new Map(items.flatMap((item) => item.failedApis.map((api) => [`${api.status} ${api.url}`, api])).map(([key, api]) => [key, api])).values()],
     slowApis: [...new Map(items.flatMap((item) => item.slowApis.map((api) => [`${api.url}`, api])).map(([key, api]) => [key, api])).values()].slice(0, 5),
     consoleErrors: [...new Set(items.flatMap((item) => item.consoleErrors))].slice(0, 5),
@@ -152,9 +149,9 @@ const markdown = [
   `- timeout: ${timeout} ms`,
   `- generated: ${result.generatedAt}`,
   '',
-  '| route | p50 ms | p95 ms | max ms | timeouts | failed APIs | slow APIs |',
-  '|---|---:|---:|---:|---:|---|---|',
-  ...summary.map((row) => `| ${row.route} | ${row.p50Ms} | ${row.p95Ms} | ${row.maxMs} | ${row.timeouts} | ${row.failedApis.length} | ${row.slowApis.length} |`),
+  '| route | nav p50 ms | nav p95 ms | total p50 ms | total p95 ms | timeouts | failed APIs | slow APIs |',
+  '|---|---:|---:|---:|---:|---:|---|---|',
+  ...summary.map((row) => `| ${row.route} | ${row.navP50Ms} | ${row.navP95Ms} | ${row.p50Ms} | ${row.p95Ms} | ${row.timeouts} | ${row.failedApis.length} | ${row.slowApis.length} |`),
 ].join('\n') + '\n'
 await writeFile(output.replace(/\.json$/, '.md'), markdown)
 console.log(markdown)

@@ -18,3 +18,16 @@ Environment:
 The benchmark is read-only. It records navigation time, API status/latency,
 console/page errors, failed requests, and P50/P95/max per route. A route that
 times out makes the process exit non-zero.
+
+## Metrics
+
+- `nav p50/p95`: `DOMContentLoaded` latency; this is the browser navigation cost.
+- `total p50/p95`: navigation plus a bounded 1.2s data-settle window.
+  Background pollers are deliberately not included; otherwise long-poll pages
+  would look permanently slow.
+- `slow APIs`: API responses at or above 500ms.
+- `failed APIs`: HTTP status >= 400.
+- A navigation timeout marks the process non-zero.
+
+Do not compare this live benchmark with the mock-based `all-pages-audit`
+Playwright suite; this script measures the real 184 UI and API.
