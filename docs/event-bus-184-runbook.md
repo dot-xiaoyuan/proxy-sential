@@ -335,3 +335,11 @@ current-shadow 现在会：
 - 发现页 24h 总数 36,733，全部时间 51,572；
 - 全部时间 API 从约 4s 降到约 0.53s，24h API 约 0.9s；
 - 页面无 console/page error。
+
+## 2026-10-31 15:55 发现视图收敛
+
+- 历史 `current=false` 文档从 current 表清理后：51,695 个 current 文档；
+- 发现页 24h 总数 36,860，全部时间 51,695；
+- 24h / all API 均约 0.4s；
+- 19,490 个 `fact_count=0` 设备没有对应 `stream_discovery_facts`，保留流式文档字段，不再视为可补齐事实；
+- 6 个 stream current 设备补入竞态仍存在。

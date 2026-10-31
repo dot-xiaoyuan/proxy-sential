@@ -192,6 +192,24 @@ AND NOT EXISTS (
 )`); err != nil {
 		return fmt.Errorf("remove stale current devices: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow c
+SET facts=agg.facts,fact_count=agg.fact_count,expired_fact_count=agg.expired_count,updated_at=now()
+FROM (
+ SELECT f.device_key,
+  coalesce(jsonb_object_agg(f.fact_key,jsonb_build_object(
+   'event_id',f.event_key,'protocol',f.protocol,'ip',f.ip,'mac',f.mac,
+   'observed_at',f.observed_at,'valid_until',f.valid_until,
+   'withdrawn',f.withdrawn,'content_hash',f.semantic_hash,'version',f.revision))
+   FILTER (WHERE f.withdrawn=FALSE AND (f.valid_until IS NULL OR f.valid_until>now())),'{}'::jsonb) AS facts,
+  count(*) FILTER (WHERE f.withdrawn=FALSE AND (f.valid_until IS NULL OR f.valid_until>now()))::int AS fact_count,
+  count(*) FILTER (WHERE f.withdrawn=TRUE OR (f.valid_until IS NOT NULL AND f.valid_until<=now()))::int AS expired_count
+ FROM stream_discovery_facts f
+ JOIN stream_source_cutovers sc ON sc.epoch=f.epoch AND sc.state='active'
+ GROUP BY f.device_key
+) agg
+WHERE c.device_key=agg.device_key AND c.fact_count=0`); err != nil {
+		return fmt.Errorf("backfill stream-only facts: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,expired_fact_count,facts,document,updated_at)
 SELECT s.device_key,s.last_seen,0,0,'{}'::jsonb,s.document,now()
 FROM stream_discovery_device_state s
