@@ -291,7 +291,7 @@ journal 侧还有重复成本：[journal.go](../internal/streamlog/journal.go#L3
 - [NCU 身份派生定向处理记录](ncu-identity-derived-20261029.md)
 - 分支 `codex/ncu-archive-group-20261029` 的 `docs/ncu-archive-group-design.md`（当前工作区尚未合并）
 - [认证关系处理边界](ncu-authentication-projection-design.md)
-- [存储效率与重复历史审查](storage-efficiency-audit-20261024.md)
+- [当前工作与下一步](current-work-20261031.md)
 - [设备中心存储与查询设计](device-center-storage-query-design.md)
 - [新鲜事件存查的性能研究](stream-ingest-performance-research-20261028.md)
 

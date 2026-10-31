@@ -12,50 +12,49 @@ Proxy Sentinel 是下一代防代理/共享上网检测系统，目标是替代�
 - 每一次判定都必须可解释、可回放、可灰度。
 - 保留未来自研 Rust/AF_XDP 数据面的迁移空间。
 
-## 推荐路线
-
-第一阶段使用 Suricata 作为采集和协议解析后端，输出 EVE JSON，再由 Proxy Sentinel 适配为标准事件。
-
-设备识别增强阶段在 Suricata 旁边并行运行 Zeek，优先消费 `dhcp.log` 和
-`software.log` 生成 `device` 标准事件，用 DHCP hostname、vendor class、
-requested options、MAC 和 Zeek Software Framework 等局域网侧信号修正
-User-Agent 不可信的问题。
-
-后续如果 Suricata 的性能、延迟或定制化能力不足，再并行开发 Rust + AF_XDP sensor。风险引擎只依赖标准事件，因此采集后端可以替换。
+## 当前架构
 
 ```text
-Suricata / Zeek / AF_XDP / DPDK / pcap
+镜像流量 / Suricata / Zeek
         |
         v
-Normalized Events
+标准事件与发现证据
         |
         v
-Evidence Aggregator
+eventbus（Redpanda）
         |
         v
-Risk Engine
+ClickHouse 事件 / PostgreSQL 当前态 / Redis 热态
         |
         v
-Decision / Policy
-        |
-        v
-Notify / Slowdown / Offline
+发现页、设备中心、风险与策略
 ```
+
+发现页当前只采信镜像证据；精确 OS、交换机物理端口、全量服务端口和 SNMP/NDM 事件需要额外数据源，不能由被动流量稳定得到。
 
 ## 当前内容
 
+- [文档索引](docs/README.md)
+- [当前工作与下一步（2026-10-31）](docs/current-work-20261031.md)
+- [发现数据重置与采集窗口](docs/discovery-data-reset-20261031.md)
+- [高性能流式存储与投影方案](docs/high-performance-streaming-architecture-20261030.md)
 - [架构设计](docs/architecture.md)
-- [开发时间线](docs/roadmap.md)
-- [技术选型评估](docs/stack-evaluation.md)
 - [标准事件模型](docs/event-model.md)
-- [证据与风险评分](docs/risk-engine.md)
-- [Suricata MVP 方案](docs/suricata-mvp.md)
-- [前端架构设计](docs/frontend-architecture.md)
-- [前端任务拆分](docs/frontend-tasks.md)
-- [生产数据架构](docs/production-data-architecture.md)
-- [192.168.0.30 Suricata 镜像流量测试](docs/testing-192.168.0.30-suricata.md)
-- [项目协作 Skill](skills/anti-proxy-v2/SKILL.md)
-- [前端协作 Skill](skills/proxy-sentinel-frontend/SKILL.md)
+- [网络设备发现](docs/network-discovery.md)
+- [被动哑终端识别边界](docs/passive-dumb-terminal-identification.md)
+- [前端架构](docs/frontend-architecture.md)
+- [现场运维](docs/university-production-operations.md)
+
+## 当前阶段
+
+当前现场只使用镜像流量做被动发现，不依赖 SNMP/NDM 凭据。已接入：
+
+- ARP、DHCP、DNS-SD、SSDP、LLDP 被动发现；
+- eventbus → ClickHouse/PG 影子事实 → current 表 → 发现页；
+- OUI 厂商、主机名类型/OS 线索、TTL/DHCP 被动信号、DNS-SD/SSDP 服务公告；
+- 发现页终端台账、服务端口列、设备详情和证据历史。
+
+不以主动扫描或伪造字段补齐 OS、交换机端口、全量服务端口。后续任务见当前工作文档。
 
 ## 开发原则
 
@@ -65,14 +64,9 @@ Notify / Slowdown / Offline
 - 热路径只做必要解析和投递，业务判断不进入抓包热路径。
 - 采集后端可以多选并存，不把系统绑定在单一框架上。
 
-## 第一阶段验收
+## 当前验收边界
 
-8 周内完成可运行 MVP：
-
-- 能消费 Suricata EVE JSON。
-- 能统一输出 flow、dns、tls、http、quic 等标准事件。
-- 能用 Zeek DHCP 和 software 日志补充 device 标准事件。
-- 能按 IP 聚合证据。
-- 能输出风险等级、分数、证据列表。
-- 能以影子模式接入真实镜像流量。
-- 能通过标注数据评估误报和漏报。
+- 发现数据只来自镜像流量；
+- 精确 OS 版本、交换机物理端口、全量开放端口和 SNMP/NDM 事件不在当前被动能力内；
+- 发现页结论必须区分证据、线索和确定值；
+- 具体验收项和命令见[当前工作](docs/current-work-20261031.md)。

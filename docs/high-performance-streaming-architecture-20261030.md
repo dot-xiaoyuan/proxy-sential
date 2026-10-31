@@ -464,4 +464,4 @@ Phase 1 已实现发现事件的 Kafka 影子发布：`internal/eventbus`、发�
 - [Apache Flink: Stateful Stream Processing](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/stateful-stream-processing/)
 - [存储积压只读分析](storage-backlog-readonly-analysis-20261030.md)
 - [设备中心存储与查询设计](device-center-storage-query-design.md)
-- [存储效率与重复历史审查](storage-efficiency-audit-20261024.md)
+- [当前工作与下一步](current-work-20261031.md)
