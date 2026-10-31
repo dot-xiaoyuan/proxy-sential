@@ -358,3 +358,11 @@ current-shadow 现在会：
 即使 current 表清理存在竞态，eventbus 查询也显式排除 `document='{}'` 且 `fact_count=0` 的行，避免空设备再次出现在发现页。
 
 当前 24h total 约 24,678，页面无空名称/空地址记录。
+
+## 2026-10-31 16:02 current-shadow 补入频率
+
+将 current-shadow 聚合/补入间隔从 5s 调整为 2s（单事务串行执行，不新增并发 goroutine）：
+
+- 避免之前 2s 独立补入 goroutine 与主聚合事务产生 PostgreSQL 死锁；
+- 现场缺失 stream current 设备从 16+ 降到约 4；
+- 无新增 deadlock。
