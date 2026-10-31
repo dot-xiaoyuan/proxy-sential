@@ -417,3 +417,10 @@ current-shadow 新增清理：
 - 若该设备仍有活跃 stream current 状态则保留；
 - 本次删除 93 条旧代次 current 文档；
 - current 表 48,791 → 48,698；no_facts 55 → 47。
+
+## 2026-10-31 16:15 清理孤儿无事实文档
+
+- 删除 current 表中 `fact_count=0` 且没有活跃 stream current 状态的文档；
+- 本次删除 41 条；
+- current 表 48,988，no_facts 55 → 12；
+- 页面当前设备只保留有活跃流式来源或事实来源的文档。
