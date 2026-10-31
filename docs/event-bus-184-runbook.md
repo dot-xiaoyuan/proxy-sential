@@ -319,3 +319,19 @@ ieee1905_client_association 尝试启用后 168 包全部 rejected，已回退 d
 - 查询增加 `(c.document->>'current' IS DISTINCT FROM 'false')`；
 - 发现页总数：24h 38,021 → 28,652；全部时间 102,342 → 43,496；
 - 这些历史状态仍保留在 stream state，不删除唯一原文。
+
+## 2026-10-31 15:52 当前表清理历史文档
+
+current-shadow 现在会：
+
+- 把活跃 stream 中 `current=true` 的设备在 current 表标记为 current；
+- 删除 current 表中 `current=false` 且没有活跃 stream current 状态的历史文档；
+- 保留 stream state 历史，不删除唯一原文。
+
+结果：
+
+- current 表 102,771 → 51,542；
+- `current=false` 文档 59,189 → 0；
+- 发现页 24h 总数 36,733，全部时间 51,572；
+- 全部时间 API 从约 4s 降到约 0.53s，24h API 约 0.9s；
+- 页面无 console/page error。

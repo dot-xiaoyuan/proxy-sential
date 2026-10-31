@@ -170,6 +170,28 @@ FROM (
 WHERE c.device_key=s.device_key AND s.last_seen>c.last_seen`); err != nil {
 		return fmt.Errorf("refresh current last seen: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow c
+SET document=c.document||jsonb_build_object('current',true),
+    last_seen=GREATEST(c.last_seen,s.last_seen),updated_at=now()
+FROM (
+ SELECT s.device_key,max(s.last_seen) AS last_seen
+ FROM stream_discovery_device_state s
+ JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active'
+ WHERE s.document->>'current'='true'
+ GROUP BY s.device_key
+) s
+WHERE c.device_key=s.device_key`); err != nil {
+		return fmt.Errorf("mark stream-current devices: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM discovery_device_current_shadow c
+WHERE c.document->>'current'='false'
+AND NOT EXISTS (
+ SELECT 1 FROM stream_discovery_device_state s
+ JOIN stream_source_cutovers cc ON cc.epoch=s.epoch AND cc.state='active'
+ WHERE s.device_key=c.device_key AND s.document->>'current'='true'
+)`); err != nil {
+		return fmt.Errorf("remove stale current devices: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,expired_fact_count,facts,document,updated_at)
 SELECT s.device_key,s.last_seen,0,0,'{}'::jsonb,s.document,now()
 FROM stream_discovery_device_state s
