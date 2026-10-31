@@ -131,7 +131,7 @@ func aggregate(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, ttl t
 	_, err = tx.Exec(ctx, `
 INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,expired_fact_count,facts,updated_at)
 SELECT f.device_key,
-       max(f.observed_at),
+       GREATEST(max(f.observed_at),COALESCE((SELECT max(s.last_seen) FROM stream_discovery_device_state s JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active' WHERE s.device_key=f.device_key),max(f.observed_at))),
        count(*) FILTER (WHERE f.withdrawn = FALSE AND (f.valid_until IS NULL OR f.valid_until > now()))::int,
        count(*) FILTER (WHERE f.withdrawn = TRUE OR (f.valid_until IS NOT NULL AND f.valid_until <= now()))::int,
        coalesce(jsonb_object_agg(f.fact_key, jsonb_build_object(
@@ -157,6 +157,18 @@ ON CONFLICT (device_key) DO UPDATE SET
     updated_at = now()`, devices)
 	if err != nil {
 		return fmt.Errorf("aggregate device current shadow: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow c
+SET last_seen=s.last_seen, updated_at=now()
+FROM (
+ SELECT s.device_key,max(s.last_seen) AS last_seen
+ FROM stream_discovery_device_state s
+ JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active'
+ WHERE s.last_seen>now()-interval '10 minutes'
+ GROUP BY s.device_key
+) s
+WHERE c.device_key=s.device_key AND s.last_seen>c.last_seen`); err != nil {
+		return fmt.Errorf("refresh current last seen: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow_state SET last_updated_at = $1 WHERE id = TRUE`, maxUpdated); err != nil {
 		return fmt.Errorf("advance current shadow state: %w", err)

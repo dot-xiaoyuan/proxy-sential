@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"net/http"
+	"os"
 	"proxy-sentinel/internal/discovery"
 	"time"
 )
@@ -49,12 +50,14 @@ func (s *Server) handleDiscoveryCoverage(w http.ResponseWriter, r *http.Request,
 		writeError(w, 500, "coverage_read", "读取协议采集状态失败")
 		return
 	}
-	freshness, err := repo.DiscoveryFreshness(ctx)
-	if err != nil {
-		writeError(w, 500, "coverage_read", "读取发现处理进度失败")
-		return
+	freshness := coverageFreshness(ctx, repo)
+	response := map[string]any{"enabled": true, "scope": discovery.PrivateDiscoveryCIDRs, "items": items, "freshness": freshness, "enrichment": enrichmentCoverage(ctx, repo)}
+	// The event-bus read path does not use the legacy pipeline counters; avoid
+	// blocking the coverage response on that historical query.
+	if os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") != "true" {
+		response["pipeline"] = discoveryCoveragePipeline(ctx, repo)
 	}
-	writeJSON(w, 200, map[string]any{"enabled": true, "scope": discovery.PrivateDiscoveryCIDRs, "items": items, "freshness": freshness, "enrichment": enrichmentCoverage(ctx, repo), "pipeline": discoveryCoveragePipeline(ctx, repo)})
+	writeJSON(w, 200, response)
 }
 
 func enrichmentCoverage(ctx context.Context, repo discovery.Repository) map[string]any {
@@ -73,4 +76,24 @@ func discoveryCoveragePipeline(ctx context.Context, repo discovery.Repository) a
 		return map[string]any{"status": "unavailable", "error": "discovery_pipeline_read_failed"}
 	}
 	return status
+}
+
+func coverageFreshness(ctx context.Context, repo discovery.Repository) map[string]any {
+	if os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+		var last time.Time
+		if err := repo.DB.QueryRowContext(ctx, `SELECT max(last_seen) FROM discovery_device_current_shadow`).Scan(&last); err != nil || last.IsZero() {
+			return map[string]any{"status": "unavailable", "source": "eventbus"}
+		}
+		lag := time.Since(last).Seconds()
+		status := "ready"
+		if lag > 300 {
+			status = "delayed"
+		}
+		return map[string]any{"status": status, "source": "eventbus", "lag_seconds": lag, "processed_at": last}
+	}
+	freshness, err := repo.DiscoveryFreshness(ctx)
+	if err != nil {
+		return map[string]any{"status": "unavailable", "source": "stream"}
+	}
+	return freshness
 }
