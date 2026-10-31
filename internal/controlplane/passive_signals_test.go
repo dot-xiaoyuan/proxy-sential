@@ -24,7 +24,7 @@ func TestCachedPassiveSignalsMergeMirrorEvidence(t *testing.T) {
 		t.Fatalf("want one merged device, got %+v", items)
 	}
 	item := items[0]
-	if item.SensorID != "sensor-a" || item.TTL != 64 || item.DHCPHostname != "DESKTOP-8" || item.OSFamily != "Windows" || item.OSEvidence == "" || item.DHCPObservedAt == "" || item.DHCPClientIDHWType != "1" || !item.DHCPOption93Present {
+	if item.SensorID != "sensor-a" || item.TTL != 64 || item.DHCPHostname != "DESKTOP-8" || item.OSFamily != "Windows" || item.OSEvidence == "" || item.DHCPObservedAt == "" || item.DHCPClientIDHWType != "1" || !item.DHCPOption93Present || item.TTLEvidence == nil || item.TTLEvidence.RawSHA256 == "" || item.DHCPFieldEvidence["hostname"].RawSHA256 == "" {
 		t.Fatalf("lost passive evidence: %+v", item)
 	}
 	file, err := os.OpenFile(dhcpPath, os.O_APPEND|os.O_WRONLY, 0600)

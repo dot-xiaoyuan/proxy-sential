@@ -29,6 +29,9 @@ func TestDurableDHCPCluesKeepBindingAndEventProvenance(t *testing.T) {
 	if len(items) != 2 || items[0].SensorID != "sensor-a" || items[0].IP != "192.0.2.3" || items[0].DHCPEvidenceID != "event-ack" || items[0].OSFamily != "Windows" || items[0].DHCPClientIDHWType != "1" || !items[0].DHCPOption93Present || items[0].DHCPHistorical || items[1].IP != "" || items[1].OSFamily != "Android" || !items[1].DHCPHistorical || items[1].OSConfidence != "weak" {
 		t.Fatalf("durable DHCP clues lost scope, evidence or binding semantics: %+v", items)
 	}
+	if items[0].DHCPFieldEvidence["hostname"].EventID != "event-ack" || items[0].DHCPFieldEvidence["dhcp_option93_present"].EventID != "event-ack" || items[1].DHCPFieldEvidence["dhcp_vendor_class"].EventID != "event-request" || !items[1].DHCPFieldEvidence["dhcp_vendor_class"].Historical {
+		t.Fatalf("DHCP field evidence lost its source event: %+v", items)
+	}
 	byKey := map[string]*PassiveSignal{}
 	for i := range items {
 		mergePassiveSignal(byKey, &items[i])
@@ -41,6 +44,30 @@ func TestDurableDHCPCluesKeepBindingAndEventProvenance(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDHCPFieldsKeepOwnEvidenceAcrossOutOfOrderMessages(t *testing.T) {
+	byKey := map[string]*PassiveSignal{}
+	newer := &PassiveSignal{SensorID: "sensor-a", MAC: "aa:bb:cc:dd:ee:ff", DHCPVLAN: "8", DHCPOptions: "1,3,6", DHCPObservedAt: "2026-11-01T00:02:00Z", DHCPEvidenceID: "event-request", DHCPHistorical: true, DHCPFieldEvidence: map[string]PassiveEvidenceRef{"dhcp_requested_options": {EventID: "event-request", ObservedAt: "2026-11-01T00:02:00Z", Historical: true}}}
+	older := &PassiveSignal{SensorID: "sensor-a", MAC: "aa:bb:cc:dd:ee:ff", DHCPVLAN: "8", DHCPHostname: "DESKTOP-3", DHCPObservedAt: "2026-11-01T00:01:00Z", DHCPEvidenceID: "event-ack", DHCPFieldEvidence: map[string]PassiveEvidenceRef{"hostname": {EventID: "event-ack", ObservedAt: "2026-11-01T00:01:00Z"}}}
+	mergePassiveSignal(byKey, newer)
+	mergePassiveSignal(byKey, older)
+	got := byKey["sensor-a|mac:aa:bb:cc:dd:ee:ff|8"]
+	if got == nil || got.DHCPHostname != "DESKTOP-3" || got.DHCPOptions != "1,3,6" || got.DHCPEvidenceID != "event-request" || got.DHCPFieldEvidence["hostname"].EventID != "event-ack" || got.DHCPFieldEvidence["dhcp_requested_options"].EventID != "event-request" {
+		t.Fatalf("DHCP fields inherited the wrong event after out-of-order merge: %+v", got)
+	}
+}
+
+func TestDHCPFieldEvidenceUsesSubsecondOrder(t *testing.T) {
+	byKey := map[string]*PassiveSignal{}
+	newer := &PassiveSignal{SensorID: "sensor-a", MAC: "aa:bb:cc:dd:ee:ff", DHCPVLAN: "8", DHCPVendorClass: "MSFT 5.0", DHCPObservedAt: "2026-11-01T00:02:00.900Z", DHCPEvidenceID: "newer", DHCPFieldEvidence: map[string]PassiveEvidenceRef{"dhcp_vendor_class": {EventID: "newer", ObservedAt: "2026-11-01T00:02:00.900Z"}}}
+	older := &PassiveSignal{SensorID: "sensor-a", MAC: "aa:bb:cc:dd:ee:ff", DHCPVLAN: "8", DHCPVendorClass: "old", DHCPObservedAt: "2026-11-01T00:02:00.100Z", DHCPEvidenceID: "older", DHCPFieldEvidence: map[string]PassiveEvidenceRef{"dhcp_vendor_class": {EventID: "older", ObservedAt: "2026-11-01T00:02:00.100Z"}}}
+	mergePassiveSignal(byKey, newer)
+	mergePassiveSignal(byKey, older)
+	got := byKey["sensor-a|mac:aa:bb:cc:dd:ee:ff|8"]
+	if got == nil || got.DHCPVendorClass != "MSFT 5.0" || got.DHCPEvidenceID != "newer" || got.DHCPFieldEvidence["dhcp_vendor_class"].EventID != "newer" {
+		t.Fatalf("subsecond DHCP evidence order changed: %+v", got)
 	}
 }
 

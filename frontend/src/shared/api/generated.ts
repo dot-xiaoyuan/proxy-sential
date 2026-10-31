@@ -6658,13 +6658,24 @@ export interface components {
             dhcp_observed_at?: string;
             dhcp_evidence_id?: string;
             dhcp_historical?: boolean;
+            dhcp_field_evidence?: {
+                [key: string]: components["schemas"]["DiscoveryPassiveEvidenceRef"];
+            };
             /** Format: date-time */
             ttl_observed_at?: string;
+            ttl_evidence?: components["schemas"]["DiscoveryPassiveEvidenceRef"];
             os_family?: string;
             os_confidence?: string;
             os_evidence?: string;
             os_conflict?: boolean;
             client_clues?: components["schemas"]["DiscoveryPassiveClientClue"][];
+        };
+        DiscoveryPassiveEvidenceRef: {
+            event_id?: string;
+            raw_sha256?: string;
+            /** Format: date-time */
+            observed_at: string;
+            historical?: boolean;
         };
         DiscoveryPassiveClientClue: {
             /** @enum {string} */

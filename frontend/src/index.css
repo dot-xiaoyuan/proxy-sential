@@ -5008,6 +5008,7 @@ pre.wrap-code {
 .discovery-client-clues { display: grid; gap: 8px; margin-bottom: 14px; }
 .discovery-client-clues article { display: grid; gap: 3px; min-width: 0; padding: 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
 .discovery-client-clues article span { overflow-wrap: anywhere; }
+.discovery-client-clues article .ant-typography { overflow-wrap: anywhere; }
 .discovery-client-clues article strong { font-size: 12px; white-space: nowrap; }
 .discovery-terminal-identity {
   display: flex;

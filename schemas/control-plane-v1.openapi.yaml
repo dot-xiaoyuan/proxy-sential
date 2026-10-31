@@ -6892,7 +6892,11 @@ components:
         dhcp_observed_at: { type: string, format: date-time }
         dhcp_evidence_id: { type: string }
         dhcp_historical: { type: boolean }
+        dhcp_field_evidence:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/DiscoveryPassiveEvidenceRef' }
         ttl_observed_at: { type: string, format: date-time }
+        ttl_evidence: { $ref: '#/components/schemas/DiscoveryPassiveEvidenceRef' }
         os_family: { type: string }
         os_confidence: { type: string }
         os_evidence: { type: string }
@@ -6900,6 +6904,14 @@ components:
         client_clues:
           type: array
           items: { $ref: '#/components/schemas/DiscoveryPassiveClientClue' }
+    DiscoveryPassiveEvidenceRef:
+      type: object
+      required: [observed_at]
+      properties:
+        event_id: { type: string }
+        raw_sha256: { type: string }
+        observed_at: { type: string, format: date-time }
+        historical: { type: boolean }
     DiscoveryPassiveClientClue:
       type: object
       required: [kind, value, observed_at]

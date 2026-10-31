@@ -33,7 +33,20 @@ test('historical DHCP clues remain visibly historical across ledger layouts', as
     await page.screenshot({ path: testInfo.outputPath(`historical-dhcp-${viewport.width}.png`), fullPage: true })
     await row.getByRole('button', { name: '查看证据' }).click()
     await expect(page.getByText('历史 REQUEST 线索；同源当前租约仍有效，需结合观测时间核对')).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath(`historical-dhcp-detail-${viewport.width}.png`), fullPage: true })
+    const evidence = page.locator('.discovery-evidence-modal')
+    await expect(evidence.getByText('DHCP 字段证据（各字段保留对应原始报文引用）')).toBeVisible()
+    await expect(evidence.getByText(/事件 fixture-dhcp-lease/)).toBeVisible()
+    await expect(evidence.getByText(/事件 fixture-dhcp-request/).first()).toBeVisible()
+    const detailLayout = await evidence.evaluate(element => ({
+      width: element.getBoundingClientRect().width,
+      documentOverflow: document.documentElement.scrollWidth > innerWidth + 2,
+      evidenceOverflow: [...element.querySelectorAll('.discovery-client-clues article')].some(article => article.scrollWidth > article.clientWidth + 2),
+    }))
+    expect(detailLayout.width).toBeLessThanOrEqual(viewport.width)
+    expect(detailLayout.documentOverflow).toBe(false)
+    expect(detailLayout.evidenceOverflow).toBe(false)
+    await evidence.screenshot({ path: testInfo.outputPath(`historical-dhcp-detail-${viewport.width}.png`) })
+    await evidence.locator('.discovery-client-clues').first().screenshot({ path: testInfo.outputPath(`historical-dhcp-field-evidence-${viewport.width}.png`) })
   }
   expect(errors).toEqual([])
 })

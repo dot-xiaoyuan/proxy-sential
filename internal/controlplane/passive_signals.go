@@ -3,6 +3,8 @@ package controlplane
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,28 +23,40 @@ import (
 // mirror traffic only. OS hints come from TTL stack behavior; DHCP fields come
 // from the Zeek DHCP message log.
 type PassiveSignal struct {
-	SensorID            string              `json:"sensor_id,omitempty"`
-	IP                  string              `json:"ip,omitempty"`
-	MAC                 string              `json:"mac,omitempty"`
-	TTL                 int                 `json:"ttl,omitempty"`
-	OSHint              string              `json:"os_hint,omitempty"`
-	DeviceHint          string              `json:"device_hint,omitempty"`
-	DHCPHostname        string              `json:"dhcp_hostname,omitempty"`
-	DHCPVendorClass     string              `json:"dhcp_vendor_class,omitempty"`
-	DHCPOptions         string              `json:"dhcp_options,omitempty"`
-	DHCPClientIDHWType  string              `json:"dhcp_client_id_hwtype,omitempty"`
-	DHCPOption93Present bool                `json:"dhcp_option93_present,omitempty"`
-	DHCPVLAN            string              `json:"dhcp_vlan,omitempty"`
-	TTLVLAN             string              `json:"ttl_vlan,omitempty"`
-	DHCPObservedAt      string              `json:"dhcp_observed_at,omitempty"`
-	DHCPEvidenceID      string              `json:"dhcp_evidence_id,omitempty"`
-	DHCPHistorical      bool                `json:"dhcp_historical,omitempty"`
-	TTLObservedAt       string              `json:"ttl_observed_at,omitempty"`
-	OSFamily            string              `json:"os_family,omitempty"`
-	OSConfidence        string              `json:"os_confidence,omitempty"`
-	OSEvidence          string              `json:"os_evidence,omitempty"`
-	OSConflict          bool                `json:"os_conflict,omitempty"`
-	ClientClues         []PassiveClientClue `json:"client_clues,omitempty"`
+	SensorID            string                        `json:"sensor_id,omitempty"`
+	IP                  string                        `json:"ip,omitempty"`
+	MAC                 string                        `json:"mac,omitempty"`
+	TTL                 int                           `json:"ttl,omitempty"`
+	OSHint              string                        `json:"os_hint,omitempty"`
+	DeviceHint          string                        `json:"device_hint,omitempty"`
+	DHCPHostname        string                        `json:"dhcp_hostname,omitempty"`
+	DHCPVendorClass     string                        `json:"dhcp_vendor_class,omitempty"`
+	DHCPOptions         string                        `json:"dhcp_options,omitempty"`
+	DHCPClientIDHWType  string                        `json:"dhcp_client_id_hwtype,omitempty"`
+	DHCPOption93Present bool                          `json:"dhcp_option93_present,omitempty"`
+	DHCPVLAN            string                        `json:"dhcp_vlan,omitempty"`
+	TTLVLAN             string                        `json:"ttl_vlan,omitempty"`
+	DHCPObservedAt      string                        `json:"dhcp_observed_at,omitempty"`
+	DHCPEvidenceID      string                        `json:"dhcp_evidence_id,omitempty"`
+	DHCPHistorical      bool                          `json:"dhcp_historical,omitempty"`
+	DHCPFieldEvidence   map[string]PassiveEvidenceRef `json:"dhcp_field_evidence,omitempty"`
+	TTLObservedAt       string                        `json:"ttl_observed_at,omitempty"`
+	TTLEvidence         *PassiveEvidenceRef           `json:"ttl_evidence,omitempty"`
+	OSFamily            string                        `json:"os_family,omitempty"`
+	OSConfidence        string                        `json:"os_confidence,omitempty"`
+	OSEvidence          string                        `json:"os_evidence,omitempty"`
+	OSConflict          bool                          `json:"os_conflict,omitempty"`
+	ClientClues         []PassiveClientClue           `json:"client_clues,omitempty"`
+}
+
+// PassiveEvidenceRef identifies the original observation behind a displayed
+// field. Durable facts use their normalized event ID; an unprojected log-tail
+// glimpse uses the SHA256 of its retained source line.
+type PassiveEvidenceRef struct {
+	EventID    string `json:"event_id,omitempty"`
+	RawSHA256  string `json:"raw_sha256,omitempty"`
+	ObservedAt string `json:"observed_at"`
+	Historical bool   `json:"historical,omitempty"`
 }
 
 type passiveSignalFile struct {
@@ -115,22 +129,48 @@ func mergePassiveSignal(byKey map[string]*PassiveSignal, signal *PassiveSignal) 
 	}
 	if signal.TTL > 0 {
 		current.TTL, current.OSHint, current.TTLObservedAt = signal.TTL, signal.OSHint, signal.TTLObservedAt
+		current.TTLEvidence = signal.TTLEvidence
 	}
-	newerDHCP := current.DHCPObservedAt == "" || signal.DHCPObservedAt >= current.DHCPObservedAt
-	if signal.DHCPHostname != "" && newerDHCP {
+	newerDHCP := newerPassiveObservation(signal.DHCPObservedAt, current.DHCPObservedAt)
+	newerField := func(field string) bool {
+		if prior, ok := current.DHCPFieldEvidence[field]; ok {
+			ref, known := signal.DHCPFieldEvidence[field]
+			return known && newerPassiveObservation(ref.ObservedAt, prior.ObservedAt)
+		}
+		if len(current.DHCPFieldEvidence) > 0 {
+			return true
+		}
+		return newerDHCP
+	}
+	copyFieldEvidence := func(field string) {
+		if ref, ok := signal.DHCPFieldEvidence[field]; ok {
+			if current.DHCPFieldEvidence == nil {
+				current.DHCPFieldEvidence = make(map[string]PassiveEvidenceRef)
+			}
+			current.DHCPFieldEvidence[field] = ref
+		} else {
+			delete(current.DHCPFieldEvidence, field)
+		}
+	}
+	if signal.DHCPHostname != "" && newerField("hostname") {
 		current.DHCPHostname = signal.DHCPHostname
+		copyFieldEvidence("hostname")
 	}
-	if signal.DHCPVendorClass != "" && newerDHCP {
+	if signal.DHCPVendorClass != "" && newerField("dhcp_vendor_class") {
 		current.DHCPVendorClass = signal.DHCPVendorClass
+		copyFieldEvidence("dhcp_vendor_class")
 	}
-	if signal.DHCPOptions != "" && newerDHCP {
+	if signal.DHCPOptions != "" && newerField("dhcp_requested_options") {
 		current.DHCPOptions = signal.DHCPOptions
+		copyFieldEvidence("dhcp_requested_options")
 	}
-	if signal.DHCPClientIDHWType != "" && newerDHCP {
+	if signal.DHCPClientIDHWType != "" && newerField("dhcp_client_id_hwtype") {
 		current.DHCPClientIDHWType = signal.DHCPClientIDHWType
+		copyFieldEvidence("dhcp_client_id_hwtype")
 	}
-	if signal.DHCPOption93Present {
+	if signal.DHCPOption93Present && (!current.DHCPOption93Present || newerField("dhcp_option93_present")) {
 		current.DHCPOption93Present = true
+		copyFieldEvidence("dhcp_option93_present")
 	}
 	if signal.DHCPVLAN != "" {
 		current.DHCPVLAN = signal.DHCPVLAN
@@ -268,6 +308,7 @@ func mergeCachedPassiveSignal(byKey map[string]*PassiveSignal, signal PassiveSig
 		signal.DHCPHostname, signal.DHCPVendorClass, signal.DHCPOptions = "", "", ""
 		signal.DHCPClientIDHWType, signal.DHCPObservedAt, signal.DHCPEvidenceID = "", "", ""
 		signal.DHCPOption93Present = false
+		signal.DHCPFieldEvidence = nil
 		signal.OSFamily, signal.OSConfidence, signal.OSEvidence, signal.OSConflict = "", "", "", false
 		signal.DeviceHint = ""
 	}
@@ -339,7 +380,9 @@ func readTTLSignals(path string, add func(*PassiveSignal)) {
 		if mac == "" {
 			mac = event.Subject.MAC
 		}
-		add(&PassiveSignal{SensorID: event.Observer.SensorID, IP: event.Subject.IP, MAC: mac, TTL: event.Payload.TTL, OSHint: ttlOSHint(event.Payload.TTL), TTLVLAN: event.Subject.VLAN, TTLObservedAt: passiveTimestamp(event.TS)})
+		observed := passiveTimestamp(event.TS)
+		ref := rawPassiveEvidence(line, observed)
+		add(&PassiveSignal{SensorID: event.Observer.SensorID, IP: event.Subject.IP, MAC: mac, TTL: event.Payload.TTL, OSHint: ttlOSHint(event.Payload.TTL), TTLVLAN: event.Subject.VLAN, TTLObservedAt: observed, TTLEvidence: &ref})
 	}
 }
 
@@ -375,9 +418,29 @@ func readDHCPSignals(path, sensor string, add func(*PassiveSignal)) {
 		if event.ClientIDHWType > 0 {
 			signal.DHCPClientIDHWType = fmt.Sprint(event.ClientIDHWType)
 		}
+		ref := rawPassiveEvidence(line, signal.DHCPObservedAt)
+		signal.DHCPFieldEvidence = map[string]PassiveEvidenceRef{}
+		for field, value := range map[string]string{
+			"hostname":               signal.DHCPHostname,
+			"dhcp_vendor_class":      signal.DHCPVendorClass,
+			"dhcp_requested_options": signal.DHCPOptions,
+			"dhcp_client_id_hwtype":  signal.DHCPClientIDHWType,
+		} {
+			if value != "" {
+				signal.DHCPFieldEvidence[field] = ref
+			}
+		}
+		if signal.DHCPOption93Present {
+			signal.DHCPFieldEvidence["dhcp_option93_present"] = ref
+		}
 		enrichDHCPVendor(signal)
 		add(signal)
 	}
+}
+
+func rawPassiveEvidence(line []byte, observedAt string) PassiveEvidenceRef {
+	sum := sha256.Sum256(line)
+	return PassiveEvidenceRef{RawSHA256: hex.EncodeToString(sum[:]), ObservedAt: observedAt}
 }
 
 func enrichDHCPVendor(signal *PassiveSignal) {
@@ -399,7 +462,19 @@ func passiveTimestamp(ts float64) string {
 	if ts <= 0 {
 		return ""
 	}
-	return time.Unix(0, int64(ts*float64(time.Second))).UTC().Format(time.RFC3339)
+	return time.Unix(0, int64(ts*float64(time.Second))).UTC().Format(time.RFC3339Nano)
+}
+
+func newerPassiveObservation(next, prior string) bool {
+	if prior == "" {
+		return true
+	}
+	nextTime, nextErr := time.Parse(time.RFC3339Nano, next)
+	priorTime, priorErr := time.Parse(time.RFC3339Nano, prior)
+	if nextErr == nil && priorErr == nil {
+		return !nextTime.Before(priorTime)
+	}
+	return next >= prior
 }
 
 func ttlOSHint(ttl int) string {

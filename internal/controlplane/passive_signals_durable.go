@@ -101,9 +101,18 @@ func readDurableDHCPSignals(ctx context.Context, db *sql.DB, macs []string) ([]P
 		signal.DHCPOptions = fields["dhcp_requested_options"]
 		signal.DHCPClientIDHWType = fields["dhcp_client_id_hwtype"]
 		signal.DHCPOption93Present = fields["dhcp_option93_present"] == "true"
-		signal.DHCPObservedAt = observed.UTC().Format(time.RFC3339)
+		signal.DHCPObservedAt = observed.UTC().Format(time.RFC3339Nano)
 		signal.DHCPEvidenceID = eventID
 		signal.DHCPHistorical = historical
+		ref := PassiveEvidenceRef{EventID: eventID, ObservedAt: signal.DHCPObservedAt, Historical: historical}
+		for _, field := range []string{"hostname", "dhcp_vendor_class", "dhcp_requested_options", "dhcp_client_id_hwtype", "dhcp_option93_present"} {
+			if value := fields[field]; value != "" && value != "false" {
+				if signal.DHCPFieldEvidence == nil {
+					signal.DHCPFieldEvidence = make(map[string]PassiveEvidenceRef)
+				}
+				signal.DHCPFieldEvidence[field] = ref
+			}
+		}
 		enrichDHCPVendor(&signal)
 		if historical && signal.OSFamily != "" {
 			signal.OSConfidence = "weak"
