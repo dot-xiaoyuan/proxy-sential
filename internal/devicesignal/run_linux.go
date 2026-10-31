@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/sharedaccess"
 	"syscall"
@@ -44,6 +45,13 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if opts.HandshakeOnly && (opts.RouterProtocolsOnly || opts.SharedSignalsOnly) {
 		return fmt.Errorf("handshake filter cannot be combined with router or shared filters: one socket takes one filter")
+	}
+	priorityCIDRs, err := parseHandshakePriorityCIDRs(os.Getenv("PROXY_SENTINEL_HANDSHAKE_PRIORITY_CIDRS"))
+	if err != nil {
+		return err
+	}
+	if len(priorityCIDRs) > 0 && !opts.HandshakeOnly {
+		return fmt.Errorf("handshake priority CIDRs require handshake-only capture")
 	}
 	iface, err := net.InterfaceByName(opts.Interface)
 	if err != nil {
@@ -102,7 +110,7 @@ func Run(ctx context.Context, opts Options) error {
 				summary.coverage.Overflow = 0
 			}
 			coverage.Omitted = max(0, len(state.handshakes)-handshakeBucketLimit())
-			if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, state.handshakes); err != nil {
+			if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, priorityCIDRs, at, state.handshakes); err != nil {
 				return err
 			}
 			if err := writeHandshakeCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, coverage); err != nil {

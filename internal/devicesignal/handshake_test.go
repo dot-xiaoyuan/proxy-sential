@@ -106,7 +106,7 @@ func TestWriteHandshakeBucketEmitsIngestableDeviceEvent(t *testing.T) {
 	mac := [6]byte{0x02, 0, 0, 0, 0, 0x34}
 	state.addHandshake(buildTCPFrame(mac, [4]byte{10, 0, 0, 34}, 443, clientHello("api.example.net", "h2")))
 	state.addHandshake(buildTCPFrame(mac, [4]byte{10, 0, 0, 34}, 80, []byte("GET / HTTP/1.1\r\nHost: r.local\r\nUser-Agent: ua-one\r\n\r\n")))
-	if err := writeHandshakeBucket(path, "ncu-184-router-pilot", "bond0", "instance-1", nil, time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC), state.handshakes); err != nil {
+	if err := writeHandshakeBucket(path, "ncu-184-router-pilot", "bond0", "instance-1", nil, nil, time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC), state.handshakes); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -140,7 +140,7 @@ func TestSelectHandshakeKeysRotatesQuietClientsWithinLimit(t *testing.T) {
 	seen := map[handshakeKey]bool{}
 	base := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
 	for bucket := 0; bucket < 20; bucket++ {
-		kept := selectHandshakeKeys(summaries, 4, base.Add(time.Duration(bucket)*30*time.Second))
+		kept := selectHandshakeKeys(summaries, 4, base.Add(time.Duration(bucket)*30*time.Second), nil)
 		if len(kept) != 4 {
 			t.Fatalf("bucket %d kept %d, want 4", bucket, len(kept))
 		}
@@ -160,6 +160,41 @@ func TestSelectHandshakeKeysRotatesQuietClientsWithinLimit(t *testing.T) {
 	}
 	if len(seen) < 15 {
 		t.Fatalf("quiet clients starved across buckets: only %d of 20 observed", len(seen))
+	}
+}
+
+func TestSelectHandshakeKeysReservesOutsidePriorityCIDR(t *testing.T) {
+	summaries := map[handshakeKey]*handshakeSummary{}
+	for i := 1; i <= 32; i++ {
+		local := handshakeKey{IP: netip.AddrFrom4([4]byte{10, 202, 0, byte(i)})}
+		other := handshakeKey{IP: netip.AddrFrom4([4]byte{222, 204, 0, byte(i)})}
+		summaries[local] = &handshakeSummary{count: 1}
+		summaries[other] = &handshakeSummary{count: 100}
+	}
+	priority := []netip.Prefix{netip.MustParsePrefix("10.202.0.0/16")}
+	kept := selectHandshakeKeys(summaries, 20, time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC), priority)
+	local, other := 0, 0
+	for _, key := range kept {
+		if priority[0].Contains(key.IP) {
+			local++
+		} else {
+			other++
+		}
+	}
+	if len(kept) != 20 || local != 15 || other != 5 {
+		t.Fatalf("selected=%d priority=%d outside=%d, want 20/15/5", len(kept), local, other)
+	}
+}
+
+func TestParseHandshakePriorityCIDRs(t *testing.T) {
+	got, err := parseHandshakePriorityCIDRs(" 10.202.0.0/16,10.248.0.0/16 ")
+	if err != nil || len(got) != 2 || !got[0].Contains(netip.MustParseAddr("10.202.1.2")) {
+		t.Fatalf("valid priority CIDRs: got=%v err=%v", got, err)
+	}
+	for _, value := range []string{"10.202.1.0/16", "0.0.0.0/0", "not-a-cidr", "10.202.0.0/16,", "10.202.0.0/16,10.202.0.0/16"} {
+		if _, err := parseHandshakePriorityCIDRs(value); err == nil {
+			t.Fatalf("invalid priority CIDRs %q accepted", value)
+		}
 	}
 }
 

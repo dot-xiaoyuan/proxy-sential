@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -275,7 +276,7 @@ func sortedHandshakeValues(set map[string]bool) []string {
 
 // writeHandshakeBucket writes one device-signal event per device, in the same JSONL format
 // as the TTL and router signals, so ingest reads it through the device-signals source.
-func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope *normalized.CaptureScope, bucket time.Time, summaries map[handshakeKey]*handshakeSummary) error {
+func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope *normalized.CaptureScope, priorityCIDRs []netip.Prefix, bucket time.Time, summaries map[handshakeKey]*handshakeSummary) error {
 	if len(summaries) == 0 {
 		return nil
 	}
@@ -284,7 +285,7 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 		return err
 	}
 	defer file.Close()
-	keys := selectHandshakeKeys(summaries, handshakeBucketLimit(), bucket)
+	keys := selectHandshakeKeys(summaries, handshakeBucketLimit(), bucket, priorityCIDRs)
 	encoder := json.NewEncoder(file)
 	kept := map[handshakeKey]bool{}
 	omitted := map[netip.Addr]int{}
@@ -353,16 +354,74 @@ func handshakeBucketLimit() int {
 	return value
 }
 
+// parseHandshakePriorityCIDRs accepts only explicit canonical networks. The
+// preference changes output selection, never packet attribution or scope.
+func parseHandshakePriorityCIDRs(value string) ([]netip.Prefix, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	if len(parts) > 16 {
+		return nil, fmt.Errorf("handshake priority CIDRs exceed 16 entries")
+	}
+	result := make([]netip.Prefix, 0, len(parts))
+	seen := map[netip.Prefix]bool{}
+	for _, part := range parts {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(part))
+		if err != nil || !prefix.IsValid() || prefix.Bits() == 0 || prefix != prefix.Masked() || seen[prefix] {
+			return nil, fmt.Errorf("invalid or repeated handshake priority CIDR %q", part)
+		}
+		seen[prefix] = true
+		result = append(result, prefix)
+	}
+	return result, nil
+}
+
 // Keep half the budget for high-activity clients and rotate the rest through a
 // stable IP/MAC order. A busy client cannot occupy every slot indefinitely;
 // the fixed per-bucket bound still caps archive and projection work.
-func selectHandshakeKeys(summaries map[handshakeKey]*handshakeSummary, limit int, bucket time.Time) []handshakeKey {
+func selectHandshakeKeys(summaries map[handshakeKey]*handshakeSummary, limit int, bucket time.Time, priorityCIDRs []netip.Prefix) []handshakeKey {
 	if limit <= 0 {
 		return nil
 	}
 	keys := make([]handshakeKey, 0, len(summaries))
 	for key := range summaries {
 		keys = append(keys, key)
+	}
+	if len(priorityCIDRs) > 0 && len(keys) > limit {
+		priority, other := make([]handshakeKey, 0, len(keys)), make([]handshakeKey, 0, len(keys))
+		for _, key := range keys {
+			matched := false
+			for _, prefix := range priorityCIDRs {
+				if prefix.Contains(key.IP.Unmap()) {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				priority = append(priority, key)
+			} else {
+				other = append(other, key)
+			}
+		}
+		outsideReserve := min(len(other), max(1, limit/4))
+		priorityLimit := min(len(priority), limit-outsideReserve)
+		keys = append(selectHandshakePool(priority, summaries, priorityLimit, bucket), selectHandshakePool(other, summaries, limit-priorityLimit, bucket)...)
+	} else {
+		keys = selectHandshakePool(keys, summaries, limit, bucket)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].IP != keys[j].IP {
+			return keys[i].IP.Less(keys[j].IP)
+		}
+		return bytes.Compare(keys[i].MAC[:], keys[j].MAC[:]) < 0
+	})
+	return keys
+}
+
+func selectHandshakePool(keys []handshakeKey, summaries map[handshakeKey]*handshakeSummary, limit int, bucket time.Time) []handshakeKey {
+	if limit <= 0 {
+		return nil
 	}
 	sort.Slice(keys, func(i, j int) bool {
 		a, b := summaries[keys[i]].count, summaries[keys[j]].count
@@ -393,11 +452,5 @@ func selectHandshakeKeys(summaries map[handshakeKey]*handshakeSummary, limit int
 		}
 		keys = selected
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].IP != keys[j].IP {
-			return keys[i].IP.Less(keys[j].IP)
-		}
-		return bytes.Compare(keys[i].MAC[:], keys[j].MAC[:]) < 0
-	})
 	return keys
 }
