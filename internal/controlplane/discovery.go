@@ -7,10 +7,51 @@ import (
 	"net/http"
 	"os"
 	"proxy-sentinel/internal/discovery"
+	"proxy-sentinel/internal/fingerprint"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+func snmpCandidateReason(ip, manufacturer, fallback string) string {
+	if strings.HasSuffix(ip, ".254") {
+		return "网段网关候选"
+	}
+	vendor := strings.ToLower(manufacturer)
+	for _, name := range []string{"h3c", "huawei", "ruijie", "cisco", "juniper", "aruba", "hp", "dell", "zyxel", "tp-link"} {
+		if strings.Contains(vendor, name) {
+			return "网络设备厂商候选"
+		}
+	}
+	return fallback
+}
+
+func snmpCandidateScore(item map[string]any) int {
+	reason, _ := item["reason"].(string)
+	score := 0
+	if reason == "网段网关候选" {
+		score += 100
+	}
+	if reason == "网络设备厂商候选" {
+		score += 30
+	}
+	if observations, ok := item["observations"].(int); ok {
+		score += observations * 3
+	}
+	name, _ := item["name"].(string)
+	if name == "" {
+		score += 20
+	}
+	lower := strings.ToLower(name)
+	for _, client := range []string{"vivo", "oppo", "redmi", "honor", "huawei", "nova", "xiaomi", "iphone", "ipad", "laptop", "desktop", "iqoo", "realme"} {
+		if strings.Contains(lower, client) {
+			score -= 40
+			break
+		}
+	}
+	return score
+}
 
 func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path string) {
 	if strings.HasPrefix(path, "/discovery/scan-profiles") {
@@ -152,12 +193,19 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 				writeError(w, 500, "discovery_read", "读取 SNMP 候选失败")
 				return
 			}
+			if strings.TrimSpace(manufacturer) == "" {
+				manufacturer = fingerprint.Default().Identify(mac).Vendor
+			}
+			reason = snmpCandidateReason(ip, manufacturer, reason)
 			items = append(items, map[string]any{"ip": ip, "name": name, "mac": mac, "manufacturer": manufacturer, "vlan": vlan, "domain": domain, "sensor_id": sensor, "site": site, "last_seen": lastSeen, "observations": observations, "reason": reason})
 		}
 		if rows.Err() != nil {
 			writeError(w, 500, "discovery_read", "读取 SNMP 候选失败")
 			return
 		}
+		sort.SliceStable(items, func(i, j int) bool {
+			return snmpCandidateScore(items[i]) > snmpCandidateScore(items[j])
+		})
 		writeJSON(w, 200, map[string]any{"items": items})
 	case path == "/discovery/sources" && r.Method == "GET":
 		rows, err := repo.DB.QueryContext(ctx, `SELECT config FROM discovery_sources ORDER BY id`)
