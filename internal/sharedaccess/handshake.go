@@ -11,6 +11,9 @@ var androidModel = regexp.MustCompile(`(?i);[ ]*([^;()]{1,64})[ ]+Build/`)
 var modelHasLetter = regexp.MustCompile(`[A-Z]`)
 var modelHasDigit = regexp.MustCompile(`[0-9]`)
 var appleModel = regexp.MustCompile(`(iPhone[0-9]+,[0-9]+|iPad[0-9]+,[0-9]+)`)
+var ja4TLS = regexp.MustCompile(`^t(13|12|11|10|s3|s2|00)[di][0-9]{4}[A-Za-z0-9]{2}_[0-9a-f]{12}_[0-9a-f]{12}$`)
+
+func ValidJA4TLS(value string) bool { return ja4TLS.MatchString(value) }
 
 // HandshakeFeatures never counts a browser, generic OS or TLS stack as a device.
 func HandshakeFeatures(family, value string) map[string]string {
@@ -21,6 +24,8 @@ func HandshakeFeatures(family, value string) map[string]string {
 		}
 		return out
 	}
+	// JA4 is displayed as a separate weak clue. Counting JA3 and JA4 from one
+	// ClientHello as two TLS stacks would create false shared-access evidence.
 	if family != "user_agent" {
 		return out
 	}

@@ -24,6 +24,7 @@ import (
 type handshakeObservation struct {
 	FeaturesOmitted bool
 	JA3             string
+	JA4             string
 	EventID         string
 	ObservedAt      time.Time
 	Truncated       bool
@@ -80,6 +81,9 @@ func parseHandshakeFrame(frame []byte) (handshakeObservation, bool) {
 			return handshakeObservation{}, false
 		}
 		observation.JA3 = clientHelloJA3(payload)
+		if observation.JA3 != "" {
+			observation.JA4 = clientHelloJA4Validated(payload)
+		}
 		observation.Truncated = observation.JA3 == ""
 		observation.SNI, observation.ALPN = sni, alpn
 	case 80:
@@ -224,7 +228,8 @@ func (s *handshakeSummary) add(o handshakeObservation) {
 		s.sampleCounts = map[string]int{}
 	}
 	if !o.Truncated && !o.FeaturesOmitted && o.EventID != "" && !o.ObservedAt.IsZero() {
-		for family, value := range map[string]string{"user_agent": o.UserAgent, "ja3": o.JA3} {
+		for _, feature := range []struct{ family, value string }{{"user_agent", o.UserAgent}, {"ja3", o.JA3}, {"ja4", o.JA4}} {
+			family, value := feature.family, feature.value
 			if value == "" {
 				continue
 			}

@@ -121,6 +121,16 @@ func TestHardwareFeaturesDoNotCountBrowserFormattingAsDevices(t *testing.T) {
 	}
 }
 
+func TestJA4WeakClueDoesNotDoubleCountOneTLSStack(t *testing.T) {
+	value := "t13d1516h2_8daaf6152771_e5627efa2ab1"
+	if !ValidJA4TLS(value) || ValidJA4TLS("not-a-ja4") {
+		t.Fatal("JA4 clue validation failed")
+	}
+	if features := HandshakeFeatures("ja4", value); len(features) != 0 {
+		t.Fatalf("JA4 counted as another TLS client stack: %v", features)
+	}
+}
+
 func TestRouterSharingDecisionRecordOnly(t *testing.T) {
 	now := time.Now().UTC()
 	cfg := Config{FreshnessSeconds: 180}

@@ -94,6 +94,10 @@ func extractDiscoveryHandshakeClues(rows []sharedObservationEvent, ip string, fr
 					continue
 				}
 				value = strings.ToLower(value)
+			case "ja4":
+				if !sharedaccess.ValidJA4TLS(value) {
+					continue
+				}
 			default:
 				continue
 			}

@@ -6827,7 +6827,7 @@ components:
       type: object
       required: [kind, value, observed_at, evidence_id]
       properties:
-        kind: { type: string, enum: [user_agent, ja3] }
+        kind: { type: string, enum: [user_agent, ja3, ja4] }
         value: { type: string }
         observed_at: { type: string, format: date-time }
         evidence_id: { type: string }

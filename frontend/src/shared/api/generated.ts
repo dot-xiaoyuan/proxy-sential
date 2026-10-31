@@ -6601,7 +6601,7 @@ export interface components {
         };
         DiscoveryHandshakeClue: {
             /** @enum {string} */
-            kind: "user_agent" | "ja3";
+            kind: "user_agent" | "ja3" | "ja4";
             value: string;
             /** Format: date-time */
             observed_at: string;

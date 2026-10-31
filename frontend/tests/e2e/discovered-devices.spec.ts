@@ -41,6 +41,18 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await expect(page.getByRole('dialog')).toContainText('DHCP 选项 93')
     await expect(page.getByRole('dialog')).toContainText('fixture-http-ua')
     await expect(page.getByRole('dialog')).toContainText('fixture-tls-ja4')
+    await expect(page.getByRole('dialog')).toContainText('fixture-handshake-ja4')
+    await expect(page.getByRole('dialog')).toContainText('TLS JA4')
+    await page.getByRole('dialog').getByText('TLS JA4',{exact:true}).scrollIntoViewIfNeeded()
+    const modalProbe=await page.evaluate(()=>{
+      const modal=document.querySelector('[role="dialog"]')!
+      const value=[...document.querySelectorAll('.discovery-client-clues article')].find(e=>e.textContent?.includes('TLS JA4'))!.querySelector('span')!
+      return {modalRight:modal.getBoundingClientRect().right,modalWidth:modal.getBoundingClientRect().width,bodyWidth:document.documentElement.scrollWidth,valueWrap:getComputedStyle(value).overflowWrap}
+    })
+    expect(modalProbe.modalRight).toBeLessThanOrEqual(viewport.width)
+    expect(modalProbe.bodyWidth).toBeLessThanOrEqual(viewport.width+2)
+    expect(modalProbe.valueWrap).toBe('anywhere')
+    await writeFile(info.outputPath('modal-dom.json'),JSON.stringify(modalProbe,null,2))
     await expect(page.getByRole('dialog')).toContainText('fixture-flow-443')
     await expect(page.getByRole('dialog')).toContainText('fixture-service-announcement')
     await expect(page.getByRole('dialog')).toContainText('不代表设备端口开放')
