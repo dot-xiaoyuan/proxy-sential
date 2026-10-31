@@ -116,3 +116,12 @@ ClickHouse `normalized_events.timestamp` 是 Asia/Shanghai 时区，第一次按
 ## SNMP 候选排序
 
 候选按 `.254` 网关、网络设备厂商、出现次数、空名称加权；主机名像手机/电脑的候选降权。现场首选已变为 `10.202.255.254`，其后是各网段 `.254` 候选。
+
+## 启用被动 SNMP
+
+已把现场发现配置中的 `snmp` 打开并重启 discovery worker：
+
+- SNMP 运行时捕获约 831、解析/处理约 80；
+- 发现页“已开启协议”会显示 SNMP；
+- 但当前没有 SNMP stream facts/current 设备记录，说明只看到 SNMP 帧，尚未形成可投影终端；
+- OS/端口仍需 SNMP 主动轮询或 MIB 数据，不能仅凭当前被动帧补全。
