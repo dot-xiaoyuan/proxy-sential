@@ -198,7 +198,11 @@ preflight() {
   local postgres_port="${POSTGRES_HOST_PORT:-25432}" clickhouse_port="${CLICKHOUSE_HTTP_HOST_PORT:-28123}" control_port="${control_addr##*:}"
   if ss -ltnH "sport = :$postgres_port" | grep -q . && ! docker ps --format '{{.Names}}' | grep -qx proxy-sentinel-postgres; then die "PostgreSQL port $postgres_port is occupied"; fi
   if ss -ltnH "sport = :$clickhouse_port" | grep -q . && ! docker ps --format '{{.Names}}' | grep -qx proxy-sentinel-clickhouse; then die "ClickHouse port $clickhouse_port is occupied"; fi
-  if ss -ltnH "sport = :$control_port" | grep -q . && ! systemctl is-active --quiet proxy-sentinel-control-plane.service; then die "control-plane port $control_port is occupied"; fi
+  if ss -ltnH "sport = :$control_port" | grep -q . &&
+     ! systemctl is-active --quiet proxy-sentinel-control-plane.service &&
+     ! systemctl is-active --quiet proxy-sentinel-control-plane-eventbus.service; then
+    die "control-plane port $control_port is occupied"
+  fi
 }
 
 has_compose() {
