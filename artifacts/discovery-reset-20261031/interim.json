@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-10-31T09:39:06Z",
+  "current_shadow": 12333,
+  "oldest_current": "2026-10-31T09:28:16.014229Z",
+  "newest_current": "2026-10-31T09:39:02.932489Z",
+  "stream_facts": 14843,
+  "protocols": {
+    "arp": 9182,
+    "dhcp": 1844,
+    "dns_sd": 491,
+    "ssdp": 154,
+    "ieee1905_client_association": 2
+  },
+  "capabilities": {
+    "casting": 201,
+    "media_rendering": 57,
+    "routing": 37,
+    "printing": 3,
+    "file_sharing": 1,
+    "scanning": 1
+  },
+  "kafka_discovery_lag": 0
+}
