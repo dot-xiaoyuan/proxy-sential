@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -97,11 +98,22 @@ func (s *Server) handleDiscoveryCoverage(w http.ResponseWriter, r *http.Request,
 		writeError(w, 500, "coverage_read", "读取逐消息采集源失败")
 		return
 	}
+	var handshakeEpoch string
+	if os.Getenv("PROXY_SENTINEL_DISCOVERY_HANDSHAKE_SCOPE_MAP") != "" {
+		err = repo.DB.QueryRowContext(ctx, `SELECT epoch FROM stream_shared_source_cutovers WHERE sensor_id=$1 AND source_owner='handshake-sidecar' AND state='active'`, s.sensorID).Scan(&handshakeEpoch)
+		if err != nil && err != sql.ErrNoRows {
+			writeError(w, 500, "coverage_read", "读取握手侧车采集源失败")
+			return
+		}
+	}
 	for _, item := range items {
 		if item["protocol"] == "dhcp" {
 			if epoch := messageEpochs[fmt.Sprint(item["sensor_id"])]; epoch != "" {
 				item["message_source_epoch"] = epoch
 			}
+		}
+		if handshakeEpoch != "" && fmt.Sprint(item["sensor_id"]) == s.sensorID && (item["protocol"] == "http" || item["protocol"] == "tls") {
+			item["handshake_source_epoch"] = handshakeEpoch
 		}
 	}
 	freshness := coverageFreshness(ctx, repo)
