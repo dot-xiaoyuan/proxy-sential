@@ -30,5 +30,7 @@ echo "=== control plane ==="
 curl -sS -o /dev/null -w 'readyz=%{http_code}\n' --max-time 8 http://127.0.0.1:18080/readyz || true
 echo "=== counts ==="
 "${PSQL[@]}" "SELECT 'current_devices',count(*) FROM discovery_device_current_shadow UNION ALL SELECT 'current_facts',count(*) FROM discovery_service_facts_shadow UNION ALL SELECT 'identity_sessions',count(*) FROM identity_session_shadow UNION ALL SELECT 'identity_open',count(*) FROM identity_session_shadow WHERE ended_at IS NULL UNION ALL SELECT 'identity_endpoints',count(*) FROM identity_endpoint_current_shadow" 2>&1 || true
+echo "=== discovery completeness ==="
+"${PSQL[@]}" "SELECT 'current',count(*) FROM discovery_device_current_shadow UNION ALL SELECT 'current_false',count(*) FROM discovery_device_current_shadow WHERE document->>'current'='false' UNION ALL SELECT 'empty',count(*) FROM discovery_device_current_shadow WHERE fact_count=0 AND document='{}'::jsonb UNION ALL SELECT 'missing_stream',count(*) FROM stream_discovery_device_state s WHERE s.document->>'current'='true' AND NOT EXISTS(SELECT 1 FROM discovery_device_current_shadow c WHERE c.device_key=s.device_key) UNION ALL SELECT 'no_facts',count(*) FROM discovery_device_current_shadow WHERE fact_count=0" 2>&1 || true
 echo "=== recognition coverage ==="
 "${PSQL[@]}" "SELECT state->>'status',state->>'available_since',state->>'history_gap_seconds',jsonb_array_length(state->'items') FROM read_model_runtime_state WHERE name='recognition-fresh-coverage'" 2>&1 || true
