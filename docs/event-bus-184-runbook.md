@@ -276,3 +276,12 @@ ieee1905_client_association 尝试启用后 168 包全部 rejected，已回退 d
 ```
 
 验证时 DNS-SD/SSDP 的 runtime 计数和 last_seen 已跟随新代次刷新。
+
+## 2026-10-31 15:30 协议逐步开启记录
+
+- discovery worker 已接回 `discovery_protocol_runtime`，DNS-SD/SSDP/ARP 计数和 last_seen 每秒刷新；
+- 已启用：dns_sd、ssdp、lldp、arp；
+- LLDP 现场 0 包；
+- 尝试启用 IEEE1905 client association：168 包全部 rejected，已回退 disabled；
+- DHCP 由 R8 流式链路采集，current-shadow 每 5 秒把 DHCP 的 last_seen/last_success 从活跃 stream facts 写入 runtime；
+- ARP 启用后 Kafka 曾短暂 lag 492，随后回到 0。

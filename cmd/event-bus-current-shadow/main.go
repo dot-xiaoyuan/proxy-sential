@@ -170,6 +170,17 @@ FROM (
 WHERE c.device_key=s.device_key AND s.last_seen>c.last_seen`); err != nil {
 		return fmt.Errorf("refresh current last seen: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `UPDATE discovery_protocol_runtime r
+SET enabled=true,last_seen=s.last_seen,last_success=s.last_seen,updated_at=now()
+FROM (
+ SELECT max(f.observed_at) AS last_seen
+ FROM stream_discovery_facts f
+ JOIN stream_source_cutovers c ON c.epoch=f.epoch AND c.state='active'
+ WHERE f.protocol='dhcp'
+) s
+WHERE r.protocol='dhcp' AND s.last_seen IS NOT NULL`); err != nil {
+		return fmt.Errorf("refresh DHCP protocol runtime: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow_state SET last_updated_at = $1 WHERE id = TRUE`, maxUpdated); err != nil {
 		return fmt.Errorf("advance current shadow state: %w", err)
 	}
