@@ -144,3 +144,18 @@ ClickHouse `normalized_events.timestamp` 是 Asia/Shanghai 时区，第一次按
 已将有效性延长到 `2026-12-31T00:00:00Z` 并重启 discovery；current 最新时间恢复，页面继续增长。
 
 同时发现页增加“服务/端口”列，直接从镜像 DNS-SD/SSDP payload 提取服务公告；不会伪造 OS、交换机端口或主动扫描开放端口。
+
+## 被动 TTL/DHCP 信号
+
+新增 `/discovery/passive-signals`：
+
+- TTL 从 ttl.jsonl 尾部读取，推断 Linux/Windows/网络设备类；
+- DHCP message log 读取 vendor_class、requested_options、host_name；
+- 页面 OS 列优先使用 TTL/DHCP 线索，详情显示 DHCP 厂商类、选项、TTL；
+- 不发起任何主动探测。
+
+现场已能把 `Ruijie_INC_Acc_...` 识别为网络设备线索；gateway TTL 255 归为网络设备类。
+
+## 采集范围/坏段处理
+
+发现 capture scope 在 20:46 过期，已延长到 12-31；重启后仍有历史坏段 `6f4d...` 因 fact scope 不一致阻塞，已把该段原始文件移入 `discovery-quarantine-20261031`（保留原始，不删除），采集恢复。SNMP 被动开关暂时关闭，避免混合 scope。

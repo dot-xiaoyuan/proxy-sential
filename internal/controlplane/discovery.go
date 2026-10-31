@@ -154,6 +154,8 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			return
 		}
 		writeJSON(w, 200, page)
+	case path == "/discovery/passive-signals" && r.Method == "GET":
+		s.handleDiscoveryPassiveSignals(w, r)
 	case path == "/discovery/service-clues" && r.Method == "GET":
 		reader, ok := s.reader.(store.DiscoveryServiceClueReader)
 		if !ok {
