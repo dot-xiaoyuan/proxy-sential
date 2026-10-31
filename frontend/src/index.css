@@ -4995,6 +4995,34 @@ pre.wrap-code {
 .discovery-detail-facts div { min-width: 0; }
 .discovery-detail-facts dt { color: #64748b; font-size: 12px; }
 .discovery-detail-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.discovery-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.discovery-metric-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+.discovery-metric-card .anticon {
+  grid-row: 1 / span 2;
+  color: #2563eb;
+  font-size: 22px;
+}
+.discovery-metric-card span { color: #64748b; font-size: 12px; }
+.discovery-metric-card strong { font-size: 22px; line-height: 1.1; }
+@media (max-width: 720px) {
+  .discovery-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .discovery-protocol-summary {
   display: flex;
   flex-wrap: wrap;

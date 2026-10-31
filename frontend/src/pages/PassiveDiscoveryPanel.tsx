@@ -17,7 +17,7 @@ import { Button,
   Typography,
 } from 'antd'
 import { useSearchParams } from 'react-router-dom'
-import { ReloadOutlined } from '@ant-design/icons'
+import { ApiOutlined, CheckCircleOutlined, ClusterOutlined, ReloadOutlined, TagsOutlined } from '@ant-design/icons'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
@@ -72,6 +72,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const items=devices.data?.items??[]
   const fresh=devices.data?.freshness
   const dumbFilter=params.get('discovery_capability')==='dumb'
+  const enabledProtocolCount=(coverage.data?.items??[]).filter(p=>p.enabled).length
+  const identifiedTypeCount=(statistics.data?.items??[]).filter(item=>item.state!=='candidate').reduce((sum,item)=>sum+item.count,0)
   const identity=(item:Device)=><><DeviceAddress ip={item.current_addresses?item.current_addresses[0]:item.primary_ip} name={item.name} mac={item.mac} addresses={item.current_addresses??item.addresses}/>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后观测地址 · {item.last_observed_ip}</Typography.Text>}</>
   const kind=(item:Device)=><Typography.Text strong={item.classification_status!=='expired'}>{types[item.device_type||item.last_device_type||'']??(dumbTerminal(item)?`哑终端线索 · ${dumbTerminal(item)}`:'待分类')}</Typography.Text>
   const vendor=(item:Device)=><Typography.Text type="secondary">{[item.manufacturer,item.model_name].filter(Boolean).join(' · ')}</Typography.Text>
@@ -110,6 +112,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     <section className="surface center-list-toolbar">
       <Typography.Paragraph type="secondary">{view==='iot'?'展示有明确类型依据的设备档案。':'展示发现设备与关联线索；证据有效不代表设备在线。'}名称搜索：少于三个字符按前缀，三个及以上按包含。</Typography.Paragraph>
       {coverage.data&&<div className="discovery-protocol-summary"><strong>已开启协议</strong>{(coverage.data.items??[]).filter(p=>p.enabled).map(p=><Tag key={p.protocol}>{protocols[p.protocol]??p.protocol}</Tag>)}<span className="discovery-protocol-counts">哑终端线索 {dumbTotal.data?.total!=null?dumbTotal.data.total:'…'} · 本页 {Object.entries(items.reduce((acc,item)=>{const label=dumbTerminal(item);if(label)acc[label]=(acc[label]??0)+1;return acc},{} as Record<string,number>)).map(([label,count])=>`${label} ${count}`).join(' · ')||'暂无'}</span><Button size="small" type="link" onClick={()=>change('capability',dumbFilter?'':'dumb')}>{dumbFilter?'查看全部设备':'查看哑终端线索'}</Button></div>}
+      <div className="discovery-metric-grid" aria-label="发现设备摘要"><article className="discovery-metric-card"><ClusterOutlined /><span>发现设备</span><strong>{devices.data?.total ?? '…'}</strong></article><article className="discovery-metric-card"><TagsOutlined /><span>哑终端线索</span><strong>{dumbTotal.data?.total ?? '…'}</strong></article><article className="discovery-metric-card"><ApiOutlined /><span>已开启协议</span><strong>{coverage.data?enabledProtocolCount:'…'}</strong></article><article className="discovery-metric-card"><CheckCircleOutlined /><span>已识别类型</span><strong>{statistics.data?identifiedTypeCount:'…'}</strong></article></div>
       {catalogue.isError&&<AppErrorAlert title="读取设备类型失败" message={catalogue.error.message} />}
       {fresh&&fresh.status!=='ready'&&<Alert type={fresh.status==='failed'?'error':'warning'} showIcon title={fresh.status==='failed'?'设备数据处理失败':fresh.status==='delayed'?'设备数据更新延迟':'设备数据处理中'} description={fresh.oldest_pending_at?`最早待处理时间：${observedTimeTitle(fresh.oldest_pending_at)}`:undefined}/>}
       {statistics.isError&&<AppErrorAlert title="读取设备统计失败" message={statistics.error.message} />}
