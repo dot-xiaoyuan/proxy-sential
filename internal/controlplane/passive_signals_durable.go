@@ -13,8 +13,9 @@ import (
 // normalized event. Direct MAC evidence is used; requested IPs do not create
 // an address binding. A closed DHCP source can still own a valid current lease:
 // expose its facts only while that device state remains current and no active
-// source has a newer valid fact for the same sensor, MAC and VLAN. Each source
-// epoch returns at most four recent DHCP facts.
+// source has a valid identification fact for the same sensor, MAC and VLAN.
+// A new ACK without option fields must not erase an older, still valid clue.
+// Each source epoch returns at most four recent DHCP facts.
 const durableDHCPSignalsSQL = `SELECT f.sensor_id,f.mac,f.ip,f.vlan,f.address_binding,f.recognition_fields,
        f.observed_at,f.visible_event_key
 FROM unnest(string_to_array($1,',')) AS requested(mac)
@@ -39,6 +40,7 @@ JOIN LATERAL (
          AND current_source.state='active' AND current_source.source_kind='zeek-dhcp-binding'
        WHERE newer.sensor_id=f.sensor_id AND newer.mac=f.mac AND newer.vlan=f.vlan
          AND newer.protocol='dhcp' AND NOT newer.withdrawn AND newer.valid_until>now()
+         AND newer.recognition_fields<>'{}'::jsonb
      )
    ))
  ORDER BY f.observed_at DESC,f.visible_event_key DESC LIMIT 4
