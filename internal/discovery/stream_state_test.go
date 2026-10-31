@@ -15,6 +15,26 @@ type streamStateArrayConverter struct{}
 
 func (streamStateArrayConverter) ConvertValue(v any) (driver.Value, error) { return v, nil }
 
+type newScopeStateArg struct{}
+
+func (newScopeStateArg) Match(value driver.Value) bool {
+	var raw []byte
+	switch v := value.(type) {
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	default:
+		return false
+	}
+	var states []streamDiscoveryState
+	if json.Unmarshal(raw, &states) != nil || len(states) != 1 {
+		return false
+	}
+	s := states[0]
+	return s.Scope == "new-scope" && s.LastDeviceType == "" && s.Document["evidence_count"] == float64(1)
+}
+
 func TestBuildStreamDiscoveryStateUsesNarrowFacts(t *testing.T) {
 	now := time.Date(2026, 10, 24, 10, 1, 0, 0, time.UTC)
 	base := streamDiscoveryFact{Epoch: "fresh", Device: "device-1", Key: "printer", Scope: "scope-1", Event: "one", Protocol: "dns_sd", CandidateType: "printer", CandidateReason: "typed printer", IP: "10.2.3.4", Name: "Printer", Observed: now.Add(-time.Minute), FirstObserved: now.Add(-time.Minute), ValidUntil: now.Add(time.Minute)}
@@ -151,12 +171,12 @@ func TestPublishStreamDiscoveryStatesHighFanoutUsesBoundedRowsAndPriorCount(t *t
 	}
 	defer db.Close()
 	now := time.Now().UTC()
-	old := streamDiscoveryState{Device: "device-1", FirstSeen: now.Add(-time.Hour), LastSeen: now.Add(-time.Minute), Document: map[string]any{"evidence_count": 214}}
+	old := streamDiscoveryState{Device: "device-1", Scope: "scope-1", FirstSeen: now.Add(-time.Hour), LastSeen: now.Add(-time.Minute), Document: map[string]any{"evidence_count": 214}}
 	oldRaw, _ := json.Marshal(old.Document)
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM stream_discovery_device_state").WithArgs("fresh", sqlmock.AnyArg()).WillReturnRows(
-		sqlmock.NewRows([]string{"device_key", "last_device_type", "last_category", "first_seen", "last_seen", "expires_at", "document"}).
-			AddRow(old.Device, "", "", old.FirstSeen, old.LastSeen, nil, oldRaw))
+		sqlmock.NewRows([]string{"device_key", "scope_id", "last_device_type", "last_category", "first_seen", "last_seen", "expires_at", "document"}).
+			AddRow(old.Device, old.Scope, "", "", old.FirstSeen, old.LastSeen, nil, oldRaw))
 	factRows := sqlmock.NewRows([]string{"device_key", "fact"})
 	for i := 0; i < maxStreamFactsPerDevice+1; i++ {
 		fact := streamDiscoveryFact{Epoch: "fresh", Device: "device-1", Scope: "scope-1", Event: "event", Protocol: "ssdp", Observed: now.Add(-time.Duration(i) * time.Millisecond), FirstObserved: now.Add(-time.Duration(i) * time.Millisecond), ValidUntil: now.Add(time.Minute)}
@@ -174,6 +194,43 @@ func TestPublishStreamDiscoveryStatesHighFanoutUsesBoundedRowsAndPriorCount(t *t
 		t.Fatal(err)
 	}
 	if err := publishStreamDiscoveryStates(context.Background(), tx, "fresh", []string{"device-1"}, map[string]int{"device-1": 47}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublishStreamDiscoveryStatesStartsNewScopeWithoutOldClassification(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(streamStateArrayConverter{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	old := streamDiscoveryState{Device: "device-1", Scope: "old-scope", LastDeviceType: "printer", LastCategory: "office", FirstSeen: now.Add(-time.Hour), LastSeen: now.Add(-time.Minute), Document: map[string]any{"evidence_count": 8}}
+	oldRaw, _ := json.Marshal(old.Document)
+	fact := streamDiscoveryFact{Epoch: "fresh", Device: old.Device, Scope: "new-scope", Event: "new-event", Protocol: "arp", Observed: now, FirstObserved: now, ValidUntil: now.Add(time.Minute)}
+	factRaw, _ := json.Marshal(fact)
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM stream_discovery_device_state").WithArgs("fresh", sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"device_key", "scope_id", "last_device_type", "last_category", "first_seen", "last_seen", "expires_at", "document"}).
+			AddRow(old.Device, old.Scope, old.LastDeviceType, old.LastCategory, old.FirstSeen, old.LastSeen, nil, oldRaw))
+	mock.ExpectQuery("JOIN LATERAL").WithArgs("fresh", sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"device_key", "fact"}).AddRow(old.Device, factRaw))
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM stream_discovery_facts").WithArgs("fresh", old.Device, fact.Scope).WillReturnRows(
+		sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("SELECT pg_advisory_xact_lock\\(9184,213\\)").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO stream_discovery_device_state").WithArgs(newScopeStateArg{}).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publishStreamDiscoveryStates(context.Background(), tx, "fresh", []string{old.Device}, map[string]int{old.Device: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

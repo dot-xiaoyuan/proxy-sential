@@ -69,7 +69,8 @@ FROM (
   SELECT f.device_key,f.fact_key,f.event_key,f.protocol,f.ip,f.mac,f.observed_at,
          f.valid_until,f.withdrawn,f.semantic_hash,f.revision
   FROM stream_discovery_facts f
-  WHERE f.epoch=sc.epoch AND f.device_key=requested.device_key
+  JOIN stream_discovery_device_state s ON s.epoch=f.epoch AND s.device_key=f.device_key
+  WHERE f.epoch=sc.epoch AND f.device_key=requested.device_key AND f.scope_id=s.scope_id
   ORDER BY f.observed_at DESC,f.event_key DESC LIMIT 256
  ) f ON true
  GROUP BY f.device_key

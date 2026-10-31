@@ -45,7 +45,7 @@ func buildStreamDiscoveryState(epoch, key string, facts []streamDiscoveryFact, p
 
 func buildStreamDiscoveryStateSummary(epoch, key string, facts []streamDiscoveryFact, previous *streamDiscoveryState, now time.Time, totalCount int, truncated bool, activeUntil, nextFuture *time.Time) (streamDiscoveryState, error) {
 	if epoch == "" || key == "" || len(facts) == 0 || len(facts) > maxStreamFactsPerDevice ||
-		(truncated && (previous == nil || totalCount <= maxStreamFactsPerDevice)) ||
+		(truncated && totalCount <= maxStreamFactsPerDevice) ||
 		(!truncated && totalCount != len(facts)) {
 		return streamDiscoveryState{}, fmt.Errorf("stream device fact budget or identity invalid; repair required")
 	}
@@ -270,7 +270,7 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 		return nil
 	}
 	oldStates := map[string]streamDiscoveryState{}
-	rows, err := tx.QueryContext(ctx, `SELECT device_key,last_device_type,last_category,first_seen,last_seen,expires_at,document FROM stream_discovery_device_state WHERE epoch=$1 AND device_key=ANY($2::text[])`, epoch, keys)
+	rows, err := tx.QueryContext(ctx, `SELECT device_key,scope_id,last_device_type,last_category,first_seen,last_seen,expires_at,document FROM stream_discovery_device_state WHERE epoch=$1 AND device_key=ANY($2::text[])`, epoch, keys)
 	if err != nil {
 		return err
 	}
@@ -278,7 +278,7 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 		var old streamDiscoveryState
 		var raw []byte
 		var expires sql.NullTime
-		if err = rows.Scan(&old.Device, &old.LastDeviceType, &old.LastCategory, &old.FirstSeen, &old.LastSeen, &expires, &raw); err != nil {
+		if err = rows.Scan(&old.Device, &old.Scope, &old.LastDeviceType, &old.LastCategory, &old.FirstSeen, &old.LastSeen, &expires, &raw); err != nil {
 			break
 		}
 		if expires.Valid {
@@ -299,7 +299,11 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 	}
 	factsByDevice := map[string][]streamDiscoveryFact{}
 	rows, err = tx.QueryContext(ctx, `SELECT v.device_key,to_jsonb(f) FROM unnest($2::text[]) AS v(device_key)
- JOIN LATERAL (SELECT * FROM stream_discovery_facts WHERE epoch=$1 AND device_key=v.device_key ORDER BY observed_at DESC,event_key DESC LIMIT 257) f ON true`, epoch, keys)
+ JOIN LATERAL (SELECT scope_id FROM stream_discovery_facts
+   WHERE epoch=$1 AND device_key=v.device_key ORDER BY observed_at DESC,event_key DESC LIMIT 1) latest ON true
+ JOIN LATERAL (SELECT * FROM stream_discovery_facts
+   WHERE epoch=$1 AND device_key=v.device_key AND scope_id=latest.scope_id
+   ORDER BY observed_at DESC,event_key DESC LIMIT 257) f ON true`, epoch, keys)
 	if err != nil {
 		return err
 	}
@@ -336,10 +340,14 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 	if len(overflowKeys) > 0 {
 		rows, err = tx.QueryContext(ctx, `SELECT v.device_key,
  (SELECT f.valid_until FROM stream_discovery_facts f WHERE f.epoch=$1 AND f.device_key=v.device_key
+  AND f.scope_id=latest.scope_id
   AND NOT f.withdrawn AND f.observed_at<=$3 AND f.valid_until>$3 ORDER BY f.valid_until LIMIT 1),
  (SELECT f.observed_at FROM stream_discovery_facts f WHERE f.epoch=$1 AND f.device_key=v.device_key
+  AND f.scope_id=latest.scope_id
   AND NOT f.withdrawn AND f.observed_at>$3 AND f.valid_until>f.observed_at ORDER BY f.observed_at LIMIT 1)
- FROM unnest($2::text[]) AS v(device_key)`, epoch, overflowKeys, now)
+ FROM unnest($2::text[]) AS v(device_key)
+ JOIN LATERAL (SELECT scope_id FROM stream_discovery_facts WHERE epoch=$1 AND device_key=v.device_key
+  ORDER BY observed_at DESC,event_key DESC LIMIT 1) latest ON true`, epoch, overflowKeys, now)
 		if err != nil {
 			return err
 		}
@@ -366,10 +374,27 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 			return err
 		}
 	}
+	// A capture-scope transition keeps older facts and receipts as evidence,
+	// but starts a new current summary. Count the new scope only on transition;
+	// ordinary updates continue using the stored count and narrow delta.
+	transitionCounts := map[string]int{}
+	for _, key := range keys {
+		if facts := factsByDevice[key]; len(facts) > 0 {
+			if old, ok := oldStates[key]; ok && old.Scope != facts[0].Scope {
+				var count int
+				if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM stream_discovery_facts
+ WHERE epoch=$1 AND device_key=$2 AND scope_id=$3`, epoch, key, facts[0].Scope).Scan(&count); err != nil {
+					return err
+				}
+				transitionCounts[key] = count
+			}
+		}
+	}
 	for _, key := range keys {
 		old, exists := oldStates[key]
 		var prior *streamDiscoveryState
-		if exists {
+		_, transitioned := transitionCounts[key]
+		if exists && !transitioned {
 			prior = &old
 		}
 		facts := factsByDevice[key]
@@ -381,6 +406,8 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 				return fmt.Errorf("stream device fact count invalid; repair required")
 			}
 			totalCount = previousCount + newFactCounts[key]
+		} else if transitioned {
+			totalCount = transitionCounts[key]
 		}
 		if truncated {
 			facts = facts[:maxStreamFactsPerDevice]

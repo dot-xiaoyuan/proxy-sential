@@ -134,6 +134,12 @@ func clearInactiveCurrent(ctx context.Context, tx pgx.Tx) ([]string, error) {
 	var epoch string
 	err := tx.QueryRow(ctx, `SELECT p.epoch FROM discovery_current_stream_progress p
 WHERE NOT EXISTS(SELECT 1 FROM stream_source_cutovers sc WHERE sc.epoch=p.epoch AND sc.state='active')
+  AND NOT EXISTS(
+    SELECT 1 FROM discovery_current_stream_progress active
+    JOIN stream_source_cutovers sc ON sc.epoch=active.epoch AND sc.state='active'
+    JOIN stream_discovery_device_state pending ON pending.epoch=active.epoch
+      AND pending.result_version>active.last_result_version
+    LIMIT 1)
   AND EXISTS(SELECT 1 FROM discovery_device_current_shadow c
     WHERE c.document ? 'epoch' AND c.document->>'epoch'=p.epoch)
 ORDER BY p.epoch LIMIT 1`).Scan(&epoch)
