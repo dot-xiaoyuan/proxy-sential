@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"proxy-sentinel/internal/discovery"
@@ -72,6 +73,36 @@ func (s *Server) handleDiscoveryCoverage(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		writeError(w, 500, "coverage_read", "读取协议采集状态失败")
 		return
+	}
+	// The per-message DHCP source has its own durable cutover ledger. Legacy
+	// Zeek protocol counters remain cumulative and may show enabled=false.
+	messageRows, err := repo.DB.QueryContext(ctx, `SELECT DISTINCT ON (sensor_id) sensor_id,epoch FROM stream_source_cutovers WHERE state='active' AND parser_version='zeek-dhcp-message-v1' ORDER BY sensor_id,cutover_at DESC`)
+	if err != nil {
+		writeError(w, 500, "coverage_read", "读取逐消息采集源失败")
+		return
+	}
+	messageEpochs := map[string]string{}
+	for messageRows.Next() {
+		var sensor, epoch string
+		if err = messageRows.Scan(&sensor, &epoch); err != nil {
+			break
+		}
+		messageEpochs[sensor] = epoch
+	}
+	if err == nil {
+		err = messageRows.Err()
+	}
+	messageRows.Close()
+	if err != nil {
+		writeError(w, 500, "coverage_read", "读取逐消息采集源失败")
+		return
+	}
+	for _, item := range items {
+		if item["protocol"] == "dhcp" {
+			if epoch := messageEpochs[fmt.Sprint(item["sensor_id"])]; epoch != "" {
+				item["message_source_epoch"] = epoch
+			}
+		}
 	}
 	freshness := coverageFreshness(ctx, repo)
 	response := map[string]any{"enabled": true, "scope": discovery.PrivateDiscoveryCIDRs, "items": items, "freshness": freshness, "enrichment": enrichmentCoverage(ctx, repo), "capture_scope": captureScopeExpiry(os.Getenv("PROXY_SENTINEL_CAPTURE_SCOPE_CONFIG"), time.Now().UTC()), "quarantine": discoveryQuarantineStatus(discoveryQuarantinePath())}

@@ -203,7 +203,9 @@ ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 // built before a field was present. The device center assumes these collection
 // fields exist; a missing key used to crash the discovery page.
 func normalizeEventBusDocument(item map[string]any) {
-	if manufacturer, ok := item["manufacturer"].(string); !ok || strings.TrimSpace(manufacturer) == "" {
+	// A routed mirror can report the gateway MAC for thousands of IPs. OUI is
+	// a device-vendor clue only when DHCP supplied the client MAC directly.
+	if manufacturer, ok := item["manufacturer"].(string); (!ok || strings.TrimSpace(manufacturer) == "") && hasEventBusProtocol(item, "dhcp") {
 		if mac, ok := item["mac"].(string); ok && strings.TrimSpace(mac) != "" {
 			if vendor := fingerprint.Default().Identify(mac).Vendor; vendor != "" {
 				item["manufacturer"] = vendor
@@ -221,4 +223,22 @@ func normalizeEventBusDocument(item map[string]any) {
 	if value, ok := item["facts"]; !ok || value == nil {
 		item["facts"] = map[string]any{}
 	}
+}
+
+func hasEventBusProtocol(item map[string]any, protocol string) bool {
+	switch values := item["protocols"].(type) {
+	case []any:
+		for _, value := range values {
+			if text, ok := value.(string); ok && text == protocol {
+				return true
+			}
+		}
+	case []string:
+		for _, value := range values {
+			if value == protocol {
+				return true
+			}
+		}
+	}
+	return false
 }

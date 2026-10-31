@@ -6556,6 +6556,7 @@ export interface components {
             };
             items: {
                 owner?: string;
+                message_source_epoch?: string;
                 sensor_id: string;
                 protocol: string;
                 enabled: boolean;

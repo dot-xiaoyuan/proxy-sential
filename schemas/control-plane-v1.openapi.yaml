@@ -6778,6 +6778,7 @@ components:
             required: [sensor_id, protocol, enabled, received, parsed, rejected, admitted, error]
             properties:
               owner: { type: string }
+              message_source_epoch: { type: string }
               sensor_id: { type: string }
               protocol: { type: string }
               enabled: { type: boolean }
