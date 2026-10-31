@@ -455,7 +455,9 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 		if !decision.WriteFact {
 			continue
 		}
-		if !hasPrior {
+		// The fact key predates capture-scope partitioning. When the same key
+		// moves to a new scope, it is a new member of that scope's summary.
+		if !hasPrior || prior.Scope != item.Fact.Scope {
 			newFactCounts[item.Fact.Device]++
 		}
 		if hasPrior && prior.FirstObserved.Before(item.Fact.FirstObserved) {

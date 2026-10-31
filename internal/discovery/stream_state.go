@@ -47,7 +47,7 @@ func buildStreamDiscoveryStateSummary(epoch, key string, facts []streamDiscovery
 	if epoch == "" || key == "" || len(facts) == 0 || len(facts) > maxStreamFactsPerDevice ||
 		(truncated && totalCount <= maxStreamFactsPerDevice) ||
 		(!truncated && totalCount != len(facts)) {
-		return streamDiscoveryState{}, fmt.Errorf("stream device fact budget or identity invalid; repair required")
+		return streamDiscoveryState{}, fmt.Errorf("stream device fact budget or identity invalid; repair required: epoch=%s device=%s sampled=%d total=%d truncated=%t prior=%t", epoch, key, len(facts), totalCount, truncated, previous != nil)
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		if facts[i].Observed.Equal(facts[j].Observed) {
