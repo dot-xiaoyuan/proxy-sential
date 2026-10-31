@@ -80,3 +80,14 @@ ClickHouse `normalized_events.timestamp` 是 Asia/Shanghai 时区，第一次按
 - 清理后 normalized_events 最早时间 `2026-10-31 17:28:06 +08:00`；
 - `stream_event_search`、`stream_event_body_short`、`stream_event_body_evidence`、`stream_risk_features_v1` 的窗口前记录均为 0；
 - PostgreSQL stream facts/state 最早时间保持 `09:28:16Z`。
+
+## 对照终端管理截图补充详情属性
+
+参考用户提供的终端管理截图，发现页设备详情新增：
+
+- 设备类型、制造商、型号；
+- MAC、当前地址；
+- 网络域、VLAN、采集传感器；
+- 首次观测、最近观测、证据数。
+
+截图中的操作系统、接入交换机端口、服务端口（80/139/445/515/9100）来自 SNMP/NDM 和主动服务探测；当前被动发现链路没有这些数据，未伪造展示。
