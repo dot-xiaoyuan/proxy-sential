@@ -157,6 +157,30 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		writeJSON(w, 200, page)
 	case path == "/discovery/passive-signals" && r.Method == "GET":
 		s.handleDiscoveryPassiveSignals(w, r, repo)
+	case path == "/discovery/handshake-clues" && r.Method == "GET":
+		reader, ok := s.reader.(store.DiscoveryHandshakeClueReader)
+		if !ok {
+			writeJSON(w, 200, map[string]any{"items": []store.DiscoveryHandshakeClue{}})
+			return
+		}
+		scope := store.SharedObservationScope{
+			SensorID:     r.URL.Query().Get("sensor_id"),
+			CampusID:     r.URL.Query().Get("campus_id"),
+			AccessDomain: r.URL.Query().Get("access_domain"),
+			IP:           r.URL.Query().Get("ip"),
+		}
+		if scope.SensorID == "" || scope.CampusID == "" || scope.AccessDomain == "" || scope.IP == "" || len(scope.SensorID) > 128 || len(scope.CampusID) > 128 || len(scope.AccessDomain) > 128 {
+			writeError(w, 400, "invalid_scope", "缺少有效的设备观测范围")
+			return
+		}
+		readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		items, err := reader.DiscoveryHandshakeClues(readCtx, scope, time.Now().UTC())
+		cancel()
+		if err != nil {
+			writeError(w, 500, "discovery_read", "读取握手弱线索失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items})
 	case path == "/discovery/service-clues" && r.Method == "GET":
 		reader, ok := s.reader.(store.DiscoveryServiceClueReader)
 		if !ok {

@@ -100,6 +100,23 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DiscoveryPassiveSignals' }
+  /discovery/handshake-clues:
+    get:
+      operationId: getDiscoveryHandshakeClues
+      description: Bounded mirror handshake clues for one current sensor/IP in device detail; requires identity:read. IP reuse or sharing can make attribution uncertain.
+      parameters:
+        - { name: sensor_id, in: query, required: true, schema: { type: string } }
+        - { name: campus_id, in: query, required: true, schema: { type: string } }
+        - { name: access_domain, in: query, required: true, schema: { type: string } }
+        - { name: ip, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Recent indexed User-Agent and JA3 weak clues with source event IDs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryHandshakeClues' }
+        '400': { description: Invalid scope }
+        '500': { description: Read failed }
   /discovery/observed-ports:
     get:
       operationId: getDiscoveryObservedPorts
@@ -6798,6 +6815,21 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/DiscoveryPassiveSignal' }
+    DiscoveryHandshakeClues:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DiscoveryHandshakeClue' }
+    DiscoveryHandshakeClue:
+      type: object
+      required: [kind, value, observed_at, evidence_id]
+      properties:
+        kind: { type: string, enum: [user_agent, ja3] }
+        value: { type: string }
+        observed_at: { type: string, format: date-time }
+        evidence_id: { type: string }
     DiscoveryObservedPorts:
       type: object
       required: [items]
@@ -6959,6 +6991,7 @@ components:
         classification: { type: object, properties: { reason: { type: string }, rule_version: { type: string }, conflict: { type: boolean }, confidence: { type: string } } }
         manufacturer: { type: string }
         model_name: { type: string }
+        site: { type: string }
         domain: { type: string }
         vlan: { type: string }
         sensor_id: { type: string }

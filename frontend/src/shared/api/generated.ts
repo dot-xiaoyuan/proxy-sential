@@ -174,6 +174,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/handshake-clues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Bounded mirror handshake clues for one current sensor/IP in device detail; requires identity:read. IP reuse or sharing can make attribution uncertain. */
+        get: operations["getDiscoveryHandshakeClues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/observed-ports": {
         parameters: {
             query?: never;
@@ -6578,6 +6595,17 @@ export interface components {
             client_status: "ready" | "unavailable" | "not_requested";
             items: components["schemas"]["DiscoveryPassiveSignal"][];
         };
+        DiscoveryHandshakeClues: {
+            items: components["schemas"]["DiscoveryHandshakeClue"][];
+        };
+        DiscoveryHandshakeClue: {
+            /** @enum {string} */
+            kind: "user_agent" | "ja3";
+            value: string;
+            /** Format: date-time */
+            observed_at: string;
+            evidence_id: string;
+        };
         DiscoveryObservedPorts: {
             items: {
                 [key: string]: components["schemas"]["DiscoveryObservedPort"][];
@@ -6724,6 +6752,7 @@ export interface components {
             };
             manufacturer?: string;
             model_name?: string;
+            site?: string;
             domain?: string;
             vlan?: string;
             sensor_id?: string;
@@ -7994,6 +8023,45 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["DiscoveryPassiveSignals"];
                 };
+            };
+        };
+    };
+    getDiscoveryHandshakeClues: {
+        parameters: {
+            query: {
+                sensor_id: string;
+                campus_id: string;
+                access_domain: string;
+                ip: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent indexed User-Agent and JA3 weak clues with source event IDs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryHandshakeClues"];
+                };
+            };
+            /** @description Invalid scope */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Read failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
