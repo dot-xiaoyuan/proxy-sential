@@ -246,9 +246,9 @@ ON CONFLICT(device_key) DO UPDATE SET
 		return fmt.Errorf("backfill stream-only current devices: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE discovery_protocol_runtime r
-SET enabled=true,last_seen=s.last_seen,last_success=s.last_seen,updated_at=now()
+SET enabled=true,received=s.total,parsed=s.total,admitted=s.total,last_seen=s.last_seen,last_success=s.last_seen,updated_at=now()
 FROM (
- SELECT max(f.observed_at) AS last_seen
+ SELECT max(f.observed_at) AS last_seen,count(*)::bigint AS total
  FROM stream_discovery_facts f
  JOIN stream_source_cutovers c ON c.epoch=f.epoch AND c.state='active'
  WHERE f.protocol='dhcp'

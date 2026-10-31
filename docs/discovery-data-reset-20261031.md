@@ -63,3 +63,7 @@ local_users         1
 - `stream_discovery_device_state` 中 `last_seen < 2026-10-31T09:20:00Z` 的 429 行；
 - ClickHouse `normalized_events` 中 timestamp 早于 09:20Z 的 3,566 行；
 - 删除后 `stream_discovery_facts/state` 最小值均为 09:28:16Z，新窗口内无早于切流点的事件。
+
+## 新窗口 DHCP 运行时
+
+重置后 DHCP 设备已由 R8/eventbus 链路进入发现列表，但 `discovery_protocol_runtime` 的计数曾为 0。current-shadow 现在按活跃 stream facts 同步 DHCP 的 `received/parsed/admitted` 和 `last_seen`；现场已显示约 1,493，且持续更新。
