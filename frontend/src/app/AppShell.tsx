@@ -14,7 +14,7 @@ import {
   SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons'
-import { Button, Drawer, Layout, Menu, Space, Typography } from 'antd'
+import { Button, Drawer, Layout, Menu, Space, Spin, Typography } from 'antd'
 import type { MenuProps } from 'antd'
 
 import { useLogout, useSession } from '../shared/api/queries'
@@ -66,7 +66,7 @@ export function AppShell() {
     contentRef.current?.scrollTo({ top: 0, behavior: 'auto' })
   }, [location.pathname, location.search])
 
-  if (session.isLoading) return <LoginPage />
+  if (session.isLoading) return <main className="app-bootstrap-loading" aria-busy="true"><SentinelLogo/><Spin size="large"/><Typography.Text type="secondary">正在恢复会话…</Typography.Text></main>
   if (session.isError || !session.data) return <LoginPage />
 	const navItems = buildNavItems(session.data)
 

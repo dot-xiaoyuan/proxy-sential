@@ -3338,6 +3338,15 @@ pre.wrap-code {
   white-space: nowrap;
 }
 
+.app-bootstrap-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: #f8fafc;
+}
 .login-page {
   position: relative;
   display: flex;
