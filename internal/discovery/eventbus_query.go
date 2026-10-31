@@ -43,7 +43,7 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 	}{q.View + ":" + q.Mode, q.Search, q.Category, q.DeviceType, q.Protocol, q.State, q.Domain, q.VLAN, int64(q.Window)})
 	args := []any{}
 	add := func(value any) string { args = append(args, value); return fmt.Sprintf("$%d", len(args)) }
-	where := []string{}
+	where := []string{"(c.document->>'current' IS DISTINCT FROM 'false')"}
 	if q.Window > 0 {
 		where = append(where, "c.last_seen >= now() - ($"+fmt.Sprint(len(args)+1)+"::text)::interval")
 		args = append(args, fmt.Sprintf("%d seconds", int(q.Window.Seconds())))

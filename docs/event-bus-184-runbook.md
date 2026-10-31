@@ -311,3 +311,11 @@ ieee1905_client_association 尝试启用后 168 包全部 rejected，已回退 d
 - 新增 `(device_key, protocol)` 事实索引，服务被动发现 `EXISTS` 过滤；
 - “全部观测时间”返回 102k 设备，single-count 仍需约 1.4–3.6 秒；页面默认 24h 保持快速；
 - 发现页仍使用 20 条游标分页，不建议把全部时间作为默认视图。
+
+## 2026-10-31 15:50 排除历史 current 文档
+
+`discovery_device_current_shadow` 中残留了 `document->>'current'='false'` 的历史文档（约 57,772 条），eventbus 查询曾把其中 `fact_count=0` 的设备算入发现页。
+
+- 查询增加 `(c.document->>'current' IS DISTINCT FROM 'false')`；
+- 发现页总数：24h 38,021 → 28,652；全部时间 102,342 → 43,496；
+- 这些历史状态仍保留在 stream state，不删除唯一原文。
