@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-10-31T09:34:30Z",
+  "window_start": "2026-10-31T09:28:16Z",
+  "cutoff": "2026-10-31T09:20:00Z",
+  "postgres": {
+    "current_shadow": 9661,
+    "stream_facts": 11865,
+    "local_auth_sessions": 0,
+    "old_discovery_observations": 0
+  },
+  "clickhouse": {
+    "normalized_events": 99250,
+    "passive_discovery_events_v2": 67697,
+    "eventbus_discovery_receipts": 96580
+  },
+  "protocols_enabled": ["arp", "dhcp", "dns_sd", "lldp", "ssdp"],
+  "kafka_discovery_lag": 203,
+  "control_plane_readyz": 200,
+  "failed_services": 0,
+  "note": "Baseline captured during the two-hour fresh-data window; current shadow and event counts continue to grow."
+}
