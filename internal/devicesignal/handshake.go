@@ -284,7 +284,7 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 		return err
 	}
 	defer file.Close()
-	keys := selectHandshakeKeys(summaries, handshakeBucketLimit())
+	keys := selectHandshakeKeys(summaries, handshakeBucketLimit(), bucket)
 	encoder := json.NewEncoder(file)
 	kept := map[handshakeKey]bool{}
 	omitted := map[netip.Addr]int{}
@@ -353,10 +353,13 @@ func handshakeBucketLimit() int {
 	return value
 }
 
-// selectHandshakeKeys keeps the most active devices of a bucket: highest observed_count
-// first, then IP for a stable order. Devices outside the bound are dropped for this bucket
-// only; the next bucket selects again, so a quiet device is never blocked for good.
-func selectHandshakeKeys(summaries map[handshakeKey]*handshakeSummary, limit int) []handshakeKey {
+// Keep half the budget for high-activity clients and rotate the rest through a
+// stable IP/MAC order. A busy client cannot occupy every slot indefinitely;
+// the fixed per-bucket bound still caps archive and projection work.
+func selectHandshakeKeys(summaries map[handshakeKey]*handshakeSummary, limit int, bucket time.Time) []handshakeKey {
+	if limit <= 0 {
+		return nil
+	}
 	keys := make([]handshakeKey, 0, len(summaries))
 	for key := range summaries {
 		keys = append(keys, key)
@@ -366,11 +369,35 @@ func selectHandshakeKeys(summaries map[handshakeKey]*handshakeSummary, limit int
 		if a != b {
 			return a > b
 		}
-		return keys[i].IP.Less(keys[j].IP)
+		if keys[i].IP != keys[j].IP {
+			return keys[i].IP.Less(keys[j].IP)
+		}
+		return bytes.Compare(keys[i].MAC[:], keys[j].MAC[:]) < 0
 	})
 	if len(keys) > limit {
-		keys = keys[:limit]
+		priority := (limit + 1) / 2
+		pool := append([]handshakeKey(nil), keys[priority:]...)
+		sort.Slice(pool, func(i, j int) bool {
+			if pool[i].IP != pool[j].IP {
+				return pool[i].IP.Less(pool[j].IP)
+			}
+			return bytes.Compare(pool[i].MAC[:], pool[j].MAC[:]) < 0
+		})
+		slots := limit - priority
+		selected := append([]handshakeKey(nil), keys[:priority]...)
+		if slots > 0 {
+			start := int((bucket.Unix() / 30 * int64(slots)) % int64(len(pool)))
+			for i := 0; i < slots; i++ {
+				selected = append(selected, pool[(start+i)%len(pool)])
+			}
+		}
+		keys = selected
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i].IP.Less(keys[j].IP) })
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].IP != keys[j].IP {
+			return keys[i].IP.Less(keys[j].IP)
+		}
+		return bytes.Compare(keys[i].MAC[:], keys[j].MAC[:]) < 0
+	})
 	return keys
 }

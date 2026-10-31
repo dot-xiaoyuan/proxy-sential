@@ -129,21 +129,37 @@ func TestWriteHandshakeBucketEmitsIngestableDeviceEvent(t *testing.T) {
 	}
 }
 
-// The bucket bound keeps the most active devices and drops the rest for that bucket only.
-func TestSelectHandshakeKeysKeepsMostActiveWithinLimit(t *testing.T) {
+// Half the bounded output keeps high-activity clients; the other half rotates
+// through quiet clients so an always-busy network does not starve them forever.
+func TestSelectHandshakeKeysRotatesQuietClientsWithinLimit(t *testing.T) {
 	summaries := map[handshakeKey]*handshakeSummary{}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		key := handshakeKey{IP: netip.AddrFrom4([4]byte{10, 0, 0, byte(i + 1)})}
 		summaries[key] = &handshakeSummary{count: i + 1}
 	}
-	kept := selectHandshakeKeys(summaries, 3)
-	if len(kept) != 3 {
-		t.Fatalf("kept %d, want 3", len(kept))
-	}
-	for _, key := range kept {
-		if summaries[key].count < 8 {
-			t.Fatalf("kept a quiet device: %v count=%d", key.IP, summaries[key].count)
+	seen := map[handshakeKey]bool{}
+	base := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
+	for bucket := 0; bucket < 20; bucket++ {
+		kept := selectHandshakeKeys(summaries, 4, base.Add(time.Duration(bucket)*30*time.Second))
+		if len(kept) != 4 {
+			t.Fatalf("bucket %d kept %d, want 4", bucket, len(kept))
 		}
+		for _, key := range kept {
+			seen[key] = true
+		}
+		for _, count := range []int{19, 20} {
+			key := handshakeKey{IP: netip.AddrFrom4([4]byte{10, 0, 0, byte(count)})}
+			found := false
+			for _, selected := range kept {
+				found = found || selected == key
+			}
+			if !found {
+				t.Fatalf("high-activity device %d lost in bucket %d", count, bucket)
+			}
+		}
+	}
+	if len(seen) < 15 {
+		t.Fatalf("quiet clients starved across buckets: only %d of 20 observed", len(seen))
 	}
 }
 
