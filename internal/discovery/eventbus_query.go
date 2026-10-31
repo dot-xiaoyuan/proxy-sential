@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,13 @@ type eventBusStateCursor struct {
 	Key       string    `json:"k"`
 	Version   int       `json:"v"`
 }
+
+type eventBusTotalEntry struct {
+	total int64
+	at    time.Time
+}
+
+var eventBusTotals sync.Map
 
 // DevicesEventBus serves the shadow current-state table. For devices that also
 // exist in the active stream projection it layers the existing rich document
@@ -163,10 +171,20 @@ ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 	}
 	freshness := map[string]any{"status": "ready", "source": "eventbus", "lag_seconds": 0, "result_version": 0}
 	result := map[string]any{"items": items, "has_more": more, "next_cursor": cursor, "limit": q.Limit, "window": q.Window.String(), "freshness": freshness}
+	cacheKey := fmt.Sprintf("%p|%s", r.DB, signature)
 	var total int64
-	if countErr := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM discovery_device_current_shadow c WHERE `+strings.Join(countWhere, " AND "), countArgs...).Scan(&total); countErr == nil {
-		result["total"] = total
+	if cached, ok := eventBusTotals.Load(cacheKey); ok {
+		entry := cached.(eventBusTotalEntry)
+		if time.Since(entry.at) < 5*time.Second {
+			total = entry.total
+		}
 	}
+	if total == 0 {
+		if countErr := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM discovery_device_current_shadow c WHERE `+strings.Join(countWhere, " AND "), countArgs...).Scan(&total); countErr == nil {
+			eventBusTotals.Store(cacheKey, eventBusTotalEntry{total: total, at: time.Now()})
+		}
+	}
+	result["total"] = total
 	return result, nil
 }
 
