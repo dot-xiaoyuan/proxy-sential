@@ -92,9 +92,13 @@ func TestStreamSignalRetentionFollowsActualReader(t *testing.T) {
 		{"packet-sidecar", "ieee1905_client_association", "evidence"},
 		{"packet-sidecar", "ieee1905_client_snapshot", "evidence"},
 		{"handshake-sidecar", "handshake", "evidence"},
+		{"flow-syn-sidecar", "syn_attempt", "evidence"},
 		{"packet-sidecar", "ttl", "short"},
 	} {
 		event := normalized.Event{Type: "device", Source: tc.source, SourceEventType: tc.kind}
+		if tc.source == "flow-syn-sidecar" {
+			event.Type = "flow"
+		}
 		if got := streamEventRetention(event); got != tc.want {
 			t.Fatalf("%s/%s retention=%s want %s", tc.source, tc.kind, got, tc.want)
 		}
@@ -102,7 +106,7 @@ func TestStreamSignalRetentionFollowsActualReader(t *testing.T) {
 }
 
 func TestSharedCoverageKeepsAuthorityUntilDecisionArchive(t *testing.T) {
-	for _, source := range []string{"handshake-sidecar", "packet-sidecar"} {
+	for _, source := range []string{"handshake-sidecar", "packet-sidecar", "flow-syn-sidecar"} {
 		segment := streamlog.Segment{Epoch: "fresh", ArchiveMonth: "202610", AcceptedAt: time.Date(2026, 10, 25, 4, 0, 0, 0, time.UTC), Events: []normalized.Event{{EventID: "coverage-1", Source: source, Type: "device", SourceEventType: "capture_coverage", Timestamp: "2026-10-25T04:00:00Z", Observer: map[string]any{"sensor_id": "sensor-a", "capture_scope_id": "scope-a"}, Subject: map[string]any{"campus_id": "campus-a"}, Payload: map[string]any{"access_domain": "bond0", "capture_coverage": true}}}}
 		prepared, err := prepareStreamEvents(segment)
 		if err != nil || len(prepared) != 1 || prepared[0].retention != "evidence" {

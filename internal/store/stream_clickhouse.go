@@ -93,7 +93,7 @@ func prepareStreamEvents(segment streamlog.Segment) ([]preparedStreamEvent, erro
 // reader, not the segment-wide projection flag or the generic device type.
 func streamEventRetention(event normalized.Event) string {
 	if event.SourceEventType == "capture_coverage" {
-		if event.Source == "handshake-sidecar" || event.Source == "packet-sidecar" {
+		if event.Source == "handshake-sidecar" || event.Source == "packet-sidecar" || event.Source == "flow-syn-sidecar" {
 			return "evidence"
 		}
 		return "short"
@@ -106,6 +106,7 @@ func streamEventRetention(event normalized.Event) string {
 		return "evidence"
 	}
 	if event.Source == "handshake-sidecar" && event.SourceEventType == "handshake" ||
+		event.Source == "flow-syn-sidecar" && event.Type == "flow" && event.SourceEventType == "syn_attempt" ||
 		event.Source == "packet-sidecar" && (event.SourceEventType == "ieee1905_client_association" || event.SourceEventType == "ieee1905_client_snapshot") {
 		return "evidence"
 	}
