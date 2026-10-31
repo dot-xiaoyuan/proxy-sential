@@ -366,3 +366,11 @@ current-shadow 现在会：
 - 避免之前 2s 独立补入 goroutine 与主聚合事务产生 PostgreSQL 死锁；
 - 现场缺失 stream current 设备从 16+ 降到约 4；
 - 无新增 deadlock。
+
+## 2026-10-31 16:04 current-shadow 1 秒补入
+
+current-shadow 聚合/补入间隔从 2s 调整为 1s（仍单事务串行）：
+
+- stream current 缺失设备从约 4 降到 3；
+- 无新增 deadlock；
+- 仍存在新设备产生的瞬时竞态，无法完全消除。
