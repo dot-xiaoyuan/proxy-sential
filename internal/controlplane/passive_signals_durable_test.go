@@ -15,10 +15,13 @@ func TestDurableDHCPCluesKeepBindingAndEventProvenance(t *testing.T) {
 	}
 	defer db.Close()
 	observed := time.Date(2026, 10, 31, 10, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL jit=off").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("FROM unnest").WithArgs("aa:bb:cc:dd:ee:ff").WillReturnRows(
 		sqlmock.NewRows([]string{"sensor_id", "mac", "ip", "vlan", "address_binding", "recognition_fields", "observed_at", "visible_event_key"}).
 			AddRow("sensor-a", "aa:bb:cc:dd:ee:ff", "192.0.2.3", "8", true, []byte(`{"hostname":"DESKTOP-3","dhcp_vendor_class":"MSFT 5.0","dhcp_requested_options":"1,3,6","dhcp_client_id_hwtype":"1","dhcp_option93_present":"true"}`), observed, "event-ack").
 			AddRow("sensor-a", "aa:bb:cc:dd:ee:ff", "192.0.2.4", "8", false, []byte(`{"dhcp_vendor_class":"android-dhcp"}`), observed.Add(-time.Minute), "event-request"))
+	mock.ExpectCommit()
 	items, err := readDurableDHCPSignals(context.Background(), db, []string{"aa:bb:cc:dd:ee:ff"})
 	if err != nil {
 		t.Fatal(err)
