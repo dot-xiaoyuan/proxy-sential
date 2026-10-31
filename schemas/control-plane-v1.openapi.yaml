@@ -6891,6 +6891,7 @@ components:
         ttl_vlan: { type: string }
         dhcp_observed_at: { type: string, format: date-time }
         dhcp_evidence_id: { type: string }
+        dhcp_historical: { type: boolean }
         ttl_observed_at: { type: string, format: date-time }
         os_family: { type: string }
         os_confidence: { type: string }

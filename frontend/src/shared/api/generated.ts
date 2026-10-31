@@ -6657,6 +6657,7 @@ export interface components {
             /** Format: date-time */
             dhcp_observed_at?: string;
             dhcp_evidence_id?: string;
+            dhcp_historical?: boolean;
             /** Format: date-time */
             ttl_observed_at?: string;
             os_family?: string;

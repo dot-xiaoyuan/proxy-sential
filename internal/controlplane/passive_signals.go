@@ -36,6 +36,7 @@ type PassiveSignal struct {
 	TTLVLAN             string              `json:"ttl_vlan,omitempty"`
 	DHCPObservedAt      string              `json:"dhcp_observed_at,omitempty"`
 	DHCPEvidenceID      string              `json:"dhcp_evidence_id,omitempty"`
+	DHCPHistorical      bool                `json:"dhcp_historical,omitempty"`
 	TTLObservedAt       string              `json:"ttl_observed_at,omitempty"`
 	OSFamily            string              `json:"os_family,omitempty"`
 	OSConfidence        string              `json:"os_confidence,omitempty"`
@@ -141,6 +142,7 @@ func mergePassiveSignal(byKey map[string]*PassiveSignal, signal *PassiveSignal) 
 		current.DHCPObservedAt = signal.DHCPObservedAt
 		current.DHCPEvidenceID = signal.DHCPEvidenceID
 	}
+	current.DHCPHistorical = current.DHCPHistorical || signal.DHCPHistorical
 	if signal.DeviceHint != "" {
 		current.DeviceHint = signal.DeviceHint
 	}

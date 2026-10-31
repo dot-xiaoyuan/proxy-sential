@@ -15,9 +15,12 @@ import (
 // expose its facts only while that device state remains current and no active
 // source has a valid identification fact for the same sensor, MAC and VLAN.
 // A new ACK without option fields must not erase an older, still valid clue.
-// Each source epoch returns at most four recent DHCP facts.
+// An expired REQUEST clue is retained for at most 24 hours only when its
+// active source still has a valid ACK lease for the same sensor, MAC and VLAN.
+// It remains a historical clue, never a current address binding. Each source
+// epoch returns at most four recent DHCP facts.
 const durableDHCPSignalsSQL = `SELECT f.sensor_id,f.mac,f.ip,f.vlan,f.address_binding,f.recognition_fields,
-       f.observed_at,f.visible_event_key
+       f.observed_at,f.visible_event_key,f.valid_until<=now() AS historical
 FROM unnest(string_to_array($1,',')) AS requested(mac)
 JOIN (
  SELECT DISTINCT c.epoch,c.sensor_id,c.state
@@ -26,10 +29,19 @@ JOIN (
 ) source ON true
 JOIN LATERAL (
  SELECT f.sensor_id,f.mac,f.ip,f.vlan,f.address_binding,f.recognition_fields,
-        f.observed_at,f.visible_event_key
+        f.observed_at,f.visible_event_key,f.valid_until
  FROM stream_discovery_facts f
  WHERE f.epoch=source.epoch AND f.sensor_id=source.sensor_id AND f.mac=requested.mac AND f.mac<>'' AND f.protocol='dhcp'
-   AND NOT f.withdrawn AND f.observed_at<=now() AND f.valid_until>now()
+   AND NOT f.withdrawn AND f.observed_at<=now()
+   AND (f.valid_until>now() OR (
+     source.state='active' AND NOT f.address_binding AND f.observed_at>=now()-interval '24 hours'
+     AND EXISTS (SELECT 1 FROM stream_discovery_facts lease
+       JOIN stream_discovery_device_state current_lease ON current_lease.epoch=lease.epoch
+         AND current_lease.device_key=lease.device_key AND current_lease.expires_at>now()
+       WHERE lease.epoch=f.epoch AND lease.sensor_id=f.sensor_id AND lease.mac=f.mac AND lease.mac<>''
+         AND lease.vlan=f.vlan AND lease.protocol='dhcp' AND lease.address_binding
+         AND lease.valid_until>now() AND NOT lease.withdrawn)
+   ))
    AND f.recognition_fields<>'{}'::jsonb
    AND (source.state='active' OR (
      EXISTS (SELECT 1 FROM stream_discovery_device_state s
@@ -71,10 +83,10 @@ func readDurableDHCPSignals(ctx context.Context, db *sql.DB, macs []string) ([]P
 	for rows.Next() {
 		var signal PassiveSignal
 		var ip, eventID string
-		var binding bool
+		var binding, historical bool
 		var raw []byte
 		var observed time.Time
-		if err := rows.Scan(&signal.SensorID, &signal.MAC, &ip, &signal.DHCPVLAN, &binding, &raw, &observed, &eventID); err != nil {
+		if err := rows.Scan(&signal.SensorID, &signal.MAC, &ip, &signal.DHCPVLAN, &binding, &raw, &observed, &eventID, &historical); err != nil {
 			return nil, err
 		}
 		var fields map[string]string
@@ -91,7 +103,12 @@ func readDurableDHCPSignals(ctx context.Context, db *sql.DB, macs []string) ([]P
 		signal.DHCPOption93Present = fields["dhcp_option93_present"] == "true"
 		signal.DHCPObservedAt = observed.UTC().Format(time.RFC3339)
 		signal.DHCPEvidenceID = eventID
+		signal.DHCPHistorical = historical
 		enrichDHCPVendor(&signal)
+		if historical && signal.OSFamily != "" {
+			signal.OSConfidence = "weak"
+			signal.OSEvidence += "（历史 DHCP REQUEST 线索）"
+		}
 		items = append(items, signal)
 	}
 	if err := rows.Err(); err != nil {
