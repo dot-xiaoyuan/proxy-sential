@@ -4995,6 +4995,24 @@ pre.wrap-code {
 .discovery-detail-facts div { min-width: 0; }
 .discovery-detail-facts dt { color: #64748b; font-size: 12px; }
 .discovery-detail-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.discovery-terminal-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.discovery-terminal-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 50%;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 15px;
+}
 .discovery-metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

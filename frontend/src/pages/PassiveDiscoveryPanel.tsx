@@ -17,7 +17,7 @@ import { Button,
   Typography,
 } from 'antd'
 import { useSearchParams } from 'react-router-dom'
-import { ApiOutlined, CheckCircleOutlined, ClusterOutlined, ReloadOutlined, TagsOutlined } from '@ant-design/icons'
+import { ApiOutlined, CheckCircleOutlined, ClusterOutlined, DesktopOutlined, MobileOutlined, PrinterOutlined, ReloadOutlined, TagsOutlined, VideoCameraOutlined } from '@ant-design/icons'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
@@ -32,6 +32,13 @@ type History = components['schemas']['DiscoveryHistoryPage']
 const protocols: Record<string,string> = { dhcp:'DHCP', dhcpv6:'DHCPv6', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
 const capabilities: Record<string,string> = { printing:'打印', scanning:'扫描', casting:'投屏', network_video:'网络视频', media_rendering:'媒体播放' }
 const states: Record<string,string> = { identified:'证据有效', expired:'证据已过期', conflict:'类型证据冲突', candidate:'发现线索' }
+function terminalIcon(item: Device) {
+  const caps = item.capabilities ?? []
+  if (caps.includes('printing') || caps.includes('scanning')) return <PrinterOutlined />
+  if (caps.includes('casting') || caps.includes('media_rendering') || caps.includes('network_video')) return <VideoCameraOutlined />
+  if (item.device_type === 'mobile' || item.device_type === 'tablet') return <MobileOutlined />
+  return <DesktopOutlined />
+}
 function dumbTerminal(item: Device) {
   const caps = item.capabilities ?? []
   if (caps.includes('printing') || caps.includes('scanning')) return '打印/扫描'
@@ -74,7 +81,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const dumbFilter=params.get('discovery_capability')==='dumb'
   const enabledProtocolCount=(coverage.data?.items??[]).filter(p=>p.enabled).length
   const identifiedTypeCount=(statistics.data?.items??[]).filter(item=>item.state!=='candidate').reduce((sum,item)=>sum+item.count,0)
-  const identity=(item:Device)=><><DeviceAddress ip={item.current_addresses?item.current_addresses[0]:item.primary_ip} name={item.name} mac={item.mac} addresses={item.current_addresses??item.addresses}/>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后观测地址 · {item.last_observed_ip}</Typography.Text>}</>
+  const identity=(item:Device)=><div className="discovery-terminal-identity"><span className="discovery-terminal-icon">{terminalIcon(item)}</span><div><DeviceAddress ip={item.current_addresses?item.current_addresses[0]:item.primary_ip} name={item.name} mac={item.mac} addresses={item.current_addresses??item.addresses}/>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后观测地址 · {item.last_observed_ip}</Typography.Text>}</div></div>
   const kind=(item:Device)=><Typography.Text strong={item.classification_status!=='expired'}>{types[item.device_type||item.last_device_type||'']??(dumbTerminal(item)?`哑终端线索 · ${dumbTerminal(item)}`:'待分类')}</Typography.Text>
   const vendor=(item:Device)=><Typography.Text type="secondary">{[item.manufacturer,item.model_name].filter(Boolean).join(' · ')}</Typography.Text>
   const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.domain}</Typography.Text><Typography.Text type="secondary">{[item.vlan&&`VLAN ${item.vlan}`,item.sensor_id].filter(Boolean).join(' · ')}</Typography.Text></Space>
