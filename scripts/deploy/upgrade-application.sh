@@ -2,13 +2,14 @@
 # Existing-installation application update. Refuses all schema changes.
 set -euo pipefail
 root="${PROXY_SENTINEL_ROOT:-/opt/proxy-sentinel}"
-version=""; archive=""; checksum=""
+version=""; archive=""; checksum=""; preserve_inventory=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version="${2:-}"; shift 2 ;;
     --archive) archive="${2:-}"; shift 2 ;;
     --checksum) checksum="${2:-}"; shift 2 ;;
-    *) echo "usage: upgrade-application.sh --version VERSION --archive FILE --checksum FILE" >&2; exit 2 ;;
+    --preserve-inventory) preserve_inventory=true; shift ;;
+    *) echo "usage: upgrade-application.sh --version VERSION --archive FILE --checksum FILE [--preserve-inventory]" >&2; exit 2 ;;
   esac
 done
 [[ "$root" =~ ^/opt/[A-Za-z0-9._/-]+$ && "$root" != *..* ]] || exit 2
@@ -41,8 +42,13 @@ python3 "$(dirname "$0")/verify-applied-migrations.py" "$stage"
 # Durable release directory is the rollback copy. Business DBs are untouched.
 units=()
 for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-binding-b56 proxy-sentinel-ingest-stream-packet-b54 proxy-sentinel-ingest-stream-handshake-b54 proxy-sentinel-ingest-stream-packet-b76 proxy-sentinel-ingest-stream-handshake-b76 proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-handshake-signal proxy-sentinel-router-prober proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-inventory proxy-sentinel-inventory-backfill proxy-sentinel-identity-materializer proxy-sentinel-ncu-identity-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery proxy-sentinel-passive-discovery proxy-sentinel-ncu-identity-sync; do
+  if [[ "$preserve_inventory" == true && "$unit" == proxy-sentinel-inventory ]]; then continue; fi
   if systemctl is-active --quiet "$unit.service"; then units+=("$unit.service"); fi
 done
+if [[ "$preserve_inventory" == true ]] && ! systemctl is-active --quiet proxy-sentinel-inventory.service; then
+  echo "preserved inventory service is not active" >&2
+  exit 1
+fi
 (( ${#units[@]} > 0 )) || { echo "no active application services" >&2; exit 1; }
 python3 "$(dirname "$0")/verify-application-cli.py" --stage "$stage" --units "${units[@]}"
 mv "$stage" "$release"
@@ -90,11 +96,12 @@ ln -sfn "$release" "$root/current.next"
 mv -Tf "$root/current.next" "$root/current"
 restart_workers
 ready
+if [[ "$preserve_inventory" == true ]]; then systemctl is-active --quiet proxy-sentinel-inventory.service; fi
 python3 "$release/scripts/verify-service-expectations.py" --root "$root"
 ln -sfn "$old_target" "$root/previous.next"
 mv -Tf "$root/previous.next" "$root/previous"
 trap - ERR
 cat > "$release/deployment-manifest.json" <<JSON
-{"version":"$version","mode":"application_only","previous":"$old_target","installed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"version":"$version","mode":"application_only","previous":"$old_target","preserve_inventory":$preserve_inventory,"installed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
 echo "application upgrade completed: $version; previous=$old_target"
