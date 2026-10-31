@@ -297,6 +297,20 @@ type EndpointRegistrationUpdate struct {
 	RegistrationUpdatedAt string `json:"registration_updated_at"`
 }
 
+type DiscoveryServiceClue struct {
+	MAC           string `json:"mac"`
+	ServiceType   string `json:"service_type"`
+	ServiceName   string `json:"service_name,omitempty"`
+	ServiceTarget string `json:"service_target,omitempty"`
+	Port          int    `json:"port"`
+	Observations  int    `json:"observations"`
+	LastSeen      string `json:"last_seen"`
+}
+
+type DiscoveryServiceClueReader interface {
+	DiscoveryServiceClues(context.Context, []string, time.Time) (map[string][]DiscoveryServiceClue, error)
+}
+
 type ActivityProfile struct {
 	IP                 string           `json:"ip"`
 	Window             string           `json:"window"`

@@ -8,6 +8,7 @@ import (
 	"os"
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/fingerprint"
+	"proxy-sentinel/internal/store"
 	"sort"
 	"strconv"
 	"strings"
@@ -153,6 +154,28 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			return
 		}
 		writeJSON(w, 200, page)
+	case path == "/discovery/service-clues" && r.Method == "GET":
+		reader, ok := s.reader.(store.DiscoveryServiceClueReader)
+		if !ok {
+			writeJSON(w, 200, map[string]any{"items": map[string]any{}})
+			return
+		}
+		raw := strings.Split(r.URL.Query().Get("macs"), ",")
+		macs := make([]string, 0, len(raw))
+		for _, mac := range raw {
+			if mac = strings.TrimSpace(mac); mac != "" {
+				macs = append(macs, mac)
+			}
+			if len(macs) >= 50 {
+				break
+			}
+		}
+		items, err := reader.DiscoveryServiceClues(ctx, macs, time.Now().UTC().Add(-2*time.Hour))
+		if err != nil {
+			writeError(w, 500, "discovery_read", "读取被动服务线索失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items})
 	case path == "/discovery/snmp-candidates" && r.Method == "GET":
 		rows, err := repo.DB.QueryContext(ctx, `WITH frequent AS (
  SELECT document->>'mac' AS mac

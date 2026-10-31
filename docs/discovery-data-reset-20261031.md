@@ -125,3 +125,14 @@ ClickHouse `normalized_events.timestamp` 是 Asia/Shanghai 时区，第一次按
 - 发现页“已开启协议”会显示 SNMP；
 - 但当前没有 SNMP stream facts/current 设备记录，说明只看到 SNMP 帧，尚未形成可投影终端；
 - OS/端口仍需 SNMP 主动轮询或 MIB 数据，不能仅凭当前被动帧补全。
+
+## 纯被动服务线索
+
+新增 `/discovery/service-clues` 和 ClickHouse 聚合：
+
+- 从 normalized_events 的 DNS-SD/SSDP payload 提取 `service_type`、`service_port`、`service_instance`；
+- 页面按 MAC 合并到“发现依据”和详情；
+- 现场 AirPlay 示例：`_airplay._tcp · 7386`、`_maxhubmobile._tcp · 7382`；
+- 查询限制 2 小时、最多 50 个 MAC、结果缓存 60 秒。
+
+这些是镜像流量里实际出现的服务公告，不是主动端口扫描。

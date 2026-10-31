@@ -111,6 +111,10 @@ func (s *DBStore) GetIPActivity(ctx context.Context, ip string, limit int) (Acti
 	return s.ch.GetIPActivity(ctx, ip, limit)
 }
 
+func (s *DBStore) DiscoveryServiceClues(ctx context.Context, macs []string, since time.Time) (map[string][]DiscoveryServiceClue, error) {
+	return s.ch.DiscoveryServiceClues(ctx, macs, since)
+}
+
 func (s *DBStore) GetAccountIdentity(ctx context.Context, accountID string, query Query) (AccountIdentityProfile, bool, error) {
 	return s.pg.GetAccountIdentity(ctx, accountID, query)
 }
