@@ -71,3 +71,12 @@ local_users         1
 ## 新窗口消费刷新
 
 eventbus consumer `--flush-interval` 从 500ms 调到 100ms，降低 ARP 突发下的 group lag；现场 lag 约 250，未出现写入错误。
+
+## 时区修正后的严格清理
+
+ClickHouse `normalized_events.timestamp` 是 Asia/Shanghai 时区，第一次按 UTC 字面量删除只清到了错误边界。已按 `17:28:00 +08:00` 重新清理：
+
+- 删除窗口前 normalized_events 2,617 + 18 行；
+- 清理后 normalized_events 最早时间 `2026-10-31 17:28:06 +08:00`；
+- `stream_event_search`、`stream_event_body_short`、`stream_event_body_evidence`、`stream_risk_features_v1` 的窗口前记录均为 0；
+- PostgreSQL stream facts/state 最早时间保持 `09:28:16Z`。
