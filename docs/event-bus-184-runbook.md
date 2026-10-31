@@ -383,3 +383,14 @@ current-shadow 聚合/补入间隔从 2s 调整为 1s（仍单事务串行）：
 - 连续刷新约 0.27s / 0.36s；
 - total 24,314；
 - 缓存只影响 total，不改变列表 cursor、窗口和过滤条件。
+
+## 2026-10-31 16:07 快速 stream 插入补入
+
+在 current-shadow 中增加 1 秒一次的 insert-only 补入：
+
+- 只插入缺失 stream current 设备；
+- 使用 `ON CONFLICT DO NOTHING`，不更新已有行，避免与聚合事务产生死锁；
+- 实测 stream current 缺失可降到 0–6 的瞬时窗口；
+- 无新增 deadlock。
+
+聚合事务仍负责 last_seen、facts、清理和历史标记。
