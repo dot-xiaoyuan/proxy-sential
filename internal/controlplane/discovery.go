@@ -216,7 +216,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		items, err := reader.DiscoveryObservedFlowPorts(readCtx, targets, time.Now().UTC().Add(-2*time.Hour))
 		cancel()
 		if err != nil {
-			writeError(w, 500, "discovery_read", "读取实际访问线索失败")
+			writeError(w, 500, "discovery_read", "读取目标端口线索失败")
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": items})
