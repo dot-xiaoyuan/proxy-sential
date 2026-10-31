@@ -93,6 +93,7 @@ func TestStreamSignalRetentionFollowsActualReader(t *testing.T) {
 		{"packet-sidecar", "ieee1905_client_snapshot", "evidence"},
 		{"handshake-sidecar", "handshake", "evidence"},
 		{"flow-syn-sidecar", "syn_attempt", "evidence"},
+		{"flow-syn-sidecar", "syn_ack_observed", "evidence"},
 		{"packet-sidecar", "ttl", "short"},
 	} {
 		event := normalized.Event{Type: "device", Source: tc.source, SourceEventType: tc.kind}

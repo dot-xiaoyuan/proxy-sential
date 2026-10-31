@@ -31,6 +31,27 @@ func runSharedSignalFilter(t *testing.T, frame []byte) int {
 	return accepted
 }
 
+func runFlowSocketFilter(t *testing.T, frame []byte) int {
+	t.Helper()
+	raw := make([]bpf.RawInstruction, len(flowSocketFilter))
+	for index, instruction := range flowSocketFilter {
+		raw[index] = bpf.RawInstruction{Op: instruction.Code, Jt: instruction.Jt, Jf: instruction.Jf, K: instruction.K}
+	}
+	instructions, decoded := bpf.Disassemble(raw)
+	if !decoded {
+		t.Fatal("flow BPF contains an unsupported instruction")
+	}
+	vm, err := bpf.NewVM(instructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := vm.Run(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return accepted
+}
+
 func sharedFilterIPv4(flags byte, vlan bool) []byte {
 	offset := 14
 	frame := make([]byte, 256)
@@ -79,6 +100,22 @@ func TestSharedSignalFilterAcceptsOnlyInitialSYNAndTruncates(t *testing.T) {
 	udp[23] = 17
 	if got := runSharedSignalFilter(t, udp); got != 0 {
 		t.Fatalf("UDP packet accepted bytes=%d", got)
+	}
+}
+
+func TestFlowFilterAcceptsSYNAndSYNACKWithoutPayload(t *testing.T) {
+	for _, flags := range []byte{0x02, 0x12} {
+		for _, vlan := range []bool{false, true} {
+			if got := runFlowSocketFilter(t, sharedFilterIPv4(flags, vlan)); got != 128 {
+				t.Fatalf("IPv4 flags=%x vlan=%t accepted=%d", flags, vlan, got)
+			}
+			if got := runFlowSocketFilter(t, sharedFilterIPv6(flags, vlan)); got != 128 {
+				t.Fatalf("IPv6 flags=%x vlan=%t accepted=%d", flags, vlan, got)
+			}
+		}
+	}
+	if got := runFlowSocketFilter(t, sharedFilterIPv4(0x10, false)); got != 0 {
+		t.Fatalf("plain ACK accepted=%d", got)
 	}
 }
 

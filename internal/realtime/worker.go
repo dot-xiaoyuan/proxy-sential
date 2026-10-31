@@ -384,11 +384,23 @@ func normalizeDeviceSignals(input []byte, sensorID string) ([]normalized.Event, 
 // open port. Restrict this exception to the dedicated collector contract;
 // other device-signal files cannot introduce arbitrary flow rows.
 func validFlowSYNEvent(event normalized.Event) bool {
-	if event.Type != "flow" || event.Source != "flow-syn-sidecar" || event.SourceEventType != "syn_attempt" || !strings.HasPrefix(event.EventID, "flow-syn-") || event.Flow == nil || event.Payload == nil {
+	if event.Type != "flow" || event.Source != "flow-syn-sidecar" || event.Flow == nil || event.Payload == nil {
+		return false
+	}
+	switch event.SourceEventType {
+	case "syn_attempt":
+		if !strings.HasPrefix(event.EventID, "flow-syn-") || strings.HasPrefix(event.EventID, "flow-syn-ack-") || event.Payload["connection_outcome"] != "unverified" || event.Payload["origin"] != "initial_syn" {
+			return false
+		}
+	case "syn_ack_observed":
+		if !strings.HasPrefix(event.EventID, "flow-syn-ack-") || event.Payload["connection_outcome"] != "syn_ack_observed" || event.Payload["origin"] != "matched_reverse_syn_ack" {
+			return false
+		}
+	default:
 		return false
 	}
 	source, ok := event.Flow["src_ip"].(string)
-	if !ok || event.Subject["ip"] != source || event.Flow["proto"] != "tcp" || event.Payload["connection_outcome"] != "unverified" {
+	if !ok || event.Subject["ip"] != source || event.Flow["proto"] != "tcp" || event.Flow["dst_ip"] != nil {
 		return false
 	}
 	ip, err := netip.ParseAddr(source)
@@ -396,7 +408,8 @@ func validFlowSYNEvent(event normalized.Event) bool {
 		return false
 	}
 	port, ok := event.Flow["dst_port"].(float64)
-	return ok && port >= 1 && port <= 65535 && port == float64(uint16(port))
+	count, countOK := event.Payload["observed_count"].(float64)
+	return ok && port >= 1 && port <= 65535 && port == float64(uint16(port)) && countOK && count > 0 && count == float64(uint32(count))
 }
 
 // A source keeps its canonical path in the durable checkpoint even while its

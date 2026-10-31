@@ -40,8 +40,8 @@ func newFlowRing(interfaceName string) (_ *flowRing, err error) {
 	}()
 	// Attach before bind and ring allocation. Otherwise the ring can collect
 	// unrestricted packets during setup, including application payload.
-	if err = attachSharedSignalFilter(fd); err != nil {
-		return nil, fmt.Errorf("attach initial SYN filter: %w", err)
+	if err = attachFlowSignalFilter(fd); err != nil {
+		return nil, fmt.Errorf("attach bounded SYN/SYN-ACK filter: %w", err)
 	}
 	if err = unix.Bind(fd, &unix.SockaddrLinklayer{Protocol: htons(unix.ETH_P_ALL), Ifindex: iface.Index}); err != nil {
 		return nil, fmt.Errorf("bind flow SYN socket to %s: %w", interfaceName, err)

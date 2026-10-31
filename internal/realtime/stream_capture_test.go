@@ -853,7 +853,7 @@ func TestStreamProjectsOnlySelectedDiscoverySignals(t *testing.T) {
 }
 
 func TestDiscoveryFlowSYNDoesNotFanOutRiskJobs(t *testing.T) {
-	clues := []normalized.Event{{Source: "flow-syn-sidecar", Type: "flow", SourceEventType: "syn_attempt"}, {Source: "flow-syn-sidecar", Type: "device", SourceEventType: "capture_coverage"}}
+	clues := []normalized.Event{{Source: "flow-syn-sidecar", Type: "flow", SourceEventType: "syn_attempt"}, {Source: "flow-syn-sidecar", Type: "flow", SourceEventType: "syn_ack_observed"}, {Source: "flow-syn-sidecar", Type: "device", SourceEventType: "capture_coverage"}}
 	if !discoveryFlowSYNOnly(clues) || needsStreamProjection(clues) {
 		t.Fatal("SYN access clues must stay in archive/search read lanes")
 	}
@@ -879,7 +879,7 @@ func TestControlledFlowSYNStreamRetainsRawWithoutProjectionOrRisk(t *testing.T) 
 		t.Fatal(err)
 	}
 	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "flow-owner", CampusID: "campus-a", AccessDomain: "bond0", InterfaceName: "bond0", ValidFrom: time.Now().Add(-time.Hour), ValidUntil: time.Now().Add(time.Hour)}
-	event := scope.Apply(normalized.Event{SchemaVersion: "v1", EventID: "flow-syn-test", Source: "flow-syn-sidecar", SourceEventType: "syn_attempt", Type: "flow", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a", "collector_instance_id": "flow-owner", "interface": "bond0"}, Subject: map[string]any{"ip": "10.202.4.8"}, Flow: map[string]any{"src_ip": "10.202.4.8", "proto": "tcp", "dst_port": 443}, Payload: map[string]any{"connection_outcome": "unverified"}})
+	event := scope.Apply(normalized.Event{SchemaVersion: "v1", EventID: "flow-syn-test", Source: "flow-syn-sidecar", SourceEventType: "syn_attempt", Type: "flow", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a", "collector_instance_id": "flow-owner", "interface": "bond0"}, Subject: map[string]any{"ip": "10.202.4.8"}, Flow: map[string]any{"src_ip": "10.202.4.8", "proto": "tcp", "dst_port": 443}, Payload: map[string]any{"origin": "initial_syn", "connection_outcome": "unverified", "observed_count": 1}})
 	raw, _ := json.Marshal(event)
 	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
 		t.Fatal(err)

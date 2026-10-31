@@ -68,13 +68,22 @@ func discoveryObservedFlowPortsQuery(targets []string, since time.Time) string {
 	if since.IsZero() {
 		since = time.Now().UTC().Add(-2 * time.Hour)
 	}
-	return fmt.Sprintf(`SELECT sensor_id,src_ip,proto,dst_port,
- maxMerge(last_seen) AS last_seen,
- argMaxMerge(evidence_id) AS evidence_id
-FROM proxy_sentinel.discovery_observed_flow_ports_10m
+	return fmt.Sprintf(`WITH merged AS (
+ SELECT sensor_id,src_ip,proto,dst_port,
+ maxMerge(last_seen) AS observed_last,
+ argMaxMerge(evidence_id) AS observed_evidence
+ FROM proxy_sentinel.discovery_observed_flow_ports_10m
 WHERE (sensor_id,src_ip) IN (%s)
  AND window_start>=toDateTime('%s','UTC')
-GROUP BY sensor_id,src_ip,proto,dst_port
+ AND proto IN ('tcp','tcp_synack')
+ GROUP BY sensor_id,src_ip,proto,dst_port
+)
+SELECT sensor_id,src_ip,'tcp' AS proto,dst_port,
+ if(countIf(proto='tcp_synack')>0,'syn_ack_observed','unverified') AS connection_outcome,
+ if(countIf(proto='tcp_synack')>0,maxIf(observed_last,proto='tcp_synack'),max(observed_last)) AS last_seen,
+ if(countIf(proto='tcp_synack')>0,argMaxIf(observed_evidence,observed_last,proto='tcp_synack'),argMax(observed_evidence,observed_last)) AS evidence_id
+FROM merged
+GROUP BY sensor_id,src_ip,dst_port
 ORDER BY sensor_id,src_ip,last_seen DESC
 LIMIT 8 BY sensor_id,src_ip FORMAT JSONEachRow`,
 		strings.Join(quotedTargets, ","), since.UTC().Truncate(10*time.Minute).Format("2006-01-02 15:04:05"))

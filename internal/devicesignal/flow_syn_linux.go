@@ -24,7 +24,11 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 	defer ring.close()
 	tracker := newStateChangeTracker[flowSYNKey](10 * time.Minute)
 	tracker.limit = maxTrackedFlowSYNKeys
+	responseTracker := newStateChangeTracker[flowSYNKey](10 * time.Minute)
+	responseTracker.limit = maxTrackedFlowSYNKeys
+	matcher := newFlowSYNMatcher(maxTrackedFlowSYNKeys)
 	values := make(map[flowSYNKey]int)
+	responses := make(map[flowSYNKey]int)
 	coverageFrom := time.Now().UTC()
 	bucket := coverageFrom
 	var keyDrops, parseUnknown int
@@ -35,13 +39,15 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 		}
 		bucket = at
 		selected := tracker.filter(bucket, values)
-		if err := writeFlowSYNBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, selected); err != nil {
+		selectedResponses := responseTracker.filter(bucket, responses)
+		if err := writeFlowSYNBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, bucket, selected, selectedResponses); err != nil {
 			return err
 		}
+		matcher.prune(at)
 		received, dropped, freezes, known := ring.stats()
 		coverage := sharedaccess.CoverageV2{
 			SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: at,
-			KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(dropped), QueueFreezes: uint64(freezes), KeyDrops: keyDrops + tracker.dropped,
+			KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(dropped), QueueFreezes: uint64(freezes), KeyDrops: keyDrops + tracker.dropped + responseTracker.dropped + matcher.dropped,
 			ParseUnknown: parseUnknown, Stopped: stopped,
 		}
 		if err := writeCaptureCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "flow-syn-sidecar", opts.CaptureScope, coverage); err != nil {
@@ -51,9 +57,10 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 			log.Printf("flow SYN capture incomplete: source=%s received=%d key_drops=%d kernel_drops=%d queue_freezes=%d", opts.Output, coverage.Received, coverage.KeyDrops, coverage.Dropped, coverage.QueueFreezes)
 		}
 		values = make(map[flowSYNKey]int)
+		responses = make(map[flowSYNKey]int)
 		coverageFrom = at
 		bucket = at
-		keyDrops, parseUnknown, tracker.dropped = 0, 0, 0
+		keyDrops, parseUnknown, tracker.dropped, responseTracker.dropped, matcher.dropped = 0, 0, 0, 0, 0
 		return nil
 	}
 	ticker := time.NewTicker(opts.Bucket)
@@ -64,6 +71,19 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 			parseUnknown++
 			return
 		}
+		at := time.Now().UTC()
+		if observation.Response {
+			key, matched := matcher.matchResponse(observation, at)
+			if !matched {
+				return
+			}
+			if _, found := responses[key]; !found && len(responses) >= maxFlowSYNBucketKeys {
+				keyDrops++
+				return
+			}
+			responses[key]++
+			return
+		}
 		if !flowSourceAllowed(observation.SourceIP, opts.SourceCIDRs) {
 			return
 		}
@@ -71,6 +91,10 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 		if _, found := values[key]; !found && len(values) >= maxFlowSYNBucketKeys {
 			keyDrops++
 			return
+		}
+		if !matcher.recordInitial(observation, at) {
+			// Retain the attempt but record that response correlation was incomplete.
+			// The matcher capacity drop appears in the next coverage record.
 		}
 		values[key]++
 	}

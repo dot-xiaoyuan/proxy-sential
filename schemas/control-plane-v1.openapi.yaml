@@ -6843,12 +6843,13 @@ components:
             items: { $ref: '#/components/schemas/DiscoveryObservedPort' }
     DiscoveryObservedPort:
       type: object
-      required: [sensor_id, src_ip, proto, dst_port, last_seen, evidence_id]
+      required: [sensor_id, src_ip, proto, dst_port, connection_outcome, last_seen, evidence_id]
       properties:
         sensor_id: { type: string }
         src_ip: { type: string }
         proto: { type: string }
         dst_port: { type: integer }
+        connection_outcome: { type: string, enum: [unverified, syn_ack_observed], description: A matched reverse SYN-ACK is a weak response clue, not proof of a device listening port. }
         last_seen: { type: string, format: date-time }
         evidence_id: { type: string }
     DiscoveryServiceClues:

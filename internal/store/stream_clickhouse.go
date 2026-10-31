@@ -106,7 +106,7 @@ func streamEventRetention(event normalized.Event) string {
 		return "evidence"
 	}
 	if event.Source == "handshake-sidecar" && event.SourceEventType == "handshake" ||
-		event.Source == "flow-syn-sidecar" && event.Type == "flow" && event.SourceEventType == "syn_attempt" ||
+		event.Source == "flow-syn-sidecar" && event.Type == "flow" && (event.SourceEventType == "syn_attempt" || event.SourceEventType == "syn_ack_observed") ||
 		event.Source == "packet-sidecar" && (event.SourceEventType == "ieee1905_client_association" || event.SourceEventType == "ieee1905_client_snapshot") {
 		return "evidence"
 	}

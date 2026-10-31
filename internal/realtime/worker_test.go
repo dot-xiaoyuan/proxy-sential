@@ -30,7 +30,7 @@ func TestSharedDeviceSignalsUseTheNormalizedEventBoundary(t *testing.T) {
 }
 
 func TestControlledFlowSYNIsAWeakStandardFlowEvent(t *testing.T) {
-	event := normalized.Event{SchemaVersion: "v1", EventID: "flow-syn-test", Source: "flow-syn-sidecar", SourceEventType: "syn_attempt", Type: "flow", Timestamp: "2026-11-01T00:00:00Z", Observer: map[string]any{"sensor_id": "sensor-a"}, Subject: map[string]any{"ip": "10.202.4.8"}, Flow: map[string]any{"src_ip": "10.202.4.8", "proto": "tcp", "dst_port": 443}, Payload: map[string]any{"connection_outcome": "unverified"}}
+	event := normalized.Event{SchemaVersion: "v1", EventID: "flow-syn-test", Source: "flow-syn-sidecar", SourceEventType: "syn_attempt", Type: "flow", Timestamp: "2026-11-01T00:00:00Z", Observer: map[string]any{"sensor_id": "sensor-a"}, Subject: map[string]any{"ip": "10.202.4.8"}, Flow: map[string]any{"src_ip": "10.202.4.8", "proto": "tcp", "dst_port": 443}, Payload: map[string]any{"origin": "initial_syn", "connection_outcome": "unverified", "observed_count": 1}}
 	raw, err := json.Marshal(event)
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +44,22 @@ func TestControlledFlowSYNIsAWeakStandardFlowEvent(t *testing.T) {
 	_, stats, err = normalize(Source{Kind: "device-signals"}, append(forged, '\n'), 0, "sensor-a", nil)
 	if err != nil || stats.Skipped != 1 || stats.Emitted != 0 {
 		t.Fatalf("mismatched source IP accepted: %+v err=%v", stats, err)
+	}
+	event.Flow["src_ip"] = "10.202.4.8"
+	event.EventID = "flow-syn-ack-test"
+	event.SourceEventType = "syn_ack_observed"
+	event.Payload["connection_outcome"] = "syn_ack_observed"
+	event.Payload["origin"] = "matched_reverse_syn_ack"
+	response, _ := json.Marshal(event)
+	events, stats, err = normalize(Source{Kind: "device-signals"}, append(response, '\n'), 0, "sensor-a", nil)
+	if err != nil || len(events) != 1 || stats.Emitted != 1 {
+		t.Fatalf("matched response event rejected: events=%+v stats=%+v err=%v", events, stats, err)
+	}
+	event.Payload["connection_outcome"] = "open"
+	forged, _ = json.Marshal(event)
+	_, stats, err = normalize(Source{Kind: "device-signals"}, append(forged, '\n'), 0, "sensor-a", nil)
+	if err != nil || stats.Skipped != 1 {
+		t.Fatalf("overstated response accepted: %+v err=%v", stats, err)
 	}
 }
 

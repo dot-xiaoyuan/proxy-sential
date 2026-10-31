@@ -316,12 +316,13 @@ type DiscoveryServiceClueReader interface {
 // DiscoveryObservedFlowPort is a destination the current IP accessed in
 // mirrored traffic. It says nothing about services listening on that IP.
 type DiscoveryObservedFlowPort struct {
-	SensorID        string `json:"sensor_id"`
-	SourceIP        string `json:"src_ip"`
-	Protocol        string `json:"proto"`
-	DestinationPort int    `json:"dst_port"`
-	LastSeen        string `json:"last_seen"`
-	EvidenceID      string `json:"evidence_id"`
+	SensorID          string `json:"sensor_id"`
+	SourceIP          string `json:"src_ip"`
+	Protocol          string `json:"proto"`
+	DestinationPort   int    `json:"dst_port"`
+	ConnectionOutcome string `json:"connection_outcome"`
+	LastSeen          string `json:"last_seen"`
+	EvidenceID        string `json:"evidence_id"`
 }
 
 type DiscoveryObservedFlowPortReader interface {

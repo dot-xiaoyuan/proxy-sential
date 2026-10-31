@@ -1,5 +1,5 @@
 [Unit]
-Description=Proxy Sentinel scoped passive TCP connection-attempt collector
+Description=Proxy Sentinel scoped passive TCP SYN and SYN-ACK clue collector
 After=network-online.target
 Wants=network-online.target
 RequiresMountsFor=/opt/proxy-sentinel/data

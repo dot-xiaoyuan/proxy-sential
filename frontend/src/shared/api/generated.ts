@@ -6619,6 +6619,11 @@ export interface components {
             src_ip: string;
             proto: string;
             dst_port: number;
+            /**
+             * @description A matched reverse SYN-ACK is a weak response clue
+             * @enum {string}
+             */
+            connection_outcome: "unverified" | "syn_ack_observed";
             /** Format: date-time */
             last_seen: string;
             evidence_id: string;

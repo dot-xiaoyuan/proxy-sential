@@ -385,7 +385,7 @@ func discoveryFlowSYNOnly(events []normalized.Event) bool {
 		return false
 	}
 	for _, event := range events {
-		if event.Source != "flow-syn-sidecar" || !(event.Type == "flow" && event.SourceEventType == "syn_attempt" || event.Type == "device" && event.SourceEventType == "capture_coverage") {
+		if event.Source != "flow-syn-sidecar" || !(event.Type == "flow" && (event.SourceEventType == "syn_attempt" || event.SourceEventType == "syn_ack_observed") || event.Type == "device" && event.SourceEventType == "capture_coverage") {
 			return false
 		}
 	}

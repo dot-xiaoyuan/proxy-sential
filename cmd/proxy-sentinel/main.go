@@ -581,7 +581,7 @@ func runDeviceSignal(args []string) error {
 	routerProtocolsOnly := fs.Bool("router-protocols-only", false, "attach the bounded router/discovery protocol BPF before capture")
 	sharedSignalsOnly := fs.Bool("shared-signals-only", false, "capture only payload-free initial TCP SYN metadata for shared-access analysis")
 	handshakeOnly := fs.Bool("handshake-only", false, "capture only TLS ClientHello SNI/ALPN and HTTP request Host/User-Agent summaries")
-	flowSYNOnly := fs.Bool("flow-syn-only", false, "capture bounded TCP initial SYN destination-port attempts")
+	flowSYNOnly := fs.Bool("flow-syn-only", false, "capture bounded TCP initial SYN and matched reverse SYN-ACK destination-port clues")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
