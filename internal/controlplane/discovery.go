@@ -249,12 +249,16 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			window = 0
 		}
 		if value := r.URL.Query().Get("window"); value != "" {
-			parsed, parseErr := time.ParseDuration(value)
-			if parseErr != nil || parsed < 10*time.Minute || parsed > 30*24*time.Hour {
-				writeError(w, 400, "bad_window", "时间窗口无效")
-				return
+			if value == "all" {
+				window = -1
+			} else {
+				parsed, parseErr := time.ParseDuration(value)
+				if parseErr != nil || parsed < 10*time.Minute || parsed > 30*24*time.Hour {
+					writeError(w, 400, "bad_window", "时间窗口无效")
+					return
+				}
+				window = parsed
 			}
-			window = parsed
 		}
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
 		var page map[string]any

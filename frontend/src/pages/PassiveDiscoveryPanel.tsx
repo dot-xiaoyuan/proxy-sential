@@ -89,7 +89,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       panel={moreOpen?<div className="app-filter-panel">
         <Select aria-label="设备类型" value={params.get('discovery_type')||''} options={[{value:'',label:'全部类型'},...(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))]} onChange={value=>change('type',value)}/>
         <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
-        <Select aria-label="最近观测范围" value={params.get('discovery_window')||''} options={[{value:'',label:'全部观测时间'},{value:'24h',label:'近 24 小时'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
+        <Select aria-label="最近观测范围" value={params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'all',label:'全部观测时间'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
         <Input aria-label="网络域" placeholder="网络域" allowClear value={params.get('discovery_domain')||''} onChange={e=>change('domain',e.target.value)}/>
         <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
       </div>:undefined}
