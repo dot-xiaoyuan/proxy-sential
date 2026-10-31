@@ -170,6 +170,9 @@ FROM (
 WHERE c.device_key=s.device_key AND s.last_seen>c.last_seen`); err != nil {
 		return fmt.Errorf("refresh current last seen: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM discovery_device_current_shadow WHERE fact_count=0 AND document='{}'::jsonb`); err != nil {
+		return fmt.Errorf("remove empty current documents: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow c
 SET document=c.document||jsonb_build_object('current',true),
     last_seen=GREATEST(c.last_seen,s.last_seen),updated_at=now()

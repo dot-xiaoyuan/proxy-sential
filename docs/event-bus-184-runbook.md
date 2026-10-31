@@ -343,3 +343,12 @@ current-shadow 现在会：
 - 24h / all API 均约 0.4s；
 - 19,490 个 `fact_count=0` 设备没有对应 `stream_discovery_facts`，保留流式文档字段，不再视为可补齐事实；
 - 6 个 stream current 设备补入竞态仍存在。
+
+## 2026-10-31 15:58 清理空当前文档
+
+发现 current 表仍有无 facts 且 `document='{}'` 的空文档（约 3,892 条），会出现在当前列表里。
+
+- 一次性删除空文档；
+- current-shadow 每轮清理 `fact_count=0 AND document='{}'`；
+- 发现页 24h 总数 36,860 → 24,975；全部时间 51,695 → 39,762；
+- 页面只保留有可展示字段的当前文档。
