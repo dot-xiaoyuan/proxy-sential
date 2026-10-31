@@ -16,6 +16,7 @@ REQUIRED_UNIT_FLAGS = {
     # requires an explicit capture scope must not be switched under the old
     # unit, whose missing flags would only fail after the release cutover.
     "proxy-sentinel-router-prober.service": {"capture-scope-config", "controlled-interface"},
+    "proxy-sentinel-flow-syn-signal.service": {"capture-scope-config", "flow-syn-only"},
 }
 
 

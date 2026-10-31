@@ -1,0 +1,26 @@
+[Unit]
+Description=Proxy Sentinel scoped passive TCP connection-attempt collector
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/opt/proxy-sentinel/data
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel device-signal run --interface bond0 --sensor-id ${PROXY_SENTINEL_SENSOR_ID} --output /opt/proxy-sentinel/data/device-signals/flow-syn.jsonl --bucket 30s --collector-instance-id ${PROXY_SENTINEL_COLLECTOR_INSTANCE_ID} --capture-scope-config /opt/proxy-sentinel/config/flow-syn-capture-scope.json --flow-syn-only
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+CPUQuota=50%
+MemoryMax=512M
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/proxy-sentinel/data/device-signals
+
+[Install]
+WantedBy=multi-user.target

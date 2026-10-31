@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -357,7 +358,7 @@ func normalizeDeviceSignals(input []byte, sensorID string) ([]normalized.Event, 
 			stats.Malformed++
 			continue
 		}
-		if event.SchemaVersion != "v1" || event.EventID == "" || event.Type != "device" || event.Timestamp == "" || event.Subject == nil {
+		if event.SchemaVersion != "v1" || event.EventID == "" || event.Timestamp == "" || event.Subject == nil || event.Type != "device" && !validFlowSYNEvent(event) {
 			stats.Skipped++
 			continue
 		}
@@ -377,6 +378,25 @@ func normalizeDeviceSignals(input []byte, sensorID string) ([]normalized.Event, 
 		return nil, stats, err
 	}
 	return events, stats, nil
+}
+
+// A payload-free SYN is a connection attempt, not an established flow or an
+// open port. Restrict this exception to the dedicated collector contract;
+// other device-signal files cannot introduce arbitrary flow rows.
+func validFlowSYNEvent(event normalized.Event) bool {
+	if event.Type != "flow" || event.Source != "flow-syn-sidecar" || event.SourceEventType != "syn_attempt" || !strings.HasPrefix(event.EventID, "flow-syn-") || event.Flow == nil || event.Payload == nil {
+		return false
+	}
+	source, ok := event.Flow["src_ip"].(string)
+	if !ok || event.Subject["ip"] != source || event.Flow["proto"] != "tcp" || event.Payload["connection_outcome"] != "unverified" {
+		return false
+	}
+	ip, err := netip.ParseAddr(source)
+	if err != nil || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	port, ok := event.Flow["dst_port"].(float64)
+	return ok && port >= 1 && port <= 65535 && port == float64(uint16(port))
 }
 
 // A source keeps its canonical path in the durable checkpoint even while its

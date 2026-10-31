@@ -9,7 +9,9 @@ type CoverageV2 struct {
 	From             time.Time `json:"covered_from"`
 	To               time.Time `json:"covered_to"`
 	KernelStatsKnown bool      `json:"kernel_stats_known"`
+	Received         uint64    `json:"received_packets,omitempty"`
 	Dropped          uint64    `json:"dropped_packets"`
+	QueueFreezes     uint64    `json:"queue_freezes,omitempty"`
 	ParseUnknown     int       `json:"unscoped_parse_truncated"`
 	Truncated        int       `json:"parse_truncated"`
 	Overflow         int       `json:"feature_overflow"`
@@ -19,7 +21,7 @@ type CoverageV2 struct {
 }
 
 func (c CoverageV2) Complete() bool {
-	return c.SchemaVersion == "capture-coverage/v2" && !c.From.IsZero() && c.To.After(c.From) && c.KernelStatsKnown && c.Dropped == 0 && c.ParseUnknown == 0 && c.Truncated == 0 && c.Overflow == 0 && c.Omitted == 0 && c.KeyDrops == 0 && !c.Stopped
+	return c.SchemaVersion == "capture-coverage/v2" && !c.From.IsZero() && c.To.After(c.From) && c.KernelStatsKnown && c.Dropped == 0 && c.QueueFreezes == 0 && c.ParseUnknown == 0 && c.Truncated == 0 && c.Overflow == 0 && c.Omitted == 0 && c.KeyDrops == 0 && !c.Stopped
 }
 
 type HandshakeSample struct {

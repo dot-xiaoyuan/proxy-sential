@@ -1,0 +1,18 @@
+[Unit]
+Description=Proxy Sentinel audited passive TCP connection-attempt stream
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/opt/proxy-sentinel/data
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
+WorkingDirectory=/opt/proxy-sentinel/current
+ExecStart=/opt/proxy-sentinel/current/bin/proxy-sentinel ingest stream-run --sensor-id ${PROXY_SENTINEL_SENSOR_ID} --device-signals /opt/proxy-sentinel/data/device-signals/flow-syn.jsonl --journal-dir /opt/proxy-sentinel/data/stream-journal/flow-syn --capture-scope-config /opt/proxy-sentinel/config/flow-syn-capture-scope.json --controlled-interface bond0 --max-pending-segments 8
+Restart=no
+TimeoutStopSec=30
+CPUQuota=50%
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

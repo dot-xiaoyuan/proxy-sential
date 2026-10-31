@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/sharedaccess"
@@ -31,6 +32,10 @@ type Options struct {
 	// summaries of handshake fields. It runs as its own process so the router control filter
 	// and its output stay unchanged.
 	HandshakeOnly bool
+	// FlowSYNOnly records bounded IP-scoped TCP connection attempts from a
+	// registered source range. It does not infer a device MAC or service state.
+	FlowSYNOnly bool
+	SourceCIDRs []netip.Prefix
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -45,6 +50,28 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if opts.HandshakeOnly && (opts.RouterProtocolsOnly || opts.SharedSignalsOnly) {
 		return fmt.Errorf("handshake filter cannot be combined with router or shared filters: one socket takes one filter")
+	}
+	if opts.FlowSYNOnly {
+		if opts.RouterProtocolsOnly || opts.SharedSignalsOnly || opts.HandshakeOnly {
+			return fmt.Errorf("flow SYN filter cannot be combined with other capture modes: one socket takes one filter")
+		}
+		if opts.CaptureScope == nil || len(opts.CaptureScope.UserCIDRs) == 0 {
+			return fmt.Errorf("flow SYN capture requires a registered capture scope with explicit user CIDRs")
+		}
+		if opts.CaptureScope.SensorID != opts.SensorID || opts.CaptureScope.CollectorInstanceID != opts.CollectorInstanceID ||
+			(opts.CaptureScope.InterfaceName != "" && opts.CaptureScope.InterfaceName != opts.Interface) ||
+			time.Now().Before(opts.CaptureScope.ValidFrom) || !time.Now().Before(opts.CaptureScope.ValidUntil) {
+			return fmt.Errorf("flow SYN capture scope does not match the collector or validity interval")
+		}
+		opts.SourceCIDRs = nil
+		for _, value := range opts.CaptureScope.UserCIDRs {
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil || prefix.Bits() == 0 || prefix != prefix.Masked() {
+				return fmt.Errorf("invalid flow SYN capture source CIDR %q", value)
+			}
+			opts.SourceCIDRs = append(opts.SourceCIDRs, prefix)
+		}
+		return runFlowSYN(ctx, opts)
 	}
 	priorityCIDRs, err := parseHandshakePriorityCIDRs(os.Getenv("PROXY_SENTINEL_HANDSHAKE_PRIORITY_CIDRS"))
 	if err != nil {
@@ -249,8 +276,16 @@ func htons(value uint16) uint16 { return value<<8 | value>>8 }
 
 // PACKET_STATISTICS resets the socket counters on every successful read.
 func packetDropStats(fd int) (uint32, bool) {
+	_, drops, known := packetCaptureStats(fd)
+	return drops, known
+}
+
+// PACKET_STATISTICS reports packets and drops for the same interval, then
+// resets both counters. Keep one read per bucket so the denominator matches
+// the drop count shown for this source.
+func packetCaptureStats(fd int) (uint32, uint32, bool) {
 	var stats struct{ Packets, Drops uint32 }
 	length := uint32(unsafe.Sizeof(stats))
 	_, _, errno := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(fd), syscall.SOL_PACKET, syscall.PACKET_STATISTICS, uintptr(unsafe.Pointer(&stats)), uintptr(unsafe.Pointer(&length)), 0)
-	return stats.Drops, errno == 0 && length >= 8
+	return stats.Packets, stats.Drops, errno == 0 && length >= 8
 }

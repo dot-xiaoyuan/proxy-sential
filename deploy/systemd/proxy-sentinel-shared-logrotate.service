@@ -3,4 +3,4 @@ Description=Rotate Proxy Sentinel shared-access and router signal logs
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/logrotate --state /opt/proxy-sentinel/data/shared-logrotate.state /etc/logrotate.d/proxy-sentinel-shared-signals /etc/logrotate.d/proxy-sentinel-router-signals
+ExecStart=/usr/sbin/logrotate --state /opt/proxy-sentinel/data/shared-logrotate.state /etc/logrotate.d/proxy-sentinel-shared-signals /etc/logrotate.d/proxy-sentinel-router-signals /etc/logrotate.d/proxy-sentinel-flow-syn-signals

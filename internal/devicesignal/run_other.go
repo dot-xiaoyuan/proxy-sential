@@ -5,6 +5,7 @@ package devicesignal
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"proxy-sentinel/internal/normalized"
 	"time"
 )
@@ -18,6 +19,8 @@ type Options struct {
 	RouterProtocolsOnly         bool
 	HandshakeOnly               bool
 	SharedSignalsOnly           bool
+	FlowSYNOnly                 bool
+	SourceCIDRs                 []netip.Prefix
 }
 
 func Run(context.Context, Options) error {

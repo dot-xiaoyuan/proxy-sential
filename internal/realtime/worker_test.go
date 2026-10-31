@@ -29,6 +29,24 @@ func TestSharedDeviceSignalsUseTheNormalizedEventBoundary(t *testing.T) {
 	}
 }
 
+func TestControlledFlowSYNIsAWeakStandardFlowEvent(t *testing.T) {
+	event := normalized.Event{SchemaVersion: "v1", EventID: "flow-syn-test", Source: "flow-syn-sidecar", SourceEventType: "syn_attempt", Type: "flow", Timestamp: "2026-11-01T00:00:00Z", Observer: map[string]any{"sensor_id": "sensor-a"}, Subject: map[string]any{"ip": "10.202.4.8"}, Flow: map[string]any{"src_ip": "10.202.4.8", "proto": "tcp", "dst_port": 443}, Payload: map[string]any{"connection_outcome": "unverified"}}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, stats, err := normalize(Source{Kind: "device-signals"}, append(raw, '\n'), 0, "sensor-a", nil)
+	if err != nil || len(events) != 1 || stats.Emitted != 1 || events[0].Type != "flow" {
+		t.Fatalf("flow SYN standard event rejected: events=%+v stats=%+v err=%v", events, stats, err)
+	}
+	event.Flow["src_ip"] = "10.202.4.9"
+	forged, _ := json.Marshal(event)
+	_, stats, err = normalize(Source{Kind: "device-signals"}, append(forged, '\n'), 0, "sensor-a", nil)
+	if err != nil || stats.Skipped != 1 || stats.Emitted != 0 {
+		t.Fatalf("mismatched source IP accepted: %+v err=%v", stats, err)
+	}
+}
+
 type fakeBackend struct {
 	checkpoint    ingest.Checkpoint
 	found         bool

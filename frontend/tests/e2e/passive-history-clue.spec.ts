@@ -11,6 +11,7 @@ test('historical DHCP clues remain visibly historical across ledger layouts', as
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
     await page.setViewportSize(viewport)
     await page.goto('/devices?tab=discovery')
+    await expect(page.getByText('尝试连接 TCP 443').first()).toBeVisible()
     const row = page.locator('.passive-ledger-table').getByRole('row').filter({ hasText: '00:11:22:33:44:77' })
     await expect(row.getByText('Windows · 历史线索')).toBeVisible()
     const layout = await page.evaluate(() => {

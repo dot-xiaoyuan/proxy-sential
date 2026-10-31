@@ -1,0 +1,14 @@
+# The collector reopens the path per 30-second bucket. Keep the raw rotations
+# for the discovery evidence retention period; stream ingest drains by file
+# identity before a delayed compression. Monitor reader lag before rotation.
+/opt/proxy-sentinel/data/device-signals/flow-syn.jsonl {
+  size 256M
+  rotate 5000
+  maxage 365
+  missingok
+  notifempty
+  nocreate
+  compress
+  delaycompress
+  dateformat -%Y%m%d-%H%M%S
+}

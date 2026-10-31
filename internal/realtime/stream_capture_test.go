@@ -852,6 +852,48 @@ func TestStreamProjectsOnlySelectedDiscoverySignals(t *testing.T) {
 	}
 }
 
+func TestDiscoveryFlowSYNDoesNotFanOutRiskJobs(t *testing.T) {
+	clues := []normalized.Event{{Source: "flow-syn-sidecar", Type: "flow", SourceEventType: "syn_attempt"}, {Source: "flow-syn-sidecar", Type: "device", SourceEventType: "capture_coverage"}}
+	if !discoveryFlowSYNOnly(clues) || needsStreamProjection(clues) {
+		t.Fatal("SYN access clues must stay in archive/search read lanes")
+	}
+	if discoveryFlowSYNOnly(append(clues, normalized.Event{Source: "packet-sidecar", Type: "device", SourceEventType: "ttl"})) {
+		t.Fatal("mixed source cannot skip risk feature work")
+	}
+}
+
+func TestControlledFlowSYNStreamRetainsRawWithoutProjectionOrRisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "flow-syn.jsonl")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := streamlog.Open(filepath.Join(t.TempDir(), "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.StartFreshSource(streamlog.SourceCursor{Epoch: "fresh-flow", Source: "device-signals", Path: path, FileID: fileIdentity(path, info), ParserVersion: "device-v1"}); err != nil {
+		t.Fatal(err)
+	}
+	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "flow-owner", CampusID: "campus-a", AccessDomain: "bond0", InterfaceName: "bond0", ValidFrom: time.Now().Add(-time.Hour), ValidUntil: time.Now().Add(time.Hour)}
+	event := scope.Apply(normalized.Event{SchemaVersion: "v1", EventID: "flow-syn-test", Source: "flow-syn-sidecar", SourceEventType: "syn_attempt", Type: "flow", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a", "collector_instance_id": "flow-owner", "interface": "bond0"}, Subject: map[string]any{"ip": "10.202.4.8"}, Flow: map[string]any{"src_ip": "10.202.4.8", "proto": "tcp", "dst_port": 443}, Payload: map[string]any{"connection_outcome": "unverified"}})
+	raw, _ := json.Marshal(event)
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, captured, err := CaptureStreamOnce(context.Background(), journal, Options{SensorID: "sensor-a"}, Source{Kind: "device-signals", Path: path, CaptureScope: scope, ControlledInterface: "bond0"})
+	if err != nil || !captured {
+		t.Fatalf("capture flow SYN: id=%s captured=%t err=%v", id, captured, err)
+	}
+	state, err := journal.Load(id)
+	if err != nil || len(state.Segment.Events) != 1 || !state.Segment.RawIsStandardEvents || state.Segment.NeedsProjection || state.Segment.RiskFeaturesRequired || state.Segment.SplitRiskFeatures || string(state.Segment.Raw) != string(append(raw, '\n')) {
+		t.Fatalf("flow SYN source lost raw or created unrelated work: state=%+v err=%v", state.Segment, err)
+	}
+}
+
 func (*captureNoopWriter) WriteBody(context.Context, string, streamlog.Segment) error     { return nil }
 func (*captureNoopWriter) ReconcileBody(context.Context, string, streamlog.Segment) error { return nil }
 func (*captureNoopWriter) WriteSearch(context.Context, string, streamlog.Segment) error   { return nil }

@@ -156,7 +156,7 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 			ParserVersion: cursor.ParserVersion, RawSHA256: hex.EncodeToString(rawHash[:]),
 			KeyScheme: cursor.KeyScheme, PreviousGeneration: cursor.Generation, SourceGeneration: generation,
 			ArchiveMonth: time.Now().UTC().Format("200601"), AcceptedAt: time.Now().UTC(),
-			NeedsProjection: needsStreamProjection(events), RiskFeaturesRequired: len(events) > 0, SplitRiskFeatures: len(events) > 0, Raw: chunk, Events: events,
+			NeedsProjection: needsStreamProjection(events), RiskFeaturesRequired: len(events) > 0 && !discoveryFlowSYNOnly(events), SplitRiskFeatures: len(events) > 0 && !discoveryFlowSYNOnly(events), Raw: chunk, Events: events,
 		}
 		segment.RawIsStandardEvents = source.Kind == "device-signals" || source.Kind == "shared-device-signals"
 		segment.SourceBackedRaw = source.Kind == "zeek-dhcp-binding" && journal.HasRawResolver()
@@ -375,6 +375,21 @@ func needsStreamProjection(events []normalized.Event) bool {
 		}
 	}
 	return false
+}
+
+// The bounded SYN source exists solely for the discovery access-clue read
+// model. Its archive and search lanes retain evidence; risk and shared jobs
+// must not fan out one job for every sampled IP/port pair.
+func discoveryFlowSYNOnly(events []normalized.Event) bool {
+	if len(events) == 0 {
+		return false
+	}
+	for _, event := range events {
+		if event.Source != "flow-syn-sidecar" || !(event.Type == "flow" && event.SourceEventType == "syn_attempt" || event.Type == "device" && event.SourceEventType == "capture_coverage") {
+			return false
+		}
+	}
+	return true
 }
 
 func lineBoundary(data []byte, maxLines int) int {

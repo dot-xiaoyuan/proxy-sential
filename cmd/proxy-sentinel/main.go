@@ -581,6 +581,7 @@ func runDeviceSignal(args []string) error {
 	routerProtocolsOnly := fs.Bool("router-protocols-only", false, "attach the bounded router/discovery protocol BPF before capture")
 	sharedSignalsOnly := fs.Bool("shared-signals-only", false, "capture only payload-free initial TCP SYN metadata for shared-access analysis")
 	handshakeOnly := fs.Bool("handshake-only", false, "capture only TLS ClientHello SNI/ALPN and HTTP request Host/User-Agent summaries")
+	flowSYNOnly := fs.Bool("flow-syn-only", false, "capture bounded TCP initial SYN destination-port attempts")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -590,7 +591,7 @@ func runDeviceSignal(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, StateLiveness: *stateLiveness, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly, HandshakeOnly: *handshakeOnly})
+	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, StateLiveness: *stateLiveness, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly, HandshakeOnly: *handshakeOnly, FlowSYNOnly: *flowSYNOnly})
 }
 
 func runRouterProber(args []string) error {
