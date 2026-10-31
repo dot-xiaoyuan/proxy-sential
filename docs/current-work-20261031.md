@@ -24,6 +24,8 @@
 
 **仍需如实保留的缺口：** 旧 TTL/握手侧车在新共享代次恢复后正追读已积累的原始文件，03:05 时 cursor 分别到文件的 13.6%/16.7%，不可宣称这两路已追平；原始日志保留、reader 活动、后续处理进度需继续观察。当前 Zeek 采集过滤器仅含 DHCP 67/68，Suricata EVE 当前仅有 DNS 与统计事件，现场没有 HTTP User-Agent、TLS JA3/JA4、SMB native OS 或非 DHCP observed flow 可供投影；因此页面不推断精确 OS 版本、开放端口或物理接入端口。NCU 身份同步本机 `/18082/readyz` 仍为 503，属于本次发现链路之外的现场遗留问题；其现行 binary 没有文档提及的 `--read-only=true` 参数，需另行核对该项现场约定，不将本次发现验收写成整站全部服务通过。
 
+03:15 复核：TTL cursor 已到约 26%；握手源在 03:14 按日志轮转规则重命名为 `handshake.jsonl-20261101-031402`，旧 inode 和 1.6 GiB 原文仍保留，reader 按文件身份继续读取，尚未读完；轮转后的新文件不能作为旧 cursor 的进度分母。恢复后两条 reader 的最终确认错误数仍为 0。现场 Suricata 的 BPF 仅纳入 ARP、发现类多播和指定 UDP/VRRP，Zeek 的 BPF 仅纳入 DHCP；对 `bond0` 上 TCP 80/443/445 的短时只读抓包可见大量报文，未做资源与丢包验收前不能直接放开全量 TCP 捕获。
+
 ## 当前已落地
 
 ### 数据链路
