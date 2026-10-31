@@ -181,7 +181,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Bounded mirror handshake clues for one current sensor/IP in device detail; requires identity:read. IP reuse or sharing can make attribution uncertain. */
+        /** @description Bounded mirror handshake clues for one current sensor/IP in device detail; requires identity:read and an explicit CIDR-limited discovery-to-handshake scope mapping. IP reuse or sharing can make attribution uncertain. */
         get: operations["getDiscoveryHandshakeClues"];
         put?: never;
         post?: never;

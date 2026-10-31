@@ -103,7 +103,7 @@ paths:
   /discovery/handshake-clues:
     get:
       operationId: getDiscoveryHandshakeClues
-      description: Bounded mirror handshake clues for one current sensor/IP in device detail; requires identity:read. IP reuse or sharing can make attribution uncertain.
+      description: Bounded mirror handshake clues for one current sensor/IP in device detail; requires identity:read and an explicit CIDR-limited discovery-to-handshake scope mapping. IP reuse or sharing can make attribution uncertain.
       parameters:
         - { name: sensor_id, in: query, required: true, schema: { type: string } }
         - { name: campus_id, in: query, required: true, schema: { type: string } }

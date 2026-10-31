@@ -173,8 +173,17 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			writeError(w, 400, "invalid_scope", "缺少有效的设备观测范围")
 			return
 		}
+		mapped, matched, err := mappedDiscoveryHandshakeScope(os.Getenv("PROXY_SENTINEL_DISCOVERY_HANDSHAKE_SCOPE_MAP"), scope)
+		if err != nil {
+			writeError(w, 500, "discovery_scope_map", "握手观测范围配置无效")
+			return
+		}
+		if !matched {
+			writeJSON(w, 200, map[string]any{"items": []store.DiscoveryHandshakeClue{}})
+			return
+		}
 		readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		items, err := reader.DiscoveryHandshakeClues(readCtx, scope, time.Now().UTC())
+		items, err := reader.DiscoveryHandshakeClues(readCtx, mapped, time.Now().UTC())
 		cancel()
 		if err != nil {
 			writeError(w, 500, "discovery_read", "读取握手弱线索失败")
