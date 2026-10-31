@@ -4975,6 +4975,19 @@ pre.wrap-code {
 .discovery-evidence-modal .ant-modal-body { max-height: 65vh; overflow:auto; }
 .iot-coverage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .iot-coverage-item { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; overflow-wrap: anywhere; }
+.discovery-protocol-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: #475569;
+  font-size: 13px;
+}
+.discovery-protocol-counts {
+  margin-left: auto;
+  color: #64748b;
+}
 .discovery-statistics { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .discovery-statistics-item { padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 999px; color: #334155; background: #f8fafc; white-space: nowrap; flex-shrink: 0; }
 .passive-discovery-controls > .ant-select { min-width: 150px; }

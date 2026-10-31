@@ -424,3 +424,12 @@ current-shadow 新增清理：
 - 本次删除 41 条；
 - current 表 48,988，no_facts 55 → 12；
 - 页面当前设备只保留有活跃流式来源或事实来源的文档。
+
+## 2026-10-31 17:05 发现页显示协议与哑终端线索
+
+- 发现页顶部显示当前已开启协议（ARP/DHCP/DNS-SD/LLDP/SSDP）；
+- 增加“查看哑终端线索”入口，按 capabilities 过滤；
+- 后端 eventbus 查询支持 `capability=dumb`（printing/scanning/casting/media_rendering/network_video）；
+- 类型列对无 device_type 但有能力的设备显示“哑终端线索 · 媒体播放/投屏”或“打印/扫描”；
+- 现场哑终端过滤 total=53（casting 49、media_rendering 4、printing 1）；
+- DHCP-only 设备仍显示“待分类”，不能凭 DHCP 单独判定哑终端。

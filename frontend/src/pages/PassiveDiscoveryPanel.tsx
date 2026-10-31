@@ -32,6 +32,13 @@ type History = components['schemas']['DiscoveryHistoryPage']
 const protocols: Record<string,string> = { dhcp:'DHCP', dhcpv6:'DHCPv6', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
 const capabilities: Record<string,string> = { printing:'打印', scanning:'扫描', casting:'投屏', network_video:'网络视频', media_rendering:'媒体播放' }
 const states: Record<string,string> = { identified:'证据有效', expired:'证据已过期', conflict:'类型证据冲突', candidate:'发现线索' }
+function dumbTerminal(item: Device) {
+  const caps = item.capabilities ?? []
+  if (caps.includes('printing') || caps.includes('scanning')) return '打印/扫描'
+  if (caps.includes('casting') || caps.includes('media_rendering') || caps.includes('network_video')) return '媒体播放/投屏'
+  if (caps.includes('routing')) return '网关/路由'
+  return ''
+}
 
 export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const [params,setParams] = useSearchParams()
@@ -39,7 +46,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const [draft,setDraft] = useState(search)
   const [moreOpen,setMoreOpen] = useState(false)
   const [pageSize,setPageSize] = useState(20)
-  const filterKey = [view,search,pageSize,...['category','type','protocol','state','domain','vlan','window'].map(k=>params.get(`discovery_${k}`)||'')].join('|')
+  const filterKey = [view,search,pageSize,...['category','type','protocol','state','domain','vlan','window','capability'].map(k=>params.get(`discovery_${k}`)||'')].join('|')
   const [paging,setPaging] = useState({key:filterKey,cursors:[''],page:0})
   const cursors=paging.key===filterKey?paging.cursors:['']
   const page=paging.key===filterKey?paging.page:0
@@ -53,7 +60,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const query = new URLSearchParams({mode:'passive',limit:String(pageSize)})
   if(view==='iot')query.set('view','iot')
   if(search)query.set('search',search)
-  for(const key of ['category','type','protocol','state','domain','vlan','window']){const value=params.get(`discovery_${key}`);if(value)query.set(key,value)}
+  for(const key of ['category','type','protocol','state','domain','vlan','window','capability']){const value=params.get(`discovery_${key}`);if(value)query.set(key,value)}
   if(cursors[page])query.set('cursor',cursors[page])
   const devices = useQuery({queryKey:['discovery-center',query.toString()],queryFn:({signal})=>request<Page>(`/discovery/devices?${query}`,{signal})})
   const catalogue=useQuery({queryKey:['discovery-types'],queryFn:({signal})=>request<Catalogue>('/discovery/types',{signal})})
@@ -63,8 +70,9 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const types=Object.fromEntries((catalogue.data?.items??[]).map(t=>[t.id,t.label]))
   const items=devices.data?.items??[]
   const fresh=devices.data?.freshness
+  const dumbFilter=params.get('discovery_capability')==='dumb'
   const identity=(item:Device)=><><DeviceAddress ip={item.current_addresses?item.current_addresses[0]:item.primary_ip} name={item.name} mac={item.mac} addresses={item.current_addresses??item.addresses}/>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后观测地址 · {item.last_observed_ip}</Typography.Text>}</>
-  const kind=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text strong={item.classification_status!=='expired'}>{types[item.device_type||item.last_device_type||'']??''}</Typography.Text><Typography.Text type="secondary">{[item.manufacturer,item.model_name].filter(Boolean).join(' · ')}</Typography.Text></Space>
+  const kind=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text strong={item.classification_status!=='expired'}>{types[item.device_type||item.last_device_type||'']??(dumbTerminal(item)?`哑终端线索 · ${dumbTerminal(item)}`:'待分类')}</Typography.Text><Typography.Text type="secondary">{[item.manufacturer,item.model_name].filter(Boolean).join(' · ')}</Typography.Text></Space>
   const clues=(item:Device)=><Space wrap>{(item.capabilities??[]).filter(c=>capabilities[c]).map(c=><Tag key={c}>{capabilities[c]}</Tag>)}{(item.protocols??[]).map(p=><Tag key={p}>{protocols[p]??p}</Tag>)}</Space>
   const state=(item:Device)=><Typography.Text type={item.classification_status==='conflict'?'warning':'secondary'}>{states[item.classification_status??'']??(item.current?'证据有效':'证据已过期')}</Typography.Text>
   const show=(item:Device)=>{setHistoryCursor('');setSelected(item)}
@@ -96,6 +104,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     />
     <section className="surface center-list-toolbar">
       <Typography.Paragraph type="secondary">{view==='iot'?'展示有明确类型依据的设备档案。':'展示发现设备与关联线索；证据有效不代表设备在线。'}名称搜索：少于三个字符按前缀，三个及以上按包含。</Typography.Paragraph>
+      {coverage.data&&<div className="discovery-protocol-summary"><strong>已开启协议</strong>{(coverage.data.items??[]).filter(p=>p.enabled).map(p=><Tag key={p.protocol}>{protocols[p.protocol]??p.protocol}</Tag>)}<span className="discovery-protocol-counts">本页哑终端线索：{Object.entries(items.reduce((acc,item)=>{const label=dumbTerminal(item);if(label)acc[label]=(acc[label]??0)+1;return acc},{} as Record<string,number>)).map(([label,count])=>`${label} ${count}`).join(' · ')||'暂无'}</span><Button size="small" type="link" onClick={()=>change('capability',dumbFilter?'':'dumb')}>{dumbFilter?'查看全部设备':'查看哑终端线索'}</Button></div>}
       {catalogue.isError&&<AppErrorAlert title="读取设备类型失败" message={catalogue.error.message} />}
       {fresh&&fresh.status!=='ready'&&<Alert type={fresh.status==='failed'?'error':'warning'} showIcon title={fresh.status==='failed'?'设备数据处理失败':fresh.status==='delayed'?'设备数据更新延迟':'设备数据处理中'} description={fresh.oldest_pending_at?`最早待处理时间：${observedTimeTitle(fresh.oldest_pending_at)}`:undefined}/>}
       {statistics.isError&&<AppErrorAlert title="读取设备统计失败" message={statistics.error.message} />}

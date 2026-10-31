@@ -46,9 +46,9 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 		q.Window = 24 * time.Hour
 	}
 	signature := contentHash(struct {
-		View, Search, Category, Type, Protocol, State, Domain, VLAN string
-		Window                                                      int64
-	}{q.View + ":" + q.Mode, q.Search, q.Category, q.DeviceType, q.Protocol, q.State, q.Domain, q.VLAN, int64(q.Window)})
+		View, Search, Category, Type, Protocol, State, Domain, VLAN, Capability string
+		Window                                                                  int64
+	}{q.View + ":" + q.Mode, q.Search, q.Category, q.DeviceType, q.Protocol, q.State, q.Domain, q.VLAN, q.Capability, int64(q.Window)})
 	args := []any{}
 	add := func(value any) string { args = append(args, value); return fmt.Sprintf("$%d", len(args)) }
 	where := []string{"(c.document->>'current' IS DISTINCT FROM 'false')", "(c.document <> '{}'::jsonb OR c.fact_count>0)"}
@@ -84,6 +84,13 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 	}
 	if q.Protocol != "" {
 		addFact("f.protocol=" + add(q.Protocol))
+	}
+	if q.Capability != "" {
+		if q.Capability == "dumb" {
+			where = append(where, "c.document->'capabilities' ?| array['printing','scanning','casting','media_rendering','network_video']")
+		} else {
+			where = append(where, "c.document->'capabilities' ? "+add(q.Capability))
+		}
 	}
 	if q.Mode == "passive" {
 		// Stream-only current documents have no event-bus fact row yet. Keep them
