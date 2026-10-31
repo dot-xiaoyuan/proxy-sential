@@ -18,9 +18,37 @@ for unit in \
   proxy-sentinel-recognition-materializer.service \
   proxy-sentinel-discovery.service \
   proxy-sentinel-handshake-signal.service \
-  proxy-sentinel-ingest-stream-handshake-layered-r7.service ; do
+  proxy-sentinel-ingest-stream-handshake-layered-r7.service \
+  proxy-sentinel-flow-syn-signal.service \
+  proxy-sentinel-ingest-stream-flow-syn.service ; do
   printf '%-62s %s\n' "$unit" "$(systemctl is-active "$unit" 2>/dev/null || true)"
 done
+echo "=== flow SYN source progress ==="
+python3 - <<'PY'
+import hashlib,json,pathlib,time
+source=pathlib.Path('/opt/proxy-sentinel/data/device-signals/flow-syn.jsonl')
+journal=pathlib.Path('/opt/proxy-sentinel/data/stream-journal/flow-syn')
+cursor=journal/(hashlib.sha256(b'device-signals\0'+str(source).encode()).hexdigest()+'.cursor')
+try:
+    state=json.loads(cursor.read_text())
+    stat=source.stat()
+except (OSError,ValueError) as error:
+    print('ALERT: flow SYN source progress unavailable:',error)
+else:
+    current=f'{source}:{stat.st_dev}:{stat.st_ino}'
+    age=int(time.time()-stat.st_mtime)
+    if state.get('file_id')==current:
+        lag=stat.st_size-state.get('offset',0)
+        print(f"epoch={state.get('epoch','')} source_bytes={stat.st_size} cursor_offset={state.get('offset',0)} lag_bytes={lag} source_age_seconds={age}")
+        if lag<0 or lag>64<<20 or age>120:
+            print('ALERT: flow SYN source has a file gap, backlog or stale input')
+    else:
+        print(f"epoch={state.get('epoch','')} current_file_bytes={stat.st_size} cursor_file_id={state.get('file_id','')} source_age_seconds={age}")
+        print('ALERT: flow SYN reader has not yet confirmed the rotated source file')
+PY
+if ! docker exec proxy-sentinel-clickhouse clickhouse-client --query "SELECT 'port_rows',count(),uniqExact(src_ip),max(window_start) FROM proxy_sentinel.discovery_observed_flow_ports_10m" 2>&1; then
+  echo 'ALERT: flow SYN port projection query failed'
+fi
 echo "=== kafka ==="
 "$RPK" -X brokers="$BROKERS" cluster health 2>&1 | sed -n '1,12p'
 for group in ps-discovery-eventbus-facts-pg-v1 ps-identity-eventbus-shadow-v1 ; do
