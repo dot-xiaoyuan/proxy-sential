@@ -116,6 +116,21 @@ func TestSourceGenerationDistinguishesReusedZeekInode(t *testing.T) {
 	}
 }
 
+func TestPerMessageDHCPSourceKeepsGenerationProof(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor := SourceCursor{Epoch: "fresh-message", Source: "zeek-dhcp-binding", Path: "/logs/current/device_dhcp_message.log", FileID: "message-file", Offset: 0, ParserVersion: "zeek-dhcp-message-v1", KeyScheme: "generation-v2", Generation: 1}
+	if err := j.StartFreshSource(cursor); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := j.LoadSource(cursor.Source, cursor.Path)
+	if err != nil || loaded.ParserVersion != cursor.ParserVersion || loaded.Generation != 1 {
+		t.Fatalf("message source lost immutable parser or generation: %+v, %v", loaded, err)
+	}
+}
+
 func TestSourceCursorRejectsStaleRotatedSegment(t *testing.T) {
 	j, err := Open(t.TempDir())
 	if err != nil {

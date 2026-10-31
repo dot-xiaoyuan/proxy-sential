@@ -60,3 +60,13 @@ func TestPassiveSignalsDoNotMergeSameMACAcrossSensors(t *testing.T) {
 		t.Fatalf("cross-sensor OS clues were merged: %+v", byKey)
 	}
 }
+
+func TestDurableDHCPEventDoesNotInheritUnprojectedTailFields(t *testing.T) {
+	byKey := map[string]*PassiveSignal{}
+	mergePassiveSignal(byKey, &PassiveSignal{SensorID: "sensor-a", MAC: "aa:bb:cc:dd:ee:ff", DHCPVLAN: "8", DHCPVendorClass: "MSFT 5.0", DHCPObservedAt: "2026-11-01T00:00:00Z", DHCPEvidenceID: "event-ack", OSFamily: "Windows", OSEvidence: "DHCP option 60"})
+	mergeCachedPassiveSignal(byKey, PassiveSignal{SensorID: "sensor-a", MAC: "aa:bb:cc:dd:ee:ff", DHCPVLAN: "8", DHCPVendorClass: "android-dhcp-13", DHCPObservedAt: "2026-11-01T00:01:00Z", OSFamily: "Android", OSEvidence: "DHCP option 60", TTL: 64, TTLVLAN: "8"})
+	got := byKey["sensor-a|mac:aa:bb:cc:dd:ee:ff|8"]
+	if got == nil || got.DHCPEvidenceID != "event-ack" || got.DHCPObservedAt != "2026-11-01T00:00:00Z" || got.DHCPVendorClass != "MSFT 5.0" || got.OSConflict || got.TTL != 64 {
+		t.Fatalf("tail was mistaken for durable evidence: %+v", got)
+	}
+}

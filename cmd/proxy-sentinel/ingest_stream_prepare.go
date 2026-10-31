@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -242,7 +243,7 @@ func prepareControlledFileStreamAfterClosed(ctx context.Context, db *sql.DB, jou
 }
 
 func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db *sql.DB, journal *streamlog.Journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash string, cutoff time.Time, priorEpoch, priorManifest, rotationArchive string) (zeekCutoverBytes, string, error) {
-	parser := streamParserForSource(kind)
+	parser := streamParserForSourcePath(kind, path)
 	if parser == "" || db == nil || journal == nil || sensor == "" || path == "" || epoch == "" || len(epoch) > 128 || cancelID == "" || previousRelease == "" || len(scopeHash) != 64 || cutoff.IsZero() || cutoff.After(time.Now()) || (priorEpoch == "") != (priorManifest == "") || (priorEpoch != "" && (kind != "zeek-dhcp-binding" && kind != "device-signals" || priorEpoch == epoch || len(priorManifest) != 64)) || (rotationArchive != "" && (priorEpoch == "" || kind != "zeek-dhcp-binding" && kind != "device-signals")) {
 		return zeekCutoverBytes{}, "", errors.New("invalid controlled file fresh-cutover parameters")
 	}
@@ -422,7 +423,7 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 		return zeekCutoverBytes{}, "", err
 	}
 	cursor := streamlog.SourceCursor{Epoch: epoch, Source: kind, Path: path, FileID: fileID, Offset: scan.Offset, ParserVersion: parser}
-	if kind == "zeek-dhcp-binding" && parser == "zeek-dhcp-binding-v2" {
+	if kind == "zeek-dhcp-binding" && (parser == zeekDHCPBindingStreamParser || parser == zeekDHCPMessageStreamParser) {
 		cursor.KeyScheme, cursor.Generation = "generation-v2", 1
 	}
 	if kind == "zeek-dhcp-binding" && scan.Offset > 0 {
@@ -471,6 +472,7 @@ func runIngestStreamPrepare(args []string) error {
 	sensor := fs.String("sensor-id", os.Getenv("PROXY_SENTINEL_SENSOR_ID"), "registered capture sensor")
 	path := fs.String("zeek-dhcp", "", "existing Zeek DHCP log")
 	bindingPath := fs.String("zeek-dhcp-binding", "", "same-scope Zeek DHCP binding log")
+	messagePath := fs.String("zeek-dhcp-message", "", "per-message Zeek DHCP log with an audited fresh start")
 	ttlPath := fs.String("device-signals", "", "existing controlled TTL signal log")
 	handshakePath := fs.String("handshake-signals", "", "existing controlled handshake signal log")
 	routerProbePath := fs.String("router-probe-signals", "", "existing controlled router probe signal log")
@@ -489,7 +491,7 @@ func runIngestStreamPrepare(args []string) error {
 		return err
 	}
 	kind, sourcePath, sourceCount := "", "", 0
-	for _, item := range []struct{ kind, path string }{{"zeek-dhcp", *path}, {"zeek-dhcp-binding", *bindingPath}, {"device-signals", *ttlPath}, {"device-signals", *handshakePath}, {"device-signals", *routerProbePath}} {
+	for _, item := range []struct{ kind, path string }{{"zeek-dhcp", *path}, {"zeek-dhcp-binding", *bindingPath}, {"zeek-dhcp-binding", *messagePath}, {"device-signals", *ttlPath}, {"device-signals", *handshakePath}, {"device-signals", *routerProbePath}} {
 		if item.path != "" {
 			kind, sourcePath = item.kind, item.path
 			sourceCount++
@@ -497,6 +499,9 @@ func runIngestStreamPrepare(args []string) error {
 	}
 	if fs.NArg() != 0 || *sensor == "" || sourceCount != 1 || *journalDir == "" || *scopeFile == "" || *postgresDSN == "" || *epoch == "" || *cancelID == "" || *previousRelease == "" || *cutoffText == "" {
 		return errors.New("stream-prepare requires source, scope, journal, database and immutable cancellation inputs")
+	}
+	if *messagePath != "" && filepath.Base(*messagePath) != "device_dhcp_message.log" {
+		return errors.New("DHCP message source must use device_dhcp_message.log")
 	}
 	cutoff, err := time.Parse(time.RFC3339Nano, *cutoffText)
 	if err != nil {

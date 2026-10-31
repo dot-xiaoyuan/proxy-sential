@@ -167,7 +167,7 @@ func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 	if s.Epoch == "" || s.Source == "" || s.SourcePath == "" || s.FileID == "" || s.ParserVersion == "" || s.EndOffset <= s.StartOffset || (len(s.Events) == 0 && s.NeedsProjection) {
 		return "", errors.New("stream segment requires epoch, source, path, file, parser, positive offsets and projection events")
 	}
-	if (s.KeyScheme == "generation-v2" && (s.Source != "zeek-dhcp-binding" || s.ParserVersion != "zeek-dhcp-binding-v2" || s.PreviousGeneration == 0 || s.SourceGeneration < s.PreviousGeneration || s.SourceGeneration > s.PreviousGeneration+1)) ||
+	if (s.KeyScheme == "generation-v2" && (s.Source != "zeek-dhcp-binding" || s.ParserVersion != "zeek-dhcp-binding-v2" && s.ParserVersion != "zeek-dhcp-message-v1" || s.PreviousGeneration == 0 || s.SourceGeneration < s.PreviousGeneration || s.SourceGeneration > s.PreviousGeneration+1)) ||
 		(s.KeyScheme != "generation-v2" && (s.PreviousGeneration != 0 || s.SourceGeneration != 0)) {
 		return "", ErrContentConflict
 	}

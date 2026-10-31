@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -449,23 +450,47 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 
 	subjectIP := first(fields, "assigned_addr", "requested_addr", "client_addr")
 	clientMAC := first(fields, "mac", "client_mac", "client_chaddr")
+	messageLog := opts.LogKind == "dhcp-message"
 	if subjectIP == "0.0.0.0" {
 		subjectIP = ""
 	}
-	if subjectIP == "" && clientMAC == "" {
+	if !messageLog && subjectIP == "" && clientMAC == "" {
 		return normalized.Event{}, fmt.Errorf("missing DHCP client address and MAC")
+	}
+	if messageLog {
+		if !validDHCPMessageIP(subjectIP) {
+			subjectIP = ""
+		}
+		clientMAC = validDHCPMessageMAC(clientMAC)
 	}
 
 	clientIP := first(fields, "client_addr", "requested_addr", "assigned_addr")
-	if clientIP == "" {
+	if clientIP == "" || messageLog && !validDHCPMessageIP(clientIP) {
 		clientIP = "0.0.0.0"
 	}
 	serverIP := first(fields, "server_addr")
-	if serverIP == "" {
+	if serverIP == "" || messageLog && !validDHCPMessageIP(serverIP) {
 		serverIP = "255.255.255.255"
 	}
 
 	payload := dhcpPayload(fields)
+	messageType := strings.ToUpper(first(fields, "msg_types"))
+	if messageLog && messageType == "REQUEST" && clientMAC != "" {
+		// A requested address is the client's proposal, not an observed lease.
+		// The request remains a MAC-scoped identification clue.
+		payload["request_only"] = true
+		subjectIP = ""
+		clientIP = first(fields, "client_addr")
+		if !validDHCPMessageIP(clientIP) {
+			clientIP = "0.0.0.0"
+		}
+	}
+	eventType := "device"
+	if messageLog && !(messageType == "ACK" && validDHCPMessageIP(first(fields, "assigned_addr")) && clientMAC != "" || messageType == "REQUEST" && clientMAC != "") {
+		// OFFER, DISCOVER and incomplete messages are retained as standard
+		// events but cannot become device or address-binding facts.
+		eventType = "dhcp_message"
+	}
 	subject := map[string]any{"vlan": first(fields, "capture_vlan", "vlan")}
 	if subjectIP != "" {
 		subject["ip"] = subjectIP
@@ -479,12 +504,16 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 		observer["sensor_id"] = opts.SensorID
 	}
 
+	logName := "dhcp"
+	if messageLog {
+		logName = "device_dhcp_message"
+	}
 	return normalized.Event{
 		SchemaVersion:   "v1",
 		EventID:         eventID(raw, lineOffset),
 		Source:          "zeek",
 		SourceEventType: "dhcp",
-		Type:            "device",
+		Type:            eventType,
 		Timestamp:       timestamp,
 		Observer:        observer,
 		Subject:         subject,
@@ -500,10 +529,23 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 		Confidence: 0.9,
 		RawRef: map[string]any{
 			"backend":     "zeek",
-			"log":         "dhcp",
+			"log":         logName,
 			"line_offset": lineOffset,
 		},
 	}, nil
+}
+
+func validDHCPMessageMAC(value string) string {
+	mac, err := net.ParseMAC(normalizeMAC(value))
+	if err != nil || len(mac) != 6 || mac[0]&1 != 0 || mac.String() == "00:00:00:00:00:00" {
+		return ""
+	}
+	return mac.String()
+}
+
+func validDHCPMessageIP(value string) bool {
+	ip := net.ParseIP(value)
+	return ip != nil && ip.To4() != nil && !ip.IsUnspecified() && !ip.IsMulticast() && !ip.Equal(net.IPv4bcast)
 }
 
 func softwareEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {

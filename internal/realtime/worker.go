@@ -316,6 +316,9 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 		logKind := strings.TrimPrefix(source.Kind, "zeek-")
 		if source.Kind == "zeek-dhcp-binding" {
 			logKind = "dhcp"
+			if filepath.Base(source.Path) == "device_dhcp_message.log" {
+				logKind = "dhcp-message"
+			}
 		}
 		value, err := zeek.Convert(bytes.NewReader(input), &output, zeek.Options{CaptureScope: source.CaptureScope, ControlledInterface: source.ControlledInterface, SensorID: sensorID, LogKind: logKind, CollectorInstanceID: source.CollectorInstanceID, ProxyProducer: source.ProxyProducer})
 		stats = normalizedStats{Read: value.Read, Emitted: value.Emitted, Skipped: value.Skipped, Malformed: value.Malformed, ByType: value.ByType}

@@ -55,6 +55,24 @@ func TestPrepareStreamDiscoveryKeepsBothReceiptsAndOneFactForRepeat(t *testing.T
 	}
 }
 
+func TestDHCPRequestProjectsMACCluesWithoutLeaseOrStrongClassification(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	event := normalized.Event{
+		SchemaVersion: "v1", EventID: "request-only", Source: "zeek", SourceEventType: "dhcp", Type: "device", Timestamp: now.Format(time.RFC3339),
+		Observer: map[string]any{"sensor_id": "sensor-a", "capture_scope_id": "scope-a"},
+		Subject:  map[string]any{"site": "site-a", "domain": "domain-a", "vlan": "120", "mac": "02:00:00:00:00:10"},
+		Payload:  map[string]any{"msg_types": "REQUEST", "request_only": true, "requested_addr": "192.168.1.12", "hostname": "DESKTOP-LAB", "vendor_class": "MSFT 5.0", "requested_options": "1,3,6,15"},
+	}
+	prepared, err := prepareStreamDiscovery(streamlog.Segment{Epoch: "fresh", Source: "zeek-dhcp-binding", AcceptedAt: now, Events: []normalized.Event{event}})
+	if err != nil || len(prepared) != 1 || !prepared[0].Parsed {
+		t.Fatalf("request did not project: %+v, %v", prepared, err)
+	}
+	fact := prepared[0].Fact
+	if fact.IP != "" || fact.AddressBinding || fact.MAC != "02:00:00:00:00:10" || fact.RecognitionFields["dhcp_vendor_class"] != "MSFT 5.0" || fact.RecognitionFields["dhcp_requested_options"] != "1,3,6,15" || fact.CandidateType != "" {
+		t.Fatalf("request gained a lease or lost clues: %+v", fact)
+	}
+}
+
 func TestStreamDiscoveryFactHandlesLateCorrectionAndWithdrawal(t *testing.T) {
 	base := streamDiscoveryEvent("base", "2026-10-24T10:00:00Z", 600)
 	newer := streamDiscoveryEvent("newer", "2026-10-24T10:00:10Z", 600)

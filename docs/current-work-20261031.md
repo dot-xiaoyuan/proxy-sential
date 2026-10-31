@@ -73,6 +73,8 @@
 
 > **服务公告归属复核。** 服务线索改按传感器与 MAC 成对读取和匹配，详情展示样本事件号与最近观测时间；仍从两小时 `normalized_events` 原表读取，需在现场测量请求成本，再决定是否建设独立公告投影。访问端口桶采用最大时间和对应样本事件，避免重试写入把次数虚增。
 
+> **逐消息 DHCP 本地链路，待现场切源。** 受审计的 Zeek 文件流新增 `--zeek-dhcp-message` 入口，固定解析版本 `zeek-dhcp-message-v1`，沿用按文件代次、偏移及原文哈希确认的持久段。`device_dhcp_message.log` 的 REQUEST 形成 MAC 线索事实，保留 option 55/60/61 与 option 93 出现状态，但删除其请求地址作为当前绑定；ACK 只用明确分配地址形成绑定，OFFER 等消息只留标准事件、不进入设备事实；缺失或无效 MAC/IP 的消息也只保留原文与不可投影事件。现场切源须先停用旧 reader，使用 `stream-cancel` 预览与应用审计退役旧源，再用 `stream-prepare --zeek-dhcp-message` 确认固定起点与旧输入审计，最后以 `stream-run --zeek-dhcp-message` 启动；运行时拒绝两个 DHCP 文件源并行。2026-11-01 只读核对显示 184 的 `proxy-sentinel-ingest-stream-dhcp-layered-r8.service` 仍活动，使用 `zeek-dhcp-binding` 读取 `/opt/proxy-sentinel/data/zeek/logs/current/device_dhcp_binding.log`；尚未执行切源，也不能把本地测试称为现场覆盖。
+
 ### P0：修正发现页布局和空列
 
 - 当前表格列较多，1440 视口下“最近观测/操作”容易互相挤压；

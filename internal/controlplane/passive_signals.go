@@ -96,15 +96,8 @@ func mergePassiveSignal(byKey map[string]*PassiveSignal, signal *PassiveSignal) 
 	if signal == nil {
 		return
 	}
-	vlan := signal.DHCPVLAN
-	if vlan == "" {
-		vlan = signal.TTLVLAN
-	}
-	key := signal.SensorID + "|ip:" + signal.IP + "|" + vlan
-	if signal.MAC != "" {
-		key = signal.SensorID + "|mac:" + strings.ToLower(signal.MAC) + "|" + vlan
-	}
-	if signal.IP == "" && signal.MAC == "" {
+	key := passiveSignalKey(signal)
+	if key == "" {
 		return
 	}
 	current := byKey[key]
@@ -177,6 +170,21 @@ func mergePassiveSignal(byKey map[string]*PassiveSignal, signal *PassiveSignal) 
 	}
 }
 
+func passiveSignalKey(signal *PassiveSignal) string {
+	if signal == nil || signal.IP == "" && signal.MAC == "" {
+		return ""
+	}
+	vlan := signal.DHCPVLAN
+	if vlan == "" {
+		vlan = signal.TTLVLAN
+	}
+	key := signal.SensorID + "|ip:" + signal.IP + "|" + vlan
+	if signal.MAC != "" {
+		key = signal.SensorID + "|mac:" + strings.ToLower(signal.MAC) + "|" + vlan
+	}
+	return key
+}
+
 func (s *Server) handleDiscoveryPassiveSignals(w http.ResponseWriter, r *http.Request, repo discovery.Repository) {
 	if r.Method != http.MethodGet {
 		writeError(w, 405, "method_not_allowed", "method not allowed")
@@ -233,7 +241,7 @@ func (s *Server) handleDiscoveryPassiveSignals(w http.ResponseWriter, r *http.Re
 	}
 	for _, signal := range cachedPassiveSignals() {
 		if (signal.MAC != "" && wantedMACs[signal.MAC]) || (signal.IP != "" && wantedIPs[signal.IP]) {
-			mergePassiveSignal(byKey, &signal)
+			mergeCachedPassiveSignal(byKey, signal)
 		}
 	}
 	items := make([]PassiveSignal, 0, len(byKey)+len(clientByKey))
@@ -246,6 +254,19 @@ func (s *Server) handleDiscoveryPassiveSignals(w http.ResponseWriter, r *http.Re
 	sort.Slice(items, func(i, j int) bool { return items[i].MAC+items[i].IP < items[j].MAC+items[j].IP })
 	response["items"] = items
 	writeJSON(w, 200, response)
+}
+
+// Once a durable DHCP fact exists, a newer log-tail glimpse must not replace
+// its event ID or attach that ID to fields from an unprojected message.
+func mergeCachedPassiveSignal(byKey map[string]*PassiveSignal, signal PassiveSignal) {
+	if current := byKey[passiveSignalKey(&signal)]; current != nil && current.DHCPEvidenceID != "" && signal.DHCPObservedAt != "" {
+		signal.DHCPHostname, signal.DHCPVendorClass, signal.DHCPOptions = "", "", ""
+		signal.DHCPClientIDHWType, signal.DHCPObservedAt, signal.DHCPEvidenceID = "", "", ""
+		signal.DHCPOption93Present = false
+		signal.OSFamily, signal.OSConfidence, signal.OSEvidence, signal.OSConflict = "", "", "", false
+		signal.DeviceHint = ""
+	}
+	mergePassiveSignal(byKey, &signal)
 }
 
 func splitList(raw string, limit int) []string {

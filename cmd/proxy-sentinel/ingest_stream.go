@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 
 const zeekDHCPStreamParser = "zeek-v1"
 const zeekDHCPBindingStreamParser = "zeek-dhcp-binding-v2"
+const zeekDHCPMessageStreamParser = "zeek-dhcp-message-v1"
 const deviceSignalStreamParser = "device-v1"
 
 func streamParserForSource(kind string) string {
@@ -37,6 +39,13 @@ func streamParserForSource(kind string) string {
 	}
 }
 
+func streamParserForSourcePath(kind, path string) string {
+	if kind == "zeek-dhcp-binding" && filepath.Base(path) == "device_dhcp_message.log" {
+		return zeekDHCPMessageStreamParser
+	}
+	return streamParserForSource(kind)
+}
+
 func controlledScopeBindingHash(fileHash, interfaceName string) string {
 	if len(fileHash) != 64 || interfaceName == "" {
 		return ""
@@ -46,7 +55,7 @@ func controlledScopeBindingHash(fileHash, interfaceName string) string {
 }
 
 func verifyIngestStreamCutover(ctx context.Context, db *sql.DB, cursor streamlog.SourceCursor, sensor, scopeHash string) error {
-	if db == nil || cursor.Path == "" || cursor.Epoch == "" || cursor.ParserVersion != streamParserForSource(cursor.Source) || cursor.ParserVersion == "" || cursor.Offset < 0 || cursor.DiscardedBeforeOffset < 0 {
+	if db == nil || cursor.Path == "" || cursor.Epoch == "" || cursor.ParserVersion != streamParserForSourcePath(cursor.Source, cursor.Path) || cursor.ParserVersion == "" || cursor.Offset < 0 || cursor.DiscardedBeforeOffset < 0 {
 		return errors.New("invalid controlled file stream cursor")
 	}
 	if cursor.Source == "zeek-dhcp-binding" && (cursor.KeyScheme != "generation-v2" || cursor.Generation == 0) {
@@ -84,6 +93,7 @@ func runIngestStream(args []string) error {
 	sensor := fs.String("sensor-id", os.Getenv("PROXY_SENTINEL_SENSOR_ID"), "registered capture sensor")
 	path := fs.String("zeek-dhcp", "", "already enabled Zeek DHCP log")
 	bindingPath := fs.String("zeek-dhcp-binding", "", "same-scope Zeek DHCP binding log")
+	messagePath := fs.String("zeek-dhcp-message", "", "per-message Zeek DHCP log; replaces the binding-file source after audited retirement")
 	ttlPath := fs.String("device-signals", "", "controlled TTL device signal log")
 	handshakePath := fs.String("handshake-signals", "", "controlled handshake device signal log")
 	routerProbePath := fs.String("router-probe-signals", "", "controlled router probe signal log")
@@ -100,8 +110,11 @@ func runIngestStream(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *sensor == "" || (*path == "" && *bindingPath == "" && *ttlPath == "" && *handshakePath == "" && *routerProbePath == "") || *journalDir == "" || *scopeFile == "" || *postgresDSN == "" || *clickhouseDSN == "" {
+	if fs.NArg() != 0 || *sensor == "" || (*path == "" && *bindingPath == "" && *messagePath == "" && *ttlPath == "" && *handshakePath == "" && *routerProbePath == "") || *journalDir == "" || *scopeFile == "" || *postgresDSN == "" || *clickhouseDSN == "" {
 		return errors.New("stream-run requires sensor, an audited file source, journal, scope and both database DSNs")
+	}
+	if *messagePath != "" && (*bindingPath != "" || *path != "" || filepath.Base(*messagePath) != "device_dhcp_message.log") {
+		return errors.New("DHCP message source must replace other DHCP file sources and use device_dhcp_message.log")
 	}
 	if *path != "" && *bindingPath != "" {
 		return errors.New("aggregate and verified DHCP bindings cannot be consumed together")
@@ -151,6 +164,17 @@ func runIngestStream(args []string) error {
 		return err
 	}
 	defer leaseStore.Close()
+	if *messagePath != "" {
+		var otherActive int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM stream_source_cutovers
+WHERE state='active' AND sensor_id=$1
+  AND (source_kind='zeek-dhcp' OR source_kind='zeek-dhcp-binding' AND source_path<>$2)`, *sensor, *messagePath).Scan(&otherActive); err != nil {
+			return fmt.Errorf("check retired DHCP file sources: %w", err)
+		}
+		if otherActive > 0 {
+			return errors.New("retire old DHCP aggregate and binding sources before starting the per-message source")
+		}
+	}
 	sources := make([]realtime.Source, 0, 5)
 	releases := make([]func(), 0, 5)
 	defer func() {
@@ -158,7 +182,7 @@ func runIngestStream(args []string) error {
 			releases[i]()
 		}
 	}()
-	for _, item := range []struct{ kind, path string }{{"zeek-dhcp", *path}, {"zeek-dhcp-binding", *bindingPath}, {"device-signals", *ttlPath}, {"device-signals", *handshakePath}, {"device-signals", *routerProbePath}} {
+	for _, item := range []struct{ kind, path string }{{"zeek-dhcp", *path}, {"zeek-dhcp-binding", *bindingPath}, {"zeek-dhcp-binding", *messagePath}, {"device-signals", *ttlPath}, {"device-signals", *handshakePath}, {"device-signals", *routerProbePath}} {
 		if item.path == "" {
 			continue
 		}

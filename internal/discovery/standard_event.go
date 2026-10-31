@@ -78,6 +78,12 @@ func AdaptDiscoveryEvent(event normalized.Event) (normalized.Event, error) {
 				action = part
 			}
 		}
+		if action == "request" && e.Payload["request_only"] == true && str(e.Subject, "mac") != "" {
+			delete(e.Subject, "ip")
+			e.Payload["address_binding"] = false
+			e.Payload["name"] = firstText(str(e.Payload, "hostname"), str(e.Payload, "device_name"))
+			return e, nil
+		}
 		if action != "ack" && action != "reply" && action != "release" && action != "stop" && action != "nak" {
 			return e, fmt.Errorf("DHCP request is not an address binding")
 		}

@@ -105,3 +105,11 @@ func TestZeekDHCPAdapterAcceptsBindingOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestDHCPMessageRequestRetainsMACClueWithoutRequestedAddress(t *testing.T) {
+	e := normalized.Event{Source: "zeek", SourceEventType: "dhcp", Type: "device", Subject: map[string]any{"mac": "02:00:00:00:00:10", "ip": "192.168.1.12"}, Payload: map[string]any{"msg_types": "REQUEST", "request_only": true, "requested_addr": "192.168.1.12", "hostname": "DESKTOP-LAB", "vendor_class": "MSFT 5.0"}}
+	a, err := AdaptDiscoveryEvent(e)
+	if err != nil || a.Subject["ip"] != nil || a.Payload["address_binding"] != false || a.Payload["name"] != "DESKTOP-LAB" {
+		t.Fatalf("request clue incorrectly became an address binding: %+v, %v", a, err)
+	}
+}

@@ -64,6 +64,9 @@ func TestVerifiedDHCPBindingHasItsOwnParserVersion(t *testing.T) {
 	if streamParserForSource("zeek-dhcp-binding") == streamParserForSource("zeek-dhcp") {
 		t.Fatal("aggregate and verified DHCP bindings share a parser version")
 	}
+	if got := streamParserForSourcePath("zeek-dhcp-binding", "/zeek/current/device_dhcp_message.log"); got != zeekDHCPMessageStreamParser {
+		t.Fatalf("per-message DHCP parser version: %q", got)
+	}
 }
 
 func TestVerifiedBindingRestartAfterRotationKeepsOriginalCutover(t *testing.T) {

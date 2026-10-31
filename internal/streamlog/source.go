@@ -116,7 +116,7 @@ func (j *Journal) StartFreshSource(cursor SourceCursor) error {
 	if (cursor.TailBytes == 0) != (cursor.TailSHA256 == "") || cursor.TailBytes < 0 || cursor.TailBytes > SourceTailProofBytes || int64(cursor.TailBytes) > cursor.Offset || (cursor.TailBytes > 0 && len(cursor.TailSHA256) != 64) {
 		return ErrContentConflict
 	}
-	if (cursor.KeyScheme == "generation-v2" && (cursor.Source != "zeek-dhcp-binding" || cursor.ParserVersion != "zeek-dhcp-binding-v2" || cursor.Generation == 0)) ||
+	if (cursor.KeyScheme == "generation-v2" && (cursor.Source != "zeek-dhcp-binding" || cursor.ParserVersion != "zeek-dhcp-binding-v2" && cursor.ParserVersion != "zeek-dhcp-message-v1" || cursor.Generation == 0)) ||
 		(cursor.KeyScheme != "generation-v2" && (cursor.KeyScheme != "" || cursor.Generation != 0)) {
 		return ErrContentConflict
 	}
