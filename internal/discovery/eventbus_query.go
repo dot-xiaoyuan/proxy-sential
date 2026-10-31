@@ -112,8 +112,9 @@ coalesce(nullif(c.document,'{}'::jsonb),jsonb_build_object('id',c.device_key))||
  'id',c.device_key,'last_seen',c.last_seen,'current',true,'generation','eventbus','freshness','new',
  'fact_count',c.fact_count,'expired_fact_count',c.expired_fact_count,'facts',c.facts,
  'evidence_count',c.fact_count+c.expired_fact_count,
- 'addresses',coalesce(fa.addresses,'[]'::jsonb),'current_addresses',coalesce(fa.addresses,'[]'::jsonb),
- 'protocols',coalesce(fa.protocols,'[]'::jsonb))
+ 'addresses',coalesce(nullif(fa.addresses,'[]'::jsonb),c.document->'addresses','[]'::jsonb),
+ 'current_addresses',coalesce(nullif(fa.addresses,'[]'::jsonb),c.document->'current_addresses',c.document->'addresses','[]'::jsonb),
+ 'protocols',coalesce(nullif(fa.protocols,'[]'::jsonb),c.document->'protocols','[]'::jsonb))
 FROM discovery_device_current_shadow c
 LEFT JOIN LATERAL (
  SELECT jsonb_agg(DISTINCT f.value->>'ip') FILTER (WHERE coalesce(f.value->>'ip','')<>'') AS addresses,
