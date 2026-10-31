@@ -28,6 +28,7 @@ type handshakeObservation struct {
 	JA4             string
 	EventID         string
 	ObservedAt      time.Time
+	DestinationPort uint16
 	Truncated       bool
 	IP              netip.Addr
 	MAC             [6]byte
@@ -74,7 +75,7 @@ func parseHandshakeFrame(frame []byte) (handshakeObservation, bool) {
 	payload := tcp[dataOffset:]
 	identity := append(append(append([]byte{}, ip[12:20]...), tcp[:8]...), payload...)
 	sum := sha256.Sum256(identity)
-	observation := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source, EventID: hex.EncodeToString(sum[:16]), ObservedAt: time.Now().UTC()}
+	observation := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source, EventID: hex.EncodeToString(sum[:16]), ObservedAt: time.Now().UTC(), DestinationPort: dstPort}
 	switch dstPort {
 	case 443:
 		sni, alpn, ok := parseClientHello(payload)
@@ -247,7 +248,7 @@ func (s *handshakeSummary) add(o handshakeObservation) {
 				continue
 			}
 			s.sampleCounts[bucketKey]++
-			s.samples[key] = sharedaccess.HandshakeSample{Family: family, Value: value, EventID: o.EventID, ObservedAt: o.ObservedAt, Bucket: o.ObservedAt.Unix() / 5}
+			s.samples[key] = sharedaccess.HandshakeSample{Family: family, Value: value, EventID: o.EventID, ObservedAt: o.ObservedAt, Bucket: o.ObservedAt.Unix() / 5, DestinationPort: o.DestinationPort}
 		}
 	}
 	add := func(set map[string]bool, value string) {

@@ -23,9 +23,10 @@ func (c CoverageV2) Complete() bool {
 }
 
 type HandshakeSample struct {
-	Bucket     int64     `json:"five_second_bucket"`
-	Family     string    `json:"family"`
-	Value      string    `json:"value"`
-	EventID    string    `json:"event_id"`
-	ObservedAt time.Time `json:"observed_at"`
+	Bucket          int64     `json:"five_second_bucket"`
+	Family          string    `json:"family"`
+	Value           string    `json:"value"`
+	EventID         string    `json:"event_id"`
+	ObservedAt      time.Time `json:"observed_at"`
+	DestinationPort uint16    `json:"dst_port,omitempty"`
 }

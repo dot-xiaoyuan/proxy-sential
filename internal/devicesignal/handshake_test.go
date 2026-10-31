@@ -127,6 +127,14 @@ func TestWriteHandshakeBucketEmitsIngestableDeviceEvent(t *testing.T) {
 	if got := payload["user_agents"].([]any); len(got) != 1 || got[0] != "ua-one" {
 		t.Fatalf("user agents: %v", payload["user_agents"])
 	}
+	ports := map[string]float64{}
+	for _, raw := range payload["feature_samples"].([]any) {
+		sample := raw.(map[string]any)
+		ports[sample["family"].(string)] = sample["dst_port"].(float64)
+	}
+	if ports["user_agent"] != 80 || ports["ja3"] != 443 || ports["ja4"] != 443 {
+		t.Fatalf("captured destination ports lost: %v", ports)
+	}
 }
 
 // Half the bounded output keeps high-activity clients; the other half rotates

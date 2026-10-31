@@ -6606,6 +6606,8 @@ export interface components {
             /** Format: date-time */
             observed_at: string;
             evidence_id: string;
+            /** @description Port observed in the captured handshake packet; absent for older evidence. */
+            dst_port?: number;
         };
         DiscoveryObservedPorts: {
             items: {

@@ -16,10 +16,11 @@ import (
 // DiscoveryHandshakeClue is an IP-scoped weak clue from mirror traffic. A
 // shared or reassigned address does not identify one physical device.
 type DiscoveryHandshakeClue struct {
-	Kind       string    `json:"kind"`
-	Value      string    `json:"value"`
-	ObservedAt time.Time `json:"observed_at"`
-	EvidenceID string    `json:"evidence_id"`
+	Kind            string    `json:"kind"`
+	Value           string    `json:"value"`
+	ObservedAt      time.Time `json:"observed_at"`
+	EvidenceID      string    `json:"evidence_id"`
+	DestinationPort uint16    `json:"dst_port,omitempty"`
 }
 
 type DiscoveryHandshakeClueReader interface {
@@ -101,9 +102,13 @@ func extractDiscoveryHandshakeClues(rows []sharedObservationEvent, ip string, fr
 			default:
 				continue
 			}
+			port := sample.DestinationPort
+			if kind == "user_agent" && port != 80 || (kind == "ja3" || kind == "ja4") && port != 443 {
+				port = 0
+			}
 			key := kind + "\x00" + value
 			if prior, ok := byValue[key]; !ok || sample.ObservedAt.After(prior.ObservedAt) {
-				byValue[key] = DiscoveryHandshakeClue{Kind: kind, Value: value, ObservedAt: sample.ObservedAt.UTC(), EvidenceID: row.EventID}
+				byValue[key] = DiscoveryHandshakeClue{Kind: kind, Value: value, ObservedAt: sample.ObservedAt.UTC(), EvidenceID: row.EventID, DestinationPort: port}
 			}
 		}
 	}

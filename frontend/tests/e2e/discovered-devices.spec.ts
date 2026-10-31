@@ -43,6 +43,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await expect(page.getByRole('dialog')).toContainText('fixture-tls-ja4')
     await expect(page.getByRole('dialog')).toContainText('fixture-handshake-ja4')
     await expect(page.getByRole('dialog')).toContainText('TLS JA4')
+    await expect(page.getByRole('dialog')).toContainText('握手目标 TCP/443')
     await page.getByRole('dialog').getByText('TLS JA4',{exact:true}).scrollIntoViewIfNeeded()
     const modalProbe=await page.evaluate(()=>{
       const modal=document.querySelector('[role="dialog"]')!
