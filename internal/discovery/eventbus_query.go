@@ -92,6 +92,8 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 			where = append(where, "((c.document->>'name') ILIKE "+p+" OR (c.document->>'manufacturer') ILIKE "+p+" OR (c.document->>'model_name') ILIKE "+p+" OR c.facts::text ILIKE "+p+")")
 		}
 	}
+	countWhere := append([]string(nil), where...)
+	countArgs := append([]any(nil), args...)
 	if q.Cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(q.Cursor)
 		var c eventBusStateCursor
@@ -153,7 +155,12 @@ ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 		cursor = base64.RawURLEncoding.EncodeToString(b)
 	}
 	freshness := map[string]any{"status": "ready", "source": "eventbus", "lag_seconds": 0, "result_version": 0}
-	return map[string]any{"items": items, "has_more": more, "next_cursor": cursor, "limit": q.Limit, "window": q.Window.String(), "freshness": freshness}, nil
+	result := map[string]any{"items": items, "has_more": more, "next_cursor": cursor, "limit": q.Limit, "window": q.Window.String(), "freshness": freshness}
+	var total int64
+	if countErr := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM discovery_device_current_shadow c WHERE `+strings.Join(countWhere, " AND "), countArgs...).Scan(&total); countErr == nil {
+		result["total"] = total
+	}
+	return result, nil
 }
 
 // normalizeEventBusDocument keeps the API shape stable for documents that were

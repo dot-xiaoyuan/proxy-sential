@@ -103,9 +103,9 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       <Collapse ghost items={[{key:'coverage',label:'采集覆盖与处理状态',children:coverage.isError?<AppErrorAlert title="读取采集状态失败" />:coverage.data?.enabled===false?<Typography.Text>当前运行旧版发现路径</Typography.Text>:<div className="iot-coverage-grid">{coverage.data?.items.map(p=><article className="iot-coverage-item" key={`${p.sensor_id}:${p.protocol}`}><strong>{protocols[p.protocol]??p.protocol}</strong><Typography.Text type="secondary">{p.sensor_id}</Typography.Text><span>{p.error?'采集异常':!p.enabled?'未启用':p.received===0?'暂未捕获协议流量':'已捕获协议流量'}</span><span>捕获 {p.received} · 解析 {p.parsed} · 处理 {p.admitted}</span></article>)}</div>}]} />
     </section>
     {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
-      <AppListHeader title="发现设备" count={`本页 ${items.length} 条`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
+      <AppListHeader title="发现设备" count={devices.data?.total!==undefined?`共 ${devices.data.total} 个设备`:`本页 ${items.length} 条`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
       <AppTable rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:960}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
-      <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
+      <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={devices.data?.total ?? page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,cursors:[''],page:0});return}
         const current=page+1
         if(nextPage===current)return

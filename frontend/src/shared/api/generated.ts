@@ -6621,6 +6621,7 @@ export interface components {
             items: components["schemas"]["DiscoveryDevice"][];
             next_cursor: string;
             has_more: boolean;
+            total?: number;
             facets?: {
                 [key: string]: unknown;
             }[];

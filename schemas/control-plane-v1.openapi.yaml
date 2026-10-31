@@ -6853,6 +6853,7 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/DiscoveryDevice' } }
         next_cursor: { type: string }
         has_more: { type: boolean }
+        total: { type: integer }
         facets: { type: array, items: { type: object, additionalProperties: true } }
         service_devices: { type: integer }
         linked_endpoints: { type: integer }
