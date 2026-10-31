@@ -39,6 +39,16 @@ function terminalIcon(item: Device) {
   if (item.device_type === 'mobile' || item.device_type === 'tablet') return <MobileOutlined />
   return <DesktopOutlined />
 }
+function osClue(item: Device) {
+  const name = (item.name || '').toLowerCase()
+  if (!name) return ''
+  if (/desktop-|laptop-|^win-|windows/.test(name)) return 'Windows'
+  if (/iphone|ipad/.test(name)) return 'iOS'
+  if (/macbook|imac/.test(name)) return 'macOS'
+  if (/ubuntu|debian|linux/.test(name)) return 'Linux'
+  if (/vivo|oppo|redmi|honor|huawei|nova|^mi[-_]|xiaomi|realme|oneplus|iqoo|meizu/.test(name)) return 'Android'
+  return ''
+}
 function dumbTerminal(item: Device) {
   const caps = item.capabilities ?? []
   if (caps.includes('printing') || caps.includes('scanning')) return '打印/扫描'
@@ -84,19 +94,20 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const identity=(item:Device)=><div className="discovery-terminal-identity"><span className="discovery-terminal-icon">{terminalIcon(item)}</span><div><DeviceAddress ip={item.current_addresses?item.current_addresses[0]:item.primary_ip} name={item.name} mac={item.mac} addresses={item.current_addresses??item.addresses}/>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后观测地址 · {item.last_observed_ip}</Typography.Text>}</div></div>
   const kind=(item:Device)=><Typography.Text strong={item.classification_status!=='expired'}>{types[item.device_type||item.last_device_type||'']??(dumbTerminal(item)?`哑终端线索 · ${dumbTerminal(item)}`:'待分类')}</Typography.Text>
   const vendor=(item:Device)=><Typography.Text type="secondary">{[item.manufacturer,item.model_name].filter(Boolean).join(' · ')}</Typography.Text>
-  const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.domain}</Typography.Text><Typography.Text type="secondary">{[item.vlan&&`VLAN ${item.vlan}`,item.sensor_id].filter(Boolean).join(' · ')}</Typography.Text></Space>
+  const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.vlan?`VLAN ${item.vlan}`:item.domain}</Typography.Text><Typography.Text type="secondary">{item.vlan?[item.domain,item.sensor_id].filter(Boolean).join(' · '):item.sensor_id}</Typography.Text></Space>
   const clues=(item:Device)=><Space wrap>{(item.capabilities??[]).filter(c=>capabilities[c]).map(c=><Tag key={c}>{capabilities[c]}</Tag>)}{(item.protocols??[]).map(p=><Tag key={p}>{protocols[p]??p}</Tag>)}</Space>
   const state=(item:Device)=><Typography.Text type={item.classification_status==='conflict'?'warning':'secondary'}>{states[item.classification_status??'']??(item.current?'证据有效':'证据已过期')}</Typography.Text>
   const show=(item:Device)=>{setHistoryCursor('');setSelected(item)}
   const columns=[
-    {title:'地址 / 名称 / MAC',key:'identity',width:220,render:(_:unknown,item:Device)=>identity(item)},
-    {title:'终端类型',key:'type',width:120,onCell:(item:Device)=>({className:item.device_type||item.last_device_type||item.manufacturer||item.model_name?'':'mobile-empty-cell'}),render:(_:unknown,item:Device)=>kind(item)},
-    {title:'制造商 / 型号',key:'vendor',width:150,render:(_:unknown,item:Device)=>vendor(item)},
-    {title:'网络位置',key:'location',width:180,render:(_:unknown,item:Device)=>location(item)},
-    {title:'发现依据',key:'clues',width:150,render:(_:unknown,item:Device)=>clues(item)},
-    {title:'证据状态',key:'state',width:90,render:(_:unknown,item:Device)=>state(item)},
-    {title:'最近观测',key:'seen',width:115,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
-    {title:'操作',key:'action',width:100,render:(_:unknown,item:Device)=><Button type="link" onClick={()=>show(item)}>查看证据</Button>},
+    {title:'地址 / 名称 / MAC',key:'identity',width:190,render:(_:unknown,item:Device)=>identity(item)},
+    {title:'终端类型',key:'type',width:105,onCell:(item:Device)=>({className:item.device_type||item.last_device_type||item.manufacturer||item.model_name?'':'mobile-empty-cell'}),render:(_:unknown,item:Device)=>kind(item)},
+    {title:'制造商 / 型号',key:'vendor',width:120,render:(_:unknown,item:Device)=>vendor(item)},
+    {title:'操作系统',key:'os',width:80,render:(_:unknown,item:Device)=><Typography.Text type="secondary">{osClue(item)?`${osClue(item)} · 线索`:''}</Typography.Text>},
+    {title:'网络位置',key:'location',width:150,render:(_:unknown,item:Device)=>location(item)},
+    {title:'发现依据',key:'clues',width:110,render:(_:unknown,item:Device)=>clues(item)},
+    {title:'证据状态',key:'state',width:80,render:(_:unknown,item:Device)=>state(item)},
+    {title:'最近观测',key:'seen',width:85,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
+    {title:'操作',key:'action',width:75,render:(_:unknown,item:Device)=><Button type="link" onClick={()=>show(item)}>查看证据</Button>},
   ]
   return <section className="passive-discovery-panel">
     <AppTableBar
@@ -128,7 +139,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     </section>
     {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
       <AppListHeader title="发现设备" count={devices.data?.total!==undefined?`共 ${devices.data.total} 个设备`:`本页 ${items.length} 条`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
-      <AppTable rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1120}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
+      <AppTable rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1050}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={devices.data?.total ?? page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,cursors:[''],page:0});return}
         const current=page+1
@@ -137,7 +148,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         if(nextPage===current+1&&devices.data?.next_cursor)setPaging({key:filterKey,cursors:[...cursors.slice(0,page+1),devices.data.next_cursor],page:page+1})
       }} totalText={`第 ${page+1} 页 · 已加载 ${page*pageSize+items.length} 条`} />
     </section>}
-    <Modal className="discovery-evidence-modal" title="设备证据与变化历史" open={!!selected} footer={null} onCancel={()=>setSelected(undefined)}>{selected&&<><div className="discovery-detail-identity">{identity(selected)}{kind(selected)}</div><dl className="discovery-detail-facts">{[[`设备类型`,types[selected.device_type||selected.last_device_type||'']??(dumbTerminal(selected)?`哑终端线索 · ${dumbTerminal(selected)}`:'待分类')],[`制造商`,selected.manufacturer],[`型号`,selected.model_name],[`MAC`,selected.mac],[`当前地址`,(selected.current_addresses??[]).join('、')||selected.primary_ip||selected.last_observed_ip],[`网络域`,selected.domain],[`VLAN`,selected.vlan],[`采集传感器`,selected.sensor_id],[`首次观测`,selected.first_seen?observedTimeTitle(selected.first_seen):''],[`最近观测`,observedTimeTitle(selected.last_seen)],[`证据数`,selected.evidence_count?String(selected.evidence_count):'']].filter(([,value])=>value).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><Typography.Paragraph>{selected.classification?.reason}</Typography.Paragraph><Typography.Paragraph type="secondary">最近证据摘要</Typography.Paragraph>{(selected.observations??[]).map(o=><article key={o.id} className="discovery-card"><strong>{protocols[o.origin]??o.origin}</strong><span className="discovery-identifier">{[o.ip,o.mac,o.name].filter(Boolean).join(' · ')}</span><span>{o.explanation}</span><Typography.Text type="secondary">{observedTimeTitle(o.observed_at)}</Typography.Text>{o.withdrawn&&<Tag color="warning">已撤销</Tag>}</article>)}
+    <Modal className="discovery-evidence-modal" title="设备证据与变化历史" open={!!selected} footer={null} onCancel={()=>setSelected(undefined)}>{selected&&<><div className="discovery-detail-identity">{identity(selected)}{kind(selected)}</div><dl className="discovery-detail-facts">{[[`设备类型`,types[selected.device_type||selected.last_device_type||'']??(dumbTerminal(selected)?`哑终端线索 · ${dumbTerminal(selected)}`:'待分类')],[`操作系统线索`,osClue(selected)],[`制造商`,selected.manufacturer],[`型号`,selected.model_name],[`MAC`,selected.mac],[`当前地址`,(selected.current_addresses??[]).join('、')||selected.primary_ip||selected.last_observed_ip],[`网络域`,selected.domain],[`VLAN`,selected.vlan],[`采集传感器`,selected.sensor_id],[`首次观测`,selected.first_seen?observedTimeTitle(selected.first_seen):''],[`最近观测`,observedTimeTitle(selected.last_seen)],[`证据数`,selected.evidence_count?String(selected.evidence_count):'']].filter(([,value])=>value).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl><Typography.Paragraph>{selected.classification?.reason}</Typography.Paragraph><Typography.Paragraph type="secondary">最近证据摘要</Typography.Paragraph>{(selected.observations??[]).map(o=><article key={o.id} className="discovery-card"><strong>{protocols[o.origin]??o.origin}</strong><span className="discovery-identifier">{[o.ip,o.mac,o.name].filter(Boolean).join(' · ')}</span><span>{o.explanation}</span><Typography.Text type="secondary">{observedTimeTitle(o.observed_at)}</Typography.Text>{o.withdrawn&&<Tag color="warning">已撤销</Tag>}</article>)}
       {history.isError&&<AppErrorAlert title="读取设备历史失败" />}
       {history.data&&<><Typography.Title level={5}>变化历史</Typography.Title>{history.data.items.map(row=><article className="discovery-card" key={row.id}><strong>{protocols[row.evidence?.origin]??row.evidence?.origin}</strong><span>{row.evidence?.explanation}</span><Typography.Text type="secondary">观测于 {observedTimeTitle(row.observed_at)}</Typography.Text></article>)}<Space wrap><Button disabled={historyCursor===''||history.isFetching} onClick={()=>setHistoryCursor('')}>最新记录</Button><Button disabled={!history.data.has_more||history.isFetching} onClick={()=>setHistoryCursor(history.data!.next_cursor)}>更早记录</Button></Space></>}
     </>}</Modal>

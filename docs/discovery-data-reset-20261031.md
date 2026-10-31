@@ -104,3 +104,7 @@ ClickHouse `normalized_events.timestamp` 是 Asia/Shanghai 时区，第一次按
 后端对缺失制造商按 MAC OUI 补全；现场已出现 `Intel Corporate` 等厂商。
 
 仍未伪造操作系统、接入交换机端口、服务端口和 NDM 事件，因为这些需要 SNMP/NDM 数据源。
+
+## 终端台账列宽调整
+
+发现列表增加操作系统线索列，并压缩列宽，使 1440 视口内操作列完整可见。操作系统仅从主机名前缀推断并标注“线索”，不替代 SNMP/NDM 的确定操作系统。
