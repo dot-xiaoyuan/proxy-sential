@@ -20,7 +20,7 @@ import (
 	"proxy-sentinel/internal/store"
 )
 
-type sharedSourceActivation struct{ Owner, Path, Epoch string }
+type sharedSourceActivation struct{ Owner, Path, Epoch, FileCancelID string }
 
 // Both sidecar owners switch together: the old per-IP job can be woken by
 // either owner, so a partial generation would mix two evidence histories.
@@ -37,6 +37,9 @@ func runIngestStreamSharedActivate(args []string) error {
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	cancelID := fs.String("cancel-id", "", "immutable fresh generation and old-job cancellation ID")
 	previousCancelID := fs.String("previous-cancel-id", "", "closed shared generation whose unfinished jobs must be canceled")
+	packetFileCancelID := fs.String("packet-file-cancel-id", "", "audited packet file cutover cancellation ID, when different from the shared generation")
+	handshakeFileCancelID := fs.String("handshake-file-cancel-id", "", "audited handshake file cutover cancellation ID, when different from the shared generation")
+	recoverClosedFiles := fs.Bool("recover-closed-file-generation", false, "audit and close a stale shared generation whose file cutovers are already closed")
 	cutoffText := fs.String("cutoff-at", "", "fixed old-input cutoff")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -62,7 +65,7 @@ func runIngestStreamSharedActivate(args []string) error {
 		return errors.New("shared activation interface differs from source scope")
 	}
 	scopeHash = controlledScopeBindingHash(scopeHash, *controlledInterface)
-	sources := []sharedSourceActivation{{"handshake-sidecar", *handshakePath, *handshakeEpoch}, {"packet-sidecar", *packetPath, *packetEpoch}}
+	sources := []sharedSourceActivation{{"handshake-sidecar", *handshakePath, *handshakeEpoch, *handshakeFileCancelID}, {"packet-sidecar", *packetPath, *packetEpoch, *packetFileCancelID}}
 	sort.Slice(sources, func(i, j int) bool { return sources[i].Path < sources[j].Path })
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -90,6 +93,14 @@ func runIngestStreamSharedActivate(args []string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(store.PostgresPoolLimit(2))
+	if *recoverClosedFiles {
+		if *previousCancelID == "" {
+			return errors.New("stale shared generation recovery requires previous-cancel-id")
+		}
+		if err := recoverClosedFileSharedGeneration(ctx, db, *sensor, sources, *previousCancelID, *cancelID, cutoff); err != nil {
+			return err
+		}
+	}
 	if err := activateStreamSharedSources(ctx, db, *sensor, scope, scopeHash, sources, *cancelID, cutoff, *previousCancelID); err != nil {
 		return err
 	}
@@ -136,7 +147,11 @@ func activateStreamSharedSources(ctx context.Context, db *sql.DB, sensor string,
 		if err != nil {
 			return err
 		}
-		if recordedSensor != sensor || recordedHash != scopeHash || recordedCancel != cancelID || state != "active" || !recordedCutoff.Equal(cutoff) {
+		fileCancelID := src.FileCancelID
+		if fileCancelID == "" {
+			fileCancelID = cancelID
+		}
+		if recordedSensor != sensor || recordedHash != scopeHash || recordedCancel != fileCancelID || state != "active" || !recordedCutoff.Equal(cutoff) {
 			return errors.New("shared source does not match an active audited file cutover")
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO stream_shared_source_cutovers(sensor_id,source_owner,epoch,source_path,scope_id,source_cutoff_at,cancel_id,canceled_jobs,canceled_manifest_sha256,state)
@@ -218,6 +233,85 @@ func activateStreamSharedSources(ctx context.Context, db *sql.DB, sensor string,
 		}
 	}
 	return final.Commit()
+}
+
+// A file-only history reset can leave the shared generation pointing at a
+// closed file epoch. Recover it only after checking both immutable file
+// cutovers, and record the exact old/new epoch pair in the existing audit
+// ledger. The subsequent activation cancels unfinished old-generation jobs.
+func recoverClosedFileSharedGeneration(ctx context.Context, db *sql.DB, sensor string, sources []sharedSourceActivation, oldGeneration, newGeneration string, cutoff time.Time) error {
+	if db == nil || sensor == "" || len(sources) != 2 || oldGeneration == "" || newGeneration == "" || oldGeneration == newGeneration || cutoff.IsZero() {
+		return errors.New("invalid stale shared generation recovery")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, src := range sources {
+		if src.Owner != "packet-sidecar" && src.Owner != "handshake-sidecar" || src.Path == "" || src.Epoch == "" {
+			return errors.New("invalid shared recovery source")
+		}
+		var oldEpoch, oldState, fileState, fileManifest string
+		var oldCutoff time.Time
+		err := tx.QueryRowContext(ctx, `SELECT s.epoch,s.state,f.state,f.cancel_manifest_sha256,s.source_cutoff_at
+ FROM stream_shared_source_cutovers s JOIN stream_source_cutovers f
+ ON f.epoch=s.epoch AND f.source_kind='device-signals' AND f.source_path=s.source_path
+ WHERE s.sensor_id=$1 AND s.source_owner=$2 AND s.source_path=$3 AND s.cancel_id=$4
+ ORDER BY s.source_cutoff_at DESC LIMIT 1 FOR UPDATE OF s`, sensor, src.Owner, src.Path, oldGeneration).Scan(&oldEpoch, &oldState, &fileState, &fileManifest, &oldCutoff)
+		if err != nil {
+			return err
+		}
+		if oldEpoch == src.Epoch || (oldState != "active" && oldState != "closed") || fileState != "closed" || len(fileManifest) != 64 || !oldCutoff.Before(cutoff) {
+			return errors.New("previous shared generation has no closed audited file cutover")
+		}
+		var newSensor, newState, fileCancel string
+		var newCutoff time.Time
+		err = tx.QueryRowContext(ctx, `SELECT sensor_id,state,legacy_cancel_id,legacy_cutoff_at FROM stream_source_cutovers
+ WHERE epoch=$1 AND source_kind='device-signals' AND source_path=$2 FOR UPDATE`, src.Epoch, src.Path).Scan(&newSensor, &newState, &fileCancel, &newCutoff)
+		if err != nil {
+			return err
+		}
+		expectedFileCancel := src.FileCancelID
+		if expectedFileCancel == "" {
+			expectedFileCancel = newGeneration
+		}
+		if newSensor != sensor || newState != "active" || fileCancel != expectedFileCancel || !newCutoff.Equal(cutoff) {
+			return errors.New("new shared recovery source does not match its active file cutover")
+		}
+		encoded, err := json.Marshal([]string{sensor, src.Owner, src.Path, oldEpoch, oldGeneration, fileManifest, src.Epoch, fileCancel, newGeneration, cutoff.UTC().Format(time.RFC3339Nano)})
+		if err != nil {
+			return err
+		}
+		hash := sha256.Sum256(encoded)
+		manifest := hex.EncodeToString(hash[:])
+		if _, err := tx.ExecContext(ctx, `INSERT INTO stream_discard_manifest
+ (epoch,source_kind,source_path,legacy_kind,legacy_reference,legacy_status,content_sha256,unprocessed_records)
+ VALUES($1,'device-signals',$2,'shared_generation_reconciled',$3,'closed_audited',$4,0)
+ ON CONFLICT DO NOTHING`, oldEpoch, src.Path, src.Epoch, manifest); err != nil {
+			return err
+		}
+		var stored string
+		if err := tx.QueryRowContext(ctx, `SELECT content_sha256 FROM stream_discard_manifest
+ WHERE epoch=$1 AND source_kind='device-signals' AND source_path=$2
+ AND legacy_kind='shared_generation_reconciled' AND legacy_reference=$3`, oldEpoch, src.Path, src.Epoch).Scan(&stored); err != nil {
+			return err
+		}
+		if stored != manifest {
+			return errors.New("shared generation recovery audit differs from stored record")
+		}
+		if oldState == "active" {
+			result, err := tx.ExecContext(ctx, `UPDATE stream_shared_source_cutovers SET state='closed'
+ WHERE sensor_id=$1 AND source_owner=$2 AND epoch=$3 AND cancel_id=$4 AND state='active'`, sensor, src.Owner, oldEpoch, oldGeneration)
+			if err != nil {
+				return err
+			}
+			if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+				return errors.New("shared generation changed during recovery")
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 func readSharedCancellationManifest(ctx context.Context, db *sql.DB, sensor string, sources []sharedSourceActivation, cancelID string, cutoff time.Time, scopeID string) (string, map[string]int64, error) {
