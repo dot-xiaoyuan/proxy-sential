@@ -70,6 +70,9 @@ def dhcp_packet(xid, name, ack, broadcast, vlans, mac=None):
     opts += option(12, name.encode())
     opts += option(55, bytes([254]) if ack else bytes([1, 3, 6, 15, 119, 252]))
     opts += option(60, b"server-must-not-overwrite" if ack else b"sentinel-fixture")
+    if not ack:
+        opts += option(61, bytes([1]) + mac)
+        opts += option(93, struct.pack("!H", 7))
     if ack:
         opts += option(51, struct.pack("!I", 600))
     payload = bootp + bytes.fromhex("63825363") + opts + b"\xff"
@@ -156,6 +159,12 @@ class DeviceDHCPReplay(unittest.TestCase):
             self.assert_logs(directory)
             messages = read_log(directory / "device_dhcp_message.log")
             self.assertEqual(len(messages), 2 * len(CASES))
+            requests = [row for row in messages if row["msg_types"] == "REQUEST"]
+            self.assertEqual(len(requests), len(CASES))
+            for row in requests:
+                self.assertEqual(row.get("client_id_hwtype"), 1)
+                self.assertEqual(row.get("client_id_hwaddr"), "02:00:00:00:00:10")
+                self.assertTrue(row.get("option93_present"))
             acks = {row["xid"]: row for row in messages if row["msg_types"] == "ACK"}
             self.assertEqual(len(acks), len(CASES))
             for index, (_, (_, reply_vlan, _, _, _)) in enumerate(CASES.items()):
@@ -169,6 +178,10 @@ class DeviceDHCPReplay(unittest.TestCase):
                     in enumerate(CASES.items()) if request_vlan == reply_vlan}
             self.assertEqual({row["xid"] for row in bindings}, safe)
             self.assertEqual(len(bindings), len(safe))
+            for row in bindings:
+                self.assertEqual(row.get("client_id_hwtype"), 1)
+                self.assertEqual(row.get("client_id_hwaddr"), "02:00:00:00:00:10")
+                self.assertTrue(row.get("option93_present"))
 
     def test_per_message_log_separates_reused_transaction_id(self):
         with tempfile.TemporaryDirectory(prefix="sentinel-dhcp-reused-xid-") as temp:

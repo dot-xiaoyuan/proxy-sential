@@ -87,6 +87,45 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DiscoveryCoverage' }
         '500': { description: Read failed; never replaced by an empty result }
+  /discovery/passive-signals:
+    get:
+      operationId: getDiscoveryPassiveSignals
+      description: Mirror-only identification clues for at most 100 page IPs and MACs; requires identity:read.
+      parameters:
+        - { name: ips, in: query, schema: { type: string } }
+        - { name: macs, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Recent log clues merged with durable DHCP fact clues.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryPassiveSignals' }
+  /discovery/observed-ports:
+    get:
+      operationId: getDiscoveryObservedPorts
+      description: Mirror-observed access destinations for at most 50 current sensor/IP pairs; requires identity:read. Does not prove an open port on the device.
+      parameters:
+        - { name: targets, in: query, schema: { type: string }, description: Comma-separated sensor|IP pairs }
+      responses:
+        '200':
+          description: Recent bounded bucket results keyed by sensor and source IP.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryObservedPorts' }
+        '500': { description: Read failed }
+  /discovery/service-clues:
+    get:
+      operationId: getDiscoveryServiceClues
+      description: Mirror-observed service announcements for at most 50 sensor/MAC pairs; requires identity:read.
+      parameters:
+        - { name: targets, in: query, schema: { type: string }, description: Comma-separated sensor|MAC pairs }
+      responses:
+        '200':
+          description: Recent scoped announcement clues with sample event IDs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryServiceClues' }
+        '500': { description: Read failed }
   /discovery/statistics:
     get:
       operationId: getDiscoveryStatistics
@@ -6719,6 +6758,19 @@ components:
         enabled: { type: boolean }
         scope: { type: string }
         freshness: { $ref: '#/components/schemas/DiscoveryFreshness' }
+        capture_scope:
+          type: object
+          required: [status]
+          properties:
+            status: { type: string, enum: [unconfigured, valid, expiring, expired, invalid] }
+            valid_until: { type: string, format: date-time }
+        quarantine:
+          type: object
+          required: [status, count_at_least]
+          properties:
+            status: { type: string, enum: [clear, blocked, unavailable] }
+            count_at_least: { type: integer, minimum: 0 }
+            truncated: { type: boolean }
         items:
           type: array
           items:
@@ -6736,6 +6788,89 @@ components:
               last_seen: { type: [string, 'null'], format: date-time }
               last_success: { type: [string, 'null'], format: date-time }
               error: { type: string }
+    DiscoveryPassiveSignals:
+      type: object
+      required: [items, durable_status, client_status]
+      properties:
+        durable_status: { type: string, enum: [ready, unavailable, not_requested] }
+        client_status: { type: string, enum: [ready, unavailable, not_requested] }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DiscoveryPassiveSignal' }
+    DiscoveryObservedPorts:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: '#/components/schemas/DiscoveryObservedPort' }
+    DiscoveryObservedPort:
+      type: object
+      required: [sensor_id, src_ip, proto, dst_port, last_seen, evidence_id]
+      properties:
+        sensor_id: { type: string }
+        src_ip: { type: string }
+        proto: { type: string }
+        dst_port: { type: integer }
+        last_seen: { type: string, format: date-time }
+        evidence_id: { type: string }
+    DiscoveryServiceClues:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: '#/components/schemas/DiscoveryServiceClue' }
+    DiscoveryServiceClue:
+      type: object
+      required: [sensor_id, mac, service_type, port, last_seen, evidence_id]
+      properties:
+        sensor_id: { type: string }
+        mac: { type: string }
+        service_type: { type: string }
+        service_name: { type: string }
+        service_target: { type: string }
+        port: { type: integer }
+        last_seen: { type: string, format: date-time }
+        evidence_id: { type: string }
+    DiscoveryPassiveSignal:
+      type: object
+      properties:
+        sensor_id: { type: string }
+        ip: { type: string }
+        mac: { type: string }
+        ttl: { type: integer }
+        os_hint: { type: string }
+        device_hint: { type: string }
+        dhcp_hostname: { type: string }
+        dhcp_vendor_class: { type: string }
+        dhcp_options: { type: string }
+        dhcp_client_id_hwtype: { type: string }
+        dhcp_option93_present: { type: boolean }
+        dhcp_vlan: { type: string }
+        ttl_vlan: { type: string }
+        dhcp_observed_at: { type: string, format: date-time }
+        dhcp_evidence_id: { type: string }
+        ttl_observed_at: { type: string, format: date-time }
+        os_family: { type: string }
+        os_confidence: { type: string }
+        os_evidence: { type: string }
+        os_conflict: { type: boolean }
+        client_clues:
+          type: array
+          items: { $ref: '#/components/schemas/DiscoveryPassiveClientClue' }
+    DiscoveryPassiveClientClue:
+      type: object
+      required: [kind, value, observed_at]
+      properties:
+        kind: { type: string, enum: [user_agent, ja3, ja4] }
+        value: { type: string }
+        observed_at: { type: string, format: date-time }
+        evidence_id: { type: string }
     DiscoveryStatistics:
       type: object
       required: [items, pending_updates]

@@ -298,17 +298,33 @@ type EndpointRegistrationUpdate struct {
 }
 
 type DiscoveryServiceClue struct {
+	SensorID      string `json:"sensor_id"`
 	MAC           string `json:"mac"`
 	ServiceType   string `json:"service_type"`
 	ServiceName   string `json:"service_name,omitempty"`
 	ServiceTarget string `json:"service_target,omitempty"`
 	Port          int    `json:"port"`
-	Observations  int    `json:"observations"`
 	LastSeen      string `json:"last_seen"`
+	EvidenceID    string `json:"evidence_id"`
 }
 
 type DiscoveryServiceClueReader interface {
 	DiscoveryServiceClues(context.Context, []string, time.Time) (map[string][]DiscoveryServiceClue, error)
+}
+
+// DiscoveryObservedFlowPort is a destination the current IP accessed in
+// mirrored traffic. It says nothing about services listening on that IP.
+type DiscoveryObservedFlowPort struct {
+	SensorID        string `json:"sensor_id"`
+	SourceIP        string `json:"src_ip"`
+	Protocol        string `json:"proto"`
+	DestinationPort int    `json:"dst_port"`
+	LastSeen        string `json:"last_seen"`
+	EvidenceID      string `json:"evidence_id"`
+}
+
+type DiscoveryObservedFlowPortReader interface {
+	DiscoveryObservedFlowPorts(context.Context, []string, time.Time) (map[string][]DiscoveryObservedFlowPort, error)
 }
 
 type ActivityProfile struct {

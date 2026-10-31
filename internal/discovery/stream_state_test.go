@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -83,6 +84,18 @@ func TestBuildStreamDiscoveryStateRejectsUnboundedDevice(t *testing.T) {
 	}
 }
 
+func TestStreamFactScopeMismatchIsDeterministic(t *testing.T) {
+	now := time.Now().UTC()
+	facts := []streamDiscoveryFact{
+		{Epoch: "fresh", Device: "device-1", Scope: "scope-1", Observed: now, FirstObserved: now, ValidUntil: now.Add(time.Hour)},
+		{Epoch: "fresh", Device: "device-1", Scope: "scope-2", Observed: now, FirstObserved: now, ValidUntil: now.Add(time.Hour)},
+	}
+	_, err := buildStreamDiscoveryState("fresh", "device-1", facts, nil, now)
+	if !errors.Is(err, ErrStreamFactScopeMismatch) {
+		t.Fatalf("scope mismatch would enter infinite retry: %v", err)
+	}
+}
+
 func TestBuildStreamDiscoveryStateHighFanoutKeepsExactCountAndConservativeSummary(t *testing.T) {
 	now := time.Date(2026, 10, 26, 1, 0, 0, 0, time.UTC)
 	base := streamDiscoveryFact{Epoch: "fresh", Device: "device-1", Scope: "scope-1", Event: "old", Protocol: "ssdp", CandidateType: "printer", Observed: now.Add(-time.Minute), FirstObserved: now.Add(-time.Hour), ValidUntil: now.Add(time.Minute)}
@@ -153,6 +166,7 @@ func TestPublishStreamDiscoveryStatesHighFanoutUsesBoundedRowsAndPriorCount(t *t
 	mock.ExpectQuery("JOIN LATERAL").WithArgs("fresh", sqlmock.AnyArg()).WillReturnRows(factRows)
 	mock.ExpectQuery("SELECT v.device_key,").WithArgs("fresh", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(
 		sqlmock.NewRows([]string{"device_key", "active", "future"}).AddRow("device-1", now.Add(10*time.Second), nil))
+	mock.ExpectExec("SELECT pg_advisory_xact_lock\\(9184,213\\)").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO stream_discovery_device_state").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	tx, err := db.Begin()

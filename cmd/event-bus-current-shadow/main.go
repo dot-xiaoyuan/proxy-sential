@@ -98,202 +98,152 @@ func aggregate(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, ttl t
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var lastUpdated time.Time
-	if err := tx.QueryRow(ctx, `SELECT last_updated_at FROM discovery_device_current_shadow_state WHERE id = TRUE FOR UPDATE`).Scan(&lastUpdated); err != nil {
+	var lastFactVersion int64
+	var lastExpiry time.Time
+	var lastExpiryDeviceKey string
+	if err := tx.QueryRow(ctx, `SELECT last_fact_change_version,last_fact_expiry_at,last_fact_expiry_device_key
+FROM discovery_device_current_shadow_state WHERE id = TRUE FOR UPDATE`).Scan(&lastFactVersion, &lastExpiry, &lastExpiryDeviceKey); err != nil {
 		return fmt.Errorf("read current shadow state: %w", err)
 	}
-	rows, err := tx.Query(ctx, `SELECT device_key, max(updated_at) FROM discovery_service_facts_shadow WHERE updated_at > $1 GROUP BY device_key`, lastUpdated)
+	rows, err := tx.Query(ctx, `SELECT device_key,fact_change_version FROM discovery_service_facts_shadow
+WHERE fact_change_version>$1
+ORDER BY fact_change_version,device_key LIMIT 1000`, lastFactVersion)
 	if err != nil {
 		return fmt.Errorf("find changed devices: %w", err)
 	}
 	devices := []string{}
-	maxUpdated := lastUpdated
+	seenDevices := make(map[string]struct{})
+	maxFactVersion := lastFactVersion
 	for rows.Next() {
 		var device string
-		var updated time.Time
-		if err := rows.Scan(&device, &updated); err != nil {
+		var version int64
+		if err := rows.Scan(&device, &version); err != nil {
 			rows.Close()
 			return err
 		}
-		devices = append(devices, device)
-		if updated.After(maxUpdated) {
-			maxUpdated = updated
+		if _, seen := seenDevices[device]; !seen {
+			devices = append(devices, device)
+			seenDevices[device] = struct{}{}
 		}
+		maxFactVersion = version
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return err
 	}
 	rows.Close()
-	if len(devices) == 0 {
-		return tx.Commit(ctx)
-	}
-	_, err = tx.Exec(ctx, `
-INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,expired_fact_count,facts,updated_at)
-SELECT f.device_key,
-       GREATEST(max(f.observed_at),COALESCE((SELECT max(s.last_seen) FROM stream_discovery_device_state s JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active' WHERE s.device_key=f.device_key),max(f.observed_at))),
-       count(*) FILTER (WHERE f.withdrawn = FALSE AND (f.valid_until IS NULL OR f.valid_until > now()))::int,
-       count(*) FILTER (WHERE f.withdrawn = TRUE OR (f.valid_until IS NOT NULL AND f.valid_until <= now()))::int,
-       coalesce(jsonb_object_agg(f.fact_key, jsonb_build_object(
-           'event_id', f.event_id,
-           'protocol', f.protocol,
-           'ip', f.ip,
-           'mac', f.mac,
-           'observed_at', f.observed_at,
-           'valid_until', f.valid_until,
-           'withdrawn', f.withdrawn,
-           'content_hash', f.content_hash,
-           'version', f.version))
-           FILTER (WHERE f.withdrawn = FALSE AND (f.valid_until IS NULL OR f.valid_until > now())), '{}'::jsonb),
-       now()
-FROM discovery_service_facts_shadow f
-WHERE f.device_key = ANY($1::text[])
-GROUP BY f.device_key
-ON CONFLICT (device_key) DO UPDATE SET
-    last_seen = EXCLUDED.last_seen,
-    fact_count = EXCLUDED.fact_count,
-    expired_fact_count = EXCLUDED.expired_fact_count,
-    facts = EXCLUDED.facts,
-    updated_at = now()`, devices)
+	expiryRows, err := tx.Query(ctx, `SELECT device_key,valid_until FROM discovery_service_facts_shadow
+WHERE NOT withdrawn AND valid_until IS NOT NULL
+  AND (valid_until,device_key)>($1,$2) AND valid_until<=now()
+ORDER BY valid_until,device_key LIMIT 1000`, lastExpiry, lastExpiryDeviceKey)
 	if err != nil {
-		return fmt.Errorf("aggregate device current shadow: %w", err)
+		return fmt.Errorf("find expired current facts: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow c
-SET last_seen=s.last_seen, updated_at=now()
-FROM (
- SELECT s.device_key,max(s.last_seen) AS last_seen
- FROM stream_discovery_device_state s
- JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active'
- WHERE s.last_seen>now()-interval '10 minutes'
- GROUP BY s.device_key
-) s
-WHERE c.device_key=s.device_key AND s.last_seen>c.last_seen`); err != nil {
-		return fmt.Errorf("refresh current last seen: %w", err)
+	expiryKeys := []string{}
+	expirySeen := make(map[string]struct{})
+	maxExpiry, maxExpiryDeviceKey := lastExpiry, lastExpiryDeviceKey
+	for expiryRows.Next() {
+		var device string
+		var until time.Time
+		if err := expiryRows.Scan(&device, &until); err != nil {
+			expiryRows.Close()
+			return err
+		}
+		if _, seen := expirySeen[device]; !seen {
+			expiryKeys = append(expiryKeys, device)
+			expirySeen[device] = struct{}{}
+		}
+		maxExpiry, maxExpiryDeviceKey = until, device
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM discovery_device_current_shadow c
-WHERE c.fact_count=0
-AND NOT EXISTS (
- SELECT 1 FROM stream_discovery_device_state s
- JOIN stream_source_cutovers sc ON sc.epoch=s.epoch AND sc.state='active'
- WHERE s.device_key=c.device_key AND s.document->>'current'='true'
-)`); err != nil {
-		return fmt.Errorf("remove orphan no-fact current devices: %w", err)
+	if err := expiryRows.Err(); err != nil {
+		expiryRows.Close()
+		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM discovery_device_current_shadow c
-WHERE c.document->>'epoch' IS NOT NULL
-AND NOT EXISTS (
- SELECT 1 FROM stream_source_cutovers sc
- WHERE sc.epoch=c.document->>'epoch' AND sc.state='active'
-)
-AND NOT EXISTS (
- SELECT 1 FROM stream_discovery_device_state s
- JOIN stream_source_cutovers sc ON sc.epoch=s.epoch AND sc.state='active'
- WHERE s.device_key=c.device_key AND s.document->>'current'='true'
-)`); err != nil {
-		return fmt.Errorf("remove inactive-epoch current devices: %w", err)
+	expiryRows.Close()
+	streamKeys, err := reconcileStreamCurrent(ctx, tx)
+	if err != nil {
+		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM discovery_device_current_shadow WHERE fact_count=0 AND document='{}'::jsonb`); err != nil {
-		return fmt.Errorf("remove empty current documents: %w", err)
+	allKeys := append(append(append([]string(nil), devices...), expiryKeys...), streamKeys...)
+	// Stream document updates do not change event-bus facts. Hydrate those
+	// facts only when their own change or expiry cursor advances.
+	factKeys := append(append([]string(nil), devices...), expiryKeys...)
+	if err := upsertFactCurrent(ctx, tx, factKeys); err != nil {
+		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow c
-SET document=c.document||jsonb_build_object('current',true),
-    last_seen=GREATEST(c.last_seen,s.last_seen),updated_at=now()
-FROM (
- SELECT s.device_key,max(s.last_seen) AS last_seen
- FROM stream_discovery_device_state s
- JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active'
- WHERE s.document->>'current'='true'
- GROUP BY s.device_key
-) s
-WHERE c.device_key=s.device_key`); err != nil {
-		return fmt.Errorf("mark stream-current devices: %w", err)
+	if err := upsertStreamFactCurrent(ctx, tx, allKeys); err != nil {
+		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM discovery_device_current_shadow c
-WHERE c.document->>'current'='false'
-AND NOT EXISTS (
- SELECT 1 FROM stream_discovery_device_state s
- JOIN stream_source_cutovers cc ON cc.epoch=s.epoch AND cc.state='active'
- WHERE s.device_key=c.device_key AND s.document->>'current'='true'
-)`); err != nil {
-		return fmt.Errorf("remove stale current devices: %w", err)
+	if err := pruneChangedCurrent(ctx, tx, allKeys); err != nil {
+		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow c
-SET facts=agg.facts,fact_count=agg.fact_count,expired_fact_count=agg.expired_count,updated_at=now()
-FROM (
- SELECT f.device_key,
-  coalesce(jsonb_object_agg(f.fact_key,jsonb_build_object(
-   'event_id',f.event_key,'protocol',f.protocol,'ip',f.ip,'mac',f.mac,
-   'observed_at',f.observed_at,'valid_until',f.valid_until,
-   'withdrawn',f.withdrawn,'content_hash',f.semantic_hash,'version',f.revision))
-   FILTER (WHERE f.withdrawn=FALSE AND (f.valid_until IS NULL OR f.valid_until>now())),'{}'::jsonb) AS facts,
-  count(*) FILTER (WHERE f.withdrawn=FALSE AND (f.valid_until IS NULL OR f.valid_until>now()))::int AS fact_count,
-  count(*) FILTER (WHERE f.withdrawn=TRUE OR (f.valid_until IS NOT NULL AND f.valid_until<=now()))::int AS expired_count
- FROM stream_discovery_facts f
- JOIN stream_source_cutovers sc ON sc.epoch=f.epoch AND sc.state='active'
- GROUP BY f.device_key
-) agg
-WHERE c.device_key=agg.device_key AND c.fact_count=0`); err != nil {
-		return fmt.Errorf("backfill stream-only facts: %w", err)
+	staleKeys, err := clearInactiveCurrent(ctx, tx)
+	if err != nil {
+		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,expired_fact_count,facts,document,updated_at)
-SELECT s.device_key,s.last_seen,0,0,'{}'::jsonb,s.document,now()
-FROM stream_discovery_device_state s
-JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active'
-WHERE s.document->>'current'='true'
-ON CONFLICT(device_key) DO UPDATE SET
- last_seen=GREATEST(discovery_device_current_shadow.last_seen,EXCLUDED.last_seen),
- updated_at=now()`); err != nil {
-		return fmt.Errorf("backfill stream-only current devices: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE discovery_protocol_runtime r
-SET enabled=true,received=s.total,parsed=s.total,admitted=s.total,last_seen=s.last_seen,last_success=s.last_seen,updated_at=now()
-FROM (
- SELECT max(f.observed_at) AS last_seen,count(*)::bigint AS total
- FROM stream_discovery_facts f
- JOIN stream_source_cutovers c ON c.epoch=f.epoch AND c.state='active'
- WHERE f.protocol='dhcp'
-) s
-WHERE r.protocol='dhcp' AND s.last_seen IS NOT NULL`); err != nil {
-		return fmt.Errorf("refresh DHCP protocol runtime: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow_state SET last_updated_at = $1 WHERE id = TRUE`, maxUpdated); err != nil {
-		return fmt.Errorf("advance current shadow state: %w", err)
+	if len(devices) > 0 || len(expiryKeys) > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE discovery_device_current_shadow_state
+SET last_fact_change_version=$1,last_fact_expiry_at=$2,last_fact_expiry_device_key=$3 WHERE id=TRUE`, maxFactVersion, maxExpiry, maxExpiryDeviceKey); err != nil {
+			return fmt.Errorf("advance current shadow fact state: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	if rdb != nil {
-		if err := writeRedis(ctx, pool, rdb, devices, ttl); err != nil {
+		if len(staleKeys) > 0 {
+			cacheKeys := make([]string, len(staleKeys))
+			for i, key := range staleKeys {
+				cacheKeys[i] = "ps:disc:current:" + key
+			}
+			if err := rdb.Del(ctx, cacheKeys...).Err(); err != nil {
+				log.Printf("event-bus-current-shadow: stale Redis eviction failed: %v", err)
+			}
+		}
+		if err := writeRedis(ctx, pool, rdb, append(allKeys, staleKeys...), ttl); err != nil {
 			log.Printf("event-bus-current-shadow: Redis write failed: %v", err)
 		}
 	}
-	log.Printf("event-bus-current-shadow: upserted=%d through=%s", len(devices), maxUpdated.UTC().Format(time.RFC3339Nano))
+	if len(devices)+len(expiryKeys)+len(streamKeys)+len(staleKeys) > 0 {
+		log.Printf("event-bus-current-shadow: changed_facts=%d expired_facts=%d stream=%d inactive=%d fact_version=%d", len(devices), len(expiryKeys), len(streamKeys), len(staleKeys), maxFactVersion)
+	}
 	return nil
 }
 
 func warmRedis(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, ttl time.Duration) error {
-	rows, err := pool.Query(ctx, `SELECT device_key FROM discovery_device_current_shadow`)
-	if err != nil {
-		return err
-	}
-	devices := []string{}
-	for rows.Next() {
-		var device string
-		if err := rows.Scan(&device); err != nil {
+	const pageSize = 500
+	cursor := ""
+	for {
+		rows, err := pool.Query(ctx, `SELECT device_key FROM discovery_device_current_shadow
+WHERE device_key>$1 ORDER BY device_key LIMIT $2`, cursor, pageSize)
+		if err != nil {
+			return err
+		}
+		devices := make([]string, 0, pageSize)
+		for rows.Next() {
+			var device string
+			if err := rows.Scan(&device); err != nil {
+				rows.Close()
+				return err
+			}
+			devices = append(devices, device)
+		}
+		if err := rows.Err(); err != nil {
 			rows.Close()
 			return err
 		}
-		devices = append(devices, device)
-	}
-	if err := rows.Err(); err != nil {
 		rows.Close()
-		return err
+		if len(devices) == 0 {
+			return nil
+		}
+		if err := writeRedis(ctx, pool, rdb, devices, ttl); err != nil {
+			return err
+		}
+		cursor = devices[len(devices)-1]
+		if len(devices) < pageSize {
+			return nil
+		}
 	}
-	rows.Close()
-	if len(devices) == 0 {
-		return nil
-	}
-	return writeRedis(ctx, pool, rdb, devices, ttl)
 }
 
 func writeRedis(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client, devices []string, ttl time.Duration) error {

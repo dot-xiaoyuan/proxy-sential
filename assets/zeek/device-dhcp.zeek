@@ -32,6 +32,9 @@ export {
         host_name: string &log &optional;
         vendor_class: string &log &optional;
         requested_options: string &log &optional;
+        client_id_hwtype: count &log &optional;
+        client_id_hwaddr: string &log &optional;
+        option93_present: bool &log &default=F;
     };
     redef enum Log::ID += { DEVICE_BINDING_LOG };
     type DeviceBindingInfo: record {
@@ -47,6 +50,9 @@ export {
         host_name: string &log &optional;
         vendor_class: string &log &optional;
         requested_options: string &log &optional;
+        client_id_hwtype: count &log &optional;
+        client_id_hwaddr: string &log &optional;
+        option93_present: bool &log &default=F;
     };
 
     # aggregate_msgs runs on the manager, where worker connections do not
@@ -63,6 +69,9 @@ type SentinelRequestInfo: record {
     host_name: string &default="";
     vendor_class: string &default="";
     requested_options: string &default="";
+    client_id_hwtype: count &optional;
+    client_id_hwaddr: string &optional;
+    option93_present: bool &default=F;
 };
 
 # The standard Zeek DHCP join is keyed only by xid. This small join is keyed
@@ -96,6 +105,16 @@ event dhcp_message(c: connection, is_orig: bool, msg: DHCP::Msg, options: DHCP::
         info$mac = options$client_id$hwaddr;
     else if ( msg$chaddr != "" )
         info$mac = msg$chaddr;
+    if ( is_orig && options?$client_id )
+        {
+        info$client_id_hwtype = options$client_id$hwtype;
+        if ( options$client_id$hwtype == 1 )
+            info$client_id_hwaddr = options$client_id$hwaddr;
+        }
+    if ( is_orig && options?$options )
+        for ( i in options$options )
+            if ( options$options[i] == 93 )
+                info$option93_present = T;
     if ( options?$addr_request )
         info$requested_addr = options$addr_request;
     if ( msg$yiaddr != 0.0.0.0 )
@@ -163,6 +182,16 @@ event DHCP::aggregate_msgs(ts: time, id: conn_id, uid: string, is_orig: bool, ms
                     sentinel_values = fmt("%s%s%d", sentinel_values, sentinel_values == "" ? "" : ",", options$param_list[i]);
                 new_request$requested_options = sentinel_values;
                 }
+            if ( options?$client_id )
+                {
+                new_request$client_id_hwtype = options$client_id$hwtype;
+                if ( options$client_id$hwtype == 1 )
+                    new_request$client_id_hwaddr = options$client_id$hwaddr;
+                }
+            if ( options?$options )
+                for ( i in options$options )
+                    if ( options$options[i] == 93 )
+                        new_request$option93_present = T;
             sentinel_requests[key] = new_request;
             }
         if ( ! is_client && msg$m_type == 5 && msg$yiaddr != 0.0.0.0 && key in sentinel_requests )
@@ -182,6 +211,11 @@ event DHCP::aggregate_msgs(ts: time, id: conn_id, uid: string, is_orig: bool, ms
                     binding$vendor_class = prior_request$vendor_class;
                 if ( prior_request$requested_options != "" )
                     binding$requested_options = prior_request$requested_options;
+                if ( prior_request?$client_id_hwtype )
+                    binding$client_id_hwtype = prior_request$client_id_hwtype;
+                if ( prior_request?$client_id_hwaddr )
+                    binding$client_id_hwaddr = prior_request$client_id_hwaddr;
+                binding$option93_present = prior_request$option93_present;
                 Log::write(DHCP::DEVICE_BINDING_LOG, binding);
                 }
             }

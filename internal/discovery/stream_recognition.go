@@ -18,6 +18,10 @@ func streamRecognitionFields(o Observation) map[string]string {
 		add("hostname", firstText(str(p, "hostname"), o.Name))
 		add("dhcp_vendor_class", str(p, "vendor_class"))
 		add("dhcp_requested_options", firstText(str(p, "requested_options"), str(p, "parameter_request_list")))
+		add("dhcp_client_id_hwtype", str(p, "client_id_hwtype"))
+		if p["option93_present"] == true {
+			add("dhcp_option93_present", "true")
+		}
 	case "lldp":
 		add("lldp_system_name", firstText(str(p, "system_name"), o.Name))
 		add("lldp_system_description", str(p, "system_description"))

@@ -157,6 +157,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/passive-signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Mirror-only identification clues for at most 100 page IPs and MACs; requires identity:read. */
+        get: operations["getDiscoveryPassiveSignals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/observed-ports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Mirror-observed access destinations for at most 50 current sensor/IP pairs; requires identity:read. Does not prove an open port on the device. */
+        get: operations["getDiscoveryObservedPorts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/service-clues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Mirror-observed service announcements for at most 50 sensor/MAC pairs; requires identity:read. */
+        get: operations["getDiscoveryServiceClues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/statistics": {
         parameters: {
             query?: never;
@@ -6491,6 +6542,18 @@ export interface components {
             enabled: boolean;
             scope?: string;
             freshness?: components["schemas"]["DiscoveryFreshness"];
+            capture_scope?: {
+                /** @enum {string} */
+                status: "unconfigured" | "valid" | "expiring" | "expired" | "invalid";
+                /** Format: date-time */
+                valid_until?: string;
+            };
+            quarantine?: {
+                /** @enum {string} */
+                status: "clear" | "blocked" | "unavailable";
+                count_at_least: number;
+                truncated?: boolean;
+            };
             items: {
                 owner?: string;
                 sensor_id: string;
@@ -6506,6 +6569,76 @@ export interface components {
                 last_success?: string | null;
                 error: string;
             }[];
+        };
+        DiscoveryPassiveSignals: {
+            /** @enum {string} */
+            durable_status: "ready" | "unavailable" | "not_requested";
+            /** @enum {string} */
+            client_status: "ready" | "unavailable" | "not_requested";
+            items: components["schemas"]["DiscoveryPassiveSignal"][];
+        };
+        DiscoveryObservedPorts: {
+            items: {
+                [key: string]: components["schemas"]["DiscoveryObservedPort"][];
+            };
+        };
+        DiscoveryObservedPort: {
+            sensor_id: string;
+            src_ip: string;
+            proto: string;
+            dst_port: number;
+            /** Format: date-time */
+            last_seen: string;
+            evidence_id: string;
+        };
+        DiscoveryServiceClues: {
+            items: {
+                [key: string]: components["schemas"]["DiscoveryServiceClue"][];
+            };
+        };
+        DiscoveryServiceClue: {
+            sensor_id: string;
+            mac: string;
+            service_type: string;
+            service_name?: string;
+            service_target?: string;
+            port: number;
+            /** Format: date-time */
+            last_seen: string;
+            evidence_id: string;
+        };
+        DiscoveryPassiveSignal: {
+            sensor_id?: string;
+            ip?: string;
+            mac?: string;
+            ttl?: number;
+            os_hint?: string;
+            device_hint?: string;
+            dhcp_hostname?: string;
+            dhcp_vendor_class?: string;
+            dhcp_options?: string;
+            dhcp_client_id_hwtype?: string;
+            dhcp_option93_present?: boolean;
+            dhcp_vlan?: string;
+            ttl_vlan?: string;
+            /** Format: date-time */
+            dhcp_observed_at?: string;
+            dhcp_evidence_id?: string;
+            /** Format: date-time */
+            ttl_observed_at?: string;
+            os_family?: string;
+            os_confidence?: string;
+            os_evidence?: string;
+            os_conflict?: boolean;
+            client_clues?: components["schemas"]["DiscoveryPassiveClientClue"][];
+        };
+        DiscoveryPassiveClientClue: {
+            /** @enum {string} */
+            kind: "user_agent" | "ja3" | "ja4";
+            value: string;
+            /** Format: date-time */
+            observed_at: string;
+            evidence_id?: string;
         };
         DiscoveryStatistics: {
             pending_updates: number;
@@ -7831,6 +7964,89 @@ export interface operations {
                 };
             };
             /** @description Read failed; never replaced by an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryPassiveSignals: {
+        parameters: {
+            query?: {
+                ips?: string;
+                macs?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent log clues merged with durable DHCP fact clues. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryPassiveSignals"];
+                };
+            };
+        };
+    };
+    getDiscoveryObservedPorts: {
+        parameters: {
+            query?: {
+                /** @description Comma-separated sensor|IP pairs */
+                targets?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent bounded bucket results keyed by sensor and source IP. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryObservedPorts"];
+                };
+            };
+            /** @description Read failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryServiceClues: {
+        parameters: {
+            query?: {
+                /** @description Comma-separated sensor|MAC pairs */
+                targets?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent scoped announcement clues with sample event IDs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryServiceClues"];
+                };
+            };
+            /** @description Read failed */
             500: {
                 headers: {
                     [name: string]: unknown;

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -155,26 +156,34 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		}
 		writeJSON(w, 200, page)
 	case path == "/discovery/passive-signals" && r.Method == "GET":
-		s.handleDiscoveryPassiveSignals(w, r)
+		s.handleDiscoveryPassiveSignals(w, r, repo)
 	case path == "/discovery/service-clues" && r.Method == "GET":
 		reader, ok := s.reader.(store.DiscoveryServiceClueReader)
 		if !ok {
 			writeJSON(w, 200, map[string]any{"items": map[string]any{}})
 			return
 		}
-		raw := strings.Split(r.URL.Query().Get("macs"), ",")
-		macs := make([]string, 0, len(raw))
-		for _, mac := range raw {
-			if mac = strings.TrimSpace(mac); mac != "" {
-				macs = append(macs, mac)
-			}
-			if len(macs) >= 50 {
-				break
-			}
-		}
-		items, err := reader.DiscoveryServiceClues(ctx, macs, time.Now().UTC().Add(-2*time.Hour))
+		targets := splitList(r.URL.Query().Get("targets"), 50)
+		readCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		items, err := reader.DiscoveryServiceClues(readCtx, targets, time.Now().UTC().Add(-2*time.Hour))
+		cancel()
 		if err != nil {
 			writeError(w, 500, "discovery_read", "读取被动服务线索失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items})
+	case path == "/discovery/observed-ports" && r.Method == "GET":
+		reader, ok := s.reader.(store.DiscoveryObservedFlowPortReader)
+		if !ok {
+			writeJSON(w, 200, map[string]any{"items": map[string]any{}})
+			return
+		}
+		targets := splitList(r.URL.Query().Get("targets"), 50)
+		readCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		items, err := reader.DiscoveryObservedFlowPorts(readCtx, targets, time.Now().UTC().Add(-2*time.Hour))
+		cancel()
+		if err != nil {
+			writeError(w, 500, "discovery_read", "读取实际访问线索失败")
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": items})

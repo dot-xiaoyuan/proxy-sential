@@ -5,8 +5,31 @@ import (
 	"net/http"
 	"os"
 	"proxy-sentinel/internal/discovery"
+	"proxy-sentinel/internal/normalized"
 	"time"
 )
+
+type captureScopeExpiryState struct {
+	Status     string `json:"status"`
+	ValidUntil string `json:"valid_until,omitempty"`
+}
+
+func captureScopeExpiry(path string, now time.Time) captureScopeExpiryState {
+	if path == "" {
+		return captureScopeExpiryState{Status: "unconfigured"}
+	}
+	scope, err := normalized.LoadCaptureScope(path)
+	if err != nil || scope == nil {
+		return captureScopeExpiryState{Status: "invalid"}
+	}
+	state := captureScopeExpiryState{Status: "valid", ValidUntil: scope.ValidUntil.UTC().Format(time.RFC3339)}
+	if !now.Before(scope.ValidUntil) {
+		state.Status = "expired"
+	} else if !now.Before(scope.ValidUntil.Add(-14 * 24 * time.Hour)) {
+		state.Status = "expiring"
+	}
+	return state
+}
 
 func (s *Server) handleDiscoveryCoverage(w http.ResponseWriter, r *http.Request, repo discovery.Repository) {
 	if !repo.PipelineV2 {
@@ -51,7 +74,7 @@ func (s *Server) handleDiscoveryCoverage(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	freshness := coverageFreshness(ctx, repo)
-	response := map[string]any{"enabled": true, "scope": discovery.PrivateDiscoveryCIDRs, "items": items, "freshness": freshness, "enrichment": enrichmentCoverage(ctx, repo)}
+	response := map[string]any{"enabled": true, "scope": discovery.PrivateDiscoveryCIDRs, "items": items, "freshness": freshness, "enrichment": enrichmentCoverage(ctx, repo), "capture_scope": captureScopeExpiry(os.Getenv("PROXY_SENTINEL_CAPTURE_SCOPE_CONFIG"), time.Now().UTC()), "quarantine": discoveryQuarantineStatus(discoveryQuarantinePath())}
 	// The event-bus read path does not use the legacy pipeline counters; avoid
 	// blocking the coverage response on that historical query.
 	if os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") != "true" {

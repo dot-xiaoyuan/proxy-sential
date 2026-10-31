@@ -131,7 +131,9 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 coalesce(nullif(c.document,'{}'::jsonb),jsonb_build_object('id',c.device_key))||jsonb_build_object(
  'id',c.device_key,'last_seen',c.last_seen,'current',true,'generation','eventbus','freshness','new',
  'fact_count',c.fact_count,'expired_fact_count',c.expired_fact_count,'facts',c.facts,
- 'evidence_count',c.fact_count+c.expired_fact_count,
+ 'evidence_count',GREATEST(c.fact_count+c.expired_fact_count,
+   CASE WHEN jsonb_typeof(c.document->'evidence_count')='number'
+     THEN (c.document->>'evidence_count')::int ELSE 0 END),
  'addresses',coalesce(nullif(fa.addresses,'[]'::jsonb),c.document->'addresses','[]'::jsonb),
  'current_addresses',coalesce(nullif(fa.addresses,'[]'::jsonb),c.document->'current_addresses',c.document->'addresses','[]'::jsonb),
  'protocols',coalesce(nullif(fa.protocols,'[]'::jsonb),c.document->'protocols','[]'::jsonb))

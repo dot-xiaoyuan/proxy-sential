@@ -4972,6 +4972,16 @@ pre.wrap-code {
 }
 /* Discovery protocol coverage and evidence summaries. */
 .passive-discovery-panel { width:100%; min-width: 0; max-width: 1920px; margin-inline:auto; }
+.passive-ledger-table .ant-table-cell { overflow-wrap: anywhere; }
+.discovery-ledger-stack { display: grid; gap: 3px; min-width: 0; }
+.discovery-ledger-stack > * { overflow-wrap: anywhere; }
+.passive-ledger-table .ant-table-cell-fix-right { background: #fff; }
+.passive-ledger-table .ant-table-cell-fix-right .ant-btn { white-space: nowrap; flex-shrink: 0; }
+@media (max-width: 560px) {
+  .passive-ledger-table .ant-table-tbody > tr.ant-table-row > td { white-space: normal; overflow: visible; text-overflow: clip; }
+  .passive-ledger-table .ant-table-cell-fix-right { position: static !important; }
+  .passive-ledger-table .ant-table-tbody > tr.ant-table-row > td[data-label]::before { display: inline-block; }
+}
 .discovery-evidence-modal .ant-modal-body { max-height: 65vh; overflow:auto; }
 .iot-coverage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
 .iot-coverage-item { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; overflow-wrap: anywhere; }
@@ -4995,6 +5005,10 @@ pre.wrap-code {
 .discovery-detail-facts div { min-width: 0; }
 .discovery-detail-facts dt { color: #64748b; font-size: 12px; }
 .discovery-detail-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.discovery-client-clues { display: grid; gap: 8px; margin-bottom: 14px; }
+.discovery-client-clues article { display: grid; gap: 3px; min-width: 0; padding: 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.discovery-client-clues article span { overflow-wrap: anywhere; }
+.discovery-client-clues article strong { font-size: 12px; white-space: nowrap; }
 .discovery-terminal-identity {
   display: flex;
   align-items: flex-start;

@@ -119,6 +119,15 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 	if err != nil {
 		return err
 	}
+	for _, id := range recovered {
+		quarantinePath := filepath.Join(opts.Spool, "discovery-quarantine", id+".json")
+		if _, err := os.Stat(quarantinePath); err == nil {
+			log.Printf("passive stream paused for quarantined, unprocessed segment=%s manifest=%s", id, quarantinePath)
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	projector := discovery.StreamDiscoveryProjector{DB: db}
 	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector}
 	if opts.DrainOnly {
@@ -137,6 +146,13 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 				}
 				if errors.Is(err, streamlog.ErrContentConflict) || errors.Is(err, streamlog.ErrQuarantined) || errors.Is(err, discovery.ErrUnsupportedStreamProjection) {
 					return err
+				}
+				if errors.Is(err, discovery.ErrStreamFactScopeMismatch) {
+					manifest, quarantineErr := quarantinePassiveSegment(journal, opts.JournalDir, opts.Spool, id, err)
+					if quarantineErr != nil {
+						return fmt.Errorf("quarantine passive segment %s: %w", id, quarantineErr)
+					}
+					return fmt.Errorf("passive segment %s quarantined at %s: %w", id, manifest, err)
 				}
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -236,6 +252,16 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 					}
 					if errors.Is(err, streamlog.ErrContentConflict) || errors.Is(err, streamlog.ErrQuarantined) || errors.Is(err, discovery.ErrUnsupportedStreamProjection) {
 						laneResults <- err
+						stop()
+						return
+					}
+					if errors.Is(err, discovery.ErrStreamFactScopeMismatch) {
+						manifest, quarantineErr := quarantinePassiveSegment(journal, opts.JournalDir, opts.Spool, id, err)
+						if quarantineErr != nil {
+							laneResults <- fmt.Errorf("quarantine passive segment %s: %w", id, quarantineErr)
+						} else {
+							laneResults <- fmt.Errorf("passive segment %s quarantined at %s: %w", id, manifest, err)
+						}
 						stop()
 						return
 					}

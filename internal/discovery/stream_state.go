@@ -14,6 +14,8 @@ import (
 // event receipts and paginated history remain stored when a device exceeds it.
 const maxStreamFactsPerDevice = 256
 
+var ErrStreamFactScopeMismatch = errors.New("stream fact scope or device mismatch")
+
 type streamDiscoveryState struct {
 	Epoch                string         `json:"epoch"`
 	Device               string         `json:"device_key"`
@@ -64,7 +66,7 @@ func buildStreamDiscoveryStateSummary(epoch, key string, facts []streamDiscovery
 	boundMAC := ""
 	for _, fact := range facts {
 		if fact.Epoch != epoch || fact.Device != key || fact.Scope != state.Scope {
-			return state, errors.New("stream fact scope or device mismatch")
+			return state, ErrStreamFactScopeMismatch
 		}
 		if fact.FirstObserved.Before(state.FirstSeen) {
 			state.FirstSeen = fact.FirstObserved
@@ -393,6 +395,13 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 	}
 	raw, err := json.Marshal(states)
 	if err != nil {
+		return err
+	}
+	// Result versions are sequence values assigned before commit. Serialize
+	// their assignment until commit so a later version cannot become visible
+	// before an earlier one and pass the current-ledger cursor permanently.
+	// Device locks were acquired before this lock by every state writer.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(9184,213)`); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_device_state(epoch,device_key,scope_id,sensor_id,site,domain,vlan,interface_name,name,manufacturer,model_name,device_type,category,last_device_type,last_category,classification_status,first_seen,last_seen,expires_at,document)

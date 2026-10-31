@@ -42,6 +42,17 @@ func TestStreamRecognitionFieldsKeepOnlyProtocolProductSignals(t *testing.T) {
 	}
 }
 
+func TestStreamRecognitionKeepsDHCPOptionPresenceWithoutInventingArchitecture(t *testing.T) {
+	o := Observation{Origin: "dhcp", Evidence: normalized.Event{Payload: map[string]any{
+		"vendor_class": "PXEClient", "requested_options": "1,3,6",
+		"client_id_hwtype": "1", "option93_present": true,
+	}}}
+	fields := streamRecognitionFields(o)
+	if fields["dhcp_client_id_hwtype"] != "1" || fields["dhcp_option93_present"] != "true" || fields["dhcp_architecture"] != "" {
+		t.Fatalf("invented DHCP architecture or lost observed options: %+v", fields)
+	}
+}
+
 func TestStreamSSHReplayKeepsServerDirection(t *testing.T) {
 	stamp := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
 	base := normalized.Event{EventID: "ssh-1", Type: "device", SourceEventType: "ssh", Timestamp: stamp.Format(time.RFC3339Nano),
