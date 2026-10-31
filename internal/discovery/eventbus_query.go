@@ -96,7 +96,7 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 		// Stream-only current documents have no event-bus fact row yet. Keep them
 		// visible until the fact projection catches up; devices with facts still
 		// require a non-active protocol.
-		where = append(where, "(c.fact_count=0 OR EXISTS(SELECT 1 FROM discovery_service_facts_shadow f WHERE f.device_key=c.device_key AND f.protocol<>'active'))")
+		where = append(where, "(c.fact_count=0 OR EXISTS(SELECT 1 FROM discovery_service_facts_shadow f WHERE f.device_key=c.device_key AND f.protocol<>'active') OR EXISTS(SELECT 1 FROM jsonb_each(c.facts) AS jf(key,value) WHERE jf.value->>'protocol'<>'active'))")
 	}
 	needle := strings.ToLower(strings.TrimSpace(q.Search))
 	if needle != "" {

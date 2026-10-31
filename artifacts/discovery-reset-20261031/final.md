@@ -11,8 +11,8 @@
 |---|---:|
 | current 文档 | 49,166 |
 | stream facts | 52,849 |
-| 发现页 passive total | 36,601 |
-| 哑终端线索过滤 total | 330 |
+| 发现页 passive total | 51,467（修正后） |
+| 哑终端线索过滤 total | 368（修正后） |
 | current=false | 0 |
 | 空文档 | 0 |
 | no_facts | 62 |

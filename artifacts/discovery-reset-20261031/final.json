@@ -11,10 +11,11 @@
     "no_facts": 62
   },
   "page": {
-    "passive_total": 36601,
-    "dumb_capability_total": 330,
+    "passive_total": 51467,
+    "dumb_capability_total": 368,
     "all_window_total": 36601,
-    "errors": []
+    "errors": [],
+    "source": "corrected passive filter includes current facts JSON when shadow facts are absent"
   },
   "protocols": {
     "arp": 24587,
@@ -52,5 +53,6 @@
     "producer_queue_depth": 0
   },
   "control_plane_readyz": 200,
-  "failed_services": 0
+  "failed_services": 0,
+  "corrected_at": "2026-10-31T19:34:00+08:00"
 }
