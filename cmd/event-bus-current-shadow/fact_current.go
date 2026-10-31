@@ -100,6 +100,11 @@ AND NOT EXISTS (
  SELECT 1 FROM stream_discovery_device_state s
  JOIN stream_source_cutovers sc ON sc.epoch=s.epoch AND sc.state='active'
  WHERE s.device_key=c.device_key AND s.document->>'current'='true'
+)
+AND NOT EXISTS (
+ SELECT 1 FROM stream_discovery_facts f
+ WHERE f.epoch=c.document->>'epoch' AND f.device_key=c.device_key
+   AND NOT f.withdrawn AND f.observed_at<=now() AND f.valid_until>now()
 )`, keys)
 	if err != nil {
 		return fmt.Errorf("prune changed current devices: %w", err)

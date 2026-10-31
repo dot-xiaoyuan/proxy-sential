@@ -127,9 +127,10 @@ WHERE epoch=$1 AND last_result_version<$2`, epoch, version); err != nil {
 	return keys, nil
 }
 
-// clearInactiveCurrent retires presentation documents and stream-only facts
-// from a deactivated epoch in indexed, bounded pages. Event-bus facts are
-// restored from their authority as part of this controlled cutover repair.
+// clearInactiveCurrent retires expired presentation documents and stream-only
+// facts from a deactivated epoch in indexed, bounded pages. A valid lease
+// remains visible until replacement or expiry. Event-bus facts are restored
+// from their authority as part of this controlled cutover repair.
 func clearInactiveCurrent(ctx context.Context, tx pgx.Tx) ([]string, error) {
 	var epoch string
 	err := tx.QueryRow(ctx, `SELECT p.epoch FROM discovery_current_stream_progress p
@@ -141,7 +142,10 @@ WHERE NOT EXISTS(SELECT 1 FROM stream_source_cutovers sc WHERE sc.epoch=p.epoch 
       AND pending.result_version>active.last_result_version
     LIMIT 1)
   AND EXISTS(SELECT 1 FROM discovery_device_current_shadow c
-    WHERE c.document ? 'epoch' AND c.document->>'epoch'=p.epoch)
+    WHERE c.document ? 'epoch' AND c.document->>'epoch'=p.epoch
+      AND NOT EXISTS(SELECT 1 FROM stream_discovery_facts f
+        WHERE f.epoch=p.epoch AND f.device_key=c.device_key
+          AND NOT f.withdrawn AND f.observed_at<=now() AND f.valid_until>now()))
 ORDER BY p.epoch LIMIT 1`).Scan(&epoch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -151,6 +155,9 @@ ORDER BY p.epoch LIMIT 1`).Scan(&epoch)
 	}
 	rows, err := tx.Query(ctx, `SELECT device_key FROM discovery_device_current_shadow
 WHERE document ? 'epoch' AND document->>'epoch'=$1
+  AND NOT EXISTS(SELECT 1 FROM stream_discovery_facts f
+    WHERE f.epoch=$1 AND f.device_key=discovery_device_current_shadow.device_key
+      AND NOT f.withdrawn AND f.observed_at<=now() AND f.valid_until>now())
 ORDER BY device_key LIMIT 200`, epoch)
 	if err != nil {
 		return nil, err
@@ -176,7 +183,10 @@ ORDER BY device_key LIMIT 200`, epoch)
 SET document='{}'::jsonb,facts='{}'::jsonb,fact_count=0,expired_fact_count=0,
     stream_result_version=0,updated_at=now()
 WHERE c.device_key=ANY($1::text[]) AND c.document->>'epoch'=$2
-  AND NOT EXISTS(SELECT 1 FROM stream_source_cutovers sc WHERE sc.epoch=$2 AND sc.state='active')`, keys, epoch); err != nil {
+  AND NOT EXISTS(SELECT 1 FROM stream_source_cutovers sc WHERE sc.epoch=$2 AND sc.state='active')
+  AND NOT EXISTS(SELECT 1 FROM stream_discovery_facts f
+    WHERE f.epoch=$2 AND f.device_key=c.device_key
+      AND NOT f.withdrawn AND f.observed_at<=now() AND f.valid_until>now())`, keys, epoch); err != nil {
 		return nil, fmt.Errorf("clear inactive current documents: %w", err)
 	}
 	if err := upsertFactCurrent(ctx, tx, keys); err != nil {
