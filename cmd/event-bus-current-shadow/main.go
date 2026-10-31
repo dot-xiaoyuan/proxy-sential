@@ -170,6 +170,16 @@ FROM (
 WHERE c.device_key=s.device_key AND s.last_seen>c.last_seen`); err != nil {
 		return fmt.Errorf("refresh current last seen: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,expired_fact_count,facts,document,updated_at)
+SELECT s.device_key,s.last_seen,0,0,'{}'::jsonb,s.document,now()
+FROM stream_discovery_device_state s
+JOIN stream_source_cutovers c ON c.epoch=s.epoch AND c.state='active'
+WHERE s.document->>'current'='true'
+ON CONFLICT(device_key) DO UPDATE SET
+ last_seen=GREATEST(discovery_device_current_shadow.last_seen,EXCLUDED.last_seen),
+ updated_at=now()`); err != nil {
+		return fmt.Errorf("backfill stream-only current devices: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE discovery_protocol_runtime r
 SET enabled=true,last_seen=s.last_seen,last_success=s.last_seen,updated_at=now()
 FROM (

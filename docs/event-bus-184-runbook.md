@@ -285,3 +285,16 @@ ieee1905_client_association 尝试启用后 168 包全部 rejected，已回退 d
 - 尝试启用 IEEE1905 client association：168 包全部 rejected，已回退 disabled；
 - DHCP 由 R8 流式链路采集，current-shadow 每 5 秒把 DHCP 的 last_seen/last_success 从活跃 stream facts 写入 runtime；
 - ARP 启用后 Kafka 曾短暂 lag 492，随后回到 0。
+
+## 2026-10-31 15:40 发现设备补全 stream-only 当前态
+
+发现 current 表此前只包含 eventbus facts 已投影的设备，活跃 stream 状态中有约 7,984 个设备没有进入 current 表，页面总数偏低。
+
+处理：
+
+- current-shadow 每轮把活跃 `stream_discovery_device_state` 中 `document->>'current'='true'`、current 表不存在的设备补入 `discovery_device_current_shadow`；
+- 已存在设备只提升 `last_seen`，不覆盖 eventbus 事实；
+- eventbus 被动发现查询对 `fact_count=0` 的 stream-only 文档保留可见性，避免补入后在列表中再次被过滤；
+- 结果：current 表 93,742 → 101,942，发现页总数 13,356 → 37,893，缺失 stream current 设备 7,984 → 2（持续补入）。
+
+页面验证：`共 37893 个设备`，最近观测“刚刚”，无 console/page error。
