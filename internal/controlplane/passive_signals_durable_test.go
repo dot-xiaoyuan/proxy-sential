@@ -36,7 +36,19 @@ func TestDurableDHCPCluesKeepBindingAndEventProvenance(t *testing.T) {
 	if len(byKey) != 1 || !byKey["sensor-a|mac:aa:bb:cc:dd:ee:ff|8"].OSConflict {
 		t.Fatalf("conflicting durable OS clues were hidden: %+v", byKey)
 	}
+	if byKey["sensor-a|mac:aa:bb:cc:dd:ee:ff|8"].OSConfidence != "weak" {
+		t.Fatalf("historical DHCP clue must keep merged OS confidence weak: %+v", byKey)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHistoricalDHCPClueDoesNotInheritCurrentOSConfidence(t *testing.T) {
+	byKey := map[string]*PassiveSignal{}
+	mergePassiveSignal(byKey, &PassiveSignal{SensorID: "sensor-a", MAC: "aa:bb:cc:dd:ee:ff", DHCPVLAN: "8", OSFamily: "Windows", OSConfidence: "weak", DHCPHistorical: true})
+	mergePassiveSignal(byKey, &PassiveSignal{SensorID: "sensor-a", MAC: "aa:bb:cc:dd:ee:ff", DHCPVLAN: "8", OSFamily: "Windows", OSConfidence: "medium"})
+	if got := byKey["sensor-a|mac:aa:bb:cc:dd:ee:ff|8"]; got == nil || got.OSConfidence != "weak" || !got.DHCPHistorical {
+		t.Fatalf("merged historical DHCP clue gained current confidence: %+v", got)
 	}
 }

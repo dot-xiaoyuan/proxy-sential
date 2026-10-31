@@ -170,6 +170,9 @@ func mergePassiveSignal(byKey map[string]*PassiveSignal, signal *PassiveSignal) 
 			current.OSFamily, current.OSConfidence, current.OSEvidence = signal.OSFamily, signal.OSConfidence, signal.OSEvidence
 		}
 	}
+	if current.DHCPHistorical && current.OSFamily != "" {
+		current.OSConfidence = "weak"
+	}
 }
 
 func passiveSignalKey(signal *PassiveSignal) string {
