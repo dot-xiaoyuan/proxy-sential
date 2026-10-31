@@ -54,3 +54,12 @@ local_users         1
 ```
 
 当前页面已能显示已开启协议 ARP/DHCP/DNS-SD/LLDP/SSDP 和哑终端线索；DNS-SD 首批媒体播放线索已出现。
+
+## 追加严格截断
+
+为消除重启前最后抓包事件时间戳混入新窗口，额外删除：
+
+- `stream_discovery_facts` 中 `observed_at < 2026-10-31T09:20:00Z` 的 429 行；
+- `stream_discovery_device_state` 中 `last_seen < 2026-10-31T09:20:00Z` 的 429 行；
+- ClickHouse `normalized_events` 中 timestamp 早于 09:20Z 的 3,566 行；
+- 删除后 `stream_discovery_facts/state` 最小值均为 09:28:16Z，新窗口内无早于切流点的事件。
