@@ -408,3 +408,12 @@ backfill stream-only current devices: deadlock detected (SQLSTATE 40P01)
 - 无新增 deadlock；
 - 瞬时缺失会随聚合追平，最终可回到 0；
 - 不再使用独立并发补入。
+
+## 2026-10-31 16:12 清理非活跃代次 current 文档
+
+current-shadow 新增清理：
+
+- 删除 document epoch 不在活跃 cutover 中的 current 文档；
+- 若该设备仍有活跃 stream current 状态则保留；
+- 本次删除 93 条旧代次 current 文档；
+- current 表 48,791 → 48,698；no_facts 55 → 47。

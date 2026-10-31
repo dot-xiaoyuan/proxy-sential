@@ -170,6 +170,19 @@ FROM (
 WHERE c.device_key=s.device_key AND s.last_seen>c.last_seen`); err != nil {
 		return fmt.Errorf("refresh current last seen: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM discovery_device_current_shadow c
+WHERE c.document->>'epoch' IS NOT NULL
+AND NOT EXISTS (
+ SELECT 1 FROM stream_source_cutovers sc
+ WHERE sc.epoch=c.document->>'epoch' AND sc.state='active'
+)
+AND NOT EXISTS (
+ SELECT 1 FROM stream_discovery_device_state s
+ JOIN stream_source_cutovers sc ON sc.epoch=s.epoch AND sc.state='active'
+ WHERE s.device_key=c.device_key AND s.document->>'current'='true'
+)`); err != nil {
+		return fmt.Errorf("remove inactive-epoch current devices: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM discovery_device_current_shadow WHERE fact_count=0 AND document='{}'::jsonb`); err != nil {
 		return fmt.Errorf("remove empty current documents: %w", err)
 	}
