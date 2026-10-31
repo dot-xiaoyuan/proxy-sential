@@ -587,7 +587,7 @@ func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.device_key,f.fact_key,f.event_key,f.visible_event_key,f.revision,f.first_observed_at,f.observed_at,f.valid_until,f.withdrawn,f.semantic_hash,f.mac,f.recognition_fields,
+	rows, err := tx.QueryContext(ctx, `SELECT f.device_key,f.fact_key,f.scope_id,f.event_key,f.visible_event_key,f.revision,f.first_observed_at,f.observed_at,f.valid_until,f.withdrawn,f.semantic_hash,f.mac,f.recognition_fields,
  f.ip,f.sensor_id,f.site,f.domain,f.vlan,f.vrf,f.interface_name,f.protocol,f.address_binding
  FROM jsonb_to_recordset($2::jsonb) AS v(device_key text,fact_key text)
  JOIN stream_discovery_facts f ON f.epoch=$1 AND f.device_key=v.device_key AND f.fact_key=v.fact_key`, epoch, raw)
@@ -598,7 +598,7 @@ func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items
 	for rows.Next() {
 		var fact streamDiscoveryFact
 		var recognitionFields []byte
-		if err := rows.Scan(&fact.Device, &fact.Key, &fact.Event, &fact.EvidenceEvent, &fact.Revision, &fact.FirstObserved, &fact.Observed, &fact.ValidUntil, &fact.Withdrawn, &fact.SemanticHash, &fact.MAC, &recognitionFields,
+		if err := rows.Scan(&fact.Device, &fact.Key, &fact.Scope, &fact.Event, &fact.EvidenceEvent, &fact.Revision, &fact.FirstObserved, &fact.Observed, &fact.ValidUntil, &fact.Withdrawn, &fact.SemanticHash, &fact.MAC, &recognitionFields,
 			&fact.IP, &fact.Sensor, &fact.Site, &fact.Domain, &fact.VLAN, &fact.VRF, &fact.Interface, &fact.Protocol, &fact.AddressBinding); err != nil {
 			return nil, err
 		}

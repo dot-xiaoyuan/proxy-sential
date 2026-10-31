@@ -18,6 +18,38 @@ type streamJSONFields map[string]string
 
 type streamArchiveKeys []streamDiscoveryReceipt
 
+func TestLoadStreamFactVersionsRetainsCaptureScope(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	observed := time.Date(2026, 10, 31, 13, 29, 15, 0, time.UTC)
+	mock.ExpectBegin()
+	columns := []string{"device_key", "fact_key", "scope_id", "event_key", "visible_event_key", "revision", "first_observed_at", "observed_at", "valid_until", "withdrawn", "semantic_hash", "mac", "recognition_fields", "ip", "sensor_id", "site", "domain", "vlan", "vrf", "interface_name", "protocol", "address_binding"}
+	mock.ExpectQuery("SELECT f.device_key,f.fact_key,f.scope_id").WithArgs("fresh", sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows(columns).AddRow("device-1", "fact-1", "scope-1", "event-1", "event-1", 1, observed, observed, observed.Add(time.Minute), false, "hash", "", []byte(`{}`), "", "sensor", "site", "domain", "", "", "bond0", "arp", false))
+	items := []streamPreparedDiscovery{{HasFact: true, Fact: streamDiscoveryFact{Device: "device-1", Key: "fact-1"}}}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := loadStreamFactVersions(context.Background(), tx, "fresh", items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts["device-1\x00fact-1"].Scope != "scope-1" {
+		t.Fatalf("capture scope lost while loading prior fact: %+v", facts)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (want streamArchiveKeys) Match(v driver.Value) bool {
 	raw, ok := v.([]byte)
 	if !ok {
