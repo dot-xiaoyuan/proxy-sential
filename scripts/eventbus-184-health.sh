@@ -23,6 +23,8 @@ for unit in \
   proxy-sentinel-ingest-stream-flow-syn.service ; do
   printf '%-62s %s\n' "$unit" "$(systemctl is-active "$unit" 2>/dev/null || true)"
 done
+echo "=== discovery capture continuity ==="
+systemctl show proxy-sentinel-discovery.service -p ActiveEnterTimestamp -p NRestarts --no-pager 2>&1 || true
 echo "=== flow SYN source progress ==="
 python3 - <<'PY'
 import hashlib,json,pathlib,time
@@ -92,3 +94,14 @@ else
 fi
 echo "=== recognition coverage ==="
 "${PSQL[@]}" "SELECT state->>'status',state->>'available_since',state->>'history_gap_seconds',jsonb_array_length(state->'items') FROM read_model_runtime_state WHERE name='recognition-fresh-coverage'" 2>&1 || true
+echo "=== shared observation backlog ==="
+"${PSQL[@]}" "SELECT 'wake_mode',mode FROM shared_observation_wake_mode UNION ALL SELECT 'realtime_pending',count(*)::text FROM shared_observation_jobs j WHERE j.revision>j.completed_revision AND NOT j.expired AND j.canceled_epoch='' AND EXISTS(SELECT 1 FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.cancel_id=j.generation_id AND c.state='active') UNION ALL SELECT 'realtime_oldest_seconds',coalesce(max(extract(epoch FROM now()-j.dirty_since))::bigint,0)::text FROM shared_observation_jobs j WHERE j.revision>j.completed_revision AND NOT j.expired AND j.canceled_epoch='' AND EXISTS(SELECT 1 FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.cancel_id=j.generation_id AND c.state='active') UNION ALL SELECT 'wakes_pending',count(*)::text FROM shared_observation_wakes WHERE processed_at IS NULL" 2>&1 || true
+echo "=== NCU identity source ==="
+curl -sS -o /dev/null -w 'ncu_identity_readyz=%{http_code}\n' --max-time 5 http://127.0.0.1:18082/readyz || true
+identity_cutover=$("${PSQL[@]}" "SELECT 'identity_cutover',c.epoch,c.start_offset::text,coalesce(r.accepted_sequence,s.accepted_sequence,-1)::text,CASE WHEN coalesce(r.accepted_sequence,s.accepted_sequence,-1)+1>c.start_offset THEN 'next_batch_allowed' ELSE 'next_batch_below_fixed_start' END FROM stream_source_cutovers c LEFT JOIN identity_pipeline_scopes s ON s.scope_key=c.source_path LEFT JOIN identity_receive_progress r ON r.scope_key=c.source_path WHERE c.source_kind='identity-http' AND c.state='active'" 2>&1) || identity_cutover='query_failed'
+printf '%s\n' "$identity_cutover"
+if [[ "$identity_cutover" == *next_batch_below_fixed_start* ]]; then
+  echo 'ALERT: NCU identity acceptance cannot advance past its fixed source start'
+elif [[ "$identity_cutover" == query_failed ]]; then
+  echo 'ALERT: NCU identity cutover query failed'
+fi

@@ -28,7 +28,7 @@ var (
 
 // The byte ceiling remains independent: a larger compact signal batch saves
 // mechanical-disk journal syncs without allowing an oversized segment.
-const MaxSegmentEvents = 500
+const MaxSegmentEvents = 1000
 const MaxSegmentBytes = 4 << 20
 
 type Lane string

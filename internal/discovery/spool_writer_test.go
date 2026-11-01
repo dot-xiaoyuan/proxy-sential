@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	"proxy-sentinel/internal/streamlog"
 )
 
 func TestSpoolWriterGroupsQueuedBatchesWithoutLosingEvents(t *testing.T) {
@@ -78,8 +80,8 @@ func TestSpoolWriterReportsDurabilityFailure(t *testing.T) {
 }
 
 func TestStreamSpoolWriterNeverCombinesBeyondSegmentBudget(t *testing.T) {
-	queue := make(chan []byte, 4)
-	for i := 0; i < 4; i++ {
+	queue := make(chan []byte, 8)
+	for i := 0; i < 8; i++ {
 		batch := make([]map[string]int, 250)
 		for at := range batch {
 			batch[at] = map[string]int{"id": i*250 + at}
@@ -94,14 +96,14 @@ func TestStreamSpoolWriterNeverCombinesBeyondSegmentBudget(t *testing.T) {
 		if err := json.Unmarshal(raw, &batch); err != nil {
 			return err
 		}
-		if len(batch) > 500 || len(raw) > 1<<20 {
+		if len(batch) > streamlog.MaxSegmentEvents || len(raw) > 1<<20 {
 			t.Fatal("stream segment exceeds capture budget")
 		}
 		total += len(batch)
 		writes++
 		return nil
-	}, 500, 1<<20)
-	if err != nil || total != 1000 || writes != 2 {
+	}, streamlog.MaxSegmentEvents, 1<<20)
+	if err != nil || total != 2000 || writes != 2 {
 		t.Fatalf("stream combine: total=%d writes=%d err=%v", total, writes, err)
 	}
 }

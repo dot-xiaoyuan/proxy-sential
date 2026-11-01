@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -66,5 +67,41 @@ func TestAppendPassiveStreamBatchRejectsScopeConflictWithoutAdvancing(t *testing
 	cursor, err := j.LoadSource("passive-discovery", path)
 	if err != nil || cursor.Offset != 0 {
 		t.Fatalf("scope conflict advanced source: %+v %v", cursor, err)
+	}
+}
+
+func TestAppendPassiveStreamBatchThousandEventBound(t *testing.T) {
+	j, err := streamlog.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := Source{ID: "passive-sensor-a", Node: "sensor-a", Site: "site-a", Domain: "domain-a", Address: "bond0"}
+	at := time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)
+	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "boot-a", CampusID: "site-a", AccessDomain: "domain-a", InterfaceName: "bond0", ValidFrom: at.Add(-time.Hour), ValidUntil: at.Add(time.Hour)}
+	path := PassiveStreamSourcePath(source)
+	if err := j.StartFreshSource(streamlog.SourceCursor{Epoch: "fresh-1", Source: "passive-discovery", Path: path, FileID: "boot-a", ParserVersion: PassiveStreamParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	events := make([]normalized.Event, streamlog.MaxSegmentEvents+1)
+	for i := range events {
+		events[i] = streamDiscoveryEvent(fmt.Sprintf("producer-%d", i), at.Format(time.RFC3339Nano), 600)
+		events[i].Observer["interface"] = "bond0"
+		events[i].Subject["site"] = "site-a"
+		events[i].Subject["domain"] = "domain-a"
+	}
+	id, err := AppendPassiveStreamBatch(context.Background(), j, source, scope, events[:streamlog.MaxSegmentEvents])
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || len(state.Segment.Events) != 1000 {
+		t.Fatalf("stored events=%d err=%v", len(state.Segment.Events), err)
+	}
+	if _, err := AppendPassiveStreamBatch(context.Background(), j, source, scope, events); err == nil {
+		t.Fatal("oversized segment accepted")
+	}
+	cursor, err := j.LoadSource("passive-discovery", path)
+	if err != nil || cursor.Offset != state.Segment.EndOffset {
+		t.Fatalf("oversized segment changed cursor: %+v %v", cursor, err)
 	}
 }
