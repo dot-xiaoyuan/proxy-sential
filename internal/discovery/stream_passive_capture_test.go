@@ -29,6 +29,9 @@ func (j *passiveAtomicTestJournal) LoadSource(source, path string) (streamlog.So
 func (j *passiveAtomicTestJournal) AppendAndCommitPassive(segment streamlog.Segment) (string, error) {
 	j.calls++
 	j.segment = segment
+	if j.err == nil {
+		time.Sleep(time.Microsecond)
+	}
 	return "durable-or-indeterminate-id", j.err
 }
 
