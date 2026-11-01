@@ -1,8 +1,8 @@
 # 已安装现场的应用版本更新
 
-`upgrade-application.sh` 用于已有完整数据库与配置的现场，仅切换已验证的应用发布包。它不会创建、执行或跳过数据库迁移。候选包中的全部 PostgreSQL、ClickHouse 迁移，必须已在现场迁移账本中执行且校验值完全一致；缺失或修改迁移时立即拒绝。需要数据库升级时使用原完整安装器及备份流程。
+`upgrade-application.sh` 用于已有完整数据库与配置的现场，仅切换已验证的应用发布包。它不会创建、执行或跳过数据库迁移。候选包中的全部 PostgreSQL、ClickHouse 迁移，必须已在现场迁移账本中执行且校验值完全一致；缺失或修改迁移时立即拒绝。需要数据库升级时使用完整安装器；184 测试联调环境按当前约定传 `--skip-backup`，不执行例行数据库备份。
 
-发布前在现场隔离数据库回放候选版本，完成 Go 与前端验收。用 `build-release.sh` 构建 Linux amd64 发布包；发布清单记录 Git 版本和工作区是否含未提交改动，包外和包内均有 SHA256 校验。
+发布前在独立隔离的测试库回放候选版本，完成相关 Go 与前端验收；没有独立测试库时如实记录真实 SQL 集成验证缺口。用 `build-release.sh` 构建 Linux amd64 发布包；发布清单记录 Git 版本和工作区是否含未提交改动，包外和包内均有 SHA256 校验。
 
 ```bash
 scripts/deploy/build-release.sh --version VERSION --output proxy-sentinel-VERSION.tar.gz
