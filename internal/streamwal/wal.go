@@ -129,6 +129,17 @@ type Recovery struct {
 	EndOffset       int64
 	Records, Groups uint64
 	TailBytes       int64
+	prefixDigest    [32]byte
+}
+
+// Position identifies a fully sealed v1 prefix. It is a content proof for the
+// current single file, not a cross-generation locator or proof that a caller
+// has folded every receipt into its own state.
+type Position struct {
+	FormatVersion uint8
+	LastLSN       uint64
+	EndOffset     int64
+	PrefixSHA256  [32]byte
 }
 
 type fileIO interface {
@@ -453,6 +464,7 @@ func (l *Log) commit(batch []*request, size int) ([]Receipt, error) {
 	l.recovery.Records += uint64(len(batch))
 	l.recovery.Groups++
 	l.recovery.EndOffset += int64(len(encoded))
+	l.recovery.prefixDigest = chainSeal(l.recovery.prefixDigest, receipts[0].sealDigest)
 	// Convert all group reservations to the actual durable bytes atomically.
 	// complete releases memory/queue counts later, but must not charge these
 	// records twice or expose a window in which neither budget accounts for them.
@@ -468,6 +480,32 @@ func (l *Log) durableSnapshot() Recovery {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.recovery
+}
+
+// DurablePosition reports the last Sync-confirmed v1 group boundary. Callers
+// must first exclude in-flight adapter mutations before using it for a
+// checkpoint; a WAL receipt can precede its in-memory state fold.
+func (l *Log) DurablePosition() Position {
+	r := l.durableSnapshot()
+	return Position{FormatVersion: 1, LastLSN: r.LastLSN, EndOffset: r.EndOffset, PrefixSHA256: r.prefixDigest}
+}
+
+// VerifyPosition replays a prefix from the current v1 file to check its
+// content proof. It is intended for maintenance, not the append hot path.
+func (l *Log) VerifyPosition(p Position) error {
+	l.ioMu.RLock()
+	defer l.ioMu.RUnlock()
+	if p.FormatVersion != 1 || p.EndOffset < 0 || p.EndOffset > l.durableSnapshot().EndOffset {
+		return ErrCorrupt
+	}
+	r, err := scan(l.file, p.EndOffset, l.opts, nil)
+	if err != nil {
+		return err
+	}
+	if r.LastLSN != p.LastLSN || r.EndOffset != p.EndOffset || r.prefixDigest != p.PrefixSHA256 {
+		return ErrCorrupt
+	}
+	return nil
 }
 
 // Usage reports current logical headroom without changing admission or disk state.

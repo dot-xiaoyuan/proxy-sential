@@ -44,6 +44,8 @@ r39 实际输入下，journal 在 1,170 秒阶段窗口内接受 532 段，最�
 
 只读恢复已与新写入预算分离：`Open` / `Inspect` / `Read` / `Replay` 使用独立的 64 GiB 文件守卫和既有逐 frame/group 格式限制，不因调低 `MaxLogBytes` 拒绝既有合法数据。配置组合本身仍须合法；总限低于 EOF 时只保证恢复读取，不承诺可以追加 ack/finalized。
 
+`DurablePosition` 现在可返回当前单文件 v1 的已同步 LSN、EOF 和逐组 seal 累积摘要；`VerifyPosition` 从文件起点回放到指定边界并核对摘要。它只证明这一个 v1 文件的内容前缀，不能证明业务适配器已经折叠所有回执，也没有跨代际 journal UUID 或可退休文件的证明。checkpoint 须先取得下文的 mutation 独占门；新格式仍需文件头和磁盘上的 seal 链。
+
 ### 2.2 业务状态与兼容入口
 
 构造顺序为：取得 source lease → 读取原 cursor → 调用 `BeforeRecovery` 验证数据库中的固定新起点 → 才允许恢复旧段或建立 WAL genesis。callback 失败时 cursor/state 不变、不创建 WAL、释放 lease。默认纯 v1 分支不提前 `RecoverSource`，继续由 cmd 在验证后显式恢复。
@@ -163,7 +165,7 @@ Redpanda 当前 shadow 路径不是上述 WAL 的可靠替代：其发布与失�
 
 第一批容量准入/控制空间预留已实现，本地回放验证 Data 拒绝后 Control 排空、排队/在途/held 计费、合组 seal 归还、并发硬限、真实 I/O Unknown、取消/Close 及两类预算调低。仍不开放可写 CLI。下一批再做版本化 locator 和暂停 mutation 的轮转/checkpoint，暂不删除任何正文，只证明切代、manifest 提交和跨代读取。完成索引退休与有归档证明的 GC 单独验收后，才可能解除累计 4096 / 总字节持续增长的限制。轮转只是把文件分开，不是增加总容量或取得长期运行能力。
 
-接口边界如下；`AppendWithClass` 和 `Usage` 已实现，其余为待实现草案：
+接口边界如下；`AppendWithClass`、`Usage` 及单文件 v1 的 `DurablePosition` / `VerifyPosition` 已实现，其余跨代际能力仍为待实现草案：
 
 ```go
 // Data 不能使用控制预留；所有 queued/inflight 按最坏独立 seal 计费。

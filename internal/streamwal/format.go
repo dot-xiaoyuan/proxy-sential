@@ -26,6 +26,13 @@ const maxLogBytes int64 = 64 << 30
 
 var magic = [8]byte{'P', 'S', 'W', 'A', 'L', '0', '1', '\n'}
 
+func chainSeal(prefix, seal [32]byte) [32]byte {
+	var pair [64]byte
+	copy(pair[:32], prefix[:])
+	copy(pair[32:], seal[:])
+	return sha256.Sum256(pair[:])
+}
+
 type frame struct {
 	kind    byte
 	lsn     uint64
@@ -202,6 +209,7 @@ func scan(r io.ReaderAt, size int64, _ Options, visit func(Entry) error) (Recove
 			recovery.Records += uint64(len(entries))
 			recovery.Groups++
 			recovery.EndOffset = offset + int64(f.length)
+			recovery.prefixDigest = chainSeal(recovery.prefixDigest, f.digest)
 			entries = nil
 			groupBytes = 0
 			groupHash.Reset()

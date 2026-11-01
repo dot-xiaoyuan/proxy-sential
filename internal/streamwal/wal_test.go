@@ -134,6 +134,50 @@ func TestGroupReceiptsWaitForSyncAndRecover(t *testing.T) {
 	}
 }
 
+func TestDurablePositionVerifiesSealedPrefixAfterAppendAndReopen(t *testing.T) {
+	l, _, dir := openTestLog(t, Options{})
+	if err := l.VerifyPosition(l.DurablePosition()); err != nil {
+		t.Fatal(err)
+	}
+	if result := <-submit(t, l, "first"); result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	first := l.DurablePosition()
+	if first.LastLSN != 1 || first.EndOffset == 0 {
+		t.Fatalf("first position: %+v", first)
+	}
+	secondResult := <-submit(t, l, "second")
+	if secondResult.Err != nil {
+		t.Fatal(secondResult.Err)
+	}
+	if err := l.VerifyPosition(first); err != nil {
+		t.Fatalf("sealed prefix changed after append: %v", err)
+	}
+	second := l.DurablePosition()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if second != reopened.DurablePosition() {
+		t.Fatalf("position changed on recovery: before=%+v after=%+v", second, reopened.DurablePosition())
+	}
+	other, _, _ := openTestLog(t, Options{})
+	if result := <-submit(t, other, "other"); result.Err != nil { // Same encoded length as "first".
+		t.Fatal(result.Err)
+	}
+	otherSecond := <-submit(t, other, "second")
+	if otherSecond.Err != nil || secondResult.Receipt.sealDigest != otherSecond.Receipt.sealDigest {
+		t.Fatalf("test needs matching final group: %+v", otherSecond)
+	}
+	if err := other.VerifyPosition(second); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("different earlier group accepted despite matching final seal: %v", err)
+	}
+}
+
 func TestSyncFailureIsIndeterminateAndRequiresRecovery(t *testing.T) {
 	l, f, dir := openTestLog(t, Options{})
 	f.mu.Lock()
