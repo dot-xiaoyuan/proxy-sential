@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"container/heap"
 	"fmt"
 	"net/netip"
 	"strconv"
@@ -169,6 +170,74 @@ func (c *DNSCache) observeAdmission(scope string, record dnsmessage.Resource, at
 	c.addIndexes(entry)
 	c.bytes += size
 	return dnsCacheAdmitted
+}
+
+type dnsFlushRRSet struct {
+	owner string
+	kind  dnsmessage.Type
+}
+
+// A unique mDNS RRSet announcement invalidates older values after the RFC 6762
+// one-second grace period. This releases obsolete entries without evicting a
+// different name or service merely because the bounded cache is full. Run only
+// after observing the entire packet so renewed RRSet members keep their TTL.
+func (c *DNSCache) flushObsolete(scope string, records []dnsmessage.Resource, at time.Time) {
+	var seen map[dnsFlushRRSet]struct{}
+	var groups []dnsFlushRRSet
+	for _, record := range records {
+		if record.Header.TTL == 0 || record.Header.Class != dnsmessage.ClassINET|0x8000 {
+			continue
+		}
+		// PTR is shared. Unknown/pseudo records are never retained by this cache.
+		switch record.Body.(type) {
+		case *dnsmessage.AResource, *dnsmessage.AAAAResource, *dnsmessage.SRVResource, *dnsmessage.TXTResource:
+		default:
+			continue
+		}
+		group := dnsFlushRRSet{owner: canonicalDNSOwner(record.Header.Name.String()), kind: record.Header.Type}
+		if seen == nil {
+			seen = make(map[dnsFlushRRSet]struct{})
+		}
+		if _, exists := seen[group]; !exists {
+			seen[group] = struct{}{}
+			groups = append(groups, group)
+		}
+	}
+	cutoff, deadline := at.Add(-time.Second), at.Add(time.Second)
+	// A normal RRSet has a handful of members; fix those heap slots directly.
+	// A pathological large RRSet would otherwise pay for thousands of Fix calls
+	// on the capture path, so rebuild the bounded heap once past this threshold.
+	const directFixLimit = 32
+	var pending [directFixLimit]*cachedDNS
+	pendingCount, rebuild := 0, false
+	for _, group := range groups {
+		for key := range c.byOwner[dnsOwnerKey{scope, group.owner}] {
+			entry := c.records[key]
+			if entry.record.Header.Type != group.kind || !entry.at.Before(cutoff) || !entry.expires.After(deadline) {
+				continue
+			}
+			if !rebuild && pendingCount < directFixLimit {
+				pending[pendingCount] = entry
+				pendingCount++
+				continue
+			}
+			if !rebuild {
+				rebuild = true
+				for _, earlier := range pending[:pendingCount] {
+					earlier.expires = deadline
+				}
+			}
+			entry.expires = deadline
+		}
+	}
+	if rebuild {
+		heap.Init(&c.expiry)
+	} else {
+		for _, entry := range pending[:pendingCount] {
+			entry.expires = deadline
+			c.refreshExpiry(entry)
+		}
+	}
 }
 
 // Charge retained key bytes plus the expanded DNS wire-record size. This is a

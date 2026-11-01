@@ -287,6 +287,9 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 				cache.countAdmissionFailure(r, reason)
 			}
 		}
+		if dport == 5353 {
+			cache.flushObsolete(scope, records, at)
+		}
 		// Current-message records always participate, including rejected cache
 		// admissions and withdrawals. Read only cached service dependencies.
 		records = cache.relatedRecords(scope, records, touched, at)
