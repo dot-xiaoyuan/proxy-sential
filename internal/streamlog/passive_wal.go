@@ -68,6 +68,24 @@ type PassiveWALCheckpointEntry struct {
 	Receipt streamwal.Receipt
 }
 
+// The v1 checkpoint anchors a folded prefix while all bodies remain in the
+// original WAL. It cannot be used to skip replay or retire any WAL bytes.
+type passiveWALCheckpoint struct {
+	FormatVersion int                         `json:"format_version"`
+	Position      streamwal.Position          `json:"position"`
+	Cursor        SourceCursor                `json:"cursor"`
+	Genesis       bool                        `json:"genesis"`
+	Quarantined   bool                        `json:"quarantined"`
+	Entries       []passiveWALCheckpointEntry `json:"entries"`
+}
+
+type passiveWALCheckpointEntry struct {
+	State  State  `json:"state"`
+	LSN    uint64 `json:"lsn"`
+	Offset int64  `json:"offset"`
+	Length int    `json:"length"`
+}
+
 type passiveTransition struct {
 	ContentSHA256 string `json:"content_sha256"`
 	Lane          Lane   `json:"lane,omitempty"`
@@ -96,6 +114,7 @@ type PassiveWALJournal struct {
 	sourceMu     sync.Mutex
 	closeOnce    sync.Once
 	closeErr     error
+	checkpointMu sync.Mutex
 }
 
 var _ ProcessorJournal = (*PassiveWALJournal)(nil)
@@ -217,8 +236,40 @@ func OpenPassiveWALJournal(legacy *Journal, path string, opts PassiveWALOptions)
 	if err != nil {
 		return fail(err)
 	}
-	if err := j.wal.Replay(j.replay); err != nil {
+	checkpoint, err := readPassiveWALCheckpoint(filepath.Join(j.dir, "checkpoint.v1.json"))
+	if err != nil {
 		return fail(err)
+	}
+	if checkpoint != nil {
+		if err := j.wal.VerifyPosition(checkpoint.Position); err != nil {
+			return fail(err)
+		}
+	}
+	checkpointSeen := checkpoint == nil
+	if err := j.wal.Replay(func(record streamwal.Entry) error {
+		if err := j.replay(record); err != nil {
+			return err
+		}
+		if checkpoint != nil && record.Receipt.LSN == checkpoint.Position.LastLSN {
+			cut, err := j.CheckpointCandidate()
+			if err != nil {
+				return err
+			}
+			actual := passiveCheckpointFromCut(cut)
+			actual.Position = checkpoint.Position
+			want, _ := json.Marshal(checkpoint)
+			got, _ := json.Marshal(actual)
+			if !bytes.Equal(want, got) {
+				return ErrContentConflict
+			}
+			checkpointSeen = true
+		}
+		return nil
+	}); err != nil {
+		return fail(err)
+	}
+	if !checkpointSeen {
+		return fail(ErrContentConflict)
 	}
 	if !j.genesis {
 		if !opts.WriteEnabled {
@@ -908,6 +959,62 @@ func (j *PassiveWALJournal) CheckpointCandidate() (PassiveWALCheckpointCandidate
 	sort.Strings(cut.LegacyPending)
 	sort.Slice(cut.Entries, func(i, k int) bool { return cut.Entries[i].State.ID < cut.Entries[k].State.ID })
 	return cut, nil
+}
+
+func passiveCheckpointFromCut(cut PassiveWALCheckpointCandidate) passiveWALCheckpoint {
+	checkpoint := passiveWALCheckpoint{FormatVersion: 1, Position: cut.Position, Cursor: cut.Cursor,
+		Genesis: cut.Genesis, Quarantined: cut.Quarantined,
+		Entries: make([]passiveWALCheckpointEntry, 0, len(cut.Entries))}
+	for _, entry := range cut.Entries {
+		checkpoint.Entries = append(checkpoint.Entries, passiveWALCheckpointEntry{
+			State: entry.State, LSN: entry.Receipt.LSN, Offset: entry.Receipt.Offset, Length: entry.Receipt.Length})
+	}
+	return checkpoint
+}
+
+func readPassiveWALCheckpoint(path string) (*passiveWALCheckpoint, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var checkpoint passiveWALCheckpoint
+	if err := json.Unmarshal(raw, &checkpoint); err != nil {
+		return nil, err
+	}
+	if checkpoint.FormatVersion != 1 || checkpoint.Position.FormatVersion != 1 ||
+		checkpoint.Position.LastLSN == 0 || checkpoint.Position.EndOffset <= 0 || !checkpoint.Genesis {
+		return nil, ErrContentConflict
+	}
+	return &checkpoint, nil
+}
+
+// PublishCheckpoint durably anchors a validated v1 WAL prefix and its folded
+// state. Later records may append while the older prefix is verified and
+// published. This checkpoint does not authorize body retirement or rotation.
+func (j *PassiveWALJournal) PublishCheckpoint() (streamwal.Position, error) {
+	if j.wal == nil {
+		return streamwal.Position{}, ErrPassiveWALInactive
+	}
+	j.checkpointMu.Lock()
+	defer j.checkpointMu.Unlock()
+	cut, err := j.CheckpointCandidate()
+	if err != nil {
+		return streamwal.Position{}, err
+	}
+	if !cut.Genesis || cut.Position.LastLSN == 0 {
+		return streamwal.Position{}, ErrContentConflict
+	}
+	if err := j.wal.VerifyPosition(cut.Position); err != nil {
+		return streamwal.Position{}, err
+	}
+	checkpoint := passiveCheckpointFromCut(cut)
+	if err := atomicJSON(filepath.Join(j.dir, "checkpoint.v1.json"), checkpoint); err != nil {
+		return streamwal.Position{}, err
+	}
+	return cut.Position, nil
 }
 
 func (j *PassiveWALJournal) Close() error {

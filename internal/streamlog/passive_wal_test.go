@@ -318,6 +318,67 @@ func TestPassiveWALCheckpointCutWaitsForDurableLaneFold(t *testing.T) {
 	}
 }
 
+func TestPassiveWALDurableCheckpointReplaysLaterLane(t *testing.T) {
+	legacy, s := passiveWALFixture(t)
+	j, err := OpenPassiveWALJournal(legacy, s.SourcePath, PassiveWALOptions{WriteEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.AppendAndCommitPassive(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	position, err := j.PublishCheckpoint()
+	if err != nil || position.LastLSN != 2 {
+		t.Fatalf("checkpoint position: %+v %v", position, err)
+	}
+	if err := j.BeginAttempt(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	j, err = OpenPassiveWALJournal(legacy, s.SourcePath, PassiveWALOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	state, err := j.Load(id)
+	if err != nil || state.Acks[Archive] != Attempted || state.Segment.EndOffset != s.EndOffset {
+		t.Fatalf("checkpoint or later lane lost: %+v %v", state, err)
+	}
+	if _, err := j.PublishCheckpoint(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPassiveWALCheckpointRejectsValidTruncatedPrefix(t *testing.T) {
+	legacy, s := passiveWALFixture(t)
+	j, err := OpenPassiveWALJournal(legacy, s.SourcePath, PassiveWALOptions{WriteEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis := j.wal.DurablePosition()
+	if _, err := j.AppendAndCommitPassive(s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.PublishCheckpoint(); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(legacy.Directory(), "passive-wal-v1", "records.v1.wal"), genesis.EndOffset); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := OpenPassiveWALJournal(legacy, s.SourcePath, PassiveWALOptions{}); !errors.Is(err, streamwal.ErrCorrupt) {
+		if reopened != nil {
+			reopened.Close()
+		}
+		t.Fatalf("valid shorter WAL bypassed checkpoint: %v", err)
+	}
+}
+
 func TestPassiveWALRejectsSourceOrScopeErrorsWithoutMovingCursor(t *testing.T) {
 	for _, kind := range []string{"predecessor", "scope", "scope_issue", "source_backed", "first_time"} {
 		t.Run(kind, func(t *testing.T) {

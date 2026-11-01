@@ -6,7 +6,7 @@
 
 **WAL 写入尚未启用；`discovery-worker` 没有 WAL 可写 CLI 参数。** 当前 cmd 使用 `WriteEnabled=false`：没有 WAL 时继续原 v1 Journal；存在有效 WAL 时可恢复、读取和通过 `DrainOnly` 排空，不能向新 WAL 写入，也不能悄悄改回 v1 写入。需要隔离的段仍阻止正常采集/排空，必须先解决隔离原因。实验性库接口允许本地测试显式开启写入，但不构成现场启用入口。
 
-当前文件上限默认 **1 GiB**，适配器默认最多 **4096 个 v2 accept**，其中已经 finalized 的段也计数。没有轮转、checkpoint 或 GC；`Release` 只追加 finalized，正文和索引项仍保留。因此即使消费者没有积压，持续输入也会到达上限。本阶段不能通过增大文件或段数上限来宣称可长期运行。
+当前文件上限默认 **1 GiB**，适配器默认最多 **4096 个 v2 accept**，其中已经 finalized 的段也计数。已增加适配器手动发布的单文件 v1 耐久切面锚点，但没有轮转、可用于正文退休的 checkpoint 或 GC；`Release` 只追加 finalized，正文和索引项仍保留。因此即使消费者没有积压，持续输入也会到达上限。本阶段不能通过增大文件或段数上限来宣称可长期运行。
 
 r39 实际输入下，journal 在 1,170 秒阶段窗口内接受 532 段，最近 200 个已投影段的来源字节平均约 519 KiB。若 WAL 编码量与来源字节同量级，以这些短样本粗算，现有 1 GiB/4096 段实验上限可能在约 1–2.5 小时触达某个边界；来源字节不等于 WAL 编码大小，不能当作容量预测。单来源 accept 持有 `sourceMu` 直到持久回执，现有 group commit 不会合并两个 accept；仅加轮转而不做有证明的正文与索引退休，也不能解除累计增长。
 
@@ -44,7 +44,7 @@ r39 实际输入下，journal 在 1,170 秒阶段窗口内接受 532 段，最�
 
 只读恢复已与新写入预算分离：`Open` / `Inspect` / `Read` / `Replay` 使用独立的 64 GiB 文件守卫和既有逐 frame/group 格式限制，不因调低 `MaxLogBytes` 拒绝既有合法数据。配置组合本身仍须合法；总限低于 EOF 时只保证恢复读取，不承诺可以追加 ack/finalized。
 
-`DurablePosition` 现在可返回当前单文件 v1 的已同步 LSN、EOF 和逐组 seal 累积摘要；`VerifyPosition` 从文件起点回放到指定边界并核对摘要。它只证明这一个 v1 文件的内容前缀，不能证明业务适配器已经折叠所有回执，也没有跨代际 journal UUID 或可退休文件的证明。checkpoint 须先取得下文的 mutation 独占门；新格式仍需文件头和磁盘上的 seal 链。
+`DurablePosition` 返回单文件 v1 的已同步 LSN、EOF 和逐组 seal 累积摘要；`VerifyPosition` 核对指定前缀。适配器的 `PublishCheckpoint` 在 mutation 门取得已折叠状态，将完整 cursor、紧凑状态及 receipt 位置与 Position 原子写入 `checkpoint.v1.json`，重启时先核对前缀再按该 LSN 比较回放状态。该文件幸存时可挡住锚点前的合法截短，但仍从 WAL 起点回放，不能取代正文、跨代际 locator 或可退休文件的证明；未来格式仍需文件头和磁盘 seal 链。
 
 ### 2.2 业务状态与兼容入口
 
@@ -126,7 +126,7 @@ checkpoint 必须覆盖**连续已折叠的 durable LSN 前缀**。不能取多�
 
 最小实现可用一个 journal mutation 门：普通 accept/lane/finalized/quarantine 在持共享门期间等待回执并折叠状态；checkpoint 取得独占门，等待这些 mutation 完成，再读取 WAL durable position 和有界 metadata 快照。门只覆盖 journal 操作，不能覆盖外部数据库 RPC；在途 RPC 的 Attempted 仍出现在快照中，其后 Ack 等门释放再提交。这比立即引入全序异步状态协调器更小，但需要测量切代暂停时长。若未来改成在线快照，再引入明确的连续 `appliedLSN` 发布协议。
 
-现已在 WAL 适配器实现共享 mutation 门和 `CheckpointCandidate` 内存切面；普通 WAL mutation 共享读锁，纯 v1 路径不经过该门。候选包含已折叠的 cursor、状态、原 receipt 和 durable position，不写磁盘、不发布 manifest。receipt 尚非可持久导入的跨代际 locator；必须先完成版本化 locator、正文验证与 manifest 恢复门禁，才能把候选保存为有效 checkpoint。
+现已在 WAL 适配器实现共享 mutation 门和 `CheckpointCandidate` 内存切面；普通 WAL mutation 共享读锁，纯 v1 路径不经过该门。`PublishCheckpoint` 在单文件 v1 上持久化候选并于重启验证；后续 WAL 记录可以在锚点之后继续回放。该锚点不带可信跨代际 locator，不能跳过回放、轮转、删除正文或解除容量上限。有效的轮转/GC checkpoint 仍须先完成版本化 locator、正文验证与 manifest 恢复门禁。
 
 快照记录完整 cursor、legacy genesis 锚、prefix 的 generation/LSN/end/seal、所有未 finalized 的段及每 lane 状态、正文 locator/hash、隔离状态/原因和必要的完成索引，不重复保存全部正文。新记录只从该边界之后重放。barrier 之前的结果必须全部折叠，单纯等底层 `Sync` 或关闭 writer 不足以证明适配器 goroutine 已更新内存。
 
@@ -176,7 +176,7 @@ Redpanda 当前 shadow 路径不是上述 WAL 的可靠替代：其发布与失�
 
 ## 6. 可实施的下一任务与验收
 
-第一批容量准入/控制空间预留已实现，本地回放验证 Data 拒绝后 Control 排空、排队/在途/held 计费、合组 seal 归还、并发硬限、真实 I/O Unknown、取消/Close 及两类预算调低。WAL 适配器的内存 checkpoint 切面已实现，仍不开放可写 CLI。下一批再做版本化 locator 和轮转/checkpoint 的耐久 manifest，暂不删除任何正文，只证明切代、manifest 提交和跨代读取。完成索引退休与有归档证明的 GC 单独验收后，才可能解除累计 4096 / 总字节持续增长的限制。轮转只是把文件分开，不是增加总容量或取得长期运行能力。
+第一批容量准入/控制空间预留已实现，本地回放验证 Data 拒绝后 Control 排空、排队/在途/held 计费、合组 seal 归还、并发硬限、真实 I/O Unknown、取消/Close 及两类预算调低。WAL 适配器的内存切面与单文件耐久锚点已实现，仍不开放可写 CLI。下一批再做版本化 locator 和轮转/checkpoint 的耐久 manifest，暂不删除任何正文，只证明切代、manifest 提交和跨代读取。完成索引退休与有归档证明的 GC 单独验收后，才可能解除累计 4096 / 总字节持续增长的限制。轮转只是把文件分开，不是增加总容量或取得长期运行能力。
 
 接口边界如下；`AppendWithClass`、`Usage` 及单文件 v1 的 `DurablePosition` / `VerifyPosition` 已实现，其余跨代际能力仍为待实现草案：
 
