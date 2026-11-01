@@ -19,12 +19,17 @@ import (
 	"time"
 )
 
+const (
+	streamCaptureFlushEvents = 500
+	streamCaptureFlushWindow = 2 * time.Second
+)
+
 // Capture spools standard events on a separate goroutine; packet reads never wait on database work.
 func Capture(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix) error {
 	return CaptureConfigured(ctx, iface, spool, source, allow, DefaultCollectionConfig())
 }
 func CaptureConfigured(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig) (result error) {
-	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, 100*time.Millisecond, 0, func(b []byte) error {
+	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, captureFlushEvents, 100*time.Millisecond, 0, func(b []byte) error {
 		h := sha256.Sum256(b)
 		path := filepath.Join(spool, hex.EncodeToString(h[:16])+".json")
 		if e := writeDurableSpool(path+".tmp", b); e != nil {
@@ -46,7 +51,7 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 	if journal == nil || scope == nil {
 		return fmt.Errorf("passive stream capture needs durable journal and scope")
 	}
-	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, passiveCaptureCoalesceWindow, 500*time.Millisecond, func(b []byte) error {
+	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, streamCaptureFlushEvents, streamCaptureFlushWindow, 500*time.Millisecond, func(b []byte) error {
 		var events []normalized.Event
 		if err := json.Unmarshal(b, &events); err != nil {
 			return err
@@ -62,7 +67,7 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 	})
 }
 
-func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes int, coalesceWindow, gatherWindow time.Duration, persist func([]byte) error) (result error) {
+func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes, flushEvents int, flushWindow, gatherWindow time.Duration, persist func([]byte) error) (result error) {
 	if len(allow) == 0 {
 		return fmt.Errorf("passive capture requires allowed CIDRs")
 	}
@@ -153,7 +158,7 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 		}
 		n, _, err := syscall.Recvfrom(fd, buffer, 0)
 		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK || err == syscall.EINTR {
-			if time.Since(lastFlush) >= coalesceWindow {
+			if time.Since(lastFlush) >= flushWindow {
 				if e = flush(); e != nil {
 					return e
 				}
@@ -178,13 +183,13 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 				continue
 			}
 			stats.recordEligible(event.SourceEventType, pending.add(event))
-			if pending.len() >= captureFlushEvents {
+			if pending.len() >= flushEvents {
 				if e = flush(); e != nil {
 					return e
 				}
 			}
 		}
-		if time.Since(lastFlush) >= coalesceWindow {
+		if time.Since(lastFlush) >= flushWindow {
 			if e = flush(); e != nil {
 				return e
 			}
