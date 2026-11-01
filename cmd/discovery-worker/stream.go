@@ -205,11 +205,41 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 			}
 		}()
 	}
+	metrics := newPassiveStreamMetrics()
 	processor := passiveStreamProcessor(journal, writer)
+	processor.Observer = metrics.observe
 	archiveQueue := make(chan string, 64)
 	searchQueue := make(chan string, 64)
 	projectionQueue := make(chan string, 64)
 	finalizeQueue := make(chan passiveFinalizerSignal, 256)
+	metricsDone := make(chan struct{})
+	sampleQueues := func() {
+		metrics.queue("archive", len(archiveQueue), cap(archiveQueue))
+		metrics.queue("search", len(searchQueue), cap(searchQueue))
+		metrics.queue("projection", len(projectionQueue), cap(projectionQueue))
+		metrics.queue("finalizer", len(finalizeQueue), cap(finalizeQueue))
+	}
+	go func() {
+		defer close(metricsDone)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sampleQueues()
+				metrics.report("periodic")
+			}
+		}
+	}()
+	defer func() {
+		stop()
+		<-metricsDone
+		sampleQueues()
+		metrics.report("shutdown")
+	}()
+
 	laneResults := make(chan error, 4)
 	maintenanceResult := make(chan error, 1)
 	go func() {
@@ -241,6 +271,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 				laneResults <- nil
 				return
 			case id := <-queue:
+				metrics.queue(string(lane), len(queue), cap(queue))
 				for {
 					err := processor.DrainLane(ctx, id, lane)
 					if err == nil {
@@ -276,9 +307,13 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 					case <-time.After(200 * time.Millisecond):
 					}
 				}
+				started := time.Now()
 				select {
 				case finalizeQueue <- passiveFinalizerSignal{id: id, lane: lane}:
+					metrics.observe("", "enqueue", time.Since(started), nil)
+					metrics.queue("finalizer", len(finalizeQueue), cap(finalizeQueue))
 				case <-ctx.Done():
+					metrics.observe("", "enqueue", time.Since(started), ctx.Err())
 					laneResults <- nil
 					return
 				}
@@ -296,21 +331,28 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 		laneResults <- err
 	}()
 	enqueue := func(id string) error {
-		for _, queue := range []chan string{archiveQueue, searchQueue, projectionQueue} {
-			select {
-			case queue <- id:
-			case <-ctx.Done():
-				return ctx.Err()
+		for i, queue := range []chan string{archiveQueue, searchQueue, projectionQueue} {
+			lane := []streamlog.Lane{streamlog.Archive, streamlog.Search, streamlog.Projection}[i]
+			if err := enqueuePassiveLane(ctx, queue, id, lane, metrics); err != nil {
+				return err
 			}
 		}
 		return nil
 	}
 	for _, id := range recovered {
 		if err := enqueue(id); err != nil {
+			stop()
+			// Join lanes before the deferred final metrics snapshot, including failures
+			// while recovering the durable backlog before capture starts.
+			for range 4 {
+				<-laneResults
+			}
+			<-maintenanceResult
 			return err
 		}
 	}
 	captureErr := discovery.CaptureStreamConfigured(ctx, opts.Interface, statsDir, source, allow, opts.Collection, journal, scope, func(captured discovery.CapturedSegment) error {
+		metrics.observe("capture", "append_commit", captured.AppendCommitDuration, nil)
 		if shadow != nil {
 			shadow.Publish(captured.ID, captured.Segment)
 		}
@@ -330,7 +372,9 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 	if maintenanceErr != nil {
 		return maintenanceErr
 	}
-	if captureErr != nil && !errors.Is(captureErr, context.Canceled) {
+	// Capture normalizes a clean cancellation to this sentinel. A joined error
+	// can also contain a real persistence failure and must not be hidden.
+	if captureErr != nil && captureErr != context.Canceled {
 		return captureErr
 	}
 	return nil

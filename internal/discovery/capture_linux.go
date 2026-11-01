@@ -93,15 +93,28 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	defer func() {
 		close(queue)
 		if writerErr := <-done; writerErr != nil {
-			result = writerErr
+			result = joinCaptureErrors(result, writerErr)
 		}
 	}()
 	decoder := &FrameDecoder{}
 	stats := NewCaptureStats()
 	stats.Config = config
+	statsWriter := newCaptureStatsWriter(func(snapshot *CaptureStats) error { return snapshot.persistSnapshot(spool) })
+	publishStats := func() error {
+		stats.FragmentDrops = decoder.FragmentDrops
+		stats.recordQueue(len(queue), cap(queue), false)
+		return statsWriter.submit(stats)
+	}
+	defer func() {
+		// Retain the final counters even on overflow or another capture error.
+		// Shutdown joins the writer; capture itself never waits on file writes.
+		submitErr := publishStats()
+		result = joinCaptureErrors(result, submitErr, statsWriter.close())
+	}()
 	pending := newCaptureCoalescer()
 	lastFlush, lastStats := time.Now(), time.Now()
 	flush := func() error {
+		stats.recordQueue(len(queue), cap(queue), false)
 		if pending.len() == 0 {
 			return nil
 		}
@@ -111,15 +124,20 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 		}
 		select {
 		case queue <- b:
+			stats.recordQueue(len(queue), cap(queue), false)
 			pending.drain()
 			lastFlush = time.Now()
 			return nil
 		default:
+			stats.recordQueue(cap(queue), cap(queue), true)
 			return fmt.Errorf("passive spool queue full; capture stopped to expose data loss")
 		}
 	}
 	buffer := make([]byte, 65536)
 	for ctx.Err() == nil {
+		if err := statsWriter.err(); err != nil {
+			return fmt.Errorf("passive capture statistics: %w", err)
+		}
 		select {
 		case err := <-done:
 			done <- err
@@ -134,8 +152,7 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 				}
 			}
 			if time.Since(lastStats) >= time.Second {
-				stats.FragmentDrops = decoder.FragmentDrops
-				if e = stats.persist(spool); e != nil {
+				if e = publishStats(); e != nil {
 					return e
 				}
 				lastStats = time.Now()
@@ -166,8 +183,7 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 			}
 		}
 		if time.Since(lastStats) >= time.Second {
-			stats.FragmentDrops = decoder.FragmentDrops
-			if e = stats.persist(spool); e != nil {
+			if e = publishStats(); e != nil {
 				return e
 			}
 			lastStats = time.Now()

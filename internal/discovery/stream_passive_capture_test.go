@@ -27,11 +27,14 @@ func TestAppendPassiveStreamBatchFixesScopeAndSourcePosition(t *testing.T) {
 	event.Observer["interface"] = "bond0"
 	event.Subject["site"] = "site-a"
 	event.Subject["domain"] = "domain-a"
-	id, err := AppendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event})
+	captured, err := appendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event})
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := j.Load(id)
+	if captured.AppendCommitDuration <= 0 {
+		t.Fatal("successful append and commit duration missing")
+	}
+	state, err := j.Load(captured.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

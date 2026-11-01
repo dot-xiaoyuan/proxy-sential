@@ -21,6 +21,9 @@ const PassiveStreamParserVersion = "passive-frame-v1"
 type CapturedSegment struct {
 	ID      string
 	Segment streamlog.Segment
+	// AppendCommitDuration measures successful journal append and source commit only.
+	// It is in-memory diagnostics and never becomes part of persisted evidence.
+	AppendCommitDuration time.Duration
 }
 
 func PassiveStreamSourcePath(source Source) string {
@@ -97,6 +100,7 @@ func appendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, s
 		StartOffset: start, EndOffset: start + int64(len(raw)), ParserVersion: PassiveStreamParserVersion,
 		ArchiveMonth: now.Format("200601"), AcceptedAt: now,
 		NeedsProjection: true, Events: prepared}
+	started := time.Now()
 	id, err := journal.Append(segment)
 	if err != nil {
 		return CapturedSegment{}, err
@@ -104,7 +108,7 @@ func appendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, s
 	if err := journal.CommitSource("passive-discovery", path, id); err != nil {
 		return CapturedSegment{ID: id, Segment: segment}, err
 	}
-	return CapturedSegment{ID: id, Segment: segment}, nil
+	return CapturedSegment{ID: id, Segment: segment, AppendCommitDuration: time.Since(started)}, nil
 }
 
 func cloneStreamFields(fields map[string]any) map[string]any {

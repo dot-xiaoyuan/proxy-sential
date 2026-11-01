@@ -16,6 +16,17 @@ type ProtocolCaptureStats struct {
 	Eligible  uint64 `json:"eligible"`
 	Coalesced uint64 `json:"coalesced"`
 }
+
+// These are observations of the bounded capture channel, not counts of
+// durable input. A consumer may drain between observations, so the peak is
+// explicitly sampled. Queue overflow remains visible after later draining.
+type CaptureQueueStats struct {
+	Batches             int    `json:"batches"`
+	Capacity            int    `json:"capacity"`
+	PeakObservedBatches int    `json:"peak_observed_batches"`
+	FullCount           uint64 `json:"full_count"`
+}
+
 type CaptureStats struct {
 	Config        CollectionConfig                 `json:"config"`
 	StartedAt     time.Time                        `json:"started_at"`
@@ -24,6 +35,7 @@ type CaptureStats struct {
 	FragmentDrops uint64                           `json:"fragment_drops"`
 	Eligible      uint64                           `json:"eligible"`
 	Coalesced     uint64                           `json:"coalesced"`
+	Queue         CaptureQueueStats                `json:"capture_queue"`
 }
 
 var DiscoveryCaptureProtocols = []string{"dns_sd", "ssdp", "ws_discovery", "snmp", "arp", "ndp", "lldp", "cdp", "ieee1905_client_association", "dhcpv6", "nbns", "llmnr", "bacnet", "coap"}
@@ -63,6 +75,22 @@ func (s *CaptureStats) recordEligible(protocol string, coalesced bool) {
 }
 func (s *CaptureStats) persist(dir string) error {
 	s.UpdatedAt = time.Now().UTC()
+	return s.persistSnapshot(dir)
+}
+
+func (s *CaptureStats) recordQueue(batches, capacity int, full bool) {
+	s.Queue.Batches, s.Queue.Capacity = batches, capacity
+	if batches > s.Queue.PeakObservedBatches {
+		s.Queue.PeakObservedBatches = batches
+	}
+	if full {
+		s.Queue.FullCount++
+	}
+}
+
+// Delayed writes must retain the observation time; a slow filesystem cannot
+// turn a stale capture heartbeat into a fresh one.
+func (s *CaptureStats) persistSnapshot(dir string) error {
 	raw, err := json.Marshal(s)
 	if err != nil {
 		return err

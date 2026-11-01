@@ -251,7 +251,9 @@ func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 			return "", err
 		}
 	}
-	if err := atomicJSON(j.path(id, ".segment"), s); err != nil {
+	// Persist the same bytes already checked against MaxSegmentBytes. Re-encoding
+	// this immutable body would allocate and serialize every event a second time.
+	if err := atomicJSONBytes(j.path(id, ".segment"), encoded); err != nil {
 		return "", err
 	}
 	// The immutable body is durable. CommitSource writes the first compact
@@ -675,7 +677,15 @@ func (j *Journal) lockFile(name string) (*os.File, error) {
 func unlock(f *os.File) { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }
 
 func atomicJSON(path string, value any) error {
-	if err := atomicJSONBeforeDirectoryBarrier(path, value); err != nil {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return atomicJSONBytes(path, data)
+}
+
+func atomicJSONBytes(path string, data []byte) error {
+	if err := atomicJSONBytesBeforeDirectoryBarrier(path, data); err != nil {
 		return err
 	}
 	return syncDir(filepath.Dir(path))
@@ -688,6 +698,10 @@ func atomicJSONBeforeDirectoryBarrier(path string, value any) error {
 	if err != nil {
 		return err
 	}
+	return atomicJSONBytesBeforeDirectoryBarrier(path, data)
+}
+
+func atomicJSONBytesBeforeDirectoryBarrier(path string, data []byte) error {
 	file, err := os.CreateTemp(filepath.Dir(path), ".stream-*.tmp")
 	if err != nil {
 		return err

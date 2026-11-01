@@ -39,9 +39,29 @@ type RiskFeatureWriter interface {
 	ReconcileRiskFeatures(context.Context, string, Segment) error
 }
 
+// ProcessorStage identifies a bounded operation; labels never contain segment IDs
+// or user data. Journal stages include local lock/disk work; write, reconcile and
+// finalize measure the sink call, including its own bounded input preparation.
+type ProcessorStage string
+
+const (
+	StageLoad         ProcessorStage = "load"
+	StagePreflight    ProcessorStage = "preflight"
+	StageBeginAttempt ProcessorStage = "begin_attempt"
+	StageWrite        ProcessorStage = "write"
+	StageReconcile    ProcessorStage = "reconcile"
+	StageAck          ProcessorStage = "ack"
+	StageFinalize     ProcessorStage = "finalize"
+	StageRelease      ProcessorStage = "release"
+)
+
 type Processor struct {
 	Journal *Journal
 	Writer  Writer
+	// Observer must be concurrency-safe, nonblocking, and perform no I/O. An empty
+	// lane denotes whole-segment finalization. Errors are for counting, not logging
+	// evidence or request contents. Nil preserves existing processor behavior.
+	Observer func(Lane, ProcessorStage, time.Duration, error)
 	// SinkTimeout starts after local source recovery and fsynced attempt state.
 	// A slow journal disk must not consume the database request's own budget.
 	SinkTimeout time.Duration
@@ -51,6 +71,35 @@ type Processor struct {
 	// FinalizeTimeout covers bounded receipt confirmation after all sinks ack.
 	// It may need more disk I/O than one archive or projection request.
 	FinalizeTimeout time.Duration
+}
+
+func (p Processor) observe(lane Lane, stage ProcessorStage, started time.Time, err error) {
+	if p.Observer != nil {
+		p.Observer(lane, stage, time.Since(started), err)
+	}
+}
+
+func (p Processor) load(id string, lane Lane, statusOnly, sourceRaw bool) (State, error) {
+	started := time.Now()
+	var state State
+	var err error
+	switch {
+	case statusOnly:
+		state, err = p.Journal.loadPendingStatus(id)
+	case sourceRaw:
+		state, err = p.Journal.Load(id)
+	default:
+		state, err = p.Journal.load(id)
+	}
+	p.observe(lane, StageLoad, started, err)
+	return state, err
+}
+
+func (p Processor) release(id string) error {
+	started := time.Now()
+	err := p.Journal.Release(id)
+	p.observe("", StageRelease, started, err)
+	return err
 }
 
 func (p Processor) sinkContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -77,7 +126,7 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 	// Only the archive sink needs the source-backed raw bytes. Search,
 	// projection and finalization use the already verified event descriptor.
 	if lane == Search {
-		status, err := p.Journal.loadPendingStatus(id)
+		status, err := p.load(id, lane, true, false)
 		if err != nil {
 			return err
 		}
@@ -85,7 +134,7 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 			return ErrUnconfirmed
 		}
 	}
-	state, err := p.Journal.load(id)
+	state, err := p.load(id, lane, false, false)
 	if err != nil {
 		return err
 	}
@@ -100,7 +149,7 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 		return ErrQuarantined
 	}
 	if lane == Archive && state.Segment.SourceBackedRaw {
-		state, err = p.Journal.Load(id)
+		state, err = p.load(id, lane, false, true)
 		if err != nil {
 			return err
 		}
@@ -141,7 +190,7 @@ func (p Processor) FinalizeAfterLanes(ctx context.Context, id string) error {
 	if p.Journal == nil || p.Writer == nil {
 		return errors.New("stream processor requires journal and writer")
 	}
-	status, err := p.Journal.loadPendingStatus(id)
+	status, err := p.load(id, "", true, false)
 	if err != nil {
 		return err
 	}
@@ -153,7 +202,7 @@ func (p Processor) FinalizeAfterLanes(ctx context.Context, id string) error {
 			return ErrUnconfirmed
 		}
 	}
-	state, err := p.Journal.load(id)
+	state, err := p.load(id, "", false, false)
 	if err != nil {
 		return err
 	}
@@ -166,21 +215,23 @@ func (p Processor) FinalizeAfterLanes(ctx context.Context, id string) error {
 		}
 	}
 	if finalizer, ok := p.Writer.(SegmentFinalizer); ok {
+		started := time.Now()
 		sinkCtx, cancel := p.finalizeContext(ctx)
 		err := finalizer.FinalizeSegment(sinkCtx, id, state.Segment)
 		cancel()
+		p.observe("", StageFinalize, started, err)
 		if err != nil {
 			return fmt.Errorf("stream segment %s finalization: %w", id, err)
 		}
 	}
-	return p.Journal.Release(id)
+	return p.release(id)
 }
 
 func (p Processor) Drain(ctx context.Context, id string) error {
 	if p.Journal == nil || p.Writer == nil {
 		return errors.New("stream processor requires journal and writer")
 	}
-	state, err := p.Journal.load(id)
+	state, err := p.load(id, "", false, false)
 	if err != nil {
 		return err
 	}
@@ -195,7 +246,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 	}
 	archiveState := state
 	if state.Acks[Archive] != Acked && state.Acks[Archive] != NotApplicable && state.Segment.SourceBackedRaw {
-		archiveState, err = p.Journal.Load(id)
+		archiveState, err = p.load(id, Archive, false, true)
 		if err != nil {
 			return err
 		}
@@ -220,7 +271,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 			failures = append(failures, err)
 		}
 	}
-	state, err = p.Journal.load(id)
+	state, err = p.load(id, "", false, false)
 	if err != nil {
 		return err
 	}
@@ -232,7 +283,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 	if len(failures) > 0 {
 		return errors.Join(failures...)
 	}
-	state, err = p.Journal.load(id)
+	state, err = p.load(id, "", false, false)
 	if err != nil {
 		return err
 	}
@@ -242,14 +293,16 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 		}
 	}
 	if finalizer, ok := p.Writer.(SegmentFinalizer); ok {
+		started := time.Now()
 		sinkCtx, cancel := p.finalizeContext(ctx)
 		err := finalizer.FinalizeSegment(sinkCtx, id, state.Segment)
 		cancel()
+		p.observe("", StageFinalize, started, err)
 		if err != nil {
 			return fmt.Errorf("stream segment %s finalization: %w", id, err)
 		}
 	}
-	return p.Journal.Release(id)
+	return p.release(id)
 }
 
 func (p Processor) runLane(ctx context.Context, id string, lane Lane, state State,
@@ -259,20 +312,25 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 	}
 	var err error
 	reportSlow := func(stage string, started time.Time) {
-		if elapsed := time.Since(started); elapsed >= time.Second {
+		if elapsed := time.Since(started); p.Observer == nil && elapsed >= time.Second {
 			log.Printf("stream lane stage segment=%s lane=%s stage=%s duration=%s", id, lane, stage, elapsed.Round(time.Millisecond))
 		}
 	}
 	switch state.Acks[lane] {
 	case Pending:
 		if preflight, ok := p.Writer.(LanePreflight); ok {
-			if err := preflight.Preflight(lane, state.Segment); err != nil {
+			started := time.Now()
+			err := preflight.Preflight(lane, state.Segment)
+			p.observe(lane, StagePreflight, started, err)
+			if err != nil {
 				return fmt.Errorf("stream lane %s local preflight: %w", lane, err)
 			}
 		}
 		if lane != Projection || !state.Segment.SourceBackedRaw {
 			started := time.Now()
-			if err = p.Journal.setAckWithProof(id, lane, Attempted, state.ContentSHA256); err != nil {
+			err = p.Journal.setAckWithProof(id, lane, Attempted, state.ContentSHA256)
+			p.observe(lane, StageBeginAttempt, started, err)
+			if err != nil {
 				return errors.Join(err, p.Journal.AbortUnsentAttempt(id, lane))
 			}
 			reportSlow("begin_attempt", started)
@@ -284,6 +342,7 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 		sinkCtx, cancel := p.sinkContext(ctx)
 		err = write(sinkCtx, id, state.Segment)
 		cancel()
+		p.observe(lane, StageWrite, started, err)
 		reportSlow("write", started)
 	case Attempted:
 		started := time.Now()
@@ -296,6 +355,7 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 		}
 		err = reconcile(sinkCtx, id, state.Segment)
 		cancel()
+		p.observe(lane, StageReconcile, started, err)
 		reportSlow("reconcile", started)
 	default:
 		return fmt.Errorf("stream lane %s has invalid status %q", lane, state.Acks[lane])
@@ -305,6 +365,7 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 	}
 	started := time.Now()
 	err = p.Journal.setAckWithProof(id, lane, Acked, state.ContentSHA256)
+	p.observe(lane, StageAck, started, err)
 	reportSlow("ack", started)
 	return err
 }

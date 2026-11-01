@@ -25,6 +25,34 @@ for unit in \
 done
 echo "=== discovery capture continuity ==="
 systemctl show proxy-sentinel-discovery.service -p ActiveEnterTimestamp -p NRestarts --no-pager 2>&1 || true
+echo "=== discovery capture queue ==="
+python3 - <<'PY'
+import json,os,pathlib,time
+path=pathlib.Path(os.environ.get('PROXY_SENTINEL_CAPTURE_STATS_FILE','/var/lib/proxy-sentinel/discovery-spool/stream-capture-stats/capture.stats'))
+try:
+    with path.open() as source:
+        raw=source.read((1<<20)+1)
+    if len(raw)>1<<20:
+        raise ValueError('capture stats exceeds read limit')
+    state=json.loads(raw)
+    from datetime import datetime
+    updated=datetime.fromisoformat(state['updated_at'].replace('Z','+00:00'))
+    age=max(0,time.time()-updated.timestamp())
+    print('capture_stats_age_seconds=%.1f updated_at=%s' % (age,state['updated_at']))
+    queue=state.get('capture_queue')
+    if queue is None:
+        print('capture_queue_metrics=unavailable_in_this_version')
+    else:
+        print(' '.join('%s=%s' % (key,queue.get(key,'')) for key in ('batches','capacity','peak_observed_batches','full_count')))
+        if queue.get('full_count',0)>0:
+            print('ALERT: capture queue overflow occurred in this process; coverage gap remains unverified')
+    if age>5:
+        print('ALERT: capture stats heartbeat is stale; queue values are not current')
+except (OSError,ValueError,KeyError,TypeError,AttributeError) as error:
+    print('ALERT: discovery capture queue metrics unavailable:',error)
+PY
+echo "=== discovery stage timings (last 10 minutes, up to 5 summaries) ==="
+journalctl -u proxy-sentinel-discovery.service --since '10 minutes ago' --grep='passive stream metrics ' -n 5 --no-pager 2>&1 || true
 echo "=== flow SYN source progress ==="
 python3 - <<'PY'
 import hashlib,json,pathlib,time
