@@ -1,11 +1,13 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"time"
 )
@@ -235,7 +237,7 @@ func coalesceStreamDiscoveryStateFreshness(previous *streamDiscoveryState, next 
 			nextDoc[k] = v
 		}
 	}
-	if contentHash(priorDoc) != contentHash(nextDoc) {
+	if !streamDiscoveryDocumentsEqual(priorDoc, nextDoc) {
 		return next
 	}
 	next.LastSeen = previous.LastSeen
@@ -265,6 +267,45 @@ func streamClassificationEvidence(doc map[string]any) []string {
 	return nil
 }
 
+// Normalize a Go document to the shape returned by decoding jsonb. UseNumber
+// preserves large integers exactly; a failed conversion forces a SQL check.
+func streamDiscoveryJSONValue(document any) (any, bool) {
+	raw, err := json.Marshal(document)
+	if err != nil {
+		return nil, false
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, false
+	}
+	return value, true
+}
+
+func streamDiscoveryDocumentsEqual(left, right map[string]any) bool {
+	leftValue, ok := streamDiscoveryJSONValue(left)
+	if !ok {
+		return false
+	}
+	rightValue, ok := streamDiscoveryJSONValue(right)
+	return ok && reflect.DeepEqual(leftValue, rightValue)
+}
+
+// A structural match with exact JSON numbers is a sufficient (though not
+// necessary) condition for PostgreSQL jsonb equality. The previous document
+// was decoded with UseNumber, and device advisory locks protect its snapshot
+// from concurrent state writers until commit.
+func streamDiscoveryStateMatchesStored(old streamDiscoveryState, next streamDiscoveryState) bool {
+	if !old.FirstSeen.Equal(next.FirstSeen) || !old.LastSeen.Equal(next.LastSeen) ||
+		(old.ExpiresAt == nil) != (next.ExpiresAt == nil) ||
+		(old.ExpiresAt != nil && !old.ExpiresAt.Equal(*next.ExpiresAt)) {
+		return false
+	}
+	current, ok := streamDiscoveryJSONValue(next.Document)
+	return ok && reflect.DeepEqual(old.Document, current)
+}
+
 func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int) error {
 	if len(keys) == 0 {
 		return nil
@@ -284,7 +325,9 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 		if expires.Valid {
 			old.ExpiresAt = &expires.Time
 		}
-		err = json.Unmarshal(raw, &old.Document)
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		err = decoder.Decode(&old.Document)
 		if err != nil {
 			break
 		}
@@ -418,7 +461,13 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 			return err
 		}
 		state = coalesceStreamDiscoveryStateFreshness(prior, state, now)
+		if exists && !transitioned && streamDiscoveryStateMatchesStored(old, state) {
+			continue
+		}
 		states = append(states, state)
+	}
+	if len(states) == 0 {
+		return nil
 	}
 	raw, err := json.Marshal(states)
 	if err != nil {
@@ -444,6 +493,13 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 
 func streamDiscoveryEvidenceCount(document map[string]any) (int, bool) {
 	switch value := document["evidence_count"].(type) {
+	case json.Number:
+		if count, err := value.Int64(); err == nil && count >= 0 && count <= 1e12 {
+			return int(count), true
+		}
+		if count, err := value.Float64(); err == nil && count >= 0 && count <= 1e12 && count == float64(int(count)) {
+			return int(count), true
+		}
 	case float64:
 		if value >= 0 && value <= 1e12 && value == float64(int(value)) {
 			return int(value), true
