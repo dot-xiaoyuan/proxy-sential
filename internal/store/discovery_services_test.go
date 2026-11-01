@@ -72,9 +72,11 @@ func TestDiscoveryServiceClueModelWaitsForFullWindow(t *testing.T) {
 		{"covered", since.Add(-time.Second), "FROM proxy_sentinel.discovery_service_clues_10m"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			ledgerQueries := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, _ := io.ReadAll(r.Body)
 				if strings.Contains(string(body), "FROM schema_migrations") {
+					ledgerQueries++
 					_, _ = fmt.Fprint(w, tc.start.UnixMicro())
 					return
 				}
@@ -88,9 +90,14 @@ func TestDiscoveryServiceClueModelWaitsForFullWindow(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			items, err := ch.DiscoveryServiceClues(context.Background(), []string{"sensor-a|00:11:22:33:44:55|192.0.2.10"}, since)
-			if err != nil || len(items["sensor-a|00:11:22:33:44:55"]) != 1 {
-				t.Fatalf("service clues = %#v, %v", items, err)
+			for range 2 {
+				items, err := ch.DiscoveryServiceClues(context.Background(), []string{"sensor-a|00:11:22:33:44:55|192.0.2.10"}, since)
+				if err != nil || len(items["sensor-a|00:11:22:33:44:55"]) != 1 {
+					t.Fatalf("service clues = %#v, %v", items, err)
+				}
+			}
+			if ledgerQueries != 1 {
+				t.Fatalf("migration ledger queried %d times", ledgerQueries)
 			}
 		})
 	}

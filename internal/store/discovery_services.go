@@ -63,18 +63,22 @@ func (s *ClickHouseStore) discoveryServiceCluesModelReady(ctx context.Context, s
 	if since.Before(time.Now().UTC().Add(-3 * time.Hour)) {
 		return false, nil
 	}
-	data, err := s.query(ctx, `SELECT toUnixTimestamp64Micro(applied_at) FROM schema_migrations FINAL
+	startedUS := s.serviceCluesModelStartUS.Load()
+	if startedUS == 0 {
+		data, err := s.query(ctx, `SELECT toUnixTimestamp64Micro(applied_at) FROM schema_migrations FINAL
 WHERE version='062_discovery_service_clues_10m.sql' LIMIT 1 FORMAT TabSeparatedRaw`)
-	if err != nil {
-		return false, err
-	}
-	value := strings.TrimSpace(string(data))
-	if value == "" {
-		return false, nil
-	}
-	startedUS, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return false, fmt.Errorf("decode service clue read-model start: %w", err)
+		if err != nil {
+			return false, err
+		}
+		value := strings.TrimSpace(string(data))
+		if value == "" {
+			return false, nil
+		}
+		startedUS, err = strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return false, fmt.Errorf("decode service clue read-model start: %w", err)
+		}
+		s.serviceCluesModelStartUS.Store(startedUS)
 	}
 	return !since.Before(time.UnixMicro(startedUS)), nil
 }

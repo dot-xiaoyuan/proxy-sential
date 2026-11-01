@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"proxy-sentinel/internal/evidence"
@@ -31,10 +32,11 @@ type ClickHouseOptions struct {
 }
 
 type ClickHouseStore struct {
-	dsn              string
-	client           *http.Client
-	eventIDCutover   time.Time
-	eventIDV2Cutover time.Time
+	dsn                      string
+	client                   *http.Client
+	eventIDCutover           time.Time
+	eventIDV2Cutover         time.Time
+	serviceCluesModelStartUS *atomic.Int64
 }
 
 func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
@@ -91,10 +93,11 @@ func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
 	// an ambiguous POST result still goes through segment reconciliation.
 	transport.IdleConnTimeout = 5 * time.Second
 	return &ClickHouseStore{
-		dsn:              parsed.String(),
-		client:           &http.Client{Transport: transport, Timeout: requestTimeout},
-		eventIDCutover:   cutover,
-		eventIDV2Cutover: v2Cutover,
+		dsn:                      parsed.String(),
+		client:                   &http.Client{Transport: transport, Timeout: requestTimeout},
+		eventIDCutover:           cutover,
+		eventIDV2Cutover:         v2Cutover,
+		serviceCluesModelStartUS: new(atomic.Int64),
 	}, nil
 }
 
