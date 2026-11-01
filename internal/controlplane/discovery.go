@@ -400,7 +400,9 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			}
 			return
 		}
-		writeJSON(w, 200, map[string]any{"items": items, "missing_keys": missing})
+		// A missing exact key remains an explicit gap. The check time lets an
+		// external audit pair it with the immutable journal acceptance time.
+		writeJSON(w, 200, map[string]any{"items": items, "missing_keys": missing, "checked_at": time.Now().UTC()})
 	case path == "/discovery/devices" && r.Method == "GET":
 		if r.URL.Query().Get("offset") != "" {
 			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")

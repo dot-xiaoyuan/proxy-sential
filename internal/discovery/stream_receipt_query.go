@@ -62,8 +62,12 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
 	if err != nil {
 		return nil, false, err
 	}
+	// projected_at is the projection transaction timestamp, which can precede
+	// commit. This observation is after the exact read returned a row, so it is
+	// a conservative upper bound on when that receipt became query-visible.
 	return map[string]any{"generation": "fresh", "epoch": epoch, "scope_id": scope, "event_key": eventKey, "content_sha256": hash,
-		"first_accepted_at": accepted, "projected_at": projected, "result": result, "archive_state": archive, "body_ref": bodyRef}, true, nil
+		"first_accepted_at": accepted, "projected_at": projected, "read_observed_at": time.Now().UTC(),
+		"result": result, "archive_state": archive, "body_ref": bodyRef}, true, nil
 }
 
 // StreamDiscoveryReceipts reads at most 50 exact keys in one bounded query.
@@ -160,6 +164,12 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 		} else {
 			missing = append(missing, key)
 		}
+	}
+	// The final lookup has completed. Every returned receipt was visible by
+	// this instant, including receipts found before the compact-key fallback.
+	observedAt := time.Now().UTC()
+	for _, item := range items {
+		item["read_observed_at"] = observedAt
 	}
 	return items, missing, nil
 }

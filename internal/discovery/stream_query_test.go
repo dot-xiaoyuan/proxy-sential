@@ -80,11 +80,18 @@ func TestStreamDiscoveryReceiptIsQueryVisiblePerEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	now := time.Now().UTC()
-	mock.ExpectQuery("FROM stream_discovery_event_keys k JOIN LATERAL").WithArgs("fresh-1", "scope-a", "fresh-1:event-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}).AddRow("hash", now, now, "repeat_observation", "pending", []byte(`{"class":"evidence","key":"fresh-1:event-a"}`)))
+	accepted := time.Now().UTC().Add(-10 * time.Second)
+	projected := accepted.Add(3 * time.Second)
+	mock.ExpectQuery("FROM stream_discovery_event_keys k JOIN LATERAL").WithArgs("fresh-1", "scope-a", "fresh-1:event-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}).AddRow("hash", accepted, projected, "repeat_observation", "pending", []byte(`{"class":"evidence","key":"fresh-1:event-a"}`)))
+	beforeRead := time.Now().UTC()
 	receipt, found, err := (Repository{DB: db}).StreamDiscoveryReceipt(context.Background(), "fresh-1", "scope-a", "fresh-1:event-a")
+	afterRead := time.Now().UTC()
 	if err != nil || !found || receipt["result"] != "repeat_observation" || receipt["archive_state"] != "pending" {
 		t.Fatalf("receipt visibility: %+v %v %v", receipt, found, err)
+	}
+	observed, ok := receipt["read_observed_at"].(time.Time)
+	if !ok || observed.Before(beforeRead) || observed.After(afterRead) || !observed.After(projected) || !receipt["first_accepted_at"].(time.Time).Equal(accepted) {
+		t.Fatalf("receipt has no conservative read observation or changed acceptance: %+v", receipt)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -191,6 +198,11 @@ func TestStreamDiscoveryReceiptsReturnsBoundedResultsInRequestOrder(t *testing.T
 	items, missing, err := (Repository{DB: db}).StreamDiscoveryReceipts(context.Background(), "fresh-1", "scope-a", []string{"key-b", "key-a", "missing"})
 	if err != nil || len(items) != 2 || items[0]["event_key"] != "key-b" || items[1]["event_key"] != "key-a" || len(missing) != 1 || missing[0] != "missing" {
 		t.Fatalf("batch receipt mismatch: items=%+v missing=%v err=%v", items, missing, err)
+	}
+	for _, item := range items {
+		if observed, ok := item["read_observed_at"].(time.Time); !ok || observed.Before(now) || observed.After(time.Now().UTC()) {
+			t.Fatalf("batch receipt has no read observation: %+v", item)
+		}
 	}
 	if _, _, err := (Repository{DB: db}).StreamDiscoveryReceipts(context.Background(), "fresh-1", "scope-a", []string{"duplicate", "duplicate"}); err == nil {
 		t.Fatal("duplicate key was accepted")

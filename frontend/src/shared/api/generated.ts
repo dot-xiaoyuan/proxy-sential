@@ -266,7 +266,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Per-event fresh-stream projection receipt; requires identity:read. A repeated observation has its own receipt even when the device state update is coalesced. */
+        /** @description Per-event fresh-stream projection receipt; requires identity:read. A repeated observation has its own receipt even when the device state update is coalesced. read_observed_at proves the receipt was query-visible by that API read; projected_at is a transaction timestamp and can precede commit. */
         get: operations["getStreamDiscoveryReceipt"];
         put?: never;
         post?: never;
@@ -283,7 +283,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Bounded exact-key receipt lookup for fresh-stream visibility checks; requires identity:read. Missing keys are returned explicitly. */
+        /** @description Bounded exact-key receipt lookup for fresh-stream visibility checks; requires identity:read. Missing keys remain explicit gaps at checked_at. The caller must retain each missing key's durable journal acceptance time to measure its unfinished delay. */
         get: operations["getStreamDiscoveryReceipts"];
         put?: never;
         post?: never;
@@ -6713,6 +6713,11 @@ export interface components {
             first_accepted_at: string;
             /** Format: date-time */
             projected_at: string;
+            /**
+             * Format: date-time
+             * @description API server time after an exact receipt query returned a row; upper bound on query visibility
+             */
+            read_observed_at: string;
             result: string;
             /** @enum {string} */
             archive_state: "pending" | "confirmed" | "verified" | "failed";
@@ -8266,6 +8271,8 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["StreamDiscoveryReceipt"][];
                         missing_keys: string[];
+                        /** Format: date-time */
+                        checked_at: string;
                     };
                 };
             };

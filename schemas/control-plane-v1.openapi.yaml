@@ -168,7 +168,7 @@ paths:
   /discovery/receipt:
     get:
       operationId: getStreamDiscoveryReceipt
-      description: Per-event fresh-stream projection receipt; requires identity:read. A repeated observation has its own receipt even when the device state update is coalesced.
+      description: Per-event fresh-stream projection receipt; requires identity:read. A repeated observation has its own receipt even when the device state update is coalesced. read_observed_at proves the receipt was query-visible by that API read; projected_at is a transaction timestamp and can precede commit.
       parameters:
         - { name: epoch, in: query, required: true, schema: { type: string, maxLength: 128 } }
         - { name: scope_id, in: query, required: true, schema: { type: string, maxLength: 256 } }
@@ -185,7 +185,7 @@ paths:
   /discovery/receipts:
     get:
       operationId: getStreamDiscoveryReceipts
-      description: Bounded exact-key receipt lookup for fresh-stream visibility checks; requires identity:read. Missing keys are returned explicitly.
+      description: Bounded exact-key receipt lookup for fresh-stream visibility checks; requires identity:read. Missing keys remain explicit gaps at checked_at. The caller must retain each missing key's durable journal acceptance time to measure its unfinished delay.
       parameters:
         - { name: epoch, in: query, required: true, schema: { type: string, maxLength: 128 } }
         - { name: scope_id, in: query, required: true, schema: { type: string, maxLength: 256 } }
@@ -202,10 +202,11 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, missing_keys]
+                required: [items, missing_keys, checked_at]
                 properties:
                   items: { type: array, items: { $ref: '#/components/schemas/StreamDiscoveryReceipt' } }
                   missing_keys: { type: array, items: { type: string } }
+                  checked_at: { type: string, format: date-time }
         '400': { description: Invalid or duplicate receipt locator }
         '500': { description: Receipt read failed }
   /discovery/nodes:
@@ -6939,7 +6940,7 @@ components:
               updated_at: { type: string, format: date-time }
     StreamDiscoveryReceipt:
       type: object
-      required: [generation, epoch, scope_id, event_key, content_sha256, first_accepted_at, projected_at, result, archive_state, body_ref]
+      required: [generation, epoch, scope_id, event_key, content_sha256, first_accepted_at, projected_at, read_observed_at, result, archive_state, body_ref]
       properties:
         generation: { type: string, enum: [fresh] }
         epoch: { type: string }
@@ -6948,6 +6949,7 @@ components:
         content_sha256: { type: string }
         first_accepted_at: { type: string, format: date-time }
         projected_at: { type: string, format: date-time }
+        read_observed_at: { type: string, format: date-time, description: API server time after an exact receipt query returned a row; upper bound on query visibility, not the database commit time. }
         result: { type: string }
         archive_state: { type: string, enum: [pending, confirmed, verified, failed] }
         body_ref:
