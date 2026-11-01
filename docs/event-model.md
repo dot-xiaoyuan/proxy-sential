@@ -293,7 +293,7 @@ mDNS 关联缓存最多保留 10,000 条记录和 8 MiB 计费字节（键字节
 
 缓存按 owner 建记录索引，并为 SRV target 和 PTR instance 建反向索引。每包只展开所触及服务及去重后的地址、TXT、PTR 依赖；A-only 包没有相关 SRV 时，不重建其他缓存记录。共享 target 只读取一次依赖。每个保留记录占一个 owner 索引项、一个过期堆节点，SRV/PTR 再占一个反向索引项；续租原位调整堆，撤销和过期同时移除索引及空桶，拒绝新增时不留下索引。索引元数据由 10,000 条记录上限约束，计费字节继续独立约束正文与键，不能等同为总内存上限。续租对原记录实际字节变化重新计费，超限时保留旧内容与旧截止时间。本包处理量取决于本包、相关依赖和实际过期记录，不随无关存活缓存量全量扫描；原文、确认及后续事实保留职责不变。
 
-每 DNS 消息的服务和主机输出合计最多 250 个事件、512 KiB JSON 事件字节，按稳定次序显式截断。达到边界时输出 `dns_message_coverage`，精确记录 `candidate_events`、`emitted_events`、`omitted_events`、`omitted_fields`、限额与 `complete`，并附原消息 SHA-256。首个服务的超大缓存 TXT 超出预算时保留实际服务/地址/TTL，省去 TXT 并记录 `dns_fields_omitted`，不得把省去的产品字段用于识别。缓存拒绝时另附 `cache_records_not_retained`，不等同于当前输出不完整。输出截断的说明明确标记该消息未完整覆盖；正常消息不增加覆盖计数。消息 hash、ID、原 TTL 与覆盖计数是证据元数据，不参与事实语义 hash，不形成设备事实或强分类。纯关联缓存压力也不进入设备事实解释或可见版本；只有实际输出/字段截断保留完整性二态说明。同一消息的相同记录按最短 TTL 合并，TTL 0 撤销优先且不依赖记录排列顺序。
+每 DNS 消息的服务和主机输出合计最多 250 个事件、512 KiB JSON 事件字节，按稳定次序显式截断。达到边界时输出 `dns_message_coverage`，精确记录 `candidate_events`、`emitted_events`、`omitted_events`、`omitted_fields`、限额与 `complete`，并附原消息 SHA-256。首个服务的超大缓存 TXT 超出预算时保留实际服务/地址/TTL，省去 TXT 并记录 `dns_fields_omitted`，不得把省去的产品字段用于识别。缓存拒绝时另附 `cache_records_not_retained`，不等同于当前输出不完整。采集进程的 `capture.stats.dns_cache` 另按固定 A、AAAA、PTR、SRV、TXT 类型记录 `not_retained_by_record_limit` 与 `not_retained_by_byte_limit`；新增记录同时触及两项预算时归入先检查的条数上限；已有键续租只按字节增量检查。这些是去重后支持记录的缓存准入拒绝次数，可重复计算相同记录，不能换算为漏包或漏发现设备数。输出截断的说明明确标记该消息未完整覆盖；正常消息不增加覆盖计数。消息 hash、ID、原 TTL 与覆盖计数是证据元数据，不参与事实语义 hash，不形成设备事实或强分类。纯关联缓存压力也不进入设备事实解释或可见版本；只有实际输出/字段截断保留完整性二态说明。同一消息的相同记录按最短 TTL 合并，TTL 0 撤销优先且不依赖记录排列顺序。
 
 回放输入：[mDNS 主机地址公告](../examples/discovery/mdns-host-announcements.jsonl) 包含 A、AAAA、同 IP 别名与大小写不同的撤销。测试从每条记录重建单答案 DNS 消息核验 SHA-256，并验证采集范围、归属、撤销、过期、缓存与输出双界。这些是本地回放结果，不代表现场容量验收。
 

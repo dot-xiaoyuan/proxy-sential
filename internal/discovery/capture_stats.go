@@ -30,12 +30,22 @@ type CaptureQueueStats struct {
 // DNS cache admission failures do not mean a packet was dropped: current
 // message records still participate in decoding. Counters are cumulative per
 // capture process; only the last affected DNS message hash is retained.
+type DNSCacheRecordKinds struct {
+	A    uint64 `json:"a"`
+	AAAA uint64 `json:"aaaa"`
+	PTR  uint64 `json:"ptr"`
+	SRV  uint64 `json:"srv"`
+	TXT  uint64 `json:"txt"`
+}
+
 type DNSCacheCaptureStats struct {
-	Records                        int    `json:"records"`
-	Bytes                          int    `json:"bytes"`
-	RecordsNotRetained             uint64 `json:"records_not_retained"`
-	MessagesWithRecordsNotRetained uint64 `json:"messages_with_records_not_retained"`
-	LastMessageSHA256              string `json:"last_message_sha256,omitempty"`
+	Records                        int                 `json:"records"`
+	Bytes                          int                 `json:"bytes"`
+	RecordsNotRetained             uint64              `json:"records_not_retained"`
+	MessagesWithRecordsNotRetained uint64              `json:"messages_with_records_not_retained"`
+	NotRetainedByRecordLimit       DNSCacheRecordKinds `json:"not_retained_by_record_limit"`
+	NotRetainedByByteLimit         DNSCacheRecordKinds `json:"not_retained_by_byte_limit"`
+	LastMessageSHA256              string              `json:"last_message_sha256,omitempty"`
 }
 
 type CaptureStats struct {

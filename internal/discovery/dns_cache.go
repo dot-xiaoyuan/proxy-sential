@@ -11,6 +11,40 @@ import (
 const dnsCacheMaxRecords = 10000
 const dnsCacheMaxBytes = 8 << 20
 
+type dnsCacheAdmissionFailure uint8
+
+const (
+	dnsCacheAdmitted dnsCacheAdmissionFailure = iota
+	dnsCacheRecordLimit
+	dnsCacheByteLimit
+)
+
+// Count only the five RR kinds that can occupy the cache. Fixed fields avoid
+// allocating a map or accepting unbounded label values on the capture path.
+func (c *DNSCache) countAdmissionFailure(record dnsmessage.Resource, reason dnsCacheAdmissionFailure) {
+	var counts *DNSCacheRecordKinds
+	switch reason {
+	case dnsCacheRecordLimit:
+		counts = &c.stats.NotRetainedByRecordLimit
+	case dnsCacheByteLimit:
+		counts = &c.stats.NotRetainedByByteLimit
+	default:
+		return
+	}
+	switch record.Body.(type) {
+	case *dnsmessage.AResource:
+		counts.A++
+	case *dnsmessage.AAAAResource:
+		counts.AAAA++
+	case *dnsmessage.PTRResource:
+		counts.PTR++
+	case *dnsmessage.SRVResource:
+		counts.SRV++
+	case *dnsmessage.TXTResource:
+		counts.TXT++
+	}
+}
+
 func (c *DNSCache) remove(key string) {
 	if old, ok := c.records[key]; ok {
 		c.removeIndexes(old)
@@ -53,30 +87,38 @@ func mdnsMessageRecords(records []dnsmessage.Resource) []dnsmessage.Resource {
 // observe reports only supported records rejected by the retained cache budget.
 // Callers can still resolve the current message without retaining those records.
 func (c *DNSCache) observe(scope string, record dnsmessage.Resource, at time.Time) bool {
+	return c.observeAdmission(scope, record, at) != dnsCacheAdmitted
+}
+
+func (c *DNSCache) observeAdmission(scope string, record dnsmessage.Resource, at time.Time) dnsCacheAdmissionFailure {
 	key := dnsCacheRecordKey(scope, record)
 	if record.Header.TTL == 0 {
 		c.remove(key)
-		return false
+		return dnsCacheAdmitted
 	}
 	ttl := min(record.Header.TTL, discoveryMaxTTLSeconds)
 	size := dnsCacheEntryBytes(key, record)
 	if size == 0 {
-		return false
+		return dnsCacheAdmitted
 	}
 	if old, exists := c.records[key]; exists {
 		// Canonical names can share a key while retaining different wire
 		// lengths. Charge the replacement delta before changing its lifetime.
 		if size-old.bytes > dnsCacheMaxBytes-c.bytes {
-			return true
+			return dnsCacheByteLimit
 		}
 		c.bytes += size - old.bytes
 		old.bytes = size
 		old.record, old.at, old.expires = record, at, at.Add(time.Duration(ttl)*time.Second)
 		c.refreshExpiry(old)
-		return false
+		return dnsCacheAdmitted
 	}
-	if len(c.records) >= dnsCacheMaxRecords || size > dnsCacheMaxBytes-c.bytes {
-		return true
+	// Preserve the existing first-failed-gate order when both limits are hit.
+	if len(c.records) >= dnsCacheMaxRecords {
+		return dnsCacheRecordLimit
+	}
+	if size > dnsCacheMaxBytes-c.bytes {
+		return dnsCacheByteLimit
 	}
 	if c.records == nil {
 		c.records = make(map[string]*cachedDNS)
@@ -85,7 +127,7 @@ func (c *DNSCache) observe(scope string, record dnsmessage.Resource, at time.Tim
 	c.records[key] = entry
 	c.addIndexes(entry)
 	c.bytes += size
-	return false
+	return dnsCacheAdmitted
 }
 
 // Charge retained key bytes plus the expanded DNS wire-record size. This is a

@@ -280,8 +280,9 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 		scope := dnsCacheNamespace(source, vlan, src.String())
 		cache.expire(at)
 		for _, r := range records {
-			if cache.observe(scope, r, at) {
+			if reason := cache.observeAdmission(scope, r, at); reason != dnsCacheAdmitted {
 				cacheNotRetained++
+				cache.countAdmissionFailure(r, reason)
 			}
 		}
 		// Current-message records always participate, including rejected cache
