@@ -34,7 +34,7 @@ func (s *ClickHouseStore) DiscoveryServiceClues(ctx context.Context, targets []s
 		}
 		row.MAC = strings.ToLower(strings.TrimSpace(row.MAC))
 		key := row.SensorID + "|" + row.MAC
-		if !requested[key] || row.Port <= 0 || row.Port > 65535 || row.EvidenceID == "" {
+		if !requested[key+"|"+row.SourceIP] || row.Port <= 0 || row.Port > 65535 || row.EvidenceID == "" {
 			continue
 		}
 		out[key] = append(out[key], row)
@@ -43,26 +43,31 @@ func (s *ClickHouseStore) DiscoveryServiceClues(ctx context.Context, targets []s
 }
 
 func discoveryServiceCluesQuery(targets []string, since time.Time) (string, map[string]bool) {
-	quotedSensors, quotedMACs := []string{}, []string{}
-	seenSensors, seenMACs, requested := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	quotedAddresses, quotedMACs := []string{}, []string{}
+	seenAddresses, seenMACs, requested := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, target := range targets {
-		parts := strings.SplitN(target, "|", 2)
-		if len(parts) != 2 || parts[0] == "" || len(parts[0]) > 128 || !safeFlowSensor(parts[0]) {
+		parts := strings.SplitN(target, "|", 3)
+		if len(parts) != 3 || parts[0] == "" || len(parts[0]) > 128 || !safeFlowSensor(parts[0]) {
 			continue
 		}
 		mac, err := net.ParseMAC(parts[1])
 		if err != nil || len(mac) != 6 {
 			continue
 		}
+		ip := net.ParseIP(strings.TrimSpace(parts[2]))
+		if ip == nil {
+			continue
+		}
 		macText := mac.String()
-		key := parts[0] + "|" + macText
+		key := parts[0] + "|" + macText + "|" + ip.String()
 		if requested[key] {
 			continue
 		}
 		requested[key] = true
-		if !seenSensors[parts[0]] {
-			seenSensors[parts[0]] = true
-			quotedSensors = append(quotedSensors, "'"+parts[0]+"'")
+		address := "('" + parts[0] + "','" + ip.String() + "')"
+		if !seenAddresses[address] {
+			seenAddresses[address] = true
+			quotedAddresses = append(quotedAddresses, address)
 		}
 		if !seenMACs[macText] {
 			seenMACs[macText] = true
@@ -80,7 +85,7 @@ func discoveryServiceCluesQuery(targets []string, since time.Time) (string, map[
 	}
 	sql := fmt.Sprintf(`SELECT sensor_id,
  lower(JSONExtractString(payload_json,'ethernet_source_mac')) AS mac,
- src_ip AS source_ip,
+ subject_ip AS source_ip,
  JSONExtractString(payload_json,'service_type') AS service_type,
  JSONExtractString(payload_json,'service_instance') AS service_name,
  JSONExtractString(payload_json,'service_target') AS service_target,
@@ -88,11 +93,12 @@ func discoveryServiceCluesQuery(targets []string, since time.Time) (string, map[
  max(timestamp) AS last_seen,
  argMax(event_id,timestamp) AS evidence_id
 FROM proxy_sentinel.normalized_events
-WHERE timestamp >= toDateTime64('%s',6,'UTC')
- AND sensor_id IN (%s)
+PREWHERE timestamp >= toDateTime64('%s',6,'UTC')
+ AND (sensor_id,subject_ip) IN (%s)
+WHERE source_event_type='dns_sd'
  AND lower(JSONExtractString(payload_json,'ethernet_source_mac')) IN (%s)
  AND JSONHas(payload_json,'service_port')
 GROUP BY sensor_id,mac,source_ip,service_type,service_name,service_target,port
-ORDER BY last_seen DESC LIMIT 1000 FORMAT JSONEachRow`, since.UTC().Format("2006-01-02 15:04:05"), strings.Join(quotedSensors, ","), strings.Join(quotedMACs, ","))
+ORDER BY last_seen DESC LIMIT 1000 FORMAT JSONEachRow`, since.UTC().Format("2006-01-02 15:04:05"), strings.Join(quotedAddresses, ","), strings.Join(quotedMACs, ","))
 	return sql, requested
 }

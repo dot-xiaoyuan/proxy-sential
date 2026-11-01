@@ -122,7 +122,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const handshakeClues=useQuery({queryKey:['discovery-handshake-clues',selected?.id,selected?.sensor_id,selected?.site,selected?.domain,detailIP],queryFn:({signal})=>request<{items:HandshakeClue[]}>(`/discovery/handshake-clues?${new URLSearchParams({sensor_id:selected!.sensor_id||'',campus_id:selected!.site||'',access_domain:selected!.domain||'',ip:detailIP!})}`,{signal}),enabled:!!selected?.sensor_id&&!!selected?.site&&!!selected?.domain&&!!detailIP&&coverage.data?.enabled===true,staleTime:30_000})
   const types=Object.fromEntries((catalogue.data?.items??[]).map(t=>[t.id,t.label]))
   const items=devices.data?.items??[]
-  const serviceKey=[...new Set(items.map(item=>item.sensor_id&&item.mac?`${item.sensor_id}|${item.mac.toLowerCase()}`:'').filter(Boolean))].sort().join(',')
+  const allServiceTargets=[...new Set(items.flatMap(item=>item.sensor_id&&item.mac?(item.current_addresses??(item.primary_ip?[item.primary_ip]:[])).map(ip=>`${item.sensor_id}|${item.mac!.toLowerCase()}|${ip}`):[]))].sort()
+  const serviceKey=allServiceTargets.slice(0,50).join(',')
   const serviceClues=useQuery({queryKey:['discovery-service-clues',serviceKey],queryFn:({signal})=>request<{items:Record<string,ServiceClue[]>}>(`/discovery/service-clues?targets=${encodeURIComponent(serviceKey)}`,{signal}),enabled:serviceKey!==''&&coverage.data?.enabled===true,staleTime:60_000})
   const signalKey=[...new Set(items.flatMap(item=>[item.current_addresses?.[0],item.primary_ip,item.last_observed_ip].filter(Boolean) as string[]))].sort().join(',')
   const signalMACs=[...new Set(items.map(item=>item.mac?.toLowerCase()).filter(Boolean))].sort().join(',')
@@ -193,6 +194,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       {passiveSignals.data?.durable_status==='unavailable'&&<Alert type="warning" showIcon title="较早的 DHCP 线索暂不可用" description="当前仅展示近期镜像日志中的被动线索。" />}
       {passiveSignals.data?.client_status==='unavailable'&&<Alert type="warning" showIcon title="HTTP 与 TLS 被动线索暂不可用" />}
       {passiveSignals.isError&&<AppErrorAlert title="读取被动识别线索失败" message={passiveSignals.error.message} />}
+      {serviceClues.isError&&<AppErrorAlert title="读取服务公告线索失败" message={serviceClues.error.message} />}
+      {allServiceTargets.length>50&&<Alert type="warning" showIcon title="本页当前地址超过 50 个，仅展示已查询地址的服务公告线索" />}
       {observedPorts.isError&&<AppErrorAlert title="读取目标端口线索失败" message={observedPorts.error.message} />}
       {allFlowTargets.length>50&&<Alert type="warning" showIcon title="本页当前地址超过 50 个，仅展示已查询地址的目标端口线索" />}
       {statistics.isError&&<AppErrorAlert title="读取设备统计失败" message={statistics.error.message} />}
