@@ -56,7 +56,10 @@ PY
 )"
 for unit in proxy-sentinel-control-plane proxy-sentinel-control-plane-eventbus proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-binding-b56 proxy-sentinel-ingest-stream-dhcp-message-r1 proxy-sentinel-ingest-stream-packet-b54 proxy-sentinel-ingest-stream-handshake-b54 proxy-sentinel-ingest-stream-packet-b76 proxy-sentinel-ingest-stream-handshake-b76 proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-ingest-stream-flow-syn proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-handshake-signal proxy-sentinel-flow-syn-signal proxy-sentinel-router-prober proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-inventory proxy-sentinel-inventory-backfill proxy-sentinel-identity-materializer proxy-sentinel-ncu-identity-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery proxy-sentinel-passive-discovery proxy-sentinel-ncu-identity-sync; do
   if [[ "$preserve_inventory" == true && "$unit" == proxy-sentinel-inventory ]]; then continue; fi
-  if systemctl is-active --quiet "$unit.service" || [[ " $expected_discovery_units " == *" $unit.service "* ]]; then units+=("$unit.service"); fi
+  if systemctl is-active --quiet "$unit.service" || [[ " $expected_discovery_units " == *" $unit.service "* ]] ||
+    { systemctl is-failed --quiet "$unit.service" && systemctl is-enabled --quiet "$unit.service"; }; then
+    units+=("$unit.service")
+  fi
 done
 if [[ "$preserve_inventory" == true ]] && ! systemctl is-active --quiet proxy-sentinel-inventory.service; then
   echo "preserved inventory service is not active" >&2
