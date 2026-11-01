@@ -7,6 +7,7 @@ host=root@222.204.3.184
 state_dir="/tmp/proxy-sentinel-184-heartbeat-$(id -u)"
 pid_file="$state_dir/pid"
 log_file="$state_dir/transitions.log"
+control_path="$state_dir/master.sock"
 mkdir -p -m 700 "$state_dir"
 if [[ -L "$state_dir" || "$(stat -f %u "$state_dir")" != "$(id -u)" ]]; then
   echo "unsafe heartbeat state directory" >&2
@@ -27,6 +28,9 @@ log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >>"$log_file"; }
 case "${1:-}" in
   status)
     if running; then echo "running (pid $(cat "$pid_file"))"; else echo stopped; fi
+    if [[ -S "$control_path" ]] && ssh -S "$control_path" -O check -o BatchMode=yes "$host" >/dev/null 2>&1; then
+      echo "multiplex ready"
+    fi
     [[ ! -f "$log_file" ]] || tail -n 3 "$log_file"
     ;;
   stop)
@@ -40,6 +44,7 @@ case "${1:-}" in
     cleanup() {
       [[ -z "$child_pid" ]] || kill "$child_pid" 2>/dev/null || true
       [[ -z "$caffeine_pid" ]] || kill "$caffeine_pid" 2>/dev/null || true
+      rm -f "$control_path"
       if [[ -f "$pid_file" && "$(cat "$pid_file")" == "$$" ]]; then rm -f "$pid_file"; fi
       log stopped
     }
@@ -50,7 +55,8 @@ case "${1:-}" in
     delay=5
     while :; do
       log connecting
-      ssh -N -T -o BatchMode=yes -o StrictHostKeyChecking=yes \
+      rm -f "$control_path"
+      ssh -M -S "$control_path" -N -T -o BatchMode=yes -o StrictHostKeyChecking=yes \
         -o ConnectTimeout=8 -o ConnectionAttempts=1 \
         -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
         "$host" &
