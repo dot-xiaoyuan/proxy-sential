@@ -46,6 +46,7 @@ type DNSCacheCaptureStats struct {
 	NotRetainedByRecordLimit       DNSCacheRecordKinds `json:"not_retained_by_record_limit"`
 	NotRetainedByByteLimit         DNSCacheRecordKinds `json:"not_retained_by_byte_limit"`
 	SkippedOutOfScope              DNSCacheRecordKinds `json:"skipped_out_of_scope"`
+	RetainedByKind                 DNSCacheRecordKinds `json:"retained_by_kind"`
 	LastMessageSHA256              string              `json:"last_message_sha256,omitempty"`
 }
 

@@ -34,17 +34,25 @@ func (c *DNSCache) countAdmissionFailure(record dnsmessage.Resource, reason dnsC
 	default:
 		return
 	}
+	if count := dnsCacheKindCounter(counts, record); count != nil {
+		(*count)++
+	}
+}
+
+func dnsCacheKindCounter(counts *DNSCacheRecordKinds, record dnsmessage.Resource) *uint64 {
 	switch record.Body.(type) {
 	case *dnsmessage.AResource:
-		counts.A++
+		return &counts.A
 	case *dnsmessage.AAAAResource:
-		counts.AAAA++
+		return &counts.AAAA
 	case *dnsmessage.PTRResource:
-		counts.PTR++
+		return &counts.PTR
 	case *dnsmessage.SRVResource:
-		counts.SRV++
+		return &counts.SRV
 	case *dnsmessage.TXTResource:
-		counts.TXT++
+		return &counts.TXT
+	default:
+		return nil
 	}
 }
 
@@ -278,5 +286,6 @@ func dnsCacheEntryBytes(key string, record dnsmessage.Resource) int {
 func (c *DNSCache) captureStats() DNSCacheCaptureStats {
 	snapshot := c.stats
 	snapshot.Records, snapshot.Bytes = len(c.records), c.bytes
+	snapshot.RetainedByKind = c.retainedKinds
 	return snapshot
 }

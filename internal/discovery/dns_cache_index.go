@@ -68,6 +68,9 @@ func (q *dnsExpiryQueue) Pop() any {
 
 func (c *DNSCache) addIndexes(entry *cachedDNS) {
 	c.byOwner.add(dnsOwnerKey{entry.scope, entry.owner}, entry.key)
+	if count := dnsCacheKindCounter(&c.retainedKinds, entry.record); count != nil {
+		(*count)++
+	}
 	switch body := entry.record.Body.(type) {
 	case *dnsmessage.SRVResource:
 		entry.target = canonicalDNSOwner(body.Target.String())
@@ -81,6 +84,9 @@ func (c *DNSCache) addIndexes(entry *cachedDNS) {
 
 func (c *DNSCache) removeIndexes(entry *cachedDNS) {
 	c.byOwner.remove(dnsOwnerKey{entry.scope, entry.owner}, entry.key)
+	if count := dnsCacheKindCounter(&c.retainedKinds, entry.record); count != nil {
+		(*count)--
+	}
 	switch entry.record.Body.(type) {
 	case *dnsmessage.SRVResource:
 		c.srvByTarget.remove(dnsOwnerKey{entry.scope, entry.target}, entry.key)

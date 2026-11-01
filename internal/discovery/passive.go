@@ -35,6 +35,7 @@ type DNSCache struct {
 	stats                             DNSCacheCaptureStats
 	byOwner, srvByTarget, ptrByTarget dnsRecordIndex
 	expiry                            dnsExpiryQueue
+	retainedKinds                     DNSCacheRecordKinds
 }
 
 func DecodeFrame(frame []byte, source Source, at time.Time) []normalized.Event {

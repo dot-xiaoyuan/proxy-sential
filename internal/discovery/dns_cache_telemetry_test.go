@@ -37,6 +37,9 @@ func TestMDNSV1FullCacheCountsCrossMessageServiceGap(t *testing.T) {
 		t.Fatalf("v1 invented a resolved service without retained SRV: %+v", second)
 	}
 	stats := full.DNS.captureStats()
+	if stats.RetainedByKind != (DNSCacheRecordKinds{A: dnsCacheMaxRecords}) {
+		t.Fatalf("retained record kinds do not describe full cache: %+v", stats.RetainedByKind)
+	}
 	if stats.RecordsNotRetained != 2 || stats.MessagesWithRecordsNotRetained != 2 ||
 		stats.NotRetainedByRecordLimit.SRV != 1 || stats.NotRetainedByRecordLimit.A != 1 ||
 		stats.NotRetainedByByteLimit.SRV != 0 || stats.Records != dnsCacheMaxRecords {
