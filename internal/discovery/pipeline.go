@@ -264,7 +264,7 @@ func (r Repository) ProcessDiscoveryLane(ctx context.Context, lane string) (work
 			semantic.ValidUntil = time.Time{}
 			payload := map[string]any{}
 			for k, v := range o.Evidence.Payload {
-				if k != "ttl" && k != "record_ttl" {
+				if k != "ttl" && k != "record_ttl" && !discoveryPayloadFieldIsEvidenceOnly(o.Evidence, k) {
 					payload[k] = v
 				}
 			}
@@ -380,6 +380,13 @@ func discoveryStateKey(o Observation) string {
 	return contentHash([]string{o.Node, o.Site, o.Domain, o.VLAN, o.VRF, o.Interface, identity})[:32]
 }
 func discoveryFactKey(o Observation) string {
+	if isMDNSHostAnnouncement(o.Evidence) {
+		return contentHash([]string{o.SourceID, o.Origin, "host_address", canonicalDNSOwner(str(o.Evidence.Payload, "dns_name")), str(o.Evidence.Payload, "dns_record_type"), o.IP, str(o.Evidence.Payload, "announcer_ip")})
+	}
+	if hasDNSSDServiceRecord(o.Evidence) {
+		p := o.Evidence.Payload
+		return contentHash([]string{o.SourceID, o.Origin, "srv", canonicalDNSOwner(serviceInstance(o)), canonicalDNSOwner(str(p, "service_target")), fmt.Sprint(number(p, "service_port")), fmt.Sprint(number(p, "service_priority")), fmt.Sprint(number(p, "service_weight")), o.IP})
+	}
 	return contentHash([]string{o.SourceID, o.Origin, serviceInstance(o), o.IP, o.Port})
 }
 

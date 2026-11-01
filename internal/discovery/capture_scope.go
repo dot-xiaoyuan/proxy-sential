@@ -30,6 +30,22 @@ func ParseCaptureCIDRs(raw string) ([]netip.Prefix, error) {
 func filterCaptureEvents(events []normalized.Event, allow []netip.Prefix) []normalized.Event {
 	kept := events[:0]
 	for _, event := range events {
+		if isMDNSHostAnnouncement(event) {
+			if err := validateMDNSHostAnnouncement(event); err != nil {
+				continue
+			}
+			announcer, _ := netip.ParseAddr(str(event.Payload, "announcer_ip"))
+			allowed := false
+			for _, prefix := range allow {
+				if prefix.Contains(announcer.Unmap()) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
 		ip, err := netip.ParseAddr(str(event.Subject, "ip"))
 		if err != nil {
 			continue

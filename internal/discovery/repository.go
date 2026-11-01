@@ -118,7 +118,35 @@ func (r Repository) SaveSnapshot(ctx context.Context, s Snapshot) error {
 				return err
 			}
 		}
-		if o.Withdrawn && o.Origin == "dns_sd" {
+		if o.Withdrawn && isMDNSHostAnnouncement(o.Evidence) {
+			if _, err = tx.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1)
+ WHERE source_id=$2 AND origin='dns_sd' AND observed_at<=$1
+ AND data->'evidence'->'payload'->>'dns_record_kind'='host_address'
+ AND lower(rtrim(data->'evidence'->'payload'->>'dns_name','.'))=$3
+ AND data->'evidence'->'payload'->>'dns_record_type'=$4 AND data->>'ip'=$5
+ AND coalesce(data->>'node','')=$6 AND coalesce(data->>'site','')=$7 AND coalesce(data->>'domain','')=$8
+ AND coalesce(data->>'vlan','')=$9 AND coalesce(data->>'vrf','')=$10 AND coalesce(data->>'interface','')=$11
+ AND data->'evidence'->'payload'->>'announcer_ip'=$12`,
+				o.ObservedAt, o.SourceID, canonicalDNSOwner(str(o.Evidence.Payload, "dns_name")), str(o.Evidence.Payload, "dns_record_type"), o.IP,
+				o.Node, o.Site, o.Domain, o.VLAN, o.VRF, o.Interface, str(o.Evidence.Payload, "announcer_ip")); err != nil {
+				return err
+			}
+		} else if o.Withdrawn && hasDNSSDServiceRecord(o.Evidence) {
+			p := o.Evidence.Payload
+			if _, err = tx.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1)
+ WHERE source_id=$2 AND origin='dns_sd' AND observed_at<=$1
+ AND lower(rtrim(data->'evidence'->'payload'->>'service_target','.'))=$3
+ AND lower(rtrim(data->'evidence'->'payload'->>'service_instance','.'))=$4
+ AND coalesce(data->>'site','')=$5 AND coalesce(data->>'domain','')=$6 AND coalesce(data->>'vlan','')=$7
+ AND data->'evidence'->'payload'->>'service_port'=$8
+ AND coalesce(data->'evidence'->'payload'->>'service_priority','0')=$9
+ AND coalesce(data->'evidence'->'payload'->>'service_weight','0')=$10
+ AND coalesce(data->>'node','')=$11 AND coalesce(data->>'vrf','')=$12 AND coalesce(data->>'interface','')=$13`,
+				o.ObservedAt, o.SourceID, canonicalDNSOwner(str(p, "service_target")), canonicalDNSOwner(str(p, "service_instance")), o.Site, o.Domain, o.VLAN,
+				fmt.Sprint(number(p, "service_port")), fmt.Sprint(number(p, "service_priority")), fmt.Sprint(number(p, "service_weight")), o.Node, o.VRF, o.Interface); err != nil {
+				return err
+			}
+		} else if o.Withdrawn && o.Origin == "dns_sd" {
 			if _, err = tx.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1) WHERE source_id=$2 AND origin='dns_sd' AND observed_at<=$1 AND data->'evidence'->'payload'->>'service_target'=$3 AND data->'evidence'->'payload'->>'service_instance'=$4 AND coalesce(data->>'site','')=$5 AND coalesce(data->>'domain','')=$6 AND coalesce(data->>'vlan','')=$7`, o.ObservedAt, o.SourceID, str(o.Evidence.Payload, "service_target"), str(o.Evidence.Payload, "service_instance"), o.Site, o.Domain, o.VLAN); err != nil {
 				return err
 			}

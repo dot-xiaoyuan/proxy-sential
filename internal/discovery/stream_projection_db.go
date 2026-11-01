@@ -157,7 +157,7 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 	if p.DB == nil {
 		return errors.New("stream discovery archive confirmation needs DB")
 	}
-	items, err := prepareStreamDiscovery(segment)
+	items, err := prepareStreamArchiveReceipts(segment)
 	if err != nil {
 		return err
 	}
@@ -172,10 +172,10 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 	// Stable lock order also makes overlapping recovery segments safe. All
 	// receipts commit together; a missing/conflicting one keeps the journal.
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].Receipt.Scope != items[j].Receipt.Scope {
-			return items[i].Receipt.Scope < items[j].Receipt.Scope
+		if items[i].Scope != items[j].Scope {
+			return items[i].Scope < items[j].Scope
 		}
-		return items[i].Receipt.Key < items[j].Receipt.Key
+		return items[i].Key < items[j].Key
 	})
 	type receiptKey struct {
 		Ordinal int    `json:"ordinal"`
@@ -184,8 +184,7 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 		Hash    string `json:"content_sha256"`
 	}
 	keys := make([]receiptKey, 0, len(items))
-	for ordinal, item := range items {
-		r := item.Receipt
+	for ordinal, r := range items {
 		keys = append(keys, receiptKey{ordinal, r.Scope, r.Key, r.Hash})
 	}
 	raw, err := json.Marshal(keys)
@@ -337,18 +336,11 @@ func (p StreamDiscoveryProjector) ReconcileStreamProjection(ctx context.Context,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	return p.ProjectStreamSegment(ctx, id, segment)
+	return p.projectPreparedStreamSegment(ctx, id, segment, prepared)
 }
 
 func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id string, segment streamlog.Segment) error {
-	stage, stageStarted := "validate", time.Now()
-	mark := func(next string) {
-		if elapsed := time.Since(stageStarted); elapsed >= 100*time.Millisecond {
-			log.Printf("stream projection stage segment=%s events=%d stage=%s seconds=%.3f", id, len(segment.Events), stage, elapsed.Seconds())
-		}
-		stage, stageStarted = next, time.Now()
-	}
-	defer mark("done")
+	validationStarted := time.Now()
 	if p.DB == nil || id == "" || segment.ArchiveMonth == "" {
 		return errors.New("stream discovery projector needs DB, segment ID and archive month")
 	}
@@ -364,7 +356,24 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 	if len(prepared) == 0 {
 		return ErrUnsupportedStreamProjection
 	}
-	mark("begin_tx")
+	if elapsed := time.Since(validationStarted); elapsed >= 100*time.Millisecond {
+		log.Printf("stream projection stage segment=%s events=%d stage=validate seconds=%.3f", id, len(segment.Events), elapsed.Seconds())
+	}
+	return p.projectPreparedStreamSegment(ctx, id, segment, prepared)
+}
+
+// prepared was validated by ProjectStreamSegment or ReconcileStreamProjection.
+// A missing committed marker reuses it instead of adapting all events again.
+func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Context, id string, segment streamlog.Segment, prepared []streamPreparedDiscovery) error {
+	stage, stageStarted := "begin_tx", time.Now()
+	mark := func(next string) {
+		if elapsed := time.Since(stageStarted); elapsed >= 100*time.Millisecond {
+			log.Printf("stream projection stage segment=%s events=%d stage=%s seconds=%.3f", id, len(segment.Events), stage, elapsed.Seconds())
+		}
+		stage, stageStarted = next, time.Now()
+	}
+	defer mark("done")
+
 	segmentHash := streamProjectionSegmentHash(segment, prepared)
 	month := streamAcceptedMonth(segment.AcceptedAt)
 	tx, err := p.DB.BeginTx(ctx, nil)

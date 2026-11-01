@@ -75,26 +75,29 @@ type streamFactDecision struct {
 	EvidenceEvent  string
 }
 
-func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscovery, error) {
+// walkStreamDiscoveryReceipts validates the immutable event identity and exact
+// body hash shared by projection and archive confirmation. Fact adaptation is
+// deliberately outside this pass: rejected/outside-scope inputs still have
+// receipts and their authoritative bodies must be confirmed.
+func walkStreamDiscoveryReceipts(segment streamlog.Segment, visit func(normalized.Event, streamDiscoveryReceipt)) error {
 	if segment.Epoch == "" || segment.AcceptedAt.IsZero() || len(segment.Events) == 0 {
-		return nil, errors.New("stream discovery segment requires epoch, acceptance time and events")
+		return errors.New("stream discovery segment requires epoch, acceptance time and events")
 	}
-	prepared := make([]streamPreparedDiscovery, 0, len(segment.Events))
 	seen := make(map[string]string, len(segment.Events))
 	for _, event := range segment.Events {
 		if !normalized.IsDiscoveryProjectionEvent(event) {
 			continue
 		}
 		if event.EventID == "" || event.Timestamp == "" {
-			return nil, errors.New("stream discovery event lacks fixed identity or time")
+			return errors.New("stream discovery event lacks fixed identity or time")
 		}
 		scope := str(event.Observer, "capture_scope_id")
 		if scope == "" {
-			return nil, fmt.Errorf("stream discovery event %s lacks capture scope", event.EventID)
+			return fmt.Errorf("stream discovery event %s lacks capture scope", event.EventID)
 		}
 		body, err := json.Marshal(event)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		sum := sha256.Sum256(body)
 		hash := hex.EncodeToString(sum[:])
@@ -102,12 +105,29 @@ func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscover
 		identity := scope + "\x00" + key
 		if prior, found := seen[identity]; found {
 			if prior != hash {
-				return nil, streamlog.ErrContentConflict
+				return streamlog.ErrContentConflict
 			}
-			return nil, fmt.Errorf("duplicate event key within immutable stream segment: %w", streamlog.ErrContentConflict)
+			return fmt.Errorf("duplicate event key within immutable stream segment: %w", streamlog.ErrContentConflict)
 		}
 		seen[identity] = hash
-		item := streamPreparedDiscovery{Receipt: streamDiscoveryReceipt{Scope: scope, Key: key, Hash: hash, Accepted: segment.AcceptedAt, Result: "applied"}}
+		visit(event, streamDiscoveryReceipt{Scope: scope, Key: key, Hash: hash, Accepted: segment.AcceptedAt, Result: "applied"})
+	}
+	return nil
+}
+
+func prepareStreamArchiveReceipts(segment streamlog.Segment) ([]streamDiscoveryReceipt, error) {
+	receipts := make([]streamDiscoveryReceipt, 0, len(segment.Events))
+	err := walkStreamDiscoveryReceipts(segment, func(_ normalized.Event, receipt streamDiscoveryReceipt) { receipts = append(receipts, receipt) })
+	if err != nil {
+		return nil, err
+	}
+	return receipts, nil
+}
+
+func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscovery, error) {
+	prepared := make([]streamPreparedDiscovery, 0, len(segment.Events))
+	err := walkStreamDiscoveryReceipts(segment, func(event normalized.Event, receipt streamDiscoveryReceipt) {
+		item := streamPreparedDiscovery{Receipt: receipt}
 		item.Protocol = firstText(str(event.Payload, "origin"), event.SourceEventType)
 		adapted, err := AdaptDiscoveryEvent(event)
 		if err == nil {
@@ -116,29 +136,29 @@ func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscover
 		if err != nil {
 			item.Receipt.Result = "rejected: " + err.Error()
 			prepared = append(prepared, item)
-			continue
+			return
 		}
 		item.Parsed = true
 		o := item.Observation
 		if o.IP != "" && !IsPrivateDiscoveryAddress(o.IP) {
 			item.Receipt.Result = "outside_private_scope"
 			prepared = append(prepared, item)
-			continue
+			return
 		}
 		semantic := o
 		semantic.ID, semantic.EventID, semantic.SnapshotID = "", "", ""
 		semantic.ObservedAt, semantic.ValidUntil, semantic.ReportedAt = time.Time{}, time.Time{}, nil
 		payload := make(map[string]any, len(o.Evidence.Payload))
 		for field, value := range o.Evidence.Payload {
-			if field != "ttl" && field != "record_ttl" && field != "revision" {
+			if field != "ttl" && field != "record_ttl" && field != "revision" && !discoveryPayloadFieldIsEvidenceOnly(o.Evidence, field) {
 				payload[field] = value
 			}
 		}
 		semantic.Evidence = normalized.Event{Payload: payload}
 		candidate, reason := observationIoTType(o)
 		item.Fact = streamDiscoveryFact{
-			Epoch: segment.Epoch, Device: discoveryStateKey(o), Key: discoveryFactKey(o), Scope: scope,
-			Source: o.SourceID, Protocol: o.Origin, ServiceInstance: serviceInstance(o), Event: key, EvidenceEvent: key,
+			Epoch: segment.Epoch, Device: discoveryStateKey(o), Key: discoveryFactKey(o), Scope: receipt.Scope,
+			Source: o.SourceID, Protocol: o.Origin, ServiceInstance: serviceInstance(o), Event: receipt.Key, EvidenceEvent: receipt.Key,
 			Revision: int64(number(event.Payload, "revision")), Observed: o.ObservedAt, FirstObserved: o.ObservedAt, ValidUntil: o.ValidUntil,
 			Withdrawn: o.Withdrawn, SemanticHash: contentHash(semantic), IP: o.IP, MAC: o.MAC,
 			Name: o.Name, Manufacturer: o.Manufacturer, Model: o.ModelName, DeviceType: o.DeviceType,
@@ -157,6 +177,9 @@ func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscover
 		}
 		item.HasFact = true
 		prepared = append(prepared, item)
+	})
+	if err != nil {
+		return nil, err
 	}
 	return prepared, nil
 }

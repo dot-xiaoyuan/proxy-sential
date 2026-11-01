@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"container/heap"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -67,6 +68,8 @@ func decodeFrame(frame []byte, source Source, at time.Time, cache *DNSCache) []n
 }
 
 type fragmentGroup struct {
+	key         string
+	expiryIndex int
 	at          time.Time
 	header      []byte
 	pieces      map[int][]byte
@@ -74,10 +77,39 @@ type fragmentGroup struct {
 	offset      int
 	ipv6        bool
 }
+
+// A live group owns exactly one heap entry. Removing completed/rejected groups
+// eagerly keeps expiry metadata bounded by the same 256-group budget; there
+// are no stale timer entries to accumulate during high-rate completion.
+type fragmentExpiryQueue []*fragmentGroup
+
+func (q fragmentExpiryQueue) Len() int           { return len(q) }
+func (q fragmentExpiryQueue) Less(i, j int) bool { return q[i].at.Before(q[j].at) }
+func (q fragmentExpiryQueue) Swap(i, j int) {
+	q[i], q[j] = q[j], q[i]
+	q[i].expiryIndex = i
+	q[j].expiryIndex = j
+}
+func (q *fragmentExpiryQueue) Push(value any) {
+	g := value.(*fragmentGroup)
+	g.expiryIndex = len(*q)
+	*q = append(*q, g)
+}
+func (q *fragmentExpiryQueue) Pop() any {
+	old := *q
+	last := len(old) - 1
+	g := old[last]
+	old[last] = nil
+	*q = old[:last]
+	g.expiryIndex = -1
+	return g
+}
+
 type FrameDecoder struct {
-	DNS           DNSCache
-	fragments     map[string]*fragmentGroup
-	FragmentDrops uint64
+	DNS            DNSCache
+	fragments      map[string]*fragmentGroup
+	fragmentExpiry fragmentExpiryQueue
+	FragmentDrops  uint64
 }
 
 // Decode bounds fragment memory to 256 datagrams and 64 KiB each, with a
@@ -176,13 +208,14 @@ func (d *FrameDecoder) fragment(key string, header, payload []byte, start int, m
 	if d.fragments == nil {
 		d.fragments = map[string]*fragmentGroup{}
 	}
-	for k, g := range d.fragments {
-		if at.Sub(g.at) > 10*time.Second {
-			delete(d.fragments, k)
-			d.FragmentDrops++
-		}
+	// Most packets have no expired group. Check only the earliest timestamp,
+	// while still reclaiming every due slot before enforcing capacity. The
+	// strict >10s boundary and first-fragment lifetime remain unchanged.
+	for len(d.fragmentExpiry) > 0 && at.Sub(d.fragmentExpiry[0].at) > 10*time.Second {
+		d.removeFragment(d.fragmentExpiry[0].key)
+		d.FragmentDrops++
 	}
-	reject := func() []byte { delete(d.fragments, key); d.FragmentDrops++; return nil }
+	reject := func() []byte { d.removeFragment(key); d.FragmentDrops++; return nil }
 	if start+len(payload) > 65535 || len(payload) == 0 || more && len(payload)%8 != 0 {
 		return reject()
 	}
@@ -192,8 +225,9 @@ func (d *FrameDecoder) fragment(key string, header, payload []byte, start int, m
 			d.FragmentDrops++
 			return nil
 		}
-		g = &fragmentGroup{at: at, pieces: map[int][]byte{}, total: -1, offset: off, ipv6: v6}
+		g = &fragmentGroup{key: key, at: at, pieces: map[int][]byte{}, total: -1, offset: off, ipv6: v6}
 		d.fragments[key] = g
+		heap.Push(&d.fragmentExpiry, g)
 	}
 	for offset, part := range g.pieces {
 		if start < offset+len(part) && offset < start+len(payload) {
@@ -220,7 +254,7 @@ func (d *FrameDecoder) fragment(key string, header, payload []byte, start int, m
 		out = append(out, part...)
 		pos += len(part)
 	}
-	delete(d.fragments, key)
+	d.removeFragment(key)
 	if v6 {
 		binary.BigEndian.PutUint16(out[off+4:off+6], uint16(g.total))
 	} else {
@@ -233,6 +267,13 @@ func (d *FrameDecoder) fragment(key string, header, payload []byte, start int, m
 	}
 	return out
 }
+func (d *FrameDecoder) removeFragment(key string) {
+	if g := d.fragments[key]; g != nil {
+		heap.Remove(&d.fragmentExpiry, g.expiryIndex)
+		delete(d.fragments, key)
+	}
+}
+
 func packetProtocol(frame []byte) string {
 	off, kind := ethernetOffset(frame)
 	if off == 0 {

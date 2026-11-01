@@ -276,3 +276,27 @@ TTL路径变化的标准事件回放样例为 `examples/device/ttl-scope/path-va
 不把IP处理过程中的跳数变化解释为新增设备。聚合包数仍不能代替多个独立事件的重复共现。
 
 `dhcpcd`、`udhcpc`、`dhclient` 等通用 DHCP 客户端原值继续保留在标准事件中，但不单凭客户端名称生成 Linux 系统提示。旧适配器根据这类客户端产生的 `device_hint=linux` 在系统家族推断时不作为独立依据；明确的 Android、Windows、Ubuntu 等其他线索仍可使用。本地归类属于推测，MAC 与名称观测不随之删除。[dhcpcd 上游](https://github.com/NetworkConfiguration/dhcpcd)说明其用途为 DHCP 客户端；[Android AOSP 的 dhcpcd 源码](https://android.googlesource.com/platform/external/dhcpcd/)也说明客户端名称不构成桌面系统专有身份。回放输入 `examples/device/portable-dhcp/client-aliases.jsonl` 保留旧提示和全部原值，验证通用软件不会增加操作系统或设备类型结论。
+
+## 被动 mDNS 主机地址公告
+
+现场采集默认使用兼容生产形状：`discovery-worker` 的 `--passive-dns-evidence-v2` 默认为 `false`，不输出下文主机地址事件及 SRV priority/weight 新字段；缓存索引、容量约束和已有服务发现继续工作。该开关只通过进程参数设置，集合配置文件不能隐式启用，`capture.stats.dns_record_evidence_version` 为 1/2。消费者和回放始终支持两种证据。先发布此兼容版本并验证，将它保留为应用回退入口后，才可另行授权启用 v2；启用时不改变固定源起点或丢弃待处理段。
+
+`type=discovery`、`source_event_type=dns_sd` 沿用现有标准事件。没有可解析服务的本包 A/AAAA 公告可带可选 `payload.dns_record_kind=host_address`：`dns_name` 保留本包 owner 大小写与结尾点，`dns_record_type` 为 A/AAAA，`dns_record_class`、`dns_record_ttl`、`dns_record_address` 保留原记录值，`announcer_ip` 为本包 IP 来源，`dns_message_id` 与 `dns_message_sha256` 标识原始 DNS 消息。消息 SHA-256 按 UDP 内完整 DNS 字节计算，记录字段不能冒充完整原始包；当前采集链没有包存储引用时，不声明原包可回取。
+
+这只是主机名与地址的弱线索：`subject.ip` 是被公告地址，`subject.mac` 为空，`address_binding=false`，不得生成服务实例、类型、目标或端口字段。以太网源 MAC 只留作 `ethernet_source_mac` 来源证据，不归属于被公告终端；主机名不进入产品、系统和整机类型推断，也不形成确定当前地址绑定。现有 `dns_sd` 配置同时控制这类公告，采集允许范围分别检查报文源和被公告地址。查询报文、非 IN 类地址、组播/未指定/回环地址不形成此线索。
+
+事实键保留完整采集作用域，区分规范化 DNS owner、A/AAAA、被公告 IP 和真实报文公告者 IP；owner 比较忽略大小写与结尾点。不同 VLAN 不合并；同 IP 的多个名称分别保留事实。不同公告者的主机声明保留独立事实，另一公告者的 goodbye 不得撤销原声明；公告者仍只是证据来源，不因此建立地址绑定。仅本包 A/AAAA 可以创建或续租主机事实，跨包缓存不会把旧地址伪装成新公告；TTL 0 撤销对应事实，其他别名不被撤销，自然过期以原观测时间和 TTL 计算，最长有效期仍为七天。本包服务已经表达同地址时，避免重复生成正向主机事实；TTL 0 主机撤销仍保留。旧版设备事实消费者需支持该可选分支后再接入流量，本轮未改变 UI 或自动发布。
+
+mDNS 关联缓存最多保留 10,000 条记录和 8 MiB 计费字节（键字节及展开 DNS 记录字节，不等于进程 RSS）；相同键满缓存仍可续租，撤销与过期释放容量。缓存拒绝新增记录时，本包内容继续参与当前消息解析。`capture.stats.dns_cache` 固定记录 `records`、`bytes`、累计 `records_not_retained`、累计 `messages_with_records_not_retained` 和最近受影响 `last_message_sha256`，即使纯 TXT/PTR 没有可生成的设备事件也保留统计。这些字段表示关联缓存保留缺口，记录数按同一消息合并重复项后的有效记录计数，不能解释为抓包丢包或当前报文未收到。
+
+关联缓存的命名空间用无歧义结构编码 `source_id`、采集节点、站点、接入域、接口、完整 VLAN 标签串和本包 `announcer_ip`，仅使用解析层实际已有值，不推断 VRF。同一公告者的跨包 SRV、A/AAAA、TXT、PTR 仍可互补；不同公告者、接口或采集作用域不能互补服务。服务解析和关联缓存只使用 IN 类记录，记录身份区分类别而不把 cache-flush 位当成另一类别。本包主机公告仍从原消息记录生成，保留各自通过既有采集边界的标准事件；无地址的 SRV-only 输出仍可能被 CIDR 筛选过滤，不代表每条原始 DNS 消息均已保存。
+
+缓存按 owner 建记录索引，并为 SRV target 和 PTR instance 建反向索引。每包只展开所触及服务及去重后的地址、TXT、PTR 依赖；A-only 包没有相关 SRV 时，不重建其他缓存记录。共享 target 只读取一次依赖。每个保留记录占一个 owner 索引项、一个过期堆节点，SRV/PTR 再占一个反向索引项；续租原位调整堆，撤销和过期同时移除索引及空桶，拒绝新增时不留下索引。索引元数据由 10,000 条记录上限约束，计费字节继续独立约束正文与键，不能等同为总内存上限。续租对原记录实际字节变化重新计费，超限时保留旧内容与旧截止时间。本包处理量取决于本包、相关依赖和实际过期记录，不随无关存活缓存量全量扫描；原文、确认及后续事实保留职责不变。
+
+每 DNS 消息的服务和主机输出合计最多 250 个事件、512 KiB JSON 事件字节，按稳定次序显式截断。达到边界时输出 `dns_message_coverage`，精确记录 `candidate_events`、`emitted_events`、`omitted_events`、`omitted_fields`、限额与 `complete`，并附原消息 SHA-256。首个服务的超大缓存 TXT 超出预算时保留实际服务/地址/TTL，省去 TXT 并记录 `dns_fields_omitted`，不得把省去的产品字段用于识别。缓存拒绝时另附 `cache_records_not_retained`，不等同于当前输出不完整。输出截断的说明明确标记该消息未完整覆盖；正常消息不增加覆盖计数。消息 hash、ID、原 TTL 与覆盖计数是证据元数据，不参与事实语义 hash，不形成设备事实或强分类。纯关联缓存压力也不进入设备事实解释或可见版本；只有实际输出/字段截断保留完整性二态说明。同一消息的相同记录按最短 TTL 合并，TTL 0 撤销优先且不依赖记录排列顺序。
+
+回放输入：[mDNS 主机地址公告](../examples/discovery/mdns-host-announcements.jsonl) 包含 A、AAAA、同 IP 别名与大小写不同的撤销。测试从每条记录重建单答案 DNS 消息核验 SHA-256，并验证采集范围、归属、撤销、过期、缓存与输出双界。这些是本地回放结果，不代表现场容量验收。
+
+真实 SRV 记录另保留可选 `service_priority`、`service_weight`；服务生产者事件标识和事实标识都区分 instance、target、port、priority、weight，事实还包含被公告 IP 和既有采集作用域。priority/weight 缺失按零处理，TTL 变化不改变事实标识，同一 SRV 的续租和 goodbye 命中同一事实，不同实际 SRV 不相互覆盖。没有 target/port 的通用服务线索仍沿用原事实语义。该事实键升级不改写既存历史：旧键事实按原 TTL 自然过期，过渡期可能与新键事实并存，不将其包装成新设备或历史已重算。
+
+回退存在语义边界：r32 消费器不识别主机公告专用事实键，也未按完整 SRV 字段区分事实，不能安全接手启用 v2 后的新语义待处理段。关闭开关或统计版本恢复为 1，不证明历史 v2 待处理段已消失。后续启用版本应回退到已验证的兼容读取版本，而非 r32。若确需回退 r32，必须先由支持本模型的新版本以 `--mode=stream-drain` 处理完这些待处理段，核验消费结果及失败/未完成缺口，并恢复旧生产参数；不能让旧二进制直接消费新段，也不能删除或跳过待处理证据。这里只说明回退条件，不自动执行发布、排空或历史清理。

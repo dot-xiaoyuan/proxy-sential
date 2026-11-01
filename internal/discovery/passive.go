@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/textproto"
 	"proxy-sentinel/internal/normalized"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,11 +19,21 @@ import (
 
 // DecodeFrame never attributes a service to its querying or relay device.
 type cachedDNS struct {
-	record  dnsmessage.Resource
-	expires time.Time
-	at      time.Time
+	record                    dnsmessage.Resource
+	expires                   time.Time
+	at                        time.Time
+	bytes                     int
+	key, scope, owner, target string
+	expiryIndex               int
 }
-type DNSCache struct{ records map[string]cachedDNS }
+type DNSCache struct {
+	legacyEvidence                    bool
+	records                           map[string]*cachedDNS
+	bytes                             int
+	stats                             DNSCacheCaptureStats
+	byOwner, srvByTarget, ptrByTarget dnsRecordIndex
+	expiry                            dnsExpiryQueue
+}
 
 func DecodeFrame(frame []byte, source Source, at time.Time) []normalized.Event {
 	return decodeFrame(frame, source, at, nil)
@@ -90,6 +101,8 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 				}
 			case 5:
 				p["name"] = string(v)
+			case 6:
+				p["system_description"] = string(v)
 			case 8:
 				if length >= 6 && v[0] == 5 && v[1] == 1 {
 					managementIP = net.IP(v[2:6]).String()
@@ -249,49 +262,31 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 		return nil
 	}
 	records := append(append(msg.Answers, msg.Authorities...), msg.Additionals...)
+	packetRecords := append([]dnsmessage.Resource(nil), records...)
+	records = mdnsMessageRecords(records)
+	inetRecords := records[:0]
+	for _, record := range records {
+		if record.Header.Class&0x7fff == dnsmessage.ClassINET {
+			inetRecords = append(inetRecords, record)
+		}
+	}
+	records = inetRecords
 	touched := map[string]bool{}
 	for _, r := range records {
 		touched[strings.ToLower(r.Header.Name.String())] = true
 	}
+	cacheNotRetained := 0
 	if cache != nil {
-		if cache.records == nil {
-			cache.records = map[string]cachedDNS{}
-		}
-		scope := source.ID + "|" + source.Site + "|" + source.Domain + "|" + vlan + "|"
-		for key, v := range cache.records {
-			if !v.expires.After(at) {
-				delete(cache.records, key)
-			}
-		}
+		scope := dnsCacheNamespace(source, vlan, src.String())
+		cache.expire(at)
 		for _, r := range records {
-			key := scope + r.Header.Name.String() + "|" + fmt.Sprint(r.Header.Type) + "|" + fmt.Sprint(r.Body)
-			ttl := r.Header.TTL
-			if ttl > 604800 {
-				ttl = 604800
-			}
-			if ttl == 0 {
-				delete(cache.records, key)
-				continue
-			}
-			if len(cache.records) < 10000 {
-				cache.records[key] = cachedDNS{r, at.Add(time.Duration(ttl) * time.Second), at}
+			if cache.observe(scope, r, at) {
+				cacheNotRetained++
 			}
 		}
-		current := records
-		records = nil
-		for key, v := range cache.records {
-			if strings.HasPrefix(key, scope) && !v.at.After(at) {
-				r := v.record
-				r.Header.TTL = uint32(v.expires.Sub(at) / time.Second)
-				records = append(records, r)
-			}
-		}
-		// Preserve explicit withdrawals even though removed from the live cache.
-		for _, r := range current {
-			if r.Header.TTL == 0 {
-				records = append(records, r)
-			}
-		}
+		// Current-message records always participate, including rejected cache
+		// admissions and withdrawals. Read only cached service dependencies.
+		records = cache.relatedRecords(scope, records, touched, at)
 	}
 	addresses := map[string][]string{}
 	addressTTL := map[string]uint32{}
@@ -312,12 +307,34 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 			ptr[strings.ToLower(v.PTR.String())] = key
 		}
 	}
-	result := []normalized.Event{}
-	for i, r := range records {
-		srv, ok := r.Body.(*dnsmessage.SRVResource)
-		if !ok {
-			continue
+	// Sort only the narrow service descriptors and address strings. Formatting
+	// large TXT bodies in a sort comparator would amplify work on every packet.
+	type serviceRecord struct {
+		record dnsmessage.Resource
+		key    string
+	}
+	services := make([]serviceRecord, 0)
+	for _, record := range records {
+		if srv, ok := record.Body.(*dnsmessage.SRVResource); ok {
+			key := canonicalDNSOwner(record.Header.Name.String()) + "|" + canonicalDNSOwner(srv.Target.String()) + "|" + fmt.Sprint(srv.Port) + "|" + fmt.Sprint(srv.Priority) + "|" + fmt.Sprint(srv.Weight)
+			services = append(services, serviceRecord{record, key})
 		}
+	}
+	sort.Slice(services, func(i, j int) bool { return services[i].key < services[j].key })
+	for _, ips := range addresses {
+		sort.Strings(ips)
+	}
+	messageHash := sha256.Sum256(body)
+	output := mdnsOutput{messageHash: hex.EncodeToString(messageHash[:]), cacheNotRetained: cacheNotRetained}
+	if cache != nil && cacheNotRetained > 0 {
+		cache.stats.RecordsNotRetained += uint64(cacheNotRetained)
+		cache.stats.MessagesWithRecordsNotRetained++
+		cache.stats.LastMessageSHA256 = output.messageHash
+	}
+	serviceTargets := map[string]bool{}
+	for _, serviceRecord := range services {
+		r := serviceRecord.record
+		srv := r.Body.(*dnsmessage.SRVResource)
 		name := strings.ToLower(r.Header.Name.String())
 		if !touched[name] && !touched[strings.ToLower(srv.Target.String())] {
 			continue
@@ -334,10 +351,15 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 		}
 		service = strings.TrimSuffix(strings.TrimSuffix(service, "."), ".local")
 		ips := addresses[strings.ToLower(srv.Target.String())]
+		serviceTargets[strings.ToLower(srv.Target.String())] = true
 		if len(ips) == 0 {
 			ips = []string{""}
 		}
-		for _, ip := range ips {
+		for index, ip := range ips {
+			if output.sealed || len(output.events) == maxMDNSMessageEvents {
+				output.omit(len(ips) - index)
+				break
+			}
 			// Cached or proxied records may describe another host; only the sender's own address gets its MAC.
 			mac := ""
 			if ip != "" && ip == src.String() {
@@ -351,10 +373,32 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 			if ttl > 604800 {
 				ttl = 604800
 			}
-			result = append(result, emit("dns_sd", fmt.Sprint(i, ":", ip), ip, mac, map[string]any{"is_response": true, "ttl": int(ttl), "service_type": service, "service_instance": r.Header.Name.String(), "service_target": srv.Target.String(), "service_port": int(srv.Port), "txt": txt[name]}))
+			key := "service|" + canonicalDNSOwner(r.Header.Name.String()) + "|" + canonicalDNSOwner(srv.Target.String()) + "|" + fmt.Sprint(srv.Port) + "|" + fmt.Sprint(srv.Priority) + "|" + fmt.Sprint(srv.Weight) + "|" + ip
+			payload := map[string]any{"is_response": true, "ttl": int(ttl), "service_type": service, "service_instance": r.Header.Name.String(), "service_target": srv.Target.String(), "service_port": int(srv.Port), "txt": txt[name]}
+			if cache == nil || !cache.legacyEvidence {
+				payload["service_priority"], payload["service_weight"] = int(srv.Priority), int(srv.Weight)
+			}
+			output.add(emit("dns_sd", key, ip, mac, payload))
 		}
 	}
-	return result
+	if cache != nil && cache.legacyEvidence {
+		return output.finish()
+	}
+	for _, host := range mdnsHostRecords(packetRecords, serviceTargets) {
+		if output.sealed || len(output.events) == maxMDNSMessageEvents {
+			output.omit(1)
+			continue
+		}
+		r := host.record
+		output.add(emit("dns_sd", "host|"+host.key, host.ip, "", map[string]any{
+			"is_response": true, "ttl": int(min(r.Header.TTL, discoveryMaxTTLSeconds)), "address_binding": false,
+			"dns_record_kind": "host_address", "dns_name": r.Header.Name.String(), "dns_record_type": host.kind,
+			"dns_record_class": int(r.Header.Class), "dns_record_ttl": int(r.Header.TTL), "dns_record_address": host.ip,
+			"name": strings.TrimSuffix(r.Header.Name.String(), "."), "announcer_ip": src.String(),
+			"dns_message_id": int(msg.ID), "dns_message_sha256": output.messageHash,
+		}))
+	}
+	return output.finish()
 }
 
 func firstText(a, b string) string {

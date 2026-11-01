@@ -96,12 +96,16 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 			result = joinCaptureErrors(result, writerErr)
 		}
 	}()
-	decoder := &FrameDecoder{}
+	decoder := newCaptureFrameDecoder(config.MDNSRecordEvidenceV2)
 	stats := NewCaptureStats()
 	stats.Config = config
+	if config.MDNSRecordEvidenceV2 {
+		stats.DNSRecordEvidenceVersion = 2
+	}
 	statsWriter := newCaptureStatsWriter(func(snapshot *CaptureStats) error { return snapshot.persistSnapshot(spool) })
 	publishStats := func() error {
 		stats.FragmentDrops = decoder.FragmentDrops
+		stats.DNSCache = decoder.DNS.captureStats()
 		stats.recordQueue(len(queue), cap(queue), false)
 		return statsWriter.submit(stats)
 	}

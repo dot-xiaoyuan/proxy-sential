@@ -211,11 +211,20 @@ func FromEvent(e normalized.Event) (Observation, error) {
 		if e.Payload["is_response"] != true {
 			return o, errors.New("query is not device evidence")
 		}
+		if isMDNSHostAnnouncement(e) {
+			if err := validateMDNSHostAnnouncement(e); err != nil {
+				return o, err
+			}
+			o.Explanation = "mDNS 主机名与地址公告线索，不确认设备身份或地址绑定"
+			o.Explanation += mdnsCoverageExplanation(e.Payload)
+			return o, nil
+		}
 		s := str(e.Payload, "service_type")
 		if capabilities, ok := ServiceCapabilities(s); ok {
 			o.Capabilities = capabilities
 		}
 		o.Explanation = "服务能力公告，不确认整机类型"
+		o.Explanation += mdnsCoverageExplanation(e.Payload)
 	case "ssdp":
 		if e.Payload["is_response"] != true {
 			return o, errors.New("SSDP search is not evidence")

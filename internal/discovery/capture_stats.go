@@ -27,21 +27,34 @@ type CaptureQueueStats struct {
 	FullCount           uint64 `json:"full_count"`
 }
 
+// DNS cache admission failures do not mean a packet was dropped: current
+// message records still participate in decoding. Counters are cumulative per
+// capture process; only the last affected DNS message hash is retained.
+type DNSCacheCaptureStats struct {
+	Records                        int    `json:"records"`
+	Bytes                          int    `json:"bytes"`
+	RecordsNotRetained             uint64 `json:"records_not_retained"`
+	MessagesWithRecordsNotRetained uint64 `json:"messages_with_records_not_retained"`
+	LastMessageSHA256              string `json:"last_message_sha256,omitempty"`
+}
+
 type CaptureStats struct {
-	Config        CollectionConfig                 `json:"config"`
-	StartedAt     time.Time                        `json:"started_at"`
-	UpdatedAt     time.Time                        `json:"updated_at"`
-	Protocols     map[string]*ProtocolCaptureStats `json:"protocols"`
-	FragmentDrops uint64                           `json:"fragment_drops"`
-	Eligible      uint64                           `json:"eligible"`
-	Coalesced     uint64                           `json:"coalesced"`
-	Queue         CaptureQueueStats                `json:"capture_queue"`
+	DNSRecordEvidenceVersion int                              `json:"dns_record_evidence_version"`
+	Config                   CollectionConfig                 `json:"config"`
+	StartedAt                time.Time                        `json:"started_at"`
+	UpdatedAt                time.Time                        `json:"updated_at"`
+	Protocols                map[string]*ProtocolCaptureStats `json:"protocols"`
+	FragmentDrops            uint64                           `json:"fragment_drops"`
+	Eligible                 uint64                           `json:"eligible"`
+	Coalesced                uint64                           `json:"coalesced"`
+	DNSCache                 DNSCacheCaptureStats             `json:"dns_cache"`
+	Queue                    CaptureQueueStats                `json:"capture_queue"`
 }
 
 var DiscoveryCaptureProtocols = []string{"dns_sd", "ssdp", "ws_discovery", "snmp", "arp", "ndp", "lldp", "cdp", "ieee1905_client_association", "dhcpv6", "nbns", "llmnr", "bacnet", "coap"}
 
 func NewCaptureStats() *CaptureStats {
-	s := &CaptureStats{StartedAt: time.Now().UTC(), Protocols: map[string]*ProtocolCaptureStats{}}
+	s := &CaptureStats{DNSRecordEvidenceVersion: 1, StartedAt: time.Now().UTC(), Protocols: map[string]*ProtocolCaptureStats{}}
 	for _, p := range DiscoveryCaptureProtocols {
 		s.Protocols[p] = &ProtocolCaptureStats{}
 	}

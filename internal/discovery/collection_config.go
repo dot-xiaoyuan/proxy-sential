@@ -25,11 +25,14 @@ type EventBinding struct {
 	ValidFrom time.Time `json:"valid_from"`
 }
 type CollectionConfig struct {
-	EventBindings   []EventBinding   `json:"event_bindings"`
-	EnrichmentPaths []EnrichmentPath `json:"enrichment_paths"`
-	Version         int              `json:"version"`
-	AllowedCIDRs    string           `json:"allowed_cidrs"`
-	Protocols       []ProtocolOwner  `json:"protocols"`
+	// Runtime opt-in only: a shared collection file cannot silently change the
+	// durable producer format before a compatible rollback release is installed.
+	MDNSRecordEvidenceV2 bool             `json:"-"`
+	EventBindings        []EventBinding   `json:"event_bindings"`
+	EnrichmentPaths      []EnrichmentPath `json:"enrichment_paths"`
+	Version              int              `json:"version"`
+	AllowedCIDRs         string           `json:"allowed_cidrs"`
+	Protocols            []ProtocolOwner  `json:"protocols"`
 }
 
 func DefaultCollectionConfig() CollectionConfig {

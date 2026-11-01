@@ -6,6 +6,9 @@ import "strings"
 // Each value is bounded; the original normalized event remains authoritative.
 func streamRecognitionFields(o Observation) map[string]string {
 	fields := map[string]string{}
+	if isMDNSHostAnnouncement(o.Evidence) {
+		return fields
+	}
 	add := func(field, value string) {
 		value = strings.TrimSpace(value)
 		if value != "" && len(value) <= 512 && !strings.ContainsAny(value, "\x00\r\n") && len(fields) < 12 {

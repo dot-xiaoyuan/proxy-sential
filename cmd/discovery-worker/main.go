@@ -29,6 +29,7 @@ func main() {
 	}
 	workers := flag.Int("realtime-workers", workerDefault, "realtime workers (1 or 2)")
 	collectionFile := flag.String("collection-config", os.Getenv("PROXY_SENTINEL_DISCOVERY_CONFIG"), "unified protocol ownership and capture scope configuration")
+	mdnsRecordEvidenceV2 := flag.Bool("passive-dns-evidence-v2", false, "emit host and complete SRV record evidence only after installing a compatible rollback release")
 	streamJournal := flag.String("stream-journal", "", "fresh-only durable passive stream journal directory")
 	streamScope := flag.String("capture-scope-config", "", "controlled fresh passive capture scope")
 	streamEpoch := flag.String("stream-epoch", "", "explicit fresh stream generation for stream-prepare")
@@ -59,6 +60,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	collection.MDNSRecordEvidenceV2 = *mdnsRecordEvidenceV2
 	if *allowCIDRs == "" {
 		*allowCIDRs = collection.AllowedCIDRs
 	}

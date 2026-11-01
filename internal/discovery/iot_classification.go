@@ -52,6 +52,9 @@ func iotCategory(kind string) string {
 // Classification uses typed protocol declarations, never hostnames, OUI or ports.
 func observationIoTType(o Observation) (string, string) {
 	p := o.Evidence.Payload
+	if isMDNSHostAnnouncement(o.Evidence) {
+		return "", "" // a hostname/address announcement never proves a device class
+	}
 	if o.Origin == "mqtt" && p["self_binding_verified"] != true {
 		return "", ""
 	}
