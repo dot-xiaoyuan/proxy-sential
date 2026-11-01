@@ -26,7 +26,7 @@ var (
 type PassiveWALOptions struct {
 	WriteEnabled  bool
 	QuarantineDir string
-	MaxSegments   int // Includes finalized records until checkpoint/retirement exists.
+	MaxSegments   int // Includes finalized records until they can be retired.
 	WAL           streamwal.Options
 	// PhaseObserver receives fixed-size, in-memory diagnostics for legacy v1
 	// acceptance. It must not retain source data or perform blocking I/O.
@@ -93,8 +93,8 @@ type passiveTransition struct {
 	Reason        string `json:"reason,omitempty"`
 }
 
-// PassiveWALJournal is experimental: it has no rotation/checkpoint/GC and must
-// not be enabled for sustained capture. It owns the legacy source lease. Its
+// PassiveWALJournal is experimental: its single-file checkpoint cannot retire
+// bodies, and it has no rotation or GC. It owns the legacy source lease. Its
 // legacy cursor is the immutable cutover anchor once the genesis frame exists.
 type PassiveWALJournal struct {
 	legacy       *Journal
