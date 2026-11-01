@@ -22,7 +22,7 @@ import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
-import { currentFlowTargets, flowBelongsToDevice, serviceBelongsToDevice, signalAddressMatchesDevice } from './discoveryServiceAttribution'
+import { flowBelongsToDevice, serviceBelongsToDevice, signalAddressMatchesDevice } from './discoveryServiceAttribution'
 
 type Device = components['schemas']['DiscoveryDevice']
 type Page = components['schemas']['DiscoveryDevicePage']
@@ -119,6 +119,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const dumbTotal=useQuery({queryKey:['discovery-dumb-total'],queryFn:({signal})=>request<Page>('/discovery/devices?mode=passive&limit=1&capability=dumb',{signal}),enabled:coverage.data?.enabled===true})
   const history=useQuery({queryKey:['discovery-history',selected?.id,historyCursor],queryFn:({signal})=>request<History>(`/discovery/history?device_id=${encodeURIComponent(selected!.id)}&cursor=${historyCursor}&limit=20`,{signal}),enabled:!!selected&&coverage.data?.enabled===true})
   const detailIP=selected?.current_addresses?.[0]??(selected?.current_addresses?undefined:selected?.primary_ip)
+  const detailFlowTarget=selected?.sensor_id&&detailIP?`${selected.sensor_id}|${detailIP}`:''
+  const portReadEnabled=detailFlowTarget!==''&&coverage.data?.enabled===true
   const handshakeClues=useQuery({queryKey:['discovery-handshake-clues',selected?.id,selected?.sensor_id,selected?.site,selected?.domain,detailIP],queryFn:({signal})=>request<{items:HandshakeClue[]}>(`/discovery/handshake-clues?${new URLSearchParams({sensor_id:selected!.sensor_id||'',campus_id:selected!.site||'',access_domain:selected!.domain||'',ip:detailIP!})}`,{signal}),enabled:!!selected?.sensor_id&&!!selected?.site&&!!selected?.domain&&!!detailIP&&coverage.data?.enabled===true,staleTime:30_000})
   const types=Object.fromEntries((catalogue.data?.items??[]).map(t=>[t.id,t.label]))
   const items=devices.data?.items??[]
@@ -128,9 +130,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const signalKey=[...new Set(items.flatMap(item=>[item.current_addresses?.[0],item.primary_ip,item.last_observed_ip].filter(Boolean) as string[]))].sort().join(',')
   const signalMACs=[...new Set(items.map(item=>item.mac?.toLowerCase()).filter(Boolean))].sort().join(',')
   const signalSensors=[...new Set(items.map(item=>item.sensor_id).filter(Boolean))].sort().join(',')
-  const allFlowTargets=currentFlowTargets(items)
-  const flowTargets=allFlowTargets.slice(0,50).join(',')
-  const observedPorts=useQuery({queryKey:['discovery-observed-ports',flowTargets],queryFn:({signal})=>request<{items:Record<string,ObservedPort[]>}>(`/discovery/observed-ports?targets=${encodeURIComponent(flowTargets)}`,{signal}),enabled:flowTargets!==''&&coverage.data?.enabled===true,staleTime:60_000})
+  const observedPorts=useQuery({queryKey:['discovery-observed-ports',detailFlowTarget],queryFn:({signal})=>request<{items:Record<string,ObservedPort[]>}>(`/discovery/observed-ports?targets=${encodeURIComponent(detailFlowTarget)}`,{signal}),enabled:portReadEnabled,staleTime:60_000})
   const passiveSignals=useQuery({queryKey:['discovery-passive-signals',signalKey,signalMACs,signalSensors],queryFn:({signal})=>request<PassiveSignals>(`/discovery/passive-signals?ips=${encodeURIComponent(signalKey)}&macs=${encodeURIComponent(signalMACs)}&sensors=${encodeURIComponent(signalSensors)}`,{signal}),enabled:(signalKey!==''||signalMACs!=='')&&coverage.data?.enabled===true,staleTime:60_000})
   const signalFor=(item:Device)=>{const ips=new Set(item.current_addresses??[item.primary_ip].filter(Boolean));const mac=(item.mac||'').toLowerCase();const candidates=(passiveSignals.data?.items??[]).filter(signal=>{const vlan=signal.dhcp_vlan||signal.ttl_vlan;return !!item.sensor_id&&signal.sensor_id===item.sensor_id&&!signal.client_clues?.length&&(!item.vlan||!vlan||item.vlan===vlan)&&signalAddressMatchesDevice(item,signal)&&((mac&&signal.mac?.toLowerCase()===mac)||(signal.ip&&ips.has(signal.ip)&&(!mac||!signal.mac)))});return candidates.find(signal=>mac&&signal.mac?.toLowerCase()===mac&&(signal.dhcp_vlan||signal.ttl_vlan)===item.vlan)??(candidates.length===1?candidates[0]:undefined)}
   const clientFor=(item:Device)=>{const current=new Set(item.current_addresses??[]);return (passiveSignals.data?.items??[]).find(signal=>!!item.sensor_id&&signal.sensor_id===item.sensor_id&&!!signal.ip&&current.has(signal.ip)&&!!signal.client_clues?.length)}
@@ -144,11 +144,9 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.vlan?`VLAN ${item.vlan}`:item.domain}</Typography.Text><Typography.Text type="secondary">{item.vlan?[item.domain,item.sensor_id].filter(Boolean).join(' · '):item.sensor_id}</Typography.Text></Space>
   const servicesFor=(item:Device)=>{const list=serviceClues.data?.items?.[`${item.sensor_id}|${(item.mac||'').toLowerCase()}`]??[];const seen=new Set<string>();return list.filter(clue=>{if(!serviceBelongsToDevice(item,clue))return false;const key=`${clue.service_type}:${clue.port}`;if(seen.has(key))return false;seen.add(key);return true})}
   const servicePageCount=items.reduce((sum,item)=>sum+servicesFor(item).length,0)
-  const portsFor=(item:Device)=>{const seen=new Set<string>();return currentFlowTargets([item]).flatMap(target=>observedPorts.data?.items?.[target]??[]).filter(clue=>{if(!flowBelongsToDevice(item,clue))return false;const key=`${clue.proto}:${clue.dst_port}`;if(seen.has(key))return false;seen.add(key);return true}).slice(0,8)}
+  const portsFor=(item:Device)=>{const seen=new Set<string>();return (portReadEnabled?observedPorts.data?.items?.[detailFlowTarget]??[]:[]).filter(clue=>{if(!flowBelongsToDevice(item,clue))return false;const key=`${clue.proto}:${clue.dst_port}`;if(seen.has(key))return false;seen.add(key);return true}).slice(0,8)}
   const portLabel=(clue:ObservedPort)=>clue.connection_outcome==='syn_ack_observed'?`见 TCP SYN-ACK ${clue.dst_port}`:`尝试连接 ${clue.proto.toUpperCase()} ${clue.dst_port}`
-  const portTagLabel=(clue:ObservedPort)=>clue.connection_outcome==='syn_ack_observed'?`见 SYN-ACK ${clue.dst_port}`:portLabel(clue)
   const serviceTags=(item:Device)=>servicesFor(item).slice(0,4).map(clue=><Tag key={`${clue.service_type}:${clue.port}`} title={`镜像服务公告 · ${clue.evidence_id} · ${observedTimeTitle(clue.last_seen)}`}>{[clue.service_type,clue.port].filter(Boolean).join(' · ')}</Tag>)
-  const portTags=(item:Device)=>portsFor(item).slice(0,3).map(clue=><Tag key={`${clue.proto}:${clue.dst_port}`} title={`按当前 IP 关联的目标端口线索 · ${clue.evidence_id} · ${observedTimeTitle(clue.last_seen)}；${clue.connection_outcome==='syn_ack_observed'?'已匹配初始 SYN 的反向 SYN-ACK，不证明连接完成或设备本机端口开放':'初始 SYN 只证明连接尝试，不代表目标响应或设备本机端口开放'}`}>{portTagLabel(clue)}</Tag>)
   const clues=(item:Device)=><Space wrap>{(item.capabilities??[]).filter(c=>capabilities[c]).map(c=><Tag key={c}>{capabilities[c]}</Tag>)}{(item.protocols??[]).map(p=><Tag key={p}>{protocols[p]??p}</Tag>)}</Space>
   const state=(item:Device)=><Typography.Text type={item.classification_status==='conflict'?'warning':'secondary'}>{states[item.classification_status??'']??(item.current?'证据有效':'证据已过期')}</Typography.Text>
   const show=(item:Device)=>{setHistoryCursor('');setSelected(item)}
@@ -158,7 +156,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     {title:'操作系统',key:'os',width:150,render:(_:unknown,item:Device)=>{const hint=osFor(item);const signal=signalFor(item);const historical=!!signal?.dhcp_historical&&!!signal.os_family;return <Typography.Text type={hint.label==='线索冲突'?'warning':'secondary'} title={hint.detail}>{hint.label?`${hint.label} · ${hint.ipOnly?'IP 线索':historical?'历史线索':'线索'}`:''}</Typography.Text>}},
     {title:'网络位置',key:'location',width:100,render:(_:unknown,item:Device)=>location(item)},
     {title:'发现依据',key:'clues',width:110,render:(_:unknown,item:Device)=>clues(item)},
-    {title:'服务 / 端口',key:'services',width:140,render:(_:unknown,item:Device)=><Space wrap>{serviceTags(item)}{portTags(item)}</Space>},
+    {title:'服务 / 端口',key:'services',width:140,render:(_:unknown,item:Device)=><Space wrap>{serviceTags(item)}</Space>},
     {title:'证据状态 / 最近观测',key:'state',width:155,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack">{state(item)}<span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span></div>},
     {title:'操作',key:'action',width:95,fixed:'right' as const,render:(_:unknown,item:Device)=><Button type="link" onClick={()=>show(item)}>查看证据</Button>},
   ]
@@ -196,8 +194,6 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       {passiveSignals.isError&&<AppErrorAlert title="读取被动识别线索失败" message={passiveSignals.error.message} />}
       {serviceClues.isError&&<AppErrorAlert title="读取服务公告线索失败" message={serviceClues.error.message} />}
       {allServiceTargets.length>50&&<Alert type="warning" showIcon title="本页当前地址超过 50 个，仅展示已查询地址的服务公告线索" />}
-      {observedPorts.isError&&<AppErrorAlert title="读取目标端口线索失败" message={observedPorts.error.message} />}
-      {allFlowTargets.length>50&&<Alert type="warning" showIcon title="本页当前地址超过 50 个，仅展示已查询地址的目标端口线索" />}
       {statistics.isError&&<AppErrorAlert title="读取设备统计失败" message={statistics.error.message} />}
       {statistics.data&&<div className="discovery-statistics" aria-label="设备类型统计">{statistics.data.items.filter(item=>item.count>0&&item.state!=='candidate').map(item=><span className="discovery-statistics-item" title={`统计更新于 ${observedTimeTitle(item.updated_at)}`} key={`${item.device_type}:${item.state}`}>{types[item.device_type]??item.device_type} · {states[item.state]??''} {item.count}</span>)}{statistics.data.pending_updates>0&&<Typography.Text type="secondary">统计处理中 {statistics.data.pending_updates}</Typography.Text>}</div>}
       <Collapse ghost items={[{key:'coverage',label:'采集覆盖与处理状态',children:coverage.isError?<AppErrorAlert title="读取采集状态失败" />:coverage.data?.enabled===false?<Typography.Text>当前运行旧版发现路径</Typography.Text>:<div className="iot-coverage-grid">{coverage.data?.items.map(p=><article className="iot-coverage-item" key={`${p.sensor_id}:${p.protocol}`}><strong>{protocols[p.protocol]??p.protocol}</strong><Typography.Text type="secondary">{p.sensor_id}</Typography.Text><span>{p.message_source_epoch?'逐消息源已登记':p.handshake_source_epoch?'握手侧车已登记 · 详情弱线索':p.error?'采集异常':!p.enabled?'未启用':p.received===0?'暂未捕获协议流量':'已捕获协议流量'}</span><span>{p.message_source_epoch?'旧链路累计 ':p.handshake_source_epoch?'发现链路累计 ':''}捕获 {p.received} · 解析 {p.parsed} · 处理 {p.admitted}</span></article>)}</div>}]} />
@@ -217,7 +213,10 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       {handshakeClues.isError&&<AppErrorAlert title="读取握手弱线索失败" />}
       {!!handshakeClues.data?.items.length&&<section className="discovery-client-clues"><Typography.Text type="secondary">镜像握手弱线索（当前 IP {detailIP}，地址共享或复用时需核对）</Typography.Text>{handshakeClues.data.items.map((clue,index)=><article key={`${clue.kind}:${clue.evidence_id}:${index}`}><strong>{clue.kind==='user_agent'?'HTTP User-Agent':clue.kind==='ja4'?'TLS JA4':'TLS JA3'}</strong><span>{clue.value}</span><Typography.Text type="secondary">{[clue.dst_port?`握手目标 TCP/${clue.dst_port}`:'',clue.evidence_id,observedTimeTitle(clue.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}
       {servicesFor(selected).length>0&&<section className="discovery-client-clues"><Typography.Text type="secondary">服务公告证据事件</Typography.Text>{servicesFor(selected).map(clue=><article key={`${clue.service_type}:${clue.port}`}><strong>{clue.service_type} · {clue.port}</strong><Typography.Text type="secondary">{clue.evidence_id} · {observedTimeTitle(clue.last_seen)}</Typography.Text></article>)}</section>}
-      {portsFor(selected).length>0&&<section className="discovery-client-clues"><Typography.Text type="secondary">目标端口线索（按当前 IP 关联；SYN-ACK 仅说明镜像见到反向响应，不证明连接完成或设备本机端口开放）</Typography.Text>{portsFor(selected).map(clue=><article key={`${clue.proto}:${clue.dst_port}`}><strong>{portLabel(clue)}</strong><Typography.Text type="secondary">{clue.evidence_id} · {observedTimeTitle(clue.last_seen)}</Typography.Text></article>)}</section>}
+      {portReadEnabled&&observedPorts.isPending&&<Typography.Text type="secondary">正在读取当前 IP 近 2 小时目标端口线索</Typography.Text>}
+      {portReadEnabled&&observedPorts.isError&&<AppErrorAlert title="读取目标端口线索失败" message={observedPorts.error.message} />}
+      {portReadEnabled&&observedPorts.data&&portsFor(selected).length===0&&<Typography.Text type="secondary">当前 IP 近 2 小时的镜像端口聚合中无匹配记录</Typography.Text>}
+      {portsFor(selected).length>0&&<section className="discovery-client-clues"><Typography.Text type="secondary">近 2 小时目标端口线索（按当前 IP 关联；SYN-ACK 仅说明镜像见到反向响应，不证明连接完成或设备本机端口开放）</Typography.Text>{portsFor(selected).map(clue=><article key={`${clue.proto}:${clue.dst_port}`}><strong>{portLabel(clue)}</strong><Typography.Text type="secondary">{clue.evidence_id} · {observedTimeTitle(clue.last_seen)}</Typography.Text></article>)}</section>}
       {history.isError&&<AppErrorAlert title="读取设备历史失败" />}
       {history.data&&<><Typography.Title level={5}>变化历史</Typography.Title>{history.data.items.map(row=><article className="discovery-card" key={row.id}><strong>{protocols[row.evidence?.origin]??row.evidence?.origin}</strong><span>{row.evidence?.explanation}</span><Typography.Text type="secondary">观测于 {observedTimeTitle(row.observed_at)}</Typography.Text></article>)}<Space wrap><Button disabled={historyCursor===''||history.isFetching} onClick={()=>setHistoryCursor('')}>最新记录</Button><Button disabled={!history.data.has_more||history.isFetching} onClick={()=>setHistoryCursor(history.data!.next_cursor)}>更早记录</Button></Space></>}
     </>}</Modal>
