@@ -75,6 +75,11 @@
 - 本地后续提交 `e1a2987` 修正识别分类结构经 JSONB 回读后与 Go struct 比较不等导致 5 秒重复观测合并失效的问题；精确比较文档和时间、过期边界后，已证明未变化的行不参与状态 UPSERT，整批均未变化时跳过全局结果版本锁。回放先红后绿，全仓 Go 测试、构建、vet、Linux amd64 构建和独立审查通过；本机单行比较微基准约 15.7 微秒、18.6 KB 分配，现场整批跳过比例、PostgreSQL 并发影响与实际收益未知。每设备锁和事实读取仍在原路径，**该提交未进入 r37 包**。
 - 本地后续提交 `1a09757` 把发现页两列宽度调整为 175/150 像素，表格内部滚动宽度与 8 列总宽同为 1115 像素。三视口 mock Playwright 的原版 1440px 裁切断言先失败、修复后 3/3 通过：390px 卡片无页级溢出，1280px 只在表内滚动，1440px 表头完整；DOM、控制台和网络探针已检查。前端 Vitest 170 项、API 契约/typecheck 与生产构建通过；当前 Node 25 的实验 WebStorage stub 使普通 `pnpm test` 出现 15 项无关失败，关闭该实验能力后 170 项全绿。**修复未进入 r37 的现场前端**，现场裁切仍待下一次已授权更新。
 
+### r38 本地候选与 184 只读预检；尚未获现场更新授权
+
+- 本地 Linux amd64 包 `2026.11.01-mirror-discovery-r38` 由源码提交 `401c26a2e956c5718e71f3b41fc784d76a2217cd` 构建，SHA256 为 `ac74b35ea3f51d0b373c1af2bfeebc53b1ad41ea38b8eec7a35936a0d18a3312`，压缩包 71,043,493 字节、载荷 279,185,723 字节。包外校验、539 个成员路径/空间检查、513 项包内 SHA256 全通过；清单 `git_worktree_modified=true` 仅因既有未跟踪验收资料，打包时已跟踪文件干净，资料未入包。相对 r37 仅包含上述 mDNS 范围缓存准入、JSONB 回读的重复观测合并与无变化写入过滤、发现页表头布局；迁移、部署脚本、systemd 单元与命令行入口未改。合并后的全仓 Go `test/build/vet`、Linux amd64 构建、前端 170 项 Vitest、API 契约/typecheck、生产构建及三视口 mock Playwright 3/3 通过。包仅在本机 `/tmp/proxy-sentinel-mirror-r38/`，未上传或安装到 184。
+- 184 只读预检确认 `current=r37`、`previous=r36`、r38 发布目录不存在，18 个活动应用进程实际执行 r37；固定版本 inventory 仍为 r24。现场 PostgreSQL 216 项、ClickHouse 61 项候选迁移校验值全部一致，无新迁移；现场 PG 另有既有历史 `202_identity_archive_groups.sql`。18 个活动服务共 114 个现场启动参数，用同源本机候选帮助输出对照无缺失；Linux amd64 二进制仍须在已授权更新时由现场脚本最终复核。root 盘可用 570,457,513,984 字节，runtime.env/discovery.env 均 root:root、权限 600、SHA256 与 r37 记录相同；`local_users=1`，PG/CH healthy、控制面 readyz 200、NCU 既有 503。router-prober 当前 active 但 disabled，升级脚本会按 active 纳入重启，不应擅改开机状态。若另获 r38 授权，应走无迁移的应用更新流程并保留 r37 为 `previous`，在真实持续输入下观察状态写入、投影队列、DNS 范围跳过与容量拒绝、页面三视口及回退能力；此前 r37 授权不覆盖本次。
+
 ## 2026-11-01 16:55 后接续：r33 已发布，17:12 恢复旧段后开始新采集
 
 - 用户明确授权更新 r33 并观察。16:55 按应用更新流程部署 `2026.11.01-mirror-discovery-r33`，源码 `9e65f20e93567148995f0a4608f0bd14d677d3da`，包 SHA256 `a8c1f94019544390a9b84f04e53fcd3a00270b6f403300033020469761af57ce`。包内 511 文件和包外校验通过，PostgreSQL 214 项、ClickHouse 61 项迁移全部已应用且一致，无新增迁移、数据库备份或数据重置。18 个活动应用进程核对为 r33；`current=r33`、`previous=r32`，固定版本 inventory 及旧发布目录保留。现场 runtime.env SHA256 仍为 `1ab730cbf8eff7f8e889895a01177336537ffb88c5d98cabc643b000d70aef32`，未启用 DNS v2 输出或 WAL 写入。
