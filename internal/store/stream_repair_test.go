@@ -16,8 +16,9 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
-func TestRetryProvenUnsentSourceBackedArchiveRequiresRawAndBodyProof(t *testing.T) {
+func TestRetryProvenUnsentV2SourceBackedArchiveRequiresRawAndBodyProof(t *testing.T) {
 	segment := testStreamSegment()
+	segment.BodyLayout = "v2"
 	segment.AcceptedAt = time.Now().UTC().Add(-3 * time.Minute)
 	segment.SourceBackedRaw = true
 	segment.Raw = []byte(strings.Repeat("x", 100))
@@ -31,9 +32,16 @@ func TestRetryProvenUnsentSourceBackedArchiveRequiresRawAndBodyProof(t *testing.
 	rawToken := streamInsertSettings(id, "stream_source_raw")["insert_deduplication_token"]
 	var rawPresent, bodyPresent, rawTokenSeen, rawBusy bool
 	var rawInserts, bodyInserts int
+	var bodyQueueProof, bodyLogProof bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)
 		q := string(data)
+		if strings.Contains(q, "FROM system.asynchronous_inserts") && strings.Contains(q, "stream_event_body_evidence_v2") {
+			bodyQueueProof = true
+		}
+		if strings.Contains(q, "FROM system.query_log") && strings.Contains(q, "INSERT INTO stream_event_body_evidence_v2") {
+			bodyLogProof = true
+		}
 		switch {
 		case strings.HasPrefix(q, "SELECT raw_sha256,raw_base64"):
 			if rawPresent {
@@ -62,7 +70,7 @@ func TestRetryProvenUnsentSourceBackedArchiveRequiresRawAndBodyProof(t *testing.
 		case strings.HasPrefix(q, "INSERT INTO stream_source_raw"):
 			rawInserts++
 			rawPresent = true
-		case strings.HasPrefix(q, "INSERT INTO stream_event_body_evidence"):
+		case strings.HasPrefix(q, "INSERT INTO stream_event_body_evidence_v2"):
 			bodyInserts++
 			bodyPresent = true
 		}
@@ -90,8 +98,8 @@ func TestRetryProvenUnsentSourceBackedArchiveRequiresRawAndBodyProof(t *testing.
 	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err != nil {
 		t.Fatal(err)
 	}
-	if rawInserts != 1 || bodyInserts != 1 {
-		t.Fatalf("expected one raw and body insert, got raw=%d body=%d", rawInserts, bodyInserts)
+	if rawInserts != 1 || bodyInserts != 1 || !bodyQueueProof || !bodyLogProof {
+		t.Fatalf("v2 repair proof or write missing: raw=%d body=%d queue=%t log=%t", rawInserts, bodyInserts, bodyQueueProof, bodyLogProof)
 	}
 }
 

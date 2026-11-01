@@ -35,7 +35,7 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamLane(ctx context.Context, id st
 				return errors.New("mixed retention classes require separate repair proof")
 			}
 		}
-		table = "stream_event_body_" + prepared[0].retention
+		table = streamBodyTable(prepared[0].retention, segment.BodyLayout)
 		missing, err = s.missingStreamBodyEvents(ctx, segment)
 	case streamlog.Search:
 		table = "stream_event_search"
