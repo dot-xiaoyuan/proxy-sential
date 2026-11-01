@@ -66,6 +66,43 @@ func TestMDNSFullCacheFlushRecoversChangedServiceAddressOnRepeat(t *testing.T) {
 	assertDNSCacheIndexes(t, &decoder.DNS)
 }
 
+func TestMDNSFullCacheFlushSurvivesDuplicateRecordWithBitOnlyOnSecondCopy(t *testing.T) {
+	var decoder FrameDecoder
+	source := Source{ID: "mirror", Node: "sensor", Site: "campus", Domain: "access", Address: "mirror0"}
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	scope := dnsCacheNamespace(source, "", "10.1.2.99")
+	service := coverageDNSSRV(600)
+	oldAddress := flushAddress("printer.local.", [4]byte{10, 1, 2, 3}, 600)
+	newAddress := flushAddress("printer.local.", [4]byte{10, 1, 2, 4}, 600)
+	withoutFlush := newAddress
+	withoutFlush.Header.Class = dnsmessage.ClassINET
+	for _, record := range []dnsmessage.Resource{service, oldAddress} {
+		if decoder.DNS.observe(scope, record, at) {
+			t.Fatal("initial service dependency was not retained")
+		}
+	}
+	for i := 0; i < dnsCacheMaxRecords-2; i++ {
+		if decoder.DNS.observe(scope, coverageDNSAddress(fmt.Sprintf("host-%d.local.", i), 600), at) {
+			t.Fatalf("cache filled before record %d", i)
+		}
+	}
+	// Both wire records have the same cache key. The output de-duplicates them,
+	// but the second copy's flush bit must still retire the stale RRSet member.
+	decoder.Decode(coverageMDNSFrame(t, withoutFlush, newAddress), source, at.Add(2*time.Second))
+	if decoder.DNS.records[dnsCacheRecordKey(scope, oldAddress)] == nil || decoder.DNS.records[dnsCacheRecordKey(scope, newAddress)] != nil {
+		t.Fatal("the first announcement must respect the full budget and grace period")
+	}
+	decoder.Decode(coverageMDNSFrame(t, withoutFlush), source, at.Add(4*time.Second))
+	if decoder.DNS.records[dnsCacheRecordKey(scope, oldAddress)] != nil || decoder.DNS.records[dnsCacheRecordKey(scope, newAddress)] == nil {
+		t.Fatal("flush bit on the duplicate copy was lost before cache admission")
+	}
+	resolved := decoder.Decode(coverageMDNSFrame(t, service), source, at.Add(5*time.Second))
+	if len(resolved) != 1 || str(resolved[0].Subject, "ip") != "10.1.2.4" {
+		t.Fatalf("cross-message service used stale address: %+v", resolved)
+	}
+	assertDNSCacheIndexes(t, &decoder.DNS)
+}
+
 func TestMDNSCacheFlushPreservesRecentRRSetMembersAndTTL0(t *testing.T) {
 	var decoder FrameDecoder
 	source := Source{ID: "mirror", Node: "sensor", Site: "campus", Domain: "access", Address: "mirror0"}

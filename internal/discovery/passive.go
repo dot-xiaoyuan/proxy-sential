@@ -288,7 +288,10 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 			}
 		}
 		if dport == 5353 {
-			cache.flushObsolete(scope, records, at)
+			// De-duplication may discard a later copy carrying the flush bit.
+			// Keep current-message output de-duplicated, but inspect every wire
+			// record when deciding whether an old RRSet member must age out.
+			cache.flushObsolete(scope, packetRecords, at)
 		}
 		// Current-message records always participate, including rejected cache
 		// admissions and withdrawals. Read only cached service dependencies.
