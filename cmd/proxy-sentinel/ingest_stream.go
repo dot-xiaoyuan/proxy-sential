@@ -63,9 +63,10 @@ func verifyIngestStreamCutover(ctx context.Context, db *sql.DB, cursor streamlog
 	}
 	var registeredSensor, registeredFile, parser, manifest, registeredScope string
 	var start int64
-	err := db.QueryRowContext(ctx, `SELECT sensor_id,file_id,start_offset,parser_version,cancel_manifest_sha256,capture_scope_sha256
+	var cutoverAt time.Time
+	err := db.QueryRowContext(ctx, `SELECT sensor_id,file_id,start_offset,parser_version,cancel_manifest_sha256,capture_scope_sha256,cutover_at
  FROM stream_source_cutovers WHERE epoch=$1 AND source_kind=$2 AND source_path=$3 AND state='active'`, cursor.Epoch, cursor.Source, cursor.Path).
-		Scan(&registeredSensor, &registeredFile, &start, &parser, &manifest, &registeredScope)
+		Scan(&registeredSensor, &registeredFile, &start, &parser, &manifest, &registeredScope, &cutoverAt)
 	if err != nil {
 		return fmt.Errorf("active file source cutover missing: %w", err)
 	}
@@ -76,15 +77,42 @@ func verifyIngestStreamCutover(ctx context.Context, db *sql.DB, cursor streamlog
 	// The cutover offset belongs to the original file. After rotation, Offset
 	// starts at zero in the next file while DiscardedBeforeOffset remains the
 	// immutable original cutoff. Require a committed segment and a newer file
-	// generation before accepting an offset below that cutoff.
+	// generation before accepting an offset below that cutoff. A recycled inode
+	// can reuse the original file ID; prove that file is newer and its committed
+	// tail is intact before accepting that collision.
 	if cursor.Offset < cursor.DiscardedBeforeOffset {
 		if cursor.LastSegmentID == "" ||
 			(cursor.KeyScheme == "generation-v2" && cursor.Generation <= 1) ||
-			(cursor.KeyScheme != "generation-v2" && registeredFile == cursor.FileID) {
+			(cursor.KeyScheme != "generation-v2" && registeredFile == cursor.FileID && !proveReusedFileCursor(cursor, cutoverAt)) {
 			return errors.New("file stream cursor rewound below audited cutover")
 		}
 	}
 	return nil
+}
+
+func proveReusedFileCursor(cursor streamlog.SourceCursor, cutoverAt time.Time) bool {
+	if cursor.TailBytes <= 0 || cursor.TailBytes > streamlog.SourceTailProofBytes || cursor.Offset < int64(cursor.TailBytes) || len(cursor.TailSHA256) != 64 {
+		return false
+	}
+	f, err := os.Open(cursor.Path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || realtime.FileIdentity(cursor.Path, info) != cursor.FileID || info.Size() < cursor.Offset {
+		return false
+	}
+	birth, ok := fileBirthTime(f)
+	if !ok || !birth.After(cutoverAt) {
+		return false
+	}
+	tail := make([]byte, cursor.TailBytes)
+	if _, err := f.ReadAt(tail, cursor.Offset-int64(cursor.TailBytes)); err != nil {
+		return false
+	}
+	sum := sha256.Sum256(tail)
+	return hex.EncodeToString(sum[:]) == cursor.TailSHA256
 }
 
 func runIngestStream(args []string) error {

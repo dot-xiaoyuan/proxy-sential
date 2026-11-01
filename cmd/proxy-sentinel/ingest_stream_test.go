@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"proxy-sentinel/internal/realtime"
 	"proxy-sentinel/internal/streamlog"
 )
 
@@ -28,7 +34,7 @@ func TestZeekStreamRunRequiresMatchingActiveCutover(t *testing.T) {
 			}
 			defer db.Close()
 			mock.ExpectQuery(`FROM stream_source_cutovers`).WithArgs(cursor.Epoch, cursor.Source, cursor.Path).
-				WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "start_offset", "parser_version", "cancel_manifest_sha256", "capture_scope_sha256"}).AddRow(tc.sensor, tc.file, tc.start, tc.parser, tc.manifest, strings.Repeat("a", 64)))
+				WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "start_offset", "parser_version", "cancel_manifest_sha256", "capture_scope_sha256", "cutover_at"}).AddRow(tc.sensor, tc.file, tc.start, tc.parser, tc.manifest, strings.Repeat("a", 64), time.Now().Add(-time.Hour)))
 			err = verifyIngestStreamCutover(context.Background(), db, cursor, "sensor-a", strings.Repeat("a", 64))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("unexpected cutover result: %v", err)
@@ -48,7 +54,7 @@ func TestControlledSignalStreamNeedsItsOwnAuditedCutover(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectQuery(`FROM stream_source_cutovers`).WithArgs(cursor.Epoch, cursor.Source, cursor.Path).
-		WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "start_offset", "parser_version", "cancel_manifest_sha256", "capture_scope_sha256"}).AddRow("sensor-a", "file-2", int64(200), "device-v1", "manifest", strings.Repeat("b", 64)))
+		WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "start_offset", "parser_version", "cancel_manifest_sha256", "capture_scope_sha256", "cutover_at"}).AddRow("sensor-a", "file-2", int64(200), "device-v1", "manifest", strings.Repeat("b", 64), time.Now().Add(-time.Hour)))
 	if err := verifyIngestStreamCutover(context.Background(), db, cursor, "sensor-a", strings.Repeat("b", 64)); err != nil {
 		t.Fatal(err)
 	}
@@ -88,10 +94,62 @@ func TestVerifiedBindingRestartAfterRotationKeepsOriginalCutover(t *testing.T) {
 			}
 			defer db.Close()
 			mock.ExpectQuery(`FROM stream_source_cutovers`).WithArgs(cursor.Epoch, cursor.Source, cursor.Path).
-				WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "start_offset", "parser_version", "cancel_manifest_sha256", "capture_scope_sha256"}).AddRow("sensor-a", "old-file", int64(742359), "zeek-dhcp-binding-v2", "manifest", strings.Repeat("c", 64)))
+				WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "start_offset", "parser_version", "cancel_manifest_sha256", "capture_scope_sha256", "cutover_at"}).AddRow("sensor-a", "old-file", int64(742359), "zeek-dhcp-binding-v2", "manifest", strings.Repeat("c", 64), time.Now().Add(-time.Hour)))
 			err = verifyIngestStreamCutover(context.Background(), db, cursor, "sensor-a", strings.Repeat("c", 64))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("rotation restart validation: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestDeviceSignalRestartAcceptsAuditedInodeReuse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "handshake.jsonl")
+	content := []byte("new rotated source with a committed cursor")
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const offset = 24
+	sum := sha256.Sum256(content[:offset])
+	cursor := streamlog.SourceCursor{
+		Epoch: "fresh-handshake", Source: "device-signals", Path: path,
+		FileID: realtime.FileIdentity(path, info), Offset: offset,
+		DiscardedBeforeOffset: 100, ParserVersion: "device-v1",
+		LastSegmentID: "committed-segment", TailBytes: offset, TailSHA256: hex.EncodeToString(sum[:]),
+	}
+	for _, tc := range []struct {
+		name      string
+		cutoverAt time.Time
+		wrongTail bool
+		wantErr   bool
+	}{
+		{name: "rotated file born after cutover", cutoverAt: time.Now().Add(-time.Hour)},
+		{name: "old file cannot rewind", cutoverAt: time.Now().Add(time.Hour), wantErr: true},
+		{name: "changed committed tail cannot rewind", cutoverAt: time.Now().Add(-time.Hour), wrongTail: true, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := cursor
+			if tc.wrongTail {
+				candidate.TailSHA256 = strings.Repeat("0", 64)
+			}
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectQuery(`FROM stream_source_cutovers`).WithArgs(candidate.Epoch, candidate.Source, candidate.Path).
+				WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "start_offset", "parser_version", "cancel_manifest_sha256", "capture_scope_sha256", "cutover_at"}).
+					AddRow("sensor-a", candidate.FileID, int64(100), "device-v1", "manifest", strings.Repeat("d", 64), tc.cutoverAt))
+			err = verifyIngestStreamCutover(context.Background(), db, candidate, "sensor-a", strings.Repeat("d", 64))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("inode reuse restart validation: %v", err)
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)
