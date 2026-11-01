@@ -670,6 +670,21 @@ func TestStreamPositionKeysKeepSignedSuricataDerivedEvent(t *testing.T) {
 	}
 }
 
+func TestNonPassiveStreamPositionReservesCompactEventPrefix(t *testing.T) {
+	inputID := "stream2-external-producer"
+	events := []normalized.Event{{EventID: inputID, Type: "discovery"}}
+	source := Source{Kind: "device-signals", Path: "/logs/device-signals.jsonl"}
+	if err := assignStreamPositionKeys(events, source, "fresh", "file-1", 0, []byte("record\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(events[0].EventID, "stream-") || strings.HasPrefix(events[0].EventID, "stream2-") {
+		t.Fatalf("non-passive input claimed compact namespace: %s", events[0].EventID)
+	}
+	if events[0].RawRef["producer_event_id"] != inputID {
+		t.Fatalf("original producer key was not retained: %+v", events[0].RawRef)
+	}
+}
+
 func TestStreamPositionKeysKeepSignedZeekProxyEvents(t *testing.T) {
 	cfg, err := proxyprotocol.Load("../../examples/proxy-protocol/producers.example.json")
 	if err != nil {

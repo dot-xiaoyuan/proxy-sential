@@ -78,6 +78,20 @@ func TestStreamArchiveConfirmationUsesCompactLedgerForStream2(t *testing.T) {
 	}
 }
 
+func TestNonPassiveLegacyStream2SegmentCanStillRecover(t *testing.T) {
+	segment := receiptPreparationSegment(1)
+	segment.Source = "device-signals"
+	segment.Events[0].EventID = "stream2-old-source"
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil || len(prepared) != 1 {
+		t.Fatalf("legacy non-passive projection blocked: %d %v", len(prepared), err)
+	}
+	receipts, err := prepareStreamArchiveReceipts(segment)
+	if err != nil || len(receipts) != 1 || receipts[0].Key != segment.Epoch+":stream2-old-source" {
+		t.Fatalf("legacy non-passive confirmation blocked: %+v %v", receipts, err)
+	}
+}
+
 func TestStreamArchiveConfirmationRejectsInvalidIdentityBeforeTransaction(t *testing.T) {
 	for _, kind := range []string{"epoch", "accepted", "empty", "id", "timestamp", "scope", "encoding", "duplicate", "conflict", "mixed_scheme", "unsupported"} {
 		t.Run(kind, func(t *testing.T) {
