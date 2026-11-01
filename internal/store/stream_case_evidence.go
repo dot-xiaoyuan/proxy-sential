@@ -34,11 +34,19 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pg.db.QueryContext(ctx, `SELECT k.epoch,k.scope_id,k.event_key,k.content_sha256,r.body_ref
+	rows, err := s.pg.db.QueryContext(ctx, `SELECT v.epoch,v.scope,v.key,v.sha256,r.body_ref
  FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,scope text,key text,sha256 text)
- JOIN stream_discovery_event_keys k ON k.epoch=v.epoch AND k.scope_id=v.scope AND k.event_key=v.key AND k.content_sha256=v.sha256
- JOIN stream_discovery_receipts r ON r.accepted_month=k.accepted_month AND r.epoch=k.epoch AND r.scope_id=k.scope_id AND r.event_key=k.event_key
- WHERE r.archive_state IN ('confirmed','verified')`, raw)
+	LEFT JOIN stream_discovery_event_keys k ON k.epoch=v.epoch AND k.scope_id=v.scope AND k.event_key=v.key
+	LEFT JOIN stream_discovery_event_keys_compact kc
+	 ON kc.key_hash=sentinel_stream_discovery_key_hash(v.epoch,v.scope,v.key)
+	 AND kc.epoch=v.epoch AND kc.scope_id=v.scope AND kc.event_key=v.key
+	JOIN stream_discovery_receipts r ON r.accepted_month=coalesce(kc.accepted_month,k.accepted_month)
+	 AND r.epoch=v.epoch AND r.scope_id=v.scope AND r.event_key=v.key
+	WHERE r.archive_state IN ('confirmed','verified')
+	 AND (k.event_key IS NOT NULL OR kc.event_key IS NOT NULL)
+	 AND (k.event_key IS NULL OR k.content_sha256=v.sha256)
+	 AND (kc.event_key IS NULL OR kc.content_sha256=v.sha256)
+	 AND (k.event_key IS NULL OR kc.event_key IS NULL OR k.accepted_month=kc.accepted_month)`, raw)
 	if err != nil {
 		return nil, err
 	}

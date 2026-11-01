@@ -30,6 +30,7 @@ func main() {
 	workers := flag.Int("realtime-workers", workerDefault, "realtime workers (1 or 2)")
 	collectionFile := flag.String("collection-config", os.Getenv("PROXY_SENTINEL_DISCOVERY_CONFIG"), "unified protocol ownership and capture scope configuration")
 	mdnsRecordEvidenceV2 := flag.Bool("passive-dns-evidence-v2", false, "emit host and complete SRV record evidence only after installing a compatible rollback release")
+	compactPassiveKeys := flag.Bool("passive-compact-event-keys", false, "reserved for compact-key successor; ignored by compatibility release")
 	streamJournal := flag.String("stream-journal", "", "fresh-only durable passive stream journal directory")
 	streamScope := flag.String("capture-scope-config", "", "controlled fresh passive capture scope")
 	streamEpoch := flag.String("stream-epoch", "", "explicit fresh stream generation for stream-prepare")
@@ -61,6 +62,12 @@ func main() {
 		log.Fatal(err)
 	}
 	collection.MDNSRecordEvidenceV2 = *mdnsRecordEvidenceV2
+	// The compatibility release accepts this flag so a rollback from the
+	// compact-only successor can start, but never mints compact keys itself.
+	// A later code release will opt in only with this release as previous.
+	if *compactPassiveKeys {
+		log.Print("compact passive event-key producer disabled in compatibility release")
+	}
 	if *allowCIDRs == "" {
 		*allowCIDRs = collection.AllowedCIDRs
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,7 +45,7 @@ func TestAppendPassiveStreamBatchUsesAtomicPersistence(t *testing.T) {
 			event := streamDiscoveryEvent("producer-id", at.Format(time.RFC3339Nano), 600)
 			event.Observer["interface"] = "bond0"
 			event.Subject["site"], event.Subject["domain"] = "site-a", "domain-a"
-			got, err := appendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event})
+			got, err := appendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event}, false)
 			if j.calls != 1 || j.segment.PreviousOffset != 77 || j.segment.PreviousFileID != "boot-a" || j.segment.StartOffset != 0 || j.segment.FileID != "boot-b" {
 				t.Fatalf("atomic accept lost predecessor or collector boundary: calls=%d segment=%+v", j.calls, j.segment)
 			}
@@ -55,6 +56,33 @@ func TestAppendPassiveStreamBatchUsesAtomicPersistence(t *testing.T) {
 				t.Fatalf("failed acceptance must not enter successful metrics: %v %+v", err, got)
 			}
 		})
+	}
+}
+
+func TestPassiveCompactEventKeyHasDisjointStableNamespace(t *testing.T) {
+	source := Source{ID: "passive-sensor-a", Node: "sensor-a", Site: "site-a", Domain: "domain-a", Address: "bond0"}
+	at := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
+	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "boot-a", CampusID: "site-a", AccessDomain: "domain-a", InterfaceName: "bond0", ValidFrom: at.Add(-time.Hour), ValidUntil: at.Add(24 * time.Hour)}
+	path := PassiveStreamSourcePath(source)
+	j := &passiveAtomicTestJournal{cursor: streamlog.SourceCursor{Epoch: "fresh-1", Source: "passive-discovery", Path: path, FileID: "boot-a", Offset: 77, ParserVersion: PassiveStreamParserVersion}}
+	event := streamDiscoveryEvent("producer-id", at.Format(time.RFC3339Nano), 600)
+	event.Observer["interface"] = "bond0"
+	event.Subject["site"], event.Subject["domain"] = "site-a", "domain-a"
+	old, err := appendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := appendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := old.Segment.Events[0].EventID
+	newKey := compact.Segment.Events[0].EventID
+	if !strings.HasPrefix(oldKey, "stream-") || !strings.HasPrefix(newKey, "stream2-") || oldKey == newKey || strings.TrimPrefix(oldKey, "stream-") != strings.TrimPrefix(newKey, "stream2-") {
+		t.Fatalf("source-position identity changed instead of namespace: old=%q compact=%q", oldKey, newKey)
+	}
+	if old.Segment.Events[0].RawRef["producer_event_id"] != "producer-id" || compact.Segment.Events[0].RawRef["producer_event_id"] != "producer-id" {
+		t.Fatal("producer evidence was lost at key cutover")
 	}
 }
 
@@ -75,7 +103,7 @@ func TestAppendPassiveStreamBatchFixesScopeAndSourcePosition(t *testing.T) {
 	event.Observer["interface"] = "bond0"
 	event.Subject["site"] = "site-a"
 	event.Subject["domain"] = "domain-a"
-	captured, err := appendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event})
+	captured, err := appendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

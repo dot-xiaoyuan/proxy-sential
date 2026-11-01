@@ -51,7 +51,7 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 		if err := json.Unmarshal(b, &events); err != nil {
 			return err
 		}
-		captured, err := appendPassiveStreamBatch(ctx, journal, source, scope, events)
+		captured, err := appendPassiveStreamBatch(ctx, journal, source, scope, events, config.CompactPassiveEventKeys)
 		if err != nil {
 			return err
 		}
@@ -99,6 +99,9 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	decoder := newCaptureFrameDecoder(config.MDNSRecordEvidenceV2)
 	stats := NewCaptureStats()
 	stats.Config = config
+	if config.CompactPassiveEventKeys {
+		stats.EventKeyVersion = 2
+	}
 	if config.MDNSRecordEvidenceV2 {
 		stats.DNSRecordEvidenceVersion = 2
 	}

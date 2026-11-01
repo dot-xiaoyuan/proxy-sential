@@ -43,11 +43,11 @@ func PassiveStreamSourcePath(source Source) string {
 // observations. The segment owns the standard events once; packet bytes were
 // never retained, so this source must not claim packet-level provenance.
 func AppendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, events []normalized.Event) (string, error) {
-	captured, err := appendPassiveStreamBatch(ctx, journal, source, scope, events)
+	captured, err := appendPassiveStreamBatch(ctx, journal, source, scope, events, false)
 	return captured.ID, err
 }
 
-func appendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, events []normalized.Event) (CapturedSegment, error) {
+func appendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, events []normalized.Event, compactKeys bool) (CapturedSegment, error) {
 	if journal == nil || scope == nil || source.ID == "" || source.Address == "" || len(events) == 0 || len(events) > streamlog.MaxSegmentEvents {
 		return CapturedSegment{}, errors.New("passive stream requires a bounded batch, source and capture scope")
 	}
@@ -95,7 +95,11 @@ func appendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal,
 		original := prepared[index].EventID
 		identity, _ := json.Marshal([]any{cursor.Epoch, "passive-discovery", path, scope.CollectorInstanceID, start, index})
 		sum := sha256.Sum256(identity)
-		prepared[index].EventID = "stream-" + hex.EncodeToString(sum[:16])
+		prefix := "stream-"
+		if compactKeys {
+			prefix = "stream2-"
+		}
+		prepared[index].EventID = prefix + hex.EncodeToString(sum[:16])
 		prepared[index].RawRef = cloneStreamFields(prepared[index].RawRef)
 		prepared[index].RawRef["backend"] = "passive-discovery"
 		prepared[index].RawRef["producer_event_id"] = original

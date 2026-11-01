@@ -40,6 +40,7 @@ type DNSCacheCaptureStats struct {
 
 type CaptureStats struct {
 	DNSRecordEvidenceVersion int                              `json:"dns_record_evidence_version"`
+	EventKeyVersion          int                              `json:"event_key_version"`
 	Config                   CollectionConfig                 `json:"config"`
 	StartedAt                time.Time                        `json:"started_at"`
 	UpdatedAt                time.Time                        `json:"updated_at"`
@@ -54,7 +55,7 @@ type CaptureStats struct {
 var DiscoveryCaptureProtocols = []string{"dns_sd", "ssdp", "ws_discovery", "snmp", "arp", "ndp", "lldp", "cdp", "ieee1905_client_association", "dhcpv6", "nbns", "llmnr", "bacnet", "coap"}
 
 func NewCaptureStats() *CaptureStats {
-	s := &CaptureStats{DNSRecordEvidenceVersion: 1, StartedAt: time.Now().UTC(), Protocols: map[string]*ProtocolCaptureStats{}}
+	s := &CaptureStats{DNSRecordEvidenceVersion: 1, EventKeyVersion: 1, StartedAt: time.Now().UTC(), Protocols: map[string]*ProtocolCaptureStats{}}
 	for _, p := range DiscoveryCaptureProtocols {
 		s.Protocols[p] = &ProtocolCaptureStats{}
 	}

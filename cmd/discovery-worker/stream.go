@@ -136,6 +136,8 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 			return err
 		}
 	}
+	// This compatibility release always dual-writes any stream2 segment it
+	// encounters, including after rollback from a later compact-only release.
 	projector := discovery.StreamDiscoveryProjector{DB: db}
 	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector}
 	if opts.DrainOnly {

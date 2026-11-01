@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/evidence"
+	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/recognitiondiag"
 	"proxy-sentinel/internal/streamlog"
 )
@@ -22,7 +24,13 @@ var ErrUnsupportedStreamProjection = errors.New("selected stream event has no di
 // StreamDiscoveryProjector writes only selected discovery facts. The source
 // body is never copied into PostgreSQL; all receipts and device changes carry
 // an immutable ClickHouse body locator.
-type StreamDiscoveryProjector struct{ DB *sql.DB }
+type StreamDiscoveryProjector struct {
+	DB *sql.DB
+	// Compatibility releases keep this false and dual-write stream2 keys so
+	// their previous release can still process them. Only a later release with
+	// that compatibility version as rollback may enable compact-only writes.
+	CompactOnly bool
+}
 
 // Expiry is a separate bounded maintenance lane. It never scans event bodies
 // and serializes with normal projection using the same device locks.
@@ -151,6 +159,32 @@ const confirmStreamArchiveReceiptsSQL = `WITH input AS MATERIALIZED (
 )
 SELECT count(*) FROM receipt`
 
+const confirmStreamArchiveCompactReceiptsSQL = `WITH input AS MATERIALIZED (
+ SELECT v.ordinal,v.scope_id,v.event_key,v.content_sha256
+ FROM jsonb_to_recordset($2::jsonb) AS v(ordinal integer,scope_id text,event_key text,content_sha256 text)
+ ORDER BY v.ordinal
+), receipt AS MATERIALIZED (
+ SELECT r.accepted_month,r.epoch,r.scope_id,r.event_key,r.content_sha256
+ FROM input i
+ JOIN LATERAL (SELECT accepted_month,epoch,scope_id,event_key,content_sha256
+  FROM stream_discovery_receipts r WHERE r.accepted_month=(SELECT k.accepted_month FROM stream_discovery_event_keys_compact k
+   WHERE k.key_hash=sentinel_stream_discovery_key_hash($1,i.scope_id,i.event_key)
+   AND k.epoch=$1 AND k.scope_id=i.scope_id AND k.event_key=i.event_key
+   AND k.content_sha256=i.content_sha256)
+  AND r.epoch=$1 AND r.scope_id=i.scope_id AND r.event_key=i.event_key
+  AND r.content_sha256=i.content_sha256 FOR UPDATE) r ON true
+ ORDER BY i.ordinal
+), confirmed AS (
+ UPDATE stream_discovery_receipts r
+ SET archive_state=CASE WHEN r.archive_state='verified' THEN 'verified' ELSE 'confirmed' END,
+ archive_confirmed_at=coalesce(r.archive_confirmed_at,now())
+ FROM receipt m WHERE r.accepted_month=m.accepted_month
+ AND r.epoch=m.epoch AND r.scope_id=m.scope_id AND r.event_key=m.event_key AND r.content_sha256=m.content_sha256
+ AND (r.archive_state NOT IN ('confirmed','verified') OR r.archive_confirmed_at IS NULL)
+ RETURNING 1
+)
+SELECT count(*) FROM receipt`
+
 // Called only after archive, search and projection acknowledgements are all
 // durable. Confirmation is distinct from case-time archive hash verification.
 func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context, _ string, segment streamlog.Segment) error {
@@ -192,7 +226,11 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 		return err
 	}
 	var matched int
-	if err := tx.QueryRowContext(ctx, confirmStreamArchiveReceiptsSQL, segment.Epoch, raw).Scan(&matched); err != nil {
+	query := confirmStreamArchiveReceiptsSQL
+	if isCompactPassiveSegment(segment) {
+		query = confirmStreamArchiveCompactReceiptsSQL
+	}
+	if err := tx.QueryRowContext(ctx, query, segment.Epoch, raw).Scan(&matched); err != nil {
 		return err
 	}
 	if matched != len(items) {
@@ -402,7 +440,12 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		}
 		return tx.Commit()
 	}
-	freshKeys, err := reserveStreamDiscoveryKeys(ctx, tx, segment.Epoch, month, prepared)
+	var freshKeys map[string]bool
+	if isCompactPassiveSegment(segment) {
+		freshKeys, err = reserveStreamDiscoveryCompactKeys(ctx, tx, segment.Epoch, month, prepared, !p.CompactOnly)
+	} else {
+		freshKeys, err = reserveStreamDiscoveryKeys(ctx, tx, segment.Epoch, month, prepared)
+	}
 	if err != nil {
 		return err
 	}
@@ -566,6 +609,122 @@ func loadStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, epoch string, 
 		result[scope+"\x00"+key] = hash
 	}
 	return result, rows.Err()
+}
+
+func isCompactPassiveSegment(segment streamlog.Segment) bool {
+	if segment.Source != "passive-discovery" || len(segment.Events) == 0 {
+		return false
+	}
+	count := 0
+	for _, event := range segment.Events {
+		if !normalized.IsDiscoveryProjectionEvent(event) {
+			continue
+		}
+		count++
+		if !strings.HasPrefix(event.EventID, "stream2-") {
+			return false
+		}
+	}
+	return count > 0
+}
+
+// The compact ledger has one 32-byte primary index entry per key. Its row
+// retains the complete identity so a digest collision fails closed rather
+// than accepting a different event. The compatibility version also writes
+// the old ledger in the same transaction for its rollback release.
+func reserveStreamDiscoveryCompactKeys(ctx context.Context, tx *sql.Tx, epoch string, month time.Time, items []streamPreparedDiscovery, dualWrite bool) (map[string]bool, error) {
+	receipts := streamReceiptList(items)
+	raw, err := json.Marshal(receipts)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `INSERT INTO stream_discovery_event_keys_compact(key_hash,epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at)
+ SELECT sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key),$1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
+ FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz)
+ ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`, epoch, month, raw)
+	if err != nil {
+		return nil, err
+	}
+	fresh := make(map[string]bool, len(items))
+	expected := make(map[string]string, len(items))
+	for _, item := range items {
+		expected[item.Receipt.Scope+"\x00"+item.Receipt.Key] = item.Receipt.Hash
+	}
+	for rows.Next() {
+		var scope, key, hash string
+		if err = rows.Scan(&scope, &key, &hash); err != nil {
+			break
+		}
+		identity := scope + "\x00" + key
+		if expected[identity] != hash || fresh[identity] {
+			err = streamlog.ErrContentConflict
+			break
+		}
+		fresh[identity] = true
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(fresh) != len(items) {
+		collisions := make([]streamDiscoveryLookupKey, 0, len(items)-len(fresh))
+		for _, item := range items {
+			if !fresh[item.Receipt.Scope+"\x00"+item.Receipt.Key] {
+				collisions = append(collisions, streamDiscoveryLookupKey{Scope: item.Receipt.Scope, Key: item.Receipt.Key})
+			}
+		}
+		collisionRaw, err := json.Marshal(collisions)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT k.scope_id,k.event_key,k.content_sha256
+ FROM jsonb_to_recordset($2::jsonb) AS v(scope_id text,event_key text)
+ JOIN stream_discovery_event_keys_compact k ON k.key_hash=sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key)
+ AND k.epoch=$1 AND k.scope_id=v.scope_id AND k.event_key=v.event_key`, epoch, collisionRaw)
+		if err != nil {
+			return nil, err
+		}
+		prior := make(map[string]string, len(collisions))
+		for rows.Next() {
+			var scope, key, hash string
+			if err = rows.Scan(&scope, &key, &hash); err != nil {
+				break
+			}
+			prior[scope+"\x00"+key] = hash
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			identity := item.Receipt.Scope + "\x00" + item.Receipt.Key
+			if !fresh[identity] && prior[identity] != item.Receipt.Hash {
+				return nil, streamlog.ErrContentConflict
+			}
+		}
+	}
+	if dualWrite && len(fresh) > 0 {
+		newItems := make([]streamPreparedDiscovery, 0, len(fresh))
+		for _, item := range items {
+			if fresh[item.Receipt.Scope+"\x00"+item.Receipt.Key] {
+				newItems = append(newItems, item)
+			}
+		}
+		legacyFresh, err := reserveStreamDiscoveryKeys(ctx, tx, epoch, month, newItems)
+		if err != nil {
+			return nil, err
+		}
+		if len(legacyFresh) != len(newItems) {
+			return nil, streamlog.ErrContentConflict
+		}
+	}
+	return fresh, nil
 }
 
 // Reserve new keys in the same projection transaction before touching facts.

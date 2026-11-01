@@ -140,6 +140,132 @@ func TestReserveStreamDiscoveryKeysAvoidsFullReceiptLookup(t *testing.T) {
 	}
 }
 
+func TestReserveCompactKeysDualWritesForCompatibleRollback(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("stream2-fixed", "2026-11-01T08:00:00Z", 600)}}
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := items[0].Receipt
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(key.Scope, key.Key, key.Hash))
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys\\(").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(key.Scope, key.Key, key.Hash))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, true)
+	if err != nil || !fresh[key.Scope+"\x00"+key.Key] {
+		t.Fatalf("dual write lost fresh key: %v %v", fresh, err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReserveCompactKeysRollbackDoesNotReplayCommittedCompactOnlyKey(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("stream2-fixed", "2026-11-01T08:00:00Z", 600)}}
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := items[0].Receipt
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}))
+	mock.ExpectQuery("JOIN stream_discovery_event_keys_compact k").WillReturnRows(
+		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(key.Scope, key.Key, key.Hash))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, true)
+	if err != nil || len(fresh) != 0 {
+		t.Fatalf("rollback replayed committed compact key: %v %v", fresh, err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReserveCompactKeysOnlyNeedsCompactLedgerAfterCutover(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("stream2-fixed", "2026-11-01T08:00:00Z", 600)}}
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := items[0].Receipt
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(key.Scope, key.Key, key.Hash))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, false)
+	if err != nil || !fresh[key.Scope+"\x00"+key.Key] {
+		t.Fatalf("compact key not admitted: %v %v", fresh, err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReserveCompactKeyDigestCollisionFailsClosed(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("stream2-fixed", "2026-11-01T08:00:00Z", 600)}}
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}))
+	mock.ExpectQuery("JOIN stream_discovery_event_keys_compact k").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, false); !errors.Is(err, streamlog.ErrContentConflict) {
+		t.Fatalf("digest collision did not fail closed: %v", err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReserveStreamDiscoveryKeysReadsOnlyCollisions(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

@@ -6,8 +6,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
+
+func streamCompactEventKey(epoch, key string) bool {
+	return strings.HasPrefix(key, epoch+":stream2-")
+}
+
+func streamReceiptLedger(compact bool) (string, string) {
+	if compact {
+		return "stream_discovery_event_keys_compact", " AND k.key_hash=sentinel_stream_discovery_key_hash($1,$2,$3)"
+	}
+	return "stream_discovery_event_keys", ""
+}
+
+const streamLegacyReceiptFallbackGuard = ` AND NOT EXISTS (
+ SELECT 1 FROM stream_discovery_event_keys_compact kc
+ WHERE kc.key_hash=sentinel_stream_discovery_key_hash($1,$2,$3)
+ AND kc.epoch=$1 AND kc.scope_id=$2 AND kc.event_key=$3)`
 
 // StreamDiscoveryReceipt is the per-event read required for a repeated fact:
 // a current-state row may coalesce freshness, but its receipt is queryable as
@@ -19,12 +36,26 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
 	var hash, result, archive string
 	var accepted, projected time.Time
 	var bodyRef json.RawMessage
-	err := r.DB.QueryRowContext(ctx, `SELECT k.content_sha256,k.first_accepted_at,r.projected_at,r.result,r.archive_state,r.body_ref
- FROM stream_discovery_event_keys k JOIN LATERAL (
+	compact := streamCompactEventKey(epoch, eventKey)
+	lookup := func(compact, legacyFallback bool) error {
+		table, hashPredicate := streamReceiptLedger(compact)
+		if legacyFallback {
+			hashPredicate += streamLegacyReceiptFallbackGuard
+		}
+		return r.DB.QueryRowContext(ctx, `SELECT k.content_sha256,k.first_accepted_at,r.projected_at,r.result,r.archive_state,r.body_ref
+ FROM `+table+` k JOIN LATERAL (
  SELECT r.projected_at,r.result,r.archive_state,r.body_ref FROM stream_discovery_receipts r
  WHERE r.accepted_month=k.accepted_month AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=$3
  OFFSET 0) r ON true
- WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=$3`, epoch, scope, eventKey).Scan(&hash, &accepted, &projected, &result, &archive, &bodyRef)
+	WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=$3`+hashPredicate, epoch, scope, eventKey).Scan(&hash, &accepted, &projected, &result, &archive, &bodyRef)
+	}
+	err := lookup(compact, false)
+	if compact && errors.Is(err, sql.ErrNoRows) {
+		// Earlier non-passive sources may have used this prefix in the legacy
+		// ledger. Only fall back if no compact identity exists at all; a compact
+		// key with a missing receipt must remain missing.
+		err = lookup(false, true)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -49,39 +80,76 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 		}
 		seen[key] = true
 	}
-	raw, err := json.Marshal(eventKeys)
-	if err != nil {
-		return nil, nil, err
+	byKey := make(map[string]map[string]any, len(eventKeys))
+	groups := map[bool][]string{false: {}, true: {}}
+	for _, key := range eventKeys {
+		compact := streamCompactEventKey(epoch, key)
+		groups[compact] = append(groups[compact], key)
 	}
-	// Preserve both lookup boundaries: an epoch missing from sampled planner
-	// statistics must not turn a short key list into repeated history scans.
-	// The original month from each ledger row also prunes receipt partitions.
-	rows, err := r.DB.QueryContext(ctx, `SELECT k.event_key,k.content_sha256,k.first_accepted_at,r.projected_at,r.result,r.archive_state,r.body_ref
+	readGroup := func(keys []string, compact, legacyFallback bool) error {
+		if len(keys) == 0 {
+			return nil
+		}
+		raw, err := json.Marshal(keys)
+		if err != nil {
+			return err
+		}
+		table := "stream_discovery_event_keys"
+		hashPredicate := ""
+		if compact {
+			table = "stream_discovery_event_keys_compact"
+			hashPredicate = " AND k.key_hash=sentinel_stream_discovery_key_hash($1,$2,v.value)"
+		}
+		if legacyFallback {
+			hashPredicate += ` AND NOT EXISTS (
+ SELECT 1 FROM stream_discovery_event_keys_compact kc
+ WHERE kc.key_hash=sentinel_stream_discovery_key_hash($1,$2,v.value)
+ AND kc.epoch=$1 AND kc.scope_id=$2 AND kc.event_key=v.value)`
+		}
+		// Both the exact ledger lookup and original month bound the receipt scan.
+		rows, err := r.DB.QueryContext(ctx, `SELECT k.event_key,k.content_sha256,k.first_accepted_at,r.projected_at,r.result,r.archive_state,r.body_ref
  FROM jsonb_array_elements_text($3::jsonb) AS v(value)
  CROSS JOIN LATERAL (
- SELECT k.event_key,k.content_sha256,k.first_accepted_at,k.accepted_month FROM stream_discovery_event_keys k
- WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=v.value OFFSET 0) k
+ SELECT k.event_key,k.content_sha256,k.first_accepted_at,k.accepted_month FROM `+table+` k
+ WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=v.value`+hashPredicate+` OFFSET 0) k
  CROSS JOIN LATERAL (
  SELECT r.projected_at,r.result,r.archive_state,r.body_ref FROM stream_discovery_receipts r
  WHERE r.accepted_month=k.accepted_month AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=k.event_key
  OFFSET 0) r`, epoch, scope, raw)
-	if err != nil {
-		return nil, nil, err
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var key, hash, result, archive string
+			var accepted, projected time.Time
+			var bodyRef json.RawMessage
+			if err := rows.Scan(&key, &hash, &accepted, &projected, &result, &archive, &bodyRef); err != nil {
+				rows.Close()
+				return err
+			}
+			byKey[key] = map[string]any{"generation": "fresh", "epoch": epoch, "scope_id": scope, "event_key": key,
+				"content_sha256": hash, "first_accepted_at": accepted, "projected_at": projected,
+				"result": result, "archive_state": archive, "body_ref": bodyRef}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		return nil
 	}
-	defer rows.Close()
-	byKey := make(map[string]map[string]any, len(eventKeys))
-	for rows.Next() {
-		var key, hash, result, archive string
-		var accepted, projected time.Time
-		var bodyRef json.RawMessage
-		if err := rows.Scan(&key, &hash, &accepted, &projected, &result, &archive, &bodyRef); err != nil {
+	for _, compact := range []bool{false, true} {
+		if err := readGroup(groups[compact], compact, false); err != nil {
 			return nil, nil, err
 		}
-		byKey[key] = map[string]any{"generation": "fresh", "epoch": epoch, "scope_id": scope, "event_key": key,
-			"content_sha256": hash, "first_accepted_at": accepted, "projected_at": projected,
-			"result": result, "archive_state": archive, "body_ref": bodyRef}
 	}
-	if err := rows.Err(); err != nil {
+	fallback := make([]string, 0)
+	for _, key := range groups[true] {
+		if _, found := byKey[key]; !found {
+			fallback = append(fallback, key)
+		}
+	}
+	if err := readGroup(fallback, false, true); err != nil {
 		return nil, nil, err
 	}
 	items := make([]map[string]any, 0, len(byKey))

@@ -84,12 +84,23 @@ func walkStreamDiscoveryReceipts(segment streamlog.Segment, visit func(normalize
 		return errors.New("stream discovery segment requires epoch, acceptance time and events")
 	}
 	seen := make(map[string]string, len(segment.Events))
+	compactScheme := -1
 	for _, event := range segment.Events {
 		if !normalized.IsDiscoveryProjectionEvent(event) {
 			continue
 		}
 		if event.EventID == "" || event.Timestamp == "" {
 			return errors.New("stream discovery event lacks fixed identity or time")
+		}
+		if segment.Source == "passive-discovery" {
+			scheme := 0
+			if strings.HasPrefix(event.EventID, "stream2-") {
+				scheme = 1
+			}
+			if compactScheme >= 0 && compactScheme != scheme {
+				return fmt.Errorf("mixed passive event-key schemes: %w", streamlog.ErrContentConflict)
+			}
+			compactScheme = scheme
 		}
 		scope := str(event.Observer, "capture_scope_id")
 		if scope == "" {

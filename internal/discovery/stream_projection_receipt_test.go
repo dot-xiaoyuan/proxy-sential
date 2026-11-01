@@ -55,8 +55,31 @@ func TestStreamArchiveConfirmationRetainsRejectedAndOutsideScopeReceipts(t *test
 	}
 }
 
+func TestStreamArchiveConfirmationUsesCompactLedgerForStream2(t *testing.T) {
+	segment := receiptPreparationSegment(1)
+	segment.Events[0].EventID = "stream2-source-position"
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM stream_discovery_event_keys_compact k").WithArgs(segment.Epoch, streamArchiveKeys{items[0].Receipt}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectCommit()
+	if err := (StreamDiscoveryProjector{DB: db}).MarkStreamArchiveConfirmed(context.Background(), "segment", segment); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStreamArchiveConfirmationRejectsInvalidIdentityBeforeTransaction(t *testing.T) {
-	for _, kind := range []string{"epoch", "accepted", "empty", "id", "timestamp", "scope", "encoding", "duplicate", "conflict", "unsupported"} {
+	for _, kind := range []string{"epoch", "accepted", "empty", "id", "timestamp", "scope", "encoding", "duplicate", "conflict", "mixed_scheme", "unsupported"} {
 		t.Run(kind, func(t *testing.T) {
 			segment := receiptPreparationSegment(1)
 			switch kind {
@@ -79,6 +102,8 @@ func TestStreamArchiveConfirmationRejectsInvalidIdentityBeforeTransaction(t *tes
 			case "conflict":
 				other := streamDiscoveryEvent(segment.Events[0].EventID, segment.Events[0].Timestamp, 0)
 				segment.Events = append(segment.Events, other)
+			case "mixed_scheme":
+				segment.Events = append(segment.Events, streamDiscoveryEvent("stream2-new", segment.Events[0].Timestamp, 600))
 			case "unsupported":
 				segment.Events[0].Type = "flow"
 				segment.Events[0].SourceEventType = "flow"
@@ -96,7 +121,7 @@ func TestStreamArchiveConfirmationRejectsInvalidIdentityBeforeTransaction(t *tes
 			if expected == nil || got == nil || got.Error() != expected.Error() {
 				t.Fatalf("identity rejection changed or reached a transaction: expected=%v got=%v", expected, got)
 			}
-			if (kind == "duplicate" || kind == "conflict") && !errors.Is(got, streamlog.ErrContentConflict) {
+			if (kind == "duplicate" || kind == "conflict" || kind == "mixed_scheme") && !errors.Is(got, streamlog.ErrContentConflict) {
 				t.Fatalf("lost content conflict: %v", got)
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
