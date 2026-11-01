@@ -5,10 +5,12 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
   test(`discovered devices ${viewport.width}`, async ({page}, info) => {
     const errors:string[]=[]
     const serviceTargets:string[]=[]
+    const observedPortTargets:string[]=[]
     page.on('pageerror',error=>errors.push(error.message))
     page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
     page.on('response',response=>{if(response.status()>=400)errors.push(`${response.status()} ${response.url()}`)})
     page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/discovery/service-clues'))serviceTargets.push(new URL(request.url()).searchParams.get('targets')??'')})
+    page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/discovery/observed-ports'))observedPortTargets.push(new URL(request.url()).searchParams.get('targets')??'')})
     await page.setViewportSize(viewport)
     await page.goto('/devices?tab=discovery')
     await expect(page.getByRole('heading',{name:'发现设备',level:1})).toBeVisible()
@@ -18,8 +20,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await expect(page.getByText('Android · IP 线索',{exact:true})).toHaveCount(0)
     await expect(page.getByText('_ipp._tcp · 631',{exact:true})).toHaveCount(1)
     expect(serviceTargets.some(target=>target.includes('sensor-test|00:11:22:33:44:55|192.0.2.10'))).toBe(true)
-    await expect(page.getByText('见 SYN-ACK 443',{exact:true}).first()).toBeVisible()
-    await expect(page.getByText('尝试连接 TCP 80',{exact:true}).first()).toBeVisible()
+    expect(observedPortTargets).toEqual([])
     await expect(page.getByLabel('发现设备摘要')).toContainText(/发现设备\s*3/)
     await expect(page.getByLabel('发现设备摘要')).toContainText(/哑终端线索\s*1/)
     await expect(page.getByText('证据有效不代表设备在线。',{exact:false})).toBeVisible()
@@ -48,6 +49,8 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     if(viewport.width<560){await page.locator('.passive-ledger-table .ant-table-tbody > tr[data-row-key]').first().scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath('discovered-devices-card.png'),animations:'disabled'})}
     await page.getByRole('button',{name:'查看证据'}).first().click()
     await expect(page.getByRole('dialog')).toContainText('DNS-SD 服务响应与地址记录自动关联')
+    await expect(page.getByRole('dialog')).toContainText('见 TCP SYN-ACK 443')
+    expect(observedPortTargets).toEqual(['sensor-test|192.0.2.10'])
     await expect(page.getByRole('dialog')).toContainText('fixture-dhcp-ack')
     await expect(page.getByRole('dialog')).toContainText('DHCP 选项 93')
     await expect(page.getByRole('dialog')).toContainText('fixture-http-ua')
