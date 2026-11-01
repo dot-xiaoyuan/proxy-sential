@@ -107,6 +107,78 @@ func (want streamJSONFields) Match(v driver.Value) bool {
 	return true
 }
 
+func TestReserveStreamDiscoveryKeysAvoidsFullReceiptLookup(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "dns-sd", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("new", "2026-11-01T08:00:00Z", 600)}}
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys").WithArgs("fresh", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(items[0].Receipt.Scope, items[0].Receipt.Key, items[0].Receipt.Hash))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := reserveStreamDiscoveryKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) != 1 || !fresh[items[0].Receipt.Scope+"\x00"+items[0].Receipt.Key] {
+		t.Fatalf("fresh key missing: %+v", fresh)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReserveStreamDiscoveryKeysReadsOnlyCollisions(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := streamlog.Segment{Epoch: "fresh", Source: "dns-sd", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{
+		streamDiscoveryEvent("new", "2026-11-01T08:00:00Z", 600),
+		streamDiscoveryEvent("repeat", "2026-11-01T08:00:00Z", 600),
+	}}
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys").WithArgs("fresh", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(items[0].Receipt.Scope, items[0].Receipt.Key, items[0].Receipt.Hash))
+	mock.ExpectQuery("FROM stream_discovery_event_keys r").WithArgs("fresh", streamJSONFields{"event_key": items[1].Receipt.Key, "scope_id": items[1].Receipt.Scope}).WillReturnRows(
+		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(items[1].Receipt.Scope, items[1].Receipt.Key, items[1].Receipt.Hash))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := reserveStreamDiscoveryKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) != 1 || !fresh[items[0].Receipt.Scope+"\x00"+items[0].Receipt.Key] || fresh[items[1].Receipt.Scope+"\x00"+items[1].Receipt.Key] {
+		t.Fatalf("collision must not project twice: %+v", fresh)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStreamDiscoveryCrossMonthRetryUsesGlobalEventKey(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -121,6 +193,7 @@ func TestStreamDiscoveryCrossMonthRetryUsesGlobalEventKey(t *testing.T) {
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO stream_projection_segments").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys").WithArgs("fresh", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}))
 	mock.ExpectQuery("FROM stream_discovery_event_keys r").WithArgs("fresh", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
 	mock.ExpectCommit()
 	if err := (StreamDiscoveryProjector{DB: db}).ProjectStreamSegment(context.Background(), "november-retry", segment); err != nil {
@@ -140,6 +213,7 @@ func TestStreamDiscoveryConflictingRetryRollsBack(t *testing.T) {
 	segment := streamlog.Segment{Epoch: "fresh", Source: "dns-sd", ArchiveMonth: "202611", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{streamDiscoveryEvent("fixed-position", "2026-10-24T10:00:00Z", 600)}}
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO stream_projection_segments").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}))
 	mock.ExpectQuery("FROM stream_discovery_event_keys r").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow("scope-a", "fresh:fixed-position", "different-content"))
 	mock.ExpectRollback()
 	err = (StreamDiscoveryProjector{DB: db}).ProjectStreamSegment(context.Background(), "november-conflict", segment)
@@ -164,7 +238,6 @@ func TestStreamDiscoveryReceiptCarriesStableBodyLocator(t *testing.T) {
 		t.Fatal(err)
 	}
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO stream_discovery_event_keys").WithArgs("fresh", sqlmock.AnyArg(), streamJSONFields{"event_key": "fresh:event-a", "scope_id": "scope-a"}).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO stream_discovery_receipts").WithArgs(sqlmock.AnyArg(), "fresh", streamJSONFields{"event_key": "fresh:event-a", "scope_id": "scope-a", "body_ref.class": "evidence", "body_ref.month": "202610", "body_ref.scope": "scope-a", "body_ref.key": "fresh:event-a", "body_ref.sha256": items[0].Receipt.Hash}).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	tx, err := db.Begin()
@@ -303,6 +376,7 @@ func TestReconcileStreamProjectionMissingMarkerRetriesProjection(t *testing.T) {
 	mock.ExpectQuery(`SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=\$1`).WithArgs("segment-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}))
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO stream_projection_segments").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys").WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}))
 	mock.ExpectQuery("FROM stream_discovery_event_keys r").WithArgs("fresh", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
 	mock.ExpectCommit()
 	if err := (StreamDiscoveryProjector{DB: db}).ReconcileStreamProjection(context.Background(), "segment-a", segment); err != nil {

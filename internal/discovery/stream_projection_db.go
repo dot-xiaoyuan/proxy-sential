@@ -387,7 +387,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if err != nil {
 		return err
 	}
-	mark("load_receipts")
+	mark("reserve_keys")
 	inserted, err := result.RowsAffected()
 	if err != nil {
 		return err
@@ -402,7 +402,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		}
 		return tx.Commit()
 	}
-	priorReceipts, err := loadStreamDiscoveryReceipts(ctx, tx, segment.Epoch, prepared)
+	freshKeys, err := reserveStreamDiscoveryKeys(ctx, tx, segment.Epoch, month, prepared)
 	if err != nil {
 		return err
 	}
@@ -410,10 +410,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	fresh := make([]streamPreparedDiscovery, 0, len(prepared))
 	for _, item := range prepared {
 		key := item.Receipt.Scope + "\x00" + item.Receipt.Key
-		if old, exists := priorReceipts[key]; exists {
-			if old != item.Receipt.Hash {
-				return streamlog.ErrContentConflict
-			}
+		if !freshKeys[key] {
 			continue
 		}
 		fresh = append(fresh, item)
@@ -571,6 +568,68 @@ func loadStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, epoch string, 
 	return result, rows.Err()
 }
 
+// Reserve new keys in the same projection transaction before touching facts.
+// The unique ledger already has to probe these keys to enforce idempotency;
+// RETURNING removes the extra 1,000 random index lookups on the normal path.
+// Only actual conflicts need the prior hash read and can be skipped as replay.
+func reserveStreamDiscoveryKeys(ctx context.Context, tx *sql.Tx, epoch string, month time.Time, items []streamPreparedDiscovery) (map[string]bool, error) {
+	receipts := streamReceiptList(items)
+	raw, err := json.Marshal(receipts)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `INSERT INTO stream_discovery_event_keys(epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at)
+ SELECT $1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
+ FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz)
+ ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`, epoch, month, raw)
+	if err != nil {
+		return nil, err
+	}
+	fresh := make(map[string]bool, len(items))
+	expected := make(map[string]string, len(items))
+	for _, item := range items {
+		expected[item.Receipt.Scope+"\x00"+item.Receipt.Key] = item.Receipt.Hash
+	}
+	for rows.Next() {
+		var scope, key, hash string
+		if err = rows.Scan(&scope, &key, &hash); err != nil {
+			break
+		}
+		identity := scope + "\x00" + key
+		if expected[identity] != hash || fresh[identity] {
+			err = streamlog.ErrContentConflict
+			break
+		}
+		fresh[identity] = true
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(fresh) == len(items) {
+		return fresh, nil
+	}
+	collisions := make([]streamPreparedDiscovery, 0, len(items)-len(fresh))
+	for _, item := range items {
+		if !fresh[item.Receipt.Scope+"\x00"+item.Receipt.Key] {
+			collisions = append(collisions, item)
+		}
+	}
+	prior, err := loadStreamDiscoveryReceipts(ctx, tx, epoch, collisions)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range collisions {
+		if hash, ok := prior[item.Receipt.Scope+"\x00"+item.Receipt.Key]; !ok || hash != item.Receipt.Hash {
+			return nil, streamlog.ErrContentConflict
+		}
+	}
+	return fresh, nil
+}
+
 func loadStreamFactVersions(ctx context.Context, tx *sql.Tx, epoch string, items []streamPreparedDiscovery) (map[string]streamDiscoveryFact, error) {
 	type keyRow struct {
 		Device string `json:"device_key"`
@@ -713,20 +772,6 @@ func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Ti
 	raw, err := json.Marshal(input)
 	if err != nil {
 		return err
-	}
-	keysResult, err := tx.ExecContext(ctx, `INSERT INTO stream_discovery_event_keys(epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at)
- SELECT $1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
- FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz)
- ON CONFLICT DO NOTHING`, segment.Epoch, month, raw)
-	if err != nil {
-		return err
-	}
-	keyCount, err := keysResult.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if keyCount != int64(len(items)) {
-		return fmt.Errorf("stream discovery key raced with another segment: %w", streamlog.ErrUnconfirmed)
 	}
 	result, err := tx.ExecContext(ctx, insertRecognitionReceiptsSQL, month, segment.Epoch, raw)
 	if err != nil {
