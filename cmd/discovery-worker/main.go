@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+func compactPassiveKeyDefault(raw string) (bool, error) {
+	if raw == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(raw)
+}
+
 func main() {
 	mode := flag.String("mode", os.Getenv("PROXY_SENTINEL_DISCOVERY_MODE"), "all, consume-only, passive, stream-prepare, stream-drain, or stream")
 	workerDefault := 2
@@ -30,7 +37,11 @@ func main() {
 	workers := flag.Int("realtime-workers", workerDefault, "realtime workers (1 or 2)")
 	collectionFile := flag.String("collection-config", os.Getenv("PROXY_SENTINEL_DISCOVERY_CONFIG"), "unified protocol ownership and capture scope configuration")
 	mdnsRecordEvidenceV2 := flag.Bool("passive-dns-evidence-v2", false, "emit host and complete SRV record evidence only after installing a compatible rollback release")
-	compactPassiveKeys := flag.Bool("passive-compact-event-keys", false, "emit stream2 passive keys and write only the compact ledger after a compatible rollback release is installed")
+	compactDefault, err := compactPassiveKeyDefault(os.Getenv("PROXY_SENTINEL_PASSIVE_COMPACT_EVENT_KEYS"))
+	if err != nil {
+		log.Fatal("invalid passive compact event-key mode")
+	}
+	compactPassiveKeys := flag.Bool("passive-compact-event-keys", compactDefault, "emit stream2 passive keys and write only the compact ledger after a compatible rollback release is installed")
 	streamJournal := flag.String("stream-journal", "", "fresh-only durable passive stream journal directory")
 	streamScope := flag.String("capture-scope-config", "", "controlled fresh passive capture scope")
 	streamEpoch := flag.String("stream-epoch", "", "explicit fresh stream generation for stream-prepare")

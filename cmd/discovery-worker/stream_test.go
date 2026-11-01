@@ -30,6 +30,19 @@ type replayFinalizerWriter struct {
 	fail bool
 }
 
+func TestCompactPassiveKeyRuntimeDefault(t *testing.T) {
+	for _, sample := range []struct {
+		raw     string
+		enabled bool
+		invalid bool
+	}{{"", false, false}, {"false", false, false}, {"true", true, false}, {"invalid", false, true}} {
+		got, err := compactPassiveKeyDefault(sample.raw)
+		if got != sample.enabled || (err != nil) != sample.invalid {
+			t.Fatalf("runtime compact default %q: enabled=%v err=%v", sample.raw, got, err)
+		}
+	}
+}
+
 func notifyAllLanes(queue chan passiveFinalizerSignal, id string) {
 	for _, lane := range []streamlog.Lane{streamlog.Archive, streamlog.Search, streamlog.Projection} {
 		queue <- passiveFinalizerSignal{id: id, lane: lane}
