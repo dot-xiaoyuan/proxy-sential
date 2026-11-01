@@ -1,7 +1,7 @@
 -- The list reads exact DNS-SD service/port announcements from narrow buckets.
 -- Only structured fields and the event key are retained; normalized_events
--- remains the authoritative body. The four-hour TTL covers the two-hour read
--- window plus bucket rounding and merge delay. This view takes new input only.
+-- remains the authoritative body. Hourly partitions let four-hour TTL drop
+-- whole parts after the two-hour read window. This view takes new input only.
 CREATE TABLE IF NOT EXISTS discovery_service_clues_10m (
  window_start DateTime('UTC'),
  sensor_id String,
@@ -14,9 +14,10 @@ CREATE TABLE IF NOT EXISTS discovery_service_clues_10m (
  last_seen AggregateFunction(max, DateTime64(6,'Asia/Shanghai')),
  evidence_id AggregateFunction(argMax, String, DateTime64(6,'Asia/Shanghai'))
 ) ENGINE=AggregatingMergeTree
-PARTITION BY toDate(window_start)
+PARTITION BY toStartOfHour(window_start)
 ORDER BY (sensor_id,source_ip,window_start,mac,service_type,service_name,service_target,port)
-TTL window_start + INTERVAL 4 HOUR DELETE;
+TTL window_start + INTERVAL 4 HOUR DELETE
+SETTINGS ttl_only_drop_parts=1;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS discovery_service_clues_10m_mv
 TO discovery_service_clues_10m AS
