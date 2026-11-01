@@ -400,6 +400,27 @@ func TestJournalKeepsFirstArchiveMonthAcrossMonthBoundary(t *testing.T) {
 	}
 }
 
+func TestJournalFixesBodyLayoutBeforeSourceCommit(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := testSegment()
+	segment.BodyLayout = "v2"
+	id, err := j.Append(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || state.Segment.BodyLayout != "v2" {
+		t.Fatalf("durable body layout = %q, %v", state.Segment.BodyLayout, err)
+	}
+	segment.BodyLayout = ""
+	if _, err := j.Append(segment); !errors.Is(err, ErrContentConflict) {
+		t.Fatalf("source position changed body layout: %v", err)
+	}
+}
+
 func TestJournalDiscardIncompleteTemporaryFileOnReopen(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".partial.tmp"), []byte("{"), 0o600); err != nil {

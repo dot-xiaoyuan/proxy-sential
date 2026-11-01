@@ -20,12 +20,20 @@ import (
 // StreamBodyRef is the complete physical locator of one authoritative event
 // body. Callers must retain all fields instead of querying every month by ID.
 type StreamBodyRef struct {
-	Epoch  string `json:"epoch,omitempty"`
-	Class  string `json:"class"`
-	Month  string `json:"month"`
-	Scope  string `json:"scope"`
-	Key    string `json:"key"`
-	SHA256 string `json:"sha256"`
+	Epoch      string `json:"epoch,omitempty"`
+	Class      string `json:"class"`
+	Month      string `json:"month"`
+	Scope      string `json:"scope"`
+	Key        string `json:"key"`
+	SHA256     string `json:"sha256"`
+	BodyLayout string `json:"body_layout,omitempty"`
+}
+
+func streamBodyTable(class, layout string) string {
+	if layout == "v2" {
+		return "stream_event_body_" + class + "_v2"
+	}
+	return "stream_event_body_" + class
 }
 
 type StreamEvidence struct {
@@ -41,6 +49,9 @@ type StreamEvidence struct {
 func (ref StreamBodyRef) Validate() error {
 	if ref.Class != "short" && ref.Class != "evidence" {
 		return errors.New("invalid stream body retention class")
+	}
+	if ref.BodyLayout != "" && ref.BodyLayout != "v2" {
+		return errors.New("invalid stream body layout")
 	}
 	if len(ref.Month) != 6 {
 		return errors.New("invalid stream body archive month")
@@ -101,13 +112,13 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 	if s == nil || len(refs) == 0 || len(refs) > 100 {
 		return nil, errors.New("stream batch body read needs one to 100 references")
 	}
-	type groupKey struct{ class, month string }
+	type groupKey struct{ class, month, layout string }
 	groups := make(map[groupKey]map[string]StreamBodyRef)
 	for _, ref := range refs {
 		if err := ref.Validate(); err != nil {
 			return nil, err
 		}
-		group := groupKey{ref.Class, ref.Month}
+		group := groupKey{ref.Class, ref.Month, ref.BodyLayout}
 		if groups[group] == nil {
 			groups[group] = make(map[string]StreamBodyRef)
 		}
@@ -125,7 +136,10 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		if order[i].month != order[j].month {
 			return order[i].month < order[j].month
 		}
-		return order[i].class < order[j].class
+		if order[i].class != order[j].class {
+			return order[i].class < order[j].class
+		}
+		return order[i].layout < order[j].layout
 	})
 	result := make(map[StreamBodyRef]StreamEvidence, len(refs))
 	for _, group := range order {
@@ -143,7 +157,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		// made a 100-reference lookup pull hundreds of megabytes when a table
 		// contained repeated physical rows. The first pass also preserves the
 		// conflict check for a key that has more than one content hash.
-		metadataQuery := "SELECT scope_id,event_key,content_sha256 FROM stream_event_body_" + group.class +
+		metadataQuery := "SELECT scope_id,event_key,content_sha256 FROM " + streamBodyTable(group.class, group.layout) +
 			" PREWHERE archive_month=" + group.month + " AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ")" +
 			fmt.Sprintf(" LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow", limit)
 		data, err := s.query(ctx, metadataQuery)
@@ -177,7 +191,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		// Fetch one body for each already verified triple. LIMIT BY keeps a
 		// duplicate physical copy from forcing the wide body column through the
 		// response; duplicates and conflicting hashes were checked above.
-		bodyQuery := "SELECT scope_id,event_key,content_sha256,body FROM stream_event_body_" + group.class +
+		bodyQuery := "SELECT scope_id,event_key,content_sha256,body FROM " + streamBodyTable(group.class, group.layout) +
 			" PREWHERE archive_month=" + group.month + " AND (scope_id,event_key,content_sha256) IN (" + strings.Join(bodyKeys, ",") + ")" +
 			" LIMIT 1 BY scope_id,event_key,content_sha256" +
 			" SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow"
@@ -268,7 +282,7 @@ func (s *ClickHouseStore) getStreamBody(ctx context.Context, ref StreamBodyRef) 
 	if err := ref.Validate(); err != nil {
 		return StreamEvidence{}, false, err
 	}
-	query := "SELECT content_sha256,body,raw_segment_id,raw_sha256 FROM stream_event_body_" + ref.Class +
+	query := "SELECT content_sha256,body,raw_segment_id,raw_sha256 FROM " + streamBodyTable(ref.Class, ref.BodyLayout) +
 		" WHERE archive_month=" + ref.Month + " AND scope_id=" + chQuote(ref.Scope) +
 		" AND event_key=" + chQuote(ref.Key) +
 		" LIMIT 101 SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow"

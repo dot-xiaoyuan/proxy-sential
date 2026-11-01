@@ -64,6 +64,61 @@ func TestStreamWriteUsesPreparedBatchWithoutNormalPathLookup(t *testing.T) {
 	}
 }
 
+func TestStreamBodyLayoutV2RoutesDurableBodyAndReferences(t *testing.T) {
+	segment := testStreamSegment()
+	segment.BodyLayout = "v2"
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := prepared[0]
+	var queries []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		query := string(data)
+		queries = append(queries, query)
+		switch {
+		case strings.HasPrefix(query, "SELECT scope_id,event_key,content_sha256,body"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"scope_id": item.scope, "event_key": item.key, "content_sha256": item.hash, "body": item.body})
+		case strings.HasPrefix(query, "SELECT scope_id,event_key,content_sha256"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"scope_id": item.scope, "event_key": item.key, "content_sha256": item.hash})
+		case strings.HasPrefix(query, "SELECT content_sha256,body"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"content_sha256": item.hash, "body": item.body})
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := ch.WriteStreamBody(ctx, "segment-one", segment); err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.WriteStreamSearch(ctx, "segment-one", segment); err != nil {
+		t.Fatal(err)
+	}
+	if present, err := ch.VerifyStreamBody(ctx, segment); err != nil || !present {
+		t.Fatalf("v2 archive verification: %t %v", present, err)
+	}
+	ref := StreamBodyRef{Class: item.retention, Month: segment.ArchiveMonth, Scope: item.scope, Key: item.key, SHA256: item.hash, BodyLayout: "v2"}
+	if event, found, err := ch.GetStreamEventByRef(ctx, ref); err != nil || !found || event.EventID != item.event.EventID {
+		t.Fatalf("v2 point read: %+v %t %v", event, found, err)
+	}
+	if events, err := ch.GetStreamEventsByRefs(ctx, []StreamBodyRef{ref}); err != nil || events[ref].EventID != item.event.EventID {
+		t.Fatalf("v2 batch read: %+v %v", events, err)
+	}
+	if len(queries) != 6 || !strings.HasPrefix(queries[0], "INSERT INTO stream_event_body_evidence_v2") ||
+		!strings.Contains(queries[1], `\"body_layout\":\"v2\"`) {
+		t.Fatalf("v2 write lost physical layout: %+v", queries)
+	}
+	for _, query := range queries[2:] {
+		if !strings.Contains(query, "stream_event_body_evidence_v2") {
+			t.Fatalf("v2 read or verification crossed into v1: %s", query)
+		}
+	}
+}
+
 func TestOperationalCoverageEventUsesShortBodyRetention(t *testing.T) {
 	segment := streamlog.Segment{Epoch: "fresh", ArchiveMonth: "202610", AcceptedAt: time.Date(2026, 10, 25, 4, 0, 0, 0, time.UTC), Events: []normalized.Event{{EventID: "coverage-1", Type: "device", SourceEventType: "capture_coverage", Timestamp: "2026-10-25T04:00:00Z", Observer: map[string]any{"sensor_id": "sensor-a", "capture_scope_id": "scope-a"}, Subject: map[string]any{"campus_id": "campus-a"}, Payload: map[string]any{"capture_coverage": true}}}}
 	prepared, err := prepareStreamEvents(segment)

@@ -31,6 +31,9 @@ func prepareStreamEvents(segment streamlog.Segment) ([]preparedStreamEvent, erro
 	if segment.Epoch == "" || segment.ArchiveMonth == "" || segment.AcceptedAt.IsZero() || len(segment.Events) == 0 {
 		return nil, errors.New("stream segment lacks fixed epoch, archive month, acceptance time or events")
 	}
+	if segment.BodyLayout != "" && segment.BodyLayout != "v2" {
+		return nil, errors.New("unknown stream body layout")
+	}
 	if _, err := time.Parse("200601", segment.ArchiveMonth); err != nil {
 		return nil, err
 	}
@@ -151,7 +154,7 @@ func (s *ClickHouseStore) writeStreamBodyEvents(ctx context.Context, tokenID, ra
 	archiveMonth, _ := strconv.ParseUint(segment.ArchiveMonth, 10, 32)
 	for _, retention := range []string{"short", "evidence"} {
 		var body bytes.Buffer
-		table := "stream_event_body_" + retention
+		table := streamBodyTable(retention, segment.BodyLayout)
 		body.WriteString("INSERT INTO " + table + " FORMAT JSONEachRow\n")
 		rows := 0
 		for _, item := range prepared {
@@ -226,7 +229,7 @@ func (s *ClickHouseStore) WriteStreamSearch(ctx context.Context, segmentID strin
 	var body bytes.Buffer
 	body.WriteString("INSERT INTO stream_event_search FORMAT JSONEachRow\n")
 	for _, item := range prepared {
-		ref, _ := json.Marshal(StreamBodyRef{Class: item.retention, Month: segment.ArchiveMonth, Scope: item.scope, Key: item.key, SHA256: item.hash})
+		ref, _ := json.Marshal(StreamBodyRef{Class: item.retention, Month: segment.ArchiveMonth, Scope: item.scope, Key: item.key, SHA256: item.hash, BodyLayout: segment.BodyLayout})
 		routerScorePossible := uint8(1)
 		if isPurePacketRouterTTL(item.event) {
 			routerScorePossible = 0
@@ -397,7 +400,7 @@ func (s *ClickHouseStore) missingStreamBodyEvents(ctx context.Context, segment s
 		if len(keys) == 0 {
 			continue
 		}
-		query := "SELECT scope_id,event_key,content_sha256 FROM stream_event_body_" + retention +
+		query := "SELECT scope_id,event_key,content_sha256 FROM " + streamBodyTable(retention, segment.BodyLayout) +
 			" WHERE archive_month=" + segment.ArchiveMonth + " AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ") FORMAT JSONEachRow"
 		data, err := s.query(ctx, query)
 		if err != nil {

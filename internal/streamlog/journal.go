@@ -71,6 +71,7 @@ type Segment struct {
 	RawTailBytes         int                `json:"raw_tail_bytes,omitempty"`
 	RawTailSHA256        string             `json:"raw_tail_sha256,omitempty"`
 	ArchiveMonth         string             `json:"archive_month"`
+	BodyLayout           string             `json:"body_layout,omitempty"`
 	AcceptedAt           time.Time          `json:"accepted_at"`
 	NeedsProjection      bool               `json:"needs_projection"`
 	RiskFeaturesRequired bool               `json:"risk_features_required,omitempty"`
@@ -134,6 +135,7 @@ func contentHash(s Segment) (string, error) {
 		PreviousFileID       string             `json:"previous_file_id"`
 		PreviousOffset       int64              `json:"previous_offset"`
 		ParserVersion        string             `json:"parser_version"`
+		BodyLayout           string             `json:"body_layout,omitempty"`
 		KeyScheme            string             `json:"key_scheme,omitempty"`
 		PreviousGeneration   uint64             `json:"previous_generation,omitempty"`
 		SourceGeneration     uint64             `json:"source_generation,omitempty"`
@@ -151,7 +153,7 @@ func contentHash(s Segment) (string, error) {
 		Quarantined          bool               `json:"quarantined,omitempty"`
 		QuarantineReason     string             `json:"quarantine_reason,omitempty"`
 		Events               []normalized.Event `json:"events"`
-	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.SplitRiskFeatures, s.Quarantined, s.QuarantineReason, s.Events})
+	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.BodyLayout, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.SplitRiskFeatures, s.Quarantined, s.QuarantineReason, s.Events})
 	if err != nil {
 		return "", err
 	}
@@ -166,6 +168,9 @@ func (j *Journal) Append(s Segment) (string, error) {
 func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 	if s.Epoch == "" || s.Source == "" || s.SourcePath == "" || s.FileID == "" || s.ParserVersion == "" || s.EndOffset <= s.StartOffset || (len(s.Events) == 0 && s.NeedsProjection) {
 		return "", errors.New("stream segment requires epoch, source, path, file, parser, positive offsets and projection events")
+	}
+	if s.BodyLayout != "" && s.BodyLayout != "v2" {
+		return "", errors.New("unknown stream body layout")
 	}
 	if (s.KeyScheme == "generation-v2" && (s.Source != "zeek-dhcp-binding" || s.ParserVersion != "zeek-dhcp-binding-v2" && s.ParserVersion != "zeek-dhcp-message-v1" || s.PreviousGeneration == 0 || s.SourceGeneration < s.PreviousGeneration || s.SourceGeneration > s.PreviousGeneration+1)) ||
 		(s.KeyScheme != "generation-v2" && (s.PreviousGeneration != 0 || s.SourceGeneration != 0)) {

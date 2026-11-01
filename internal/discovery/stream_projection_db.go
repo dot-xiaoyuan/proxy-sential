@@ -575,13 +575,18 @@ func streamReceiptList(items []streamPreparedDiscovery) []streamDiscoveryReceipt
 func streamProjectionSegmentHash(segment streamlog.Segment, prepared []streamPreparedDiscovery) string {
 	return contentHash(struct {
 		Epoch, Source, Path, File, RawSHA string
+		BodyLayout                        string `json:"body_layout,omitempty"`
 		Start, End                        int64
 		Events                            []streamDiscoveryReceipt
-	}{segment.Epoch, segment.Source, segment.SourcePath, segment.FileID, segment.RawSHA256, segment.StartOffset, segment.EndOffset, streamReceiptList(prepared)})
+	}{segment.Epoch, segment.Source, segment.SourcePath, segment.FileID, segment.RawSHA256, segment.BodyLayout, segment.StartOffset, segment.EndOffset, streamReceiptList(prepared)})
 }
 
 func streamDiscoveryBodyRef(segment streamlog.Segment, receipt streamDiscoveryReceipt) json.RawMessage {
-	ref, _ := json.Marshal(map[string]string{"epoch": segment.Epoch, "class": "evidence", "month": segment.ArchiveMonth, "scope": receipt.Scope, "key": receipt.Key, "sha256": receipt.Hash})
+	fields := map[string]string{"epoch": segment.Epoch, "class": "evidence", "month": segment.ArchiveMonth, "scope": receipt.Scope, "key": receipt.Key, "sha256": receipt.Hash}
+	if segment.BodyLayout != "" {
+		fields["body_layout"] = segment.BodyLayout
+	}
+	ref, _ := json.Marshal(fields)
 	return ref
 }
 
