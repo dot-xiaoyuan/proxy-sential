@@ -35,6 +35,12 @@
 - 新格式不能直接交给 r32 消费，已加入默认关闭的 `--passive-dns-evidence-v2`：本批兼容版本仍不输出 host 及 SRV priority/weight，消费者已支持新语义，统计记录实际生产格式版本。先发布并验证兼容版本作为回退，再另行启用新格式，避免发布脚本自动回退到旧消费者时错误合并证据。开关回放先失败后通过，尚未在现场启用新格式或 WAL。
 - 身份边界和兼容开关收尾后，最终 `go test ./...`、discovery/streamlog/streamwal/discovery-worker/current-shadow 五包 race、`go build ./...`、`go vet ./...`、Linux amd64 全构建均通过，准备封版构建 r33。两条 current 作用域 SQL 已在现场只读事务以 EXPLAIN 规划通过，没有执行写入；它不代替写事务集成与容量验证。下一次采样已改用 epoch 日志时间游标，并记录进程实际 executable 与 DNS 缓存统计；35 秒现场只读试采成功取得阶段指标，无采样或日志参数错误。
 
+### r33 兼容候选已完成预检，待单独现场授权
+
+- 候选 `2026.11.01-mirror-discovery-r33`，源码 `9e65f20e93567148995f0a4608f0bd14d677d3da`；包含 `63cf828` 台账归属修复、`ab3967e` 缓存/证据及兼容开关、`e824afa` 默认关闭的 WAL 兼容基础。Linux amd64 包 SHA256 `a8c1f94019544390a9b84f04e53fcd3a00270b6f403300033020469761af57ce`，71,020,064 字节，包内 511 文件校验通过。清单工作区标记为 true 仅对应原有未跟踪验收资料，打包时已跟踪代码干净。
+- 已暂存 `/tmp/ps184-mirror-r33/`，候选核验目录 `candidate-9e65f20`。现场包外/包内校验、PG 214 项及 CH 61 项迁移账本匹配、18 个活动服务的候选 CLI 参数和服务期望检查通过。当前仍为 r32、previous 为 r31；没有执行更新脚本、迁移或备份。获授权后按应用更新流程使用 `--preserve-inventory`，保留 r32 为回退；既有 NCU 503、observed-ports 冷读 500 和持续饱和仍列为未解决。
+- 兼容阶段不传 `--passive-dns-evidence-v2`，不启用 WAL；先观察现有流量下缓存/分片/归档准备及作用域修复的实测结果，不能将本地基准说成已解决饱和。WAL 容量准入下一阶段在独立工作树 `/tmp/proxy-sentinel-wal-capacity-worktree`、分支 `codex/passive-wal-capacity-20261101` 开发，不进入此候选包。
+
 ## 2026-11-01 接续任务：采集可靠性（以下为 r32 发布前记录）
 
 - 从远端 `codex/high-performance-streaming-20261030` 的 `0d731c4` 接续，领取下方交接指定的采集可靠性任务。工作区原有未跟踪验收资料保留。本轮范围为代码与本地回放，不部署、不移动切流起点、不清理未确认段，不启动本地数据库栈。
