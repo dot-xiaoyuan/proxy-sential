@@ -22,6 +22,12 @@
 - 直接增加同一来源的投影 worker 会违反 `Processor.DrainLane` 的同源同 lane 顺序要求，本轮没有这样改。后续须针对约 2.67 秒/段的键台账写入设计可回退的紧凑索引或来源位置去重，并以现场真实输入验证吞吐、重启、未确认段与资源；WAL 轮转、checkpoint 和正文退休证明未完成前不启用其写入。
 - 本地正在准备 [紧凑事件键兼容阶段](stream-discovery-compact-event-keys.md)：迁移 214 新建摘要主键台账及 BRIN 保留扫描索引，兼容程序读取双账本、对未来 `stream2-` 段双写，但当前版本不生产新键，也不减少旧索引写入。审查后已修正双账本不一致时案件证据拒绝，以及其他来源同前缀键的回执受限回查。定向回放、`go test ./...`、相关包 race、`go build ./...`、`go vet ./...` 和 Linux amd64 构建通过；真实迁移集成用例因无独立远程 PostgreSQL 测试库而跳过，索引增长、生命周期归档清理及后继版本现场回退仍待验收。这批代码未发布，r34 持续饱和结论不变。
 
+### r35 兼容候选暂存与只读预检（尚未发布）
+
+- 源码提交 `435c1a63361e2ab723d054c9f8381e3a27d75f5e`；Linux amd64 包 `2026.11.01-mirror-discovery-r35` 的 SHA256 为 `0a82388091fe901c9c9e4da76456fb664e9248f2f9ff03b0f77f22497ad87d96`。包外校验、512 个包内文件哈希和文件路径/空间校验通过，载荷 279,155,055 字节。构建清单的 `git_worktree_modified=true` 仅对应既有未跟踪验收资料，构建时已跟踪源码无未提交改动；这些资料没有进入发布包。候选暂存于 184 的 `/tmp/proxy-sentinel-mirror-r35/candidate-435c1a6`，未执行安装器或迁移。
+- 184 只读检查：`current=r34`、`previous=r33`，根盘约 552 GB 可用，runtime.env SHA256 仍为 `1ab730cbf8eff7f8e889895a01177336537ffb88c5d98cabc643b000d70aef32`；一个本地用户账号，PostgreSQL 18.4 的 SHA256 表达式返回 32 字节，紧凑表尚不存在。候选 PostgreSQL 215 项中 214 项与现场账本哈希一致，只有新迁移 `214_stream_discovery_compact_event_keys.sql` 待执行，SHA256 `4eae228ebb1708ecca8b598f39c71bb610e32e75901681bdef3cd3a7458df70b`；ClickHouse 61 项全部一致。现场账本另有当前仓库未携带的历史 `202_identity_archive_groups.sql`，迁移器按候选文件逐项核对，不删除或改写该账本项。18 个拟更新活动应用服务的候选参数预检通过，固定版本 inventory 服务仍指向 r24，发现服务运行意图与当前状态一致。
+- 无独立远程 PostgreSQL 测试库，真实迁移与触发器集成测试尚未执行；现有 Go `sqlmock` 和静态校验不能替代它。r35 只准备兼容能力，正常流量仍使用旧键，所以不能以 r35 发布宣称容量改善。若另获 r35 现场更新授权，按既有 r26 的受控方式用完整安装器 `--skip-backup --prepare-only` 执行新迁移并核对账本、配置和旧应用健康，再用应用更新脚本 `--preserve-inventory` 切换，保留 r34 为 `previous`；任何迁移或健康检查失败均停止切换并保留原应用。此段仅记录待执行步骤，不构成授权。
+
 ## 2026-11-01 16:55 后接续：r33 已发布，17:12 恢复旧段后开始新采集
 
 - 用户明确授权更新 r33 并观察。16:55 按应用更新流程部署 `2026.11.01-mirror-discovery-r33`，源码 `9e65f20e93567148995f0a4608f0bd14d677d3da`，包 SHA256 `a8c1f94019544390a9b84f04e53fcd3a00270b6f403300033020469761af57ce`。包内 511 文件和包外校验通过，PostgreSQL 214 项、ClickHouse 61 项迁移全部已应用且一致，无新增迁移、数据库备份或数据重置。18 个活动应用进程核对为 r33；`current=r33`、`previous=r32`，固定版本 inventory 及旧发布目录保留。现场 runtime.env SHA256 仍为 `1ab730cbf8eff7f8e889895a01177336537ffb88c5d98cabc643b000d70aef32`，未启用 DNS v2 输出或 WAL 写入。
