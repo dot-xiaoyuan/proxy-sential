@@ -70,3 +70,20 @@ func TestDurableDHCPEventDoesNotInheritUnprojectedTailFields(t *testing.T) {
 		t.Fatalf("tail was mistaken for durable evidence: %+v", got)
 	}
 }
+
+func TestHuaweiDHCPVendorClues(t *testing.T) {
+	for _, tc := range []struct{ vendor, os, device string }{
+		{"HUAWEI:android:DBY", "Android", ""},
+		{"HUAWEI:openharmony:CV81", "HarmonyOS", ""},
+		{"huawei AP", "", "网络设备"},
+		{"HUAWEI:router:BE30", "", "网络设备"},
+		{"huawei S5720S-28X-PWR-LI-AC", "", "网络设备"},
+		{"HUAWEI", "", ""},
+	} {
+		signal := PassiveSignal{DHCPVendorClass: tc.vendor}
+		enrichDHCPVendor(&signal)
+		if signal.OSFamily != tc.os || signal.DeviceHint != tc.device || (tc.os != "" && (signal.OSConfidence != "medium" || signal.OSEvidence == "")) {
+			t.Errorf("vendor %q: OS=%q confidence=%q evidence=%q device=%q", tc.vendor, signal.OSFamily, signal.OSConfidence, signal.OSEvidence, signal.DeviceHint)
+		}
+	}
+}

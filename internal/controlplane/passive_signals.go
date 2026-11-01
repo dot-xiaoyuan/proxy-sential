@@ -447,10 +447,15 @@ func enrichDHCPVendor(signal *PassiveSignal) {
 	vendor := strings.ToLower(signal.DHCPVendorClass)
 	if strings.Contains(vendor, "msft 5.0") {
 		signal.OSFamily, signal.OSConfidence, signal.OSEvidence = "Windows", "medium", "DHCP option 60: "+signal.DHCPVendorClass
-	} else if strings.Contains(vendor, "android-dhcp") {
+	} else if strings.Contains(vendor, "android-dhcp") || strings.HasPrefix(vendor, "huawei:android:") {
 		signal.OSFamily, signal.OSConfidence, signal.OSEvidence = "Android", "medium", "DHCP option 60: "+signal.DHCPVendorClass
+	} else if strings.HasPrefix(vendor, "huawei:openharmony:") {
+		signal.OSFamily, signal.OSConfidence, signal.OSEvidence = "HarmonyOS", "medium", "DHCP option 60: "+signal.DHCPVendorClass
 	}
-	for _, networkVendor := range []string{"ruijie", "h3c", "huawei", "cisco", "aruba", "juniper", "tp-link", "tplink", "zyxel"} {
+	if strings.HasPrefix(vendor, "huawei ap") || strings.HasPrefix(vendor, "huawei:router:") || strings.HasPrefix(vendor, "huawei s5720s-") {
+		signal.DeviceHint = "网络设备"
+	}
+	for _, networkVendor := range []string{"ruijie", "h3c", "cisco", "aruba", "juniper", "tp-link", "tplink", "zyxel"} {
 		if strings.Contains(vendor, networkVendor) {
 			signal.DeviceHint = "网络设备"
 			break
