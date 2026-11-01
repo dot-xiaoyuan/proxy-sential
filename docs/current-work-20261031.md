@@ -96,6 +96,12 @@
 - 本地 `fc88f62` 为逐事件及最多 50 键批量回执增加实际查询观察时间、缺口核查时间；它们仅给出首次接收至查询可见的保守时间上界，`first_accepted_at` 早于 fsync 成功，`projected_at` 可能早于事务提交，且本接口尚无持续逐项抽样。`6a0e6ef` 新增至多 128 段的只读完成见证审计及[归档覆盖边界](stream-projection-coverage-audit.md)：必须有独立、不可变来源区间清单；现有段行不能自证清单完整。收据、ClickHouse 正文/原文、案件与晚到覆盖均保持未验证，输出始终禁止清理。
 - 集成后 `go test ./...`、`go build ./...`、`go vet ./...`、Linux amd64 全包构建通过；前端 48 个文件、174 项 Vitest 通过，API 契约/typecheck、生产构建通过。发现设备三视口 Playwright 3/3 通过，包含截图、DOM 溢出/裁切、按钮折行、控制台与网络探针，以及列表不请求弱端口、详情只请求一个当前地址的断言。首次与 Go 构建并行跑全量 Vitest 时有两项 5 秒超时，单测定向复查和独立重跑全量均通过；未改超时门槛掩盖问题。以上只是本地 mock 与无数据库测试，未在 184 发布或验证这些后续补丁。
 
+### r39 候选包与 184 只读预检；未获现场更新授权
+
+- Linux amd64 包 `2026.11.01-mirror-discovery-r39` 由源码提交 `e48a39f4899206b784d0f29d2741f8c67314cab2` 构建，SHA256 为 `ddc9efa64ff748f242ecaeb26d26922d26e4df109b3ec52b0178655dd05c921d`，压缩包 71,048,141 字节、载荷 279,189,170 字节。本地及 184 临时目录 `/tmp/proxy-sentinel-mirror-r39/candidate-e48a39f` 均已核对包外 SHA256、539 个成员路径/空间及 513 项包内哈希，清单版本/源码/Linux amd64 匹配。构建时已跟踪文件干净；`git_worktree_modified=true` 仅来自原有未跟踪验收资料，未进入包。
+- 184 切换前只读检查仍为 `current=r38`、`previous=r37`、r39 发布目录不存在，根盘约 566.8 GB 可用；runtime.env/discovery.env SHA256 不变，`local_users=1`，PostgreSQL/ClickHouse healthy，控制面 readyz 200，发现服务未重启，router-prober 仍 disabled。候选 PostgreSQL 216 项、ClickHouse 61 项迁移逐项与现场账本匹配；相对 r38 无新迁移、配置、systemd 或部署脚本改动。18 个当前活动服务的 Linux amd64 候选命令行参数检查全部通过，发现服务运行预期匹配。新只读 `stream-witness-audit` 命令源码在仓库中，当前发布打包脚本未将该辅助命令加入应用包；它不参与活动服务。
+- r39 候选旨在进一步回收过时 mDNS 唯一记录、修复表头 2 像素裁切，并让弱端口线索仅在详情按一个当前地址读取；新增逐项回执核查时间字段。RFC 宽限回收、单地址接口在现场持续负载下的收益与错误率尚未验证，之前对单个地址的 HTTP 200/72 毫秒仅是一次样本。批量端口 API 底层仍可慢读，journal 单 writer 约 97% 占用的余量风险也未由本包解决。候选只暂存与预检，**未执行应用切换**；任何后续现场更新须单独授权、保留 r38 回退并观察真实输入和三视口页面。
+
 ## 2026-11-01 16:55 后接续：r33 已发布，17:12 恢复旧段后开始新采集
 
 - 用户明确授权更新 r33 并观察。16:55 按应用更新流程部署 `2026.11.01-mirror-discovery-r33`，源码 `9e65f20e93567148995f0a4608f0bd14d677d3da`，包 SHA256 `a8c1f94019544390a9b84f04e53fcd3a00270b6f403300033020469761af57ce`。包内 511 文件和包外校验通过，PostgreSQL 214 项、ClickHouse 61 项迁移全部已应用且一致，无新增迁移、数据库备份或数据重置。18 个活动应用进程核对为 r33；`current=r33`、`previous=r32`，固定版本 inventory 及旧发布目录保留。现场 runtime.env SHA256 仍为 `1ab730cbf8eff7f8e889895a01177336537ffb88c5d98cabc643b000d70aef32`，未启用 DNS v2 输出或 WAL 写入。
