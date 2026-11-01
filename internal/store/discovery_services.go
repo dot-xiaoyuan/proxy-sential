@@ -83,6 +83,7 @@ func discoveryServiceCluesQuery(targets []string, since time.Time) (string, map[
 	if since.IsZero() {
 		since = time.Now().UTC().Add(-2 * time.Hour)
 	}
+	// Filter the event type before reading payload_json for the selected devices.
 	sql := fmt.Sprintf(`SELECT sensor_id,
  lower(JSONExtractString(payload_json,'ethernet_source_mac')) AS mac,
  subject_ip AS source_ip,
@@ -95,8 +96,8 @@ func discoveryServiceCluesQuery(targets []string, since time.Time) (string, map[
 FROM proxy_sentinel.normalized_events
 PREWHERE timestamp >= toDateTime64('%s',6,'UTC')
  AND (sensor_id,subject_ip) IN (%s)
-WHERE source_event_type='dns_sd'
- AND lower(JSONExtractString(payload_json,'ethernet_source_mac')) IN (%s)
+ AND source_event_type='dns_sd'
+WHERE lower(JSONExtractString(payload_json,'ethernet_source_mac')) IN (%s)
  AND JSONHas(payload_json,'service_port')
 GROUP BY sensor_id,mac,source_ip,service_type,service_name,service_target,port
 ORDER BY last_seen DESC LIMIT 1000 FORMAT JSONEachRow`, since.UTC().Format("2006-01-02 15:04:05"), strings.Join(quotedAddresses, ","), strings.Join(quotedMACs, ","))

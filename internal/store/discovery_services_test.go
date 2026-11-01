@@ -25,6 +25,9 @@ func TestDiscoveryServiceClueQueryScopesMACToSensorAndKeepsEvidence(t *testing.T
 			t.Fatalf("query missing %q: %s", want, query)
 		}
 	}
+	if strings.Contains(query, "WHERE source_event_type='dns_sd'") || !strings.Contains(query, "AND source_event_type='dns_sd'\nWHERE") {
+		t.Fatalf("event type must filter before reading DNS-SD payload: %s", query)
+	}
 	if strings.Contains(query, "OR 1=1") || strings.Contains(query, "src_ip AS source_ip") {
 		t.Fatal("untrusted sensor reached SQL")
 	}
