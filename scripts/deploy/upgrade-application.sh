@@ -41,9 +41,22 @@ python3 "$stage/scripts/verify-service-expectations.py" --root "$root"
 python3 "$(dirname "$0")/verify-applied-migrations.py" "$stage"
 # Durable release directory is the rollback copy. Business DBs are untouched.
 units=()
+# An auto-restarting discovery service can briefly fail is-active between
+# intent validation and this list. Keep declared running sources in the
+# restart set so they cannot resume on the old executable after the switch.
+expected_discovery_units="$(python3 - "$root/config/service-expectations.json" <<'PY'
+import json,sys
+from pathlib import Path
+path=Path(sys.argv[1])
+expected=json.loads(path.read_text()) if path.exists() else {}
+for unit in ('proxy-sentinel-discovery.service','proxy-sentinel-passive-discovery.service'):
+    if expected.get(unit)=='running':
+        print(unit,end=' ')
+PY
+)"
 for unit in proxy-sentinel-control-plane proxy-sentinel-control-plane-eventbus proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-binding-b56 proxy-sentinel-ingest-stream-dhcp-message-r1 proxy-sentinel-ingest-stream-packet-b54 proxy-sentinel-ingest-stream-handshake-b54 proxy-sentinel-ingest-stream-packet-b76 proxy-sentinel-ingest-stream-handshake-b76 proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-ingest-stream-flow-syn proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-handshake-signal proxy-sentinel-flow-syn-signal proxy-sentinel-router-prober proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-inventory proxy-sentinel-inventory-backfill proxy-sentinel-identity-materializer proxy-sentinel-ncu-identity-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery proxy-sentinel-passive-discovery proxy-sentinel-ncu-identity-sync; do
   if [[ "$preserve_inventory" == true && "$unit" == proxy-sentinel-inventory ]]; then continue; fi
-  if systemctl is-active --quiet "$unit.service"; then units+=("$unit.service"); fi
+  if systemctl is-active --quiet "$unit.service" || [[ " $expected_discovery_units " == *" $unit.service "* ]]; then units+=("$unit.service"); fi
 done
 if [[ "$preserve_inventory" == true ]] && ! systemctl is-active --quiet proxy-sentinel-inventory.service; then
   echo "preserved inventory service is not active" >&2
