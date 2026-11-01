@@ -103,9 +103,9 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 	needle := strings.ToLower(strings.TrimSpace(q.Search))
 	if needle != "" {
 		if ip := net.ParseIP(needle); ip != nil {
-			addFact("f.ip=" + add(ip.String()))
+			where = append(where, eventBusAddressSearchClause("ip", add(ip.String())))
 		} else if mac, err := net.ParseMAC(needle); err == nil {
-			addFact("f.mac=" + add(mac.String()))
+			where = append(where, eventBusAddressSearchClause("mac", add(mac.String())))
 		} else {
 			pattern := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(needle) + "%"
 			if len([]rune(needle)) >= 3 {
@@ -197,6 +197,15 @@ ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 	}
 	result["total"] = total
 	return result, nil
+}
+
+// Both event-bus and active stream facts can contribute to a current row.
+// Searching only the event-bus table hides stream-backed devices that the
+// unfiltered current list already displays.
+func eventBusAddressSearchClause(column, placeholder string) string {
+	return "(EXISTS(SELECT 1 FROM discovery_service_facts_shadow f WHERE f.device_key=c.device_key AND f." + column + "=" + placeholder + ")" +
+		" OR EXISTS(SELECT 1 FROM stream_discovery_facts f JOIN stream_source_cutovers cut ON cut.epoch=f.epoch AND cut.state='active'" +
+		" WHERE f.device_key=c.device_key AND f." + column + "=" + placeholder + " AND NOT f.withdrawn AND (f.valid_until IS NULL OR f.valid_until>now())))"
 }
 
 // normalizeEventBusDocument keeps the API shape stable for documents that were
