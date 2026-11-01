@@ -19,6 +19,8 @@ SELECT f.device_key,max(f.observed_at),
        count(*) FILTER (WHERE f.withdrawn = TRUE OR (f.valid_until IS NOT NULL AND f.valid_until <= now()))::int,
        coalesce(jsonb_object_agg(f.fact_key, jsonb_build_object(
            'event_id',f.event_id,'protocol',f.protocol,'ip',f.ip,'mac',f.mac,
+           'sensor_id',f.sensor_id,'site',f.site,'domain',f.domain,'vlan',f.vlan,
+           'vrf',coalesce(f.observation->>'vrf',''),'interface_name',f.interface_name,
            'observed_at',f.observed_at,'valid_until',f.valid_until,
            'withdrawn',f.withdrawn,'content_hash',f.content_hash,'version',f.version))
            FILTER (WHERE f.withdrawn = FALSE AND (f.valid_until IS NULL OR f.valid_until > now())), '{}'::jsonb),now()
@@ -58,6 +60,8 @@ FROM (
  SELECT f.device_key,
   coalesce(jsonb_object_agg(f.fact_key,jsonb_build_object(
    'event_id',f.event_key,'protocol',f.protocol,'ip',f.ip,'mac',f.mac,
+   'sensor_id',f.sensor_id,'site',f.site,'domain',f.domain,'vlan',f.vlan,
+   'vrf',f.vrf,'interface_name',f.interface_name,
    'observed_at',f.observed_at,'valid_until',f.valid_until,
    'withdrawn',f.withdrawn,'content_hash',f.semantic_hash,'version',f.revision))
    FILTER (WHERE f.withdrawn=FALSE AND f.valid_until>now()),'{}'::jsonb) AS facts,
@@ -67,7 +71,8 @@ FROM (
  JOIN (SELECT DISTINCT epoch FROM stream_source_cutovers WHERE state='active') sc ON true
  JOIN LATERAL (
   SELECT f.device_key,f.fact_key,f.event_key,f.protocol,f.ip,f.mac,f.observed_at,
-         f.valid_until,f.withdrawn,f.semantic_hash,f.revision
+         f.valid_until,f.withdrawn,f.semantic_hash,f.revision,
+         f.sensor_id,f.site,f.domain,f.vlan,f.vrf,f.interface_name
   FROM stream_discovery_facts f
   JOIN stream_discovery_device_state s ON s.epoch=f.epoch AND s.device_key=f.device_key
   WHERE f.epoch=sc.epoch AND f.device_key=requested.device_key AND f.scope_id=s.scope_id

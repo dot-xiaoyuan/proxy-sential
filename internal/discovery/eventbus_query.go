@@ -212,6 +212,7 @@ func eventBusAddressSearchClause(column, placeholder string) string {
 // built before a field was present. The device center assumes these collection
 // fields exist; a missing key used to crash the discovery page.
 func normalizeEventBusDocument(item map[string]any) {
+	normalizeEventBusScope(item)
 	// A routed mirror can report the gateway MAC for thousands of IPs. OUI is
 	// a device-vendor clue only when DHCP supplied the client MAC directly.
 	if manufacturer, ok := item["manufacturer"].(string); (!ok || strings.TrimSpace(manufacturer) == "") && hasEventBusProtocol(item, "dhcp") {
@@ -231,6 +232,60 @@ func normalizeEventBusDocument(item map[string]any) {
 	}
 	if value, ok := item["facts"]; !ok || value == nil {
 		item["facts"] = map[string]any{}
+	}
+}
+
+// New event-bus facts may reach current before the richer stream document.
+// Hydrate only the complete, agreeing scope already stored in this current
+// row. Old rows without metadata remain empty; no scope is guessed from an IP
+// or device key, and conflicting document evidence is never overwritten.
+func normalizeEventBusScope(item map[string]any) {
+	facts, ok := item["facts"].(map[string]any)
+	if !ok || len(facts) == 0 {
+		return
+	}
+	fields := [...]string{"sensor_id", "site", "domain", "vlan", "vrf", "interface_name"}
+	documentFields := [...]string{"sensor_id", "site", "domain", "vlan", "vrf", "interface"}
+	var scope [6]string
+	first := true
+	for _, value := range facts {
+		fact, ok := value.(map[string]any)
+		if !ok {
+			return
+		}
+		var candidate [6]string
+		for i, field := range fields {
+			text, ok := fact[field].(string)
+			if !ok {
+				return
+			}
+			if (i == 0 || i == 1 || i == 2 || i == 5) && strings.TrimSpace(text) == "" {
+				return
+			}
+			candidate[i] = text
+		}
+		if first {
+			scope = candidate
+			first = false
+		} else if scope != candidate {
+			return
+		}
+	}
+	for i, field := range documentFields {
+		if value, exists := item[field]; exists && value != nil {
+			text, ok := value.(string)
+			// An explicit empty VLAN/VRF means untagged/default routing, not
+			// missing attribution. Never silently replace it with another scope.
+			known := text != "" || i == 3 || i == 4
+			if !ok || known && text != scope[i] {
+				return
+			}
+		}
+	}
+	for i, field := range documentFields {
+		if value, exists := item[field]; !exists || value == nil || value == "" {
+			item[field] = scope[i]
+		}
 	}
 }
 

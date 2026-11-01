@@ -22,7 +22,7 @@ import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
-import { serviceBelongsToDevice, signalAddressMatchesDevice } from './discoveryServiceAttribution'
+import { currentFlowTargets, flowBelongsToDevice, serviceBelongsToDevice, signalAddressMatchesDevice } from './discoveryServiceAttribution'
 
 type Device = components['schemas']['DiscoveryDevice']
 type Page = components['schemas']['DiscoveryDevicePage']
@@ -128,7 +128,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const signalKey=[...new Set(items.flatMap(item=>[item.current_addresses?.[0],item.primary_ip,item.last_observed_ip].filter(Boolean) as string[]))].sort().join(',')
   const signalMACs=[...new Set(items.map(item=>item.mac?.toLowerCase()).filter(Boolean))].sort().join(',')
   const signalSensors=[...new Set(items.map(item=>item.sensor_id).filter(Boolean))].sort().join(',')
-  const allFlowTargets=[...new Set(items.flatMap(item=>(item.current_addresses??[]).map(ip=>`${item.sensor_id}|${ip}`)))].filter(target=>!target.startsWith('|'))
+  const allFlowTargets=currentFlowTargets(items)
   const flowTargets=allFlowTargets.slice(0,50).join(',')
   const observedPorts=useQuery({queryKey:['discovery-observed-ports',flowTargets],queryFn:({signal})=>request<{items:Record<string,ObservedPort[]>}>(`/discovery/observed-ports?targets=${encodeURIComponent(flowTargets)}`,{signal}),enabled:flowTargets!==''&&coverage.data?.enabled===true,staleTime:60_000})
   const passiveSignals=useQuery({queryKey:['discovery-passive-signals',signalKey,signalMACs,signalSensors],queryFn:({signal})=>request<PassiveSignals>(`/discovery/passive-signals?ips=${encodeURIComponent(signalKey)}&macs=${encodeURIComponent(signalMACs)}&sensors=${encodeURIComponent(signalSensors)}`,{signal}),enabled:(signalKey!==''||signalMACs!=='')&&coverage.data?.enabled===true,staleTime:60_000})
@@ -144,7 +144,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.vlan?`VLAN ${item.vlan}`:item.domain}</Typography.Text><Typography.Text type="secondary">{item.vlan?[item.domain,item.sensor_id].filter(Boolean).join(' · '):item.sensor_id}</Typography.Text></Space>
   const servicesFor=(item:Device)=>{const list=serviceClues.data?.items?.[`${item.sensor_id}|${(item.mac||'').toLowerCase()}`]??[];const seen=new Set<string>();return list.filter(clue=>{if(!serviceBelongsToDevice(item,clue))return false;const key=`${clue.service_type}:${clue.port}`;if(seen.has(key))return false;seen.add(key);return true})}
   const servicePageCount=items.reduce((sum,item)=>sum+servicesFor(item).length,0)
-  const portsFor=(item:Device)=>{const seen=new Set<string>();return (item.current_addresses??[]).flatMap(ip=>observedPorts.data?.items?.[`${item.sensor_id}|${ip}`]??[]).filter(clue=>{const key=`${clue.proto}:${clue.dst_port}`;if(seen.has(key))return false;seen.add(key);return true}).slice(0,8)}
+  const portsFor=(item:Device)=>{const seen=new Set<string>();return currentFlowTargets([item]).flatMap(target=>observedPorts.data?.items?.[target]??[]).filter(clue=>{if(!flowBelongsToDevice(item,clue))return false;const key=`${clue.proto}:${clue.dst_port}`;if(seen.has(key))return false;seen.add(key);return true}).slice(0,8)}
   const portLabel=(clue:ObservedPort)=>clue.connection_outcome==='syn_ack_observed'?`见 TCP SYN-ACK ${clue.dst_port}`:`尝试连接 ${clue.proto.toUpperCase()} ${clue.dst_port}`
   const portTagLabel=(clue:ObservedPort)=>clue.connection_outcome==='syn_ack_observed'?`见 SYN-ACK ${clue.dst_port}`:portLabel(clue)
   const serviceTags=(item:Device)=>servicesFor(item).slice(0,4).map(clue=><Tag key={`${clue.service_type}:${clue.port}`} title={`镜像服务公告 · ${clue.evidence_id} · ${observedTimeTitle(clue.last_seen)}`}>{[clue.service_type,clue.port].filter(Boolean).join(' · ')}</Tag>)
