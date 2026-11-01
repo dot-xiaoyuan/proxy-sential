@@ -82,7 +82,13 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 	previousToken := newSharedObservationLeaseToken
 	newSharedObservationLeaseToken = func() (string, error) { return "test-lease", nil }
 	defer func() { newSharedObservationLeaseToken = previousToken }()
-	for _, fail := range []bool{true, false, false} {
+	for attempt, fail := range []bool{true, false, false} {
+		retiredRows, upsertedRows := int64(0), int64(1)
+		if attempt == 1 { // Retiring the previous current row still wakes the profile.
+			retiredRows, upsertedRows = 1, 0
+		} else if attempt == 2 { // Unchanged observation leaves the profile alone.
+			upsertedRows = 0
+		}
 		// The singleton mode row must stay unlocked so concurrent workers can claim separate jobs.
 		mock.ExpectBegin()
 		mock.ExpectExec("SET LOCAL synchronous_commit = off").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -90,9 +96,11 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 		mock.ExpectCommit()
 		mock.ExpectBegin()
 		mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectExec("UPDATE shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec("INSERT INTO shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, 1))
-		mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("UPDATE shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, retiredRows))
+		mock.ExpectExec("(?s)INSERT INTO shared_behavior_observations.*IS DISTINCT FROM").WillReturnResult(sqlmock.NewResult(0, upsertedRows))
+		if retiredRows+upsertedRows > 0 {
+			mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
+		}
 		mock.ExpectExec("INSERT INTO shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
 		expectation := mock.ExpectExec("INSERT INTO policy_decision_records")
 		if fail {

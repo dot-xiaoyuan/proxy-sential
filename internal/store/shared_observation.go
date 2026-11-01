@@ -367,20 +367,31 @@ func finalizeSharedObservation(w sharedaccess.Window, cfg sharedaccess.Config, n
 }
 
 // PersistSharedObservationTx shares the caller's transaction with the decision
-// and job acknowledgement. It does not write risk or action projections.
-func PersistSharedObservationTx(ctx context.Context, tx *sql.Tx, item sharedaccess.BehaviorAssessment) error {
+// and job acknowledgement. It reports whether the read model changed so the
+// caller can avoid waking downstream profiles for an unchanged poll.
+func PersistSharedObservationTx(ctx context.Context, tx *sql.Tx, item sharedaccess.BehaviorAssessment) (bool, error) {
 	raw, err := json.Marshal(item)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE shared_behavior_observations SET current=false WHERE sensor_id=$1 AND campus_id=$2 AND access_domain=$3 AND ip=$4::inet AND current AND observation_id<>$5`, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.ObservationID)
+	retired, err := tx.ExecContext(ctx, `UPDATE shared_behavior_observations SET current=false WHERE sensor_id=$1 AND campus_id=$2 AND access_domain=$3 AND ip=$4::inet AND current AND observation_id<>$5`, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.ObservationID)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO shared_behavior_observations(observation_id,sensor_id,campus_id,access_domain,ip,status,confidence,signal_groups,rule_version,coverage_state,first_seen,last_seen,window_start,window_end,expires_at,observation,current,generation_id)
+	upserted, err := tx.ExecContext(ctx, `INSERT INTO shared_behavior_observations(observation_id,sensor_id,campus_id,access_domain,ip,status,confidence,signal_groups,rule_version,coverage_state,first_seen,last_seen,window_start,window_end,expires_at,observation,current,generation_id)
  VALUES($1,$2,$3,$4,$5::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
- ON CONFLICT(observation_id) DO UPDATE SET observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,generation_id=EXCLUDED.generation_id,coverage_state=EXCLUDED.coverage_state,updated_at=now()`, item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen, item.WindowStart, item.WindowEnd, item.ExpiresAt, raw, item.Current, item.GenerationID)
-	return err
+ ON CONFLICT(observation_id) DO UPDATE SET observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,generation_id=EXCLUDED.generation_id,coverage_state=EXCLUDED.coverage_state,updated_at=now()
+ WHERE (shared_behavior_observations.observation,shared_behavior_observations.current,shared_behavior_observations.status,shared_behavior_observations.confidence,shared_behavior_observations.generation_id,shared_behavior_observations.coverage_state)
+ IS DISTINCT FROM (EXCLUDED.observation,EXCLUDED.current,EXCLUDED.status,EXCLUDED.confidence,EXCLUDED.generation_id,EXCLUDED.coverage_state)`, item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen, item.WindowStart, item.WindowEnd, item.ExpiresAt, raw, item.Current, item.GenerationID)
+	if err != nil {
+		return false, err
+	}
+	retiredRows, err := retired.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	upsertedRows, err := upserted.RowsAffected()
+	return retiredRows > 0 || upsertedRows > 0, err
 }
 
 type SharedObservationProfileKey struct {
