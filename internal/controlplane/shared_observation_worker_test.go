@@ -193,6 +193,31 @@ func TestSharedObservationClaimLanes(t *testing.T) {
 	}
 }
 
+func TestSharedObservationLegacyOldWorkerGate(t *testing.T) {
+	for _, tt := range []struct {
+		index   int
+		mode    string
+		flag    bool
+		enabled bool
+		lane    string
+	}{
+		{0, "legacy", false, true, "realtime_new"},
+		{1, "legacy", false, true, "expiry"},
+		{2, "legacy", false, false, "realtime_new"},
+		{2, "legacy", true, true, "realtime_old"},
+		{2, "shadow", true, false, "realtime_new"},
+		{2, "async", true, true, "realtime_new"},
+		{3, "legacy", true, false, "realtime_new"},
+	} {
+		if got := sharedObservationWorkerEnabled(tt.index, tt.mode, tt.flag); got != tt.enabled {
+			t.Fatalf("index=%d mode=%s flag=%t enabled=%t, want %t", tt.index, tt.mode, tt.flag, got, tt.enabled)
+		}
+		if got := sharedObservationWorkerLaneForMode(tt.index, tt.mode, tt.flag); got != tt.lane {
+			t.Fatalf("index=%d mode=%s flag=%t lane=%s, want %s", tt.index, tt.mode, tt.flag, got, tt.lane)
+		}
+	}
+}
+
 func TestSharedObservationExpiryUsesStoredEvidence(t *testing.T) {
 	now := time.Date(2026, 10, 21, 1, 0, 0, 0, time.UTC)
 	w := sharedaccess.Window{ID: "old-evidence", RuleVersion: sharedaccess.RuleVersion, SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", IP: "192.0.2.4", From: now.Add(-6 * time.Minute), To: now.Add(-5 * time.Minute), LastObservedAt: now.Add(-5 * time.Minute)}

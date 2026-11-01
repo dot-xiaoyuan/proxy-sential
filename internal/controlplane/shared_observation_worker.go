@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
@@ -116,12 +117,12 @@ func (s *Server) startSharedObservationWorker() error {
 		}
 	}()
 	// No action worker, notification queue or controller is reachable from here.
-	var asyncMode atomic.Bool
+	var wakeMode atomic.Value
 	var initialMode string
 	if err := s.operations.db.QueryRowContext(context.Background(), `SELECT mode FROM shared_observation_wake_mode WHERE singleton`).Scan(&initialMode); err != nil {
 		return err
 	}
-	asyncMode.Store(initialMode == "async")
+	wakeMode.Store(initialMode)
 	go func() {
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -129,7 +130,7 @@ func (s *Server) startSharedObservationWorker() error {
 			err := s.operations.db.QueryRowContext(ctx, `SELECT mode FROM shared_observation_wake_mode WHERE singleton`).Scan(&mode)
 			cancel()
 			if err == nil {
-				asyncMode.Store(mode == "async")
+				wakeMode.Store(mode)
 			} else {
 				log.Printf("shared wake mode refresh failed: %v", err)
 			}
@@ -140,19 +141,21 @@ func (s *Server) startSharedObservationWorker() error {
 	// Keep one expiry worker reserved and allow up to two realtime workers to
 	// borrow expiry work only after their realtime claim finds no ready job.
 	expiryBorrowSlots := make(chan struct{}, 2)
+	legacyOldWorker := os.Getenv("PROXY_SENTINEL_SHARED_OBSERVATION_LEGACY_OLD_WORKER") == "true"
 	for i := 0; i < 8; i++ {
 		workerIndex := i
-		lane := sharedObservationWorkerLane(i)
 		go func() {
 			for {
-				if workerIndex >= 2 && !asyncMode.Load() {
+				mode := wakeMode.Load().(string)
+				if !sharedObservationWorkerEnabled(workerIndex, mode, legacyOldWorker) {
 					time.Sleep(time.Second)
 					continue
 				}
+				lane := sharedObservationWorkerLaneForMode(workerIndex, mode, legacyOldWorker)
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				did, err := s.processSharedObservationWithLimit(ctx, time.Now().UTC(), chSlots, lane)
 				cancel()
-				if shouldBorrowSharedObservationExpiry(lane, asyncMode.Load(), did, err) {
+				if shouldBorrowSharedObservationExpiry(lane, wakeMode.Load().(string) == "async", did, err) {
 					select {
 					case expiryBorrowSlots <- struct{}{}:
 						expiryCtx, expiryCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -179,6 +182,17 @@ func sharedObservationWorkerLane(index int) string {
 		return "expiry"
 	}
 	return "realtime_new"
+}
+
+func sharedObservationWorkerEnabled(index int, mode string, legacyOldWorker bool) bool {
+	return index < 2 || mode == "async" || (mode == "legacy" && legacyOldWorker && index == 2)
+}
+
+func sharedObservationWorkerLaneForMode(index int, mode string, legacyOldWorker bool) string {
+	if index == 2 && mode == "legacy" && legacyOldWorker {
+		return "realtime_old"
+	}
+	return sharedObservationWorkerLane(index)
 }
 
 func shouldBorrowSharedObservationExpiry(lane string, asyncMode, did bool, err error) bool {
