@@ -19,6 +19,14 @@ type Writer interface {
 	ReconcileProjection(context.Context, string, Segment) error
 }
 
+// UnsentLaneError is returned only when a writer can prove no sink request was
+// dispatched during this attempt. A generic cancellation or timeout does not
+// provide that proof and must retain the durable Attempted marker.
+type UnsentLaneError struct{ Cause error }
+
+func (e *UnsentLaneError) Error() string { return "stream lane not dispatched: " + e.Cause.Error() }
+func (e *UnsentLaneError) Unwrap() error { return e.Cause }
+
 // SegmentFinalizer persists cross-lane metadata after every required sink has
 // acknowledged, while the recoverable segment still exists.
 type SegmentFinalizer interface {
@@ -323,6 +331,7 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 		return err
 	}
 	var err error
+	markedAttempt := false
 	reportSlow := func(stage string, started time.Time) {
 		if elapsed := time.Since(started); p.Observer == nil && elapsed >= time.Second {
 			log.Printf("stream lane stage segment=%s lane=%s stage=%s duration=%s", id, lane, stage, elapsed.Round(time.Millisecond))
@@ -345,6 +354,7 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 			if err != nil {
 				return errors.Join(err, p.Journal.AbortUnsentAttempt(id, lane))
 			}
+			markedAttempt = true
 			reportSlow("begin_attempt", started)
 			if err := ctx.Err(); err != nil {
 				return errors.Join(err, p.Journal.AbortUnsentAttempt(id, lane))
@@ -356,6 +366,10 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 		cancel()
 		p.observe(lane, StageWrite, started, err)
 		reportSlow("write", started)
+		var unsent *UnsentLaneError
+		if markedAttempt && errors.As(err, &unsent) {
+			return errors.Join(err, p.Journal.AbortUnsentAttempt(id, lane))
+		}
 	case Attempted:
 		started := time.Now()
 		var sinkCtx context.Context

@@ -44,6 +44,44 @@ func TestStreamLanePreflightRejectsInvalidLocalArchiveWithoutSink(t *testing.T) 
 	}
 }
 
+func TestStreamSearchCanceledBeforeTransportIsExplicitlyUnsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("canceled request reached transport") }))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = (StreamLaneWriter{ClickHouse: ch}).WriteSearch(ctx, "segment", testStreamSegment())
+	var unsent *streamlog.UnsentLaneError
+	if !errors.As(err, &unsent) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("unsubmitted request not identified: %v", err)
+	}
+}
+
+func TestStreamSearchCanceledAfterDispatchRemainsAmbiguous(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = io.Copy(io.Discard, r.Body)
+		cancel()
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = (StreamLaneWriter{ClickHouse: ch}).WriteSearch(ctx, "segment", testStreamSegment())
+	var unsent *streamlog.UnsentLaneError
+	if calls != 1 || err == nil || errors.As(err, &unsent) {
+		t.Fatalf("transport outcome must remain attempted: calls=%d err=%v", calls, err)
+	}
+}
+
 func TestStreamLaneWriterNeverAcknowledgesMissingProjection(t *testing.T) {
 	writer := StreamLaneWriter{}
 	segment := streamlog.Segment{NeedsProjection: true}

@@ -70,6 +70,70 @@ type fakeLaneWriter struct {
 	failArchiveOnce bool
 }
 
+type unsentSearchWriter struct{ fakeLaneWriter }
+
+func (*unsentSearchWriter) WriteSearch(context.Context, string, Segment) error {
+	return &UnsentLaneError{Cause: context.Canceled}
+}
+
+func (*unsentSearchWriter) ReconcileSearch(context.Context, string, Segment) error {
+	return &UnsentLaneError{Cause: context.Canceled}
+}
+
+func TestProcessorRearmsOnlyProvenUnsentSearch(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	if err := (Processor{Journal: j, Writer: &fakeLaneWriter{}}).DrainLane(context.Background(), id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Processor{Journal: j, Writer: &unsentSearchWriter{}}).DrainLane(context.Background(), id, Search); !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected failure: %v", err)
+	}
+	j, err = Open(j.Directory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil || state.Acks[Search] != Pending {
+		t.Fatalf("unsubmitted search stranded: %+v %v", state.Acks, err)
+	}
+	if err := (Processor{Journal: j, Writer: &fakeLaneWriter{}}).DrainLane(context.Background(), id, Search); err != nil {
+		t.Fatalf("pending search was not retried: %v", err)
+	}
+	state, err = j.Load(id)
+	if err != nil || state.Acks[Search] != Acked {
+		t.Fatalf("restarted search not acknowledged: %+v %v", state.Acks, err)
+	}
+}
+
+func TestProcessorNeverRearmsAnEarlierAttempt(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	if err := (Processor{Journal: j, Writer: &fakeLaneWriter{}}).DrainLane(context.Background(), id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	state, err := j.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.setAckWithProof(id, Search, Attempted, state.ContentSHA256); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Processor{Journal: j, Writer: &unsentSearchWriter{}}).DrainLane(context.Background(), id, Search); !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected result: %v", err)
+	}
+	state, err = j.Load(id)
+	if err != nil || state.Acks[Search] != Attempted {
+		t.Fatalf("old ambiguous attempt was reset: %+v %v", state.Acks, err)
+	}
+}
+
 type mutateAfterArchiveWriter struct {
 	fakeLaneWriter
 	path string

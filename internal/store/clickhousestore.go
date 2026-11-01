@@ -1134,6 +1134,15 @@ func (s *ClickHouseStore) queryWithSettings(ctx context.Context, sql string, set
 	if err != nil {
 		return nil, err
 	}
+	// A lane that is canceled before transport begins may safely rearm its
+	// durable attempt. Once Do is entered, every result is ambiguous until
+	// scoped reconciliation, including a cancellation before request bytes send.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if tracker, ok := ctx.Value(streamDispatchKey{}).(*streamDispatch); ok {
+		tracker.started.Store(true)
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		// net/http wraps transport failures with the full URL, which can contain

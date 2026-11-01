@@ -72,7 +72,8 @@ func (w StreamLaneWriter) WriteBody(ctx context.Context, id string, segment stre
 	if w.ClickHouse == nil {
 		return errors.New("stream ClickHouse writer is unavailable")
 	}
-	return w.ClickHouse.WriteStreamBody(ctx, id, segment)
+	ctx, tracker := trackStreamDispatch(ctx)
+	return classifyUnsentStreamLane(w.ClickHouse.WriteStreamBody(ctx, id, segment), tracker)
 }
 
 func (w StreamLaneWriter) ReconcileBody(ctx context.Context, id string, segment streamlog.Segment) error {
@@ -105,20 +106,21 @@ func (w StreamLaneWriter) WriteSearch(ctx context.Context, id string, segment st
 	if w.ClickHouse == nil {
 		return errors.New("stream ClickHouse writer is unavailable")
 	}
+	ctx, tracker := trackStreamDispatch(ctx)
 	if err := w.ClickHouse.WriteStreamSearch(ctx, id, segment); err != nil {
-		return err
+		return classifyUnsentStreamLane(err, tracker)
 	}
 	if !segment.RiskFeaturesRequired || segment.SplitRiskFeatures {
 		return nil
 	}
 	if err := w.ClickHouse.WriteStreamRiskFeatures(ctx, id, segment); err != nil {
-		return err
+		return classifyUnsentStreamLane(err, tracker)
 	}
 	// Search runs only after the authoritative body is acknowledged. Once
 	// features are confirmed, its subjects can be queued without waiting for
 	// unrelated device projection, journal acknowledgement or shared jobs.
 	// The immutable segment remains retained until all lanes finalize.
-	return w.enqueueRisk(ctx, id, segment)
+	return classifyUnsentStreamLane(w.enqueueRisk(ctx, id, segment), tracker)
 }
 
 func (w StreamLaneWriter) ReconcileSearch(ctx context.Context, id string, segment streamlog.Segment) error {
@@ -152,10 +154,11 @@ func (w StreamLaneWriter) WriteRiskFeatures(ctx context.Context, id string, segm
 	if !segment.SplitRiskFeatures || !segment.RiskFeaturesRequired {
 		return errors.New("stream segment has no independent risk-feature sink")
 	}
+	ctx, tracker := trackStreamDispatch(ctx)
 	if err := w.ClickHouse.WriteStreamRiskFeatures(ctx, id, segment); err != nil {
-		return err
+		return classifyUnsentStreamLane(err, tracker)
 	}
-	return w.enqueueRisk(ctx, id, segment)
+	return classifyUnsentStreamLane(w.enqueueRisk(ctx, id, segment), tracker)
 }
 
 func (w StreamLaneWriter) ReconcileRiskFeatures(ctx context.Context, id string, segment streamlog.Segment) error {
