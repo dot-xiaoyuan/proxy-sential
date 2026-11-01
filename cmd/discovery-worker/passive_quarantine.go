@@ -12,20 +12,25 @@ import (
 )
 
 type passiveQuarantineRecord struct {
-	SegmentID     string    `json:"segment_id"`
-	ContentSHA256 string    `json:"content_sha256"`
-	RawSHA256     string    `json:"raw_sha256"`
-	Epoch         string    `json:"epoch"`
-	SourcePath    string    `json:"source_path"`
-	Reason        string    `json:"reason"`
-	Status        string    `json:"status"`
-	RecordedAt    time.Time `json:"recorded_at"`
+	SegmentID     string                         `json:"segment_id"`
+	ContentSHA256 string                         `json:"content_sha256"`
+	RawSHA256     string                         `json:"raw_sha256"`
+	Epoch         string                         `json:"epoch"`
+	SourcePath    string                         `json:"source_path"`
+	Reason        string                         `json:"reason"`
+	Status        string                         `json:"status"`
+	RecordedAt    time.Time                      `json:"recorded_at"`
+	WALReference  *streamlog.PassiveWALReference `json:"wal_reference,omitempty"`
+}
+
+type passiveQuarantineJournal interface {
+	Load(string) (streamlog.State, error)
 }
 
 // A deterministic scope conflict stops the live lane and creates an
 // independently visible audit record. The immutable journal segment is hard
 // linked, retaining one raw body until an operator resolves the gap.
-func quarantinePassiveSegment(journal *streamlog.Journal, journalDir, spool, id string, cause error) (string, error) {
+func quarantinePassiveSegment(journal passiveQuarantineJournal, journalDir, spool, id string, cause error) (string, error) {
 	if journal == nil || id == "" || filepath.Base(id) != id || spool == "" || journalDir == "" || cause == nil {
 		return "", errors.New("invalid passive quarantine request")
 	}
@@ -40,24 +45,36 @@ func quarantinePassiveSegment(journal *streamlog.Journal, journalDir, spool, id 
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
-	source := filepath.Join(journalDir, id+".segment")
-	target := filepath.Join(dir, id+".segment")
-	if err := os.Link(source, target); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return "", fmt.Errorf("link immutable passive segment: %w", err)
-		}
-		oldInfo, oldErr := os.Stat(source)
-		newInfo, newErr := os.Stat(target)
-		if oldErr != nil || newErr != nil || !os.SameFile(oldInfo, newInfo) {
-			return "", errors.New("quarantine segment path contains different content")
-		}
-	}
 	record := passiveQuarantineRecord{SegmentID: id, ContentSHA256: state.ContentSHA256,
 		RawSHA256: state.Segment.RawSHA256, Epoch: state.Segment.Epoch,
 		SourcePath: state.Segment.SourcePath, Reason: cause.Error(),
 		Status: "quarantined_unprocessed", RecordedAt: time.Now().UTC()}
 	if len(record.Reason) > 512 {
 		record.Reason = record.Reason[:512]
+	}
+	if wal, ok := journal.(*streamlog.PassiveWALJournal); ok {
+		if ref, exists := wal.V2SegmentReference(id); exists {
+			// Seal the failure before publishing its external diagnostic record.
+			// A crash between these steps still pins the body and stops capture.
+			if err := wal.Quarantine(id, record.Reason); err != nil {
+				return "", fmt.Errorf("quarantine passive WAL segment: %w", err)
+			}
+			record.WALReference = &ref
+		}
+	}
+	if record.WALReference == nil {
+		source := filepath.Join(journalDir, id+".segment")
+		target := filepath.Join(dir, id+".segment")
+		if err := os.Link(source, target); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				return "", fmt.Errorf("link immutable passive segment: %w", err)
+			}
+			oldInfo, oldErr := os.Stat(source)
+			newInfo, newErr := os.Stat(target)
+			if oldErr != nil || newErr != nil || !os.SameFile(oldInfo, newInfo) {
+				return "", errors.New("quarantine segment path contains different content")
+			}
+		}
 	}
 	path := filepath.Join(dir, id+".json")
 	validatePrior := func() (string, error) {
@@ -67,6 +84,10 @@ func quarantinePassiveSegment(journal *streamlog.Journal, journalDir, spool, id 
 			prior.ContentSHA256 != record.ContentSHA256 || prior.RawSHA256 != record.RawSHA256 ||
 			prior.Epoch != record.Epoch || prior.Status != record.Status {
 			return "", errors.New("quarantine manifest conflicts with immutable segment")
+		}
+		if (prior.WALReference == nil) != (record.WALReference == nil) ||
+			(prior.WALReference != nil && *prior.WALReference != *record.WALReference) {
+			return "", errors.New("quarantine manifest conflicts with WAL reference")
 		}
 		return path, nil
 	}

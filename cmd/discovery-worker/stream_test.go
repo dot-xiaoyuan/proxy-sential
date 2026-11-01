@@ -240,6 +240,77 @@ func TestPassiveFinalizerPropagatesContentConflict(t *testing.T) {
 	}
 }
 
+func TestPassiveFinalizerStopsRetryingFailedWAL(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	queue := make(chan passiveFinalizerSignal, 3)
+	notifyAllLanes(queue, "stopped-wal")
+	err := runPassiveFinalizer(ctx, queue, func(context.Context, string) error {
+		return errors.Join(streamlog.ErrPassiveWALStopped, errors.New("sync result indeterminate"))
+	}, time.Hour, 2)
+	if !errors.Is(err, streamlog.ErrPassiveWALStopped) {
+		t.Fatalf("failed WAL was retried or hidden: %v", err)
+	}
+}
+
+func TestPassiveFinalizerJoinsInFlightBeforeReturning(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queue := make(chan passiveFinalizerSignal, 3)
+	notifyAllLanes(queue, "inflight")
+	entered, finish, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- runPassiveFinalizer(ctx, queue, func(ctx context.Context, _ string) error {
+			close(entered)
+			<-ctx.Done()
+			<-finish
+			return ctx.Err()
+		}, time.Hour, 2)
+	}()
+	<-entered
+	cancel()
+	select {
+	case err := <-done:
+		close(finish)
+		t.Fatalf("returned before in-flight finalization stopped: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(finish)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("finalizer did not join after worker exited")
+	}
+}
+
+func TestPassiveFinalizerPreservesTerminalErrorDuringShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	queue := make(chan passiveFinalizerSignal, 3)
+	notifyAllLanes(queue, "corrupt-at-shutdown")
+	entered, done := make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- runPassiveFinalizer(ctx, queue, func(ctx context.Context, _ string) error {
+			close(entered)
+			<-ctx.Done()
+			return errors.Join(ctx.Err(), streamlog.ErrPassiveWALStopped)
+		}, time.Hour, 2)
+	}()
+	<-entered
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, streamlog.ErrPassiveWALStopped) {
+			t.Fatalf("terminal shutdown error hidden: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("finalizer did not stop")
+	}
+}
+
 func (*passiveBudgetWriter) Preflight(streamlog.Lane, streamlog.Segment) error {
 	// Local validation and durable journal preparation precede the RPC.
 	time.Sleep(80 * time.Millisecond)

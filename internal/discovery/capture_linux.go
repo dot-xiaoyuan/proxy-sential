@@ -42,7 +42,7 @@ func CaptureConfigured(ctx context.Context, iface, spool string, source Source, 
 	})
 }
 
-func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source Source, allow []netip.Prefix, config CollectionConfig, journal *streamlog.Journal, scope *normalized.CaptureScope, onSegment func(CapturedSegment) error) error {
+func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source Source, allow []netip.Prefix, config CollectionConfig, journal PassiveStreamJournal, scope *normalized.CaptureScope, onSegment func(CapturedSegment) error) error {
 	if journal == nil || scope == nil {
 		return fmt.Errorf("passive stream capture needs durable journal and scope")
 	}

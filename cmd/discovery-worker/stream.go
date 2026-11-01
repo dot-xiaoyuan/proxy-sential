@@ -32,7 +32,7 @@ type passiveStreamOptions struct {
 	DrainOnly  bool
 }
 
-func passiveStreamProcessor(journal *streamlog.Journal, writer streamlog.Writer) streamlog.Processor {
+func passiveStreamProcessor(journal streamlog.ProcessorJournal, writer streamlog.Writer) streamlog.Processor {
 	// Start each RPC budget after local decode and durable attempt fsync. A
 	// shared-disk stall must not strand an unsent request as an ambiguous write.
 	return streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 30 * time.Second, ProjectionRetryTimeout: 120 * time.Second, FinalizeTimeout: 30 * time.Second}
@@ -56,7 +56,7 @@ func verifyPassiveStreamCutover(ctx context.Context, db *sql.DB, cursor streamlo
 	return nil
 }
 
-func runPassiveStreamWorker(opts passiveStreamOptions) error {
+func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	if opts.Interface == "" || opts.Node == "" || opts.Site == "" || opts.Domain == "" || opts.JournalDir == "" || opts.ScopeFile == "" {
 		return errors.New("stream discovery requires interface, node, site, domain, journal and controlled scope")
 	}
@@ -95,23 +95,31 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 	if err != nil {
 		return err
 	}
-	journal, err := streamlog.Open(opts.JournalDir)
+	legacyJournal, err := streamlog.Open(opts.JournalDir)
 	if err != nil {
 		return err
 	}
 	source := discovery.Source{ID: "passive-" + opts.Node, Node: opts.Node, Site: opts.Site, Domain: opts.Domain, Address: opts.Interface, ConfigVersion: 1}
 	path := discovery.PassiveStreamSourcePath(source)
-	release, err := journal.AcquireSourceLease("passive-discovery", path)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// Compatibility comes before activation. This binary can drain WAL-backed
+	// segments, but live WAL writes remain unavailable until rotation/checkpoint
+	// and rollback have been validated. Existing v1 capture keeps its protocol.
+	journal, err := streamlog.OpenPassiveWALJournal(legacyJournal, path, streamlog.PassiveWALOptions{
+		QuarantineDir: filepath.Join(opts.Spool, "discovery-quarantine"),
+		BeforeRecovery: func(cursor streamlog.SourceCursor) error {
+			return verifyPassiveStreamCutover(ctx, db, cursor, opts.Node)
+		},
+	})
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer func() { stop(); result = errors.Join(result, journal.Close()) }()
 	cursor, err := journal.LoadSource("passive-discovery", path)
 	if err != nil {
 		return fmt.Errorf("fresh stream source was not initialized: %w", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	if err := verifyPassiveStreamCutover(ctx, db, cursor, opts.Node); err != nil {
 		return err
 	}
@@ -144,7 +152,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 				if err == nil {
 					break
 				}
-				if errors.Is(err, streamlog.ErrContentConflict) || errors.Is(err, streamlog.ErrQuarantined) || errors.Is(err, discovery.ErrUnsupportedStreamProjection) {
+				if errors.Is(err, streamlog.ErrContentConflict) || errors.Is(err, streamlog.ErrQuarantined) || errors.Is(err, streamlog.ErrPassiveWALStopped) || errors.Is(err, discovery.ErrUnsupportedStreamProjection) {
 					return err
 				}
 				if errors.Is(err, discovery.ErrStreamFactScopeMismatch) {
@@ -281,7 +289,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) error {
 						laneResults <- nil
 						return
 					}
-					if errors.Is(err, streamlog.ErrContentConflict) || errors.Is(err, streamlog.ErrQuarantined) || errors.Is(err, discovery.ErrUnsupportedStreamProjection) {
+					if errors.Is(err, streamlog.ErrContentConflict) || errors.Is(err, streamlog.ErrQuarantined) || errors.Is(err, streamlog.ErrPassiveWALStopped) || errors.Is(err, discovery.ErrUnsupportedStreamProjection) {
 						laneResults <- err
 						stop()
 						return

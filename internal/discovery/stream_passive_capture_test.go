@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -9,6 +10,53 @@ import (
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/streamlog"
 )
+
+type passiveAtomicTestJournal struct {
+	cursor  streamlog.SourceCursor
+	segment streamlog.Segment
+	calls   int
+	err     error
+}
+
+func (j *passiveAtomicTestJournal) LoadSource(source, path string) (streamlog.SourceCursor, error) {
+	if source != j.cursor.Source || path != j.cursor.Path {
+		return streamlog.SourceCursor{}, streamlog.ErrContentConflict
+	}
+	return j.cursor, nil
+}
+
+func (j *passiveAtomicTestJournal) AppendAndCommitPassive(segment streamlog.Segment) (string, error) {
+	j.calls++
+	j.segment = segment
+	return "durable-or-indeterminate-id", j.err
+}
+
+func TestAppendPassiveStreamBatchUsesAtomicPersistence(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			source := Source{ID: "passive-sensor-a", Node: "sensor-a", Site: "site-a", Domain: "domain-a", Address: "bond0"}
+			at := time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC)
+			scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "boot-b", CampusID: "site-a", AccessDomain: "domain-a", InterfaceName: "bond0", ValidFrom: at.Add(-time.Hour), ValidUntil: at.Add(time.Hour)}
+			j := &passiveAtomicTestJournal{cursor: streamlog.SourceCursor{Epoch: "fresh-1", Source: "passive-discovery", Path: PassiveStreamSourcePath(source), FileID: "boot-a", Offset: 77, ParserVersion: PassiveStreamParserVersion}}
+			if fail {
+				j.err = errors.New("durability result is indeterminate")
+			}
+			event := streamDiscoveryEvent("producer-id", at.Format(time.RFC3339Nano), 600)
+			event.Observer["interface"] = "bond0"
+			event.Subject["site"], event.Subject["domain"] = "site-a", "domain-a"
+			got, err := appendPassiveStreamBatch(context.Background(), j, source, scope, []normalized.Event{event})
+			if j.calls != 1 || j.segment.PreviousOffset != 77 || j.segment.PreviousFileID != "boot-a" || j.segment.StartOffset != 0 || j.segment.FileID != "boot-b" {
+				t.Fatalf("atomic accept lost predecessor or collector boundary: calls=%d segment=%+v", j.calls, j.segment)
+			}
+			if got.ID != "durable-or-indeterminate-id" || got.Segment.AcceptedAt.IsZero() || !got.Segment.AcceptedAt.Equal(j.segment.AcceptedAt) {
+				t.Fatalf("accept result lost recovery identity or original time: %+v", got)
+			}
+			if !errors.Is(err, j.err) || (fail && got.AppendCommitDuration != 0) || (!fail && got.AppendCommitDuration <= 0) {
+				t.Fatalf("failed acceptance must not enter successful metrics: %v %+v", err, got)
+			}
+		})
+	}
+}
 
 func TestAppendPassiveStreamBatchFixesScopeAndSourcePosition(t *testing.T) {
 	j, err := streamlog.Open(t.TempDir())

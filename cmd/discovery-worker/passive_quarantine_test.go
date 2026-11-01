@@ -67,3 +67,67 @@ func TestPassiveScopeConflictQuarantineRetainsOneImmutableBody(t *testing.T) {
 		t.Fatal("unsafe quarantine id was accepted")
 	}
 }
+
+func TestPassiveWALQuarantineRetainsReferenceWithoutCopyingBody(t *testing.T) {
+	dir, spool := t.TempDir(), t.TempDir()
+	legacy, err := streamlog.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	s := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", SourcePath: "packet://bond0/node", FileID: "boot", PreviousFileID: "boot",
+		StartOffset: 0, EndOffset: 100, ParserVersion: discovery.PassiveStreamParserVersion, ArchiveMonth: at.Format("200601"), AcceptedAt: at, NeedsProjection: true,
+		Events: []normalized.Event{{EventID: "event-1", Timestamp: at.Format(time.RFC3339Nano), Type: "discovery", Observer: map[string]any{"capture_scope_id": "scope-1"}}}}
+	if err := legacy.StartFreshSource(streamlog.SourceCursor{Epoch: s.Epoch, Source: s.Source, Path: s.SourcePath, FileID: s.FileID, ParserVersion: s.ParserVersion}); err != nil {
+		t.Fatal(err)
+	}
+	j, err := streamlog.OpenPassiveWALJournal(legacy, s.SourcePath, streamlog.PassiveWALOptions{WriteEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	id, err := j.AppendAndCommitPassive(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := quarantinePassiveSegment(j, dir, spool, id, discovery.ErrStreamFactScopeMismatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := quarantinePassiveSegment(j, dir, spool, id, discovery.ErrStreamFactScopeMismatch); err != nil || again != manifest {
+		t.Fatalf("retry: %s %v", again, err)
+	}
+	for _, root := range []string{dir, filepath.Join(spool, "discovery-quarantine")} {
+		if _, err := os.Stat(filepath.Join(root, id+".segment")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("unexpected copied body: %v", err)
+		}
+	}
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record passiveQuarantineRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	ref, ok := j.V2SegmentReference(id)
+	if !ok || record.WALReference == nil || *record.WALReference != ref || record.Status != "quarantined_unprocessed" {
+		t.Fatalf("lost authoritative reference: %+v", record)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.Segment.Quarantined || len(state.Segment.Events) != 1 {
+		t.Fatalf("body or quarantine missing: %+v %v", state, err)
+	}
+	if err := j.Release(id); !errors.Is(err, streamlog.ErrQuarantined) {
+		t.Fatalf("quarantined body released: %v", err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := streamlog.OpenPassiveWALJournal(legacy, s.SourcePath, streamlog.PassiveWALOptions{QuarantineDir: filepath.Dir(manifest)}); !errors.Is(err, streamlog.ErrQuarantined) {
+		if reopened != nil {
+			reopened.Close()
+		}
+		t.Fatalf("quarantine did not block startup: %v", err)
+	}
+}

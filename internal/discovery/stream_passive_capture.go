@@ -15,6 +15,15 @@ import (
 
 const PassiveStreamParserVersion = "passive-frame-v1"
 
+// PassiveStreamJournal owns the durable acceptance boundary. Implementations
+// must retain the original source position and acceptance time on recovery.
+// The WAL backend seals body and cursor together; the legacy adapter preserves
+// its existing two-step recovery protocol.
+type PassiveStreamJournal interface {
+	LoadSource(source, path string) (streamlog.SourceCursor, error)
+	AppendAndCommitPassive(streamlog.Segment) (string, error)
+}
+
 // CapturedSegment is the durable segment plus its journal id. Capture passes it
 // to the segment callback so an optional shadow publisher does not have to
 // re-read a segment that a lane may already have released.
@@ -33,12 +42,12 @@ func PassiveStreamSourcePath(source Source) string {
 // AppendPassiveStreamBatch is the durable boundary for non-file passive
 // observations. The segment owns the standard events once; packet bytes were
 // never retained, so this source must not claim packet-level provenance.
-func AppendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, source Source, scope *normalized.CaptureScope, events []normalized.Event) (string, error) {
+func AppendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, events []normalized.Event) (string, error) {
 	captured, err := appendPassiveStreamBatch(ctx, journal, source, scope, events)
 	return captured.ID, err
 }
 
-func appendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, source Source, scope *normalized.CaptureScope, events []normalized.Event) (CapturedSegment, error) {
+func appendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, events []normalized.Event) (CapturedSegment, error) {
 	if journal == nil || scope == nil || source.ID == "" || source.Address == "" || len(events) == 0 || len(events) > streamlog.MaxSegmentEvents {
 		return CapturedSegment{}, errors.New("passive stream requires a bounded batch, source and capture scope")
 	}
@@ -101,11 +110,8 @@ func appendPassiveStreamBatch(ctx context.Context, journal *streamlog.Journal, s
 		ArchiveMonth: now.Format("200601"), AcceptedAt: now,
 		NeedsProjection: true, Events: prepared}
 	started := time.Now()
-	id, err := journal.Append(segment)
+	id, err := journal.AppendAndCommitPassive(segment)
 	if err != nil {
-		return CapturedSegment{}, err
-	}
-	if err := journal.CommitSource("passive-discovery", path, id); err != nil {
 		return CapturedSegment{ID: id, Segment: segment}, err
 	}
 	return CapturedSegment{ID: id, Segment: segment, AppendCommitDuration: time.Since(started)}, nil

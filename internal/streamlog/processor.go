@@ -55,8 +55,20 @@ const (
 	StageRelease      ProcessorStage = "release"
 )
 
+// ProcessorJournal preserves the legacy processor contract while allowing the
+// passive-only WAL adapter. Private methods keep proof-bearing mutations inside
+// this package; callers assign either *Journal or *PassiveWALJournal.
+type ProcessorJournal interface {
+	Load(string) (State, error)
+	load(string) (State, error)
+	loadPendingStatus(string) (State, error)
+	setAckWithProof(string, Lane, Status, string) error
+	AbortUnsentAttempt(string, Lane) error
+	Release(string) error
+}
+
 type Processor struct {
-	Journal *Journal
+	Journal ProcessorJournal
 	Writer  Writer
 	// Observer must be concurrency-safe, nonblocking, and perform no I/O. An empty
 	// lane denotes whole-segment finalization. Errors are for counting, not logging

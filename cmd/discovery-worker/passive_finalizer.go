@@ -24,17 +24,51 @@ type passiveFinalizerResult struct {
 	err error
 }
 
-func runPassiveFinalizer(ctx context.Context, queue <-chan passiveFinalizerSignal, finalize func(context.Context, string) error, retryDelay time.Duration, maxRetries int) error {
+// Wrapped cancellation is routine shutdown, but a joined disk/sink error must
+// survive cancellation. errors.Is alone would also hide that joined failure.
+func passiveCancellationOnly(err error) bool {
+	if err == context.Canceled {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !passiveCancellationOnly(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return passiveCancellationOnly(wrapped.Unwrap())
+	}
+	return false
+}
+
+func runPassiveFinalizer(ctx context.Context, queue <-chan passiveFinalizerSignal, finalize func(context.Context, string) error, retryDelay time.Duration, maxRetries int) (resultErr error) {
 	if retryDelay <= 0 || maxRetries <= 0 {
 		return errors.New("invalid passive finalizer retry budget")
 	}
 	workCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	const maxConcurrent = 2
 	results := make(chan passiveFinalizerResult, maxConcurrent)
 	signals := map[string]uint8{}
 	retries := map[string]time.Time{}
 	running := map[string]bool{}
+	defer func() {
+		cancel()
+		// Join the bounded in-flight calls before the caller closes the journal
+		// or reports its final metrics. Buffered results alone only avoid leaks.
+		for range len(running) {
+			result := <-results
+			if result.err != nil && !passiveCancellationOnly(result.err) {
+				resultErr = errors.Join(resultErr, result.err)
+			}
+		}
+	}()
 	var lastReport, lastSaturation time.Time
 	for {
 		if ctx.Err() != nil {
@@ -87,7 +121,7 @@ func runPassiveFinalizer(ctx context.Context, queue <-chan passiveFinalizerSigna
 				delete(signals, result.id)
 				continue
 			}
-			if errors.Is(result.err, streamlog.ErrContentConflict) || errors.Is(result.err, streamlog.ErrQuarantined) {
+			if errors.Is(result.err, streamlog.ErrContentConflict) || errors.Is(result.err, streamlog.ErrQuarantined) || errors.Is(result.err, streamlog.ErrPassiveWALStopped) {
 				return result.err
 			}
 			if time.Since(lastReport) >= 30*time.Second {

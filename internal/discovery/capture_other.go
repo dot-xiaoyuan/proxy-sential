@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/netip"
 	"proxy-sentinel/internal/normalized"
-	"proxy-sentinel/internal/streamlog"
 )
 
 func Capture(context.Context, string, string, Source, []netip.Prefix) error {
@@ -18,6 +17,6 @@ func CaptureConfigured(context.Context, string, string, Source, []netip.Prefix, 
 	return errors.New("passive capture requires Linux")
 }
 
-func CaptureStreamConfigured(context.Context, string, string, Source, []netip.Prefix, CollectionConfig, *streamlog.Journal, *normalized.CaptureScope, func(CapturedSegment) error) error {
+func CaptureStreamConfigured(context.Context, string, string, Source, []netip.Prefix, CollectionConfig, PassiveStreamJournal, *normalized.CaptureScope, func(CapturedSegment) error) error {
 	return errors.New("passive capture requires Linux")
 }
