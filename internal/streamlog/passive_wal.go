@@ -221,7 +221,11 @@ func (j *PassiveWALJournal) persist(kind, id string, payload []byte) (streamwal.
 	if closed {
 		return streamwal.Receipt{}, ErrPassiveWALStopped
 	}
-	future, err := j.wal.Append(context.Background(), streamwal.Record{Kind: kind, ID: id, Payload: payload})
+	class := streamwal.Control
+	if kind == "accept" {
+		class = streamwal.Data
+	}
+	future, err := j.wal.AppendWithClass(context.Background(), streamwal.Record{Kind: kind, ID: id, Payload: payload}, class)
 	if err != nil {
 		if errors.Is(err, streamwal.ErrStopped) {
 			return streamwal.Receipt{}, j.halt(err)

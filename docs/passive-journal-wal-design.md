@@ -8,7 +8,11 @@
 
 当前文件上限默认 **1 GiB**，适配器默认最多 **4096 个 v2 accept**，其中已经 finalized 的段也计数。没有轮转、checkpoint 或 GC；`Release` 只追加 finalized，正文和索引项仍保留。因此即使消费者没有积压，持续输入也会到达上限。本阶段不能通过增大文件或段数上限来宣称可长期运行。
 
-两项上限的后果不同：4096 在 accept 准入时拒绝，既有 lane 仍可继续；1 GiB 在 `streamwal.commit` 的组写入前检查，超限虽明确为 `ErrNotWritten + ErrCapacity`，当前 writer 仍将其视为终止条件，适配器也进入 stopped。因此到达字节上限不只是停止新输入，已接收段的 ack/finalized 也不能再追加。相同容量重启没有创造新空间，降低 `MaxLogBytes` 甚至会拒绝读取现有文件。当前 cmd 在 capture 失败后还会取消各 lane，不能把“保留了旧正文”描述成“满额后仍可排空”。
+容量准入批已将字节拒绝移到入队之前：总硬限 `MaxLogBytes` 默认 1 GiB，控制预留默认 `min(16 MiB, 总限/16)`，Data 高水位 `MaxDataBytes` 默认总限减预留，显式高水位只能进一步调低。accept 使用 Data，genesis/lane/finalized/quarantine 使用 Control；所有已耐久、排队和在途记录按共同文件位置计费，每条在途记录保守预留独立 seal，group 成功后原子归还多余 seal 空间。
+
+数据达到高水位时返回明确的 `ErrNotWritten + ErrCapacity + ErrDataCapacity`，不停止 writer；控制记录仍可用剩余总预算。总硬限不足时两类追加都明确拒绝；不会因重启而获得 EOF 之上的新额度。真实短写/同步未知错误仍停止整个 writer。原始 `9e65f20` 实现在提交时才发现超限并停止全部 lane/finalized，此回归已由本批容量测试覆盖。4096 仍是累计 accept 上限，不因 finalized 减少。
+
+降低 Data 高水位仍可利用总限内的 Control 空间；降低总限到 EOF 以下仍可读取/回放，但不能再追加控制记录。现有 cmd 在 capture 失败后仍会取消各 lane，本批没有修改该生命周期，也没有开放可写 CLI；库内可利用预留排空，不代表 cmd 已自动进入停采排空模式。
 
 设每秒接受段数为 `r`、平均每段正文及其控制记录字节为 `B`，无回收时触顶时间近似为 `min(4096/r, 1 GiB/(r×B))`，与是否及时 finalized 无关。仅作量级示例：平均每段约 1 MiB 时，字节上限约容纳一千段；小于约 256 KiB 时，累计段数上限可能先到。这不是现场速率或容量承诺。
 
@@ -36,7 +40,7 @@
 - 不完整 tail 或校验损坏：保留原字节并拒绝可写重开，不截断、不跳过、不自动修复。
 - 完整 sealed group 的前一次同步结果可能未知；`Open` 重新校验和同步后，允许适配器按稳定业务 ID 核对。
 
-当前 `MaxLogBytes` 也参与 `Open` / `Inspect` 对既存文件的检查，不能调低到现有文件长度以下。下一阶段应把只读恢复的格式边界与新写入容量预算分开，不能因下调容量而失去排空能力。
+只读恢复已与新写入预算分离：`Open` / `Inspect` / `Read` / `Replay` 使用独立的 64 GiB 文件守卫和既有逐 frame/group 格式限制，不因调低 `MaxLogBytes` 拒绝既有合法数据。配置组合本身仍须合法；总限低于 EOF 时只保证恢复读取，不承诺可以追加 ack/finalized。
 
 ### 2.2 业务状态与兼容入口
 
@@ -155,9 +159,9 @@ Redpanda 当前 shadow 路径不是上述 WAL 的可靠替代：其发布与失�
 
 ## 6. 可实施的下一任务与验收
 
-下一实现批次建议先拆成两个可独立回放的边界，仍不开放可写 CLI：先做容量准入/控制空间预留，再做版本化 locator 和暂停 mutation 的轮转/checkpoint。第二步暂不删除任何正文，只证明切代、manifest 提交和跨代读取。完成索引退休与有归档证明的 GC 单独验收后，才可能解除累计 4096 / 总字节持续增长的限制。轮转只是把文件分开，不是增加总容量或取得长期运行能力。
+第一批容量准入/控制空间预留已实现，本地回放验证 Data 拒绝后 Control 排空、排队/在途/held 计费、合组 seal 归还、并发硬限、真实 I/O Unknown、取消/Close 及两类预算调低。仍不开放可写 CLI。下一批再做版本化 locator 和暂停 mutation 的轮转/checkpoint，暂不删除任何正文，只证明切代、manifest 提交和跨代读取。完成索引退休与有归档证明的 GC 单独验收后，才可能解除累计 4096 / 总字节持续增长的限制。轮转只是把文件分开，不是增加总容量或取得长期运行能力。
 
-建议 API 草案如下；均为待实现接口，不表示当前包已有此能力：
+接口边界如下；`AppendWithClass` 和 `Usage` 已实现，其余为待实现草案：
 
 ```go
 // Data 不能使用控制预留；所有 queued/inflight 按最坏独立 seal 计费。
@@ -186,7 +190,7 @@ mutation 门的锁序固定为门 → source/segment/lane 锁 → metadata 锁�
 
 | 顺序 | 实施范围 | 完成条件 |
 | --- | --- | --- |
-| 1 | 准入阶段的总字节与控制空间预留，读取配置与写预算分离 | 拒绝新 Data 后 writer 保持健康，控制记录可用预留提交；调低预算仍可读 |
+| 1（本地实现） | 准入阶段的总字节与控制空间预留，读取配置与写预算分离 | 拒绝新 Data 后 writer 保持健康，控制记录可用预留提交；调低预算仍可读 |
 | 2 | 版本化 locator、文件头/seal 链、跨 generation 读取；保留单文件 v1 reader | v1/v2 混合读取，错文件/错代际/缺文件失败；原 receipt 不能误读新代际 |
 | 3 | mutation 门、组边界轮转、连续 prefix checkpoint、耐久 manifest | 任意回执调度顺序恢复一致；manifest 锚不倒退；本步不执行正文删除 |
 | 4 | 可验证 retirement proof、整文件 GC、读者 pin、控制记录预留预算 | 仅核验归档且不再被任何恢复/证据引用的正文可退休；pending 不被跳过 |

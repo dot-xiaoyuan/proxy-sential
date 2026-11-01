@@ -566,3 +566,51 @@ func TestPassiveWALPureV1DefersRecoveryUntilCallerRequestsIt(t *testing.T) {
 		t.Fatalf("explicit recovery did not commit: %+v %v", after, err)
 	}
 }
+
+func TestPassiveWALDataLimitStillAllowsAcceptedLanesAndFinalize(t *testing.T) {
+	legacy, segment := passiveWALFixture(t)
+	segment.Events[0].Payload["capacity_padding"] = ""
+	raw, err := json.Marshal(segment)
+	if err != nil || len(raw) >= 2500 {
+		t.Fatalf("invalid capacity fixture: bytes=%d err=%v", len(raw), err)
+	}
+	segment.Events[0].Payload["capacity_padding"] = strings.Repeat("x", 2500-len(raw))
+	opts := PassiveWALOptions{WriteEnabled: true, WAL: streamwal.Options{MaxLogBytes: 64 << 10, MaxDataBytes: 4096, ControlReserveBytes: 32 << 10}}
+	j, err := OpenPassiveWALJournal(legacy, segment.SourcePath, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	id, err := j.AppendAndCommitPassive(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := segment
+	next.PreviousOffset, next.StartOffset, next.EndOffset = segment.EndOffset, segment.EndOffset, segment.EndOffset+100
+	if _, err := j.AppendAndCommitPassive(next); !errors.Is(err, streamwal.ErrNotWritten) || !errors.Is(err, streamwal.ErrDataCapacity) || errors.Is(err, ErrPassiveWALStopped) {
+		t.Fatalf("data limit stopped the journal or admitted new input: %v", err)
+	}
+	if err := (Processor{Journal: j, Writer: &fakeLaneWriter{}}).Drain(context.Background(), id); err != nil {
+		t.Fatalf("accepted work could not use control reserve: %v", err)
+	}
+	state, err := j.Load(id)
+	if err != nil || !state.Released || !state.Segment.AcceptedAt.Equal(segment.AcceptedAt) || len(state.Segment.Events) != 1 {
+		t.Fatalf("finalization changed first time or deleted body: %+v %v", state, err)
+	}
+	cursor, err := j.LoadSource(segment.Source, segment.SourcePath)
+	if err != nil || cursor.Offset != segment.EndOffset || cursor.LastSegmentID != id {
+		t.Fatalf("rejected accept advanced cursor: %+v %v", cursor, err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	opts.WAL.MaxDataBytes = 1
+	j, err = OpenPassiveWALJournal(legacy, segment.SourcePath, opts)
+	if err != nil {
+		t.Fatalf("lower data budget prevented recovery: %v", err)
+	}
+	defer j.Close()
+	if state, err := j.Load(id); err != nil || !state.Released || len(state.Segment.Events) != 1 {
+		t.Fatalf("completed evidence lost on recovery: %+v %v", state, err)
+	}
+}

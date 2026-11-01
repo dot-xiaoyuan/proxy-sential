@@ -15,12 +15,13 @@ import (
 
 type faultFile struct {
 	*os.File
-	mu       sync.Mutex
-	block    chan struct{}
-	entered  chan struct{}
-	failSync bool
-	short    bool
-	syncs    int
+	mu        sync.Mutex
+	block     chan struct{}
+	entered   chan struct{}
+	failSync  bool
+	failWrite bool
+	short     bool
+	syncs     int
 }
 
 func (f *faultFile) Sync() error {
@@ -45,8 +46,11 @@ func (f *faultFile) Sync() error {
 
 func (f *faultFile) Write(p []byte) (int, error) {
 	f.mu.Lock()
-	short := f.short
+	short, fail := f.short, f.failWrite
 	f.mu.Unlock()
+	if fail {
+		return 0, errors.New("injected write error")
+	}
 	if short {
 		return f.File.Write(p[:len(p)/2])
 	}
@@ -309,11 +313,13 @@ func TestLogCapacityNeverClaimsAnUnwrittenAppend(t *testing.T) {
 	if first.Err != nil {
 		t.Fatal(first.Err)
 	}
-	second := <-submit(t, l, "b")
-	if !errors.Is(second.Err, ErrNotWritten) || !errors.Is(second.Err, ErrCapacity) {
-		t.Fatalf("capacity outcome=%v", second.Err)
+	second, err := l.Append(context.Background(), Record{Kind: "accept", ID: "b", Payload: []byte("exact evidence")})
+	if second != nil || !errors.Is(err, ErrNotWritten) || !errors.Is(err, ErrCapacity) {
+		t.Fatalf("capacity outcome=%v", err)
 	}
-	_ = l.Close()
+	if err := l.Close(); err != nil {
+		t.Fatalf("known capacity rejection stopped writer: %v", err)
+	}
 	info, err := Inspect(dir, Options{MaxBatchBytes: 256, MaxLogBytes: 256})
 	if err != nil || info.Records != 1 {
 		t.Fatalf("capacity modified committed data: %+v %v", info, err)

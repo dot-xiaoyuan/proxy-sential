@@ -21,6 +21,9 @@ const (
 	maxBatchRecords      = 1024
 )
 
+// Read/format guard, independent of runtime write budgets.
+const maxLogBytes int64 = 64 << 30
+
 var magic = [8]byte{'P', 'S', 'W', 'A', 'L', '0', '1', '\n'}
 
 type frame struct {
@@ -140,9 +143,9 @@ func decodeRecord(payload []byte) (Record, error) {
 	return r, nil
 }
 
-func scan(r io.ReaderAt, size int64, o Options, visit func(Entry) error) (Recovery, error) {
+func scan(r io.ReaderAt, size int64, _ Options, visit func(Entry) error) (Recovery, error) {
 	var recovery Recovery
-	if size < 0 || size > o.MaxLogBytes {
+	if size < 0 || size > maxLogBytes {
 		return recovery, ErrCapacity
 	}
 	var entries []Entry
