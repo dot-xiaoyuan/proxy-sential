@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	streamCaptureFlushEvents = 500
-	streamCaptureFlushWindow = 2 * time.Second
+	streamCaptureFlushEvents = 750
+	streamCaptureFlushWindow = 3 * time.Second
 )
 
 // Capture spools standard events on a separate goroutine; packet reads never wait on database work.
