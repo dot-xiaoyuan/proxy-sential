@@ -158,6 +158,9 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 			ArchiveMonth: time.Now().UTC().Format("200601"), AcceptedAt: time.Now().UTC(),
 			NeedsProjection: needsStreamProjection(events), RiskFeaturesRequired: len(events) > 0 && !discoveryFlowSYNOnly(events), SplitRiskFeatures: len(events) > 0 && !discoveryFlowSYNOnly(events), Raw: chunk, Events: events,
 		}
+		if source.Kind == "device-signals" && os.Getenv("PROXY_SENTINEL_DEVICE_SIGNAL_BODY_LAYOUT_V2") == "true" {
+			segment.BodyLayout = "v2"
+		}
 		segment.RawIsStandardEvents = source.Kind == "device-signals" || source.Kind == "shared-device-signals"
 		segment.SourceBackedRaw = source.Kind == "zeek-dhcp-binding" && journal.HasRawResolver()
 		appendStarted := time.Now()

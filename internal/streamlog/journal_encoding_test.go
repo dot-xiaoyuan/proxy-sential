@@ -39,6 +39,9 @@ func TestJournalEncodedBodySurvivesInterruptedSourceCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			segment := encodingSegment(count)
+			if count == 1 {
+				segment.BodyLayout = "v2"
+			}
 			if err := j.StartFreshSource(SourceCursor{Epoch: segment.Epoch, Source: segment.Source, Path: segment.SourcePath,
 				FileID: segment.PreviousFileID, Offset: segment.PreviousOffset, ParserVersion: segment.ParserVersion}); err != nil {
 				t.Fatal(err)

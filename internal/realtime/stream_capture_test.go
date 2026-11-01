@@ -780,6 +780,7 @@ func TestControlledDeviceSignalRequiresOriginalMatchingScope(t *testing.T) {
 }
 
 func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtFiveHundred(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_DEVICE_SIGNAL_BODY_LAYOUT_V2", "false")
 	path := filepath.Join(t.TempDir(), "signals.jsonl")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -813,13 +814,14 @@ func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtFiveHundred(t *te
 			t.Fatalf("capture signal segment: id=%s captured=%t err=%v", id, captured, err)
 		}
 		state, err := journal.Load(id)
-		if err != nil || len(state.Segment.Events) != want || !state.Segment.RawIsStandardEvents {
+		if err != nil || len(state.Segment.Events) != want || !state.Segment.RawIsStandardEvents || state.Segment.BodyLayout != "" {
 			t.Fatalf("segment events=%d, standard-source=%t, want %d: %v", len(state.Segment.Events), state.Segment.RawIsStandardEvents, want, err)
 		}
 	}
 }
 
 func TestControlledNonProjectionSignalsUseOneClickHouseBatch(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_DEVICE_SIGNAL_BODY_LAYOUT_V2", "true")
 	path := filepath.Join(t.TempDir(), "handshake.jsonl")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -851,7 +853,7 @@ func TestControlledNonProjectionSignalsUseOneClickHouseBatch(t *testing.T) {
 		t.Fatalf("capture handshake batch: id=%s captured=%t err=%v", id, captured, err)
 	}
 	state, err := journal.Load(id)
-	if err != nil || len(state.Segment.Events) != 75 || state.Segment.NeedsProjection {
+	if err != nil || len(state.Segment.Events) != 75 || state.Segment.NeedsProjection || state.Segment.BodyLayout != "v2" {
 		t.Fatalf("non-projected ClickHouse batch events=%d projection=%t err=%v", len(state.Segment.Events), state.Segment.NeedsProjection, err)
 	}
 }
