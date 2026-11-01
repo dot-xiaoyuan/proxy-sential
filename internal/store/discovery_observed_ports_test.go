@@ -11,7 +11,7 @@ func TestDiscoveryObservedFlowQueryKeepsSensorIPAndBucketBounds(t *testing.T) {
 		[]string{"sensor-a|192.0.2.10", "sensor-a|192.0.2.10", "bad' OR 1=1|192.0.2.10", "sensor-a|192.0.2.10' OR 1=1"},
 		time.Date(2026, 11, 1, 0, 13, 0, 0, time.UTC),
 	)
-	for _, want := range []string{"(sensor_id,src_ip) IN (('sensor-a','192.0.2.10'))", "2026-11-01 00:10:00", "discovery_observed_flow_ports_10m", "argMaxMerge(evidence_id)", "countIf(proto='tcp_synack')", "argMaxIf(observed_evidence,observed_last,proto='tcp_synack')", "LIMIT 8 BY sensor_id,src_ip"} {
+	for _, want := range []string{"(sensor_id,src_ip) IN (('sensor-a','192.0.2.10'))", "2026-11-01 00:10:00", "discovery_observed_flow_ports_10m", "argMaxMerge(evidence_id)", "proto AS observation_proto", "countIf(observation_proto='tcp_synack')", "argMaxIf(observed_evidence,observed_last,observation_proto='tcp_synack')", "LIMIT 8 BY sensor_id,src_ip"} {
 		if !strings.Contains(query, want) {
 			t.Fatalf("query missing %q: %s", want, query)
 		}
