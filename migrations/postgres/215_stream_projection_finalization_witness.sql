@@ -1,6 +1,10 @@
 -- Preserve a source-position witness after all stream lanes finish and before
 -- the local journal body is released. Historical rows stay NULL and cannot
 -- establish archive coverage or authorize retention cleanup.
+-- The metadata change takes a table lock; fail instead of waiting behind a
+-- long-running projection transaction and holding up subsequent writers.
+SET LOCAL lock_timeout = '5s';
+
 ALTER TABLE stream_projection_segments
  ADD COLUMN source_file_id text,
  ADD COLUMN source_start_offset bigint,
