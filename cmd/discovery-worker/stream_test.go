@@ -36,6 +36,53 @@ func notifyAllLanes(queue chan passiveFinalizerSignal, id string) {
 	}
 }
 
+func TestPassiveCompactKeyModeBindsProjectionAndRiskQueue(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		config := discovery.DefaultCollectionConfig()
+		config.CompactPassiveEventKeys = enabled
+		configured, writer := newPassiveStreamLaneWriter(nil, nil, config)
+		projector, ok := writer.Projector.(discovery.StreamDiscoveryProjector)
+		if !ok || projector.CompactOnly != enabled || configured.CompactOnly != enabled {
+			t.Fatalf("producer compact=%v projector=%+v", enabled, writer.Projector)
+		}
+		risk, ok := writer.RiskQueue.(discovery.StreamDiscoveryProjector)
+		if !ok || risk.CompactOnly != enabled {
+			t.Fatalf("risk queue projector changed: %+v", writer.RiskQueue)
+		}
+	}
+}
+
+func TestCompactKeyModeRequiresInstalledLedgerBeforeCapture(t *testing.T) {
+	for _, ready := range []bool{false, true} {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := discovery.DefaultCollectionConfig()
+		config.CompactPassiveEventKeys = true
+		mock.ExpectQuery("(?s)to_regclass.*stream_discovery_event_keys_compact.*to_regprocedure.*sentinel_stream_discovery_key_hash").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(ready))
+		err = verifyCompactPassiveEventKeySchema(context.Background(), db, config)
+		if (err == nil) != ready {
+			t.Fatalf("schema ready=%v err=%v", ready, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := verifyCompactPassiveEventKeySchema(context.Background(), db, discovery.DefaultCollectionConfig()); err != nil {
+		t.Fatalf("legacy mode required compact schema: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (w *replayFinalizerWriter) FinalizeSegment(context.Context, string, streamlog.Segment) error {
 	if w.fail {
 		return streamlog.ErrUnconfirmed

@@ -38,6 +38,28 @@ func passiveStreamProcessor(journal streamlog.ProcessorJournal, writer streamlog
 	return streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 30 * time.Second, ProjectionRetryTimeout: 120 * time.Second, FinalizeTimeout: 30 * time.Second}
 }
 
+// Capture and projection consume the same runtime-only switch. Recovery with
+// the switch off still dual-writes any unfinished stream2 segment for r35.
+func newPassiveStreamLaneWriter(db *sql.DB, ch *store.ClickHouseStore, config discovery.CollectionConfig) (discovery.StreamDiscoveryProjector, store.StreamLaneWriter) {
+	projector := discovery.StreamDiscoveryProjector{DB: db, CompactOnly: config.CompactPassiveEventKeys}
+	return projector, store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector}
+}
+
+func verifyCompactPassiveEventKeySchema(ctx context.Context, db *sql.DB, config discovery.CollectionConfig) error {
+	if !config.CompactPassiveEventKeys {
+		return nil
+	}
+	var ready bool
+	if err := db.QueryRowContext(ctx, `SELECT to_regclass('stream_discovery_event_keys_compact') IS NOT NULL
+ AND to_regprocedure('sentinel_stream_discovery_key_hash(text,text,text)') IS NOT NULL`).Scan(&ready); err != nil {
+		return fmt.Errorf("compact event-key schema preflight: %w", err)
+	}
+	if !ready {
+		return errors.New("compact event-key schema is not installed")
+	}
+	return nil
+}
+
 func verifyPassiveStreamCutover(ctx context.Context, db *sql.DB, cursor streamlog.SourceCursor, sensor string) error {
 	if cursor.Source != "passive-discovery" || cursor.Epoch == "" || cursor.Path == "" || cursor.ParserVersion != discovery.PassiveStreamParserVersion || cursor.Offset < 0 {
 		return errors.New("invalid passive stream cursor")
@@ -84,6 +106,12 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	defer db.Close()
 	db.SetMaxOpenConns(store.PostgresPoolLimit(2))
 	db.SetMaxIdleConns(store.PostgresPoolLimit(2))
+	preflight, cancelPreflight := context.WithTimeout(context.Background(), 5*time.Second)
+	err = verifyCompactPassiveEventKeySchema(preflight, db, opts.Collection)
+	cancelPreflight()
+	if err != nil {
+		return err
+	}
 	runtimeDB, err := sql.Open("pgx", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"))
 	if err != nil {
 		return err
@@ -136,10 +164,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 			return err
 		}
 	}
-	// This compatibility release always dual-writes any stream2 segment it
-	// encounters, including after rollback from a later compact-only release.
-	projector := discovery.StreamDiscoveryProjector{DB: db}
-	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector}
+	projector, writer := newPassiveStreamLaneWriter(db, ch, opts.Collection)
 	if opts.DrainOnly {
 		processor := streamlog.Processor{Journal: journal, Writer: writer}
 		for _, id := range recovered {
