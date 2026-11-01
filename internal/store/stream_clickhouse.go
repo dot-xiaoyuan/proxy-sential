@@ -492,7 +492,7 @@ func (s *ClickHouseStore) missingStreamSearchEvents(ctx context.Context, segment
 			maxTime = item.observed
 		}
 	}
-	query := "SELECT scope_id,event_key,content_sha256,archive_month,retention_class FROM stream_event_search PREWHERE observed_at >= " +
+	query := "SELECT scope_id,event_key,content_sha256,archive_month,retention_class,body_ref FROM stream_event_search PREWHERE observed_at >= " +
 		chQuote(minTime.Format("2006-01-02 15:04:05.000000")) + " AND observed_at <= " + chQuote(maxTime.Format("2006-01-02 15:04:05.000000")) +
 		" AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ")" +
 		fmt.Sprintf(" LIMIT %d SETTINGS max_threads=1,max_memory_usage=134217728,max_execution_time=5 FORMAT JSONEachRow", 101*len(prepared))
@@ -511,6 +511,7 @@ func (s *ClickHouseStore) missingStreamSearchEvents(ctx context.Context, segment
 			Hash  string `json:"content_sha256"`
 			Month uint32 `json:"archive_month"`
 			Class string `json:"retention_class"`
+			Ref   string `json:"body_ref"`
 		}
 		if err := json.Unmarshal(line, &row); err != nil {
 			return nil, err
@@ -519,6 +520,12 @@ func (s *ClickHouseStore) missingStreamSearchEvents(ctx context.Context, segment
 		index, found := expected[key]
 		if !found || prepared[index].hash != row.Hash || fmt.Sprint(row.Month) != segment.ArchiveMonth || prepared[index].retention != row.Class || seen[key] >= 100 {
 			return nil, streamlog.ErrContentConflict
+		}
+		if segment.BodyLayout == "v2" {
+			ref, err := ParseStreamBodyRef(row.Ref)
+			if err != nil || ref.BodyLayout != "v2" || ref.Scope != row.Scope || ref.Key != row.Key || ref.SHA256 != row.Hash || ref.Month != segment.ArchiveMonth || ref.Class != row.Class {
+				return nil, streamlog.ErrContentConflict
+			}
 		}
 		seen[key]++
 		delete(remaining, key)

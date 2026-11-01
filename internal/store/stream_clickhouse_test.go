@@ -119,6 +119,34 @@ func TestStreamBodyLayoutV2RoutesDurableBodyAndReferences(t *testing.T) {
 	}
 }
 
+func TestVerifyV2SearchRejectsV1BodyReference(t *testing.T) {
+	segment := testStreamSegment()
+	segment.BodyLayout = "v2"
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := prepared[0]
+	ref := StreamBodyRef{Class: item.retention, Month: segment.ArchiveMonth, Scope: item.scope, Key: item.key, SHA256: item.hash}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		encoded, _ := json.Marshal(ref)
+		_ = json.NewEncoder(w).Encode(map[string]any{"scope_id": item.scope, "event_key": item.key, "content_sha256": item.hash,
+			"archive_month": 202610, "retention_class": item.retention, "body_ref": string(encoded)})
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, err := ch.VerifyStreamSearch(context.Background(), segment); !errors.Is(err, streamlog.ErrContentConflict) || found {
+		t.Fatalf("v1 reference confirmed v2 body: %t %v", found, err)
+	}
+	ref.BodyLayout = "v2"
+	if found, err := ch.VerifyStreamSearch(context.Background(), segment); err != nil || !found {
+		t.Fatalf("v2 reference not confirmed: %t %v", found, err)
+	}
+}
+
 func TestOperationalCoverageEventUsesShortBodyRetention(t *testing.T) {
 	segment := streamlog.Segment{Epoch: "fresh", ArchiveMonth: "202610", AcceptedAt: time.Date(2026, 10, 25, 4, 0, 0, 0, time.UTC), Events: []normalized.Event{{EventID: "coverage-1", Type: "device", SourceEventType: "capture_coverage", Timestamp: "2026-10-25T04:00:00Z", Observer: map[string]any{"sensor_id": "sensor-a", "capture_scope_id": "scope-a"}, Subject: map[string]any{"campus_id": "campus-a"}, Payload: map[string]any{"capture_coverage": true}}}}
 	prepared, err := prepareStreamEvents(segment)
