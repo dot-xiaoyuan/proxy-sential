@@ -30,6 +30,9 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
       panelRight:document.querySelector('.passive-discovery-panel')!.getBoundingClientRect().right,
       controls:[...document.querySelectorAll('.passive-discovery-panel .ant-btn,.passive-discovery-panel .ant-tag')].filter(e=>e.getBoundingClientRect().width>0).map(e=>({text:e.textContent,wrap:getComputedStyle(e).whiteSpace,shrink:getComputedStyle(e).flexShrink})),
       rowDisplay:getComputedStyle(document.querySelector('.passive-discovery-panel .ant-table-tbody > tr[data-row-key]')!).display,
+      visibleHeaders:[...document.querySelectorAll<HTMLElement>('.passive-ledger-table .ant-table-thead th')].filter(e=>e.getClientRects().length>0).map(e=>e.textContent?.trim()),
+      clippedHeaders:[...document.querySelectorAll<HTMLElement>('.passive-ledger-table .ant-table-thead th')].filter(e=>e.getClientRects().length>0&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent?.trim()),
+      tableScroll:(()=>{const e=document.querySelector<HTMLElement>('.passive-ledger-table .ant-table-content')!;return {width:e.clientWidth,content:e.scrollWidth,overflow:getComputedStyle(e).overflowX}})(),
       selected:[...document.querySelectorAll('.ant-menu-item-selected')].map(e=>({text:e.textContent,color:getComputedStyle(e).color,background:getComputedStyle(e).backgroundColor})),
       titleSize:getComputedStyle(document.querySelector('h1')!).fontSize,
     }))
@@ -37,8 +40,12 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     expect(probe.panelRight).toBeLessThanOrEqual(viewport.width)
     expect(probe.controls.every(c=>c.wrap==='nowrap'&&c.shrink==='0')).toBe(true)
     if(viewport.width<560)expect(probe.rowDisplay).not.toBe('table-row')
+    else {expect(probe.visibleHeaders).toHaveLength(8);expect(probe.visibleHeaders).toContain('终端类型 / 制造商 / 型号');expect(probe.visibleHeaders).toContain('证据状态 / 最近观测');expect(probe.clippedHeaders).toEqual([])}
+    if(viewport.width===1280){expect(probe.tableScroll.content).toBeGreaterThan(probe.tableScroll.width);expect(probe.tableScroll.overflow).toMatch(/auto|scroll/)}
+    if(viewport.width===1440)expect(probe.tableScroll.content).toBeLessThanOrEqual(probe.tableScroll.width+1)
     await writeFile(info.outputPath('dom.json'),JSON.stringify(probe,null,2))
     await page.screenshot({path:info.outputPath('discovered-devices.png'),fullPage:true,animations:'disabled'})
+    if(viewport.width<560){await page.locator('.passive-ledger-table .ant-table-tbody > tr[data-row-key]').first().scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath('discovered-devices-card.png'),animations:'disabled'})}
     await page.getByRole('button',{name:'查看证据'}).first().click()
     await expect(page.getByRole('dialog')).toContainText('DNS-SD 服务响应与地址记录自动关联')
     await expect(page.getByRole('dialog')).toContainText('fixture-dhcp-ack')

@@ -154,12 +154,12 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const show=(item:Device)=>{setHistoryCursor('');setSelected(item)}
   const columns=[
     {title:'地址 / 名称 / MAC',key:'identity',width:195,render:(_:unknown,item:Device)=>identity(item)},
-    {title:'终端类型 / 制造商 / 型号',key:'type',width:150,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack">{kind(item)}{vendor(item)}</div>},
+    {title:'终端类型 / 制造商 / 型号',key:'type',width:175,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack">{kind(item)}{vendor(item)}</div>},
     {title:'操作系统',key:'os',width:150,render:(_:unknown,item:Device)=>{const hint=osFor(item);const signal=signalFor(item);const historical=!!signal?.dhcp_historical&&!!signal.os_family;return <Typography.Text type={hint.label==='线索冲突'?'warning':'secondary'} title={hint.detail}>{hint.label?`${hint.label} · ${hint.ipOnly?'IP 线索':historical?'历史线索':'线索'}`:''}</Typography.Text>}},
     {title:'网络位置',key:'location',width:100,render:(_:unknown,item:Device)=>location(item)},
     {title:'发现依据',key:'clues',width:110,render:(_:unknown,item:Device)=>clues(item)},
     {title:'服务 / 端口',key:'services',width:140,render:(_:unknown,item:Device)=><Space wrap>{serviceTags(item)}{portTags(item)}</Space>},
-    {title:'证据状态 / 最近观测',key:'state',width:120,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack">{state(item)}<span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span></div>},
+    {title:'证据状态 / 最近观测',key:'state',width:150,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack">{state(item)}<span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span></div>},
     {title:'操作',key:'action',width:95,fixed:'right' as const,render:(_:unknown,item:Device)=><Button type="link" onClick={()=>show(item)}>查看证据</Button>},
   ]
   return <section className="passive-discovery-panel">
@@ -204,7 +204,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     </section>
     {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
       <AppListHeader title="发现设备" count={devices.data?.total!==undefined?`共 ${devices.data.total} 个设备`:`本页 ${items.length} 条`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
-      <AppTable className="passive-ledger-table" rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1040}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
+      <AppTable className="passive-ledger-table" rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1115}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={devices.data?.total ?? page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,cursors:[''],page:0});return}
         const current=page+1
