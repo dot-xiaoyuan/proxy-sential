@@ -31,6 +31,13 @@ case "${1:-}" in
     if [[ -S "$control_path" ]] && ssh -S "$control_path" -O check -o BatchMode=yes "$host" >/dev/null 2>&1; then
       echo "multiplex ready"
     fi
+    route_interface="$(route -n get "${host#*@}" 2>/dev/null | awk '$1=="interface:" {print $2; exit}' || true)"
+    if [[ -n "$route_interface" ]]; then
+      echo "route interface: $route_interface"
+      if [[ "$route_interface" != utun* ]]; then
+        echo "VPN route unavailable; reconnect the VPN to reach 184"
+      fi
+    fi
     [[ ! -f "$log_file" ]] || tail -n 3 "$log_file"
     ;;
   stop)
