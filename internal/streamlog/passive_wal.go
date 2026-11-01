@@ -27,6 +27,9 @@ type PassiveWALOptions struct {
 	QuarantineDir string
 	MaxSegments   int // Includes finalized records until checkpoint/retirement exists.
 	WAL           streamwal.Options
+	// PhaseObserver receives fixed-size, in-memory diagnostics for legacy v1
+	// acceptance. It must not retain source data or perform blocking I/O.
+	PhaseObserver func(PassiveJournalPhases, int, int64, error)
 	// BeforeRecovery validates the existing fixed source start while its lease
 	// is held, before any source recovery or WAL genesis can change disk state.
 	// Worker integrations must supply this gate; isolated library tests may omit it.
@@ -80,17 +83,41 @@ type PassiveWALJournal struct {
 var _ ProcessorJournal = (*PassiveWALJournal)(nil)
 var _ ProcessorJournal = (*Journal)(nil)
 
+// PassiveJournalPhases distinguishes the two durable v1 operations without
+// changing their ordering or crash recovery barriers.
+type PassiveJournalPhases struct {
+	AppendAttempted bool
+	CommitAttempted bool
+	AppendDuration  time.Duration
+	CommitDuration  time.Duration
+}
+
 // AppendAndCommitPassive retains the v1 durable sequence for the capture seam.
 // An append ID is returned even if source commit fails, preserving recovery.
 func (j *Journal) AppendAndCommitPassive(segment Segment) (string, error) {
+	id, _, err := j.AppendAndCommitPassiveMeasured(segment)
+	return id, err
+}
+
+// AppendAndCommitPassiveMeasured keeps a completed body's ID on cursor failure
+// so recovery can resume the exact immutable segment after a crash.
+func (j *Journal) AppendAndCommitPassiveMeasured(segment Segment) (string, PassiveJournalPhases, error) {
+	var phases PassiveJournalPhases
 	if segment.Source != "passive-discovery" {
-		return "", ErrContentConflict
+		return "", phases, ErrContentConflict
 	}
+	phases.AppendAttempted = true
+	started := time.Now()
 	id, err := j.Append(segment)
+	phases.AppendDuration = time.Since(started)
 	if err != nil {
-		return id, err
+		return id, phases, err
 	}
-	return id, j.CommitSource(segment.Source, segment.SourcePath, id)
+	phases.CommitAttempted = true
+	started = time.Now()
+	err = j.CommitSource(segment.Source, segment.SourcePath, id)
+	phases.CommitDuration = time.Since(started)
+	return id, phases, err
 }
 
 // OpenPassiveWALJournal acquires the source lease itself; callers must not hold
@@ -287,7 +314,11 @@ func (j *PassiveWALJournal) AppendAndCommitPassive(s Segment) (string, error) {
 		return "", ErrPassiveWALStopped
 	}
 	if j.wal == nil {
-		return j.legacy.AppendAndCommitPassive(s)
+		id, phases, err := j.legacy.AppendAndCommitPassiveMeasured(s)
+		if j.opts.PhaseObserver != nil {
+			j.opts.PhaseObserver(phases, len(s.Events), s.EndOffset-s.StartOffset, err)
+		}
+		return id, err
 	}
 	if !j.opts.WriteEnabled {
 		return "", ErrPassiveWALWritesDisabled

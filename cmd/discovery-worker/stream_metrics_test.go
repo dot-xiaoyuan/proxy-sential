@@ -70,3 +70,29 @@ func TestPassiveStreamEnqueueCancellationIsVisible(t *testing.T) {
 		t.Fatal("cancelled enqueue changed queue")
 	}
 }
+
+func TestPassiveJournalPhasesAndBatchSizesStayBounded(t *testing.T) {
+	m := newPassiveStreamMetrics()
+	m.observeJournal(streamlog.PassiveJournalPhases{
+		AppendAttempted: true, CommitAttempted: true,
+		AppendDuration: 150 * time.Millisecond, CommitDuration: 300 * time.Millisecond,
+	}, 625, 600<<10, errors.New("sensitive segment content"))
+	snapshot := m.snapshot("periodic", time.Now())
+	if appendStage := snapshot.Stages["capture.append"]; appendStage.Count != 1 || appendStage.Failures != 0 || appendStage.TotalMS != 150 {
+		t.Fatalf("append phase: %+v", appendStage)
+	}
+	if commitStage := snapshot.Stages["capture.commit"]; commitStage.Count != 1 || commitStage.Failures != 1 || commitStage.TotalMS != 300 {
+		t.Fatalf("commit phase: %+v", commitStage)
+	}
+	if batches := snapshot.CaptureBatches; batches.Count != 1 || batches.Events != 625 || batches.SourceBytes != 600<<10 || batches.EventsLE750 != 1 || batches.BytesLE1MiB != 1 {
+		t.Fatalf("capture batch sizes: %+v", batches)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil || strings.Contains(string(encoded), "sensitive") {
+		t.Fatalf("bounded snapshot leaked error: %s %v", encoded, err)
+	}
+	reset := m.snapshot("shutdown", time.Now())
+	if reset.CaptureBatches.Count != 0 || len(reset.Stages) != 0 {
+		t.Fatalf("capture dimensions did not reset: %+v", reset)
+	}
+}

@@ -131,11 +131,13 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	path := discovery.PassiveStreamSourcePath(source)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	metrics := newPassiveStreamMetrics()
 	// Compatibility comes before activation. This binary can drain WAL-backed
 	// segments, but live WAL writes remain unavailable until rotation/checkpoint
 	// and rollback have been validated. Existing v1 capture keeps its protocol.
 	journal, err := streamlog.OpenPassiveWALJournal(legacyJournal, path, streamlog.PassiveWALOptions{
 		QuarantineDir: filepath.Join(opts.Spool, "discovery-quarantine"),
+		PhaseObserver: metrics.observeJournal,
 		BeforeRecovery: func(cursor streamlog.SourceCursor) error {
 			return verifyPassiveStreamCutover(ctx, db, cursor, opts.Node)
 		},
@@ -240,7 +242,6 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 			}
 		}()
 	}
-	metrics := newPassiveStreamMetrics()
 	processor := passiveStreamProcessor(journal, writer)
 	processor.Observer = metrics.observe
 	archiveQueue := make(chan string, 64)

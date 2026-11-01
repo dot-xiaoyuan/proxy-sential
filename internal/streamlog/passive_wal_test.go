@@ -32,6 +32,50 @@ func passiveWALFixture(t *testing.T) (*Journal, Segment) {
 	return legacy, s
 }
 
+func TestPassiveLegacyPhaseObservationPreservesInterruptedCommit(t *testing.T) {
+	legacy, segment := passiveWALFixture(t)
+	var observed []PassiveJournalPhases
+	var failures []error
+	journal, err := OpenPassiveWALJournal(legacy, segment.SourcePath, PassiveWALOptions{
+		PhaseObserver: func(phases PassiveJournalPhases, eventCount int, sourceBytes int64, failure error) {
+			if eventCount != len(segment.Events) || sourceBytes != segment.EndOffset-segment.StartOffset {
+				t.Errorf("unexpected bounded batch size: %d events %d bytes", eventCount, sourceBytes)
+			}
+			observed = append(observed, phases)
+			failures = append(failures, failure)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+
+	// The body can be durable even if the cursor predecessor is rejected.
+	segment.PreviousOffset = 1
+	id, err := journal.AppendAndCommitPassive(segment)
+	if !errors.Is(err, ErrContentConflict) || id == "" {
+		t.Fatalf("expected durable body with rejected cursor: %s %v", id, err)
+	}
+	if len(observed) != 1 || !observed[0].AppendAttempted || !observed[0].CommitAttempted || !errors.Is(failures[0], ErrContentConflict) {
+		t.Fatalf("commit failure was not attributed: %+v %v", observed, failures)
+	}
+	if cursor, err := journal.LoadSource(segment.Source, segment.SourcePath); err != nil || cursor.Offset != 0 {
+		t.Fatalf("failed commit advanced source: %+v %v", cursor, err)
+	}
+	if state, err := journal.Load(id); err != nil || state.Segment.PreviousOffset != 1 {
+		t.Fatalf("failed commit lost body: %+v %v", state, err)
+	}
+}
+
+func TestPassiveLegacyPhaseObservationSkipsCommitAfterAppendFailure(t *testing.T) {
+	legacy, segment := passiveWALFixture(t)
+	segment.EndOffset = segment.StartOffset
+	_, phases, err := legacy.AppendAndCommitPassiveMeasured(segment)
+	if err == nil || !phases.AppendAttempted || phases.CommitAttempted {
+		t.Fatalf("invalid append reached commit: %+v %v", phases, err)
+	}
+}
+
 func TestPassiveWALAcceptAtomicallyAdvancesCursorAndRetainsFirstTime(t *testing.T) {
 	legacy, s := passiveWALFixture(t)
 	j, err := OpenPassiveWALJournal(legacy, s.SourcePath, PassiveWALOptions{WriteEnabled: true})
