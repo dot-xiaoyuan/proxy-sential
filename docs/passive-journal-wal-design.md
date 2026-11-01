@@ -80,9 +80,13 @@ WAL 回放一次构建有界 metadata 索引；正文只存于 accept frame。`L
 
 ### 3.1 文件与 locator
 
-轮转文件按 journal UUID 和递增 generation 标识；全局 LSN 跨文件连续，不随轮转归零。文件头应绑定格式版本、journal/source identity、generation、首 LSN、前文件末 seal hash。每个新 seal 再绑定前 group seal hash；checkpoint 保留被删除前缀的认证锚，避免删除中间文件后把两个合法文件直接拼接。
+轮转文件按 journal UUID 和递增 generation 标识；全局 LSN 跨文件连续，不随轮转归零。文件头应绑定格式版本、journal/source identity、generation、首 LSN 和带类型的前代锚。每个新 seal 再绑定前 group seal hash；checkpoint 保留被删除前缀的认证锚，避免删除中间文件后把两个合法文件直接拼接。
 
-新 locator 至少包含：格式版本、journal UUID、generation、全局 LSN、offset/length、frame digest、seal offset/digest。路径只作定位，不能作为完整性证明；必须核对文件头和 reference 的 journal identity。当前 `PassiveWALReference` 只有目录/LSN/offset/length/content hash，是单文件诊断引用，不能直接当作跨代际、可持久导入的可信 locator。
+新 locator 至少包含：格式版本、journal UUID、generation、全局 LSN、frame offset/length/digest、group start/count、seal offset/digest。路径只作定位，不能作为完整性证明；必须核对文件头和 reference 的 journal identity。当前 `PassiveWALReference` 只有目录/LSN/offset/length/content hash，是单文件诊断引用，不能直接当作跨代际、可持久导入的可信 locator。
+
+v1 `Receipt` 虽在内存里另有 frame/seal digest，但这些字段未导出，也没有文件 UUID、generation、文件头或磁盘上的前组 seal 链。现有 `Read(Receipt)` 信任其由 commit/replay 生成，只读目标 frame 与 seal；把字段直接序列化后再读取，尚不能证明该 frame 属于该 seal 覆盖的完整 group。`DurablePosition` 的累积摘要可核验当前单文件前缀，但它不为单条正文生成跨代际身份。隔离记录中的旧 `PassiveWALReference` 必须保持诊断含义，不能隐式升级成可信 locator。
+
+v2 文件头应绑定格式、journal UUID、固定来源身份（source/path、epoch 和 genesis 锚）、generation、首个全局 LSN 与前代末 seal 锚。从 v1 切代时，首代的前驱锚须显式标为 v1 前缀摘要，后代才是 v2 seal digest。每组 seal 在现有 group hash 之外记录前组 seal digest；跨文件的第一组以前代末 seal 为前驱。`ReadLocator` 先由 manifest 选定代际文件并核对文件头，再在有界 group 内核对连续 LSN、全部 frame、group hash、前驱 seal、目标 frame 的 offset/length/digest 与 locator 的 seal digest；最后由适配器核对段 ID 和业务 content hash。不能仅比对目标 frame 与某个合法 seal，也不能在缺文件、错代际或 hash 冲突时改读同名/同 offset 的其他文件。已经验证的完整 group 可缓存证明，避免每次详情读取重扫整个 journal。
 
 隔离 manifest 和 checkpoint 必须使用版本化 locator。重定位 pending 正文时，旧引用通过受控 relocation 映射解析，不能原地改变历史 manifest 中的证据标识。读者正在使用的 generation 有引用保护，GC 不能先删除其文件再等待读者。
 
@@ -106,6 +110,13 @@ WAL 回放一次构建有界 metadata 索引；正文只存于 accept frame。`L
 4. 崩溃留下未被 manifest 引用的新文件时，先检查其中是否有完整组和未知结果，再决定恢复；不能用“孤儿文件”名称直接删除证据。manifest 发布结果不明时停止切换，通过恢复核对，不能同时向新旧文件继续写。
 
 轮转不等于 GC，旧文件要等 checkpoint、正文落点和读者引用都满足要求才可删除。容量不足必须在接收前明确背压，并给完成已接收的 lane/finalized、checkpoint 和迁移保留空间；不能把最后一点磁盘都用于新 accept，造成再也无法确认或释放旧段。
+
+### 3.4 最小兼容发布顺序
+
+1. **旧格式降级门禁**：先让仍只写/读 v1 的二进制识别未来格式标记，并在标记存在或版本未知时停止，不能静默回到冻结的 v1 cursor。保持 v1 WAL 原样且不开放新写入。v1 已接受的 pending 可继续从保留的完整 v1 文件回放；初次切代无需把旧诊断引用伪装成 v2 locator。这一批可独立发布。更早的二进制无法补上门禁，部署/回退脚本还须拒绝把已切代现场指向不兼容版本。
+2. **v2 只读兼容**：实现上述文件头、seal 链、locator 与 manifest 的读取/校验，用本地构造文件回放错 UUID、错代际、跨组拼接、缺文件和截尾；cmd 仍不写 v2。此批可先独立发布并验证旧 v1 回放。随后才允许单独实施写入切代：在 mutation 门下核验 v1 最终 `Position`，先在与 v1 共享的来源 WAL 目录耐久发布格式门禁文件（文件和目录均 `Sync`），再以该前缀摘要锚定新 journal UUID 和首个 v2 header，耐久发布 manifest 后开始 v2 写入；v1 文件须保留到其全部引用经核验退休。
+
+一旦有第一条 v2 accept，回退只能到已验证能读取该 UUID、manifest 和代际链的兼容版本；旧 v1 二进制即使能启动也不属于回退入口。格式标记或 manifest 发布结果不明时停止并核对文件，不自动删“孤儿”新代际，也不把旧 manifest 当作较短 cursor 继续运行。locator 校验只证明 WAL 字节及引用一致，正文退休仍另需归档与案件保护证明。
 
 ## 4. Checkpoint、正文退休与空间回收
 
