@@ -96,7 +96,7 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 			result = joinCaptureErrors(result, writerErr)
 		}
 	}()
-	decoder := newCaptureFrameDecoder(config.MDNSRecordEvidenceV2)
+	decoder := newCaptureFrameDecoder(config.MDNSRecordEvidenceV2, allow...)
 	stats := NewCaptureStats()
 	stats.Config = config
 	if config.CompactPassiveEventKeys {

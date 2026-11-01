@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"fmt"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -17,6 +18,7 @@ const (
 	dnsCacheAdmitted dnsCacheAdmissionFailure = iota
 	dnsCacheRecordLimit
 	dnsCacheByteLimit
+	dnsCacheOutOfScope
 )
 
 // Count only the five RR kinds that can occupy the cache. Fixed fields avoid
@@ -87,15 +89,54 @@ func mdnsMessageRecords(records []dnsmessage.Resource) []dnsmessage.Resource {
 // observe reports only supported records rejected by the retained cache budget.
 // Callers can still resolve the current message without retaining those records.
 func (c *DNSCache) observe(scope string, record dnsmessage.Resource, at time.Time) bool {
-	return c.observeAdmission(scope, record, at) != dnsCacheAdmitted
+	reason := c.observeAdmission(scope, record, at)
+	return reason == dnsCacheRecordLimit || reason == dnsCacheByteLimit
+}
+
+// Filtering only retained address dependencies cannot remove an in-scope
+// service: capture output is filtered by the same advertised address. The
+// current DNS message still takes part in resolution before that filter.
+func (c *DNSCache) addressInScope(record dnsmessage.Resource) bool {
+	if len(c.allowedAddresses) == 0 {
+		return true
+	}
+	var address netip.Addr
+	switch body := record.Body.(type) {
+	case *dnsmessage.AResource:
+		address = netip.AddrFrom4(body.A)
+	case *dnsmessage.AAAAResource:
+		address = netip.AddrFrom16(body.AAAA).Unmap()
+	default:
+		return true
+	}
+	for _, prefix := range c.allowedAddresses {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *DNSCache) observeAdmission(scope string, record dnsmessage.Resource, at time.Time) dnsCacheAdmissionFailure {
-	key := dnsCacheRecordKey(scope, record)
 	if record.Header.TTL == 0 {
-		c.remove(key)
+		c.remove(dnsCacheRecordKey(scope, record))
 		return dnsCacheAdmitted
 	}
+	if record.Header.Class&0x7fff != dnsmessage.ClassINET {
+		return dnsCacheAdmitted
+	}
+	if !c.addressInScope(record) {
+		// Scope is fixed for the decoder lifetime. TTL 0 withdrawals above
+		// still remove old entries; this skip is not a budget failure.
+		switch record.Body.(type) {
+		case *dnsmessage.AResource:
+			c.stats.SkippedOutOfScope.A++
+		case *dnsmessage.AAAAResource:
+			c.stats.SkippedOutOfScope.AAAA++
+		}
+		return dnsCacheOutOfScope
+	}
+	key := dnsCacheRecordKey(scope, record)
 	ttl := min(record.Header.TTL, discoveryMaxTTLSeconds)
 	size := dnsCacheEntryBytes(key, record)
 	if size == 0 {

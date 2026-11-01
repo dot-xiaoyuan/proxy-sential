@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"golang.org/x/net/dns/dnsmessage"
 	"net"
+	"net/netip"
 	"net/textproto"
 	"proxy-sentinel/internal/normalized"
 	"sort"
@@ -28,6 +29,7 @@ type cachedDNS struct {
 }
 type DNSCache struct {
 	legacyEvidence                    bool
+	allowedAddresses                  []netip.Prefix
 	records                           map[string]*cachedDNS
 	bytes                             int
 	stats                             DNSCacheCaptureStats
@@ -280,7 +282,7 @@ func decodeServiceFrame(frame []byte, source Source, at time.Time, cache *DNSCac
 		scope := dnsCacheNamespace(source, vlan, src.String())
 		cache.expire(at)
 		for _, r := range records {
-			if reason := cache.observeAdmission(scope, r, at); reason != dnsCacheAdmitted {
+			if reason := cache.observeAdmission(scope, r, at); reason == dnsCacheRecordLimit || reason == dnsCacheByteLimit {
 				cacheNotRetained++
 				cache.countAdmissionFailure(r, reason)
 			}
