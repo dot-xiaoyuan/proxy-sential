@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -259,6 +260,61 @@ func TestPassiveWALRecoversAcceptAfterDurableResultBeforeMemoryCursor(t *testing
 	state, err := j.Load(id)
 	if err != nil || !state.Committed || state.Acks[Archive] != Pending {
 		t.Fatalf("recovered body=%+v %v", state, err)
+	}
+}
+
+func TestPassiveWALCheckpointCutWaitsForDurableLaneFold(t *testing.T) {
+	legacy, s := passiveWALFixture(t)
+	j, err := OpenPassiveWALJournal(legacy, s.SourcePath, PassiveWALOptions{WriteEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	id, err := j.AppendAndCommitPassive(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition := passiveTransition{ContentSHA256: j.entries[id].state.ContentSHA256, Lane: Archive, Status: Attempted}
+	raw, _ := json.Marshal(transition)
+	j.mutationMu.RLock() // Pause exactly after the receipt and before the state fold.
+	if _, err := j.persist("lane", id, raw); err != nil {
+		j.mutationMu.RUnlock()
+		t.Fatal(err)
+	}
+	type result struct {
+		cut PassiveWALCheckpointCandidate
+		err error
+	}
+	done := make(chan result, 1)
+	go func() { cut, err := j.CheckpointCandidate(); done <- result{cut, err} }()
+	deadline := time.Now().Add(time.Second)
+	for j.mutationMu.TryRLock() {
+		j.mutationMu.RUnlock()
+		if time.Now().After(deadline) {
+			j.mutationMu.RUnlock()
+			t.Fatal("checkpoint did not wait for in-flight mutation")
+		}
+		runtime.Gosched()
+	}
+	select {
+	case <-done:
+		j.mutationMu.RUnlock()
+		t.Fatal("checkpoint passed an unfolded durable receipt")
+	default:
+	}
+	j.mu.Lock()
+	err = applyPassiveTransition(&j.entries[id].state, "lane", transition)
+	j.mu.Unlock()
+	j.mutationMu.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := <-done
+	if got.err != nil || got.cut.Position.LastLSN != 3 || len(got.cut.Entries) != 1 || got.cut.Entries[0].State.Acks[Archive] != Attempted {
+		t.Fatalf("checkpoint cut omitted the folded lane: %+v %v", got.cut, got.err)
+	}
+	if err := j.wal.VerifyPosition(got.cut.Position); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 
 var (
 	ErrPassiveWALWritesDisabled = errors.New("passive WAL is active; new WAL capture is disabled, legacy writes are forbidden")
+	ErrPassiveWALInactive       = errors.New("passive WAL is not active")
 	ErrPassiveWALStopped        = errors.New("passive WAL stopped; reopen and reconcile before continuing")
 )
 
@@ -51,6 +52,22 @@ type passiveWALEntry struct {
 	finish  sync.Mutex
 }
 
+// PassiveWALCheckpointCandidate is an in-memory, fully folded cut. Receipts
+// remain opaque: this is not a durable checkpoint or a cross-file locator.
+type PassiveWALCheckpointCandidate struct {
+	Position      streamwal.Position
+	Cursor        SourceCursor
+	Genesis       bool
+	Quarantined   bool
+	LegacyPending []string
+	Entries       []PassiveWALCheckpointEntry
+}
+
+type PassiveWALCheckpointEntry struct {
+	State   State
+	Receipt streamwal.Receipt
+}
+
 type passiveTransition struct {
 	ContentSHA256 string `json:"content_sha256"`
 	Lane          Lane   `json:"lane,omitempty"`
@@ -75,6 +92,7 @@ type PassiveWALJournal struct {
 	terminal     error
 	quarantined  bool
 	closed       bool
+	mutationMu   sync.RWMutex
 	sourceMu     sync.Mutex
 	closeOnce    sync.Once
 	closeErr     error
@@ -309,6 +327,10 @@ func validatePassiveWALSegment(s Segment) error {
 }
 
 func (j *PassiveWALJournal) AppendAndCommitPassive(s Segment) (string, error) {
+	if j.wal != nil {
+		j.mutationMu.RLock()
+		defer j.mutationMu.RUnlock()
+	}
 	j.sourceMu.Lock()
 	defer j.sourceMu.Unlock()
 	j.mu.Lock()
@@ -681,6 +703,10 @@ func (j *PassiveWALJournal) PendingLanes(id string) ([]Lane, error) {
 }
 
 func (j *PassiveWALJournal) setAckWithProof(id string, lane Lane, status Status, proof string) error {
+	if j.wal != nil {
+		j.mutationMu.RLock()
+		defer j.mutationMu.RUnlock()
+	}
 	entry, _, err := j.entry(id)
 	if err != nil {
 		return err
@@ -747,6 +773,10 @@ func (j *PassiveWALJournal) AbortUnsentAttempt(id string, lane Lane) error {
 }
 
 func (j *PassiveWALJournal) Release(id string) error {
+	if j.wal != nil {
+		j.mutationMu.RLock()
+		defer j.mutationMu.RUnlock()
+	}
 	entry, _, err := j.entry(id)
 	if err != nil {
 		return err
@@ -793,6 +823,10 @@ func (j *PassiveWALJournal) Release(id string) error {
 // Quarantine records a durable failed scope/body reference without copying the
 // body into a fabricated v1 segment. New capture and release then fail closed.
 func (j *PassiveWALJournal) Quarantine(id, reason string) error {
+	if j.wal != nil {
+		j.mutationMu.RLock()
+		defer j.mutationMu.RUnlock()
+	}
 	// Serialize the source gate with accept validation and commit. Once this
 	// record is durable, no later accept can pass a stale quarantine check.
 	j.sourceMu.Lock()
@@ -845,7 +879,42 @@ func (j *PassiveWALJournal) V2SegmentReference(id string) (PassiveWALReference, 
 	return PassiveWALReference{WALDirectory: j.dir, LSN: r.LSN, Offset: r.Offset, Length: r.Length, ContentSHA256: entry.state.ContentSHA256}, true
 }
 
+// CheckpointCandidate waits for all WAL mutations that started before its
+// exclusive gate, including their durable receipts and in-memory folds. It
+// copies bounded metadata only; callers must verify Position and body locators
+// before any future manifest publication. It performs no disk I/O.
+func (j *PassiveWALJournal) CheckpointCandidate() (PassiveWALCheckpointCandidate, error) {
+	if j.wal == nil {
+		return PassiveWALCheckpointCandidate{}, ErrPassiveWALInactive
+	}
+	j.mutationMu.Lock()
+	j.mu.Lock()
+	if j.closed || j.terminal != nil {
+		j.mu.Unlock()
+		j.mutationMu.Unlock()
+		return PassiveWALCheckpointCandidate{}, ErrPassiveWALStopped
+	}
+	cut := PassiveWALCheckpointCandidate{Cursor: j.cursor, Genesis: j.genesis, Quarantined: j.quarantined,
+		LegacyPending: make([]string, 0, len(j.legacyIDs)), Entries: make([]PassiveWALCheckpointEntry, 0, len(j.entries))}
+	for id := range j.legacyIDs {
+		cut.LegacyPending = append(cut.LegacyPending, id)
+	}
+	for _, entry := range j.entries {
+		cut.Entries = append(cut.Entries, PassiveWALCheckpointEntry{State: clonePassiveState(entry.state), Receipt: entry.receipt})
+	}
+	j.mu.Unlock()
+	cut.Position = j.wal.DurablePosition()
+	j.mutationMu.Unlock()
+	sort.Strings(cut.LegacyPending)
+	sort.Slice(cut.Entries, func(i, k int) bool { return cut.Entries[i].State.ID < cut.Entries[k].State.ID })
+	return cut, nil
+}
+
 func (j *PassiveWALJournal) Close() error {
+	if j.wal != nil {
+		j.mutationMu.Lock()
+		defer j.mutationMu.Unlock()
+	}
 	j.sourceMu.Lock()
 	defer j.sourceMu.Unlock()
 	j.closeOnce.Do(func() {
