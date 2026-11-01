@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"proxy-sentinel/internal/streamlog"
 )
@@ -105,5 +106,59 @@ func TestStreamSpoolWriterNeverCombinesBeyondSegmentBudget(t *testing.T) {
 	}, streamlog.MaxSegmentEvents, 1<<20)
 	if err != nil || total != 2000 || writes != 2 {
 		t.Fatalf("stream combine: total=%d writes=%d err=%v", total, writes, err)
+	}
+}
+
+func TestStreamSpoolWriterGathersNextCaptureWindow(t *testing.T) {
+	queue := make(chan []byte, 2)
+	firstCommitting := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var batches [][]int
+	done := make(chan error, 1)
+	go func() {
+		done <- drainSpoolQueueBoundedWindow(queue, func(raw []byte) error {
+			var batch []struct {
+				ID int `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &batch); err != nil {
+				return err
+			}
+			ids := make([]int, len(batch))
+			for i, event := range batch {
+				ids[i] = event.ID
+			}
+			batches = append(batches, ids)
+			if len(batches) == 1 {
+				close(firstCommitting)
+				<-releaseFirst
+			}
+			return nil
+		}, streamlog.MaxSegmentEvents, 1<<20, 500*time.Millisecond)
+	}()
+	queue <- []byte(`[{"id":0}]`)
+	<-firstCommitting
+	for batch := 0; batch < 2; batch++ {
+		entries := make([]map[string]int, captureFlushEvents)
+		for i := range entries {
+			entries[i] = map[string]int{"id": batch*captureFlushEvents + i + 1}
+		}
+		raw, _ := json.Marshal(entries)
+		queue <- raw
+		if batch == 0 {
+			close(releaseFirst)
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	close(queue)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(batches) != 2 || len(batches[0]) != 1 || len(batches[1]) != 2*captureFlushEvents {
+		t.Fatalf("batch sizes: %v", batches)
+	}
+	for i, id := range batches[1] {
+		if id != i+1 {
+			t.Fatalf("event %d became %d", i+1, id)
+		}
 	}
 }
