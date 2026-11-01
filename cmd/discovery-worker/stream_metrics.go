@@ -108,6 +108,20 @@ func (m *passiveStreamMetrics) observeJournal(phases streamlog.PassiveJournalPha
 	m.observeStageLocked("capture.append", float64(phases.AppendDuration)/float64(time.Millisecond), appendErr)
 	if phases.CommitAttempted {
 		m.observeStageLocked("capture.commit", float64(phases.CommitDuration)/float64(time.Millisecond), err)
+		for _, phase := range [...]struct {
+			name     string
+			duration time.Duration
+		}{
+			{"capture.commit.lock", phases.CommitLockDuration},
+			{"capture.commit.load_verify", phases.CommitLoadDuration},
+			{"capture.commit.ack", phases.CommitAckDuration},
+			{"capture.commit.state", phases.CommitStateDuration},
+			{"capture.commit.cursor", phases.CommitCursorDuration},
+		} {
+			if phase.duration > 0 {
+				m.observeStageLocked(phase.name, float64(phase.duration)/float64(time.Millisecond), nil)
+			}
+		}
 	}
 	b := &m.captureBatches
 	b.Count++

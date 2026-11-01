@@ -246,24 +246,45 @@ func (j *Journal) AppendSourceReady(segment Segment) (string, error) {
 // CommitSource moves the read cursor only after the matching immutable segment
 // is durably present. Consumers own independent acknowledgement positions.
 func (j *Journal) CommitSource(source, path, segmentID string) error {
+	return j.commitSourceMeasured(source, path, segmentID, nil)
+}
+
+func (j *Journal) commitSourceMeasured(source, path, segmentID string, phases *PassiveJournalPhases) error {
+	started := time.Now()
 	lock, err := j.lockFile(".cursor-lock-" + sourceCursorID(source, path))
+	if phases != nil {
+		phases.CommitLockDuration += time.Since(started)
+	}
 	if err != nil {
 		return err
 	}
 	defer unlock(lock)
+	started = time.Now()
 	cursor, err := j.loadSource(source, path)
+	if phases != nil {
+		phases.CommitLoadDuration += time.Since(started)
+	}
 	if err != nil {
 		return err
 	}
 	if cursor.LastSegmentID == segmentID {
 		// A prior cursor rename may have succeeded while its directory sync
 		// returned an error. Seal it before the segment can be released.
-		if err := syncDir(j.dir); err != nil {
+		started = time.Now()
+		err = syncDir(j.dir)
+		if phases != nil {
+			phases.CommitCursorDuration += time.Since(started)
+		}
+		if err != nil {
 			return err
 		}
 		return j.finishPreparedSource(segmentID, true)
 	}
+	started = time.Now()
 	segmentLock, err := j.lockSegment(segmentID)
+	if phases != nil {
+		phases.CommitLockDuration += time.Since(started)
+	}
 	if err != nil {
 		return err
 	}
@@ -272,7 +293,11 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 			unlock(segmentLock)
 		}
 	}()
+	started = time.Now()
 	state, err := j.load(segmentID)
+	if phases != nil {
+		phases.CommitLoadDuration += time.Since(started)
+	}
 	if err != nil {
 		return err
 	}
@@ -290,7 +315,12 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 		// The empty file's data is synced here; the cursor's directory sync
 		// seals its entry together with the compact state rename. The first
 		// attempted record then needs only its own file sync.
-		if err := j.prepareEmptyAckLog(segmentID); err != nil {
+		started = time.Now()
+		err = j.prepareEmptyAckLog(segmentID)
+		if phases != nil {
+			phases.CommitAckDuration = time.Since(started)
+		}
+		if err != nil {
 			return err
 		}
 		state.Committed = true
@@ -299,7 +329,12 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 		// The cursor is in this same directory. Its final directory sync
 		// seals both renames; a crash before then is recovered from the
 		// already durable immutable segment and the old cursor.
-		if err := atomicJSONBeforeDirectoryBarrier(j.path(segmentID, ".state"), stateWithoutEvents(state)); err != nil {
+		started = time.Now()
+		err = atomicJSONBeforeDirectoryBarrier(j.path(segmentID, ".state"), stateWithoutEvents(state))
+		if phases != nil {
+			phases.CommitStateDuration = time.Since(started)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -324,12 +359,22 @@ func (j *Journal) CommitSource(source, path, segmentID string) error {
 		// hold their segment lock through the slower cursor fsync.
 		unlock(segmentLock)
 		segmentLock = nil
-		if err := atomicJSON(j.sourcePath(source, path), cursor); err != nil {
+		started = time.Now()
+		err = atomicJSON(j.sourcePath(source, path), cursor)
+		if phases != nil {
+			phases.CommitCursorDuration = time.Since(started)
+		}
+		if err != nil {
 			return err
 		}
 		return j.finishPreparedSource(segmentID, false)
 	}
-	return atomicJSON(j.sourcePath(source, path), cursor)
+	started = time.Now()
+	err = atomicJSON(j.sourcePath(source, path), cursor)
+	if phases != nil {
+		phases.CommitCursorDuration = time.Since(started)
+	}
+	return err
 }
 
 func (j *Journal) finishPreparedSource(id string, allowRetired bool) error {

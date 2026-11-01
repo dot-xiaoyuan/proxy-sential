@@ -76,6 +76,7 @@ func TestPassiveJournalPhasesAndBatchSizesStayBounded(t *testing.T) {
 	m.observeJournal(streamlog.PassiveJournalPhases{
 		AppendAttempted: true, CommitAttempted: true,
 		AppendDuration: 150 * time.Millisecond, CommitDuration: 300 * time.Millisecond,
+		CommitAckDuration: 80 * time.Millisecond,
 	}, 625, 600<<10, errors.New("sensitive segment content"))
 	snapshot := m.snapshot("periodic", time.Now())
 	if appendStage := snapshot.Stages["capture.append"]; appendStage.Count != 1 || appendStage.Failures != 0 || appendStage.TotalMS != 150 {
@@ -83,6 +84,9 @@ func TestPassiveJournalPhasesAndBatchSizesStayBounded(t *testing.T) {
 	}
 	if commitStage := snapshot.Stages["capture.commit"]; commitStage.Count != 1 || commitStage.Failures != 1 || commitStage.TotalMS != 300 {
 		t.Fatalf("commit phase: %+v", commitStage)
+	}
+	if ackStage := snapshot.Stages["capture.commit.ack"]; ackStage.Count != 1 || ackStage.TotalMS != 80 {
+		t.Fatalf("commit ACK phase: %+v", ackStage)
 	}
 	if batches := snapshot.CaptureBatches; batches.Count != 1 || batches.Events != 625 || batches.SourceBytes != 600<<10 || batches.EventsLE750 != 1 || batches.BytesLE1MiB != 1 {
 		t.Fatalf("capture batch sizes: %+v", batches)

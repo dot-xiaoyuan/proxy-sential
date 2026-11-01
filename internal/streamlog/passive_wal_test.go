@@ -76,6 +76,25 @@ func TestPassiveLegacyPhaseObservationSkipsCommitAfterAppendFailure(t *testing.T
 	}
 }
 
+func TestPassiveLegacyCommitSubphasesCoverDurablePath(t *testing.T) {
+	legacy, segment := passiveWALFixture(t)
+	_, phases, err := legacy.AppendAndCommitPassiveMeasured(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := []time.Duration{phases.CommitLockDuration, phases.CommitLoadDuration, phases.CommitAckDuration, phases.CommitStateDuration, phases.CommitCursorDuration}
+	var covered time.Duration
+	for _, part := range parts {
+		if part <= 0 {
+			t.Fatalf("missing commit phase: %+v", phases)
+		}
+		covered += part
+	}
+	if covered > phases.CommitDuration {
+		t.Fatalf("commit phases overlap: %+v", phases)
+	}
+}
+
 func TestPassiveWALAcceptAtomicallyAdvancesCursorAndRetainsFirstTime(t *testing.T) {
 	legacy, s := passiveWALFixture(t)
 	j, err := OpenPassiveWALJournal(legacy, s.SourcePath, PassiveWALOptions{WriteEnabled: true})

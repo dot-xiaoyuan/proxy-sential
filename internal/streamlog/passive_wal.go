@@ -90,6 +90,13 @@ type PassiveJournalPhases struct {
 	CommitAttempted bool
 	AppendDuration  time.Duration
 	CommitDuration  time.Duration
+	// Commit subphases cover the v1 journal's normal path. The remainder of
+	// CommitDuration includes validation and cursor-tail hashing.
+	CommitLockDuration   time.Duration
+	CommitLoadDuration   time.Duration
+	CommitAckDuration    time.Duration
+	CommitStateDuration  time.Duration
+	CommitCursorDuration time.Duration
 }
 
 // AppendAndCommitPassive retains the v1 durable sequence for the capture seam.
@@ -115,7 +122,7 @@ func (j *Journal) AppendAndCommitPassiveMeasured(segment Segment) (string, Passi
 	}
 	phases.CommitAttempted = true
 	started = time.Now()
-	err = j.CommitSource(segment.Source, segment.SourcePath, id)
+	err = j.commitSourceMeasured(segment.Source, segment.SourcePath, id, &phases)
 	phases.CommitDuration = time.Since(started)
 	return id, phases, err
 }
