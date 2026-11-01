@@ -77,7 +77,13 @@ ready() {
     if curl -fsS --max-time 5 "${PROXY_SENTINEL_HEALTH_URL:-http://127.0.0.1:18080/readyz}" >/dev/null; then
       for unit in "${units[@]}"; do systemctl is-active --quiet "$unit" || return 1; done
       if python3 "$(dirname "$0")/verify-application-runtime.py" --root "$root" --release "$(readlink -f "$root/current")" --units "${units[@]}"; then
-        return 0
+        # Type=simple may report active before a reader exits on startup.
+        sleep 5
+        for unit in "${units[@]}"; do systemctl is-active --quiet "$unit" || return 1; done
+        if curl -fsS --max-time 5 "${PROXY_SENTINEL_HEALTH_URL:-http://127.0.0.1:18080/readyz}" >/dev/null &&
+          python3 "$(dirname "$0")/verify-application-runtime.py" --root "$root" --release "$(readlink -f "$root/current")" --units "${units[@]}"; then
+          return 0
+        fi
       fi
     fi
     sleep 2
