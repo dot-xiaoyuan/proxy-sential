@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run in the foreground under `caffeinate -i -s` to keep the Mac awake.
 # SSH sends encrypted keepalives and reconnects after a broken VPN path.
+# caffeinate keeps the Mac awake while this process is running.
 host=root@222.204.3.184
 state_dir="/tmp/proxy-sentinel-184-heartbeat-$(id -u)"
 pid_file="$state_dir/pid"
@@ -36,13 +36,17 @@ case "${1:-}" in
     if running; then echo "heartbeat already running" >&2; exit 1; fi
     echo "$$" >"$pid_file"
     child_pid=
+    caffeine_pid=
     cleanup() {
       [[ -z "$child_pid" ]] || kill "$child_pid" 2>/dev/null || true
+      [[ -z "$caffeine_pid" ]] || kill "$caffeine_pid" 2>/dev/null || true
       if [[ -f "$pid_file" && "$(cat "$pid_file")" == "$$" ]]; then rm -f "$pid_file"; fi
       log stopped
     }
     trap 'exit 0' INT TERM
     trap cleanup EXIT
+    caffeinate -i -s -w "$$" &
+    caffeine_pid=$!
     delay=5
     while :; do
       log connecting
@@ -66,5 +70,5 @@ case "${1:-}" in
       if (( delay > 60 )); then delay=60; fi
     done
     ;;
-  *) echo "usage: caffeinate -i -s $0 run | $0 status | $0 stop" >&2; exit 2 ;;
+  *) echo "usage: $0 run | $0 status | $0 stop" >&2; exit 2 ;;
 esac
