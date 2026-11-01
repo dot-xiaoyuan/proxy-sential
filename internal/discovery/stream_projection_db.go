@@ -420,8 +420,15 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	}
 	defer tx.Rollback()
 	mark("insert_segment")
-	result, err := tx.ExecContext(ctx, `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count)
- VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`, id, segment.Epoch, segment.Source, segment.SourcePath, segmentHash, segment.AcceptedAt, len(prepared))
+	// A journal-backed segment has a fixed source position. Older direct
+	// projections without one remain readable but cannot gain a finalization
+	// witness or later qualify for a retention proof.
+	var sourceFile, sourceStart, sourceEnd any
+	if segment.FileID != "" && segment.StartOffset >= 0 && segment.EndOffset > segment.StartOffset {
+		sourceFile, sourceStart, sourceEnd = segment.FileID, segment.StartOffset, segment.EndOffset
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, id, segment.Epoch, segment.Source, segment.SourcePath, segmentHash, segment.AcceptedAt, len(prepared), sourceFile, sourceStart, sourceEnd)
 	if err != nil {
 		return err
 	}

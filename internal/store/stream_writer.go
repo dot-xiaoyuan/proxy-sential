@@ -21,6 +21,12 @@ type StreamArchiveConfirmer interface {
 	MarkStreamArchiveConfirmed(context.Context, string, streamlog.Segment) error
 }
 
+// StreamFinalizationWitness records a durable segment source position only
+// after the required sinks and their downstream wake receipts have finished.
+type StreamFinalizationWitness interface {
+	MarkStreamSegmentFinalized(context.Context, string, streamlog.Segment) error
+}
+
 type StreamRiskQueue interface {
 	MarkStreamRiskSubjectsDirty(context.Context, string, streamlog.Segment) error
 }
@@ -214,12 +220,21 @@ func (w StreamLaneWriter) FinalizeSegment(ctx context.Context, id string, segmen
 			break
 		}
 	}
-	if segment.SplitRiskFeatures {
-		// Its independently acknowledged feature step already includes the PG
-		// wake receipt. Finalization cannot reach here until that ack is durable.
+	if !segment.SplitRiskFeatures {
+		if err := w.enqueueRisk(ctx, id, segment); err != nil {
+			return err
+		}
+		// Split features already have their PG wake receipt in the separately
+		// acknowledged lane. Both paths must reach the witness below.
+	}
+	if !segment.NeedsProjection {
 		return nil
 	}
-	return w.enqueueRisk(ctx, id, segment)
+	witness, ok := w.Projector.(StreamFinalizationWitness)
+	if !ok {
+		return ErrStreamProjectorUnavailable
+	}
+	return witness.MarkStreamSegmentFinalized(ctx, id, segment)
 }
 
 // Legacy finalization repeats this idempotent receipt. Split feature recovery
