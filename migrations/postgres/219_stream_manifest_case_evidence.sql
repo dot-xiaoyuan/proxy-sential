@@ -34,7 +34,7 @@ BEGIN
      AND (
       EXISTS(SELECT 1 FROM stream_discovery_receipts r
        LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
-        AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
+        AND s.epoch=r.epoch AND s.archive_receipt_mode IN ('segment','manifest')
        WHERE r.accepted_month=coalesce(kc.accepted_month,k.accepted_month)
         AND r.epoch=v.epoch AND r.scope_id=v.scope_id AND r.event_key=v.event_key
         AND (r.archive_state='verified'
