@@ -29,7 +29,7 @@ func Capture(ctx context.Context, iface, spool string, source Source, allow []ne
 	return CaptureConfigured(ctx, iface, spool, source, allow, DefaultCollectionConfig())
 }
 func CaptureConfigured(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig) (result error) {
-	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, captureFlushEvents, 100*time.Millisecond, 0, false, func(b []byte) error {
+	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, captureFlushEvents, 100*time.Millisecond, 0, false, false, func(b []byte) error {
 		h := sha256.Sum256(b)
 		path := filepath.Join(spool, hex.EncodeToString(h[:16])+".json")
 		if e := writeDurableSpool(path+".tmp", b); e != nil {
@@ -51,23 +51,38 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 	if journal == nil || scope == nil {
 		return fmt.Errorf("passive stream capture needs durable journal and scope")
 	}
-	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, streamCaptureFlushEvents, streamCaptureFlushWindow, 500*time.Millisecond, true, func(b []byte) error {
-		var events []normalized.Event
-		if err := json.Unmarshal(b, &events); err != nil {
-			return err
-		}
-		captured, err := appendPassiveStreamBatch(ctx, journal, source, scope, events, config.CompactPassiveEventKeys)
-		if err != nil {
-			return err
-		}
-		if onSegment != nil {
-			return onSegment(captured)
-		}
-		return nil
+	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, streamCaptureFlushEvents, streamCaptureFlushWindow, 500*time.Millisecond, true, true, func(b []byte) error {
+		return persistPassiveStreamCaptureBatch(ctx, journal, source, scope, config.CompactPassiveEventKeys, onSegment, b)
 	})
 }
 
-func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes, flushEvents int, flushWindow, gatherWindow time.Duration, splitOversized bool, persist func([]byte) error) (result error) {
+func persistPassiveStreamCaptureBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, compactKeys bool, onSegment func(CapturedSegment) error, raw []byte) error {
+	var events []normalized.Event
+	if err := json.Unmarshal(raw, &events); err != nil {
+		return err
+	}
+	// Capture stops on cancellation, but its accepted in-memory queue still
+	// needs to reach the journal before the worker exits. Recovery will enqueue
+	// these segments on the next start.
+	captured, err := appendPassiveStreamBatch(context.WithoutCancel(ctx), journal, source, scope, events, compactKeys)
+	if err != nil {
+		return err
+	}
+	if onSegment == nil || ctx.Err() != nil {
+		return nil
+	}
+	if err := onSegment(captured); err != nil {
+		// Cancellation can race with an in-flight lane enqueue. The segment is
+		// already durable, and startup recovery will re-enqueue every lane.
+		if ctx.Err() != nil && captureCancellationOnly(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes, flushEvents int, flushWindow, gatherWindow time.Duration, splitOversized, drainOnCancel bool, persist func([]byte) error) (result error) {
 	if len(allow) == 0 {
 		return fmt.Errorf("passive capture requires allowed CIDRs")
 	}
@@ -142,12 +157,8 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 			}
 		}
 		for _, batch := range batches {
-			select {
-			case queue <- batch:
-				stats.recordQueue(len(queue), cap(queue), false)
-			default:
-				stats.recordQueue(cap(queue), cap(queue), true)
-				return fmt.Errorf("passive spool queue full; capture stopped to expose data loss")
+			if err := enqueueCaptureBatch(ctx, queue, done, batch, stats, drainOnCancel); err != nil {
+				return err
 			}
 		}
 		pending.drain()
@@ -215,6 +226,33 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 		return e
 	}
 	return ctx.Err()
+}
+
+func enqueueCaptureBatch(ctx context.Context, queue chan []byte, done chan error, batch []byte, stats *CaptureStats, drainOnCancel bool) error {
+	if drainOnCancel && ctx.Err() != nil {
+		// The final coalesced batch still belongs to this capture. Once capture
+		// has stopped, wait for the writer to make room instead of declaring
+		// overflow while it is draining the already queued batches.
+		select {
+		case queue <- batch:
+			stats.recordQueue(len(queue), cap(queue), false)
+			return nil
+		case writerErr := <-done:
+			done <- writerErr // The deferred join still owns the writer result.
+			if writerErr == nil {
+				return fmt.Errorf("passive spool writer exited before final capture batch")
+			}
+			return writerErr
+		}
+	}
+	select {
+	case queue <- batch:
+		stats.recordQueue(len(queue), cap(queue), false)
+		return nil
+	default:
+		stats.recordQueue(cap(queue), cap(queue), true)
+		return fmt.Errorf("passive spool queue full; capture stopped to expose data loss")
+	}
 }
 
 func htons(v uint16) uint16 {

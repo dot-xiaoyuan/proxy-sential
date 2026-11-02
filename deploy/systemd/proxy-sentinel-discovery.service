@@ -10,6 +10,7 @@ EnvironmentFile=-/opt/proxy-sentinel/config/discovery.env
 ExecStart=/opt/proxy-sentinel/current/bin/discovery-worker --node ${PROXY_SENTINEL_SENSOR_ID}
 Restart=on-failure
 RestartSec=10
+TimeoutStopSec=20min
 UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
