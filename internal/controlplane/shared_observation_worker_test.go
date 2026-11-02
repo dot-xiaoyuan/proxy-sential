@@ -327,6 +327,44 @@ func TestSharedObservationExpiryUsesStoredEvidence(t *testing.T) {
 	}
 }
 
+func TestSharedObservationFreshExpiryReschedulesWithoutRetiringEvidence(t *testing.T) {
+	now := time.Date(2026, 10, 21, 1, 0, 0, 0, time.UTC)
+	w := sharedaccess.Window{ID: "fresh-evidence", RuleVersion: sharedaccess.RuleVersion, SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", IP: "192.0.2.4", LastObservedAt: now.Add(-time.Minute)}
+	item := sharedaccess.BehaviorAssessment{ObservationID: w.ID, SensorID: w.SensorID, CampusID: w.CampusID, AccessDomain: w.AccessDomain, IP: w.IP, Current: true}
+	previous, _ := json.Marshal(sharedObservationDocument{Window: w, Assessment: item, Result: sharedaccess.Result{State: "basis_present"}})
+	for _, tt := range []struct {
+		lane        string
+		rescheduled int64
+	}{
+		{lane: "expiry", rescheduled: 1},
+		{lane: "expiry_borrowed", rescheduled: 0}, // A concurrent wake replaced this lease.
+	} {
+		t.Run(tt.lane, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(sharedTestConverter{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			oldToken := newSharedObservationLeaseToken
+			newSharedObservationLeaseToken = func() (string, error) { return "expiry-lease", nil }
+			defer func() { newSharedObservationLeaseToken = oldToken }()
+			s := &Server{sharedConfig: sharedaccess.Config{FreshnessSeconds: 180, Sources: []sharedaccess.Source{{SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture"}}}, operations: &operationsState{db: db}, reader: expiredSharedReader{}}
+			mock.ExpectBegin()
+			mock.ExpectExec("SET LOCAL synchronous_commit = off").WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectQuery("j.revision=j.completed_revision").WillReturnRows(sqlmock.NewRows([]string{"id", "sensor", "campus", "domain", "ip", "revision", "last", "dependency", "new_dependency", "generation"}).AddRow("job", "mirror", "ncu", "capture", w.IP, 1, previous, now.Add(-time.Minute), false, ""))
+			mock.ExpectCommit()
+			mock.ExpectExec(`(?s)UPDATE shared_observation_jobs SET next_attempt_at=.*lease_token=\$2 AND revision=\$3 AND completed_revision=\$3 AND generation_id=\$4 AND canceled_epoch='' AND NOT expired`).WithArgs("job", "expiry-lease", int64(1), "", w.LastObservedAt.Add(180*time.Second)).WillReturnResult(sqlmock.NewResult(0, tt.rescheduled))
+			did, err := s.processSharedObservationWithLimit(context.Background(), now, nil, tt.lane)
+			if err != nil || !did {
+				t.Fatalf("did=%v err=%v", did, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 type sharedTestConverter struct{}
 
 func (sharedTestConverter) ConvertValue(v any) (driver.Value, error) {

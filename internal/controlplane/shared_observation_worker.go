@@ -280,6 +280,18 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 			return failure(err)
 		}
 		w, item = doc.Window, doc.Assessment
+		// A legacy non-matched result can still have a five-second retry due
+		// when the wake mode changes to async. Do not retire its current
+		// observation until the stored evidence has actually expired.
+		expiresAt := w.LastObservedAt.Add(s.sharedConfig.Freshness())
+		if !w.LastObservedAt.IsZero() && now.Before(expiresAt) {
+			_, err = s.operations.db.ExecContext(ctx, `UPDATE shared_observation_jobs SET next_attempt_at=GREATEST($5,now()+interval '1 second'),lease_token='',lease_until=NULL
+ WHERE job_id=$1 AND lease_token=$2 AND revision=$3 AND completed_revision=$3 AND generation_id=$4 AND canceled_epoch='' AND NOT expired`, id, token, revision, generation, expiresAt)
+			if err != nil {
+				return failure(err)
+			}
+			return true, nil
+		}
 		item.Current = false
 	} else {
 		readStarted := time.Now()
