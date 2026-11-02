@@ -1,4 +1,20 @@
-# NCU 身份新起点恢复（候选，未现场执行）
+# NCU 身份新起点恢复（2026-11-02 现场记录）
+
+## r60 发布与新起点切换
+
+- 用户已单独授权在 184 执行本次迁移、部署、切流和验收。`2026.11.02-ncu-shared-recovery-r60` 来自干净提交 `98b031c44d8732bddecec2ffe169648fbdadf317`，发布包 SHA256 为 `9d6b45068a898964772ea4d0aea0865843af6068195e2608196b962e84ae9608`。包外和包内 524 项文件哈希均核对通过；后端全仓测试、构建、vet、定向 race 和打包时前端类型检查/构建通过。前端源码本次未改。
+- 184 只读预检确认原 `current=r59b`、`previous=r58`、受保护账号与配置存在。完整安装器传 `--skip-backup --prepare-only` 应用 PostgreSQL 222；之后 223 项 PostgreSQL、63 项 ClickHouse 候选迁移与账本一致。应用升级将 `current` 切到 r60、`previous` 留 r59b，18 个活动进程为 r60。`runtime.env` SHA256 仍为 `1ab730cbf8eff7f8e889895a01177336537ffb88c5d98cabc643b000d70aef32`，没有清库、例行备份或改写旧迁移。
+- UTC 12:26:41 停止桥接，NCU 专用派生服务原已 inactive。现场运行配置确认事件 Redis 为 `222.204.3.227:16384`、源键 `list:antiproxy:127.0.0.1`、处理中键为其 `:proxy-sentinel-processing` 后，使用 r60 的只读边界命令生成 0600 文件 `/opt/proxy-sentinel/config/ncu-redis-audit-20261102T1227Z.json`。源/处理中长度为 100000/2，审计文件 SHA256 为 `490150e429b09ed4043f8004b7307fa969c6bccdf37397ebdbb8e0a503de0c95`；只含长度、时间、首尾哈希及冻结批次摘要，不含原文。
+- 应用前再次读到旧 b2 起点 784452、accepted 673156、processed 672823、主待办 2041、导出待办 9894，旧 inbox/片段/IP 待办和三张拆分进度表均为零。受限事务创建 `identity-fresh-b3-20261102T1227Z`，新起点固定为 673156、下一个序号 673157；b2 关闭且旧 scope 计数不变。不可变缺口 `672824–673156` 的状态为 `unverifiable_gap`，审计 SHA256 `16c75a67753802510ce914272a3e580831596a8f2b60a5a75c6be9b108c1d48a`；没有清理 Redis 队列，也没有把旧待办记成完成。
+- 新建 systemd drop-in `/etc/systemd/system/proxy-sentinel-control-plane-eventbus.service.d/zzzzzzz-ncu-identity-b3.conf`，仅将控制面的 `PROXY_SENTINEL_IDENTITY_STREAM_EPOCH` 设为 b3，实际进程环境与 r60 可执行文件已核对，`/readyz` 200。桥接恢复后开始提交：UTC 12:28:53 的最近事件已更新，源队列由 100000 降至约 88552，提交计数约 11002，事件连续失败为零；UTC 12:29 后 `/18082/readyz` 返回 200。该队列变化不是对上游来源完整性或每条消息去向的证明。
+
+## 派生层旧策略缺失与受限修复
+
+首次启动固定 r25 的 NCU 专用派生服务立即以 0 退出，日志为 `identity fresh cutover admission: sql: no rows in result set`。其入场需要 `identity_derived_fresh_starts` 中原 `ncu-derived-fresh-20261029T051129Z` 策略，但现场该表和取消进度表均为空；r60 的 b3 接收恢复不会创建派生层策略。恢复前只读确认旧截止点 UTC `2026-10-29T05:11:29Z` 之前的 NCU 批次和片段均为零、NCU 旧物化游标不存在，已接收的新批次最早是 UTC 11 月 2 日 12:28:24。
+
+按用户原固定截止点执行[受限 SQL](../scripts/maintenance/ncu-derived-fresh-policy-restore-20261102.sql)（SHA256 `7dcb33acf524ad0c75a33cf066226496413b83d94f662620102a725b8b2bf13e`）：在同一事务中短暂锁住 inbox 写入，复核 b3 活动与缺口审计、原策略不存在、截止点前批次/片段为零，然后插入不可变派生策略和 `done=true`、取消数为零的进度。此零取消只指现场数据库没有截止点前的物理片段，**不改变 b2 的不可核验缺口，也不宣称旧原文已归档**。事务成功后 r25 派生服务重新启动；后续持续消费、派生、归档的最终验收结果见下一节。
+
+派生服务随后报告 ready 状态查询缺少 `identity_derived_ready_scan` 单例。迁移 198 应创建的该行在现场也为空；按[受限恢复 SQL](../scripts/maintenance/ncu-derived-ready-scan-restore-20261102.sql)（SHA256 `2b8d6e06b319f384d58e126f8b60b4187fa6cedf6bee8b8ba201cc09173ff0cc`）复核不可变截止点及增量登记触发器后，只插入初始扫描游标，保留既有 ready 键和片段状态。新鲜派生模式按设计不扫描旧历史，因此游标保持 `-1`、`done=false`；UTC 12:40:01 的状态已更新为 `fresh_index_keys_present`，不是全部派生完成。
 
 ## 已核对的阻塞与边界
 
