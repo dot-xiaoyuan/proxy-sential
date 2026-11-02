@@ -93,7 +93,7 @@ restart_workers() {
 wait_deferred_discovery() {
   [[ "$defer_discovery_restart" == true ]] || return 0
   local pid exe unexpected_pid="" unexpected_count=0
-  for _ in $(seq 1 360); do
+  for _ in $(seq 1 540); do
     pid="$(systemctl show "$deferred_unit" -p MainPID --value)"
     if [[ "$pid" =~ ^[1-9][0-9]*$ && "$pid" != "$old_discovery_pid" ]]; then
       exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
@@ -125,7 +125,7 @@ wait_deferred_discovery() {
     fi
     sleep 5
   done
-  echo "deferred discovery did not naturally restart into $release within 30 minutes" >&2
+  echo "deferred discovery did not naturally restart into $release within 45 minutes" >&2
   return 1
 }
 ready() {
