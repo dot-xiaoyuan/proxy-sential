@@ -136,6 +136,17 @@ func (p StreamDiscoveryProjector) ExpireStreamDiscoveryStates(ctx context.Contex
 	return count, nil
 }
 
+// Expiry already publishes state before waking recognition. Projection must
+// use the same lock order: publish may acquire the global result-version lock,
+// while recognition updates endpoint_recognition_jobs rows. Reversing the two
+// lets concurrent expiry and projection transactions deadlock.
+func publishStreamStateAndRecognition(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int, dirty *streamRecognitionDirty) error {
+	if err := publishStreamDiscoveryStates(ctx, tx, epoch, keys, newFactCounts); err != nil {
+		return err
+	}
+	return dirty.mark(ctx, tx)
+}
+
 // One bounded request confirms the whole segment. The key ledger locates the
 // original partition even across month boundaries. A missing or conflicting
 // receipt makes the matched count incomplete and rolls back every update.
@@ -683,16 +694,13 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if err := writeStreamDiscoveryFacts(ctx, tx, factWrites); err != nil {
 		return err
 	}
-	if err := dirty.mark(ctx, tx); err != nil {
-		return err
-	}
 	mark("publish_state")
 	stateKeys := make([]string, 0, len(changedDevices))
 	for key := range changedDevices {
 		stateKeys = append(stateKeys, key)
 	}
 	sort.Strings(stateKeys)
-	if err := publishStreamDiscoveryStates(ctx, tx, segment.Epoch, stateKeys, newFactCounts); err != nil {
+	if err := publishStreamStateAndRecognition(ctx, tx, segment.Epoch, stateKeys, newFactCounts, dirty); err != nil {
 		return err
 	}
 	mark("write_changes")

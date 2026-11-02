@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Verify each upgraded systemd MainPID executes the selected release inode."""
-import argparse,json,os
+"""Verify upgraded MainPIDs and explicitly pinned systemd executables."""
+import argparse,json,os,re
 from pathlib import Path
 import subprocess
 
@@ -37,7 +37,26 @@ UNIT_BINARIES={
  'proxy-sentinel-recognition-minute-shadow.service':'recognition-minute-shadow',
 }
 
-def verify(root,release,units):
+# The NCU derived materializer is upgraded on its own schedule. Its systemd
+# ExecStart is pinned to an immutable release, unlike the other active units.
+PINNED_UNITS={'proxy-sentinel-ncu-identity-materializer.service'}
+
+def pinned_executable(root,unit,binary):
+ value=subprocess.check_output(['systemctl','show',unit,'-p','ExecStart','--value'],text=True,timeout=5).strip()
+ match=re.match(r'^\{\s*path=([^\s;]+)\s*;\s*argv\[\]=([^\s;]+)(?:\s|;)',value)
+ if not match or match.group(1)!=match.group(2):
+  raise ValueError('cannot verify pinned unit ExecStart: '+unit)
+ configured=Path(match.group(1))
+ if configured==root/'current'/'bin'/binary:
+  return (root/'current'/'bin'/binary).resolve(strict=True)
+ if (configured.parent.parent.parent!=root/'releases' or configured.parent.name!='bin' or
+     configured.name!=binary or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}',configured.parent.parent.name)):
+  raise ValueError('pinned unit executable is outside immutable releases: '+unit)
+ if configured.is_symlink() or not configured.is_file() or configured.resolve(strict=True)!=configured:
+  raise ValueError('pinned unit executable is not an immutable release file: '+unit)
+ return configured
+
+def verify(root,release,units,proc_root=Path('/proc')):
  root=Path(root).resolve(strict=True);release=Path(release).resolve(strict=True)
  if release.parent!=root/'releases' or (root/'current').resolve(strict=True)!=release:
   raise ValueError('selected release pointer mismatch')
@@ -45,17 +64,20 @@ def verify(root,release,units):
  result=[]
  for unit in units:
   if unit not in UNIT_BINARIES:raise ValueError('unsupported application unit')
-  expected=release/'bin'/UNIT_BINARIES[unit]
-  if expected.is_symlink() or not expected.is_file():raise ValueError('candidate executable missing or symlink')
+  candidate=release/'bin'/UNIT_BINARIES[unit]
+  if candidate.is_symlink() or not candidate.is_file():raise ValueError('candidate executable missing or symlink')
+  expected=pinned_executable(root,unit,UNIT_BINARIES[unit]) if unit in PINNED_UNITS else candidate
   pid=int(subprocess.check_output(['systemctl','show',unit,'-p','MainPID','--value'],text=True,timeout=5).strip())
   if pid<=0:raise ValueError('application process missing: '+unit)
-  proc=Path('/proc')/str(pid)/'exe'
+  proc=proc_root/str(pid)/'exe'
   if os.readlink(proc)!=str(expected):raise ValueError('application process runs another release: '+unit)
-  actual=proc.stat();candidate=expected.stat()
-  if (actual.st_dev,actual.st_ino)!=(candidate.st_dev,candidate.st_ino):raise ValueError('application executable inode mismatch: '+unit)
+  actual=proc.stat();expected_stat=expected.stat()
+  if (actual.st_dev,actual.st_ino)!=(expected_stat.st_dev,expected_stat.st_ino):raise ValueError('application executable inode mismatch: '+unit)
   # Fence a concurrent restart between reading MainPID and observing exe.
   again=int(subprocess.check_output(['systemctl','show',unit,'-p','MainPID','--value'],text=True,timeout=5).strip())
   if again!=pid:raise ValueError('application process changed during verification: '+unit)
+  if unit in PINNED_UNITS and pinned_executable(root,unit,UNIT_BINARIES[unit])!=expected:
+   raise ValueError('pinned unit ExecStart changed during verification: '+unit)
   result.append({'unit':unit,'pid':pid,'executable':str(expected)})
  return {'release':release.name,'verified_application_processes':result}
 

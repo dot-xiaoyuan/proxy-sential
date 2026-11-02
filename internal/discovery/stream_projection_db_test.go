@@ -473,6 +473,51 @@ func TestStreamDiscoverySegmentReceiptBindsMarkerWithoutPendingState(t *testing.
 	}
 }
 
+// Projection and expiry both publish state and wake endpoint recognition in
+// one transaction. The global result-version lock must be acquired first in
+// both paths, or their transactions can deadlock on endpoint_recognition_jobs.
+func TestPublishStreamStateAndRecognitionUsesExpiryLockOrder(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(streamStateArrayConverter{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	fact := streamDiscoveryFact{
+		Epoch: "fresh", Device: "device-1", Scope: "scope-1", Event: "event-1",
+		Protocol: "arp", MAC: "02:00:00:00:00:01", Observed: now,
+		FirstObserved: now, ValidUntil: now.Add(time.Minute),
+	}
+	factRaw, err := json.Marshal(fact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirty := newStreamRecognitionDirty()
+	dirty.macs[fact.MAC] = true
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM stream_discovery_device_state").WithArgs("fresh", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"device_key", "scope_id", "last_device_type", "last_category", "first_seen", "last_seen", "expires_at", "document"}))
+	mock.ExpectQuery("JOIN LATERAL").WithArgs("fresh", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"device_key", "fact"}).AddRow(fact.Device, factRaw))
+	mock.ExpectExec("SELECT pg_advisory_xact_lock\\(9184,213\\)").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO stream_discovery_device_state").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("SELECT mark_endpoint_recognition_dirty").WithArgs([]string{fact.MAC}).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publishStreamStateAndRecognition(context.Background(), tx, "fresh", []string{fact.Device}, map[string]int{fact.Device: 1}, dirty); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExpireStreamDiscoveryStatesUsesBoundedDueKeys(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

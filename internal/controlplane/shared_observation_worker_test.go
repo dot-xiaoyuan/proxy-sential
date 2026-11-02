@@ -10,6 +10,8 @@ import (
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -215,7 +217,7 @@ func TestSharedObservationClaimLanes(t *testing.T) {
 			t.Fatalf("%s: group=%s order=%s", tt.lane, group, order)
 		}
 	}
-	if predicate := sharedObservationClaimPredicate("realtime_old"); predicate != "$4='realtime_old' AND j.revision>j.completed_revision" {
+	if predicate := sharedObservationClaimPredicate("realtime_old"); predicate != "$3='realtime_old' AND j.revision>j.completed_revision" {
 		t.Fatalf("old lane must use an indexable pending-only predicate: %s", predicate)
 	}
 	if predicate := sharedObservationClaimPredicate("realtime_new"); !strings.Contains(predicate, "j.revision>j.completed_revision OR") {
@@ -230,6 +232,35 @@ func TestSharedObservationClaimLanes(t *testing.T) {
 	}
 	if !sharedObservationNewDependency("realtime_new", true) || sharedObservationNewDependency("realtime_new", false) || sharedObservationNewDependency("expiry", true) {
 		t.Fatal("natural expiry or gap recheck counted as a new dependency")
+	}
+}
+
+func TestSharedObservationClaimBindsEveryPostgresPlaceholder(t *testing.T) {
+	placeholder := regexp.MustCompile(`\$([1-9][0-9]*)`)
+	for _, lane := range []string{"realtime_new", "realtime_old", "expiry", "expiry_borrowed"} {
+		t.Run(lane, func(t *testing.T) {
+			query, args := sharedObservationClaimQuery(lane, []byte(`[]`), 180, "lease-token")
+			used := make(map[int]bool)
+			for _, match := range placeholder.FindAllStringSubmatch(query, -1) {
+				index, err := strconv.Atoi(match[1])
+				if err != nil || index > len(args) {
+					t.Fatalf("placeholder %q has no argument: %v", match[0], err)
+				}
+				used[index] = true
+			}
+			for index := range args {
+				if !used[index+1] {
+					t.Fatalf("argument %d is unused by claim SQL", index+1)
+				}
+			}
+			if lane == "realtime_old" {
+				if len(args) != 3 || args[1] != "lease-token" || args[2] != "realtime_old" || !strings.Contains(query, "lease_token=$2") {
+					t.Fatalf("old lane bindings changed: args=%v", args)
+				}
+			} else if len(args) != 4 || args[1] != 180 || args[2] != "lease-token" || !strings.Contains(query, "lease_token=$3") {
+				t.Fatalf("lane %s bindings changed: args=%v", lane, args)
+			}
+		})
 	}
 }
 
