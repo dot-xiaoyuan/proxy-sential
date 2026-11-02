@@ -24,7 +24,8 @@ func (r Repository) streamManifestReceipts(ctx context.Context, epoch, scope str
 	}
 	rows, err := r.DB.QueryContext(ctx, `SELECT k.event_key,k.content_sha256,k.first_accepted_at,k.accepted_month,k.receipt_segment_id,k.receipt_ordinal,
  s.epoch,s.source_kind,s.archive_receipt_mode,s.event_count,s.projected_at,s.lanes_finalized_at,
- s.source_file_id,s.source_start_offset,s.source_end_offset,m.archive_month,m.body_layout,m.results
+ s.source_file_id,s.source_start_offset,s.source_end_offset,m.archive_month,m.body_layout,
+ jsonb_array_length(m.results),m.results->>k.receipt_ordinal
  FROM jsonb_array_elements_text($3::jsonb) AS v(value)
 	 JOIN LATERAL (SELECT k.event_key,k.content_sha256,k.first_accepted_at,k.accepted_month,k.receipt_segment_id,k.receipt_ordinal
   FROM stream_discovery_event_keys_compact k
@@ -40,12 +41,12 @@ func (r Repository) streamManifestReceipts(ctx context.Context, epoch, scope str
 		var key, hash string
 		var accepted, acceptedMonth time.Time
 		var locator, segmentEpoch, source, mode, fileID, archiveMonth, bodyLayout sql.NullString
-		var ordinal, eventCount, sourceStart, sourceEnd sql.NullInt64
+		var ordinal, eventCount, sourceStart, sourceEnd, resultCount sql.NullInt64
 		var projected, finalized sql.NullTime
-		var results []byte
+		var result sql.NullString
 		if err := rows.Scan(&key, &hash, &accepted, &acceptedMonth, &locator, &ordinal,
 			&segmentEpoch, &source, &mode, &eventCount, &projected, &finalized,
-			&fileID, &sourceStart, &sourceEnd, &archiveMonth, &bodyLayout, &results); err != nil {
+			&fileID, &sourceStart, &sourceEnd, &archiveMonth, &bodyLayout, &resultCount, &result); err != nil {
 			return nil, err
 		}
 		if !locator.Valid || locator.String == "" || !ordinal.Valid {
@@ -57,12 +58,11 @@ func (r Repository) streamManifestReceipts(ctx context.Context, epoch, scope str
 		if !segmentEpoch.Valid || segmentEpoch.String != epoch || !source.Valid || source.String != "passive-discovery" ||
 			!mode.Valid || !eventCount.Valid || !projected.Valid || !fileID.Valid || fileID.String == "" || !sourceStart.Valid || !sourceEnd.Valid ||
 			sourceEnd.Int64 <= sourceStart.Int64 || !archiveMonth.Valid || archiveMonth.String != acceptedMonth.Format("200601") ||
-			!bodyLayout.Valid || (bodyLayout.String != "" && bodyLayout.String != "v2") || len(results) == 0 {
+			!bodyLayout.Valid || (bodyLayout.String != "" && bodyLayout.String != "v2") || !resultCount.Valid {
 			return nil, fmt.Errorf("stream compact key %s has an incomplete receipt manifest: %w", key, streamlog.ErrContentConflict)
 		}
-		var values []*string
-		if err := json.Unmarshal(results, &values); err != nil || len(values) != int(eventCount.Int64) ||
-			ordinal.Int64 < 0 || ordinal.Int64 >= int64(len(values)) || values[ordinal.Int64] == nil || *values[ordinal.Int64] == "" {
+		if resultCount.Int64 != eventCount.Int64 || ordinal.Int64 < 0 || ordinal.Int64 >= resultCount.Int64 ||
+			!result.Valid || result.String == "" {
 			return nil, fmt.Errorf("stream compact key %s has a conflicting receipt result: %w", key, streamlog.ErrContentConflict)
 		}
 		fields := map[string]string{"epoch": epoch, "class": "evidence", "month": archiveMonth.String, "scope": scope, "key": key, "sha256": hash}
@@ -79,7 +79,7 @@ func (r Repository) streamManifestReceipts(ctx context.Context, epoch, scope str
 		}
 		out[key] = map[string]any{"generation": "fresh", "epoch": epoch, "scope_id": scope, "event_key": key,
 			"content_sha256": hash, "first_accepted_at": accepted, "projected_at": projected.Time,
-			"result": *values[ordinal.Int64], "archive_state": archive, "body_ref": json.RawMessage(bodyRef)}
+			"result": result.String, "archive_state": archive, "body_ref": json.RawMessage(bodyRef)}
 	}
 	return out, rows.Err()
 }

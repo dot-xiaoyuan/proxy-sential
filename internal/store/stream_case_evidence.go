@@ -95,7 +95,7 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 		manifestRows, err := s.pg.db.QueryContext(ctx, `SELECT v.epoch,v.scope,v.key,v.sha256,kc.content_sha256,to_char(kc.accepted_month,'YYYYMM'),
  kc.receipt_segment_id,kc.receipt_ordinal,sm.epoch,sm.source_kind,sm.archive_receipt_mode,
  sm.event_count,sm.lanes_finalized_at,sm.source_file_id,sm.source_start_offset,sm.source_end_offset,
- m.archive_month,m.body_layout,m.results
+ m.archive_month,m.body_layout,jsonb_array_length(m.results),m.results->>kc.receipt_ordinal
  FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,scope text,key text,sha256 text)
  JOIN stream_discovery_event_keys_compact kc
   ON kc.key_hash=sentinel_stream_discovery_key_hash(v.epoch,v.scope,v.key)
@@ -111,13 +111,13 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 		for manifestRows.Next() {
 			var epoch, scope, key, hash, savedHash, acceptedMonth string
 			var locator, markerEpoch, source, mode, fileID, month, bodyLayout sql.NullString
-			var ordinal, eventCount, sourceStart, sourceEnd sql.NullInt64
+			var ordinal, eventCount, sourceStart, sourceEnd, resultCount sql.NullInt64
 			var finalized sql.NullTime
-			var results []byte
+			var result sql.NullString
 			if err = manifestRows.Scan(&epoch, &scope, &key, &hash, &savedHash, &acceptedMonth,
 				&locator, &ordinal, &markerEpoch, &source, &mode,
 				&eventCount, &finalized, &fileID, &sourceStart, &sourceEnd,
-				&month, &bodyLayout, &results); err != nil {
+				&month, &bodyLayout, &resultCount, &result); err != nil {
 				break
 			}
 			var requested StreamBodyRef
@@ -141,9 +141,8 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 				err = streamlog.ErrContentConflict
 				break
 			}
-			var values []*string
-			if json.Unmarshal(results, &values) != nil || len(values) != int(eventCount.Int64) ||
-				ordinal.Int64 < 0 || ordinal.Int64 >= int64(len(values)) || values[ordinal.Int64] == nil || *values[ordinal.Int64] == "" {
+			if !resultCount.Valid || resultCount.Int64 != eventCount.Int64 ||
+				ordinal.Int64 < 0 || ordinal.Int64 >= resultCount.Int64 || !result.Valid || result.String == "" {
 				err = streamlog.ErrContentConflict
 				break
 			}

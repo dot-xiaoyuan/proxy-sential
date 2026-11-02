@@ -85,9 +85,9 @@ func TestReadStreamCaseEvidenceUsesFinalizedManifestWithoutEventReceipt(t *testi
 	defer db.Close()
 	mock.ExpectQuery("(?s)FROM jsonb_to_recordset.*JOIN stream_discovery_receipts r").
 		WillReturnRows(sqlmock.NewRows([]string{"epoch", "scope", "key", "sha256", "body_ref"}))
-	columns := []string{"epoch", "scope", "key", "sha256", "key_hash", "accepted_month", "receipt_segment_id", "receipt_ordinal", "segment_epoch", "source_kind", "archive_receipt_mode", "event_count", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "results"}
+	columns := []string{"epoch", "scope", "key", "sha256", "key_hash", "accepted_month", "receipt_segment_id", "receipt_ordinal", "segment_epoch", "source_kind", "archive_receipt_mode", "event_count", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "result_count", "result"}
 	mock.ExpectQuery("(?s)FROM jsonb_to_recordset.*stream_discovery_segment_receipt_manifests").
-		WillReturnRows(sqlmock.NewRows(columns).AddRow(ref.Epoch, ref.Scope, ref.Key, ref.SHA256, ref.SHA256, ref.Month, "segment-a", 0, ref.Epoch, "passive-discovery", "manifest", 1, time.Now().UTC(), "file-a", int64(0), int64(100), ref.Month, "", []byte(`["applied"]`)))
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(ref.Epoch, ref.Scope, ref.Key, ref.SHA256, ref.SHA256, ref.Month, "segment-a", 0, ref.Epoch, "passive-discovery", "manifest", 1, time.Now().UTC(), "file-a", int64(0), int64(100), ref.Month, "", 1, "applied"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		row, _ := json.Marshal(map[string]string{"scope_id": ref.Scope, "event_key": ref.Key, "content_sha256": ref.SHA256, "body": string(body)})
 		_, _ = w.Write(append(row, '\n'))
