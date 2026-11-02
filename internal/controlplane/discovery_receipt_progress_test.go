@@ -17,6 +17,8 @@ func TestDiscoveryReceiptBatchKeepsMissingKeysWithCheckTime(t *testing.T) {
 	defer db.Close()
 	mock.ExpectQuery("FROM stream_discovery_event_keys k").WithArgs("fresh-1", "scope-a", []byte(`["missing"]`)).
 		WillReturnRows(sqlmock.NewRows([]string{"event_key", "content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}))
+	mock.ExpectQuery("SELECT k.event_key FROM jsonb_array_elements_text").WithArgs("fresh-1", "scope-a", []byte(`["missing"]`)).
+		WillReturnRows(sqlmock.NewRows([]string{"event_key"}))
 	server := &Server{operations: &operationsState{db: db}}
 	request := httptest.NewRequest("GET", "/discovery/receipts?epoch=fresh-1&scope_id=scope-a&event_key=missing", nil)
 	response := httptest.NewRecorder()

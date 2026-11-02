@@ -2,10 +2,13 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"proxy-sentinel/internal/streamlog"
 )
 
 func TestDevicesStateLimitsKeysBeforeReadingNewAndLegacyDocuments(t *testing.T) {
@@ -60,7 +63,7 @@ func TestDiscoveryFreshnessIncludesUnfinalizedSegment(t *testing.T) {
 	defer db.Close()
 	accepted := time.Now().UTC().Add(-20 * time.Second)
 	projected := time.Now().UTC()
-	mock.ExpectQuery("(?s)archive_state='pending'.*UNION ALL.*archive_receipt_mode='segment' AND lanes_finalized_at IS NULL").
+	mock.ExpectQuery("(?s)archive_state='pending'.*UNION ALL.*archive_receipt_mode='segment' AND lanes_finalized_at IS NULL.*UNION ALL.*archive_receipt_mode='manifest' AND lanes_finalized_at IS NULL").
 		WillReturnRows(sqlmock.NewRows([]string{"oldest", "projected", "version"}).AddRow(accepted, projected, int64(10)))
 	result, err := (Repository{DB: db}).streamDiscoveryFreshness(context.Background())
 	if err != nil {
@@ -90,6 +93,25 @@ func TestDiscoveryHistoryReadsFreshNarrowChanges(t *testing.T) {
 	items := page["items"].([]map[string]any)
 	if len(items) != 1 || items[0]["event_id"] != "fresh-1:event-a" {
 		t.Fatalf("fresh change missing: %+v", items)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiscoveryHistoryRejectsChangeWithoutValidReceipt(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	mock.ExpectQuery("(?s)archive_receipt_mode='manifest'.*FROM stream_discovery_changes c").WithArgs("fresh-1", "device-new", int64(0), 21).
+		WillReturnRows(sqlmock.NewRows([]string{"change_id", "event_key", "accepted_at", "observed_at", "change_kind", "before_hash", "after_hash", "body_ref", "archive_state"}).
+			AddRow(int64(7), "fresh-1:stream2-new", now, now, "applied", "", "hash", []byte(`{"class":"evidence"}`), nil))
+	_, err = (Repository{DB: db}).streamDiscoveryHistory(context.Background(), "fresh-1", "device-new", "", 20)
+	if !errors.Is(err, streamlog.ErrUnconfirmed) {
+		t.Fatalf("history accepted a missing receipt: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -139,6 +161,54 @@ func TestStreamDiscoveryCompactReceiptIsQueryVisiblePerEvent(t *testing.T) {
 	}
 }
 
+func TestStreamDiscoveryReceiptReadsFinalizedManifestWhenEventReceiptIsOmitted(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	key := "fresh-1:stream2-new"
+	mock.ExpectQuery("FROM stream_discovery_event_keys_compact k JOIN LATERAL").WithArgs("fresh-1", "scope-a", key).
+		WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}))
+	columns := []string{"event_key", "content_sha256", "first_accepted_at", "accepted_month", "receipt_segment_id", "receipt_ordinal", "epoch", "source_kind", "archive_receipt_mode", "event_count", "projected_at", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "results"}
+	mock.ExpectQuery("(?s)FROM jsonb_array_elements_text.*stream_discovery_segment_receipt_manifests").WithArgs("fresh-1", "scope-a", []byte(`["`+key+`"]`)).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(key, "hash", now, now, "segment-a", 0, "fresh-1", "passive-discovery", "manifest", 1, now, now, "file-a", int64(0), int64(100), "202611", "", []byte(`["applied"]`)))
+	receipt, found, err := (Repository{DB: db}).StreamDiscoveryReceipt(context.Background(), "fresh-1", "scope-a", key)
+	if err != nil || !found || receipt["result"] != "applied" || receipt["archive_state"] != "confirmed" {
+		t.Fatalf("manifest receipt: %+v found=%v err=%v", receipt, found, err)
+	}
+	var ref map[string]string
+	if err := json.Unmarshal(receipt["body_ref"].(json.RawMessage), &ref); err != nil || ref["sha256"] != "hash" || ref["month"] != "202611" {
+		t.Fatalf("manifest body reference: %+v err=%v", ref, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamDiscoveryReceiptRejectsMissingShadowReceipt(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	key := "fresh-1:stream2-shadow"
+	mock.ExpectQuery("FROM stream_discovery_event_keys_compact k JOIN LATERAL").WithArgs("fresh-1", "scope-a", key).
+		WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}))
+	columns := []string{"event_key", "content_sha256", "first_accepted_at", "accepted_month", "receipt_segment_id", "receipt_ordinal", "epoch", "source_kind", "archive_receipt_mode", "event_count", "projected_at", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "results"}
+	mock.ExpectQuery("(?s)FROM jsonb_array_elements_text.*stream_discovery_segment_receipt_manifests").WithArgs("fresh-1", "scope-a", []byte(`["`+key+`"]`)).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(key, "hash", now, now, "segment-a", 0, "fresh-1", "passive-discovery", "segment", 1, now, now, "file-a", int64(0), int64(100), "202611", "", []byte(`["applied"]`)))
+	_, _, err = (Repository{DB: db}).StreamDiscoveryReceipt(context.Background(), "fresh-1", "scope-a", key)
+	if !errors.Is(err, streamlog.ErrUnconfirmed) {
+		t.Fatalf("missing shadow receipt was accepted: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStreamDiscoveryReceiptFallsBackForLegacyNonPassiveStream2Key(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -149,6 +219,8 @@ func TestStreamDiscoveryReceiptFallsBackForLegacyNonPassiveStream2Key(t *testing
 	key := "fresh-1:stream2-old-source"
 	columns := []string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}
 	mock.ExpectQuery("FROM stream_discovery_event_keys_compact k JOIN LATERAL").WithArgs("fresh-1", "scope-a", key).WillReturnRows(sqlmock.NewRows(columns))
+	mock.ExpectQuery("(?s)FROM jsonb_array_elements_text.*stream_discovery_segment_receipt_manifests").WithArgs("fresh-1", "scope-a", []byte(`["`+key+`"]`)).
+		WillReturnRows(sqlmock.NewRows([]string{"event_key", "content_sha256", "first_accepted_at", "accepted_month", "receipt_segment_id", "receipt_ordinal", "epoch", "source_kind", "archive_receipt_mode", "event_count", "projected_at", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "results"}))
 	mock.ExpectQuery("(?s)FROM stream_discovery_event_keys k JOIN LATERAL.*NOT EXISTS").WithArgs("fresh-1", "scope-a", key).
 		WillReturnRows(sqlmock.NewRows(columns).AddRow("hash", now, now, "applied", "confirmed", []byte(`{"class":"evidence"}`)))
 	receipt, found, err := (Repository{DB: db}).StreamDiscoveryReceipt(context.Background(), "fresh-1", "scope-a", key)
@@ -173,11 +245,40 @@ func TestStreamDiscoveryReceiptsMixesLegacyAndCompactKeysInRequestOrder(t *testi
 		WillReturnRows(sqlmock.NewRows(columns).AddRow(oldKey, "old-hash", now, now, "applied", "confirmed", []byte(`{"class":"evidence"}`)))
 	mock.ExpectQuery("FROM stream_discovery_event_keys_compact k").WithArgs("fresh-1", "scope-a", []byte(`["`+newKey+`","fresh-1:stream2-missing"]`)).
 		WillReturnRows(sqlmock.NewRows(columns).AddRow(newKey, "new-hash", now, now, "applied", "pending", []byte(`{"class":"evidence"}`)))
+	mock.ExpectQuery("(?s)FROM jsonb_array_elements_text.*stream_discovery_segment_receipt_manifests").WithArgs("fresh-1", "scope-a", []byte(`["fresh-1:stream2-missing"]`)).
+		WillReturnRows(sqlmock.NewRows([]string{"event_key", "content_sha256", "first_accepted_at", "accepted_month", "receipt_segment_id", "receipt_ordinal", "epoch", "source_kind", "archive_receipt_mode", "event_count", "projected_at", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "results"}))
 	mock.ExpectQuery("(?s)FROM stream_discovery_event_keys k.*NOT EXISTS").WithArgs("fresh-1", "scope-a", []byte(`["fresh-1:stream2-missing"]`)).
 		WillReturnRows(sqlmock.NewRows(columns))
+	mock.ExpectQuery("SELECT k.event_key FROM jsonb_array_elements_text").WithArgs("fresh-1", "scope-a", []byte(`["fresh-1:stream2-missing"]`)).
+		WillReturnRows(sqlmock.NewRows([]string{"event_key"}))
 	items, missing, err := (Repository{DB: db}).StreamDiscoveryReceipts(context.Background(), "fresh-1", "scope-a", []string{newKey, oldKey, "fresh-1:stream2-missing"})
 	if err != nil || len(items) != 2 || items[0]["event_key"] != newKey || items[1]["event_key"] != oldKey || len(missing) != 1 || missing[0] != "fresh-1:stream2-missing" {
 		t.Fatalf("mixed receipt lookup: items=%+v missing=%v err=%v", items, missing, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamDiscoveryReceiptsIncludesPendingManifestInRequestOrder(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	oldKey, newKey := "fresh-1:stream-old", "fresh-1:stream2-new"
+	columns := []string{"event_key", "content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}
+	mock.ExpectQuery("FROM stream_discovery_event_keys k").WithArgs("fresh-1", "scope-a", []byte(`["`+oldKey+`"]`)).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(oldKey, "old-hash", now, now, "applied", "confirmed", []byte(`{"class":"evidence"}`)))
+	mock.ExpectQuery("FROM stream_discovery_event_keys_compact k").WithArgs("fresh-1", "scope-a", []byte(`["`+newKey+`"]`)).
+		WillReturnRows(sqlmock.NewRows(columns))
+	manifestColumns := []string{"event_key", "content_sha256", "first_accepted_at", "accepted_month", "receipt_segment_id", "receipt_ordinal", "epoch", "source_kind", "archive_receipt_mode", "event_count", "projected_at", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "results"}
+	mock.ExpectQuery("(?s)FROM jsonb_array_elements_text.*stream_discovery_segment_receipt_manifests").WithArgs("fresh-1", "scope-a", []byte(`["`+newKey+`"]`)).
+		WillReturnRows(sqlmock.NewRows(manifestColumns).AddRow(newKey, "new-hash", now, now, "segment-a", 0, "fresh-1", "passive-discovery", "manifest", 1, now, nil, "file-a", int64(0), int64(100), "202611", "", []byte(`["repeat_observation"]`)))
+	items, missing, err := (Repository{DB: db}).StreamDiscoveryReceipts(context.Background(), "fresh-1", "scope-a", []string{newKey, oldKey})
+	if err != nil || len(missing) != 0 || len(items) != 2 || items[0]["event_key"] != newKey || items[0]["archive_state"] != "pending" || items[1]["event_key"] != oldKey {
+		t.Fatalf("batch manifest lookup: items=%+v missing=%v err=%v", items, missing, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -194,6 +295,8 @@ func TestStreamDiscoveryReceiptsFallsBackForLegacyNonPassiveStream2Key(t *testin
 	key := "fresh-1:stream2-old-source"
 	columns := []string{"event_key", "content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}
 	mock.ExpectQuery("FROM stream_discovery_event_keys_compact k").WithArgs("fresh-1", "scope-a", []byte(`["`+key+`"]`)).WillReturnRows(sqlmock.NewRows(columns))
+	mock.ExpectQuery("(?s)FROM jsonb_array_elements_text.*stream_discovery_segment_receipt_manifests").WithArgs("fresh-1", "scope-a", []byte(`["`+key+`"]`)).
+		WillReturnRows(sqlmock.NewRows([]string{"event_key", "content_sha256", "first_accepted_at", "accepted_month", "receipt_segment_id", "receipt_ordinal", "epoch", "source_kind", "archive_receipt_mode", "event_count", "projected_at", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "results"}))
 	mock.ExpectQuery("(?s)FROM stream_discovery_event_keys k.*NOT EXISTS").WithArgs("fresh-1", "scope-a", []byte(`["`+key+`"]`)).
 		WillReturnRows(sqlmock.NewRows(columns).AddRow(key, "hash", now, now, "applied", "confirmed", []byte(`{"class":"evidence"}`)))
 	items, missing, err := (Repository{DB: db}).StreamDiscoveryReceipts(context.Background(), "fresh-1", "scope-a", []string{key})
@@ -217,6 +320,8 @@ func TestStreamDiscoveryReceiptsReturnsBoundedResultsInRequestOrder(t *testing.T
 		WillReturnRows(sqlmock.NewRows([]string{"event_key", "content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}).
 			AddRow("key-a", "hash-a", now, now, "corrected", "confirmed", []byte(`{"class":"evidence"}`)).
 			AddRow("key-b", "hash-b", now, now, "repeat_observation", "pending", []byte(`{"class":"evidence"}`)))
+	mock.ExpectQuery("SELECT k.event_key FROM jsonb_array_elements_text").WithArgs("fresh-1", "scope-a", []byte(`["missing"]`)).
+		WillReturnRows(sqlmock.NewRows([]string{"event_key"}))
 	items, missing, err := (Repository{DB: db}).StreamDiscoveryReceipts(context.Background(), "fresh-1", "scope-a", []string{"key-b", "key-a", "missing"})
 	if err != nil || len(items) != 2 || items[0]["event_key"] != "key-b" || items[1]["event_key"] != "key-a" || len(missing) != 1 || missing[0] != "missing" {
 		t.Fatalf("batch receipt mismatch: items=%+v missing=%v err=%v", items, missing, err)

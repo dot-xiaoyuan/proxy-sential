@@ -57,12 +57,22 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
 	}
 	err := lookup(compact, false)
 	if compact && errors.Is(err, sql.ErrNoRows) {
+		manifest, manifestErr := r.streamManifestReceipts(ctx, epoch, scope, []string{eventKey})
+		if manifestErr != nil {
+			return nil, false, manifestErr
+		}
+		if receipt, found := manifest[eventKey]; found {
+			receipt["read_observed_at"] = time.Now().UTC()
+			return receipt, true, nil
+		}
 		// Earlier non-passive sources may have used this prefix in the legacy
-		// ledger. Only fall back if no compact identity exists at all; a compact
-		// key with a missing receipt must remain missing.
+		// ledger. Fall back only when no compact identity exists at all.
 		err = lookup(false, true)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
+		if err := r.missingLegacyReceipt(ctx, epoch, scope, []string{eventKey}); err != nil {
+			return nil, false, err
+		}
 		return nil, false, nil
 	}
 	if err != nil {
@@ -165,6 +175,19 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 			fallback = append(fallback, key)
 		}
 	}
+	manifest, err := r.streamManifestReceipts(ctx, epoch, scope, fallback)
+	if err != nil {
+		return nil, nil, err
+	}
+	for key, item := range manifest {
+		byKey[key] = item
+	}
+	fallback = fallback[:0]
+	for _, key := range groups[true] {
+		if _, found := byKey[key]; !found {
+			fallback = append(fallback, key)
+		}
+	}
 	if err := readGroup(fallback, false, true); err != nil {
 		return nil, nil, err
 	}
@@ -176,6 +199,9 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 		} else {
 			missing = append(missing, key)
 		}
+	}
+	if err := r.missingLegacyReceipt(ctx, epoch, scope, missing); err != nil {
+		return nil, nil, err
 	}
 	// The final lookup has completed. Every returned receipt was visible by
 	// this instant, including receipts found before the compact-key fallback.

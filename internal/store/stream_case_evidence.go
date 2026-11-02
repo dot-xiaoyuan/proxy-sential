@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"proxy-sentinel/internal/streamlog"
 )
@@ -78,6 +80,86 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 	rows.Close()
 	if err != nil {
 		return nil, err
+	}
+	manifestRefs := make([]StreamBodyRef, 0)
+	for _, ref := range refs {
+		if _, ok := confirmed[ref]; !ok && strings.HasPrefix(ref.Key, ref.Epoch+":stream2-") {
+			manifestRefs = append(manifestRefs, ref)
+		}
+	}
+	if len(manifestRefs) != 0 {
+		manifestInput, err := json.Marshal(manifestRefs)
+		if err != nil {
+			return nil, err
+		}
+		manifestRows, err := s.pg.db.QueryContext(ctx, `SELECT v.epoch,v.scope,v.key,v.sha256,kc.content_sha256,to_char(kc.accepted_month,'YYYYMM'),
+ kc.receipt_segment_id,kc.receipt_ordinal,sm.epoch,sm.source_kind,sm.archive_receipt_mode,
+ sm.event_count,sm.lanes_finalized_at,sm.source_file_id,sm.source_start_offset,sm.source_end_offset,
+ m.archive_month,m.body_layout,m.results
+ FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,scope text,key text,sha256 text)
+ JOIN stream_discovery_event_keys_compact kc
+  ON kc.key_hash=sentinel_stream_discovery_key_hash(v.epoch,v.scope,v.key)
+  AND kc.epoch=v.epoch AND kc.scope_id=v.scope AND kc.event_key=v.key
+ LEFT JOIN stream_discovery_receipts r ON r.accepted_month=kc.accepted_month
+  AND r.epoch=v.epoch AND r.scope_id=v.scope AND r.event_key=v.key
+ LEFT JOIN stream_projection_segments sm ON sm.segment_id=kc.receipt_segment_id
+ LEFT JOIN stream_discovery_segment_receipt_manifests m ON m.segment_id=sm.segment_id
+ WHERE r.event_key IS NULL`, manifestInput)
+		if err != nil {
+			return nil, err
+		}
+		for manifestRows.Next() {
+			var epoch, scope, key, hash, savedHash, acceptedMonth string
+			var locator, markerEpoch, source, mode, fileID, month, bodyLayout sql.NullString
+			var ordinal, eventCount, sourceStart, sourceEnd sql.NullInt64
+			var finalized sql.NullTime
+			var results []byte
+			if err = manifestRows.Scan(&epoch, &scope, &key, &hash, &savedHash, &acceptedMonth,
+				&locator, &ordinal, &markerEpoch, &source, &mode,
+				&eventCount, &finalized, &fileID, &sourceStart, &sourceEnd,
+				&month, &bodyLayout, &results); err != nil {
+				break
+			}
+			var requested StreamBodyRef
+			for _, ref := range manifestRefs {
+				if ref.Epoch == epoch && ref.Scope == scope && ref.Key == key && ref.SHA256 == hash {
+					requested = ref
+					break
+				}
+			}
+			if requested.Key == "" || savedHash != hash {
+				err = streamlog.ErrContentConflict
+				break
+			}
+			if !locator.Valid || locator.String == "" || !ordinal.Valid || !mode.Valid || mode.String != "manifest" {
+				err = streamlog.ErrUnconfirmed
+				break
+			}
+			if !markerEpoch.Valid || markerEpoch.String != epoch || !source.Valid || source.String != "passive-discovery" ||
+				!eventCount.Valid || !fileID.Valid || fileID.String == "" || !sourceStart.Valid || !sourceEnd.Valid || sourceEnd.Int64 <= sourceStart.Int64 ||
+				!month.Valid || !bodyLayout.Valid || month.String != acceptedMonth || month.String != requested.Month || bodyLayout.String != requested.BodyLayout {
+				err = streamlog.ErrContentConflict
+				break
+			}
+			var values []*string
+			if json.Unmarshal(results, &values) != nil || len(values) != int(eventCount.Int64) ||
+				ordinal.Int64 < 0 || ordinal.Int64 >= int64(len(values)) || values[ordinal.Int64] == nil || *values[ordinal.Int64] == "" {
+				err = streamlog.ErrContentConflict
+				break
+			}
+			if !finalized.Valid {
+				err = streamlog.ErrUnconfirmed
+				break
+			}
+			confirmed[requested] = struct{}{}
+		}
+		if err == nil {
+			err = manifestRows.Err()
+		}
+		manifestRows.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
 	for _, ref := range refs {
 		if _, ok := confirmed[ref]; !ok {

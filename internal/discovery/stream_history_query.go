@@ -2,10 +2,13 @@ package discovery
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"proxy-sentinel/internal/streamlog"
 )
 
 type streamHistoryCursor struct {
@@ -29,9 +32,23 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
 		limit = 20
 	}
 	rows, err := r.DB.QueryContext(ctx, `SELECT c.change_id,c.event_key,c.accepted_at,c.observed_at,c.change_kind,c.before_hash,c.after_hash,c.body_ref,
- coalesce(CASE WHEN r.archive_state IN ('verified','failed') THEN r.archive_state
-  WHEN r.archive_segment_id IS NOT NULL THEN CASE WHEN s.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
-  ELSE r.archive_state END,'pending')
+ CASE WHEN r.event_key IS NOT NULL THEN
+  CASE WHEN r.archive_state IN ('verified','failed') THEN r.archive_state
+   WHEN r.archive_segment_id IS NOT NULL THEN CASE WHEN s.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
+   ELSE r.archive_state END
+  WHEN kc.event_key IS NOT NULL AND sm.epoch=c.epoch AND sm.source_kind='passive-discovery'
+   AND sm.archive_receipt_mode='manifest' AND sm.source_file_id IS NOT NULL AND sm.source_file_id<>''
+   AND sm.source_start_offset IS NOT NULL AND sm.source_end_offset>sm.source_start_offset
+   AND kc.receipt_ordinal>=0 AND kc.receipt_ordinal<sm.event_count
+   AND jsonb_array_length(m.results)=sm.event_count AND coalesce(m.results->>kc.receipt_ordinal,'')<>''
+   AND (k.event_key IS NULL OR (k.accepted_month=kc.accepted_month AND k.content_sha256=kc.content_sha256))
+   AND c.body_ref->>'class'='evidence' AND c.body_ref->>'epoch'=c.epoch
+   AND c.body_ref->>'scope'=kc.scope_id AND c.body_ref->>'key'=c.event_key
+   AND c.body_ref->>'sha256'=kc.content_sha256 AND c.body_ref->>'month'=m.archive_month
+   AND to_char(kc.accepted_month,'YYYYMM')=m.archive_month
+   AND coalesce(c.body_ref->>'body_layout','')=m.body_layout
+  THEN CASE WHEN sm.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
+  ELSE NULL END
  FROM stream_discovery_changes c
  LEFT JOIN stream_discovery_event_keys k ON k.epoch=c.epoch AND k.event_key=c.event_key AND k.scope_id=c.body_ref->>'scope'
  LEFT JOIN stream_discovery_event_keys_compact kc
@@ -43,6 +60,8 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
    (k.accepted_month=kc.accepted_month AND k.content_sha256=kc.content_sha256))
  LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
   AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
+ LEFT JOIN stream_projection_segments sm ON sm.segment_id=kc.receipt_segment_id
+ LEFT JOIN stream_discovery_segment_receipt_manifests m ON m.segment_id=sm.segment_id
  WHERE c.epoch=$1 AND c.device_key=$2 AND ($3::bigint=0 OR c.change_id<$3)
  ORDER BY c.change_id DESC LIMIT $4`, epoch, key, after, limit+1)
 	if err != nil {
@@ -53,14 +72,18 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
 	ids := []int64{}
 	for rows.Next() {
 		var id int64
-		var event, kind, before, afterHash, archive string
+		var event, kind, before, afterHash string
+		var archive sql.NullString
 		var accepted, observed time.Time
 		var ref json.RawMessage
 		if err = rows.Scan(&id, &event, &accepted, &observed, &kind, &before, &afterHash, &ref, &archive); err != nil {
 			return nil, err
 		}
+		if !archive.Valid {
+			return nil, fmt.Errorf("stream discovery change %d has no valid receipt: %w", id, streamlog.ErrUnconfirmed)
+		}
 		items = append(items, map[string]any{"id": id, "event_id": event, "ingested_at": accepted, "observed_at": observed, "kind": kind,
-			"evidence": map[string]any{"before_hash": before, "after_hash": afterHash, "body_ref": ref, "archive_state": archive}, "generation": "fresh"})
+			"evidence": map[string]any{"before_hash": before, "after_hash": afterHash, "body_ref": ref, "archive_state": archive.String}, "generation": "fresh"})
 		ids = append(ids, id)
 	}
 	if err = rows.Err(); err != nil {

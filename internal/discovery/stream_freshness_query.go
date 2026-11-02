@@ -19,6 +19,10 @@ func (r Repository) streamDiscoveryFreshness(ctx context.Context) (map[string]an
    (SELECT accepted_at FROM stream_projection_segments
     WHERE epoch=c.epoch AND archive_receipt_mode='segment' AND lanes_finalized_at IS NULL
     ORDER BY accepted_at LIMIT 1)
+   UNION ALL
+   (SELECT accepted_at FROM stream_projection_segments
+    WHERE epoch=c.epoch AND archive_receipt_mode='manifest' AND lanes_finalized_at IS NULL
+    ORDER BY accepted_at LIMIT 1)
   ) p
  ) pending ON true
  LEFT JOIN LATERAL (SELECT projected_at FROM stream_projection_segments WHERE epoch=c.epoch ORDER BY projected_at DESC LIMIT 1) projected ON true

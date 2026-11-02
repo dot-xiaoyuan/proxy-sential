@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"proxy-sentinel/internal/normalized"
@@ -66,6 +67,39 @@ func TestReadStreamCaseEvidenceRejectsUnconfirmedReceipt(t *testing.T) {
 	}
 	if _, err := (&DBStore{pg: &PostgresStore{db: db}, ch: ch}).ReadStreamCaseEvidence(context.Background(), []StreamBodyRef{ref}); !errors.Is(err, streamlog.ErrUnconfirmed) {
 		t.Fatalf("unconfirmed archive was accepted for a case: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadStreamCaseEvidenceUsesFinalizedManifestWithoutEventReceipt(t *testing.T) {
+	event := normalized.Event{EventID: "stream2-new", SchemaVersion: "v1", Type: "discovery", Timestamp: "2026-10-24T10:00:00Z"}
+	body, _ := json.Marshal(event)
+	sum := sha256.Sum256(body)
+	ref := StreamBodyRef{Epoch: "fresh", Class: "evidence", Month: "202610", Scope: "scope-a", Key: "fresh:stream2-new", SHA256: hex.EncodeToString(sum[:])}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery("(?s)FROM jsonb_to_recordset.*JOIN stream_discovery_receipts r").
+		WillReturnRows(sqlmock.NewRows([]string{"epoch", "scope", "key", "sha256", "body_ref"}))
+	columns := []string{"epoch", "scope", "key", "sha256", "key_hash", "accepted_month", "receipt_segment_id", "receipt_ordinal", "segment_epoch", "source_kind", "archive_receipt_mode", "event_count", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "archive_month", "body_layout", "results"}
+	mock.ExpectQuery("(?s)FROM jsonb_to_recordset.*stream_discovery_segment_receipt_manifests").
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(ref.Epoch, ref.Scope, ref.Key, ref.SHA256, ref.SHA256, ref.Month, "segment-a", 0, ref.Epoch, "passive-discovery", "manifest", 1, time.Now().UTC(), "file-a", int64(0), int64(100), ref.Month, "", []byte(`["applied"]`)))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		row, _ := json.Marshal(map[string]string{"scope_id": ref.Scope, "event_key": ref.Key, "content_sha256": ref.SHA256, "body": string(body)})
+		_, _ = w.Write(append(row, '\n'))
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&DBStore{pg: &PostgresStore{db: db}, ch: ch}).ReadStreamCaseEvidence(context.Background(), []StreamBodyRef{ref})
+	if err != nil || string(got[ref].Document) != string(body) {
+		t.Fatalf("manifest case original unavailable: %s %v", got[ref].Document, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
