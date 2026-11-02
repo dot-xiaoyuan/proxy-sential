@@ -138,6 +138,31 @@ func TestReceiptManifestWritesRequiresWriteSchema(t *testing.T) {
 	}
 }
 
+func TestTwoThousandEventModeRequiresWidenedReceiptBounds(t *testing.T) {
+	for _, ready := range []bool{false, true} {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := discovery.DefaultCollectionConfig()
+		config.CompactPassiveEventKeys = true
+		config.ReceiptManifestWrites = true
+		config.PassiveSegmentMaxEvents = streamlog.MaxPassiveSegmentEvents
+		mock.ExpectQuery("to_regclass.*stream_discovery_event_keys_compact").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
+		mock.ExpectQuery("to_regclass.*stream_discovery_segment_receipt_manifests").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
+		mock.ExpectQuery("(?s)recognition_summary.*stream_projection_archive_receipt_mode").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
+		mock.ExpectQuery("(?s)stream_discovery_compact_receipt_locator.*stream_discovery_segment_receipt_manifests_results_check").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(ready))
+		err = verifyCompactPassiveEventKeySchema(context.Background(), db, config)
+		if (err == nil) != ready {
+			t.Fatalf("widened bounds ready=%v err=%v", ready, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+	}
+}
+
 func (w *replayFinalizerWriter) FinalizeSegment(context.Context, string, streamlog.Segment) error {
 	if w.fail {
 		return streamlog.ErrUnconfirmed

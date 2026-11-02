@@ -48,7 +48,7 @@ func AppendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal,
 }
 
 func appendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, events []normalized.Event, compactKeys bool) (CapturedSegment, error) {
-	if journal == nil || scope == nil || source.ID == "" || source.Address == "" || len(events) == 0 || len(events) > streamlog.MaxSegmentEvents {
+	if journal == nil || scope == nil || source.ID == "" || source.Address == "" || len(events) == 0 || len(events) > streamlog.MaxPassiveSegmentEvents {
 		return CapturedSegment{}, errors.New("passive stream requires a bounded batch, source and capture scope")
 	}
 	if source.Node != scope.SensorID || source.Site != scope.CampusID || source.Domain != scope.AccessDomain || source.Address != scope.InterfaceName || scope.CollectorInstanceID == "" ||

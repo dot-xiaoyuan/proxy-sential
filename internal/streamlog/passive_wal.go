@@ -358,7 +358,7 @@ func validatePassiveWALSegment(s Segment) error {
 	if s.Source != "passive-discovery" || s.SourcePath == "" || s.FileID == "" || s.Epoch == "" || s.ParserVersion != "passive-frame-v1" ||
 		s.KeyScheme != "" || s.SourceGeneration != 0 || s.PreviousGeneration != 0 || s.SourceBackedRaw || s.RawIsStandardEvents || s.EarlyProcessing ||
 		s.Quarantined || s.QuarantineReason != "" || s.RiskFeaturesRequired || s.SplitRiskFeatures || len(s.Raw) != 0 || s.RawSHA256 != "" || s.RawTailBytes != 0 || s.RawTailSHA256 != "" || len(s.EventOffsets) != 0 ||
-		!s.NeedsProjection || s.AcceptedAt.IsZero() || len(s.Events) < 1 || len(s.Events) > MaxSegmentEvents {
+		!s.NeedsProjection || s.AcceptedAt.IsZero() || len(s.Events) < 1 || len(s.Events) > MaxPassiveSegmentEvents {
 		return ErrContentConflict
 	}
 	if _, err := time.Parse("200601", s.ArchiveMonth); err != nil {

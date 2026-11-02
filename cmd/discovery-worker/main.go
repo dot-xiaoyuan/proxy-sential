@@ -11,6 +11,7 @@ import (
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/store"
+	"proxy-sentinel/internal/streamlog"
 	"strconv"
 	"strings"
 	"syscall"
@@ -57,6 +58,14 @@ func main() {
 		log.Fatal("invalid passive receipt manifest writes mode")
 	}
 	manifestWrites := flag.Bool("passive-receipt-manifest-writes", manifestWritesDefault, "write one manifest instead of per-event receipts for new passive stream2 segments")
+	segmentEventsDefault := streamlog.MaxSegmentEvents
+	if raw := os.Getenv("PROXY_SENTINEL_PASSIVE_SEGMENT_MAX_EVENTS"); raw != "" {
+		segmentEventsDefault, err = strconv.Atoi(raw)
+		if err != nil {
+			log.Fatal("invalid passive segment event limit")
+		}
+	}
+	passiveSegmentMaxEvents := flag.Int("passive-segment-max-events", segmentEventsDefault, "passive events per durable segment (1000 or 2000; 2000 requires a compatible rollback release)")
 	streamJournal := flag.String("stream-journal", "", "fresh-only durable passive stream journal directory")
 	streamScope := flag.String("capture-scope-config", "", "controlled fresh passive capture scope")
 	streamEpoch := flag.String("stream-epoch", "", "explicit fresh stream generation for stream-prepare")
@@ -80,6 +89,12 @@ func main() {
 	if *manifestWrites && (!*compactPassiveKeys || !*segmentArchiveReceipts) {
 		log.Fatal("receipt manifest writes require compact passive keys and segment archive receipts")
 	}
+	if *passiveSegmentMaxEvents != streamlog.MaxSegmentEvents && *passiveSegmentMaxEvents != streamlog.MaxPassiveSegmentEvents {
+		log.Fatal("passive segment event limit must be 1000 or 2000")
+	}
+	if *passiveSegmentMaxEvents == streamlog.MaxPassiveSegmentEvents && !*manifestWrites {
+		log.Fatal("2000-event passive segments require manifest writes and a compatible rollback release")
+	}
 	library, err := fingerprint.OpenInstalledRuntime()
 	if err != nil {
 		log.Fatal(err)
@@ -101,6 +116,7 @@ func main() {
 	collection.SegmentArchiveReceipts = *segmentArchiveReceipts
 	collection.ReceiptManifestShadow = *manifestShadow
 	collection.ReceiptManifestWrites = *manifestWrites
+	collection.PassiveSegmentMaxEvents = *passiveSegmentMaxEvents
 	if *allowCIDRs == "" {
 		*allowCIDRs = collection.AllowedCIDRs
 	}

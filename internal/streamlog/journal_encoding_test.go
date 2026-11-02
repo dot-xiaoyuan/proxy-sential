@@ -31,7 +31,7 @@ func encodingSegment(count int) Segment {
 }
 
 func TestJournalEncodedBodySurvivesInterruptedSourceCommit(t *testing.T) {
-	for _, count := range []int{1, MaxSegmentEvents} {
+	for _, count := range []int{1, MaxSegmentEvents, MaxPassiveSegmentEvents} {
 		t.Run(fmt.Sprintf("events_%d", count), func(t *testing.T) {
 			dir := t.TempDir()
 			j, err := Open(dir)
@@ -39,6 +39,11 @@ func TestJournalEncodedBodySurvivesInterruptedSourceCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			segment := encodingSegment(count)
+			if count == MaxPassiveSegmentEvents {
+				segment.Source = "passive-discovery"
+				segment.SourcePath = "packet://bond0/sensor-1"
+				segment.ParserVersion = "passive-frame-v1"
+			}
 			if count == 1 {
 				segment.BodyLayout = "v2"
 			}
@@ -92,7 +97,7 @@ func TestJournalEncodedBodySurvivesInterruptedSourceCommit(t *testing.T) {
 }
 
 func TestJournalEncodedBodyRejectsBoundsBeforePersistence(t *testing.T) {
-	for _, kind := range []string{"events", "bytes"} {
+	for _, kind := range []string{"events", "passive_events", "bytes"} {
 		t.Run(kind, func(t *testing.T) {
 			j, err := Open(t.TempDir())
 			if err != nil {
@@ -101,6 +106,9 @@ func TestJournalEncodedBodyRejectsBoundsBeforePersistence(t *testing.T) {
 			segment := encodingSegment(1)
 			if kind == "events" {
 				segment = encodingSegment(MaxSegmentEvents + 1)
+			} else if kind == "passive_events" {
+				segment = encodingSegment(MaxPassiveSegmentEvents + 1)
+				segment.Source = "passive-discovery"
 			} else {
 				segment.Events[0].Payload["oversized"] = strings.Repeat("x", MaxSegmentBytes)
 			}

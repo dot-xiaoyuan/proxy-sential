@@ -46,6 +46,9 @@ func newPassiveStreamLaneWriter(db *sql.DB, ch *store.ClickHouseStore, config di
 }
 
 func verifyCompactPassiveEventKeySchema(ctx context.Context, db *sql.DB, config discovery.CollectionConfig) error {
+	if config.PassiveSegmentMaxEvents == streamlog.MaxPassiveSegmentEvents && !config.ReceiptManifestWrites {
+		return errors.New("2000-event segments require manifest receipts")
+	}
 	if !config.CompactPassiveEventKeys {
 		return nil
 	}
@@ -81,6 +84,21 @@ func verifyCompactPassiveEventKeySchema(ctx context.Context, db *sql.DB, config 
 		}
 		if !ready {
 			return errors.New("manifest receipt write schema is not installed")
+		}
+	}
+	if config.PassiveSegmentMaxEvents == streamlog.MaxPassiveSegmentEvents {
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint
+ WHERE conrelid=to_regclass('stream_discovery_event_keys_compact')
+  AND conname='stream_discovery_compact_receipt_locator'
+  AND pg_get_constraintdef(oid) LIKE '%1999%')
+ AND EXISTS(SELECT 1 FROM pg_constraint
+ WHERE conrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND conname='stream_discovery_segment_receipt_manifests_results_check'
+  AND pg_get_constraintdef(oid) LIKE '%2000%')`).Scan(&ready); err != nil {
+			return fmt.Errorf("2000-event receipt bounds preflight: %w", err)
+		}
+		if !ready {
+			return errors.New("2000-event receipt bounds are not installed")
 		}
 	}
 	return nil

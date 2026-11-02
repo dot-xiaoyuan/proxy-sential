@@ -152,7 +152,7 @@ func TestAppendPassiveStreamBatchRejectsScopeConflictWithoutAdvancing(t *testing
 	}
 }
 
-func TestAppendPassiveStreamBatchThousandEventBound(t *testing.T) {
+func TestAppendPassiveStreamBatchTwoThousandEventBound(t *testing.T) {
 	j, err := streamlog.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -164,19 +164,20 @@ func TestAppendPassiveStreamBatchThousandEventBound(t *testing.T) {
 	if err := j.StartFreshSource(streamlog.SourceCursor{Epoch: "fresh-1", Source: "passive-discovery", Path: path, FileID: "boot-a", ParserVersion: PassiveStreamParserVersion}); err != nil {
 		t.Fatal(err)
 	}
-	events := make([]normalized.Event, streamlog.MaxSegmentEvents+1)
+	events := make([]normalized.Event, streamlog.MaxPassiveSegmentEvents+1)
 	for i := range events {
 		events[i] = streamDiscoveryEvent(fmt.Sprintf("producer-%d", i), at.Format(time.RFC3339Nano), 600)
 		events[i].Observer["interface"] = "bond0"
 		events[i].Subject["site"] = "site-a"
 		events[i].Subject["domain"] = "domain-a"
 	}
-	id, err := AppendPassiveStreamBatch(context.Background(), j, source, scope, events[:streamlog.MaxSegmentEvents])
+	id, err := AppendPassiveStreamBatch(context.Background(), j, source, scope, events[:streamlog.MaxPassiveSegmentEvents])
 	if err != nil {
 		t.Fatal(err)
 	}
 	state, err := j.Load(id)
-	if err != nil || len(state.Segment.Events) != 1000 {
+	if err != nil || len(state.Segment.Events) != streamlog.MaxPassiveSegmentEvents ||
+		state.Segment.Events[streamlog.MaxPassiveSegmentEvents-1].RawRef["source_record_ordinal"] != float64(streamlog.MaxPassiveSegmentEvents-1) {
 		t.Fatalf("stored events=%d err=%v", len(state.Segment.Events), err)
 	}
 	if _, err := AppendPassiveStreamBatch(context.Background(), j, source, scope, events); err == nil {

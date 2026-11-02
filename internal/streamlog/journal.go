@@ -29,6 +29,10 @@ var (
 // The byte ceiling remains independent: a larger compact signal batch saves
 // mechanical-disk journal syncs without allowing an oversized segment.
 const MaxSegmentEvents = 1000
+
+// Passive packet capture uses a larger segment to amortize durable journal
+// barriers. File-backed and shared sources retain the existing bound.
+const MaxPassiveSegmentEvents = 2000
 const MaxSegmentBytes = 4 << 20
 
 type Lane string
@@ -216,7 +220,11 @@ func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 	if s.AcceptedAt.IsZero() {
 		s.AcceptedAt = time.Now().UTC()
 	}
-	if len(s.Events) > MaxSegmentEvents {
+	maxEvents := MaxSegmentEvents
+	if s.Source == "passive-discovery" {
+		maxEvents = MaxPassiveSegmentEvents
+	}
+	if len(s.Events) > maxEvents {
 		return "", ErrSegmentTooLarge
 	}
 	encoded, err := json.Marshal(s)

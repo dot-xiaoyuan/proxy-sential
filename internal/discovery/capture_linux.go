@@ -19,10 +19,7 @@ import (
 	"time"
 )
 
-const (
-	streamCaptureFlushEvents = streamlog.MaxSegmentEvents
-	streamCaptureFlushWindow = 4 * time.Second
-)
+const streamCaptureFlushWindow = 4 * time.Second
 
 // Capture spools standard events on a separate goroutine; packet reads never wait on database work.
 func Capture(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix) error {
@@ -51,9 +48,28 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 	if journal == nil || scope == nil {
 		return fmt.Errorf("passive stream capture needs durable journal and scope")
 	}
-	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, streamCaptureFlushEvents, streamCaptureFlushWindow, 500*time.Millisecond, true, true, func(b []byte) error {
+	maxEvents, maxBytes, err := passiveStreamCaptureBudget(config)
+	if err != nil {
+		return err
+	}
+	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, maxEvents, maxBytes, maxEvents, streamCaptureFlushWindow, 500*time.Millisecond, true, true, func(b []byte) error {
 		return persistPassiveStreamCaptureBatch(ctx, journal, source, scope, config.CompactPassiveEventKeys, onSegment, b)
 	})
+}
+
+func passiveStreamCaptureBudget(config CollectionConfig) (int, int, error) {
+	maxEvents := config.PassiveSegmentMaxEvents
+	if maxEvents == 0 {
+		maxEvents = streamlog.MaxSegmentEvents
+	}
+	if maxEvents != streamlog.MaxSegmentEvents && maxEvents != streamlog.MaxPassiveSegmentEvents {
+		return 0, 0, fmt.Errorf("invalid passive segment event limit: %d", maxEvents)
+	}
+	maxBytes := 1 << 20
+	if maxEvents == streamlog.MaxPassiveSegmentEvents {
+		maxBytes = 2 << 20
+	}
+	return maxEvents, maxBytes, nil
 }
 
 func persistPassiveStreamCaptureBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, compactKeys bool, onSegment func(CapturedSegment) error, raw []byte) error {

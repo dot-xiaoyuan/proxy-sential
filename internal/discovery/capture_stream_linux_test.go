@@ -68,6 +68,18 @@ func TestStreamCaptureQueueDrainsToJournalAfterCancellation(t *testing.T) {
 	}
 }
 
+func TestPassiveStreamCaptureBudgetOptIn(t *testing.T) {
+	for _, sample := range []struct {
+		configured, events, bytes int
+		invalid                   bool
+	}{{0, 1000, 1 << 20, false}, {2000, 2000, 2 << 20, false}, {1999, 0, 0, true}} {
+		gotEvents, gotBytes, err := passiveStreamCaptureBudget(CollectionConfig{PassiveSegmentMaxEvents: sample.configured})
+		if gotEvents != sample.events || gotBytes != sample.bytes || (err != nil) != sample.invalid {
+			t.Fatalf("configured=%d budget=%d/%d err=%v", sample.configured, gotEvents, gotBytes, err)
+		}
+	}
+}
+
 func TestCanceledCaptureWaitsForFinalQueueSlotOrWriterFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

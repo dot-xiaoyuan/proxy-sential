@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -92,6 +93,49 @@ func (want streamArchiveKeys) Match(v driver.Value) bool {
 		}
 	}
 	return true
+}
+
+func TestTwoThousandEventManifestKeepsLastOrdinal(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	items := make([]streamPreparedDiscovery, streamlog.MaxPassiveSegmentEvents)
+	wantKeys := make(streamArchiveKeys, len(items))
+	wantResults := make(streamManifestResults, len(items))
+	now := time.Now().UTC()
+	for i := range items {
+		receipt := streamDiscoveryReceipt{Scope: "scope", Key: fmt.Sprintf("stream2-%d", i), Hash: "hash", Accepted: now, Result: "applied"}
+		items[i].Receipt = receipt
+		wantKeys[i] = receipt
+		wantResults[i] = receipt.Result
+	}
+	mock.ExpectBegin()
+	rows := sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"})
+	for _, key := range wantKeys {
+		rows.AddRow(key.Scope, key.Key, key.Hash)
+	}
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WithArgs("fresh", sqlmock.AnyArg(), wantKeys, "segment-a").WillReturnRows(rows)
+	mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs("segment-a", "202611", "", wantResults).WillReturnResult(sqlmock.NewResult(0, 1))
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, "fresh", now, items, false, "segment-a")
+	if err != nil || len(fresh) != len(items) {
+		t.Fatalf("reserve last ordinal: %d %v", len(fresh), err)
+	}
+	if err := writeStreamReceiptManifest(context.Background(), tx, "segment-a", streamlog.Segment{ArchiveMonth: "202611"}, items, items, nil); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (want streamJSONFields) Match(v driver.Value) bool {

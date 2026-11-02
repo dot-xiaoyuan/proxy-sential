@@ -38,12 +38,15 @@ type CollectionConfig struct {
 	ReceiptManifestShadow bool `json:"-"`
 	// Switch new durable passive segments to manifest-only receipts after the
 	// compatible reader/finalizer release is the rollback target.
-	ReceiptManifestWrites bool             `json:"-"`
-	EventBindings         []EventBinding   `json:"event_bindings"`
-	EnrichmentPaths       []EnrichmentPath `json:"enrichment_paths"`
-	Version               int              `json:"version"`
-	AllowedCIDRs          string           `json:"allowed_cidrs"`
-	Protocols             []ProtocolOwner  `json:"protocols"`
+	ReceiptManifestWrites bool `json:"-"`
+	// Default capture stays at 1000 until a 2000-capable release is the
+	// rollback target. This runtime-only option never comes from the shared file.
+	PassiveSegmentMaxEvents int              `json:"-"`
+	EventBindings           []EventBinding   `json:"event_bindings"`
+	EnrichmentPaths         []EnrichmentPath `json:"enrichment_paths"`
+	Version                 int              `json:"version"`
+	AllowedCIDRs            string           `json:"allowed_cidrs"`
+	Protocols               []ProtocolOwner  `json:"protocols"`
 }
 
 func DefaultCollectionConfig() CollectionConfig {
