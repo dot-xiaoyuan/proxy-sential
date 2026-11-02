@@ -314,9 +314,33 @@ func (p StreamDiscoveryProjector) verifyStreamManifestArchive(ctx context.Contex
   JOIN stream_discovery_event_keys_compact k
    ON k.key_hash=sentinel_stream_discovery_key_hash($2,v.scope_id,v.event_key)
    AND k.epoch=$2 AND k.scope_id=v.scope_id AND k.event_key=v.event_key
-   AND k.content_sha256=v.content_sha256 AND k.accepted_month=$4
-   AND k.receipt_segment_id=m.segment_id AND k.receipt_ordinal=v.ordinal
-   AND jsonb_typeof(m.results->v.ordinal)='string' AND m.results->>v.ordinal<>'')
+   AND k.content_sha256=v.content_sha256
+  WHERE (k.accepted_month=$4 AND k.receipt_segment_id=m.segment_id AND k.receipt_ordinal=v.ordinal
+    AND jsonb_typeof(m.results->v.ordinal)='string' AND m.results->>v.ordinal<>'')
+   OR (m.results->v.ordinal='null'::jsonb AND k.receipt_segment_id IS DISTINCT FROM m.segment_id
+    AND (EXISTS(SELECT 1 FROM stream_discovery_receipts r
+      LEFT JOIN stream_projection_segments sr ON sr.segment_id=r.archive_segment_id
+       AND sr.epoch=r.epoch AND sr.archive_receipt_mode='segment'
+      WHERE r.accepted_month=k.accepted_month AND r.epoch=k.epoch
+       AND r.scope_id=k.scope_id AND r.event_key=k.event_key
+       AND r.content_sha256=k.content_sha256
+       AND (r.archive_state='verified'
+        OR (r.archive_segment_id IS NULL AND r.archive_state='confirmed')
+        OR (r.archive_segment_id IS NOT NULL AND r.archive_state<>'failed'
+         AND sr.lanes_finalized_at IS NOT NULL)))
+     OR EXISTS(SELECT 1 FROM stream_projection_segments previous
+      JOIN stream_discovery_segment_receipt_manifests prior ON prior.segment_id=previous.segment_id
+      WHERE previous.segment_id=k.receipt_segment_id AND previous.epoch=k.epoch
+       AND previous.source_kind='passive-discovery' AND previous.archive_receipt_mode='manifest'
+       AND previous.source_file_id IS NOT NULL AND previous.source_file_id<>''
+       AND previous.source_start_offset IS NOT NULL
+       AND previous.source_end_offset>previous.source_start_offset
+       AND previous.lanes_finalized_at IS NOT NULL
+       AND prior.archive_month=to_char(k.accepted_month,'YYYYMM')
+       AND jsonb_array_length(prior.results)=previous.event_count
+       AND k.receipt_ordinal BETWEEN 0 AND previous.event_count-1
+       AND jsonb_typeof(prior.results->k.receipt_ordinal)='string'
+       AND prior.results->>k.receipt_ordinal<>''))))
  FROM stream_discovery_segment_receipt_manifests m
  WHERE m.segment_id=$1`, id, segment.Epoch, raw, streamAcceptedMonth(segment.AcceptedAt)).Scan(&month, &layout, &results, &matched)
 	if errors.Is(err, sql.ErrNoRows) {
