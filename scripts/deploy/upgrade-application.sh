@@ -92,7 +92,7 @@ restart_workers() {
 }
 wait_deferred_discovery() {
   [[ "$defer_discovery_restart" == true ]] || return 0
-  local pid exe
+  local pid exe unexpected_pid="" unexpected_count=0
   for _ in $(seq 1 360); do
     pid="$(systemctl show "$deferred_unit" -p MainPID --value)"
     if [[ "$pid" =~ ^[1-9][0-9]*$ && "$pid" != "$old_discovery_pid" ]]; then
@@ -105,10 +105,22 @@ wait_deferred_discovery() {
         # A restart can race with the atomic current switch. Let this old
         # process drain naturally too, then verify the next start.
         old_discovery_pid="$pid"
+        unexpected_pid=""
+        unexpected_count=0
       else
-        deferred_started_new=true
-        echo "deferred discovery restarted with unexpected executable: $exe" >&2
-        return 1
+        # systemd reports MainPID before exec; /proc briefly still points at
+        # systemd. Recheck the same PID before treating it as an invalid start.
+        if [[ "$pid" == "$unexpected_pid" ]]; then
+          unexpected_count=$((unexpected_count + 1))
+        else
+          unexpected_pid="$pid"
+          unexpected_count=1
+        fi
+        if (( unexpected_count >= 3 )); then
+          deferred_started_new=true
+          echo "deferred discovery restarted with unexpected executable: $exe" >&2
+          return 1
+        fi
       fi
     fi
     sleep 5
@@ -158,7 +170,7 @@ rollback() {
   if [[ "$deferred_started_new" == true ]]; then
     ln -sfn "$old_target" "$root/previous.next"
     mv -Tf "$root/previous.next" "$root/previous"
-    echo "application upgrade incomplete: candidate remains current and old release is previous; discovery restarted into the candidate, so automatic rollback would interrupt its in-memory capture queue" >&2
+    echo "application upgrade incomplete: candidate remains current and old release is previous; discovery left its old process, so automatic rollback could interrupt its in-memory capture queue" >&2
     exit "$result"
   fi
   ln -sfn "$old_target" "$root/current.next"
