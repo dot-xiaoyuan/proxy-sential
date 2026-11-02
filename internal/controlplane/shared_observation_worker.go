@@ -165,6 +165,14 @@ func (s *Server) startSharedObservationWorker() error {
 					default:
 					}
 				}
+				if shouldBorrowSharedObservationOld(lane, wakeMode.Load().(string), did, err) {
+					// Legacy and shadow have only two workers. The reserved expiry
+					// worker can serve the oldest realtime job while no expiry is
+					// due, then returns to the expiry lane on its next iteration.
+					oldCtx, oldCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					did, err = s.processSharedObservationWithLimit(oldCtx, time.Now().UTC(), chSlots, "realtime_old")
+					oldCancel()
+				}
 				if err != nil {
 					log.Printf("shared observation task failed: %v", err)
 				}
@@ -197,6 +205,10 @@ func sharedObservationWorkerLaneForMode(index int, mode string, legacyOldWorker 
 
 func shouldBorrowSharedObservationExpiry(lane string, asyncMode, did bool, err error) bool {
 	return lane == "realtime_new" && asyncMode && !did && err == nil
+}
+
+func shouldBorrowSharedObservationOld(lane, mode string, did bool, err error) bool {
+	return lane == "expiry" && (mode == "legacy" || mode == "shadow") && !did && err == nil
 }
 
 func sharedObservationExpiryLane(lane string) bool {

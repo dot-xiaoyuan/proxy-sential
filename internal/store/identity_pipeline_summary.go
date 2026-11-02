@@ -7,23 +7,36 @@ import (
 )
 
 type IdentityPipelineSummary struct {
-	ExportError          string     `json:"export_error"`
-	ExportHeartbeatAt    *time.Time `json:"export_heartbeat_at"`
-	DerivedCursorAt      *time.Time `json:"derived_cursor_at"`
-	DerivedLastSuccessAt *time.Time `json:"derived_last_success_at"`
-	DerivedError         string     `json:"derived_error"`
-	Accounts             *int64     `json:"accounts"`
-	Sessions             *int64     `json:"sessions"`
-	StatisticsAt         *time.Time `json:"statistics_at"`
-	AcceptedSequence     int64      `json:"accepted_sequence"`
-	ProcessedSequence    int64      `json:"processed_sequence"`
-	PendingRecords       int64      `json:"pending_records"`
-	ExportPendingRecords int64      `json:"export_pending_records"`
-	OldestPendingAt      *time.Time `json:"oldest_pending_at"`
-	HeartbeatAt          *time.Time `json:"heartbeat_at"`
-	LastError            string     `json:"last_error"`
-	CalibrationState     string     `json:"calibration_state"`
-	SnapshotAt           *time.Time `json:"snapshot_at"`
+	HistoricalGap        *IdentityHistoricalGap `json:"historical_gap,omitempty"`
+	ExportError          string                 `json:"export_error"`
+	ExportHeartbeatAt    *time.Time             `json:"export_heartbeat_at"`
+	DerivedCursorAt      *time.Time             `json:"derived_cursor_at"`
+	DerivedLastSuccessAt *time.Time             `json:"derived_last_success_at"`
+	DerivedError         string                 `json:"derived_error"`
+	Accounts             *int64                 `json:"accounts"`
+	Sessions             *int64                 `json:"sessions"`
+	StatisticsAt         *time.Time             `json:"statistics_at"`
+	AcceptedSequence     int64                  `json:"accepted_sequence"`
+	ProcessedSequence    int64                  `json:"processed_sequence"`
+	PendingRecords       int64                  `json:"pending_records"`
+	ExportPendingRecords int64                  `json:"export_pending_records"`
+	OldestPendingAt      *time.Time             `json:"oldest_pending_at"`
+	HeartbeatAt          *time.Time             `json:"heartbeat_at"`
+	LastError            string                 `json:"last_error"`
+	CalibrationState     string                 `json:"calibration_state"`
+	SnapshotAt           *time.Time             `json:"snapshot_at"`
+}
+
+type IdentityHistoricalGap struct {
+	OldEpoch                   string    `json:"old_epoch"`
+	NewEpoch                   string    `json:"new_epoch"`
+	State                      string    `json:"state"`
+	FirstUnverifiableSequence  int64     `json:"first_unverifiable_sequence"`
+	LastUnverifiableSequence   int64     `json:"last_unverifiable_sequence"`
+	LegacyPendingRecords       int64     `json:"legacy_pending_records"`
+	LegacyExportPendingRecords int64     `json:"legacy_export_pending_records"`
+	RedisAuditSHA256           string    `json:"redis_audit_sha256"`
+	RecordedAt                 time.Time `json:"recorded_at"`
 }
 
 // This request path only reads one indexed summary row. Never derive counters
@@ -37,5 +50,20 @@ func ReadIdentityPipelineSummary(ctx context.Context, db *sql.DB, scope Identity
 	if summary.StatisticsAt == nil {
 		summary.Accounts, summary.Sessions = nil, nil
 	}
-	return summary, err
+	if err != nil {
+		return summary, err
+	}
+	var gap IdentityHistoricalGap
+	err = db.QueryRowContext(ctx, `SELECT old_epoch,new_epoch,state,processed_sequence+1,accepted_sequence,legacy_pending_records,legacy_export_pending_records,redis_audit_sha256,recorded_at
+ FROM identity_fresh_recovery_gaps WHERE scope_key=$1 ORDER BY recorded_at DESC LIMIT 1`, IdentityScopeKey(scope)).Scan(
+		&gap.OldEpoch, &gap.NewEpoch, &gap.State, &gap.FirstUnverifiableSequence, &gap.LastUnverifiableSequence,
+		&gap.LegacyPendingRecords, &gap.LegacyExportPendingRecords, &gap.RedisAuditSHA256, &gap.RecordedAt)
+	if err == sql.ErrNoRows {
+		return summary, nil
+	}
+	if err != nil {
+		return summary, err
+	}
+	summary.HistoricalGap = &gap
+	return summary, nil
 }

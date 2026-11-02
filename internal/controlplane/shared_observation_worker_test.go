@@ -53,6 +53,31 @@ func TestSharedObservationExpiryBorrowRequiresIdleAsyncRealtimeWorker(t *testing
 	}
 }
 
+func TestSharedObservationLegacyExpiryWorkerBorrowsOldRealtimeOnlyWhenIdle(t *testing.T) {
+	tests := []struct {
+		name     string
+		lane     string
+		mode     string
+		did      bool
+		err      error
+		expected bool
+	}{
+		{name: "idle legacy expiry worker borrows old realtime", lane: "expiry", mode: "legacy", expected: true},
+		{name: "idle shadow expiry worker borrows old realtime", lane: "expiry", mode: "shadow", expected: true},
+		{name: "expiry work takes priority", lane: "expiry", mode: "legacy", did: true},
+		{name: "failed expiry claim does not borrow", lane: "expiry", mode: "legacy", err: errors.New("claim failed")},
+		{name: "async expiry worker remains reserved", lane: "expiry", mode: "async"},
+		{name: "realtime worker does not borrow old lane", lane: "realtime_new", mode: "legacy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldBorrowSharedObservationOld(tt.lane, tt.mode, tt.did, tt.err); got != tt.expected {
+				t.Fatalf("shouldBorrowSharedObservationOld() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func (expiredSharedReader) ReadSharedObservation(context.Context, store.SharedObservationScope, sharedaccess.Config, time.Time) (sharedaccess.Window, sharedaccess.BehaviorAssessment, error) {
 	panic("expired evidence with a stored document must not query ClickHouse")
 }
