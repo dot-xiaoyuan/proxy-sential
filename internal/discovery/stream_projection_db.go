@@ -210,7 +210,7 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 		if err != nil {
 			return err
 		}
-		if mode == "segment" {
+		if mode == "segment" || mode == "manifest" {
 			prepared, err := prepareStreamDiscovery(segment)
 			if err != nil {
 				return err
@@ -224,8 +224,14 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 				!end.Valid || end.Int64 != segment.EndOffset {
 				return streamlog.ErrContentConflict
 			}
-			// Projection inserted every receipt with this locator in the same
-			// transaction as the marker. The final witness follows all lanes.
+			if mode == "manifest" {
+				if err := p.verifyStreamManifestArchive(ctx, id, segment, prepared); err != nil {
+					return err
+				}
+			}
+			// Projection inserted the event receipts or the manifest and key
+			// locators in the same transaction as the marker. The final witness
+			// follows all durable lanes.
 			return nil
 		}
 		if mode != "event" {
@@ -278,6 +284,51 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 		return fmt.Errorf("stream archive confirmation missing receipt: %w", streamlog.ErrUnconfirmed)
 	}
 	return tx.Commit()
+}
+
+// Kept in the compatible reader release so an unfinished manifest segment
+// can still be finalized after rolling back the writer release.
+func (p StreamDiscoveryProjector) verifyStreamManifestArchive(ctx context.Context, id string, segment streamlog.Segment, prepared []streamPreparedDiscovery) error {
+	if segment.ArchiveMonth != segment.AcceptedAt.UTC().Format("200601") {
+		return streamlog.ErrContentConflict
+	}
+	type locator struct {
+		Scope   string `json:"scope_id"`
+		Key     string `json:"event_key"`
+		Hash    string `json:"content_sha256"`
+		Ordinal int    `json:"ordinal"`
+	}
+	keys := make([]locator, len(prepared))
+	for ordinal, item := range prepared {
+		keys[ordinal] = locator{item.Receipt.Scope, item.Receipt.Key, item.Receipt.Hash, ordinal}
+	}
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return err
+	}
+	var month, layout string
+	var results, matched int
+	err = p.DB.QueryRowContext(ctx, `SELECT m.archive_month,m.body_layout,jsonb_array_length(m.results),
+ (SELECT count(*) FROM jsonb_to_recordset($3::jsonb)
+  AS v(scope_id text,event_key text,content_sha256 text,ordinal integer)
+  JOIN stream_discovery_event_keys_compact k
+   ON k.key_hash=sentinel_stream_discovery_key_hash($2,v.scope_id,v.event_key)
+   AND k.epoch=$2 AND k.scope_id=v.scope_id AND k.event_key=v.event_key
+   AND k.content_sha256=v.content_sha256 AND k.accepted_month=$4
+   AND k.receipt_segment_id=m.segment_id AND k.receipt_ordinal=v.ordinal
+   AND jsonb_typeof(m.results->v.ordinal)='string' AND m.results->>v.ordinal<>'')
+ FROM stream_discovery_segment_receipt_manifests m
+ WHERE m.segment_id=$1`, id, segment.Epoch, raw, streamAcceptedMonth(segment.AcceptedAt)).Scan(&month, &layout, &results, &matched)
+	if errors.Is(err, sql.ErrNoRows) {
+		return streamlog.ErrUnconfirmed
+	}
+	if err != nil {
+		return err
+	}
+	if month != segment.ArchiveMonth || layout != segment.BodyLayout || results != len(prepared) || matched != len(prepared) {
+		return streamlog.ErrContentConflict
+	}
+	return nil
 }
 
 type streamRiskDirtySubject struct {

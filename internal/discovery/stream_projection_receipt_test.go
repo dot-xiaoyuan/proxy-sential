@@ -116,6 +116,38 @@ func TestStreamArchiveConfirmationUsesPersistedSegmentWitness(t *testing.T) {
 	}
 }
 
+func TestManifestArchiveConfirmationSurvivesWriterRollback(t *testing.T) {
+	segment := finalizationWitnessSegment()
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, matched := range []int{0, len(prepared)} {
+		t.Run(fmt.Sprint(matched), func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectQuery("SELECT archive_receipt_mode,epoch,source_kind").WithArgs("segment-a").WillReturnRows(
+				sqlmock.NewRows([]string{"archive_receipt_mode", "epoch", "source_kind", "source_path", "content_sha256", "source_file_id", "source_start_offset", "source_end_offset", "event_count"}).
+					AddRow("manifest", segment.Epoch, segment.Source, segment.SourcePath, streamProjectionSegmentHash(segment, prepared),
+						segment.FileID, segment.StartOffset, segment.EndOffset, len(prepared)))
+			mock.ExpectQuery("FROM stream_discovery_segment_receipt_manifests m").
+				WithArgs("segment-a", segment.Epoch, sqlmock.AnyArg(), streamAcceptedMonth(segment.AcceptedAt)).
+				WillReturnRows(sqlmock.NewRows([]string{"archive_month", "body_layout", "results", "matched"}).
+					AddRow(segment.ArchiveMonth, segment.BodyLayout, len(prepared), matched))
+			err = (StreamDiscoveryProjector{DB: db}).MarkStreamArchiveConfirmed(context.Background(), "segment-a", segment)
+			if matched == len(prepared) && err != nil || matched == 0 && !errors.Is(err, streamlog.ErrContentConflict) {
+				t.Fatalf("manifest finalizer result: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestSegmentWitnessIncludesRejectedReceiptResult(t *testing.T) {
 	segment := finalizationWitnessSegment()
 	segment.Events[0].Timestamp = "invalid-observation-time"
