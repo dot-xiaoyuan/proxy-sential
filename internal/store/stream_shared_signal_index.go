@@ -73,16 +73,19 @@ func (s *ClickHouseStore) listStreamSharedSignalRefs(ctx context.Context, scope 
 	if source == "packet-sidecar" {
 		field = "subject_mac"
 	}
-	where := "scope_id=" + chQuote(scopeID) + " AND sensor_id=" + chQuote(scope.SensorID) + " AND campus_id=" + chQuote(scope.CampusID) +
-		" AND access_domain=" + chQuote(scope.AccessDomain) + " AND source=" + chQuote(source) +
-		" AND startsWith(event_key," + chQuote(epoch+":") + ")" +
-		" AND " + field + " IN (''," + chQuote(subject) + ")" +
+	// Keep the subject and primary-key filters in PREWHERE so the remaining
+	// scope and event-key columns are read only for matching rows.
+	prewhere := "scope_id=" + chQuote(scopeID) +
 		" AND observed_at>=parseDateTime64BestEffort(" + chQuote(from.UTC().Format(time.RFC3339Nano)) + ",6)" +
-		" AND observed_at<=parseDateTime64BestEffort(" + chQuote(to.UTC().Format(time.RFC3339Nano)) + ",6)"
+		" AND observed_at<=parseDateTime64BestEffort(" + chQuote(to.UTC().Format(time.RFC3339Nano)) + ",6)" +
+		" AND " + field + " IN (''," + chQuote(subject) + ")"
+	where := "sensor_id=" + chQuote(scope.SensorID) + " AND campus_id=" + chQuote(scope.CampusID) +
+		" AND access_domain=" + chQuote(scope.AccessDomain) + " AND source=" + chQuote(source) +
+		" AND startsWith(event_key," + chQuote(epoch+":") + ")"
 	if source == "handshake-sidecar" {
-		where += " AND protocol IN ('handshake','capture_coverage')"
+		prewhere += " AND protocol IN ('handshake','capture_coverage')"
 	} else {
-		where += " AND protocol IN ('ieee1905_client_association','ieee1905_client_snapshot','capture_coverage')"
+		prewhere += " AND protocol IN ('ieee1905_client_association','ieee1905_client_snapshot','capture_coverage')"
 	}
 	if len(exactKeys) != 0 {
 		quoted := make([]string, 0, len(exactKeys))
@@ -96,8 +99,8 @@ func (s *ClickHouseStore) listStreamSharedSignalRefs(ctx context.Context, scope 
 		where += " AND (observed_at>" + stamp + " OR (observed_at=" + stamp + " AND (event_key>" + chQuote(afterKey) + " OR (event_key=" + chQuote(afterKey) + " AND content_sha256>" + chQuote(afterHash) + "))))"
 	}
 	query := fmt.Sprintf(`SELECT observed_at,indexed_at,event_key,source,protocol,sensor_id,campus_id,access_domain,subject_ip,subject_mac,collector_instance_id,scope_id,content_sha256,archive_month,retention_class,body_ref
-FROM stream_event_search PREWHERE %s ORDER BY observed_at,event_key,content_sha256 LIMIT %d
-SETTINGS max_threads=1,max_memory_usage=134217728,max_execution_time=5 FORMAT JSONEachRow`, where, limit)
+FROM stream_event_search PREWHERE %s WHERE %s ORDER BY observed_at,event_key,content_sha256 LIMIT %d
+SETTINGS move_all_conditions_to_prewhere=0,max_threads=1,max_memory_usage=134217728,max_execution_time=5 FORMAT JSONEachRow`, prewhere, where, limit)
 	data, err := s.query(ctx, query)
 	if err != nil {
 		return nil, err

@@ -39,6 +39,12 @@ func TestStreamSharedIndexRejectsChangedBodyLocator(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].Body != ref || !strings.Contains(query, "stream_event_search PREWHERE") || !strings.Contains(query, "subject_ip IN ('','10.2.3.4')") {
 		t.Fatalf("scoped body lookup failed: %+v %v %s", got, err, query)
 	}
+	prewhere, where, found := strings.Cut(query, " WHERE ")
+	if !found || strings.Contains(prewhere, "startsWith(event_key") || strings.Contains(prewhere, "sensor_id=") ||
+		!strings.Contains(where, "startsWith(event_key,'fresh:')") || !strings.Contains(where, "sensor_id='sensor-a'") ||
+		!strings.Contains(query, "move_all_conditions_to_prewhere=0") {
+		t.Fatalf("shared lookup did not defer non-index filters: %s", query)
+	}
 	row["content_sha256"] = strings.Repeat("b", 64)
 	if _, err := ch.ListStreamSharedSignalRefs(context.Background(), scope, "scope-a", "handshake-sidecar", "fresh", scope.IP, from, to, time.Time{}, "", "", 100); !errors.Is(err, streamlog.ErrContentConflict) {
 		t.Fatalf("changed locator passed: %v", err)
