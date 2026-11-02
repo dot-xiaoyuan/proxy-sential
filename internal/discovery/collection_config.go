@@ -33,12 +33,14 @@ type CollectionConfig struct {
 	CompactPassiveEventKeys bool `json:"-"`
 	// A compatible rollback release must be installed before new segments use
 	// one archive witness in place of per-event confirmation updates.
-	SegmentArchiveReceipts bool             `json:"-"`
-	EventBindings          []EventBinding   `json:"event_bindings"`
-	EnrichmentPaths        []EnrichmentPath `json:"enrichment_paths"`
-	Version                int              `json:"version"`
-	AllowedCIDRs           string           `json:"allowed_cidrs"`
-	Protocols              []ProtocolOwner  `json:"protocols"`
+	SegmentArchiveReceipts bool `json:"-"`
+	// Shadow a per-segment receipt manifest while retaining every event receipt.
+	ReceiptManifestShadow bool             `json:"-"`
+	EventBindings         []EventBinding   `json:"event_bindings"`
+	EnrichmentPaths       []EnrichmentPath `json:"enrichment_paths"`
+	Version               int              `json:"version"`
+	AllowedCIDRs          string           `json:"allowed_cidrs"`
+	Protocols             []ProtocolOwner  `json:"protocols"`
 }
 
 func DefaultCollectionConfig() CollectionConfig {

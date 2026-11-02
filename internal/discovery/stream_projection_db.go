@@ -33,6 +33,7 @@ type StreamDiscoveryProjector struct {
 	// Only new passive stream2 segments can use the segment witness. The
 	// persisted marker mode controls recovery and finalization after cutover.
 	SegmentArchiveReceipts bool
+	ReceiptManifestShadow  bool
 }
 
 // Expiry is a separate bounded maintenance lane. It never scans event bodies
@@ -467,9 +468,14 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if segment.FileID != "" && segment.StartOffset >= 0 && segment.EndOffset > segment.StartOffset {
 		sourceFile, sourceStart, sourceEnd = segment.FileID, segment.StartOffset, segment.EndOffset
 	}
+	compactPassive := isCompactPassiveSegment(segment)
 	mode := "event"
-	if p.SegmentArchiveReceipts && isCompactPassiveSegment(segment) && sourceFile != nil {
+	if p.SegmentArchiveReceipts && compactPassive && sourceFile != nil {
 		mode = "segment"
+	}
+	shadowID := ""
+	if p.ReceiptManifestShadow && compactPassive && sourceFile != nil {
+		shadowID = id
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode)
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`, id, segment.Epoch, segment.Source, segment.SourcePath, segmentHash, segment.AcceptedAt, len(prepared), sourceFile, sourceStart, sourceEnd, mode)
@@ -492,8 +498,8 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		return tx.Commit()
 	}
 	var freshKeys map[string]bool
-	if isCompactPassiveSegment(segment) {
-		freshKeys, err = reserveStreamDiscoveryCompactKeys(ctx, tx, segment.Epoch, month, prepared, !p.CompactOnly)
+	if compactPassive {
+		freshKeys, err = reserveStreamDiscoveryCompactKeys(ctx, tx, segment.Epoch, month, prepared, !p.CompactOnly, shadowID)
 	} else {
 		freshKeys, err = reserveStreamDiscoveryKeys(ctx, tx, segment.Epoch, month, prepared)
 	}
@@ -518,6 +524,12 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		}
 	}
 	if len(fresh) == 0 {
+		if shadowID != "" {
+			mark("write_manifest")
+			if err := writeStreamReceiptManifest(ctx, tx, shadowID, segment, prepared, fresh); err != nil {
+				return err
+			}
+		}
 		return tx.Commit()
 	}
 	keys := make([]string, 0)
@@ -606,6 +618,12 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	mark("write_receipts")
 	if err := writeStreamDiscoveryReceipts(ctx, tx, month, segment, id, mode, fresh); err != nil {
 		return err
+	}
+	if shadowID != "" {
+		mark("write_manifest")
+		if err := writeStreamReceiptManifest(ctx, tx, shadowID, segment, prepared, fresh); err != nil {
+			return err
+		}
 	}
 	mark("commit")
 	return tx.Commit()
@@ -696,16 +714,42 @@ func isCompactPassiveSegment(segment streamlog.Segment) bool {
 // retains the complete identity so a digest collision fails closed rather
 // than accepting a different event. The compatibility version also writes
 // the old ledger in the same transaction for its rollback release.
-func reserveStreamDiscoveryCompactKeys(ctx context.Context, tx *sql.Tx, epoch string, month time.Time, items []streamPreparedDiscovery, dualWrite bool) (map[string]bool, error) {
-	receipts := streamReceiptList(items)
-	raw, err := json.Marshal(receipts)
+func reserveStreamDiscoveryCompactKeys(ctx context.Context, tx *sql.Tx, epoch string, month time.Time, items []streamPreparedDiscovery, dualWrite bool, receiptSegmentID string) (map[string]bool, error) {
+	query := `INSERT INTO stream_discovery_event_keys_compact(key_hash,epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at)
+	 SELECT sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key),$1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
+	 FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz)
+	 ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`
+	var raw []byte
+	var err error
+	args := []any{epoch, month}
+	if receiptSegmentID == "" {
+		raw, err = json.Marshal(streamReceiptList(items))
+		args = append(args, raw)
+	} else {
+		type keyInput struct {
+			Scope    string    `json:"scope_id"`
+			Key      string    `json:"event_key"`
+			Hash     string    `json:"content_sha256"`
+			Accepted time.Time `json:"accepted_at"`
+			Ordinal  int       `json:"ordinal"`
+		}
+		keys := make([]keyInput, 0, len(items))
+		for ordinal, item := range items {
+			r := item.Receipt
+			keys = append(keys, keyInput{r.Scope, r.Key, r.Hash, r.Accepted, ordinal})
+		}
+		raw, err = json.Marshal(keys)
+		args = append(args, raw, receiptSegmentID)
+		query = `INSERT INTO stream_discovery_event_keys_compact(key_hash,epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at,receipt_segment_id,receipt_ordinal)
+	 SELECT sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key),$1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at,$4,v.ordinal
+	 FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz,ordinal integer)
+	 ORDER BY v.ordinal
+	 ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`
+	}
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `INSERT INTO stream_discovery_event_keys_compact(key_hash,epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at)
- SELECT sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key),$1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
- FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz)
- ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`, epoch, month, raw)
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1013,4 +1057,27 @@ func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Ti
 		return fmt.Errorf("stream discovery receipt raced with another segment: %w", streamlog.ErrUnconfirmed)
 	}
 	return nil
+}
+
+// The shadow manifest shares the projection transaction with the authoritative
+// receipts. Null slots belong to keys already reserved by an older segment.
+func writeStreamReceiptManifest(ctx context.Context, tx *sql.Tx, id string, segment streamlog.Segment, prepared, fresh []streamPreparedDiscovery) error {
+	resultsByKey := make(map[string]string, len(fresh))
+	for _, item := range fresh {
+		resultsByKey[item.Receipt.Scope+"\x00"+item.Receipt.Key] = item.Receipt.Result
+	}
+	results := make([]*string, len(prepared))
+	for ordinal, item := range prepared {
+		if value, ok := resultsByKey[item.Receipt.Scope+"\x00"+item.Receipt.Key]; ok {
+			result := value
+			results[ordinal] = &result
+		}
+	}
+	raw, err := json.Marshal(results)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results)
+	 VALUES($1,$2,$3,$4::jsonb)`, id, segment.ArchiveMonth, segment.BodyLayout, raw)
+	return err
 }

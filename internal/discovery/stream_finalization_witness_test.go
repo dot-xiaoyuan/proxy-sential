@@ -79,9 +79,11 @@ func TestSegmentReceiptProjectionBindsOnlyFreshStream2Keys(t *testing.T) {
 						AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
 				mock.ExpectExec("UPDATE stream_projection_segments SET archive_receipt_mode='event'").WithArgs("segment-a").
 					WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs("segment-a", segment.ArchiveMonth,
+					segment.BodyLayout, streamManifestResults{nil}).WillReturnResult(sqlmock.NewResult(0, 1))
 			}
 			mock.ExpectCommit()
-			if err := (StreamDiscoveryProjector{DB: db, CompactOnly: true, SegmentArchiveReceipts: true}).
+			if err := (StreamDiscoveryProjector{DB: db, CompactOnly: true, SegmentArchiveReceipts: true, ReceiptManifestShadow: !fresh}).
 				projectPreparedStreamSegment(context.Background(), "segment-a", segment, prepared); err != nil {
 				t.Fatal(err)
 			}
@@ -89,6 +91,97 @@ func TestSegmentReceiptProjectionBindsOnlyFreshStream2Keys(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestReceiptManifestShadowCommitsWithReceiptOrRollsBack(t *testing.T) {
+	segment := finalizationWitnessSegment()
+	segment.Events[0].Timestamp = "invalid-observation-time"
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil || len(prepared) != 1 || prepared[0].HasFact {
+		t.Fatalf("expected a rejected receipt without a fact: %+v %v", prepared, err)
+	}
+	for _, fail := range []bool{false, true} {
+		name := "committed"
+		if fail {
+			name = "manifest_failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectBegin()
+			mock.ExpectExec("INSERT INTO stream_projection_segments").WithArgs("segment-a", segment.Epoch, segment.Source, segment.SourcePath,
+				streamProjectionSegmentHash(segment, prepared), segment.AcceptedAt, 1, segment.FileID, segment.StartOffset, segment.EndOffset, "segment").
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WithArgs(segment.Epoch, sqlmock.AnyArg(),
+				streamArchiveKeys{prepared[0].Receipt}, "segment-a").WillReturnRows(
+				sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).
+					AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
+			mock.ExpectExec("INSERT INTO stream_discovery_receipts").WithArgs(sqlmock.AnyArg(), segment.Epoch, sqlmock.AnyArg(), "segment", "segment-a").
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			manifest := mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs("segment-a", segment.ArchiveMonth,
+				segment.BodyLayout, streamManifestResults{prepared[0].Receipt.Result})
+			if fail {
+				manifest.WillReturnError(errors.New("manifest failed"))
+				mock.ExpectRollback()
+			} else {
+				manifest.WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			}
+			got := (StreamDiscoveryProjector{DB: db, CompactOnly: true, SegmentArchiveReceipts: true, ReceiptManifestShadow: true}).
+				projectPreparedStreamSegment(context.Background(), "segment-a", segment, prepared)
+			if (got != nil) != fail {
+				t.Fatalf("projection error = %v, want failure=%v", got, fail)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestReceiptManifestShadowLeavesReplayedOrdinalEmpty(t *testing.T) {
+	segment := finalizationWitnessSegment()
+	segment.Events[0].Timestamp = "invalid-observation-time"
+	second := segment.Events[0]
+	second.EventID = "stream2-second"
+	segment.Events = []normalized.Event{segment.Events[0], {Type: "diagnostic", EventID: "not-projected"}, second}
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil || len(prepared) != 2 {
+		t.Fatalf("prepare two receipt positions: %v, %+v", err, prepared)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO stream_projection_segments").WithArgs("segment-a", segment.Epoch, segment.Source, segment.SourcePath,
+		streamProjectionSegmentHash(segment, prepared), segment.AcceptedAt, 2, segment.FileID, segment.StartOffset, segment.EndOffset, "segment").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WithArgs(segment.Epoch, sqlmock.AnyArg(),
+		streamArchiveKeys{prepared[0].Receipt, prepared[1].Receipt}, "segment-a").WillReturnRows(
+		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).
+			AddRow(prepared[1].Receipt.Scope, prepared[1].Receipt.Key, prepared[1].Receipt.Hash))
+	mock.ExpectQuery("JOIN stream_discovery_event_keys_compact k").WillReturnRows(
+		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).
+			AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
+	mock.ExpectExec("UPDATE stream_projection_segments SET archive_receipt_mode='event'").WithArgs("segment-a").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO stream_discovery_receipts").WithArgs(sqlmock.AnyArg(), segment.Epoch, sqlmock.AnyArg(), "pending", nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs("segment-a", segment.ArchiveMonth,
+		segment.BodyLayout, streamManifestResults{nil, prepared[1].Receipt.Result}).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := (StreamDiscoveryProjector{DB: db, CompactOnly: true, SegmentArchiveReceipts: true, ReceiptManifestShadow: true}).
+		projectPreparedStreamSegment(context.Background(), "segment-a", segment, prepared); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

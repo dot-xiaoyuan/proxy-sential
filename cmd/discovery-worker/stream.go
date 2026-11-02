@@ -41,7 +41,7 @@ func passiveStreamProcessor(journal streamlog.ProcessorJournal, writer streamlog
 // Capture and projection consume the same runtime-only switch. Recovery with
 // the switch off still dual-writes any unfinished stream2 segment for r35.
 func newPassiveStreamLaneWriter(db *sql.DB, ch *store.ClickHouseStore, config discovery.CollectionConfig) (discovery.StreamDiscoveryProjector, store.StreamLaneWriter) {
-	projector := discovery.StreamDiscoveryProjector{DB: db, CompactOnly: config.CompactPassiveEventKeys, SegmentArchiveReceipts: config.SegmentArchiveReceipts}
+	projector := discovery.StreamDiscoveryProjector{DB: db, CompactOnly: config.CompactPassiveEventKeys, SegmentArchiveReceipts: config.SegmentArchiveReceipts, ReceiptManifestShadow: config.ReceiptManifestShadow}
 	return projector, store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector}
 }
 
@@ -56,6 +56,18 @@ func verifyCompactPassiveEventKeySchema(ctx context.Context, db *sql.DB, config 
 	}
 	if !ready {
 		return errors.New("compact event-key schema is not installed")
+	}
+	if config.ReceiptManifestShadow {
+		if err := db.QueryRowContext(ctx, `SELECT to_regclass('stream_discovery_segment_receipt_manifests') IS NOT NULL
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_discovery_event_keys_compact')
+  AND attname='receipt_segment_id' AND NOT attisdropped)
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_discovery_event_keys_compact')
+  AND attname='receipt_ordinal' AND NOT attisdropped)`).Scan(&ready); err != nil {
+			return fmt.Errorf("receipt manifest shadow schema preflight: %w", err)
+		}
+		if !ready {
+			return errors.New("receipt manifest shadow schema is not installed")
+		}
 	}
 	return nil
 }

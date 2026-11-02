@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,22 @@ import (
 type streamJSONFields map[string]string
 
 type streamArchiveKeys []streamDiscoveryReceipt
+
+type streamManifestResults []any
+
+func (want streamManifestResults) Match(v driver.Value) bool {
+	raw, ok := v.([]byte)
+	if !ok {
+		if value, isString := v.(string); isString {
+			raw, ok = []byte(value), true
+		}
+	}
+	if !ok {
+		return false
+	}
+	var got []any
+	return json.Unmarshal(raw, &got) == nil && reflect.DeepEqual(got, []any(want))
+}
 
 func TestLoadStreamFactVersionsRetainsCaptureScope(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -159,7 +176,7 @@ func TestReserveCompactKeysDualWritesForCompatibleRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, true)
+	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, true, "")
 	if err != nil || !fresh[key.Scope+"\x00"+key.Key] {
 		t.Fatalf("dual write lost fresh key: %v %v", fresh, err)
 	}
@@ -192,7 +209,7 @@ func TestReserveCompactKeysRollbackDoesNotReplayCommittedCompactOnlyKey(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, true)
+	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, true, "")
 	if err != nil || len(fresh) != 0 {
 		t.Fatalf("rollback replayed committed compact key: %v %v", fresh, err)
 	}
@@ -223,7 +240,7 @@ func TestReserveCompactKeysOnlyNeedsCompactLedgerAfterCutover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, false)
+	fresh, err := reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, false, "")
 	if err != nil || !fresh[key.Scope+"\x00"+key.Key] {
 		t.Fatalf("compact key not admitted: %v %v", fresh, err)
 	}
@@ -254,7 +271,7 @@ func TestReserveCompactKeyDigestCollisionFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, false); !errors.Is(err, streamlog.ErrContentConflict) {
+	if _, err = reserveStreamDiscoveryCompactKeys(context.Background(), tx, segment.Epoch, streamAcceptedMonth(segment.AcceptedAt), items, false, ""); !errors.Is(err, streamlog.ErrContentConflict) {
 		t.Fatalf("digest collision did not fail closed: %v", err)
 	}
 	mock.ExpectRollback()
