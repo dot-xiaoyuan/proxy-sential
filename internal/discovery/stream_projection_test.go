@@ -55,6 +55,50 @@ func TestPrepareStreamDiscoveryKeepsBothReceiptsAndOneFactForRepeat(t *testing.T
 	}
 }
 
+func TestARPRequestFactCannotReplaceReplyBinding(t *testing.T) {
+	now := time.Date(2026, 11, 2, 10, 0, 4, 0, time.UTC)
+	events := []normalized.Event{
+		arpCaptureEvent("request-1", "2026-11-02T10:00:00Z", "10.2.3.4", "02:00:00:00:00:04", "request", 600),
+		arpCaptureEvent("reply", "2026-11-02T10:00:01Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 600),
+		arpCaptureEvent("request-2", "2026-11-02T10:00:02Z", "10.2.3.4", "02:00:00:00:00:04", "request", 600),
+		arpCaptureEvent("conflict", "2026-11-02T10:00:03Z", "10.2.3.4", "02:00:00:00:00:05", "reply", 600),
+		arpCaptureEvent("withdraw", "2026-11-02T10:00:04Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 0),
+	}
+	prepared, err := prepareStreamDiscovery(streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", AcceptedAt: now, Events: events})
+	if err != nil || len(prepared) != len(events) {
+		t.Fatalf("prepare ARP: %+v %v", prepared, err)
+	}
+	request, reply, repeat, conflict := prepared[0].Fact, prepared[1].Fact, prepared[2].Fact, prepared[3].Fact
+	legacyReplyKey := contentHash([]string{reply.Source, reply.Protocol, "", reply.IP, ""})
+	if request.Key == reply.Key || reply.Key != legacyReplyKey || repeat.Key != request.Key || conflict.Key != reply.Key {
+		t.Fatalf("request/reply fact keys: %s %s %s %s", request.Key, reply.Key, repeat.Key, conflict.Key)
+	}
+	if decision := mergeStreamDiscoveryFact(&request, repeat); decision.Result != "repeat_observation" || decision.VisibleChanged {
+		t.Fatalf("request repeat became a change: %+v", decision)
+	}
+	if decision := mergeStreamDiscoveryFact(&reply, conflict); decision.Result != "corrected" || !decision.VisibleChanged {
+		t.Fatalf("reply MAC conflict disappeared: %+v", decision)
+	}
+	withdraw := prepared[4].Fact
+	if withdraw.Key != reply.Key {
+		t.Fatalf("reply withdrawal key changed: %s", withdraw.Key)
+	}
+	if decision := mergeStreamDiscoveryFact(&reply, withdraw); decision.Result != "withdrawn" || !decision.VisibleChanged {
+		t.Fatalf("reply withdrawal disappeared: %+v", decision)
+	}
+	state, err := buildStreamDiscoveryState("fresh", reply.Device, []streamDiscoveryFact{reply, repeat}, nil, now)
+	if err != nil || state.Document["mac"] != reply.MAC || state.Document["primary_ip"] != reply.IP {
+		t.Fatalf("request displaced reply binding: %+v %v", state.Document, err)
+	}
+	// A pre-upgrade request on the old reply key may coexist until it expires.
+	legacyRequest := request
+	legacyRequest.Key = legacyReplyKey
+	state, err = buildStreamDiscoveryState("fresh", request.Device, []streamDiscoveryFact{legacyRequest, repeat}, nil, now)
+	if err != nil || state.Document["mac"] != "" || state.Document["primary_ip"] != "" {
+		t.Fatalf("request-only clue became an address binding: %+v %v", state.Document, err)
+	}
+}
+
 func TestDHCPRequestProjectsMACCluesWithoutLeaseOrStrongClassification(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	event := normalized.Event{

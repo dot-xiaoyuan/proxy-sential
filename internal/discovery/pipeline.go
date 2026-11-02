@@ -387,7 +387,13 @@ func discoveryFactKey(o Observation) string {
 		p := o.Evidence.Payload
 		return contentHash([]string{o.SourceID, o.Origin, "srv", canonicalDNSOwner(serviceInstance(o)), canonicalDNSOwner(str(p, "service_target")), fmt.Sprint(number(p, "service_port")), fmt.Sprint(number(p, "service_priority")), fmt.Sprint(number(p, "service_weight")), o.IP})
 	}
-	return contentHash([]string{o.SourceID, o.Origin, serviceInstance(o), o.IP, o.Port})
+	identity := []string{o.SourceID, o.Origin, serviceInstance(o), o.IP, o.Port}
+	if o.Origin == "arp" && str(o.Evidence.Payload, "message") == "request" {
+		// A request is a sender clue, not a confirmed address binding. Keep
+		// replies on their existing key so a later request cannot replace one.
+		identity = append(identity, "request")
+	}
+	return contentHash(identity)
 }
 
 func refreshDiscoveryState(ctx context.Context, tx *sql.Tx, key string, now time.Time) error {
