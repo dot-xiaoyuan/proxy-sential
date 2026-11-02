@@ -2,15 +2,17 @@
 -- enabling manifest-only receipts for new durable passive stream2 segments.
 SET LOCAL lock_timeout = '5s';
 
-ALTER TABLE stream_discovery_segment_receipt_manifests
- ADD COLUMN recognition_summary jsonb NOT NULL DEFAULT '{}'::jsonb;
-
+-- Projection takes the segment row before the manifest. Acquire the DDL
+-- locks in that order while the old writer is still active.
 ALTER TABLE stream_projection_segments
  DROP CONSTRAINT stream_projection_archive_receipt_mode;
 ALTER TABLE stream_projection_segments
  ADD CONSTRAINT stream_projection_archive_receipt_mode
  CHECK (archive_receipt_mode IS NOT NULL
   AND archive_receipt_mode IN ('event','segment','manifest')) NOT VALID;
+
+ALTER TABLE stream_discovery_segment_receipt_manifests
+ ADD COLUMN recognition_summary jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 -- The minute observer reads completed and pending manifests by acceptance
 -- minute; the pending-only index from migration 219 cannot serve that scan.
