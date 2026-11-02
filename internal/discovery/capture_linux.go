@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	streamCaptureFlushEvents = 750
-	streamCaptureFlushWindow = 3 * time.Second
+	streamCaptureFlushEvents = streamlog.MaxSegmentEvents
+	streamCaptureFlushWindow = 4 * time.Second
 )
 
 // Capture spools standard events on a separate goroutine; packet reads never wait on database work.
@@ -29,7 +29,7 @@ func Capture(ctx context.Context, iface, spool string, source Source, allow []ne
 	return CaptureConfigured(ctx, iface, spool, source, allow, DefaultCollectionConfig())
 }
 func CaptureConfigured(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig) (result error) {
-	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, captureFlushEvents, 100*time.Millisecond, 0, func(b []byte) error {
+	return captureConfiguredWithPersist(ctx, iface, spool, source, allow, config, 2000, 8<<20, captureFlushEvents, 100*time.Millisecond, 0, false, func(b []byte) error {
 		h := sha256.Sum256(b)
 		path := filepath.Join(spool, hex.EncodeToString(h[:16])+".json")
 		if e := writeDurableSpool(path+".tmp", b); e != nil {
@@ -51,7 +51,7 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 	if journal == nil || scope == nil {
 		return fmt.Errorf("passive stream capture needs durable journal and scope")
 	}
-	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, streamCaptureFlushEvents, streamCaptureFlushWindow, 500*time.Millisecond, func(b []byte) error {
+	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, streamlog.MaxSegmentEvents, 1<<20, streamCaptureFlushEvents, streamCaptureFlushWindow, 500*time.Millisecond, true, func(b []byte) error {
 		var events []normalized.Event
 		if err := json.Unmarshal(b, &events); err != nil {
 			return err
@@ -67,7 +67,7 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 	})
 }
 
-func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes, flushEvents int, flushWindow, gatherWindow time.Duration, persist func([]byte) error) (result error) {
+func captureConfiguredWithPersist(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix, config CollectionConfig, maxEvents, maxBytes, flushEvents int, flushWindow, gatherWindow time.Duration, splitOversized bool, persist func([]byte) error) (result error) {
 	if len(allow) == 0 {
 		return fmt.Errorf("passive capture requires allowed CIDRs")
 	}
@@ -134,16 +134,25 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 		if e != nil {
 			return e
 		}
-		select {
-		case queue <- b:
-			stats.recordQueue(len(queue), cap(queue), false)
-			pending.drain()
-			lastFlush = time.Now()
-			return nil
-		default:
-			stats.recordQueue(cap(queue), cap(queue), true)
-			return fmt.Errorf("passive spool queue full; capture stopped to expose data loss")
+		batches := [][]byte{b}
+		if splitOversized && len(b) > maxBytes {
+			batches, e = splitCaptureBatch(b, maxBytes)
+			if e != nil {
+				return e
+			}
 		}
+		for _, batch := range batches {
+			select {
+			case queue <- batch:
+				stats.recordQueue(len(queue), cap(queue), false)
+			default:
+				stats.recordQueue(cap(queue), cap(queue), true)
+				return fmt.Errorf("passive spool queue full; capture stopped to expose data loss")
+			}
+		}
+		pending.drain()
+		lastFlush = time.Now()
+		return nil
 	}
 	buffer := make([]byte, 65536)
 	for ctx.Err() == nil {
