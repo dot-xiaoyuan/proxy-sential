@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/opt/proxy-sentinel/config/runtime.env
-ExecStart=/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/recognition-minute-shadow --interval=60s --lookback-minutes=10
+ExecStart=/opt/proxy-sentinel/current/bin/recognition-minute-shadow --interval=60s --lookback-minutes=10
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=20

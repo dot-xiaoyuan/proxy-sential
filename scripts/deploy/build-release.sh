@@ -34,6 +34,7 @@ release_dir="$build_root/release"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/device-retention" ./cmd/device-retention
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-identity-snapshot" ./cmd/srun-identity-snapshot
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/legacy-4k-identity-bridge" ./cmd/legacy-4k-identity-bridge
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/recognition-minute-shadow" ./cmd/recognition-minute-shadow
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-policy-snapshot" ./cmd/srun-policy-snapshot
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-group-directory-sync" ./cmd/srun-group-directory-sync
   (cd frontend && VITE_ENABLE_MOCKS=false VITE_API_BASE=/api/v1 pnpm build)
@@ -72,6 +73,7 @@ JS
   cp scripts/deploy/router-pilot-watchdog.sh scripts/deploy/router-pilot-snmp-rollback.sh scripts/deploy/router-pilot-shared-rollback.sh "$release_dir/scripts/"
   cp scripts/deploy/ncu-identity-sync-rollback.sh "$release_dir/scripts/ncu-identity-sync-rollback.sh"
   cp scripts/deploy/verify-service-expectations.py scripts/deploy/upgrade-application.sh scripts/deploy/manage-frontend-previous.py scripts/deploy/verify-applied-migrations.py scripts/deploy/validate-release-archive.py scripts/deploy/verify-application-runtime.py scripts/deploy/verify-application-cli.py scripts/deploy/retire-releases.py scripts/deploy/retire-acceptance-artifacts.py "$release_dir/scripts/"
+  cp scripts/deploy/upgrade-recognition-minute-shadow.sh "$release_dir/scripts/upgrade-recognition-minute-shadow.sh"
 )
 
 commit="$(git -C "$repo_root" rev-parse HEAD)"

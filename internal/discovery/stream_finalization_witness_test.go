@@ -185,6 +185,59 @@ func TestReceiptManifestShadowLeavesReplayedOrdinalEmpty(t *testing.T) {
 	}
 }
 
+func TestManifestWritesKeepMixedSegmentAndSkipStaticReceipts(t *testing.T) {
+	segment := finalizationWitnessSegment()
+	segment.Events[0].Timestamp = "invalid-observation-time"
+	second := segment.Events[0]
+	second.EventID = "stream2-second"
+	segment.Events = []normalized.Event{segment.Events[0], second}
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil || len(prepared) != 2 {
+		t.Fatalf("prepare: %v, %+v", err, prepared)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO stream_projection_segments").WithArgs("segment-a", segment.Epoch, segment.Source, segment.SourcePath,
+		streamProjectionSegmentHash(segment, prepared), segment.AcceptedAt, 2, segment.FileID, segment.StartOffset, segment.EndOffset, "manifest").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WithArgs(segment.Epoch, sqlmock.AnyArg(),
+		streamArchiveKeys{prepared[0].Receipt, prepared[1].Receipt}, "segment-a").WillReturnRows(
+		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).
+			AddRow(prepared[1].Receipt.Scope, prepared[1].Receipt.Key, prepared[1].Receipt.Hash))
+	mock.ExpectQuery("JOIN stream_discovery_event_keys_compact k").WillReturnRows(
+		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).
+			AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
+	mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs("segment-a", segment.ArchiveMonth,
+		segment.BodyLayout, streamManifestResults{nil, prepared[1].Receipt.Result}, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	projector := StreamDiscoveryProjector{DB: db, CompactOnly: true, SegmentArchiveReceipts: true, ReceiptManifestWrites: true}
+	if err := projector.projectPreparedStreamSegment(context.Background(), "segment-a", segment, prepared); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManifestReceiptSplitPreservesRecognitionInput(t *testing.T) {
+	items := []streamPreparedDiscovery{
+		{Protocol: "arp", Parsed: true, HasFact: true, Fact: streamDiscoveryFact{Protocol: "arp"}},
+		{Protocol: "mdns", Parsed: true, HasFact: true, Fact: streamDiscoveryFact{Protocol: "mdns", RecognitionFields: map[string]string{"model": "printer"}}},
+	}
+	receipts, omitted := splitStreamManifestReceipts(items)
+	if len(receipts) != 1 || receipts[0].Protocol != "mdns" || len(omitted) != 1 || omitted[0].Protocol != "arp" {
+		t.Fatalf("dynamic recognition input lost: receipts=%+v omitted=%+v", receipts, omitted)
+	}
+	if got := streamRecognitionSummary(omitted)["arp"]; got.Inputs != 1 || got.Parsed != 1 || got.Insufficient != 1 {
+		t.Fatalf("static recognition count lost: %+v", got)
+	}
+}
+
 func TestStreamFinalizationWitnessRetriesUnknownOutcome(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

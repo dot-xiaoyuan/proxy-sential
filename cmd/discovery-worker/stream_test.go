@@ -118,6 +118,26 @@ func TestReceiptManifestShadowRequiresInstalledSchemaBeforeCapture(t *testing.T)
 	}
 }
 
+func TestReceiptManifestWritesRequiresWriteSchema(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	config := discovery.DefaultCollectionConfig()
+	config.CompactPassiveEventKeys = true
+	config.ReceiptManifestWrites = true
+	mock.ExpectQuery("to_regclass.*stream_discovery_event_keys_compact").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
+	mock.ExpectQuery("to_regclass.*stream_discovery_segment_receipt_manifests").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
+	mock.ExpectQuery("(?s)recognition_summary.*stream_projection_archive_receipt_mode").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(false))
+	if err := verifyCompactPassiveEventKeySchema(context.Background(), db, config); err == nil {
+		t.Fatal("manifest writes accepted without migration 220")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (w *replayFinalizerWriter) FinalizeSegment(context.Context, string, streamlog.Segment) error {
 	if w.fail {
 		return streamlog.ErrUnconfirmed

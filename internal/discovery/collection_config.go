@@ -35,7 +35,10 @@ type CollectionConfig struct {
 	// one archive witness in place of per-event confirmation updates.
 	SegmentArchiveReceipts bool `json:"-"`
 	// Shadow a per-segment receipt manifest while retaining every event receipt.
-	ReceiptManifestShadow bool             `json:"-"`
+	ReceiptManifestShadow bool `json:"-"`
+	// Switch new durable passive segments to manifest-only receipts after the
+	// compatible reader/finalizer release is the rollback target.
+	ReceiptManifestWrites bool             `json:"-"`
 	EventBindings         []EventBinding   `json:"event_bindings"`
 	EnrichmentPaths       []EnrichmentPath `json:"enrichment_paths"`
 	Version               int              `json:"version"`

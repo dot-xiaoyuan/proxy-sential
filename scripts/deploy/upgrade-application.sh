@@ -42,6 +42,8 @@ python3 "$stage/scripts/verify-service-expectations.py" --root "$root"
 python3 "$(dirname "$0")/verify-applied-migrations.py" "$stage"
 # Durable release directory is the rollback copy. Business DBs are untouched.
 units=()
+# The recognition minute observer has a separately pinned systemd executable.
+# Upgrade it after this pointer switch with upgrade-recognition-minute-shadow.sh.
 # An auto-restarting discovery service can briefly fail is-active between
 # intent validation and this list. Keep declared running sources in the
 # restart set so they cannot resume on the old executable after the switch.

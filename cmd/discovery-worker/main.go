@@ -52,6 +52,11 @@ func main() {
 		log.Fatal("invalid passive receipt manifest shadow mode")
 	}
 	manifestShadow := flag.Bool("passive-receipt-manifest-shadow", manifestDefault, "shadow per-segment receipts while retaining per-event receipts")
+	manifestWritesDefault, err := compactPassiveKeyDefault(os.Getenv("PROXY_SENTINEL_PASSIVE_RECEIPT_MANIFEST_WRITES"))
+	if err != nil {
+		log.Fatal("invalid passive receipt manifest writes mode")
+	}
+	manifestWrites := flag.Bool("passive-receipt-manifest-writes", manifestWritesDefault, "write one manifest instead of per-event receipts for new passive stream2 segments")
 	streamJournal := flag.String("stream-journal", "", "fresh-only durable passive stream journal directory")
 	streamScope := flag.String("capture-scope-config", "", "controlled fresh passive capture scope")
 	streamEpoch := flag.String("stream-epoch", "", "explicit fresh stream generation for stream-prepare")
@@ -71,6 +76,9 @@ func main() {
 	}
 	if *manifestShadow && !*compactPassiveKeys {
 		log.Fatal("receipt manifest shadow requires compact passive event keys")
+	}
+	if *manifestWrites && (!*compactPassiveKeys || !*segmentArchiveReceipts) {
+		log.Fatal("receipt manifest writes require compact passive keys and segment archive receipts")
 	}
 	library, err := fingerprint.OpenInstalledRuntime()
 	if err != nil {
@@ -92,6 +100,7 @@ func main() {
 	collection.CompactPassiveEventKeys = *compactPassiveKeys
 	collection.SegmentArchiveReceipts = *segmentArchiveReceipts
 	collection.ReceiptManifestShadow = *manifestShadow
+	collection.ReceiptManifestWrites = *manifestWrites
 	if *allowCIDRs == "" {
 		*allowCIDRs = collection.AllowedCIDRs
 	}

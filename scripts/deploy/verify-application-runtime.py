@@ -34,6 +34,7 @@ UNIT_BINARIES={
  'proxy-sentinel-discovery.service':'discovery-worker',
  'proxy-sentinel-passive-discovery.service':'passive-discovery-worker',
  'proxy-sentinel-ncu-identity-sync.service':'legacy-4k-identity-bridge',
+ 'proxy-sentinel-recognition-minute-shadow.service':'recognition-minute-shadow',
 }
 
 def verify(root,release,units):

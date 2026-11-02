@@ -34,6 +34,7 @@ type StreamDiscoveryProjector struct {
 	// persisted marker mode controls recovery and finalization after cutover.
 	SegmentArchiveReceipts bool
 	ReceiptManifestShadow  bool
+	ReceiptManifestWrites  bool
 }
 
 // Expiry is a separate bounded maintenance lane. It never scans event bodies
@@ -548,8 +549,12 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if p.SegmentArchiveReceipts && compactPassive && sourceFile != nil {
 		mode = "segment"
 	}
+	if p.ReceiptManifestWrites && mode == "segment" && p.CompactOnly &&
+		segment.ArchiveMonth == segment.AcceptedAt.UTC().Format("200601") {
+		mode = "manifest"
+	}
 	shadowID := ""
-	if p.ReceiptManifestShadow && compactPassive && sourceFile != nil {
+	if (p.ReceiptManifestShadow && compactPassive && sourceFile != nil) || mode == "manifest" {
 		shadowID = id
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode)
@@ -601,7 +606,11 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if len(fresh) == 0 {
 		if shadowID != "" {
 			mark("write_manifest")
-			if err := writeStreamReceiptManifest(ctx, tx, shadowID, segment, prepared, fresh); err != nil {
+			var omitted []streamPreparedDiscovery
+			if mode == "manifest" {
+				omitted = []streamPreparedDiscovery{}
+			}
+			if err := writeStreamReceiptManifest(ctx, tx, shadowID, segment, prepared, fresh, omitted); err != nil {
 				return err
 			}
 		}
@@ -690,13 +699,20 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if err := writeStreamDiscoveryChanges(ctx, tx, changes); err != nil {
 		return err
 	}
-	mark("write_receipts")
-	if err := writeStreamDiscoveryReceipts(ctx, tx, month, segment, id, mode, fresh); err != nil {
-		return err
+	omitted := []streamPreparedDiscovery(nil)
+	receipts := fresh
+	if mode == "manifest" {
+		receipts, omitted = splitStreamManifestReceipts(fresh)
+	}
+	if len(receipts) != 0 {
+		mark("write_receipts")
+		if err := writeStreamDiscoveryReceipts(ctx, tx, month, segment, id, mode, receipts); err != nil {
+			return err
+		}
 	}
 	if shadowID != "" {
 		mark("write_manifest")
-		if err := writeStreamReceiptManifest(ctx, tx, shadowID, segment, prepared, fresh); err != nil {
+		if err := writeStreamReceiptManifest(ctx, tx, shadowID, segment, prepared, fresh, omitted); err != nil {
 			return err
 		}
 	}
@@ -1117,7 +1133,7 @@ func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Ti
 	}
 	var locator any
 	state := "pending"
-	if mode == "segment" {
+	if mode == "segment" || mode == "manifest" {
 		locator, state = id, "segment"
 	}
 	result, err := tx.ExecContext(ctx, insertRecognitionReceiptsSQL, month, segment.Epoch, raw, state, locator)
@@ -1134,9 +1150,9 @@ func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Ti
 	return nil
 }
 
-// The shadow manifest shares the projection transaction with the authoritative
-// receipts. Null slots belong to keys already reserved by an older segment.
-func writeStreamReceiptManifest(ctx context.Context, tx *sql.Tx, id string, segment streamlog.Segment, prepared, fresh []streamPreparedDiscovery) error {
+// The manifest shares the projection transaction with compact key locators.
+// Null result slots belong to keys already reserved by an older segment.
+func writeStreamReceiptManifest(ctx context.Context, tx *sql.Tx, id string, segment streamlog.Segment, prepared, fresh, omitted []streamPreparedDiscovery) error {
 	resultsByKey := make(map[string]string, len(fresh))
 	for _, item := range fresh {
 		resultsByKey[item.Receipt.Scope+"\x00"+item.Receipt.Key] = item.Receipt.Result
@@ -1152,7 +1168,61 @@ func writeStreamReceiptManifest(ctx context.Context, tx *sql.Tx, id string, segm
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results)
+	if omitted == nil {
+		_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results)
 	 VALUES($1,$2,$3,$4::jsonb)`, id, segment.ArchiveMonth, segment.BodyLayout, raw)
+		return err
+	}
+	summary, err := json.Marshal(streamRecognitionSummary(omitted))
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results,recognition_summary)
+	 VALUES($1,$2,$3,$4::jsonb,$5::jsonb)`, id, segment.ArchiveMonth, segment.BodyLayout, raw, summary)
 	return err
+}
+
+type streamRecognitionCounts struct {
+	Inputs       int64 `json:"inputs"`
+	Parsed       int64 `json:"parsed"`
+	Features     int64 `json:"features"`
+	Insufficient int64 `json:"insufficient"`
+	Errors       int64 `json:"errors"`
+}
+
+func streamRecognitionSummary(items []streamPreparedDiscovery) map[string]streamRecognitionCounts {
+	summary := make(map[string]streamRecognitionCounts)
+	for _, item := range items {
+		input, status := recognitionInput(item)
+		c := summary[input.Protocol]
+		c.Inputs++
+		if input.Parsed {
+			c.Parsed++
+		}
+		if input.Features > 0 {
+			c.Features++
+		}
+		if status == "no_features" || status == "insufficient_evidence" {
+			c.Insufficient++
+		}
+		if status == "parse_error" || status == "diagnostic_limit" {
+			c.Errors++
+		}
+		summary[input.Protocol] = c
+	}
+	return summary
+}
+
+func splitStreamManifestReceipts(items []streamPreparedDiscovery) (receipts, omitted []streamPreparedDiscovery) {
+	receipts = make([]streamPreparedDiscovery, 0, len(items))
+	omitted = make([]streamPreparedDiscovery, 0, len(items))
+	for _, item := range items {
+		_, status := recognitionInput(item)
+		if status == "unattributed" || status == "processing" {
+			receipts = append(receipts, item)
+		} else {
+			omitted = append(omitted, item)
+		}
+	}
+	return receipts, omitted
 }
