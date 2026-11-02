@@ -37,6 +37,7 @@ type ClickHouseStore struct {
 	eventIDCutover           time.Time
 	eventIDV2Cutover         time.Time
 	serviceCluesModelStartUS *atomic.Int64
+	verifiedStreamBodies     *verifiedStreamBodyCache
 }
 
 func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
@@ -98,6 +99,7 @@ func NewClickHouseStore(opts ClickHouseOptions) (*ClickHouseStore, error) {
 		eventIDCutover:           cutover,
 		eventIDV2Cutover:         v2Cutover,
 		serviceCluesModelStartUS: new(atomic.Int64),
+		verifiedStreamBodies:     new(verifiedStreamBodyCache),
 	}, nil
 }
 

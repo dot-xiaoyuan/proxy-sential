@@ -94,7 +94,7 @@ func (s *ClickHouseStore) GetStreamEventByRef(ctx context.Context, ref StreamBod
 // stored hash and the body bytes; a missing or conflicting row cannot be
 // interpreted as an empty event.
 func (s *ClickHouseStore) GetStreamEventsByRefs(ctx context.Context, refs []StreamBodyRef) (map[StreamBodyRef]normalized.Event, error) {
-	bodies, err := s.getStreamBodiesByRefs(ctx, refs)
+	bodies, err := s.getStreamBodiesByRefs(ctx, refs, true)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func (s *ClickHouseStore) GetStreamEventsByRefs(ctx context.Context, refs []Stre
 // getStreamBodiesByRefs returns the exact archived bytes as well as the
 // decoded event. Case creation can protect up to 100 originals without
 // issuing one ClickHouse query per reference inside its PostgreSQL transaction.
-func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []StreamBodyRef) (map[StreamBodyRef]StreamEvidence, error) {
+func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []StreamBodyRef, useVerifiedCache bool) (map[StreamBodyRef]StreamEvidence, error) {
 	if s == nil || len(refs) == 0 || len(refs) > 100 {
 		return nil, errors.New("stream batch body read needs one to 100 references")
 	}
@@ -145,13 +145,10 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 	for _, group := range order {
 		expected := groups[group]
 		keys := make([]string, 0, len(expected))
-		bodyKeys := make([]string, 0, len(expected))
 		for _, ref := range expected {
 			keys = append(keys, "("+chQuote(ref.Scope)+","+chQuote(ref.Key)+")")
-			bodyKeys = append(bodyKeys, "("+chQuote(ref.Scope)+","+chQuote(ref.Key)+","+chQuote(ref.SHA256)+")")
 		}
 		sort.Strings(keys)
-		sort.Strings(bodyKeys)
 		limit := 101 * len(expected)
 		// Read only the narrow key columns first. Selecting body in this query
 		// made a 100-reference lookup pull hundreds of megabytes when a table
@@ -188,9 +185,32 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 			return nil, streamlog.ErrUnconfirmed
 		}
 
-		// Fetch one body for each already verified triple. LIMIT BY keeps a
-		// duplicate physical copy from forcing the wide body column through the
-		// response; duplicates and conflicting hashes were checked above.
+		// The narrow read above always runs, including on cache hits: a late
+		// conflicting physical row or a missing original must remain visible.
+		// Only the wide body read may use recently verified immutable bytes.
+		bodyKeys := make([]string, 0, len(expected))
+		bodySeen := make(map[string]bool, len(expected))
+		for _, ref := range expected {
+			key := ref.Scope + "\x00" + ref.Key
+			if useVerifiedCache && s.verifiedStreamBodies != nil {
+				if body, ok := s.verifiedStreamBodies.get(ref, time.Now()); ok {
+					evidence, err := decodeVerifiedStreamBody(ref, body)
+					if err != nil {
+						return nil, err
+					}
+					result[ref] = evidence
+					bodySeen[key] = true
+					continue
+				}
+			}
+			bodyKeys = append(bodyKeys, "("+chQuote(ref.Scope)+","+chQuote(ref.Key)+","+chQuote(ref.SHA256)+")")
+		}
+		if len(bodyKeys) == 0 {
+			continue
+		}
+		sort.Strings(bodyKeys)
+		// Fetch one body for each uncached triple. LIMIT BY keeps a duplicate
+		// physical copy from forcing the wide body column through the response.
 		bodyQuery := "SELECT scope_id,event_key,content_sha256,body FROM " + streamBodyTable(group.class, group.layout) +
 			" PREWHERE archive_month=" + group.month + " AND (scope_id,event_key,content_sha256) IN (" + strings.Join(bodyKeys, ",") + ")" +
 			" LIMIT 1 BY scope_id,event_key,content_sha256" +
@@ -199,7 +219,6 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		if err != nil {
 			return nil, err
 		}
-		bodySeen := make(map[string]bool, len(expected))
 		for _, line := range bytes.Split(bytes.TrimSpace(bodyData), []byte{'\n'}) {
 			if len(line) == 0 {
 				continue
@@ -218,25 +237,38 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 			if !found || row.Hash != ref.SHA256 || bodySeen[key] {
 				return nil, streamlog.ErrContentConflict
 			}
-			sum := sha256.Sum256([]byte(row.Body))
-			if hex.EncodeToString(sum[:]) != ref.SHA256 {
-				return nil, streamlog.ErrContentConflict
-			}
-			var event normalized.Event
-			if err := json.Unmarshal([]byte(row.Body), &event); err != nil {
+			body := []byte(row.Body)
+			evidence, err := decodeVerifiedStreamBody(ref, body)
+			if err != nil {
 				return nil, err
 			}
-			if event.EventID == "" {
-				return nil, streamlog.ErrContentConflict
-			}
-			result[ref] = StreamEvidence{Event: event, Body: json.RawMessage(row.Body), BodySHA256: ref.SHA256}
+			result[ref] = evidence
 			bodySeen[key] = true
+			if useVerifiedCache && s.verifiedStreamBodies != nil && evidence.Event.SourceEventType == "capture_coverage" &&
+				stringFromMap(evidence.Event.Subject, "ip") == "" && stringFromMap(evidence.Event.Subject, "mac") == "" {
+				s.verifiedStreamBodies.put(ref, body, time.Now())
+			}
 		}
 		if len(bodySeen) != len(expected) {
 			return nil, streamlog.ErrUnconfirmed
 		}
 	}
 	return result, nil
+}
+
+func decodeVerifiedStreamBody(ref StreamBodyRef, body []byte) (StreamEvidence, error) {
+	sum := sha256.Sum256(body)
+	if hex.EncodeToString(sum[:]) != ref.SHA256 {
+		return StreamEvidence{}, streamlog.ErrContentConflict
+	}
+	var event normalized.Event
+	if err := json.Unmarshal(body, &event); err != nil {
+		return StreamEvidence{}, err
+	}
+	if event.EventID == "" {
+		return StreamEvidence{}, streamlog.ErrContentConflict
+	}
+	return StreamEvidence{Event: event, Body: body, BodySHA256: ref.SHA256}, nil
 }
 
 func (s *ClickHouseStore) GetStreamEvidenceByRef(ctx context.Context, ref StreamBodyRef) (StreamEvidence, bool, error) {

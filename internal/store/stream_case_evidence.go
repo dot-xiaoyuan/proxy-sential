@@ -99,7 +99,7 @@ func (s *DBStore) ReadStreamSharedCaseEvidence(ctx context.Context, refs []Strea
 
 func (s *DBStore) readStreamCaseBodies(ctx context.Context, refs []StreamBodyRef) (map[StreamBodyRef]StreamCaseEvidence, error) {
 	out := make(map[StreamBodyRef]StreamCaseEvidence, len(refs))
-	bodies, err := s.ch.getStreamBodiesByRefs(ctx, refs)
+	bodies, err := s.ch.getStreamBodiesByRefs(ctx, refs, false)
 	if err != nil {
 		return nil, err
 	}

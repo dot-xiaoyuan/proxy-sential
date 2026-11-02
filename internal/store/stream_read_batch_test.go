@@ -54,3 +54,55 @@ func TestStreamBodiesBatchReadUsesBoundedPhysicalLocator(t *testing.T) {
 		t.Fatalf("same key with conflicting body was accepted: %v", err)
 	}
 }
+
+func TestStreamCoverageBodyCacheKeepsMetadataAndCaseVerification(t *testing.T) {
+	event := normalized.Event{EventID: "coverage", Source: "handshake-sidecar", SourceEventType: "capture_coverage", Timestamp: "2026-10-25T08:30:00Z", Subject: map[string]any{"campus_id": "campus-a"}}
+	body, _ := json.Marshal(event)
+	sum := sha256.Sum256(body)
+	ref := StreamBodyRef{Class: "evidence", Month: "202610", Scope: "scope-a", Key: "fresh:coverage", SHA256: hex.EncodeToString(sum[:])}
+	var metadataReads, bodyReads int
+	var conflict, corrupt bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(query), "SELECT scope_id,event_key,content_sha256,body FROM") {
+			bodyReads++
+			content := string(body)
+			if corrupt {
+				content += " "
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"scope_id": ref.Scope, "event_key": ref.Key, "content_sha256": ref.SHA256, "body": content})
+			return
+		}
+		metadataReads++
+		hash := ref.SHA256
+		if conflict {
+			hash = strings.Repeat("f", 64)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"scope_id": ref.Scope, "event_key": ref.Key, "content_sha256": hash})
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		got, err := ch.GetStreamEventsByRefs(context.Background(), []StreamBodyRef{ref})
+		if err != nil || got[ref].EventID != event.EventID {
+			t.Fatalf("coverage read %d: %+v %v", i, got, err)
+		}
+	}
+	if metadataReads != 2 || bodyReads != 1 {
+		t.Fatalf("cache skipped archive metadata or repeated the wide body read: metadata=%d body=%d", metadataReads, bodyReads)
+	}
+	conflict = true
+	if _, err := ch.GetStreamEventsByRefs(context.Background(), []StreamBodyRef{ref}); !errors.Is(err, streamlog.ErrContentConflict) {
+		t.Fatalf("late conflicting archive row passed cache: %v", err)
+	}
+	conflict, corrupt = false, true
+	if _, err := ch.getStreamBodiesByRefs(context.Background(), []StreamBodyRef{ref}, false); !errors.Is(err, streamlog.ErrContentConflict) {
+		t.Fatalf("case path accepted changed authoritative bytes: %v", err)
+	}
+	if metadataReads != 4 || bodyReads != 2 {
+		t.Fatalf("case path reused live cache: metadata=%d body=%d", metadataReads, bodyReads)
+	}
+}
