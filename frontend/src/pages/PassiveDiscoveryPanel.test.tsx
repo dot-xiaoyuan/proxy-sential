@@ -31,13 +31,13 @@ function mockReads(observedPortResult: unknown = {
       connection_outcome: 'syn_ack_observed', last_seen: '2026-11-01T12:00:00Z', evidence_id: 'flow-443',
     }],
   },
-}, deviceRow = device) {
+}, deviceRow = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }) {
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/observed-ports?')) {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
     }
     if (path.startsWith('/discovery/devices?')) return Promise.resolve({ items: [deviceRow], total: 1, has_more: false })
-    if (path === '/discovery/coverage') return Promise.resolve({ enabled: true, items: [] })
+    if (path === '/discovery/coverage') return Promise.resolve(coverage)
     if (path === '/discovery/statistics') return Promise.resolve({ items: [], pending_updates: 0 })
     if (path === '/discovery/types') return Promise.resolve({ items: [] })
     if (path.startsWith('/discovery/service-clues?')) return Promise.resolve({ items: {} })
@@ -57,6 +57,25 @@ function observedCalls() {
 }
 
 afterEach(() => { cleanup(); request.mockReset() })
+
+it('separates mirrored protocols from the DHCP message source', async () => {
+  mockReads(undefined, device, { enabled: true, items: [
+    { protocol: 'arp', enabled: true },
+    { protocol: 'dns_sd', enabled: true },
+    { protocol: 'ssdp', enabled: true },
+    { protocol: 'lldp', enabled: true },
+    { protocol: 'dhcp', enabled: false, message_source_epoch: 'dhcp-message-fresh' },
+  ] })
+  renderPanel()
+  const heading = await screen.findByText('镜像采集协议')
+  const summary = heading.closest('.discovery-protocol-summary')
+  expect(summary).toHaveTextContent('ARP')
+  expect(summary).toHaveTextContent('DNS-SD')
+  expect(summary).toHaveTextContent('SSDP')
+  expect(summary).toHaveTextContent('LLDP')
+  expect(summary).toHaveTextContent('DHCP 逐消息源已登记')
+  expect(summary?.querySelectorAll('.ant-tag')).toHaveLength(4)
+})
 
 it('loads one current IP port clue only when its evidence detail opens', async () => {
   mockReads()
