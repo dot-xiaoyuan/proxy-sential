@@ -33,6 +33,73 @@ func TestCaptureCoalescerKeepsBoundedRepeatEvidence(t *testing.T) {
 	}
 }
 
+func arpCaptureEvent(id, at, ip, mac, message string, ttl int) normalized.Event {
+	e := streamDiscoveryEvent(id, at, ttl)
+	e.SourceEventType = "arp"
+	e.Subject["ip"] = ip
+	e.Subject["mac"] = mac
+	e.Payload = map[string]any{"origin": "arp", "message": message, "address_binding": message == "reply", "ttl": ttl}
+	return e
+}
+
+func TestCaptureCoalescerCombinesInterleavedARPWithinBatch(t *testing.T) {
+	c := newCaptureCoalescer()
+	first := arpCaptureEvent("first", "2026-10-28T10:00:00Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 120)
+	other := arpCaptureEvent("other", "2026-10-28T10:00:00.2Z", "10.2.3.5", "02:00:00:00:00:05", "reply", 120)
+	service := streamDiscoveryEvent("service", "2026-10-28T10:00:00.3Z", 120)
+	service.Subject["ip"] = "10.2.3.7"
+	last := arpCaptureEvent("last", "2026-10-28T10:00:00.8Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 180)
+	if c.add(first) || c.add(other) || c.add(service) || !c.add(last) {
+		t.Fatal("interleaved ARP repeat was not combined")
+	}
+	got := c.drain()
+	if len(got) != 3 || got[0].EventID != "last" || got[1].EventID != "other" || got[2].EventID != "service" ||
+		got[0].RawRef["coalesced_first_observed_at"] != first.Timestamp ||
+		got[0].RawRef["coalesced_first_producer_event_id"] != first.EventID ||
+		got[0].RawRef["coalesced_count"] != 2 || got[0].Payload["ttl"] != 180 {
+		t.Fatalf("interleaved repeat lost bounded evidence: %+v", got)
+	}
+	segment := streamlog.Segment{Epoch: "fresh", Source: "passive-discovery", AcceptedAt: time.Date(2026, 10, 28, 10, 0, 1, 0, time.UTC), Events: got}
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil || len(prepared) != 3 || prepared[0].Fact.FirstObserved.Format(time.RFC3339Nano) != first.Timestamp ||
+		prepared[0].Fact.Observed.Format(time.RFC3339Nano) != last.Timestamp ||
+		prepared[0].Fact.ValidUntil.Sub(prepared[0].Fact.Observed) != 180*time.Second {
+		t.Fatalf("projected ARP freshness differs from source observations: %+v %v", prepared, err)
+	}
+	if c.add(arpCaptureEvent("next-batch", "2026-10-28T10:00:00.9Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 180)) || len(c.drain()) != 1 {
+		t.Fatal("coalescing crossed the durable batch boundary")
+	}
+}
+
+func TestCaptureCoalescerDoesNotBridgeARPTransitions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*normalized.Event)
+	}{
+		{"request", func(e *normalized.Event) { e.Payload["message"] = "request"; e.Payload["address_binding"] = false }},
+		{"correction", func(e *normalized.Event) { e.Payload["ethernet_source_mac"] = "02:00:00:00:00:06" }},
+		{"withdrawal", func(e *normalized.Event) { e.Payload["ttl"] = 0 }},
+		{"scope", func(e *normalized.Event) { e.Observer["capture_scope_id"] = "scope-b" }},
+		{"address", func(e *normalized.Event) { e.Subject["ip"] = "10.2.3.6" }},
+		{"mac", func(e *normalized.Event) { e.Subject["mac"] = "02:00:00:00:00:06" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCaptureCoalescer()
+			first := arpCaptureEvent("first", "2026-10-28T10:00:00Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 120)
+			middle := arpCaptureEvent("middle", "2026-10-28T10:00:00.2Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 120)
+			last := arpCaptureEvent("last", "2026-10-28T10:00:00.4Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 120)
+			tc.change(&middle)
+			c.add(first)
+			if c.add(middle) || c.add(last) {
+				t.Fatal("ARP transition was collapsed")
+			}
+			if got := c.drain(); len(got) != 3 {
+				t.Fatalf("ARP transition lost an event: %+v", got)
+			}
+		})
+	}
+}
+
 func TestCaptureCoalescerPreservesScopeChangesWithdrawalsAndLateInputs(t *testing.T) {
 	base := streamDiscoveryEvent("base", "2026-10-28T10:00:00Z", 120)
 	otherScope := streamDiscoveryEvent("other-scope", "2026-10-28T10:00:00.1Z", 120)

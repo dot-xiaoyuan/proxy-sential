@@ -14,10 +14,17 @@ type captureCoalescer struct {
 	events    []normalized.Event
 	positions map[string]int
 	lastKey   string
+	arpByMAC  map[string]*captureARPPosition
+	arpByIP   map[string]*captureARPPosition
+}
+
+type captureARPPosition struct {
+	key, mac, ip string
+	at           int
 }
 
 func newCaptureCoalescer() *captureCoalescer {
-	return &captureCoalescer{positions: map[string]int{}}
+	return &captureCoalescer{positions: map[string]int{}, arpByMAC: map[string]*captureARPPosition{}, arpByIP: map[string]*captureARPPosition{}}
 }
 
 func captureCoalesceKey(event normalized.Event) (string, bool) {
@@ -39,8 +46,12 @@ func captureCoalesceKey(event normalized.Event) (string, bool) {
 
 func (c *captureCoalescer) add(event normalized.Event) bool {
 	key, eligible := captureCoalesceKey(event)
-	// Replacing an older observation across an intervening event can reorder a
-	// withdrawal or correction. Only consecutive identical events may combine.
+	if event.SourceEventType == "arp" {
+		clear(c.positions)
+		c.lastKey = ""
+		return c.addARP(event, key, eligible)
+	}
+	// Other protocols still combine only adjacent identical observations.
 	if !eligible || key != c.lastKey {
 		clear(c.positions)
 	}
@@ -51,35 +62,7 @@ func (c *captureCoalescer) add(event normalized.Event) bool {
 	}
 	if eligible {
 		if at, found := c.positions[key]; found {
-			previous := c.events[at]
-			first := previous.Timestamp
-			firstID := previous.EventID
-			count := 1
-			if previous.RawRef != nil {
-				if value, ok := previous.RawRef["coalesced_first_observed_at"].(string); ok {
-					first = value
-				}
-				if value, ok := previous.RawRef["coalesced_first_producer_event_id"].(string); ok {
-					firstID = value
-				}
-				if value, ok := previous.RawRef["coalesced_count"].(int); ok {
-					count = value
-				}
-			}
-			firstAt, firstErr := time.Parse(time.RFC3339Nano, first)
-			previousAt, previousErr := time.Parse(time.RFC3339Nano, previous.Timestamp)
-			currentAt, currentErr := time.Parse(time.RFC3339Nano, event.Timestamp)
-			previousTTL := number(previous.Payload, "ttl")
-			// Equal timestamps are resolved by the final event key downstream;
-			// dropping either event could change which TTL wins that tie.
-			if firstErr == nil && previousErr == nil && currentErr == nil && currentAt.After(previousAt) &&
-				previousTTL > 0 && previousTTL <= discoveryMaxTTLSeconds && currentAt.Before(previousAt.Add(time.Duration(previousTTL)*time.Second)) &&
-				currentAt.Sub(firstAt) <= passiveCaptureCoalesceWindow {
-				event.RawRef = cloneStreamFields(event.RawRef)
-				event.RawRef["coalesced_count"] = count + 1
-				event.RawRef["coalesced_first_observed_at"] = first
-				event.RawRef["coalesced_first_producer_event_id"] = firstID
-				c.events[at] = event
+			if c.combine(at, event) {
 				return true
 			}
 		}
@@ -89,6 +72,86 @@ func (c *captureCoalescer) add(event normalized.Event) bool {
 	return false
 }
 
+// An ARP address or MAC change invalidates the previous candidate even when
+// another device was observed between them. The maps live for one capture batch.
+func (c *captureCoalescer) addARP(event normalized.Event, key string, eligible bool) bool {
+	mac, ip := str(event.Subject, "mac"), str(event.Subject, "ip")
+	if mac == "" || ip == "" {
+		clear(c.arpByMAC)
+		clear(c.arpByIP)
+		c.events = append(c.events, event)
+		return false
+	}
+	prefix := event.Source + "\x00" + str(event.Observer, "sensor_id") + "\x00"
+	mac, ip = prefix+mac, prefix+ip
+	if previous := c.arpByMAC[mac]; previous != nil && previous.key != key {
+		c.forgetARP(previous)
+	}
+	if previous := c.arpByIP[ip]; previous != nil && previous.key != key {
+		c.forgetARP(previous)
+	}
+	if eligible {
+		if previous := c.arpByMAC[mac]; previous != nil && previous == c.arpByIP[ip] && c.combine(previous.at, event) {
+			return true
+		}
+	}
+	if previous := c.arpByMAC[mac]; previous != nil {
+		c.forgetARP(previous)
+	}
+	if previous := c.arpByIP[ip]; previous != nil {
+		c.forgetARP(previous)
+	}
+	if eligible {
+		position := &captureARPPosition{key: key, mac: mac, ip: ip, at: len(c.events)}
+		c.arpByMAC[mac], c.arpByIP[ip] = position, position
+	}
+	c.events = append(c.events, event)
+	return false
+}
+
+func (c *captureCoalescer) forgetARP(position *captureARPPosition) {
+	if c.arpByMAC[position.mac] == position {
+		delete(c.arpByMAC, position.mac)
+	}
+	if c.arpByIP[position.ip] == position {
+		delete(c.arpByIP, position.ip)
+	}
+}
+
+func (c *captureCoalescer) combine(at int, event normalized.Event) bool {
+	previous := c.events[at]
+	first := previous.Timestamp
+	firstID := previous.EventID
+	count := 1
+	if previous.RawRef != nil {
+		if value, ok := previous.RawRef["coalesced_first_observed_at"].(string); ok {
+			first = value
+		}
+		if value, ok := previous.RawRef["coalesced_first_producer_event_id"].(string); ok {
+			firstID = value
+		}
+		if value, ok := previous.RawRef["coalesced_count"].(int); ok {
+			count = value
+		}
+	}
+	firstAt, firstErr := time.Parse(time.RFC3339Nano, first)
+	previousAt, previousErr := time.Parse(time.RFC3339Nano, previous.Timestamp)
+	currentAt, currentErr := time.Parse(time.RFC3339Nano, event.Timestamp)
+	previousTTL := number(previous.Payload, "ttl")
+	// Equal timestamps use the event key to decide which TTL wins.
+	if firstErr != nil || previousErr != nil || currentErr != nil || !currentAt.After(previousAt) ||
+		previousTTL <= 0 || previousTTL > discoveryMaxTTLSeconds || !currentAt.Before(previousAt.Add(time.Duration(previousTTL)*time.Second)) ||
+		currentAt.Sub(firstAt) > passiveCaptureCoalesceWindow {
+		return false
+	}
+	event.RawRef = cloneStreamFields(event.RawRef)
+	event.RawRef["coalesced_count"] = count + 1
+	event.RawRef["coalesced_first_observed_at"] = first
+	event.RawRef["coalesced_first_producer_event_id"] = firstID
+	c.events[at] = event
+	return true
+}
+
 func (c *captureCoalescer) len() int { return len(c.events) }
 
 func (c *captureCoalescer) drain() []normalized.Event {
@@ -96,5 +159,7 @@ func (c *captureCoalescer) drain() []normalized.Event {
 	c.events = nil
 	c.positions = map[string]int{}
 	c.lastKey = ""
+	c.arpByMAC = map[string]*captureARPPosition{}
+	c.arpByIP = map[string]*captureARPPosition{}
 	return events
 }
