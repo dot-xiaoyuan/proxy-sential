@@ -10,7 +10,7 @@
 
 worker 以短事务领取 45 秒租约；领取 SQL 只对任务行使用 `FOR UPDATE OF j SKIP LOCKED`，模式表仅作只读条件，避免单行模式记录把 8 个 worker 串行化。读取 ClickHouse 和身份资料时不持有共享任务行锁。最终事务先写观测和审计，再短暂锁定任务核对租约令牌与版本；版本不符则回滚全部写入，匹配时才 ACK。期间新证据令版本递增并释放旧租约，新 worker 可立即领取；旧 worker 的写入在版本核对失败时整事务回滚。`async` 下共 8 个 worker：7 个优先按依赖入库时间处理近期任务，1 个专用处理自然到期；实时领取为空时，最多 2 个实时 worker 可借用到期任务，最多形成 3 路到期处理，实时任务出现后借用者回到实时队列。总 worker 不超过 8，最多 4 个同时读取 ClickHouse。即使事件时间已过新鲜窗口，只要依赖版本尚未完成，仍由实时 worker 先判定。`legacy/shadow` 保持 2 个 worker，避免旧快照长事务期间扩大数据库写入压力。已有保存证据的到期任务直接按该证据完成到期判定与审计；没有保存证据的任务仍查询原始事件。`async` 模式下结果不足的任务等待依赖变化、证据到期或每分钟有上限的补漏扫描；`legacy` 和 `shadow` 保留原来的 5 秒复查。
 
-仅在已确认旧任务长期饥饿且数据库仍有余量时，可给控制面设置 `PROXY_SENTINEL_SHARED_OBSERVATION_LEGACY_OLD_WORKER=true`，在 `legacy` 模式下临时启用第三个 worker；它按 `next_attempt_at,dirty_since,job_id` 领取较旧的实时任务。默认关闭，`shadow` 与 `async` 的 worker 数和原有 lane 不变。切换后观察旧待办、近期判定、PostgreSQL 锁等待、ClickHouse 正文读取及发现采集队列；撤销环境变量并重启控制面即可停止新增领取，已领取任务按原租约完成或恢复。
+仅在已确认旧任务长期饥饿且数据库仍有余量时，可给控制面设置 `PROXY_SENTINEL_SHARED_OBSERVATION_LEGACY_OLD_WORKER=true`，在 `legacy` 模式下临时启用第三个 worker；它仅领取尚未完成版本的任务，按 `dirty_since,job_id` 处理最旧待办。默认关闭，`shadow` 与 `async` 的 worker 数和原有 lane 不变。切换后观察旧待办、近期判定、PostgreSQL 锁等待、ClickHouse 正文读取及发现采集队列；撤销环境变量并重启控制面即可停止新增领取，已领取任务按原租约完成或恢复。
 
 ## 现场切换与核验
 
@@ -24,7 +24,7 @@ UPDATE shared_observation_wake_mode SET mode='shadow',changed_at=clock_timestamp
 UPDATE shared_observation_wake_mode SET mode='async',changed_at=clock_timestamp() WHERE singleton;
 ```
 
-观察两份后续完整快照和至少 1,000 条新任务。每次 `async` 判定提交后写一条 `shared_observation_decision` 结构化日志，包含任务版本、依赖时间、延迟、各处理阶段耗时及 `new_dependency` 标记；只用标记为 `true` 的完成记录计算新任务 P99，自然到期、定期补漏及历史积压另报。`shared_observation_jobs.last_decision_latency_ms` 保留每个 IP 最近一次新依赖的判定延迟，可用于快速看板。日志 `shared_observation_metrics` 提供实时/到期数量和最老年龄、待展开范围、超时租约、入队锁等待及最近一次新依赖延迟的 P99。核对新旧唤醒、判定/审计数量，并确认握手入队没有快照级长锁等待。快照范围记录在投影事务结束前更新时间戳，以接近依赖可见的时刻；指标仍包含事务最后提交耗时。
+观察两份在 `async` 切换时刻**之后接收并投影**的完整快照，以及至少 1,000 条依赖时间晚于切换时刻的新任务完成。每次 `async` 判定提交后写一条 `shared_observation_decision` 结构化日志，包含任务版本、依赖时间、延迟、各处理阶段耗时及 `new_dependency` 标记；计数和新输入延迟同时要求 `new_dependency=true`、`dependency_at >= shared_observation_wake_mode.changed_at`。只看切换后写出的日志会把切换前快照集中唤醒留下的旧依赖误算成新输入。自然到期、定期补漏及历史积压另报。`shared_observation_jobs.last_decision_latency_ms` 保留每个 IP 最近一次新依赖的判定延迟，可用于快速看板。日志 `shared_observation_metrics` 提供实时/到期数量和最老年龄、待展开范围、超时租约、入队锁等待及最近一次新依赖延迟的 P99；该滚动窗口在切换初期仍可能含切换前的依赖。核对新旧唤醒、判定/审计数量，并确认握手入队没有快照级长锁等待。快照范围记录在投影事务结束前更新时间戳，以接近依赖可见的时刻；指标仍包含事务最后提交耗时。
 
 失败时先执行：
 
