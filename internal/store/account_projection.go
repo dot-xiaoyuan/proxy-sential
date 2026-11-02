@@ -31,9 +31,11 @@ func (s *PostgresStore) projectPendingIdentitySnapshots(ctx context.Context, lim
 			return err
 		}
 		var raw []byte
-		query := `SELECT f.document FROM identity_snapshot_projection_jobs j JOIN identity_full_snapshots f USING(source,sensor_id,campus_id,access_domain,snapshot_id)`
+		query := `SELECT f.document FROM identity_snapshot_projection_jobs j JOIN identity_full_snapshots f USING(source,sensor_id,campus_id,access_domain,snapshot_id)
+ WHERE NOT EXISTS(SELECT 1 FROM identity_snapshot_projection_cancellations c
+ WHERE c.source=j.source AND c.sensor_id=j.sensor_id AND c.campus_id=j.campus_id AND c.access_domain=j.access_domain AND c.snapshot_id=j.snapshot_id)`
 		if s.identityDeltaEnabled {
-			query += ` WHERE NOT EXISTS(SELECT 1 FROM identity_delta_settings st WHERE st.mode IN ('shadow','delta') AND st.scope_key::jsonb->>'source'=j.source AND st.scope_key::jsonb->>'sensor_id'=j.sensor_id AND st.scope_key::jsonb->>'campus_id'=j.campus_id AND st.scope_key::jsonb->>'access_domain'=j.access_domain)`
+			query += ` AND NOT EXISTS(SELECT 1 FROM identity_delta_settings st WHERE st.mode IN ('shadow','delta') AND st.scope_key::jsonb->>'source'=j.source AND st.scope_key::jsonb->>'sensor_id'=j.sensor_id AND st.scope_key::jsonb->>'campus_id'=j.campus_id AND st.scope_key::jsonb->>'access_domain'=j.access_domain)`
 		}
 		query += ` ORDER BY j.observed_at,j.source,j.snapshot_id FOR UPDATE OF j SKIP LOCKED LIMIT 1`
 		err = tx.QueryRowContext(ctx, query).Scan(&raw)

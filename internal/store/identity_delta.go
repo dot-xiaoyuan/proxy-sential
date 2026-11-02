@@ -155,6 +155,8 @@ func (s *PostgresStore) claimIdentityDelta(ctx context.Context) (identityDeltaRu
  FROM identity_snapshot_projection_jobs j JOIN identity_full_snapshots f USING(source,sensor_id,campus_id,access_domain,snapshot_id)
  JOIN identity_delta_settings st ON st.scope_key::jsonb->>'source'=j.source AND st.scope_key::jsonb->>'sensor_id'=j.sensor_id AND st.scope_key::jsonb->>'campus_id'=j.campus_id AND st.scope_key::jsonb->>'access_domain'=j.access_domain
  WHERE st.mode IN ('shadow','delta')
+ AND NOT EXISTS(SELECT 1 FROM identity_snapshot_projection_cancellations c
+  WHERE c.source=j.source AND c.sensor_id=j.sensor_id AND c.campus_id=j.campus_id AND c.access_domain=j.access_domain AND c.snapshot_id=j.snapshot_id)
  AND NOT EXISTS(SELECT 1 FROM identity_delta_runs a WHERE a.scope_key=st.scope_key AND a.state<>'completed')
  ORDER BY j.observed_at,j.snapshot_id LIMIT 1 ON CONFLICT DO NOTHING`)
 	if err != nil {
@@ -164,6 +166,8 @@ func (s *PostgresStore) claimIdentityDelta(ctx context.Context) (identityDeltaRu
 	err = tx.QueryRowContext(ctx, `UPDATE identity_delta_runs r SET lease_owner=$1,lease_until=now()+interval '30 seconds'
  WHERE r.run_id=(SELECT a.run_id FROM identity_delta_runs a JOIN identity_delta_settings st USING(scope_key)
  WHERE a.state NOT IN ('completed','failed') AND st.mode IN ('shadow','delta')
+ AND NOT EXISTS(SELECT 1 FROM identity_snapshot_projection_cancellations c
+  WHERE c.source=a.source AND c.sensor_id=a.sensor_id AND c.campus_id=a.campus_id AND c.access_domain=a.access_domain AND c.snapshot_id=a.snapshot_id)
  AND NOT(a.state='ready' AND st.mode='shadow') ORDER BY a.run_id LIMIT 1 FOR UPDATE OF a SKIP LOCKED)
  RETURNING r.run_id,r.scope_key,r.source,r.sensor_id,r.campus_id,r.access_domain,r.snapshot_id,r.observed_at,r.received_at,r.interval_seconds,r.expected_members,r.state,r.member_cursor,r.diff_cursor,r.exit_cursor,r.exits_complete,r.batch_size,(SELECT mode FROM identity_delta_settings WHERE scope_key=r.scope_key)`, r.Owner).Scan(&r.ID, &r.ScopeKey, &r.Source, &r.SensorID, &r.CampusID, &r.AccessDomain, &r.SnapshotID, &r.ObservedAt, &r.ReceivedAt, &r.Interval, &r.Expected, &r.State, &r.Cursor, &r.DiffCursor, &r.ExitCursor, &r.ExitsComplete, &r.Batch, &r.Mode)
 	if err != nil {

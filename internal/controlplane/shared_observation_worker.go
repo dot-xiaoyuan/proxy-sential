@@ -235,20 +235,20 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	var readDuration, identityDuration time.Duration
 	scopeJSON, _ := json.Marshal(s.sharedConfig.Sources)
 	group, order := sharedObservationClaimOrder(lane)
+	predicate := sharedObservationClaimPredicate(lane)
 	claimSQL := fmt.Sprintf(`WITH candidate AS (
  SELECT j.job_id FROM shared_observation_jobs j CROSS JOIN shared_observation_wake_mode m WHERE m.singleton
  AND NOT j.expired AND j.canceled_epoch='' AND j.next_attempt_at<=now()
  AND j.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=j.sensor_id AND c.state='active'),'')
  AND (j.lease_token='' OR j.lease_until<now())
- AND (($4='realtime' AND (j.revision>j.completed_revision OR (m.mode<>'async' AND j.last_event_at+($2::integer*interval '1 second')>now())))
-   OR ($4='expiry' AND j.revision=j.completed_revision AND (m.mode='async' OR j.last_event_at+($2::integer*interval '1 second')<=now())))
+ AND (%s)
  AND (j.sensor_id,j.campus_id,j.access_domain) IN (SELECT sensor_id,campus_id,access_domain FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,campus_id text,access_domain text))
  -- The mode row is shared by all claimers. Locking it here makes the other
  -- seven workers skip the entire candidate even while jobs are pending.
  ORDER BY %s LIMIT 1 FOR UPDATE OF j SKIP LOCKED)
  UPDATE shared_observation_jobs j SET lease_token=$3,lease_until=now()+interval '45 seconds'
  FROM candidate WHERE j.job_id=candidate.job_id
- RETURNING j.job_id,j.sensor_id,j.campus_id,j.access_domain,host(j.ip),j.revision,j.last_document,j.last_dependency_at,j.dirty_since<=j.last_dependency_at,j.generation_id`, order)
+ RETURNING j.job_id,j.sensor_id,j.campus_id,j.access_domain,host(j.ip),j.revision,j.last_document,j.last_dependency_at,j.dirty_since<=j.last_dependency_at,j.generation_id`, predicate, order)
 	// Only a transient, random-token lease is changed here. Losing an unflushed
 	// claim on a database crash leaves the durable job pending; a replacement
 	// claim has a different token, so the old worker cannot publish or ACK it.
@@ -494,7 +494,10 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 func sharedObservationClaimOrder(lane string) (string, string) {
 	switch lane {
 	case "realtime_old":
-		return "realtime", "next_attempt_at,dirty_since,job_id"
+		// next_attempt_at is already an eligibility bound. A new observation can
+		// advance it to now for an overdue job; sorting on it would repeatedly
+		// push a hot, never-completed job behind the whole older queue.
+		return "realtime_old", "dirty_since,job_id"
 	case "expiry", "expiry_borrowed":
 		return "expiry", "next_attempt_at,dirty_since,job_id"
 	default:
@@ -504,6 +507,16 @@ func sharedObservationClaimOrder(lane string) (string, string) {
 		// dedicated expiry lane makes progress even under sustained arrivals.
 		return "realtime", "CASE WHEN last_dependency_at>=now()-interval '5 minutes' THEN 0 ELSE 1 END,last_dependency_at,job_id"
 	}
+}
+
+func sharedObservationClaimPredicate(lane string) string {
+	if lane == "realtime_old" {
+		// Keep this condition outside an OR so the pending-visibility partial
+		// index can serve dirty_since ordering without sorting the whole queue.
+		return "$4='realtime_old' AND j.revision>j.completed_revision"
+	}
+	return `($4='realtime' AND (j.revision>j.completed_revision OR (m.mode<>'async' AND j.last_event_at+($2::integer*interval '1 second')>now())))
+   OR ($4='expiry' AND j.revision=j.completed_revision AND (m.mode='async' OR j.last_event_at+($2::integer*interval '1 second')<=now()))`
 }
 
 func sharedObservationNewDependency(lane string, marked bool) bool {

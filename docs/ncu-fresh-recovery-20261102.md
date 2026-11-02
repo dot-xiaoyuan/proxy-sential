@@ -16,6 +16,14 @@
 
 派生服务随后报告 ready 状态查询缺少 `identity_derived_ready_scan` 单例。迁移 198 应创建的该行在现场也为空；按[受限恢复 SQL](../scripts/maintenance/ncu-derived-ready-scan-restore-20261102.sql)（SHA256 `2b8d6e06b319f384d58e126f8b60b4187fa6cedf6bee8b8ba201cc09173ff0cc`）复核不可变截止点及增量登记触发器后，只插入初始扫描游标，保留既有 ready 键和片段状态。新鲜派生模式按设计不扫描旧历史，因此游标保持 `-1`、`done=false`；UTC 12:40:01 的状态已更新为 `fresh_index_keys_present`，不是全部派生完成。
 
+## 全量快照任务边界与临时保护
+
+另发现 NCU `identity_snapshot_projection_jobs` 有 138 份未投影全量快照，其中按 b3 的 `cutover_at` 与首次接收时间划分，137 份在 b3 前、1 份在 b3 后。137 份均在 2026-10-29 派生新起点之后，不能未经用户决定视为旧历史；现场逐项 JOIN 原文表，138/138 都有原文及 64 位内容哈希，b3 前 137 份合计约 2,045,602 个会话位置（单份 6,974–38,023）。用户随后明确选择：137 份逐份审计为“取消投影、未处理”，保留原文和哈希；从 b3 起处理新快照。审计不得删掉原 job 引用，因为现有文档生命周期以待办引用保护旧原文。
+
+全局快照投影原由 `proxy-sentinel-identity-materializer.service` 负责，但实时 NCU 待办触发其 delta 压力门控，最近快照尚未投影。为防主消费追平后旧快照在审计前抢先投影，UTC 12:50 给全局服务增加临时 drop-in `/etc/systemd/system/proxy-sentinel-identity-materializer.service.d/zzzzzz-ncu-snapshot-pause-r60.conf`，仅附加 `--identity-project-snapshots=false` 并重启。原单元快照存于受保护配置目录，SHA256 `c795f0486db53119fe5abffcb18ea21040aca3c2fa7d21603d071c787074a84e`。服务仍 active，控制面 `/readyz` 200；复核 138 个待办仍在、最近投影时间未前进。待逐份审计迁移、原文保护和新快照选择逻辑验证后移除该 drop-in，恢复投影，并以一份成功投影的完整快照作共享观测 `shadow` 对照门槛。
+
+本地 r61 候选的 PostgreSQL 223 新增逐份不可变取消台账，并用外键及更新/删除触发器保护原任务、完整文档和元数据；常规与 delta 投影领取都排除已审计的任务，状态将待投影与已取消分开。现场一次性[审计 SQL](../scripts/maintenance/ncu-snapshot-fresh-cancel-20261102.sql) SHA256 为 `7d620696465ac8a0075a586f2187e0c93f10c5563cddda893e03589678be2c62`，要求 b3 仍活动、恰好 137 份未投影旧任务、每份原文与日志的哈希及时间一致、没有未完成 delta run，整批事务才登记。该核对比较两处已保存哈希，**不是重新计算原始消息字节的独立哈希验证**。本地全仓 Go 测试、构建和 vet 已通过；专用 PostgreSQL 回放 DSN 未配置，真实 SQL 仍须在 184 受控迁移中验收。
+
 ## 已核对的阻塞与边界
 
 184 的 `identity-fresh-b2-20261025` 是唯一活动 `identity-http` cutover，`start_offset=784452`。同一作用域的旧汇总仍是 `accepted_sequence=673156`、`processed_sequence=672823`、`pending_records=2041`、`export_pending_records=9894`，而 `identity_ingest_batches`、`identity_ingest_fragments` 和拆分进度三表均无记录。下一条批次在接收事务中被 `identity_cutover_not_active` 拒绝；桥接保留冻结批次并重试，不能把 503 当作成功接收。

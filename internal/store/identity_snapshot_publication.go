@@ -32,8 +32,13 @@ const snapshotPruneSQL = `DELETE FROM identity_full_snapshots WHERE ctid IN (SEL
  AND NOT EXISTS (SELECT 1 FROM identity_snapshot_projection_jobs j WHERE j.source=f.source AND j.sensor_id=f.sensor_id AND j.campus_id=f.campus_id AND j.access_domain=f.access_domain AND j.snapshot_id=f.snapshot_id)
  ORDER BY f.observed_at LIMIT $6)`
 
-const snapshotLogPruneSQL = `DELETE FROM identity_snapshot_log WHERE ctid IN (SELECT ctid FROM identity_snapshot_log
- WHERE source=$1 AND sensor_id=$2 AND campus_id=$3 AND access_domain=$4 AND observed_at<$5 ORDER BY observed_at LIMIT $6)`
+const snapshotLogPruneSQL = `DELETE FROM identity_snapshot_log WHERE ctid IN (SELECT l.ctid FROM identity_snapshot_log l
+ WHERE l.source=$1 AND l.sensor_id=$2 AND l.campus_id=$3 AND l.access_domain=$4 AND l.observed_at<$5
+ AND NOT EXISTS (SELECT 1 FROM identity_snapshot_projection_jobs j
+ WHERE j.source=l.source AND j.sensor_id=l.sensor_id
+ AND j.campus_id=l.campus_id AND j.access_domain=l.access_domain
+ AND j.snapshot_id=l.snapshot_id)
+ ORDER BY l.observed_at LIMIT $6)`
 
 // snapshotPublication counts distinct sessions and accounts in a complete snapshot and reports a
 // session that belongs to more than one account.

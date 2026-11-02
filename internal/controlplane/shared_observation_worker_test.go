@@ -10,6 +10,7 @@ import (
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
+	"strings"
 	"testing"
 	"time"
 )
@@ -206,13 +207,19 @@ func TestSharedObservationNewRevisionRejectsOldResult(t *testing.T) {
 func TestSharedObservationClaimLanes(t *testing.T) {
 	for _, tt := range []struct{ lane, group, order string }{
 		{"realtime_new", "realtime", "CASE WHEN last_dependency_at>=now()-interval '5 minutes' THEN 0 ELSE 1 END,last_dependency_at,job_id"},
-		{"realtime_old", "realtime", "next_attempt_at,dirty_since,job_id"},
+		{"realtime_old", "realtime_old", "dirty_since,job_id"},
 		{"expiry", "expiry", "next_attempt_at,dirty_since,job_id"},
 	} {
 		group, order := sharedObservationClaimOrder(tt.lane)
 		if group != tt.group || order != tt.order {
 			t.Fatalf("%s: group=%s order=%s", tt.lane, group, order)
 		}
+	}
+	if predicate := sharedObservationClaimPredicate("realtime_old"); predicate != "$4='realtime_old' AND j.revision>j.completed_revision" {
+		t.Fatalf("old lane must use an indexable pending-only predicate: %s", predicate)
+	}
+	if predicate := sharedObservationClaimPredicate("realtime_new"); !strings.Contains(predicate, "j.revision>j.completed_revision OR") {
+		t.Fatalf("new lane must retain legacy due rechecks: %s", predicate)
 	}
 	lanes := map[string]int{}
 	for i := 0; i < 8; i++ {

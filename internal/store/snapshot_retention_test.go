@@ -19,7 +19,7 @@ func TestSnapshotPruneKeepsOnlyLatestDocumentAndYearOfMetadata(t *testing.T) {
 			t.Fatalf("document prune lacks %q: %s", required, snapshotPruneSQL)
 		}
 	}
-	if !strings.Contains(snapshotLogPruneSQL, "observed_at<$5") || !strings.Contains(snapshotLogPruneSQL, "LIMIT $6") {
+	if !strings.Contains(snapshotLogPruneSQL, "observed_at<$5") || !strings.Contains(snapshotLogPruneSQL, "LIMIT $6") || !strings.Contains(snapshotLogPruneSQL, "NOT EXISTS (SELECT 1 FROM identity_snapshot_projection_jobs j") {
 		t.Fatalf("log prune not bounded: %s", snapshotLogPruneSQL)
 	}
 	if snapshotMetadataRetention != 365*24*time.Hour {
