@@ -211,6 +211,8 @@ func TestManifestWritesKeepMixedSegmentAndSkipStaticReceipts(t *testing.T) {
 	mock.ExpectQuery("JOIN stream_discovery_event_keys_compact k").WillReturnRows(
 		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).
 			AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
+	mock.ExpectQuery("SELECT EXISTS").WithArgs(segment.AcceptedAt).
+		WillReturnRows(sqlmock.NewRows([]string{"eligible"}).AddRow(false))
 	mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs("segment-a", segment.ArchiveMonth,
 		segment.BodyLayout, streamManifestResults{nil, prepared[1].Receipt.Result}, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -229,12 +231,16 @@ func TestManifestReceiptSplitPreservesRecognitionInput(t *testing.T) {
 		{Protocol: "arp", Parsed: true, HasFact: true, Fact: streamDiscoveryFact{Protocol: "arp"}},
 		{Protocol: "mdns", Parsed: true, HasFact: true, Fact: streamDiscoveryFact{Protocol: "mdns", RecognitionFields: map[string]string{"model": "printer"}}},
 	}
-	receipts, omitted := splitStreamManifestReceipts(items)
+	receipts, omitted := splitStreamManifestReceipts(items, true)
 	if len(receipts) != 1 || receipts[0].Protocol != "mdns" || len(omitted) != 1 || omitted[0].Protocol != "arp" {
 		t.Fatalf("dynamic recognition input lost: receipts=%+v omitted=%+v", receipts, omitted)
 	}
 	if got := streamRecognitionSummary(omitted)["arp"]; got.Inputs != 1 || got.Parsed != 1 || got.Insufficient != 1 {
 		t.Fatalf("static recognition count lost: %+v", got)
+	}
+	receipts, omitted = splitStreamManifestReceipts(items, false)
+	if len(receipts) != 0 || len(omitted) != len(items) || streamRecognitionSummary(omitted)["mdns"].Features != 1 {
+		t.Fatalf("pre-cutoff diagnostic gap lost from manifest: receipts=%d omitted=%d", len(receipts), len(omitted))
 	}
 }
 

@@ -702,7 +702,13 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	omitted := []streamPreparedDiscovery(nil)
 	receipts := fresh
 	if mode == "manifest" {
-		receipts, omitted = splitStreamManifestReceipts(fresh)
+		var freshDiagnostics bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+ SELECT 1 FROM read_model_runtime_state
+ WHERE name='recognition-fresh-cutoff' AND (state->>'since')::timestamptz<=$1)`, segment.AcceptedAt).Scan(&freshDiagnostics); err != nil {
+			return err
+		}
+		receipts, omitted = splitStreamManifestReceipts(fresh, freshDiagnostics)
 	}
 	if len(receipts) != 0 {
 		mark("write_receipts")
@@ -1213,7 +1219,12 @@ func streamRecognitionSummary(items []streamPreparedDiscovery) map[string]stream
 	return summary
 }
 
-func splitStreamManifestReceipts(items []streamPreparedDiscovery) (receipts, omitted []streamPreparedDiscovery) {
+func splitStreamManifestReceipts(items []streamPreparedDiscovery, freshDiagnostics bool) (receipts, omitted []streamPreparedDiscovery) {
+	// A fixed fresh start owns only later diagnostic work. Earlier events still
+	// have exact receipts in the segment manifest and their raw source archive.
+	if !freshDiagnostics {
+		return nil, items
+	}
 	receipts = make([]streamPreparedDiscovery, 0, len(items))
 	omitted = make([]streamPreparedDiscovery, 0, len(items))
 	for _, item := range items {
