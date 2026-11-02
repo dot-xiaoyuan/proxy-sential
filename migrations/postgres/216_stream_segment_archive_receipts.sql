@@ -2,13 +2,15 @@
 -- them. Existing receipts remain in event mode and keep their original state.
 SET LOCAL lock_timeout = '5s';
 
-ALTER TABLE stream_discovery_receipts
- ADD COLUMN archive_segment_id text;
 ALTER TABLE stream_projection_segments
  ADD COLUMN archive_receipt_mode text DEFAULT 'event';
 ALTER TABLE stream_projection_segments
  ADD CONSTRAINT stream_projection_archive_receipt_mode
  CHECK (archive_receipt_mode IS NOT NULL AND archive_receipt_mode IN ('event','segment')) NOT VALID;
+-- Projection transactions lock the segment row before writing receipts.
+-- Take DDL locks in the same order to avoid a cycle with live writers.
+ALTER TABLE stream_discovery_receipts
+ ADD COLUMN archive_segment_id text;
 
 -- Keep this migration metadata-only. Before enabling segment-mode writes, a
 -- later release must add a bounded pending-segment index and freshness read,
