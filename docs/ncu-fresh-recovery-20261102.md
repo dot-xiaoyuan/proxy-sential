@@ -24,6 +24,8 @@
 
 本地 r61 候选的 PostgreSQL 223 新增逐份不可变取消台账，并用外键及更新/删除触发器保护原任务、完整文档和元数据；常规与 delta 投影领取都排除已审计的任务，状态将待投影与已取消分开。现场一次性[审计 SQL](../scripts/maintenance/ncu-snapshot-fresh-cancel-20261102.sql) SHA256 为 `7d620696465ac8a0075a586f2187e0c93f10c5563cddda893e03589678be2c62`，要求 b3 仍活动、恰好 137 份未投影旧任务、每份原文与日志的哈希及时间一致、没有未完成 delta run，整批事务才登记。该核对比较两处已保存哈希，**不是重新计算原始消息字节的独立哈希验证**。本地全仓 Go 测试、构建和 vet 已通过；专用 PostgreSQL 回放 DSN 未配置，真实 SQL 仍须在 184 受控迁移中验收。
 
+UTC 13:07 阶段：r61 来自干净提交 `eff673801bc31782f7b0393f7ab221234674a0d4`，包 SHA256 `ef7faf4e14b3475dc8000261bf6a38885908a532f0a6b5ef555ca21ddf98059f`，551 个成员、525 项包内哈希通过；包内仅新增 PG223，不包含全量预锁的 PG224 草案。现场完整安装器用 `--skip-backup --prepare-only` 成功应用 PG223，候选 224 项 PostgreSQL / 63 项 ClickHouse 迁移逐项匹配；`current` 仍 r60、`previous` 仍 r59b，`runtime.env` 哈希未变，本地账号仍 1 个。此刻取消台账仍为 0、快照任务 139（旧 137、新 2），全局投影暂停未解除。发现采集队列约 245/256，应用切换先等其排空或使用不强切旧进程的受控流程；不能把迁移完成当成 r61 已发布。
+
 ## 已核对的阻塞与边界
 
 184 的 `identity-fresh-b2-20261025` 是唯一活动 `identity-http` cutover，`start_offset=784452`。同一作用域的旧汇总仍是 `accepted_sequence=673156`、`processed_sequence=672823`、`pending_records=2041`、`export_pending_records=9894`，而 `identity_ingest_batches`、`identity_ingest_fragments` 和拆分进度三表均无记录。下一条批次在接收事务中被 `identity_cutover_not_active` 拒绝；桥接保留冻结批次并重试，不能把 503 当作成功接收。
