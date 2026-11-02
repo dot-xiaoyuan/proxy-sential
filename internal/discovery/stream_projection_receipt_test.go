@@ -67,10 +67,72 @@ func TestStreamArchiveConfirmationUsesCompactLedgerForStream2(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	mock.ExpectQuery("SELECT archive_receipt_mode,epoch,source_kind").WithArgs("segment").WillReturnRows(
+		sqlmock.NewRows([]string{"archive_receipt_mode", "epoch", "source_kind", "source_path", "content_sha256", "source_file_id", "source_start_offset", "source_end_offset", "event_count"}).
+			AddRow("event", segment.Epoch, segment.Source, segment.SourcePath, "", nil, nil, nil, len(items)))
 	mock.ExpectBegin()
 	mock.ExpectQuery("FROM stream_discovery_event_keys_compact k").WithArgs(segment.Epoch, streamArchiveKeys{items[0].Receipt}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectCommit()
 	if err := (StreamDiscoveryProjector{DB: db}).MarkStreamArchiveConfirmed(context.Background(), "segment", segment); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamArchiveConfirmationUsesPersistedSegmentWitness(t *testing.T) {
+	segment := finalizationWitnessSegment()
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []struct {
+		name string
+		hash string
+		want error
+	}{
+		{"matching segment", streamProjectionSegmentHash(segment, prepared), nil},
+		{"different segment body", "wrong-hash", streamlog.ErrContentConflict},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectQuery("SELECT archive_receipt_mode,epoch,source_kind").WithArgs("segment-a").WillReturnRows(
+				sqlmock.NewRows([]string{"archive_receipt_mode", "epoch", "source_kind", "source_path", "content_sha256", "source_file_id", "source_start_offset", "source_end_offset", "event_count"}).
+					AddRow("segment", segment.Epoch, segment.Source, segment.SourcePath, scenario.hash,
+						segment.FileID, segment.StartOffset, segment.EndOffset, len(prepared)))
+			err = (StreamDiscoveryProjector{DB: db}).MarkStreamArchiveConfirmed(context.Background(), "segment-a", segment)
+			if !errors.Is(err, scenario.want) || scenario.want == nil && err != nil {
+				t.Fatalf("archive witness admission: %v, want %v", err, scenario.want)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSegmentWitnessIncludesRejectedReceiptResult(t *testing.T) {
+	segment := finalizationWitnessSegment()
+	segment.Events[0].Timestamp = "invalid-observation-time"
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil || len(prepared) != 1 || prepared[0].HasFact {
+		t.Fatalf("expected rejected receipt: %+v %v", prepared, err)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery("SELECT archive_receipt_mode,epoch,source_kind").WithArgs("segment-a").WillReturnRows(
+		sqlmock.NewRows([]string{"archive_receipt_mode", "epoch", "source_kind", "source_path", "content_sha256", "source_file_id", "source_start_offset", "source_end_offset", "event_count"}).
+			AddRow("segment", segment.Epoch, segment.Source, segment.SourcePath, streamProjectionSegmentHash(segment, prepared),
+				segment.FileID, segment.StartOffset, segment.EndOffset, len(prepared)))
+	if err := (StreamDiscoveryProjector{DB: db}).MarkStreamArchiveConfirmed(context.Background(), "segment-a", segment); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

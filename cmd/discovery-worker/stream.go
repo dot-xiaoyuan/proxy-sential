@@ -41,7 +41,7 @@ func passiveStreamProcessor(journal streamlog.ProcessorJournal, writer streamlog
 // Capture and projection consume the same runtime-only switch. Recovery with
 // the switch off still dual-writes any unfinished stream2 segment for r35.
 func newPassiveStreamLaneWriter(db *sql.DB, ch *store.ClickHouseStore, config discovery.CollectionConfig) (discovery.StreamDiscoveryProjector, store.StreamLaneWriter) {
-	projector := discovery.StreamDiscoveryProjector{DB: db, CompactOnly: config.CompactPassiveEventKeys}
+	projector := discovery.StreamDiscoveryProjector{DB: db, CompactOnly: config.CompactPassiveEventKeys, SegmentArchiveReceipts: config.SegmentArchiveReceipts}
 	return projector, store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector}
 }
 

@@ -364,16 +364,47 @@ func TestStreamDiscoveryReceiptCarriesStableBodyLocator(t *testing.T) {
 		t.Fatal(err)
 	}
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO stream_discovery_receipts").WithArgs(sqlmock.AnyArg(), "fresh", streamJSONFields{"event_key": "fresh:event-a", "scope_id": "scope-a", "body_ref.class": "evidence", "body_ref.month": "202610", "body_ref.scope": "scope-a", "body_ref.key": "fresh:event-a", "body_ref.sha256": items[0].Receipt.Hash}).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO stream_discovery_receipts").WithArgs(sqlmock.AnyArg(), "fresh", streamJSONFields{"event_key": "fresh:event-a", "scope_id": "scope-a", "body_ref.class": "evidence", "body_ref.month": "202610", "body_ref.scope": "scope-a", "body_ref.key": "fresh:event-a", "body_ref.sha256": items[0].Receipt.Hash}, "pending", nil).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = writeStreamDiscoveryReceipts(context.Background(), tx, streamAcceptedMonth(segment.AcceptedAt), segment, items); err != nil {
+	if err = writeStreamDiscoveryReceipts(context.Background(), tx, streamAcceptedMonth(segment.AcceptedAt), segment, "segment-a", "event", items); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamDiscoverySegmentReceiptBindsMarkerWithoutPendingState(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	segment := finalizationWitnessSegment()
+	items, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO stream_discovery_receipts").WithArgs(sqlmock.AnyArg(), segment.Epoch,
+		streamJSONFields{"event_key": items[0].Receipt.Key, "scope_id": items[0].Receipt.Scope}, "segment", "segment-a").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStreamDiscoveryReceipts(context.Background(), tx, streamAcceptedMonth(segment.AcceptedAt), segment, "segment-a", "segment", items); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

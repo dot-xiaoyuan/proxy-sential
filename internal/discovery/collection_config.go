@@ -30,12 +30,15 @@ type CollectionConfig struct {
 	MDNSRecordEvidenceV2 bool `json:"-"`
 	// Enable only after a release that can read compact keys is the rollback
 	// target. The producer then mints a disjoint stream2 event-key namespace.
-	CompactPassiveEventKeys bool             `json:"-"`
-	EventBindings           []EventBinding   `json:"event_bindings"`
-	EnrichmentPaths         []EnrichmentPath `json:"enrichment_paths"`
-	Version                 int              `json:"version"`
-	AllowedCIDRs            string           `json:"allowed_cidrs"`
-	Protocols               []ProtocolOwner  `json:"protocols"`
+	CompactPassiveEventKeys bool `json:"-"`
+	// A compatible rollback release must be installed before new segments use
+	// one archive witness in place of per-event confirmation updates.
+	SegmentArchiveReceipts bool             `json:"-"`
+	EventBindings          []EventBinding   `json:"event_bindings"`
+	EnrichmentPaths        []EnrichmentPath `json:"enrichment_paths"`
+	Version                int              `json:"version"`
+	AllowedCIDRs           string           `json:"allowed_cidrs"`
+	Protocols              []ProtocolOwner  `json:"protocols"`
 }
 
 func DefaultCollectionConfig() CollectionConfig {

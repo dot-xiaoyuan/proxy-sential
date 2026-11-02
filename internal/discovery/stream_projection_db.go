@@ -30,6 +30,9 @@ type StreamDiscoveryProjector struct {
 	// their previous release can still process them. Only a later release with
 	// that compatibility version as rollback may enable compact-only writes.
 	CompactOnly bool
+	// Only new passive stream2 segments can use the segment witness. The
+	// persisted marker mode controls recovery and finalization after cutover.
+	SegmentArchiveReceipts bool
 }
 
 // Expiry is a separate bounded maintenance lane. It never scans event bodies
@@ -187,9 +190,46 @@ SELECT count(*) FROM receipt`
 
 // Called only after archive, search and projection acknowledgements are all
 // durable. Confirmation is distinct from case-time archive hash verification.
-func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context, _ string, segment streamlog.Segment) error {
+func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context, id string, segment streamlog.Segment) error {
 	if p.DB == nil {
 		return errors.New("stream discovery archive confirmation needs DB")
+	}
+	if isCompactPassiveSegment(segment) {
+		var mode, epoch, source, path, hash string
+		var file sql.NullString
+		var start, end sql.NullInt64
+		var count int
+		err := p.DB.QueryRowContext(ctx, `SELECT archive_receipt_mode,epoch,source_kind,source_path,content_sha256,
+ source_file_id,source_start_offset,source_end_offset,event_count
+ FROM stream_projection_segments WHERE segment_id=$1`, id).
+			Scan(&mode, &epoch, &source, &path, &hash, &file, &start, &end, &count)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("stream archive projection marker missing: %w", streamlog.ErrUnconfirmed)
+		}
+		if err != nil {
+			return err
+		}
+		if mode == "segment" {
+			prepared, err := prepareStreamDiscovery(segment)
+			if err != nil {
+				return err
+			}
+			if len(prepared) == 0 {
+				return ErrUnsupportedStreamProjection
+			}
+			if epoch != segment.Epoch || source != segment.Source || path != segment.SourcePath ||
+				hash != streamProjectionSegmentHash(segment, prepared) || count != len(prepared) ||
+				!file.Valid || file.String != segment.FileID || !start.Valid || start.Int64 != segment.StartOffset ||
+				!end.Valid || end.Int64 != segment.EndOffset {
+				return streamlog.ErrContentConflict
+			}
+			// Projection inserted every receipt with this locator in the same
+			// transaction as the marker. The final witness follows all lanes.
+			return nil
+		}
+		if mode != "event" {
+			return streamlog.ErrContentConflict
+		}
 	}
 	items, err := prepareStreamArchiveReceipts(segment)
 	if err != nil {
@@ -427,8 +467,12 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if segment.FileID != "" && segment.StartOffset >= 0 && segment.EndOffset > segment.StartOffset {
 		sourceFile, sourceStart, sourceEnd = segment.FileID, segment.StartOffset, segment.EndOffset
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, id, segment.Epoch, segment.Source, segment.SourcePath, segmentHash, segment.AcceptedAt, len(prepared), sourceFile, sourceStart, sourceEnd)
+	mode := "event"
+	if p.SegmentArchiveReceipts && isCompactPassiveSegment(segment) && sourceFile != nil {
+		mode = "segment"
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`, id, segment.Epoch, segment.Source, segment.SourcePath, segmentHash, segment.AcceptedAt, len(prepared), sourceFile, sourceStart, sourceEnd, mode)
 	if err != nil {
 		return err
 	}
@@ -464,6 +508,14 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 			continue
 		}
 		fresh = append(fresh, item)
+	}
+	if mode == "segment" && len(fresh) != len(prepared) {
+		// Replayed keys can belong to an older segment. Their receipts cannot
+		// be covered by this segment's witness, so use event confirmation.
+		mode = "event"
+		if _, err := tx.ExecContext(ctx, `UPDATE stream_projection_segments SET archive_receipt_mode='event' WHERE segment_id=$1`, id); err != nil {
+			return err
+		}
 	}
 	if len(fresh) == 0 {
 		return tx.Commit()
@@ -552,7 +604,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		return err
 	}
 	mark("write_receipts")
-	if err := writeStreamDiscoveryReceipts(ctx, tx, month, segment, fresh); err != nil {
+	if err := writeStreamDiscoveryReceipts(ctx, tx, month, segment, id, mode, fresh); err != nil {
 		return err
 	}
 	mark("commit")
@@ -928,7 +980,7 @@ func writeStreamDiscoveryChanges(ctx context.Context, tx *sql.Tx, changes []stre
 	return err
 }
 
-func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Time, segment streamlog.Segment, items []streamPreparedDiscovery) error {
+func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Time, segment streamlog.Segment, id, mode string, items []streamPreparedDiscovery) error {
 	type row struct {
 		streamDiscoveryReceipt
 		BodyRef json.RawMessage       `json:"body_ref"`
@@ -944,7 +996,12 @@ func writeStreamDiscoveryReceipts(ctx context.Context, tx *sql.Tx, month time.Ti
 	if err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, insertRecognitionReceiptsSQL, month, segment.Epoch, raw)
+	var locator any
+	state := "pending"
+	if mode == "segment" {
+		locator, state = id, "segment"
+	}
+	result, err := tx.ExecContext(ctx, insertRecognitionReceiptsSQL, month, segment.Epoch, raw, state, locator)
 	if err != nil {
 		return err
 	}

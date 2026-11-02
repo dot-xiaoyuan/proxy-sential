@@ -57,8 +57,8 @@ const insertRecognitionReceiptsSQL = `WITH inputs AS MATERIALIZED (
  SELECT * FROM inputs WHERE accepted_at >=
   (SELECT (state->>'since')::timestamptz FROM read_model_runtime_state WHERE name='recognition-fresh-cutoff')
 )
-INSERT INTO stream_discovery_receipts(accepted_month,epoch,scope_id,event_key,content_sha256,accepted_at,result,body_ref,recognition_input,recognition_status,recognition_check_after)
+INSERT INTO stream_discovery_receipts(accepted_month,epoch,scope_id,event_key,content_sha256,accepted_at,result,body_ref,recognition_input,recognition_status,recognition_check_after,archive_state,archive_segment_id)
 SELECT $1,$2,v.scope_id,v.event_key,v.content_sha256,v.accepted_at,v.result,v.body_ref,m.recognition_input,COALESCE(m.recognition_status,''),
- CASE WHEN m.recognition_status IN ('processing','unattributed') THEN clock_timestamp() ELSE NULL END
+ CASE WHEN m.recognition_status IN ('processing','unattributed') THEN clock_timestamp() ELSE NULL END,$4,$5
 FROM inputs v LEFT JOIN fresh m USING(scope_id,event_key)
 ON CONFLICT DO NOTHING`

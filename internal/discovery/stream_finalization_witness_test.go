@@ -34,7 +34,7 @@ func TestProjectionMarkerCarriesSourcePositionForNewSegments(t *testing.T) {
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO stream_projection_segments").WithArgs("segment-a", segment.Epoch, segment.Source, segment.SourcePath,
-		streamProjectionSegmentHash(segment, prepared), segment.AcceptedAt, len(prepared), segment.FileID, segment.StartOffset, segment.EndOffset).
+		streamProjectionSegmentHash(segment, prepared), segment.AcceptedAt, len(prepared), segment.FileID, segment.StartOffset, segment.EndOffset, "event").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=\\$1 FOR UPDATE").WithArgs("segment-a").
 		WillReturnRows(sqlmock.NewRows([]string{"content_sha256"}).AddRow(streamProjectionSegmentHash(segment, prepared)))
@@ -44,6 +44,51 @@ func TestProjectionMarkerCarriesSourcePositionForNewSegments(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSegmentReceiptProjectionBindsOnlyFreshStream2Keys(t *testing.T) {
+	segment := finalizationWitnessSegment()
+	segment.Events[0].Timestamp = "invalid-observation-time"
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil || len(prepared) != 1 || prepared[0].HasFact {
+		t.Fatalf("expected a receipt without a device fact: %+v %v", prepared, err)
+	}
+	for _, fresh := range []bool{true, false} {
+		t.Run(map[bool]string{true: "fresh", false: "duplicate"}[fresh], func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectBegin()
+			mock.ExpectExec("INSERT INTO stream_projection_segments").WithArgs("segment-a", segment.Epoch, segment.Source, segment.SourcePath,
+				streamProjectionSegmentHash(segment, prepared), segment.AcceptedAt, 1, segment.FileID, segment.StartOffset, segment.EndOffset, "segment").
+				WillReturnResult(sqlmock.NewResult(0, 1))
+			keys := sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"})
+			if fresh {
+				keys.AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash)
+			}
+			mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WillReturnRows(keys)
+			if fresh {
+				mock.ExpectExec("INSERT INTO stream_discovery_receipts").WithArgs(sqlmock.AnyArg(), segment.Epoch, sqlmock.AnyArg(), "segment", "segment-a").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			} else {
+				mock.ExpectQuery("JOIN stream_discovery_event_keys_compact k").WillReturnRows(
+					sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).
+						AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
+				mock.ExpectExec("UPDATE stream_projection_segments SET archive_receipt_mode='event'").WithArgs("segment-a").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			}
+			mock.ExpectCommit()
+			if err := (StreamDiscoveryProjector{DB: db, CompactOnly: true, SegmentArchiveReceipts: true}).
+				projectPreparedStreamSegment(context.Background(), "segment-a", segment, prepared); err != nil {
+				t.Fatal(err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

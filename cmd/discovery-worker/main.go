@@ -42,6 +42,11 @@ func main() {
 		log.Fatal("invalid passive compact event-key mode")
 	}
 	compactPassiveKeys := flag.Bool("passive-compact-event-keys", compactDefault, "emit stream2 passive keys and write only the compact ledger after a compatible rollback release is installed")
+	segmentDefault, err := compactPassiveKeyDefault(os.Getenv("PROXY_SENTINEL_PASSIVE_SEGMENT_ARCHIVE_RECEIPTS"))
+	if err != nil {
+		log.Fatal("invalid passive segment archive receipt mode")
+	}
+	segmentArchiveReceipts := flag.Bool("passive-segment-archive-receipts", segmentDefault, "confirm new passive stream2 archive receipts by segment after installing a compatible rollback release")
 	streamJournal := flag.String("stream-journal", "", "fresh-only durable passive stream journal directory")
 	streamScope := flag.String("capture-scope-config", "", "controlled fresh passive capture scope")
 	streamEpoch := flag.String("stream-epoch", "", "explicit fresh stream generation for stream-prepare")
@@ -56,6 +61,9 @@ func main() {
 	node := flag.String("node", "", "configured discovery node ID")
 	describe := flag.Bool("ssdp-describe", true, "read UPnP descriptions of on-link SSDP announcers whose neighbor MAC matches")
 	flag.Parse()
+	if *segmentArchiveReceipts && !*compactPassiveKeys {
+		log.Fatal("segment archive receipts require compact passive event keys")
+	}
 	library, err := fingerprint.OpenInstalledRuntime()
 	if err != nil {
 		log.Fatal(err)
@@ -74,6 +82,7 @@ func main() {
 	}
 	collection.MDNSRecordEvidenceV2 = *mdnsRecordEvidenceV2
 	collection.CompactPassiveEventKeys = *compactPassiveKeys
+	collection.SegmentArchiveReceipts = *segmentArchiveReceipts
 	if *allowCIDRs == "" {
 		*allowCIDRs = collection.AllowedCIDRs
 	}
