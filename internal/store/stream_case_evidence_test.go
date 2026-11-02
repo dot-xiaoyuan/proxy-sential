@@ -31,7 +31,7 @@ func TestReadStreamCaseEvidenceNeedsArchiveReceiptAndVerifiedBody(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery("FROM jsonb_to_recordset").WillReturnRows(sqlmock.NewRows([]string{"epoch", "scope_id", "event_key", "content_sha256", "body_ref"}).AddRow(ref.Epoch, ref.Scope, ref.Key, ref.SHA256, refJSON))
+	mock.ExpectQuery("(?s)FROM jsonb_to_recordset.*LEFT JOIN stream_projection_segments s.*s.lanes_finalized_at IS NOT NULL").WillReturnRows(sqlmock.NewRows([]string{"epoch", "scope_id", "event_key", "content_sha256", "body_ref"}).AddRow(ref.Epoch, ref.Scope, ref.Key, ref.SHA256, refJSON))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		row, _ := json.Marshal(map[string]string{"scope_id": ref.Scope, "event_key": ref.Key, "content_sha256": ref.SHA256, "body": string(body)})
 		_, _ = w.Write(append(row, '\n'))

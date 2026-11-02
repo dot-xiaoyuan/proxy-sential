@@ -44,7 +44,13 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
 		}
 		return r.DB.QueryRowContext(ctx, `SELECT k.content_sha256,k.first_accepted_at,r.projected_at,r.result,r.archive_state,r.body_ref
  FROM `+table+` k JOIN LATERAL (
- SELECT r.projected_at,r.result,r.archive_state,r.body_ref FROM stream_discovery_receipts r
+ SELECT r.projected_at,r.result,
+  CASE WHEN r.archive_state IN ('verified','failed') THEN r.archive_state
+   WHEN r.archive_segment_id IS NOT NULL THEN CASE WHEN s.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
+   ELSE r.archive_state END AS archive_state,r.body_ref
+ FROM stream_discovery_receipts r
+ LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
+  AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
  WHERE r.accepted_month=k.accepted_month AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=$3
  OFFSET 0) r ON true
 	WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=$3`+hashPredicate, epoch, scope, eventKey).Scan(&hash, &accepted, &projected, &result, &archive, &bodyRef)
@@ -117,7 +123,13 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
  SELECT k.event_key,k.content_sha256,k.first_accepted_at,k.accepted_month FROM `+table+` k
  WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=v.value`+hashPredicate+` OFFSET 0) k
  CROSS JOIN LATERAL (
- SELECT r.projected_at,r.result,r.archive_state,r.body_ref FROM stream_discovery_receipts r
+ SELECT r.projected_at,r.result,
+  CASE WHEN r.archive_state IN ('verified','failed') THEN r.archive_state
+   WHEN r.archive_segment_id IS NOT NULL THEN CASE WHEN s.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
+   ELSE r.archive_state END AS archive_state,r.body_ref
+ FROM stream_discovery_receipts r
+ LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
+  AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
  WHERE r.accepted_month=k.accepted_month AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=k.event_key
  OFFSET 0) r`, epoch, scope, raw)
 		if err != nil {

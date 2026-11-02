@@ -82,7 +82,7 @@ func TestStreamDiscoveryReceiptIsQueryVisiblePerEvent(t *testing.T) {
 	defer db.Close()
 	accepted := time.Now().UTC().Add(-10 * time.Second)
 	projected := accepted.Add(3 * time.Second)
-	mock.ExpectQuery("FROM stream_discovery_event_keys k JOIN LATERAL").WithArgs("fresh-1", "scope-a", "fresh-1:event-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}).AddRow("hash", accepted, projected, "repeat_observation", "pending", []byte(`{"class":"evidence","key":"fresh-1:event-a"}`)))
+	mock.ExpectQuery("(?s)FROM stream_discovery_event_keys k JOIN LATERAL.*archive_segment_id.*lanes_finalized_at").WithArgs("fresh-1", "scope-a", "fresh-1:event-a").WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}).AddRow("hash", accepted, projected, "repeat_observation", "pending", []byte(`{"class":"evidence","key":"fresh-1:event-a"}`)))
 	beforeRead := time.Now().UTC()
 	receipt, found, err := (Repository{DB: db}).StreamDiscoveryReceipt(context.Background(), "fresh-1", "scope-a", "fresh-1:event-a")
 	afterRead := time.Now().UTC()

@@ -42,7 +42,12 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 	 AND kc.epoch=v.epoch AND kc.scope_id=v.scope AND kc.event_key=v.key
 	JOIN stream_discovery_receipts r ON r.accepted_month=coalesce(kc.accepted_month,k.accepted_month)
 	 AND r.epoch=v.epoch AND r.scope_id=v.scope AND r.event_key=v.key
-	WHERE r.archive_state IN ('confirmed','verified')
+	LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
+	 AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
+	WHERE (r.archive_state='verified'
+	 OR (r.archive_state<>'failed' AND
+	  ((r.archive_segment_id IS NULL AND r.archive_state='confirmed')
+	   OR (r.archive_segment_id IS NOT NULL AND s.lanes_finalized_at IS NOT NULL))))
 	 AND (k.event_key IS NOT NULL OR kc.event_key IS NOT NULL)
 	 AND (k.event_key IS NULL OR k.content_sha256=v.sha256)
 	 AND (kc.event_key IS NULL OR kc.content_sha256=v.sha256)

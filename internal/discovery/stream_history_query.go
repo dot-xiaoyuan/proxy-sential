@@ -28,7 +28,10 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	rows, err := r.DB.QueryContext(ctx, `SELECT c.change_id,c.event_key,c.accepted_at,c.observed_at,c.change_kind,c.before_hash,c.after_hash,c.body_ref,coalesce(r.archive_state,'pending')
+	rows, err := r.DB.QueryContext(ctx, `SELECT c.change_id,c.event_key,c.accepted_at,c.observed_at,c.change_kind,c.before_hash,c.after_hash,c.body_ref,
+ coalesce(CASE WHEN r.archive_state IN ('verified','failed') THEN r.archive_state
+  WHEN r.archive_segment_id IS NOT NULL THEN CASE WHEN s.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
+  ELSE r.archive_state END,'pending')
  FROM stream_discovery_changes c
  LEFT JOIN stream_discovery_event_keys k ON k.epoch=c.epoch AND k.event_key=c.event_key AND k.scope_id=c.body_ref->>'scope'
  LEFT JOIN stream_discovery_event_keys_compact kc
@@ -38,6 +41,8 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
   AND r.epoch=c.epoch AND r.scope_id=c.body_ref->>'scope' AND r.event_key=c.event_key
   AND (k.event_key IS NULL OR kc.event_key IS NULL OR
    (k.accepted_month=kc.accepted_month AND k.content_sha256=kc.content_sha256))
+ LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
+  AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
  WHERE c.epoch=$1 AND c.device_key=$2 AND ($3::bigint=0 OR c.change_id<$3)
  ORDER BY c.change_id DESC LIMIT $4`, epoch, key, after, limit+1)
 	if err != nil {
