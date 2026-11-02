@@ -10,8 +10,8 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 )
 
-const dnsCacheMaxRecords = 10000
-const dnsCacheMaxBytes = 8 << 20
+const dnsCacheMaxRecords = 100000
+const dnsCacheMaxBytes = 64 << 20
 
 type dnsCacheAdmissionFailure uint8
 

@@ -45,14 +45,14 @@ func TestMDNSFullCacheRefreshesExistingRecordsAndRetainsWithdrawal(t *testing.T)
 	source := Source{ID: "mirror", Node: "sensor", Site: "campus", Domain: "access", Address: "mirror0"}
 	at := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
 	decoder.Decode(coverageMDNSFrame(t, coverageDNSSRV(2), coverageDNSAddress("printer.local.", 2)), source, at)
-	for start := 0; start < 9998; start += 200 {
+	for start := 0; start < dnsCacheMaxRecords-2; start += 200 {
 		records := make([]dnsmessage.Resource, 0, 200)
-		for i := start; i < min(start+200, 9998); i++ {
+		for i := start; i < min(start+200, dnsCacheMaxRecords-2); i++ {
 			records = append(records, coverageDNSAddress(fmt.Sprintf("host-%d.local.", i), 600))
 		}
 		decoder.Decode(coverageMDNSFrame(t, records...), source, at)
 	}
-	if len(decoder.DNS.records) != 10000 {
+	if len(decoder.DNS.records) != dnsCacheMaxRecords {
 		t.Fatalf("cache has %d records", len(decoder.DNS.records))
 	}
 	renewed := decoder.Decode(coverageMDNSFrame(t, coverageDNSSRV(120), coverageDNSAddress("printer.local.", 120)), source, at.Add(time.Second))
@@ -60,7 +60,7 @@ func TestMDNSFullCacheRefreshesExistingRecordsAndRetainsWithdrawal(t *testing.T)
 		t.Fatalf("full cache lost live renewal or attributed relay MAC: %+v", renewed)
 	}
 	decoder.Decode(coverageMDNSFrame(t, coverageDNSAddress("overflow.local.", 600)), source, at.Add(time.Second))
-	if len(decoder.DNS.records) != 10000 {
+	if len(decoder.DNS.records) != dnsCacheMaxRecords {
 		t.Fatal("new record exceeded cache capacity")
 	}
 	// Check after the original TTL, with no fresh address in this packet.
@@ -72,7 +72,7 @@ func TestMDNSFullCacheRefreshesExistingRecordsAndRetainsWithdrawal(t *testing.T)
 	if len(withdrawn) != 2 || number(withdrawn[0].Payload, "ttl") != 0 || number(withdrawn[1].Payload, "ttl") != 0 || !isMDNSHostAnnouncement(withdrawn[1]) {
 		t.Fatalf("address withdrawal disappeared: %+v", withdrawn)
 	}
-	if len(decoder.DNS.records) != 9999 {
+	if len(decoder.DNS.records) != dnsCacheMaxRecords-1 {
 		t.Fatal("withdrawn record retained cache capacity")
 	}
 	after := decoder.Decode(coverageMDNSFrame(t, coverageDNSSRV(120)), source, at.Add(5*time.Second))

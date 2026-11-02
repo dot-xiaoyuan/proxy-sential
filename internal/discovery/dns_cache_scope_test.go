@@ -27,7 +27,7 @@ func TestMDNSCaptureCacheSkipsOutOfScopeAddressFloodBeforeService(t *testing.T) 
 	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	source := Source{ID: "mirror", Node: "sensor", Site: "campus", Domain: "access", Address: "mirror0"}
 	decoder := newCaptureFrameDecoder(false, allow...)
-	for i := 0; i < dnsCacheMaxRecords; i++ {
+	for i := 0; i < 10000; i++ {
 		if decoder.DNS.observe("other-scope", scopeTestAddress(fmt.Sprintf("outside-%d.local.", i), [4]byte{192, 0, 2, 1}, 600), at) {
 			t.Fatal("out-of-scope address was treated as a budget failure")
 		}
@@ -36,7 +36,7 @@ func TestMDNSCaptureCacheSkipsOutOfScopeAddressFloodBeforeService(t *testing.T) 
 		t.Fatalf("out-of-scope addresses consumed cache: %d records, %d bytes", len(decoder.DNS.records), decoder.DNS.bytes)
 	}
 	stats := decoder.DNS.captureStats()
-	if stats.SkippedOutOfScope.A != dnsCacheMaxRecords || stats.RecordsNotRetained != 0 || stats.NotRetainedByRecordLimit != (DNSCacheRecordKinds{}) {
+	if stats.SkippedOutOfScope.A != 10000 || stats.RecordsNotRetained != 0 || stats.NotRetainedByRecordLimit != (DNSCacheRecordKinds{}) {
 		t.Fatalf("scope skips were mixed with capacity failures: %+v", stats)
 	}
 	raw, err := json.Marshal(stats)
@@ -140,7 +140,7 @@ func TestMDNSCaptureCacheScopeKeepsWithdrawalAndBothBudgets(t *testing.T) {
 		}
 	}
 	if !decoder.DNS.observe("scope", inside, at) {
-		t.Fatal("in-scope record escaped the 10,000 entry limit")
+		t.Fatal("in-scope record escaped the entry limit")
 	}
 	if decoder.DNS.captureStats().SkippedOutOfScope.A != 0 {
 		t.Fatal("in-scope capacity failure counted as scope skip")

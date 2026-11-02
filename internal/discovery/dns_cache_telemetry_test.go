@@ -53,7 +53,7 @@ func TestMDNSV1FullCacheCountsCrossMessageServiceGap(t *testing.T) {
 
 func TestMDNSCacheByteHeadroomCountsSupportedRecordTypes(t *testing.T) {
 	decoder := newCaptureFrameDecoder(false)
-	// Isolate the byte admission gate without allocating an 8 MiB fixture.
+	// Isolate the byte admission gate without allocating a full-budget fixture.
 	decoder.DNS.bytes = dnsCacheMaxBytes - 1
 	source := Source{ID: "mirror", Node: "sensor", Site: "campus", Domain: "access", Address: "mirror0"}
 	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)

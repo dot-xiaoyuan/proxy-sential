@@ -461,8 +461,8 @@ func TestMDNSCanonicalRenewalRejectsByteGrowthBeforeMutating(t *testing.T) {
 	cache.observe("scope|", original, at)
 	key := dnsCacheRecordKey("scope|", original)
 	before := *cache.records[key]
-	// Model capacity consumed by other entries without allocating 8 MiB of
-	// unrelated evidence; this checks only the replacement reservation path.
+	// Model capacity consumed by other entries without allocating a full
+	// budget of unrelated evidence; check only the replacement reservation path.
 	cache.bytes = dnsCacheMaxBytes
 	if !cache.observe("scope|", coverageDNSAddress(" office.local.", 300), at.Add(time.Second)) {
 		t.Fatal("renewal exceeded byte capacity")
