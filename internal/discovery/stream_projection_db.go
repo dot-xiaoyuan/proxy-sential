@@ -702,10 +702,8 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	omitted := []streamPreparedDiscovery(nil)
 	receipts := fresh
 	if mode == "manifest" {
-		var freshDiagnostics bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
- SELECT 1 FROM read_model_runtime_state
- WHERE name='recognition-fresh-cutoff' AND (state->>'since')::timestamptz<=$1)`, segment.AcceptedAt).Scan(&freshDiagnostics); err != nil {
+		freshDiagnostics, err := streamManifestFreshDiagnostics(ctx, tx, segment.AcceptedAt)
+		if err != nil {
 			return err
 		}
 		receipts, omitted = splitStreamManifestReceipts(fresh, freshDiagnostics)
@@ -1236,4 +1234,17 @@ func splitStreamManifestReceipts(items []streamPreparedDiscovery, freshDiagnosti
 		}
 	}
 	return receipts, omitted
+}
+
+func streamManifestFreshDiagnostics(ctx context.Context, tx *sql.Tx, accepted time.Time) (bool, error) {
+	var since time.Time
+	err := tx.QueryRowContext(ctx, `SELECT (state->>'since')::timestamptz
+ FROM read_model_runtime_state WHERE name='recognition-fresh-cutoff'`).Scan(&since)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !accepted.Before(since), nil
 }

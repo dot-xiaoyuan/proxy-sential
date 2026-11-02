@@ -211,8 +211,7 @@ func TestManifestWritesKeepMixedSegmentAndSkipStaticReceipts(t *testing.T) {
 	mock.ExpectQuery("JOIN stream_discovery_event_keys_compact k").WillReturnRows(
 		sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"}).
 			AddRow(prepared[0].Receipt.Scope, prepared[0].Receipt.Key, prepared[0].Receipt.Hash))
-	mock.ExpectQuery("SELECT EXISTS").WithArgs(segment.AcceptedAt).
-		WillReturnRows(sqlmock.NewRows([]string{"eligible"}).AddRow(false))
+	mock.ExpectQuery("SELECT .*since").WillReturnRows(sqlmock.NewRows([]string{"since"}))
 	mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs("segment-a", segment.ArchiveMonth,
 		segment.BodyLayout, streamManifestResults{nil, prepared[1].Receipt.Result}, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -241,6 +240,30 @@ func TestManifestReceiptSplitPreservesRecognitionInput(t *testing.T) {
 	receipts, omitted = splitStreamManifestReceipts(items, false)
 	if len(receipts) != 0 || len(omitted) != len(items) || streamRecognitionSummary(omitted)["mdns"].Features != 1 {
 		t.Fatalf("pre-cutoff diagnostic gap lost from manifest: receipts=%d omitted=%d", len(receipts), len(omitted))
+	}
+}
+
+func TestManifestFreshDiagnosticsRejectsBadCutoff(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .*since").WillReturnRows(sqlmock.NewRows([]string{"since"}).AddRow(nil))
+	mock.ExpectRollback()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := streamManifestFreshDiagnostics(context.Background(), tx, time.Now().UTC()); err == nil {
+		t.Fatal("existing cutoff without since was treated as no cutoff")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
