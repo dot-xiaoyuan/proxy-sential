@@ -320,7 +320,7 @@ func (p StreamDiscoveryProjector) verifyStreamManifestArchive(ctx context.Contex
    OR (m.results->v.ordinal='null'::jsonb AND k.receipt_segment_id IS DISTINCT FROM m.segment_id
     AND (EXISTS(SELECT 1 FROM stream_discovery_receipts r
       LEFT JOIN stream_projection_segments sr ON sr.segment_id=r.archive_segment_id
-       AND sr.epoch=r.epoch AND sr.archive_receipt_mode='segment'
+       AND sr.epoch=r.epoch AND sr.archive_receipt_mode IN ('segment','manifest')
       WHERE r.accepted_month=k.accepted_month AND r.epoch=k.epoch
        AND r.scope_id=k.scope_id AND r.event_key=k.event_key
        AND r.content_sha256=k.content_sha256

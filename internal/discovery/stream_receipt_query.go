@@ -50,7 +50,7 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
    ELSE r.archive_state END AS archive_state,r.body_ref
  FROM stream_discovery_receipts r
  LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
-  AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
+  AND s.epoch=r.epoch AND s.archive_receipt_mode IN ('segment','manifest')
  WHERE r.accepted_month=k.accepted_month AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=$3
  OFFSET 0) r ON true
 	WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=$3`+hashPredicate, epoch, scope, eventKey).Scan(&hash, &accepted, &projected, &result, &archive, &bodyRef)
@@ -139,7 +139,7 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
    ELSE r.archive_state END AS archive_state,r.body_ref
  FROM stream_discovery_receipts r
  LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
-  AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
+  AND s.epoch=r.epoch AND s.archive_receipt_mode IN ('segment','manifest')
  WHERE r.accepted_month=k.accepted_month AND r.epoch=$1 AND r.scope_id=$2 AND r.event_key=k.event_key
  OFFSET 0) r`, epoch, scope, raw)
 		if err != nil {

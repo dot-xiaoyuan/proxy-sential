@@ -59,7 +59,7 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
   AND (k.event_key IS NULL OR kc.event_key IS NULL OR
    (k.accepted_month=kc.accepted_month AND k.content_sha256=kc.content_sha256))
  LEFT JOIN stream_projection_segments s ON s.segment_id=r.archive_segment_id
-  AND s.epoch=r.epoch AND s.archive_receipt_mode='segment'
+  AND s.epoch=r.epoch AND s.archive_receipt_mode IN ('segment','manifest')
  LEFT JOIN stream_projection_segments sm ON sm.segment_id=kc.receipt_segment_id
  LEFT JOIN stream_discovery_segment_receipt_manifests m ON m.segment_id=sm.segment_id
  WHERE c.epoch=$1 AND c.device_key=$2 AND ($3::bigint=0 OR c.change_id<$3)
