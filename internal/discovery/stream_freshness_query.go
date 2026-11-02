@@ -11,7 +11,16 @@ func (r Repository) streamDiscoveryFreshness(ctx context.Context) (map[string]an
 	var version sql.NullInt64
 	err := r.DB.QueryRowContext(ctx, `SELECT min(pending.accepted_at),max(projected.projected_at),max(state.result_version)
  FROM (SELECT DISTINCT epoch FROM stream_source_cutovers WHERE state='active') c
- LEFT JOIN LATERAL (SELECT accepted_at FROM stream_discovery_receipts WHERE epoch=c.epoch AND archive_state='pending' ORDER BY accepted_at LIMIT 1) pending ON true
+ LEFT JOIN LATERAL (
+  SELECT min(p.accepted_at) AS accepted_at FROM (
+   (SELECT accepted_at FROM stream_discovery_receipts
+    WHERE epoch=c.epoch AND archive_state='pending' ORDER BY accepted_at LIMIT 1)
+   UNION ALL
+   (SELECT accepted_at FROM stream_projection_segments
+    WHERE epoch=c.epoch AND archive_receipt_mode='segment' AND lanes_finalized_at IS NULL
+    ORDER BY accepted_at LIMIT 1)
+  ) p
+ ) pending ON true
  LEFT JOIN LATERAL (SELECT projected_at FROM stream_projection_segments WHERE epoch=c.epoch ORDER BY projected_at DESC LIMIT 1) projected ON true
  LEFT JOIN LATERAL (SELECT result_version FROM stream_discovery_device_state WHERE epoch=c.epoch ORDER BY result_version DESC LIMIT 1) state ON true`).Scan(&oldest, &projected, &version)
 	if err != nil {

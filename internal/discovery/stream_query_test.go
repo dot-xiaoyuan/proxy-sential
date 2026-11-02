@@ -52,6 +52,28 @@ func TestDiscoveryFreshnessDoesNotCountCancelledLegacyWorkAsFreshLag(t *testing.
 	}
 }
 
+func TestDiscoveryFreshnessIncludesUnfinalizedSegment(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	accepted := time.Now().UTC().Add(-20 * time.Second)
+	projected := time.Now().UTC()
+	mock.ExpectQuery("(?s)archive_state='pending'.*UNION ALL.*archive_receipt_mode='segment' AND lanes_finalized_at IS NULL").
+		WillReturnRows(sqlmock.NewRows([]string{"oldest", "projected", "version"}).AddRow(accepted, projected, int64(10)))
+	result, err := (Repository{DB: db}).streamDiscoveryFreshness(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldest, ok := result["archive_oldest_pending_at"].(time.Time); !ok || !oldest.Equal(accepted) || result["archive_status"] != "delayed" {
+		t.Fatalf("segment archive backlog disappeared: %+v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDiscoveryHistoryReadsFreshNarrowChanges(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
