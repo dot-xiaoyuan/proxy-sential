@@ -75,6 +75,34 @@ CREATE TRIGGER protect_stream3_manifest_metadata
 BEFORE UPDATE OR DELETE ON stream_discovery_segment_receipt_manifests
 FOR EACH ROW EXECUTE FUNCTION sentinel_protect_stream3_manifest_metadata();
 
+-- Row triggers do not run for TRUNCATE, including a table reached through
+-- TRUNCATE ... CASCADE. Preserve stream3 proof even during a test reset while
+-- allowing a legacy-only table to follow its existing lifecycle.
+CREATE FUNCTION sentinel_protect_stream3_truncate() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE scheme_column text; has_stream3 boolean;
+BEGIN
+ CASE TG_TABLE_NAME
+  WHEN 'stream_projection_segments' THEN scheme_column:='passive_key_scheme';
+  WHEN 'stream_discovery_segment_receipt_manifests' THEN scheme_column:='key_scheme';
+  ELSE RAISE EXCEPTION 'unsupported stream3 truncate guard table';
+ END CASE;
+ EXECUTE format('SELECT EXISTS(SELECT 1 FROM %s WHERE %I=$1)',TG_RELID::regclass,scheme_column)
+  INTO has_stream3 USING 'stream3';
+ IF has_stream3 THEN
+  RAISE EXCEPTION 'stream3 % cannot be truncated',TG_TABLE_NAME;
+ END IF;
+ RETURN NULL;
+END $$;
+
+CREATE TRIGGER protect_stream3_segment_truncate
+BEFORE TRUNCATE ON stream_projection_segments
+FOR EACH STATEMENT EXECUTE FUNCTION sentinel_protect_stream3_truncate();
+
+CREATE TRIGGER protect_stream3_manifest_truncate
+BEFORE TRUNCATE ON stream_discovery_segment_receipt_manifests
+FOR EACH STATEMENT EXECUTE FUNCTION sentinel_protect_stream3_truncate();
+
 -- PostgreSQL text cannot contain a NUL byte; construct the exact journal
 -- source-interval identity as bytea before hashing it.
 CREATE FUNCTION sentinel_stream_source_segment_id(p_epoch text,p_source text,p_path text,

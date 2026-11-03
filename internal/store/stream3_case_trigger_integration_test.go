@@ -119,10 +119,41 @@ func TestStream3CaseTriggerProtectsSegmentOriginalPostgres(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
+	for _, tc := range []struct{ table, trigger string }{
+		{"stream_projection_segments", "protect_stream3_segment_metadata"},
+		{"stream_discovery_segment_receipt_manifests", "protect_stream3_manifest_metadata"},
+		{"stream_projection_segments", "protect_stream3_segment_truncate"},
+		{"stream_discovery_segment_receipt_manifests", "protect_stream3_manifest_truncate"},
+	} {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE `+tc.table+` ENABLE REPLICA TRIGGER `+tc.trigger); err != nil {
+			t.Fatal(err)
+		}
+		var active int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_trigger
+		 WHERE tgrelid=to_regclass($1) AND tgname=$2 AND tgenabled IN ('O','A')`, tc.table, tc.trigger).Scan(&active); err != nil || active != 0 {
+			t.Fatalf("replica-only trigger counted as ordinary-session guard: %s %d %v", tc.trigger, active, err)
+		}
+		if _, err := db.ExecContext(ctx, `ALTER TABLE `+tc.table+` ENABLE TRIGGER `+tc.trigger); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_trigger
+		 WHERE tgrelid=to_regclass($1) AND tgname=$2 AND tgenabled IN ('O','A')`, tc.table, tc.trigger).Scan(&active); err != nil || active != 1 {
+			t.Fatalf("ordinary-session trigger not recognized: %s %d %v", tc.trigger, active, err)
+		}
+	}
 	if _, err := db.ExecContext(ctx, `CREATE TRIGGER protect_stream_discovery_case_evidence
  AFTER INSERT OR UPDATE OF evidence ON risk_case_evidence_snapshots
  FOR EACH ROW EXECUTE FUNCTION sentinel_protect_stream_discovery_case_evidence()`); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO stream_projection_segments
+	 (segment_id,epoch,source_kind,source_path,archive_receipt_mode,event_count,accepted_at,projected_at)
+	 VALUES('legacy-clear','fresh','passive-discovery','packet://legacy','manifest',1,now(),now());
+	 INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results)
+	 VALUES('legacy-clear','202611','','["applied"]'::jsonb);
+	 TRUNCATE stream_discovery_segment_receipt_manifests;
+	 TRUNCATE stream_projection_segments;`); err != nil {
+		t.Fatalf("legacy-only reset changed: %v", err)
 	}
 	const epoch, scope, path, file = "fresh", "scope-a", "packet://test", "capture-a"
 	id := streamlog.SourceSegmentID(streamlog.Segment{Epoch: epoch, Source: "passive-discovery", SourcePath: path,
@@ -175,6 +206,37 @@ func TestStream3CaseTriggerProtectsSegmentOriginalPostgres(t *testing.T) {
 	}
 	if err := insertCase(); err != nil {
 		t.Fatalf("valid finalized stream3 case rejected: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE stream3_truncate_segment_root(id integer PRIMARY KEY);
+	 CREATE TABLE stream3_truncate_manifest_root(id integer PRIMARY KEY);
+	 ALTER TABLE stream_projection_segments ADD COLUMN truncate_root integer REFERENCES stream3_truncate_segment_root(id);
+	 ALTER TABLE stream_discovery_segment_receipt_manifests ADD COLUMN truncate_root integer REFERENCES stream3_truncate_manifest_root(id)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		`TRUNCATE stream_projection_segments`,
+		`TRUNCATE stream_discovery_segment_receipt_manifests`,
+		`TRUNCATE stream3_truncate_segment_root CASCADE`,
+		`TRUNCATE stream3_truncate_manifest_root CASCADE`,
+	} {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, truncateErr := tx.ExecContext(ctx, query)
+		if err := tx.Rollback(); err != nil {
+			t.Fatal(err)
+		}
+		if truncateErr == nil {
+			t.Errorf("stream3 proof survived only because TRUNCATE was rolled back: %s", query)
+		}
+		var segmentCount, manifestCount int
+		if err := db.QueryRowContext(ctx, `SELECT
+		 (SELECT count(*) FROM stream_projection_segments WHERE passive_key_scheme='stream3'),
+		 (SELECT count(*) FROM stream_discovery_segment_receipt_manifests WHERE key_scheme='stream3')`).
+			Scan(&segmentCount, &manifestCount); err != nil || segmentCount != 1 || manifestCount != 1 {
+			t.Fatalf("TRUNCATE rollback lost stream3 proof after %s: %d/%d %v", query, segmentCount, manifestCount, err)
+		}
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO stream_discovery_receipts
  (accepted_month,epoch,scope_id,event_key,content_sha256,result,accepted_at,archive_state,body_ref,archive_segment_id)

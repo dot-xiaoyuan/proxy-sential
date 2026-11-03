@@ -75,9 +75,13 @@ func verifyCompactPassiveEventKeySchema(ctx context.Context, db *sql.DB, config 
  AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_projection_segments')
   AND conname='stream_projection_archive_receipt_mode' AND pg_get_constraintdef(oid) LIKE '%manifest%')
  AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_projection_segments')
-  AND tgname='protect_stream3_segment_metadata' AND tgenabled<>'D')
+  AND tgname='protect_stream3_segment_metadata' AND tgenabled IN ('O','A'))
  AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_discovery_segment_receipt_manifests')
-  AND tgname='protect_stream3_manifest_metadata' AND tgenabled<>'D')`).Scan(&ready); err != nil {
+  AND tgname='protect_stream3_manifest_metadata' AND tgenabled IN ('O','A'))
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_projection_segments')
+  AND tgname='protect_stream3_segment_truncate' AND tgenabled IN ('O','A'))
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND tgname='protect_stream3_manifest_truncate' AND tgenabled IN ('O','A'))`).Scan(&ready); err != nil {
 			return fmt.Errorf("stream3 segment-key schema preflight: %w", err)
 		}
 		if !ready {

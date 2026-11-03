@@ -116,6 +116,25 @@ func TestStream3ProducerRequiresPG225SchemaBeforeCapture(t *testing.T) {
 	}
 }
 
+func TestStream3PreflightRejectsReplicaOnlyOrMissingTruncateGuards(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	config := discovery.DefaultCollectionConfig()
+	config.Stream3PassiveEventKeys = true
+	mock.ExpectQuery(`(?s)protect_stream3_segment_metadata'.*tgenabled IN \('O','A'\).*protect_stream3_manifest_metadata'.*tgenabled IN \('O','A'\).*protect_stream3_segment_truncate'.*tgenabled IN \('O','A'\).*protect_stream3_manifest_truncate'.*tgenabled IN \('O','A'\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(false))
+	err = verifyCompactPassiveEventKeySchema(context.Background(), db, config)
+	if err == nil || !strings.Contains(err.Error(), "PG225 is not installed") {
+		t.Fatalf("replica-only or missing stream3 guard did not fail closed: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTwoThousandStream3EventsRequireWidenedManifest(t *testing.T) {
 	for _, ready := range []bool{false, true} {
 		db, mock, err := sqlmock.New()
