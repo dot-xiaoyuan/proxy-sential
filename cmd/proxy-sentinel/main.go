@@ -728,7 +728,7 @@ func runMigrate(args []string) error {
 
 func runDeviceFingerprint(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: proxy-sentinel device-fingerprint <build|build-embedded|extend|refresh|upgrade-v7|verify|install>")
+		return fmt.Errorf("usage: proxy-sentinel device-fingerprint <build|build-embedded|extend|refresh|fingerbank-refresh|upgrade-v7|verify|install>")
 	}
 	switch args[0] {
 	case "upgrade-v7":
@@ -835,6 +835,78 @@ func runDeviceFingerprint(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "device fingerprint bundle built: version=%s output=%s\n", manifest.Version, *output)
 		return nil
+	case "fingerbank-refresh":
+		fs := flag.NewFlagSet("device-fingerprint fingerbank-refresh", flag.ContinueOnError)
+		rawPath := fs.String("raw", "", "extracted fingerbank raw records JSON")
+		basePath := fs.String("base", "", "verified base bundle to update")
+		jsonOut := fs.String("json-out", "", "write the compiled fingerbank-dhcp.json here")
+		statsOut := fs.String("stats-out", "", "write compile statistics here")
+		output := fs.String("output", "", "write the refreshed bundle here")
+		version := fs.String("version", "", "new bundle version")
+		sourceVersion := fs.String("source-version", "", "fingerbank snapshot version label")
+		sourceURL := fs.String("source-url", "https://api.fingerbank.org/api/v2/download/db", "fingerbank snapshot URL")
+		sourceLicense := fs.String("source-license", "ODbL-1.0/DbCL-1.0", "fingerbank source license declaration")
+		noticePath := fs.String("notice", "", "optional replacement licenses/NOTICE.txt")
+		minRules := fs.Int("min-rules", 0, "minimum compiled rules (0 uses the built-in guard)")
+		maxUnmapped := fs.Float64("max-unmapped-rate", 0, "maximum unmapped rule rate (0 uses the built-in guard)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *rawPath == "" {
+			return fmt.Errorf("--raw is required")
+		}
+		raw, err := os.ReadFile(*rawPath)
+		if err != nil {
+			return err
+		}
+		compiled, stats, err := fingerprint.CompileFingerbankSnapshot(raw, fingerprint.FingerbankCompileOptions{MinRules: *minRules, MaxUnmappedRate: *maxUnmapped})
+		if err != nil {
+			return err
+		}
+		if *statsOut != "" {
+			encoded, marshalErr := json.MarshalIndent(stats, "", "  ")
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if writeErr := os.WriteFile(*statsOut, append(encoded, '\n'), 0o640); writeErr != nil {
+				return writeErr
+			}
+		}
+		if *jsonOut != "" {
+			if writeErr := os.WriteFile(*jsonOut, compiled, 0o640); writeErr != nil {
+				return writeErr
+			}
+		}
+		if *output == "" {
+			return writeJSON(os.Stdout, stats)
+		}
+		if *basePath == "" || *version == "" || *sourceVersion == "" {
+			return fmt.Errorf("--base, --version and --source-version are required with --output")
+		}
+		baseData, err := os.ReadFile(*basePath)
+		if err != nil {
+			return err
+		}
+		var notice []byte
+		if *noticePath != "" {
+			notice, err = os.ReadFile(*noticePath)
+			if err != nil {
+				return err
+			}
+		}
+		manifest, err := fingerprint.ReplaceFingerbankSnapshot(baseData, compiled, fingerprint.FingerbankReplaceOptions{
+			Output:        *output,
+			Version:       *version,
+			SourceVersion: *sourceVersion,
+			SourceURL:     *sourceURL,
+			SourceLicense: *sourceLicense,
+			Notice:        notice,
+			Now:           time.Now(),
+		})
+		if err != nil {
+			return err
+		}
+		return writeJSON(os.Stdout, map[string]any{"manifest": manifest, "stats": stats})
 	case "verify":
 		fs := flag.NewFlagSet("device-fingerprint verify", flag.ContinueOnError)
 		bundlePath := fs.String("bundle", "", "bundle path")
