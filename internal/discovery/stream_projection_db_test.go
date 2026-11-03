@@ -113,10 +113,13 @@ func TestTwoThousandEventManifestKeepsLastOrdinal(t *testing.T) {
 	}
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{"scope_id", "event_key", "content_sha256"})
-	for _, key := range wantKeys {
+	// A digest-ordered INSERT can return a different order from the source.
+	// The manifest still uses the original source ordinal.
+	for i := len(wantKeys) - 1; i >= 0; i-- {
+		key := wantKeys[i]
 		rows.AddRow(key.Scope, key.Key, key.Hash)
 	}
-	mock.ExpectQuery("INSERT INTO stream_discovery_event_keys_compact").WithArgs("fresh", sqlmock.AnyArg(), wantKeys, "segment-a").WillReturnRows(rows)
+	mock.ExpectQuery(`(?s)INSERT INTO stream_discovery_event_keys_compact.*ORDER BY key_hash,v.ordinal`).WithArgs("fresh", sqlmock.AnyArg(), wantKeys, "segment-a").WillReturnRows(rows)
 	mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs("segment-a", "202611", "", wantResults).WillReturnResult(sqlmock.NewResult(0, 1))
 	tx, err := db.Begin()
 	if err != nil {

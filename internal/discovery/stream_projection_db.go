@@ -819,8 +819,9 @@ func isCompactPassiveSegment(segment streamlog.Segment) bool {
 // the old ledger in the same transaction for its rollback release.
 func reserveStreamDiscoveryCompactKeys(ctx context.Context, tx *sql.Tx, epoch string, month time.Time, items []streamPreparedDiscovery, dualWrite bool, receiptSegmentID string) (map[string]bool, error) {
 	query := `INSERT INTO stream_discovery_event_keys_compact(key_hash,epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at)
-	 SELECT sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key),$1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
+	 SELECT sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key) AS key_hash,$1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
 	 FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz)
+	 ORDER BY key_hash,v.scope_id,v.event_key
 	 ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`
 	var raw []byte
 	var err error
@@ -844,14 +845,17 @@ func reserveStreamDiscoveryCompactKeys(ctx context.Context, tx *sql.Tx, epoch st
 		raw, err = json.Marshal(keys)
 		args = append(args, raw, receiptSegmentID)
 		query = `INSERT INTO stream_discovery_event_keys_compact(key_hash,epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at,receipt_segment_id,receipt_ordinal)
-	 SELECT sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key),$1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at,$4,v.ordinal
+	 SELECT sentinel_stream_discovery_key_hash($1,v.scope_id,v.event_key) AS key_hash,$1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at,$4,v.ordinal
 	 FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz,ordinal integer)
-	 ORDER BY v.ordinal
+	 ORDER BY key_hash,v.ordinal
 	 ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`
 	}
 	if err != nil {
 		return nil, err
 	}
+	// Sort bounded inserts by the compact primary key. The source ordinal
+	// remains attached to every manifest locator.
+	insertStarted := time.Now()
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -879,6 +883,9 @@ func reserveStreamDiscoveryCompactKeys(ctx context.Context, tx *sql.Tx, epoch st
 	rows.Close()
 	if err != nil {
 		return nil, err
+	}
+	if elapsed := time.Since(insertStarted); elapsed >= 100*time.Millisecond {
+		log.Printf("stream compact key reservation items=%d inserted=%d insert_seconds=%.3f", len(items), len(fresh), elapsed.Seconds())
 	}
 	if len(fresh) != len(items) {
 		collisions := make([]streamDiscoveryLookupKey, 0, len(items)-len(fresh))
