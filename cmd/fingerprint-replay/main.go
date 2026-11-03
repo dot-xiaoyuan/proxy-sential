@@ -156,7 +156,18 @@ func loadLibrary(dir, version string, fingerbankOverride []byte) (*fingerprint.L
 			return nil, err
 		}
 	}
-	return fingerprint.LoadWithDomainData(version, oui, rules, fingerbankData, aliases, domains)
+	library, err := fingerprint.LoadWithDomainData(version, oui, rules, fingerbankData, aliases, domains)
+	if err != nil {
+		return nil, err
+	}
+	// The field worker loads the multisource catalog too; without it the
+	// baseline is under-represented and the Fingerbank delta is overstated.
+	if catalog, readErr := read("multisource-catalog.json"); readErr == nil && len(catalog) > 0 {
+		if loadErr := library.LoadCatalog(catalog); loadErr != nil {
+			return nil, loadErr
+		}
+	}
+	return library, nil
 }
 
 func measure(name string, library *fingerprint.Library, inputs []replayInput) map[string]any {
