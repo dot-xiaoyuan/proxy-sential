@@ -144,3 +144,42 @@ func TestStreamRouterCursorStopsBeforeIndexRetentionGap(t *testing.T) {
 		t.Fatalf("expired index cursor skipped old source gap: %v", err)
 	}
 }
+
+func TestStreamRouterClaimDelayCapsSuccessfulClaims(t *testing.T) {
+	if delay := streamRouterClaimDelay(true, 100, nil); delay != time.Second {
+		t.Fatalf("successful claim resumed without pause: %s", delay)
+	}
+	for _, item := range []struct {
+		claimed   bool
+		processed int
+		err       error
+	}{
+		{claimed: false, processed: 0},
+		{claimed: true, processed: 0},
+		{claimed: true, processed: 100, err: errors.New("write failed")},
+	} {
+		if delay := streamRouterClaimDelay(item.claimed, item.processed, item.err); delay != 5*time.Second {
+			t.Fatalf("idle or failed claim retried too soon: %+v delay=%s", item, delay)
+		}
+	}
+}
+
+func TestStreamRouterClaimBudgetFailsClosedOnInvalidConfiguration(t *testing.T) {
+	for _, item := range []struct {
+		text string
+		want int
+		err  bool
+	}{
+		{text: "", want: 0},
+		{text: "1", want: 1},
+		{text: "10", want: 10},
+		{text: "0", err: true},
+		{text: "-1", err: true},
+		{text: "no-limit", err: true},
+	} {
+		got, err := parseStreamRouterClaimBudget(item.text)
+		if got != item.want || (err != nil) != item.err {
+			t.Fatalf("budget %q: got=%d err=%v", item.text, got, err)
+		}
+	}
+}
