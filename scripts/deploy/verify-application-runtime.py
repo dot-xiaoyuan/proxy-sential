@@ -41,6 +41,7 @@ UNIT_BINARIES={
 # archive-resume reader both have deliberately pinned immutable executables.
 # Verify their exact configured path and inode, never just accept any old PID.
 PINNED_UNITS={'proxy-sentinel-ncu-identity-materializer.service',
+              'proxy-sentinel-recognition-materializer.service',
               'proxy-sentinel-ingest-stream-dhcp-message-r1.service'}
 
 def pinned_executable(root,unit,binary):

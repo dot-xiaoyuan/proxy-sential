@@ -70,13 +70,16 @@ class RuntimeVerifierTest(unittest.TestCase):
             self.verify([NORMAL])
 
     def test_dhcp_archive_reader_keeps_its_explicit_immutable_release(self):
-        unit = "proxy-sentinel-ingest-stream-dhcp-message-r1.service"
-        self.pids[unit] = 411
-        result = self.verify([unit, NORMAL])
-        self.assertEqual(result["verified_application_processes"][0]["executable"], str(self.old))
-        self.process(411, self.release)
-        with self.assertRaisesRegex(ValueError, "runs another release"):
-            self.verify([unit])
+        for unit in ("proxy-sentinel-ingest-stream-dhcp-message-r1.service",
+                     "proxy-sentinel-recognition-materializer.service"):
+            with self.subTest(unit=unit):
+                self.process(411, self.old)
+                self.pids[unit] = 411
+                result = self.verify([unit, NORMAL])
+                self.assertEqual(result["verified_application_processes"][0]["executable"], str(self.old))
+                self.process(411, self.release)
+                with self.assertRaisesRegex(ValueError, "runs another release"):
+                    self.verify([unit])
 
     def test_pinned_process_must_match_configured_executable(self):
         self.process(411, self.release)

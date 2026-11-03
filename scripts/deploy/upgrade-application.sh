@@ -3,6 +3,7 @@
 set -euo pipefail
 root="${PROXY_SENTINEL_ROOT:-/opt/proxy-sentinel}"
 version=""; archive=""; checksum=""; preserve_inventory=false; defer_discovery_restart=false; preserve_discovery=false
+resume_existing=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version="${2:-}"; shift 2 ;;
@@ -11,7 +12,8 @@ while [[ $# -gt 0 ]]; do
     --preserve-inventory) preserve_inventory=true; shift ;;
     --defer-discovery-restart) defer_discovery_restart=true; shift ;;
     --preserve-discovery) preserve_discovery=true; shift ;;
-    *) echo "usage: upgrade-application.sh --version VERSION --archive FILE --checksum FILE [--preserve-inventory] [--defer-discovery-restart|--preserve-discovery]" >&2; exit 2 ;;
+    --resume-existing) resume_existing=true; shift ;;
+    *) echo "usage: upgrade-application.sh --version VERSION --archive FILE --checksum FILE [--preserve-inventory] [--defer-discovery-restart|--preserve-discovery] [--resume-existing]" >&2; exit 2 ;;
   esac
 done
 [[ "$preserve_discovery" != true || "$defer_discovery_restart" != true ]] || { echo "choose one discovery restart mode" >&2; exit 2; }
@@ -30,14 +32,26 @@ if [[ -L "$root/previous" ]]; then
   [[ "$previous_target" == "$root/releases/"* && -d "$previous_target" ]] || exit 2
 fi
 release="$root/releases/$version"
-[[ ! -e "$release" ]] || { echo "release already exists: $version" >&2; exit 1; }
+if [[ "$resume_existing" == true ]]; then
+  [[ -d "$release" && ! -L "$release" && "$release" != "$old_target" ]] || { echo "resume requires a separate existing immutable candidate" >&2; exit 1; }
+else
+  [[ ! -e "$release" ]] || { echo "release already exists: $version" >&2; exit 1; }
+fi
 stage="$(mktemp -d "$root/releases/.application-stage.XXXXXX")"
+cleanup_stage="$stage"
 frontend_state=""
-trap 'rm -rf "$stage"; [[ -z "$frontend_state" ]] || rm -f "$frontend_state"' EXIT
+trap 'rm -rf "$cleanup_stage"; [[ -z "$frontend_state" ]] || rm -f "$frontend_state"' EXIT
 # Validate members and capacity before any archive content reaches the release
 # filesystem. Keep headroom for live database writes and rollback metadata.
 python3 "$(dirname "$0")/validate-release-archive.py" "$archive" "$root/releases"
-tar --no-same-owner -xzf "$archive" -C "$stage"
+if [[ "$resume_existing" == true ]]; then
+  tar --no-same-owner -xzf "$archive" -C "$stage" ./SHA256SUMS ./release-manifest.json
+  cmp "$stage/SHA256SUMS" "$release/SHA256SUMS"
+  cmp "$stage/release-manifest.json" "$release/release-manifest.json"
+  stage="$release"
+else
+  tar --no-same-owner -xzf "$archive" -C "$stage"
+fi
 (cd "$stage" && sha256sum -c SHA256SUMS >/dev/null)
 python3 - "$stage/release-manifest.json" "$version" <<'PY'
 import json,sys
@@ -78,6 +92,17 @@ if [[ "$preserve_inventory" == true ]] && ! systemctl is-active --quiet proxy-se
 fi
 (( ${#units[@]} > 0 )) || { echo "no active application services" >&2; exit 1; }
 python3 "$(dirname "$0")/verify-application-cli.py" --stage "$stage" --units "${units[@]}"
+# Catch unintended version drift and omitted pins before switching current.
+preflight_units=()
+for unit in "${units[@]}"; do
+  # The deferred discovery check below also permits the protected previous
+  # executable while it drains accepted memory batches.
+  if [[ "$defer_discovery_restart" == true && "$unit" == proxy-sentinel-discovery.service ]]; then continue; fi
+  preflight_units+=("$unit")
+done
+if (( ${#preflight_units[@]} > 0 )); then
+  python3 "$(dirname "$0")/verify-application-runtime.py" --root "$root" --release "$old_target" --units "${preflight_units[@]}"
+fi
 deferred_unit=proxy-sentinel-discovery.service
 old_discovery_pid=""
 deferred_started_new=false
@@ -100,7 +125,7 @@ fi
 if [[ "$preserve_discovery" == true ]]; then
   python3 "$(dirname "$0")/verify-application-cli.py" --stage "$stage" --units "$deferred_unit"
 fi
-mv "$stage" "$release"
+if [[ "$resume_existing" != true ]]; then mv "$stage" "$release"; fi
 restart_workers() {
   local failed=0
   for unit in "${units[@]}"; do
