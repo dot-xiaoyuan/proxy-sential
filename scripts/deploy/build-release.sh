@@ -2,15 +2,17 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: build-release.sh --version VERSION --output FILE" >&2
+  echo "usage: build-release.sh --version VERSION --output FILE [--skip-frontend-validation]" >&2
 }
 
 version=""
 output=""
+skip_frontend_validation=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version="${2:-}"; shift 2 ;;
     --output) output="${2:-}"; shift 2 ;;
+    --skip-frontend-validation) skip_frontend_validation=true; shift ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -38,7 +40,13 @@ release_dir="$build_root/release"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/recognition-minute-shadow" ./cmd/recognition-minute-shadow
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-policy-snapshot" ./cmd/srun-policy-snapshot
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$release_dir/bin/srun-group-directory-sync" ./cmd/srun-group-directory-sync
-  (cd frontend && VITE_ENABLE_MOCKS=false VITE_API_BASE=/api/v1 pnpm build)
+  if [[ "$skip_frontend_validation" == true ]]; then
+    # Explicit backend-only iteration: still produce production assets, but
+    # do not repeat TypeScript/API checks when the frontend is unchanged.
+    (cd frontend && VITE_ENABLE_MOCKS=false VITE_API_BASE=/api/v1 pnpm exec vite build)
+  else
+    (cd frontend && VITE_ENABLE_MOCKS=false VITE_API_BASE=/api/v1 pnpm build)
+  fi
   cp -R frontend/dist "$release_dir/frontend/dist"
   node --input-type=module - "$release_dir/frontend/dist/assets" <<'JS'
 import { readdir, readFile, writeFile } from 'node:fs/promises';

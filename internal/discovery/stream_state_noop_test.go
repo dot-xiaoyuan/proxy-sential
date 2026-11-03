@@ -209,6 +209,46 @@ func TestStreamDiscoveryEvidenceCountExactDatabaseNumber(t *testing.T) {
 	}
 }
 
+func TestCoalesceExpiredStreamStateKeepsBoundedFreshnessWithoutHidingRevival(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	fact := streamDiscoveryFact{Epoch: "fresh", Device: "device-1", Scope: "scope-1", Event: "first", EvidenceEvent: "first",
+		Observed: now.Add(-time.Hour), FirstObserved: now.Add(-time.Hour), ValidUntil: now.Add(-time.Minute)}
+	old, err := buildStreamDiscoveryState("fresh", fact.Device, []streamDiscoveryFact{fact}, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(old.Document)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&old.Document); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		elapsed  time.Duration
+		revive   bool
+		coalesce bool
+	}{{"expired_repeat", 2 * time.Second, false, true}, {"freshness_bound", 5 * time.Second, false, false}, {"revival", 2 * time.Second, true, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			repeat := fact
+			repeat.Event = "second"
+			repeat.Observed = fact.Observed.Add(tc.elapsed)
+			repeat.ValidUntil = fact.ValidUntil.Add(tc.elapsed)
+			if tc.revive {
+				repeat.ValidUntil = now.Add(time.Minute)
+			}
+			next, err := buildStreamDiscoveryState("fresh", fact.Device, []streamDiscoveryFact{repeat}, &old, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next = coalesceStreamDiscoveryStateFreshness(&old, next, now)
+			if streamDiscoveryStateMatchesStored(old, next) != tc.coalesce {
+				t.Fatalf("unexpected coalescing: old=%+v next=%+v", old, next)
+			}
+		})
+	}
+}
+
 func BenchmarkStreamDiscoveryStateStoredComparison(b *testing.B) {
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	fact := streamDiscoveryFact{Epoch: "fresh", Device: "device-1", Scope: "scope-1", Event: "event-1", EvidenceEvent: "event-1", CandidateType: "printer", Observed: now, FirstObserved: now, ValidUntil: now.Add(time.Hour)}

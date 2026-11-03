@@ -219,10 +219,19 @@ func streamVisibleEvidenceEvent(fact streamDiscoveryFact) string {
 // Receipts still record every observation immediately. Current-state rows may
 // coalesce a semantically identical heartbeat for at most five seconds.
 func coalesceStreamDiscoveryStateFreshness(previous *streamDiscoveryState, next streamDiscoveryState, now time.Time) streamDiscoveryState {
-	if previous == nil || previous.ExpiresAt == nil || next.ExpiresAt == nil ||
-		!previous.ExpiresAt.After(now.Add(5*time.Second)) || next.ExpiresAt.Before(*previous.ExpiresAt) ||
-		!next.LastSeen.After(previous.LastSeen) || next.LastSeen.Sub(previous.LastSeen) >= 5*time.Second ||
+	if previous == nil || !next.LastSeen.After(previous.LastSeen) || next.LastSeen.Sub(previous.LastSeen) >= 5*time.Second ||
 		!next.FirstSeen.Equal(previous.FirstSeen) {
+		return next
+	}
+	if previous.ExpiresAt == nil && next.ExpiresAt == nil {
+		// Backlogged, already expired repeats have no future wake to preserve.
+		// Their fact/receipt still advances exactly; apply the same five-second
+		// summary bound as active heartbeats instead of rewriting a dead summary.
+		if previous.Document["current"] != false || next.Document["current"] != false {
+			return next
+		}
+	} else if previous.ExpiresAt == nil || next.ExpiresAt == nil ||
+		!previous.ExpiresAt.After(now.Add(5*time.Second)) || next.ExpiresAt.Before(*previous.ExpiresAt) {
 		return next
 	}
 	priorDoc := make(map[string]any, len(previous.Document))

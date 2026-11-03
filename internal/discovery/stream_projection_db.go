@@ -742,15 +742,6 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if err := writeStreamDiscoveryFacts(ctx, tx, factWrites); err != nil {
 		return err
 	}
-	mark("publish_state")
-	stateKeys := make([]string, 0, len(changedDevices))
-	for key := range changedDevices {
-		stateKeys = append(stateKeys, key)
-	}
-	sort.Strings(stateKeys)
-	if err := publishStreamStateAndRecognition(ctx, tx, segment.Epoch, stateKeys, newFactCounts, dirty); err != nil {
-		return err
-	}
 	mark("write_changes")
 	if err := writeStreamDiscoveryChanges(ctx, tx, changes); err != nil {
 		return err
@@ -775,6 +766,20 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		if err := writeStreamReceiptManifest(ctx, tx, shadowID, segment, prepared, fresh, omitted); err != nil {
 			return err
 		}
+	}
+	// The result-version lock lasts until commit. Persist evidence before
+	// acquiring it so history/index/receipt I/O cannot serialize unrelated
+	// device publishers. A later publication failure still rolls back all
+	// evidence in this transaction. Keep publication before recognition jobs
+	// to preserve the lock order used by already running expiry workers.
+	mark("publish_state")
+	stateKeys := make([]string, 0, len(changedDevices))
+	for key := range changedDevices {
+		stateKeys = append(stateKeys, key)
+	}
+	sort.Strings(stateKeys)
+	if err := publishStreamStateAndRecognition(ctx, tx, segment.Epoch, stateKeys, newFactCounts, dirty); err != nil {
+		return err
 	}
 	mark("commit")
 	return tx.Commit()
