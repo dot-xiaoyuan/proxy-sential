@@ -22,6 +22,11 @@ flock -n 9 || { echo "another application upgrade is running" >&2; exit 1; }
 (cd "$(dirname "$archive")" && sha256sum -c "$(basename "$checksum")")
 old_target="$(readlink -f "$root/current")"
 [[ "$old_target" == "$root/releases/"* && -d "$old_target" ]] || exit 2
+previous_target=""
+if [[ -L "$root/previous" ]]; then
+  previous_target="$(readlink -f "$root/previous")"
+  [[ "$previous_target" == "$root/releases/"* && -d "$previous_target" ]] || exit 2
+fi
 release="$root/releases/$version"
 [[ ! -e "$release" ]] || { echo "release already exists: $version" >&2; exit 1; }
 stage="$(mktemp -d "$root/releases/.application-stage.XXXXXX")"
@@ -79,9 +84,13 @@ if [[ "$defer_discovery_restart" == true ]]; then
   systemctl is-active --quiet "$deferred_unit" || { echo "deferred discovery service is not active" >&2; exit 1; }
   [[ "$(systemctl show "$deferred_unit" -p Restart --value)" == on-failure ]] || { echo "deferred discovery service does not auto-restart on failure" >&2; exit 1; }
   old_discovery_pid="$(systemctl show "$deferred_unit" -p MainPID --value)"
-  [[ "$old_discovery_pid" =~ ^[1-9][0-9]*$ && "$(readlink -f "/proc/$old_discovery_pid/exe")" == "$old_target/bin/discovery-worker" ]] || {
-    echo "deferred discovery process does not run the old release" >&2; exit 1;
-  }
+  [[ "$old_discovery_pid" =~ ^[1-9][0-9]*$ ]] || { echo "deferred discovery has no running process" >&2; exit 1; }
+  old_discovery_exe="$(readlink -f "/proc/$old_discovery_pid/exe")"
+  if [[ "$old_discovery_exe" != "$old_target/bin/discovery-worker" ]] &&
+    [[ -z "$previous_target" || "$old_discovery_exe" != "$previous_target/bin/discovery-worker" ]]; then
+    echo "deferred discovery process does not run current or previous release" >&2
+    exit 1
+  fi
 fi
 mv "$stage" "$release"
 restart_workers() {
@@ -103,7 +112,8 @@ wait_deferred_discovery() {
         deferred_started_new=true
         return 0
       fi
-      if [[ "$exe" == "$old_target/bin/discovery-worker" ]]; then
+      if [[ "$exe" == "$old_target/bin/discovery-worker" ]] ||
+        [[ -n "$previous_target" && "$exe" == "$previous_target/bin/discovery-worker" ]]; then
         # A restart can race with the atomic current switch. Let this old
         # process drain naturally too, then verify the next start.
         old_discovery_pid="$pid"
@@ -199,7 +209,7 @@ frontend_state="$(mktemp "$root/config/frontend-upgrade-state.XXXXXX")"
 python3 "$(dirname "$0")/manage-frontend-previous.py" prepare --root "$root" --candidate "$release" --state "$frontend_state"
 if [[ "$defer_discovery_restart" == true ]]; then
   current_pid="$(systemctl show "$deferred_unit" -p MainPID --value)"
-  [[ "$current_pid" == "$old_discovery_pid" && "$(readlink -f "/proc/$current_pid/exe")" == "$old_target/bin/discovery-worker" ]] || {
+  [[ "$current_pid" == "$old_discovery_pid" && "$(readlink -f "/proc/$current_pid/exe")" == "$old_discovery_exe" ]] || {
     echo "deferred discovery restarted before pointer switch; retry this upgrade after checking its queue" >&2
     false
   }

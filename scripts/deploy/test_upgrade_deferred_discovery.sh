@@ -6,6 +6,7 @@ eval "$(sed -n '/^restart_workers() {/,/^}/p; /^wait_deferred_discovery() {/,/^}
 
 root=/opt/fixture
 old_target=$root/releases/r49
+previous_target=$root/releases/r48
 release=$root/releases/r52
 deferred_unit=proxy-sentinel-discovery.service
 defer_discovery_restart=true
@@ -31,7 +32,7 @@ systemctl() {
 }
 readlink() {
   case "$2" in
-    /proc/200/exe) echo "$old_target/bin/discovery-worker" ;;
+    /proc/200/exe) echo "$previous_target/bin/discovery-worker" ;;
     /proc/300/exe)
       seen=$(($(cat "$exec_file") + 1))
       echo "$seen" > "$exec_file"
