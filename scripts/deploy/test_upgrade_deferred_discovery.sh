@@ -63,4 +63,13 @@ eval "$(sed -n '/^rollback() {/,/^}/p' "$script")"
 ) 2>/dev/null
 [[ "$(cat "$rollback_file")" == $'previous-link\nprevious-move' ]]
 
+preserve_inventory=false
+preserve_discovery=true
+expected_discovery_units='proxy-sentinel-discovery.service'
+units=()
+systemctl() { return 0; }
+eval "$(sed -n '/^for unit in proxy-sentinel-control-plane /,/^done/p' "$script")"
+[[ " ${units[*]} " != *" proxy-sentinel-discovery.service "* ]]
+[[ " ${units[*]} " == *" proxy-sentinel-passive-discovery.service "* ]]
+
 echo 'deferred discovery natural restart and timeout safety verified'

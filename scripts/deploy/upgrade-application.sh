@@ -2,7 +2,7 @@
 # Existing-installation application update. Refuses all schema changes.
 set -euo pipefail
 root="${PROXY_SENTINEL_ROOT:-/opt/proxy-sentinel}"
-version=""; archive=""; checksum=""; preserve_inventory=false; defer_discovery_restart=false
+version=""; archive=""; checksum=""; preserve_inventory=false; defer_discovery_restart=false; preserve_discovery=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version="${2:-}"; shift 2 ;;
@@ -10,9 +10,11 @@ while [[ $# -gt 0 ]]; do
     --checksum) checksum="${2:-}"; shift 2 ;;
     --preserve-inventory) preserve_inventory=true; shift ;;
     --defer-discovery-restart) defer_discovery_restart=true; shift ;;
-    *) echo "usage: upgrade-application.sh --version VERSION --archive FILE --checksum FILE [--preserve-inventory] [--defer-discovery-restart]" >&2; exit 2 ;;
+    --preserve-discovery) preserve_discovery=true; shift ;;
+    *) echo "usage: upgrade-application.sh --version VERSION --archive FILE --checksum FILE [--preserve-inventory] [--defer-discovery-restart|--preserve-discovery]" >&2; exit 2 ;;
   esac
 done
+[[ "$preserve_discovery" != true || "$defer_discovery_restart" != true ]] || { echo "choose one discovery restart mode" >&2; exit 2; }
 [[ "$root" =~ ^/opt/[A-Za-z0-9._/-]+$ && "$root" != *..* ]] || exit 2
 [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || exit 2
 [[ -r "$archive" && -r "$checksum" && -L "$root/current" ]] || exit 2
@@ -64,6 +66,7 @@ PY
 )"
 for unit in proxy-sentinel-control-plane proxy-sentinel-control-plane-eventbus proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-binding-b56 proxy-sentinel-ingest-stream-dhcp-message-r1 proxy-sentinel-ingest-stream-packet-b54 proxy-sentinel-ingest-stream-handshake-b54 proxy-sentinel-ingest-stream-packet-b76 proxy-sentinel-ingest-stream-handshake-b76 proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-ingest-stream-flow-syn proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-handshake-signal proxy-sentinel-flow-syn-signal proxy-sentinel-router-prober proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-inventory proxy-sentinel-inventory-backfill proxy-sentinel-identity-materializer proxy-sentinel-ncu-identity-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery proxy-sentinel-passive-discovery proxy-sentinel-ncu-identity-sync; do
   if [[ "$preserve_inventory" == true && "$unit" == proxy-sentinel-inventory ]]; then continue; fi
+  if [[ "$preserve_discovery" == true && "$unit" == proxy-sentinel-discovery ]]; then continue; fi
   if systemctl is-active --quiet "$unit.service" || [[ " $expected_discovery_units " == *" $unit.service "* ]] ||
     { systemctl is-failed --quiet "$unit.service" && systemctl is-enabled --quiet "$unit.service"; }; then
     units+=("$unit.service")
@@ -79,8 +82,10 @@ deferred_unit=proxy-sentinel-discovery.service
 old_discovery_pid=""
 deferred_started_new=false
 pointer_switched=false
-if [[ "$defer_discovery_restart" == true ]]; then
-  [[ " ${units[*]} " == *" $deferred_unit "* ]] || { echo "deferred discovery service is not in the active release" >&2; exit 1; }
+if [[ "$defer_discovery_restart" == true || "$preserve_discovery" == true ]]; then
+  if [[ "$defer_discovery_restart" == true ]]; then
+    [[ " ${units[*]} " == *" $deferred_unit "* ]] || { echo "deferred discovery service is not in the active release" >&2; exit 1; }
+  fi
   systemctl is-active --quiet "$deferred_unit" || { echo "deferred discovery service is not active" >&2; exit 1; }
   [[ "$(systemctl show "$deferred_unit" -p Restart --value)" == on-failure ]] || { echo "deferred discovery service does not auto-restart on failure" >&2; exit 1; }
   old_discovery_pid="$(systemctl show "$deferred_unit" -p MainPID --value)"
@@ -91,6 +96,9 @@ if [[ "$defer_discovery_restart" == true ]]; then
     echo "deferred discovery process does not run current or previous release" >&2
     exit 1
   fi
+fi
+if [[ "$preserve_discovery" == true ]]; then
+  python3 "$(dirname "$0")/verify-application-cli.py" --stage "$stage" --units "$deferred_unit"
 fi
 mv "$stage" "$release"
 restart_workers() {
@@ -221,11 +229,18 @@ restart_workers
 wait_deferred_discovery
 ready
 if [[ "$preserve_inventory" == true ]]; then systemctl is-active --quiet proxy-sentinel-inventory.service; fi
+if [[ "$preserve_discovery" == true ]]; then
+  systemctl is-active --quiet "$deferred_unit"
+  preserved_pid="$(systemctl show "$deferred_unit" -p MainPID --value)"
+  preserved_exe="$(readlink -f "/proc/$preserved_pid/exe")"
+  [[ "$preserved_exe" == "$old_discovery_exe" || "$preserved_exe" == "$release/bin/discovery-worker" ]]
+  echo "discovery process preserved: pid=$preserved_pid exe=$preserved_exe"
+fi
 python3 "$release/scripts/verify-service-expectations.py" --root "$root"
 ln -sfn "$old_target" "$root/previous.next"
 mv -Tf "$root/previous.next" "$root/previous"
 trap - ERR
 cat > "$release/deployment-manifest.json" <<JSON
-{"version":"$version","mode":"application_only","previous":"$old_target","preserve_inventory":$preserve_inventory,"installed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"version":"$version","mode":"application_only","previous":"$old_target","preserve_inventory":$preserve_inventory,"preserve_discovery":$preserve_discovery,"installed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
 echo "application upgrade completed: $version; previous=$old_target"

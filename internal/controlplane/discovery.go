@@ -70,7 +70,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
-	repo := discovery.Repository{DB: s.operations.db, DeviceCache: s.discoveryDevices, PipelineV2: os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true"}
+	repo := discovery.Repository{DB: s.operations.db, DeviceCache: s.discoveryDevices, PipelineV2: os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true", ActiveStreamOnly: discoveryStreamCurrentReadEnabled()}
 	limit, offset := 50, 0
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, e := strconv.Atoi(v)
@@ -221,9 +221,13 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		}
 		writeJSON(w, 200, map[string]any{"items": items})
 	case path == "/discovery/snmp-candidates" && r.Method == "GET":
+		currentRelation := "discovery_device_current_shadow"
+		if repo.ActiveStreamOnly {
+			currentRelation = discovery.StreamCurrentRelation
+		}
 		rows, err := repo.DB.QueryContext(ctx, `WITH frequent AS (
  SELECT document->>'mac' AS mac
- FROM discovery_device_current_shadow
+ FROM `+currentRelation+`
  WHERE coalesce(document->>'last_observed_ip','')<>'' AND coalesce(document->>'mac','')<>''
  GROUP BY 1 HAVING count(DISTINCT document->>'last_observed_ip')>3
 ), candidates AS (
@@ -238,7 +242,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
         max(last_seen) AS last_seen,
         count(*) AS observations,
         CASE WHEN split_part(document->>'last_observed_ip','.',4) IN ('1','254') THEN '网段网关候选' ELSE '高频基础设施 MAC' END AS reason
- FROM discovery_device_current_shadow
+ FROM `+currentRelation+`
  WHERE coalesce(document->>'last_observed_ip','')<>''
    AND (split_part(document->>'last_observed_ip','.',4) IN ('1','254') OR document->>'mac' IN (SELECT mac FROM frequent))
  GROUP BY document->>'last_observed_ip',
@@ -427,7 +431,9 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
 		var page map[string]any
 		var err error
-		if os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+		if repo.ActiveStreamOnly {
+			page, err = repo.DevicesState(ctx, query)
+		} else if os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
 			page, err = repo.DevicesEventBus(ctx, query)
 		} else if repo.PipelineV2 {
 			page, err = repo.DevicesState(ctx, query)
@@ -545,4 +551,8 @@ func firstQueryValue(r *http.Request, key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func discoveryStreamCurrentReadEnabled() bool {
+	return os.Getenv("PROXY_SENTINEL_DISCOVERY_CURRENT_SOURCE") == "stream"
 }

@@ -18,6 +18,8 @@ type Repository struct {
 	Collection       *CollectionConfig
 	ArchiveDiscovery func(context.Context, string, time.Time, []normalized.Event) error
 	PipelineV2       bool
+	// ActiveStreamOnly retires the duplicate event-bus facts/current writer.
+	ActiveStreamOnly bool
 	DB               *sql.DB
 	BackfillDB       *sql.DB
 	RuntimeDB        *sql.DB

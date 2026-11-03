@@ -23,6 +23,7 @@ func main() {
 	clientID := flag.String("client-id", "event-bus-consumer", "Kafka client id")
 	dsn := flag.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	pgDSN := flag.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	normalizedOnly := flag.Bool("normalized-only", false, "retire duplicate receipt/fact projections; preserve normalized events and committed offsets")
 	batchSize := flag.Int("batch-size", 1000, "maximum receipts per ClickHouse insert")
 	fetchBytes := flag.Int("fetch-max-bytes", 8<<20, "maximum bytes per Kafka fetch")
 	flushInterval := flag.Duration("flush-interval", 500*time.Millisecond, "maximum batch wait")
@@ -39,24 +40,24 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	chSink, err := eventbus.NewClickHouseDiscoverySink(*dsn)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
-		os.Exit(2)
-	}
 	chStore, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: *dsn})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
-		os.Exit(2)
+		log.Fatal(err)
 	}
 	normalizedSink := eventbus.NewClickHouseNormalizedSink(chStore)
-	pgSink, err := eventbus.NewPostgresFactSink(ctx, *pgDSN)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
-		os.Exit(2)
+	var sink eventbus.ReceiptSink = normalizedSink
+	if !*normalizedOnly {
+		chSink, err := eventbus.NewClickHouseDiscoverySink(*dsn)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pgSink, err := eventbus.NewPostgresFactSink(ctx, *pgDSN)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer pgSink.Close()
+		sink = eventbus.NewMultiSink(chSink, pgSink, normalizedSink)
 	}
-	defer pgSink.Close()
-	sink := eventbus.NewMultiSink(chSink, pgSink, normalizedSink)
 	projector, err := eventbus.NewProjector(cfg, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "event-bus-consumer:", err)
@@ -64,7 +65,7 @@ func main() {
 	}
 	defer projector.Close()
 
-	log.Printf("event-bus-consumer started topic=%s group=%s brokers=%s postgres=true", cfg.Topic, cfg.Group, strings.Join(cfg.Brokers, ","))
+	log.Printf("event-bus-consumer started topic=%s group=%s brokers=%s normalized_only=%t", cfg.Topic, cfg.Group, strings.Join(cfg.Brokers, ","), *normalizedOnly)
 	if err := projector.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("event-bus-consumer stopped: %v", err)
 		os.Exit(1)

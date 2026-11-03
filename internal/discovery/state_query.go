@@ -26,19 +26,38 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 	if q.Limit <= 0 || q.Limit > 200 {
 		q.Limit = 20
 	}
+	cursorVersion := 2
+	if r.ActiveStreamOnly {
+		cursorVersion = 3
+		if q.Window == 0 {
+			q.Window = 24 * time.Hour
+		}
+	}
 	signature := contentHash(struct {
-		View, Search, Category, Type, Protocol, State, Domain, VLAN string
-		Window                                                      int64
-	}{q.View + ":" + q.Mode, q.Search, q.Category, q.DeviceType, q.Protocol, q.State, q.Domain, q.VLAN, int64(q.Window)})
+		View, Search, Category, Type, Protocol, State, Domain, VLAN, Capability string
+		Window                                                                  int64
+	}{q.View + ":" + q.Mode, q.Search, q.Category, q.DeviceType, q.Protocol, q.State, q.Domain, q.VLAN, q.Capability, int64(q.Window)})
 	args := []any{}
 	freshWhere := []string{"s.epoch=c.epoch"}
 	legacyWhere := []string{`NOT EXISTS(SELECT 1 FROM stream_discovery_device_state f JOIN stream_source_cutovers c ON c.epoch=f.epoch AND c.state='active' WHERE f.device_key=s.device_key)`}
+	if r.ActiveStreamOnly {
+		freshWhere = append(freshWhere, ActiveStreamCurrentPredicate)
+		legacyWhere = []string{"false"}
+	}
 	addBoth := func(condition string) {
 		freshWhere = append(freshWhere, condition)
 		legacyWhere = append(legacyWhere, condition)
 	}
 	addFact := func(condition string) {
-		freshWhere = append(freshWhere, "EXISTS(SELECT 1 FROM stream_discovery_facts f WHERE f.epoch=s.epoch AND f.device_key=s.device_key AND "+condition+")")
+		valid := ""
+		boundary := ""
+		if r.ActiveStreamOnly {
+			valid = " AND f.scope_id=s.scope_id AND NOT f.withdrawn AND f.observed_at<=now() AND f.valid_until>now()"
+			// Keep this a per-device lookup. Pulling it up into a semi-join
+			// makes PostgreSQL scan the entire epoch before applying LIMIT.
+			boundary = " OFFSET 0"
+		}
+		freshWhere = append(freshWhere, "EXISTS(SELECT 1 FROM stream_discovery_facts f WHERE f.epoch=s.epoch AND f.device_key=s.device_key"+valid+" AND "+condition+boundary+")")
 		legacyWhere = append(legacyWhere, "EXISTS(SELECT 1 FROM discovery_service_facts_v2 f WHERE f.device_key=s.device_key AND "+condition+")")
 	}
 	if q.Mode != "" && q.Mode != "passive" && q.Mode != "all" {
@@ -75,6 +94,13 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 	if q.VLAN != "" {
 		addBoth("s.vlan=" + add(q.VLAN))
 	}
+	if q.Capability != "" {
+		if q.Capability == "dumb" {
+			addBoth("s.document->'capabilities' ?| array['printing','scanning','casting','media_rendering','network_video']")
+		} else {
+			addBoth("s.document->'capabilities' ? " + add(q.Capability))
+		}
+	}
 	if q.Protocol != "" {
 		addFact("f.protocol=" + add(q.Protocol))
 	}
@@ -96,10 +122,12 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 			addBoth("(lower(s.name) LIKE " + p + " ESCAPE '\\' OR lower(s.manufacturer) LIKE " + p + " ESCAPE '\\' OR lower(s.model_name) LIKE " + p + " ESCAPE '\\')")
 		}
 	}
+	countWhere := append([]string(nil), freshWhere...)
+	countArgs := append([]any(nil), args...)
 	if q.Cursor != "" {
 		raw, e := base64.RawURLEncoding.DecodeString(q.Cursor)
 		var c stateCursor
-		if e != nil || json.Unmarshal(raw, &c) != nil || c.Signature != signature || c.Version != 2 || c.Key == "" || c.Last.IsZero() {
+		if e != nil || json.Unmarshal(raw, &c) != nil || c.Signature != signature || c.Version != cursorVersion || c.Key == "" || c.Last.IsZero() {
 			return nil, fmt.Errorf("cursor does not match discovery query")
 		}
 		t, k := add(c.Last), add(c.Key)
@@ -109,7 +137,7 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 	// Limit indexed keys in each generation before touching JSON documents. A
 	// UNION view over all legacy documents forced a parallel heap scan and sort
 	// on the shared disk even for a 50-row first page.
-	query := `WITH fresh AS MATERIALIZED (
+	pageQuery := `WITH fresh AS MATERIALIZED (
  SELECT s.device_key,s.last_seen,s.result_version,s.epoch FROM
  (SELECT DISTINCT epoch FROM stream_source_cutovers WHERE state='active') c
  CROSS JOIN LATERAL (
@@ -126,7 +154,8 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
  SELECT device_key,last_seen,result_version,epoch,'legacy'::text AS generation FROM legacy
  ORDER BY last_seen DESC,device_key LIMIT ` + limit + `
 )
-SELECT p.device_key,p.last_seen,p.result_version,
+`
+	query := pageQuery + `SELECT p.device_key,p.last_seen,p.result_version,
  COALESCE(c.document,'{}'::jsonb)||jsonb_build_object(
   'last_seen',f.last_seen,
   'addresses',CASE WHEN jsonb_array_length(COALESCE(f.document->'addresses','[]'::jsonb))>0 THEN f.document->'addresses' ELSE COALESCE(c.document->'addresses','[]'::jsonb) END,
@@ -139,6 +168,12 @@ SELECT p.device_key,p.last_seen,p.result_version,l.document||jsonb_build_object(
  CASE WHEN EXISTS(SELECT 1 FROM stream_source_cutovers WHERE state='active') THEN 'stale' ELSE 'legacy' END)
  FROM page p JOIN discovery_device_state_v2 l ON l.device_key=p.device_key WHERE p.generation='legacy'
 ORDER BY last_seen DESC,device_key LIMIT ` + limit
+	if r.ActiveStreamOnly {
+		query = pageQuery + `SELECT p.device_key,p.last_seen,p.result_version,
+ f.document||jsonb_build_object('generation','fresh','freshness','new')
+ FROM page p JOIN stream_discovery_device_state f ON f.epoch=p.epoch AND f.device_key=p.device_key
+ WHERE p.generation='fresh' ORDER BY p.last_seen DESC,p.device_key LIMIT ` + limit
+	}
 	rows, err := r.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -160,8 +195,11 @@ ORDER BY last_seen DESC,device_key LIMIT ` + limit
 			return nil, err
 		}
 		item["result_version"] = version
+		if r.ActiveStreamOnly {
+			normalizeEventBusDocument(item)
+		}
 		items = append(items, item)
-		keys = append(keys, stateCursor{signature, last, key, 2})
+		keys = append(keys, stateCursor{signature, last, key, cursorVersion})
 	}
 	err = rows.Err()
 	rows.Close()
@@ -175,11 +213,31 @@ ORDER BY last_seen DESC,device_key LIMIT ` + limit
 		b, _ := json.Marshal(keys[q.Limit-1])
 		cursor = base64.RawURLEncoding.EncodeToString(b)
 	}
-	fresh, err := r.DiscoveryFreshness(ctx)
+	var fresh map[string]any
+	if r.ActiveStreamOnly {
+		fresh, err = r.StreamCurrentFreshness(ctx)
+	} else {
+		fresh, err = r.DiscoveryFreshness(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"items": items, "has_more": more, "next_cursor": cursor, "limit": q.Limit, "window": q.Window.String(), "freshness": fresh}, nil
+	result := map[string]any{"items": items, "has_more": more, "next_cursor": cursor, "limit": q.Limit, "window": q.Window.String(), "freshness": fresh}
+	if r.ActiveStreamOnly {
+		// Statistics have their own deadline and cannot make a valid page fail.
+		countCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		var total int64
+		if e := r.DB.QueryRowContext(countCtx, `SELECT count(*) FROM
+ (SELECT DISTINCT epoch FROM stream_source_cutovers WHERE state='active') c
+ JOIN stream_discovery_device_state s ON s.epoch=c.epoch WHERE `+strings.Join(countWhere, " AND "), countArgs...).Scan(&total); e == nil {
+			result["total"] = total
+			result["total_status"] = "ready"
+		} else {
+			result["total_status"] = "unavailable"
+		}
+	}
+	return result, nil
 }
 func (r Repository) DiscoveryFreshness(ctx context.Context) (map[string]any, error) {
 	var freshActive bool

@@ -120,7 +120,7 @@ func (s *Server) handleDiscoveryCoverage(w http.ResponseWriter, r *http.Request,
 	response := map[string]any{"enabled": true, "scope": discovery.PrivateDiscoveryCIDRs, "items": items, "freshness": freshness, "enrichment": enrichmentCoverage(ctx, repo), "capture_scope": captureScopeExpiry(os.Getenv("PROXY_SENTINEL_CAPTURE_SCOPE_CONFIG"), time.Now().UTC()), "quarantine": discoveryQuarantineStatus(discoveryQuarantinePath())}
 	// The event-bus read path does not use the legacy pipeline counters; avoid
 	// blocking the coverage response on that historical query.
-	if os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") != "true" {
+	if !discoveryStreamCurrentReadEnabled() && os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") != "true" {
 		response["pipeline"] = discoveryCoveragePipeline(ctx, repo)
 	}
 	writeJSON(w, 200, response)
@@ -145,7 +145,14 @@ func discoveryCoveragePipeline(ctx context.Context, repo discovery.Repository) a
 }
 
 func coverageFreshness(ctx context.Context, repo discovery.Repository) map[string]any {
-	if os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+	if discoveryStreamCurrentReadEnabled() {
+		fresh, err := repo.StreamCurrentFreshness(ctx)
+		if err != nil {
+			return map[string]any{"status": "unavailable", "source": "stream"}
+		}
+		return fresh
+	}
+	if !discoveryStreamCurrentReadEnabled() && os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
 		var last time.Time
 		if err := repo.DB.QueryRowContext(ctx, `SELECT max(last_seen) FROM discovery_device_current_shadow`).Scan(&last); err != nil || last.IsZero() {
 			return map[string]any{"status": "unavailable", "source": "eventbus"}
