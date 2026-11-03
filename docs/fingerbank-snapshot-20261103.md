@@ -107,3 +107,28 @@ so there is no need to download this multiple times per day.
 
 - 整库快照：受每日一次限制，需次日或 on-prem 授权后重跑。
 - 184 现场导入与 A/B：等用户确认后再做，届时用 `endpoint_recognition_jobs` 有界重算同一端点集对比。
+
+## 10. 184 现场导入与可见性验证（2026-11-03 13:30–13:50）
+
+**导入**：用 root 执行 `device-fingerprint install`，把 `offline-2026.11.03-fingerbank-obs1` 写入 `/opt/proxy-sentinel/data/device-fingerprints`，`current` 指向新 release，旧 release 保留；识别工作进程 5 秒内热加载。未重启任何服务、未切换应用版本。
+
+**为什么还需要回填**：识别链路从 `endpoint_entities.attributes` 取 `vendor_class` / `requested_options`，但现场属性里只有 campus/vlan/nas（全库 0 条 DHCP 指纹）。只导入规则不会命中，所以对**最近 1,000 台终端**做了一次 DHCP 绑定日志回填，并把这批端点重新入队识别。
+
+**结果**（1,000 台）：
+
+| 指标 | 数量 |
+|---|---:|
+| 获得 os_family | 951 |
+| 其中 FB 证据与最终值一致 | 861 |
+| 获得 device_type | 663 |
+| 无 FB 证据（Fingerbank 无匹配） | 49 |
+
+OS 分布：Android 549、Apple OS 155、Windows 155、HarmonyOS 90、ChromeOS 2、Linux 1。
+全库高置信度（≥0.8、无冲突）OS 覆盖从 **0 → 950 台（2.7%）**，设备页的操作系统筛选开始出现 6 个取值。
+
+**回滚**：
+- 特征库：`ln -sfn /opt/proxy-sentinel/data/device-fingerprints/releases/offline-2026-10-28-layered-v7-r2 /opt/proxy-sentinel/data/device-fingerprints/current`（`status.json` 备份在 `/tmp/fingerprint-status-before-20261103.json`）。
+- 属性：`fb_attr_backup_20261103` 保存了 1,000 台的原始 attributes，可按 endpoint_id 还原。
+- 还原后对这批端点重新入队，即可回到旧标签。
+
+**限制**：回填是演示用的数据补齐，不是常规链路；长期方案是让 DHCP option 55/60 随发现/身份事件进入 `endpoint_attributes`（属识别链路改动）。控制面未重启，页面“设备特征库”显示的版本可能仍是旧值，以识别结果为准。
