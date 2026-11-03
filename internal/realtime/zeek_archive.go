@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/streamlog"
@@ -100,11 +101,6 @@ func readZeekBindingChunk(path string, cursor streamlog.SourceCursor, maxBytes i
 	if matched < 0 {
 		return sourceChunk{}, ErrStreamArchivePending
 	}
-	// A stopped reader may have missed another whole hourly archive. Do not
-	// jump straight to current/ and silently omit it.
-	if matched != len(archives)-1 {
-		return sourceChunk{}, ErrStreamSourceGap
-	}
 	archive, err := os.Open(archives[matched])
 	if err != nil {
 		return sourceChunk{}, ErrStreamArchivePending
@@ -134,8 +130,17 @@ func readZeekBindingChunk(path string, cursor streamlog.SourceCursor, maxBytes i
 		data := buf[:last+1]
 		return sourceChunk{data: data, fileID: cursor.FileID, start: cursor.Offset, end: cursor.Offset + int64(len(data)), archive: true}, nil
 	}
-	if err == nil {
+	// Only a verified gzip EOF proves that the old archive has been drained.
+	// An incomplete compressed file must never trigger a rotation.
+	if err != io.EOF {
 		return sourceChunk{}, ErrStreamArchivePending
+	}
+	if matched+1 < len(archives) {
+		next := archives[matched+1]
+		if !consecutiveZeekArchives(archives[matched], next) {
+			return sourceChunk{}, ErrStreamSourceGap
+		}
+		return readFirstZeekArchiveChunk(path, next, maxBytes)
 	}
 	if info == nil {
 		return sourceChunk{}, ErrStreamArchivePending
@@ -146,6 +151,100 @@ func readZeekBindingChunk(path string, cursor streamlog.SourceCursor, maxBytes i
 	}
 	read.verifiedRotation = true
 	return read, nil
+}
+
+// A cursor can lag across several completed Zeek rotations. It must enter
+// each intervening archive in filename order, with a new generation for each
+// file, before it may follow current/. An absent interval remains a hard gap.
+func consecutiveZeekArchives(previous, next string) bool {
+	_, end, ok := zeekArchiveInterval(previous)
+	if !ok {
+		return false
+	}
+	start, _, ok := zeekArchiveInterval(next)
+	return ok && end.Equal(start)
+}
+
+func zeekArchiveInterval(path string) (time.Time, time.Time, bool) {
+	name := filepath.Base(path)
+	if !strings.HasSuffix(name, ".log.gz") {
+		return time.Time{}, time.Time{}, false
+	}
+	name = strings.TrimSuffix(name, ".log.gz")
+	dot := strings.LastIndexByte(name, '.')
+	if dot < 0 {
+		return time.Time{}, time.Time{}, false
+	}
+	period := name[dot+1:]
+	parts := strings.Split(period, "-")
+	if len(parts) != 2 {
+		return time.Time{}, time.Time{}, false
+	}
+	date := filepath.Base(filepath.Dir(path))
+	start, err := time.Parse("2006-01-02 15:04:05", date+" "+parts[0])
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	end, err := time.Parse("2006-01-02 15:04:05", date+" "+parts[1])
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	if !end.After(start) {
+		end = end.Add(24 * time.Hour)
+	}
+	return start, end, true
+}
+
+func readFirstZeekArchiveChunk(sourcePath, archivePath string, maxBytes int64) (sourceChunk, error) {
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		return sourceChunk{}, ErrStreamArchivePending
+	}
+	defer archive.Close()
+	before, err := archive.Stat()
+	if err != nil || !before.Mode().IsRegular() {
+		return sourceChunk{}, ErrStreamArchivePending
+	}
+	// The successor is a new source generation. Check its gzip trailer and
+	// CRC before committing a descriptor that depends on its original bytes.
+	verify, err := gzip.NewReader(archive)
+	if err != nil {
+		return sourceChunk{}, ErrStreamArchivePending
+	}
+	_, verifyErr := io.Copy(io.Discard, verify)
+	closeErr := verify.Close()
+	if verifyErr != nil || closeErr != nil {
+		return sourceChunk{}, ErrStreamArchivePending
+	}
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		return sourceChunk{}, ErrStreamArchivePending
+	}
+	zr, err := gzip.NewReader(archive)
+	if err != nil {
+		return sourceChunk{}, ErrStreamArchivePending
+	}
+	defer zr.Close()
+	if maxBytes <= 0 || maxBytes > streamReadLimit {
+		return sourceChunk{}, fmt.Errorf("invalid Zeek archive read bound")
+	}
+	buf := make([]byte, maxBytes)
+	n, err := io.ReadFull(zr, buf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return sourceChunk{}, ErrStreamArchivePending
+	}
+	if n == 0 {
+		return sourceChunk{}, ErrStreamSourceGap
+	}
+	last := bytes.LastIndexByte(buf[:n], '\n')
+	if last < 0 {
+		return sourceChunk{}, streamlog.ErrSegmentTooLarge
+	}
+	after, err := archive.Stat()
+	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return sourceChunk{}, ErrStreamArchivePending
+	}
+	data := buf[:last+1]
+	return sourceChunk{data: data, fileID: fileIdentity(sourcePath, before), start: 0, end: int64(len(data)), archive: true, verifiedRotation: true}, nil
 }
 
 func zeekArchiveMatchesCursor(path string, cursor streamlog.SourceCursor) (bool, error) {
