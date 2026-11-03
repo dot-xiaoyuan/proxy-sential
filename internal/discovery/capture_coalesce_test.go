@@ -71,6 +71,110 @@ func TestCaptureCoalescerCombinesInterleavedARPWithinBatch(t *testing.T) {
 	}
 }
 
+func TestCaptureCoalescerKeepsARPAfterNonIncreasingObservationTime(t *testing.T) {
+	for _, tc := range []struct {
+		name, middleAt string
+	}{
+		{"late", "2026-10-28T09:59:59.5Z"},
+		{"same_time", "2026-10-28T10:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCaptureCoalescer()
+			first := arpCaptureEvent("first", "2026-10-28T10:00:00Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 120)
+			middle := arpCaptureEvent("middle", tc.middleAt, "10.2.3.4", "02:00:00:00:00:04", "reply", 120)
+			last := arpCaptureEvent("last", "2026-10-28T10:00:00.4Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 120)
+			if c.add(first) || c.add(middle) || c.add(last) {
+				t.Fatal("a non-increasing ARP observation hid a separate receipt")
+			}
+			got := c.drain()
+			if len(got) != 3 || got[0].EventID != "first" || got[1].EventID != "middle" || got[2].EventID != "last" {
+				t.Fatalf("ARP observation order or receipt lost: %+v", got)
+			}
+		})
+	}
+}
+
+func TestCaptureCoalescerKeepsServiceAfterNonIncreasingObservationTime(t *testing.T) {
+	for _, tc := range []struct {
+		name, middleAt string
+	}{
+		{"late", "2026-10-28T09:59:59.5Z"},
+		{"same_time", "2026-10-28T10:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCaptureCoalescer()
+			first := streamDiscoveryEvent("first", "2026-10-28T10:00:00Z", 120)
+			middle := streamDiscoveryEvent("middle", tc.middleAt, 120)
+			last := streamDiscoveryEvent("last", "2026-10-28T10:00:00.4Z", 120)
+			if c.add(first) || c.add(middle) || c.add(last) {
+				t.Fatal("a non-increasing service observation hid a separate receipt")
+			}
+			got := c.drain()
+			if len(got) != 3 || got[0].EventID != "first" || got[1].EventID != "middle" || got[2].EventID != "last" {
+				t.Fatalf("service observation order or receipt lost: %+v", got)
+			}
+		})
+	}
+}
+
+func TestCaptureCoalescerDoesNotSeedAfterLateTransition(t *testing.T) {
+	t.Run("arp_address", func(t *testing.T) {
+		c := newCaptureCoalescer()
+		first := arpCaptureEvent("first", "2026-10-28T10:00:00Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 120)
+		late := arpCaptureEvent("late", "2026-10-28T09:59:59.5Z", "10.2.3.5", "02:00:00:00:00:04", "reply", 120)
+		last := arpCaptureEvent("last", "2026-10-28T10:00:00.4Z", "10.2.3.5", "02:00:00:00:00:04", "reply", 120)
+		if c.add(first) || c.add(late) || c.add(last) {
+			t.Fatal("late address transition hid an ARP receipt")
+		}
+		got := c.drain()
+		if len(got) != 3 || got[0].EventID != "first" || got[1].EventID != "late" || got[2].EventID != "last" {
+			t.Fatalf("late ARP transition lost: %+v", got)
+		}
+	})
+	t.Run("service_change", func(t *testing.T) {
+		c := newCaptureCoalescer()
+		first := streamDiscoveryEvent("first", "2026-10-28T10:00:00Z", 120)
+		late := streamDiscoveryEvent("late", "2026-10-28T09:59:59.5Z", 120)
+		late.Payload["txt"] = "ty=Changed"
+		last := streamDiscoveryEvent("last", "2026-10-28T10:00:00.4Z", 120)
+		last.Payload["txt"] = "ty=Changed"
+		if c.add(first) || c.add(late) || c.add(last) {
+			t.Fatal("late service correction hid a receipt")
+		}
+		got := c.drain()
+		if len(got) != 3 || got[0].EventID != "first" || got[1].EventID != "late" || got[2].EventID != "last" {
+			t.Fatalf("late service transition lost: %+v", got)
+		}
+	})
+}
+
+func TestCaptureCoalescerUnrelatedNewerEventDoesNotBlockServiceRepeat(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		first normalized.Event
+	}{
+		{"other_protocol", arpCaptureEvent("other", "2026-10-28T10:00:00Z", "10.2.3.4", "02:00:00:00:00:04", "reply", 120)},
+		{"other_device", func() normalized.Event {
+			e := streamDiscoveryEvent("other", "2026-10-28T10:00:00Z", 120)
+			e.Subject["ip"] = "10.2.3.9"
+			return e
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCaptureCoalescer()
+			first := streamDiscoveryEvent("first", "2026-10-28T09:59:59Z", 120)
+			last := streamDiscoveryEvent("last", "2026-10-28T09:59:59.5Z", 120)
+			if c.add(tc.first) || c.add(first) || !c.add(last) {
+				t.Fatal("an unrelated newer event blocked a safe service repeat")
+			}
+			got := c.drain()
+			if len(got) != 2 || got[0].EventID != "other" || got[1].EventID != "last" || got[1].RawRef["coalesced_count"] != 2 {
+				t.Fatalf("service repeat was not preserved: %+v", got)
+			}
+		})
+	}
+}
+
 func TestCaptureCoalescerDoesNotBridgeARPTransitions(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"reflect"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
@@ -51,6 +52,15 @@ func (c *captureCoalescer) add(event normalized.Event) bool {
 		c.lastKey = ""
 		return c.addARP(event, key, eligible)
 	}
+	if eligible && len(c.events) > 0 && captureSameSubject(c.events[len(c.events)-1], event) &&
+		captureNonIncreasing(c.events[len(c.events)-1], event) {
+		// A late or tied transition is its own evidence, even if its payload
+		// differs from the previous event. Do not seed a later repeat with it.
+		clear(c.positions)
+		c.lastKey = ""
+		c.events = append(c.events, event)
+		return false
+	}
 	// Other protocols still combine only adjacent identical observations.
 	if !eligible || key != c.lastKey {
 		clear(c.positions)
@@ -84,6 +94,22 @@ func (c *captureCoalescer) addARP(event normalized.Event, key string, eligible b
 	}
 	prefix := event.Source + "\x00" + str(event.Observer, "sensor_id") + "\x00"
 	mac, ip = prefix+mac, prefix+ip
+	if eligible {
+		byMAC, byIP := c.arpByMAC[mac], c.arpByIP[ip]
+		if (byMAC != nil && captureNonIncreasing(c.events[byMAC.at], event)) ||
+			(byIP != nil && captureNonIncreasing(c.events[byIP.at], event)) {
+			// Address or content changes can be late too. Keep this event
+			// independent and break both related merge candidates.
+			if byMAC != nil {
+				c.forgetARP(byMAC)
+			}
+			if byIP != nil {
+				c.forgetARP(byIP)
+			}
+			c.events = append(c.events, event)
+			return false
+		}
+	}
 	if previous := c.arpByMAC[mac]; previous != nil && previous.key != key {
 		c.forgetARP(previous)
 	}
@@ -91,8 +117,10 @@ func (c *captureCoalescer) addARP(event normalized.Event, key string, eligible b
 		c.forgetARP(previous)
 	}
 	if eligible {
-		if previous := c.arpByMAC[mac]; previous != nil && previous == c.arpByIP[ip] && c.combine(previous.at, event) {
-			return true
+		if previous := c.arpByMAC[mac]; previous != nil && previous == c.arpByIP[ip] && previous.key == key {
+			if c.combine(previous.at, event) {
+				return true
+			}
 		}
 	}
 	if previous := c.arpByMAC[mac]; previous != nil {
@@ -107,6 +135,17 @@ func (c *captureCoalescer) addARP(event normalized.Event, key string, eligible b
 	}
 	c.events = append(c.events, event)
 	return false
+}
+
+func captureNonIncreasing(previous, current normalized.Event) bool {
+	previousAt, previousErr := time.Parse(time.RFC3339Nano, previous.Timestamp)
+	currentAt, currentErr := time.Parse(time.RFC3339Nano, current.Timestamp)
+	return previousErr == nil && currentErr == nil && !currentAt.After(previousAt)
+}
+
+func captureSameSubject(previous, current normalized.Event) bool {
+	return previous.Source == current.Source && previous.SourceEventType == current.SourceEventType &&
+		reflect.DeepEqual(previous.Observer, current.Observer) && reflect.DeepEqual(previous.Subject, current.Subject)
 }
 
 func (c *captureCoalescer) forgetARP(position *captureARPPosition) {
