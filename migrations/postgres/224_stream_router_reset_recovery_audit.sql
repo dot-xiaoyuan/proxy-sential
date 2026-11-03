@@ -31,3 +31,8 @@ END $$;
 CREATE TRIGGER stream_router_reset_recovery_immutable
 BEFORE UPDATE OR DELETE ON stream_router_reset_recoveries
 FOR EACH ROW EXECUTE FUNCTION prevent_stream_router_reset_recovery_change();
+-- A broad test reset may use TRUNCATE ... CASCADE, which bypasses row triggers.
+-- This statement trigger also rejects truncation reached through CASCADE.
+CREATE TRIGGER stream_router_reset_recovery_no_truncate
+BEFORE TRUNCATE ON stream_router_reset_recoveries
+FOR EACH STATEMENT EXECUTE FUNCTION prevent_stream_router_reset_recovery_change();

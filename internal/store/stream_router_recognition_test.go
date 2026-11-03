@@ -145,6 +145,20 @@ func TestStreamRouterCursorStopsBeforeIndexRetentionGap(t *testing.T) {
 	}
 }
 
+func TestStreamRouterIndexGuardStopsAtShortTTLSecondBoundary(t *testing.T) {
+	cursor := time.Date(2026, 10, 31, 9, 29, 6, 138538000, time.UTC)
+	shortExpires := cursor.Truncate(time.Second).Add(6 * 24 * time.Hour)
+	if streamRouterIndexExpired(shortExpires.Add(-time.Nanosecond), cursor) {
+		t.Fatal("index rejected before the earliest short TTL boundary")
+	}
+	if !streamRouterIndexExpired(shortExpires, cursor) {
+		t.Fatal("index may have expired at the short TTL second boundary")
+	}
+	if !streamRouterIndexExpired(shortExpires.Add(time.Hour), cursor) {
+		t.Fatal("index gap was hidden during the sixth-to-seventh day")
+	}
+}
+
 func TestStreamRouterClaimDelayCapsSuccessfulClaims(t *testing.T) {
 	if delay := streamRouterClaimDelay(true, 100, nil); delay != time.Second {
 		t.Fatalf("successful claim resumed without pause: %s", delay)

@@ -64,6 +64,13 @@ func runStreamRouterClaimBatches(ctx context.Context, start streamRouterCursor, 
 
 var ErrStreamRouterIndexGap = errors.New("stream router cursor is older than retained index coverage")
 
+// The shortest router index TTL is toDateTime(indexed_at)+6 days (CH 055).
+// toDateTime truncates microseconds, so stop at that whole-second boundary
+// even if the physical TTL merge has not yet removed the row.
+func streamRouterIndexExpired(now, indexedAt time.Time) bool {
+	return !indexedAt.IsZero() && !now.Before(indexedAt.UTC().Truncate(time.Second).Add(6*24*time.Hour))
+}
+
 func (s *DBStore) claimStreamRouterRecognition(ctx context.Context, sensor, owner string) (streamRouterCursor, bool, error) {
 	if sensor == "" || owner == "" {
 		return streamRouterCursor{}, false, errors.New("stream router claim requires sensor and owner")
@@ -122,7 +129,7 @@ func (s *DBStore) finishStreamRouterRecognition(ctx context.Context, sensor stri
 }
 
 func (s *DBStore) streamRouterSignalBatch(ctx context.Context, sensor string, cursor streamRouterCursor) ([]normalized.Event, streamRouterCursor, error) {
-	if !cursor.IndexedAt.IsZero() && time.Since(cursor.IndexedAt) > 7*24*time.Hour {
+	if streamRouterIndexExpired(time.Now().UTC(), cursor.IndexedAt) {
 		return nil, cursor, ErrStreamRouterIndexGap
 	}
 	indexed, err := s.ch.ListStreamRouterSignalRefs(ctx, sensor, cursor.IndexedAt, cursor.EventKey, 100)

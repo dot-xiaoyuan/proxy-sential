@@ -42,6 +42,7 @@ type StreamRouterResetRecoveryProof struct {
 // interval as processed. The missing row count remains unknown in the audit.
 func (s *DBStore) RestoreStreamRouterAfterReset(ctx context.Context, req StreamRouterResetRecoveryRequest) (StreamRouterResetRecoveryProof, error) {
 	var proof StreamRouterResetRecoveryProof
+	now := time.Now().UTC()
 	if s == nil || s.pg == nil || s.pg.db == nil || s.ch == nil ||
 		req.SensorID == "" || req.ResetID == "" || req.AuthorizationRef == "" || req.FixedCancelID == "" ||
 		req.ExpectedFirstEventKey == "" || len(req.ExpectedFirstSHA256) != 64 ||
@@ -50,7 +51,7 @@ func (s *DBStore) RestoreStreamRouterAfterReset(ctx context.Context, req StreamR
 		!req.ResetStartedAt.Equal(req.ResetStartedAt.UTC().Truncate(time.Microsecond)) ||
 		!req.ExpectedFirstIndexedAt.Equal(req.ExpectedFirstIndexedAt.UTC().Truncate(time.Microsecond)) ||
 		!req.FixedCutoverAt.Before(req.ResetStartedAt) || req.ExpectedFirstIndexedAt.Before(req.ResetStartedAt) ||
-		!req.ExpectedFirstIndexedAt.Before(time.Now().UTC()) || !time.Now().UTC().Before(req.ResetStartedAt.Add(6*24*time.Hour)) {
+		!req.ExpectedFirstIndexedAt.Before(now) || streamRouterIndexExpired(now, req.ResetStartedAt) {
 		return proof, errors.New("invalid router reset recovery boundary or expired short index window")
 	}
 	if _, err := hex.DecodeString(req.ExpectedFirstSHA256); err != nil || req.ExpectedFirstSHA256 != strings.ToLower(req.ExpectedFirstSHA256) {
@@ -93,6 +94,9 @@ SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=15 FORMAT T
 	}
 	proof.FirstIndexedAt, proof.FirstEventKey, proof.FirstSHA256, proof.FirstBodyVerified =
 		first[0].IndexedAt, first[0].EventKey, first[0].Body.SHA256, true
+	if streamRouterIndexExpired(time.Now().UTC(), req.ResetStartedAt) {
+		return proof, ErrStreamRouterIndexGap
+	}
 
 	tx, err := s.pg.db.BeginTx(ctx, nil)
 	if err != nil {
