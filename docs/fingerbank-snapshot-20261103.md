@@ -1,6 +1,6 @@
 # Fingerbank 快照接入与识别效果对比（2026-11-03）
 
-本文记录在本机独立 worktree `codex/fingerbank-snapshot-20261103` 中完成的 Fingerbank 接入测试。所有现场数据读取均为只读，184 未发生任何写入；Fingerbank 数据只在构建机使用，不进入仓库、不进入发布包。
+本文按时间记录 Fingerbank 的离线回放与 184 现场小批验证。离线阶段仅只读提取现场 DHCP 指纹、在构建机编译和回放；13:30–13:50 的现场阶段导入了离线规则包，并为最近 1,000 台终端补齐 DHCP 属性、重新入队识别。Fingerbank 原始查询数据不进入仓库或应用发布包。
 
 ## 1. 凭据与接口探测
 
@@ -67,6 +67,8 @@ so there is no need to download this multiple times per day.
 
 ## 7. 结果（按观测加权，542,404 条绑定观测）
 
+以下为修正回放工具前保存的历史结果：当时基线库未加载 `multisource-catalog.json`，增益可能被高估。整合分支已修复加载逻辑并加回归测试；原始回放语料和离线包未随仓库提交，精确数值须用同一语料重跑后再用于决策。
+
 | 指标 | 基线包 | 替换后（67 条规则） |
 |---|---:|---:|
 | 有 device_type 的流量 | 42.9% | **59.2%** |
@@ -77,15 +79,17 @@ so there is no need to download this multiple times per day.
 - 195 次查询中 180 次命中，得分中位数 89；命中类别以手机/平板（89）、操作系统（68）、打印机（11）、路由/AP（7）、交换机（3）为主。
 - 明细见 `artifacts/fingerbank-20261103/replay-comparison.json` 与 `replay-summary.md`。
 
-## 8. 测试包（未部署）
+## 8. 离线规则包与本地验证
 
 - 版本：`offline-2026.11.03-fingerbank-obs1`，v7 结构，67 条 DHCP 规则，`fingerbank-dhcp.json` 10,751 字节。
 - SHA256：`3893d8404ba8c505d0fa0ac83bdd0ed3364f53ee32c2bcc29479967d01fc04cb`（4,222,475 字节）。
-- 位置：worktree `dist/fingerbank/`（`.gitignore` 忽略，未提交、未进入发布包）。
+- 构建时产物位于独立工作树的 `dist/fingerbank/`（被 `.gitignore` 忽略，未提交仓库）；现场安装记录见第 10 节。
 - `device-fingerprint verify` 与临时目录 `install` 均通过：导入后 `status=ready`、`dhcp_rule_count=67`、`oui_count=54,289`。
-- 现场导入由用户在“规则与特征库 → 设备特征库”执行；回滚重新导入 `offline-2026.10.28-layered-v7-r2` 的原始包。
+- 现场导入和回退位置见第 10 节。
 
 ## 9. 时间切分验证（设备级）
+
+本节表格同样使用修正前的基线，仅记录当时试验结果；增益数字尚未按修正后的工具复算。
 
 为避免“用同一批指纹建规则再测同一批指纹”的循环，补了一组时间切分：
 
@@ -103,14 +107,9 @@ so there is no need to download this multiple times per day.
 
 复现步骤（全程只读现场）：按日抽取 `device_dhcp_binding` 日志 → 过滤出训练日出现过的 option-55 → `fingerbank-refresh --min-rules 20 --max-unmapped-rate 0.9 --min-score 30 --max-confidence 0.84` → `fingerprint-replay --input <测试日设备 JSONL> --library-dir <现装包> --fingerbank-json <新规则>`。
 
-## 10. 未执行
-
-- 整库快照：受每日一次限制，需次日或 on-prem 授权后重跑。
-- 184 现场导入与 A/B：等用户确认后再做，届时用 `endpoint_recognition_jobs` 有界重算同一端点集对比。
-
 ## 10. 184 现场导入与可见性验证（2026-11-03 13:30–13:50）
 
-**导入**：用 root 执行 `device-fingerprint install`，把 `offline-2026.11.03-fingerbank-obs1` 写入 `/opt/proxy-sentinel/data/device-fingerprints`，`current` 指向新 release，旧 release 保留；识别工作进程 5 秒内热加载。未重启任何服务、未切换应用版本。
+**导入**：用 root 执行 `device-fingerprint install`，把 `offline-2026.11.03-fingerbank-obs1` 写入 `/opt/proxy-sentinel/data/device-fingerprints`，`current` 指向新 release，旧 release 保留；识别工作进程 5 秒内热加载。此验证窗口内未重启服务、未切换应用版本；其后应用已更新至 r67，当前版本见[问题与优先级](current-issues-priorities-20261103.md)。
 
 **为什么还需要回填**：识别链路从 `endpoint_entities.attributes` 取 `vendor_class` / `requested_options`，但现场属性里只有 campus/vlan/nas（全库 0 条 DHCP 指纹）。只导入规则不会命中，所以对**最近 1,000 台终端**做了一次 DHCP 绑定日志回填，并把这批端点重新入队识别。
 
@@ -132,3 +131,8 @@ OS 分布：Android 549、Apple OS 155、Windows 155、HarmonyOS 90、ChromeOS 2
 - 还原后对这批端点重新入队，即可回到旧标签。
 
 **限制**：回填是演示用的数据补齐，不是常规链路；长期方案是让 DHCP option 55/60 随发现/身份事件进入 `endpoint_attributes`（属识别链路改动）。控制面未重启，页面“设备特征库”显示的版本可能仍是旧值，以识别结果为准。
+
+## 11. 仍待验证
+
+- Fingerbank 整库快照受每日一次下载限制，本次只取得现场观测指纹的定向规则。
+- 现场 1,000 台补齐属于小批可见性验证；尚未完成同一端点集的正式 A/B 与常规新输入链路验证，也不能把离线标签覆盖率当作准确率或全库识别率。
