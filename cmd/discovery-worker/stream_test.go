@@ -96,6 +96,48 @@ func TestCompactKeyModeRequiresInstalledLedgerBeforeCapture(t *testing.T) {
 	}
 }
 
+func TestStream3ProducerRequiresPG225SchemaBeforeCapture(t *testing.T) {
+	for _, ready := range []bool{false, true} {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := discovery.DefaultCollectionConfig()
+		config.Stream3PassiveEventKeys = true
+		mock.ExpectQuery("sentinel_stream3_locator").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(ready))
+		err = verifyCompactPassiveEventKeySchema(context.Background(), db, config)
+		if (err == nil) != ready {
+			t.Fatalf("PG225 schema ready=%v err=%v", ready, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+	}
+}
+
+func TestTwoThousandStream3EventsRequireWidenedManifest(t *testing.T) {
+	for _, ready := range []bool{false, true} {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := discovery.DefaultCollectionConfig()
+		config.Stream3PassiveEventKeys = true
+		config.PassiveSegmentMaxEvents = streamlog.MaxPassiveSegmentEvents
+		mock.ExpectQuery("sentinel_stream3_locator").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
+		mock.ExpectQuery("stream_discovery_segment_receipt_manifests_results_check").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(ready))
+		err = verifyCompactPassiveEventKeySchema(context.Background(), db, config)
+		if (err == nil) != ready {
+			t.Fatalf("stream3 2000-event manifest ready=%v err=%v", ready, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+	}
+}
+
 func TestReceiptManifestShadowRequiresInstalledSchemaBeforeCapture(t *testing.T) {
 	for _, ready := range []bool{false, true} {
 		db, mock, err := sqlmock.New()

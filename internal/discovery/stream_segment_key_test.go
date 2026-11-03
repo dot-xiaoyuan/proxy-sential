@@ -1,10 +1,13 @@
 package discovery
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/streamlog"
 )
@@ -73,6 +76,88 @@ func TestStream3ProjectionRequiresSourceBoundOrdinalAndScope(t *testing.T) {
 			items, err := prepareStreamDiscovery(copy)
 			if err == nil && verifyStream3PreparedSegment(id, copy, items) == nil {
 				t.Fatal("conflicting stream3 source admitted")
+			}
+		})
+	}
+}
+
+func TestStream3ProjectionSkipsCompactLedgerAndRollsBackFailedManifest(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "commit", true: "rollback"}[fail], func(t *testing.T) {
+			id, segment := stream3ProjectionTestSegment()
+			segment.Events[0].Subject["ip"] = "203.0.113.4"
+			prepared, err := prepareStreamDiscovery(segment)
+			if err != nil || len(prepared) != 1 || prepared[0].HasFact || prepared[0].Receipt.Result != "outside_private_scope" {
+				t.Fatalf("test input did not select manifest-only receipt: %+v err=%v", prepared, err)
+			}
+			scope, hashes, err := stream3ScopeAndHashes(prepared)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectBegin()
+			mock.ExpectExec("INSERT INTO stream_projection_segments").WithArgs(id, segment.Epoch, segment.Source, segment.SourcePath,
+				streamProjectionSegmentHash(segment, prepared), segment.AcceptedAt, 1, segment.FileID, segment.StartOffset,
+				segment.EndOffset, "manifest", int64(0)).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery("SELECT .*since").WillReturnRows(sqlmock.NewRows([]string{"since"}))
+			manifest := mock.ExpectExec("INSERT INTO stream_discovery_segment_receipt_manifests").WithArgs(id, segment.ArchiveMonth,
+				segment.BodyLayout, streamManifestResults{"outside_private_scope"}, sqlmock.AnyArg(), scope, hashes)
+			if fail {
+				manifest.WillReturnError(errors.New("manifest write interrupted"))
+				mock.ExpectRollback()
+			} else {
+				manifest.WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			}
+			err = (StreamDiscoveryProjector{DB: db}).ProjectStreamSegment(context.Background(), id, segment)
+			if (err != nil) != fail {
+				t.Fatalf("manifest failure=%v projection err=%v", fail, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestStream3ProjectionRetryUsesCommittedSegmentMarker(t *testing.T) {
+	id, segment := stream3ProjectionTestSegment()
+	prepared, err := prepareStreamDiscovery(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, prior string
+		wantErr     bool
+	}{
+		{"same segment", streamProjectionSegmentHash(segment, prepared), false},
+		{"different body", "different-hash", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectBegin()
+			mock.ExpectExec("INSERT INTO stream_projection_segments").WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectQuery("SELECT content_sha256,passive_key_scheme,source_generation").WithArgs(id).
+				WillReturnRows(sqlmock.NewRows([]string{"content_sha256", "passive_key_scheme", "source_generation"}).AddRow(tc.prior, "stream3", int64(0)))
+			if tc.wantErr {
+				mock.ExpectRollback()
+			} else {
+				mock.ExpectCommit()
+			}
+			err = (StreamDiscoveryProjector{DB: db}).ProjectStreamSegment(context.Background(), id, segment)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("existing segment hash=%s err=%v", tc.prior, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

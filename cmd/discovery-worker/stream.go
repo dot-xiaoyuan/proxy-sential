@@ -46,8 +46,54 @@ func newPassiveStreamLaneWriter(db *sql.DB, ch *store.ClickHouseStore, config di
 }
 
 func verifyCompactPassiveEventKeySchema(ctx context.Context, db *sql.DB, config discovery.CollectionConfig) error {
-	if config.PassiveSegmentMaxEvents == streamlog.MaxPassiveSegmentEvents && !config.ReceiptManifestWrites {
+	if config.PassiveSegmentMaxEvents == streamlog.MaxPassiveSegmentEvents && !config.ReceiptManifestWrites && !config.Stream3PassiveEventKeys {
 		return errors.New("2000-event segments require manifest receipts")
+	}
+	if config.Stream3PassiveEventKeys {
+		var ready bool
+		if err := db.QueryRowContext(ctx, `SELECT
+ to_regprocedure('sentinel_stream3_locator(text,text)') IS NOT NULL
+ AND to_regprocedure('sentinel_stream_source_segment_id(text,text,text,text,bigint,bigint,bigint)') IS NOT NULL
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_projection_segments')
+  AND attname='passive_key_scheme' AND NOT attisdropped)
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_projection_segments')
+  AND attname='source_generation' AND NOT attisdropped)
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_projection_segments')
+  AND conname='stream_projection_passive_key_scheme')
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_projection_segments')
+  AND conname='stream_projection_source_generation_nonnegative')
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND attname='key_scheme' AND NOT attisdropped)
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND attname='scope_id' AND NOT attisdropped)
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND attname='content_hashes' AND NOT attisdropped)
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND attname='recognition_summary' AND NOT attisdropped)
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND conname='stream_discovery_manifest_key_scheme')
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_projection_segments')
+  AND conname='stream_projection_archive_receipt_mode' AND pg_get_constraintdef(oid) LIKE '%manifest%')
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_projection_segments')
+  AND tgname='protect_stream3_segment_metadata' AND tgenabled<>'D')
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND tgname='protect_stream3_manifest_metadata' AND tgenabled<>'D')`).Scan(&ready); err != nil {
+			return fmt.Errorf("stream3 segment-key schema preflight: %w", err)
+		}
+		if !ready {
+			return errors.New("stream3 segment-key schema PG225 is not installed")
+		}
+		if config.PassiveSegmentMaxEvents == streamlog.MaxPassiveSegmentEvents {
+			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint
+ WHERE conrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND conname='stream_discovery_segment_receipt_manifests_results_check'
+  AND pg_get_constraintdef(oid) LIKE '%2000%')`).Scan(&ready); err != nil {
+				return fmt.Errorf("stream3 2000-event manifest bounds preflight: %w", err)
+			}
+			if !ready {
+				return errors.New("stream3 2000-event manifest bounds are not installed")
+			}
+		}
 	}
 	if !config.CompactPassiveEventKeys {
 		return nil

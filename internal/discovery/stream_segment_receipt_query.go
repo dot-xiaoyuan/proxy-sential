@@ -13,9 +13,9 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
-// streamSegmentReceipts looks up only the requested segment IDs. stream3 is
-// still reader-only: no live producer may write it until history, archive and
-// case evidence can also prove these manifest-backed identities.
+// streamSegmentReceipts looks up only the requested segment IDs. It remains
+// available when the stream3 producer switch is off, so a compatible rollback
+// release can finish segments accepted by a later producer.
 func (r Repository) streamSegmentReceipts(ctx context.Context, epoch, scope string, keys []string) (map[string]map[string]any, error) {
 	out := make(map[string]map[string]any, len(keys))
 	if len(keys) == 0 {

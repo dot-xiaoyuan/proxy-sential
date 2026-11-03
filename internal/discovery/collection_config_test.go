@@ -9,7 +9,7 @@ import (
 
 func TestSharedCollectionFileCannotEnableCompactPassiveKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "collection.json")
-	data := []byte(`{"version":1,"allowed_cidrs":"10.0.0.0/8","protocols":[],"compact_passive_event_keys":true}`)
+	data := []byte(`{"version":1,"allowed_cidrs":"10.0.0.0/8","protocols":[],"compact_passive_event_keys":true,"stream3_passive_event_keys":true}`)
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -17,8 +17,23 @@ func TestSharedCollectionFileCannotEnableCompactPassiveKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.CompactPassiveEventKeys {
+	if config.CompactPassiveEventKeys || config.Stream3PassiveEventKeys {
 		t.Fatal("shared collection file enabled the durable producer format")
+	}
+}
+
+func TestPassiveStream3KeyModeDefaultsOffAndOverridesStream2OnlyWhenSelected(t *testing.T) {
+	config := DefaultCollectionConfig()
+	if config.Stream3PassiveEventKeys || passiveStreamKeyScheme(config) != passiveEventKeyLegacy {
+		t.Fatal("stream3 producer default changed")
+	}
+	config.CompactPassiveEventKeys = true
+	if passiveStreamKeyScheme(config) != passiveEventKeyStream2 {
+		t.Fatal("existing stream2 producer was not selected")
+	}
+	config.Stream3PassiveEventKeys = true
+	if passiveStreamKeyScheme(config) != passiveEventKeyStream3 {
+		t.Fatal("explicit stream3 producer was not selected")
 	}
 }
 

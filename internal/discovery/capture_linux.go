@@ -53,7 +53,7 @@ func CaptureStreamConfigured(ctx context.Context, iface, statsDir string, source
 		return err
 	}
 	return captureConfiguredWithPersist(ctx, iface, statsDir, source, allow, config, maxEvents, maxBytes, maxEvents, streamCaptureFlushWindow, 500*time.Millisecond, true, true, func(b []byte) error {
-		return persistPassiveStreamCaptureBatch(ctx, journal, source, scope, config.CompactPassiveEventKeys, onSegment, b)
+		return persistPassiveStreamCaptureBatchWithScheme(ctx, journal, source, scope, passiveStreamKeyScheme(config), onSegment, b)
 	})
 }
 
@@ -73,6 +73,14 @@ func passiveStreamCaptureBudget(config CollectionConfig) (int, int, error) {
 }
 
 func persistPassiveStreamCaptureBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, compactKeys bool, onSegment func(CapturedSegment) error, raw []byte) error {
+	scheme := passiveEventKeyLegacy
+	if compactKeys {
+		scheme = passiveEventKeyStream2
+	}
+	return persistPassiveStreamCaptureBatchWithScheme(ctx, journal, source, scope, scheme, onSegment, raw)
+}
+
+func persistPassiveStreamCaptureBatchWithScheme(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, scheme passiveEventKeyScheme, onSegment func(CapturedSegment) error, raw []byte) error {
 	var events []normalized.Event
 	if err := json.Unmarshal(raw, &events); err != nil {
 		return err
@@ -80,7 +88,7 @@ func persistPassiveStreamCaptureBatch(ctx context.Context, journal PassiveStream
 	// Capture stops on cancellation, but its accepted in-memory queue still
 	// needs to reach the journal before the worker exits. Recovery will enqueue
 	// these segments on the next start.
-	captured, err := appendPassiveStreamBatch(context.WithoutCancel(ctx), journal, source, scope, events, compactKeys)
+	captured, err := appendPassiveStreamBatchWithScheme(context.WithoutCancel(ctx), journal, source, scope, events, scheme)
 	if err != nil {
 		return err
 	}
@@ -135,7 +143,9 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	decoder := newCaptureFrameDecoder(config.MDNSRecordEvidenceV2, allow...)
 	stats := NewCaptureStats()
 	stats.Config = config
-	if config.CompactPassiveEventKeys {
+	if config.Stream3PassiveEventKeys {
+		stats.EventKeyVersion = 3
+	} else if config.CompactPassiveEventKeys {
 		stats.EventKeyVersion = 2
 	}
 	if config.MDNSRecordEvidenceV2 {
