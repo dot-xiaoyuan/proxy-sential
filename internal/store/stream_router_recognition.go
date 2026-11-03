@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/fingerprint"
@@ -61,6 +63,13 @@ func runStreamRouterClaimBatches(ctx context.Context, start streamRouterCursor, 
 }
 
 var ErrStreamRouterIndexGap = errors.New("stream router cursor is older than retained index coverage")
+
+// The shortest router index TTL is toDateTime(indexed_at)+6 days (CH 055).
+// toDateTime truncates microseconds, so stop at that whole-second boundary
+// even if the physical TTL merge has not yet removed the row.
+func streamRouterIndexExpired(now, indexedAt time.Time) bool {
+	return !indexedAt.IsZero() && !now.Before(indexedAt.UTC().Truncate(time.Second).Add(6*24*time.Hour))
+}
 
 func (s *DBStore) claimStreamRouterRecognition(ctx context.Context, sensor, owner string) (streamRouterCursor, bool, error) {
 	if sensor == "" || owner == "" {
@@ -120,7 +129,7 @@ func (s *DBStore) finishStreamRouterRecognition(ctx context.Context, sensor stri
 }
 
 func (s *DBStore) streamRouterSignalBatch(ctx context.Context, sensor string, cursor streamRouterCursor) ([]normalized.Event, streamRouterCursor, error) {
-	if !cursor.IndexedAt.IsZero() && time.Since(cursor.IndexedAt) > 7*24*time.Hour {
+	if streamRouterIndexExpired(time.Now().UTC(), cursor.IndexedAt) {
 		return nil, cursor, ErrStreamRouterIndexGap
 	}
 	indexed, err := s.ch.ListStreamRouterSignalRefs(ctx, sensor, cursor.IndexedAt, cursor.EventKey, 100)
@@ -158,11 +167,24 @@ func (s *DBStore) streamRouterSignalBatch(ctx context.Context, sensor string, cu
 }
 
 func (s *DBStore) runStreamRouterRecognitionMaterializer(ctx context.Context, sensor string) {
+	if os.Getenv("PROXY_SENTINEL_STREAM_ROUTER_DISABLED") == "true" {
+		fmt.Fprintln(os.Stderr, "stream router recognition disabled by operator")
+		return
+	}
+	claimBudget, budgetErr := parseStreamRouterClaimBudget(os.Getenv("PROXY_SENTINEL_STREAM_ROUTER_CLAIM_BUDGET"))
+	if budgetErr != nil {
+		fmt.Fprintf(os.Stderr, "stream router recognition disabled: %v\n", budgetErr)
+		return
+	}
+	claims := 0
 	owner := fmt.Sprintf("stream-router-%d-%d", os.Getpid(), time.Now().UnixNano())
 	for ctx.Err() == nil {
 		started := time.Now()
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		cursor, claimed, err := s.claimStreamRouterRecognition(workCtx, sensor, owner)
+		if claimed {
+			claims++
+		}
 		claimDuration := time.Since(started)
 		processed := 0
 		var readDuration, analyzeDuration, expiryDuration, finishDuration time.Duration
@@ -198,13 +220,11 @@ func (s *DBStore) runStreamRouterRecognitionMaterializer(ctx context.Context, se
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "stream router recognition failed: %v\n", err)
 		}
-		if claimed && err == nil && processed > 0 {
-			// Each bounded batch already waits for both stores and a durable
-			// cursor. An extra one-second pause caps this lane below the live
-			// index rate even when all storage calls are instantaneous.
-			continue
+		if claimBudget > 0 && claims >= claimBudget {
+			fmt.Fprintf(os.Stderr, "stream router recognition claim budget reached: claims=%d\n", claims)
+			return
 		}
-		timer := time.NewTimer(5 * time.Second)
+		timer := time.NewTimer(streamRouterClaimDelay(claimed, processed, err))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -212,4 +232,24 @@ func (s *DBStore) runStreamRouterRecognitionMaterializer(ctx context.Context, se
 		case <-timer.C:
 		}
 	}
+}
+
+func parseStreamRouterClaimBudget(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 || value > 1000000 {
+		return 0, fmt.Errorf("invalid PROXY_SENTINEL_STREAM_ROUTER_CLAIM_BUDGET %q", raw)
+	}
+	return value, nil
+}
+
+func streamRouterClaimDelay(claimed bool, processed int, runErr error) time.Duration {
+	if claimed && runErr == nil && processed > 0 {
+		// Bounded claims still need a pause after a successful cursor commit.
+		return time.Second
+	}
+	return 5 * time.Second
 }
