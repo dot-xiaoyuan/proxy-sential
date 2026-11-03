@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
 
 	"proxy-sentinel/internal/streamlog"
@@ -32,7 +34,8 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
 		limit = 20
 	}
 	rows, err := r.DB.QueryContext(ctx, `SELECT c.change_id,c.event_key,c.accepted_at,c.observed_at,c.change_kind,c.before_hash,c.after_hash,c.body_ref,
- CASE WHEN r.event_key IS NOT NULL THEN
+ CASE WHEN left(c.event_key,char_length(c.epoch)+9)=c.epoch||':stream3-' THEN NULL
+  WHEN r.event_key IS NOT NULL THEN
   CASE WHEN r.archive_state IN ('verified','failed') THEN r.archive_state
    WHEN r.archive_segment_id IS NOT NULL THEN CASE WHEN s.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
    ELSE r.archive_state END
@@ -48,7 +51,8 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
    AND to_char(kc.accepted_month,'YYYYMM')=m.archive_month
    AND coalesce(c.body_ref->>'body_layout','')=m.body_layout
   THEN CASE WHEN sm.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
-  ELSE NULL END
+  ELSE NULL END,
+ (k.event_key IS NOT NULL OR kc.event_key IS NOT NULL)
  FROM stream_discovery_changes c
  LEFT JOIN stream_discovery_event_keys k ON k.epoch=c.epoch AND k.event_key=c.event_key AND k.scope_id=c.body_ref->>'scope'
  LEFT JOIN stream_discovery_event_keys_compact kc
@@ -70,24 +74,71 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
 	defer rows.Close()
 	items := []map[string]any{}
 	ids := []int64{}
+	type segmentChange struct {
+		index      int
+		id         int64
+		scope, key string
+		accepted   time.Time
+		ref        json.RawMessage
+	}
+	segmentChanges := make([]segmentChange, 0)
+	segmentKeys := make(map[string][]string)
 	for rows.Next() {
 		var id int64
 		var event, kind, before, afterHash string
 		var archive sql.NullString
+		var legacyPresent bool
 		var accepted, observed time.Time
 		var ref json.RawMessage
-		if err = rows.Scan(&id, &event, &accepted, &observed, &kind, &before, &afterHash, &ref, &archive); err != nil {
+		if err = rows.Scan(&id, &event, &accepted, &observed, &kind, &before, &afterHash, &ref, &archive, &legacyPresent); err != nil {
 			return nil, err
 		}
-		if !archive.Valid {
+		archiveState := archive.String
+		if strings.HasPrefix(event, epoch+":stream3-") {
+			if _, _, ok := ParsePassiveStream3Key(epoch, event); !ok || legacyPresent {
+				return nil, fmt.Errorf("stream discovery change %d has conflicting stream3 identity: %w", id, streamlog.ErrContentConflict)
+			}
+			var fields map[string]string
+			if err := json.Unmarshal(ref, &fields); err != nil || fields["scope"] == "" {
+				return nil, fmt.Errorf("stream discovery change %d has invalid evidence reference: %w", id, streamlog.ErrContentConflict)
+			}
+			scope := fields["scope"]
+			segmentChanges = append(segmentChanges, segmentChange{index: len(items), id: id, scope: scope, key: event, accepted: accepted, ref: ref})
+			segmentKeys[scope] = append(segmentKeys[scope], event)
+			archiveState = ""
+		} else if !archive.Valid {
 			return nil, fmt.Errorf("stream discovery change %d has no valid receipt: %w", id, streamlog.ErrUnconfirmed)
 		}
 		items = append(items, map[string]any{"id": id, "event_id": event, "ingested_at": accepted, "observed_at": observed, "kind": kind,
-			"evidence": map[string]any{"before_hash": before, "after_hash": afterHash, "body_ref": ref, "archive_state": archive.String}, "generation": "fresh"})
+			"evidence": map[string]any{"before_hash": before, "after_hash": afterHash, "body_ref": ref, "archive_state": archiveState}, "generation": "fresh"})
 		ids = append(ids, id)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	segmentReceipts := make(map[string]map[string]map[string]any, len(segmentKeys))
+	for scope, keys := range segmentKeys {
+		receipts, err := r.streamSegmentReceipts(ctx, epoch, scope, keys)
+		if err != nil {
+			return nil, err
+		}
+		segmentReceipts[scope] = receipts
+	}
+	for _, change := range segmentChanges {
+		receipt, found := segmentReceipts[change.scope][change.key]
+		if !found {
+			return nil, fmt.Errorf("stream discovery change %d has no segment receipt: %w", change.id, streamlog.ErrUnconfirmed)
+		}
+		var original, confirmed map[string]string
+		bodyRef, ok := receipt["body_ref"].(json.RawMessage)
+		if !ok || json.Unmarshal(change.ref, &original) != nil || json.Unmarshal(bodyRef, &confirmed) != nil ||
+			!reflect.DeepEqual(original, confirmed) || !streamAcceptedAtMatches(receipt["first_accepted_at"].(time.Time), change.accepted) {
+			return nil, fmt.Errorf("stream discovery change %d has conflicting segment reference: %w", change.id, streamlog.ErrContentConflict)
+		}
+		items[change.index]["evidence"].(map[string]any)["archive_state"] = receipt["archive_state"]
 	}
 	more := len(items) > limit
 	next := ""

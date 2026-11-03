@@ -85,7 +85,7 @@ func TestDiscoveryHistoryReadsFreshNarrowChanges(t *testing.T) {
 	defer db.Close()
 	now := time.Now().UTC()
 	mock.ExpectQuery("SELECT s.epoch FROM stream_discovery_device_state s").WithArgs("device-new").WillReturnRows(sqlmock.NewRows([]string{"epoch"}).AddRow("fresh-1"))
-	mock.ExpectQuery("FROM stream_discovery_changes c").WithArgs("fresh-1", "device-new", int64(0), 21).WillReturnRows(sqlmock.NewRows([]string{"change_id", "event_key", "accepted_at", "observed_at", "change_kind", "before_hash", "after_hash", "body_ref", "archive_state"}).AddRow(int64(7), "fresh-1:event-a", now, now, "applied", "", "hash", []byte(`{"class":"evidence","month":"202610","scope":"scope-a","key":"fresh-1:event-a","sha256":"hash"}`), "confirmed"))
+	mock.ExpectQuery("FROM stream_discovery_changes c").WithArgs("fresh-1", "device-new", int64(0), 21).WillReturnRows(sqlmock.NewRows([]string{"change_id", "event_key", "accepted_at", "observed_at", "change_kind", "before_hash", "after_hash", "body_ref", "archive_state", "legacy_present"}).AddRow(int64(7), "fresh-1:event-a", now, now, "applied", "", "hash", []byte(`{"class":"evidence","month":"202610","scope":"scope-a","key":"fresh-1:event-a","sha256":"hash"}`), "confirmed", true))
 	page, err := (Repository{DB: db}).DiscoveryHistory(context.Background(), "device-new", "", 20)
 	if err != nil {
 		t.Fatal(err)
@@ -107,8 +107,8 @@ func TestDiscoveryHistoryRejectsChangeWithoutValidReceipt(t *testing.T) {
 	defer db.Close()
 	now := time.Now().UTC()
 	mock.ExpectQuery("(?s)archive_receipt_mode='manifest'.*FROM stream_discovery_changes c").WithArgs("fresh-1", "device-new", int64(0), 21).
-		WillReturnRows(sqlmock.NewRows([]string{"change_id", "event_key", "accepted_at", "observed_at", "change_kind", "before_hash", "after_hash", "body_ref", "archive_state"}).
-			AddRow(int64(7), "fresh-1:stream2-new", now, now, "applied", "", "hash", []byte(`{"class":"evidence"}`), nil))
+		WillReturnRows(sqlmock.NewRows([]string{"change_id", "event_key", "accepted_at", "observed_at", "change_kind", "before_hash", "after_hash", "body_ref", "archive_state", "legacy_present"}).
+			AddRow(int64(7), "fresh-1:stream2-new", now, now, "applied", "", "hash", []byte(`{"class":"evidence"}`), nil, false))
 	_, err = (Repository{DB: db}).streamDiscoveryHistory(context.Background(), "fresh-1", "device-new", "", 20)
 	if !errors.Is(err, streamlog.ErrUnconfirmed) {
 		t.Fatalf("history accepted a missing receipt: %v", err)

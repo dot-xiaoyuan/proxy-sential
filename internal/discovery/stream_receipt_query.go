@@ -33,6 +33,17 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
 	if epoch == "" || scope == "" || eventKey == "" || len(epoch) > 128 || len(scope) > 256 || len(eventKey) > 512 {
 		return nil, false, fmt.Errorf("invalid stream discovery receipt key")
 	}
+	if strings.HasPrefix(eventKey, epoch+":stream3-") {
+		receipts, err := r.streamSegmentReceipts(ctx, epoch, scope, []string{eventKey})
+		if err != nil {
+			return nil, false, err
+		}
+		receipt, found := receipts[eventKey]
+		if found {
+			receipt["read_observed_at"] = time.Now().UTC()
+		}
+		return receipt, found, nil
+	}
 	var hash, result, archive string
 	var accepted, projected time.Time
 	var bodyRef json.RawMessage
@@ -102,9 +113,21 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 	}
 	byKey := make(map[string]map[string]any, len(eventKeys))
 	groups := map[bool][]string{false: {}, true: {}}
+	segmentKeys := make([]string, 0)
 	for _, key := range eventKeys {
+		if strings.HasPrefix(key, epoch+":stream3-") {
+			segmentKeys = append(segmentKeys, key)
+			continue
+		}
 		compact := streamCompactEventKey(epoch, key)
 		groups[compact] = append(groups[compact], key)
+	}
+	segmentReceipts, err := r.streamSegmentReceipts(ctx, epoch, scope, segmentKeys)
+	if err != nil {
+		return nil, nil, err
+	}
+	for key, receipt := range segmentReceipts {
+		byKey[key] = receipt
 	}
 	readGroup := func(keys []string, compact, legacyFallback bool) error {
 		if len(keys) == 0 {
@@ -200,7 +223,13 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 			missing = append(missing, key)
 		}
 	}
-	if err := r.missingLegacyReceipt(ctx, epoch, scope, missing); err != nil {
+	legacyMissing := make([]string, 0, len(missing))
+	for _, key := range missing {
+		if !strings.HasPrefix(key, epoch+":stream3-") {
+			legacyMissing = append(legacyMissing, key)
+		}
+	}
+	if err := r.missingLegacyReceipt(ctx, epoch, scope, legacyMissing); err != nil {
 		return nil, nil, err
 	}
 	// The final lookup has completed. Every returned receipt was visible by

@@ -207,6 +207,12 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 	if p.DB == nil {
 		return errors.New("stream discovery archive confirmation needs DB")
 	}
+	if hasSegmentKeyedPassiveEvent(segment) && !isSegmentKeyedPassiveSegment(segment) {
+		return streamlog.ErrContentConflict
+	}
+	if isSegmentKeyedPassiveSegment(segment) {
+		return p.confirmStream3Archive(ctx, id, segment)
+	}
 	if isCompactPassiveSegment(segment) {
 		var mode, epoch, source, path, hash string
 		var file sql.NullString
@@ -487,6 +493,12 @@ func (p StreamDiscoveryProjector) ReconcileStreamProjection(ctx context.Context,
 	if len(prepared) == 0 {
 		return ErrUnsupportedStreamProjection
 	}
+	if hasSegmentKeyedPassiveEvent(segment) && !isSegmentKeyedPassiveSegment(segment) {
+		return streamlog.ErrContentConflict
+	}
+	if isSegmentKeyedPassiveSegment(segment) {
+		return p.projectPreparedStreamSegment(ctx, id, segment, prepared)
+	}
 	// This marker is inserted in the same transaction as the projection. A
 	// visible matching row proves that transaction committed, including the
 	// receipts; a missing row may still race an in-flight transaction, so the
@@ -540,6 +552,15 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	}
 	defer mark("done")
 
+	segmentKeyed := isSegmentKeyedPassiveSegment(segment)
+	if hasSegmentKeyedPassiveEvent(segment) && !segmentKeyed {
+		return streamlog.ErrContentConflict
+	}
+	if segmentKeyed {
+		if err := verifyStream3PreparedSegment(id, segment, prepared); err != nil {
+			return err
+		}
+	}
 	segmentHash := streamProjectionSegmentHash(segment, prepared)
 	month := streamAcceptedMonth(segment.AcceptedAt)
 	tx, err := p.DB.BeginTx(ctx, nil)
@@ -564,12 +585,22 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		segment.ArchiveMonth == segment.AcceptedAt.UTC().Format("200601") {
 		mode = "manifest"
 	}
+	if segmentKeyed {
+		mode = "manifest"
+	}
 	shadowID := ""
 	if (p.ReceiptManifestShadow && compactPassive && sourceFile != nil) || mode == "manifest" {
 		shadowID = id
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`, id, segment.Epoch, segment.Source, segment.SourcePath, segmentHash, segment.AcceptedAt, len(prepared), sourceFile, sourceStart, sourceEnd, mode)
+	insertSQL := `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`
+	insertArgs := []any{id, segment.Epoch, segment.Source, segment.SourcePath, segmentHash, segment.AcceptedAt, len(prepared), sourceFile, sourceStart, sourceEnd, mode}
+	if segmentKeyed {
+		insertSQL = `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode,passive_key_scheme,source_generation)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'stream3',$12) ON CONFLICT DO NOTHING`
+		insertArgs = append(insertArgs, int64(segment.SourceGeneration))
+	}
+	result, err := tx.ExecContext(ctx, insertSQL, insertArgs...)
 	if err != nil {
 		return err
 	}
@@ -580,8 +611,20 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	}
 	if inserted == 0 {
 		var prior string
-		if err := tx.QueryRowContext(ctx, `SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=$1 FOR UPDATE`, id).Scan(&prior); err != nil {
-			return err
+		if segmentKeyed {
+			var scheme string
+			var generation int64
+			if err := tx.QueryRowContext(ctx, `SELECT content_sha256,passive_key_scheme,source_generation FROM stream_projection_segments WHERE segment_id=$1 FOR UPDATE`, id).
+				Scan(&prior, &scheme, &generation); err != nil {
+				return err
+			}
+			if scheme != "stream3" || generation != int64(segment.SourceGeneration) {
+				return streamlog.ErrContentConflict
+			}
+		} else {
+			if err := tx.QueryRowContext(ctx, `SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=$1 FOR UPDATE`, id).Scan(&prior); err != nil {
+				return err
+			}
 		}
 		if prior != segmentHash {
 			return streamlog.ErrContentConflict
@@ -589,7 +632,12 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		return tx.Commit()
 	}
 	var freshKeys map[string]bool
-	if compactPassive {
+	if segmentKeyed {
+		freshKeys = make(map[string]bool, len(prepared))
+		for _, item := range prepared {
+			freshKeys[item.Receipt.Scope+"\x00"+item.Receipt.Key] = true
+		}
+	} else if compactPassive {
 		freshKeys, err = reserveStreamDiscoveryCompactKeys(ctx, tx, segment.Epoch, month, prepared, !p.CompactOnly, shadowID)
 	} else {
 		freshKeys, err = reserveStreamDiscoveryKeys(ctx, tx, segment.Epoch, month, prepared)
@@ -1185,6 +1233,27 @@ func writeStreamReceiptManifest(ctx context.Context, tx *sql.Tx, id string, segm
 	}
 	raw, err := json.Marshal(results)
 	if err != nil {
+		return err
+	}
+	if isSegmentKeyedPassiveSegment(segment) {
+		if len(fresh) != len(prepared) || omitted == nil {
+			return streamlog.ErrContentConflict
+		}
+		scope, hashes, err := stream3ScopeAndHashes(prepared)
+		if err != nil {
+			return err
+		}
+		for _, result := range results {
+			if result == nil || *result == "" {
+				return streamlog.ErrContentConflict
+			}
+		}
+		summary, err := json.Marshal(streamRecognitionSummary(omitted))
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results,recognition_summary,key_scheme,scope_id,content_hashes)
+	 VALUES($1,$2,$3,$4::jsonb,$5::jsonb,'stream3',$6,$7)`, id, segment.ArchiveMonth, segment.BodyLayout, raw, summary, scope, hashes)
 		return err
 	}
 	if omitted == nil {
