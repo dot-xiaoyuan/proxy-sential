@@ -37,9 +37,11 @@ UNIT_BINARIES={
  'proxy-sentinel-recognition-minute-shadow.service':'recognition-minute-shadow',
 }
 
-# The NCU derived materializer is upgraded on its own schedule. Its systemd
-# ExecStart is pinned to an immutable release, unlike the other active units.
-PINNED_UNITS={'proxy-sentinel-ncu-identity-materializer.service'}
+# These readers are upgraded independently: NCU derivation and the DHCP
+# archive-resume reader both have deliberately pinned immutable executables.
+# Verify their exact configured path and inode, never just accept any old PID.
+PINNED_UNITS={'proxy-sentinel-ncu-identity-materializer.service',
+              'proxy-sentinel-ingest-stream-dhcp-message-r1.service'}
 
 def pinned_executable(root,unit,binary):
  value=subprocess.check_output(['systemctl','show',unit,'-p','ExecStart','--value'],text=True,timeout=5).strip()
