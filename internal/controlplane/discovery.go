@@ -444,6 +444,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			}
 			return
 		}
+		enrichDiscoveryRecognition(ctx, repo.DB, page)
 		writeJSON(w, 200, page)
 	case path == "/discovery/tasks" && r.Method == "GET":
 		rows, err := repo.DB.QueryContext(ctx, `SELECT id,coalesce(source_id,''),node,kind,status,config_version,created_at,result,error,cancel_requested FROM discovery_tasks ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
