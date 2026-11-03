@@ -849,6 +849,8 @@ func runDeviceFingerprint(args []string) error {
 		noticePath := fs.String("notice", "", "optional replacement licenses/NOTICE.txt")
 		minRules := fs.Int("min-rules", 0, "minimum compiled rules (0 uses the built-in guard)")
 		maxUnmapped := fs.Float64("max-unmapped-rate", 0, "maximum unmapped rule rate (0 uses the built-in guard)")
+		minScore := fs.Float64("min-score", 0, "drop interrogate rows below this Fingerbank score (0 uses 30)")
+		maxConfidence := fs.Float64("max-confidence", 0, "cap rule confidence so project rules can win (0 uses 0.9)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -859,7 +861,7 @@ func runDeviceFingerprint(args []string) error {
 		if err != nil {
 			return err
 		}
-		compiled, stats, err := fingerprint.CompileFingerbankSnapshot(raw, fingerprint.FingerbankCompileOptions{MinRules: *minRules, MaxUnmappedRate: *maxUnmapped})
+		compiled, stats, err := fingerprint.CompileFingerbankSnapshot(raw, fingerprint.FingerbankCompileOptions{MinRules: *minRules, MaxUnmappedRate: *maxUnmapped, MinScore: *minScore, MaxConfidence: *maxConfidence})
 		if err != nil {
 			return err
 		}

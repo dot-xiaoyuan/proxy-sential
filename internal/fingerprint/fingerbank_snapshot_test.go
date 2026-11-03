@@ -38,7 +38,7 @@ func TestCompileFingerbankSnapshotMapsDeviceFamilies(t *testing.T) {
 	for _, item := range items {
 		byOptions[item.RequestedOptions] = item
 	}
-	if got := byOptions["1,3,6,15"]; got.DeviceType != "" || got.OSFamily != "Windows" || len(got.VendorClasses) != 1 {
+	if got := byOptions["1,3,6,15"]; got.DeviceType != "desktop" || got.OSFamily != "Windows" || len(got.VendorClasses) != 1 {
 		t.Fatalf("windows rule wrong: %+v", got)
 	}
 	if got := byOptions["1,33,3,6"]; got.DeviceType != "printer" {
@@ -177,9 +177,9 @@ func TestNormalizeFingerbankDevicePathExtras(t *testing.T) {
 	}{
 		{"Operating System/Apple OS", "", "Apple OS"},
 		{"Operating System/Embedded OS", "", ""},
-		{"Operating System/Chrome OS", "", "ChromeOS"},
+		{"Operating System/Chrome OS", "desktop", "ChromeOS"},
 		{"Hardware/IP Camera", "camera", ""},
-		{"Operating System/Windows OS", "", "Windows"},
+		{"Operating System/Windows OS", "desktop", "Windows"},
 	}
 	for _, tc := range cases {
 		device, osFamily := normalizeFingerbankDevicePath(tc.path, "")

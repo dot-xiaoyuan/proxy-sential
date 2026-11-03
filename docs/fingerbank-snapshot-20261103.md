@@ -25,15 +25,15 @@ so there is no need to download this multiple times per day.
 
 - 来源：`/opt/proxy-sentinel/data/zeek/logs/current/device_dhcp_binding.log` 与 2026-11-02、2026-11-03 的小时轮转日志，共 36 个文件、542,404 行。
 - 只保留 `requested_options`（DHCP option 55）与 `vendor_class`（option 60），丢弃 MAC、主机名与 UA。
-- 去重后 **577 个不同组合**；取观测次数最多的前 200 个，覆盖 **97.9%** 的观测。
+- 去重后 **577 个组合**，归并后是 **85 个不同 option-55 取值**；85 个取值全部查询，前 20 个就覆盖 98.7% 的观测。
 - 语料在构建机保存为 `dhcp-pairs.jsonl`，不写回现场。
 
 ## 4. 采用的取数方式：按现场指纹逐个 interrogate
 
-由于整库下载当日不可用，本次改为对前 200 个现场指纹逐个 interrogate（含 vendor class）：
+由于整库下载当日不可用，本次改为对现场指纹逐个 interrogate（含 vendor class），共 195 次查询（85 个不同 option-55 取值 + 110 个 vendor 变体）：
 
 - 脚本：`scripts/fingerprints/interrogate_fingerbank.py`（密钥只从环境变量读取）。
-- 频率限制：免费额度 600 次/小时；脚本按每 10 秒 1 次（约 360 次/小时）执行，约 33 分钟完成。
+- 频率限制：免费额度 600 次/小时；脚本按每 8—10 秒 1 次（约 360 次/小时）执行，分两段约 40 分钟完成。
 - 每个响应写入本地缓存 `fb-cache.jsonl`，中断可续跑，不重复查询。
 - 404（无匹配）记录但不生成规则；401/403 立即终止；429 退避 60 秒重试。
 - 该方式只发送两个 DHCP 字段，不发送 MAC/主机名/UA；响应结果只用于本次评估。
@@ -46,13 +46,16 @@ so there is no need to download this multiple times per day.
 |---|---|
 | `fingerprints[]` | `requested_options`（归一化为逗号分隔） |
 | `vendor_classes[]` | `vendor_classes`（同指纹多来源时取并集） |
-| `device_path` | `device_type` / `os_family`，复用 `normalizeFingerbankClass`，补充 camera→iot、tablet、TV/console→media 等保守映射 |
-| `score` | 规则置信度：`score/100` 截断到 `[0.5, 0.9]`；`score < 30` 直接丢弃 |
+| `device_path` | 按层级首段分类：Phone/Tablet→mobile/tablet，Router/AP→access_point/router，Switch→switch，IoT→iot，Printer→printer，Camera→camera；Operating System 仅给 OS（Windows/ChromeOS 补 desktop） |
+| `score` | 规则置信度：`score/100` 截断到 `[0.5, 上限]`，默认上限 0.9；`score < 30` 直接丢弃 |
+| `vendor_classes` | 只保留与最终设备路径一致的来源，避免同名指纹的跨设备厂商串味 |
 | 无 score（整库快照） | 沿用 0.84 |
 
 同一 option 组合只产出一条规则：优先高分设备路径，其次更深层级；避免多个候选让 `bestDHCPFingerprint` 拒绝匹配。
 
-护栏：规则数少于 100 或“无法映射到 device_type/os_family”的比例超过 20% 时构建失败。
+护栏：整库模式默认要求 ≥100 条规则、可映射比例 ≥80%；按现场指纹抽取的定向快照用 `--min-rules 20` 放宽（本次 67 条，丢弃 3 条无法映射）。
+
+置信度上限是关键参数：0.9 会覆盖项目内 0.85 以上的规则并产生 6.5% 冲突流量；0.84 让项目规则优先，覆盖率相同且冲突为 0。
 
 ## 6. 代码改动（worktree 内）
 
@@ -62,6 +65,27 @@ so there is no need to download this multiple times per day.
 - `cmd/proxy-sentinel/main.go`：新增 `device-fingerprint fingerbank-refresh`（编译 + 可选重打包）。
 - `cmd/fingerprint-replay/main.go`：支持基线库与替换库对比，输出识别率、OS 分布、冲突数与吞吐；输入支持 `weight` 以按观测次数加权。
 
-## 7. 结果
+## 7. 结果（按观测加权，542,404 条绑定观测）
 
-见同目录回放报告与 `artifacts/fingerbank-20261103/`。整库快照与现场 A/B 尚未执行。
+| 指标 | 基线包 | 替换后（67 条规则） |
+|---|---:|---:|
+| 有 device_type 的流量 | 42.9% | **59.2%** |
+| 有 os_family 的流量 | 42.1% | **85.2%** |
+| 冲突流量 | 0% | **0%** |
+
+- 规则覆盖 87.8% 的观测流量；未覆盖部分主要是 Fingerbank 404（15 个取值无匹配）和 3 个无法映射的设备族。
+- 195 次查询中 180 次命中，得分中位数 89；命中类别以手机/平板（89）、操作系统（68）、打印机（11）、路由/AP（7）、交换机（3）为主。
+- 明细见 `artifacts/fingerbank-20261103/replay-comparison.json` 与 `replay-summary.md`。
+
+## 8. 测试包（未部署）
+
+- 版本：`offline-2026.11.03-fingerbank-obs1`，v7 结构，67 条 DHCP 规则，`fingerbank-dhcp.json` 10,751 字节。
+- SHA256：`3893d8404ba8c505d0fa0ac83bdd0ed3364f53ee32c2bcc29479967d01fc04cb`（4,222,475 字节）。
+- 位置：worktree `dist/fingerbank/`（`.gitignore` 忽略，未提交、未进入发布包）。
+- `device-fingerprint verify` 与临时目录 `install` 均通过：导入后 `status=ready`、`dhcp_rule_count=67`、`oui_count=54,289`。
+- 现场导入由用户在“规则与特征库 → 设备特征库”执行；回滚重新导入 `offline-2026.10.28-layered-v7-r2` 的原始包。
+
+## 9. 未执行
+
+- 整库快照：受每日一次限制，需次日或 on-prem 授权后重跑。
+- 184 现场导入与 A/B：等用户确认后再做，届时用 `endpoint_recognition_jobs` 有界重算同一端点集对比。

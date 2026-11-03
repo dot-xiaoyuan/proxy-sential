@@ -1,0 +1,216 @@
+{
+  "generated_at": "2026-11-03T11:00:00+08:00",
+  "scope": "in-process replay on aggregated DHCP fingerprint pairs; no endpoint identifiers",
+  "fingerbank": {
+    "api": "https://api.fingerbank.org/api/v2",
+    "bulk_download": "daily limited; not available after the first attempt on 2026-11-03",
+    "acquisition": "interrogate of the 85 distinct observed option-55 values plus 110 vendor variants (195 queries total)"
+  },
+  "corpus": {
+    "source_files": 36,
+    "source_lines": 542404,
+    "distinct_pairs": 577,
+    "distinct_options": 85,
+    "queried_options": 85,
+    "queried_observation_share": 1.0,
+    "rule_option_traffic_share": 0.8779
+  },
+  "queries": {
+    "total": 195,
+    "status": {
+      "200": 180,
+      "404": 15
+    },
+    "score_min": 43.0,
+    "score_median": 89.0,
+    "score_max": 91.0,
+    "device_categories": {
+      "Phone, Tablet or Wearable": 89,
+      "Operating System": 68,
+      "Printer or Scanner": 11,
+      "Router, Access Point or Femtocell": 7,
+      "Switch and Wireless Controller": 3,
+      "Internet of Things (IoT)": 1,
+      "Network Boot Agent": 1
+    }
+  },
+  "compile": {
+    "raw_records": 180,
+    "distinct_fingerprints": 70,
+    "emitted_rules": 67,
+    "unmapped_rules": 3,
+    "unmapped_rate": 0.04285714285714286,
+    "device_types": {
+      "access_point": 7,
+      "desktop": 13,
+      "iot": 1,
+      "mobile": 2,
+      "network": 1,
+      "printer": 11,
+      "switch": 2
+    },
+    "os_families": {
+      "Android": 9,
+      "Apple OS": 5,
+      "ChromeOS": 1,
+      "Embedded Linux": 9,
+      "Linux": 8,
+      "Windows": 12,
+      "iOS": 1
+    },
+    "malformed_rows": 0,
+    "low_score_rows": 0,
+    "confidence": 0.84,
+    "min_rules": 20,
+    "max_unmapped_rate": 0.9,
+    "min_score": 30
+  },
+  "replay": {
+    "top200_observed": {
+      "inputs": 200,
+      "baseline": {
+        "allocated_bytes": 3226128,
+        "allocations": 7261,
+        "conflict_dimensions": {},
+        "conflict_fingerprints": 0,
+        "conflict_rate": 0,
+        "elapsed_ms": 11.625,
+        "fingerprints": 200,
+        "fingerprints_per_second": 17203.685442310194,
+        "identified_fingerprints": 161,
+        "identified_rate": 0.42860936481808626,
+        "matched_fingerprints": 0,
+        "matched_rate": 0,
+        "os_family_distribution": {
+          "Android": 148653,
+          "Embedded Linux": 1714,
+          "HarmonyOS": 34300,
+          "Windows": 39050
+        },
+        "os_family_fingerprints": 163,
+        "os_family_rate": 0.4213395961323324,
+        "result_sources": {
+          "device_rule": 188605,
+          "fingerbank_dhcp": 39050,
+          "model_catalog": 1636
+        },
+        "source_fingerprints": {},
+        "variant": "baseline",
+        "weighted_endpoints": 530966
+      },
+      "refreshed": {
+        "allocated_bytes": 3391984,
+        "allocations": 8177,
+        "conflict_dimensions": {},
+        "conflict_fingerprints": 0,
+        "conflict_rate": 0,
+        "elapsed_ms": 23.642,
+        "fingerprints": 200,
+        "fingerprints_per_second": 8459.401681745972,
+        "identified_fingerprints": 177,
+        "identified_rate": 0.5922959285528641,
+        "matched_fingerprints": 0,
+        "matched_rate": 0,
+        "os_family_distribution": {
+          "Android": 204781,
+          "Apple OS": 92320,
+          "ChromeOS": 489,
+          "Embedded Linux": 1054,
+          "HarmonyOS": 34300,
+          "Linux": 2208,
+          "Windows": 117057
+        },
+        "os_family_fingerprints": 186,
+        "os_family_rate": 0.8516722351336997,
+        "result_sources": {
+          "fingerbank_dhcp": 463509,
+          "model_catalog": 1636
+        },
+        "source_fingerprints": {},
+        "variant": "fingerbank-refreshed",
+        "weighted_endpoints": 530966
+      }
+    },
+    "all_observed": {
+      "inputs": 577,
+      "baseline": {
+        "allocated_bytes": 9157704,
+        "allocations": 20233,
+        "conflict_dimensions": {},
+        "conflict_fingerprints": 0,
+        "conflict_rate": 0,
+        "elapsed_ms": 65.347,
+        "fingerprints": 577,
+        "fingerprints_per_second": 8829.768715915197,
+        "identified_fingerprints": 443,
+        "identified_rate": 0.4369539964967272,
+        "matched_fingerprints": 0,
+        "matched_rate": 0,
+        "os_family_distribution": {
+          "Android": 155554,
+          "Embedded Linux": 2294,
+          "HarmonyOS": 36328,
+          "Windows": 39052
+        },
+        "os_family_fingerprints": 464,
+        "os_family_rate": 0.43003226698626346,
+        "result_sources": {
+          "device_rule": 198558,
+          "fingerbank_dhcp": 39052,
+          "model_catalog": 1666
+        },
+        "source_fingerprints": {},
+        "variant": "baseline",
+        "weighted_endpoints": 542350
+      },
+      "refreshed": {
+        "allocated_bytes": 9546656,
+        "allocations": 22858,
+        "conflict_dimensions": {},
+        "conflict_fingerprints": 0,
+        "conflict_rate": 0,
+        "elapsed_ms": 66.137,
+        "fingerprints": 577,
+        "fingerprints_per_second": 8724.259672856591,
+        "identified_fingerprints": 508,
+        "identified_rate": 0.5990578040011063,
+        "matched_fingerprints": 0,
+        "matched_rate": 0,
+        "os_family_distribution": {
+          "Android": 211891,
+          "Apple OS": 92403,
+          "ChromeOS": 521,
+          "Embedded Linux": 1470,
+          "HarmonyOS": 36328,
+          "Linux": 2509,
+          "Windows": 117292,
+          "iOS": 5
+        },
+        "os_family_fingerprints": 516,
+        "os_family_rate": 0.852621001198488,
+        "result_sources": {
+          "device_rule": 45,
+          "fingerbank_dhcp": 474453,
+          "model_catalog": 1666
+        },
+        "source_fingerprints": {},
+        "variant": "fingerbank-refreshed",
+        "weighted_endpoints": 542350
+      }
+    }
+  },
+  "recommended_configuration": {
+    "min_score": 30,
+    "max_confidence": 0.84,
+    "min_rules": 20,
+    "note": "0.84 上限让项目内 >=0.85 的规则优先，回放冲突降为 0；0.9 上限覆盖率相同但产生 6.5% OS 冲突"
+  },
+  "bundle": {
+    "version": "offline-2026.11.03-fingerbank-obs1",
+    "sha256": "3893d8404ba8c505d0fa0ac83bdd0ed3364f53ee32c2bcc29479967d01fc04cb",
+    "size_bytes": 4222475,
+    "dhcp_rules": 67,
+    "schema": "device-fingerprint-bundle/v7",
+    "location": "dist/fingerbank/offline-2026.11.03-fingerbank-obs1.tar.gz (未提交)"
+  }
+}

@@ -45,6 +45,7 @@ type FingerbankSnapshotStats struct {
 	Confidence     float64        `json:"confidence"`
 	MinRules       int            `json:"min_rules"`
 	MaxUnmappedPct float64        `json:"max_unmapped_rate"`
+	MinScore       float64        `json:"min_score"`
 }
 
 // FingerbankCompileOptions bounds a build so a wrong table or an empty snapshot
@@ -53,13 +54,20 @@ type FingerbankCompileOptions struct {
 	Confidence      float64
 	MinRules        int
 	MaxUnmappedRate float64
+	// MinScore drops interrogate rows below this Fingerbank score. Zero keeps
+	// the built-in floor of 30.
+	MinScore float64
+	// MaxConfidence caps every rule so stronger project rules can still win.
+	// Zero keeps the built-in ceiling of 0.9.
+	MaxConfidence float64
 }
 
 const (
-	fingerbankDefaultConfidence  = 0.84
-	fingerbankDefaultMinRules    = 100
-	fingerbankDefaultUnmappedCap = 0.20
-	fingerbankMinScore           = 30
+	fingerbankDefaultConfidence    = 0.84
+	fingerbankDefaultMinRules      = 100
+	fingerbankDefaultUnmappedCap   = 0.20
+	fingerbankMinScore             = 30
+	fingerbankDefaultMaxConfidence = 0.9
 )
 
 type fingerbankCandidate struct {
@@ -85,12 +93,19 @@ func CompileFingerbankSnapshot(raw []byte, options FingerbankCompileOptions) ([]
 	if options.MaxUnmappedRate <= 0 || options.MaxUnmappedRate >= 1 {
 		options.MaxUnmappedRate = fingerbankDefaultUnmappedCap
 	}
+	if options.MinScore <= 0 {
+		options.MinScore = fingerbankMinScore
+	}
+	if options.MaxConfidence <= 0 || options.MaxConfidence > 1 {
+		options.MaxConfidence = fingerbankDefaultMaxConfidence
+	}
 	stats := FingerbankSnapshotStats{
 		DeviceTypes:    map[string]int{},
 		OSFamilies:     map[string]int{},
 		Confidence:     options.Confidence,
 		MinRules:       options.MinRules,
 		MaxUnmappedPct: options.MaxUnmappedRate,
+		MinScore:       options.MinScore,
 	}
 	var records []FingerbankRawRecord
 	if err := json.Unmarshal(raw, &records); err != nil {
@@ -101,7 +116,7 @@ func CompileFingerbankSnapshot(raw []byte, options FingerbankCompileOptions) ([]
 	candidates := map[string]*fingerbankCandidate{}
 	for _, record := range records {
 		// Provenance-only rows: a low interrogate score must not become a rule.
-		if record.Score > 0 && record.Score < fingerbankMinScore {
+		if record.Score > 0 && record.Score < options.MinScore {
 			stats.LowScoreRows++
 			continue
 		}
@@ -162,7 +177,7 @@ func CompileFingerbankSnapshot(raw []byte, options FingerbankCompileOptions) ([]
 			DeviceType:       candidate.deviceType,
 			OSFamily:         candidate.osFamily,
 			Description:      fingerbankDescription(candidate.devicePath, candidate.description),
-			Confidence:       fingerbankRuleConfidence(candidate.score, options.Confidence),
+			Confidence:       fingerbankRuleConfidence(candidate.score, options.Confidence, options.MaxConfidence),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -244,6 +259,11 @@ func normalizeFingerbankDevicePath(path, description string) (string, string) {
 	case strings.HasPrefix(category, "internet of things"):
 		return "iot", osFamily
 	case strings.HasPrefix(category, "operating system"):
+		// Windows and ChromeOS OS-only paths are desktop-class in the existing
+		// rule vocabulary; other OS-only paths stay without a device type.
+		if osFamily == "Windows" || osFamily == "ChromeOS" {
+			return "desktop", osFamily
+		}
 		return "", osFamily
 	case strings.Contains(text, "printer"):
 		return "printer", osFamily
@@ -288,7 +308,7 @@ func fingerbankOSFamily(text string) string {
 // fingerbankRuleConfidence maps an interrogate score to the rule confidence.
 // Scores below 30 are not compiled at all; the rest are clamped so a single
 // vendor-class match can still reach the 0.9 ceiling used by the matcher.
-func fingerbankRuleConfidence(score, fallback float64) float64 {
+func fingerbankRuleConfidence(score, fallback, ceiling float64) float64 {
 	if score <= 0 {
 		return fallback
 	}
@@ -296,8 +316,8 @@ func fingerbankRuleConfidence(score, fallback float64) float64 {
 	if value < 0.5 {
 		value = 0.5
 	}
-	if value > 0.9 {
-		value = 0.9
+	if value > ceiling {
+		value = ceiling
 	}
 	return value
 }
