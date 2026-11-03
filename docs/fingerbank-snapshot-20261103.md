@@ -85,7 +85,25 @@ so there is no need to download this multiple times per day.
 - `device-fingerprint verify` 与临时目录 `install` 均通过：导入后 `status=ready`、`dhcp_rule_count=67`、`oui_count=54,289`。
 - 现场导入由用户在“规则与特征库 → 设备特征库”执行；回滚重新导入 `offline-2026.10.28-layered-v7-r2` 的原始包。
 
-## 9. 未执行
+## 9. 时间切分验证（设备级）
+
+为避免“用同一批指纹建规则再测同一批指纹”的循环，补了一组时间切分：
+
+- 训练：2026-11-02 的 DHCP 绑定日志，39,901 台终端、83 个不同 option-55；
+- 测试：2026-11-03 的日志，28,313 台终端、82 个不同 option-55；
+- 测试日只有 2 台设备的指纹未在训练日出现（0.01%）；训练集编译出 65 条规则（3 条无法映射）。
+
+| 指标（28,313 台） | 基线包 | 加入 FB | 变化 |
+|---|---:|---:|---:|
+| 有 device_type | 52.8% | 66.1% | +3,758 台 |
+| 有 os_family | 50.9% | 95.6% | +12,658 台 |
+| 冲突 | 0 | 0 | 0 |
+
+已有 OS 标签的设备中，14,389 台与 FB 一致、25 台变化（全部 Embedded Linux→Linux）。方法与限制见 `artifacts/fingerbank-20261103/holdout-summary.md`。
+
+复现步骤（全程只读现场）：按日抽取 `device_dhcp_binding` 日志 → 过滤出训练日出现过的 option-55 → `fingerbank-refresh --min-rules 20 --max-unmapped-rate 0.9 --min-score 30 --max-confidence 0.84` → `fingerprint-replay --input <测试日设备 JSONL> --library-dir <现装包> --fingerbank-json <新规则>`。
+
+## 10. 未执行
 
 - 整库快照：受每日一次限制，需次日或 on-prem 授权后重跑。
 - 184 现场导入与 A/B：等用户确认后再做，届时用 `endpoint_recognition_jobs` 有界重算同一端点集对比。
