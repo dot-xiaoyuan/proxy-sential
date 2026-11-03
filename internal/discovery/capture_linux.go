@@ -129,7 +129,7 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	if e = os.MkdirAll(spool, 0700); e != nil {
 		return e
 	}
-	queue := make(chan []byte, 256)
+	queue := make(chan []byte, PassiveCaptureQueueCapacity)
 	done := make(chan error, 1)
 	go func() {
 		done <- drainSpoolQueueBoundedWindow(queue, persist, maxEvents, maxBytes, gatherWindow)

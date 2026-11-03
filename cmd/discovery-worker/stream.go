@@ -30,6 +30,7 @@ type passiveStreamOptions struct {
 	AllowCIDRs string
 	Collection discovery.CollectionConfig
 	DrainOnly  bool
+	Buffer     passiveBufferConfig
 }
 
 func passiveStreamProcessor(journal streamlog.ProcessorJournal, writer streamlog.Writer) streamlog.Processor {
@@ -223,7 +224,10 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	}
 	source := discovery.Source{ID: "passive-" + opts.Node, Node: opts.Node, Site: opts.Site, Domain: opts.Domain, Address: opts.Interface, ConfigVersion: 1}
 	path := discovery.PassiveStreamSourcePath(source)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancelCause := context.WithCancelCause(signalCtx)
+	stop := func() { cancelCause(context.Canceled) }
 	defer stop()
 	metrics := newPassiveStreamMetrics()
 	// Compatibility comes before activation. This binary can drain WAL-backed
@@ -297,6 +301,11 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 		}
 		return nil
 	}
+	buffer, err := newPassiveDurableBuffer(ctx, opts.Buffer, opts.JournalDir, recovered, func() { cancelCause(errPassiveBacklogPaused) }, nil)
+	if err != nil {
+		return err
+	}
+	metrics.buffer = buffer
 	runtimeRepo := discovery.Repository{DB: runtimeDB}
 	if _, err := runtimeDB.ExecContext(ctx, `UPDATE discovery_protocol_runtime SET received=0,parsed=0,rejected=0,admitted=0,last_seen=NULL,last_success=NULL,error='' WHERE sensor_id=$1 AND owner='discovery-worker'`, opts.Node); err != nil {
 		return fmt.Errorf("reset stream protocol runtime: %w", err)
@@ -338,9 +347,13 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	}
 	processor := passiveStreamProcessor(journal, writer)
 	processor.Observer = metrics.observe
-	archiveQueue := make(chan string, 64)
-	searchQueue := make(chan string, 64)
-	projectionQueue := make(chan string, 64)
+	laneCapacity := 64
+	if buffer != nil {
+		laneCapacity = buffer.hard
+	}
+	archiveQueue := make(chan string, laneCapacity)
+	searchQueue := make(chan string, laneCapacity)
+	projectionQueue := make(chan string, laneCapacity)
 	finalizeQueue := make(chan passiveFinalizerSignal, 256)
 	metricsDone := make(chan struct{})
 	sampleQueues := func() {
@@ -454,7 +467,17 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	go runLane(streamlog.Search, searchQueue)
 	go runLane(streamlog.Projection, projectionQueue)
 	go func() {
-		err := runPassiveFinalizer(ctx, finalizeQueue, processor.FinalizeAfterLanes, time.Second, 256)
+		finalize := processor.FinalizeAfterLanes
+		if buffer != nil {
+			finalize = func(ctx context.Context, id string) error {
+				err := processor.FinalizeAfterLanes(ctx, id)
+				if err == nil {
+					buffer.release(id)
+				}
+				return err
+			}
+		}
+		err := runPassiveFinalizer(ctx, finalizeQueue, finalize, time.Second, 256)
 		if err != nil {
 			stop()
 		}
@@ -481,13 +504,23 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 			return err
 		}
 	}
-	captureErr := discovery.CaptureStreamConfigured(ctx, opts.Interface, statsDir, source, allow, opts.Collection, journal, scope, func(captured discovery.CapturedSegment) error {
-		metrics.observe("capture", "append_commit", captured.AppendCommitDuration, nil)
-		if shadow != nil {
-			shadow.Publish(captured.ID, captured.Segment)
+	var captureErr error
+	if buffer != nil {
+		captureErr = buffer.waitForCapture(ctx)
+	}
+	if captureErr == nil {
+		captureJournal := discovery.PassiveStreamJournal(journal)
+		if buffer != nil {
+			captureJournal = passiveBufferedCaptureJournal{journal: journal, buffer: buffer}
 		}
-		return enqueue(captured.ID)
-	})
+		captureErr = discovery.CaptureStreamConfigured(ctx, opts.Interface, statsDir, source, allow, opts.Collection, captureJournal, scope, func(captured discovery.CapturedSegment) error {
+			metrics.observe("capture", "append_commit", captured.AppendCommitDuration, nil)
+			if shadow != nil {
+				shadow.Publish(captured.ID, captured.Segment)
+			}
+			return enqueue(captured.ID)
+		})
+	}
 	stop()
 	var consumerErr error
 	for range 4 {
@@ -501,6 +534,17 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	}
 	if maintenanceErr != nil {
 		return maintenanceErr
+	}
+	return passiveCaptureResultError(ctx, buffer, captureErr)
+}
+
+func passiveCaptureResultError(ctx context.Context, buffer *passiveDurableBuffer, captureErr error) error {
+	if buffer != nil && errors.Is(context.Cause(ctx), errPassiveBacklogPaused) {
+		pauseErr := fmt.Errorf("%w: %+v", errPassiveBacklogPaused, buffer.snapshot())
+		if captureErr != nil && !passiveCancellationOnly(captureErr) {
+			return errors.Join(pauseErr, captureErr)
+		}
+		return pauseErr
 	}
 	// Capture normalizes a clean cancellation to this sentinel. A joined error
 	// can also contain a real persistence failure and must not be hidden.

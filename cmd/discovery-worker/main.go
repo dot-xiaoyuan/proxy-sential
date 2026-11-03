@@ -25,6 +25,18 @@ func compactPassiveKeyDefault(raw string) (bool, error) {
 	return strconv.ParseBool(raw)
 }
 
+func passiveBufferEnvDefault(name string) int64 {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		log.Fatalf("invalid %s", name)
+	}
+	return value
+}
+
 func main() {
 	mode := flag.String("mode", os.Getenv("PROXY_SENTINEL_DISCOVERY_MODE"), "all, consume-only, passive, stream-prepare, stream-drain, or stream")
 	workerDefault := 2
@@ -71,6 +83,9 @@ func main() {
 		}
 	}
 	passiveSegmentMaxEvents := flag.Int("passive-segment-max-events", segmentEventsDefault, "passive events per durable segment (1000 or 2000; 2000 requires a compatible rollback release)")
+	bufferSegments := flag.Int("passive-durable-buffer-segments", int(passiveBufferEnvDefault("PROXY_SENTINEL_PASSIVE_DURABLE_BUFFER_SEGMENTS")), "opt-in bounded durable passive backlog; zero keeps existing scheduling")
+	bufferBytes := flag.Int64("passive-durable-buffer-bytes", passiveBufferEnvDefault("PROXY_SENTINEL_PASSIVE_DURABLE_BUFFER_BYTES"), "maximum conservatively reserved bytes for unfinalized passive segments")
+	bufferMinFree := flag.Int64("passive-durable-min-free-bytes", passiveBufferEnvDefault("PROXY_SENTINEL_PASSIVE_DURABLE_MIN_FREE_BYTES"), "minimum filesystem free bytes after draining the capture queue")
 	streamJournal := flag.String("stream-journal", "", "fresh-only durable passive stream journal directory")
 	streamScope := flag.String("capture-scope-config", "", "controlled fresh passive capture scope")
 	streamEpoch := flag.String("stream-epoch", "", "explicit fresh stream generation for stream-prepare")
@@ -133,7 +148,7 @@ func main() {
 		return
 	}
 	if *mode == "stream" || *mode == "stream-drain" {
-		if err := runPassiveStreamWorker(passiveStreamOptions{Interface: *iface, Spool: *spool, JournalDir: *streamJournal, ScopeFile: *streamScope, Node: *node, Site: *site, Domain: *domain, AllowCIDRs: *allowCIDRs, Collection: collection, DrainOnly: *mode == "stream-drain"}); err != nil {
+		if err := runPassiveStreamWorker(passiveStreamOptions{Interface: *iface, Spool: *spool, JournalDir: *streamJournal, ScopeFile: *streamScope, Node: *node, Site: *site, Domain: *domain, AllowCIDRs: *allowCIDRs, Collection: collection, DrainOnly: *mode == "stream-drain", Buffer: passiveBufferConfig{Segments: *bufferSegments, Bytes: *bufferBytes, MinFreeBytes: *bufferMinFree}}); err != nil {
 			log.Fatal(err)
 		}
 		return

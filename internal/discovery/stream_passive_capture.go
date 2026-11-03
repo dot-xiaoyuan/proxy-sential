@@ -34,6 +34,9 @@ func passiveStreamKeyScheme(config CollectionConfig) passiveEventKeyScheme {
 	}
 	return passiveEventKeyLegacy
 }
+// A stopped capture drains at most this many accepted, in-memory batches to
+// the journal. Durable backlog limits reserve space for every one of them.
+const PassiveCaptureQueueCapacity = 256
 
 // PassiveStreamJournal owns the durable acceptance boundary. Implementations
 // must retain the original source position and acceptance time on recovery.

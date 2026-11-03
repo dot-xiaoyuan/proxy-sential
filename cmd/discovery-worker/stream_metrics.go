@@ -18,6 +18,7 @@ type passiveStreamMetrics struct {
 	stages         map[string]passiveStageMetrics
 	queues         map[string]passiveQueueMetrics
 	captureBatches passiveCaptureBatchMetrics
+	buffer         *passiveDurableBuffer
 }
 type passiveStageMetrics struct {
 	Count    uint64  `json:"count"`
@@ -54,6 +55,7 @@ type passiveMetricsSnapshot struct {
 	Stages         map[string]passiveStageMetrics `json:"stages"`
 	Queues         map[string]passiveQueueMetrics `json:"queues"`
 	CaptureBatches passiveCaptureBatchMetrics     `json:"capture_batches"`
+	DurableBacklog *passiveBacklogSnapshot        `json:"durable_backlog,omitempty"`
 }
 
 func newPassiveStreamMetrics() *passiveStreamMetrics {
@@ -181,6 +183,10 @@ func (m *passiveStreamMetrics) snapshot(kind string, at time.Time) passiveMetric
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	snapshot := passiveMetricsSnapshot{Kind: kind, WindowStart: m.since, At: at.UTC(), Stages: m.stages, Queues: m.queues, CaptureBatches: m.captureBatches}
+	if m.buffer != nil {
+		backlog := m.buffer.snapshot()
+		snapshot.DurableBacklog = &backlog
+	}
 	m.since = at.UTC()
 	m.stages = make(map[string]passiveStageMetrics)
 	m.captureBatches = passiveCaptureBatchMetrics{}
