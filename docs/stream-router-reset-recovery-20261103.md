@@ -48,7 +48,9 @@ SELECT countIf(indexed_at<toDateTime64('2026-10-31 09:14:01',6,'UTC')) AS before
 
 使用包含 PG224、恢复命令和识别线程门控的候选版本。先在识别服务设置 `PROXY_SENTINEL_STREAM_ROUTER_DISABLED=true` 并重启，确认日志中的停用记录；它只退出专用 stream router 线程，其余识别线程继续运行。环境变量从 184 已保护的运行配置读取，不把 DSN 写入命令行或文档。确认实时链路延迟和 PostgreSQL/ClickHouse 等待处于可观测范围后执行：
 
-`build-release.sh` 会把新 CLI 编入候选包的 `bin/proxy-sentinel` 并复制 PG224；但 184 当前活动的 `proxy-sentinel-recognition-materializer-eventbus.service` 仍固定运行 `/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-recognition-eventbus`。普通 `upgrade-application.sh` 的服务重启列表不含这个 eventbus 单元，`current` 指针切换不会替换其进程或启用新门控。必须先核对并记录原 unit，单独将其 `ExecStart` 指向候选不可变发布目录的 `bin/proxy-sentinel read-model run --lane recognition ...`，设置停用环境并重启，核对 `/proc/<PID>/exe` 为候选二进制与停用日志；然后才能插入状态。旧固定二进制不识别 `PROXY_SENTINEL_STREAM_ROUTER_DISABLED`，仅设置变量没有保护作用。回退时恢复原 unit 指向和环境，但保留 PG224 审计与已写入的状态和证据。
+`build-release.sh` 会把新 CLI 编入候选包的 `bin/proxy-sentinel` 并复制 PG224；但 184 当前活动的 `proxy-sentinel-recognition-materializer-eventbus.service` 仍固定运行 `/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-recognition-eventbus`。普通 `upgrade-application.sh` 的服务重启列表不含这个 eventbus 单元，`current` 指针切换不会替换其进程或启用新门控。必须先核对并记录原 unit，单独将其 `ExecStart` 指向候选不可变发布目录的 `bin/proxy-sentinel read-model run --lane recognition ...`，设置停用环境并重启，核对 `/proc/<PID>/exe` 为候选二进制与停用日志；然后才能插入状态。旧固定二进制不识别 `PROXY_SENTINEL_STREAM_ROUTER_DISABLED`，仅设置变量没有保护作用。**若无法完成固定二进制切换和门控核验，不执行恢复命令。**
+
+候选 `bin/proxy-sentinel` 与 p2 固定 binary 都接受 `read-model run --lane recognition --sensor-id ...`，但 p2 缺少可追溯的源码清单，不能仅凭命令行相同断言其他识别线程完全等价。插入状态前应在 `disabled=true` 下短时核对进程不退出、覆盖识别、共享行为和常规识别线程的进度及错误、服务 ready 状态与实时积压；若出现回归，先恢复旧 unit，此时状态行仍为空。状态行一旦插入，回退只能保留候选 binary 并维持 `disabled=true`，或停止/禁用识别 eventbus unit，保留 PG224 审计与已写入的状态/证据。**不得把 unit 恢复为裸 p2 并启动**：旧进程会无门控自动领取全部积压。恢复旧二进制之前须另行设计、审计并验证可靠的状态暂停方案。
 
 ```sh
 proxy-sentinel router reset-recovery \
