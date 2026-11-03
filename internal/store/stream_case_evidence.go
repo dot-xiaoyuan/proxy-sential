@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/streamlog"
 )
 
@@ -32,7 +34,13 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 			return nil, errors.New("case evidence needs a complete retained stream reference")
 		}
 	}
-	raw, err := json.Marshal(refs)
+	legacyRefs := make([]StreamBodyRef, 0, len(refs))
+	for _, ref := range refs {
+		if !strings.HasPrefix(ref.Key, ref.Epoch+":stream3-") {
+			legacyRefs = append(legacyRefs, ref)
+		}
+	}
+	raw, err := json.Marshal(legacyRefs)
 	if err != nil {
 		return nil, err
 	}
@@ -160,12 +168,78 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 			return nil, err
 		}
 	}
+	if err := s.confirmStream3CaseRefs(ctx, refs, confirmed); err != nil {
+		return nil, err
+	}
 	for _, ref := range refs {
 		if _, ok := confirmed[ref]; !ok {
 			return nil, fmt.Errorf("stream case evidence is not archived: %w", streamlog.ErrUnconfirmed)
 		}
 	}
 	return s.readStreamCaseBodies(ctx, refs)
+}
+
+// The discovery receipt reader proves a segment-located key against its
+// marker, source position, scope and hash vector. Case capture additionally
+// requires finalization and the caller's exact archive reference before the
+// original body is fetched and hashed from ClickHouse.
+func (s *DBStore) confirmStream3CaseRefs(ctx context.Context, refs []StreamBodyRef, confirmed map[StreamBodyRef]struct{}) error {
+	type groupKey struct{ epoch, scope string }
+	groups := make(map[groupKey]map[string]StreamBodyRef)
+	for _, ref := range refs {
+		if !strings.HasPrefix(ref.Key, ref.Epoch+":stream3-") {
+			continue
+		}
+		if _, _, ok := discovery.ParsePassiveStream3Key(ref.Epoch, ref.Key); !ok {
+			return streamlog.ErrContentConflict
+		}
+		group := groupKey{ref.Epoch, ref.Scope}
+		if groups[group] == nil {
+			groups[group] = make(map[string]StreamBodyRef)
+		}
+		if prior, found := groups[group][ref.Key]; found && prior != ref {
+			return streamlog.ErrContentConflict
+		}
+		groups[group][ref.Key] = ref
+	}
+	reader := discovery.Repository{DB: s.pg.db}
+	for group, expected := range groups {
+		keys := make([]string, 0, len(expected))
+		for key := range expected {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for start := 0; start < len(keys); start += 50 {
+			end := min(start+50, len(keys))
+			items, missing, err := reader.StreamDiscoveryReceipts(ctx, group.epoch, group.scope, keys[start:end])
+			if err != nil {
+				return err
+			}
+			if len(missing) != 0 || len(items) != end-start {
+				return streamlog.ErrUnconfirmed
+			}
+			for _, item := range items {
+				key, ok := item["event_key"].(string)
+				if !ok || item["archive_state"] != "confirmed" {
+					return streamlog.ErrUnconfirmed
+				}
+				ref, found := expected[key]
+				if !found || item["content_sha256"] != ref.SHA256 {
+					return streamlog.ErrContentConflict
+				}
+				bodyRef, ok := item["body_ref"].(json.RawMessage)
+				if !ok {
+					return streamlog.ErrContentConflict
+				}
+				var saved StreamBodyRef
+				if err := json.Unmarshal(bodyRef, &saved); err != nil || saved != ref {
+					return streamlog.ErrContentConflict
+				}
+				confirmed[ref] = struct{}{}
+			}
+		}
+	}
+	return nil
 }
 
 // Shared case locators come from a committed decision's exact source records

@@ -31,6 +31,10 @@ type CollectionConfig struct {
 	// Enable only after a release that can read compact keys is the rollback
 	// target. The producer then mints a disjoint stream2 event-key namespace.
 	CompactPassiveEventKeys bool `json:"-"`
+	// Only new passive segments use source-interval stream3 keys. This switch
+	// stays runtime-only and defaults off until the PG225 reader is deployed as
+	// the rollback target.
+	Stream3PassiveEventKeys bool `json:"-"`
 	// A compatible rollback release must be installed before new segments use
 	// one archive witness in place of per-event confirmation updates.
 	SegmentArchiveReceipts bool `json:"-"`

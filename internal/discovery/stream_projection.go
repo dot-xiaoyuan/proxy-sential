@@ -96,6 +96,8 @@ func walkStreamDiscoveryReceipts(segment streamlog.Segment, visit func(normalize
 			scheme := 0
 			if strings.HasPrefix(event.EventID, "stream2-") {
 				scheme = 1
+			} else if strings.HasPrefix(event.EventID, "stream3-") {
+				scheme = 2
 			}
 			if compactScheme >= 0 && compactScheme != scheme {
 				return fmt.Errorf("mixed passive event-key schemes: %w", streamlog.ErrContentConflict)

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
@@ -14,6 +16,24 @@ import (
 )
 
 const PassiveStreamParserVersion = "passive-frame-v1"
+
+type passiveEventKeyScheme uint8
+
+const (
+	passiveEventKeyLegacy passiveEventKeyScheme = iota
+	passiveEventKeyStream2
+	passiveEventKeyStream3
+)
+
+func passiveStreamKeyScheme(config CollectionConfig) passiveEventKeyScheme {
+	if config.Stream3PassiveEventKeys {
+		return passiveEventKeyStream3
+	}
+	if config.CompactPassiveEventKeys {
+		return passiveEventKeyStream2
+	}
+	return passiveEventKeyLegacy
+}
 
 // PassiveStreamJournal owns the durable acceptance boundary. Implementations
 // must retain the original source position and acceptance time on recovery.
@@ -48,6 +68,17 @@ func AppendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal,
 }
 
 func appendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, events []normalized.Event, compactKeys bool) (CapturedSegment, error) {
+	scheme := passiveEventKeyLegacy
+	if compactKeys {
+		scheme = passiveEventKeyStream2
+	}
+	return appendPassiveStreamBatchWithScheme(ctx, journal, source, scope, events, scheme)
+}
+
+func appendPassiveStreamBatchWithScheme(ctx context.Context, journal PassiveStreamJournal, source Source, scope *normalized.CaptureScope, events []normalized.Event, scheme passiveEventKeyScheme) (CapturedSegment, error) {
+	if scheme > passiveEventKeyStream3 {
+		return CapturedSegment{}, streamlog.ErrContentConflict
+	}
 	if journal == nil || scope == nil || source.ID == "" || source.Address == "" || len(events) == 0 || len(events) > streamlog.MaxPassiveSegmentEvents {
 		return CapturedSegment{}, errors.New("passive stream requires a bounded batch, source and capture scope")
 	}
@@ -91,15 +122,33 @@ func appendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal,
 	if err != nil {
 		return CapturedSegment{}, err
 	}
+	if start < 0 || start > math.MaxInt64-int64(len(raw)) {
+		return CapturedSegment{}, streamlog.ErrContentConflict
+	}
+	end := start + int64(len(raw))
+	segmentID, firstScope, stream3Prefix := "", "", ""
+	if scheme == passiveEventKeyStream3 {
+		segmentID = streamlog.SourceSegmentID(streamlog.Segment{Epoch: cursor.Epoch, Source: "passive-discovery",
+			SourcePath: path, FileID: scope.CollectorInstanceID, StartOffset: start, EndOffset: end})
+		stream3Prefix = "stream3-" + segmentID + "-"
+		firstScope, _ = prepared[0].Observer["capture_scope_id"].(string)
+	}
 	for index := range prepared {
 		original := prepared[index].EventID
-		identity, _ := json.Marshal([]any{cursor.Epoch, "passive-discovery", path, scope.CollectorInstanceID, start, index})
-		sum := sha256.Sum256(identity)
-		prefix := "stream-"
-		if compactKeys {
-			prefix = "stream2-"
+		if scheme == passiveEventKeyStream3 {
+			if firstScope == "" || prepared[index].Observer["capture_scope_id"] != firstScope {
+				return CapturedSegment{}, streamlog.ErrContentConflict
+			}
+			prepared[index].EventID = stream3Prefix + strconv.Itoa(index)
+		} else {
+			identity, _ := json.Marshal([]any{cursor.Epoch, "passive-discovery", path, scope.CollectorInstanceID, start, index})
+			sum := sha256.Sum256(identity)
+			prefix := "stream-"
+			if scheme == passiveEventKeyStream2 {
+				prefix = "stream2-"
+			}
+			prepared[index].EventID = prefix + hex.EncodeToString(sum[:16])
 		}
-		prepared[index].EventID = prefix + hex.EncodeToString(sum[:16])
 		prepared[index].RawRef = cloneStreamFields(prepared[index].RawRef)
 		prepared[index].RawRef["backend"] = "passive-discovery"
 		prepared[index].RawRef["producer_event_id"] = original
@@ -110,13 +159,16 @@ func appendPassiveStreamBatch(ctx context.Context, journal PassiveStreamJournal,
 	now := time.Now().UTC()
 	segment := streamlog.Segment{Epoch: cursor.Epoch, Source: "passive-discovery", SourcePath: path,
 		PreviousFileID: cursor.FileID, PreviousOffset: cursor.Offset, FileID: scope.CollectorInstanceID,
-		StartOffset: start, EndOffset: start + int64(len(raw)), ParserVersion: PassiveStreamParserVersion,
+		StartOffset: start, EndOffset: end, ParserVersion: PassiveStreamParserVersion,
 		ArchiveMonth: now.Format("200601"), AcceptedAt: now,
 		NeedsProjection: true, Events: prepared}
 	started := time.Now()
 	id, err := journal.AppendAndCommitPassive(segment)
 	if err != nil {
 		return CapturedSegment{ID: id, Segment: segment}, err
+	}
+	if scheme == passiveEventKeyStream3 && id != segmentID {
+		return CapturedSegment{ID: id, Segment: segment}, streamlog.ErrContentConflict
 	}
 	return CapturedSegment{ID: id, Segment: segment, AppendCommitDuration: time.Since(started)}, nil
 }

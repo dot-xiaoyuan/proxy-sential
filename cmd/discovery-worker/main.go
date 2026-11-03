@@ -43,6 +43,11 @@ func main() {
 		log.Fatal("invalid passive compact event-key mode")
 	}
 	compactPassiveKeys := flag.Bool("passive-compact-event-keys", compactDefault, "emit stream2 passive keys and write only the compact ledger after a compatible rollback release is installed")
+	stream3Default, err := compactPassiveKeyDefault(os.Getenv("PROXY_SENTINEL_PASSIVE_STREAM3_EVENT_KEYS"))
+	if err != nil {
+		log.Fatal("invalid passive stream3 event-key mode")
+	}
+	stream3Keys := flag.Bool("passive-stream3-event-keys", stream3Default, "emit source-interval stream3 keys only after installing the PG225 compatible reader as the rollback release")
 	segmentDefault, err := compactPassiveKeyDefault(os.Getenv("PROXY_SENTINEL_PASSIVE_SEGMENT_ARCHIVE_RECEIPTS"))
 	if err != nil {
 		log.Fatal("invalid passive segment archive receipt mode")
@@ -92,7 +97,7 @@ func main() {
 	if *passiveSegmentMaxEvents != streamlog.MaxSegmentEvents && *passiveSegmentMaxEvents != streamlog.MaxPassiveSegmentEvents {
 		log.Fatal("passive segment event limit must be 1000 or 2000")
 	}
-	if *passiveSegmentMaxEvents == streamlog.MaxPassiveSegmentEvents && !*manifestWrites {
+	if *passiveSegmentMaxEvents == streamlog.MaxPassiveSegmentEvents && !*manifestWrites && !*stream3Keys {
 		log.Fatal("2000-event passive segments require manifest writes and a compatible rollback release")
 	}
 	library, err := fingerprint.OpenInstalledRuntime()
@@ -113,6 +118,7 @@ func main() {
 	}
 	collection.MDNSRecordEvidenceV2 = *mdnsRecordEvidenceV2
 	collection.CompactPassiveEventKeys = *compactPassiveKeys
+	collection.Stream3PassiveEventKeys = *stream3Keys
 	collection.SegmentArchiveReceipts = *segmentArchiveReceipts
 	collection.ReceiptManifestShadow = *manifestShadow
 	collection.ReceiptManifestWrites = *manifestWrites

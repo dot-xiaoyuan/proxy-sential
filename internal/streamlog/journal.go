@@ -133,6 +133,11 @@ func segmentID(s Segment) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// SourceSegmentID is the stable journal identity of a source interval. A
+// segment-located event key must use this exact calculation on capture and
+// verify it again from persisted source metadata on read.
+func SourceSegmentID(s Segment) string { return segmentID(s) }
+
 func contentHash(s Segment) (string, error) {
 	encoded, err := json.Marshal(struct {
 		SourcePath           string             `json:"source_path"`
