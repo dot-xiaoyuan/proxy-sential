@@ -187,11 +187,13 @@ BEGIN
       AND s.event_count BETWEEN 1 AND 2000 AND loc.ordinal<s.event_count
       AND s.segment_id=sentinel_stream_source_segment_id(s.epoch,s.source_kind,s.source_path,
        s.source_file_id,s.source_start_offset,s.source_end_offset,s.source_generation)
-      AND NOT EXISTS(SELECT 1 FROM stream_discovery_event_keys old
-       WHERE old.epoch=s.epoch AND old.scope_id=ref->>'scope' AND old.event_key=ref->>'key')
-      AND NOT EXISTS(SELECT 1 FROM stream_discovery_event_keys_compact old
-       WHERE old.key_hash=sentinel_stream_discovery_key_hash(s.epoch,ref->>'scope',ref->>'key')
-        AND old.epoch=s.epoch AND old.scope_id=ref->>'scope' AND old.event_key=ref->>'key')
+      AND NOT EXISTS(SELECT 1 FROM stream_discovery_event_keys legacy_key
+       WHERE legacy_key.epoch=s.epoch AND legacy_key.scope_id=ref->>'scope'
+        AND legacy_key.event_key=ref->>'key')
+      AND NOT EXISTS(SELECT 1 FROM stream_discovery_event_keys_compact compact_key
+       WHERE compact_key.key_hash=sentinel_stream_discovery_key_hash(s.epoch,ref->>'scope',ref->>'key')
+        AND compact_key.epoch=s.epoch AND compact_key.scope_id=ref->>'scope'
+        AND compact_key.event_key=ref->>'key')
       AND m.key_scheme='stream3' AND m.scope_id=ref->>'scope'
       AND m.archive_month=to_char(s.accepted_at AT TIME ZONE 'UTC','YYYYMM')
       AND m.body_layout IN ('','v2')

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"testing"
@@ -18,9 +17,9 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
-// Run only against a dedicated disposable PostgreSQL database. The fixture
-// applies the actual forward migration and executes its case trigger; it
-// never connects to 184 or a local snapshot stack.
+// Run only against a dedicated disposable loopback PostgreSQL database on a
+// nonstandard port. The fixture applies the actual forward migration and
+// executes its case trigger; it never connects to 184 or a snapshot stack.
 func TestStream3CaseTriggerProtectsSegmentOriginalPostgres(t *testing.T) {
 	dsn := os.Getenv("PROXY_SENTINEL_TEST_STREAM3_CASE_DSN")
 	if dsn == "" {
@@ -30,19 +29,10 @@ func TestStream3CaseTriggerProtectsSegmentOriginalPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := strings.ToLower(cfg.Host)
-	if !strings.HasSuffix(cfg.Database, "_stream3_case_test") || host == "" || host == "localhost" ||
-		strings.HasPrefix(host, "/") || len(cfg.Fallbacks) > 0 {
-		t.Fatal("stream3 trigger replay requires a dedicated remote test database")
-	}
-	resolved, err := net.LookupIP(host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, ip := range resolved {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.Equal(net.ParseIP("222.204.3.184")) {
-			t.Fatal("stream3 trigger replay refuses local, private or 184 addresses")
-		}
+	if !strings.HasSuffix(cfg.Database, "_stream3_case_test") ||
+		(cfg.Host != "127.0.0.1" && cfg.Host != "::1") ||
+		cfg.Port <= 1024 || cfg.Port == 5432 || len(cfg.Fallbacks) > 0 {
+		t.Fatal("stream3 trigger replay requires a dedicated loopback test database on a nonstandard port")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -91,9 +81,32 @@ func TestStream3CaseTriggerProtectsSegmentOriginalPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../migrations/postgres/224_passive_segment_key_locator.sql")
+	migration, err := os.ReadFile("../../migrations/postgres/225_passive_segment_key_locator.sql")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// An interrupted migration must leave neither columns nor a locator behind.
+	interrupted, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := interrupted.ExecContext(ctx, string(migration)); err != nil {
+		_ = interrupted.Rollback()
+		t.Fatalf("apply interrupted stream3 migration: %v", err)
+	}
+	if err := interrupted.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	var partialMigration bool
+	if err := db.QueryRowContext(ctx, `SELECT
+	 EXISTS(SELECT 1 FROM information_schema.columns
+	  WHERE table_schema=current_schema() AND table_name='stream_projection_segments'
+	   AND column_name='passive_key_scheme')
+	 OR to_regprocedure('sentinel_stream3_locator(text,text)') IS NOT NULL`).Scan(&partialMigration); err != nil {
+		t.Fatal(err)
+	}
+	if partialMigration {
+		t.Fatal("rolled-back stream3 migration left partial schema")
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -255,7 +268,7 @@ func TestStream3CaseTriggerProtectsSegmentOriginalPostgres(t *testing.T) {
 	if err := insertCase(); err != nil {
 		t.Fatalf("rejected metadata mutations changed the valid case: %v", err)
 	}
-	pendingFile := "capture-pending"
+	pendingFile := "capture-finalize-pending"
 	pendingID := streamlog.SourceSegmentID(streamlog.Segment{Epoch: epoch, Source: "passive-discovery", SourcePath: path,
 		FileID: pendingFile, StartOffset: 0, EndOffset: 100})
 	if _, err := db.ExecContext(ctx, `INSERT INTO stream_projection_segments
