@@ -15,7 +15,8 @@ units=(control.service "$deferred_unit" ingest.service)
 restarted=()
 poll_file="$(mktemp)"
 exec_file="$(mktemp)"
-trap 'rm -f "$poll_file" "$exec_file"' EXIT
+rollback_file="$(mktemp)"
+trap 'rm -f "$poll_file" "$exec_file" "$rollback_file"' EXIT
 echo 0 > "$poll_file"
 echo 0 > "$exec_file"
 systemctl() {
@@ -46,4 +47,19 @@ restart_workers
 wait_deferred_discovery
 [[ "$deferred_started_new" == true && "$old_discovery_pid" == 200 && "$(cat "$poll_file")" == 4 ]]
 
-echo 'deferred discovery natural restart and service exclusion verified'
+# A timed-out deferred upgrade must not restart the old process while it may
+# still contain unpersisted capture batches.
+eval "$(sed -n '/^rollback() {/,/^}/p' "$script")"
+(
+  pointer_switched=true
+  deferred_started_new=false
+  frontend_state=""
+  systemctl() { echo 200; }
+  ln() { echo previous-link >> "$rollback_file"; }
+  mv() { echo previous-move >> "$rollback_file"; }
+  restart_workers() { echo unsafe-restart >> "$rollback_file"; }
+  rollback
+) 2>/dev/null
+[[ "$(cat "$rollback_file")" == $'previous-link\nprevious-move' ]]
+
+echo 'deferred discovery natural restart and timeout safety verified'

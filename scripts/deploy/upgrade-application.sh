@@ -169,10 +169,14 @@ rollback() {
       [[ "$exe" == "$old_target/bin/discovery-worker" ]] || deferred_started_new=true
     fi
   fi
-  if [[ "$deferred_started_new" == true ]]; then
+  # After a deferred pointer switch, even an old discovery process may still
+  # hold accepted batches in memory. Never restart it as part of rollback.
+  # Keep the compatible old release as previous and report an incomplete
+  # upgrade for explicit inspection instead.
+  if [[ "$defer_discovery_restart" == true ]]; then
     ln -sfn "$old_target" "$root/previous.next"
     mv -Tf "$root/previous.next" "$root/previous"
-    echo "application upgrade incomplete: candidate remains current and old release is previous; discovery left its old process, so automatic rollback could interrupt its in-memory capture queue" >&2
+    echo "application upgrade incomplete: candidate remains current and old release is previous; discovery was not restarted because its in-memory capture queue may be nonempty" >&2
     exit "$result"
   fi
   ln -sfn "$old_target" "$root/current.next"
