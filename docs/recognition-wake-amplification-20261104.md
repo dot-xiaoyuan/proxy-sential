@@ -81,6 +81,13 @@ PASS
 
 两个测试库的 `DROP DATABASE` 仍排队（现场 checkpoint 未完成），库暂时存在；未改动任何业务表；临时二进制与脚本已删除。
 
+## 184 发布与短窗验收（2026-11-04）
+
+- 本地集成分支已快进到 `9e58e0eb`；`go test ./internal/discovery -count=1` 与 `go vet ./internal/discovery` 通过。唯一候选包 `2026.11.04-recognition-wake-r71` 的 SHA256 为 `b1b37b1b6b606fd532b7b236b241ffda571185e0ba232f197731cbaab0118268`，发布清单记录该提交且工作区无未提交改动。
+- 184 在 UTC 02:59:07 完成应用更新：`current=r71`，`previous=r70`。应用更新脚本核对 PostgreSQL 227 个、ClickHouse 63 个已应用迁移及校验值，未执行新迁移；发现 worker 实际运行 r71。按发布参数保留 inventory 服务；识别物化器仍固定 r24、NCU 身份物化器 r25、DHCP 逐消息流 r66、分钟影子 r59b。
+- 切换后 `readyz=200`，发现投影继续提交段。识别队列在 UTC 03:00:07 至 03:01:07 的一分钟样本中，脏代次增加 82、已处理代次增加 27、待办从 25,832 增至 25,887；UTC 03:02:52 待办仍为 25,887。样本较短，仅说明链路继续运行，不能据此宣称积压已解决。
+- 两个隔离测试库分别约 21 MB 和 7.9 MB，其 `DROP DATABASE IF EXISTS` 后台进程仍在等待 PostgreSQL checkpoint；截至 UTC 03:02，最近完成的 checkpoint 仍为 00:51:46。保留 DROP 任务继续等待，未为删除测试库重启业务数据库或改动业务表；清理完成前不得记为已删除。
+
 ## 验收建议（供 Codex）
 
 1. **PostgreSQL 回归**：设置 `PROXY_SENTINEL_TEST_POSTGRES_DSN`（已应用迁移的隔离库）后运行：
