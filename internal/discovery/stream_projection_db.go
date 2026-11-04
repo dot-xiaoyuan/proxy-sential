@@ -136,15 +136,34 @@ func (p StreamDiscoveryProjector) ExpireStreamDiscoveryStates(ctx context.Contex
 	return count, nil
 }
 
+// streamRecognitionRepeatCoalesceWindow bounds how long a repeat observation
+// may wait before it wakes recognition. The wake is delayed, never dropped:
+// observed_at/valid_until decide whether a binding is live when the job runs.
+const streamRecognitionRepeatCoalesceWindow = time.Minute
+
 // Expiry already publishes state before waking recognition. Projection must
 // use the same lock order: publish may acquire the global result-version lock,
 // while recognition updates endpoint_recognition_jobs rows. Reversing the two
 // lets concurrent expiry and projection transactions deadlock.
-func publishStreamStateAndRecognition(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int, dirty *streamRecognitionDirty) error {
+func publishStreamStateAndRecognition(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int, dirty, deferred *streamRecognitionDirty) error {
 	if err := publishStreamDiscoveryStates(ctx, tx, epoch, keys, newFactCounts); err != nil {
 		return err
 	}
-	return dirty.mark(ctx, tx)
+	immediate, err := dirty.resolve(ctx, tx)
+	if err != nil {
+		return err
+	}
+	scheduled, err := deferred.resolve(ctx, tx)
+	if err != nil {
+		return err
+	}
+	// A visible change wins over a repeat observation of the same endpoint in
+	// this batch; never let the deferred statement delay it.
+	dropImmediateOverlap(immediate, scheduled)
+	if err := markStreamRecognitionDirtyNow(ctx, tx, immediate); err != nil {
+		return err
+	}
+	return markStreamRecognitionDirtyDeferred(ctx, tx, scheduled, streamRecognitionRepeatCoalesceWindow)
 }
 
 // One bounded request confirms the whole segment. The key ledger locates the
@@ -698,6 +717,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	mark("merge_facts")
 	factWrites := map[string]streamDiscoveryFact{}
 	dirty := newStreamRecognitionDirty()
+	deferredDirty := newStreamRecognitionDirty()
 	newFactCounts := map[string]int{}
 	changedDevices := map[string]bool{}
 	changes := make([]streamDiscoveryChange, 0)
@@ -728,7 +748,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		}
 		versions[identity] = item.Fact
 		factWrites[identity] = item.Fact
-		dirty.add(priorPtr, item.Fact)
+		routeRecognitionWake(dirty, deferredDirty, priorPtr, item.Fact, decision)
 		changedDevices[item.Fact.Device] = true
 		if decision.VisibleChanged {
 			before := ""
@@ -778,7 +798,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		stateKeys = append(stateKeys, key)
 	}
 	sort.Strings(stateKeys)
-	if err := publishStreamStateAndRecognition(ctx, tx, segment.Epoch, stateKeys, newFactCounts, dirty); err != nil {
+	if err := publishStreamStateAndRecognition(ctx, tx, segment.Epoch, stateKeys, newFactCounts, dirty, deferredDirty); err != nil {
 		return err
 	}
 	mark("commit")
@@ -1158,6 +1178,80 @@ func markStreamRecognitionDirty(ctx context.Context, tx *sql.Tx, macs map[string
  JOIN (SELECT DISTINCT lower(mac) AS mac FROM unnest($1::text[]) AS m(mac)) changed
    ON e.primary_mac=changed.mac
  WHERE e.entity_role='endpoint'`, values)
+	return err
+}
+
+// markStreamRecognitionDirtyNow is the immediate path: the existing dirty
+// function handles completed, leased and historical-lane rows, then any realtime
+// job that an earlier batch deferred is promoted so the visible change does not
+// wait for its original window.
+func markStreamRecognitionDirtyNow(ctx context.Context, tx *sql.Tx, macs map[string]bool) error {
+	if err := markStreamRecognitionDirty(ctx, tx, macs); err != nil {
+		return err
+	}
+	return promoteDeferredRecognitionJobs(ctx, tx, macs)
+}
+
+// promoteDeferredRecognitionJobs makes pending, unclaimed realtime jobs
+// claimable now. It only moves not_before, keeping the row's generation and
+// queue time; a job that is already claimable or leased is left alone.
+func promoteDeferredRecognitionJobs(ctx context.Context, tx *sql.Tx, macs map[string]bool) error {
+	if len(macs) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(macs))
+	for mac := range macs {
+		values = append(values, mac)
+	}
+	sort.Strings(values)
+	array := "{" + strings.Join(values, ",") + "}"
+	_, err := tx.ExecContext(ctx, `UPDATE endpoint_recognition_jobs j
+ SET not_before=clock_timestamp()
+ FROM endpoint_entities e
+ WHERE e.endpoint_id=j.endpoint_id
+   AND e.entity_role='endpoint'
+   AND e.primary_mac = ANY($1::text[])
+   AND j.processed_generation<j.dirty_generation
+   AND j.lease_until<=clock_timestamp()
+   AND j.lane=0
+   AND j.attempts=0
+   AND j.last_error=''
+   AND j.not_before>clock_timestamp()`, array)
+	return err
+}
+
+// markStreamRecognitionDirtyDeferred coalesces repeat observations into one
+// bounded future run. It mirrors mark_endpoint_recognition_dirty: a pending,
+// unclaimed, realtime job is left untouched (same row, same queue time); a
+// completed, leased or historical-lane job gets a new generation, is moved to
+// the realtime lane and is scheduled after the window. That keeps a renewal
+// from being swallowed without rewriting a job that is already waiting.
+func markStreamRecognitionDirtyDeferred(ctx context.Context, tx *sql.Tx, macs map[string]bool, delay time.Duration) error {
+	if len(macs) == 0 {
+		return nil
+	}
+	values := make([]string, 0, len(macs))
+	for mac := range macs {
+		values = append(values, mac)
+	}
+	sort.Strings(values)
+	// MACs are lower-case hex with colons, so a text array literal is safe and
+	// keeps the statement testable without a driver-specific slice encoding.
+	array := "{" + strings.Join(values, ",") + "}"
+	_, err := tx.ExecContext(ctx, `INSERT INTO endpoint_recognition_jobs(endpoint_id,dirty_generation,not_before,updated_at)
+ SELECT e.endpoint_id,1,clock_timestamp()+make_interval(secs=>$2),now()
+ FROM endpoint_entities e
+ JOIN (SELECT DISTINCT lower(mac) AS mac FROM unnest($1::text[]) AS m(mac)) changed
+   ON e.primary_mac=changed.mac
+ WHERE e.entity_role='endpoint'
+ ON CONFLICT(endpoint_id) DO UPDATE SET
+  dirty_generation=endpoint_recognition_jobs.dirty_generation+1,
+  lane=0,
+  not_before=clock_timestamp()+make_interval(secs=>$2),
+  updated_at=now()
+ WHERE endpoint_recognition_jobs.processed_generation>=endpoint_recognition_jobs.dirty_generation
+    OR endpoint_recognition_jobs.lease_until>clock_timestamp()
+    OR endpoint_recognition_jobs.lane=1`, array, int(delay.Seconds()))
 	return err
 }
 

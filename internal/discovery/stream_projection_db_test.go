@@ -505,12 +505,13 @@ func TestPublishStreamStateAndRecognitionUsesExpiryLockOrder(t *testing.T) {
 	mock.ExpectExec("SELECT pg_advisory_xact_lock\\(9184,213\\)").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO stream_discovery_device_state").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("SELECT mark_endpoint_recognition_dirty").WithArgs([]string{fact.MAC}).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE endpoint_recognition_jobs j").WithArgs("{" + fact.MAC + "}").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := publishStreamStateAndRecognition(context.Background(), tx, "fresh", []string{fact.Device}, map[string]int{fact.Device: 1}, dirty); err != nil {
+	if err := publishStreamStateAndRecognition(context.Background(), tx, "fresh", []string{fact.Device}, map[string]int{fact.Device: 1}, dirty, newStreamRecognitionDirty()); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
