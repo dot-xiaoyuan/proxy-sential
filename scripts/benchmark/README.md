@@ -47,6 +47,6 @@ PROXY_SENTINEL_BENCHMARK_PG='postgres://postgres:本地测试口令@127.0.0.1:25
 go test ./internal/controlplane -run '^$' -bench BenchmarkOperationsLoadScopes -benchtime 3x -benchmem
 ```
 
-结束后停止夹具并删除自己创建的一次性容器。此次测量数据及覆盖限制见 `docs/api-performance-benchmark-20260917.md`。
+结束后停止夹具并删除自己创建的一次性容器。2026-09-17 的测量数据及覆盖限制可从 Git 历史追溯。
 
 隔离数据因七天 TTL 降到不足一千万条时，可运行 `seed-scale.py --replenish`：只追加带唯一批次前缀的观测及对应标准事件，不删除、改写或重复使用旧事件 ID；旧数据超过目标时拒绝追加。追加后须等待新读模型回填和追平，再进行性能复测。

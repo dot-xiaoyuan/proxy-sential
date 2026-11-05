@@ -25,6 +25,7 @@ config.local.*
 deploy/compose/storage.env
 .gocache/
 .worktrees/
+/artifacts/
 
 # IDE
 .idea/

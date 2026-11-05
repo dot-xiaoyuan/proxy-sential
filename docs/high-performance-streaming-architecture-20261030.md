@@ -1,12 +1,12 @@
 # 高性能流式存储与投影方案
 
-状态：设计提案；Phase 1 影子发布、Phase 2a 收据、Phase 2b ClickHouse 事实、Phase 2c PostgreSQL 事实、Phase 2d 影子设备当前态、Phase 2e Redis 热态、Phase 2g 只读 API 和 Phase 2j 控制面发现读切换均已在 184 上线（真实发现事件 → Redpanda → ClickHouse/PG 影子事实 → PG 影子当前态 → Redis → `/discovery/devices`）。changes、身份/统计链路和容量验收仍未完成。本文用于替换“PostgreSQL 控制面 + ClickHouse 事件存储、禁止引入消息队列”的旧边界；旧约束已在 `AGENTS.md` 调整为“按性能目标选型”，同时保留安全、审计和不可放宽的边界。
+状态：架构设计。文中的数字和阶段记录以 2026-10-30 当时的现场为准；当前运行状态见[当前工作](current-work.md)。
 
 ## 1. 目标与判断
 
 ### 1.1 为什么现在要改
 
-只读分析（[存储积压只读分析](storage-backlog-readonly-analysis-20261030.md)）确认，三个积压不是单点代码 bug：
+2026-10-30 的只读分析确认，三个积压不是单点代码 bug：
 
 - NCU 会话当前态写在约 203 万行、5 GB、11 个索引的 `account_sessions` 上，单批 10 条会话要 0.7—5.1 秒。
 - 识别覆盖每分钟对 1,126 万行/16 GB 的收据分区重算 24 小时窗口。
@@ -438,30 +438,6 @@ Redis 不作为唯一权威：AOF `everysec` + 副本；Redis 丢数据时从 Po
 
 **推荐**：Redpanda（Kafka API）+ Go 消费者 + Redis + PostgreSQL 当前态 + ClickHouse 事件/统计 + 对象存储归档。保留 Kafka 作为等价实现选项，避免绑定单一厂商。
 
-## 14. 下一步
+## 当前实施状态
 
-1. 在 184 加 NVMe（或独立 SSD 节点），先做 Redpanda 单节点 + 1 个主题的影子双写；验证生产/消费延迟、磁盘和 spool。
-2. 用真实发现事件做 24 小时影子投影：新 projector 写 CH + PG 影子表，与旧路径比对设备状态、收据、变化。
-3. 通过后先切发现投影（收益最大、风险最集中），再切归档，再切身份会话，最后切统计。
-4. 每个阶段保留旧路径和回退开关；不一次性全量切换。
-5. 所有容量结论附硬件、数据分布、负载和观察窗口；不以本地 mock 或短样本替代现场验收。
-
-### Phase 1 落盘状态
-
-Phase 1 已实现发现事件的 Kafka 影子发布：`internal/eventbus`、发现分区键、`CapturedSegment` 回调、`discovery-worker` 接线、`cmd/event-bus-probe`、本地 Redpanda compose/脚本和测试。默认关闭，不改读取路径，不写业务表。2026-10-30 在 184 用主机二进制 + systemd 单节点 Redpanda 完成部署验证（cluster healthy、主题创建、probe produce/consume、重启恢复）；Docker 18.09 的创建路径在本机卡住，旧 compose 单元已移除。运行方式、环境变量、184 命令和回退见 [事件总线 Phase 1](event-bus-phase1.md)。本阶段不代表投影、Redis、ClickHouse 账本或读取切换已完成。
-
-## 15. 参考
-
-- [Apache Kafka 文档](https://kafka.apache.org/documentation/)
-- [Redpanda 文档](https://docs.redpanda.com/)
-- [ClickHouse Kafka 引擎](https://clickhouse.com/docs/en/engines/table-engines/integrations/kafka)
-- [ClickHouse ReplacingMergeTree](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replacingmergetree)
-- [ClickHouse AggregatingMergeTree](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/aggregatingmergetree)
-- [Redis 持久化](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/)
-- [Transactional Outbox](https://microservices.io/patterns/data/transactional-outbox.html)
-- [Google SRE: Handling Overload](https://sre.google/sre-book/handling-overload/)
-- [Google SRE: Addressing Cascading Failures](https://sre.google/sre-book/addressing-cascading-failures/)
-- [Apache Flink: Stateful Stream Processing](https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/stateful-stream-processing/)
-- [存储积压只读分析](storage-backlog-readonly-analysis-20261030.md)
-- [设备中心存储与查询设计](device-center-storage-query-design.md)
-- [当前工作与下一步](current-work.md)
+以[当前工作](current-work.md)和实际代码为准。旧阶段验收与分析可从 Git 历史追溯。

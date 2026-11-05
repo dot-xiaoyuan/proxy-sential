@@ -1,6 +1,6 @@
 -- PostgreSQL 写入与可观测性参数（现场部署时由运维以 superuser 执行，随后重启容器生效）。
 --
--- 依据 docs/site-184-storage-query-diagnosis-20261015.md：
+-- 依据 2026-10-15 的现场存储诊断（可从 Git 历史追溯）：
 --   * max_wal_size=8GB 时 13.5 小时内 7 次被迫检查点，单次检查点写 15～76 分钟；
 --   * 没有慢日志、pg_stat_statements、track_io_timing，热点 SQL 只能靠采样推断；
 --   * 现场 effective_cache_size=32GB，而主机约 62GB 内存中可用于页缓存的约 40GB。

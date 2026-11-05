@@ -46,7 +46,7 @@ When preparing Antigravity work:
 ## Useful Local References
 
 - `docs/frontend-architecture.md`
-- `docs/frontend-tasks.md`
+- `docs/current-work.md`
 - `schemas/control-plane-v1.openapi.yaml`
 - `docs/risk-engine.md`
 - `docs/event-model.md`
