@@ -609,9 +609,15 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 		return stats, err
 	}
 	defer tx.Rollback()
-	for _, event := range events {
+	coalescedMDNS := passiveCoalescedMDNSIndexes(events)
+	for index, event := range events {
 		stats.Processed++
 		stats.Protocols[event.SourceEventType]++
+		if coalescedMDNS[index] {
+			stats.Skipped++
+			stats.Reasons["mdns_repeated_record_coalesced"]++
+			continue
+		}
 		var observations []discovery.Observation
 		var reason string
 		var eventErr error
