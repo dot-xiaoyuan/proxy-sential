@@ -94,7 +94,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	// Mirror ports can deliver short bursts much faster than a 30-second bucket
 	// flush. Linux clamps this request to net.core.rmem_max on each host.
-	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 8<<20); err != nil {
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 32<<20); err != nil {
 		return fmt.Errorf("set capture receive buffer: %w", err)
 	}
 	if opts.HandshakeOnly {
