@@ -195,3 +195,21 @@ it('preserves owner account and identity merge relations when editing the regist
     expect(payload).toMatchObject({owner_account:'asset-owner',owner_department:'信息中心',merge_status:'merged',merged_into_endpoint_id:row.merged_into_endpoint_id,registration_details:row.registration_details})
   })
 })
+
+it('removes previous rows when a filter changes after one discovery key was split into evidence groups',async()=>{
+  const errorLog=vi.spyOn(console,'error').mockImplementation(()=>{})
+  mockReads()
+  const read=request.getMockImplementation()!
+  const splitRows=['one','two','three'].map((name,index)=>({...device,id:'shared-discovery-key',name:`打印机 ${name}`,device_type:'printer',mac:'00:11:22:33:44:55',observations:[{id:`evidence-${index}`,origin:'dns_sd',observed_at:device.last_seen}]}))
+  request.mockImplementation((path:string,options?:unknown)=>path.startsWith('/discovery/devices?')?Promise.resolve({items:path.includes('type=access_point')?[{...device,id:'ap-key',name:'筛选后的 AP',device_type:'access_point',observations:[{id:'ap-evidence',origin:'arp',observed_at:device.last_seen}]}]:splitRows,has_more:false}):read(path,options))
+  renderPanel()
+  await screen.findByRole('button',{name:'打印机 three'})
+  fireEvent.click(screen.getByRole('button',{name:'无线 AP'}))
+  await screen.findByRole('button',{name:'筛选后的 AP'})
+  expect(screen.queryByRole('button',{name:'打印机 one'})).not.toBeInTheDocument()
+  expect(screen.queryByRole('button',{name:'打印机 two'})).not.toBeInTheDocument()
+  expect(screen.queryByRole('button',{name:'打印机 three'})).not.toBeInTheDocument()
+  const duplicateKeys=errorLog.mock.calls.filter(args=>args.map(String).join(' ').includes('same key'))
+  errorLog.mockRestore()
+  expect(duplicateKeys).toEqual([])
+})

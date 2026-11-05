@@ -194,3 +194,40 @@ func TestAggregateDeviceRowsDoesNotMergeAmbiguousIPReuse(t *testing.T) {
 		t.Fatalf("conflicting MAC identities were merged: %+v", items)
 	}
 }
+
+func TestAggregateDeviceRowsMergesCanonicalEndpointAndMatchingMAC(t *testing.T) {
+	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	linked := passiveRepositoryRow("same-key", "10.0.0.8", "00:11:22:33:44:55", "AP", "", "", at)
+	linked.EndpointID = "mac:00:11:22:33:44:55"
+	unlinked := passiveRepositoryRow("same-key", "fe80::211:22ff:fe33:4455", "00:11:22:33:44:55", "AP", "", "", at.Add(time.Second))
+	linked.Observation.ID = "linked-observation"
+	unlinked.Observation.ID = "unlinked-observation"
+	items := aggregateDeviceRows([]deviceObservationRow{linked, unlinked}, at.Add(time.Minute))
+	if len(items) != 1 {
+		t.Fatalf("same MAC was split by canonical endpoint linkage: %d groups", len(items))
+	}
+	if items[0].ID != "same-key" || items[0].EndpointID != linked.EndpointID || len(items[0].Addresses) != 2 || items[0].EvidenceCount != 2 {
+		t.Fatalf("merge changed key or lost evidence: %+v", items[0])
+	}
+}
+
+func TestAggregateDeviceRowsKeepsRealIdentityConflictSeparate(t *testing.T) {
+	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	first := passiveRepositoryRow("same-key", "10.0.0.8", "00:11:22:33:44:55", "", "", "", at)
+	first.EndpointID = "mac:00:11:22:33:44:55"
+	for _, second := range []deviceObservationRow{
+		passiveRepositoryRow("same-key", "10.0.0.8", "00:11:22:33:44:56", "", "", "", at.Add(time.Second)),
+		{DeviceKey: "same-key", EndpointID: "registered-other", Observation: first.Observation},
+		{DeviceKey: "same-key", EndpointID: "mac:00:11:22:33:44:56", Observation: first.Observation},
+	} {
+		items := aggregateDeviceRows([]deviceObservationRow{first, second}, at.Add(time.Minute))
+		if len(items) != 2 {
+			t.Fatalf("distinct identity was merged: endpoint=%s mac=%s", second.EndpointID, second.Observation.MAC)
+		}
+		for _, item := range items {
+			if item.ID != "same-key" {
+				t.Fatalf("split changed persisted device key: %s", item.ID)
+			}
+		}
+	}
+}

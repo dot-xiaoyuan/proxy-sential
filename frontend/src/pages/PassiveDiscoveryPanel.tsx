@@ -92,6 +92,12 @@ function dumbTerminal(item: Device) {
   return ''
 }
 
+// One discovery key can legitimately split into separate evidence/identity groups.
+// Keep the API id for history and use a scoped evidence key only for reconciliation.
+function discoveryTableRowKey(item:Device) {
+  return JSON.stringify([item.id,item.sensor_id,item.site,item.domain,item.vlan,item.endpoint_id,item.mac,item.observations.map(o=>o.id).sort()])
+}
+
 function typeLabel(item:Device, types:Record<string,string>, signal?:PassiveSignal) {
   if(item.classification_status==='conflict')return '类型证据冲突'
   if(item.classification_status==='expired')return item.last_device_type?`${types[item.last_device_type]??deviceTypeLabel(item.last_device_type)} · 历史类型`:''
@@ -250,7 +256,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     <div className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span><Button type="link" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith('discovery_')&&key!=='discovery_view')next.delete(key);return next})}>清除筛选</Button></div>
     {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
       <AppListHeader title="发现设备" count={`本页 ${items.length} 条镜像发现记录`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void inventoryTotal.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
-      <AppTable className="passive-ledger-table" rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1125}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
+      <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1125}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={devices.data?.total ?? page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,cursors:[''],page:0});return}
         const current=page+1

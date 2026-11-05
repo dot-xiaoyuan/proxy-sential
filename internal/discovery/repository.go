@@ -384,11 +384,19 @@ func deviceAliases(row deviceObservationRow) []string {
 
 func deviceAnchor(row deviceObservationRow) string {
 	scope := discoveryScope(row.Observation) + "\x00"
+	mac := strings.ToLower(row.Observation.MAC)
+	endpoint := strings.ToLower(row.EndpointID)
+	// A canonical MAC endpoint and an unlinked observation of that same MAC
+	// are the same anchor. Preserve distinct endpoint identities (including a
+	// canonical endpoint that disagrees with the observed MAC) as conflicts.
+	if mac != "" && endpoint == "mac:"+mac {
+		return scope + "mac:" + mac
+	}
 	if row.EndpointID != "" {
-		return scope + "endpoint:" + strings.ToLower(row.EndpointID)
+		return scope + "endpoint:" + endpoint
 	}
 	if row.Observation.MAC != "" {
-		return scope + "mac:" + strings.ToLower(row.Observation.MAC)
+		return scope + "mac:" + mac
 	}
 	return ""
 }

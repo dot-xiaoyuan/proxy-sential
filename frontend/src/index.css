@@ -5063,7 +5063,7 @@ pre.wrap-code {
 .terminal-device-link > span { white-space: normal; overflow-wrap: anywhere; }
 .terminal-mac { font-family: ui-monospace, monospace; color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
 .terminal-kind-caption { color: #64748b; font-size: 12px; }
-.terminal-address, .terminal-vendor { display: flex; flex-direction: column; gap: 5px; overflow-wrap: anywhere; }
+.terminal-address, .terminal-vendor { display: flex; flex-direction: column; gap: 5px; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .terminal-address > span:first-child { font-family: ui-monospace, monospace; }
 .terminal-row-actions .ant-btn { padding: 0 3px; }
 .terminal-diagnostics { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
