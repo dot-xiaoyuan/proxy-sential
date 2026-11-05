@@ -193,7 +193,7 @@ function FindingsPanel() {
         <AppListSection isError={findings.isError} errorTitle="发现记录读取失败" errorMessage={String(findings.error)} isLoading={findings.isLoading} loadingRows={4} isEmpty={!findings.data?.items.length} emptyText="暂无发现记录">
           <AppTable rowKey="finding_id" columns={columns} dataSource={findings.data?.items ?? []} scroll={{ x: 970 }} />
         </AppListSection>
-        <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={findings.data?.page.total ?? 0} onChange={pagination.update} />
+        <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={findings.data?.page.total} onChange={pagination.update} />
       </section>
     </div>
   )

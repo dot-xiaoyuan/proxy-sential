@@ -10,7 +10,7 @@ function canonical(value:unknown):unknown {
 function semanticContent(record:EvidenceObservation,state:EvidenceGroup['state']) {
  const excluded=new Set(['id','event_id','snapshot_id','observed_at','reported_at','valid_until','evidence'])
  const fields=Object.fromEntries(Object.entries(record).filter(([key])=>!excluded.has(key)))
- const evidence=Object.fromEntries(Object.entries(record.evidence??{}).filter(([key])=>!['event_id','timestamp'].includes(key)))
+ const evidence=Object.fromEntries(Object.entries(record.evidence??{}).filter(([key])=>!['event_id','timestamp','raw_ref'].includes(key)))
  return JSON.stringify(canonical({...fields,capabilities:[...(record.capabilities??[])].sort(),evidence,state}))
 }
 export function groupDiscoveryEvidence(records:EvidenceObservation[],now=Date.now()):EvidenceGroup[] {

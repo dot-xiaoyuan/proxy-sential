@@ -20,3 +20,11 @@ it('compares payload object keys canonically but preserves meaningful array orde
  const correction={...a,device_type:'camera'}
  expect(groupDiscoveryEvidence([a,b,c,correction],now).map(g=>g.count).sort()).toEqual([1,1,2])
 })
+it('groups equal facts across different raw references while retaining both originals',()=>{
+ const first={...observation,evidence:{...observation.evidence,raw_ref:{event_id:'raw-first',source_path:'capture/first',offset:100}}}
+ const last={...observation,id:'second',observed_at:'2026-11-05T23:00:00Z',evidence:{...observation.evidence,raw_ref:{event_id:'raw-last',source_path:'capture/last',offset:200}}}
+ const groups=groupDiscoveryEvidence([first,last],now)
+ expect(groups).toHaveLength(1)
+ expect(groups[0].count).toBe(2)
+ expect(groups[0].records.map(r=>r.evidence?.raw_ref)).toEqual([first.evidence.raw_ref,last.evidence.raw_ref])
+})

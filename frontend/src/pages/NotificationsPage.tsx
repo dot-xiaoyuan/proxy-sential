@@ -281,7 +281,7 @@ function OutboxPanel({ writable, invalidate }: { writable: boolean; invalidate: 
         <Select aria-label="投递状态筛选" allowClear placeholder="全部状态" value={status || undefined} onChange={(value) => setStatus(value ?? '')} options={statusFilters.map((value) => ({ value, label: statusText(value) }))} />
       </div>
       {<AppListSection isError={outbox.isError} errorTitle="投递记录读取失败" errorMessage={String(outbox.error)} isLoading={outbox.isLoading} loadingRows={4} isEmpty={!outbox.data?.items.length} emptyText="暂无投递记录">{<AppTable rowKey="notification_id" className="compact-list-table" columns={columns} dataSource={outbox.data?.items ?? []} pagination={false} scroll={{ x: 1200 }} />}</AppListSection>}
-      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={outbox.data?.page.total ?? 0} onChange={pagination.update} />
+      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={outbox.data?.page.total} onChange={pagination.update} />
       <Modal width={720} footer={null} title="投递详情" open={!!detail} onCancel={() => setDetail(undefined)}>
         {detailQuery.isLoading ? <AppLoadingState rows={3} /> : detailQuery.data ? (
           <>

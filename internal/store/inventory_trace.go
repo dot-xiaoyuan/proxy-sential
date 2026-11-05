@@ -40,6 +40,7 @@ type EndpointObservation struct {
 	SessionID     string  `json:"session_id,omitempty"`
 }
 type EndpointObservationQuery struct {
+	AsOf   string
 	Kind   string
 	Value  string
 	Source string
@@ -227,7 +228,7 @@ func validateObservationQuery(q *EndpointObservationQuery) error {
 		}
 		q.Value = ip.String()
 	}
-	for _, v := range []string{q.Start, q.End} {
+	for _, v := range []string{q.Start, q.End, q.AsOf} {
 		if v != "" {
 			if _, err := time.Parse(time.RFC3339Nano, v); err != nil {
 				return fmt.Errorf("invalid observation time")
@@ -249,7 +250,10 @@ func observationSignature(id string, q EndpointObservationQuery) string {
 	return fmt.Sprintf("%x", sum)
 }
 func observationPosition(id string, q EndpointObservationQuery) (observationCursor, error) {
-	c := observationCursor{Signature: observationSignature(id, q), AsOf: time.Now().UTC().Format(time.RFC3339Nano)}
+	c := observationCursor{Signature: observationSignature(id, q), AsOf: q.AsOf}
+	if c.AsOf == "" {
+		c.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	if q.Cursor == "" {
 		return c, nil
 	}
@@ -264,7 +268,7 @@ func observationPosition(id string, q EndpointObservationQuery) (observationCurs
 	if _, err = time.Parse(time.RFC3339Nano, decoded.At); err != nil {
 		return c, fmt.Errorf("invalid cursor time")
 	}
-	if _, err = time.Parse(time.RFC3339Nano, decoded.AsOf); err != nil {
+	if _, err = time.Parse(time.RFC3339Nano, decoded.AsOf); err != nil || (q.AsOf != "" && q.AsOf != decoded.AsOf) {
 		return c, fmt.Errorf("invalid cursor snapshot")
 	}
 	return decoded, nil
@@ -306,17 +310,7 @@ func (s *PostgresStore) ListEndpointObservations(ctx context.Context, id string,
 	result.State.Updating = global.Updating
 	// Every branch is endpoint-bounded. Stable keyset cursor replaces LIMIT 500
 	// and frontend slicing. DHCP leases are point observations; sessions carry intervals.
-	sqlText := `WITH observations AS (
- SELECT 'lease:'||event_id record_id,'ip'::text kind,host(ip) value,'dhcp'::text source,observed_at,1.0::float8 confidence,event_id,NULL::timestamptz started_at,NULL::timestamptz ended_at
- FROM device_address_leases WHERE endpoint_id=$1 AND action='ack' AND $2='ip'
- UNION ALL
- SELECT 'session:'||jsonb_build_array(source,session_id,host(ip))::text,$2,
- CASE $2 WHEN 'account' THEN account_id WHEN 'ip' THEN host(ip) ELSE coalesce(access_id,'') END,
- source,greatest(started_at,coalesce(nullif(policy_metadata->>'last_confirmed_at','')::timestamptz,started_at)),coalesce(identity_confidence,0),''::text,started_at,ended_at
- FROM account_sessions WHERE endpoint_id=$1
- ) SELECT record_id,kind,value,source,observed_at,confidence,event_id,started_at,ended_at FROM observations
- WHERE value<>'' AND ($3='' OR value=$3) AND ($4='' OR source=$4)
- AND ($5::timestamptz IS NULL OR observed_at>=$5) AND ($6::timestamptz IS NULL OR observed_at<=$6) AND observed_at<=$7
+	sqlText := endpointObservationSourceSQL + ` SELECT record_id,kind,value,source,observed_at,confidence,event_id,started_at,ended_at FROM observations` + endpointObservationFilterSQL + `
  AND ($8::timestamptz IS NULL OR (observed_at,record_id)<($8::timestamptz,$9)) ORDER BY observed_at DESC,record_id DESC LIMIT $10`
 	nullable := func(v string) any {
 		if v == "" {
@@ -367,3 +361,16 @@ func (s *PostgresStore) ListEndpointObservations(ctx context.Context, id string,
 	}
 	return result, rows.Err()
 }
+
+const endpointObservationSourceSQL = `WITH observations AS (
+ SELECT 'lease:'||event_id record_id,'ip'::text kind,host(ip) value,'dhcp'::text source,observed_at,1.0::float8 confidence,event_id,NULL::timestamptz started_at,NULL::timestamptz ended_at
+ FROM device_address_leases WHERE endpoint_id=$1 AND action='ack' AND $2='ip'
+ UNION ALL
+ SELECT 'session:'||jsonb_build_array(source,session_id,host(ip))::text,$2,
+ CASE $2 WHEN 'account' THEN account_id WHEN 'ip' THEN host(ip) ELSE coalesce(access_id,'') END,
+ source,greatest(started_at,coalesce(nullif(policy_metadata->>'last_confirmed_at','')::timestamptz,started_at)),coalesce(identity_confidence,0),''::text,started_at,ended_at
+ FROM account_sessions WHERE endpoint_id=$1
+ )`
+const endpointObservationFilterSQL = `
+ WHERE value<>'' AND ($3='' OR value=$3) AND ($4='' OR source=$4)
+ AND ($5::timestamptz IS NULL OR observed_at>=$5) AND ($6::timestamptz IS NULL OR observed_at<=$6) AND observed_at<=$7`

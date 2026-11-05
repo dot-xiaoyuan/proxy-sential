@@ -1,4 +1,4 @@
-import { AppErrorAlert, AppServerPagination, AppTable, formatDateTime, useMediaQuery } from '../../shared/ui'
+import { AppErrorAlert, AppServerPagination, AppTable, formatDateTime, useMediaQuery, useCursorPagePosition, usePaginationMetadata } from '../../shared/ui'
 import { Notice as Alert } from '../../shared/ui/Notice'
 import { useState } from 'react'
 import type { ColumnsType } from 'antd/es/table'
@@ -26,19 +26,16 @@ export function AssociationOverview({detail}:{detail?:InventoryDetail}) {
 export function EndpointTracePanel({endpointId}:{endpointId:string}) {
  const [filters,setFilters]=useState<EndpointObservationQuery>({kind:'account',limit:20})
  const [value,setValue]=useState(''),[source,setSource]=useState('')
- const [cursors,setCursors]=useState<string[]>([''])
+ const [tracePage,setTracePage]=useState(1)
  const [pageSize,setPageSize]=useState(20)
- const tracePage=cursors.length
  const showTraceDetail=useMediaQuery('(min-width: 1200px), (max-width: 559px)')
- const page=useEndpointObservations(endpointId,{...filters,limit:pageSize,cursor:cursors.at(-1)||undefined})
- const items=page.data?.items??[]
- const update=(next:Partial<EndpointObservationQuery>)=>{setFilters({...filters,...next});setCursors([''])}
- const changePage=(nextPage:number,nextSize:number)=>{
-  if(nextSize!==pageSize){setPageSize(nextSize);setCursors(['']);return}
-  if(nextPage===tracePage)return
-  if(nextPage<tracePage){setCursors(current=>current.slice(0,nextPage));return}
-  if(nextPage===tracePage+1&&page.data?.next_cursor)setCursors(current=>[...current,page.data!.next_cursor!])
- }
+ const metadata=usePaginationMetadata(`/endpoints/${encodeURIComponent(endpointId)}/observations/metadata`,filters)
+ const traceQuery={...filters,as_of:metadata.data?.as_of}
+ const position=useCursorPagePosition({path:`/endpoints/${encodeURIComponent(endpointId)}/observations/position`,query:traceQuery,page:tracePage,pageSize,enabled:Boolean(metadata.data)&&!metadata.isFetching})
+ const page=useEndpointObservations(endpointId,{...traceQuery,limit:pageSize,cursor:position.cursor},position.ready)
+ const items=position.ready?page.data?.items??[]:[]
+ const update=(next:Partial<EndpointObservationQuery>)=>{setFilters({...filters,...next});setTracePage(1)}
+ const changePage=(nextPage:number,nextSize:number)=>{setPageSize(nextSize);setTracePage(nextPage)}
  const columns:ColumnsType<EndpointObservation>=[
   {title:'观测时间',dataIndex:'observed_at',width:145,render:(value:string)=>time(value)},
   {title:'类别',dataIndex:'kind',width:72,render:(kind:EndpointObservation['kind'])=><Tag>{labels[kind]}</Tag>},
@@ -50,16 +47,16 @@ export function EndpointTracePanel({endpointId}:{endpointId:string}) {
   {title:'会话区间',key:'session',width:185,onCell:(row)=>({className:row.started_at||row.session_id?'':'mobile-empty-cell'}),render:(_,row)=>row.started_at?<span className="endpoint-trace-session">起点 {time(row.started_at)}<br/>终点 {row.ended_at?time(row.ended_at):'证据未提供'}</span>:row.session_id?<Typography.Text className="endpoint-trace-session-id" copyable>会话 {row.session_id}</Typography.Text>:''},
   {title:'证据',key:'evidence',width:165,render:(_,row)=><ObservationEvidence row={row}/>},
  ]
- const loaded=(tracePage-1)*pageSize+items.length
- return <section className="surface endpoint-trace-panel"><div className="surface-title-row"><Typography.Title level={4}>身份溯源</Typography.Title><Typography.Text type="secondary">按终端限定 · 最新观测在上</Typography.Text></div><Typography.Paragraph type="secondary">账号、IP 与接入记录均为历史证据，不代表当前在线或使用人。仅认证证据明确给出起止时间时展示会话区间。</Typography.Paragraph><div className="endpoint-trace-filters"><Select aria-label="溯源类别" value={filters.kind} options={Object.entries(labels).map(([value,label])=>({value,label}))} onChange={kind=>{setValue('');update({kind,value:undefined})}}/><Input.Search aria-label="精确关联值" allowClear placeholder={`精确${labels[filters.kind]}`} value={value} onChange={e=>setValue(e.target.value)} onSearch={v=>update({value:v.trim()||undefined})}/><Button loading={page.isFetching} onClick={()=>void page.refetch()}>刷新明细</Button></div><details className="filter-disclosure endpoint-trace-more"><summary>来源与时间筛选</summary><div className="endpoint-trace-filters"><Input.Search aria-label="证据来源" allowClear placeholder="精确来源" value={source} onChange={e=>setSource(e.target.value)} onSearch={v=>update({source:v.trim()||undefined})}/><label>开始时间<input aria-label="溯源开始时间" type="datetime-local" onChange={e=>update({start:e.target.value?new Date(e.target.value).toISOString():undefined})}/></label><label>结束时间<input aria-label="溯源结束时间" type="datetime-local" onChange={e=>update({end:e.target.value?new Date(e.target.value).toISOString():undefined})}/></label></div></details>
+ return <section className="surface endpoint-trace-panel"><div className="surface-title-row"><Typography.Title level={4}>身份溯源</Typography.Title><Typography.Text type="secondary">按终端限定 · 最新观测在上</Typography.Text></div><Typography.Paragraph type="secondary">账号、IP 与接入记录均为历史证据，不代表当前在线或使用人。仅认证证据明确给出起止时间时展示会话区间。</Typography.Paragraph><div className="endpoint-trace-filters"><Select aria-label="溯源类别" value={filters.kind} options={Object.entries(labels).map(([value,label])=>({value,label}))} onChange={kind=>{setValue('');update({kind,value:undefined})}}/><Input.Search aria-label="精确关联值" allowClear placeholder={`精确${labels[filters.kind]}`} value={value} onChange={e=>setValue(e.target.value)} onSearch={v=>update({value:v.trim()||undefined})}/><Button loading={page.isFetching||metadata.isFetching} onClick={()=>{setTracePage(1);void position.invalidate();void metadata.refetch()}}>刷新明细</Button></div><details className="filter-disclosure endpoint-trace-more"><summary>来源与时间筛选</summary><div className="endpoint-trace-filters"><Input.Search aria-label="证据来源" allowClear placeholder="精确来源" value={source} onChange={e=>setSource(e.target.value)} onSearch={v=>update({source:v.trim()||undefined})}/><label>开始时间<input aria-label="溯源开始时间" type="datetime-local" onChange={e=>update({start:e.target.value?new Date(e.target.value).toISOString():undefined})}/></label><label>结束时间<input aria-label="溯源结束时间" type="datetime-local" onChange={e=>update({end:e.target.value?new Date(e.target.value).toISOString():undefined})}/></label></div></details>
  {page.isError&&<AppErrorAlert title="溯源明细读取失败" message={page.error.message} />}
  {page.data&&!page.data.state.complete&&<Alert showIcon type="info" title="历史覆盖回填中" description="当前结果尚不完整，不作为完整历史数量。"/>}
- {page.isFetching&&<Typography.Paragraph type="secondary">正在读取所选溯源条件</Typography.Paragraph>}
+ {(page.isFetching||metadata.isFetching)&&<Typography.Paragraph type="secondary">正在读取所选溯源条件</Typography.Paragraph>}
  {page.data?.state&&<Typography.Paragraph className="endpoint-trace-state" type="secondary">明细投影更新时间 {time(page.data.state.as_of)}{page.data.state.updating?' · 关联物化更新中':''}</Typography.Paragraph>}
  <div className="endpoint-trace-table-wrap endpoint-tab-table-wrap" aria-busy={page.isFetching}>
   <AppTable<EndpointObservation> className="endpoint-trace-table" columns={columns} dataSource={items} rowKey="record_id" tableLayout="fixed" scroll={{x:showTraceDetail?867:722}} locale={{emptyText:page.data?.state.complete?'所选条件没有观测记录':' '}} />
  </div>
- <AppServerPagination disabled={page.isFetching} page={tracePage} pageSize={pageSize} total={loaded+(page.data?.next_cursor?1:0)} onChange={changePage} cursorMode hasMore={Boolean(page.data?.next_cursor)} totalText={`已加载 ${loaded} 条`} />
+ {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message}/>}
+ <AppServerPagination disabled={page.isFetching||position.isLocating} page={tracePage} pageSize={pageSize} total={metadata.data?.total} onChange={changePage} totalText={metadata.isError?'数量读取失败':undefined} />
  </section>
 }
 

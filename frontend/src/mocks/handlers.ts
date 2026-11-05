@@ -1,3 +1,4 @@
+import { auxiliaryPaginationHandlers } from './auxiliaryPagination'
 import { recognitionDimensionConflict } from '../entities/device/recognitionConflict'
 import { freshRecognition } from './freshRecognition'
 import fingerprintCatalog from "./fingerprintCatalog.json"
@@ -130,6 +131,7 @@ const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管�
 const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
 
 export const handlers = [
+  ...auxiliaryPaginationHandlers,
   ...ipTrafficObservationHandlers,
  ...violationHandlers,
  http.get('/api/v1/whitelist',()=>HttpResponse.json({items:[],page:{total:0,limit:20},checked_at:new Date().toISOString()})),
@@ -375,7 +377,7 @@ export const handlers = [
       },
     )
   }),
-  http.get(/\/api\/v1\/(?:devices|device-inventory(?:\/metadata)?)$/, ({ request }) => {
+  http.get(/\/api\/v1\/(?:devices|device-inventory(?:\/(?:metadata|position))?)$/, ({ request }) => {
     const url = new URL(request.url)
     const qRaw=url.searchParams.get('q')?.trim()||''
     const q = qRaw.toLowerCase()
@@ -452,6 +454,11 @@ export const handlers = [
     const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
 
     if(url.pathname.endsWith('/metadata')) return HttpResponse.json({total:filtered.length,facets,as_of:new Date().toISOString()})
+    if(url.pathname.endsWith('/position')) {
+      const page=Number(url.searchParams.get('page')??1),offset=(page-1)*limit
+      if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>200||(page>1&&offset>=filtered.length))return HttpResponse.json({code:'page_out_of_range',message:'目标页已不存在，请刷新列表'},{status:400})
+      return HttpResponse.json({page,limit,cursor:page===1?'':String(offset),as_of:new Date().toISOString()})
+    }
 
     return HttpResponse.json({
       items: pageItems,
@@ -613,45 +620,12 @@ export const handlers = [
     return HttpResponse.json({ events: eventsByIp[ip] ?? [] })
   }),
   http.get('/api/v1/ai-relay/indicators', () => HttpResponse.json({version:'2026.10.21',updated_at:'2026-10-21',sources:[{id:'awesome-ai-api-proxy',name:'awesome-ai-api-proxy',url:'https://github.com/howardpen9/awesome-ai-api-proxy'},{id:'cctq-doc',name:'CCTQ 接入文档',url:'https://doc.cctq.ai/guide/chatbox.html'},{id:'micuapi-doc',name:'米醋接入文档',url:'https://docs.micuapi.ai/external-compat'}],official_domains:['api.openai.com','api.anthropic.com'],indicators:[{domain:'cctq.ai',match_type:'subdomain',category:'relay',name:'CCTQ',name_zh:'CCTQ 中转站',confidence:0.9,status:'resolved',source:'cctq-doc'},{domain:'micuapi.ai',match_type:'subdomain',category:'relay',name:'MICU',name_zh:'米醋中转站',confidence:0.9,status:'resolved',source:'micuapi-doc'},{domain:'yunwu.ai',match_type:'subdomain',category:'relay',name:'云雾 API',name_zh:'云雾 API',confidence:0.8,status:'resolved',source:'awesome-ai-api-proxy'},{domain:'openrouter.ai',match_type:'subdomain',category:'aggregator',name:'OpenRouter',name_zh:'OpenRouter 聚合站',confidence:0.8,status:'resolved',source:'awesome-ai-api-proxy'}]})),
-  http.get('/api/v1/ai-relay/usages', ({ request }) => {
-    const params = new URL(request.url).searchParams
-    const limit = Math.min(50, Math.max(1, Number(params.get('limit') ?? 20)))
-    const offset = Math.max(0, Number(params.get('cursor') ?? 0) || 0)
-    const timestamp = new Date(Date.now()-10*60_000).toISOString()
-    const all = Array.from({ length: 45 }, (_, index) => {
-      const ip = `10.20.${Math.floor(index / 200)}.${(index % 200) + 11}`
-      const domain = index % 2 === 0 ? 'api.yunwu.ai' : 'api.micuapi.ai'
-      return { ip, account_id: `student-${11 + index}`, first_seen: timestamp, last_seen: timestamp, event_count: index + 1, domains: [domain], domain_names: { [domain]: index % 2 === 0 ? '云雾 API' : '米醋中转站' }, events: [{ event_id: `ai-relay-mock-${index + 1}`, timestamp, domain, source: 'handshake_tls', sensor_id: 'mock-sensor' }] }
-    })
-    const visible = all.filter(item => (!params.get('ip') || item.ip === params.get('ip')) && (!params.get('domain') || item.domains.some(domain => domain.endsWith(params.get('domain')!))))
-    const items = visible.slice(offset, offset + limit)
-    const next = offset + items.length < visible.length ? String(offset + items.length) : null
-    return HttpResponse.json({ items, page: { limit, next_cursor: next, total: visible.length }, indicator_version: 'mock-v1' })
-  }),
-  http.get('/api/v1/events/stream-index', ({ request }) => {
-    const url = new URL(request.url)
-    const scope = url.searchParams.get('scope_id') ?? ''
-    if (!scope) return HttpResponse.json({ code: 'bad_stream_query', message: 'scope_id is required' }, { status: 400 })
-    if (url.searchParams.get('cursor')) return HttpResponse.json({ events: [] })
-    const observed = new Date(Date.now() - 60_000).toISOString()
-    return HttpResponse.json({ events: [{
-      observed_at: observed, event_key: 'mock-stream-event-1', protocol: url.searchParams.get('protocol') || 'ssdp',
-      event_type: 'device', source: 'zeek', sensor_id: 'mock-sensor', subject_ip: '192.0.2.8',
-      src_ip: '192.0.2.8', dst_ip: '239.255.255.250', body_ref: {
-        class: 'evidence', month: observed.slice(0, 7).replace('-', ''), scope, key: 'mock-stream-event-1', sha256: 'a'.repeat(64),
-      },
-    }] })
-  }),
+
+
   http.get('/api/v1/events/stream-body', () => HttpResponse.json({
     ...eventsByIp['10.255.0.59'][0], event_id: 'mock-stream-event-1', timestamp: new Date(Date.now() - 60_000).toISOString(),
   })),
-  http.get('/api/v1/risks/stream-current', ({ request }) => {
-    const url = new URL(request.url)
-    if (url.searchParams.get('cursor')) return HttpResponse.json({ items: [], accepted_after: '2026-10-26T02:24:31.585894Z' })
-    const now = new Date().toISOString()
-    const account = url.searchParams.get('subject_type') === 'account'
-    return HttpResponse.json({ items: [{ ...riskSnapshots[0], ip: account ? '' : '192.0.2.8', subject_type: account ? 'account' : 'ip', subject_id: account ? 'mock-account' : '192.0.2.8', updated_at: now }], accepted_after: '2026-10-26T02:24:31.585894Z', next_cursor: 'mock-next' })
-  }),
+
   http.get('/api/v1/risks/stream-evidence', ({ request }) => {
     const url = new URL(request.url)
     const id = url.searchParams.get('evidence_id')

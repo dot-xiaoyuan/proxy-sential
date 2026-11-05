@@ -41,7 +41,7 @@ function fail(message: string, code = 'bad_registration_query') { return HttpRes
 // Browser-local demo state only; creating a fresh handler set resets all edits.
 export function createTerminalRegistrationHandlers() {
   const records = new Map(initialRecords().map(row => [row.endpoint_id, row]))
-  const read = (request: Request, metadata: boolean) => {
+  const read = (request: Request, metadata: boolean, position=false) => {
     const params = new URL(request.url).searchParams
     const search = text(params.get('search')).toLowerCase()
     const status = text(params.get('status'))
@@ -55,7 +55,7 @@ export function createTerminalRegistrationHandlers() {
     if (mac && !/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) return fail('设备 MAC 无效')
     const signature = JSON.stringify([search, status, type, ownership, mac])
     let after = ''
-    if (!metadata && params.get('cursor')) {
+    if (!metadata && !position && params.get('cursor')) {
       try {
         const cursor = JSON.parse(decodeURIComponent(atob(params.get('cursor')!))) as { id: string; scope: string }
         if (!cursor.id || cursor.scope !== signature) return fail('登记游标与查询条件不匹配')
@@ -69,6 +69,12 @@ export function createTerminalRegistrationHandlers() {
     }).sort((left, right) => left.endpoint_id.localeCompare(right.endpoint_id))
     const as_of = new Date().toISOString()
     if (metadata) return HttpResponse.json({ total: matched.length, as_of })
+    if(position) {
+      const page=Number(params.get('page')??1),offset=(page-1)*limit
+      if(!Number.isInteger(page)||page<1||(page>1&&offset>=matched.length))return fail('目标页已不存在，请刷新列表','page_out_of_range')
+      const cursor=page===1?'':btoa(encodeURIComponent(JSON.stringify({id:matched[offset-1].endpoint_id,scope:signature})))
+      return HttpResponse.json({page,limit,cursor,as_of})
+    }
     const remaining = matched.filter(row => !after || row.endpoint_id > after)
     const items = remaining.slice(0, limit)
     const has_more = remaining.length > items.length
@@ -79,6 +85,7 @@ export function createTerminalRegistrationHandlers() {
   return [
     http.get('/api/v1/endpoints/registrations', ({ request }) => read(request, false)),
     http.get('/api/v1/endpoints/registrations/metadata', ({ request }) => read(request, true)),
+    http.get('/api/v1/endpoints/registrations/position', ({ request }) => read(request, false, true)),
     http.post('/api/v1/endpoints/:endpointId/registration', async ({ params, request }) => {
       let body: Update
       try { body = await request.json() as Update } catch { return fail('登记内容不是有效 JSON', 'bad_endpoint_registration_request') }

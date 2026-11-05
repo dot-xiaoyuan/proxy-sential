@@ -35,6 +35,7 @@ function renderPanel(initialEntry = '/devices?discovery_view=registrations') {
 
 function mockReads(items: RegistrationRow[] = [row], total = 123) {
   request.mockImplementation((path: string) => {
+    if (path.startsWith('/endpoints/registrations/position')) {const q=new URL(path,'http://localhost').searchParams;return Promise.resolve({page:Number(q.get('page')),limit:Number(q.get('limit')),cursor:'opaque-page-two'})}
     if (path === '/discovery/types') return Promise.resolve({ items: [{ id: 'printer', label: '打印机' }] })
     if (path.startsWith('/endpoints/registrations/metadata')) return Promise.resolve({ total, as_of: '2026-11-05T12:00:00Z' })
     if (path.startsWith('/endpoints/registrations?')) return Promise.resolve({ items, next_cursor: '', has_more: false, limit: 20, as_of: '2026-11-05T12:00:00Z' })
@@ -58,7 +59,7 @@ it('shows an independent registration count and supplies the complete selected r
   expect(request.mock.calls.some(([path]) => path === '/endpoints/registrations/metadata')).toBe(true)
 })
 
-it('uses opaque cursors, resets them on search, and keeps the selected registration view', async () => {
+it('locates an arbitrary page with one opaque cursor, resets on search, and retains the registration view', async () => {
   mockReads()
   const baseImplementation = request.getMockImplementation()!
   request.mockImplementation((path: string) => {
@@ -75,8 +76,11 @@ it('uses opaque cursors, resets them on search, and keeps the selected registrat
   })
   renderPanel('/devices?discovery_view=registrations&registration_status=registered&registration_ownership=school_asset')
   await screen.findByText('共 123 条登记记录')
-  fireEvent.click(screen.getByTitle('Next Page'))
+  fireEvent.click(screen.getByTitle('4'))
   expect(await screen.findByText('第二页设备')).toBeVisible()
+  const positions=request.mock.calls.map(([path])=>String(path)).filter(path=>path.includes('/position'))
+  expect(positions).toHaveLength(1)
+  expect(positions[0]).toContain('page=4')
   const cursorCall = request.mock.calls.map(([path]) => String(path)).find(path => path.includes('cursor='))!
   expect(new URLSearchParams(cursorCall.split('?')[1]).get('cursor')).toBe('opaque-page-two')
   const input = screen.getByRole('textbox', { name: '搜索名称、MAC、资产编号或责任人' })

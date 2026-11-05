@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Empty, Modal, Segmented, Select, Space, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Link, useSearchParams } from 'react-router-dom'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
-import { AppErrorAlert, AppListHeader, AppServerPagination, AppTable, AppTableBar } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppServerPagination, AppTable, AppTableBar, useCursorPagePosition } from '../shared/ui'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
 import { DiscoveryDeviceIcon } from '../entities/device/DiscoveryDeviceIcon'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
@@ -30,6 +30,7 @@ function discoveryLink(item: Device) {
 
 export function RouterAssetsPanel() {
   const [params, setParams] = useSearchParams()
+  const queryClient=useQueryClient()
   const view = params.get('routers_view') === 'ap' ? 'ap' : 'router'
   const type = view === 'ap' ? 'access_point' : 'router'
   const label = view === 'ap' ? '接入点' : '路由器'
@@ -45,15 +46,17 @@ export function RouterAssetsPanel() {
   if (state) scope.set('state', state)
   const scopeKey = scope.toString()
   const filterKey = `${scopeKey}|${pageSize}`
-  const [paging, setPaging] = useState({ key: filterKey, cursors: [''], page: 0 })
+  const [paging, setPaging] = useState({ key: filterKey, page: 0 })
+  useEffect(()=>setPaging(current=>current.key===filterKey?current:{key:filterKey,page:0}),[filterKey])
   const page = paging.key === filterKey ? paging.page : 0
-  const cursors = paging.key === filterKey ? paging.cursors : ['']
+  const position = useCursorPagePosition({ path: '/discovery/devices/position', query: scope, page: page + 1, pageSize })
   const query = new URLSearchParams(scope)
   query.set('limit', String(pageSize))
-  if (cursors[page]) query.set('cursor', cursors[page])
+  if (position.cursor) query.set('cursor', position.cursor)
   const devices = useQuery({
     queryKey: ['router-assets', query.toString()],
     queryFn: ({ signal }) => request<DevicePage>(`/discovery/devices?${query}`, { signal }),
+    enabled: position.ready,
   })
   const metadata = useQuery({
     queryKey: ['router-assets-metadata', scopeKey],
@@ -74,8 +77,8 @@ export function RouterAssetsPanel() {
       return next
     }, { replace: true })
   }
-  const refresh = () => { void devices.refetch(); void metadata.refetch() }
-  const items = devices.data?.items ?? []
+  const refresh = () => { const first=new URLSearchParams(query);first.delete('cursor');setPaging({key:filterKey,page:0});void position.invalidate();void metadata.refetch();void queryClient.invalidateQueries({queryKey:['router-assets'],refetchType:'none'});void queryClient.refetchQueries({queryKey:['router-assets',first.toString()],exact:true}) }
+  const items = position.ready ? devices.data?.items ?? [] : []
   const filtered = Boolean(search || state || window !== '24h')
   const columns = [
     {
@@ -121,6 +124,7 @@ export function RouterAssetsPanel() {
         {filtered && <Button type="text" onClick={reset}>清空筛选</Button>}
       </>}
     />
+    {position.isError && <AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={() => void position.refetch()}>重试定位</Button>} />}
     {metadata.isError && <AppErrorAlert title="读取设备数量失败" message={metadata.error.message} action={<Button onClick={() => void metadata.refetch()}>重试统计</Button>} />}
     <section className="surface center-list-surface">
       <AppListHeader
@@ -130,14 +134,13 @@ export function RouterAssetsPanel() {
         actions={<Button aria-label="刷新设备" icon={<ReloadOutlined />} loading={devices.isFetching || metadata.isFetching} onClick={refresh}>刷新</Button>}
       />
       {devices.isError ? <AppErrorAlert title="读取网络设备失败" message={devices.error.message} action={<Button onClick={() => void devices.refetch()}>重新读取</Button>} /> : <>
-        <AppTable className="passive-ledger-table" rowKey={rowKey} columns={columns} dataSource={items} loading={devices.isPending} tableLayout="fixed" scroll={{ x: 900 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`当前观测范围内暂无匹配的${label}设备`}>{filtered && <Button onClick={reset}>清空筛选</Button>}</Empty> }} />
-        {(items.length > 0 || page > 0) && <AppServerPagination cursorMode hasMore={Boolean(devices.data?.has_more && devices.data?.next_cursor)} page={page + 1} pageSize={pageSize} disabled={devices.isFetching}
-          total={metadata.data?.total ?? 0}
+        <AppTable className="passive-ledger-table" rowKey={rowKey} columns={columns} dataSource={items} loading={devices.isPending||position.isLocating} tableLayout="fixed" scroll={{ x: 900 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`当前观测范围内暂无匹配的${label}设备`}>{filtered && <Button onClick={reset}>清空筛选</Button>}</Empty> }} />
+        {(items.length > 0 || page > 0) && <AppServerPagination page={page + 1} pageSize={pageSize} disabled={devices.isFetching || position.isLocating}
+          total={metadata.data?.total}
           totalText={metadata.data ? `共 ${metadata.data.total} 条` : metadata.isError ? '数量读取失败' : '正在读取总数'}
           onChange={(nextPage, nextSize) => {
             if (nextSize !== pageSize) { setPageSize(nextSize); return }
-            if (nextPage <= page && cursors[nextPage - 1] !== undefined) { setPaging({ key: filterKey, cursors, page: nextPage - 1 }); return }
-            if (nextPage === page + 2 && devices.data?.next_cursor) setPaging({ key: filterKey, cursors: [...cursors.slice(0, page + 1), devices.data.next_cursor], page: page + 1 })
+            setPaging({ key: filterKey, page: nextPage - 1 })
           }} />}
       </>}
     </section>

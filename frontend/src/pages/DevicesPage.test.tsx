@@ -1,10 +1,17 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactElement } from 'react'
+import { request } from '../shared/api/client'
+import { act, cleanup, fireEvent, render as baseRender, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { DevicesPage } from './DevicesPage'
 
+vi.mock('../shared/api/client', async original => ({...await original<typeof import('../shared/api/client')>(),request:vi.fn(async (path:string)=>{const q=new URL(path,'http://localhost').searchParams;return {page:Number(q.get('page')),limit:Number(q.get('limit')),cursor:`page-${q.get('page')}`}})}))
+function render(ui:ReactElement){return baseRender(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}>{ui}</QueryClientProvider>)}
+
 vi.mock('../widgets/IpTrafficObservations', () => ({ IpTrafficObservations: ({ip}:{ip:string}) => <output data-testid="ip-observations">{ip}</output> }))
 
+vi.stubGlobal('localStorage',{getItem:vi.fn(()=>null),setItem:vi.fn(),removeItem:vi.fn(),clear:vi.fn()})
 const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,nextCursor:'20' as string|null,eventsRead:true,metadataError:false,readState:undefined as {complete:boolean;updating:boolean;as_of:string;available?:boolean}|undefined,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnosticsData:undefined as unknown,diagnostics:vi.fn((_enabled?:boolean)=>({data:undefined as unknown}))}))
 vi.mock('../shared/api/queries', () => ({
   useOrganization: fixture.organization,
@@ -13,7 +20,7 @@ vi.mock('../shared/api/queries', () => ({
   useDevices: () => ({ data: { items: fixture.items, read_model_state:fixture.readState, page: {next_cursor:fixture.nextCursor}, facets: { brands: [], os_families: [] } },dataUpdatedAt:Date.now(), isFetching: false,isPlaceholderData:false,refresh:fixture.refresh }),
   useDeviceInventoryMetadata:()=>({data:fixture.total===undefined?undefined:{total:fixture.total,facets:{brands:[],os_families:[]}},isError:fixture.metadataError,refresh:fixture.metadataRefresh}),
 }))
-afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.nextCursor='20';fixture.eventsRead=true;fixture.metadataError=false;fixture.readState=undefined;fixture.diagnosticsData=undefined;localStorage.clear();vi.clearAllMocks()})
+afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.nextCursor='20';fixture.eventsRead=true;fixture.metadataError=false;fixture.readState=undefined;fixture.diagnosticsData=undefined;window.localStorage.clear();vi.clearAllMocks()})
 function Location() { return <output data-testid="location">{useLocation().search}</output> }
 function setup(url = '/devices') { render(<MemoryRouter initialEntries={[url]}><DevicesPage /><Location /></MemoryRouter>) }
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) }) }
@@ -33,10 +40,10 @@ describe('终端列表分页与搜索', () => {
   })
   it('翻页后保持第二页，继续翻页不会触发搜索重置', async () => {
     setup()
-    fireEvent.click(screen.getByRole('button',{name:'下一页'}))
+    fireEvent.click(screen.getByTitle('Next Page'))
     await settle()
     expect(screen.getByTestId('location')).toHaveTextContent('page=2')
-    fireEvent.click(screen.getByRole('button',{name:'下一页'}))
+    fireEvent.click(screen.getByTitle('Next Page'))
     await settle()
     expect(screen.getByTestId('location')).toHaveTextContent('page=3')
   })
@@ -47,18 +54,21 @@ describe('终端列表分页与搜索', () => {
     fireEvent.change(screen.getByPlaceholderText('搜索终端名称、MAC、IP 或账号'), { target: { value: 'Dell' } })
     fireEvent.click(screen.getByRole('button', { name: /查\s*询/ }))
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('page=1&limit=50'))
-    fireEvent.click(screen.getByRole('button',{name:'下一页'}))
+    fireEvent.click(screen.getByTitle('Next Page'))
     await settle()
     expect(screen.getByTestId('location')).toHaveTextContent('page=2&limit=50')
   })
 })
 
-it('falls back to the last available page after the result count shrinks', async()=>{
+it('keeps the requested page when positioning fails even if the independent count shrinks', async()=>{
  fixture.total=21
+ vi.mocked(request).mockRejectedValueOnce(new Error('目标页超出当前结果范围'))
  setup('/devices?page=5&limit=20&view=recent&window=24h')
- await waitFor(()=>expect(screen.getByTestId('location')).toHaveTextContent('page=2'))
- expect(screen.getByTestId('location')).toHaveTextContent('view=recent')
+ await screen.findByText('页码定位失败')
+ expect(screen.getByTestId('location')).toHaveTextContent('page=5')
+ expect(vi.mocked(request).mock.calls.every(([path])=>!String(path).includes('page=1'))).toBe(true)
 })
+
 it('restores search and scope from the URL', async()=>{
  setup('/devices?view=history&q=office&page=1&limit=20')
  expect(screen.getByPlaceholderText('搜索终端名称、MAC、IP 或账号')).toHaveValue('office')
@@ -125,7 +135,7 @@ it('shows the list before statistics without displaying a zero count',()=>{
  fixture.items=[{endpoint_id:'test',current_ip:'192.0.2.1',primary_mac:'00:11:22:33:44:55',current_account:'student-1',current_access_id:'Campus-AP-1'}]
  setup('/devices?view=recent&window=24h')
  expect(screen.getAllByRole('link',{name:'192.0.2.1'}).length).toBeGreaterThan(0)
- expect(document.querySelector('.ant-pagination-next')).not.toHaveClass('ant-pagination-disabled')
+ expect(document.querySelector('.ant-pagination-next')).toHaveClass('ant-pagination-disabled')
  expect(screen.queryByText('0 个终端身份')).not.toBeInTheDocument()
  expect(screen.getAllByText('student-1').length).toBeGreaterThan(0)
  expect(fixture.organization).not.toHaveBeenCalled()
@@ -138,12 +148,15 @@ it('keeps the list when metadata fails and retries only statistics',()=>{
  expect(fixture.metadataRefresh).toHaveBeenCalledOnce()
  expect(fixture.refresh).not.toHaveBeenCalled()
 })
-it('does not enable a next cursor page from the independent total alone',()=>{
+it('uses numeric page positioning even when the prior response has no next cursor',async()=>{
  fixture.total=123;fixture.nextCursor=null
  fixture.items=[{endpoint_id:'only-page',current_ip:'192.0.2.10'}]
  setup('/devices?view=recent&window=24h')
  expect(screen.getByText('123 个终端身份')).toBeVisible()
- expect(screen.getByRole('button',{name:'下一页'})).toBeDisabled()
+ expect(screen.getByTitle('6')).toBeVisible()
+ fireEvent.click(screen.getByTitle('6'))
+ await waitFor(()=>expect(vi.mocked(request).mock.calls.some(([path])=>String(path).includes('page=6'))).toBe(true))
+ expect(screen.getByTestId('location')).toHaveTextContent('page=6')
 })
 it('mounts campus filters only when expanded and enables diagnostics separately',async()=>{
  setup('/devices?view=recent&window=24h')

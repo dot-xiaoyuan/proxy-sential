@@ -2,9 +2,8 @@ import { useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Button, Input, Select, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { AppListHeader, AppListSection, AppServerPagination, AppTable, AppTableBar, formatDateTime, useMediaQuery } from '../shared/ui'
+import { AppListHeader, AppListSection, AppServerPagination, AppTable, AppTableBar, formatDateTime, useMediaQuery, useCursorPagePosition, AppErrorAlert } from '../shared/ui'
 import { useAIRelayUsages } from '../shared/api/queries'
-import { api } from '../shared/api/client'
 import type { AIRelayUsageQuery } from '../shared/api/types'
 import { detailPath } from '../app/navigation'
 
@@ -59,37 +58,18 @@ export function AIRelayPage() {
   const [campus,setCampus]=useState('')
   const [sensor,setSensor]=useState('')
   const [selectedIP,setSelectedIP]=useState('')
-  const [cursors,setCursors]=useState<string[]>([])
+  const [page,setPage]=useState(1)
   const [pageSize,setPageSize]=useState(20)
-  const [jumping,setJumping]=useState(false)
   const [moreOpen,setMoreOpen]=useState(false)
-  const reset=()=>{setCursors([]);setSelectedIP('')}
+  const reset=()=>{setPage(1);setSelectedIP('')}
   const hours=ranges.find(item=>item.value===range)?.hours??168
-  const query:AIRelayUsageQuery=useMemo(()=>({from:new Date(anchor-hours*3600000).toISOString(),to:new Date(anchor).toISOString(),ip:ip.trim()||undefined,domain:domain.trim()||undefined,campus_id:campus.trim()||undefined,sensor_id:sensor.trim()||undefined,limit:pageSize,cursor:cursors.at(-1)}),[anchor,hours,ip,domain,campus,sensor,cursors])
-  const result=useAIRelayUsages(query)
-  const items=result.data?.items??[]
-  const total=result.data?.page.total??items.length
-  const page=cursors.length+1
+  const query:AIRelayUsageQuery=useMemo(()=>({from:new Date(anchor-hours*3600000).toISOString(),to:new Date(anchor).toISOString(),ip:ip.trim()||undefined,domain:domain.trim()||undefined,campus_id:campus.trim()||undefined,sensor_id:sensor.trim()||undefined,limit:pageSize}),[anchor,hours,ip,domain,campus,sensor,pageSize])
+  const position=useCursorPagePosition({path:'/ai-relay/usages/position',query,page,pageSize})
+  const result=useAIRelayUsages({...query,cursor:position.cursor},position.ready)
+  const items=position.ready?result.data?.items??[]:[]
+  const total=result.data?.page.total
   const activeItem=items.find(item=>item.ip===selectedIP)??items[0]
-  const changePage=async(next:number,size:number)=>{
-    if(size!==pageSize){setPageSize(size);setCursors([]);return}
-    if(next===page)return
-    if(next<page){setCursors(current=>current.slice(0,Math.max(0,next-1)));return}
-    const nextCursor=result.data?.page.next_cursor
-    if(next===page+1){if(nextCursor)setCursors(current=>[...current,nextCursor]);return}
-    setJumping(true)
-    try{
-      const stack=[...cursors]
-      let cursor=stack.at(-1)
-      for(let current=page;current<next;current++){
-        const pageData=await api.aiRelayUsages({...query,cursor})
-        const value=pageData.page.next_cursor
-        if(!value)break
-        stack.push(value);cursor=value
-      }
-      setCursors(stack)
-    }catch{/* 保留当前页 */}finally{setJumping(false)}
-  }
+  const changePage=(next:number,size:number)=>{setPage(next);setPageSize(size);setSelectedIP('')}
   const narrowColumns: ColumnsType<Usage> = [
     { title: '源 IP', key: 'ip', width: 170, render: (_, item) => <span className="ai-relay-ip mono">{item.ip}</span> },
     { title: '观测记录', dataIndex: 'event_count', width: 100 },
@@ -122,12 +102,12 @@ export function AIRelayPage() {
       </div>:undefined}
     />
     <section className="surface">
-      <AppListHeader title="中转站访问" count={`${total} 个源 IP`} description={result.data?.indicator_version ? `指标版本 ${result.data.indicator_version}` : undefined} />
+      <AppListHeader title="中转站访问" count={total===undefined?undefined:`${total} 个源 IP`} description={result.data?.indicator_version ? `指标版本 ${result.data.indicator_version}` : undefined} />
       <AppListSection
         isError={result.isError}
         errorTitle="中转站访问记录读取失败"
         errorMessage={result.isError ? result.error.message : undefined}
-        isLoading={result.isLoading}
+        isLoading={result.isLoading||position.isLocating}
         loadingRows={5}
         isEmpty={!items.length}
         emptyText="所选时间和条件下暂无中转站域名访问记录"
@@ -151,14 +131,13 @@ export function AIRelayPage() {
           {wide && activeItem && <RelayDetail item={activeItem} location={location}/>}
         </div>
       </AppListSection>
+      {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message}/>}
       <AppServerPagination
-        cursorMode
-        hasMore={Boolean(result.data?.page.next_cursor)}
-        disabled={result.isFetching||jumping}
+        disabled={result.isFetching||position.isLocating}
         page={page}
         pageSize={pageSize}
         total={total}
-        totalText={`共 ${total} 条`}
+        totalText={result.isError?'数量读取失败':undefined}
         onChange={changePage}
       />
     </section>

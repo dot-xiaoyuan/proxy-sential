@@ -53,7 +53,9 @@ type Query struct {
 	Cursor          int
 	// InventoryCursor is the opaque, filter-bound cursor used by the device
 	// inventory read model. Cursor remains for the other legacy list readers.
-	InventoryCursor       string
+	InventoryCursor string
+	// InventoryPositionPage locates a numbered page boundary without reading payloads.
+	InventoryPositionPage int
 	IncludeWeak           bool
 	InventorySkipMetadata bool
 	InventoryMetadataOnly bool

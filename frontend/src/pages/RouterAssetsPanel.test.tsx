@@ -22,6 +22,7 @@ const row = {
 function setup(entry = '/devices?tab=network&routers_view=router') {
   observations.mockResolvedValue({ items: [], page: { total: 0 } })
   request.mockImplementation((path: string) => {
+    if(path.startsWith('/discovery/devices/position')){const q=new URL(path,'http://localhost').searchParams;return Promise.resolve({page:Number(q.get('page')),limit:Number(q.get('limit')),cursor:'opaque-router-cursor'})}
     if (path.startsWith('/discovery/devices/metadata')) return Promise.resolve({ total: 63, as_of: '2026-11-05T16:00:00Z', count_unit: 'discovery_records' })
     return Promise.resolve({ items: [row], limit: 20, has_more: false, next_cursor: '' })
   })
@@ -88,6 +89,7 @@ it('uses opaque discovery cursors and resets the cursor when the asset search ch
   setup()
   await screen.findByText('宿舍路由设备')
   request.mockImplementation((path: string) => {
+    if(path.startsWith('/discovery/devices/position')){const q=new URL(path,'http://localhost').searchParams;return Promise.resolve({page:Number(q.get('page')),limit:Number(q.get('limit')),cursor:'opaque-router-cursor'})}
     if (path.startsWith('/discovery/devices/metadata')) return Promise.resolve({ total: 63 })
     const query = new URL(path, 'http://localhost').searchParams
     return Promise.resolve({ items: Array.from({ length: 20 }, (_, index) => ({ ...row, id: `${query.get('cursor') || 'first'}-${index}` })), limit: 20, has_more: !query.has('cursor'), next_cursor: query.has('cursor') ? '' : 'opaque-router-cursor' })

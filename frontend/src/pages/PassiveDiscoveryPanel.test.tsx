@@ -77,6 +77,24 @@ it('renders endpoint types that are outside the IoT type catalogue', async () =>
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
 })
 
+it('keeps a computer hostname out of confirmed device type and OS fields', async () => {
+  mockReads({items:{}}, {...device,name:'DESKTOP-204',mac:'02:00:00:20:40:01'})
+  renderPanel()
+  expect(await screen.findByText('电脑名称线索')).toBeVisible()
+  expect(screen.queryByText(/办公终端|Windows/)).not.toBeInTheDocument()
+  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
+  fireEvent.click(screen.getByRole('button',{name:'查看详情'}))
+  expect(await screen.findByText(/名称可自行设置，不能据此确认设备类型、操作系统或用途/)).toBeInTheDocument()
+  expect(screen.getByText(/仅有地址活动证据/)).toBeInTheDocument()
+})
+
+it('does not label a Huawei AP hostname as Android or a mobile device', async () => {
+  mockReads({items:{}}, {...device,name:'Huawei-AP',mac:'02:00:00:20:40:01'})
+  renderPanel()
+  await screen.findByText('Huawei-AP')
+  expect(screen.queryByText(/Android|移动终端|移动设备名称线索/)).not.toBeInTheDocument()
+})
+
 it('counts recent observations beyond the configured five-minute discovery holdback', async () => {
   mockReads({items:{}}, {...device,last_seen:new Date(Date.now()-7*60_000).toISOString()})
   renderPanel()

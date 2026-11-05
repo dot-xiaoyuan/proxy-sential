@@ -24,6 +24,6 @@ export function RisksPage() {
     {risks.isError && <AppErrorAlert title="读取风险快照失败" message={risks.error.message} />}
     <AppTableBar filterOptions={filterOptions} onClearFilters={() => {setLevel('all');setSearchInput('');pagination.reset()}} onFilterToggle={(key) => {setLevel(level===key?'all':key as RiskLevel);pagination.reset()}} onSearchChange={setSearchInput} searchPlaceholder="搜索 IP 或风险摘要" searchValue={searchInput} />
     <details className="surface filter-disclosure"><summary>高校维度筛选</summary><div className="filter-disclosure-content"><UniversityDimensionFilters value={dimensions} onChange={(next) => { setDimensions(next); pagination.reset() }} /></div></details>
-    <section className="surface"><AppListHeader title="风险 IP" count={`${risks.data?.page.total ?? 0} 条`} /><RiskTable data={risks.data?.items ?? []} loading={risks.isFetching} /><AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={risks.data?.page.total ?? 0} onChange={pagination.update} /></section>
+    <section className="surface"><AppListHeader title="风险 IP" count={`${risks.data?.page.total ?? 0} 条`} /><RiskTable data={risks.data?.items ?? []} loading={risks.isFetching} /><AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={risks.data?.page.total} onChange={pagination.update} /></section>
   </main>
 }

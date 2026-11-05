@@ -47,6 +47,14 @@ type AIRelayUsagePage struct {
 	IndicatorVersion string         `json:"indicator_version"`
 }
 
+func ValidateAIRelayUsageQuery(q AIRelayUsageQuery) error {
+	if q.Limit < 1 || q.Limit > 50 {
+		return fmt.Errorf("limit must be between 1 and 50")
+	}
+	_, err := relayReadScope(q)
+	return err
+}
+
 func relayReadScope(q AIRelayUsageQuery) (string, error) {
 	if q.From.IsZero() || q.To.IsZero() || !q.From.Before(q.To) || q.To.Sub(q.From) > 7*24*time.Hour {
 		return "", fmt.Errorf("time range must be within 7 days")

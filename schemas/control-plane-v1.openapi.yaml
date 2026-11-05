@@ -157,14 +157,52 @@ paths:
   /discovery/history:
     get:
       operationId: getDiscoveryHistory
-      description: Scoped device discovery data; requires identity:read.
+      description: Scoped device discovery change history; requires identity:read. A supplied snapshot fixes the ingestion-time upper bound. Cursor remains bound to device and stream generation. Evidence receipts are verified on the requested page.
+      parameters:
+        - { name: device_id, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 1024 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque device and generation bound history cursor. }
+        - { name: snapshot, in: query, schema: { type: string, format: date-time }, description: Reuse metadata snapshot for numbered navigation. }
       responses:
         '200':
-          description: Discovery result
+          description: Discovery history page
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DiscoveryHistoryPage' }
+        '400': { description: Invalid device, cursor, snapshot or page size }
         '500': { description: Read failed; never replaced by an empty result }
+  /discovery/history/metadata:
+    get:
+      operationId: getDiscoveryHistoryMetadata
+      description: Independent count of the selected device change index at the ingestion-time snapshot; requires identity:read. Counts records in the active stream generation when present, otherwise the legacy change index. No evidence bodies are loaded or verified by this count.
+      parameters:
+        - { name: device_id, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 1024 } }
+        - { name: snapshot, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Change-record total with snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IndexedPageMetadata' }
+        '400': { description: Invalid device or snapshot }
+        '500': { description: Read failed; never replaced by a zero count }
+  /discovery/history/position:
+    get:
+      operationId: getDiscoveryHistoryPosition
+      description: Locate the preceding and first target change keys without loading earlier evidence bodies; requires identity:read. Use the returned cursor and same snapshot with the history list. Page one returns an empty cursor, including for an empty index.
+      parameters:
+        - { name: device_id, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 1024 } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, maximum: 1000000000, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: snapshot, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: History page position with snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NumberedPagePosition' }
+        '400': { description: Invalid parameters or target page does not exist }
+        '500': { description: Index read failed }
   /discovery/receipt:
     get:
       operationId: getStreamDiscoveryReceipt
@@ -454,10 +492,27 @@ paths:
   /shared-access/reviews:
     get:
       operationId: listSharedAccessReviews
-      description: Requires cases:read. Stable database keyset pagination by created_at and review_id. Empty does not prove no shared behavior.
+      description: >-
+        Requires cases:read. Stable database keyset pagination by created_at and review_id. Empty does not prove no shared
+        behavior.
       parameters:
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { name: cursor, in: query, schema: { type: string } }
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
       responses:
         '200':
           description: Review page
@@ -465,10 +520,19 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items, next_cursor]
+                required:
+                  - items
+                  - next_cursor
                 properties:
-                  items: { type: array, items: { $ref: '#/components/schemas/SharedAccessReview' } }
-                  next_cursor: { type: string }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SharedAccessReview'
+                  next_cursor:
+                    type: string
+                  snapshot:
+                    type: string
+                    format: date-time
   /shared-access/reviews/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -484,34 +548,77 @@ paths:
         '404': { description: Review does not exist }
   /shared-access/reviews/{id}/evidence:
     parameters:
-      - { name: id, in: path, required: true, schema: { type: string } }
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
     get:
       operationId: listSharedReviewEvidence
-      description: Requires cases:read. Append-only versions descending. Bounded original references are a summary and not a full packet history.
+      description: >-
+        Requires cases:read. Append-only versions descending. Bounded original references are a summary and not a full
+        packet history.
       parameters:
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { name: cursor, in: query, description: Previous page last version, schema: { type: string } }
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          description: Previous page last version
+          schema:
+            type: string
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
       responses:
         '200':
           description: Evidence versions page
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SharedReviewHistoryPage' }
+              schema:
+                $ref: '#/components/schemas/SharedReviewHistoryPage'
   /shared-access/reviews/{id}/executions:
     parameters:
-      - { name: id, in: path, required: true, schema: { type: string } }
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
     get:
       operationId: listSharedReviewExecutions
       description: Requires cases:read. Only explicitly linked actions; does not attach unrelated account actions.
       parameters:
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { name: cursor, in: query, schema: { type: string } }
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
       responses:
         '200':
           description: Linked execution page
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SharedReviewHistoryPage' }
+              schema:
+                $ref: '#/components/schemas/SharedReviewHistoryPage'
   /shared-access/reviews/{id}/conclusion:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -2217,48 +2324,134 @@ paths:
       operationId: listPolicyDecisionRecords
       description: Stable cursor pagination over recorded decisions; shared observe records never dispatch actions.
       parameters:
-        - { name: account_id, in: query, schema: { type: string } }
-        - { name: policy_id, in: query, schema: { type: string } }
-        - { name: observation_id, in: query, schema: { type: string } }
-        - { name: trigger, in: query, schema: { type: string, enum: [shared_access] } }
-        - { name: ip, in: query, schema: { type: string } }
-        - { name: result, in: query, schema: { type: string, enum: [matched, insufficient, expired] } }
-        - { name: from, in: query, schema: { type: string, format: date-time } }
-        - { name: to, in: query, schema: { type: string, format: date-time } }
-        - { name: cursor, in: query, schema: { type: string } }
-        - { name: include_processing, in: query, schema: { type: boolean, default: false } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - name: account_id
+          in: query
+          schema:
+            type: string
+        - name: policy_id
+          in: query
+          schema:
+            type: string
+        - name: observation_id
+          in: query
+          schema:
+            type: string
+        - name: trigger
+          in: query
+          schema:
+            type: string
+            enum:
+              - shared_access
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum:
+              - matched
+              - insufficient
+              - expired
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: include_processing
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
       responses:
         '200':
-          description: Append-only decisions, including mode, delivery status and evidence versions. Empty results do not prove absence of sharing.
+          description: >-
+            Append-only decisions, including mode, delivery status and evidence versions. Empty results do not prove
+            absence of sharing.
           content:
             application/json:
               schema:
                 type: object
-                required: [items, next_cursor]
+                required:
+                  - items
+                  - next_cursor
                 properties:
-                  next_cursor: { type: string }
-                  processing: { type: array, items: { type: object, additionalProperties: true } }
-                  processing_has_more: { type: boolean }
+                  next_cursor:
+                    type: string
+                  processing:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  processing_has_more:
+                    type: boolean
                   items:
                     type: array
                     items:
                       type: object
                       properties:
-                        decision_id: { type: string }
-                        policy_revision: { type: integer }
-                        evidence_version: { type: string }
-                        observation_id: { type: string }
-                        account_id: { type: string }
-                        ip: { type: string }
-                        evaluated_at: { type: string, format: date-time }
-                        mode: { type: string, description: Shared-access records always use observe. }
-                        planned_action: { type: string }
-                        delivery_status: { type: string, description: Shared-access records always use not_sent. }
-                        result: { type: string, enum: [matched, insufficient, expired] }
-                        evidence: { type: object, additionalProperties: true }
-        '400': { description: Invalid filter or cursor. }
-        '503': { description: Decision storage unavailable. }
+                        decision_id:
+                          type: string
+                        policy_revision:
+                          type: integer
+                        evidence_version:
+                          type: string
+                        observation_id:
+                          type: string
+                        account_id:
+                          type: string
+                        ip:
+                          type: string
+                        evaluated_at:
+                          type: string
+                          format: date-time
+                        mode:
+                          type: string
+                          description: Shared-access records always use observe.
+                        planned_action:
+                          type: string
+                        delivery_status:
+                          type: string
+                          description: Shared-access records always use not_sent.
+                        result:
+                          type: string
+                          enum:
+                            - matched
+                            - insufficient
+                            - expired
+                        evidence:
+                          type: object
+                          additionalProperties: true
+                  snapshot:
+                    type: string
+                    format: date-time
+        '400':
+          description: Invalid filter or cursor.
+        '503':
+          description: Decision storage unavailable.
   /overview:
     get:
       operationId: getOverview
@@ -3186,20 +3379,72 @@ paths:
   /endpoints/{endpoint_id}/observations:
     get:
       operationId: listEndpointObservations
-      description: Endpoint-scoped trace, exact relation filters and stable opaque cursors. Observation timestamps do not establish continuous validity.
+      description: >-
+        Endpoint-scoped trace, exact relation filters and stable opaque cursors. Observation timestamps do not establish
+        continuous validity.
       parameters:
-        - { name: endpoint_id, in: path, required: true, schema: { type: string } }
-        - { name: kind, in: query, required: true, schema: { type: string, enum: [account, ip, access] } }
-        - { name: value, in: query, schema: { type: string, maxLength: 256 } }
-        - { name: source, in: query, schema: { type: string, maxLength: 128 } }
-        - { name: start, in: query, schema: { type: string, format: date-time } }
-        - { name: end, in: query, schema: { type: string, format: date-time } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { name: cursor, in: query, schema: { type: string } }
+        - name: endpoint_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - account
+              - ip
+              - access
+        - name: value
+          in: query
+          schema:
+            type: string
+            maxLength: 256
+        - name: source
+          in: query
+          schema:
+            type: string
+            maxLength: 128
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: as_of
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
       responses:
-        "200": { description: Trace page, content: { application/json: { schema: { $ref: "#/components/schemas/EndpointObservationPage" } } } }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "503": { description: Historical coverage incomplete }
+        '200':
+          description: Trace page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EndpointObservationPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          description: Historical coverage incomplete
   /endpoints/{endpoint_id}/observations/{record_id}/evidence:
     get:
       operationId: getInventorySnapshotEvidence
@@ -4124,6 +4369,1174 @@ paths:
         "200": {description: "Notification state after the operation", content: {application/json: {schema: {$ref: "#/components/schemas/NotificationOperationResult"}}}}
         "409": {description: "Notification is not in a state that allows this operation"}
 
+  /discovery/devices/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /discovery/devices. Reads existing indexed keys only;
+        does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the
+        first page.
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: protocol
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum:
+              - identified
+              - expired
+              - conflict
+              - candidate
+        - name: domain
+          in: query
+          schema:
+            type: string
+        - name: vlan
+          in: query
+          schema:
+            type: string
+        - name: view
+          in: query
+          description: >-
+            IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is
+            insufficient.
+          schema:
+            type: string
+            enum:
+              - iot
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum:
+              - passive
+              - infrastructure
+              - active
+              - all
+            default: all
+        - name: window
+          in: query
+          description: Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range.
+          schema:
+            type: string
+            default: 24h
+        - name: search
+          in: query
+          description: >-
+            Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix;
+            three or more use contains matching.
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: category
+          in: query
+          schema:
+            type: string
+            enum:
+              - mobile
+              - tablet
+              - desktop
+              - printer
+              - camera
+              - network
+              - media
+              - identity_only
+        - name: capability
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /device-inventory/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /device-inventory. Reads existing indexed keys only;
+        does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the
+        first page.
+      parameters:
+        - name: search_type
+          in: query
+          schema:
+            type: string
+            enum:
+              - all
+              - account
+              - ip
+              - mac
+              - name
+            default: all
+          description: >-
+            Account searches match exact latest observed candidates only; complete IP searches retain historical evidence
+            matching.
+        - name: view
+          in: query
+          schema:
+            type: string
+            enum:
+              - recent
+              - history
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum:
+              - 10m
+              - 1h
+              - 24h
+              - 7d
+              - 30d
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: brand
+          in: query
+          schema:
+            type: string
+        - name: os_family
+          in: query
+          schema:
+            type: string
+        - name: ecosystem
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/CampusIdQuery'
+        - $ref: '#/components/parameters/DepartmentQuery'
+        - $ref: '#/components/parameters/PersonTypeQuery'
+        - $ref: '#/components/parameters/SSIDQuery'
+        - $ref: '#/components/parameters/VLANQuery'
+        - $ref: '#/components/parameters/APQuery'
+        - $ref: '#/components/parameters/NASIPQuery'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /endpoints/registrations/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /endpoints/registrations. Reads existing indexed keys
+        only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to
+        the first page.
+      parameters:
+        - name: mac
+          in: query
+          description: Exact device MAC lookup; accepted MAC formats normalize to lower-case colon notation.
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 200
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - registered
+              - unregistered
+              - ignored
+              - retired
+        - name: type
+          in: query
+          schema:
+            type: string
+            maxLength: 200
+        - name: ownership_class
+          in: query
+          schema:
+            type: string
+            enum:
+              - unknown
+              - byod
+              - school_asset
+              - public_terminal
+              - infrastructure
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /ai-relay/usages/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /ai-relay/usages. Reads existing indexed keys only;
+        does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the
+        first page.
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: domain
+          in: query
+          schema:
+            type: string
+        - name: campus_id
+          in: query
+          schema:
+            type: string
+        - name: sensor_id
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /endpoints/{endpoint_id}/observations/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /endpoints/{endpoint_id}/observations. Reads existing
+        indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently
+        falls back to the first page.
+      parameters:
+        - name: endpoint_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - account
+              - ip
+              - access
+        - name: value
+          in: query
+          schema:
+            type: string
+            maxLength: 256
+        - name: source
+          in: query
+          schema:
+            type: string
+            maxLength: 128
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: as_of
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /endpoints/{endpoint_id}/observations/metadata:
+    get:
+      tags:
+        - pagination
+      summary: Count the filtered index independently of list pagination
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /endpoints/{endpoint_id}/observations. Reads existing
+        indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+      parameters:
+        - name: endpoint_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: true
+          schema:
+            type: string
+            enum:
+              - account
+              - ip
+              - access
+        - name: value
+          in: query
+          schema:
+            type: string
+            maxLength: 256
+        - name: source
+          in: query
+          schema:
+            type: string
+            maxLength: 128
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: as_of
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Filtered record count and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedPageMetadata'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /risks/stream-current/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /risks/stream-current. Reads existing indexed keys
+        only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to
+        the first page.
+      parameters:
+        - name: subject_type
+          in: query
+          schema:
+            type: string
+            enum:
+              - ip
+              - account
+            default: ip
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum:
+              - normal
+              - suspicious
+              - high
+              - confirmed
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /risks/stream-current/metadata:
+    get:
+      tags:
+        - pagination
+      summary: Count the filtered index independently of list pagination
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /risks/stream-current. Reads existing indexed keys
+        only; does not load preceding record payloads. Count errors are not represented as an empty result.
+      parameters:
+        - name: subject_type
+          in: query
+          schema:
+            type: string
+            enum:
+              - ip
+              - account
+            default: ip
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum:
+              - normal
+              - suspicious
+              - high
+              - confirmed
+      responses:
+        '200':
+          description: Filtered record count and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedPageMetadata'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /events/stream-index/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /events/stream-index. Reads existing indexed keys
+        only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to
+        the first page.
+      parameters:
+        - name: scope_id
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: protocol
+          in: query
+          schema:
+            type: string
+            maxLength: 128
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /events/stream-index/metadata:
+    get:
+      tags:
+        - pagination
+      summary: Count the filtered index independently of list pagination
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /events/stream-index. Reads existing indexed keys
+        only; does not load preceding record payloads. Count errors are not represented as an empty result.
+      parameters:
+        - name: scope_id
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: protocol
+          in: query
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        '200':
+          description: Filtered record count and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedPageMetadata'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /ips/{ip}/traffic-observations/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /ips/{ip}/traffic-observations. Reads existing indexed
+        keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back
+        to the first page.
+      parameters:
+        - $ref: '#/components/parameters/IpPath'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: source_owner
+          in: query
+          schema:
+            type: string
+            enum:
+              - handshake-sidecar
+              - packet-sidecar
+            default: handshake-sidecar
+        - name: protocol
+          in: query
+          schema:
+            type: string
+            enum:
+              - handshake
+              - ttl
+              - hop_limit
+        - name: sensor_id
+          in: query
+          description: If present must equal the configured site sensor.
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /ips/{ip}/traffic-observations/metadata:
+    get:
+      tags:
+        - pagination
+      summary: Count the filtered index independently of list pagination
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /ips/{ip}/traffic-observations. Reads existing indexed
+        keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+      parameters:
+        - $ref: '#/components/parameters/IpPath'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: source_owner
+          in: query
+          schema:
+            type: string
+            enum:
+              - handshake-sidecar
+              - packet-sidecar
+            default: handshake-sidecar
+        - name: protocol
+          in: query
+          schema:
+            type: string
+            enum:
+              - handshake
+              - ttl
+              - hop_limit
+        - name: sensor_id
+          in: query
+          description: If present must equal the configured site sensor.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Filtered record count and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedPageMetadata'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /policy-decisions/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /policy-decisions. Reads existing indexed keys only;
+        does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the
+        first page.
+      parameters:
+        - name: account_id
+          in: query
+          schema:
+            type: string
+        - name: policy_id
+          in: query
+          schema:
+            type: string
+        - name: observation_id
+          in: query
+          schema:
+            type: string
+        - name: trigger
+          in: query
+          schema:
+            type: string
+            enum:
+              - shared_access
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum:
+              - matched
+              - insufficient
+              - expired
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: include_processing
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /policy-decisions/metadata:
+    get:
+      tags:
+        - pagination
+      summary: Count the filtered index independently of list pagination
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /policy-decisions. Reads existing indexed keys only;
+        does not load preceding record payloads. Count errors are not represented as an empty result.
+      parameters:
+        - name: account_id
+          in: query
+          schema:
+            type: string
+        - name: policy_id
+          in: query
+          schema:
+            type: string
+        - name: observation_id
+          in: query
+          schema:
+            type: string
+        - name: trigger
+          in: query
+          schema:
+            type: string
+            enum:
+              - shared_access
+        - name: ip
+          in: query
+          schema:
+            type: string
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum:
+              - matched
+              - insufficient
+              - expired
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: include_processing
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Filtered record count and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedPageMetadata'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /shared-access/reviews/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /shared-access/reviews. Reads existing indexed keys
+        only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to
+        the first page.
+      parameters:
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /shared-access/reviews/metadata:
+    get:
+      tags:
+        - pagination
+      summary: Count the filtered index independently of list pagination
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /shared-access/reviews. Reads existing indexed keys
+        only; does not load preceding record payloads. Count errors are not represented as an empty result.
+      parameters:
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Filtered record count and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedPageMetadata'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /shared-access/reviews/{id}/evidence/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /shared-access/reviews/{id}/evidence. Reads existing
+        indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently
+        falls back to the first page.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /shared-access/reviews/{id}/evidence/metadata:
+    get:
+      tags:
+        - pagination
+      summary: Count the filtered index independently of list pagination
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /shared-access/reviews/{id}/evidence. Reads existing
+        indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Filtered record count and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedPageMetadata'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /shared-access/reviews/{id}/executions/position:
+    get:
+      tags:
+        - pagination
+      summary: Locate the keyset boundary for a numbered page
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /shared-access/reviews/{id}/executions. Reads existing
+        indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently
+        falls back to the first page.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Page boundary cursor and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NumberedPagePosition'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
+  /shared-access/reviews/{id}/executions/metadata:
+    get:
+      tags:
+        - pagination
+      summary: Count the filtered index independently of list pagination
+      description: >-
+        Uses the same authorization, scope, filters and ordering as /shared-access/reviews/{id}/executions. Reads existing
+        indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: snapshot
+          in: query
+          description: Fixed append boundary shared by metadata, numbered-page positioning and the cursor list.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Filtered record count and observation time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedPageMetadata'
+        '400':
+          description: Invalid filters, page parameters or a page outside the current filtered result.
+        '503':
+          description: Required indexed storage or page positioning is unavailable.
 components:
   securitySchemes:
     IdentityBearer:
@@ -4295,6 +5708,46 @@ components:
       schema:
         type: string
   schemas:
+    NumberedPagePosition:
+      type: object
+      required:
+        - page
+        - limit
+        - cursor
+        - as_of
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+        cursor:
+          type: string
+          description: Opaque list cursor; empty only for page one.
+        as_of:
+          type: string
+          format: date-time
+        snapshot:
+          type: string
+          format: date-time
+          description: Fixed append boundary for shared review and policy history.
+    IndexedPageMetadata:
+      type: object
+      required:
+        - total
+        - as_of
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        as_of:
+          type: string
+          format: date-time
+        snapshot:
+          type: string
+          format: date-time
     RootFilesystemStatus:
       type: object
       description: Filesystem containing / in the control-plane process namespace; separately mounted data volumes are outside this measurement.
@@ -4535,10 +5988,20 @@ components:
             total: { type: integer }
     SharedReviewHistoryPage:
       type: object
-      required: [items, next_cursor]
+      required:
+        - items
+        - next_cursor
       properties:
-        items: { type: array, items: { type: object, additionalProperties: true } }
-        next_cursor: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        next_cursor:
+          type: string
+        snapshot:
+          type: string
+          format: date-time
     ManagedIdentityConfiguration:
       type: object
       required: [kind, source, sensor_id, campus_id, access_domain, user_cidrs, max_records, enabled]
@@ -7035,6 +8498,7 @@ components:
       type: object
       required: [items, has_more, next_cursor]
       properties:
+        snapshot: { type: string, format: date-time }
         has_more: { type: boolean }
         next_cursor: { type: string }
         items:

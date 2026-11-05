@@ -21,6 +21,9 @@ type streamHistoryCursor struct {
 }
 
 func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, cursor string, limit int) (map[string]any, error) {
+	return r.streamDiscoveryHistoryAt(ctx, epoch, key, cursor, limit, time.Time{})
+}
+func (r Repository) streamDiscoveryHistoryAt(ctx context.Context, epoch, key, cursor string, limit int, snapshot time.Time) (map[string]any, error) {
 	var after int64
 	if cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(cursor)
@@ -33,7 +36,7 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	rows, err := r.DB.QueryContext(ctx, `SELECT c.change_id,c.event_key,c.accepted_at,c.observed_at,c.change_kind,c.before_hash,c.after_hash,c.body_ref,
+	query := `SELECT c.change_id,c.event_key,c.accepted_at,c.observed_at,c.change_kind,c.before_hash,c.after_hash,c.body_ref,
  CASE WHEN left(c.event_key,char_length(c.epoch)+9)=c.epoch||':stream3-' THEN NULL
   WHEN r.event_key IS NOT NULL THEN
   CASE WHEN r.archive_state IN ('verified','failed') THEN r.archive_state
@@ -67,7 +70,13 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
  LEFT JOIN stream_projection_segments sm ON sm.segment_id=kc.receipt_segment_id
  LEFT JOIN stream_discovery_segment_receipt_manifests m ON m.segment_id=sm.segment_id
  WHERE c.epoch=$1 AND c.device_key=$2 AND ($3::bigint=0 OR c.change_id<$3)
- ORDER BY c.change_id DESC LIMIT $4`, epoch, key, after, limit+1)
+ ORDER BY c.change_id DESC LIMIT $4`
+	args := []any{epoch, key, after, limit + 1}
+	if !snapshot.IsZero() {
+		query = strings.Replace(query, "ORDER BY c.change_id DESC", "AND c.accepted_at<=$5 ORDER BY c.change_id DESC", 1)
+		args = append(args, snapshot)
+	}
+	rows, err := r.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -147,5 +156,9 @@ func (r Repository) streamDiscoveryHistory(ctx context.Context, epoch, key, curs
 		raw, _ := json.Marshal(streamHistoryCursor{Key: key, Epoch: epoch, After: ids[limit-1], Version: 3})
 		next = base64.RawURLEncoding.EncodeToString(raw)
 	}
-	return map[string]any{"items": items, "has_more": more, "next_cursor": next, "generation": "fresh"}, nil
+	result := map[string]any{"items": items, "has_more": more, "next_cursor": next, "generation": "fresh"}
+	if !snapshot.IsZero() {
+		result["snapshot"] = snapshot
+	}
+	return result, nil
 }

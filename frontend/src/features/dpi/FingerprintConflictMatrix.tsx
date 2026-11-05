@@ -22,7 +22,7 @@ interface FingerprintConflictMatrixProps {
 export function FingerprintConflictMatrix({ items, onInspectIp }: FingerprintConflictMatrixProps) {
   const totalConflicts = items.length
   const [page, setPage] = useState(1)
-  const pageSize = 10
+  const [pageSize,setPageSize] = useState(20)
   const pageItems = items.slice((page - 1) * pageSize, page * pageSize)
 	const columns: ColumnsType<FingerprintConflictItem> = [
 		{ title: 'IP', dataIndex: 'ip', width: 150, render: (value: string) => <span className="list-cell-nowrap mono" title={value}>{value}</span> },
@@ -54,7 +54,7 @@ export function FingerprintConflictMatrix({ items, onInspectIp }: FingerprintCon
           当前窗口下暂无需要复核的多源指纹差异
         </Typography.Text>
       ) : (
-		<><AppTable className="compact-list-table" columns={columns} dataSource={pageItems} pagination={false} rowKey="id" size="small" /><AppServerPagination page={page} pageSize={pageSize} total={items.length} onChange={(next)=>setPage(next)} showSizeChanger={false}/></>
+		<><AppTable className="compact-list-table" columns={columns} dataSource={pageItems} pagination={false} rowKey="id" size="small" /><AppServerPagination page={page} pageSize={pageSize} total={items.length} onChange={(next,size)=>{setPage(next);setPageSize(size)}}/></>
       )}
     </Card>
   )

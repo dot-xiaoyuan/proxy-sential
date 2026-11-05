@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
+	"proxy-sentinel/internal/pagination"
 	"testing"
 )
 
@@ -51,6 +53,18 @@ func TestRegistrationCatalogPostgresPaginationAndFactIsolation(t *testing.T) {
 	second, err := pg.ListEndpointRegistrations(ctx, q)
 	if err != nil || len(second.Items) != 1 || second.HasMore || second.Items[0].EndpointID == first.Items[0].EndpointID {
 		t.Fatalf("second=%+v err=%v", second, err)
+	}
+	pos, err := pg.EndpointRegistrationPosition(ctx, q, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.Cursor = pos.Cursor
+	located, err := pg.ListEndpointRegistrations(ctx, q)
+	if err != nil || len(located.Items) != 1 || located.Items[0].EndpointID != second.Items[0].EndpointID {
+		t.Fatalf("random page lost registration: %+v %v", located, err)
+	}
+	if _, err = pg.EndpointRegistrationPosition(ctx, q, 3); !errors.Is(err, pagination.ErrPageOutOfRange) {
+		t.Fatalf("accepted empty next page: %v", err)
 	}
 	meta, err := pg.EndpointRegistrationMetadata(ctx, q)
 	if err != nil || meta.Total != 2 {

@@ -28,3 +28,12 @@ it('returns a complete router sample and pages without changing the independent 
   expect(new Set([...first.items, ...second.items].map((row: { id: string }) => row.id)).size).toBe(4)
   expect((await (await fetch(`${base}/metadata?mode=passive&cursor=${first.next_cursor}`)).json()).total).toBe(6)
 })
+
+it('locates an unvisited discovery page and rejects a page past the exact last boundary', async () => {
+  const position = await (await fetch(`${base}/position?mode=passive&page=3&limit=2`)).json()
+  const located = await (await fetch(`${base}?mode=passive&limit=2&cursor=${position.cursor}`)).json()
+  expect(position).toMatchObject({page:3,limit:2})
+  expect(located.items.map((row:{id:string})=>row.id)).toEqual(['fixture-camera','fixture-router'])
+  expect((await fetch(`${base}/position?mode=passive&page=4&limit=2`)).status).toBe(400)
+  expect((await fetch(`${base}/position?mode=passive&type=router&page=2&limit=1`)).status).toBe(400)
+})

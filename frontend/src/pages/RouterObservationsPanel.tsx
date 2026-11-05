@@ -87,7 +87,7 @@ function RouterRoleObservationsPanel() {
     { title:'最近观测',dataIndex:'last_seen',width:100,render:(value?:string)=><ObservedTime value={value}/> },
     { title:'操作',key:'action',width:75,render:(_,item)=><Link to={detailPath(`/devices/network/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link> },
   ]
-  const total = observations.data?.page?.total ?? 0
+  const total = observations.data?.page?.total
   return <div className="router-observations-panel">
     {/* Filters and the list identity share one card so the table is not pushed down. */}
     <Form form={form} className="router-filter-form" layout="vertical" onFinish={submit}>
@@ -126,7 +126,7 @@ function RouterRoleObservationsPanel() {
     <section className="surface center-list-surface">
       <AppListHeader
         title={view === 'ap' ? '接入点观察' : '路由器观察'}
-        count={`${total} 台${view === 'ap' ? '接入点' : '设备'}`}
+        count={total===undefined?undefined:`${total} 台${view === 'ap' ? '接入点' : '设备'}`}
         actions={<Tooltip title={view === 'ap' ? '本页识别接入点。接入点记录不参与路由器确认；分类基于 DHCP、LLDP、管理面等证据，仍可能受弱信号影响。' : '本页识别路由器，不代表下游共享已确认。分数表示证据匹配强度；路由器确认还要求明确路由角色、独立来源、强证据和可靠设备关联，基础设施及排除证据会阻断确认。'}><InfoCircleOutlined aria-label="网络设备说明" /></Tooltip>}
       />
       {observations.isLoading ? <AppLoadingState rows={6} /> : observations.isError ? <AppErrorAlert title="路由观察读取失败" message={observations.error.message} /> : <>

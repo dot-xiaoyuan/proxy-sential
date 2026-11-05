@@ -1,3 +1,4 @@
+import { mockPageMetadata, mockPagePosition } from './auxiliaryPagination'
 import { http, HttpResponse } from 'msw'
 import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './deviceRecognition'
 import { domainOnlyDevice, domainOnlyProfile } from './brandInference'
@@ -23,12 +24,19 @@ function detailFor(id:string):InventoryDetail|undefined {
 }
 
 export const inventoryTraceHandlers=[
+ ...['metadata','position'].map(operation=>http.get(`/api/v1/endpoints/:endpointId/observations/${operation}`,({params,request})=>{const detail=detailFor(decodeURIComponent(String(params.endpointId)));if(!detail)return HttpResponse.json({error:'not found'},{status:404});const q=new URL(request.url).searchParams,total=traceItems(detail,q).length;return operation==='metadata'?mockPageMetadata(q,total):mockPagePosition(q,total)})),
  http.get('/api/v1/device-inventory/:endpointId',({params})=>{const detail=detailFor(decodeURIComponent(String(params.endpointId)));return detail?HttpResponse.json(detail):HttpResponse.json({error:'not found'},{status:404})}),
  http.get('/api/v1/endpoints/:endpointId/observations',({params,request})=>{
   const detail=detailFor(decodeURIComponent(String(params.endpointId)));if(!detail)return HttpResponse.json({error:'not found'},{status:404})
-  const q=new URL(request.url).searchParams,kind=q.get('kind')||'account',limit=Math.min(100,Number(q.get('limit')||20)),offset=Number(q.get('cursor')||0)
-  const value=kind==='account'?detail.profile.recognition?.current_account:kind==='ip'?detail.profile.recognition?.current_ip:detail.profile.recognition?.current_access_id
-  const items:EndpointObservation[]=value&&(!q.get('value')||q.get('value')===value)?Array.from({length:45},(_,i)=>({kind:kind as EndpointObservation['kind'],value,record_id:`mock-${i}`,source:'mock',observed_at:new Date(Date.now()-i*60000).toISOString(),confidence:.9,evidence_state:i>20?'outside_retention':'not_checked',event_id:`mock-event-${i}`})):[]
+  const q=new URL(request.url).searchParams,limit=Math.min(100,Number(q.get('limit')||20)),offset=Number(q.get('cursor')||0)
+  const items=traceItems(detail,q)
   return HttpResponse.json({items:items.slice(offset,offset+limit),next_cursor:offset+limit<items.length?String(offset+limit):undefined,state:detail.state})
  }),
 ]
+
+function traceItems(detail:InventoryDetail,q:URLSearchParams){
+ const kind=q.get('kind')||'account'
+  const value=kind==='account'?detail.profile.recognition?.current_account:kind==='ip'?detail.profile.recognition?.current_ip:detail.profile.recognition?.current_access_id
+  const items:EndpointObservation[]=value&&(!q.get('value')||q.get('value')===value)?Array.from({length:45},(_,i)=>({kind:kind as EndpointObservation['kind'],value,record_id:`mock-${i}`,source:'mock',observed_at:new Date(Date.parse(q.get('as_of')||new Date().toISOString())-i*60000).toISOString(),confidence:.9,evidence_state:i>20?'outside_retention':'not_checked',event_id:`mock-event-${i}`})):[]
+ return items.filter(item=>(!q.get('source')||item.source===q.get('source'))&&(!q.get('start')||item.observed_at>=q.get('start')!)&&(!q.get('end')||item.observed_at<=q.get('end')!))
+}

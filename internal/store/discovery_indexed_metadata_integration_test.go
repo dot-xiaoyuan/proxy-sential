@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"proxy-sentinel/internal/pagination"
+	"reflect"
 	"testing"
 	"time"
 
@@ -94,6 +97,7 @@ func TestDiscoveryIndexedMetadataMatchesEveryCursorPage(t *testing.T) {
 		}
 		cursors := map[string]bool{}
 		count := 0
+		expected := []discovery.DeviceView{}
 		for pages := 0; pages < 10; pages++ {
 			page, err := repo.DevicesIndexed(ctx, q)
 			if err != nil {
@@ -101,6 +105,7 @@ func TestDiscoveryIndexedMetadataMatchesEveryCursorPage(t *testing.T) {
 			}
 			items := page["items"].([]discovery.DeviceView)
 			count += len(items)
+			expected = append(expected, items...)
 			if page["has_more"] != true {
 				break
 			}
@@ -113,6 +118,28 @@ func TestDiscoveryIndexedMetadataMatchesEveryCursorPage(t *testing.T) {
 		}
 		if int64(count) != meta.Total {
 			t.Fatalf("count=%d disagrees with metadata=%d for %+v", count, meta.Total, q)
+		}
+
+		// Reverse page order exercises genuine random access rather than walking
+		// cached cursors. Returned facts must match the corresponding keyset page.
+		for number := len(expected); number >= 1; number-- {
+			q.Cursor = ""
+			pos, err := repo.DevicesIndexedPosition(ctx, q, number)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q.Cursor = pos.Cursor
+			got, err := repo.DevicesIndexed(ctx, q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			items := got["items"].([]discovery.DeviceView)
+			if len(items) != 1 || !reflect.DeepEqual(items[0], expected[number-1]) {
+				t.Fatalf("page %d differs from sequential result: %+v", number, items)
+			}
+		}
+		if _, err := repo.DevicesIndexedPosition(ctx, q, len(expected)+2); !errors.Is(err, pagination.ErrPageOutOfRange) {
+			t.Fatalf("out-of-range position=%v", err)
 		}
 	}
 	assert(discovery.DeviceQuery{}, 6)

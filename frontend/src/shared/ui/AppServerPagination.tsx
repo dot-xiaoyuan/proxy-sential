@@ -1,4 +1,4 @@
-import { Button, Pagination, Select } from 'antd'
+import { Pagination } from 'antd'
 import { useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
@@ -6,40 +6,25 @@ type AppServerPaginationProps = {
 	disabled?: boolean
 	page: number
 	pageSize: number
-	total: number
+	total?: number
 	onChange: (page: number, pageSize: number) => void
-	cursorMode?: boolean
-	/** 游标模式的下一页由响应游标决定，与独立统计总数无关。 */
-	hasMore?: boolean
-	/** 可选的总量文案；游标分页没有准确总数时可传“已加载 N 条” */
+	/** 统计尚未就绪时显示明确的读取状态，不使用已加载条数替代总数。 */
 	totalText?: string
 	showSizeChanger?: boolean
 }
 
-export function AppServerPagination({ disabled = false, page, pageSize, total, onChange, cursorMode = false, hasMore = false, totalText, showSizeChanger = true }: AppServerPaginationProps) {
-	if (cursorMode) {
-		const previousDisabled = disabled || page <= 1
-		const nextDisabled = disabled || !hasMore
-		return <nav className="list-pagination app-server-pagination cursor-pagination" aria-label="游标分页">
-			<span className="cursor-pagination-total">{totalText ?? `共 ${total} 条`}</span>
-			<div className="cursor-pagination-controls">
-				<Button title="Previous Page" aria-label="上一页" className={`ant-pagination-prev${previousDisabled ? ' ant-pagination-disabled' : ''}`} disabled={previousDisabled} onClick={() => onChange(page - 1, pageSize)}>上一页</Button>
-				<span className="cursor-pagination-page" aria-current="page">第 {page} 页</span>
-				<Button title="Next Page" aria-label="下一页" className={`ant-pagination-next${nextDisabled ? ' ant-pagination-disabled' : ''}`} disabled={nextDisabled} onClick={() => onChange(page + 1, pageSize)}>下一页</Button>
-			</div>
-			{showSizeChanger && <Select aria-label="每页记录数" value={pageSize} disabled={disabled} options={[{ value: 20, label: '20 条/页' }, { value: 50, label: '50 条/页' }]} onChange={value => onChange(1, value)} />}
-		</nav>
-	}
+export function AppServerPagination({ disabled = false, page, pageSize, total, onChange, totalText, showSizeChanger = true }: AppServerPaginationProps) {
+	const hasTotal = typeof total === 'number' && Number.isFinite(total) && total >= 0
 	return <Pagination
 		className="list-pagination app-server-pagination"
 		current={page}
-		disabled={disabled}
+		disabled={disabled || !hasTotal}
 		pageSize={pageSize}
 		pageSizeOptions={[20, 50]}
 		showQuickJumper
 		showSizeChanger={showSizeChanger}
-		showTotal={() => totalText ?? `共 ${total} 条`}
-		total={total}
+		showTotal={() => totalText ?? (hasTotal ? `共 ${total} 条` : '正在读取总数')}
+		total={hasTotal ? total : 0}
 		onChange={(nextPage, nextSize) => onChange(nextSize !== pageSize ? 1 : nextPage, nextSize)}
 	/>
 }

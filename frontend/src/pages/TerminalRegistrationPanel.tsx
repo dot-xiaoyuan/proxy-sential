@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Empty, Select, Space, Tag, Typography } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppErrorAlert, AppListHeader, AppServerPagination, AppTable, AppTableBar } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppServerPagination, AppTable, AppTableBar, useCursorPagePosition } from '../shared/ui'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import type { components } from '../shared/api/generated'
@@ -22,6 +22,7 @@ const ownerships: Record<string, string> = { school_asset: '学校资产', publi
 
 export function TerminalRegistrationPanel({ onCreate, onEdit }: Props) {
   const [params, setParams] = useSearchParams()
+  const queryClient=useQueryClient()
   const search = params.get('registration_search') || ''
   const status = params.get('registration_status') || ''
   const deviceType = params.get('registration_type') || ''
@@ -39,16 +40,18 @@ export function TerminalRegistrationPanel({ onCreate, onEdit }: Props) {
   if (ownership) scope.set('ownership_class', ownership)
   const scopeKey = scope.toString()
   const filterKey = `${scopeKey}|${pageSize}`
-  const [paging, setPaging] = useState({ key: filterKey, cursors: [''], page: 0 })
-  const cursors = paging.key === filterKey ? paging.cursors : ['']
+  const [paging, setPaging] = useState({ key: filterKey, page: 0 })
+  useEffect(()=>setPaging(current=>current.key===filterKey?current:{key:filterKey,page:0}),[filterKey])
   const page = paging.key === filterKey ? paging.page : 0
+  const position = useCursorPagePosition({ path: '/endpoints/registrations/position', query: scope, page: page + 1, pageSize })
   const query = new URLSearchParams(scope)
   query.set('limit', String(pageSize))
-  if (cursors[page]) query.set('cursor', cursors[page])
+  if (position.cursor) query.set('cursor', position.cursor)
 
   const records = useQuery({
     queryKey: ['terminal-registrations', query.toString()],
     queryFn: ({ signal }) => request<RegistrationPage>(`/endpoints/registrations?${query}`, { signal }),
+    enabled: position.ready,
   })
   const metadata = useQuery({
     queryKey: ['terminal-registration-metadata', scopeKey],
@@ -59,7 +62,7 @@ export function TerminalRegistrationPanel({ onCreate, onEdit }: Props) {
     queryFn: ({ signal }) => request<components['schemas']['DiscoveryTypeCatalogue']>('/discovery/types', { signal }),
   })
   const types = Object.fromEntries((catalogue.data?.items ?? []).map(item => [item.id, item.label]))
-  const items = records.data?.items ?? []
+  const items = position.ready ? records.data?.items ?? [] : []
   const filtered = Boolean(search || status || deviceType || ownership)
 
   const change = (key: string, value: string) => setParams(current => {
@@ -76,7 +79,7 @@ export function TerminalRegistrationPanel({ onCreate, onEdit }: Props) {
       return next
     }, { replace: true })
   }
-  const refresh = () => { void records.refetch(); void metadata.refetch() }
+  const refresh = () => { const first=new URLSearchParams(query);first.delete('cursor');setPaging({key:filterKey,page:0});void position.invalidate();void metadata.refetch();void queryClient.invalidateQueries({queryKey:['terminal-registrations'],refetchType:'none'});void queryClient.refetchQueries({queryKey:['terminal-registrations',first.toString()],exact:true}) }
   const columns = [
     {
       title: '设备 / MAC', key: 'identity', width: 225,
@@ -139,6 +142,7 @@ export function TerminalRegistrationPanel({ onCreate, onEdit }: Props) {
       </>}
     />
     {catalogue.isError && <AppErrorAlert title="读取登记类型失败" message={catalogue.error.message} />}
+    {position.isError && <AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={() => void position.refetch()}>重试定位</Button>} />}
     {metadata.isError && <AppErrorAlert title="读取登记数量失败" message={metadata.error.message} action={<Button onClick={() => void metadata.refetch()}>重试统计</Button>} />}
     {records.isError ? <AppErrorAlert title="读取登记台账失败" message={records.error.message} action={<Button onClick={() => void records.refetch()}>重新读取</Button>} /> : <section className="surface center-list-surface">
       <AppListHeader
@@ -153,21 +157,19 @@ export function TerminalRegistrationPanel({ onCreate, onEdit }: Props) {
         columns={columns}
         dataSource={items}
         tableLayout="fixed"
-        loading={records.isPending}
+        loading={records.isPending||position.isLocating}
         scroll={{ x: writable ? 1105 : 1005 }}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={filtered ? '当前筛选下暂无登记记录' : '还没有登记设备'}>{filtered ? <Button onClick={clearFilters}>清空筛选</Button> : <Space orientation="vertical"><Typography.Text type="secondary">从设备发现选择登记，或直接录入已有资产。</Typography.Text>{writable && <Button type="primary" onClick={onCreate}>登记第一台设备</Button>}</Space>}</Empty> }}
       />
       {(items.length > 0 || page > 0) && <AppServerPagination
-        cursorMode
-        hasMore={Boolean(records.data?.has_more && records.data?.next_cursor)}
+        disabled={records.isFetching || position.isLocating}
         page={page + 1}
         pageSize={pageSize}
-        total={metadata.data?.total ?? 0}
+        total={metadata.data?.total}
         totalText={metadata.data ? `共 ${metadata.data.total} 条` : metadata.isError ? '数量读取失败' : '正在读取总数'}
         onChange={(nextPage, nextSize) => {
           if (nextSize !== pageSize) { setPageSize(nextSize); return }
-          if (nextPage <= page && cursors[nextPage - 1] !== undefined) { setPaging({ key: filterKey, cursors, page: nextPage - 1 }); return }
-          if (nextPage === page + 2 && records.data?.next_cursor) setPaging({ key: filterKey, cursors: [...cursors.slice(0, page + 1), records.data.next_cursor], page: page + 1 })
+          setPaging({ key: filterKey, page: nextPage - 1 })
         }}
       />}
     </section>}

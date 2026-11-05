@@ -12,14 +12,13 @@ import { InfoCircleOutlined, SettingOutlined } from '@ant-design/icons'
 import { TerminalInventoryIdentity, DeviceLedgerRecognition, DeviceLedgerOS, deviceDetailsURL } from '../entities/device/DeviceInventoryCells'
 import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices, useSession } from '../shared/api/queries'
 import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
-import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useServerPagination, useCursorPagePosition } from '../shared/ui'
 
 export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const [params, setParams] = useSearchParams()
   const session = useSession()
   const canReadTraffic = can(session.data, 'events:read')
   const pagination = useServerPagination()
-  const cursorByPage = useRef<Record<number, string>>({ 1: '' })
   const view = params.get('view') === 'history' ? 'history' : 'recent'
   const quickWindow = (['10m','1h','24h','7d','30d'].includes(params.get('window') || '') ? params.get('window') : '24h') as ReportWindow
   const query = params.get('q') || ''
@@ -37,25 +36,18 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const change = useCallback((values: Record<string,string|undefined>)=>setParams(current=>{
     const next=new URLSearchParams(current)
     for(const [key,value] of Object.entries(values)){if(value)next.set(key,value);else next.delete(key)}
-    cursorByPage.current={1:''}
     next.set('page','1');next.delete('cursor');return next
   },{replace:true}),[setParams])
   useEffect(()=>{setSearchInput(query)},[query])
   useEffect(()=>{if(!params.has('view')||!params.has('window'))setParams(current=>{const next=new URLSearchParams(current);if(!next.has('view'))next.set('view','recent');if(!next.has('window'))next.set('window','24h');return next},{replace:true})},[params,setParams])
   const recognitionSummary = useDeviceRecognitionSummary(diagnosticsOpen)
-  const listQuery: DeviceQuery={ search_type:searchType, view, window: quickWindow, q: query, ecosystem, brand, os_family: osFamily, sensor_id:params.get('sensor_id')||undefined, ...dimensions, limit: pagination.pageSize, cursor: cursorByPage.current[pagination.page] || undefined }
-  const devices = useDevices(listQuery)
-  const metadata=useDeviceInventoryMetadata(listQuery,Boolean(devices.data)&&!devices.isPlaceholderData)
+  const listQuery: DeviceQuery={ search_type:searchType, view, window: quickWindow, q: query, ecosystem, brand, os_family: osFamily, sensor_id:params.get('sensor_id')||undefined, ...dimensions, limit: pagination.pageSize }
+  const position=useCursorPagePosition({path:'/device-inventory/position',query:new URLSearchParams(Object.entries(listQuery).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)])),page:pagination.page,pageSize:pagination.pageSize})
+  listQuery.cursor=position.cursor
+  const devices = useDevices(listQuery,position.ready)
+  const metadata=useDeviceInventoryMetadata(listQuery,true)
   const total=metadata.data?.total
-  useEffect(()=>{
-    const next=devices.data?.page?.next_cursor
-    if(next) cursorByPage.current[pagination.page+1]=next
-  },[devices.data,pagination.page])
-  const updatePagination=(nextPage:number,nextSize:number)=>{
-    if(nextPage===1||nextSize!==pagination.pageSize)cursorByPage.current={1:''}
-    pagination.update(nextPage,nextSize)
-  }
-  useEffect(()=>{if(total===undefined||metadata.isFetching||devices.isFetching||devices.isPlaceholderData||(devices.data?.items?.length??0)>0)return;const last=Math.max(1,Math.ceil(total/pagination.pageSize));if(pagination.page>last)pagination.update(last,pagination.pageSize)},[total,metadata.isFetching,devices.isFetching,devices.isPlaceholderData,devices.data,pagination])
+  const updatePagination=pagination.update
   const entered=useRef(performance.getEntriesByName('device-inventory-enter').at(-1)?.startTime??performance.now())
   const measured=useRef(false)
   useEffect(()=>{
@@ -65,7 +57,7 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   },[devices.data])
   const returnTo='/devices?'+params.toString()
   const detailURL=(row:DeviceInventoryListItem)=>deviceDetailsURL(row)+'?return_to='+encodeURIComponent(returnTo)
-  const items = devices.data?.items ?? []
+  const items = position.ready ? devices.data?.items ?? [] : []
   const matchSearch=items.some(row=>row.ip_match)
 
   const scopeControls = <>
@@ -138,7 +130,8 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && <Alert type="info" showIcon title="当前检索条件下没有终端身份结果" description={canReadTraffic ? '下方按 IP 展示流量观测；握手 MAC 是终端候选线索，需结合身份与接入证据核实归属。' : '当前身份与地址索引中没有该 IP 的关联记录。'} />}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表读取失败" message={devices.error.message} /> : <>
         <AppTable className="terminal-inventory-table" rowKey="endpoint_id" columns={deviceColumns} dataSource={items} tableLayout="fixed" scroll={{ x: deviceColumns.reduce((width, column) => width + Number(column.width ?? 0), 0) }} locale={{ emptyText: '没有匹配的终端' }} />
-        {(()=>{const derivedTotal=devices.data?.page.next_cursor?pagination.page*pagination.pageSize+1:(pagination.page-1)*pagination.pageSize+items.length;return <AppServerPagination cursorMode hasMore={Boolean(devices.data?.page.next_cursor)} disabled={devices.isPlaceholderData} page={pagination.page} pageSize={pagination.pageSize} total={total??derivedTotal} totalText={total===undefined?`第 ${pagination.page} 页 · 已加载 ${(pagination.page-1)*pagination.pageSize+items.length} 条`:`共 ${total} 条`} onChange={updatePagination}/>})()}
+        {position.isError&&<AppErrorAlert title="页码定位失败" message={`${position.error.message}（请求第 ${pagination.page} 页）`} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
+        <AppServerPagination disabled={devices.isFetching||devices.isPlaceholderData||position.isLocating} page={pagination.page} pageSize={pagination.pageSize} total={total} totalText={total===undefined?(metadata.isError?'数量读取失败':'正在读取总数'):`共 ${total} 条`} onChange={updatePagination}/>
       </>}
     </section>
     {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && canReadTraffic && <IpTrafficObservations key={query.trim()} ip={query.trim()} />}

@@ -18,46 +18,39 @@ describe('AppServerPagination', () => {
 		expect(document.querySelector('.app-server-pagination')).toHaveClass('ant-pagination-disabled')
 	})
 
-	it('游标模式保留真实总数但不提供没有游标的数字跳页', () => {
+	it('直接跳到尚未访问的第42页', () => {
 		const onChange = vi.fn()
-		render(<AppServerPagination cursorMode page={2} pageSize={20} total={98765} totalText="共 98765 条" hasMore={false} onChange={onChange} />)
-		expect(screen.getByText('共 98765 条')).toBeVisible()
-		expect(screen.getByText('第 2 页')).toBeVisible()
-		expect(screen.queryByTitle('3')).not.toBeInTheDocument()
-		expect(document.querySelector('.ant-pagination-options-quick-jumper')).not.toBeInTheDocument()
-		expect(screen.getByTitle('Next Page')).toBeDisabled()
-		fireEvent.click(screen.getByTitle('Next Page'))
-		expect(onChange).not.toHaveBeenCalled()
-		fireEvent.click(screen.getByTitle('Previous Page'))
-		expect(onChange).toHaveBeenCalledWith(1, 20)
+		render(<AppServerPagination page={2} pageSize={20} total={98765} onChange={onChange} />)
+		const jump = document.querySelector('.ant-pagination-options-quick-jumper input')!
+		fireEvent.change(jump, { target: { value: '42' } })
+		fireEvent.keyUp(jump, { key: 'Enter', keyCode: 13 })
+		expect(onChange).toHaveBeenCalledWith(42, 20)
 	})
 
-	it('下一页只依赖服务端游标而不依赖统计大小', () => {
+	it('切换每页50条会回到第一页', () => {
 		const onChange = vi.fn()
-		render(<AppServerPagination cursorMode page={1} pageSize={20} total={0} hasMore onChange={onChange} />)
-		expect(screen.getByTitle('Previous Page')).toBeDisabled()
-		expect(screen.getByTitle('Next Page')).toBeEnabled()
-		fireEvent.click(screen.getByTitle('Next Page'))
-		expect(onChange).toHaveBeenCalledWith(2, 20)
-	})
-
-	it('尚未取得下一页游标时不从总数推测可翻页', () => {
-		render(<AppServerPagination cursorMode page={1} pageSize={20} total={999} onChange={() => undefined} />)
-		expect(screen.getByTitle('Next Page')).toBeDisabled()
-	})
-
-	it('游标模式切换页长回到第一页', () => {
-		const onChange = vi.fn()
-		render(<AppServerPagination cursorMode page={3} pageSize={20} total={200} hasMore onChange={onChange} />)
-		fireEvent.mouseDown(screen.getByRole('combobox', { name: '每页记录数' }))
-		fireEvent.click(screen.getByText('50 条/页'))
+		render(<AppServerPagination page={3} pageSize={20} total={200} onChange={onChange} />)
+		fireEvent.mouseDown(screen.getByRole('combobox'))
+		fireEvent.click(screen.getByText('50 / page'))
 		expect(onChange).toHaveBeenCalledWith(1, 50)
 	})
 
-	it('加载期间禁用游标翻页和页长选择', () => {
-		render(<AppServerPagination cursorMode disabled page={2} pageSize={20} total={200} hasMore onChange={() => undefined} />)
-		expect(screen.getByTitle('Previous Page')).toBeDisabled()
-		expect(screen.getByTitle('Next Page')).toBeDisabled()
-		expect(screen.getByRole('combobox', { name: '每页记录数' })).toBeDisabled()
+	it('没有准确统计时不展示假总数或可跳转页', () => {
+		render(<AppServerPagination page={1} pageSize={20} onChange={() => undefined} />)
+		expect(screen.getByText('正在读取总数')).toBeVisible()
+		expect(screen.queryByText('共 0 条')).not.toBeInTheDocument()
+		expect(document.querySelector('.app-server-pagination')).toHaveClass('ant-pagination-disabled')
+	})
+
+	it('统计读取失败保留明确状态而不冒充空列表', () => {
+		render(<AppServerPagination page={1} pageSize={20} totalText="数量读取失败" onChange={() => undefined} />)
+		expect(screen.getByText('数量读取失败')).toBeVisible()
+		expect(screen.queryByText('共 0 条')).not.toBeInTheDocument()
+	})
+
+	it('真实空结果显示共0条并禁用下一页', () => {
+		render(<AppServerPagination page={1} pageSize={20} total={0} onChange={() => undefined} />)
+		expect(screen.getByText('共 0 条')).toBeVisible()
+		expect(screen.getByTitle('Next Page')).toHaveClass('ant-pagination-disabled')
 	})
 })

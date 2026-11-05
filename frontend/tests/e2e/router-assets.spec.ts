@@ -16,7 +16,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         if (!url.pathname.endsWith('/discovery/devices') && !url.pathname.endsWith('/discovery/devices/metadata')) return original(input, init)
         const stamp = new Date().toISOString()
         const type = url.searchParams.get('type') || 'router'
-        const response = url.pathname.endsWith('/metadata') ? { total: 61, as_of: stamp, count_unit: 'trusted_discovery_identity' } : {
+        const response = url.pathname.endsWith('/metadata') ? { total: 2, as_of: stamp, count_unit: 'trusted_discovery_identity' } : {
           items: [
             { id: 'router-current', mac: '02:20:40:00:00:04', name: '教学楼路由设备', device_type: type, category: 'network', identity_kind: 'link_layer_device', manufacturer: 'Huawei', model_name: 'AR6120', classification_status: 'identified', first_seen: stamp, last_seen: stamp, current: true, current_addresses: ['192.0.2.41'], primary_ip: '192.0.2.41', last_observed_ip: '192.0.2.41', protocols: ['lldp', 'dhcp'], capabilities: ['routing'], observations: [], evidence_count: 2, domain: '教学网', vlan: '20' },
             { id: 'router-expired', mac: '02:20:40:00:00:05', name: '历史路由记录', device_type: '', last_device_type: type, category: 'network', identity_kind: 'link_layer_device', classification_status: 'expired', first_seen: stamp, last_seen: stamp, current: false, current_addresses: [], primary_ip: '192.0.2.42', last_observed_ip: '192.0.2.42', protocols: ['dhcp'], capabilities: [], observations: [], evidence_count: 1 },
@@ -26,13 +26,13 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       }
     })
     await page.goto('/devices?tab=network&routers_view=router')
-    await expect(page.getByText('共 61 条设备记录', { exact: true })).toBeVisible()
+    await expect(page.getByText('共 2 条设备记录', { exact: true })).toBeVisible()
     await expect(page.getByText('教学楼路由设备', { exact: true })).toBeVisible()
     await expect(page.getByText('历史路由器', { exact: true })).toBeVisible()
     await expect(page.getByText('历史 IP：192.0.2.42', { exact: true })).toBeVisible()
     await expect(page.getByText('设备类型用于资产管理；违规与共享行为需另行核验。', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeDisabled()
-    await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeDisabled()
+    await expect(page.locator('.ant-pagination-next')).toHaveClass(/ant-pagination-disabled/)
+    await expect(page.locator('.ant-pagination-prev')).toHaveClass(/ant-pagination-disabled/)
     await expect(page.getByTitle('2', { exact: true })).toHaveCount(0)
     const probe = await page.evaluate(() => {
       const panel = document.querySelector('.router-observations-panel')!
@@ -58,7 +58,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     })
     await writeFile(info.outputPath('router-assets-dom.json'), JSON.stringify({ viewport, probe, errors }, null, 2))
     await page.screenshot({ path: info.outputPath('router-assets.png'), fullPage: true, animations: 'disabled' })
-    await page.locator('.cursor-pagination').screenshot({ path: info.outputPath('router-assets-pagination.png'), animations: 'disabled' })
+    await page.locator('.app-server-pagination').screenshot({ path: info.outputPath('router-assets-pagination.png'), animations: 'disabled' })
     expect(probe.overflow).toBe(false)
     expect(probe.panelOverflow).toBe(false)
     expect(probe.controls).toEqual([])

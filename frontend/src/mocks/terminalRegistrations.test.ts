@@ -80,3 +80,12 @@ it('rejects malformed paging and incomplete registered records rather than showi
   expect(response.status).toBe(400)
   expect((await response.json()).code).toBe('bad_endpoint_registration_request')
 })
+
+it('locates arbitrary registration pages with a scope-bound cursor', async () => {
+  const position = await (await get('/endpoints/registrations/position?page=2&limit=1')).json()
+  const located = await (await get(`/endpoints/registrations?limit=1&cursor=${encodeURIComponent(position.cursor)}`)).json() as Page
+  expect(position).toMatchObject({page:2,limit:1})
+  expect(located.items).toHaveLength(1)
+  expect((await get(`/endpoints/registrations?limit=1&status=retired&cursor=${encodeURIComponent(position.cursor)}`)).status).toBe(400)
+  expect((await get('/endpoints/registrations/position?page=99&limit=1')).status).toBe(400)
+})

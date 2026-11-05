@@ -1,12 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { api } from '../shared/api/client'
+import { api, request } from '../shared/api/client'
 import type { IpTrafficObservationPage } from '../shared/api/types'
 import { IpTrafficObservations } from './IpTrafficObservations'
 import { MemoryRouter } from 'react-router-dom'
 
-vi.mock('../shared/api/client', () => ({ api: { ipTrafficObservations: vi.fn(), streamEventBody: vi.fn() } }))
+vi.mock('../shared/api/client', () => ({ request:vi.fn(async(path:string)=>{const q=new URL(path,'http://localhost').searchParams;return path.includes('/position')?{page:Number(q.get('page')),limit:Number(q.get('limit')),cursor:'next-page'}:{total:41,as_of:'2026-10-26T06:55:01Z'}}), api: { ipTrafficObservations: vi.fn(), streamEventBody: vi.fn() } }))
 const result: IpTrafficObservationPage = {
   ip: '10.157.2.191', source_owner: 'handshake-sidecar', status: 'ready', from: '2026-10-26T06:40:00Z', to: '2026-10-26T06:55:00Z', queried_at: '2026-10-26T06:55:01Z',
   source: { epoch: 'fresh', scope_id: 'scope', cutoff_at: '2026-10-26T06:38:56Z', state: 'active' },
@@ -35,8 +35,11 @@ it('自动限定 IP 和时间并按需读取正文，明确旧摘要与新观测
 })
 it('翻页绑定原查询，刷新失败后隐藏旧页而不显示为空', async () => {
   setup(); await screen.findByText('本页 1 条观测摘要')
-  fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+  await screen.findByText('共 41 条')
+  fireEvent.click(screen.getByTitle('3'))
   await waitFor(() => expect(vi.mocked(api.ipTrafficObservations).mock.lastCall?.[1].cursor).toBe('next-page'))
+  expect(vi.mocked(request).mock.calls.filter(([path])=>String(path).includes('/position'))).toHaveLength(1)
+  expect(vi.mocked(request).mock.calls.find(([path])=>String(path).includes('/position'))?.[0]).toContain('page=3')
   vi.mocked(api.ipTrafficObservations).mockRejectedValue(new Error('query budget exceeded'))
   fireEvent.click(screen.getByRole('button', { name: '刷新最近 15 分钟' }))
   await screen.findByText('流量观察读取失败')

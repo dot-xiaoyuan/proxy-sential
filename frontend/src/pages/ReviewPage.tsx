@@ -44,7 +44,7 @@ export function ReviewPage() {
       <AppListHeader title="翻墙监测复核" count={`${reviews.data?.page.total ?? 0} 条`} />
       {reviews.isLoading ? <AppLoadingState rows={8} /> : reviews.isError ? <AppErrorAlert title="复核数据读取失败" message={reviews.error.message} /> : (reviews.data?.items.length ?? 0) === 0 ? <AppEmptyState description="当前筛选下暂无复核对象" /> : <>
         <AppTable className="compact-list-table" columns={columns} dataSource={reviews.data?.items ?? []} pagination={false} rowKey="case_id" scroll={{x:1180}} size="small" />
-        <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={reviews.data?.page.total ?? 0} onChange={pagination.update} />
+        <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={reviews.data?.page.total} onChange={pagination.update} />
       </>}
     </section>
   </main>
