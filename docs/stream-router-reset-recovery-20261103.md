@@ -1,5 +1,7 @@
 # 184 路由识别游标的重置恢复
 
+状态：恢复方案。2026-11-05 只读复核显示活动识别服务已统一运行 r72，下面关于旧 p2 固定二进制的叙述是当时的切换风险记录；当前执行前以活动 unit 和实际进程为准。实时结果见[当前工作](current-work.md)。
+
 ## 原因与范围
 
 2026-10-31 授权的测试数据重置清空了 `stream_router_recognition_state`，保留了此前不可变的 `stream_router_fresh_cutovers`。迁移 187 只建表，不会补回已被清空的状态行。识别线程因此每五秒尝试领取却始终无任务；路由证据、评估和依赖它们的共享档案无法从新的镜像事件生成。
@@ -46,11 +48,11 @@ SELECT countIf(indexed_at<toDateTime64('2026-10-31 09:14:01',6,'UTC')) AS before
 
 ## 受控恢复
 
-使用包含 PG224、恢复命令和识别线程门控的候选版本。先在识别服务设置 `PROXY_SENTINEL_STREAM_ROUTER_DISABLED=true` 并重启，确认日志中的停用记录；它只退出专用 stream router 线程，其余识别线程继续运行。环境变量从 184 已保护的运行配置读取，不把 DSN 写入命令行或文档。确认实时链路延迟和 PostgreSQL/ClickHouse 等待处于可观测范围后执行：
+PG224、恢复命令和识别线程门控已在 r72。先在当前活动的 `proxy-sentinel-recognition-materializer.service` 设置 `PROXY_SENTINEL_STREAM_ROUTER_DISABLED=true` 并重启，核对实际二进制仍为 r72 且日志明确记录停用；它只退出专用 stream router 线程，其余识别线程继续运行。环境变量从 184 已保护的运行配置读取，不把 DSN 写入命令行或文档。确认实时链路延迟和 PostgreSQL/ClickHouse 等待处于可观测范围后执行：
 
-`build-release.sh` 会把新 CLI 编入候选包的 `bin/proxy-sentinel` 并复制 PG224；但 184 当前活动的 `proxy-sentinel-recognition-materializer-eventbus.service` 仍固定运行 `/opt/proxy-sentinel/releases/2026.10.30-eventbus-p2/bin/proxy-sentinel-recognition-eventbus`。普通 `upgrade-application.sh` 的服务重启列表不含这个 eventbus 单元，`current` 指针切换不会替换其进程或启用新门控。必须先核对并记录原 unit，单独将其 `ExecStart` 指向候选不可变发布目录的 `bin/proxy-sentinel read-model run --lane recognition ...`，保留原有 `PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED=true`，增设 stream router 停用环境并重启，核对 `/proc/<PID>/exe` 为候选二进制与停用日志；然后才能插入状态。旧固定二进制不识别 `PROXY_SENTINEL_STREAM_ROUTER_DISABLED`，仅设置变量没有保护作用。**若无法完成固定二进制切换和门控核验，不执行恢复命令。**
+2026-11-05 核对：旧 `proxy-sentinel-recognition-materializer-eventbus.service` 已停用，活动的 `proxy-sentinel-recognition-materializer.service` 的有效 `ExecStart` 与 `/proc/<PID>/exe` 均指向 r72。保留当前 `PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED=true`；恢复前仍要单独核对停用变量、实际进程和停用日志。**若无法完成门控核验，不执行恢复命令。**
 
-候选 `bin/proxy-sentinel` 与 p2 固定 binary 都接受 `read-model run --lane recognition --sensor-id ...`，但 p2 缺少可追溯的源码清单，不能仅凭命令行相同断言其他识别线程完全等价。插入状态前应在 `disabled=true` 下短时核对进程不退出、覆盖识别、共享行为和常规识别线程的进度及错误、服务 ready 状态与实时积压；若出现回归，先恢复旧 unit，此时状态行仍为空。状态行一旦插入，回退只能保留候选 binary 并维持 `disabled=true`，或停止/禁用识别 eventbus unit，保留 PG224 审计与已写入的状态/证据。**不得把 unit 恢复为裸 p2 并启动**：旧进程会无门控自动领取全部积压。恢复旧二进制之前须另行设计、审计并验证可靠的状态暂停方案。
+插入状态前应在 `disabled=true` 下短时核对进程不退出、覆盖识别、共享行为和常规识别线程的进度及错误、服务 ready 状态与实时积压；若出现回归，先恢复原 unit 参数，此时状态行仍为空。状态行一旦插入，应保留具备门控的 r72 并维持 `disabled=true`，或停止识别服务，保留 PG224 审计与已写入的状态/证据；不能启动不识别门控的历史二进制自动领取积压。
 
 ```sh
 proxy-sentinel router reset-recovery \
@@ -69,7 +71,7 @@ proxy-sentinel router reset-recovery \
 
 恢复后先维持门控，核对状态与审计。试运行前把这个 unit 的 `Restart` 临时设为 `no`，记录原值 `on-failure`；再移除 stream router 停用变量，设置 `PROXY_SENTINEL_STREAM_ROUTER_CLAIM_BUDGET=10` 并重启识别服务。该预算**仅对当前 PID 有效**，不是全局持久上限；任何手工或 systemd 重启都会重新获得 10 次领取。每次领取最多 100 条评分事件或 500 条纯弱 TTL；首轮最多约 1000 条评分事件、5000 条总事件。核对 `systemctl show -p MainPID,NRestarts,Restart` 和日志，PID 或 NRestarts 意外变化立即停单元，不能把多次运行算作一次预算。检查游标、处理耗时、PG WAL 与等待、CH 查询、实时发现积压和页面延迟，再按实测逐级增加预算并有意重启。成功领取之间至少暂停一秒；如果单批实际耗时较长，处理速度会更低。预算用尽后不能把线程退出当作“已追平”。恢复常规运行前撤销临时 `Restart=no`，再次核对实际属性。
 
-恢复前必须重新确认 10 月 31 日起点仍在索引保留期内。`short` 索引按 `toDateTime(indexed_at)+6 天` 保留，`toDateTime` 会截去微秒；首条 `short` 在 10 月 31 日 09:29:06Z 左右。恢复命令和消费线程均在游标对应整秒满 6 天时硬停，**即使 ClickHouse TTL 后台合并尚未实际删除行，也不继续读后续 evidence 行或推进游标**。届时记录未处理缺口与索引覆盖状态，不能把游标移到当前时间或另建 fresh cutover 来绕过检查。
+恢复前必须重新确认 10 月 31 日起点仍在索引保留期内。`short` 索引按 `toDateTime(indexed_at)+6 天` 保留，`toDateTime` 会截去微秒；首条 `short` 为 10 月 31 日 09:29:06.138538Z，对应 TTL 为 11 月 6 日 09:29:06Z。**恢复命令先按重置起点 10 月 31 日 09:14:01Z 作六天硬停检查，因此现场可执行截止时间更早，为 11 月 6 日 09:14:01Z（北京时间 17:14:01）。**消费线程也在游标对应整秒满 6 天时硬停，即使 ClickHouse TTL 后台合并尚未实际删除行，也不继续读后续 evidence 行或推进游标。届时记录未处理缺口与索引覆盖状态，不能把游标移到当前时间或另建 fresh cutover 来绕过检查。
 
 ## 现场跟踪
 
