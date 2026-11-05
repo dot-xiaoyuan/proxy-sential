@@ -470,11 +470,11 @@ func (s *DBStore) materializeMDNS(ctx context.Context, db passiveDiscoveryDB, ev
 		if err == nil {
 			switch recordType {
 			case "A", "AAAA":
-				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->>'ip'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, value)
+				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=$1,withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->>'ip'=$3 AND observed_at<=$1 AND NOT withdrawn AND valid_until>$1`, at, "passive:"+sensor+":"+iface, value)
 			case "SRV", "TXT":
-				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, recordName)
+				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=$1,withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1 AND NOT withdrawn AND valid_until>$1`, at, "passive:"+sensor+":"+iface, recordName)
 			case "PTR":
-				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=least(valid_until,$1),withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1`, at, "passive:"+sensor+":"+iface, value)
+				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=$1,withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1 AND NOT withdrawn AND valid_until>$1`, at, "passive:"+sensor+":"+iface, value)
 			}
 		}
 	} else {
