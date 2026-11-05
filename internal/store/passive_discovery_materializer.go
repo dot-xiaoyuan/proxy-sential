@@ -122,8 +122,13 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 	if limit <= 0 || limit > 5000 {
 		limit = 2000
 	}
+	cutoff, err := passiveDiscoveryReadCutoff(time.Now())
+	if err != nil {
+		return nil, cursor, err
+	}
 	stamp := "parseDateTime64BestEffort(" + chQuote(cursor.Timestamp.UTC().Format(time.RFC3339Nano)) + ",6)"
-	where := "sensor_id=" + chQuote(sensorID) + " AND timestamp>=" + stamp + " AND (" + chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "event_id", Value: chQuote(cursor.EventID)}}) + ")"
+	upper := "parseDateTime64BestEffort(" + chQuote(cutoff.UTC().Format(time.RFC3339Nano)) + ",6)"
+	where := "sensor_id=" + chQuote(sensorID) + " AND timestamp>=" + stamp + " AND timestamp<" + upper + " AND (" + chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "event_id", Value: chQuote(cursor.EventID)}}) + ")"
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
 		where += " AND source_event_type='dhcp'"
 	} else {
@@ -154,6 +159,18 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 		next.Timestamp, next.EventID = stamp.UTC(), row.EventID
 	}
 	return events, next, nil
+}
+
+func passiveDiscoveryReadCutoff(now time.Time) (time.Time, error) {
+	holdback := 2 * time.Minute
+	if raw := strings.TrimSpace(os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_HOLDBACK")); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil || parsed < 30*time.Second || parsed > 30*time.Minute {
+			return time.Time{}, fmt.Errorf("invalid passive discovery holdback %q: expected 30s..30m", raw)
+		}
+		holdback = parsed
+	}
+	return now.Add(-holdback), nil
 }
 
 func passiveString(m map[string]any, key string) string {
