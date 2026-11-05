@@ -13,7 +13,7 @@ func TestReadOnlyEndpointRegistrationRetainsGuardsAndAudit(t *testing.T) {
 	s.auth.enabled = true
 	s.auth.sessions["registration-admin"] = authSession{User: localUser{ID: "admin", Role: "admin"}, CSRFToken: "csrf", ExpiresAt: time.Now().Add(time.Hour)}
 	path := "/endpoints/mac:aa:bb:cc:dd:ee:01/registration"
-	body := `{"registration_status":"registered","owner_name":"登记回放","asset_tag":"asset-1","registration_note":"登记资料"}`
+	body := `{"registration_status":"registered","owner_name":"登记回放","asset_tag":"asset-1","registration_note":"登记资料","registration_details":{"name":"教室打印机","device_type":"printer","model":"M252n","serial_number":"SN-204","registered_ip":"10.152.41.41","location":"教学楼"}}`
 	request := func(method, path, body, cookie, csrf string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "/api/v1"+path, strings.NewReader(body))
 		if cookie != "" {
@@ -33,11 +33,17 @@ func TestReadOnlyEndpointRegistrationRetainsGuardsAndAudit(t *testing.T) {
 	if w := request(http.MethodPost, path, `{}`, "registration-admin", "csrf"); w.Code != 400 {
 		t.Fatalf("validation: %d %s", w.Code, w.Body.String())
 	}
-	if w := request(http.MethodPost, path, body, "registration-admin", "csrf"); w.Code != 200 || !strings.Contains(w.Body.String(), "asset-1") {
+	if w := request(http.MethodPost, path, body, "registration-admin", "csrf"); w.Code != 200 || !strings.Contains(w.Body.String(), "asset-1") || !strings.Contains(w.Body.String(), "教室打印机") {
 		t.Fatalf("registration: %d %s", w.Code, w.Body.String())
 	}
-	if w := request(http.MethodGet, "/endpoints/mac:aa:bb:cc:dd:ee:01/identity", "", "registration-admin", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "登记回放") {
+	if w := request(http.MethodGet, "/endpoints/mac:aa:bb:cc:dd:ee:01/identity", "", "registration-admin", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "登记回放") || !strings.Contains(w.Body.String(), "教室打印机") {
 		t.Fatalf("profile: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(http.MethodPost, path, `{"registration_status":"registered","asset_tag":"asset-1","registration_details":{"registered_ip":"invalid"}}`, "registration-admin", "csrf"); w.Code != 400 {
+		t.Fatalf("invalid registered IP: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(http.MethodPost, "/endpoints/mac:01:00:00:00:00:01/registration", body, "registration-admin", "csrf"); w.Code != 400 {
+		t.Fatalf("invalid multicast MAC: %d %s", w.Code, w.Body.String())
 	}
 	if w := request(http.MethodGet, "/audit-logs", "", "registration-admin", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "endpoints.registration.update") {
 		t.Fatalf("audit: %d %s", w.Code, w.Body.String())

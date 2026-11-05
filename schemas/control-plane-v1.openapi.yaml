@@ -7267,6 +7267,17 @@ components:
           format: date-time
         registration_update_by_id:
           type: string
+    EndpointRegistrationDetails:
+      type: object
+      description: Operator-confirmed local registration facts; registered_ip is not an observed current address.
+      properties:
+        name: { type: string, maxLength: 200 }
+        device_type: { type: string, maxLength: 200 }
+        manufacturer: { type: string, maxLength: 200 }
+        model: { type: string, maxLength: 200 }
+        serial_number: { type: string, maxLength: 200 }
+        registered_ip: { type: string, format: ip }
+        location: { type: string, maxLength: 200 }
     UpdateEndpointRegistrationRequest:
       type: object
       required: [registration_status]
@@ -7295,6 +7306,8 @@ components:
           type: string
         split_from_endpoint_id:
           type: string
+        registration_details:
+          $ref: "#/components/schemas/EndpointRegistrationDetails"
     SharedAccessEvaluation:
       type: object
       required: [state, ip, sensor_id, reasons]

@@ -31,7 +31,7 @@ function mockReads(observedPortResult: unknown = {
       connection_outcome: 'syn_ack_observed', last_seen: '2026-11-01T12:00:00Z', evidence_id: 'flow-443',
     }],
   },
-}, deviceRow = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }) {
+}, deviceRow: typeof device & {mac?:string;name?:string} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }) {
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/observed-ports?')) {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
@@ -49,6 +49,7 @@ function mockReads(observedPortResult: unknown = {
 
 function renderPanel() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  client.setQueryData(['session'],{user:{id:'admin',name:'管理员'},role:'admin',permissions:['endpoints:write'],csrf_token:'csrf'})
   render(<QueryClientProvider client={client}><MemoryRouter><PassiveDiscoveryPanel view="records" /></MemoryRouter></QueryClientProvider>)
 }
 
@@ -75,6 +76,23 @@ it('separates mirrored protocols from the DHCP message source', async () => {
   expect(summary).toHaveTextContent('LLDP')
   expect(summary).toHaveTextContent('DHCP 逐消息源已登记')
   expect(summary?.querySelectorAll('.ant-tag')).toHaveLength(4)
+})
+
+it('registers a MAC discovery as a local fact without treating its observed IP as registered', async () => {
+  mockReads({items:{}}, {...device, mac:'02:00:00:20:40:01', name:'镜像名称'})
+  renderPanel()
+  await screen.findByText('192.0.2.10')
+  fireEvent.click(screen.getByRole('button',{name:'查看证据'}))
+  fireEvent.click(await screen.findByRole('button',{name:'登记此设备'}))
+  expect(screen.getByText(/登记 IP 是资料字段/)).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox',{name:'资产编号'}),{target:{value:'204-ASSET-1'}})
+  fireEvent.click(screen.getByRole('button',{name:'保存登记'}))
+  await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).includes('/endpoints/mac%3A02%3A00%3A00%3A20%3A40%3A01/registration'))).toBe(true))
+  const [,options]=request.mock.calls.find(([path])=>String(path).includes('/endpoints/mac%3A02%3A00%3A00%3A20%3A40%3A01/registration'))!
+  const body=JSON.parse(options.body)
+  expect(body.registration_details.name).toBe('镜像名称')
+  expect(body.registration_details.registered_ip).toBeUndefined()
+  expect(body.asset_tag).toBe('204-ASSET-1')
 })
 
 it('loads one current IP port clue only when its evidence detail opens', async () => {

@@ -478,6 +478,17 @@ func applyEndpointRegistrationUpdate(endpoint *EndpointEntity, update EndpointRe
 	if endpoint.EntityRole == "" {
 		endpoint.EntityRole = "endpoint"
 	}
+	if endpoint.PrimaryMAC == "" {
+		endpoint.PrimaryMAC = registrationMAC(update.EndpointID)
+	}
+	if raw := registrationDetailsDocument(update); raw != nil {
+		if endpoint.Attributes == nil {
+			endpoint.Attributes = map[string]any{}
+		}
+		var details map[string]any
+		_ = json.Unmarshal(raw, &details)
+		endpoint.Attributes["manual_registration"] = details
+	}
 	ensureEndpointRegistrationDefaults(endpoint)
 	if update.RegistrationStatus != "" {
 		endpoint.RegistrationStatus = update.RegistrationStatus

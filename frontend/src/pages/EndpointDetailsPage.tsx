@@ -143,6 +143,7 @@ export function EndpointDetailsPage() {
   const updateRegistration = useUpdateEndpointRegistration();
 
   const profile = identity.data ?? fallbackEndpointProfile(endpointId);
+  const registeredDevice = manualRegistrationDetails(profile.endpoint.attributes)
   const canUpdateRegistration = can(session.data, "endpoints:write");
   const mergeStatus = Form.useWatch("merge_status", registrationForm);
   const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? "";
@@ -189,6 +190,7 @@ export function EndpointDetailsPage() {
       merge_status: endpoint.merge_status ?? "active",
       merged_into_endpoint_id: endpoint.merged_into_endpoint_id ?? "",
       split_from_endpoint_id: endpoint.split_from_endpoint_id ?? "",
+      registration_details: manualRegistrationDetails(endpoint.attributes),
     });
   }, [identity.data, registrationForm]);
 
@@ -310,6 +312,13 @@ export function EndpointDetailsPage() {
                 {profile.endpoint.owner_name && <Descriptions.Item label="责任人">{profile.endpoint.owner_name}</Descriptions.Item>}
                 {profile.endpoint.owner_department && <Descriptions.Item label="部门">{profile.endpoint.owner_department}</Descriptions.Item>}
                 {profile.endpoint.asset_tag && <Descriptions.Item label="资产编号">{profile.endpoint.asset_tag}</Descriptions.Item>}
+                {registeredDevice.name && <Descriptions.Item label="登记名称">{registeredDevice.name}</Descriptions.Item>}
+                {registeredDevice.device_type && <Descriptions.Item label="登记类型">{deviceTypeLabel(registeredDevice.device_type)}</Descriptions.Item>}
+                {registeredDevice.manufacturer && <Descriptions.Item label="登记厂商">{registeredDevice.manufacturer}</Descriptions.Item>}
+                {registeredDevice.model && <Descriptions.Item label="登记型号">{registeredDevice.model}</Descriptions.Item>}
+                {registeredDevice.serial_number && <Descriptions.Item label="序列号">{registeredDevice.serial_number}</Descriptions.Item>}
+                {registeredDevice.registered_ip && <Descriptions.Item label="登记 IP">{registeredDevice.registered_ip}（不代表当前地址）</Descriptions.Item>}
+                {registeredDevice.location && <Descriptions.Item label="登记位置">{registeredDevice.location}</Descriptions.Item>}
                 {ownershipClassText(profile.endpoint.ownership_class) && <Descriptions.Item label="终端归属">{ownershipClassText(profile.endpoint.ownership_class)}</Descriptions.Item>}
                 <Descriptions.Item label="合并状态">{mergeStatusText(profile.endpoint.merge_status)}</Descriptions.Item>
                 {profile.endpoint.registration_note && <Descriptions.Item label="备注">{profile.endpoint.registration_note}</Descriptions.Item>}
@@ -480,6 +489,15 @@ export function EndpointDetailsPage() {
               <Form.Item label="资产编号" name="asset_tag">
                 <Input placeholder="资产编号" />
               </Form.Item>
+              <Form.Item label="登记设备名" name={['registration_details','name']}><Input maxLength={200} /></Form.Item>
+              <Form.Item label="登记设备类型" name={['registration_details','device_type']}><Select allowClear options={[
+                {label:'打印机',value:'printer'},{label:'摄像头',value:'camera'},{label:'无线接入点',value:'access_point'},{label:'路由器',value:'router'},{label:'交换机',value:'switch'},{label:'移动终端',value:'mobile'},{label:'平板',value:'tablet'},{label:'其他哑终端',value:'iot'}
+              ]}/></Form.Item>
+              <Form.Item label="登记厂商" name={['registration_details','manufacturer']}><Input maxLength={200} /></Form.Item>
+              <Form.Item label="登记型号" name={['registration_details','model']}><Input maxLength={200} /></Form.Item>
+              <Form.Item label="序列号" name={['registration_details','serial_number']}><Input maxLength={200} /></Form.Item>
+              <Form.Item label="登记 IP" name={['registration_details','registered_ip']} extra="登记资料，不代表当前在线地址"><Input /></Form.Item>
+              <Form.Item label="登记位置" name={['registration_details','location']}><Input maxLength={200} /></Form.Item>
               <Form.Item
                 label="终端归属"
                 name="ownership_class"
@@ -620,6 +638,17 @@ const signalColumns: ColumnsType<DeviceSignal> = [
   },
   { title: "最近出现", dataIndex: "last_seen", width: 180, render: formatTime },
 ];
+
+function manualRegistrationDetails(attributes?: Record<string,unknown>) {
+  const raw=attributes?.manual_registration
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)) return {}
+  const details=raw as Record<string,unknown>
+  const result: Record<string,string>={}
+  for(const key of ['name','device_type','manufacturer','model','serial_number','registered_ip','location']) {
+    if(typeof details[key]==='string') result[key]=details[key]
+  }
+  return result
+}
 
 function registrationStatusText(status?: string) {
   switch (status) {

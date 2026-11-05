@@ -609,6 +609,9 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 		return stats, err
 	}
 	defer tx.Rollback()
+	if err := ensurePassiveARPCandidateEndpoints(ctx, tx, events, scope); err != nil {
+		return stats, err
+	}
 	coalescedMDNS := passiveCoalescedMDNSIndexes(events)
 	for index, event := range events {
 		stats.Processed++

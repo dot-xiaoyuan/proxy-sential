@@ -6963,6 +6963,17 @@ export interface components {
             registration_updated_at?: string;
             registration_update_by_id?: string;
         };
+        /** @description Operator-confirmed local registration facts; registered_ip is not an observed current address. */
+        EndpointRegistrationDetails: {
+            name?: string;
+            device_type?: string;
+            manufacturer?: string;
+            model?: string;
+            serial_number?: string;
+            /** Format: ip */
+            registered_ip?: string;
+            location?: string;
+        };
         UpdateEndpointRegistrationRequest: {
             /** @enum {string} */
             registration_status: "unregistered" | "registered" | "ignored" | "retired";
@@ -6980,6 +6991,7 @@ export interface components {
             merge_status: "active" | "merged" | "split";
             merged_into_endpoint_id?: string;
             split_from_endpoint_id?: string;
+            registration_details?: components["schemas"]["EndpointRegistrationDetails"];
         };
         SharedAccessEvaluation: {
             id?: string;

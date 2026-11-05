@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -260,16 +262,17 @@ type CreateLabelRequest struct {
 }
 
 type UpdateEndpointRegistrationRequest struct {
-	RegistrationStatus   string `json:"registration_status"`
-	OwnerAccount         string `json:"owner_account"`
-	OwnerName            string `json:"owner_name"`
-	OwnerDepartment      string `json:"owner_department"`
-	AssetTag             string `json:"asset_tag"`
-	OwnershipClass       string `json:"ownership_class"`
-	RegistrationNote     string `json:"registration_note"`
-	MergeStatus          string `json:"merge_status"`
-	MergedIntoEndpointID string `json:"merged_into_endpoint_id"`
-	SplitFromEndpointID  string `json:"split_from_endpoint_id"`
+	RegistrationStatus   string                             `json:"registration_status"`
+	OwnerAccount         string                             `json:"owner_account"`
+	OwnerName            string                             `json:"owner_name"`
+	OwnerDepartment      string                             `json:"owner_department"`
+	AssetTag             string                             `json:"asset_tag"`
+	OwnershipClass       string                             `json:"ownership_class"`
+	RegistrationNote     string                             `json:"registration_note"`
+	MergeStatus          string                             `json:"merge_status"`
+	MergedIntoEndpointID string                             `json:"merged_into_endpoint_id"`
+	SplitFromEndpointID  string                             `json:"split_from_endpoint_id"`
+	RegistrationDetails  *store.EndpointRegistrationDetails `json:"registration_details,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -1804,6 +1807,7 @@ func (s *Server) handleEndpointRegistration(w http.ResponseWriter, r *http.Reque
 		SplitFromEndpointID:   strings.TrimSpace(request.SplitFromEndpointID),
 		RegistrationUpdatedBy: sessionFromContext(r.Context()).User.ID,
 		RegistrationUpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		RegistrationDetails:   request.RegistrationDetails,
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
@@ -1845,6 +1849,12 @@ func validateEndpointRegistrationRequest(endpointID string, request UpdateEndpoi
 	if strings.TrimSpace(endpointID) == "" {
 		return fmt.Errorf("endpoint_id is required")
 	}
+	if strings.HasPrefix(endpointID, "mac:") {
+		mac, err := net.ParseMAC(strings.TrimPrefix(endpointID, "mac:"))
+		if err != nil || len(mac) != 6 || mac[0]&1 != 0 || endpointID != "mac:"+mac.String() || mac.String() == "00:00:00:00:00:00" {
+			return fmt.Errorf("endpoint_id contains an invalid device MAC")
+		}
+	}
 	switch request.RegistrationStatus {
 	case "unregistered", "registered", "ignored", "retired":
 	default:
@@ -1868,6 +1878,22 @@ func validateEndpointRegistrationRequest(endpointID string, request UpdateEndpoi
 	}
 	if strings.TrimSpace(request.MergedIntoEndpointID) == strings.TrimSpace(endpointID) {
 		return fmt.Errorf("merged_into_endpoint_id cannot equal endpoint_id")
+	}
+	if details := request.RegistrationDetails; details != nil {
+		for field, value := range map[string]string{
+			"name": details.Name, "device_type": details.DeviceType,
+			"manufacturer": details.Manufacturer, "model": details.Model,
+			"serial_number": details.SerialNumber, "location": details.Location,
+		} {
+			if len([]rune(strings.TrimSpace(value))) > 200 {
+				return fmt.Errorf("registration_details.%s exceeds 200 characters", field)
+			}
+		}
+		if ip := strings.TrimSpace(details.RegisteredIP); ip != "" {
+			if _, err := netip.ParseAddr(ip); err != nil {
+				return fmt.Errorf("registration_details.registered_ip is invalid")
+			}
+		}
 	}
 	return nil
 }
