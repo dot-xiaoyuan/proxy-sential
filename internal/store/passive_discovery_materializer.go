@@ -579,7 +579,11 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscover
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_entities WHERE endpoint_id=$1 AND entity_role='endpoint')`, endpointID).Scan(&exists); err != nil || !exists {
 		return err
 	}
-	if o.IP != "" {
+	// ARP's sender hardware address and sender protocol address come from the
+	// same frame. This observation can link to an existing endpoint by that
+	// exact MAC without a DHCP lease. Other protocols still need the lease
+	// guard before their IP/MAC claim may link an endpoint.
+	if o.IP != "" && o.Origin != "arp" {
 		var leaseEndpoint string
 		err := db.QueryRowContext(ctx, `SELECT endpoint_id FROM device_address_leases WHERE sensor_id=$1 AND campus_id=$2 AND ip=$3::inet AND action='ack' AND observed_at<=$4 AND valid_until>$4 ORDER BY observed_at DESC,event_id DESC LIMIT 1`, o.Node, passiveString(o.Evidence.Subject, "campus_id"), o.IP, o.ObservedAt).Scan(&leaseEndpoint)
 		if err == sql.ErrNoRows || leaseEndpoint != endpointID {
@@ -589,7 +593,11 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscover
 			return err
 		}
 	}
-	basis, _ := json.Marshal(map[string]any{"kind": "passive_event_time_identity", "sensor": o.Node, "ip": o.IP, "mac": mac})
+	kind := "passive_event_time_identity"
+	if o.Origin == "arp" {
+		kind = "passive_arp_sender_identity"
+	}
+	basis, _ := json.Marshal(map[string]any{"kind": kind, "sensor": o.Node, "ip": o.IP, "mac": mac, "origin": o.Origin})
 	_, err := db.ExecContext(ctx, `INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis) VALUES($1,$2,$3,$4) ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis`, o.ID, endpointID, o.ValidUntil, basis)
 	return err
 }
