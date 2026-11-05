@@ -842,6 +842,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDPIIP(w, r, strings.TrimPrefix(path, "/dpi/ips/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/accounts/"):
 		s.handleAccount(w, r, strings.TrimPrefix(path, "/accounts/"))
+	case r.Method == http.MethodGet && (path == "/endpoints/registrations" || path == "/endpoints/registrations/metadata"):
+		s.handleEndpointRegistrationCatalog(w, r, path == "/endpoints/registrations/metadata")
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/endpoints/"):
 		s.handleEndpoint(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/endpoints/"):

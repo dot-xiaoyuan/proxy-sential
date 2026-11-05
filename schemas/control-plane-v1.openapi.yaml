@@ -2964,6 +2964,51 @@ paths:
                         parser_version: {type: string}
                         processing_latency_ms: {type: integer, minimum: 0, description: 标准事件入库后进入队列至首次名称处理的耗时，历史回放不填充}
         '400': {description: '分页或终端参数无效'}
+  /endpoints/registrations:
+    get:
+      operationId: listEndpointRegistrations
+      description: Local registration ledger of operator-maintained current facts. Passive-only candidates are excluded. Registered IP is never an observed online address. Requires identity:read.
+      parameters:
+        - { name: mac, in: query, description: Exact device MAC lookup; accepted MAC formats normalize to lower-case colon notation., schema: { type: string } }
+        - { name: search, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: status, in: query, schema: { type: string, enum: [registered, unregistered, ignored, retired] } }
+        - { name: type, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: ownership_class, in: query, schema: { type: string, enum: [unknown, byod, school_asset, public_terminal, infrastructure] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 4096 } }
+      responses:
+        "200":
+          description: Bounded registration page ordered by stable endpoint identity; exact totals are read separately.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EndpointRegistrationPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { description: Registration storage unavailable. }
+  /endpoints/registrations/metadata:
+    get:
+      operationId: getEndpointRegistrationMetadata
+      description: Exact current registration count, independent from list pagination. Requires identity:read.
+      parameters:
+        - { name: mac, in: query, description: Exact device MAC lookup., schema: { type: string } }
+        - { name: search, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: status, in: query, schema: { type: string, enum: [registered, unregistered, ignored, retired] } }
+        - { name: type, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: ownership_class, in: query, schema: { type: string, enum: [unknown, byod, school_asset, public_terminal, infrastructure] } }
+      responses:
+        "200":
+          description: Count of current operator-maintained registration records matching filters.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, as_of]
+                properties:
+                  total: { type: integer, minimum: 0 }
+                  as_of: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { description: Registration storage unavailable. }
   /endpoints/{endpoint_id}/identity:
     get:
       operationId: getEndpointIdentity
@@ -7267,6 +7312,37 @@ components:
           format: date-time
         registration_update_by_id:
           type: string
+    EndpointRegistrationRecord:
+      type: object
+      required: [endpoint_id, primary_mac, registration_status, owner_account, owner_name, owner_department, asset_tag, ownership_class, registration_note, registration_updated_at, registration_updated_by, registered_at, last_seen, merge_status, merged_into_endpoint_id, split_from_endpoint_id, source, registration_details]
+      properties:
+        endpoint_id: { type: string }
+        primary_mac: { type: string }
+        registration_status: { type: string, enum: [unregistered, registered, ignored, retired] }
+        owner_account: { type: string }
+        owner_name: { type: string }
+        owner_department: { type: string }
+        asset_tag: { type: string }
+        ownership_class: { type: string, enum: [unknown, byod, school_asset, public_terminal, infrastructure] }
+        registration_note: { type: string }
+        registration_updated_at: { type: string }
+        registration_updated_by: { type: string }
+        registered_at: { type: string }
+        last_seen: { type: string, description: Last passive observation if present; blank for registration-only devices. }
+        merge_status: { type: string, enum: [active, merged, split] }
+        merged_into_endpoint_id: { type: string }
+        split_from_endpoint_id: { type: string }
+        source: { type: string, enum: [local] }
+        registration_details: { $ref: "#/components/schemas/EndpointRegistrationDetails" }
+    EndpointRegistrationPage:
+      type: object
+      required: [items, next_cursor, has_more, limit, as_of]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/EndpointRegistrationRecord" } }
+        next_cursor: { type: string }
+        has_more: { type: boolean }
+        limit: { type: integer, minimum: 1, maximum: 200 }
+        as_of: { type: string, format: date-time }
     EndpointRegistrationDetails:
       type: object
       description: Operator-confirmed local registration facts; registered_ip is not an observed current address.

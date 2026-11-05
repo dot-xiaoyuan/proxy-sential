@@ -5034,6 +5034,60 @@ pre.wrap-code {
   gap: 12px;
   margin: 14px 0;
 }
+
+/* 204 device discovery and the independent registration ledger. */
+.terminal-workspace { display: flex; flex-direction: column; gap: 16px; }
+.terminal-workspace-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; padding: 4px 0; }
+.terminal-workspace-header h3.ant-typography { margin: 6px 0 8px; font-size: 24px; font-weight: 650; }
+.terminal-eyebrow { color: #64748b; font-size: 12px; }
+.terminal-header-actions, .terminal-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.terminal-header-actions button, .terminal-row-actions button, .terminal-type-shortcuts button { white-space: nowrap; flex-shrink: 0; }
+.terminal-workspace-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0; }
+.terminal-workspace-nav .ant-segmented { padding: 4px; background: #e2e8f0; }
+.terminal-workspace-nav .ant-segmented-item-selected { color: #1e40af; font-weight: 600; background: #fff; }
+.terminal-total { display: flex; align-items: baseline; gap: 10px; color: #64748b; font-size: 13px; }
+.terminal-total strong { font-size: 24px; color: #0f172a; font-variant-numeric: tabular-nums; }
+.terminal-type-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; }
+.terminal-type-shortcuts .ant-btn { border-radius: 6px; }
+.terminal-page-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; color: #64748b; font-size: 13px; }
+.terminal-page-summary strong { color: #334155; margin-left: 4px; }
+.terminal-identity { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.terminal-identity > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.terminal-device-icon { display: inline-flex; justify-content: center; align-items: center; flex-shrink: 0; width: 42px; height: 42px; border-radius: 8px; background: #eef2ff; color: #4338ca; font-size: 24px; }
+.terminal-device-icon-printer, .terminal-device-icon-scanner { background: #ecfdf5; color: #047857; }
+.terminal-device-icon-camera, .terminal-device-icon-recorder { background: #fff7ed; color: #b45309; }
+.terminal-device-icon-access_point, .terminal-device-icon-router, .terminal-device-icon-switch, .terminal-device-icon-gateway { background: #eff6ff; color: #1d4ed8; }
+.terminal-device-icon-mobile, .terminal-device-icon-tablet { background: #fdf4ff; color: #a21caf; }
+.terminal-device-icon-generic { background: #f1f5f9; color: #64748b; }
+.terminal-identity .terminal-device-link.ant-btn { padding: 0; height: auto; min-height: 20px; text-align: left; justify-content: flex-start; font-weight: 600; color: #0f172a; white-space: normal; }
+.terminal-device-link > span { white-space: normal; overflow-wrap: anywhere; }
+.terminal-mac { font-family: ui-monospace, monospace; color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
+.terminal-kind-caption { color: #64748b; font-size: 12px; }
+.terminal-address, .terminal-vendor { display: flex; flex-direction: column; gap: 5px; overflow-wrap: anywhere; }
+.terminal-address > span:first-child { font-family: ui-monospace, monospace; }
+.terminal-row-actions .ant-btn { padding: 0 3px; }
+.terminal-diagnostics { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.terminal-diagnostics > summary { padding: 14px 20px; font-size: 13px; color: #475569; cursor: pointer; }
+.terminal-diagnostics .surface { border: 0; box-shadow: none; }
+.terminal-registration-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 18px; }
+.terminal-registration-form .ant-form-item { min-width: 0; margin-bottom: 18px; }
+.terminal-registration-form .ant-form-item:last-child { grid-column: 1/-1; }
+.terminal-workspace .center-list-surface { margin-top: 0; }
+.terminal-workspace .app-server-pagination { position: static; z-index: auto; }
+@media (max-width: 559px) {
+  .terminal-workspace { gap: 12px; }
+  .terminal-workspace-header { gap: 14px; }
+  .terminal-workspace-header h3.ant-typography { font-size: 21px; }
+  .terminal-header-actions { width: 100%; }
+  .terminal-header-actions .ant-btn { flex: 1 0 0; }
+  .terminal-type-shortcuts { gap: 6px; }
+  .terminal-type-shortcuts .ant-btn { padding-inline: 10px; }
+  .terminal-total strong { font-size: 20px; }
+  .terminal-page-summary { gap: 8px 14px; }
+  .terminal-registration-form { grid-template-columns: 1fr; }
+  .terminal-device-icon { width: 38px; height: 38px; font-size: 22px; }
+  .terminal-workspace .passive-ledger-table .ant-table-cell-fix-end { position: static !important; z-index: auto; }
+}
 .discovery-metric-card {
   display: grid;
   grid-template-columns: auto 1fr;

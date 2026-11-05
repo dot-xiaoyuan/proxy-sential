@@ -39,7 +39,9 @@ func enrichDiscoveryRecognition(ctx context.Context, db *sql.DB, page map[string
 	// MACs are lower-case hex with colons, so a text array literal is safe and
 	// avoids depending on a driver-specific slice encoding.
 	array := "{" + strings.Join(macs, ",") + "}"
-	rows, err := db.QueryContext(ctx, `SELECT lower(primary_mac),os_family,role,brand,model,confidence,rule_version
+	rows, err := db.QueryContext(ctx, `SELECT lower(primary_mac),os_family,
+CASE WHEN CASE WHEN jsonb_array_length(coalesce(summary->'conflict_dimensions','[]'::jsonb))>0 THEN summary->'conflict_dimensions' ? 'device_type' ELSE conflict END THEN '' ELSE role END,
+brand,model,coalesce(NULLIF(summary->>'device_type_confidence','')::double precision,confidence,0),rule_version
 FROM endpoint_recognition_summary
 WHERE lower(primary_mac)=ANY($1::text[])
   AND (os_family<>'' OR role<>'' OR brand<>'' OR model<>'')`, array)
@@ -118,7 +120,13 @@ func applyDiscoveryRecognition(items []map[string]any, positions map[string][]in
 			if index < 0 || index >= len(items) {
 				continue
 			}
-			items[index]["recognition"] = item
+			decoration := item
+			// Discovery explicitly distinguishes current conclusions from conflicted
+			// or expired evidence. A summary decoration must not override that state.
+			if state, _ := items[index]["classification_status"].(string); state == "conflict" || state == "expired" {
+				decoration.DeviceType = ""
+			}
+			items[index]["recognition"] = decoration
 		}
 	}
 }

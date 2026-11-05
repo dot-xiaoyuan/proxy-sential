@@ -96,3 +96,14 @@ func TestEnrichDiscoveryRecognitionKeepsPageOnJoinFailure(t *testing.T) {
 		t.Fatal("failed join must keep the original item")
 	}
 }
+
+func TestDiscoveryRecognitionDoesNotOverrideConflictOrExpiry(t *testing.T) {
+	for _, state := range []string{"conflict", "expired"} {
+		items := []map[string]any{{"mac": "00:11:22:33:44:55", "classification_status": state}}
+		applyDiscoveryRecognition(items, map[string][]int{"00:11:22:33:44:55": {0}}, map[string]discoveryRecognition{"00:11:22:33:44:55": {DeviceType: "printer", Confidence: .95, OSFamily: "Linux"}})
+		got := items[0]["recognition"].(discoveryRecognition)
+		if got.DeviceType != "" || got.OSFamily != "Linux" {
+			t.Fatalf("%s: %+v", state, got)
+		}
+	}
+}

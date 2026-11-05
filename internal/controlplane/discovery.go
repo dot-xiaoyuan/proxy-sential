@@ -94,7 +94,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	}
 	switch {
 	case path == "/discovery/types" && r.Method == "GET":
-		writeJSON(w, 200, map[string]any{"version": discovery.IoTRuleVersion, "items": discovery.IoTTypes})
+		writeJSON(w, 200, map[string]any{"version": discovery.IoTRuleVersion, "items": discovery.DeviceTypes})
 	case path == "/discovery/statistics" && r.Method == "GET":
 		if !repo.PipelineV2 {
 			writeError(w, 409, "pipeline_disabled", "发现统计路径未启用")
@@ -443,7 +443,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		if err != nil {
 			if strings.Contains(err.Error(), "cursor") {
 				writeError(w, 400, "bad_cursor", err.Error())
-			} else if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") {
+			} else if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") {
 				writeError(w, 400, "bad_filter", err.Error())
 			} else {
 				writeError(w, 500, "discovery_read", "读取发现结果失败")

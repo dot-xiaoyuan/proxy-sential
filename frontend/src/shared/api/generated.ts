@@ -2919,6 +2919,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/endpoints/registrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Local registration ledger of operator-maintained current facts. Passive-only candidates are excluded. Registered IP is never an observed online address. Requires identity:read. */
+        get: operations["listEndpointRegistrations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/registrations/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Exact current registration count, independent from list pagination. Requires identity:read. */
+        get: operations["getEndpointRegistrationMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/endpoints/{endpoint_id}/identity": {
         parameters: {
             query?: never;
@@ -6962,6 +6996,39 @@ export interface components {
             /** Format: date-time */
             registration_updated_at?: string;
             registration_update_by_id?: string;
+        };
+        EndpointRegistrationRecord: {
+            endpoint_id: string;
+            primary_mac: string;
+            /** @enum {string} */
+            registration_status: "unregistered" | "registered" | "ignored" | "retired";
+            owner_account: string;
+            owner_name: string;
+            owner_department: string;
+            asset_tag: string;
+            /** @enum {string} */
+            ownership_class: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
+            registration_note: string;
+            registration_updated_at: string;
+            registration_updated_by: string;
+            registered_at: string;
+            /** @description Last passive observation if present; blank for registration-only devices. */
+            last_seen: string;
+            /** @enum {string} */
+            merge_status: "active" | "merged" | "split";
+            merged_into_endpoint_id: string;
+            split_from_endpoint_id: string;
+            /** @enum {string} */
+            source: "local";
+            registration_details: components["schemas"]["EndpointRegistrationDetails"];
+        };
+        EndpointRegistrationPage: {
+            items: components["schemas"]["EndpointRegistrationRecord"][];
+            next_cursor: string;
+            has_more: boolean;
+            limit: number;
+            /** Format: date-time */
+            as_of: string;
         };
         /** @description Operator-confirmed local registration facts; registered_ip is not an observed current address. */
         EndpointRegistrationDetails: {
@@ -13093,6 +13160,84 @@ export interface operations {
             };
             /** @description 分页或终端参数无效 */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listEndpointRegistrations: {
+        parameters: {
+            query?: {
+                /** @description Exact device MAC lookup; accepted MAC formats normalize to lower-case colon notation. */
+                mac?: string;
+                search?: string;
+                status?: "registered" | "unregistered" | "ignored" | "retired";
+                type?: string;
+                ownership_class?: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded registration page ordered by stable endpoint identity; exact totals are read separately. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointRegistrationPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            /** @description Registration storage unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getEndpointRegistrationMetadata: {
+        parameters: {
+            query?: {
+                /** @description Exact device MAC lookup. */
+                mac?: string;
+                search?: string;
+                status?: "registered" | "unregistered" | "ignored" | "retired";
+                type?: string;
+                ownership_class?: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Count of current operator-maintained registration records matching filters. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        total: number;
+                        /** Format: date-time */
+                        as_of: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            /** @description Registration storage unavailable. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

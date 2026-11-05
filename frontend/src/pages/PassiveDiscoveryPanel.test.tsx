@@ -48,10 +48,10 @@ function mockReads(observedPortResult: unknown = {
   })
 }
 
-function renderPanel() {
+function renderPanel(initialEntries = ["/"]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.setQueryData(['session'],{user:{id:'admin',name:'管理员'},role:'admin',permissions:['endpoints:write'],csrf_token:'csrf'})
-  render(<QueryClientProvider client={client}><MemoryRouter><PassiveDiscoveryPanel view="records" /></MemoryRouter></QueryClientProvider>)
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={initialEntries}><PassiveDiscoveryPanel view="records" /></MemoryRouter></QueryClientProvider>)
 }
 
 function observedCalls() {
@@ -64,9 +64,9 @@ it('shows the independent identity total and recognized type when the discovery 
   mockReads({items:{}}, {...device,mac:'02:00:00:20:40:01',recognition:{device_type:'access_point',confidence:0.9}}, undefined, false)
   renderPanel()
   const summary = await screen.findByLabelText('发现设备摘要')
-  await waitFor(()=>expect(summary).toHaveTextContent('终端身份总数1458'))
-  expect(summary).toHaveTextContent('本页明确类型1')
-  expect(await screen.findByText('无线接入点')).toBeVisible()
+  await waitFor(()=>expect(screen.getByText('1458')).toBeVisible())
+  expect(summary).toHaveTextContent('本页明确类型 1')
+  expect((await screen.findAllByText('无线接入点'))[0]).toBeVisible()
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
 })
 
@@ -81,35 +81,32 @@ it('counts recent observations beyond the configured five-minute discovery holdb
   mockReads({items:{}}, {...device,last_seen:new Date(Date.now()-7*60_000).toISOString()})
   renderPanel()
   const summary=await screen.findByLabelText('发现设备摘要')
-  await waitFor(()=>expect(summary).toHaveTextContent('本页近15分钟观测1'))
+  await waitFor(()=>expect(summary).toHaveTextContent('本页近15分钟观测 1'))
 })
 
-it('separates mirrored protocols from the DHCP message source', async () => {
-  mockReads(undefined, device, { enabled: true, items: [
-    { protocol: 'arp', enabled: true },
-    { protocol: 'dns_sd', enabled: true },
-    { protocol: 'ssdp', enabled: true },
-    { protocol: 'lldp', enabled: true },
-    { protocol: 'dhcp', enabled: false, message_source_epoch: 'dhcp-message-fresh' },
-  ] })
-  renderPanel()
-  const heading = await screen.findByText('镜像采集协议')
-  const summary = heading.closest('.discovery-protocol-summary')
-  expect(summary).toHaveTextContent('ARP')
-  expect(summary).toHaveTextContent('DNS-SD')
-  expect(summary).toHaveTextContent('SSDP')
-  expect(summary).toHaveTextContent('LLDP')
-  expect(summary).toHaveTextContent('DHCP 逐消息源已登记')
-  expect(summary?.querySelectorAll('.ant-tag')).toHaveLength(4)
+it('keeps type filters visible and collection diagnostics behind a disclosure', async () => {
+  mockReads();renderPanel()
+  expect(screen.getByRole('combobox',{name:'设备类型'})).toBeVisible()
+  expect(screen.getByText('采集与识别状态').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByRole('button',{name:'新增登记'})).toBeVisible()
+})
+
+it('starts an independent registration without requiring a mirrored device', async()=>{
+  mockReads();renderPanel()
+  fireEvent.click(screen.getByRole('button',{name:'新增登记'}))
+  fireEvent.change(screen.getByRole('textbox',{name:'MAC 地址'}),{target:{value:'00:11:22:33:44:55'}})
+  fireEvent.change(screen.getByRole('textbox',{name:'资产编号'}),{target:{value:'ASSET-204'}})
+  fireEvent.click(screen.getByRole('button',{name:'保存登记'}))
+  await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).includes('/endpoints/mac%3A00%3A11%3A22%3A33%3A44%3A55/registration'))).toBe(true))
 })
 
 it('registers a MAC discovery as a local fact without treating its observed IP as registered', async () => {
   mockReads({items:{}}, {...device, mac:'02:00:00:20:40:01', name:'镜像名称'})
   renderPanel()
-  await screen.findByText('192.0.2.10')
-  fireEvent.click(screen.getByRole('button',{name:'查看证据'}))
+  await screen.findAllByText('192.0.2.10')
+  fireEvent.click(screen.getByRole('button',{name:'查看详情'}))
   fireEvent.click(await screen.findByRole('button',{name:'登记此设备'}))
-  expect(screen.getByText(/登记 IP 是资料字段/)).toBeInTheDocument()
+  expect(await screen.findByText(/登记 IP 是资料字段/)).toBeInTheDocument()
   fireEvent.change(screen.getByRole('textbox',{name:'资产编号'}),{target:{value:'204-ASSET-1'}})
   fireEvent.click(screen.getByRole('button',{name:'保存登记'}))
   await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).includes('/endpoints/mac%3A02%3A00%3A00%3A20%3A40%3A01/registration'))).toBe(true))
@@ -123,10 +120,10 @@ it('registers a MAC discovery as a local fact without treating its observed IP a
 it('loads one current IP port clue only when its evidence detail opens', async () => {
   mockReads()
   renderPanel()
-  await screen.findByText('192.0.2.10')
+  await screen.findAllByText('192.0.2.10')
   expect(observedCalls()).toHaveLength(0)
 
-  fireEvent.click(screen.getByRole('button', { name: '查看证据' }))
+  fireEvent.click(screen.getByRole('button', { name: '查看详情' }))
   await waitFor(() => expect(observedCalls()).toHaveLength(1))
   const targets = new URLSearchParams(observedCalls()[0].split('?')[1]).get('targets')
   expect(targets).toBe('sensor-a|192.0.2.10')
@@ -137,10 +134,10 @@ it('loads one current IP port clue only when its evidence detail opens', async (
 it('shows a detail error when the selected IP port read fails', async () => {
   mockReads(new Error('read failed'))
   renderPanel()
-  await screen.findByText('192.0.2.10')
+  await screen.findAllByText('192.0.2.10')
   expect(screen.queryByText('读取目标端口线索失败')).not.toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: '查看证据' }))
+  fireEvent.click(screen.getByRole('button', { name: '查看详情' }))
   expect(await screen.findByText('读取目标端口线索失败')).toBeInTheDocument()
   expect(observedCalls()).toHaveLength(1)
 })
@@ -148,8 +145,8 @@ it('shows a detail error when the selected IP port read fails', async () => {
 it('does not query a historical address when the device has no current address', async () => {
   mockReads({ items: {} }, { ...device, current_addresses: [] })
   renderPanel()
-  await screen.findByText('最后观测地址 · 192.0.2.12')
-  fireEvent.click(screen.getByRole('button', { name: '查看证据' }))
+  await screen.findByText('最后地址 192.0.2.12')
+  fireEvent.click(screen.getByRole('button', { name: '查看详情' }))
   expect(observedCalls()).toHaveLength(0)
   expect(screen.queryByText('正在读取当前 IP 近 2 小时目标端口线索')).not.toBeInTheDocument()
 })
@@ -157,8 +154,44 @@ it('does not query a historical address when the device has no current address',
 it('distinguishes an empty current IP port read from a failed read', async () => {
   mockReads({ items: {} })
   renderPanel()
-  await screen.findByText('192.0.2.10')
-  fireEvent.click(screen.getByRole('button', { name: '查看证据' }))
+  await screen.findAllByText('192.0.2.10')
+  fireEvent.click(screen.getByRole('button', { name: '查看详情' }))
   expect(await screen.findByText('当前 IP 近 2 小时的镜像端口聚合中无匹配记录')).toBeInTheDocument()
   expect(screen.queryByText('读取目标端口线索失败')).not.toBeInTheDocument()
+})
+
+it('switches shortcut types atomically and clears the dumb capability filter', async()=>{
+  mockReads();renderPanel(['/?discovery_capability=dumb'])
+  fireEvent.click(screen.getByRole('button',{name:'无线 AP'}))
+  await waitFor(()=>{
+    const paths=request.mock.calls.map(([p])=>String(p)).filter(p=>p.startsWith('/discovery/devices?'))
+    const query=new URLSearchParams(paths.at(-1)!.split('?')[1])
+    expect(query.get('type')).toBe('access_point')
+    expect(query.has('capability')).toBe(false)
+  })
+})
+
+it('does not count expired or conflicting recognition as an explicit current type', async()=>{
+  mockReads({items:{}},{...device,classification_status:'expired',recognition:{device_type:'access_point',confidence:.95}})
+  renderPanel()
+  await screen.findAllByText('192.0.2.10')
+  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
+})
+
+it('preserves owner account and identity merge relations when editing the registration ledger',async()=>{
+  mockReads()
+  const read=request.getMockImplementation()!
+  const row={endpoint_id:'mac:00:11:22:33:44:55',primary_mac:'00:11:22:33:44:55',registration_status:'registered',owner_account:'asset-owner',owner_name:'',owner_department:'实验室',asset_tag:'',ownership_class:'school_asset',registration_note:'核验记录',registration_details:{name:'实验室打印机',device_type:'printer',registered_ip:'192.0.2.20'},merge_status:'merged',merged_into_endpoint_id:'mac:00:11:22:33:44:66',split_from_endpoint_id:'',registration_updated_at:'2026-11-05T12:00:00Z'}
+  request.mockImplementation((path:string,options?:unknown)=>path.startsWith('/endpoints/registrations/metadata')?Promise.resolve({total:1}):path.startsWith('/endpoints/registrations?')?Promise.resolve({items:[row],has_more:false}):read(path,options))
+  renderPanel(['/?discovery_view=registrations'])
+  fireEvent.click(await screen.findByRole('button',{name:'编辑登记'}))
+  expect(screen.getByRole('textbox',{name:'责任人账号'})).toHaveValue('asset-owner')
+  fireEvent.change(screen.getByRole('textbox',{name:'部门'}),{target:{value:'信息中心'}})
+  fireEvent.click(screen.getByRole('button',{name:'保存登记'}))
+  await waitFor(()=>{
+    const call=request.mock.calls.find(([path,options])=>String(path).includes('/registration')&&(options as {method?:string})?.method==='POST')
+    expect(call).toBeDefined()
+    const payload=JSON.parse((call![1] as {body:string}).body)
+    expect(payload).toMatchObject({owner_account:'asset-owner',owner_department:'信息中心',merge_status:'merged',merged_into_endpoint_id:row.merged_into_endpoint_id,registration_details:row.registration_details})
+  })
 })

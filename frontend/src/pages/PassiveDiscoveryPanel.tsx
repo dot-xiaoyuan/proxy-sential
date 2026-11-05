@@ -6,7 +6,7 @@ import {
 import { Notice as Alert } from '../shared/ui/Notice'
 import { useEffect,
   useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button,
   Collapse,
   Form,
@@ -14,17 +14,21 @@ import { Button,
   Modal,
   message,
   Select,
+  Segmented,
   Space,
   Tag,
   Typography,
 } from 'antd'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ApiOutlined, CheckCircleOutlined, ClusterOutlined, DesktopOutlined, MobileOutlined, PrinterOutlined, ReloadOutlined, TagsOutlined, VideoCameraOutlined } from '@ant-design/icons'
+import { useSearchParams } from 'react-router-dom'
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
 import type { components } from '../shared/api/generated'
-import { DeviceAddress } from '../entities/device/DeviceAddress'
+import { DiscoveryDeviceIcon } from '../entities/device/DiscoveryDeviceIcon'
+import { BrandLogo } from '../entities/device/BrandLogo'
+import { resolveDeviceBrand } from '../entities/device/brandMatcher'
+import { TerminalRegistrationPanel, type RegistrationRow } from './TerminalRegistrationPanel'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
 import { flowBelongsToDevice, serviceBelongsToDevice, signalAddressMatchesDevice } from './discoveryServiceAttribution'
@@ -63,14 +67,6 @@ type HandshakeClue = components['schemas']['DiscoveryHandshakeClue']
 const protocols: Record<string,string> = { dhcp:'DHCP', dhcpv6:'DHCPv6', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
 const capabilities: Record<string,string> = { printing:'打印', scanning:'扫描', casting:'投屏', network_video:'网络视频', media_rendering:'媒体播放' }
 const states: Record<string,string> = { identified:'证据有效', expired:'证据已过期', conflict:'类型证据冲突', candidate:'发现线索' }
-function terminalIcon(item: Device) {
-  const caps = item.capabilities ?? []
-  if (caps.includes('printing') || caps.includes('scanning')) return <PrinterOutlined />
-  if (caps.includes('casting') || caps.includes('media_rendering') || caps.includes('network_video')) return <VideoCameraOutlined />
-  const recognizedType=item.device_type||((item.recognition?.confidence??0)>=.8?item.recognition?.device_type:'')
-  if (recognizedType === 'mobile' || recognizedType === 'tablet') return <MobileOutlined />
-  return <DesktopOutlined />
-}
 function osClue(item: Device) {
   const name = (item.name || '').toLowerCase()
   if (!name) return ''
@@ -97,7 +93,9 @@ function dumbTerminal(item: Device) {
 }
 
 function typeLabel(item:Device, types:Record<string,string>, signal?:PassiveSignal) {
-  const observed=item.device_type||item.last_device_type
+  if(item.classification_status==='conflict')return '类型证据冲突'
+  if(item.classification_status==='expired')return item.last_device_type?`${types[item.last_device_type]??deviceTypeLabel(item.last_device_type)} · 历史类型`:''
+  const observed=item.device_type
   if(observed)return types[observed]??deviceTypeLabel(observed)
   const recognized=item.recognition?.device_type
   if(recognized&&((item.recognition?.confidence??0)>=.8))return types[recognized]??deviceTypeLabel(recognized)
@@ -110,7 +108,9 @@ function typeLabel(item:Device, types:Record<string,string>, signal?:PassiveSign
 
 export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const [params,setParams] = useSearchParams()
-  const navigate=useNavigate()
+  const queryClient=useQueryClient()
+  const ledgerView=params.get('discovery_view')==='registrations'
+  const setView=(value:string)=>setParams(current=>{const next=new URLSearchParams(current);if(value==='registrations')next.set('discovery_view',value);else next.delete('discovery_view');return next},{replace:true})
   const search = params.get('discovery_search') || ''
   const [draft,setDraft] = useState(search)
   const [moreOpen,setMoreOpen] = useState(false)
@@ -120,7 +120,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const cursors=paging.key===filterKey?paging.cursors:['']
   const page=paging.key===filterKey?paging.page:0
   const [selected,setSelected] = useState<Device>()
-  const [registerTarget,setRegisterTarget] = useState<Device>()
+  const [registerTarget,setRegisterTarget] = useState<{mac?:string;endpoint_id?:string;merge_status?:string;merged_into_endpoint_id?:string;split_from_endpoint_id?:string}>()
   const [registering,setRegistering] = useState(false)
   const [registerBusy,setRegisterBusy] = useState(false)
   const [registerForm] = Form.useForm()
@@ -131,6 +131,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const change = (key:string,value:string) => {
     setParams(current=>{const next=new URLSearchParams(current);if(value)next.set(`discovery_${key}`,value);else next.delete(`discovery_${key}`);if(key==='type')next.delete('discovery_category');return next},{replace:true})
   }
+  const shortcut=(type:string,capability='')=>setParams(current=>{const next=new URLSearchParams(current);for(const key of ['type','category','capability'])next.delete(`discovery_${key}`);if(type)next.set('discovery_type',type);if(capability)next.set('discovery_capability',capability);return next},{replace:true})
   const query = new URLSearchParams({mode:'passive',limit:String(pageSize)})
   if(view==='iot')query.set('view','iot')
   if(search)query.set('search',search)
@@ -143,34 +144,51 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const inventoryTotal=useQuery({queryKey:['discovery-inventory-total-204'],queryFn:({signal})=>request<{total:number;as_of?:string}>('/device-inventory/metadata?view=history',{signal}),staleTime:30_000})
   const history=useQuery({queryKey:['discovery-history',selected?.id,historyCursor],queryFn:({signal})=>request<History>(`/discovery/history?device_id=${encodeURIComponent(selected!.id)}&cursor=${historyCursor}&limit=20`,{signal}),enabled:!!selected&&coverage.data?.enabled===true})
   const detailIP=selected?.current_addresses?.[0]??(selected?.current_addresses?undefined:selected?.primary_ip)
-  const openRegistration=()=>{
-    if(!selected)return
+  const startRegistration=async(item?:Device)=>{
+    if(item?.mac){
+      try{
+        const existing=await request<{items:RegistrationRow[]}>(`/endpoints/registrations?mac=${encodeURIComponent(item.mac)}&limit=2`)
+        const row=existing.items?.find(r=>r.primary_mac.toLowerCase()===item.mac!.toLowerCase())
+        if(row){setSelected(undefined);editRegistration(row);return}
+      }catch(error){void message.error(`读取已有登记失败：${String(error)}`);return}
+    }
     registerForm.resetFields()
-    registerForm.setFieldsValue({ownership_class:'school_asset',registration_details:{name:selected?.name??''}})
-    setRegisterTarget(selected)
+    registerForm.setFieldsValue({mac:item?.mac??'',ownership_class:'school_asset',registration_status:'registered',registration_details:{name:item?.name??'',device_type:item?.device_type??''}})
+    setRegisterTarget(item?{mac:item.mac}:undefined)
     setSelected(undefined)
     setRegistering(true)
   }
+  const openRegistration=()=>startRegistration(selected)
+  const editRegistration=(row:RegistrationRow)=>{
+    registerForm.resetFields()
+    registerForm.setFieldsValue({...row,mac:row.primary_mac})
+    setRegisterTarget({mac:row.primary_mac,endpoint_id:row.endpoint_id,merge_status:row.merge_status,merged_into_endpoint_id:row.merged_into_endpoint_id,split_from_endpoint_id:row.split_from_endpoint_id})
+    setRegistering(true)
+  }
   const saveRegistration=async()=>{
-    if(!registerTarget?.mac)return
     let values: Record<string,unknown>
     try { values=await registerForm.validateFields() } catch { return }
+    const mac=String(values.mac??registerTarget?.mac??'').trim().toLowerCase().replaceAll('-',':')
+    const {mac:_mac,...payload}=values
     setRegisterBusy(true)
     try{
-      const endpointID=`mac:${registerTarget.mac.toLowerCase()}`
-      await request(`/endpoints/${encodeURIComponent(endpointID)}/registration`,{method:'POST',body:JSON.stringify({registration_status:'registered',merge_status:'active',...values})})
-      setRegistering(false)
-      setRegisterTarget(undefined)
-      navigate(`/devices/${encodeURIComponent(endpointID)}?tab=registration`)
-    }catch(error){void message.error(String(error))
-    }finally{setRegisterBusy(false)}
+      if(!registerTarget?.endpoint_id){
+        const existing=await request<{items:RegistrationRow[]}>(`/endpoints/registrations?mac=${encodeURIComponent(mac)}&limit=2`)
+        if(existing.items?.some(r=>r.primary_mac.toLowerCase()===mac)){void message.error('该设备已有登记，请在登记台账中编辑');return}
+      }
+      const endpointID=registerTarget?.endpoint_id??`mac:${mac}`
+      await request(`/endpoints/${encodeURIComponent(endpointID)}/registration`,{method:'POST',body:JSON.stringify({registration_status:'registered',merge_status:registerTarget?.merge_status??'active',merged_into_endpoint_id:registerTarget?.merged_into_endpoint_id??'',split_from_endpoint_id:registerTarget?.split_from_endpoint_id??'',...payload})})
+      setRegistering(false);setRegisterTarget(undefined);setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith('registration_'))next.delete(key);next.set('discovery_view','registrations');next.set('registration_search',mac);return next},{replace:true})
+      await Promise.all([queryClient.invalidateQueries({queryKey:['terminal-registrations']}),queryClient.invalidateQueries({queryKey:['terminal-registration-metadata']}),inventoryTotal.refetch()])
+      void message.success('设备登记已保存')
+    }catch(error){void message.error(String(error))}finally{setRegisterBusy(false)}
   }
   const detailFlowTarget=selected?.sensor_id&&detailIP?`${selected.sensor_id}|${detailIP}`:''
   const portReadEnabled=detailFlowTarget!==''&&coverage.data?.enabled===true
   const handshakeClues=useQuery({queryKey:['discovery-handshake-clues',selected?.id,selected?.sensor_id,selected?.site,selected?.domain,detailIP],queryFn:({signal})=>request<{items:HandshakeClue[]}>(`/discovery/handshake-clues?${new URLSearchParams({sensor_id:selected!.sensor_id||'',campus_id:selected!.site||'',access_domain:selected!.domain||'',ip:detailIP!})}`,{signal}),enabled:!!selected?.sensor_id&&!!selected?.site&&!!selected?.domain&&!!detailIP&&coverage.data?.enabled===true,staleTime:30_000})
   const types=Object.fromEntries((catalogue.data?.items??[]).map(t=>[t.id,t.label]))
   const items:Device[]=devices.data?.items??[]
-  const typedPageCount=items.filter(item=>!!(item.device_type||item.last_device_type||(item.recognition?.device_type&&(item.recognition.confidence??0)>=.8))).length
+  const typedPageCount=items.filter(item=>!['conflict','expired'].includes(item.classification_status??'')&&!!(item.device_type||(item.recognition?.device_type&&(item.recognition.confidence??0)>=.8))).length
   const allServiceTargets=[...new Set(items.flatMap(item=>item.sensor_id&&item.mac?(item.current_addresses??(item.primary_ip?[item.primary_ip]:[])).map(ip=>`${item.sensor_id}|${item.mac!.toLowerCase()}|${ip}`):[]))].sort()
   const serviceKey=allServiceTargets.slice(0,50).join(',')
   const serviceClues=useQuery({queryKey:['discovery-service-clues',serviceKey],queryFn:({signal})=>request<{items:Record<string,ServiceClue[]>}>(`/discovery/service-clues?targets=${encodeURIComponent(serviceKey)}`,{signal}),enabled:serviceKey!==''&&coverage.data?.enabled===true,staleTime:60_000})
@@ -185,50 +203,63 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const fresh=devices.data?.freshness
   const dumbFilter=params.get('discovery_capability')==='dumb'
   const recentPageCount=(devices.data?.items??[]).filter(item=>Date.now()-new Date(item.last_seen).getTime()<=15*60*1000).length
-  const identity=(item:Device)=><div className="discovery-terminal-identity"><span className="discovery-terminal-icon">{terminalIcon(item)}</span><div><DeviceAddress ip={item.current_addresses?item.current_addresses[0]:item.primary_ip} name={item.name} mac={item.mac} addresses={item.current_addresses??item.addresses}/>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后观测地址 · {item.last_observed_ip}</Typography.Text>}</div></div>
+  const identity=(item:Device)=>{
+    const type=['conflict','expired'].includes(item.classification_status??'')?'':item.device_type||((item.recognition?.confidence??0)>=.8?item.recognition?.device_type:'')
+    return <div className="terminal-identity"><DiscoveryDeviceIcon type={type} capabilities={item.capabilities}/><div><Button type="link" className="terminal-device-link" onClick={()=>show(item)}>{item.name||typeLabel(item,types)||item.mac||item.primary_ip}</Button>{item.mac&&<span className="terminal-mac">{item.mac}</span>}{item.name&&typeLabel(item,types)&&<span className="terminal-kind-caption">{typeLabel(item,types)}</span>}</div></div>
+  }
   const kind=(item:Device)=>{const label=typeLabel(item,types,signalFor(item));return label?<Typography.Text strong={item.classification_status!=='expired'}>{label}</Typography.Text>:null}
-  const vendor=(item:Device)=><Typography.Text type="secondary">{[item.manufacturer,item.model_name].filter(Boolean).join(' · ')}</Typography.Text>
+  const vendor=(item:Device)=>{const brand=item.manufacturer||((item.recognition?.confidence??0)>=.8?item.recognition?.brand:'');return <div className="terminal-vendor">{brand&&(resolveDeviceBrand({brand}).key!=='unknown'?<BrandLogo brandKey={brand}/>:<Typography.Text>{brand}</Typography.Text>)}{item.model_name&&<Typography.Text type="secondary">{item.model_name}</Typography.Text>}</div>}
   const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.vlan?`VLAN ${item.vlan}`:item.domain}</Typography.Text><Typography.Text type="secondary">{item.vlan?[item.domain,item.sensor_id].filter(Boolean).join(' · '):item.sensor_id}</Typography.Text></Space>
   const servicesFor=(item:Device)=>{const list=serviceClues.data?.items?.[`${item.sensor_id}|${(item.mac||'').toLowerCase()}`]??[];const seen=new Set<string>();return list.filter(clue=>{if(!serviceBelongsToDevice(item,clue))return false;const key=`${clue.service_type}:${clue.port}`;if(seen.has(key))return false;seen.add(key);return true})}
-  const servicePageCount=items.reduce((sum,item)=>sum+servicesFor(item).length,0)
   const portsFor=(item:Device)=>{const seen=new Set<string>();return (portReadEnabled?observedPorts.data?.items?.[detailFlowTarget]??[]:[]).filter(clue=>{if(!flowBelongsToDevice(item,clue))return false;const key=`${clue.proto}:${clue.dst_port}`;if(seen.has(key))return false;seen.add(key);return true}).slice(0,8)}
   const portLabel=(clue:ObservedPort)=>clue.connection_outcome==='syn_ack_observed'?`见 TCP SYN-ACK ${clue.dst_port}`:`尝试连接 ${clue.proto.toUpperCase()} ${clue.dst_port}`
-  const serviceTags=(item:Device)=>servicesFor(item).slice(0,4).map(clue=><Tag key={`${clue.service_type}:${clue.port}`} title={`镜像服务公告 · ${clue.evidence_id} · ${observedTimeTitle(clue.last_seen)}`}>{[clue.service_type,clue.port].filter(Boolean).join(' · ')}</Tag>)
   const clues=(item:Device)=><Space wrap>{(item.capabilities??[]).filter(c=>capabilities[c]).map(c=><Tag key={c}>{capabilities[c]}</Tag>)}{(item.protocols??[]).map(p=><Tag key={p}>{protocols[p]??p}</Tag>)}</Space>
   const state=(item:Device)=><Typography.Text type={item.classification_status==='conflict'?'warning':'secondary'}>{!typeLabel(item,types,signalFor(item))&&item.protocols?.includes('arp')?'ARP 地址候选':states[item.classification_status??'']??(item.current?'证据有效':'证据已过期')}</Typography.Text>
   const show=(item:Device)=>{setHistoryCursor('');setSelected(item)}
   const columns=[
-    {title:'地址 / 名称 / MAC',key:'identity',width:195,render:(_:unknown,item:Device)=>identity(item)},
-    {title:'终端类型 / 制造商 / 型号',key:'type',width:180,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack">{kind(item)}{vendor(item)}</div>},
-    {title:'操作系统',key:'os',width:150,render:(_:unknown,item:Device)=>{const hint=osFor(item);const signal=signalFor(item);const historical=!!signal?.dhcp_historical&&!!signal.os_family;return <Typography.Text type={hint.label==='线索冲突'?'warning':'secondary'} title={hint.detail}>{hint.label?`${hint.label} · ${hint.ipOnly?'IP 线索':historical?'历史线索':'线索'}`:''}</Typography.Text>}},
-    {title:'网络位置',key:'location',width:100,render:(_:unknown,item:Device)=>location(item)},
-    {title:'发现依据',key:'clues',width:110,render:(_:unknown,item:Device)=>clues(item)},
-    {title:'服务 / 端口',key:'services',width:140,render:(_:unknown,item:Device)=><Space wrap>{serviceTags(item)}</Space>},
-    {title:'证据状态 / 最近观测',key:'state',width:155,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack">{state(item)}<span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span></div>},
-    {title:'操作',key:'action',width:95,fixed:'right' as const,render:(_:unknown,item:Device)=><Button type="link" onClick={()=>show(item)}>查看证据</Button>},
+    {title:'设备',key:'identity',width:250,render:(_:unknown,item:Device)=>identity(item)},
+    {title:'设备类型',key:'type',width:145,render:(_:unknown,item:Device)=>kind(item)},
+    {title:'地址 / 网络',key:'address',width:175,render:(_:unknown,item:Device)=><div className="terminal-address"><span>{item.current_addresses?.[0]??item.primary_ip}</span>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后地址 {item.last_observed_ip}</Typography.Text>}{location(item)}</div>},
+    {title:'厂商 / 系统',key:'vendor',width:160,render:(_:unknown,item:Device)=><div>{vendor(item)}{osFor(item).label&&<Typography.Text type="secondary">{osFor(item).label} · 线索</Typography.Text>}</div>},
+    {title:'识别依据',key:'clues',width:145,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack">{clues(item)}{state(item)}</div>},
+    {title:'最近观测',key:'seen',width:110,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
+    {title:'操作',key:'action',width:140,fixed:'right' as const,render:(_:unknown,item:Device)=><div className="terminal-row-actions"><Button type="link" onClick={()=>show(item)}>查看详情</Button>{item.mac&&can(session.data,'endpoints:write')&&<Button type="link" onClick={()=>startRegistration(item)}>登记</Button>}</div>},
   ]
-  return <section className="passive-discovery-panel">
+  return <section className="passive-discovery-panel terminal-workspace">
+    <header className="terminal-workspace-header"><div><span className="terminal-eyebrow">设备中心 / 204 独立管理</span><Typography.Title level={3}>哑终端管理</Typography.Title><Typography.Text type="secondary">发现镜像中的设备，核对类型，补齐负责人和资产资料。</Typography.Text></div><div className="terminal-header-actions"><Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={()=>{void devices.refetch();void inventoryTotal.refetch();void queryClient.invalidateQueries({queryKey:['terminal-registrations']});void queryClient.invalidateQueries({queryKey:['terminal-registration-metadata']})}}>刷新数据</Button>{can(session.data,'endpoints:write')&&<Button type="primary" icon={<PlusOutlined aria-hidden="true"/>} onClick={()=>startRegistration()}>新增登记</Button>}</div></header>
+    <div className="terminal-workspace-nav"><Segmented aria-label="设备管理视图" value={ledgerView?'registrations':'discovery'} options={[{label:'自动发现',value:'discovery'},{label:'登记台账',value:'registrations'}]} onChange={v=>setView(String(v))}/><span className="terminal-total" title="设备中心已建立的终端身份，独立于当前发现筛选">终端身份总数 <strong>{inventoryTotal.isError?'读取失败':inventoryTotal.data?.total??'…'}</strong></span></div>
+    {ledgerView?<TerminalRegistrationPanel onCreate={()=>startRegistration()} onEdit={editRegistration}/>:<>
+    <nav className="terminal-type-shortcuts" aria-label="快捷设备类型">{[{value:'',label:'全部设备'},{value:'printer',label:'打印机'},{value:'camera',label:'摄像机'},{value:'access_point',label:'无线 AP'},{value:'router',label:'路由器'},{value:'switch',label:'交换机'},{value:'desktop',label:'电脑'},{value:'mobile',label:'手机'}].map(t=><Button key={t.value} type={(params.get('discovery_type')||'')===t.value&&!dumbFilter?'primary':'default'} onClick={()=>shortcut(t.value)}>{t.label}</Button>)}<Button type={dumbFilter?'primary':'default'} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button></nav>
     <AppTableBar
       searchPlaceholder="搜索 IP、MAC、名称或型号"
       searchValue={draft}
       onSearchChange={setDraft}
       onSearch={value=>change('search', value.trim())}
       filters={<>
+        <Select aria-label="设备类型" showSearch optionFilterProp="label" value={params.get('discovery_type')||''} options={[{value:'',label:'全部设备类型'},...(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))]} onChange={v=>change('type',v)}/>
         <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
         <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length?`（${['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
       </>}
       panel={moreOpen?<div className="app-filter-panel">
-        <Select aria-label="设备类型" value={params.get('discovery_type')||''} options={[{value:'',label:'全部类型'},...(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))]} onChange={value=>change('type',value)}/>
         <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
         <Select aria-label="最近观测范围" value={params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'all',label:'全部观测时间'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
         <Input aria-label="网络域" placeholder="网络域" allowClear value={params.get('discovery_domain')||''} onChange={e=>change('domain',e.target.value)}/>
         <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
       </div>:undefined}
     />
-    <section className="surface center-list-toolbar">
-      <Typography.Paragraph type="secondary">{view==='iot'?'展示有明确类型依据的设备档案。':'展示发现设备与关联线索；证据有效不代表设备在线。'}终端身份总数来自独立身份投影，与本页镜像发现记录口径不同。名称搜索：少于三个字符按前缀，三个及以上按包含。</Typography.Paragraph>
-      {coverage.data&&<div className="discovery-protocol-summary"><strong>镜像采集协议</strong>{(coverage.data.items??[]).filter(p=>p.enabled&&p.owner!=='zeek').map(p=><Tag key={p.protocol}>{protocols[p.protocol]??p.protocol}</Tag>)}{coverage.data.items?.some(p=>p.protocol==='dhcp'&&p.message_source_epoch)&&<Typography.Text type="secondary">DHCP 逐消息源已登记</Typography.Text>}<span className="discovery-protocol-counts">本页哑终端线索 {items.filter(item=>!!dumbTerminal(item)).length} · {Object.entries(items.reduce((acc,item)=>{const label=dumbTerminal(item);if(label)acc[label]=(acc[label]??0)+1;return acc},{} as Record<string,number>)).map(([label,count])=>`${label} ${count}`).join(' · ')||'暂无'}</span><Button size="small" type="link" onClick={()=>change('capability',dumbFilter?'':'dumb')}>{dumbFilter?'查看全部设备':'查看哑终端线索'}</Button><Button size="small" type="link" onClick={()=>navigate('/settings/sources?tab=sources')}>接入 SNMP</Button></div>}
-      <div className="discovery-metric-grid" aria-label="发现设备摘要"><article className="discovery-metric-card"><ClusterOutlined /><span>终端身份总数</span><strong>{inventoryTotal.isError?'读取失败':inventoryTotal.data?.total ?? '…'}</strong></article><article className="discovery-metric-card"><TagsOutlined /><span>本页明确类型</span><strong>{typedPageCount}</strong></article><article className="discovery-metric-card"><ApiOutlined /><span>本页服务线索</span><strong>{serviceKey===''?0:serviceClues.isError?'读取失败':serviceClues.data?servicePageCount:'…'}</strong></article><article className="discovery-metric-card"><CheckCircleOutlined /><span>本页近15分钟观测</span><strong>{recentPageCount}</strong></article></div>
+    <div className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span><Button type="link" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith('discovery_')&&key!=='discovery_view')next.delete(key);return next})}>清除筛选</Button></div>
+    {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
+      <AppListHeader title="发现设备" count={`本页 ${items.length} 条镜像发现记录`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void inventoryTotal.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
+      <AppTable className="passive-ledger-table" rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1125}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
+      <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={devices.data?.total ?? page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
+        if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,cursors:[''],page:0});return}
+        const current=page+1
+        if(nextPage===current)return
+        if(nextPage<current){setPaging({key:filterKey,cursors,page:nextPage-1});return}
+        if(nextPage===current+1&&devices.data?.next_cursor)setPaging({key:filterKey,cursors:[...cursors.slice(0,page+1),devices.data.next_cursor],page:page+1})
+      }} totalText={`第 ${page+1} 页 · 已加载 ${page*pageSize+items.length} 条`} />
+    </section>}
+    <details className="terminal-diagnostics"><summary>采集与识别状态</summary>    <section className="surface center-list-toolbar">
       {catalogue.isError&&<AppErrorAlert title="读取设备类型失败" message={catalogue.error.message} />}
       {fresh&&fresh.status!=='ready'&&<Alert type={fresh.status==='failed'?'error':'warning'} showIcon title={fresh.status==='failed'?'设备数据处理失败':fresh.status==='delayed'?'设备数据更新延迟':'设备数据处理中'} description={fresh.oldest_pending_at?`最早待处理时间：${observedTimeTitle(fresh.oldest_pending_at)}`:undefined}/>}
       {coverage.data?.capture_scope?.status==='expiring'&&<Alert type="warning" showIcon title="镜像采集范围即将到期" description={coverage.data.capture_scope.valid_until?`有效期至 ${observedTimeTitle(coverage.data.capture_scope.valid_until)}，请提前更新采集范围。`:undefined}/>}
@@ -245,18 +276,9 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       {statistics.data&&<div className="discovery-statistics" aria-label="设备类型统计">{statistics.data.items.filter(item=>item.count>0&&item.state!=='candidate').map(item=><span className="discovery-statistics-item" title={`统计更新于 ${observedTimeTitle(item.updated_at)}`} key={`${item.device_type}:${item.state}`}>{types[item.device_type]??item.device_type} · {states[item.state]??''} {item.count}</span>)}{statistics.data.pending_updates>0&&<Typography.Text type="secondary">统计处理中 {statistics.data.pending_updates}</Typography.Text>}</div>}
       <Collapse ghost items={[{key:'coverage',label:'采集覆盖与处理状态',children:coverage.isError?<AppErrorAlert title="读取采集状态失败" />:coverage.data?.enabled===false?<Typography.Text>当前运行旧版发现路径</Typography.Text>:<div className="iot-coverage-grid">{coverage.data?.items.map(p=><article className="iot-coverage-item" key={`${p.sensor_id}:${p.protocol}`}><strong>{protocols[p.protocol]??p.protocol}</strong><Typography.Text type="secondary">{p.sensor_id}</Typography.Text><span>{p.message_source_epoch?'逐消息源已登记':p.handshake_source_epoch?'握手侧车已登记 · 详情弱线索':p.error?'采集异常':!p.enabled?'未启用':p.received===0?'暂未捕获协议流量':'已捕获协议流量'}</span><span>{p.message_source_epoch?'旧链路累计 ':p.handshake_source_epoch?'发现链路累计 ':''}捕获 {p.received} · 解析 {p.parsed} · 处理 {p.admitted}</span></article>)}</div>}]} />
     </section>
-    {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
-      <AppListHeader title="发现设备" count={`本页 ${items.length} 条镜像发现记录`} actions={<Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={()=>{void devices.refetch();void inventoryTotal.refetch();void coverage.refetch();void statistics.refetch()}}>刷新</Button>} />
-      <AppTable className="passive-ledger-table" rowKey="id" columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending} scroll={{x:1125}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
-      <AppServerPagination cursorMode page={page+1} pageSize={pageSize} total={devices.data?.total ?? page*pageSize+items.length+(devices.data?.has_more?1:0)} onChange={(nextPage,nextSize)=>{
-        if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,cursors:[''],page:0});return}
-        const current=page+1
-        if(nextPage===current)return
-        if(nextPage<current){setPaging({key:filterKey,cursors,page:nextPage-1});return}
-        if(nextPage===current+1&&devices.data?.next_cursor)setPaging({key:filterKey,cursors:[...cursors.slice(0,page+1),devices.data.next_cursor],page:page+1})
-      }} totalText={`第 ${page+1} 页 · 已加载 ${page*pageSize+items.length} 条`} />
-    </section>}
-    <Modal className="discovery-evidence-modal" title="设备证据与变化历史" open={!!selected} footer={null} onCancel={()=>setSelected(undefined)}>{selected&&<><div className="discovery-detail-identity">{identity(selected)}{kind(selected)}{selected.mac&&can(session.data,'endpoints:write')&&<Button onClick={openRegistration}>登记此设备</Button>}</div><dl className="discovery-detail-facts">{[[`设备类型`,typeLabel(selected,types,signalFor(selected))],[`操作系统线索`,osFor(selected).label?`${osFor(selected).label} · ${signalFor(selected)?.dhcp_historical&&signalFor(selected)?.os_family?'历史线索':'线索'}`:''],[`操作系统依据`,osFor(selected).detail],[`DHCP 线索时效`,signalFor(selected)?.dhcp_historical?'历史 REQUEST 线索；同源当前租约仍有效，需结合观测时间核对':''],[`DHCP 观测时间`,signalFor(selected)?.dhcp_observed_at?observedTimeTitle(signalFor(selected)!.dhcp_observed_at!):''],[`最近 DHCP 证据事件`,signalFor(selected)?.dhcp_evidence_id],[`TTL 证据引用`,signalFor(selected)?.ttl_evidence?.event_id||((signalFor(selected)?.ttl_evidence?.raw_sha256)?`原文 SHA256 ${signalFor(selected)?.ttl_evidence?.raw_sha256}`:'')],[`TTL 观测时间`,signalFor(selected)?.ttl_observed_at?observedTimeTitle(signalFor(selected)!.ttl_observed_at!):''],[`TTL`,signalFor(selected)?.ttl?String(signalFor(selected)?.ttl):''],[`DHCP 主机名`,signalFor(selected)?.dhcp_hostname],[`DHCP 厂商类`,signalFor(selected)?.dhcp_vendor_class],[`DHCP 请求选项`,signalFor(selected)?.dhcp_options],[`DHCP 客户端标识类型`,signalFor(selected)?.dhcp_client_id_hwtype],[`DHCP 选项 93`,signalFor(selected)?.dhcp_option93_present?'已观测':''],[`识别操作系统`,selected.recognition?.os_family],[`识别设备类型`,selected.recognition?.device_type],[`识别规则`,selected.recognition?.rule_version],[`制造商`,selected.manufacturer],[`型号`,selected.model_name],[`MAC`,selected.mac],[`当前地址`,(selected.current_addresses??[]).join('、')||selected.primary_ip],[`最后观测地址`,selected.last_observed_ip],[`网络域`,selected.domain],[`VLAN`,selected.vlan],[`采集传感器`,selected.sensor_id],[`首次观测`,selected.first_seen?observedTimeTitle(selected.first_seen):''],[`最近观测`,observedTimeTitle(selected.last_seen)],[`证据数`,selected.evidence_count?String(selected.evidence_count):'']].filter(([,value])=>value).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>{dhcpFieldEvidenceFor(signalFor(selected)).length>0&&<section className="discovery-client-clues"><Typography.Text type="secondary">DHCP 字段证据（各字段保留对应原始报文引用）</Typography.Text>{dhcpFieldEvidenceFor(signalFor(selected)).map(entry=><article key={entry.field}><strong>{entry.label}</strong><span>{entry.value}</span><Typography.Text type="secondary">{[entry.ref.event_id?`事件 ${entry.ref.event_id}`:entry.ref.raw_sha256?`原文 SHA256 ${entry.ref.raw_sha256}`:'',entry.ref.historical?'历史线索':'',observedTimeTitle(entry.ref.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}{clientFor(selected)?.client_clues?.length&&<section className="discovery-client-clues"><Typography.Text type="secondary">HTTP / TLS 客户端弱线索（仅按当前 IP 关联，地址共享或复用时需核对）</Typography.Text>{clientFor(selected)?.client_clues?.map((clue,index)=><article key={`${clue.kind}:${clue.evidence_id}:${index}`}><strong>{clue.kind==='user_agent'?'HTTP User-Agent':clue.kind.toUpperCase()}</strong><span>{clue.value}</span><Typography.Text type="secondary">{[clue.evidence_id,observedTimeTitle(clue.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}<Typography.Paragraph>{selected.classification?.reason}</Typography.Paragraph><Typography.Paragraph type="secondary">最近证据摘要</Typography.Paragraph>{servicesFor(selected).length>0&&<div className="discovery-service-clues"><Typography.Text type="secondary">镜像服务公告线索（不代表端口开放）</Typography.Text><Space wrap>{servicesFor(selected).map(clue=><Tag key={`${clue.service_type}:${clue.port}`} title={observedTimeTitle(clue.last_seen)}>{[clue.service_type,clue.port,clue.service_name,`观测于 ${observedTimeLabel(clue.last_seen)}`].filter(Boolean).join(' · ')}</Tag>)}</Space></div>}{(selected.observations??[]).map(o=><article key={o.id} className="discovery-card"><strong>{protocols[o.origin]??o.origin}</strong><span className="discovery-identifier">{[o.ip,o.mac,o.name].filter(Boolean).join(' · ')}</span><span>{o.explanation}</span><Typography.Text type="secondary">{observedTimeTitle(o.observed_at)}</Typography.Text>{o.withdrawn&&<Tag color="warning">已撤销</Tag>}</article>)}
+</details>
+    </>}
+    <Modal className="discovery-evidence-modal" title="设备详情" open={!!selected} footer={null} onCancel={()=>setSelected(undefined)}>{selected&&<><div className="discovery-detail-identity">{identity(selected)}{kind(selected)}{selected.mac&&can(session.data,'endpoints:write')&&<Button onClick={openRegistration}>登记此设备</Button>}</div><dl className="discovery-detail-facts">{[[`设备类型`,typeLabel(selected,types,signalFor(selected))],[`操作系统线索`,osFor(selected).label?`${osFor(selected).label} · ${signalFor(selected)?.dhcp_historical&&signalFor(selected)?.os_family?'历史线索':'线索'}`:''],[`操作系统依据`,osFor(selected).detail],[`DHCP 线索时效`,signalFor(selected)?.dhcp_historical?'历史 REQUEST 线索；同源当前租约仍有效，需结合观测时间核对':''],[`DHCP 观测时间`,signalFor(selected)?.dhcp_observed_at?observedTimeTitle(signalFor(selected)!.dhcp_observed_at!):''],[`最近 DHCP 证据事件`,signalFor(selected)?.dhcp_evidence_id],[`TTL 证据引用`,signalFor(selected)?.ttl_evidence?.event_id||((signalFor(selected)?.ttl_evidence?.raw_sha256)?`原文 SHA256 ${signalFor(selected)?.ttl_evidence?.raw_sha256}`:'')],[`TTL 观测时间`,signalFor(selected)?.ttl_observed_at?observedTimeTitle(signalFor(selected)!.ttl_observed_at!):''],[`TTL`,signalFor(selected)?.ttl?String(signalFor(selected)?.ttl):''],[`DHCP 主机名`,signalFor(selected)?.dhcp_hostname],[`DHCP 厂商类`,signalFor(selected)?.dhcp_vendor_class],[`DHCP 请求选项`,signalFor(selected)?.dhcp_options],[`DHCP 客户端标识类型`,signalFor(selected)?.dhcp_client_id_hwtype],[`DHCP 选项 93`,signalFor(selected)?.dhcp_option93_present?'已观测':''],[`识别操作系统`,selected.recognition?.os_family],[`识别设备类型`,selected.recognition?.device_type],[`识别规则`,selected.recognition?.rule_version],[`制造商`,selected.manufacturer],[`型号`,selected.model_name],[`MAC`,selected.mac],[`当前地址`,(selected.current_addresses??[]).join('、')||selected.primary_ip],[`最后观测地址`,selected.last_observed_ip],[`网络域`,selected.domain],[`VLAN`,selected.vlan],[`采集传感器`,selected.sensor_id],[`首次观测`,selected.first_seen?observedTimeTitle(selected.first_seen):''],[`最近观测`,observedTimeTitle(selected.last_seen)],[`证据数`,selected.evidence_count?String(selected.evidence_count):'']].filter(([,value])=>value).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>{dhcpFieldEvidenceFor(signalFor(selected)).length>0&&<section className="discovery-client-clues"><Typography.Text type="secondary">DHCP 字段证据（各字段保留对应原始报文引用）</Typography.Text>{dhcpFieldEvidenceFor(signalFor(selected)).map(entry=><article key={entry.field}><strong>{entry.label}</strong><span>{entry.value}</span><Typography.Text type="secondary">{[entry.ref.event_id?`事件 ${entry.ref.event_id}`:entry.ref.raw_sha256?`原文 SHA256 ${entry.ref.raw_sha256}`:'',entry.ref.historical?'历史线索':'',observedTimeTitle(entry.ref.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}{clientFor(selected)?.client_clues?.length&&<section className="discovery-client-clues"><Typography.Text type="secondary">HTTP / TLS 客户端弱线索（仅按当前 IP 关联，地址共享或复用时需核对）</Typography.Text>{clientFor(selected)?.client_clues?.map((clue,index)=><article key={`${clue.kind}:${clue.evidence_id}:${index}`}><strong>{clue.kind==='user_agent'?'HTTP User-Agent':clue.kind.toUpperCase()}</strong><span>{clue.value}</span><Typography.Text type="secondary">{[clue.evidence_id,observedTimeTitle(clue.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}<Typography.Paragraph>{selected.classification?.reason}</Typography.Paragraph><Typography.Paragraph type="secondary">最近证据摘要</Typography.Paragraph>{servicesFor(selected).length>0&&<div className="discovery-service-clues"><Typography.Text type="secondary">镜像服务公告线索（不代表端口开放）</Typography.Text><Space wrap>{servicesFor(selected).map(clue=><Tag key={`${clue.service_type}:${clue.port}`} title={observedTimeTitle(clue.last_seen)}>{[clue.service_type,clue.port,clue.service_name,`观测于 ${observedTimeLabel(clue.last_seen)}`].filter(Boolean).join(' · ')}</Tag>)}</Space></div>}{(selected.observations??[]).map(o=><article key={o.id} className="discovery-card"><strong>{protocols[o.origin]??o.origin}</strong><span className="discovery-identifier">{[o.ip,o.mac,o.name].filter(Boolean).join(' · ')}</span><span>{o.explanation}</span><Typography.Text type="secondary">{observedTimeTitle(o.observed_at)}</Typography.Text>{o.withdrawn&&<Tag color="warning">已撤销</Tag>}</article>)}
       {handshakeClues.isError&&<AppErrorAlert title="读取握手弱线索失败" />}
       {!!handshakeClues.data?.items.length&&<section className="discovery-client-clues"><Typography.Text type="secondary">镜像握手弱线索（当前 IP {detailIP}，地址共享或复用时需核对）</Typography.Text>{handshakeClues.data.items.map((clue,index)=><article key={`${clue.kind}:${clue.evidence_id}:${index}`}><strong>{clue.kind==='user_agent'?'HTTP User-Agent':clue.kind==='ja4'?'TLS JA4':'TLS JA3'}</strong><span>{clue.value}</span><Typography.Text type="secondary">{[clue.dst_port?`握手目标 TCP/${clue.dst_port}`:'',clue.evidence_id,observedTimeTitle(clue.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}
       {servicesFor(selected).length>0&&<section className="discovery-client-clues"><Typography.Text type="secondary">服务公告证据事件</Typography.Text>{servicesFor(selected).map(clue=><article key={`${clue.service_type}:${clue.port}`}><strong>{clue.service_type} · {clue.port}</strong><Typography.Text type="secondary">{clue.evidence_id} · {observedTimeTitle(clue.last_seen)}</Typography.Text></article>)}</section>}
@@ -267,16 +289,18 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       {history.isError&&<AppErrorAlert title="读取设备历史失败" />}
       {history.data&&<><Typography.Title level={5}>变化历史</Typography.Title>{history.data.items.map(row=><article className="discovery-card" key={row.id}><strong>{protocols[row.evidence?.origin]??row.evidence?.origin}</strong><span>{row.evidence?.explanation}</span><Typography.Text type="secondary">观测于 {observedTimeTitle(row.observed_at)}</Typography.Text></article>)}<Space wrap><Button disabled={historyCursor===''||history.isFetching} onClick={()=>setHistoryCursor('')}>最新记录</Button><Button disabled={!history.data.has_more||history.isFetching} onClick={()=>setHistoryCursor(history.data!.next_cursor)}>更早记录</Button></Space></>}
     </>}</Modal>
-    <Modal className="terminal-registration-modal" title="204 本地设备登记" open={registering} confirmLoading={registerBusy} onCancel={()=>{setRegistering(false);setRegisterTarget(undefined)}} onOk={()=>void saveRegistration()} okText="保存登记" destroyOnHidden>
+    <Modal className="terminal-registration-modal" title={registerTarget?.endpoint_id?"编辑设备登记":"新增设备登记"} open={registering} confirmLoading={registerBusy} onCancel={()=>{setRegistering(false);setRegisterTarget(undefined)}} onOk={()=>void saveRegistration()} okText="保存登记" destroyOnHidden>
       <Typography.Paragraph type="secondary">镜像名称仅作填写线索，请核实后保存。登记 IP 是资料字段，不代表当前在线地址。</Typography.Paragraph>
-      {registerTarget?.mac&&<Typography.Paragraph className="discovery-identifier">MAC {registerTarget.mac}</Typography.Paragraph>}
-      <Form form={registerForm} layout="vertical">
+      <Form form={registerForm} layout="vertical" className="terminal-registration-form">
+        <Form.Item name="mac" label="MAC 地址" rules={[{required:true,message:'请填写设备 MAC 地址'},{pattern:/^(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/,message:'请输入完整 MAC 地址，例如 00:11:22:33:44:55'}]}><Input disabled={!!registerTarget?.mac} placeholder="00:11:22:33:44:55"/></Form.Item>
+        <Form.Item name="registration_status" label="登记状态"><Select options={[{value:'registered',label:'已登记'},{value:'unregistered',label:'待登记'},{value:'ignored',label:'已忽略'},{value:'retired',label:'已退役'}]}/></Form.Item>
         <Form.Item name="asset_tag" label="资产编号"><Input maxLength={200}/></Form.Item>
-        <Form.Item name="owner_name" label="责任人" dependencies={['asset_tag']} rules={[({getFieldValue})=>({validator:(_,value)=>value||getFieldValue('asset_tag')?Promise.resolve():Promise.reject(new Error('请填写责任人或资产编号'))})]}><Input maxLength={200}/></Form.Item>
+        <Form.Item name="owner_name" label="责任人" dependencies={['asset_tag','owner_account','registration_status']} rules={[({getFieldValue})=>({validator:(_,value)=>getFieldValue('registration_status')!=='registered'||value||getFieldValue('owner_account')||getFieldValue('asset_tag')?Promise.resolve():Promise.reject(new Error('请填写责任人、责任人账号或资产编号'))})]}><Input maxLength={200}/></Form.Item>
+        <Form.Item name="owner_account" label="责任人账号"><Input maxLength={200}/></Form.Item>
         <Form.Item name="owner_department" label="部门"><Input maxLength={200}/></Form.Item>
-        <Form.Item name="ownership_class" label="终端归属" rules={[{required:true}]}><Select options={[{label:'学校资产',value:'school_asset'},{label:'公共终端',value:'public_terminal'},{label:'基础设施',value:'infrastructure'},{label:'个人终端',value:'byod'}]}/></Form.Item>
+        <Form.Item name="ownership_class" label="终端归属" rules={[{required:true}]}><Select options={[{label:'',value:'unknown'},{label:'学校资产',value:'school_asset'},{label:'公共终端',value:'public_terminal'},{label:'基础设施',value:'infrastructure'},{label:'个人终端',value:'byod'}]}/></Form.Item>
         <Form.Item name={['registration_details','name']} label="登记设备名"><Input maxLength={200}/></Form.Item>
-        <Form.Item name={['registration_details','device_type']} label="登记设备类型"><Select allowClear options={[{label:'打印机',value:'printer'},{label:'摄像头',value:'camera'},{label:'无线接入点',value:'access_point'},{label:'路由器',value:'router'},{label:'交换机',value:'switch'},{label:'其他哑终端',value:'iot'}]}/></Form.Item>
+        <Form.Item name={['registration_details','device_type']} label="登记设备类型"><Select allowClear options={(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))}/></Form.Item>
         <Form.Item name={['registration_details','manufacturer']} label="登记厂商"><Input maxLength={200}/></Form.Item>
         <Form.Item name={['registration_details','model']} label="登记型号"><Input maxLength={200}/></Form.Item>
         <Form.Item name={['registration_details','serial_number']} label="序列号"><Input maxLength={200}/></Form.Item>
