@@ -581,7 +581,9 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
-ExecStart=$(command -v suricata) -c /etc/suricata/suricata.yaml -i $interface -l /var/log/suricata --pidfile /run/proxy-sentinel-suricata.pid
+# systemd tracks the foreground process; a separate pid file can survive an
+# unclean stop and block every subsequent restart.
+ExecStart=$(command -v suricata) -c /etc/suricata/suricata.yaml -i $interface -l /var/log/suricata
 Restart=always
 RestartSec=5
 [Install]

@@ -13,7 +13,9 @@ import (
 )
 
 // StartStreamRouterFreshCutover excludes pre-cutoff index rows from the new
-// recognizer. The source must be paused and all earlier search inserts settled.
+// recognizer. Rows at and after the fixed indexed_at boundary remain eligible
+// even when current input continues. Callers must use a settled past boundary
+// so an earlier asynchronous insert cannot arrive after the audit count.
 func (s *DBStore) StartStreamRouterFreshCutover(ctx context.Context, sensor, cancelID string, cutoff time.Time) (uint64, error) {
 	if s == nil || s.pg == nil || s.pg.db == nil || s.ch == nil || sensor == "" || cancelID == "" || cutoff.IsZero() ||
 		!cutoff.Equal(cutoff.Truncate(time.Microsecond)) || cutoff.After(time.Now().UTC()) {
@@ -64,9 +66,8 @@ func (s *DBStore) StartStreamRouterFreshCutover(ctx context.Context, sensor, can
 	if err != nil {
 		return 0, err
 	}
-	newRows, err := strconv.ParseUint(parts[1], 10, 64)
-	if err != nil || newRows != 0 {
-		return 0, fmt.Errorf("router fresh cutover crosses %d new index rows: %v", newRows, err)
+	if _, err = strconv.ParseUint(parts[1], 10, 64); err != nil {
+		return 0, fmt.Errorf("parse retained router index count: %w", err)
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO stream_router_fresh_cutovers(sensor_id,cancel_id,indexed_after,canceled_index_rows,prior_processed_events)
  VALUES($1,$2,$3,$4,$5)`, sensor, cancelID, cutoff.UTC(), oldRows, processed); err != nil {

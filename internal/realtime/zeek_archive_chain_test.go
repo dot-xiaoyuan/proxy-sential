@@ -184,6 +184,39 @@ func TestZeekBindingWaitsForCompleteSuccessorArchive(t *testing.T) {
 	}
 }
 
+func TestZeekRawResolverRechecksCachedArchiveAfterItMoves(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "current", "device_dhcp_message.log")
+	archiveDir := filepath.Join(dir, time.Now().Format("2006-01-02"))
+	for _, directory := range []string{filepath.Dir(path), archiveDir} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, []byte("replacement\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("original archived bytes\n")
+	sum := sha256.Sum256(raw)
+	segment := streamlog.Segment{Source: "zeek-dhcp-binding", SourceBackedRaw: true, SourcePath: path,
+		FileID: "old-file-id", StartOffset: 0, EndOffset: int64(len(raw)), RawSHA256: hex.EncodeToString(sum[:])}
+	first := filepath.Join(archiveDir, "device_dhcp_message.12:00:00-13:00:00.log.gz")
+	writeZeekChainArchive(t, first, raw)
+	got, err := ResolveZeekSourceRaw(segment)
+	if err != nil || !bytes.Equal(got, raw) {
+		t.Fatalf("initial archive resolution: %v", err)
+	}
+	if err := os.Remove(first); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(archiveDir, "device_dhcp_message.13:00:00-14:00:00.log.gz")
+	writeZeekChainArchive(t, second, raw)
+	got, err = ResolveZeekSourceRaw(segment)
+	if err != nil || !bytes.Equal(got, raw) {
+		t.Fatalf("stale cached archive was not rechecked: %v", err)
+	}
+}
+
 func writeZeekChainArchive(t *testing.T, path string, raw []byte) {
 	t.Helper()
 	f, err := os.Create(path)

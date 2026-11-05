@@ -11,6 +11,35 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
+// ReconcileSettledStreamBody repairs an old ambiguous archive attempt after
+// its source has been stopped and leased by the operator. A scoped read keeps
+// already archived rows untouched; a non-empty async queue leaves the attempt
+// unconfirmed instead of racing a delayed ClickHouse flush.
+func (s *ClickHouseStore) ReconcileSettledStreamBody(ctx context.Context, id string, segment streamlog.Segment) error {
+	if id == "" || !segment.SourceBackedRaw || len(segment.Raw) == 0 || len(segment.Events) == 0 ||
+		segment.AcceptedAt.IsZero() || time.Since(segment.AcceptedAt) < time.Hour {
+		return fmt.Errorf("settled source-backed archive proof is incomplete: %w", streamlog.ErrUnconfirmed)
+	}
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		return err
+	}
+	tables := map[string]bool{"stream_source_raw": true}
+	for _, item := range prepared {
+		tables[streamBodyTable(item.retention, segment.BodyLayout)] = true
+	}
+	for table := range tables {
+		queued, err := s.streamSystemCount(ctx, "SELECT count() FROM system.asynchronous_inserts WHERE database=currentDatabase() AND table="+chQuote(table))
+		if err != nil {
+			return err
+		}
+		if queued != 0 {
+			return streamlog.ErrUnconfirmed
+		}
+	}
+	return s.ReconcileStreamBody(ctx, id, segment)
+}
+
 // RetryProvenUnsentStreamLane is an operator recovery path for a stopped
 // source. It reuses the original immutable segment and deduplication token
 // only when every expected row is absent, ClickHouse has no queued insert for

@@ -11,11 +11,38 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/streamlog"
 )
+
+var zeekArchiveCache = struct {
+	sync.Mutex
+	paths map[string]string
+}{paths: make(map[string]string)}
+
+func cachedZeekArchive(key string) string {
+	zeekArchiveCache.Lock()
+	defer zeekArchiveCache.Unlock()
+	return zeekArchiveCache.paths[key]
+}
+
+func rememberZeekArchive(key, path string) {
+	zeekArchiveCache.Lock()
+	defer zeekArchiveCache.Unlock()
+	if len(zeekArchiveCache.paths) >= 128 {
+		clear(zeekArchiveCache.paths)
+	}
+	zeekArchiveCache.paths[key] = path
+}
+
+func forgetZeekArchive(key string) {
+	zeekArchiveCache.Lock()
+	defer zeekArchiveCache.Unlock()
+	delete(zeekArchiveCache.paths, key)
+}
 
 // Zeek moves hourly files out of current/ and compresses them. The compressed
 // inode is not the source inode, so prove continuity with the last committed
@@ -308,6 +335,13 @@ func resolveZeekSourceRaw(segment streamlog.Segment) ([]byte, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	cacheKey := segment.SourcePath + "\x00" + segment.FileID
+	if path := cachedZeekArchive(cacheKey); path != "" {
+		if raw := matchingZeekArchiveSlice(path, segment, length); raw != nil {
+			return raw, nil
+		}
+		forgetZeekArchive(cacheKey)
+	}
 	base := strings.TrimSuffix(filepath.Base(segment.SourcePath), ".log")
 	pattern := filepath.Join(filepath.Dir(filepath.Dir(segment.SourcePath)), "????-??-??", base+".*.log.gz")
 	archives, err := filepath.Glob(pattern)
@@ -315,37 +349,45 @@ func resolveZeekSourceRaw(segment streamlog.Segment) ([]byte, error) {
 		return nil, err
 	}
 	var matched []byte
+	var matchedPath string
 	for _, path := range archives {
-		f, err := os.Open(path)
-		if err != nil {
+		candidate := matchingZeekArchiveSlice(path, segment, length)
+		if candidate == nil {
 			continue
 		}
-		zr, err := gzip.NewReader(f)
-		if err != nil {
-			_ = f.Close()
-			continue
+		if matched != nil {
+			return nil, streamlog.ErrContentConflict
 		}
-		_, err = io.CopyN(io.Discard, zr, segment.StartOffset)
-		if err == nil {
-			candidate := make([]byte, length)
-			_, err = io.ReadFull(zr, candidate)
-			if err == nil {
-				sum := sha256.Sum256(candidate)
-				if hex.EncodeToString(sum[:]) == segment.RawSHA256 {
-					if matched != nil {
-						_ = zr.Close()
-						_ = f.Close()
-						return nil, streamlog.ErrContentConflict
-					}
-					matched = candidate
-				}
-			}
-		}
-		_ = zr.Close()
-		_ = f.Close()
+		matched, matchedPath = candidate, path
 	}
 	if matched == nil {
 		return nil, ErrStreamArchivePending
 	}
+	rememberZeekArchive(cacheKey, matchedPath)
 	return matched, nil
+}
+
+func matchingZeekArchiveSlice(path string, segment streamlog.Segment, length int64) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		return nil
+	}
+	defer zr.Close()
+	if _, err := io.CopyN(io.Discard, zr, segment.StartOffset); err != nil {
+		return nil
+	}
+	candidate := make([]byte, length)
+	if _, err := io.ReadFull(zr, candidate); err != nil {
+		return nil
+	}
+	sum := sha256.Sum256(candidate)
+	if hex.EncodeToString(sum[:]) != segment.RawSHA256 {
+		return nil
+	}
+	return candidate
 }

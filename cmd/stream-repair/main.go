@@ -1,6 +1,6 @@
 // stream-repair restores a stopped source's proven-unsent ClickHouse lane.
-// It does not mark the journal acknowledged; stream-drain must verify all
-// consumers and finalize the segment afterward.
+// It does not mark the journal acknowledged; the ingest stream worker must
+// verify all consumers and finalize the segment afterward.
 package main
 
 import (
@@ -20,16 +20,20 @@ func main() {
 	journalDir := flag.String("journal", "", "durable stream journal directory")
 	id := flag.String("segment-id", "", "exact segment id")
 	laneName := flag.String("lane", "", "archive, search or risk-feature")
+	settledScoped := flag.Bool("settled-scoped", false, "repair a settled source-backed archive with scoped row proof")
 	flag.Parse()
-	if err := run(*journalDir, *id, streamlog.Lane(*laneName)); err != nil {
+	if err := run(*journalDir, *id, streamlog.Lane(*laneName), *settledScoped); err != nil {
 		fmt.Fprintln(os.Stderr, "stream repair:", err)
 		os.Exit(1)
 	}
 }
 
-func run(directory, id string, lane streamlog.Lane) error {
+func run(directory, id string, lane streamlog.Lane, settledScoped bool) error {
 	if directory == "" || id == "" || (lane != streamlog.Archive && lane != streamlog.Search && lane != "risk-feature") {
 		return errors.New("journal, segment-id and ClickHouse lane are required")
+	}
+	if settledScoped && lane != streamlog.Archive {
+		return errors.New("settled scoped repair only supports the archive lane")
 	}
 	j, err := streamlog.Open(directory)
 	if err != nil {
@@ -63,9 +67,11 @@ func run(directory, id string, lane streamlog.Lane) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if lane == "risk-feature" {
+	if settledScoped {
+		err = ch.ReconcileSettledStreamBody(ctx, id, state.Segment)
+	} else if lane == "risk-feature" {
 		err = ch.RetryProvenUnsentStreamRiskFeatures(ctx, id, state.Segment)
 	} else {
 		err = ch.RetryProvenUnsentStreamLane(ctx, id, state.Segment, lane)
@@ -73,6 +79,6 @@ func run(directory, id string, lane streamlog.Lane) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("verified original-token repair segment=%s lane=%s events=%d; run stream-drain to confirm acknowledgements\n", id, lane, len(state.Segment.Events))
+	fmt.Printf("verified scoped repair segment=%s lane=%s events=%d; restart the ingest stream worker to confirm acknowledgements\n", id, lane, len(state.Segment.Events))
 	return nil
 }
