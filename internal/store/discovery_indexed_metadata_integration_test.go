@@ -56,13 +56,19 @@ func TestDiscoveryIndexedMetadataMatchesEveryCursorPage(t *testing.T) {
 	// One trusted identity spans two discovery keys, protocols and address families.
 	insert("a", "same-history", "ssdp", macA, "10.0.0.8", "10", "mac:"+macA, "", []string{"printing"})
 	insert("b", "second-key", "ndp", macA, "fe80::8", "10", "", "", nil)
+	// A service may omit MAC while carrying the same canonical endpoint identity.
+	insert("g", "canonical-service-key", "dns_sd", "", "fe80::9", "10", "mac:"+macA, "", nil)
 	// Different trusted identities may share the representative history key.
 	insert("c", "same-history", "arp", macB, "10.0.0.8", "10", "", "", nil)
 	insert("d", "scope-key", "dhcp", macA, "10.0.20.8", "20", "", "", nil)
+	insert("h", "other-scope-service-key", "dns_sd", "", "fe80::20", "20", "mac:"+macA, "", nil)
 	// A matching name/IP is insufficient to merge an unresolved service record.
 	insert("e", "service-key", "dns_sd", "", "10.0.0.8", "10", "", "", nil)
 	// A distinct registered endpoint remains separate even when the MAC matches.
 	insert("f", "registered-key", "ws_discovery", macA, "10.0.0.8", "10", custom, "printer", nil)
+	insert("i", "registered-service-key", "dns_sd", "", "10.0.0.8", "10", custom, "", nil)
+	// Invalid canonical formatting must stay an endpoint identity, not a MAC alias.
+	insert("j", "malformed-endpoint-key", "dns_sd", "", "10.0.0.8", "10", "mac:02-f0-00-00-00-01", "", nil)
 
 	for _, age := range []time.Duration{48 * time.Hour, 31 * 24 * time.Hour} {
 		past := now.Add(-age)
@@ -109,17 +115,40 @@ func TestDiscoveryIndexedMetadataMatchesEveryCursorPage(t *testing.T) {
 			t.Fatalf("count=%d disagrees with metadata=%d for %+v", count, meta.Total, q)
 		}
 	}
-	assert(discovery.DeviceQuery{}, 5)
-	assert(discovery.DeviceQuery{Window: -1}, 6)
-	assert(discovery.DeviceQuery{Window: 720 * time.Hour}, 6)
+	assert(discovery.DeviceQuery{}, 6)
+	assert(discovery.DeviceQuery{Window: -1}, 7)
+	assert(discovery.DeviceQuery{Window: 720 * time.Hour}, 7)
 	assert(discovery.DeviceQuery{DeviceType: "printer"}, 2)
 	assert(discovery.DeviceQuery{DeviceType: "access_point", Category: "network"}, 1)
 	assert(discovery.DeviceQuery{Protocol: "ndp"}, 1)
 	assert(discovery.DeviceQuery{Capability: "dumb"}, 1)
 	assert(discovery.DeviceQuery{View: "iot", Category: "printer"}, 1)
-	assert(discovery.DeviceQuery{State: "candidate"}, 1)
+	assert(discovery.DeviceQuery{State: "candidate"}, 2)
 	assert(discovery.DeviceQuery{State: "conflict"}, 1)
 	assert(discovery.DeviceQuery{VLAN: "20"}, 1)
-	assert(discovery.DeviceQuery{Search: "shared-title"}, 5)
+	assert(discovery.DeviceQuery{Search: "shared-title"}, 6)
 	assert(discovery.DeviceQuery{Search: "nothing-matches"}, 0)
+	// Counting the canonical service with its MAC identity must also retain all
+	// page evidence, including the original observation with no MAC field.
+	page, err := repo.DevicesIndexed(ctx, discovery.DeviceQuery{Mode: "passive", Domain: prefix, VLAN: "10", DeviceType: "printer", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := page["items"].([]discovery.DeviceView)
+	if len(items) != 1 || items[0].EvidenceCount != 3 || len(items[0].Observations) != 3 || len(items[0].Addresses) != 3 || items[0].MAC != macA {
+		t.Fatalf("canonical merge lost page evidence: %+v", items)
+	}
+	observedIDs := map[string]bool{}
+	for _, observation := range items[0].Observations {
+		observedIDs[observation.ID] = true
+		if observation.ID == prefix+"g" && observation.MAC != "" {
+			t.Fatal("derived canonical MAC overwrote service evidence")
+		}
+	}
+	for _, id := range []string{"a", "b", "g"} {
+		if !observedIDs[prefix+id] {
+			t.Fatalf("missing canonical merge observation %s", id)
+		}
+	}
+
 }

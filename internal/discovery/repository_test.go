@@ -231,3 +231,47 @@ func TestAggregateDeviceRowsKeepsRealIdentityConflictSeparate(t *testing.T) {
 		}
 	}
 }
+
+func TestAggregateDeviceRowsMergesCanonicalEndpointWithoutObservedMAC(t *testing.T) {
+	at := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+	mac := "00:11:22:33:44:55"
+	linked := passiveRepositoryRow("service-key", "fe80::8", "", "printer", "", "", at)
+	linked.EndpointID = "mac:" + mac
+	observed := passiveRepositoryRow("mac-key", "10.0.0.8", mac, "printer", "", "", at.Add(time.Second))
+	items := aggregateDeviceRows([]deviceObservationRow{linked, observed}, at.Add(time.Minute))
+	if len(items) != 1 {
+		t.Fatalf("canonical endpoint without observed MAC split from same MAC: %d groups", len(items))
+	}
+	if items[0].MAC != mac || items[0].EvidenceCount != 2 || len(items[0].Addresses) != 2 {
+		t.Fatalf("lost observed identity or evidence: %+v", items[0])
+	}
+	for _, observation := range items[0].Observations {
+		if observation.ID == linked.Observation.ID && observation.MAC != "" {
+			t.Fatal("derived endpoint MAC rewrote raw observation")
+		}
+	}
+}
+
+func TestCanonicalEndpointWithoutMACPreservesScopeAndIdentityIsolation(t *testing.T) {
+	at := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+	observed := passiveRepositoryRow("mac-key", "10.0.0.8", "00:11:22:33:44:55", "", "", "", at)
+	for _, tc := range []struct{ endpoint, vlan string }{{"mac:00:11:22:33:44:55", "20"}, {"registered:other", ""}, {"mac:00-11-22-33-44-55", ""}, {"mac:invalid", ""}} {
+		linked := passiveRepositoryRow("service-key", "10.0.0.8", "", "", "", "", at)
+		linked.EndpointID = tc.endpoint
+		linked.Observation.VLAN = tc.vlan
+		if items := aggregateDeviceRows([]deviceObservationRow{linked, observed}, at.Add(time.Minute)); len(items) != 2 {
+			t.Fatalf("identity crossed boundary endpoint=%s vlan=%s", tc.endpoint, tc.vlan)
+		}
+	}
+}
+
+func TestCanonicalEndpointMACRequiresNormalizedUnicastAddress(t *testing.T) {
+	for _, endpoint := range []string{"registered:x", "mac:invalid", "mac:00-11-22-33-44-55", "mac:01:11:22:33:44:55", "mac:00:00:00:00:00:00", "mac:00:11:22:33:44:55:66:77"} {
+		if got := canonicalEndpointMAC(endpoint); got != "" {
+			t.Fatalf("invalid canonical endpoint %s became %s", endpoint, got)
+		}
+	}
+	if got := canonicalEndpointMAC("mac:00:11:22:33:44:aa"); got != "00:11:22:33:44:aa" {
+		t.Fatalf("valid canonical endpoint=%s", got)
+	}
+}

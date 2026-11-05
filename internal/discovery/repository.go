@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/netip"
 	"proxy-sentinel/internal/normalized"
 	"sort"
@@ -365,6 +366,8 @@ func deviceAliases(row deviceObservationRow) []string {
 	}
 	if o.MAC != "" {
 		aliases = append(aliases, scope+"mac:"+strings.ToLower(o.MAC))
+	} else if mac := canonicalEndpointMAC(row.EndpointID); mac != "" {
+		aliases = append(aliases, scope+"mac:"+mac)
 	}
 	if o.IP != "" {
 		ipScope := scope
@@ -391,8 +394,8 @@ func deviceAnchor(row deviceObservationRow) string {
 	// A canonical MAC endpoint and an unlinked observation of that same MAC
 	// are the same anchor. Preserve distinct endpoint identities (including a
 	// canonical endpoint that disagrees with the observed MAC) as conflicts.
-	if mac != "" && endpoint == "mac:"+mac {
-		return scope + "mac:" + mac
+	if canonical := canonicalEndpointMAC(endpoint); canonical != "" && (mac == "" || mac == canonical) {
+		return scope + "mac:" + canonical
 	}
 	if row.EndpointID != "" {
 		return scope + "endpoint:" + endpoint
@@ -401,6 +404,22 @@ func deviceAnchor(row deviceObservationRow) string {
 		return scope + "mac:" + mac
 	}
 	return ""
+}
+
+// A canonical MAC endpoint is already an identity assertion, even when a
+// service observation omits its MAC. Match the discovery ingress constraints;
+// malformed, multicast and zero addresses cannot create a trusted MAC alias.
+func canonicalEndpointMAC(endpoint string) string {
+	endpoint = strings.ToLower(endpoint)
+	if !strings.HasPrefix(endpoint, "mac:") {
+		return ""
+	}
+	value := strings.TrimPrefix(endpoint, "mac:")
+	parsed, err := net.ParseMAC(value)
+	if err != nil || len(parsed) != 6 || parsed[0]&1 != 0 || parsed.String() == "00:00:00:00:00:00" || parsed.String() != value {
+		return ""
+	}
+	return value
 }
 
 func betterDeviceName(candidate, current string) bool {
