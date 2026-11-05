@@ -1,6 +1,6 @@
 # 被动发现 Journal WAL：当前实现与后续持久化设计
 
-更新时间：2026-11-02。本文是本地实现说明和下一阶段设计，不是现场启用或容量验收记录。现场版本、授权与运行结果由[当前任务](current-work-20261031.md)记录。整体存储约束见 [AGENTS.md](../AGENTS.md) 和[高性能流式存储方案](high-performance-streaming-architecture-20261030.md)。
+更新时间：2026-11-02。本文是本地实现说明和下一阶段设计，不是现场启用或容量验收记录。现场版本、授权与运行结果由[当前任务](current-work.md)记录。整体存储约束见 [AGENTS.md](../AGENTS.md) 和[高性能流式存储方案](high-performance-streaming-architecture-20261030.md)。
 
 ## 1. 当前状态与边界
 

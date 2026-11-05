@@ -109,7 +109,7 @@ so there is no need to download this multiple times per day.
 
 ## 10. 184 现场导入与可见性验证（2026-11-03 13:30–13:50）
 
-**导入**：用 root 执行 `device-fingerprint install`，把 `offline-2026.11.03-fingerbank-obs1` 写入 `/opt/proxy-sentinel/data/device-fingerprints`，`current` 指向新 release，旧 release 保留；识别工作进程 5 秒内热加载。此验证窗口内未重启服务、未切换应用版本；其后应用已更新至 r67，当前版本见[问题与优先级](current-issues-priorities-20261103.md)。
+**导入**：用 root 执行 `device-fingerprint install`，把 `offline-2026.11.03-fingerbank-obs1` 写入 `/opt/proxy-sentinel/data/device-fingerprints`，`current` 指向新 release，旧 release 保留；识别工作进程 5 秒内热加载。此验证窗口内未重启服务、未切换应用版本；其后应用已更新至 r67，当前版本见[问题与优先级](current-work.md)。
 
 **为什么还需要回填**：识别链路从 `endpoint_entities.attributes` 取 `vendor_class` / `requested_options`，但现场属性里只有 campus/vlan/nas（全库 0 条 DHCP 指纹）。只导入规则不会命中，所以对**最近 1,000 台终端**做了一次 DHCP 绑定日志回填，并把这批端点重新入队识别。
 

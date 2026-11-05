@@ -90,5 +90,5 @@ go test ./internal/... ./cmd/...
 `PROXY_SENTINEL_TEST_POSTGRES_DSN`；按本地约定未启动数据库栈，该用例跳过，SQL 只做了静态核对，
 尚未在真实 PostgreSQL 上执行。
 
-历史链路验收记录已移除；当前识别任务见[当前工作](current-work-20261031.md)。
+历史链路验收记录已移除；当前识别任务见[当前工作](current-work.md)。
 

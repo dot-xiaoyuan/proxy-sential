@@ -35,7 +35,7 @@ ClickHouse 事件 / PostgreSQL 当前态 / Redis 热态
 ## 当前内容
 
 - [文档索引](docs/README.md)
-- [当前工作与下一步（2026-10-31）](docs/current-work-20261031.md)
+- [当前工作与下一步](docs/current-work.md)
 - [发现数据重置与采集窗口](docs/discovery-data-reset-20261031.md)
 - [高性能流式存储与投影方案](docs/high-performance-streaming-architecture-20261030.md)
 - [架构设计](docs/architecture.md)
@@ -50,7 +50,7 @@ ClickHouse 事件 / PostgreSQL 当前态 / Redis 热态
 当前现场只使用镜像流量做被动发现，不依赖 SNMP/NDM 凭据。已接入：
 
 - ARP、DHCP、DNS-SD、SSDP、LLDP 被动发现；
-- eventbus → ClickHouse/PG 影子事实 → current 表 → 发现页；
+- 镜像发现流 → 标准事件与权威当前态 → 发现页；
 - OUI 厂商、主机名类型/OS 线索、TTL/DHCP 被动信号、DNS-SD/SSDP 服务公告；
 - 发现页终端台账、服务端口列、设备详情和证据历史。
 
@@ -69,4 +69,4 @@ ClickHouse 事件 / PostgreSQL 当前态 / Redis 热态
 - 发现数据只来自镜像流量；
 - 精确 OS 版本、交换机物理端口、全量开放端口和 SNMP/NDM 事件不在当前被动能力内；
 - 发现页结论必须区分证据、线索和确定值；
-- 具体验收项和命令见[当前工作](docs/current-work-20261031.md)。
+- 具体验收项和命令见[当前工作](docs/current-work.md)。

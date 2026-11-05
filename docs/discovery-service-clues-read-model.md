@@ -16,7 +16,7 @@ ClickHouse 迁移 `062_discovery_service_clues_10m.sql` 从新写入的 `normali
 
 关闭读开关或回退应用不会停止 MV 的同步 INSERT 成本。若新 MV 导致源 INSERT 异常，或在同等输入下 INSERT P95 持续显著上升且积压增长，先保持读开关关闭，再受控执行 `DETACH TABLE proxy_sentinel.discovery_service_clues_10m_mv PERMANENTLY SYNC`；目标表和原始事件保留。重新 ATTACH 后缺口期的输入不在模型中，原 062 账本时间不能再作为切读覆盖证明，必须另建覆盖门槛并重新比对。操作语义见 ClickHouse [DETACH](https://clickhouse.com/docs/reference/statements/detach) 与 [ATTACH](https://clickhouse.com/docs/reference/statements/attach)。
 
-模型表 TTL 只用于这份短期辅助结果，不改变原始事件、案件证据或归档的保留期。迁移不修改 PostgreSQL；目前没有独立 ClickHouse 集成环境。184 已于 UTC 2026-11-01 18:35:57 执行 CH 062，之后 15 分钟真实输入观察无源 INSERT/MV 异常或采集积压；短期行数和字节见[当前工作记录](current-work-20261031.md)。完整两小时覆盖、新旧结果与冷读收益仍待现场验收，读开关保持关闭。
+模型表 TTL 只用于这份短期辅助结果，不改变原始事件、案件证据或归档的保留期。迁移不修改 PostgreSQL；目前没有独立 ClickHouse 集成环境。184 已于 UTC 2026-11-01 18:35:57 执行 CH 062，之后 15 分钟真实输入观察无源 INSERT/MV 异常或采集积压；短期行数和字节见[当前工作记录](current-work.md)。完整两小时覆盖、新旧结果与冷读收益仍待现场验收，读开关保持关闭。
 
 迁移前后在 184 以相同的 10 分钟窗口执行以下只读采样；第一条统计 `normalized_events` 同步 INSERT 数量、写入行/字节及耗时，第二条按小时查看模型表活动 part 数、行数和磁盘字节。首次采样需记下 UTC 时间，避免把流量变化当作 MV 成本。
 
