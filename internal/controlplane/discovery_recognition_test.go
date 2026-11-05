@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"proxy-sentinel/internal/discovery"
 )
 
 func TestEnrichDiscoveryRecognitionJoinsByMAC(t *testing.T) {
@@ -34,6 +35,31 @@ func TestEnrichDiscoveryRecognitionJoinsByMAC(t *testing.T) {
 	}
 	if _, ok := items[2]["recognition"]; ok {
 		t.Fatal("device without a MAC must stay unchanged")
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnrichDiscoveryRecognitionJoinsIndexedDeviceViews(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	page := map[string]any{"items": []discovery.DeviceView{{ID: "arp-device", MAC: "AA:BB:CC:DD:EE:01"}}}
+	mock.ExpectQuery(`SELECT lower\(primary_mac\)`).WithArgs("{aa:bb:cc:dd:ee:01}").WillReturnRows(
+		sqlmock.NewRows([]string{"mac", "os_family", "role", "brand", "model", "confidence", "rule_version"}).
+			AddRow("aa:bb:cc:dd:ee:01", "", "access_point", "", "", 0.9, "replay"),
+	)
+	enrichDiscoveryRecognition(context.Background(), db, page)
+	items, ok := page["items"].([]map[string]any)
+	if !ok || len(items) != 1 || items[0]["mac"] != "AA:BB:CC:DD:EE:01" {
+		t.Fatalf("indexed page was not preserved: %#v", page["items"])
+	}
+	got, ok := items[0]["recognition"].(discoveryRecognition)
+	if !ok || got.DeviceType != "access_point" {
+		t.Fatalf("indexed recognition = %#v", items[0]["recognition"])
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

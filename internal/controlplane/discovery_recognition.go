@@ -3,9 +3,12 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+
+	"proxy-sentinel/internal/discovery"
 )
 
 // discoveryRecognition is the endpoint-recognition view of a discovered device.
@@ -73,6 +76,19 @@ func discoveryPageItems(page map[string]any) ([]map[string]any, bool) {
 			}
 			out = append(out, item)
 		}
+		return out, true
+	case []discovery.DeviceView:
+		// The indexed discovery reader returns typed views. Convert only this
+		// bounded page to its JSON shape before adding recognition fields.
+		raw, err := json.Marshal(items)
+		if err != nil {
+			return nil, false
+		}
+		var out []map[string]any
+		if err = json.Unmarshal(raw, &out); err != nil {
+			return nil, false
+		}
+		page["items"] = out
 		return out, true
 	default:
 		return nil, false
