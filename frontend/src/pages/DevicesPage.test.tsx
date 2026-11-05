@@ -5,15 +5,15 @@ import { DevicesPage } from './DevicesPage'
 
 vi.mock('../widgets/IpTrafficObservations', () => ({ IpTrafficObservations: ({ip}:{ip:string}) => <output data-testid="ip-observations">{ip}</output> }))
 
-const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,eventsRead:true,metadataError:false,readState:undefined as {complete:boolean;updating:boolean;as_of:string;available?:boolean}|undefined,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnosticsData:undefined as unknown,diagnostics:vi.fn((_enabled?:boolean)=>({data:undefined as unknown}))}))
+const fixture = vi.hoisted(()=>({total:88 as number|undefined,items:[] as unknown[]|null,nextCursor:'20' as string|null,eventsRead:true,metadataError:false,readState:undefined as {complete:boolean;updating:boolean;as_of:string;available?:boolean}|undefined,refresh:vi.fn(),metadataRefresh:vi.fn(),organization:vi.fn(()=>({data:undefined})),diagnosticsData:undefined as unknown,diagnostics:vi.fn((_enabled?:boolean)=>({data:undefined as unknown}))}))
 vi.mock('../shared/api/queries', () => ({
   useOrganization: fixture.organization,
   useSession: () => ({data:{user:{id:'admin'},permissions:fixture.eventsRead?['identity:read','events:read']:['identity:read']}}),
   useDeviceRecognitionSummary: (enabled?:boolean)=>{fixture.diagnostics(enabled);return {data:fixture.diagnosticsData}},
-  useDevices: () => ({ data: { items: fixture.items, read_model_state:fixture.readState, page: {next_cursor:'20'}, facets: { brands: [], os_families: [] } },dataUpdatedAt:Date.now(), isFetching: false,isPlaceholderData:false,refresh:fixture.refresh }),
+  useDevices: () => ({ data: { items: fixture.items, read_model_state:fixture.readState, page: {next_cursor:fixture.nextCursor}, facets: { brands: [], os_families: [] } },dataUpdatedAt:Date.now(), isFetching: false,isPlaceholderData:false,refresh:fixture.refresh }),
   useDeviceInventoryMetadata:()=>({data:fixture.total===undefined?undefined:{total:fixture.total,facets:{brands:[],os_families:[]}},isError:fixture.metadataError,refresh:fixture.metadataRefresh}),
 }))
-afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.eventsRead=true;fixture.metadataError=false;fixture.readState=undefined;fixture.diagnosticsData=undefined;localStorage.clear();vi.clearAllMocks()})
+afterEach(()=>{cleanup();fixture.total=88;fixture.items=[];fixture.nextCursor='20';fixture.eventsRead=true;fixture.metadataError=false;fixture.readState=undefined;fixture.diagnosticsData=undefined;localStorage.clear();vi.clearAllMocks()})
 function Location() { return <output data-testid="location">{useLocation().search}</output> }
 function setup(url = '/devices') { render(<MemoryRouter initialEntries={[url]}><DevicesPage /><Location /></MemoryRouter>) }
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) }) }
@@ -33,10 +33,10 @@ describe('终端列表分页与搜索', () => {
   })
   it('翻页后保持第二页，继续翻页不会触发搜索重置', async () => {
     setup()
-    fireEvent.click(screen.getByTitle('2'))
+    fireEvent.click(screen.getByRole('button',{name:'下一页'}))
     await settle()
     expect(screen.getByTestId('location')).toHaveTextContent('page=2')
-    fireEvent.click(screen.getByTitle('3'))
+    fireEvent.click(screen.getByRole('button',{name:'下一页'}))
     await settle()
     expect(screen.getByTestId('location')).toHaveTextContent('page=3')
   })
@@ -47,7 +47,7 @@ describe('终端列表分页与搜索', () => {
     fireEvent.change(screen.getByPlaceholderText('搜索终端名称、MAC、IP 或账号'), { target: { value: 'Dell' } })
     fireEvent.click(screen.getByRole('button', { name: /查\s*询/ }))
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('page=1&limit=50'))
-    fireEvent.click(screen.getByTitle('2'))
+    fireEvent.click(screen.getByRole('button',{name:'下一页'}))
     await settle()
     expect(screen.getByTestId('location')).toHaveTextContent('page=2&limit=50')
   })
@@ -71,7 +71,7 @@ it('treats a legacy null items response as an empty list',()=>{
  setup('/devices?view=recent&window=24h')
  expect(screen.getAllByText('没有匹配的终端').length).toBeGreaterThan(0)
 })
-it('keeps IPv4 as the only primary address and places names and MACs in fixed fields',()=>{
+it('keeps names and MACs together while retaining IPv4 and IPv6 in the address column',()=>{
  fixture.items=[
   {endpoint_id:'named',current_ip:'192.0.2.10',primary_mac:'00:11:22:33:44:10',device_name:{value:'DESKTOP-01',source:'dhcp',confidence:1}},
   {endpoint_id:'mac-only',primary_mac:'00:11:22:33:44:11'},
@@ -88,6 +88,25 @@ it('keeps IPv4 as the only primary address and places names and MACs in fixed fi
  expect(rows[2]).not.toHaveTextContent('192.0.2.')
  expect(rows[2]).toHaveTextContent('00:11:22:33:44:12')
  expect(rows[2]).toHaveTextContent('2001:db8::12')
+ expect(rows[0].querySelector('td[data-label="终端 / MAC"]')).toHaveTextContent('DESKTOP-01')
+ expect(rows[0].querySelector('td[data-label="终端 / MAC"]')).toHaveTextContent('00:11:22:33:44:10')
+ expect(rows[2].querySelector('td[data-label="地址 / 接入"]')).toHaveTextContent('2001:db8::12')
+})
+
+it('retains independent identity counts, ownership and access conflicts with the unified visual layout',()=>{
+ fixture.total=123
+ fixture.items=[{endpoint_id:'printer',primary_mac:'00:11:22:33:44:10',current_ip:'192.0.2.10',device_type:'printer',device_type_confidence:.95,brand:'HP',brand_confidence:.95,os_family:'Linux',os_family_confidence:.95,current_account:'user-a',owner_name:'图书馆',current_access_id:'slot=1;subslot=0;port=8;vlanid=204',current_access_conflict:true,ip_match:{ip:'192.0.2.9',matched_at:'2026-11-05T12:00:00Z',source:'ip_observation',is_recent_ip:false}}]
+ setup('/devices?view=history&search_type=ip&q=192.0.2.9')
+ expect(screen.getByText('123 个终端身份')).toBeVisible()
+ expect(screen.getByRole('img',{name:'打印机'})).toBeVisible()
+ expect(screen.getByText('Linux')).toBeVisible()
+ expect(screen.getByText('图书馆')).toBeVisible()
+ expect(screen.getByText('user-a')).toBeVisible()
+ expect(screen.getByText('端口 1/0/8 · VLAN 204')).toBeVisible()
+ expect(screen.getByText('接入位置冲突')).toBeVisible()
+ expect(screen.getByText('历史 IP 命中')).toBeVisible()
+ const detail=screen.getByRole('link',{name:'查看详情'})
+ expect(decodeURIComponent(detail.getAttribute('href')!)).toContain('return_to=/devices?view=history&search_type=ip&q=192.0.2.9')
 })
 it('restores exact account search and waits for explicit submit',async()=>{
  setup('/devices?view=recent&window=24h&search_type=account&q=Student-A&page=2')
@@ -118,6 +137,13 @@ it('keeps the list when metadata fails and retries only statistics',()=>{
  fireEvent.click(screen.getByRole('button',{name:'重试统计'}))
  expect(fixture.metadataRefresh).toHaveBeenCalledOnce()
  expect(fixture.refresh).not.toHaveBeenCalled()
+})
+it('does not enable a next cursor page from the independent total alone',()=>{
+ fixture.total=123;fixture.nextCursor=null
+ fixture.items=[{endpoint_id:'only-page',current_ip:'192.0.2.10'}]
+ setup('/devices?view=recent&window=24h')
+ expect(screen.getByText('123 个终端身份')).toBeVisible()
+ expect(screen.getByRole('button',{name:'下一页'})).toBeDisabled()
 })
 it('mounts campus filters only when expanded and enables diagnostics separately',async()=>{
  setup('/devices?view=recent&window=24h')

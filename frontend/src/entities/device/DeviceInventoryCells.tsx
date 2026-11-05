@@ -8,6 +8,8 @@ import { OperatingSystemLabel } from './OperatingSystemLabel'
 import { resolveDeviceBrand } from './brandMatcher'
 import { recognitionDimensionConflict } from './recognitionConflict'
 import { routerLibraryLabels } from './libraryLabels'
+import { DiscoveryDeviceIcon } from './DiscoveryDeviceIcon'
+import { brandIconPaths } from './brandIcons'
 
 type DeviceDisplayItem = EndpointDeviceInventory | DeviceInventoryListItem
 
@@ -122,7 +124,22 @@ export function DeviceLedgerIdentity({device,href,showName=true}:{device:DeviceD
  </div>
 }
 
-export function DeviceLedgerRecognition({device}:{device:DeviceDisplayItem}) {
+export function TerminalInventoryIdentity({ device, href, showName = true }: { device: DeviceDisplayItem; href: string; showName?: boolean }) {
+  const name = showName ? device.device_name?.value : ''
+  const type = !recognitionDimensionConflict(device, 'device_type') && (device.device_type_confidence ?? 0) >= .8 && !isEmptyRecognition(device.device_type) ? device.device_type : undefined
+  return <div className="terminal-inventory-identity">
+    <DiscoveryDeviceIcon type={type} />
+    <div className="terminal-inventory-identity-content">
+      {name ? <Link className="terminal-inventory-primary" to={href} title={device.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>
+        : device.primary_mac ? <div className="terminal-inventory-primary-mac"><DeviceMAC device={device} href={href} /></div>
+          : device.current_ip ? <Link className="terminal-inventory-primary mono" to={href}>{device.current_ip}</Link> : null}
+      {name && device.primary_mac && <DeviceMAC device={device} href={href} />}
+      {name && device.device_name?.status === 'historical' && <span className="device-name-caption">历史名称</span>}
+    </div>
+  </div>
+}
+
+export function DeviceLedgerRecognition({device,showBrandLogo=false}:{device:DeviceDisplayItem;showBrandLogo?:boolean}) {
  const brandSafe=!recognitionDimensionConflict(device, 'brand')
  const platform=virtualPlatform(device)||(/^vmware(?:[\s,.]|$)/i.test(device.brand||'')?'VMware':undefined)
  const type=!recognitionDimensionConflict(device, 'device_type')&&(device.device_type_confidence??0)>=.8&&!isEmptyRecognition(device.device_type)?deviceTypeLabel(device.device_type!):''
@@ -136,7 +153,8 @@ export function DeviceLedgerRecognition({device}:{device:DeviceDisplayItem}) {
  ].filter(Boolean)
  return <div className="device-ledger-recognition">
   {type&&<Typography.Text>{type}</Typography.Text>}
-  {(brand||model)&&<Typography.Text className="device-brand-model">{[brand,model].filter(Boolean).join(' · ')}</Typography.Text>}
+  {showBrandLogo ? <>{brand && (brandIconPaths[resolveDeviceBrand({brand:device.brand}).key] ? <BrandLogo brandKey={device.brand!} /> : <Typography.Text className="device-brand-model">{brand}</Typography.Text>)}{model && <Typography.Text className="device-brand-model">{model}</Typography.Text>}</>
+    : (brand||model)&&<Typography.Text className="device-brand-model">{[brand,model].filter(Boolean).join(' · ')}</Typography.Text>}
   <div className="device-identity-clues">
    {platform&&<Tooltip title="虚拟网卡或虚拟化平台线索，不确认宿主机品牌。"><Tag className="device-platform-tag"><CloudServerOutlined/>VMware 虚拟平台线索</Tag></Tooltip>}
    {(device.recognition_conflict||device.brand_inference?.status==='conflict')&&<Tag className="device-conflict-tag">线索冲突</Tag>}

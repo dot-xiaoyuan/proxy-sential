@@ -33,7 +33,7 @@ func TestIndexedDumbFilterRunsBeforeCandidateLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery(`(?s)GROUP BY device_key\s+HAVING bool_or\(coalesce\(data->'capabilities'.*LIMIT`).WillReturnRows(
+	mock.ExpectQuery(`(?s)GROUP BY identity_key\s+HAVING bool_or\(observation_capabilities.*LIMIT`).WillReturnRows(
 		sqlmock.NewRows([]string{"device_key", "data", "endpoint_id", "role", "confidence", "conflict"}),
 	)
 	_, err = (Repository{DB: db}).DevicesIndexed(context.Background(), DeviceQuery{Mode: "passive", Capability: "dumb", Limit: 20})

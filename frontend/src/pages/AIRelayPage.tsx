@@ -153,6 +153,7 @@ export function AIRelayPage() {
       </AppListSection>
       <AppServerPagination
         cursorMode
+        hasMore={Boolean(result.data?.page.next_cursor)}
         disabled={result.isFetching||jumping}
         page={page}
         pageSize={pageSize}

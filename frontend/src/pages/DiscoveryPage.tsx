@@ -96,7 +96,7 @@ export function DiscoveryPage({configuration=false,embedded=false}:{configuratio
  {key:'devices',label:'发现记录',children:<>
         <AppListHeader title="发现记录" count={`${devices.data?.items.length ?? 0} 条`} />
         <AppTable rowKey="id" columns={cols} dataSource={devices.data?.items??[]} pagination={false} locale={{emptyText:'暂无发现记录'}} scroll={{x:1150}}/>
-        {(()=>{const items=devices.data?.items.length??0;const total=devices.data?.has_more?devicePage*20+1:(devicePage-1)*20+items;return <AppServerPagination cursorMode page={devicePage} pageSize={20} total={total} totalText={`第 ${devicePage} 页 · 已加载 ${(devicePage-1)*20+items} 条`} onChange={(next)=>{if(next>devicePage){const value=devices.data?.next_cursor;if(value){setDeviceCursors([...deviceCursors,value]);setDevicePage(next)}}else setDevicePage(next)}}/>})()} 
+        {(()=>{const items=devices.data?.items.length??0;const total=devices.data?.has_more?devicePage*20+1:(devicePage-1)*20+items;return <AppServerPagination cursorMode showSizeChanger={false} hasMore={Boolean(devices.data?.has_more&&devices.data?.next_cursor)} page={devicePage} pageSize={20} total={total} totalText={`已加载 ${(devicePage-1)*20+items} 条`} onChange={(next)=>{if(next>devicePage){const value=devices.data?.next_cursor;if(value){setDeviceCursors([...deviceCursors,value]);setDevicePage(next)}}else setDevicePage(next)}}/>})()}
       </>},
  {key:'sources',label:'基础设施接入',children:<>
         <AppListHeader title="基础设施接入" count={`${sources.data?.items.length ?? 0} 条`} actions={<Button disabled={!manage} onClick={()=>edit(null)}>新增接入源</Button>} />

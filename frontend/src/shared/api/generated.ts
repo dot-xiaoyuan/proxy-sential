@@ -396,6 +396,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/devices/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Exact filtered count of discovered devices grouped by source scope and trusted endpoint or MAC identity, falling back to the discovery key. Uses the same current-index grouping and filters as the indexed discovery list. Does not claim a physical terminal census. Cursor, offset and limit are ignored. Requires identity:read. */
+        get: operations["getDiscoveryDeviceMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/router-observations": {
         parameters: {
             query?: never;
@@ -6797,6 +6814,36 @@ export interface components {
             valid_until: string;
             withdrawn?: boolean;
             explanation: string;
+            vlan?: string;
+            vrf?: string;
+            interface?: string;
+            port?: string;
+            manufacturer?: string;
+            model_name?: string;
+            confidence?: string;
+            rule_version?: string;
+            config_version?: number;
+            evidence?: {
+                event_id?: string;
+                type?: string;
+                schema_version?: string;
+                source?: string;
+                source_event_type?: string;
+                payload?: {
+                    [key: string]: unknown;
+                };
+                subject?: {
+                    [key: string]: unknown;
+                };
+                observer?: {
+                    [key: string]: unknown;
+                };
+                flow?: {
+                    [key: string]: unknown;
+                };
+            } & {
+                [key: string]: unknown;
+            };
         };
         DiscoveryDevice: {
             last_device_type?: string;
@@ -6839,12 +6886,26 @@ export interface components {
             endpoint_id?: string;
             observations: components["schemas"]["DiscoveryObservation"][];
         };
+        DiscoveryDeviceMetadata: {
+            /** Format: int64 */
+            total: number;
+            /** Format: date-time */
+            as_of: string;
+            /**
+             * @description A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key.
+             * @enum {string}
+             */
+            count_unit: "trusted_discovery_identity";
+            window: string;
+        };
         DiscoveryDevicePage: {
             freshness?: components["schemas"]["DiscoveryFreshness"];
             items: components["schemas"]["DiscoveryDevice"][];
             next_cursor: string;
             has_more: boolean;
             total?: number;
+            /** @enum {string} */
+            count_unit?: "trusted_discovery_identity";
             facets?: {
                 [key: string]: unknown;
             }[];
@@ -8404,6 +8465,7 @@ export interface operations {
                 /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
                 view?: "iot";
                 mode?: "passive" | "infrastructure" | "active" | "all";
+                /** @description Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range. */
                 window?: string;
                 /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
                 search?: string;
@@ -8430,6 +8492,62 @@ export interface operations {
             };
             /** @description Invalid cursor */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryDeviceMetadata: {
+        parameters: {
+            query?: {
+                type?: string;
+                protocol?: string;
+                state?: "identified" | "expired" | "conflict" | "candidate";
+                domain?: string;
+                vlan?: string;
+                /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
+                view?: "iot";
+                mode?: "passive" | "infrastructure" | "active" | "all";
+                /** @description Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range. */
+                window?: string;
+                /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
+                search?: string;
+                category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
+                capability?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Independent filtered discovery count and its database snapshot time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryDeviceMetadata"];
+                };
+            };
+            /** @description Invalid filter or time window */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current discovery read path does not support this indexed metadata contract */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Count could not be read; never reported as an empty result */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

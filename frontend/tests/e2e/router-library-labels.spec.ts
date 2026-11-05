@@ -7,6 +7,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await page.setViewportSize(viewport)
     await page.goto('/devices?tab=network')
     await expect(page.getByRole('heading', { name: '路由器', exact: true })).toBeVisible()
+    await page.getByText('路由角色证据核查', { exact: true }).click()
     // Desktop and mobile lists both render the recognition block; only the visible one counts.
     await expect(page.locator('.router-library:visible').filter({ hasText: 'Recog 命中' }).first()).toBeVisible()
     await expect(page.locator('.router-library:visible').filter({ hasText: 'WhatWeb 命中' }).first()).toBeVisible()

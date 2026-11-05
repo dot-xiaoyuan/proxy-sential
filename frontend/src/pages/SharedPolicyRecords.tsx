@@ -168,7 +168,7 @@ export function SharedPolicyRecords() {
         {!!item.evidence.records?.length && <div className="shared-record-detail-scroll">{item.evidence.records.map(ref => <p className="shared-record-id" key={`${ref.source}/${ref.event_id}`}>{[ref.source, ref.collector_instance_id, ref.event_id].filter(Boolean).join(' / ')}</p>)}</div>}
       </div> }}
     />}
-    <AppServerPagination cursorMode page={page} pageSize={pageSize} total={derivedTotal} totalText={`已加载 ${(page - 1) * pageSize + items.length} 条`} onChange={changePage} />
+    <AppServerPagination cursorMode hasMore={Boolean(nextCursor)} page={page} pageSize={pageSize} total={derivedTotal} totalText={`已加载 ${(page - 1) * pageSize + items.length} 条`} onChange={changePage} />
     <details className="shared-record-processing" onToggle={e=>setProcessingOpen(e.currentTarget.open)}><summary>查看采集处理进度（不属于策略命中）</summary>
      {processingOpen&&(query.isFetching?<p>正在读取处理进度</p>:query.isError?<p>处理进度读取失败</p>:query.data?.processing?.length?<><p>本次返回 {query.data.processing.length} 项待办{query.data.processing_has_more?'，还有其他待办':''}。账号筛选只作用于已生成的记录。</p><ul>{query.data.processing.slice(0,5).map(item=><li key={item.ip}><span className="shared-record-id">{item.ip}</span><Tag>{item.state==='failed'?'失败待重试':'处理中'}</Tag></li>)}</ul>{query.data.processing.length>5&&<p className="shared-access-muted">仅展开前 5 项，其他待办仍继续处理。</p>}</>:<p>当前范围没有返回待办。此状态不代表已确认或排除共享。</p>)}
     </details>

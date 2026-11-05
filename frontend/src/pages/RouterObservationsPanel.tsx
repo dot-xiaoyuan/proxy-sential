@@ -9,10 +9,10 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button,
   Checkbox,
+  Collapse,
   Form,
   Input,
   InputNumber,
-  Segmented,
   Select,
   Switch,
   Tag,
@@ -28,6 +28,7 @@ import { BrandLogo } from '../entities/device/BrandLogo'
 import { routerLibraryLabels } from '../entities/device/libraryLabels'
 import { routerConflictLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
 import { routerVerdictExplanation } from './routerVerdictExplanation'
+import { RouterAssetsPanel } from './RouterAssetsPanel'
 
 const statusLabels = routerStatusLabels
 const roleLabels = routerRoleLabels
@@ -48,6 +49,13 @@ export function routerObservationQueryFromParams(params: URLSearchParams): Route
 }
 
 export function RouterObservationsPanel() {
+  return <div className="router-detail-page">
+    <RouterAssetsPanel />
+    <Collapse items={[{ key: 'role-evidence', label: '路由角色证据核查', children: <RouterRoleObservationsPanel /> }]} />
+  </div>
+}
+
+function RouterRoleObservationsPanel() {
   const [form] = Form.useForm()
   const location=useLocation();const [params,setParams]=useSearchParams();const pagination=useServerPagination('routers_');const page=pagination.page;const setPage=(value:number)=>pagination.update(value,pagination.pageSize)
   const query=routerObservationQueryFromParams(params)
@@ -55,7 +63,6 @@ export function RouterObservationsPanel() {
   const desktopAuth = useMediaQuery('(min-width: 1100px)')
   const mobileAuth = useMediaQuery('(max-width: 559px)')
   const showAuth = desktopAuth || mobileAuth
-  const switchView = (value: string | number) => { const nextView = String(value); if (nextView === view) return; setParams(current => { const next = new URLSearchParams(current); next.set('routers_view', nextView); next.delete('routers_page'); return next }) }
   const [searchDraft,setSearchDraft]=useState(String(params.get('router_keyword')||''))
   const [moreOpen,setMoreOpen]=useState(false)
   useEffect(()=>{setSearchDraft(String(params.get('router_keyword')||''))},[params])
@@ -82,9 +89,6 @@ export function RouterObservationsPanel() {
   ]
   const total = observations.data?.page?.total ?? 0
   return <div className="router-observations-panel">
-    <div className="router-view-switch">
-      <Segmented aria-label="网络设备类型" value={view} onChange={switchView} options={[{label:'路由器',value:'router'},{label:'接入点',value:'ap'}]} />
-    </div>
     {/* Filters and the list identity share one card so the table is not pushed down. */}
     <Form form={form} className="router-filter-form" layout="vertical" onFinish={submit}>
       <AppTableBar

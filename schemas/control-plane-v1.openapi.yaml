@@ -250,7 +250,7 @@ paths:
         - { name: vlan, in: query, schema: { type: string } }
         - { name: view, in: query, description: IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient., schema: { type: string, enum: [iot] } }
         - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
-        - { name: window, in: query, schema: { type: string, default: 24h } }
+        - { name: window, in: query, description: "Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range.", schema: { type: string, default: 24h } }
         - { name: search, in: query, description: 'Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching.', schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
         - { name: category, in: query, schema: { type: string, enum: [mobile, tablet, desktop, printer, camera, network, media, identity_only] } }
@@ -264,6 +264,31 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DiscoveryDevicePage' }
         '400': { description: Invalid cursor, mode, or pagination parameter }
+  /discovery/devices/metadata:
+    get:
+      operationId: getDiscoveryDeviceMetadata
+      description: Exact filtered count of discovered devices grouped by source scope and trusted endpoint or MAC identity, falling back to the discovery key. Uses the same current-index grouping and filters as the indexed discovery list. Does not claim a physical terminal census. Cursor, offset and limit are ignored. Requires identity:read.
+      parameters:
+        - { name: type, in: query, schema: { type: string } }
+        - { name: protocol, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string, enum: [identified, expired, conflict, candidate] } }
+        - { name: domain, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
+        - { name: view, in: query, description: IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient., schema: { type: string, enum: [iot] } }
+        - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
+        - { name: window, in: query, description: "Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range.", schema: { type: string, default: 24h } }
+        - { name: search, in: query, description: 'Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching.', schema: { type: string } }
+        - { name: category, in: query, schema: { type: string, enum: [mobile, tablet, desktop, printer, camera, network, media, identity_only] } }
+        - { name: capability, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Independent filtered discovery count and its database snapshot time.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryDeviceMetadata' }
+        '400': { description: Invalid filter or time window }
+        '409': { description: Current discovery read path does not support this indexed metadata contract }
+        '500': { description: Count could not be read; never reported as an empty result }
   /router-observations:
     get:
       operationId: listRouterObservations
@@ -7044,6 +7069,28 @@ components:
         valid_until: { type: string, format: date-time }
         withdrawn: { type: boolean }
         explanation: { type: string }
+        vlan: { type: string }
+        vrf: { type: string }
+        interface: { type: string }
+        port: { type: string }
+        manufacturer: { type: string }
+        model_name: { type: string }
+        confidence: { type: string }
+        rule_version: { type: string }
+        config_version: { type: integer }
+        evidence:
+          type: object
+          additionalProperties: true
+          properties:
+            event_id: { type: string }
+            type: { type: string }
+            schema_version: { type: string }
+            source: { type: string }
+            source_event_type: { type: string }
+            payload: { type: object, additionalProperties: true }
+            subject: { type: object, additionalProperties: true }
+            observer: { type: object, additionalProperties: true }
+            flow: { type: object, additionalProperties: true }
     DiscoveryDevice:
       type: object
       required: [id, observations, category, identity_kind, capabilities, protocols, first_seen, last_seen, current, evidence_count]
@@ -7078,6 +7125,14 @@ components:
         evidence_count: { type: integer }
         endpoint_id: { type: string }
         observations: { type: array, items: { $ref: '#/components/schemas/DiscoveryObservation' } }
+    DiscoveryDeviceMetadata:
+      type: object
+      required: [total, as_of, count_unit, window]
+      properties:
+        total: { type: integer, format: int64, minimum: 0 }
+        as_of: { type: string, format: date-time }
+        count_unit: { type: string, enum: [trusted_discovery_identity], description: A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key. }
+        window: { type: string }
     DiscoveryDevicePage:
       type: object
       required: [items, next_cursor, has_more, limit, window]
@@ -7087,6 +7142,7 @@ components:
         next_cursor: { type: string }
         has_more: { type: boolean }
         total: { type: integer }
+        count_unit: { type: string, enum: [trusted_discovery_identity] }
         facets: { type: array, items: { type: object, additionalProperties: true } }
         service_devices: { type: integer }
         linked_endpoints: { type: integer }

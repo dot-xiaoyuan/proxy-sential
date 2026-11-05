@@ -37,7 +37,7 @@ function mockReads(observedPortResult: unknown = {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
     }
     if (path.startsWith('/discovery/devices?')) return Promise.resolve({ items: [deviceRow], ...(includeListTotal?{total:1}:{}), has_more: false })
-    if (path === '/device-inventory/metadata?view=history') return Promise.resolve({total:1458,as_of:'2026-11-05T14:00:00Z'})
+    if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve({total:path.includes('type=access_point')?1:84,as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'})
     if (path === '/discovery/coverage') return Promise.resolve(coverage)
     if (path === '/discovery/statistics') return Promise.resolve({ items: [], pending_updates: 0 })
     if (path === '/discovery/types') return Promise.resolve({ items: [] })
@@ -60,11 +60,11 @@ function observedCalls() {
 
 afterEach(() => { cleanup(); request.mockReset() })
 
-it('shows the independent identity total and recognized type when the discovery cursor page has no total', async () => {
+it('shows the filtered discovery metadata total when the cursor page has no total', async () => {
   mockReads({items:{}}, {...device,mac:'02:00:00:20:40:01',recognition:{device_type:'access_point',confidence:0.9}}, undefined, false)
   renderPanel()
   const summary = await screen.findByLabelText('发现设备摘要')
-  await waitFor(()=>expect(screen.getByText('1458')).toBeVisible())
+  await waitFor(()=>expect(screen.getByText('84')).toBeVisible())
   expect(summary).toHaveTextContent('本页明确类型 1')
   expect((await screen.findAllByText('无线接入点'))[0]).toBeVisible()
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
@@ -212,4 +212,15 @@ it('removes previous rows when a filter changes after one discovery key was spli
   const duplicateKeys=errorLog.mock.calls.filter(args=>args.map(String).join(' ').includes('same key'))
   errorLog.mockRestore()
   expect(duplicateKeys).toEqual([])
+})
+
+it('keeps the loaded list and offers retry when filtered statistics fail',async()=>{
+  mockReads()
+  const read=request.getMockImplementation()!
+  request.mockImplementation((path:string,options?:unknown)=>path.startsWith('/discovery/devices/metadata?')?Promise.reject(new Error('统计暂时不可用')):read(path,options))
+  renderPanel()
+  await screen.findAllByText('192.0.2.10')
+  expect(await screen.findByText('读取发现数量失败')).toBeVisible()
+  expect(screen.getByRole('button',{name:'重试统计'})).toBeVisible()
+  expect(screen.queryByText('终端身份总数')).not.toBeInTheDocument()
 })

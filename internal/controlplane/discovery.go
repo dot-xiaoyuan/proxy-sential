@@ -72,7 +72,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	defer cancel()
 	repo := discovery.Repository{DB: s.operations.db, DeviceCache: s.discoveryDevices, PipelineV2: os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true", ActiveStreamOnly: discoveryStreamCurrentReadEnabled()}
 	limit, offset := 50, 0
-	if v := r.URL.Query().Get("limit"); v != "" {
+	if v := r.URL.Query().Get("limit"); v != "" && path != "/discovery/devices/metadata" {
 		n, e := strconv.Atoi(v)
 		if e != nil || n < 1 || n > 200 {
 			writeError(w, 400, "bad_page", "分页参数无效")
@@ -80,7 +80,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		}
 		limit = n
 	}
-	if v := r.URL.Query().Get("offset"); v != "" {
+	if v := r.URL.Query().Get("offset"); v != "" && path != "/discovery/devices/metadata" {
 		if path == "/discovery/devices" {
 			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")
 			return
@@ -407,8 +407,8 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		// A missing exact key remains an explicit gap. The check time lets an
 		// external audit pair it with the immutable journal acceptance time.
 		writeJSON(w, 200, map[string]any{"items": items, "missing_keys": missing, "checked_at": time.Now().UTC()})
-	case path == "/discovery/devices" && r.Method == "GET":
-		if r.URL.Query().Get("offset") != "" {
+	case (path == "/discovery/devices" || path == "/discovery/devices/metadata") && r.Method == "GET":
+		if r.URL.Query().Get("offset") != "" && path == "/discovery/devices" {
 			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")
 			return
 		}
@@ -429,6 +429,24 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			}
 		}
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
+
+		if path == "/discovery/devices/metadata" {
+			if repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+				writeError(w, 409, "metadata_read_path", "当前发现读取路径不支持此统计接口")
+				return
+			}
+			result, err := repo.DevicesIndexedMetadata(ctx, query)
+			if err != nil {
+				if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") {
+					writeError(w, 400, "bad_filter", err.Error())
+				} else {
+					writeError(w, 500, "discovery_metadata_read", "读取发现设备总数失败")
+				}
+				return
+			}
+			writeJSON(w, 200, result)
+			return
+		}
 		var page map[string]any
 		var err error
 		if repo.ActiveStreamOnly {

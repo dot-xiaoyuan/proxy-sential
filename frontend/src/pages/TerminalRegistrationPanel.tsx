@@ -159,10 +159,11 @@ export function TerminalRegistrationPanel({ onCreate, onEdit }: Props) {
       />
       {(items.length > 0 || page > 0) && <AppServerPagination
         cursorMode
+        hasMore={Boolean(records.data?.has_more && records.data?.next_cursor)}
         page={page + 1}
         pageSize={pageSize}
-        total={page * pageSize + items.length + (records.data?.has_more ? 1 : 0)}
-        totalText={`${metadata.data ? `共 ${metadata.data.total} 条 · ` : ''}第 ${page + 1} 页`}
+        total={metadata.data?.total ?? 0}
+        totalText={metadata.data ? `共 ${metadata.data.total} 条` : metadata.isError ? '数量读取失败' : '正在读取总数'}
         onChange={(nextPage, nextSize) => {
           if (nextSize !== pageSize) { setPageSize(nextSize); return }
           if (nextPage <= page && cursors[nextPage - 1] !== undefined) { setPaging({ key: filterKey, cursors, page: nextPage - 1 }); return }

@@ -257,6 +257,7 @@ type HistoricalAddress struct {
 }
 
 type DeviceView struct {
+	indexedIdentityKey   string
 	SensorID             string              `json:"sensor_id,omitempty"`
 	Site                 string              `json:"site,omitempty"`
 	Domain               string              `json:"domain,omitempty"`
@@ -294,6 +295,7 @@ func newDeviceView(id string, observedAt time.Time) DeviceView {
 }
 
 type deviceObservationRow struct {
+	IndexedIdentityKey    string
 	DeviceKey             string
 	EndpointID            string
 	ProfileDeviceType     string

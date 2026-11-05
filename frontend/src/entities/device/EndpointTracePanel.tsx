@@ -59,7 +59,7 @@ export function EndpointTracePanel({endpointId}:{endpointId:string}) {
  <div className="endpoint-trace-table-wrap endpoint-tab-table-wrap" aria-busy={page.isFetching}>
   <AppTable<EndpointObservation> className="endpoint-trace-table" columns={columns} dataSource={items} rowKey="record_id" tableLayout="fixed" scroll={{x:showTraceDetail?867:722}} locale={{emptyText:page.data?.state.complete?'所选条件没有观测记录':' '}} />
  </div>
- <AppServerPagination disabled={page.isFetching} page={tracePage} pageSize={pageSize} total={loaded+(page.data?.next_cursor?1:0)} onChange={changePage} cursorMode totalText={`第 ${tracePage} 页 · 已加载 ${loaded} 条`} />
+ <AppServerPagination disabled={page.isFetching} page={tracePage} pageSize={pageSize} total={loaded+(page.data?.next_cursor?1:0)} onChange={changePage} cursorMode hasMore={Boolean(page.data?.next_cursor)} totalText={`已加载 ${loaded} 条`} />
  </section>
 }
 

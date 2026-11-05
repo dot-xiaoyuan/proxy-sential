@@ -3333,6 +3333,18 @@ pre.wrap-code {
 .app-cursor-pagination { align-items: center; gap: 12px; flex-wrap: wrap; }
 .app-cursor-label { color: #475569; font-size: 12px; }
 
+.app-server-pagination.cursor-pagination { position: static; z-index: auto; align-items: center; flex-wrap: wrap; gap: 8px 12px; overflow: visible; }
+.cursor-pagination-total { flex: 1 1 140px; min-width: 0; color: #475569; font-size: 13px; overflow-wrap: anywhere; }
+.cursor-pagination-controls { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; flex-shrink: 0; }
+.cursor-pagination-page { min-width: 54px; color: #334155; text-align: center; white-space: nowrap; flex-shrink: 0; }
+.cursor-pagination .ant-btn { white-space: nowrap; flex-shrink: 0; }
+.cursor-pagination > .ant-select { width: 112px; flex-shrink: 0; }
+@media (max-width: 560px) {
+  .cursor-pagination-total { order: 1; }
+  .cursor-pagination > .ant-select { order: 2; }
+  .cursor-pagination-controls { order: 3; width: 100%; justify-content: space-between; }
+}
+
 .compact-list-table .ant-table-cell {
   overflow: hidden;
   white-space: nowrap;
@@ -3854,6 +3866,26 @@ pre.wrap-code {
  .device-inventory-page .device-mobile-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
 }
 .device-inventory-surface { min-width: 0; }
+/* Terminal identity ledger shares the discovery presentation without its evidence workflow. */
+.terminal-inventory-page .terminal-inventory-table .ant-table-cell { white-space: normal; overflow-wrap: anywhere; }
+.terminal-inventory-identity { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.terminal-inventory-identity-content { display: grid; gap: 5px; min-width: 0; }
+.terminal-inventory-primary { color: #0f172a; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.terminal-inventory-identity .device-mac-link { color: #64748b; }
+.terminal-inventory-primary-mac .device-mac-link { color: #0f172a; font-size: 13px; font-weight: 650; }
+.terminal-inventory-network, .terminal-inventory-profile { display: grid; gap: 6px; min-width: 0; }
+.terminal-inventory-network > * { min-width: 0; overflow-wrap: anywhere; }
+.terminal-inventory-address { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.terminal-inventory-address > a { color: #0f172a; font-size: 13px; overflow-wrap: anywhere; }
+.terminal-inventory-profile .brand-logo-tag { justify-self: start; max-width: 100%; }
+.terminal-inventory-page .device-context-cell > div { display: grid; grid-template-columns: minmax(0,1fr); gap: 2px; }
+.terminal-inventory-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.terminal-inventory-actions a { white-space: nowrap; flex-shrink: 0; }
+@media (max-width: 559px) {
+  .terminal-inventory-page .terminal-inventory-table .ant-table-tbody > tr.ant-table-row > td { overflow: visible; text-overflow: clip; }
+  .terminal-inventory-page .terminal-inventory-table .ant-table-cell-fix-end { position: static !important; z-index: auto; }
+  .terminal-inventory-identity .terminal-device-icon { width: 38px; height: 38px; font-size: 22px; }
+}
 .device-list-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
 .device-list-heading h4.ant-typography { margin: 0; font-size: 16px; font-weight: 600; }
 .device-list-heading > .ant-typography-secondary { font-size: 12px; }
@@ -5747,3 +5779,21 @@ pre.wrap-code {
 .terminal-registration-modal .ant-modal-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .terminal-registration-modal .ant-modal-footer button { white-space: nowrap; flex-shrink: 0; }
 @media (max-width: 559px) { .terminal-registration-modal { top: 8px; } .terminal-registration-modal .ant-modal-container { max-height: calc(100dvh - 16px); padding: 14px; } }
+
+/* Summarize repeated discovery facts without dropping evidence references. */
+.discovery-evidence-summary { display: flex; flex-direction: column; gap: 10px; }
+.discovery-evidence-summary h5.ant-typography, .discovery-evidence-summary .ant-typography { margin-bottom: 0; }
+.discovery-protocol-evidence { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; }
+.discovery-protocol-evidence > summary { padding: 14px 16px; cursor: pointer; color: #334155; }
+.discovery-protocol-heading { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.discovery-protocol-heading > span { color: #64748b; font-size: 12px; }
+.discovery-protocol-overview { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.discovery-protocol-overview .ant-typography { flex-basis: 100%; font-size: 12px; }
+.discovery-protocol-records { display: flex; flex-direction: column; gap: 10px; padding: 0 16px 14px; }
+.discovery-evidence-fact { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid #e2e8f0; padding-top: 12px; min-width: 0; }
+.discovery-evidence-fact-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.discovery-evidence-fact .discovery-identifier, .discovery-evidence-reference > span { white-space: normal; overflow-wrap: anywhere; }
+.discovery-evidence-fact .ant-tag, .discovery-protocol-overview .ant-tag { white-space: nowrap; flex-shrink: 0; }
+.discovery-evidence-references > summary { cursor: pointer; color: #475569; font-size: 12px; }
+.discovery-evidence-reference { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; color: #64748b; font-size: 12px; border-bottom: 1px solid #f1f5f9; }
+@media (max-width: 559px) { .discovery-protocol-evidence > summary { padding: 12px 14px; } .discovery-protocol-records { padding-inline: 14px; } }

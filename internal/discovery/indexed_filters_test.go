@@ -3,7 +3,6 @@ package discovery
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 	"time"
 
@@ -35,7 +34,7 @@ func TestIndexedTypeFilterUsesRecognitionBeforePagingAndKeepsOtherEvidence(t *te
 	now := time.Now().UTC()
 	o := Observation{ID: "arp", Origin: "arp", MAC: "00:11:22:33:44:55", Node: "s204", Domain: "mirror", VLAN: "10", ObservedAt: now, ValidUntil: now.Add(time.Hour)}
 	raw, _ := json.Marshal(o)
-	mock.ExpectQuery(`(?s)candidate_rows AS.*endpoint_recognition_summary.*candidate_source AS.*classification_status.*candidates AS.*effective_types.*LIMIT`).WillReturnRows(sqlmock.NewRows([]string{"device_key", "data", "endpoint_id", "role", "confidence", "conflict"}).AddRow("device", raw, "mac:00:11:22:33:44:55", "access_point", .95, false))
+	mock.ExpectQuery(`(?s)candidate_rows AS.*endpoint_recognition_summary.*candidate_source AS.*matched AS.*classification_status.*candidates AS.*LIMIT`).WillReturnRows(sqlmock.NewRows([]string{"identity_key", "device_key", "data", "endpoint_id", "role", "confidence", "conflict", "category"}).AddRow("identity", "device", raw, "mac:00:11:22:33:44:55", "access_point", .95, false, "network"))
 	page, err := (Repository{DB: db}).DevicesIndexed(context.Background(), DeviceQuery{Mode: "passive", DeviceType: "access_point", Protocol: "arp", State: "identified", Domain: "mirror", VLAN: "10", Limit: 20})
 	if err != nil {
 		t.Fatal(err)
@@ -93,38 +92,5 @@ func TestIndexedClassificationRefinesGenericMobileEvidence(t *testing.T) {
 		if got.Observations[0].DeviceType != "mobile" {
 			t.Fatal("original observation was rewritten")
 		}
-	}
-}
-
-func TestIndexedContinuationCountsCandidateKeysBeforeAliasMerging(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"device_key", "data", "endpoint_id", "role", "confidence", "conflict"})
-	for i := 0; i < 64; i++ {
-		observation := Observation{ID: fmt.Sprintf("observation-%03d", i), Origin: "arp", MAC: "00:11:22:33:44:55", ObservedAt: now, ValidUntil: now.Add(time.Hour)}
-		raw, _ := json.Marshal(observation)
-		rows.AddRow(fmt.Sprintf("key-%03d", i), raw, "", "", 0, false)
-	}
-	mock.ExpectQuery("WITH candidate_rows").WillReturnRows(rows)
-	q := DeviceQuery{Mode: "passive", Limit: 1}
-	page, err := (Repository{DB: db}).DevicesIndexed(context.Background(), q)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page["items"].([]DeviceView)) != 1 || page["has_more"] != true || page["next_cursor"] == "" {
-		t.Fatalf("merged candidate page lost continuation: has_more=%v cursor=%v", page["has_more"], page["next_cursor"])
-	}
-	q.Window = 24 * time.Hour
-	q.Cursor = page["next_cursor"].(string)
-	cursor, err := decodeIndexedDeviceCursor(q)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cursor.DeviceKey != "key-063" {
-		t.Fatalf("continuation must consume all selected keys, got %+v", cursor)
 	}
 }

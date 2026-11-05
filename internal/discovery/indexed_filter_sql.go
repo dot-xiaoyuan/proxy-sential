@@ -25,3 +25,27 @@ const indexedClassificationStateSQL = `CASE
  WHEN type_conflict OR cardinality(effective_types)>1 THEN 'conflict'
  WHEN cardinality(effective_types)=1 THEN 'identified'
  ELSE 'candidate' END`
+
+// Only trustworthy identities cross discovery keys. Names and IP addresses are
+// searchable evidence, never identity aliases in this paginated read model.
+const indexedIdentitySQL = `CASE
+ WHEN coalesce(i.endpoint_id,dl.endpoint_id,'')<>'' AND lower(coalesce(i.endpoint_id,dl.endpoint_id,''))<>'mac:'||lower(coalesce(l.data->>'mac','')) THEN
+ jsonb_build_array('identity',coalesce(l.data->>'node',''),coalesce(l.data->>'site',''),coalesce(l.data->>'domain',''),coalesce(l.data->>'vlan',''),coalesce(l.data->>'vrf',''),'endpoint',lower(coalesce(i.endpoint_id,dl.endpoint_id,'')))::text
+ WHEN coalesce(l.data->>'mac','')<>'' THEN
+ jsonb_build_array('identity',coalesce(l.data->>'node',''),coalesce(l.data->>'site',''),coalesce(l.data->>'domain',''),coalesce(l.data->>'vlan',''),coalesce(l.data->>'vrf',''),'mac',lower(l.data->>'mac'))::text
+ ELSE jsonb_build_array('discovery_key',l.device_key)::text END`
+
+const indexedObservationCapabilitiesSQL = `CASE WHEN origin IN ('lldp','cdp') AND lower(concat_ws(' ',data->>'name',data->'evidence'->'payload'->>'system_name',data->'evidence'->'payload'->>'system_description')) LIKE '%ikuai%'
+ THEN coalesce(data->'capabilities','[]'::jsonb)||'["routing"]'::jsonb
+ ELSE coalesce(data->'capabilities','[]'::jsonb) END`
+
+func indexedCategorySQL(view string) string {
+	if view == "iot" {
+		return "CASE WHEN has_printing THEN 'printer' WHEN has_video THEN 'camera' WHEN has_media THEN 'media' ELSE '' END"
+	}
+	expression := "CASE WHEN classification_status='identified' THEN CASE effective_types[1]"
+	for _, kind := range DeviceTypes {
+		expression += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
+	}
+	return expression + " ELSE 'identity_only' END ELSE 'identity_only' END"
+}
