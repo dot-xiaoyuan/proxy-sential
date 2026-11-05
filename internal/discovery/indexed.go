@@ -123,6 +123,15 @@ func (r Repository) DevicesIndexed(ctx context.Context, query DeviceQuery) (map[
 		args = append(args, query.DeviceType)
 		baseWhere = append(baseWhere, "coalesce(data->>'device_type',data->'evidence'->'assessment'->>'device_type','')=$"+fmt.Sprint(len(args)))
 	}
+	candidateHaving := ""
+	if query.Capability != "" {
+		if query.Capability == "dumb" {
+			candidateHaving = " HAVING bool_or(coalesce(data->'capabilities','[]'::jsonb) ?| ARRAY['printing','scanning','casting','media_rendering','network_video','routing'])"
+		} else {
+			args = append(args, query.Capability)
+			candidateHaving = fmt.Sprintf(" HAVING bool_or(coalesce(data->'capabilities','[]'::jsonb) ? $%d)", len(args))
+		}
+	}
 	positionWhere := ""
 	if position != nil {
 		last, _ := time.Parse(time.RFC3339Nano, position.LastSeen)
@@ -142,7 +151,7 @@ func (r Repository) DevicesIndexed(ctx context.Context, query DeviceQuery) (map[
  SELECT device_key,max(observed_at) last_seen
  FROM discovery_observation_latest
  WHERE ` + strings.Join(baseWhere, " AND ") + `
- GROUP BY device_key
+ GROUP BY device_key` + candidateHaving + `
 ), candidates AS (
  SELECT device_key,last_seen FROM candidate_source` + positionWhere + `
  ORDER BY last_seen DESC,device_key
@@ -197,7 +206,7 @@ ORDER BY s.last_seen DESC,s.device_key,s.id`
 		if query.Category != "" && item.Category != query.Category {
 			continue
 		}
-		if query.Capability != "" && !containsString(item.Capabilities, query.Capability) {
+		if query.Capability != "" && !matchesDeviceCapability(item.Capabilities, query.Capability) {
 			continue
 		}
 		if needle != "" && !exactSearch {

@@ -659,7 +659,7 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 		if query.DeviceType != "" && item.DeviceType != query.DeviceType {
 			continue
 		}
-		if query.Capability != "" && !containsString(item.Capabilities, query.Capability) {
+		if query.Capability != "" && !matchesDeviceCapability(item.Capabilities, query.Capability) {
 			continue
 		}
 		history := make([]string, 0, len(item.HistoricalAddresses))
@@ -849,6 +849,18 @@ func deviceFacets(items []DeviceView) []DeviceFacet {
 func containsString(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesDeviceCapability(values []string, wanted string) bool {
+	if wanted != "dumb" {
+		return containsString(values, wanted)
+	}
+	for _, capability := range []string{"printing", "scanning", "casting", "media_rendering", "network_video", "routing"} {
+		if containsString(values, capability) {
 			return true
 		}
 	}

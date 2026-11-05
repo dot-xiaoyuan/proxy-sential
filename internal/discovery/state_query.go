@@ -96,7 +96,7 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 	}
 	if q.Capability != "" {
 		if q.Capability == "dumb" {
-			addBoth("s.document->'capabilities' ?| array['printing','scanning','casting','media_rendering','network_video']")
+			addBoth("s.document->'capabilities' ?| array['printing','scanning','casting','media_rendering','network_video','routing']")
 		} else {
 			addBoth("s.document->'capabilities' ? " + add(q.Capability))
 		}

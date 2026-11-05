@@ -77,6 +77,13 @@ it('renders endpoint types that are outside the IoT type catalogue', async () =>
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
 })
 
+it('counts recent observations beyond the configured five-minute discovery holdback', async () => {
+  mockReads({items:{}}, {...device,last_seen:new Date(Date.now()-7*60_000).toISOString()})
+  renderPanel()
+  const summary=await screen.findByLabelText('发现设备摘要')
+  await waitFor(()=>expect(summary).toHaveTextContent('本页近15分钟观测1'))
+})
+
 it('separates mirrored protocols from the DHCP message source', async () => {
   mockReads(undefined, device, { enabled: true, items: [
     { protocol: 'arp', enabled: true },
