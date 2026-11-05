@@ -19,9 +19,9 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const session = useSession()
   const canReadTraffic = can(session.data, 'events:read')
   const pagination = useServerPagination()
-  const showProfile = useMediaQuery('(min-width: 1440px)') || useMediaQuery('(max-width: 559px)')
-  const showContext = useMediaQuery('(min-width: 1200px)') || useMediaQuery('(max-width: 559px)')
-  const showMac = useMediaQuery('(min-width: 1000px)') || useMediaQuery('(max-width: 559px)')
+  const showProfile = useMediaQuery('(min-width: 1440px), (max-width: 559px)')
+  const showContext = useMediaQuery('(min-width: 1200px), (max-width: 559px)')
+  const showMac = useMediaQuery('(min-width: 1000px), (max-width: 559px)')
   const cursorByPage = useRef<Record<number, string>>({ 1: '' })
   const view = params.get('view') === 'history' ? 'history' : 'recent'
   const quickWindow = (['10m','1h','24h','7d','30d'].includes(params.get('window') || '') ? params.get('window') : '24h') as ReportWindow

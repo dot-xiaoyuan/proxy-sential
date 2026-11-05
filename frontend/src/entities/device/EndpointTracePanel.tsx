@@ -29,7 +29,7 @@ export function EndpointTracePanel({endpointId}:{endpointId:string}) {
  const [cursors,setCursors]=useState<string[]>([''])
  const [pageSize,setPageSize]=useState(20)
  const tracePage=cursors.length
- const showTraceDetail=useMediaQuery('(min-width: 1200px)')||useMediaQuery('(max-width: 559px)')
+ const showTraceDetail=useMediaQuery('(min-width: 1200px), (max-width: 559px)')
  const page=useEndpointObservations(endpointId,{...filters,limit:pageSize,cursor:cursors.at(-1)||undefined})
  const items=page.data?.items??[]
  const update=(next:Partial<EndpointObservationQuery>)=>{setFilters({...filters,...next});setCursors([''])}
