@@ -20,7 +20,7 @@ type passiveLivePTRCursor struct {
 }
 
 type passiveLivePTRStreamRow struct {
-	ReceivedAt    string `json:"received_at"`
+	ReceivedAt    string `json:"received_at_text"`
 	Timestamp     string `json:"event_timestamp"`
 	EventID       string `json:"event_id"`
 	SensorID      string `json:"sensor_id"`
@@ -47,8 +47,8 @@ func (row passiveLivePTRStreamRow) normalizedEvent() (normalized.Event, time.Tim
 	event := normalized.Event{
 		EventID: row.EventID, Source: "zeek", SourceEventType: "mdns", Timestamp: at.UTC().Format(time.RFC3339Nano),
 		Observer: map[string]any{"sensor_id": row.SensorID, "interface": row.InterfaceName},
-		Subject: map[string]any{"ip": row.SubjectIP, "campus_id": row.CampusID},
-		Flow: map[string]any{"src_ip": row.FlowSrcIP, "dst_ip": row.FlowDstIP},
+		Subject:  map[string]any{"ip": row.SubjectIP, "campus_id": row.CampusID},
+		Flow:     map[string]any{"src_ip": row.FlowSrcIP, "dst_ip": row.FlowDstIP},
 		Payload: map[string]any{"is_response": true, "record_type": "PTR", "record_name": row.RecordName, "service_target": row.ServiceTarget,
 			"l2_source_mac_direct": true, "responder_l2_mac": row.ResponderMAC}, Confidence: 0.75,
 	}
@@ -102,17 +102,21 @@ func (s *DBStore) claimPassiveLivePTR(ctx context.Context, sensorID, owner strin
 	return cursor, true, tx.Commit()
 }
 
-func (s *DBStore) passiveLivePTREvents(ctx context.Context, sensorID string, cursor passiveLivePTRCursor) ([]normalized.Event, passiveLivePTRCursor, error) {
-	cutoff := time.Now().UTC().Add(-2 * time.Minute)
+func passiveLivePTRQuery(sensorID string, cursor passiveLivePTRCursor, cutoff time.Time) string {
 	stamp := "parseDateTime64BestEffort(" + chQuote(cursor.ReceivedAt.UTC().Format(time.RFC3339Nano)) + ",6)"
 	upper := "parseDateTime64BestEffort(" + chQuote(cutoff.Format(time.RFC3339Nano)) + ",6)"
 	where := "sensor_id=" + chQuote(sensorID) + " AND received_at>=" + stamp + " AND received_at<" + upper
 	where += " AND (" + chAfterBound([]chBoundKey{{Expr: "received_at", Value: stamp}, {Expr: "event_id", Value: chQuote(cursor.EventID)}}) + ")"
-	query := fmt.Sprintf(`SELECT formatDateTime(received_at,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') received_at,
+	return fmt.Sprintf(`SELECT formatDateTime(received_at,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') AS received_at_text,
 formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,
 event_id,sensor_id,campus_id,subject_ip,flow_src_ip,flow_dst_ip,interface_name,responder_mac,record_name,service_target,record_ttl_raw
 FROM passive_live_ptr_events PREWHERE %s ORDER BY received_at,event_id LIMIT %d
 SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, passiveLivePTRBatchSize)
+
+}
+
+func (s *DBStore) passiveLivePTREvents(ctx context.Context, sensorID string, cursor passiveLivePTRCursor) ([]normalized.Event, passiveLivePTRCursor, error) {
+	query := passiveLivePTRQuery(sensorID, cursor, time.Now().UTC().Add(-2*time.Minute))
 	raw, err := s.ch.query(ctx, query)
 	if err != nil {
 		return nil, cursor, err

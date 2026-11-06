@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,12 @@ func TestPassiveLivePTRStreamRowKeepsStringTTLAndReceivePosition(t *testing.T) {
 	fact, ok := passiveLivePTRFact(event, scope)
 	if !ok || fact.Withdrawn || !fact.ValidUntil.Equal(time.Date(2026, 11, 6, 7, 29, 0, 0, time.UTC)) {
 		t.Fatalf("string TTL did not produce the expected live fact: %+v ok=%v", fact, ok)
+	}
+}
+
+func TestPassiveLivePTRQueryPreservesNativeReceiveColumnInFilter(t *testing.T) {
+	query := passiveLivePTRQuery("campus-204", passiveLivePTRCursor{ReceivedAt: time.Date(2026, 11, 6, 5, 17, 0, 0, time.UTC)}, time.Date(2026, 11, 6, 7, 0, 0, 0, time.UTC))
+	if !strings.Contains(query, "AS received_at_text") || strings.Contains(query, "AS received_at,") || !strings.Contains(query, "PREWHERE sensor_id='campus-204' AND received_at>=") {
+		t.Fatalf("receive time output alias shadows the native filtered column: %s", query)
 	}
 }
