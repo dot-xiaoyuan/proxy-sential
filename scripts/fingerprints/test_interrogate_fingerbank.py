@@ -3,7 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from interrogate_fingerbank import build_request, load_done
+from interrogate_fingerbank import build_request, load_done, raw_records
 
 
 class FingerbankRequestTest(unittest.TestCase):
@@ -22,6 +22,21 @@ class FingerbankRequestTest(unittest.TestCase):
             path.write_text("\n".join(json.dumps({"requested_options": str(status), "vendor_class": "", "status": status}) for status in [200, 404, 429, -1]))
             done = load_done(path)
         self.assertEqual(set(done), {("200", ""), ("404", "")})
+
+    def test_refresh_keeps_completed_combinations_outside_current_window(self):
+        done = {
+            ("1,3", "old"): {"requested_options": "1,3", "vendor_class": "old", "status": 200, "device_name": "Printer", "score": 90},
+            ("1,6", "new"): {"requested_options": "1,6", "vendor_class": "new", "status": 200, "device_name": "Phone", "score": 80},
+            ("1,9", "missing"): {"requested_options": "1,9", "vendor_class": "missing", "status": 404},
+        }
+        pairs = [{"requested_options": "1,6", "vendor_class": "new"}]
+
+        current = raw_records(done, pairs, include_cached=False)
+        refreshed = raw_records(done, pairs, include_cached=True)
+
+        self.assertEqual(len(current), 1)
+        self.assertEqual(len(refreshed), 2)
+        self.assertEqual([record["fingerprints"][0] for record in refreshed], ["1,3", "1,6"])
 
 
 if __name__ == "__main__":

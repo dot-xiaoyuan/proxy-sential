@@ -52,6 +52,24 @@ def load_done(path):
     return done
 
 
+def raw_records(done, pairs, include_cached=False):
+    identities = sorted(done) if include_cached else [
+        (pair.get("requested_options"), pair.get("vendor_class", "")) for pair in pairs
+    ]
+    records = []
+    for identity in identities:
+        record = done.get(identity)
+        if not record or record.get("status") != 200:
+            continue
+        if not record.get("device_name") or float(record.get("score") or 0) <= 0:
+            continue
+        item = {"fingerprints": [record["requested_options"]], "device_path": record["device_name"], "score": record.get("score", 0)}
+        if record.get("vendor_class"):
+            item["vendor_classes"] = [record["vendor_class"]]
+        records.append(item)
+    return records
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
@@ -60,6 +78,7 @@ def main():
     parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--interval", type=float, default=10.0)
     parser.add_argument("--timeout", type=float, default=25.0)
+    parser.add_argument("--include-cached", action="store_true", help="retain completed combinations outside the current input window")
     args = parser.parse_args()
 
     key = os.environ.get("FB_API_KEY", "").strip()
@@ -114,17 +133,7 @@ def main():
             sys.stderr.write(f"progress {index}/{len(pairs)} queried={queried} last={record.get('status')}\n")
         time.sleep(args.interval)
 
-    records = []
-    for pair in pairs:
-        record = done.get((pair.get("requested_options"), pair.get("vendor_class", "")))
-        if not record or record.get("status") != 200:
-            continue
-        if not record.get("device_name") or float(record.get("score") or 0) <= 0:
-            continue
-        item = {"fingerprints": [record["requested_options"]], "device_path": record["device_name"], "score": record.get("score", 0)}
-        if record.get("vendor_class"):
-            item["vendor_classes"] = [record["vendor_class"]]
-        records.append(item)
+    records = raw_records(done, pairs, args.include_cached)
     with open(args.output, "w", encoding="utf-8") as handle:
         json.dump(records, handle, ensure_ascii=False, indent=1)
     sys.stderr.write(f"wrote {len(records)} raw records from {len(pairs)} pairs\n")
