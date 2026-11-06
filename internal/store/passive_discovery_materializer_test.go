@@ -25,8 +25,45 @@ func TestPassiveDiscoveryUsesBoundedSignalStream(t *testing.T) {
 }
 
 func TestPassiveDiscoveryBatchFitsLeaseBudget(t *testing.T) {
-	if passiveDiscoveryBatchSize <= 0 || passiveDiscoveryBatchSize > 500 {
+	if passiveDiscoveryBatchSize <= 0 || passiveDiscoveryBatchSize > 750 || passiveDiscoveryBatchBytes <= 0 || passiveDiscoveryBatchBytes > 2<<20 {
 		t.Fatalf("passive discovery batch must stay bounded, got %d", passiveDiscoveryBatchSize)
+	}
+}
+
+func TestPassiveDiscoveryByteBudgetRetainsCompleteCursorPrefix(t *testing.T) {
+	first := `{"event_id":"first"}` + "\n"
+	second := `{"event_id":"second"}` + "\n"
+	raw := []byte(first + second)
+	bounded, err := boundedPassiveDiscoveryRows(raw, len(first)+len(second)-1)
+	if err != nil || string(bounded) != first || string(raw[len(bounded):]) != second {
+		t.Fatalf("byte limit lost or split a row: bounded=%q remainder=%q err=%v", bounded, raw[len(bounded):], err)
+	}
+	if _, err := boundedPassiveDiscoveryRows(raw, len(first)-1); err == nil {
+		t.Fatal("oversized first row was accepted without a complete cursor boundary")
+	}
+}
+
+func TestPassiveDiscoveryBatchRetriesSmallerAfterTimeout(t *testing.T) {
+	tuner := passiveDiscoveryBatchTuner{limit: passiveDiscoveryBatchSize}
+	tuner.observe(true, context.DeadlineExceeded)
+	if tuner.limit != 375 {
+		t.Fatalf("timeout should halve the next claim, got %d", tuner.limit)
+	}
+	for range 8 {
+		tuner.observe(true, nil)
+	}
+	if tuner.limit != passiveDiscoveryBatchSize {
+		t.Fatalf("successful bounded claims should restore throughput, got %d", tuner.limit)
+	}
+	for range 4 {
+		tuner.observe(true, context.DeadlineExceeded)
+	}
+	if tuner.limit != passiveDiscoveryMinBatch {
+		t.Fatalf("timeout retries went below minimum bounded claim: %d", tuner.limit)
+	}
+	tuner.observe(false, context.Canceled)
+	if tuner.limit != passiveDiscoveryMinBatch {
+		t.Fatalf("non-timeout cancellation changed the batch limit: %d", tuner.limit)
 	}
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -55,10 +56,42 @@ type passiveDiscoveryDB interface {
 }
 
 // A passive event can fan out into several PostgreSQL lookups and idempotent
-// writes (notably mDNS). Keep each claim comfortably inside the 90-second
-// lease and 45-second work budget so a busy sensor can advance its cursor
-// instead of replaying the same oversized batch forever.
-const passiveDiscoveryBatchSize = 250
+// writes (notably mDNS). The event and encoded-byte limits keep each claim
+// inside the 90-second lease and 45-second work budget. The larger event
+// window merges repeated ARP and mDNS facts before the PostgreSQL writes.
+const (
+	passiveDiscoveryBatchSize  = 750
+	passiveDiscoveryBatchBytes = 2 << 20
+	passiveDiscoveryMinBatch   = 125
+)
+
+type passiveDiscoveryBatchTuner struct {
+	limit     int
+	successes int
+}
+
+// A slow batch retries from the unchanged cursor at a smaller size. Grow only
+// after several full successful batches, so one hotspot cannot pin the cursor
+// in a repeated timeout/retry cycle.
+func (t *passiveDiscoveryBatchTuner) observe(full bool, err error) {
+	if err != nil {
+		switch discovery.WorkErrorCode(err) {
+		case "deadline_exceeded", "database_40P01":
+			t.limit = max(passiveDiscoveryMinBatch, t.limit/2)
+			t.successes = 0
+		}
+		return
+	}
+	if !full {
+		t.successes = 0
+		return
+	}
+	t.successes++
+	if t.successes >= 8 {
+		t.limit = min(passiveDiscoveryBatchSize, t.limit*2)
+		t.successes = 0
+	}
+}
 
 type passiveDiscoveryScope struct{ prefixes []netip.Prefix }
 
@@ -118,13 +151,13 @@ func (s *DBStore) claimPassiveDiscovery(ctx context.Context, sensorID, owner str
 	return cursor, true, tx.Commit()
 }
 
-func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, cursor passiveDiscoveryCursor, limit int) ([]normalized.Event, passiveDiscoveryCursor, error) {
+func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, cursor passiveDiscoveryCursor, limit int) ([]normalized.Event, passiveDiscoveryCursor, bool, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 2000
 	}
 	cutoff, err := passiveDiscoveryReadCutoff(time.Now())
 	if err != nil {
-		return nil, cursor, err
+		return nil, cursor, false, err
 	}
 	stamp := "parseDateTime64BestEffort(" + chQuote(cursor.Timestamp.UTC().Format(time.RFC3339Nano)) + ",6)"
 	upper := "parseDateTime64BestEffort(" + chQuote(cutoff.UTC().Format(time.RFC3339Nano)) + ",6)"
@@ -137,18 +170,24 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 	query := fmt.Sprintf(`SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,source,source_event_type,type,sensor_id,campus_id,subject_ip,subject_mac,observer_json,payload_json,flow_json,confidence FROM passive_discovery_events_v2 PREWHERE %s ORDER BY timestamp,event_id LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, limit)
 	raw, err := s.ch.query(ctx, query)
 	if err != nil {
-		return nil, cursor, err
+		return nil, cursor, false, err
 	}
+	readBytes := len(raw)
+	raw, err = boundedPassiveDiscoveryRows(raw, passiveDiscoveryBatchBytes)
+	if err != nil {
+		return nil, cursor, false, err
+	}
+	truncated := len(raw) < readBytes
 	rows := []passiveDiscoveryRow{}
 	if err = decodeJSONEachRow(raw, &rows); err != nil {
-		return nil, cursor, err
+		return nil, cursor, false, err
 	}
 	events := make([]normalized.Event, 0, len(rows))
 	next := cursor
 	for _, row := range rows {
 		stamp, parseErr := time.Parse(time.RFC3339Nano, normalizeClickHouseTimestamp(row.Timestamp))
 		if parseErr != nil {
-			return nil, cursor, parseErr
+			return nil, cursor, false, parseErr
 		}
 		event := normalized.Event{SchemaVersion: "v1", EventID: row.EventID, Source: row.Source, SourceEventType: row.SourceEventType, Type: row.Type, Timestamp: stamp.UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": row.SensorID}, Subject: map[string]any{"ip": row.SubjectIP, "mac": row.SubjectMAC, "campus_id": row.CampusID}, Payload: map[string]any{}, Flow: map[string]any{}, Confidence: row.Confidence}
 		_ = json.Unmarshal([]byte(row.ObserverJSON), &event.Observer)
@@ -158,7 +197,21 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 		events = append(events, event)
 		next.Timestamp, next.EventID = stamp.UTC(), row.EventID
 	}
-	return events, next, nil
+	return events, next, truncated, nil
+}
+
+// ClickHouse returns rows sorted by timestamp and event ID. Keep only a
+// complete prefix when the encoded result exceeds the transaction byte budget;
+// the persisted cursor stops at its last row, so the remainder is read next.
+func boundedPassiveDiscoveryRows(raw []byte, maxBytes int) ([]byte, error) {
+	if len(raw) <= maxBytes {
+		return raw, nil
+	}
+	lastComplete := bytes.LastIndexByte(raw[:maxBytes], '\n')
+	if lastComplete < 0 {
+		return nil, fmt.Errorf("passive discovery event exceeds %d-byte batch budget", maxBytes)
+	}
+	return raw[:lastComplete+1], nil
 }
 
 func passiveDiscoveryReadCutoff(now time.Time) (time.Time, error) {
@@ -788,11 +841,14 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 	}()
 	defer func() { <-heartbeatDone }()
 	owner := fmt.Sprintf("passive-discovery-%d", os.Getpid())
+	batchTuner := passiveDiscoveryBatchTuner{limit: passiveDiscoveryBatchSize}
 	for ctx.Err() == nil {
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		requestedLimit := batchTuner.limit
 		scope, err := parsePassiveDiscoveryScope(os.Getenv("PROXY_SENTINEL_DISCOVERY_CIDRS"))
 		claimed := false
 		batchEvents := 0
+		batchTruncated := false
 		processedEvents := 0
 		stageStarted := time.Now()
 		if err == nil {
@@ -801,7 +857,7 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 			if err == nil && claimed {
 				var events []normalized.Event
 				var next passiveDiscoveryCursor
-				events, next, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, passiveDiscoveryBatchSize)
+				events, next, batchTruncated, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, requestedLimit)
 				discovery.ObserveStage(workCtx, "dhcp_read", stageStarted, err)
 				stageStarted = time.Now()
 				batchEvents = len(events)
@@ -833,8 +889,12 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 			reportCancel()
 		}
 		cancel()
+		fullBatch := batchEvents >= requestedLimit || batchTruncated
+		if claimed {
+			batchTuner.observe(fullBatch, err)
+		}
 		delay := 5 * time.Second
-		if claimed && err == nil && batchEvents >= passiveDiscoveryBatchSize {
+		if claimed && err == nil && fullBatch {
 			delay = 0
 		} else if claimed && err == nil {
 			delay = time.Second
