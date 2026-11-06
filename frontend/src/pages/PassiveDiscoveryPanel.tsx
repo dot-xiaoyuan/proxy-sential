@@ -252,6 +252,17 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
       </div>:undefined}
     />
+    {discoveryMetadata.data&&<section className="surface discovery-overview" aria-label="发现设备总览">
+      <div className="discovery-overview-heading"><strong>设备类型总览</strong><Typography.Text type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重 · 统计于 {observedTimeTitle(discoveryMetadata.data.as_of)}</Typography.Text></div>
+      <div className="discovery-overview-metrics">
+        <div><span>发现身份</span><strong>{discoveryMetadata.data.total}</strong></div>
+        <div><span>明确类型</span><strong>{discoveryMetadata.data.identified}</strong></div>
+        <div><span>待核实</span><strong>{discoveryMetadata.data.candidate}</strong></div>
+        <div><span>类型冲突</span><strong>{discoveryMetadata.data.conflict}</strong></div>
+        <div><span>证据过期</span><strong>{discoveryMetadata.data.expired}</strong></div>
+      </div>
+      <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型</Typography.Text>{[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><span className="discovery-overview-type" key={item.device_type}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></span>)}</div>
+    </section>}
     <div className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span><Button type="link" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith('discovery_')&&key!=='discovery_view')next.delete(key);return next})}>清除筛选</Button></div>
     {discoveryMetadata.isError&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}
     {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}

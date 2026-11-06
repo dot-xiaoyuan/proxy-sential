@@ -3,11 +3,27 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+func TestIndexedSelectionLimitsHistoricalLinkLookup(t *testing.T) {
+	selection, err := buildIndexedDeviceSelection(DeviceQuery{Mode: "passive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"coalesce(l.data->>'mac','')=''",
+		"coalesce(ix.basis->>'mac','')='' OR lower(ix.endpoint_id)<>'mac:'||lower(ix.basis->>'mac')",
+	} {
+		if !strings.Contains(selection.CTE, fragment) {
+			t.Fatalf("current selection still scans historical links: missing %q", fragment)
+		}
+	}
+}
 
 func TestIndexedMetadataCountsFilteredTrustedIdentitiesWithoutPagination(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -16,12 +32,12 @@ func TestIndexedMetadataCountsFilteredTrustedIdentitiesWithoutPagination(t *test
 	}
 	defer db.Close()
 	at := time.Now().UTC()
-	mock.ExpectQuery(`(?s)identity_key.*GROUP BY identity_key.*matched.*classification_status.*SELECT count\(\*\),now\(\) FROM matched`).WillReturnRows(sqlmock.NewRows([]string{"total", "as_of"}).AddRow(7, at))
+	mock.ExpectQuery(`(?s)identity_key.*GROUP BY identity_key.*matched.*classification_status.*GROUP BY classification_status`).WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).AddRow("identified", "access_point", 5, at).AddRow("candidate", "", 2, at).AddRow("conflict", "", 1, at).AddRow("expired", "", 1, at))
 	metadata, err := (Repository{DB: db}).DevicesIndexedMetadata(context.Background(), DeviceQuery{Mode: "passive", DeviceType: "access_point", State: "identified", Cursor: "ignored", Offset: 99, Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Total != 7 || metadata.CountUnit != "trusted_discovery_identity" || !metadata.AsOf.Equal(at) {
+	if metadata.Total != 9 || metadata.Identified != 5 || metadata.Candidate != 2 || metadata.Conflict != 1 || metadata.Expired != 1 || len(metadata.Types) != 1 || metadata.Types[0].DeviceType != "access_point" || metadata.Types[0].Count != 5 || metadata.CountUnit != "trusted_discovery_identity" || !metadata.AsOf.Equal(at) {
 		t.Fatalf("metadata=%+v", metadata)
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
@@ -35,7 +51,7 @@ func TestIndexedMetadataPropagatesQueryFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery("SELECT count").WillReturnError(context.DeadlineExceeded)
+	mock.ExpectQuery("GROUP BY classification_status").WillReturnError(context.DeadlineExceeded)
 	if _, err = (Repository{DB: db}).DevicesIndexedMetadata(context.Background(), DeviceQuery{}); err == nil {
 		t.Fatal("failed statistics became empty success")
 	}

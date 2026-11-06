@@ -124,17 +124,21 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	}
 	statement := `WITH candidate_rows AS (
  SELECT l.*,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
- coalesce(i.endpoint_id,dl.endpoint_id,'') linked_endpoint,
+ coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'') linked_endpoint,
  coalesce(rp.role,'') profile_role,` + indexedProfileConfidenceSQL("rp") + ` profile_confidence,
  CASE WHEN ` + indexedProfileConfidenceSQL("rp") + `>=0.8 AND NOT (` + indexedProfileConflictSQL("rp") + `) THEN coalesce(rp.role,'') ELSE '' END profile_type,
  (` + indexedProfileConflictSQL("rp") + `) AND coalesce(rp.role,'')<>'' profile_conflict
  FROM discovery_observation_latest l
- LEFT JOIN discovery_identity_links i ON i.observation_id=l.id
+ -- MAC-matching links add no identity information. Their historical table is
+ -- large; inspect it only for observations without a MAC or link exceptions.
+ LEFT JOIN discovery_identity_links i ON i.observation_id=l.id AND coalesce(l.data->>'mac','')=''
+ LEFT JOIN discovery_identity_links ix ON ix.observation_id=l.id
+ AND (coalesce(ix.basis->>'mac','')='' OR lower(ix.endpoint_id)<>'mac:'||lower(ix.basis->>'mac'))
  LEFT JOIN device_address_leases dl ON dl.event_id=l.id AND dl.action='ack'
  AND dl.sensor_id=coalesce(l.data->>'node','') AND host(dl.ip)=coalesce(l.data->>'ip','')
  AND dl.campus_id=coalesce(l.data->'evidence'->'subject'->>'campus_id','')
  AND dl.endpoint_id='mac:'||lower(coalesce(l.data->>'mac',''))
- LEFT JOIN endpoint_recognition_summary rp ON rp.endpoint_id=coalesce(i.endpoint_id,dl.endpoint_id,'mac:'||lower(coalesce(l.data->>'mac','')))
+ LEFT JOIN endpoint_recognition_summary rp ON rp.endpoint_id=coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'mac:'||lower(coalesce(l.data->>'mac','')))
  WHERE ` + strings.Join(baseWhere, " AND ") + `
 ), candidate_grouped AS (
  SELECT identity_key,min(device_key COLLATE "C") device_key,max(observed_at) last_seen,

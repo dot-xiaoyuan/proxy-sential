@@ -8183,6 +8183,22 @@ export interface components {
         DiscoveryDeviceMetadata: {
             /** Format: int64 */
             total: number;
+            /**
+             * Format: int64
+             * @description Current non-conflicting identities with one explicit device type.
+             */
+            identified: number;
+            /** Format: int64 */
+            candidate: number;
+            /** Format: int64 */
+            conflict: number;
+            /** Format: int64 */
+            expired: number;
+            types: {
+                device_type: string;
+                /** Format: int64 */
+                count: number;
+            }[];
             /** Format: date-time */
             as_of: string;
             /**

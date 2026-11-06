@@ -29,12 +29,12 @@ const indexedClassificationStateSQL = `CASE
 // Only trustworthy identities cross discovery keys. Names and IP addresses are
 // searchable evidence, never identity aliases in this paginated read model.
 const indexedIdentitySQL = `CASE
- WHEN lower(coalesce(i.endpoint_id,dl.endpoint_id,'')) ~ '^mac:[0-9a-f][02468ace](:[0-9a-f]{2}){5}$'
- AND lower(coalesce(i.endpoint_id,dl.endpoint_id,''))<>'mac:00:00:00:00:00:00'
- AND (coalesce(l.data->>'mac','')='' OR lower(coalesce(i.endpoint_id,dl.endpoint_id,''))='mac:'||lower(l.data->>'mac')) THEN
- jsonb_build_array('identity',coalesce(l.data->>'node',''),coalesce(l.data->>'site',''),coalesce(l.data->>'domain',''),coalesce(l.data->>'vlan',''),coalesce(l.data->>'vrf',''),'mac',substring(lower(coalesce(i.endpoint_id,dl.endpoint_id,'')) FROM 5))::text
- WHEN coalesce(i.endpoint_id,dl.endpoint_id,'')<>'' THEN
- jsonb_build_array('identity',coalesce(l.data->>'node',''),coalesce(l.data->>'site',''),coalesce(l.data->>'domain',''),coalesce(l.data->>'vlan',''),coalesce(l.data->>'vrf',''),'endpoint',lower(coalesce(i.endpoint_id,dl.endpoint_id,'')))::text
+ WHEN lower(coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'')) ~ '^mac:[0-9a-f][02468ace](:[0-9a-f]{2}){5}$'
+ AND lower(coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,''))<>'mac:00:00:00:00:00:00'
+ AND (coalesce(l.data->>'mac','')='' OR lower(coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,''))='mac:'||lower(l.data->>'mac')) THEN
+ jsonb_build_array('identity',coalesce(l.data->>'node',''),coalesce(l.data->>'site',''),coalesce(l.data->>'domain',''),coalesce(l.data->>'vlan',''),coalesce(l.data->>'vrf',''),'mac',substring(lower(coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'')) FROM 5))::text
+ WHEN coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'')<>'' THEN
+ jsonb_build_array('identity',coalesce(l.data->>'node',''),coalesce(l.data->>'site',''),coalesce(l.data->>'domain',''),coalesce(l.data->>'vlan',''),coalesce(l.data->>'vrf',''),'endpoint',lower(coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'')))::text
  WHEN coalesce(l.data->>'mac','')<>'' THEN
  jsonb_build_array('identity',coalesce(l.data->>'node',''),coalesce(l.data->>'site',''),coalesce(l.data->>'domain',''),coalesce(l.data->>'vlan',''),coalesce(l.data->>'vrf',''),'mac',lower(l.data->>'mac'))::text
  ELSE jsonb_build_array('discovery_key',l.device_key)::text END`

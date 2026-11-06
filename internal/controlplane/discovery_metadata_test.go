@@ -18,7 +18,7 @@ func TestDiscoveryMetadataUsesIndependentFilteredCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery(`(?s)GROUP BY identity_key.*matched AS.*classification_status.*SELECT count`).WillReturnRows(sqlmock.NewRows([]string{"total", "as_of"}).AddRow(23, time.Now().UTC()))
+	mock.ExpectQuery(`(?s)GROUP BY identity_key.*matched AS.*classification_status.*GROUP BY classification_status`).WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).AddRow("identified", "access_point", 23, time.Now().UTC()))
 	server := &Server{operations: &operationsState{db: db}}
 	request := httptest.NewRequest("GET", "/discovery/devices/metadata?mode=passive&type=access_point&state=identified&cursor=ignored&limit=bad&offset=99", nil)
 	response := httptest.NewRecorder()
@@ -30,7 +30,7 @@ func TestDiscoveryMetadataUsesIndependentFilteredCount(t *testing.T) {
 	if err = json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result["total"] != float64(23) || result["count_unit"] != "trusted_discovery_identity" {
+	if result["total"] != float64(23) || result["identified"] != float64(23) || result["count_unit"] != "trusted_discovery_identity" {
 		t.Fatalf("result=%v", result)
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {

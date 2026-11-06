@@ -37,7 +37,7 @@ function mockReads(observedPortResult: unknown = {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
     }
     if (path.startsWith('/discovery/devices?')) return Promise.resolve({ items: [deviceRow], ...(includeListTotal?{total:1}:{}), has_more: false })
-    if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve({total:path.includes('type=access_point')?1:84,as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'})
+    if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve(path.includes('type=access_point')?{total:1,identified:1,candidate:0,conflict:0,expired:0,types:[{device_type:'access_point',count:1}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'}:{total:84,identified:42,candidate:35,conflict:4,expired:3,types:[{device_type:'router',count:30},{device_type:'access_point',count:12}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'})
     if (path === '/discovery/coverage') return Promise.resolve(coverage)
     if (path === '/discovery/statistics') return Promise.resolve({ items: [], pending_updates: 0 })
     if (path === '/discovery/types') return Promise.resolve({ items: [] })
@@ -64,10 +64,23 @@ it('shows the filtered discovery metadata total when the cursor page has no tota
   mockReads({items:{}}, {...device,mac:'02:00:00:20:40:01',recognition:{device_type:'access_point',confidence:0.9}}, undefined, false)
   renderPanel()
   const summary = await screen.findByLabelText('发现设备摘要')
-  await waitFor(()=>expect(screen.getByText('84')).toBeVisible())
+  await waitFor(()=>expect(screen.getByLabelText('发现设备总览')).toHaveTextContent('发现身份84'))
   expect(summary).toHaveTextContent('本页明确类型 1')
   expect((await screen.findAllByText('无线接入点'))[0]).toBeVisible()
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
+})
+
+it('shows complete discovery and confirmed type counts using the same metadata scope', async () => {
+  mockReads()
+  renderPanel()
+  const overview=await screen.findByLabelText('发现设备总览')
+  await waitFor(()=>expect(overview).toHaveTextContent('明确类型42'))
+  expect(overview).toHaveTextContent('发现身份84')
+  expect(overview).toHaveTextContent('待核实35')
+  expect(overview).toHaveTextContent('类型冲突4')
+  expect(overview).toHaveTextContent('证据过期3')
+  expect(overview).toHaveTextContent('路由器 30')
+  expect(overview).toHaveTextContent('无线接入点 12')
 })
 
 it('renders endpoint types that are outside the IoT type catalogue', async () => {

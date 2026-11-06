@@ -85,8 +85,9 @@ func (r Repository) DevicesIndexed(ctx context.Context, query DeviceQuery) (map[
  SELECT identity_key,device_key,last_seen,category FROM matched` + positionWhere + `
  ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT $` + fmt.Sprint(len(args)) + `
 )
-SELECT c.identity_key,c.device_key,l.data,l.linked_endpoint,l.profile_role,l.profile_confidence,l.profile_conflict,c.category
+SELECT c.identity_key,c.device_key,l.data,coalesce(page_link.endpoint_id,l.linked_endpoint),l.profile_role,l.profile_confidence,l.profile_conflict,c.category
 FROM candidate_rows l JOIN candidates c USING(identity_key)
+LEFT JOIN discovery_identity_links page_link ON page_link.observation_id=l.id AND coalesce(l.data->>'mac','')<>''
 ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 	rows, err := r.DB.QueryContext(ctx, statement, args...)
 	if err != nil {

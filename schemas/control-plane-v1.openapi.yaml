@@ -8591,9 +8591,21 @@ components:
         observations: { type: array, items: { $ref: '#/components/schemas/DiscoveryObservation' } }
     DiscoveryDeviceMetadata:
       type: object
-      required: [total, as_of, count_unit, window]
+      required: [total, identified, candidate, conflict, expired, types, as_of, count_unit, window]
       properties:
         total: { type: integer, format: int64, minimum: 0 }
+        identified: { type: integer, format: int64, minimum: 0, description: Current non-conflicting identities with one explicit device type. }
+        candidate: { type: integer, format: int64, minimum: 0 }
+        conflict: { type: integer, format: int64, minimum: 0 }
+        expired: { type: integer, format: int64, minimum: 0 }
+        types:
+          type: array
+          items:
+            type: object
+            required: [device_type, count]
+            properties:
+              device_type: { type: string }
+              count: { type: integer, format: int64, minimum: 0 }
         as_of: { type: string, format: date-time }
         count_unit: { type: string, enum: [trusted_discovery_identity], description: A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key. }
         window: { type: string }

@@ -5090,6 +5090,18 @@ pre.wrap-code {
 .terminal-type-shortcuts .ant-btn { border-radius: 6px; }
 .terminal-page-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; color: #64748b; font-size: 13px; }
 .terminal-page-summary strong { color: #334155; margin-left: 4px; }
+.discovery-overview { padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: var(--surface, #fff); }
+.discovery-overview-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 16px; }
+.discovery-overview-heading strong { color: #0f172a; font-size: 16px; font-weight: 650; }
+.discovery-overview-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.discovery-overview-metrics > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.discovery-overview-metrics span { color: #64748b; font-size: 12px; white-space: nowrap; }
+.discovery-overview-metrics strong { color: #0f172a; font-size: 23px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.discovery-overview-types { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 14px; }
+.discovery-overview-type { display: inline-flex; gap: 6px; flex-shrink: 0; white-space: nowrap; padding: 5px 9px; border: 1px solid #e2e8f0; border-radius: 8px; color: #334155; background: #fff; }
+.discovery-overview-type strong { color: #0f172a; font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) { .discovery-overview-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .discovery-overview { padding: 14px; } .discovery-overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .discovery-overview-metrics > div { padding: 10px; } .discovery-overview-metrics strong { font-size: 20px; } }
 .terminal-identity { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .terminal-identity > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .terminal-device-icon { display: inline-flex; justify-content: center; align-items: center; flex-shrink: 0; width: 42px; height: 42px; border-radius: 8px; background: #eef2ff; color: #4338ca; font-size: 24px; }

@@ -20,7 +20,13 @@ export const discoveryHandlers=[
   if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>200||(page>1&&offset>=items.length))return HttpResponse.json({code:'page_out_of_range',message:'目标页已不存在，请刷新列表'},{status:400})
   return HttpResponse.json({page,limit,cursor:page===1?'':String(offset),as_of:now})
  }),
- http.get('*/discovery/devices/metadata',({request})=>HttpResponse.json({total:filteredPassiveDevices(new URL(request.url)).length,as_of:now,count_unit:'trusted_discovery_identity'})),
+ http.get('*/discovery/devices/metadata',({request})=>{
+  const items=filteredPassiveDevices(new URL(request.url)) as Array<{classification_status?:string;device_type?:string}>
+  const byType=new Map<string,number>()
+  for(const item of items)if(item.classification_status==='identified'&&item.device_type)byType.set(item.device_type,(byType.get(item.device_type)??0)+1)
+  const identified=[...byType.values()].reduce((sum,count)=>sum+count,0)
+  return HttpResponse.json({total:items.length,identified,candidate:items.length-identified,conflict:0,expired:0,types:[...byType].map(([device_type,count])=>({device_type,count})),as_of:now,count_unit:'trusted_discovery_identity',window:'24h0m0s'})
+ }),
  http.get('*/discovery/types',()=>HttpResponse.json({version:'device-types-v1',items:[{id:'printer',label:'打印机',category:'printer'},{id:'camera',label:'摄像机',category:'camera'},{id:'access_control',label:'门禁设备',category:'access_control'},{id:'sensor',label:'传感设备',category:'sensor'},{id:'access_point',label:'无线接入点',category:'network'},{id:'router',label:'路由器',category:'network'},{id:'switch',label:'交换机',category:'network'},{id:'desktop',label:'桌面终端',category:'desktop'},{id:'mobile',label:'手机',category:'mobile'}]})),
  http.get('*/discovery/coverage',()=>HttpResponse.json({enabled:true,scope:'private',quarantine:{status:'blocked',count_at_least:1},capture_scope:{status:'expiring',valid_until:new Date(Date.now()+7*24*60*60*1000).toISOString()},items:[{sensor_id:'sensor-test',protocol:'dns_sd',enabled:true,received:12,parsed:10,rejected:2,admitted:10,error:''}]})),
  http.get('*/discovery/statistics',()=>HttpResponse.json({pending_updates:0,oldest_pending_at:null,items:[{device_type:'printer',state:'identified',count:1,updated_at:now},{device_type:'camera',state:'identified',count:1,updated_at:now},{device_type:'access_point',state:'identified',count:1,updated_at:now},{device_type:'router',state:'identified',count:1,updated_at:now}]})),
