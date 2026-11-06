@@ -16,6 +16,7 @@ func TestIndexedSelectionLimitsHistoricalLinkLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fragment := range []string{
+		"LEFT JOIN LATERAL (",
 		"coalesce(l.data->>'mac','')=''",
 		"coalesce(ix.basis->>'mac','')='' OR lower(ix.endpoint_id)<>'mac:'||lower(ix.basis->>'mac')",
 	} {

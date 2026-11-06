@@ -131,7 +131,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
  FROM discovery_observation_latest l
  -- MAC-matching links add no identity information. Their historical table is
  -- large; inspect it only for observations without a MAC or link exceptions.
- LEFT JOIN discovery_identity_links i ON i.observation_id=l.id AND coalesce(l.data->>'mac','')=''
+ LEFT JOIN LATERAL (
+  SELECT endpoint_id FROM discovery_identity_links
+  WHERE observation_id=l.id AND coalesce(l.data->>'mac','')=''
+  LIMIT 1
+ ) i ON true
  LEFT JOIN discovery_identity_links ix ON ix.observation_id=l.id
  AND (coalesce(ix.basis->>'mac','')='' OR lower(ix.endpoint_id)<>'mac:'||lower(ix.basis->>'mac'))
  LEFT JOIN device_address_leases dl ON dl.event_id=l.id AND dl.action='ack'
