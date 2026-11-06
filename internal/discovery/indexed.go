@@ -143,7 +143,11 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 			linked++
 		}
 	}
-	return map[string]any{"items": items, "next_cursor": nextCursor, "has_more": hasMore, "facets": deviceFacets(items), "service_devices": services, "linked_endpoints": linked, "limit": query.Limit, "window": indexedWindowLabel(query.Window), "count_unit": "trusted_discovery_identity"}, nil
+	page := map[string]any{"items": items, "next_cursor": nextCursor, "has_more": hasMore, "facets": deviceFacets(items), "service_devices": services, "linked_endpoints": linked, "limit": query.Limit, "window": indexedWindowLabel(query.Window), "count_unit": "trusted_discovery_identity"}
+	if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
+		page["freshness"] = fresh
+	}
+	return page, nil
 }
 
 func aggregateIndexedDeviceRows(rows []deviceObservationRow, now time.Time) ([]DeviceView, error) {

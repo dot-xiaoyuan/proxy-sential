@@ -65,5 +65,13 @@ func (r Repository) DevicesIndexedMetadata(ctx context.Context, q DeviceQuery) (
 	if err := rows.Err(); err != nil {
 		return IndexedDeviceMetadata{}, err
 	}
+	// Report the data cutoff rather than the query time: the page prints this as
+	// the statistics timestamp, and the discovery projection intentionally runs
+	// one holdback behind the newest mirrored event.
+	if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
+		if at, ok := fresh["cursor_at"].(time.Time); ok && !at.IsZero() {
+			result.AsOf = at
+		}
+	}
 	return result, nil
 }
