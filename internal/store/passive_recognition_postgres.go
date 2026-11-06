@@ -29,6 +29,11 @@ func (s *PostgresStore) PassiveDiscoveryRecognitionHints(ctx context.Context, en
    AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
    AND o.origin IN ('dns_sd','dhcp') AND coalesce(o.data->>'name','')<>''
  UNION ALL
+ SELECT p.endpoint_id,p.event_id,'dns_sd',p.observed_at,''::text,p.name
+ FROM passive_live_ptr_current p
+ WHERE p.endpoint_id=ANY($1::text[]) AND p.observed_at<=$2
+   AND p.valid_until>$2 AND NOT p.withdrawn AND p.name<>''
+ UNION ALL
  SELECT l.endpoint_id,o.id,o.origin,o.observed_at,f.field,coalesce(o.data->>f.key,'')
  FROM discovery_identity_links l
  JOIN discovery_observations o ON o.id=l.observation_id

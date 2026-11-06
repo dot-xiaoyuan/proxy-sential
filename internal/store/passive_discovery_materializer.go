@@ -845,5 +845,14 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 // RunPassiveDiscoveryMaterializer provides the dedicated worker entry point.
 // The same persisted cursor and lease prevent duplicate concurrent consumption.
 func (s *DBStore) RunPassiveDiscoveryMaterializer(ctx context.Context, sensorID string) {
+	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED") == "true" {
+		return
+	}
+	liveDone := make(chan struct{})
+	go func() {
+		defer close(liveDone)
+		s.runPassiveLivePTRMaterializer(ctx, sensorID)
+	}()
 	s.runPassiveDiscoveryMaterializer(ctx, sensorID)
+	<-liveDone
 }
