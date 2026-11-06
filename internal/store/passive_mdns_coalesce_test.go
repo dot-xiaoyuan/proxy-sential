@@ -36,3 +36,13 @@ func TestPassiveMDNSCoalescingKeepsChangedContentAndQueries(t *testing.T) {
 		t.Fatalf("changed content or query was coalesced: %v", got)
 	}
 }
+
+func TestPassiveMDNSCoalescingKeepsDifferentDirectResponders(t *testing.T) {
+	record := func(id, mac string) normalized.Event {
+		return normalized.Event{EventID: id, SourceEventType: "mdns", Observer: map[string]any{"sensor_id": "s"}, Subject: map[string]any{"ip": "192.0.2.8"}, Payload: map[string]any{"is_response": true, "record_type": "PTR", "record_name": "_ipp._tcp.local", "service_target": "printer._ipp._tcp.local", "responder_l2_mac": mac, "l2_source_mac_direct": true, "ttl": 120}}
+	}
+	events := []normalized.Event{record("a", "02:00:00:00:00:01"), record("b", "02:00:00:00:00:02"), record("c", "02:00:00:00:00:01")}
+	if got := passiveCoalescedMDNSIndexes(events); len(got) != 0 {
+		t.Fatalf("different direct responders were coalesced: %v", got)
+	}
+}

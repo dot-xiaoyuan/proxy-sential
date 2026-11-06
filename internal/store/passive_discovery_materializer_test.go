@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -8,6 +9,8 @@ import (
 
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/normalized"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestPassiveDiscoveryUsesBoundedSignalStream(t *testing.T) {
@@ -160,6 +163,59 @@ func TestPassivePTRResponseCreatesServiceWithoutTerminalIdentity(t *testing.T) {
 	event.Subject["ip"] = "218.30.19.40"
 	if _, ok = passivePTRObservation(event, "office-30", "ens1f1", "_ipp._tcp.local", "hp laserjet._ipp._tcp.local", at, at.Add(time.Minute), scope); ok {
 		t.Fatal("public PTR responder created a discovery observation")
+	}
+}
+
+func TestPassivePTRDirectL2IdentityRequiresSameMulticastResponder(t *testing.T) {
+	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
+	at := time.Now().UTC()
+	event := passiveTestEvent("mdns", "192.168.0.254", "", map[string]any{"is_response": true, "l2_source_mac_direct": true, "responder_l2_mac": "02:11:22:33:44:55"})
+	event.Source = "zeek"
+	event.Flow = map[string]any{"dst_ip": "224.0.0.251"}
+	observation, ok := passivePTRObservation(event, "office-30", "ens1f1", "_ipp._tcp.local", "hp laserjet._ipp._tcp.local", at, at.Add(time.Minute), scope)
+	if !ok || observation.MAC != "02:11:22:33:44:55" || !passiveDirectResponderIdentity(observation) {
+		t.Fatalf("direct responder identity missing: %+v", observation)
+	}
+	for _, change := range []func(*discovery.Observation){
+		func(o *discovery.Observation) { o.Evidence.Payload["l2_source_mac_direct"] = false },
+		func(o *discovery.Observation) { o.Evidence.Subject["mac"] = "02:11:22:33:44:66" },
+		func(o *discovery.Observation) { o.Evidence.Flow["dst_ip"] = "192.168.0.1" },
+		func(o *discovery.Observation) { o.Evidence.Source = "other" },
+	} {
+		copy := observation
+		copy.Evidence = observation.Evidence
+		copy.Evidence.Payload = map[string]any{"l2_source_mac_direct": true, "responder_l2_mac": observation.MAC, "service_source": "ptr_responder"}
+		copy.Evidence.Subject = map[string]any{"ip": observation.IP, "mac": observation.MAC}
+		copy.Evidence.Flow = map[string]any{"dst_ip": "224.0.0.251"}
+		change(&copy)
+		if passiveDirectResponderIdentity(copy) {
+			t.Fatalf("unverified responder accepted: %+v", copy)
+		}
+	}
+}
+
+func TestDirectPTRLinkDoesNotRequireDHCPLease(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().UTC()
+	event := passiveTestEvent("mdns", "192.168.0.254", "", map[string]any{"is_response": true, "l2_source_mac_direct": true, "responder_l2_mac": "02:11:22:33:44:55"})
+	event.Source = "zeek"
+	event.Flow = map[string]any{"dst_ip": "224.0.0.251"}
+	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
+	observation, ok := passivePTRObservation(event, "office-30", "ens1f1", "_ipp._tcp.local", "hp laserjet._ipp._tcp.local", at, at.Add(time.Minute), scope)
+	if !ok {
+		t.Fatal("expected PTR observation")
+	}
+	mock.ExpectQuery("SELECT EXISTS").WithArgs("mac:02:11:22:33:44:55").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectExec("INSERT INTO discovery_identity_links").WithArgs(observation.ID, "mac:02:11:22:33:44:55", observation.ValidUntil, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := (&DBStore{}).linkPassiveObservation(context.Background(), db, observation); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

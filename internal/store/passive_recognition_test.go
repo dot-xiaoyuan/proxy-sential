@@ -34,6 +34,24 @@ func TestPassiveDiscoveryHintEnrichesEndpointRecognition(t *testing.T) {
 	}
 }
 
+func TestCurrentDirectPTRPrinterNameCanIdentifyEndpoint(t *testing.T) {
+	profile := EndpointIdentityProfile{
+		EndpointID: "mac:02:11:22:33:44:55",
+		Endpoint: EndpointEntity{
+			EndpointID: "mac:02:11:22:33:44:55", PrimaryMAC: "02:11:22:33:44:55",
+			EntityRole: "endpoint", Attributes: map[string]any{},
+		},
+		DiscoveryRecognitionHints: []DiscoveryRecognitionHint{{
+			Value: "HP LaserJet Pro MFP M128fw", Field: "hostname", Origin: "dns_sd",
+			ObservationID: "direct-ptr-printer", ObservedAt: time.Now().UTC(),
+		}},
+	}
+	item := BuildEndpointDeviceInventory(profile)
+	if item.DeviceType != "printer" {
+		t.Fatalf("printer self-report was not recognized: %+v", item)
+	}
+}
+
 func TestSameConclusionStillKeepsDiscoveryEvidenceReference(t *testing.T) {
 	profile := EndpointIdentityProfile{
 		EndpointID: "mac:02:00:00:00:00:19",

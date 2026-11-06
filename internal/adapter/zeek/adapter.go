@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -390,6 +391,19 @@ func discoveryEventFromFields(raw []byte, fields map[string]string, lineOffset i
 	subject := map[string]any{"ip": subjectIP, "vlan": first(fields, "capture_vlan", "vlan")}
 	if mac := first(fields, "mac", "client_mac"); mac != "" {
 		subject["mac"] = normalizeMAC(mac)
+	}
+	// A multicast mDNS answer carries the responder's link-layer source in
+	// Zeek's controlled log. Keep this provenance so downstream identity can
+	// distinguish it from an IP/MAC inferred from a prior address binding.
+	if opts.LogKind == "mdns" && payload["is_response"] == true {
+		if dst, err := netip.ParseAddr(destination); err == nil && dst.IsMulticast() {
+			if mac, err := net.ParseMAC(first(fields, "src_mac")); err == nil && len(mac) == 6 && mac[0]&1 == 0 {
+				// Keep this out of Subject: a response-only service record is not
+				// an endpoint identity event and must not cause a write per mDNS RR.
+				payload["responder_l2_mac"] = strings.ToLower(mac.String())
+				payload["l2_source_mac_direct"] = true
+			}
+		}
 	}
 	observer := map[string]any{}
 	if opts.SensorID != "" {

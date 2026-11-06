@@ -7,7 +7,7 @@ import (
 )
 
 type passiveMDNSKey struct {
-	sensor, iface, sender, recordType, name, value string
+	sensor, iface, sender, responderMAC, recordType, name, value string
 }
 
 // passiveCoalescedMDNSIndexes retains the first and last copy of an unchanged
@@ -66,5 +66,5 @@ func passiveMDNSCoalesceKey(event normalized.Event) (passiveMDNSKey, bool) {
 	if sensor == "" || name == "" || value == "" {
 		return passiveMDNSKey{}, false
 	}
-	return passiveMDNSKey{sensor: sensor, iface: passiveInterface(event), sender: passiveString(event.Subject, "ip"), recordType: typeName, name: name, value: value}, true
+	return passiveMDNSKey{sensor: sensor, iface: passiveInterface(event), sender: passiveString(event.Subject, "ip"), responderMAC: passiveString(event.Payload, "responder_l2_mac"), recordType: typeName, name: name, value: value}, true
 }

@@ -10,6 +10,8 @@ export {
         ts: time &log;
         src_ip: addr &log;
         dst_ip: addr &log;
+        # Only set for a multicast answer when the responder's frame had L2 data.
+        src_mac: string &log &optional;
         is_response: bool &log &default=F;
         record_type: string &log &optional;
         record_name: string &log &optional;
@@ -63,12 +65,19 @@ function mdns_response_destination(c: connection): addr
     if ( mdns_is_multicast(c$id$resp_h) ) return c$id$resp_h;
     return c$device_dns_is_orig ? c$id$resp_h : c$id$orig_h;
     }
+function mdns_multicast_response_mac(c: connection): string
+    {
+    if ( mdns_is_multicast(c$id$resp_h) && c$orig?$l2_addr ) return c$orig$l2_addr;
+    if ( mdns_is_multicast(c$id$orig_h) && c$resp?$l2_addr ) return c$resp$l2_addr;
+    return "";
+    }
 function log_mdns_address(c: connection, msg: dns_msg, ans: dns_answer, a: addr, kind: string)
     {
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
     Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
         $is_response=T, $record_type=kind, $record_name=ans$query,
-        $record_address=a, $record_ttl=double_to_count(interval_to_double(ans$TTL))]);
+        $record_address=a, $record_ttl=double_to_count(interval_to_double(ans$TTL)),
+        $src_mac=mdns_multicast_response_mac(c)]);
     }
 event dns_A_reply(c: connection, msg: dns_msg, ans: dns_answer, a: addr)
     { log_mdns_address(c, msg, ans, a, "A"); }
@@ -79,19 +88,19 @@ event dns_SRV_reply(c: connection, msg: dns_msg, ans: dns_answer, target: string
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
     Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
         $is_response=T, $record_type="SRV", $record_name=ans$query, $service_target=target,
-        $record_ttl=double_to_count(interval_to_double(ans$TTL))]);
+        $record_ttl=double_to_count(interval_to_double(ans$TTL)), $src_mac=mdns_multicast_response_mac(c)]);
     }
 event dns_PTR_reply(c: connection, msg: dns_msg, ans: dns_answer, name: string)
     {
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
     Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
         $is_response=T, $record_type="PTR", $record_name=ans$query, $service_target=name,
-        $record_ttl=double_to_count(interval_to_double(ans$TTL))]);
+        $record_ttl=double_to_count(interval_to_double(ans$TTL)), $src_mac=mdns_multicast_response_mac(c)]);
     }
 event dns_TXT_reply(c: connection, msg: dns_msg, ans: dns_answer, txt: string_vec)
     {
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
     Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
         $is_response=T, $record_type="TXT", $record_name=ans$query, $record_text=join_string_vec(txt, " "),
-        $record_ttl=double_to_count(interval_to_double(ans$TTL))]);
+        $record_ttl=double_to_count(interval_to_double(ans$TTL)), $src_mac=mdns_multicast_response_mac(c)]);
     }

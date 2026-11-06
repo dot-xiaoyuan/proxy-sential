@@ -414,7 +414,18 @@ func passivePTRObservation(event normalized.Event, sensor, iface, recordName, in
 	evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])
 	evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
 	evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-	observation := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: passivePrinterType(capabilities, instance), Capabilities: capabilities, Confidence: "strong", Explanation: "DNS-SD 服务响应由报文源地址被动关联", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
+	directMAC := ""
+	if event.Source == "zeek" && event.Payload["l2_source_mac_direct"] == true {
+		if destination, err := netip.ParseAddr(passiveString(event.Flow, "dst_ip")); err == nil && destination.IsMulticast() {
+			directMAC = validPassiveMAC(passiveString(event.Payload, "responder_l2_mac"))
+		}
+	}
+	if directMAC != "" {
+		evidence.Subject["mac"] = directMAC
+		evidence.Payload["l2_source_mac_direct"] = true
+		evidence.Payload["responder_l2_mac"] = directMAC
+	}
+	observation := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: passivePrinterType(capabilities, instance), Capabilities: capabilities, Confidence: "strong", Explanation: "DNS-SD 服务响应由报文源地址被动关联", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
 	if observation.Site == "" {
 		observation.Site = sensor
 	}
@@ -598,9 +609,9 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscover
 	}
 	// ARP's sender hardware address and sender protocol address come from the
 	// same frame. This observation can link to an existing endpoint by that
-	// exact MAC without a DHCP lease. Other protocols still need the lease
-	// guard before their IP/MAC claim may link an endpoint.
-	if o.IP != "" && o.Origin != "arp" {
+	// exact MAC without a DHCP lease. A verified multicast PTR responder has
+	// the same direct frame-level ownership; other IP/MAC claims need a lease.
+	if o.IP != "" && o.Origin != "arp" && !passiveDirectResponderIdentity(o) {
 		var leaseEndpoint string
 		err := db.QueryRowContext(ctx, `SELECT endpoint_id FROM device_address_leases WHERE sensor_id=$1 AND campus_id=$2 AND ip=$3::inet AND action='ack' AND observed_at<=$4 AND valid_until>$4 ORDER BY observed_at DESC,event_id DESC LIMIT 1`, o.Node, passiveString(o.Evidence.Subject, "campus_id"), o.IP, o.ObservedAt).Scan(&leaseEndpoint)
 		if err == sql.ErrNoRows || leaseEndpoint != endpointID {
@@ -617,6 +628,21 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscover
 	basis, _ := json.Marshal(map[string]any{"kind": kind, "sensor": o.Node, "ip": o.IP, "mac": mac, "origin": o.Origin})
 	_, err := db.ExecContext(ctx, `INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis) VALUES($1,$2,$3,$4) ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis`, o.ID, endpointID, o.ValidUntil, basis)
 	return err
+}
+
+// Only a multicast PTR answer with a MAC logged from that responder's own
+// frame may establish a service-to-endpoint link without a DHCP lease.
+func passiveDirectResponderIdentity(o discovery.Observation) bool {
+	if o.Origin != "dns_sd" || o.Evidence.Source != "zeek" ||
+		passiveString(o.Evidence.Payload, "service_source") != "ptr_responder" ||
+		o.Evidence.Payload["l2_source_mac_direct"] != true ||
+		validPassiveMAC(passiveString(o.Evidence.Payload, "responder_l2_mac")) != validPassiveMAC(o.MAC) ||
+		validPassiveMAC(o.MAC) == "" || validPassiveMAC(passiveString(o.Evidence.Subject, "mac")) != validPassiveMAC(o.MAC) ||
+		passiveString(o.Evidence.Subject, "ip") != o.IP {
+		return false
+	}
+	destination, err := netip.ParseAddr(passiveString(o.Evidence.Flow, "dst_ip"))
+	return err == nil && destination.IsMulticast()
 }
 
 func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []normalized.Event, scope passiveDiscoveryScope) (passiveDiscoveryBatchStats, error) {

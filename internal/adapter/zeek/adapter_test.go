@@ -183,6 +183,33 @@ func TestConvertSoftwareLog(t *testing.T) {
 	}
 }
 
+func TestMDNSResponseKeepsVerifiedMulticastSourceMAC(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw string
+		wantMAC   bool
+	}{
+		{"multicast response", `{"ts":1785232800.25,"src_ip":"192.0.2.8","dst_ip":"224.0.0.251","is_response":true,"record_type":"PTR","src_mac":"02:11:22:33:44:55"}`, true},
+		{"query", `{"ts":1785232800.25,"src_ip":"192.0.2.8","dst_ip":"224.0.0.251","is_response":false,"src_mac":"02:11:22:33:44:55"}`, false},
+		{"unicast response", `{"ts":1785232800.25,"src_ip":"192.0.2.8","dst_ip":"192.0.2.9","is_response":true,"src_mac":"02:11:22:33:44:55"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			if _, err := Convert(bytes.NewBufferString(tc.raw+"\n"), &output, Options{LogKind: "mdns"}); err != nil {
+				t.Fatal(err)
+			}
+			var event normalized.Event
+			if err := json.NewDecoder(&output).Decode(&event); err != nil {
+				t.Fatal(err)
+			}
+			_, hasMAC := event.Subject["mac"]
+			if hasMAC || (event.Payload["l2_source_mac_direct"] == true) != tc.wantMAC ||
+				(event.Payload["responder_l2_mac"] == "02:11:22:33:44:55") != tc.wantMAC {
+				t.Fatalf("unexpected mDNS source attribution: %+v", event)
+			}
+		})
+	}
+}
+
 func TestConvertPreservesMACOnlyAndRejectsMalformedDHCP(t *testing.T) {
 	input := bytes.NewBufferString("{bad json\n" +
 		"#separator \\x09\n" +
