@@ -503,6 +503,10 @@ Type=simple
 WorkingDirectory=$root/current
 EnvironmentFile=$runtime_env
 EnvironmentFile=-$root/config/proxy-source.env
+# Per-event id lookups scanned the whole normalized_events table (no time-ordered
+# sort key) and capped ingest throughput. The table already keeps a ClickHouse
+# block deduplication window, so replayed blocks are dropped without the scan.
+Environment=PROXY_SENTINEL_EVENT_ID_IDEMPOTENCY=clickhouse
 ExecStart=$root/current/bin/proxy-sentinel ingest run --sensor-id $sensor_id $ingest_source_args --poll-interval ${PROXY_SENTINEL_INGEST_POLL_INTERVAL:-2s} --max-batch-bytes ${PROXY_SENTINEL_INGEST_MAX_BATCH_BYTES:-8388608} --store-timeout ${PROXY_SENTINEL_INGEST_STORE_TIMEOUT:-2m} --heartbeat-interval ${PROXY_SENTINEL_INGEST_HEARTBEAT_INTERVAL:-30s}
 Restart=on-failure
 RestartSec=5
