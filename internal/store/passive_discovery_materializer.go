@@ -656,9 +656,15 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 		return stats, err
 	}
 	coalescedMDNS := passiveCoalescedMDNSIndexes(events)
+	coalescedARP := passiveCoalescedARPIndexes(events)
 	for index, event := range events {
 		stats.Processed++
 		stats.Protocols[event.SourceEventType]++
+		if coalescedARP[index] {
+			stats.Skipped++
+			stats.Reasons["arp_repeated_claim_coalesced"]++
+			continue
+		}
 		if coalescedMDNS[index] {
 			stats.Skipped++
 			stats.Reasons["mdns_repeated_record_coalesced"]++
