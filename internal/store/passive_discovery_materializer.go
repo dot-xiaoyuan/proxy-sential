@@ -492,6 +492,13 @@ func (s *DBStore) materializeMDNS(ctx context.Context, db passiveDiscoveryDB, ev
 	}
 	ttl := passiveTTL(event.Payload, 120)
 	validUntil := at.Add(time.Duration(ttl) * time.Second)
+	// PTR, SRV and TXT records outside the supported service families cannot
+	// produce a discovery observation or contribute to a supported SRV join.
+	// Keep A/AAAA host addresses for those joins and process zero-TTL records
+	// so older projections can still be withdrawn after a rule change.
+	if ttl > 0 && recordType != "A" && recordType != "AAAA" && passiveServiceType(recordName) == "" {
+		return nil, "mdns_unusable_service", nil
+	}
 	raw, _ := json.Marshal(event.Payload)
 	if ttl == 0 {
 		_, err = db.ExecContext(ctx, `DELETE FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_name=$3 AND record_type=$4 AND record_value=$5`, sensor, iface, recordName, recordType, value)

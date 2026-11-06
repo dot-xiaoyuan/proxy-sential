@@ -56,6 +56,66 @@ func TestPassiveDiscoveryBindingLookupIsIndexed(t *testing.T) {
 	}
 }
 
+func TestPassiveMDNSIgnoresUnusableServiceAnnouncementsButKeepsWithdrawal(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	scope, err := parsePassiveDiscoveryScope("192.168.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := passiveTestEvent("mdns", "192.168.0.8", "", map[string]any{
+		"is_response": true, "record_type": "PTR", "record_name": "_dosvc._tcp.local",
+		"service_target": "desktop._dosvc._tcp.local", "ttl": 120,
+	})
+	if observations, reason, err := (&DBStore{}).materializeMDNS(context.Background(), db, event, scope); err != nil || len(observations) != 0 || reason != "mdns_unusable_service" {
+		t.Fatalf("unusable service should not write a discovery projection: observations=%v reason=%q err=%v", observations, reason, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+	withdrawn := event
+	withdrawn.Payload = map[string]any{
+		"is_response": true, "record_type": "PTR", "record_name": "_dosvc._tcp.local",
+		"service_target": "desktop._dosvc._tcp.local", "ttl": 0,
+	}
+	mock.ExpectExec("DELETE FROM passive_discovery_mdns_records").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE discovery_observations SET valid_until").WillReturnResult(sqlmock.NewResult(0, 0))
+	if _, _, err := (&DBStore{}).materializeMDNS(context.Background(), db, withdrawn, scope); err != nil {
+		t.Fatalf("withdrawal must still remove an older service projection: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPassiveMDNSRetainsSupportedServiceAnnouncement(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	scope, err := parsePassiveDiscoveryScope("192.168.0.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := passiveTestEvent("mdns", "192.168.0.8", "", map[string]any{
+		"is_response": true, "record_type": "PTR", "record_name": "_ipp._tcp.local",
+		"service_target": "printer._ipp._tcp.local", "ttl": 120,
+	})
+	mock.ExpectExec("INSERT INTO passive_discovery_mdns_records").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT srv.record_name").WillReturnRows(sqlmock.NewRows([]string{"record_name", "record_value", "address", "valid_until", "record_text", "observed_at", "event_id"}))
+	observations, reason, err := (&DBStore{}).materializeMDNS(context.Background(), db, event, scope)
+	if err != nil || reason != "" || len(observations) != 1 || observations[0].Origin != "dns_sd" || observations[0].DeviceType != "printer" {
+		t.Fatalf("supported printer service changed: observations=%v reason=%q err=%v", observations, reason, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func passiveTestEvent(kind, ip, mac string, payload map[string]any) normalized.Event {
 	return normalized.Event{
 		EventID:         kind + "-event",
