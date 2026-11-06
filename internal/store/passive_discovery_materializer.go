@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"proxy-sentinel/internal/discovery"
@@ -59,10 +60,16 @@ type passiveDiscoveryDB interface {
 // writes (notably mDNS). The event and encoded-byte limits keep each claim
 // inside the 90-second lease and 45-second work budget. The larger event
 // window merges repeated ARP and mDNS facts before the PostgreSQL writes.
+//
+// Measured on the 204 sensor, one published observation costs a few
+// milliseconds once its index pages are cached, so a 500-event floor keeps the
+// per-batch read overhead amortised instead of collapsing to tiny claims the
+// way the old 125-event floor did.
 const (
-	passiveDiscoveryBatchSize  = 750
-	passiveDiscoveryBatchBytes = 2 << 20
-	passiveDiscoveryMinBatch   = 125
+	passiveDiscoveryBatchSize  = 1500
+	passiveDiscoveryBatchBytes = 6 << 20
+	passiveDiscoveryMinBatch   = 500
+	passiveDiscoveryMaxBatch   = 1500
 )
 
 type passiveDiscoveryBatchTuner struct {
@@ -70,9 +77,10 @@ type passiveDiscoveryBatchTuner struct {
 	successes int
 }
 
-// A slow batch retries from the unchanged cursor at a smaller size. Grow only
-// after several full successful batches, so one hotspot cannot pin the cursor
-// in a repeated timeout/retry cycle.
+// A slow batch retries from the unchanged cursor at a smaller size. The floor
+// stays high enough that one timeout cannot pin the cursor in a tiny-claim
+// loop, and three full successes restore the cap so a transient hotspot does
+// not permanently halve throughput.
 func (t *passiveDiscoveryBatchTuner) observe(full bool, err error) {
 	if err != nil {
 		switch discovery.WorkErrorCode(err) {
@@ -87,10 +95,30 @@ func (t *passiveDiscoveryBatchTuner) observe(full bool, err error) {
 		return
 	}
 	t.successes++
-	if t.successes >= 8 {
-		t.limit = min(passiveDiscoveryBatchSize, t.limit*2)
+	if t.successes >= 3 {
+		t.limit = min(passiveDiscoveryMaxBatch, t.limit*2)
 		t.successes = 0
 	}
+}
+
+// passiveSlowBatchLogUnix rate-limits the slow-batch diagnostics to one line
+// per ten seconds so a busy catch-up cannot flood the journal.
+var passiveSlowBatchLogUnix atomic.Int64
+
+func logSlowPassiveBatch(stats passiveDiscoveryBatchStats, sections map[string]time.Duration, total time.Duration) {
+	if total < 3*time.Second {
+		return
+	}
+	now := time.Now().Unix()
+	last := passiveSlowBatchLogUnix.Load()
+	if now-last < 10 || !passiveSlowBatchLogUnix.CompareAndSwap(last, now) {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "passive discovery slow batch: processed=%d emitted=%d skipped=%d arp_candidates=%s arp_batch=%s mdns=%s observe=%s commit=%s total=%s\n",
+		stats.Processed, stats.Emitted, stats.Skipped,
+		sections["arp_candidates"].Round(time.Millisecond), sections["arp_batch"].Round(time.Millisecond),
+		sections["mdns"].Round(time.Millisecond), sections["observe"].Round(time.Millisecond),
+		sections["commit"].Round(time.Millisecond), total.Round(time.Millisecond))
 }
 
 type passiveDiscoveryScope struct{ prefixes []netip.Prefix }
@@ -707,12 +735,21 @@ func passiveDirectResponderIdentity(o discovery.Observation) bool {
 
 func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []normalized.Event, scope passiveDiscoveryScope) (passiveDiscoveryBatchStats, error) {
 	stats := passiveDiscoveryBatchStats{Protocols: map[string]int{}, Reasons: map[string]int{}}
+	started := time.Now()
+	sections := map[string]time.Duration{}
+	measure := func(name string, fn func() error) error {
+		stage := time.Now()
+		err := fn()
+		sections[name] += time.Since(stage)
+		discovery.ObserveStage(ctx, name, stage, err)
+		return err
+	}
 	tx, err := s.pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return stats, err
 	}
 	defer tx.Rollback()
-	if err := ensurePassiveARPCandidateEndpoints(ctx, tx, events, scope); err != nil {
+	if err := measure("arp_candidates", func() error { return ensurePassiveARPCandidateEndpoints(ctx, tx, events, scope) }); err != nil {
 		return stats, err
 	}
 	coalescedMDNS := passiveCoalescedMDNSIndexes(events)
@@ -720,7 +757,10 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	pendingARP := make([]discovery.Observation, 0, len(events))
 	pendingIDs := make(map[string]bool)
 	flushARP := func() error {
-		if err := s.insertPassiveARPBatch(ctx, tx, pendingARP); err != nil {
+		if len(pendingARP) == 0 {
+			return nil
+		}
+		if err := measure("arp_batch", func() error { return s.insertPassiveARPBatch(ctx, tx, pendingARP) }); err != nil {
 			return err
 		}
 		pendingARP = pendingARP[:0]
@@ -766,7 +806,10 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 		var reason string
 		var eventErr error
 		if event.SourceEventType == "mdns" {
+			stage := time.Now()
 			observations, reason, eventErr = s.materializeMDNS(ctx, tx, event, scope)
+			sections["mdns"] += time.Since(stage)
+			discovery.ObserveStage(ctx, "mdns", stage, eventErr)
 		} else {
 			var observation discovery.Observation
 			observation, reason = passiveObservation(event, scope)
@@ -783,7 +826,11 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 			continue
 		}
 		for _, observation := range observations {
-			if eventErr = s.insertPassiveObservation(ctx, tx, observation); eventErr != nil {
+			stage := time.Now()
+			eventErr = s.insertPassiveObservation(ctx, tx, observation)
+			sections["observe"] += time.Since(stage)
+			discovery.ObserveStage(ctx, "observe", stage, eventErr)
+			if eventErr != nil {
 				return stats, eventErr
 			}
 			stats.Emitted++
@@ -792,7 +839,12 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	if err := flushARP(); err != nil {
 		return stats, err
 	}
-	return stats, tx.Commit()
+	commitStage := time.Now()
+	err = tx.Commit()
+	sections["commit"] += time.Since(commitStage)
+	discovery.ObserveStage(ctx, "commit", commitStage, err)
+	logSlowPassiveBatch(stats, sections, time.Since(started))
+	return stats, err
 }
 
 func (s *DBStore) finishPassiveDiscovery(ctx context.Context, sensorID string, cursor passiveDiscoveryCursor, stats passiveDiscoveryBatchStats, runErr error) error {

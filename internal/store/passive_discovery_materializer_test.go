@@ -25,8 +25,11 @@ func TestPassiveDiscoveryUsesBoundedSignalStream(t *testing.T) {
 }
 
 func TestPassiveDiscoveryBatchFitsLeaseBudget(t *testing.T) {
-	if passiveDiscoveryBatchSize <= 0 || passiveDiscoveryBatchSize > 750 || passiveDiscoveryBatchBytes <= 0 || passiveDiscoveryBatchBytes > 2<<20 {
+	if passiveDiscoveryBatchSize <= 0 || passiveDiscoveryBatchSize > 1500 || passiveDiscoveryBatchBytes <= 0 || passiveDiscoveryBatchBytes > 6<<20 {
 		t.Fatalf("passive discovery batch must stay bounded, got %d", passiveDiscoveryBatchSize)
+	}
+	if passiveDiscoveryMinBatch < 500 || passiveDiscoveryMinBatch > passiveDiscoveryBatchSize {
+		t.Fatalf("discovery floor must stay high enough to amortise per-batch reads, got %d", passiveDiscoveryMinBatch)
 	}
 }
 
@@ -46,14 +49,14 @@ func TestPassiveDiscoveryByteBudgetRetainsCompleteCursorPrefix(t *testing.T) {
 func TestPassiveDiscoveryBatchRetriesSmallerAfterTimeout(t *testing.T) {
 	tuner := passiveDiscoveryBatchTuner{limit: passiveDiscoveryBatchSize}
 	tuner.observe(true, context.DeadlineExceeded)
-	if tuner.limit != 375 {
+	if tuner.limit != passiveDiscoveryBatchSize/2 {
 		t.Fatalf("timeout should halve the next claim, got %d", tuner.limit)
 	}
-	for range 8 {
+	for range 3 {
 		tuner.observe(true, nil)
 	}
 	if tuner.limit != passiveDiscoveryBatchSize {
-		t.Fatalf("successful bounded claims should restore throughput, got %d", tuner.limit)
+		t.Fatalf("three full successes should restore the cap, got %d", tuner.limit)
 	}
 	for range 4 {
 		tuner.observe(true, context.DeadlineExceeded)

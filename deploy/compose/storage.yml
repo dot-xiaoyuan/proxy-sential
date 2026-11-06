@@ -6,7 +6,9 @@ services:
     container_name: proxy-sentinel-postgres
     restart: unless-stopped
     cpus: "2.0"
-    mem_limit: 3g
+    # 128 MB shared_buffers thrashed the discovery write path on the 204 HDD;
+    # the live cluster runs 3 GB shared_buffers inside this 6 GB limit.
+    mem_limit: 6g
     logging:
       driver: json-file
       options:
