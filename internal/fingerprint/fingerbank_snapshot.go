@@ -305,11 +305,9 @@ func normalizeFingerbankDevicePath(path, description string) (string, string) {
 	case strings.HasPrefix(category, "internet of things"):
 		return "iot", osFamily
 	case strings.HasPrefix(category, "operating system"):
-		// Windows and ChromeOS OS-only paths are desktop-class in the existing
-		// rule vocabulary; other OS-only paths stay without a device type.
-		if osFamily == "Windows" || osFamily == "ChromeOS" {
-			return "desktop", osFamily
-		}
+		// An OS fingerprint does not establish the hardware form factor.
+		// Keep Windows and ChromeOS as OS evidence until a device-specific
+		// source independently identifies a desktop or laptop.
 		return "", osFamily
 	case strings.Contains(text, "printer"):
 		return "printer", osFamily

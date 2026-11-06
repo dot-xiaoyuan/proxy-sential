@@ -38,7 +38,7 @@ func TestCompileFingerbankSnapshotMapsDeviceFamilies(t *testing.T) {
 	for _, item := range items {
 		byOptions[item.RequestedOptions] = item
 	}
-	if got := byOptions["1,3,6,15"]; got.DeviceType != "desktop" || got.OSFamily != "Windows" || len(got.VendorClasses) != 1 {
+	if got := byOptions["1,3,6,15"]; got.DeviceType != "" || got.OSFamily != "Windows" || len(got.VendorClasses) != 1 {
 		t.Fatalf("windows rule wrong: %+v", got)
 	}
 	if got := byOptions["1,33,3,6"]; got.DeviceType != "printer" {
@@ -177,7 +177,7 @@ func TestNormalizeFingerbankDevicePathExtras(t *testing.T) {
 	}{
 		{"Operating System/Apple OS", "", "Apple OS"},
 		{"Operating System/Embedded OS", "", ""},
-		{"Operating System/Chrome OS", "desktop", "ChromeOS"},
+		{"Operating System/Chrome OS", "", "ChromeOS"},
 		{"Hardware/IP Camera", "camera", ""},
 		{"Firewall and Security Appliance/Ruijie Firewall", "firewall", ""},
 		{"Phone, Tablet or Wearable/Generic Android/Huawei Android", "", "Android"},
@@ -193,7 +193,7 @@ func TestNormalizeFingerbankDevicePathExtras(t *testing.T) {
 		{"Router, Access Point or Femtocell/Wireless Access Point/H3C WAP", "access_point", ""},
 		{"Operating System/Tizen OS", "", "Tizen"},
 		{"VoIP Device/Yealink VoIP", "phone", ""},
-		{"Operating System/Windows OS", "desktop", "Windows"},
+		{"Operating System/Windows OS", "", "Windows"},
 	}
 	for _, tc := range cases {
 		device, osFamily := normalizeFingerbankDevicePath(tc.path, "")
@@ -251,8 +251,8 @@ func TestCompileFingerbankSnapshotUsesGenericOnlyWithoutVendorMatch(t *testing.T
 	}
 	for _, tc := range []struct{ vendor, deviceType, os string }{
 		{"android-dhcp", "mobile", "Android"},
-		{"other", "desktop", "Windows"},
-		{"", "desktop", "Windows"},
+		{"other", "", "Windows"},
+		{"", "", "Windows"},
 	} {
 		got := lib.IdentifySignals(Signals{DHCPRequestedOptions: "1,3,6", DHCPVendorClass: tc.vendor})
 		if got.DeviceType != tc.deviceType || got.OSFamily != tc.os {
