@@ -728,9 +728,38 @@ func runMigrate(args []string) error {
 
 func runDeviceFingerprint(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: proxy-sentinel device-fingerprint <build|build-embedded|extend|refresh|fingerbank-refresh|upgrade-v7|verify|install>")
+		return fmt.Errorf("usage: proxy-sentinel device-fingerprint <build|build-embedded|extend|refresh|ieee-refresh|fingerbank-refresh|upgrade-v7|verify|install>")
 	}
 	switch args[0] {
+	case "ieee-refresh":
+		fs := flag.NewFlagSet("device-fingerprint ieee-refresh", flag.ContinueOnError)
+		basePath := fs.String("base", "", "verified current v6 bundle")
+		maLPath := fs.String("ma-l", "", "official IEEE MA-L CSV")
+		maMPath := fs.String("ma-m", "", "official IEEE MA-M CSV")
+		maSPath := fs.String("ma-s", "", "official IEEE MA-S CSV")
+		output := fs.String("output", "", "refreshed v6 bundle")
+		version := fs.String("version", "", "new version")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *basePath == "" || *maLPath == "" || *maMPath == "" || *maSPath == "" || *output == "" || *version == "" {
+			return fmt.Errorf("--base, --ma-l, --ma-m, --ma-s, --output and --version are required")
+		}
+		paths := []string{*basePath, *maLPath, *maMPath, *maSPath}
+		inputs := make([][]byte, len(paths))
+		for i, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			inputs[i] = data
+		}
+		manifest, err := fingerprint.RefreshOfficialIEEEBundle(inputs[0], inputs[1:], *output, *version, time.Now())
+		if err != nil {
+			return err
+		}
+		fmt.Printf("refreshed IEEE OUI bundle: %s\n", manifest.Version)
+		return nil
 	case "upgrade-v7":
 		fs := flag.NewFlagSet("device-fingerprint upgrade-v7", flag.ContinueOnError)
 		basePath := fs.String("base", "", "verified v6 bundle")
