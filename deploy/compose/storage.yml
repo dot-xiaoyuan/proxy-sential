@@ -37,6 +37,10 @@ services:
       - checkpoint_timeout=15min
       - -c
       - wal_compression=lz4
+      # JIT compilation added ~130 ms per discovery page query on the 204
+      # dataset without helping any sub-second statement.
+      - -c
+      - jit=off
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-25432}:5432"
     volumes:
