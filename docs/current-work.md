@@ -41,6 +41,18 @@
 - **两个列表为何不同**：终端列表读取更广的近期终端状态和地址/会话线索；发现页仅统计指定被动协议、未撤销且近 24 小时的观测，并按采集节点、网络范围与可信 MAC/endpoint 分组。先前只读关联快照约 4,095 个终端身份、3,702 个发现身份，其中约 489 个近期终端 MAC 在同窗口没有对应的当前发现观测；不同时间及身份键不能相减为“漏镜像设备数”，也不能把发现身份视作全校设备总数。
 - **识别补齐进度**：安装完整 IEEE 前缀表后，对近 24 小时仍缺厂商且使用全球管理 MAC 的终端分时入队 **1,144 个**，每 5 秒到期一个以限制对实时识别的竞争；16:23 后只读核对队列待处理 1,086、已到期 2、错误 0，后续结果会持续更新。厂商前缀不会使缺少协议特征的设备自动获得确定类型；随机 MAC、静默终端与尚未处理的发现游标仍是覆盖缺口。
 
+### 发现吞吐修复与追平（11 月 6 日 23:00–11 月 7 日 00:30 现场实施）
+
+本轮按用户授权直接处理 204 发现吞吐：先只读定位，再修改配置、代码、发布与指纹包，全部结论以现场复测为准。
+
+- **根因（只读实测）**：ClickHouse 进程持续读取约 72 MB/s，主机约 60% iowait、load 20+。最大读取者不是发现，而是域名/应用历史对账：`ListDomainEventsAfter` 用无上界的 `ORDER BY timestamp,event_id LIMIT 10000` 扫 `normalized_events`，而该表排序键是 `(sensor_id,subject_ip,timestamp,event_id)`，时间序必须整段排序，单次查询读到 56 GB、耗时 3–4 分钟；每日对账又固定从 7 天窗口起点重扫。其次，ingest 的归一化事件幂等检查按 `event_id IN (...)` 扫同一表，约 30 MB/s。PostgreSQL 只有 128 MB shared_buffers，回放期间冷插入约 83 ms/行（热 2.4 ms/行），发现批次被写放大拖住；批次调优器一旦超时就缩到 125 条下限且需要 8 次连续满批才回升，现场长期钉在下限。
+- **处置**：①ingest 增加 `PROXY_SENTINEL_EVENT_ID_IDEMPOTENCY=clickhouse`，依赖表已有的 `non_replicated_deduplication_window=100` 做整块幂等，停止逐 id 扫描；②`runtime.env` 设 `PROXY_SENTINEL_APPLICATION_HISTORY_DISABLED=true`，并终止仍在执行的 7 天历史对账查询，实时域名识别与品牌线索继续；③PostgreSQL 调优并重启容器：shared_buffers 3 GB、effective_cache_size 12 GB、work_mem 8 MB、maintenance_work_mem 512 MB、max_wal_size 4 GB、checkpoint_timeout 15 min、wal_compression lz4，容器内存上限 3 GB→6 GB（`deploy/compose/storage.yml` 同步记录，供新装复用）；④代码把单批上限 750/2 MiB 提到 1500/6 MiB，下限 125→500，连续 3 个满批成功即回涨，并新增 `arp_candidates/arp_batch/mdns/observe/commit` 分段计时与慢批日志（每 10 秒最多一条）；⑤`/discovery/statistics` 在索引读取路径下改回 200 空结果，避免诊断区常驻“读取设备统计失败”。
+- **追平结果**：游标滞后从 3 小时 40 分降到 **5 分钟 holdback**（config 即 5m），期间约 40 分钟处理约 100 万条事件；追平阶段实测约 500–750 条/秒、约 9 倍实时，稳定后处理约 50–80 条/秒。现场 ClickHouse 读降到约 7 MB/s 后进一步归零，load 从 20+ 降到 4–5，最近 10 分钟 0 次 `materialize failed`。发布 `2026.11.06-059dd7c` 与 `2026.11.07-e9cf0fe`，后者为当前版本；230/64 迁移校验一致，`/readyz=200`。
+- **功能复核（临时只读账号调用现场接口，用完即删）**：`/discovery/devices/metadata` 返回近 24 小时 4,586 个可信身份、已识别 1,124、待核实 790、冲突 0、证据过期 2,672，类型含无线 AP 240、手机 686、路由器 95、打印机 16、交换机 4 等；`/discovery/devices` 前 5 条最近观测在请求前 5 分钟内；`/discovery/coverage` 明确返回 `legacy` 路径（`enabled=false`），`/discovery/statistics` 返回 200 空结果。设备列表与总览读取同一 `discovery_observation_latest` 投影，数据时间随游标保持在 5 分钟 holdback 内。
+- **重复记录取舍**：本轮不把每一帧重复报文折叠成一条跨批历史，而是明确以下边界：批内相同 ARP/mDNS 记录继续合并；跨批重复以“每事件一条 PG 观测”保留 30 天热历史，原始标准事件在 ClickHouse 保留，PG 增长由保留期封顶。实测 30 分钟内 ARP 7,064 行/2,187 个事实（3.2 倍）、NDP 5,569/391（14 倍）、DNS-SD 1,257/15（84 倍）、SSDP 1,104/29（38 倍），整体约 5.6 倍；按当前约 8 条/秒写入估算约 44 GB/30 天，磁盘余量 1.6 TB。该口径保留逐事件证据与历史时间线；若后续容量或写入压力需要，再按“事实键 + 时间桶”压缩，并同步改读模型，不能只删原文。
+- **指纹修正落地**：18:12 的 `f164e15` 此前既不在应用也不在指纹包。本轮用该逻辑重建指纹包（把 17 条“仅操作系统”的 Windows/ChromeOS 规则从 `desktop` 改为空类型），校验后安装为 `offline-2026.11.07-204-fb-safe-6981e3be`，保留 196 条 DHCP 规则与 54,390 条 IEEE 前缀，控制面重启后状态 ready。对 514 个 desktop 端点重新识别：`endpoint_recognition_summary` 的 desktop 从 513 降到 131，发现页已识别具体类型从 1,415 降到 1,124、待核实从 455 升到 790。这是“操作系统指纹不决定整机形态”的预期结果，不是识别退步。
+- **仍待处理**：域名/应用历史对账的窗口化读取尚未改代码，故现场继续保留 `APPLICATION_HISTORY_DISABLED=true`，恢复前需验证不会再次整周扫描；`PROXY_SENTINEL_EVENT_ID_IDEMPOTENCY=clickhouse` 依赖 ClickHouse 整块去重，重复块回放被丢弃但不同分块的重放仍可能产生重复标准事件（观测写入按 id 幂等）；本轮未改前端源码，未重做三视口审查；现场临时验证账号已删除。
+
 ### Fingerbank 204 定向扩展（11 月 6 日）
 
 - **数据与保护**：初次只读提取 204 近 24 小时的 247 组 DHCP 选项/厂商类；后续随真实输入增长，当时缓存 371 组（354 组有结果、17 组无匹配）。调用官方 Community API 时按免费额度节流、缓存完成结果。公开 SQLite 的 `combination` 表为空，不能用其属性表冒充设备映射。刷新脚本保留跨滚动窗口已完成组合，并有回归测试。上一阶段规则包 `offline-2026.11.06-204-fb-84edbaa9` SHA256 为 `e3791e15c2330b0d0fddb15120ffb5fa029d8ab3b82b6f89d6c42c5438d64102`，165 条规则、1 条泛类保留为空类型。后续新组合仍需按额度再次刷新，不把一次快照说成持续自动覆盖。
