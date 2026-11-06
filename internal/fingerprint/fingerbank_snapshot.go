@@ -271,6 +271,20 @@ func normalizeFingerbankDevicePath(path, description string) (string, string) {
 		if strings.Contains(detail, "smartphone") || strings.Contains(detail, "iphone") || strings.HasPrefix(detail, "phone") || strings.Contains(detail, "/phone") || strings.Contains(detail, " phone") {
 			return "mobile", osFamily
 		}
+		// The broad family includes phones, tablets and watches. Only a
+		// model-specific Fingerbank leaf from a known product line narrows it.
+		// A generic "Huawei Android" result must remain OS-only.
+		if len(segments) >= 4 && strings.TrimSpace(segments[1]) == "generic android" && strings.TrimSpace(segments[2]) == "huawei android" {
+			model := strings.TrimSpace(segments[len(segments)-1])
+			switch {
+			case strings.HasPrefix(model, "huawei matepad "), strings.HasPrefix(model, "huawei mediapad "):
+				return "tablet", osFamily
+			case strings.HasPrefix(model, "huawei mate "), strings.HasPrefix(model, "huawei nova "),
+				strings.HasPrefix(model, "huawei pura "), strings.HasPrefix(model, "huawei pocket "),
+				strings.HasPrefix(model, "huawei enjoy "):
+				return "mobile", osFamily
+			}
+		}
 		return "", osFamily
 	case strings.HasPrefix(category, "router, access point"):
 		if strings.Contains(detail, "access point") || strings.Contains(detail, "wireless ap") {
