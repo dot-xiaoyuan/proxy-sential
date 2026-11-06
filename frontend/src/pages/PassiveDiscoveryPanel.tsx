@@ -139,6 +139,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const statistics=useQuery({queryKey:['discovery-statistics'],queryFn:({signal})=>request<Statistics>('/discovery/statistics',{signal}),enabled:coverage.data?.enabled===true})
   const metadataQuery=new URLSearchParams(query);metadataQuery.delete('cursor');metadataQuery.delete('limit')
   const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal}),enabled:!ledgerView})
+  const metadataValue=(value?:number)=>value??(discoveryMetadata.isError?'统计读取失败':'统计中')
   const historyEnabled=Boolean(selected)&&coverage.data?.enabled===true
   const historyMetadata=usePaginationMetadata('/discovery/history/metadata',{device_id:selected?.id},historyEnabled)
   const historyScope=new URLSearchParams({device_id:selected?.id??''})
@@ -252,16 +253,16 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
       </div>:undefined}
     />
-    {discoveryMetadata.data&&<section className="surface discovery-overview" aria-label="发现设备总览">
-      <div className="discovery-overview-heading"><strong>设备类型总览</strong><Typography.Text type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重 · 统计于 {observedTimeTitle(discoveryMetadata.data.as_of)}</Typography.Text></div>
+    {!ledgerView&&<section className="surface discovery-overview" aria-label="发现设备总览" aria-busy={discoveryMetadata.isPending}>
+      <div className="discovery-overview-heading"><strong>设备类型总览</strong><Typography.Text type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 当前筛选 · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}</Typography.Text></div>
       <div className="discovery-overview-metrics">
-        <div><span>发现身份</span><strong>{discoveryMetadata.data.total}</strong></div>
-        <div><span>明确类型</span><strong>{discoveryMetadata.data.identified}</strong></div>
-        <div><span>待核实</span><strong>{discoveryMetadata.data.candidate}</strong></div>
-        <div><span>类型冲突</span><strong>{discoveryMetadata.data.conflict}</strong></div>
-        <div><span>证据过期</span><strong>{discoveryMetadata.data.expired}</strong></div>
+        <div><span>发现设备数</span><strong>{metadataValue(discoveryMetadata.data?.total)}</strong></div>
+        <div><span>已识别具体类型</span><strong>{metadataValue(discoveryMetadata.data?.identified)}</strong></div>
+        <div><span>待核实</span><strong>{metadataValue(discoveryMetadata.data?.candidate)}</strong></div>
+        <div><span>类型冲突</span><strong>{metadataValue(discoveryMetadata.data?.conflict)}</strong></div>
+        <div><span>证据过期</span><strong>{metadataValue(discoveryMetadata.data?.expired)}</strong></div>
       </div>
-      <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型</Typography.Text>{[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><span className="discovery-overview-type" key={item.device_type}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></span>)}</div>
+      <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><span className="discovery-overview-type" key={item.device_type}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></span>):<Typography.Text type="secondary">{discoveryMetadata.data?'当前筛选下暂无明确类型':discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
     </section>}
     <div className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span><Button type="link" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith('discovery_')&&key!=='discovery_view')next.delete(key);return next})}>清除筛选</Button></div>
     {discoveryMetadata.isError&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}

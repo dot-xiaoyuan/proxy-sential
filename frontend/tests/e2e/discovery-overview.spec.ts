@@ -11,8 +11,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await page.goto('/devices?tab=discovery')
     const overview = page.getByLabel('发现设备总览')
     await expect(overview).toBeVisible()
-    await expect(overview).toContainText('发现身份')
-    await expect(overview).toContainText('明确类型')
+    await expect(overview).toContainText('发现设备数')
+    await expect(overview).toContainText('已识别具体类型')
     await expect(overview.locator('.discovery-overview-metrics > div')).toHaveCount(5)
     await expect(overview.locator('.discovery-overview-type').first()).toBeVisible()
     const probe = await page.evaluate(() => {
