@@ -657,6 +657,16 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	}
 	coalescedMDNS := passiveCoalescedMDNSIndexes(events)
 	coalescedARP := passiveCoalescedARPIndexes(events)
+	pendingARP := make([]discovery.Observation, 0, len(events))
+	pendingIDs := make(map[string]bool)
+	flushARP := func() error {
+		if err := s.insertPassiveARPBatch(ctx, tx, pendingARP); err != nil {
+			return err
+		}
+		pendingARP = pendingARP[:0]
+		clear(pendingIDs)
+		return nil
+	}
 	for index, event := range events {
 		stats.Processed++
 		stats.Protocols[event.SourceEventType]++
@@ -669,6 +679,28 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 			stats.Skipped++
 			stats.Reasons["mdns_repeated_record_coalesced"]++
 			continue
+		}
+		if event.SourceEventType == "arp" {
+			observation, reason := passiveObservation(event, scope)
+			if reason != "" {
+				stats.Skipped++
+				stats.Reasons[reason]++
+				continue
+			}
+			// A repeated event ID in the same statement would make PostgreSQL's
+			// ON CONFLICT affect one row twice. Flush between duplicates.
+			if pendingIDs[observation.ID] {
+				if err := flushARP(); err != nil {
+					return stats, err
+				}
+			}
+			pendingARP = append(pendingARP, observation)
+			pendingIDs[observation.ID] = true
+			stats.Emitted++
+			continue
+		}
+		if err := flushARP(); err != nil {
+			return stats, err
 		}
 		var observations []discovery.Observation
 		var reason string
@@ -696,6 +728,9 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 			}
 			stats.Emitted++
 		}
+	}
+	if err := flushARP(); err != nil {
+		return stats, err
 	}
 	return stats, tx.Commit()
 }
