@@ -81,6 +81,11 @@ func mergeDimension(result *Result, field, candidate string, confidence, conflic
 		return
 	}
 	if *value == "" || *score < conflictFloor && confidence > *score {
+		// A narrower family may arrive after a high-confidence generic DHCP
+		// label. Preserve its specificity even when the generic score is higher.
+		if *value != "" && moreSpecificDimension(field, candidate, *value) {
+			return
+		}
 		*value, *score = candidate, confidence
 		return
 	}
@@ -88,10 +93,64 @@ func mergeDimension(result *Result, field, candidate string, confidence, conflic
 		*score = max(*score, confidence)
 		return
 	}
+	if moreSpecificDimension(field, *value, candidate) {
+		*value, *score = candidate, confidence
+		return
+	}
+	if moreSpecificDimension(field, candidate, *value) {
+		return
+	}
 	if *score >= conflictFloor && confidence >= conflictFloor {
 		result.Conflict = true
 		result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, field)
 	}
+}
+
+func moreSpecificDimension(field, broad, specific string) bool {
+	if field == "device_type" {
+		return strings.EqualFold(broad, "mobile") && strings.EqualFold(specific, "tablet")
+	}
+	if field != "os_family" {
+		return false
+	}
+	if strings.EqualFold(broad, "Apple OS") {
+		return strings.EqualFold(specific, "iOS") || strings.EqualFold(specific, "iPadOS") || strings.EqualFold(specific, "macOS")
+	}
+	return strings.EqualFold(broad, "Android") && strings.EqualFold(specific, "HarmonyOS")
+}
+
+// Fingerbank interrogation is an additional DHCP interpretation. A different
+// existing conclusion remains visible, with a conflict only when both sources
+// are strong; a generic DHCP label must not erase a more specific rule.
+func mergeFingerbankDimension(result *Result, field, candidate string, confidence float64) {
+	if candidate == "" {
+		return
+	}
+	var current string
+	var currentConfidence float64
+	switch field {
+	case "device_type":
+		current, currentConfidence = result.DeviceType, result.DeviceTypeConfidence
+	case "os_family":
+		current, currentConfidence = result.OSFamily, result.OSFamilyConfidence
+	default:
+		return
+	}
+	if current != "" && !strings.EqualFold(current, candidate) {
+		if moreSpecificDimension(field, current, candidate) {
+			mergeDimension(result, field, candidate, confidence, .85)
+			return
+		}
+		if moreSpecificDimension(field, candidate, current) {
+			return
+		}
+		if currentConfidence >= .85 && confidence >= .85 {
+			result.Conflict = true
+			result.ConflictDimensions = appendConflictDimension(result.ConflictDimensions, field)
+		}
+		return
+	}
+	mergeDimension(result, field, candidate, confidence, .85)
 }
 
 // Explicit family restrictions are an additional index within the field index.

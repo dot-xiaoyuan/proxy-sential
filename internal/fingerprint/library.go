@@ -246,18 +246,6 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 			}
 		}
 	}
-	if candidates := l.dhcp[normalizeDHCPOptions(signals.DHCPRequestedOptions)]; len(candidates) > 0 {
-		if candidate, ok := bestDHCPFingerprint(candidates, signals.DHCPVendorClass); ok {
-			addProductCandidate(&result, ProductCandidate{DeviceType: candidate.DeviceType, Source: "fingerbank_dhcp", Field: "dhcp_requested_options", Confidence: candidate.Confidence})
-			mergeDimension(&result, "device_type", candidate.DeviceType, candidate.Confidence, .85)
-			mergeDimension(&result, "os_family", candidate.OSFamily, candidate.Confidence, .85)
-			if result.Source == "" || result.Source == "ieee_oui" {
-				result.Source, result.Confidence = "fingerbank_dhcp", candidate.Confidence
-			}
-			result.Evidence = append(result.Evidence, "Fingerbank DHCP: "+candidate.Description)
-			recordDimensionEvidence(&result, "fingerbank_dhcp", "dhcp_requested_options", candidate.Description, ruleValues{deviceType: candidate.DeviceType, osFamily: candidate.OSFamily}, candidate.Confidence)
-		}
-	}
 	if observe != nil {
 		observe("lookup", time.Since(lookupStarted))
 	}
@@ -316,6 +304,18 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 		}
 		result.Evidence = append(result.Evidence, "设备规则: "+match.rule.Pattern)
 	}
+	if candidates := l.dhcp[normalizeDHCPOptions(signals.DHCPRequestedOptions)]; len(candidates) > 0 {
+		if candidate, ok := bestDHCPFingerprint(candidates, signals.DHCPVendorClass); ok {
+			addProductCandidate(&result, ProductCandidate{DeviceType: candidate.DeviceType, Source: "fingerbank_dhcp", Field: "dhcp_requested_options", Confidence: candidate.Confidence})
+			mergeFingerbankDimension(&result, "device_type", candidate.DeviceType, candidate.Confidence)
+			mergeFingerbankDimension(&result, "os_family", candidate.OSFamily, candidate.Confidence)
+			if result.Source == "" || result.Source == "ieee_oui" {
+				result.Source, result.Confidence = "fingerbank_dhcp", candidate.Confidence
+			}
+			result.Evidence = append(result.Evidence, "Fingerbank DHCP: "+candidate.Description)
+			recordDimensionEvidence(&result, "fingerbank_dhcp", "dhcp_requested_options", candidate.Description, ruleValues{deviceType: candidate.DeviceType, osFamily: candidate.OSFamily}, candidate.Confidence)
+		}
+	}
 	// A device-reported Android DHCP class still identifies its OS when a more
 	// specific hostname rule wins brand and model selection.
 	if result.OSFamily == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(signals.DHCPVendorClass)), "android-dhcp-") {
@@ -366,16 +366,39 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 
 func bestDHCPFingerprint(items []DHCPFingerprint, vendorClass string) (DHCPFingerprint, bool) {
 	vendorClass = strings.ToLower(strings.TrimSpace(vendorClass))
+	var matched *DHCPFingerprint
 	for _, item := range items {
 		for _, vendor := range item.VendorClasses {
 			if vendorClass != "" && strings.EqualFold(strings.TrimSpace(vendor), vendorClass) {
-				item.Confidence = 0.9
-				return item, true
+				if !item.VendorRequired {
+					item.Confidence = max(item.Confidence, 0.9)
+				}
+				if matched == nil || item.Confidence > matched.Confidence {
+					copy := item
+					matched = &copy
+				}
 			}
 		}
 	}
-	if len(items) == 1 {
+	if matched != nil {
+		return *matched, true
+	}
+	if len(items) == 1 && !items[0].VendorRequired {
 		return items[0], true
+	}
+	var generic *DHCPFingerprint
+	for _, item := range items {
+		if item.VendorRequired || len(item.VendorClasses) != 0 {
+			continue
+		}
+		if generic != nil {
+			return DHCPFingerprint{}, false
+		}
+		copy := item
+		generic = &copy
+	}
+	if generic != nil {
+		return *generic, true
 	}
 	return DHCPFingerprint{}, false
 }

@@ -1,9 +1,10 @@
 """Interrogate Fingerbank for the DHCP fingerprints this site actually sees.
 
-The daily bulk download is limited to one fetch per day, so this script queries
-only the distinct (requested_options, vendor_class) pairs extracted from the
-field DHCP logs. Requests are paced below the free hourly limit and every
-response is cached so an interrupted run resumes without re-querying.
+The public bulk SQLite download contains DHCP attributes and device names, but
+no combination-to-device mappings. Query only the distinct
+(requested_options, vendor_class) pairs extracted from the site's DHCP facts.
+Requests are paced below the free 600/hour limit and completed responses are
+cached so an interrupted run resumes without re-querying.
 
 Input : JSONL with {"requested_options": "...", "vendor_class": "...", "count": N}
 Output: JSONL raw records for CompileFingerbankSnapshot plus a cache file.
@@ -16,10 +17,21 @@ import os
 import sys
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 API = "https://api.fingerbank.org/api/v2/combinations/interrogate"
+
+
+def build_request(key, fingerprint, vendor_class):
+    body = {"dhcp_fingerprint": fingerprint}
+    if vendor_class:
+        body["dhcp_vendor"] = vendor_class
+    return urllib.request.Request(
+        API,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + key},
+        method="POST",
+    )
 
 
 def load_done(path):
@@ -35,7 +47,8 @@ def load_done(path):
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            done[(record.get("requested_options"), record.get("vendor_class"))] = record
+            if record.get("status") in (200, 404):
+                done[(record.get("requested_options"), record.get("vendor_class"))] = record
     return done
 
 
@@ -67,12 +80,7 @@ def main():
         identity = (pair.get("requested_options"), pair.get("vendor_class", ""))
         if identity in done:
             continue
-        body = {"dhcp_fingerprint": identity[0]}
-        if identity[1]:
-            body["dhcp_vendor"] = identity[1]
-        payload = json.dumps(body).encode()
-        url = API + "?key=" + urllib.parse.quote(key)
-        request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        request = build_request(key, identity[0], identity[1])
         record = {"requested_options": identity[0], "vendor_class": identity[1], "queried_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         for attempt in range(4):
             try:

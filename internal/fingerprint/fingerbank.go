@@ -11,10 +11,13 @@ import (
 type DHCPFingerprint struct {
 	RequestedOptions string   `json:"requested_options"`
 	VendorClasses    []string `json:"vendor_classes,omitempty"`
-	DeviceType       string   `json:"device_type,omitempty"`
-	OSFamily         string   `json:"os_family,omitempty"`
-	Description      string   `json:"description"`
-	Confidence       float64  `json:"confidence"`
+	// VendorRequired is set for API results queried with a DHCP vendor class.
+	// A shared option sequence alone must not inherit that vendor's device.
+	VendorRequired bool    `json:"vendor_required,omitempty"`
+	DeviceType     string  `json:"device_type,omitempty"`
+	OSFamily       string  `json:"os_family,omitempty"`
+	Description    string  `json:"description"`
+	Confidence     float64 `json:"confidence"`
 }
 
 type fingerbankSection struct {
