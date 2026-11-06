@@ -56,6 +56,7 @@ INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basi
 SELECT i.id,i.endpoint_id,i.valid_until,i.basis FROM incoming i JOIN stored s USING(id)
 JOIN endpoint_entities e ON e.endpoint_id=i.endpoint_id AND e.entity_role='endpoint'
 ORDER BY i.endpoint_id,i.id
-ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis`, string(raw))
+ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis
+WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id OR discovery_identity_links.basis IS DISTINCT FROM EXCLUDED.basis OR EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'`, string(raw))
 	return err
 }

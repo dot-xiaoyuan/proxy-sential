@@ -431,7 +431,27 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	}
 	discovery.NormalizeObservationClassification(&o)
 	discovery.NormalizeObservationName(&o)
+	if id := passiveRepeatableFactID(o); id != "" {
+		o.ID = id
+	}
 	return o, ""
+}
+
+// passiveRepeatableFactID collapses repeated address claims into one row per
+// fact and hour. A frame-per-second ARP or NDP stream would otherwise insert a
+// row, an identity link and a recognition job for every frame. The raw frames
+// stay in ClickHouse; the projection keeps one row per fact per hour and
+// refreshes the latest-observation view on every repeat.
+func passiveRepeatableFactID(o discovery.Observation) string {
+	switch o.Origin {
+	case "arp", "ndp", "dhcp":
+	default:
+		return ""
+	}
+	bucket := o.ObservedAt.UTC().Truncate(time.Hour)
+	key := strings.Join([]string{o.Origin, o.SourceID, o.MAC, o.IP, o.Name, bucket.Format(time.RFC3339)}, "\x00")
+	sum := sha256.Sum256([]byte(key))
+	return "fact-" + hex.EncodeToString(sum[:16])
 }
 
 func passiveServiceType(name string) string {
@@ -714,7 +734,10 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscover
 		kind = "passive_arp_sender_identity"
 	}
 	basis, _ := json.Marshal(map[string]any{"kind": kind, "sensor": o.Node, "ip": o.IP, "mac": mac, "origin": o.Origin})
-	_, err := db.ExecContext(ctx, `INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis) VALUES($1,$2,$3,$4) ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis`, o.ID, endpointID, o.ValidUntil, basis)
+	// One fact now refreshes the same link row many times. Refresh it only when
+	// the endpoint changes or the validity extends by five minutes, so the
+	// recognition/profile triggers do not fire for every repeated frame.
+	_, err := db.ExecContext(ctx, `INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis) VALUES($1,$2,$3,$4) ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id OR discovery_identity_links.basis IS DISTINCT FROM EXCLUDED.basis OR EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'`, o.ID, endpointID, o.ValidUntil, basis)
 	return err
 }
 
@@ -755,7 +778,7 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	coalescedMDNS := passiveCoalescedMDNSIndexes(events)
 	coalescedARP := passiveCoalescedARPIndexes(events)
 	pendingARP := make([]discovery.Observation, 0, len(events))
-	pendingIDs := make(map[string]bool)
+	pendingIDs := make(map[string]int)
 	flushARP := func() error {
 		if len(pendingARP) == 0 {
 			return nil
@@ -787,15 +810,17 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 				stats.Reasons[reason]++
 				continue
 			}
-			// A repeated event ID in the same statement would make PostgreSQL's
-			// ON CONFLICT affect one row twice. Flush between duplicates.
-			if pendingIDs[observation.ID] {
-				if err := flushARP(); err != nil {
-					return stats, err
-				}
+			// A repeated fact row in the same statement would make PostgreSQL's
+			// ON CONFLICT affect one row twice. Keep the newest claim for the
+			// fact instead of writing the same row twice.
+			if index, exists := pendingIDs[observation.ID]; exists {
+				pendingARP[index] = observation
+				stats.Skipped++
+				stats.Reasons["arp_fact_refreshed"]++
+				continue
 			}
+			pendingIDs[observation.ID] = len(pendingARP)
 			pendingARP = append(pendingARP, observation)
-			pendingIDs[observation.ID] = true
 			stats.Emitted++
 			continue
 		}

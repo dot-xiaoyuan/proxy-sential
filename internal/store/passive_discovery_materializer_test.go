@@ -357,3 +357,41 @@ func TestPassiveSelfReportReadsUPnPDescription(t *testing.T) {
 		t.Fatalf("service type must not invent a self-report: %q %q", manufacturer, model)
 	}
 }
+
+func TestPassiveRepeatableFactIDCollapsesWithinHour(t *testing.T) {
+	base := time.Date(2026, 11, 7, 10, 5, 0, 0, time.UTC)
+	fact := discovery.Observation{ID: "event-1", Origin: "arp", SourceID: "passive:s204:mirror", MAC: "00:11:22:33:44:55", IP: "10.0.0.8", ObservedAt: base}
+	sameHour := fact
+	sameHour.ObservedAt = base.Add(40 * time.Minute)
+	nextHour := fact
+	nextHour.ObservedAt = base.Add(2 * time.Hour)
+	otherAddress := fact
+	otherAddress.IP = "10.0.0.9"
+
+	first := passiveRepeatableFactID(fact)
+	if first == "" || first != passiveRepeatableFactID(sameHour) {
+		t.Fatalf("same fact in one hour must share an observation id: %q %q", first, passiveRepeatableFactID(sameHour))
+	}
+	if first == passiveRepeatableFactID(nextHour) {
+		t.Fatal("a new hour must start a new fact row")
+	}
+	if first == passiveRepeatableFactID(otherAddress) {
+		t.Fatal("a different address must be a different fact")
+	}
+	if id := passiveRepeatableFactID(discovery.Observation{Origin: "ssdp", MAC: "00:11:22:33:44:55"}); id != "" {
+		t.Fatalf("non-repeatable origins keep their event id, got %q", id)
+	}
+}
+
+func TestPassiveLinkRefreshIsThrottled(t *testing.T) {
+	for _, path := range []string{"passive_discovery_materializer.go", "passive_arp_batch.go"} {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := string(source)
+		if !strings.Contains(code, "EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'") || !strings.Contains(code, "discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id") {
+			t.Fatalf("%s must throttle repeated identity-link refreshes", path)
+		}
+	}
+}

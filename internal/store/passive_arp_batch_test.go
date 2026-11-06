@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,22 @@ import (
 )
 
 type passiveARPBatchArgument struct{ first, last, middle string }
+
+type passiveARPFactBatchArgument struct{}
+
+func (passiveARPFactBatchArgument) Match(value driver.Value) bool {
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal([]byte(text), &rows) != nil || len(rows) != 1 {
+		return false
+	}
+	return strings.HasPrefix(rows[0].ID, "fact-")
+}
 
 type passiveARPCandidatesSortedArgument struct{}
 
@@ -96,13 +113,13 @@ func TestPassiveDiscoveryBatchesRepeatedARPSenderWrites(t *testing.T) {
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO endpoint_entities").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("WITH incoming").WithArgs(passiveARPBatchArgument{first: "arp-first", last: "arp-last", middle: "arp-middle"}).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec("WITH incoming").WithArgs(passiveARPFactBatchArgument{}).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	stats, err := store.processPassiveDiscoveryBatch(context.Background(), events, scope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Processed != 3 || stats.Emitted != 2 || stats.Skipped != 1 || stats.Reasons["arp_repeated_claim_coalesced"] != 1 {
+	if stats.Processed != 3 || stats.Emitted != 1 || stats.Skipped != 2 || stats.Reasons["arp_repeated_claim_coalesced"] != 1 || stats.Reasons["arp_fact_refreshed"] != 1 {
 		t.Fatalf("unexpected ARP batch stats: %+v", stats)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -129,14 +146,13 @@ func TestPassiveDiscoveryFlushesDuplicateARPEventIDs(t *testing.T) {
 	scope, _ := parsePassiveDiscoveryScope("10.0.0.0/8")
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO endpoint_entities").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("WITH incoming").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("WITH incoming").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("WITH incoming").WithArgs(passiveARPFactBatchArgument{}).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	stats, err := store.processPassiveDiscoveryBatch(context.Background(), []normalized.Event{event, replay}, scope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Processed != 2 || stats.Emitted != 2 || stats.Skipped != 0 {
+	if stats.Processed != 2 || stats.Emitted != 1 || stats.Skipped != 1 || stats.Reasons["arp_fact_refreshed"] != 1 {
 		t.Fatalf("unexpected replay stats: %+v", stats)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
