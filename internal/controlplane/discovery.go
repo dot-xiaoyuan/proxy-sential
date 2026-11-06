@@ -98,7 +98,10 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		writeJSON(w, 200, map[string]any{"version": discovery.IoTRuleVersion, "items": discovery.DeviceTypes})
 	case path == "/discovery/statistics" && r.Method == "GET":
 		if !repo.PipelineV2 {
-			writeError(w, 409, "pipeline_disabled", "发现统计路径未启用")
+			// The indexed read path has no legacy statistics summary. Return an
+			// empty result instead of an error so the diagnostics section does
+			// not show a permanent failure on deployments that read the index.
+			writeJSON(w, 200, map[string]any{"items": []any{}, "pending_updates": 0})
 			return
 		}
 		result, e := repo.DiscoveryStatistics(ctx)
