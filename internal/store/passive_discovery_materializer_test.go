@@ -372,8 +372,8 @@ func TestPassiveRepeatableFactIDCollapsesWithinHour(t *testing.T) {
 	if first == "" || first != passiveRepeatableFactID(sameHour) {
 		t.Fatalf("same fact in one hour must share an observation id: %q %q", first, passiveRepeatableFactID(sameHour))
 	}
-	if first == passiveRepeatableFactID(nextHour) {
-		t.Fatal("a new hour must start a new fact row")
+	if first != passiveRepeatableFactID(nextHour) {
+		t.Fatal("an active fact must keep one row across hours")
 	}
 	if first == passiveRepeatableFactID(otherAddress) {
 		t.Fatal("a different address must be a different fact")

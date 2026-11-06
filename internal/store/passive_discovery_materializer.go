@@ -438,18 +438,19 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 }
 
 // passiveRepeatableFactID collapses repeated address claims into one row per
-// fact and hour. A frame-per-second ARP or NDP stream would otherwise insert a
-// row, an identity link and a recognition job for every frame. The raw frames
-// stay in ClickHouse; the projection keeps one row per fact per hour and
-// refreshes the latest-observation view on every repeat.
+// fact. A frame-per-second ARP or NDP stream would otherwise insert a row, an
+// identity link and a recognition job for every frame. The raw frames stay in
+// ClickHouse; the projection keeps one row per fact and refreshes its last-seen
+// and latest-observation view on every repeat. The key deliberately excludes a
+// time bucket so an active fact does not rewrite the whole table at each hour
+// boundary; a change of address, interface or DHCP name starts a new row.
 func passiveRepeatableFactID(o discovery.Observation) string {
 	switch o.Origin {
 	case "arp", "ndp", "dhcp":
 	default:
 		return ""
 	}
-	bucket := o.ObservedAt.UTC().Truncate(time.Hour)
-	key := strings.Join([]string{o.Origin, o.SourceID, o.MAC, o.IP, o.Name, bucket.Format(time.RFC3339)}, "\x00")
+	key := strings.Join([]string{o.Origin, o.SourceID, o.MAC, o.IP, o.Name}, "\x00")
 	sum := sha256.Sum256([]byte(key))
 	return "fact-" + hex.EncodeToString(sum[:16])
 }
