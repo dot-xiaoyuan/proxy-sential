@@ -47,7 +47,7 @@ func (s *DBStore) insertPassiveARPBatch(ctx context.Context, db passiveDiscovery
  SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(id text,device_key text,source_id text,observed_at timestamptz,valid_until timestamptz,data jsonb,endpoint_id text,basis jsonb)
 ), stored AS (
  INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data)
- SELECT id,device_key,source_id,'arp',observed_at,valid_until,false,data FROM incoming
+ SELECT id,device_key,source_id,'arp',observed_at,valid_until,false,data FROM incoming ORDER BY id
  ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data
  WHERE EXCLUDED.observed_at>=discovery_observations.observed_at
  RETURNING id
@@ -55,6 +55,7 @@ func (s *DBStore) insertPassiveARPBatch(ctx context.Context, db passiveDiscovery
 INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis)
 SELECT i.id,i.endpoint_id,i.valid_until,i.basis FROM incoming i JOIN stored s USING(id)
 JOIN endpoint_entities e ON e.endpoint_id=i.endpoint_id AND e.entity_role='endpoint'
+ORDER BY i.endpoint_id,i.id
 ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis`, string(raw))
 	return err
 }

@@ -176,6 +176,7 @@ func (s *DBStore) finishPassiveLivePTR(ctx context.Context, sensorID string, cur
 INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,identity_confidence,attributes)
 SELECT endpoint_id,substring(endpoint_id from 5),'endpoint',first_seen,last_seen,0.55,
        '{"identity_source":"passive_mdns_l2_responder"}'::jsonb FROM incoming
+ORDER BY endpoint_id
 ON CONFLICT(endpoint_id) DO UPDATE SET
  first_seen=LEAST(coalesce(endpoint_entities.first_seen,EXCLUDED.first_seen),EXCLUDED.first_seen),
  last_seen=GREATEST(endpoint_entities.last_seen,EXCLUDED.last_seen),
@@ -191,6 +192,7 @@ WHERE endpoint_entities.entity_role='endpoint'
 		_, err = tx.ExecContext(ctx, `INSERT INTO passive_live_ptr_current(sensor_id,site,interface_name,responder_ip,endpoint_id,record_name,instance,name,event_id,observed_at,valid_until,withdrawn)
 SELECT sensor_id,site,interface_name,responder_ip,endpoint_id,record_name,instance,name,event_id,observed_at,valid_until,withdrawn
 FROM jsonb_to_recordset($1::jsonb) AS r(sensor_id text,site text,interface_name text,responder_ip text,endpoint_id text,record_name text,instance text,name text,event_id text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean)
+ORDER BY r.endpoint_id,r.sensor_id,r.site,r.interface_name,r.responder_ip,r.record_name,r.instance
 ON CONFLICT(sensor_id,site,interface_name,responder_ip,endpoint_id,record_name,instance)
 DO UPDATE SET name=EXCLUDED.name,event_id=EXCLUDED.event_id,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,updated_at=now()
 WHERE (EXCLUDED.observed_at,EXCLUDED.event_id)>(passive_live_ptr_current.observed_at,passive_live_ptr_current.event_id)`, string(raw))

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,12 +50,14 @@ func ensurePassiveARPCandidateEndpoints(ctx context.Context, db passiveDiscovery
 	for _, candidate := range byMAC {
 		candidates = append(candidates, candidate)
 	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].MAC < candidates[j].MAC })
 	raw, _ := json.Marshal(candidates)
 	_, err := db.ExecContext(ctx, `
 INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,identity_confidence,attributes)
 SELECT 'mac:'||incoming.mac,incoming.mac,'endpoint',incoming.first_seen,incoming.last_seen,0.55,
        '{"identity_source":"passive_arp_sender"}'::jsonb
 FROM jsonb_to_recordset($1::jsonb) AS incoming(mac text,first_seen timestamptz,last_seen timestamptz)
+ORDER BY incoming.mac
 ON CONFLICT(endpoint_id) DO UPDATE SET
   first_seen=COALESCE(endpoint_entities.first_seen,EXCLUDED.first_seen),
   last_seen=GREATEST(endpoint_entities.last_seen,EXCLUDED.last_seen),

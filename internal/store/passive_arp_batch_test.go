@@ -14,6 +14,51 @@ import (
 
 type passiveARPBatchArgument struct{ first, last, middle string }
 
+type passiveARPCandidatesSortedArgument struct{}
+
+func (passiveARPCandidatesSortedArgument) Match(value driver.Value) bool {
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	var rows []passiveARPCandidate
+	if json.Unmarshal([]byte(text), &rows) != nil || len(rows) != 2 {
+		return false
+	}
+	return rows[0].MAC == "02:00:00:00:00:01" && rows[1].MAC == "02:00:00:00:00:02"
+}
+
+func TestPassiveARPCandidatesAcquireEndpointLocksInIdentityOrder(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().UTC().Truncate(time.Second)
+	event := func(id, mac, ip string) normalized.Event {
+		return normalized.Event{
+			EventID: id, Source: "zeek", SourceEventType: "arp", Timestamp: at.Format(time.RFC3339Nano),
+			Observer: map[string]any{"sensor_id": "campus-204", "interface": "enp3s0f0"},
+			Subject:  map[string]any{"ip": ip, "mac": mac, "campus_id": "campus-204"},
+			Payload:  map[string]any{"origin": "arp", "message": "reply"},
+		}
+	}
+	scope, err := parsePassiveDiscoveryScope("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectExec(`(?s)INSERT INTO endpoint_entities.*ORDER BY incoming.mac`).WithArgs(passiveARPCandidatesSortedArgument{}).WillReturnResult(sqlmock.NewResult(0, 2))
+	if err := ensurePassiveARPCandidateEndpoints(context.Background(), db, []normalized.Event{
+		event("second", "02:00:00:00:00:02", "10.1.1.2"),
+		event("first", "02:00:00:00:00:01", "10.1.1.1"),
+	}, scope); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (a passiveARPBatchArgument) Match(value driver.Value) bool {
 	text, ok := value.(string)
 	if !ok {

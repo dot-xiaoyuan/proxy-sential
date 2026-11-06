@@ -96,6 +96,7 @@ func (s *PostgresStore) insertDeviceNamesBatch(ctx context.Context, names []Devi
 	if _, err = tx.ExecContext(ctx, `INSERT INTO device_name_evidence(sensor_id,event_id,source,value,endpoint_id,observed_at,evidence)
  SELECT r.sensor_id,r.event_id,r.source,r.value,r.endpoint_id,r.observed_at,r.evidence
  FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,event_id text,source text,value text,endpoint_id text,observed_at timestamptz,evidence jsonb)
+ ORDER BY r.endpoint_id,r.sensor_id,r.event_id,r.source,r.value
  ON CONFLICT(sensor_id,event_id,source,value) DO UPDATE SET endpoint_id=excluded.endpoint_id,evidence=jsonb_set(excluded.evidence,'{processing_latency_ms}',coalesce(nullif(device_name_evidence.evidence->'processing_latency_ms','null'::jsonb),excluded.evidence->'processing_latency_ms','null'::jsonb)),processed_at=now()`, body); err != nil {
 		return err
 	}
