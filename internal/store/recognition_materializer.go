@@ -36,6 +36,12 @@ func (s *DBStore) withRecognitionLease(ctx context.Context, job recognitionJob, 
 		return err
 	}
 	defer tx.Rollback()
+	// Serialise the recognition/profile enqueue section with every trigger that
+	// marks jobs dirty; the discovery batch takes the same lock from the trigger
+	// side, so job and profile rows are never locked in crossing orders.
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('recognition-writer',0))`); err != nil {
+		return err
+	}
 	var current bool
 	err = tx.QueryRowContext(ctx, `SELECT lease_owner=$2 AND lease_until>clock_timestamp()
 FROM endpoint_recognition_jobs WHERE endpoint_id=$1 FOR UPDATE`, job.EndpointID, job.LeaseOwner).Scan(&current)
