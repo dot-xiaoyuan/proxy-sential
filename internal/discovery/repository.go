@@ -470,6 +470,7 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		protocols       map[string]bool
 		endpoints       map[string]bool
 		profileTypes    map[string]bool
+		candidateTypes  map[string]bool
 		currentTypes    map[string]bool
 		historicalType  string
 		historicalAt    time.Time
@@ -483,7 +484,7 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		root := sets.find(index)
 		group := groups[root]
 		if group == nil {
-			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}, profileTypes: map[string]bool{}, currentTypes: map[string]bool{}}
+			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}, profileTypes: map[string]bool{}, candidateTypes: map[string]bool{}, currentTypes: map[string]bool{}}
 			groups[root] = group
 		}
 		group.deviceKeys[row.DeviceKey] = true
@@ -540,6 +541,11 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		}
 		if o.Current(now) && !row.ProfileConflict && row.ProfileTypeConfidence >= .8 && row.ProfileDeviceType != "" {
 			group.profileTypes[row.ProfileDeviceType] = true
+		}
+		// A vendor or hostname prior below the identified threshold still names a
+		// likely class. Keep it as a candidate label instead of hiding it.
+		if o.Current(now) && !row.ProfileConflict && row.ProfileTypeConfidence >= .4 && row.ProfileTypeConfidence < .8 && row.ProfileDeviceType != "" {
+			group.candidateTypes[row.ProfileDeviceType] = true
 		}
 		if confidenceRank(o.Confidence) > confidenceRank(group.view.Confidence) {
 			group.view.Confidence = o.Confidence
@@ -599,6 +605,12 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		case len(allTypes) == 1:
 			group.view.ClassificationStatus = "identified"
 			for value := range allTypes {
+				group.view.DeviceType = value
+			}
+		case len(group.candidateTypes) == 1:
+			refineDeviceTypes(group.candidateTypes)
+			group.view.ClassificationStatus = "candidate"
+			for value := range group.candidateTypes {
 				group.view.DeviceType = value
 			}
 		default:

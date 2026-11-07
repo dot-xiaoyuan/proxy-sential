@@ -67,8 +67,8 @@ func TestAggregateDeviceRowsClassifiesReliableEndpointProfile(t *testing.T) {
 	}
 	row.ProfileTypeConfidence = .79
 	items = aggregateDeviceRows([]deviceObservationRow{row}, at.Add(time.Minute))
-	if items[0].DeviceType != "" || items[0].Category != "identity_only" {
-		t.Fatalf("low-confidence profile type must not be promoted: %+v", items[0])
+	if items[0].DeviceType != "mobile" || items[0].ClassificationStatus != "candidate" || items[0].Category != "mobile" {
+		t.Fatalf("low-confidence profile type should stay a candidate label: %+v", items[0])
 	}
 	row.ProfileTypeConfidence = .82
 	row.ProfileConflict = true

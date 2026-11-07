@@ -61,9 +61,19 @@ func TestIndexedClassificationKeepsExpiredAndConflictSeparate(t *testing.T) {
 	if conflict.DeviceType != "" || conflict.ClassificationStatus != "conflict" {
 		t.Fatalf("conflict promoted certainty: %+v", conflict)
 	}
+	// A single low-confidence profile type stays a candidate label, not a
+	// confirmed type.
 	candidate := aggregateDeviceRows([]deviceObservationRow{{DeviceKey: "a", Observation: Observation{Origin: "arp", ObservedAt: now, ValidUntil: now.Add(time.Hour)}, ProfileDeviceType: "camera", ProfileTypeConfidence: .5}}, now)[0]
-	if candidate.DeviceType != "" || candidate.ClassificationStatus != "candidate" {
-		t.Fatalf("low-confidence profile promoted: %+v", candidate)
+	if candidate.DeviceType != "camera" || candidate.ClassificationStatus != "candidate" {
+		t.Fatalf("low-confidence profile surfaced incorrectly: %+v", candidate)
+	}
+	// Two different low-confidence classes remain ambiguous and show no type.
+	ambiguous := aggregateDeviceRows([]deviceObservationRow{
+		{DeviceKey: "b", Observation: Observation{ID: "b1", Origin: "arp", MAC: "00:11:22:33:44:56", ObservedAt: now, ValidUntil: now.Add(time.Hour)}, ProfileDeviceType: "camera", ProfileTypeConfidence: .5},
+		{DeviceKey: "b", Observation: Observation{ID: "b2", Origin: "ndp", MAC: "00:11:22:33:44:56", ObservedAt: now, ValidUntil: now.Add(time.Hour)}, ProfileDeviceType: "printer", ProfileTypeConfidence: .5},
+	}, now)[0]
+	if ambiguous.DeviceType != "" || ambiguous.ClassificationStatus != "candidate" {
+		t.Fatalf("ambiguous candidates selected a class: %+v", ambiguous)
 	}
 }
 

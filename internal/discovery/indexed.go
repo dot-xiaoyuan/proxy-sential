@@ -117,7 +117,9 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		return nil, err
 	}
 	for i := range items {
-		items[i].Category = categories[items[i].indexedIdentityKey]
+		if items[i].DeviceType == "" {
+			items[i].Category = categories[items[i].indexedIdentityKey]
+		}
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].LastSeen.Equal(items[j].LastSeen) {
