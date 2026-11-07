@@ -77,11 +77,19 @@ func TestIEEEPrefixLengthsAndSignalConflict(t *testing.T) {
 	}
 }
 
-func TestUserAgentCannotPopulatePhysicalDeviceProfile(t *testing.T) {
+// The user authorized a clue-level device class from an explicit client user
+// agent. Brand, model and OS stay unproven, and non-committal agents (embedded
+// clients, Go HTTP clients) must not produce a class at all.
+func TestUserAgentClueNeverPopulatesBrandModelOrOS(t *testing.T) {
 	for _, ua := range []string{"MicroMessenger Client", "Mozilla/5.0 (iPhone)", "Mozilla/5.0 (Windows NT 10.0)", "Go-http-client/1.1"} {
 		result := Default().IdentifySignals(Signals{UserAgents: []string{ua}})
-		if result.Brand != "" || result.Model != "" || result.DeviceType != "" || result.OSFamily != "" || result.Confidence != 0 {
-			t.Fatalf("UA %q must remain client metadata only: %+v", ua, result)
+		if result.Brand != "" || result.Model != "" || result.OSFamily != "" || result.Confidence > .8 {
+			t.Fatalf("UA %q must not establish brand/model/OS or exceed clue confidence: %+v", ua, result)
+		}
+	}
+	for _, ua := range []string{"MicroMessenger Client", "Go-http-client/1.1"} {
+		if result := Default().IdentifySignals(Signals{UserAgents: []string{ua}}); result.DeviceType != "" {
+			t.Fatalf("UA %q must not produce a device class: %+v", ua, result)
 		}
 	}
 }

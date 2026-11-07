@@ -40,15 +40,25 @@ func TestIdentifyEvidenceKeepsDirectionAndLifetime(t *testing.T) {
 	}
 }
 
-func TestIdentifyEvidenceDoesNotPromoteClientFeatures(t *testing.T) {
+// The user authorized using a client user agent as a clue-level device class
+// (candidate, never a confirmed type). It must still never establish brand,
+// model or OS, and other client features such as JA4 remain non-evidence.
+func TestIdentifyEvidenceUsesUserAgentOnlyAsClue(t *testing.T) {
 	now := time.Now().UTC()
 	items := []EvidenceSignal{
 		{Protocol: "http", Field: "user_agent", Value: "iPhone", Direction: "client", Association: "mac", EventID: "ua", ObservedAt: now, ValidUntil: now.Add(time.Minute)},
 		{Protocol: "tls", Field: "ja4", Value: "test", Direction: "client", Association: "mac", EventID: "ja4", ObservedAt: now, ValidUntil: now.Add(time.Minute)},
 	}
 	got := Default().IdentifyEvidence("02:00:00:00:00:01", items, now)
-	if got.Brand != "" || got.Model != "" || got.DeviceType != "" || got.Diagnostics.Reason != "insufficient_specificity" {
-		t.Fatalf("client signals established hardware: %+v", got)
+	if got.DeviceType != "mobile" || got.DeviceTypeConfidence > .8 {
+		t.Fatalf("user agent clue was not applied at clue level: %+v", got)
+	}
+	if got.Brand != "" || got.Model != "" || got.OSFamily != "" {
+		t.Fatalf("client signals established brand/model/OS: %+v", got)
+	}
+	ja4Only := Default().IdentifyEvidence("02:00:00:00:00:02", items[1:], now)
+	if ja4Only.DeviceType != "" || ja4Only.Brand != "" {
+		t.Fatalf("JA4 established hardware: %+v", ja4Only)
 	}
 }
 
