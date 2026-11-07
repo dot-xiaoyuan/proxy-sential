@@ -11,7 +11,7 @@ import (
 	"proxy-sentinel/internal/normalized"
 )
 
-const passiveLivePTRBatchSize = 500
+const passiveLivePTRBatchSize = 120
 
 type passiveLivePTRCursor struct {
 	ReceivedAt time.Time
