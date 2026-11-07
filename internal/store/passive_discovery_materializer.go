@@ -946,11 +946,17 @@ func (s *DBStore) finishPassiveDiscovery(ctx context.Context, sensorID string, c
 protocol_counts=coalesce((SELECT jsonb_object_agg(key,total) FROM (SELECT key,sum(value::bigint) total FROM (SELECT * FROM jsonb_each_text(protocol_counts) UNION ALL SELECT * FROM jsonb_each_text($8::jsonb)) counts GROUP BY key) totals),'{}'::jsonb),
 skip_counts=coalesce((SELECT jsonb_object_agg(key,total) FROM (SELECT key,sum(value::bigint) total FROM (SELECT * FROM jsonb_each_text(skip_counts) UNION ALL SELECT * FROM jsonb_each_text($9::jsonb)) counts GROUP BY key) totals),'{}'::jsonb),
 lease_owner='',lease_until='-infinity',last_success_at=now(),last_error='',updated_at=now() WHERE sensor_id=$1 AND lease_owner=$2`, sensorID, cursor.Owner, cursor.Timestamp, cursor.EventID, stats.Processed, stats.Emitted, stats.Skipped, protocols, reasons)
-	if err == nil {
-		state, _ := json.Marshal(map[string]any{"status": "ready", "sensor_id": sensorID, "cursor_at": cursor.Timestamp, "processed": stats.Processed, "emitted": stats.Emitted, "skipped": stats.Skipped, "protocols": stats.Protocols, "skip_reasons": stats.Reasons})
-		_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('passive-discovery',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state)
+	if err != nil {
+		return err
 	}
-	return err
+	// The cursor has advanced. The runtime beacon is only a status hint, so a
+	// slow beacon must not turn a committed batch into a reported failure and
+	// force the same batch through the pipeline again.
+	state, _ := json.Marshal(map[string]any{"status": "ready", "sensor_id": sensorID, "cursor_at": cursor.Timestamp, "processed": stats.Processed, "emitted": stats.Emitted, "skipped": stats.Skipped, "protocols": stats.Protocols, "skip_reasons": stats.Reasons})
+	if _, beaconErr := s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('passive-discovery',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state); beaconErr != nil {
+		fmt.Fprintf(os.Stderr, "passive discovery beacon: %v\n", beaconErr)
+	}
+	return nil
 }
 
 func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID string) {
@@ -1010,7 +1016,7 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 				if err == nil {
 					cursor = next
 				}
-				finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(workCtx), 2*time.Second)
+				finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(workCtx), 8*time.Second)
 				finishErr := s.finishPassiveDiscovery(finishCtx, sensorID, cursor, stats, err)
 				finishCancel()
 				if err == nil {
