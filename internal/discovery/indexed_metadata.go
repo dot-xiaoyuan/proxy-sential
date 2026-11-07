@@ -35,7 +35,9 @@ func (r Repository) DevicesIndexedMetadata(ctx context.Context, q DeviceQuery) (
 	}
 	result := IndexedDeviceMetadata{CountUnit: "trusted_discovery_identity", Window: indexedWindowLabel(selection.Query.Window), Types: []IndexedDeviceTypeCount{}, AsOf: time.Now().UTC()}
 	rows, err := r.DB.QueryContext(ctx, selection.CTE+` SELECT classification_status,
- CASE WHEN classification_status='identified' THEN effective_types[1] ELSE '' END device_type,
+ CASE WHEN classification_status='identified' THEN effective_types[1]
+  WHEN classification_status='candidate' AND cardinality(effective_types)=0 THEN candidate_role
+  ELSE '' END device_type,
  count(*),now() FROM matched GROUP BY classification_status,device_type ORDER BY classification_status,device_type`, selection.Args...)
 	if err != nil {
 		return IndexedDeviceMetadata{}, err
@@ -56,6 +58,9 @@ func (r Repository) DevicesIndexedMetadata(ctx context.Context, q DeviceQuery) (
 			result.Types = append(result.Types, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
 		case "candidate":
 			result.Candidate += count
+			if kind != "" {
+				result.Types = append(result.Types, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
+			}
 		case "conflict":
 			result.Conflict += count
 		case "expired":

@@ -86,7 +86,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	classifiedWhere := []string{}
 	if query.DeviceType != "" {
 		args = append(args, query.DeviceType)
-		classifiedWhere = append(classifiedWhere, fmt.Sprintf("((classification_status='identified' AND effective_types[1]=$%[1]d) OR (classification_status='expired' AND historical_type=$%[1]d))", len(args)))
+		classifiedWhere = append(classifiedWhere, fmt.Sprintf("((classification_status='identified' AND effective_types[1]=$%[1]d) OR (classification_status='expired' AND historical_type=$%[1]d) OR (classification_status='candidate' AND candidate_role=$%[1]d))", len(args)))
 	}
 	if query.Protocol != "" {
 		args = append(args, query.Protocol)
@@ -127,7 +127,8 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
  coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'') linked_endpoint,
  coalesce(rp.role,'') profile_role,` + indexedProfileConfidenceSQL("rp") + ` profile_confidence,
  CASE WHEN ` + indexedProfileConfidenceSQL("rp") + `>=0.8 AND NOT (` + indexedProfileConflictSQL("rp") + `) THEN coalesce(rp.role,'') ELSE '' END profile_type,
- (` + indexedProfileConflictSQL("rp") + `) AND coalesce(rp.role,'')<>'' profile_conflict
+ (` + indexedProfileConflictSQL("rp") + `) AND coalesce(rp.role,'')<>'' profile_conflict,
+ CASE WHEN NOT (` + indexedProfileConflictSQL("rp") + `) AND ` + indexedProfileConfidenceSQL("rp") + `>=0.4 AND ` + indexedProfileConfidenceSQL("rp") + `<0.8 THEN coalesce(rp.role,'') ELSE '' END profile_candidate_role
  FROM discovery_observation_latest l
  -- MAC-matching links add no identity information. Their historical table is
  -- large; inspect it only for observations without a MAC or link exceptions.
@@ -152,7 +153,10 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
  bool_or(valid_until>now()) is_current,
  bool_or(profile_conflict AND valid_until>now()) type_conflict,
  coalesce(array_agg(observed_type) FILTER (WHERE valid_until>now()),'{}'::text[]) || coalesce(array_agg(profile_type) FILTER (WHERE valid_until>now()),'{}'::text[]) types,
- (array_agg(observed_type ORDER BY observed_at DESC,id) FILTER (WHERE observed_type<>''))[1] historical_type
+ (array_agg(observed_type ORDER BY observed_at DESC,id) FILTER (WHERE observed_type<>''))[1] historical_type,
+ CASE WHEN count(DISTINCT profile_candidate_role) FILTER (WHERE valid_until>now() AND profile_candidate_role<>'')=1
+  THEN min(profile_candidate_role) FILTER (WHERE valid_until>now() AND profile_candidate_role<>'')
+  ELSE '' END candidate_role
  FROM candidate_rows
  GROUP BY identity_key` + candidateHaving + `
 ), candidate_types AS (

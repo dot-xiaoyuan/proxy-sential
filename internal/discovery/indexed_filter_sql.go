@@ -47,9 +47,15 @@ func indexedCategorySQL(view string) string {
 	if view == "iot" {
 		return "CASE WHEN has_printing THEN 'printer' WHEN has_video THEN 'camera' WHEN has_media THEN 'media' ELSE '' END"
 	}
-	expression := "CASE WHEN classification_status='identified' THEN CASE effective_types[1]"
+	identified := "CASE effective_types[1]"
+	candidate := "CASE candidate_role"
 	for _, kind := range DeviceTypes {
-		expression += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
+		identified += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
+		candidate += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
 	}
-	return expression + " ELSE 'identity_only' END ELSE 'identity_only' END"
+	identified += " ELSE 'identity_only' END"
+	candidate += " ELSE 'identity_only' END"
+	return "CASE WHEN classification_status='identified' THEN " + identified +
+		" WHEN classification_status='candidate' AND cardinality(effective_types)=0 AND candidate_role<>'' THEN " + candidate +
+		" ELSE 'identity_only' END"
 }
