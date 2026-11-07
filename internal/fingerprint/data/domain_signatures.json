@@ -55,5 +55,183 @@
       "tvOS"
     ],
     "brand_eligible": true
+  },
+  {
+    "domain": "miui.com",
+    "match_type": "subdomain",
+    "ecosystem": "Xiaomi",
+    "category": "update",
+    "confidence": 0.6,
+    "source": "Xiaomi service domains",
+    "source_url": "https://www.mi.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "xiaomi-ota",
+    "purpose": "小米 OTA 与云服务",
+    "os_families": [
+      "Android"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "xiaomi.com",
+    "match_type": "subdomain",
+    "ecosystem": "Xiaomi",
+    "category": "push",
+    "confidence": 0.55,
+    "source": "Xiaomi service domains",
+    "source_url": "https://www.mi.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "xiaomi-push",
+    "purpose": "小米推送与账号服务",
+    "os_families": [
+      "Android"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "hicloud.com",
+    "match_type": "subdomain",
+    "ecosystem": "Huawei",
+    "category": "update",
+    "confidence": 0.6,
+    "source": "Huawei service domains",
+    "source_url": "https://consumer.huawei.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "huawei-cloud",
+    "purpose": "华为 OTA 与云服务",
+    "os_families": [
+      "Android",
+      "HarmonyOS"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "huawei.com",
+    "match_type": "subdomain",
+    "ecosystem": "Huawei",
+    "category": "push",
+    "confidence": 0.55,
+    "source": "Huawei service domains",
+    "source_url": "https://consumer.huawei.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "huawei-push",
+    "purpose": "华为推送与账号服务",
+    "os_families": [
+      "Android",
+      "HarmonyOS"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "samsungapps.com",
+    "match_type": "subdomain",
+    "ecosystem": "Samsung",
+    "category": "update",
+    "confidence": 0.6,
+    "source": "Samsung service domains",
+    "source_url": "https://www.samsung.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "samsung-store",
+    "purpose": "三星应用商店与 OTA",
+    "os_families": [
+      "Android"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "samsung.com",
+    "match_type": "subdomain",
+    "ecosystem": "Samsung",
+    "category": "push",
+    "confidence": 0.55,
+    "source": "Samsung service domains",
+    "source_url": "https://www.samsung.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "samsung-push",
+    "purpose": "三星推送与账号服务",
+    "os_families": [
+      "Android"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "oppo.com",
+    "match_type": "subdomain",
+    "ecosystem": "OPPO",
+    "category": "update",
+    "confidence": 0.55,
+    "source": "OPPO service domains",
+    "source_url": "https://www.oppo.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "oppo-ota",
+    "purpose": "OPPO 系统与云服务",
+    "os_families": [
+      "Android"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "vivo.com",
+    "match_type": "subdomain",
+    "ecosystem": "vivo",
+    "category": "update",
+    "confidence": 0.55,
+    "source": "vivo service domains",
+    "source_url": "https://www.vivo.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "vivo-ota",
+    "purpose": "vivo 系统与云服务",
+    "os_families": [
+      "Android"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "connectivitycheck.gstatic.com",
+    "match_type": "exact",
+    "ecosystem": "Google",
+    "category": "telemetry",
+    "confidence": 0.55,
+    "source": "Android connectivity check",
+    "source_url": "https://www.google.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "android-connectivity",
+    "purpose": "Android 网络连通性检测",
+    "os_families": [
+      "Android"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "mtalk.google.com",
+    "match_type": "exact",
+    "ecosystem": "Google",
+    "category": "push",
+    "confidence": 0.55,
+    "source": "Google push service",
+    "source_url": "https://www.google.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "google-push",
+    "purpose": "Google 推送连接",
+    "os_families": [
+      "Android"
+    ],
+    "brand_eligible": true
+  },
+  {
+    "domain": "windowsupdate.com",
+    "match_type": "subdomain",
+    "ecosystem": "Microsoft",
+    "category": "update",
+    "confidence": 0.55,
+    "source": "Windows update service",
+    "source_url": "https://www.microsoft.com/",
+    "source_version": "reviewed-2026-11-08",
+    "service": "windows-update",
+    "purpose": "Windows 更新服务",
+    "os_families": [
+      "Windows"
+    ],
+    "brand_eligible": true
   }
 ]
