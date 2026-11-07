@@ -200,7 +200,7 @@
     "os_families": [
       "Android"
     ],
-    "brand_eligible": true
+    "brand_eligible": false
   },
   {
     "domain": "mtalk.google.com",
@@ -216,7 +216,7 @@
     "os_families": [
       "Android"
     ],
-    "brand_eligible": true
+    "brand_eligible": false
   },
   {
     "domain": "windowsupdate.com",
@@ -232,6 +232,6 @@
     "os_families": [
       "Windows"
     ],
-    "brand_eligible": true
+    "brand_eligible": false
   }
 ]
