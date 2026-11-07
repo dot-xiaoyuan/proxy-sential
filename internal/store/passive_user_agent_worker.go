@@ -47,10 +47,17 @@ func (s *DBStore) attributePassiveUserAgents(ctx context.Context) (int, error) {
 	}
 	until := time.Now().UTC()
 	since := until.Add(-passiveUserAgentWindow)
+	// Only explicit client browser tokens carry a device class. The most
+	// frequent agent on a Windows host is usually a system component (NCSI,
+	// CryptoAPI), so prefer any browser agent over the raw dominant one.
 	query := fmt.Sprintf(`SELECT subject_ip,ua FROM (
- SELECT subject_ip,JSONExtractString(payload_json,'user_agent') AS ua FROM normalized_events
+ SELECT subject_ip,JSONExtractString(payload_json,'user_agent') AS ua,count() AS n FROM normalized_events
  WHERE type='http' AND timestamp>=parseDateTime64BestEffort('%s',3) AND timestamp<parseDateTime64BestEffort('%s',3)
-) WHERE ua<>'' GROUP BY subject_ip,ua ORDER BY subject_ip,count() DESC LIMIT 1 BY subject_ip LIMIT %d FORMAT JSONEachRow`,
+ AND (JSONExtractString(payload_json,'user_agent') ILIKE '%%iphone%%' OR JSONExtractString(payload_json,'user_agent') ILIKE '%%ipad%%'
+   OR JSONExtractString(payload_json,'user_agent') ILIKE '%%macintosh%%' OR JSONExtractString(payload_json,'user_agent') ILIKE '%%windows nt%%'
+   OR JSONExtractString(payload_json,'user_agent') ILIKE '%%android%%')
+ GROUP BY subject_ip,ua
+) WHERE ua<>'' ORDER BY subject_ip,n DESC LIMIT 1 BY subject_ip LIMIT %d FORMAT JSONEachRow`,
 		since.Format(time.RFC3339Nano), until.Format(time.RFC3339Nano), passiveUserAgentMaxIPs)
 	data, err := s.ch.query(ctx, query)
 	if err != nil {
@@ -122,7 +129,7 @@ func (s *DBStore) attributePassiveUserAgents(ctx context.Context) (int, error) {
 	result, err := s.pg.db.ExecContext(ctx, `UPDATE endpoint_entities e
  SET attributes=coalesce(e.attributes,'{}'::jsonb)||jsonb_build_object('user_agent',v.ua),updated_at=now()
  FROM (SELECT * FROM unnest($1::text[],$2::text[]) AS t(endpoint_id,ua)) v
- WHERE e.endpoint_id=v.endpoint_id AND coalesce(e.attributes->>'user_agent','')=''`, ids, agents)
+ WHERE e.endpoint_id=v.endpoint_id`, ids, agents)
 	if err != nil {
 		return 0, err
 	}
