@@ -756,6 +756,18 @@ func (s *DBStore) insertPassiveLinksBatch(ctx context.Context, db passiveDiscove
 	if len(links) == 0 {
 		return nil
 	}
+	// One fact can appear several times in a batch; ON CONFLICT may not touch
+	// the same row twice, so keep the newest validity per observation first.
+	deduped := make(map[string]passiveLinkRow, len(links))
+	for _, link := range links {
+		if previous, ok := deduped[link.ObservationID]; !ok || link.ValidUntil.After(previous.ValidUntil) {
+			deduped[link.ObservationID] = link
+		}
+	}
+	links = links[:0]
+	for _, link := range deduped {
+		links = append(links, link)
+	}
 	sort.Slice(links, func(i, j int) bool {
 		if links[i].EndpointID == links[j].EndpointID {
 			return links[i].ObservationID < links[j].ObservationID

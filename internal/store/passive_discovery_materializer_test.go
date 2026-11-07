@@ -397,3 +397,23 @@ func TestPassiveLinkRefreshIsThrottled(t *testing.T) {
 		}
 	}
 }
+
+func TestPassiveLinkBatchDeduplicatesObservationIDs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().UTC()
+	mock.ExpectExec("WITH incoming").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 2))
+	links := []passiveLinkRow{
+		{ObservationID: "fact-a", EndpointID: "mac:00:11:22:33:44:55", ValidUntil: at, Basis: []byte(`{}`)},
+		{ObservationID: "fact-a", EndpointID: "mac:00:11:22:33:44:55", ValidUntil: at.Add(time.Hour), Basis: []byte(`{}`)},
+	}
+	if err := (&DBStore{}).insertPassiveLinksBatch(context.Background(), db, links); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
