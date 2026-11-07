@@ -342,6 +342,32 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 			break
 		}
 	}
+	// Device-reported hostnames are the remaining self-identifying evidence for
+	// endpoints whose DHCP option sequence only resolves an OS. Microsoft uses
+	// DESKTOP-/LAPTOP- for default installations, Lenovo PCs report LENOVO-PC and
+	// iQOO phones/pads use their model name. Keep them at clue confidence so the
+	// page shows a candidate rather than a confirmed type.
+	if result.DeviceType == "" {
+		for _, hostname := range signals.Hostnames {
+			lower := strings.ToLower(strings.TrimSpace(hostname))
+			for _, hint := range hostnameDeviceHints {
+				if !strings.HasPrefix(lower, hint.prefix) {
+					continue
+				}
+				result.DeviceType = hint.deviceType
+				result.DeviceTypeConfidence = hint.confidence
+				if result.Source == "" || result.Source == "ieee_oui" {
+					result.Source = "dhcp_hostname_hint"
+				}
+				result.Evidence = append(result.Evidence, "DHCP 主机名: "+hostname+" → "+hint.description)
+				recordDimensionEvidence(&result, "hostname_hint", "hostname", hostname, ruleValues{deviceType: hint.deviceType}, hint.confidence)
+				break
+			}
+			if result.DeviceType != "" {
+				break
+			}
+		}
+	}
 	if result.DeviceType == "" && result.Vendor != "" {
 		if deviceType, confidence, ok := LookupVendorPrior(result.Vendor); ok {
 			result.DeviceType = deviceType
