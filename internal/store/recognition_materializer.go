@@ -217,6 +217,8 @@ func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 	workers.Add(1)
 	go func() { defer workers.Done(); s.runJobEnqueueDispatchers(ctx) }()
 	workers.Add(1)
+	go func() { defer workers.Done(); s.runPassiveUserAgentWorker(ctx) }()
+	workers.Add(1)
 	go func() {
 		defer workers.Done()
 		s.runSharedDeviceProfileMaterializer(ctx)

@@ -368,6 +368,30 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 			}
 		}
 	}
+	// The client's own browser user agent is a self-reported device class. It is
+	// weaker than a device protocol but stronger than an OUI product-line guess,
+	// so it fills an empty type before the vendor prior runs.
+	if result.DeviceType == "" {
+		for _, ua := range signals.UserAgents {
+			lower := strings.ToLower(strings.TrimSpace(ua))
+			for _, hint := range userAgentDeviceHints {
+				if !strings.Contains(lower, hint.marker) {
+					continue
+				}
+				result.DeviceType = hint.deviceType
+				result.DeviceTypeConfidence = hint.confidence
+				if result.Source == "" || result.Source == "ieee_oui" {
+					result.Source = "user_agent_hint"
+				}
+				result.Evidence = append(result.Evidence, "Client UA: "+hint.description)
+				recordDimensionEvidence(&result, "user_agent_hint", "user_agent", hint.marker, ruleValues{deviceType: hint.deviceType}, hint.confidence)
+				break
+			}
+			if result.DeviceType != "" {
+				break
+			}
+		}
+	}
 	if result.DeviceType == "" && result.Vendor != "" {
 		if deviceType, confidence, ok := LookupVendorPrior(result.Vendor); ok {
 			result.DeviceType = deviceType
