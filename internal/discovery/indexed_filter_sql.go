@@ -47,17 +47,9 @@ func indexedCategorySQL(view string) string {
 	if view == "iot" {
 		return "CASE WHEN has_printing THEN 'printer' WHEN has_video THEN 'camera' WHEN has_media THEN 'media' ELSE '' END"
 	}
-	identified := "CASE effective_types[1]"
-	candidate := "CASE profile_role"
+	expression := "CASE WHEN classification_status='identified' THEN CASE effective_types[1]"
 	for _, kind := range DeviceTypes {
-		identified += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
-		candidate += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
+		expression += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
 	}
-	identified += " ELSE 'identity_only' END"
-	candidate += " ELSE 'identity_only' END"
-	// A lone low-confidence profile type (vendor or hostname prior) names the
-	// category for filtering without becoming an identified type.
-	return "CASE WHEN classification_status='identified' THEN " + identified +
-		" WHEN classification_status='candidate' AND cardinality(effective_types)=0 AND NOT profile_conflict AND coalesce(profile_role,'')<>'' AND coalesce(profile_confidence,0)>=0.4 THEN " + candidate +
-		" ELSE 'identity_only' END"
+	return expression + " ELSE 'identity_only' END ELSE 'identity_only' END"
 }

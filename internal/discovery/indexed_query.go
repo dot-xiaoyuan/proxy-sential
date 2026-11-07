@@ -86,7 +86,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	classifiedWhere := []string{}
 	if query.DeviceType != "" {
 		args = append(args, query.DeviceType)
-		classifiedWhere = append(classifiedWhere, fmt.Sprintf("((classification_status='identified' AND effective_types[1]=$%[1]d) OR (classification_status='expired' AND historical_type=$%[1]d) OR (classification_status='candidate' AND NOT profile_conflict AND coalesce(profile_role,'')=$%[1]d))", len(args)))
+		classifiedWhere = append(classifiedWhere, fmt.Sprintf("((classification_status='identified' AND effective_types[1]=$%[1]d) OR (classification_status='expired' AND historical_type=$%[1]d))", len(args)))
 	}
 	if query.Protocol != "" {
 		args = append(args, query.Protocol)
