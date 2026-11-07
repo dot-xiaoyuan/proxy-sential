@@ -386,6 +386,15 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		if passiveString(event.Payload, "association_state") != "joined" {
 			o.Withdrawn, o.ValidUntil = true, at
 		}
+	case "ieee1905_topology":
+		// Only the mesh node itself originates 1905 topology messages; the
+		// subject MAC is its AL MAC, not a client behind it.
+		if mac == "" {
+			return discovery.Observation{}, "ieee1905_no_mac"
+		}
+		o.Origin, o.Explanation, o.ValidUntil = "ieee1905", "IEEE 1905 网格拓扑声明", at.Add(10*time.Minute)
+		o.DeviceType, o.Capabilities = "access_point", []string{"routing"}
+		o.Confidence = "strong"
 	case "ssdp":
 		if !scope.allows(ip) {
 			return discovery.Observation{}, "ssdp_out_of_scope"
