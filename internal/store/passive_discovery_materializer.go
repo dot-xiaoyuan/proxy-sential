@@ -464,7 +464,7 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 // boundary; a change of address, interface or DHCP name starts a new row.
 func passiveRepeatableFactID(o discovery.Observation) string {
 	switch o.Origin {
-	case "arp", "ndp", "dhcp":
+	case "arp", "ndp", "dhcp", "ieee1905":
 	default:
 		return ""
 	}
