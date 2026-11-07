@@ -45,7 +45,14 @@ func TestPassiveARPLinksEndpointWithoutDHCPLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	observation := discovery.Observation{ID: id, EventID: id, SourceID: "passive:test", Origin: "arp", Node: "sensor-204", Site: "sensor-204", Domain: "mirror", IP: "192.168.50.12", MAC: mac, ObservedAt: at, ValidUntil: at.Add(10 * time.Minute), Evidence: normalized.Event{Subject: map[string]any{"campus_id": "sensor-204"}}}
-	if err = store.insertPassiveObservation(ctx, pg.db, observation); err != nil {
+	link, err := store.insertPassiveObservation(ctx, pg.db, observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link == nil {
+		t.Fatal("ARP sender observation did not produce a link row")
+	}
+	if err = store.insertPassiveLinksBatch(ctx, pg.db, []passiveLinkRow{*link}); err != nil {
 		t.Fatal(err)
 	}
 	var linked string
@@ -53,8 +60,14 @@ func TestPassiveARPLinksEndpointWithoutDHCPLease(t *testing.T) {
 		t.Fatalf("ARP sender link missing: endpoint=%q err=%v", linked, err)
 	}
 	observation.ID, observation.EventID, observation.Origin = otherID, otherID, "ssdp"
-	if err = store.insertPassiveObservation(ctx, pg.db, observation); err != nil {
+	otherLink, err := store.insertPassiveObservation(ctx, pg.db, observation)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if otherLink != nil {
+		if err = store.insertPassiveLinksBatch(ctx, pg.db, []passiveLinkRow{*otherLink}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var otherLinked bool
 	if err = pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM discovery_identity_links WHERE observation_id=$1)`, otherID).Scan(&otherLinked); err != nil || otherLinked {

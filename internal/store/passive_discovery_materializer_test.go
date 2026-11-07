@@ -309,10 +309,12 @@ func TestDirectPTRLinkDoesNotRequireDHCPLease(t *testing.T) {
 	if !ok {
 		t.Fatal("expected PTR observation")
 	}
-	mock.ExpectQuery("SELECT EXISTS").WithArgs("mac:02:11:22:33:44:55").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-	mock.ExpectExec("INSERT INTO discovery_identity_links").WithArgs(observation.ID, "mac:02:11:22:33:44:55", observation.ValidUntil, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
-	if err := (&DBStore{}).linkPassiveObservation(context.Background(), db, observation); err != nil {
+	link, err := (&DBStore{}).passiveObservationLink(context.Background(), db, observation)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if link == nil || link.EndpointID != "mac:02:11:22:33:44:55" || link.ObservationID != observation.ID {
+		t.Fatalf("direct PTR responder must link without a lease, got %+v", link)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

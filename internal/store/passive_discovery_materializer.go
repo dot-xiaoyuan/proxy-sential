@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -114,10 +115,11 @@ func logSlowPassiveBatch(stats passiveDiscoveryBatchStats, sections map[string]t
 	if now-last < 10 || !passiveSlowBatchLogUnix.CompareAndSwap(last, now) {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "passive discovery slow batch: processed=%d emitted=%d skipped=%d arp_candidates=%s arp_batch=%s mdns=%s observe=%s commit=%s total=%s\n",
+	fmt.Fprintf(os.Stderr, "passive discovery slow batch: processed=%d emitted=%d skipped=%d arp_candidates=%s arp_batch=%s mdns=%s observe=%s link_batch=%s commit=%s total=%s\n",
 		stats.Processed, stats.Emitted, stats.Skipped,
 		sections["arp_candidates"].Round(time.Millisecond), sections["arp_batch"].Round(time.Millisecond),
 		sections["mdns"].Round(time.Millisecond), sections["observe"].Round(time.Millisecond),
+		sections["link_batch"].Round(time.Millisecond),
 		sections["commit"].Round(time.Millisecond), total.Round(time.Millisecond))
 }
 
@@ -674,9 +676,20 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 	return result, "", rows.Err()
 }
 
-func (s *DBStore) insertPassiveObservation(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) error {
+// passiveLinkRow is one pending identity link. Links are written once per batch
+// in endpoint order so concurrent writers cannot take endpoint row locks in
+// opposite orders (the dominant deadlock cycle with name evidence and the
+// recognition summary).
+type passiveLinkRow struct {
+	ObservationID string          `json:"observation_id"`
+	EndpointID    string          `json:"endpoint_id"`
+	ValidUntil    time.Time       `json:"valid_until"`
+	Basis         json.RawMessage `json:"basis"`
+}
+
+func (s *DBStore) insertPassiveObservation(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) (*passiveLinkRow, error) {
 	if o.ID == "" || o.ObservedAt.IsZero() {
-		return nil
+		return nil, nil
 	}
 	if o.ValidUntil.IsZero() {
 		o.ValidUntil = o.ObservedAt.Add(24 * time.Hour)
@@ -693,29 +706,25 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 		if err == nil {
 			o.MAC = validPassiveMAC(mac)
 		} else if err != sql.ErrNoRows {
-			return err
+			return nil, err
 		}
 	}
 	raw, _ := json.Marshal(o)
 	if _, err := db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data WHERE EXCLUDED.observed_at>=discovery_observations.observed_at`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw); err != nil {
-		return err
+		return nil, err
 	}
-	return s.linkPassiveObservation(ctx, db, o)
+	return s.passiveObservationLink(ctx, db, o)
 }
 
-func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) error {
+func (s *DBStore) passiveObservationLink(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) (*passiveLinkRow, error) {
 	mac := validPassiveMAC(o.MAC)
 	if mac == "" {
-		return nil
+		return nil, nil
 	}
 	if passiveRandomMAC(mac) && o.IP == "" {
-		return nil
+		return nil, nil
 	}
 	endpointID := "mac:" + mac
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_entities WHERE endpoint_id=$1 AND entity_role='endpoint')`, endpointID).Scan(&exists); err != nil || !exists {
-		return err
-	}
 	// ARP's sender hardware address and sender protocol address come from the
 	// same frame. This observation can link to an existing endpoint by that
 	// exact MAC without a DHCP lease. A verified multicast PTR responder has
@@ -724,10 +733,10 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscover
 		var leaseEndpoint string
 		err := db.QueryRowContext(ctx, `SELECT endpoint_id FROM device_address_leases WHERE sensor_id=$1 AND campus_id=$2 AND ip=$3::inet AND action='ack' AND observed_at<=$4 AND valid_until>$4 ORDER BY observed_at DESC,event_id DESC LIMIT 1`, o.Node, passiveString(o.Evidence.Subject, "campus_id"), o.IP, o.ObservedAt).Scan(&leaseEndpoint)
 		if err == sql.ErrNoRows || leaseEndpoint != endpointID {
-			return nil
+			return nil, nil
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	kind := "passive_event_time_identity"
@@ -735,10 +744,37 @@ func (s *DBStore) linkPassiveObservation(ctx context.Context, db passiveDiscover
 		kind = "passive_arp_sender_identity"
 	}
 	basis, _ := json.Marshal(map[string]any{"kind": kind, "sensor": o.Node, "ip": o.IP, "mac": mac, "origin": o.Origin})
-	// One fact now refreshes the same link row many times. Refresh it only when
-	// the endpoint changes or the validity extends by five minutes, so the
-	// recognition/profile triggers do not fire for every repeated frame.
-	_, err := db.ExecContext(ctx, `INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis) VALUES($1,$2,$3,$4) ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id OR discovery_identity_links.basis IS DISTINCT FROM EXCLUDED.basis OR EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'`, o.ID, endpointID, o.ValidUntil, basis)
+	return &passiveLinkRow{ObservationID: o.ID, EndpointID: endpointID, ValidUntil: o.ValidUntil, Basis: basis}, nil
+}
+
+// insertPassiveLinksBatch writes one batch of identity links in endpoint order.
+// The join replaces the previous per-observation endpoint existence probe. One
+// fact now refreshes the same link row many times, so the conflict update only
+// runs when the endpoint changes or the validity extends by five minutes; the
+// recognition/profile triggers therefore do not fire for every repeated frame.
+func (s *DBStore) insertPassiveLinksBatch(ctx context.Context, db passiveDiscoveryDB, links []passiveLinkRow) error {
+	if len(links) == 0 {
+		return nil
+	}
+	sort.Slice(links, func(i, j int) bool {
+		if links[i].EndpointID == links[j].EndpointID {
+			return links[i].ObservationID < links[j].ObservationID
+		}
+		return links[i].EndpointID < links[j].EndpointID
+	})
+	raw, err := json.Marshal(links)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `WITH incoming AS (
+ SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(observation_id text,endpoint_id text,valid_until timestamptz,basis jsonb)
+)
+INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis)
+SELECT i.observation_id,i.endpoint_id,i.valid_until,i.basis
+FROM incoming i JOIN endpoint_entities e ON e.endpoint_id=i.endpoint_id AND e.entity_role='endpoint'
+ORDER BY i.endpoint_id,i.observation_id
+ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis
+WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id OR discovery_identity_links.basis IS DISTINCT FROM EXCLUDED.basis OR EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'`, string(raw))
 	return err
 }
 
@@ -779,6 +815,7 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	coalescedMDNS := passiveCoalescedMDNSIndexes(events)
 	coalescedARP := passiveCoalescedARPIndexes(events)
 	pendingARP := make([]discovery.Observation, 0, len(events))
+	pendingLinks := make([]passiveLinkRow, 0, len(events))
 	pendingIDs := make(map[string]int)
 	flushARP := func() error {
 		if len(pendingARP) == 0 {
@@ -853,16 +890,22 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 		}
 		for _, observation := range observations {
 			stage := time.Now()
-			eventErr = s.insertPassiveObservation(ctx, tx, observation)
+			link, linkErr := s.insertPassiveObservation(ctx, tx, observation)
 			sections["observe"] += time.Since(stage)
-			discovery.ObserveStage(ctx, "observe", stage, eventErr)
-			if eventErr != nil {
-				return stats, eventErr
+			discovery.ObserveStage(ctx, "observe", stage, linkErr)
+			if linkErr != nil {
+				return stats, linkErr
+			}
+			if link != nil {
+				pendingLinks = append(pendingLinks, *link)
 			}
 			stats.Emitted++
 		}
 	}
 	if err := flushARP(); err != nil {
+		return stats, err
+	}
+	if err := measure("link_batch", func() error { return s.insertPassiveLinksBatch(ctx, tx, pendingLinks) }); err != nil {
 		return stats, err
 	}
 	commitStage := time.Now()
