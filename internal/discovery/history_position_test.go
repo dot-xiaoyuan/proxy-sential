@@ -29,6 +29,7 @@ func TestDiscoveryHistoryMetadataPositionAndReadShareDeviceEpochAndSnapshot(t *t
 			}
 			expectEpoch()
 			if epoch == "" {
+				mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_device_changes_v2`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 				mock.ExpectQuery(`SELECT count\(\*\) FROM discovery_device_changes_v2 WHERE device_key=\$1 AND ingested_at<=\$2`).WithArgs("device-a", stamp).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
 			} else {
 				mock.ExpectQuery(`SELECT count\(\*\) FROM stream_discovery_changes WHERE epoch=\$1 AND device_key=\$2 AND accepted_at<=\$3`).WithArgs(epoch, "device-a", stamp).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
@@ -40,6 +41,7 @@ func TestDiscoveryHistoryMetadataPositionAndReadShareDeviceEpochAndSnapshot(t *t
 			expectEpoch()
 			rows := sqlmock.NewRows([]string{"change_id"}).AddRow(30).AddRow(20)
 			if epoch == "" {
+				mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_device_changes_v2`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 				mock.ExpectQuery(`SELECT change_id FROM discovery_device_changes_v2.*ORDER BY change_id DESC LIMIT 2 OFFSET \$3`).WithArgs("device-a", stamp, int64(1)).WillReturnRows(rows)
 			} else {
 				mock.ExpectQuery(`SELECT change_id FROM stream_discovery_changes.*ORDER BY change_id DESC LIMIT 2 OFFSET \$4`).WithArgs(epoch, "device-a", stamp, int64(1)).WillReturnRows(rows)
@@ -56,6 +58,7 @@ func TestDiscoveryHistoryMetadataPositionAndReadShareDeviceEpochAndSnapshot(t *t
 			}
 			expectEpoch()
 			if epoch == "" {
+				mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_device_changes_v2`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 				mock.ExpectQuery(`SELECT change_id,event_id,ingested_at,observed_at,change_kind,document.*ingested_at<=\$4`).WithArgs("device-a", int64(30), 3, stamp).WillReturnRows(sqlmock.NewRows([]string{"change_id", "event_id", "ingested_at", "observed_at", "kind", "document"}).AddRow(20, "event-20", stamp, stamp, "applied", []byte(`{}`)))
 			} else {
 				mock.ExpectQuery(`(?s)SELECT c.change_id.*FROM stream_discovery_changes c.*accepted_at<=\$5`).WithArgs(epoch, "device-a", int64(30), 3, stamp).WillReturnRows(sqlmock.NewRows([]string{"change_id", "event_key", "accepted_at", "observed_at", "kind", "before", "after", "body_ref", "archive_state", "legacy_present"}).AddRow(20, "event-20", stamp, stamp, "applied", "", "hash", []byte(`{}`), "confirmed", true))
@@ -91,6 +94,7 @@ func TestDiscoveryHistoryPositionRejectsMissingTargetAndInvalidBounds(t *testing
 		t.Fatal(first, err)
 	}
 	mock.ExpectQuery("SELECT s.epoch FROM stream_discovery_device_state s").WithArgs("a").WillReturnRows(sqlmock.NewRows([]string{"epoch"}))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_device_changes_v2`).WithArgs("a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery(`SELECT change_id FROM discovery_device_changes_v2.*LIMIT 2 OFFSET`).WithArgs("a", stamp, int64(1)).WillReturnRows(sqlmock.NewRows([]string{"change_id"}).AddRow(1))
 	if _, err := repo.DiscoveryHistoryPosition(ctx, "a", stamp, 2, 2); !errors.Is(err, pagination.ErrPageOutOfRange) {
 		t.Fatal("last full page incorrectly exposed another page", err)
