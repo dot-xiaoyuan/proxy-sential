@@ -262,7 +262,9 @@ func (s *DBStore) runPassiveLivePTRMaterializer(ctx context.Context, sensorID st
 			events, next, err = s.passiveLivePTREvents(workCtx, sensorID, cursor)
 			count = len(events)
 			if err == nil {
+				passiveBatchMu.Lock()
 				err = s.finishPassiveLivePTR(workCtx, sensorID, next, events, scope)
+				passiveBatchMu.Unlock()
 			}
 		}
 		if err != nil && ctx.Err() == nil {

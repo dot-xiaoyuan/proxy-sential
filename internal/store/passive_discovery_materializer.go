@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -105,6 +106,12 @@ func (t *passiveDiscoveryBatchTuner) observe(full bool, err error) {
 // passiveSlowBatchLogUnix rate-limits the slow-batch diagnostics to one line
 // per ten seconds so a busy catch-up cannot flood the journal.
 var passiveSlowBatchLogUnix atomic.Int64
+
+// passiveBatchMu serialises this process's two PostgreSQL writers (the main
+// discovery materializer and the live mDNS PTR worker). They touch the same
+// latest-observation and endpoint rows; letting them interleave produced
+// multi-second lock waits inside the same process.
+var passiveBatchMu sync.Mutex
 
 func logSlowPassiveBatch(stats passiveDiscoveryBatchStats, sections map[string]time.Duration, total time.Duration) {
 	if total < 3*time.Second {
@@ -996,7 +1003,9 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 				batchEvents = len(events)
 				stats := passiveDiscoveryBatchStats{Protocols: map[string]int{}, Reasons: map[string]int{}}
 				if err == nil && len(events) > 0 {
+					passiveBatchMu.Lock()
 					stats, err = s.processPassiveDiscoveryBatch(workCtx, events, scope)
+					passiveBatchMu.Unlock()
 				}
 				if err == nil {
 					cursor = next
