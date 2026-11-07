@@ -61,9 +61,21 @@ func observationHistoryID(id string) int64 {
 	return int64(hash.Sum64() & 0x7fffffffffffffff)
 }
 
+// observationHistoryCountCap bounds the metadata count. A busy device can hold
+// tens of thousands of retained observations; an exact count turns the metadata
+// request into a multi-second index-only scan on the HDD. Numbered navigation
+// beyond the cap is not useful (the tab pages by 20), while the cursor list
+// itself keeps returning every row.
+const observationHistoryCountCap = 5000
+
 func (r Repository) ObservationHistoryMetadata(ctx context.Context, key string, snapshot time.Time) (HistoryMetadata, error) {
 	result := HistoryMetadata{Metadata: pagination.Metadata{AsOf: snapshot}, Snapshot: snapshot}
-	err := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM discovery_observations WHERE device_key=$1 AND observed_at<=$2`, key, snapshot).Scan(&result.Total)
+	var total int
+	err := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM discovery_observations WHERE device_key=$1 AND observed_at<=$2 LIMIT $3) capped`, key, snapshot, observationHistoryCountCap+1).Scan(&total)
+	if total > observationHistoryCountCap {
+		total = observationHistoryCountCap
+	}
+	result.Total = int64(total)
 	return result, err
 }
 

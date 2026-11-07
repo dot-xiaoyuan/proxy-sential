@@ -17,7 +17,7 @@ func TestObservationHistoryMetadataCountsRetainedObservations(t *testing.T) {
 	at := time.Now().UTC()
 	mock.ExpectQuery(`SELECT s.epoch FROM stream_discovery_device_state`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"epoch"}))
 	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_device_changes_v2`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectQuery(`SELECT count\(\*\) FROM discovery_observations`).WithArgs("device-a", at).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(7))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM \(SELECT 1 FROM discovery_observations`).WithArgs("device-a", at, 5001).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(7))
 	metadata, err := (Repository{DB: db}).DiscoveryHistoryMetadata(context.Background(), "device-a", at)
 	if err != nil {
 		t.Fatal(err)
