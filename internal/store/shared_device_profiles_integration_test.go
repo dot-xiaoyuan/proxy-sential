@@ -130,6 +130,9 @@ VALUES($1,'','archive-lease-reused','192.0.2.123',$2,'ack',$3,$4)`, s.sensorID, 
 	if _, err = s.db.ExecContext(ctx, `SELECT enqueue_shared_device_profile_job($1,'',$2,$3,$4::inet,'',$5)`, s.sensorID, owner, mac, "192.0.2.123", now.Add(4*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = dbs.flushSharedProfileDirtyLog(ctx); err != nil {
+		t.Fatal(err)
+	}
 	for index := 0; index < 5; index++ {
 		found, processErr := dbs.processSharedDeviceProfileJob(ctx, "test-idempotent-restart")
 		if processErr != nil {
