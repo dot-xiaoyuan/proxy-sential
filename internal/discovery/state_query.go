@@ -300,6 +300,14 @@ func (r Repository) DiscoveryHistoryAt(ctx context.Context, key string, cursor s
 	if freshEpoch != "" {
 		return r.streamDiscoveryHistoryAt(ctx, freshEpoch, key, cursor, limit, snapshot)
 	}
+	if observations, obsErr := r.historyUsesObservations(ctx, key); obsErr != nil {
+		return nil, obsErr
+	} else if observations {
+		if snapshot.IsZero() {
+			snapshot = time.Now().UTC()
+		}
+		return r.ObservationHistoryAt(ctx, key, cursor, limit, snapshot)
+	}
 	var after int64
 	if cursor != "" {
 		b, e := base64.RawURLEncoding.DecodeString(cursor)

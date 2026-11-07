@@ -60,6 +60,13 @@ func (r Repository) DiscoveryHistoryMetadata(ctx context.Context, key string, sn
 	if err != nil {
 		return result, err
 	}
+	if epoch == "" {
+		if observations, obsErr := r.historyUsesObservations(ctx, key); obsErr != nil {
+			return result, obsErr
+		} else if observations {
+			return r.ObservationHistoryMetadata(ctx, key, snapshot)
+		}
+	}
 	table, where, args := historySelection(epoch, key, snapshot)
 	err = r.DB.QueryRowContext(ctx, `SELECT count(*) FROM `+table+` WHERE `+where, args...).Scan(&result.Total)
 	return result, err
@@ -86,6 +93,13 @@ func (r Repository) DiscoveryHistoryPosition(ctx context.Context, key string, sn
 	epoch, err := r.discoveryHistoryEpoch(ctx, key)
 	if err != nil {
 		return result, err
+	}
+	if epoch == "" {
+		if observations, obsErr := r.historyUsesObservations(ctx, key); obsErr != nil {
+			return result, obsErr
+		} else if observations {
+			return r.ObservationHistoryPosition(ctx, key, snapshot, page, limit)
+		}
 	}
 	table, where, args := historySelection(epoch, key, snapshot)
 	args = append(args, offset)
