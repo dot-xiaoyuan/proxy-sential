@@ -53,9 +53,11 @@ func indexedCategorySQL(view string) string {
 		identified += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
 		candidate += " WHEN '" + kind.ID + "' THEN '" + deviceCategory(kind.ID) + "'"
 	}
+	identified += " ELSE 'identity_only' END"
+	candidate += " ELSE 'identity_only' END"
 	// A lone low-confidence profile type (vendor or hostname prior) names the
 	// category for filtering without becoming an identified type.
 	return "CASE WHEN classification_status='identified' THEN " + identified +
-		" ELSE 'identity_only' END WHEN classification_status='candidate' AND cardinality(effective_types)=0 AND NOT profile_conflict AND coalesce(profile_role,'')<>'' AND coalesce(profile_confidence,0)>=0.4 THEN " + candidate +
-		" ELSE 'identity_only' END ELSE 'identity_only' END"
+		" WHEN classification_status='candidate' AND cardinality(effective_types)=0 AND NOT profile_conflict AND coalesce(profile_role,'')<>'' AND coalesce(profile_confidence,0)>=0.4 THEN " + candidate +
+		" ELSE 'identity_only' END"
 }
