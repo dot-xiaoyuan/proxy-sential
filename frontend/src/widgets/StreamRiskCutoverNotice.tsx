@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useStreamRiskCutover } from '../shared/api/queries'
 import { AppErrorAlert } from '../shared/ui'
 
@@ -5,12 +6,12 @@ import { AppErrorAlert } from '../shared/ui'
  * 历史缺口审计结论。属于可追溯的状态记录，不是列表主操作区；
  * 收起时保留关键结论，展开后给出逐项来源与截止点。
  */
-export function StreamRiskCutoverNotice() {
+export function StreamRiskCutoverNotice({ expanded = false, fallback }: { expanded?: boolean; fallback?: ReactNode } = {}) {
   const cutover = useStreamRiskCutover()
   if (cutover.isError) return <AppErrorAlert title="读取新风险链状态失败" message={cutover.error.message} />
-  if (!cutover.data?.active || !cutover.data.status) return null
+  if (!cutover.data?.active || !cutover.data.status) return fallback ?? null
   const status = cutover.data.status
-  return <details className="surface filter-disclosure risk-cutover-status" aria-label="新存查链历史缺口">
+  return <details className="surface filter-disclosure risk-cutover-status" aria-label="新存查链历史缺口" open={expanded}>
     <summary>
       <span className="risk-cutover-title">新存查链历史缺口</span>
       <span className="risk-cutover-meta">旧待办 {status.canceled_subjects.toLocaleString()} 个主体已审计取消 · 当前待处理 {status.pending_subjects.toLocaleString()} 个，其中 {status.pending_older_than_5s.toLocaleString()} 个超过 5 秒</span>

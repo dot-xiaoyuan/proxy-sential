@@ -129,10 +129,12 @@ export function SharedDeviceProfiles() {
   )
 
   return <>
-    {alerts}
-    {searchBar}
-    <section className="surface">
-      <AppListHeader title="终端档案" count={total===undefined?undefined:`${total} 条`} actions={<span className="shared-access-muted">身份档案与共享结论分别核验</span>} />
+    <section className="surface list-surface">
+      <div className="list-surface-head list-surface-head-inline">
+        <AppListHeader title="终端档案" count={total===undefined?undefined:`${total} 条`} />
+        {searchBar}
+      </div>
+      {alerts}
       <AppListSection isError={profiles.isError} errorTitle="终端档案读取失败" isLoading={profiles.isFetching} loadingRows={6} isEmpty={!items.length} emptyText="当前筛选下暂无终端档案">
         <AppTable rowKey="profile_id" columns={columns} dataSource={items} scroll={{ x: 960 }} />
       </AppListSection>

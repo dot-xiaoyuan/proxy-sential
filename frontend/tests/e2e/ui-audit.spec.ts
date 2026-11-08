@@ -102,7 +102,7 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
 			{ route: '/cases', selector: '.compact-list-table' },
 			{ route: '/review', selector: '.compact-list-table' },
 			{ route: '/audit', selector: '.compact-list-table' },
-			{ route: '/discovery', selector: '.app-list-header' },
+			{ route: '/discovery', selector: '.passive-ledger-table' },
 		]
 		for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
 			await page.setViewportSize(viewport)

@@ -1,10 +1,12 @@
 import {
   detailPath } from '../app/navigation'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link,
   useSearchParams,
   useLocation } from 'react-router-dom'
-import { Input,
+import { Button,
+  Drawer,
+  Input,
   Tag,
   Typography,
 } from 'antd'
@@ -12,7 +14,7 @@ import type { ColumnsType } from 'antd/es/table'
 
 import { useEvents } from '../shared/api/queries'
 import type { EventQuery, NormalizedEventSummary } from '../shared/api/types'
-import { AppErrorAlert, AppListHeader, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, UniversityDimensionFilters } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, AppTimePicker, formatDateTime, type ReportWindow, UniversityDimensionFilters } from '../shared/ui'
 import { StreamEventsPanel } from '../widgets/StreamEventsPanel'
 
 export function EventsPage() {
@@ -21,6 +23,8 @@ export function EventsPage() {
   const query = useMemo(() => queryFromSearchParams(searchParams), [searchParams])
   const quickWindow: ReportWindow = query.window ?? '1h'
   const activeType = query.type ?? ''
+  const [streamOpen, setStreamOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const events = useEvents({ ...query, window: quickWindow })
 
   const columns: ColumnsType<NormalizedEventSummary> = [
@@ -80,39 +84,8 @@ export function EventsPage() {
     return <AppLoadingState rows={8} />
   }
 
-  return (
-    <main className="page">
-      <AppPageHeader
-        onQuickWindowChange={(value) => updateQuery(setSearchParams, { ...query, window: value, cursor: undefined })}
-        quickWindow={quickWindow}
-        quickWindows={['10m','1h','24h','7d','30d']}
-      />
-
-      {events.isError && <AppErrorAlert title="标准事件列表读取失败" />}
-
-      <AppTableBar
-        filterOptions={filterOptions}
-        onClearFilters={() => {
-          setSearchParams({})
-        }}
-        onFilterToggle={(key) =>
-          updateQuery(setSearchParams, {
-            ...query,
-            type: activeType === key ? undefined : key,
-            cursor: undefined,
-          })
-        }
-        onSearchChange={(val) => {
-          updateQuery(setSearchParams, { ...query, q: val || undefined, cursor: undefined })
-        }}
-        searchPlaceholder="快速检索 (Event ID / IP / 域名 / SNI / UA)..."
-        searchValue={searchParams.get('q') || ''}
-      />
-
-      <div className="list-secondary-tools">
-        <details className="surface filter-disclosure"><summary>新流事件检索</summary><StreamEventsPanel /></details>
-        <details className="surface filter-disclosure">
-        <summary>高校维度与技术字段筛选</summary>
+  const filtersPanel = (
+    <>
         <div className="filter-disclosure-content"><UniversityDimensionFilters value={query} onChange={(next) => updateQuery(setSearchParams, { ...query, ...next, cursor: undefined })} /></div>
         <div className="event-filter-panel filter-disclosure-content">
         <div className="event-filter-grid">
@@ -188,11 +161,40 @@ export function EventsPage() {
           />
         </div>
         </div>
-      </details>
-      </div>
+    </>
+  )
 
-      <section className="surface">
-        <AppListHeader title="标准事件" count={`${events.data?.page.total ?? 0} 条`} />
+  return (
+    <main className="page">
+      <section className="surface list-surface">
+        <div className="list-surface-head">
+          <AppListHeader title="标准事件" count={`${events.data?.page.total ?? 0} 条`} actions={
+            <div className="list-head-actions">
+              <Button size="small" onClick={() => setStreamOpen(true)}>新流事件检索</Button>
+              <Button size="small" onClick={() => setFiltersOpen(true)}>高校维度与技术字段</Button>
+            </div>
+          } />
+          <AppTableBar
+            filterOptions={filterOptions}
+            onClearFilters={() => {
+              setSearchParams({})
+            }}
+            onFilterToggle={(key) =>
+              updateQuery(setSearchParams, {
+                ...query,
+                type: activeType === key ? undefined : key,
+                cursor: undefined,
+              })
+            }
+            onSearchChange={(val) => {
+              updateQuery(setSearchParams, { ...query, q: val || undefined, cursor: undefined })
+            }}
+            searchPlaceholder="快速检索 (Event ID / IP / 域名 / SNI / UA)..."
+            searchValue={searchParams.get('q') || ''}
+            extra={<AppTimePicker onQuickWindowChange={(value) => updateQuery(setSearchParams, { ...query, window: value, cursor: undefined })} quickWindow={quickWindow} windows={['10m','1h','24h','7d','30d']} />}
+          />
+        </div>
+        {events.isError && <AppErrorAlert title="标准事件列表读取失败" />}
         <AppTable<NormalizedEventSummary>
           className="compact-list-table"
           columns={columns}
@@ -202,10 +204,10 @@ export function EventsPage() {
           scroll={{ x: 960 }}
           size="small"
         />
-
-		<AppServerPagination page={Math.floor(Number(query.cursor ?? 0) / (query.limit ?? 20)) + 1} pageSize={query.limit ?? 20} total={events.data?.page.total} onChange={(page, pageSize) => updateQuery(setSearchParams, { ...query, limit: pageSize, cursor: String((page - 1) * pageSize) })} />
+        <AppServerPagination page={Math.floor(Number(query.cursor ?? 0) / (query.limit ?? 20)) + 1} pageSize={query.limit ?? 20} total={events.data?.page.total} onChange={(page, pageSize) => updateQuery(setSearchParams, { ...query, limit: pageSize, cursor: String((page - 1) * pageSize) })} />
       </section>
-
+      <Drawer rootClassName="list-drawer" title="新流事件检索" placement="right" size={900} open={streamOpen} onClose={() => setStreamOpen(false)} destroyOnHidden><StreamEventsPanel /></Drawer>
+      <Drawer rootClassName="list-drawer" title="高校维度与技术字段筛选" placement="right" size={520} open={filtersOpen} onClose={() => setFiltersOpen(false)}>{filtersPanel}</Drawer>
     </main>
   )
 }

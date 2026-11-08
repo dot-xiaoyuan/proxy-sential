@@ -1,7 +1,6 @@
 import {
   AppErrorAlert,
   AppServerPagination, useCursorPagePosition, usePaginationMetadata,
-  AppListHeader,
   AppTable, AppTableBar } from '../shared/ui'
 import { Notice as Alert } from '../shared/ui/Notice'
 import { useEffect,
@@ -13,6 +12,7 @@ import { Button,
   Input,
   Modal,
   message,
+  Popover,
   Select,
   Segmented,
   Space,
@@ -241,28 +241,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     {title:'最近观测',key:'seen',width:110,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
     {title:'操作',key:'action',width:140,fixed:'right' as const,render:(_:unknown,item:Device)=><div className="terminal-row-actions"><Button type="link" onClick={()=>show(item)}>查看详情</Button>{item.mac&&can(session.data,'endpoints:write')&&<Button type="link" onClick={()=>startRegistration(item)}>登记</Button>}</div>},
   ]
-  return <section className="passive-discovery-panel terminal-workspace">
-    <header className="terminal-workspace-header"><div><span className="terminal-eyebrow">设备中心 / 204 独立管理</span><Typography.Title level={3}>哑终端管理</Typography.Title><Typography.Text type="secondary">发现镜像中的设备，核对类型，补齐负责人和资产资料。</Typography.Text></div><div className="terminal-header-actions"><Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refreshWorkspace}>刷新数据</Button>{can(session.data,'endpoints:write')&&<Button type="primary" icon={<PlusOutlined aria-hidden="true"/>} onClick={()=>startRegistration()}>新增登记</Button>}</div></header>
-    <div className="terminal-workspace-nav"><Segmented aria-label="设备管理视图" value={ledgerView?'registrations':'discovery'} options={[{label:'自动发现',value:'discovery'},{label:'登记台账',value:'registrations'}]} onChange={v=>setView(String(v))}/>{!ledgerView&&<nav className="terminal-type-shortcuts" aria-label="快捷设备类型">{[{value:'',label:'全部设备'},{value:'printer',label:'打印机'},{value:'camera',label:'摄像机'},{value:'access_point',label:'无线 AP'},{value:'router',label:'路由器'},{value:'switch',label:'交换机'},{value:'desktop',label:'电脑'},{value:'mobile',label:'手机'}].map(t=><Button key={t.value} type={(params.get('discovery_type')||'')===t.value&&!dumbFilter?'primary':'default'} onClick={()=>shortcut(t.value)}>{t.label}</Button>)}<Button type={dumbFilter?'primary':'default'} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button></nav>}</div>
-    {ledgerView?<TerminalRegistrationPanel key={ledgerRefresh} onCreate={()=>startRegistration()} onEdit={editRegistration}/>:<>
-    <AppTableBar
-      searchPlaceholder="搜索 IP、MAC、名称或型号"
-      searchValue={draft}
-      onSearchChange={setDraft}
-      onSearch={value=>change('search', value.trim())}
-      filters={<>
-        <Select aria-label="设备类型" showSearch optionFilterProp="label" value={params.get('discovery_type')||''} options={[{value:'',label:'全部设备类型'},...(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))]} onChange={v=>change('type',v)}/>
-        <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
-        <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length?`（${['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
-      </>}
-      panel={moreOpen?<div className="app-filter-panel">
-        <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
-        <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
-        <Input aria-label="网络域" placeholder="网络域" allowClear value={params.get('discovery_domain')||''} onChange={e=>change('domain',e.target.value)}/>
-        <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
-      </div>:undefined}
-    />
-    {!ledgerView&&<section className="surface discovery-overview" aria-label="发现设备总览" aria-busy={discoveryMetadata.isPending}>
+  const overviewPanel = (
+<section className="surface discovery-overview" aria-label="发现设备总览" aria-busy={discoveryMetadata.isPending}>
       <div className="discovery-overview-heading"><strong>设备类型总览</strong><Typography.Text type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 当前筛选 · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}</Typography.Text></div>
       <div className="discovery-overview-row">
       <div className="discovery-overview-metrics">
@@ -274,11 +254,39 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       </div>
       <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><span className="discovery-overview-type" key={item.device_type}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></span>):<Typography.Text type="secondary">{discoveryMetadata.data?'当前筛选下暂无明确类型':discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
       </div>
-    </section>}
+    </section>
+  )
+
+  return <section className="passive-discovery-panel terminal-workspace">
+    <div className="workspace-topbar">
+    <header className="terminal-workspace-header"><div><span className="terminal-eyebrow">设备中心 / 204 独立管理</span><Typography.Title level={3}>哑终端管理</Typography.Title><Typography.Text type="secondary">发现镜像中的设备，核对类型，补齐负责人和资产资料。</Typography.Text></div><div className="terminal-header-actions"><Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refreshWorkspace}>刷新数据</Button>{can(session.data,'endpoints:write')&&<Button type="primary" icon={<PlusOutlined aria-hidden="true"/>} onClick={()=>startRegistration()}>新增登记</Button>}<Popover trigger="click" placement="bottomRight" content={<div className="list-popover">{overviewPanel}</div>}><Button size="small">统计</Button></Popover></div></header>
+    <div className="terminal-workspace-nav"><Segmented aria-label="设备管理视图" value={ledgerView?'registrations':'discovery'} options={[{label:'自动发现',value:'discovery'},{label:'登记台账',value:'registrations'}]} onChange={v=>setView(String(v))}/></div>
+    </div>
+    {ledgerView?<TerminalRegistrationPanel key={ledgerRefresh} onCreate={()=>startRegistration()} onEdit={editRegistration}/>:<>
     {discoveryMetadata.isError&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}
     {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
     {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
-      <AppListHeader title="发现设备" count={discoveryMetadata.data?`共 ${discoveryMetadata.data.total} 个设备`:`本页 ${items.length} 个设备`} actions={<div className="discovery-list-actions"><span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith('discovery_')&&key!=='discovery_view')next.delete(key);return next})}>清除筛选</Button><Button icon={<ReloadOutlined />} loading={devices.isFetching} onClick={refreshDiscovery}>刷新</Button></div>} />
+      <div className="list-surface-head">
+      <AppTableBar
+        searchPlaceholder="搜索 IP、MAC、名称或型号"
+        searchValue={draft}
+        onSearchChange={setDraft}
+        onSearch={value=>change('search', value.trim())}
+        filters={<>
+          <Select aria-label="设备类型" showSearch optionFilterProp="label" value={params.get('discovery_type')||''} options={[{value:'',label:'全部设备类型'},...(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))]} onChange={v=>change('type',v)}/>
+          <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
+          <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length?`（${['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
+        </>}
+        extra={<div className="discovery-list-actions"><span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
+      panel={moreOpen?<div className="app-filter-panel">
+          <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
+          <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
+          <Input aria-label="网络域" placeholder="网络域" allowClear value={params.get('discovery_domain')||''} onChange={e=>change('domain',e.target.value)}/>
+          <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
+        </div>:undefined}
+      />
+        <nav className="terminal-type-shortcuts" aria-label="快捷设备类型">{[{value:'',label:'全部设备'},{value:'printer',label:'打印机'},{value:'camera',label:'摄像机'},{value:'access_point',label:'无线 AP'},{value:'router',label:'路由器'},{value:'switch',label:'交换机'},{value:'desktop',label:'电脑'},{value:'mobile',label:'手机'}].map(t=><Button key={t.value} type={(params.get('discovery_type')||'')===t.value&&!dumbFilter?'primary':'default'} onClick={()=>shortcut(t.value)}>{t.label}</Button>)}<Button type={dumbFilter?'primary':'default'} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button></nav>
+      </div>
       <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending||position.isLocating} scroll={{x:1125}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,page:0});return}

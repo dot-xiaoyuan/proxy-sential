@@ -8,25 +8,23 @@ test('audited source gap stays readable at the three required viewports', async 
     await page.setViewportSize(viewport)
     for (const route of ['/cases', '/shared-access?tab=associations']) {
       await page.goto(route)
+      // 审计结论从列表顶部的常驻块改为标题行入口，展开后仍能逐条核对。
+      await page.getByRole('button', { name: '历史缺口' }).click()
       const notice = page.getByLabel('新存查链历史缺口')
       await expect(notice).toBeVisible()
-      // 审计结论默认收起，首屏先露出列表；收起高度不超过视口的四分之一。
-      const collapsed = await notice.boundingBox()
-      expect(collapsed?.height ?? 999, `${route} collapsed notice is too tall at ${viewport.width}px`).toBeLessThan(viewport.height * 0.25)
-      await notice.locator('summary').click()
       await expect(notice).toContainText('567,763,339 字节')
       await expect(notice).toContainText('44,764 条')
       await expect(notice).toContainText('此前审计取消 40,504 个主体')
-      const probe = await notice.evaluate(element => {
-        const style = getComputedStyle(element)
-        return { documentOverflow: document.documentElement.scrollWidth > innerWidth + 2, noticeOverflow: element.scrollWidth > element.clientWidth + 2, padding: style.paddingLeft, border: style.borderTopColor, textWrap: getComputedStyle(element.querySelector('p')!).overflowWrap }
-      })
+      const probe = await notice.evaluate(element => ({
+        documentOverflow: document.documentElement.scrollWidth > innerWidth + 2,
+        noticeOverflow: element.scrollWidth > element.clientWidth + 2,
+        textWrap: getComputedStyle(element.querySelector('p')!).overflowWrap,
+      }))
       expect(probe.documentOverflow).toBe(false)
       expect(probe.noticeOverflow).toBe(false)
-      expect(probe.padding).toBe(viewport.width === 390 ? '14px' : '20px')
-      expect(probe.border).toBe('rgb(226, 232, 240)')
       expect(probe.textWrap).toBe('anywhere')
       await page.screenshot({ path: `test-results/stream-gap-${route.startsWith('/cases') ? 'cases' : 'shared'}-${viewport.width}.png`, fullPage: true })
+      await page.keyboard.press('Escape')
     }
   }
   expect(errors).toEqual([])

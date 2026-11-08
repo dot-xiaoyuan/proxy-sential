@@ -21,6 +21,7 @@ import { Button,
   Form,
   Input,
   Modal,
+  Popover,
   Select,
   Space,
   Tabs,
@@ -130,8 +131,10 @@ export function SharedAccessPage() {
     {title:'阻断原因',key:'blocker',width:180,render:(_,source)=>blockers[source.blocker]??''},
   ]
   return <section className="page shared-access-page">
-    {can(session.data,'risks:read') && <StreamRiskCutoverNotice />}
-    <Tabs className="page-section-tabs" activeKey={tab} onChange={setTab} items={[{key:'routers',label:'路由器核验'},{key:'associations',label:'多终端接入'},{key:'devices',label:'共享终端档案'},{key:'history',label:'历史观察'},{key:'reviews',label:'账号归属核验'}]}/>
+    <div className="page-tabs-row">
+      <Tabs className="page-section-tabs" activeKey={tab} onChange={setTab} items={[{key:'routers',label:'路由器核验'},{key:'associations',label:'多终端接入'},{key:'devices',label:'共享终端档案'},{key:'history',label:'历史观察'},{key:'reviews',label:'账号归属核验'}]}/>
+      {can(session.data,'risks:read') && <Popover trigger="click" placement="bottomRight" content={<div className="list-popover"><StreamRiskCutoverNotice expanded fallback={<p className="list-popover-empty">当前没有历史缺口记录。</p>} /></div>}><Button size="small" className="page-tabs-action">历史缺口</Button></Popover>}
+    </div>
     {tab==='devices'&&<SharedDeviceProfiles/>}
     {tab==='routers'&&<RouterSharingCandidates/>}
     {(tab==='associations'||tab==='history')&&<>

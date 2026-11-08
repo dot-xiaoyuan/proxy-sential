@@ -7,6 +7,7 @@ import { Link,
 import { App as AntApp,
   Button,
   Input,
+  Popover,
   Select,
   Space,
   Switch,
@@ -34,7 +35,6 @@ export function CasesPage() {
   const dimensions=Object.fromEntries(['sensor_id','campus_id','department','person_type','ssid','vlan','ap','nas_ip'].map(key=>[key,params.get(key)||undefined])) as UniversityDimensions;
  const setDimensions=(value:UniversityDimensions)=>setParams(current=>{const next=new URLSearchParams(current);Object.entries(value).forEach(([key,value])=>value?next.set(key,value):next.delete(key));next.delete('page');next.delete('cursor');return next})
   const [selected,setSelected]=useState<string[]>([])
-  const [streamOpen,setStreamOpen]=useState(false)
   const [assignee,setAssignee]=useState('')
   const batch=useCasesBatchMutation();const session=useSession();const {message}=AntApp.useApp();const writable=can(session.data,'cases:write')
   const query=useCases({q,status:status||undefined,...dimensions,cursor:pagination.cursor,limit:pagination.pageSize,window:'7d',include_router_observations:includeRouterObservations})
@@ -50,17 +50,20 @@ export function CasesPage() {
   if(query.isLoading)return <AppLoadingState rows={8}/>
   if(query.isError||!query.data)return <AppErrorAlert title="风险处置队列读取失败"/>
   return <main className="page">
-    <StreamRiskCutoverNotice />
-    <AppTableBar searchPlaceholder="搜索 IP、账号、终端或院系" searchValue={q} onSearchChange={value=>{setQ(value)}} extra={<Space wrap><span className="case-router-toggle"><Switch aria-label="显示路由器观察" checked={includeRouterObservations} onChange={setIncludeRouterObservations}/><Typography.Text>显示路由器观察</Typography.Text></span><Select aria-label="案件状态" value={status} onChange={value=>{setStatus(value)}} options={[{value:'',label:'全部状态'},...Object.entries(statusNames).map(([value,label])=>({value,label}))]} /></Space>} />
-    <div className="list-secondary-tools">
-      <details className="surface filter-disclosure" onToggle={event=>setStreamOpen(event.currentTarget.open)}><summary>新流风险结果</summary>{streamOpen&&<StreamRiskCurrentPanel />}</details>
-      <details className="surface filter-disclosure"><summary>高校维度筛选</summary><div className="filter-disclosure-content"><UniversityDimensionFilters value={dimensions} onChange={(next)=>{setDimensions(next)}} /></div></details>
-    </div>
-    <section className="surface">
-    <AppListHeader title="风险案件" count={`${query.data.page.total} 条`} />
-    {writable&&selected.length>0&&<div className="case-batch-inline"><Typography.Text>已选 {selected.length} 项</Typography.Text><Input aria-label="批量负责人" placeholder="负责人账号" value={assignee} onChange={event=>setAssignee(event.target.value)}/><Button disabled={!assignee.trim()} loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'assign',assigneeId:assignee.trim()},{onSuccess:()=>{setSelected([]);void message.success('案件已批量分派')}})}>批量分派</Button><Button danger loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'close'},{onSuccess:()=>{setSelected([]);void message.success('已批量关闭符合条件的案件')}})}>批量关闭</Button></div>}
-    <AppTable columns={columns} dataSource={query.data.items} rowKey="case_id" rowSelection={writable?{selectedRowKeys:selected,onChange:(keys)=>setSelected(keys.map(String))}:undefined} tableLayout="fixed" scroll={{x:900}} />
-    <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={query.data.page.total} onChange={pagination.update} />
+    <section className="surface list-surface">
+      <div className="list-surface-head">
+        <AppListHeader title="风险案件" count={`${query.data.page.total} 条`} actions={
+          <div className="list-head-actions">
+            <Popover trigger="click" placement="bottomRight" content={<div className="list-popover"><StreamRiskCutoverNotice expanded fallback={<p className="list-popover-empty">当前没有历史缺口记录。</p>} /></div>}><Button size="small">历史缺口</Button></Popover>
+            <Popover trigger="click" placement="bottomRight" destroyOnHidden content={<div className="list-popover"><StreamRiskCurrentPanel /></div>}><Button size="small">新流风险</Button></Popover>
+            <Popover trigger="click" placement="bottomRight" content={<div className="list-popover list-popover-form"><UniversityDimensionFilters value={dimensions} onChange={(next)=>{setDimensions(next)}} /></div>}><Button size="small">高校维度</Button></Popover>
+          </div>
+        } />
+        <AppTableBar searchPlaceholder="搜索 IP、账号、终端或院系" searchValue={q} onSearchChange={value=>{setQ(value)}} extra={<Space wrap><span className="case-router-toggle"><Switch aria-label="显示路由器观察" checked={includeRouterObservations} onChange={setIncludeRouterObservations}/><Typography.Text>显示路由器观察</Typography.Text></span><Select aria-label="案件状态" value={status} onChange={value=>{setStatus(value)}} options={[{value:'',label:'全部状态'},...Object.entries(statusNames).map(([value,label])=>({value,label}))]} /></Space>} />
+      </div>
+      {writable&&selected.length>0&&<div className="case-batch-inline"><Typography.Text>已选 {selected.length} 项</Typography.Text><Input aria-label="批量负责人" placeholder="负责人账号" value={assignee} onChange={event=>setAssignee(event.target.value)}/><Button disabled={!assignee.trim()} loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'assign',assigneeId:assignee.trim()},{onSuccess:()=>{setSelected([]);void message.success('案件已批量分派')}})}>批量分派</Button><Button danger loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'close'},{onSuccess:()=>{setSelected([]);void message.success('已批量关闭符合条件的案件')}})}>批量关闭</Button></div>}
+      <AppTable columns={columns} dataSource={query.data.items} rowKey="case_id" rowSelection={writable?{selectedRowKeys:selected,onChange:(keys)=>setSelected(keys.map(String))}:undefined} tableLayout="fixed" scroll={{x:900}} />
+      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={query.data.page.total} onChange={pagination.update} />
     </section>
   </main>
 }

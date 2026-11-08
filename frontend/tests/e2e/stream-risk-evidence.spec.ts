@@ -7,7 +7,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     page.on('response', response => { if (response.url().includes('/risks/stream-') && response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
     await page.setViewportSize(viewport)
     await page.goto('/cases')
-    await page.locator('summary').filter({ hasText: '新流风险结果' }).click()
+    await page.getByRole('button', { name: '新流风险' }).click()
     const evidenceButton = page.getByRole('button', { name: '查看证据 1' })
     await expect(evidenceButton).toBeVisible()
     await evidenceButton.click()
