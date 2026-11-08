@@ -10,7 +10,6 @@ import { Button,
   Collapse,
   Input,
   Modal,
-  Popover,
   Select,
   Space,
   Tag,
@@ -188,25 +187,10 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     {title:'最近观测',key:'seen',width:110,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
     {title:'操作',key:'action',width:140,fixed:'right' as const,render:(_:unknown,item:Device)=><div className="terminal-row-actions"><Button type="link" onClick={()=>show(item)}>查看详情</Button></div>},
   ]
-  const overviewPanel = (
-<section className="surface discovery-overview" aria-label="发现设备总览" aria-busy={discoveryMetadata.isPending}>
-      <div className="discovery-overview-heading"><strong>设备类型总览</strong><Typography.Text type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 当前筛选 · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}</Typography.Text></div>
-      <div className="discovery-overview-row">
-      <div className="discovery-overview-metrics">
-        <div><span>发现设备数</span><strong>{metadataValue(discoveryMetadata.data?.total)}</strong></div>
-        <div><span>已识别具体类型</span><strong>{metadataValue(discoveryMetadata.data?.identified)}</strong></div>
-        <div><span>待核实</span><strong>{metadataValue(discoveryMetadata.data?.candidate)}</strong></div>
-        <div><span>类型冲突</span><strong>{metadataValue(discoveryMetadata.data?.conflict)}</strong></div>
-        <div><span>证据过期</span><strong>{metadataValue(discoveryMetadata.data?.expired)}</strong></div>
-      </div>
-      <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><span className="discovery-overview-type" key={item.device_type}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></span>):<Typography.Text type="secondary">{discoveryMetadata.data?'当前筛选下暂无明确类型':discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
-      </div>
-    </section>
-  )
 
   return <section className="passive-discovery-panel terminal-workspace">
     <div className="workspace-topbar">
-    <header className="terminal-workspace-header"><div><span className="terminal-eyebrow">设备中心 / 204 独立管理</span><Typography.Title level={3}>发现设备</Typography.Title><Typography.Text type="secondary">发现镜像中的设备，核对类型与识别依据。</Typography.Text></div><div className="terminal-header-actions"><Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refreshWorkspace}>刷新数据</Button><Popover trigger="click" placement="bottomRight" content={<div className="list-popover">{overviewPanel}</div>}><Button size="small">统计</Button></Popover></div></header>
+    <header className="terminal-workspace-header"><div><span className="terminal-eyebrow">设备中心 / 204 独立管理</span><Typography.Title level={3}>发现设备</Typography.Title><Typography.Text type="secondary">发现镜像中的设备，核对类型与识别依据。</Typography.Text></div><div className="terminal-header-actions"><Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refreshWorkspace}>刷新数据</Button></div></header>
     </div>
     {discoveryMetadata.isError&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}
     {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
@@ -231,6 +215,17 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         </div>:undefined}
       />
         <nav className="terminal-type-shortcuts" aria-label="快捷设备类型">{[{value:'',label:'全部设备'},{value:'printer',label:'打印机'},{value:'camera',label:'摄像机'},{value:'access_point',label:'无线 AP'},{value:'router',label:'路由器'},{value:'switch',label:'交换机'},{value:'desktop',label:'电脑'},{value:'mobile',label:'手机'}].map(t=><Button key={t.value} type={(params.get('discovery_type')||'')===t.value&&!dumbFilter?'primary':'default'} onClick={()=>shortcut(t.value)}>{t.label}</Button>)}<Button type={dumbFilter?'primary':'default'} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button></nav>
+      </div>
+      <div className="discovery-overview-strip" aria-label="发现设备总览" title={`${params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
+        <div className="discovery-overview-line">
+          <strong>共 {metadataValue(discoveryMetadata.data?.total)} 个设备</strong>
+          <span>已识别类型 {metadataValue(discoveryMetadata.data?.identified)}</span>
+          <span>待核实 {metadataValue(discoveryMetadata.data?.candidate)}</span>
+          <span>类型冲突 {metadataValue(discoveryMetadata.data?.conflict)}</span>
+          <span>证据过期 {metadataValue(discoveryMetadata.data?.expired)}</span>
+          <Typography.Text className="discovery-overview-caption" type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}</Typography.Text>
+        </div>
+        <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><span className="discovery-overview-type" key={item.device_type}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></span>):<Typography.Text type="secondary">{discoveryMetadata.data?'当前筛选下暂无明确类型':discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
       </div>
       <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending||position.isLocating} scroll={{x:1125}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
