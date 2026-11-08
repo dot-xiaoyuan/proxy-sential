@@ -218,7 +218,7 @@ func evidenceProtocolAllowsField(protocol, field string) bool {
 		return field == "bacnet_model" || field == "service_type"
 	case "http", "http_device":
 		return strings.HasPrefix(field, "http_") || field == "favicon_md5" || field == "user_agent"
-	case "tls":
+	case "tls", "tls_device":
 		return strings.HasPrefix(field, "tls_") || field == "ja3" || field == "ja4"
 	case "ssh":
 		return field == "ssh_banner"

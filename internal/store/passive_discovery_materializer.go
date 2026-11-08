@@ -206,7 +206,7 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
 		where += " AND source_event_type='dhcp'"
 	} else {
-		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','lldp','cdp','ieee1905_client_association','ieee1905_topology','ttl','http-device','snmp')"
+		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','lldp','cdp','ieee1905_client_association','ieee1905_topology','ttl','http-device','snmp','tls','ssl','x509')"
 	}
 	query := fmt.Sprintf(`SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,source,source_event_type,type,sensor_id,campus_id,subject_ip,subject_mac,observer_json,payload_json,flow_json,confidence FROM passive_discovery_events_v2 PREWHERE %s ORDER BY timestamp,event_id LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, limit)
 	raw, err := s.ch.query(ctx, query)
@@ -400,6 +400,20 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		}
 		o.Origin, o.Explanation, o.ValidUntil = "ndp", "IPv6 邻居发现地址声明", at.Add(10*time.Minute)
 		o.Confidence = "confirmed"
+	case "tls", "ssl", "x509":
+		// Device-side TLS: the certificate the server (device) presented. The
+		// event subject is the client, so the server address is the device.
+		serverIP := passiveString(event.Flow, "dst_ip")
+		subject := discovery.CleanReportedText(passiveString(event.Payload, "certificate_subject"))
+		issuer := discovery.CleanReportedText(passiveString(event.Payload, "certificate_issuer"))
+		if serverIP == "" || subject == "" || !scope.allows(serverIP) {
+			return discovery.Observation{}, "tls_device_out_of_scope"
+		}
+		o.Origin, o.Explanation, o.ValidUntil = "tls_device", "设备侧 TLS 证书主题", at.Add(24*time.Hour)
+		o.Confidence = "clue"
+		o.IP = serverIP
+		o.ModelName = subject
+		o.DeviceType = tlsCertDeviceType(subject, issuer)
 	case "snmp":
 		// SNMP agent identity: the system description names the exact product
 		// (printers, switches, routers). The subject is the agent address.
@@ -672,6 +686,24 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 		o.Domain = iface
 	}
 	return o, true
+}
+
+// tlsCertDeviceType maps well-known certificate subject/issuer families to a
+// device class. Generic web certificates (wildcards, public CAs) do not classify.
+func tlsCertDeviceType(subject, issuer string) string {
+	lower := strings.ToLower(subject + " " + issuer)
+	switch {
+	case strings.Contains(lower, "hikvision"), strings.Contains(lower, "dahua"), strings.Contains(lower, "axis"):
+		return "camera"
+	case strings.Contains(lower, "laserjet"), strings.Contains(lower, "officejet"), strings.Contains(lower, "printer"):
+		return "printer"
+	case strings.Contains(lower, "routeros"), strings.Contains(lower, "mikrotik"), strings.Contains(lower, "router"):
+		return "router"
+	case strings.Contains(lower, "unifi"), strings.Contains(lower, "ubiquiti"), strings.Contains(lower, "aruba"),
+		strings.Contains(lower, "access point"):
+		return "access_point"
+	}
+	return ""
 }
 
 // ssdpServerDeviceType maps well-known UPnP server product families to a

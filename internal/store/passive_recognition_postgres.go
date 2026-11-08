@@ -81,6 +81,20 @@ func (s *PostgresStore) PassiveDiscoveryRecognitionHints(ctx context.Context, en
  WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
    AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
    AND o.origin='http_device' AND coalesce(o.data->'evidence'->'payload'->>'title','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,'tls_device',o.observed_at,'tls_subject',coalesce(o.data->'evidence'->'payload'->>'certificate_subject','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='tls_device' AND coalesce(o.data->'evidence'->'payload'->>'certificate_subject','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,'tls_device',o.observed_at,'tls_issuer',coalesce(o.data->'evidence'->'payload'->>'certificate_issuer','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='tls_device' AND coalesce(o.data->'evidence'->'payload'->>'certificate_issuer','')<>''
 ), deduped AS (
  SELECT DISTINCT ON (endpoint_id,origin,field,lower(value))
    endpoint_id,observation_id,origin,observed_at,field,value
