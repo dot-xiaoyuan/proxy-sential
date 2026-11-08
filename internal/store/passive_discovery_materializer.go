@@ -621,7 +621,13 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	evidence.EventID = "dns-sd-txt-" + hex.EncodeToString(hash[:16])
 	evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
 	evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-	o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD TXT 型号自述", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
+	directMAC := passiveDirectResponderMAC(event)
+	if directMAC != "" {
+		evidence.Subject["mac"] = directMAC
+		evidence.Payload["l2_source_mac_direct"] = true
+		evidence.Payload["responder_l2_mac"] = directMAC
+	}
+	o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD TXT 型号自述", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
 	if o.Site == "" {
 		o.Site = sensor
 	}
@@ -870,7 +876,13 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])
 		evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
 		evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-		o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD 服务响应与地址记录自动关联", RuleVersion: discovery.RuleVersion, ObservedAt: observed, ValidUntil: until, Interface: iface, Evidence: evidence}
+		directMAC := passiveDirectResponderMAC(event)
+		if directMAC != "" {
+			evidence.Subject["mac"] = directMAC
+			evidence.Payload["l2_source_mac_direct"] = true
+			evidence.Payload["responder_l2_mac"] = directMAC
+		}
+		o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD 服务响应与地址记录自动关联", RuleVersion: discovery.RuleVersion, ObservedAt: observed, ValidUntil: until, Interface: iface, Evidence: evidence}
 		if o.Site == "" {
 			o.Site = sensor
 		}
@@ -1064,9 +1076,24 @@ WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id
 
 // Only a multicast PTR answer with a MAC logged from that responder's own
 // frame may establish a service-to-endpoint link without a DHCP lease.
+// passiveDirectResponderMAC returns the L2 source MAC of a multicast DNS
+// response from a device's own frame, if the parser marked it as direct.
+func passiveDirectResponderMAC(event normalized.Event) string {
+	if event.Source != "zeek" || event.Payload["l2_source_mac_direct"] != true {
+		return ""
+	}
+	destination, err := netip.ParseAddr(passiveString(event.Flow, "dst_ip"))
+	if err != nil || !destination.IsMulticast() {
+		return ""
+	}
+	return validPassiveMAC(passiveString(event.Payload, "responder_l2_mac"))
+}
+
 func passiveDirectResponderIdentity(o discovery.Observation) bool {
+	// A multicast DNS response is sent from the responder's own frame, so the
+	// logged L2 source MAC is frame-level ownership even when the observation
+	// came from a TXT or SRV answer instead of a PTR.
 	if o.Origin != "dns_sd" || o.Evidence.Source != "zeek" ||
-		passiveString(o.Evidence.Payload, "service_source") != "ptr_responder" ||
 		o.Evidence.Payload["l2_source_mac_direct"] != true ||
 		validPassiveMAC(passiveString(o.Evidence.Payload, "responder_l2_mac")) != validPassiveMAC(o.MAC) ||
 		validPassiveMAC(o.MAC) == "" || validPassiveMAC(passiveString(o.Evidence.Subject, "mac")) != validPassiveMAC(o.MAC) ||
