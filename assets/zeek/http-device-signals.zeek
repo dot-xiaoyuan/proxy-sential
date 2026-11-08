@@ -59,8 +59,11 @@ event http_entity_data(c: connection, is_orig: bool, length: count, data: string
     if ( ! c$ps_http_html )
         return;
     local keep = 4096;
-    if ( |c$ps_http_title_body| + |data| > keep )
-        data = data[:keep - |c$ps_http_title_body| < 0 ? 0 : keep - |c$ps_http_title_body|];
+    local remaining = keep - |c$ps_http_title_body|;
+    if ( remaining <= 0 )
+        return;
+    if ( |data| > remaining )
+        data = data[:remaining];
     c$ps_http_title_body = c$ps_http_title_body + data;
     local text = to_lower(c$ps_http_title_body);
     local start = strstr(text, "<title");
