@@ -915,7 +915,10 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 		}
 	}
 	raw, _ := json.Marshal(o)
-	if _, err := db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data WHERE EXCLUDED.observed_at>=discovery_observations.observed_at`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw); err != nil {
+	// service_instance is a plain column so the dedup does not need to extract
+	// the same JSON path for every row of a multi-gigabyte history.
+	serviceInstance := passiveString(o.Evidence.Payload, "service_instance")
+	if _, err := db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data,service_instance) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data,service_instance=EXCLUDED.service_instance WHERE EXCLUDED.observed_at>=discovery_observations.observed_at`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw, serviceInstance); err != nil {
 		return nil, err
 	}
 	return s.passiveObservationLink(ctx, db, o)
@@ -1300,7 +1303,7 @@ func (s *DBStore) cleanupPassiveObservations(ctx context.Context) error {
 			SELECT o.id FROM discovery_observations o
 			JOIN discovery_observations n ON n.origin='dns_sd' AND n.source_id=o.source_id
 			 AND n.data->>'ip'=o.data->>'ip'
-			 AND n.data->'evidence'->'payload'->>'service_instance'=o.data->'evidence'->'payload'->>'service_instance'
+			 AND n.service_instance=o.service_instance
 			 AND (n.observed_at>o.observed_at OR (n.observed_at=o.observed_at AND n.id>o.id))
 			WHERE o.origin='dns_sd' AND o.observed_at<now()-interval '2 days' LIMIT 5000)`,
 	} {
