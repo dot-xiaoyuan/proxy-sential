@@ -595,7 +595,7 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	if address == "" || !scope.allows(address) {
 		return discovery.Observation{}, false
 	}
-	if parsed, err := netip.ParseAddr(address); err != nil || (parsed.Is6() && parsed.IsLinkLocalUnicast()) {
+	if !passiveUsableAddress(address) {
 		return discovery.Observation{}, false
 	}
 	service := passiveServiceType(recordName)
@@ -627,6 +627,20 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 		o.Domain = iface
 	}
 	return o, true
+}
+
+// passiveUsableAddress reports whether an address can identify a device on the
+// discovery page. Link-local IPv6 cannot: it is scoped to one segment and has
+// no DHCP/ARP binding.
+func passiveUsableAddress(value string) bool {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || !address.IsValid() || address.IsUnspecified() || address.IsMulticast() || address.IsLoopback() {
+		return false
+	}
+	if address.Is6() && address.IsLinkLocalUnicast() {
+		return false
+	}
+	return true
 }
 
 // passiveNameDeviceType derives a class from the service instance name when
@@ -666,7 +680,7 @@ func passivePTRObservation(event normalized.Event, sensor, iface, recordName, in
 	service := passiveServiceType(recordName)
 	capabilities := passiveCapabilities(service)
 	address := passiveString(event.Subject, "ip")
-	if len(capabilities) == 0 || !scope.allows(address) {
+	if len(capabilities) == 0 || !scope.allows(address) || !passiveUsableAddress(address) {
 		return discovery.Observation{}, false
 	}
 	name := strings.TrimSpace(strings.Split(instance, "._")[0])
@@ -699,7 +713,7 @@ func passivePTRObservation(event normalized.Event, sensor, iface, recordName, in
 
 func (s *DBStore) passivePTRAddressObservations(ctx context.Context, db passiveDiscoveryDB, event normalized.Event, sensor, iface, host, address string, at, addressUntil time.Time, scope passiveDiscoveryScope) ([]discovery.Observation, error) {
 	token := passiveHostToken(host)
-	if token == "" || !scope.allows(address) {
+	if token == "" || !scope.allows(address) || !passiveUsableAddress(address) {
 		return nil, nil
 	}
 	rows, err := db.QueryContext(ctx, `SELECT record_name,record_value,least(valid_until,$4) FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_type='PTR' AND valid_until>$3 AND lower(record_value) LIKE $5`, sensor, iface, at, addressUntil, "%["+token+"]%")
@@ -816,6 +830,11 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		var until, observed time.Time
 		if err = rows.Scan(&instance, &target, &address, &until, &textValue, &observed, &srvEventID); err != nil {
 			return nil, "", err
+		}
+		// A service target resolved only to a link-local IPv6 address cannot be
+		// tied to a device by the page's DHCP/ARP bindings.
+		if !passiveUsableAddress(address) {
+			continue
 		}
 		service := passiveServiceType(instance)
 		capabilities := passiveCapabilities(service)
