@@ -23,6 +23,8 @@ redef record connection += {
     ps_http_server: string &optional;
     ps_http_title: string &optional;
     ps_http_title_seen: bool &default = F;
+    ps_http_title_body: string &default = "";
+    ps_http_html: bool &default = F;
 };
 
 event zeek_init()
@@ -35,40 +37,44 @@ event http_request(c: connection, method: string, original_URI: string, unescape
     c$ps_http_server = "";
     c$ps_http_title = "";
     c$ps_http_title_seen = F;
+    c$ps_http_title_body = "";
+    c$ps_http_html = F;
     }
 
 event http_header(c: connection, is_orig: bool, name: string, value: string)
     {
     if ( is_orig )
         return;
-    if ( to_upper(name) == "SERVER" )
+    local upper = to_upper(name);
+    if ( upper == "SERVER" )
         c$ps_http_server = value;
+    else if ( upper == "CONTENT-TYPE" && strstr(to_lower(value), "html") >= 0 )
+        c$ps_http_html = T;
     }
 
 event http_entity_data(c: connection, is_orig: bool, length: count, data: string)
     {
     if ( is_orig || c$ps_http_title_seen || ! c?$http || c$http$status_code != 200 )
         return;
-    if ( ! c$http?$resp_mime_types || |c$http$resp_mime_types| == 0 )
+    if ( ! c$ps_http_html )
         return;
-    local text = to_lower(data);
+    local keep = 4096;
+    if ( |c$ps_http_title_body| + |data| > keep )
+        data = data[:keep - |c$ps_http_title_body| < 0 ? 0 : keep - |c$ps_http_title_body|];
+    c$ps_http_title_body = c$ps_http_title_body + data;
+    local text = to_lower(c$ps_http_title_body);
     local start = strstr(text, "<title");
     if ( start < 0 )
-        {
-        # A title may start in a later chunk; keep at most a short window.
-        local tail = text;
-        if ( |tail| > 24 )
-            tail = sub_bytes(tail, |tail| - 24, 24);
-        c$ps_http_title = tail;
         return;
-        }
     local from = strstr(text[start:], ">");
     if ( from < 0 )
         return;
-    local rest = text[start + from + 1:];
-    local stop = strstr(rest, "</title>");
+    local rest = c$ps_http_title_body[start + from + 1:];
+    local stop = strstr(to_lower(rest), "</title>");
     if ( stop < 0 )
         {
+        if ( |rest| > 120 )
+            rest = rest[:120];
         c$ps_http_title = rest;
         return;
         }
@@ -93,6 +99,11 @@ event http_message_done(c: connection, is_orig: bool, stat: http_message_stat)
     if ( c?$ps_http_server && c$ps_http_server != "" )
         item$server = c$ps_http_server;
     if ( c?$ps_http_title && c$ps_http_title != "" )
-        item$title = sub_bytes(c$ps_http_title, 0, (|c$ps_http_title| < 120 ? |c$ps_http_title| : 120));
+        {
+        local title = strip(c$ps_http_title);
+        if ( |title| > 120 )
+            title = title[:120];
+        item$title = title;
+        }
     Log::write(LOG_HTTP_DEVICE, item);
     }
