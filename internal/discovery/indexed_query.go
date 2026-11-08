@@ -122,13 +122,21 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	if len(classifiedWhere) > 0 {
 		matchedWhere = " WHERE " + strings.Join(classifiedWhere, " AND ")
 	}
-	statement := `WITH candidate_rows AS (
+	statement := `WITH recognition AS MATERIALIZED (
+ SELECT endpoint_id,
+  coalesce(role,'') role,
+  coalesce(NULLIF(summary->>'device_type_confidence','')::double precision,confidence,0) profile_confidence,
+  CASE WHEN jsonb_array_length(coalesce(summary->'conflict_dimensions','[]'::jsonb))>0
+   THEN summary->'conflict_dimensions' ? 'device_type'
+   ELSE coalesce(conflict,false) END profile_conflict
+ FROM endpoint_recognition_summary
+), candidate_rows AS (
  SELECT l.*,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
  coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'') linked_endpoint,
- coalesce(rp.role,'') profile_role,` + indexedProfileConfidenceSQL("rp") + ` profile_confidence,
- CASE WHEN ` + indexedProfileConfidenceSQL("rp") + `>=0.8 AND NOT (` + indexedProfileConflictSQL("rp") + `) THEN coalesce(rp.role,'') ELSE '' END profile_type,
- (` + indexedProfileConflictSQL("rp") + `) AND coalesce(rp.role,'')<>'' profile_conflict,
- CASE WHEN NOT (` + indexedProfileConflictSQL("rp") + `) AND ` + indexedProfileConfidenceSQL("rp") + `>=0.4 AND ` + indexedProfileConfidenceSQL("rp") + `<0.8 THEN coalesce(rp.role,'') ELSE '' END profile_candidate_role
+ coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
+ CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT (coalesce(rec.profile_conflict,false)) THEN coalesce(rec.role,'') ELSE '' END profile_type,
+ (coalesce(rec.profile_conflict,false)) AND coalesce(rec.role,'')<>'' profile_conflict,
+ CASE WHEN NOT (coalesce(rec.profile_conflict,false)) AND coalesce(rec.profile_confidence,0)>=0.4 AND coalesce(rec.profile_confidence,0)<0.8 THEN coalesce(rec.role,'') ELSE '' END profile_candidate_role
  FROM discovery_observation_latest l
  -- MAC-matching links add no identity information. Their historical table is
  -- large; inspect it only for observations without a MAC or link exceptions.
@@ -143,7 +151,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
  AND dl.sensor_id=coalesce(l.data->>'node','') AND host(dl.ip)=coalesce(l.data->>'ip','')
  AND dl.campus_id=coalesce(l.data->'evidence'->'subject'->>'campus_id','')
  AND dl.endpoint_id='mac:'||lower(coalesce(l.data->>'mac',''))
- LEFT JOIN endpoint_recognition_summary rp ON rp.endpoint_id=coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'mac:'||lower(coalesce(l.data->>'mac','')))
+ LEFT JOIN recognition rec ON rec.endpoint_id=coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'mac:'||lower(coalesce(l.data->>'mac','')))
  WHERE ` + strings.Join(baseWhere, " AND ") + `
 ), candidate_grouped AS (
  SELECT identity_key,min(device_key COLLATE "C") device_key,max(observed_at) last_seen,

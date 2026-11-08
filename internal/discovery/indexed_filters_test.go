@@ -34,7 +34,7 @@ func TestIndexedTypeFilterUsesRecognitionBeforePagingAndKeepsOtherEvidence(t *te
 	now := time.Now().UTC()
 	o := Observation{ID: "arp", Origin: "arp", MAC: "00:11:22:33:44:55", Node: "s204", Domain: "mirror", VLAN: "10", ObservedAt: now, ValidUntil: now.Add(time.Hour)}
 	raw, _ := json.Marshal(o)
-	mock.ExpectQuery(`(?s)candidate_rows AS.*endpoint_recognition_summary.*candidate_source AS.*matched AS.*classification_status.*candidates AS.*LIMIT`).WillReturnRows(sqlmock.NewRows([]string{"identity_key", "device_key", "data", "endpoint_id", "role", "confidence", "conflict", "category"}).AddRow("identity", "device", raw, "mac:00:11:22:33:44:55", "access_point", .95, false, "network"))
+	mock.ExpectQuery(`(?s)endpoint_recognition_summary.*candidate_rows AS.*candidate_source AS.*matched AS.*classification_status.*candidates AS.*LIMIT`).WillReturnRows(sqlmock.NewRows([]string{"identity_key", "device_key", "data", "endpoint_id", "role", "confidence", "conflict", "category"}).AddRow("identity", "device", raw, "mac:00:11:22:33:44:55", "access_point", .95, false, "network"))
 	mock.ExpectQuery(`FROM passive_discovery_state`).WillReturnRows(sqlmock.NewRows([]string{"cursor_timestamp", "last_success_at", "last_error", "updated_at"}).AddRow(now.Add(-5*time.Minute), now.Add(-time.Minute), "", now))
 	page, err := (Repository{DB: db}).DevicesIndexed(context.Background(), DeviceQuery{Mode: "passive", DeviceType: "access_point", Protocol: "arp", State: "identified", Domain: "mirror", VLAN: "10", Limit: 20})
 	if err != nil {
