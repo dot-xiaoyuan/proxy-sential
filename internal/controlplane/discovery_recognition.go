@@ -24,6 +24,12 @@ type discoveryRecognition struct {
 	RuleVersion string   `json:"rule_version,omitempty"`
 	Source      string   `json:"source,omitempty"`
 	Evidence    []string `json:"evidence,omitempty"`
+	// Brand inference is separate from the device-type conclusion: it can be
+	// present while the type stays a clue, so the UI must show its status and
+	// confidence instead of presenting it as a confirmed brand.
+	BrandInferenceStatus     string  `json:"brand_inference_status,omitempty"`
+	BrandInferenceBrand      string  `json:"brand_inference_brand,omitempty"`
+	BrandInferenceConfidence float64 `json:"brand_inference_confidence,omitempty"`
 }
 
 // enrichDiscoveryRecognition joins the terminal recognition summary onto the
@@ -44,7 +50,10 @@ func enrichDiscoveryRecognition(ctx context.Context, db *sql.DB, page map[string
 	rows, err := db.QueryContext(ctx, `SELECT lower(primary_mac),os_family,
 CASE WHEN CASE WHEN jsonb_array_length(coalesce(summary->'conflict_dimensions','[]'::jsonb))>0 THEN summary->'conflict_dimensions' ? 'device_type' ELSE conflict END THEN '' ELSE role END,
 brand,model,coalesce(NULLIF(summary->>'device_type_confidence','')::double precision,confidence,0),rule_version,
-coalesce(summary->>'recognition_source',''),coalesce(summary->'recognition_evidence','[]'::jsonb)
+coalesce(summary->>'recognition_source',''),coalesce(summary->'recognition_evidence','[]'::jsonb),
+coalesce(summary->'brand_inference'->>'status',''),
+coalesce(summary->'brand_inference'->>'brand',''),
+coalesce(NULLIF(summary->'brand_inference'->>'confidence','')::double precision,0)
 FROM endpoint_recognition_summary
 WHERE lower(primary_mac)=ANY($1::text[])
   AND (os_family<>'' OR role<>'' OR brand<>'' OR model<>'')`, array)
@@ -58,7 +67,7 @@ WHERE lower(primary_mac)=ANY($1::text[])
 		var mac string
 		var item discoveryRecognition
 		var evidence []byte
-		if err = rows.Scan(&mac, &item.OSFamily, &item.DeviceType, &item.Brand, &item.Model, &item.Confidence, &item.RuleVersion, &item.Source, &evidence); err != nil {
+		if err = rows.Scan(&mac, &item.OSFamily, &item.DeviceType, &item.Brand, &item.Model, &item.Confidence, &item.RuleVersion, &item.Source, &evidence, &item.BrandInferenceStatus, &item.BrandInferenceBrand, &item.BrandInferenceConfidence); err != nil {
 			fmt.Fprintf(os.Stderr, "discovery recognition row failed: %v\n", err)
 			return
 		}

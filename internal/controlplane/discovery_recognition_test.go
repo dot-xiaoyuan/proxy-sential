@@ -21,8 +21,8 @@ func TestEnrichDiscoveryRecognitionJoinsByMAC(t *testing.T) {
 		{"id": "c"},
 	}}
 	mock.ExpectQuery(`SELECT lower\(primary_mac\)`).WithArgs("{aa:bb:cc:dd:ee:01,aa:bb:cc:dd:ee:02}").WillReturnRows(
-		sqlmock.NewRows([]string{"mac", "os_family", "role", "brand", "model", "confidence", "rule_version", "source", "evidence"}).
-			AddRow("aa:bb:cc:dd:ee:01", "Android", "mobile", "", "", 0.84, "offline-test", "ieee_oui", []byte(`["IEEE OUI: Example Vendor"]`)),
+		sqlmock.NewRows([]string{"mac", "os_family", "role", "brand", "model", "confidence", "rule_version", "source", "evidence", "brand_inference_status", "brand_inference_brand", "brand_inference_confidence"}).
+			AddRow("aa:bb:cc:dd:ee:01", "Android", "mobile", "", "", 0.84, "offline-test", "ieee_oui", []byte(`["IEEE OUI: Example Vendor"]`), "", "", 0),
 	)
 	enrichDiscoveryRecognition(context.Background(), db, page)
 	items := page["items"].([]map[string]any)
@@ -49,8 +49,8 @@ func TestEnrichDiscoveryRecognitionJoinsIndexedDeviceViews(t *testing.T) {
 	defer db.Close()
 	page := map[string]any{"items": []discovery.DeviceView{{ID: "arp-device", MAC: "AA:BB:CC:DD:EE:01"}}}
 	mock.ExpectQuery(`SELECT lower\(primary_mac\)`).WithArgs("{aa:bb:cc:dd:ee:01}").WillReturnRows(
-		sqlmock.NewRows([]string{"mac", "os_family", "role", "brand", "model", "confidence", "rule_version", "source", "evidence"}).
-			AddRow("aa:bb:cc:dd:ee:01", "", "access_point", "", "", 0.9, "replay", "ieee1905", []byte(`["IEEE 1905 网格拓扑声明"]`)),
+		sqlmock.NewRows([]string{"mac", "os_family", "role", "brand", "model", "confidence", "rule_version", "source", "evidence", "brand_inference_status", "brand_inference_brand", "brand_inference_confidence"}).
+			AddRow("aa:bb:cc:dd:ee:01", "", "access_point", "", "", 0.9, "replay", "ieee1905", []byte(`["IEEE 1905 网格拓扑声明"]`), "", "", 0),
 	)
 	enrichDiscoveryRecognition(context.Background(), db, page)
 	items, ok := page["items"].([]map[string]any)
