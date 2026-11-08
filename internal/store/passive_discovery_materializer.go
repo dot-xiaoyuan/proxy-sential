@@ -818,6 +818,12 @@ func (s *DBStore) materializeMDNS(ctx context.Context, db passiveDiscoveryDB, ev
 		}
 		result = append(result, linked...)
 	}
+	// The SRV/A join is only needed when the arriving record is an SRV or an
+	// address answer. PTR and TXT events are handled by their own paths and
+	// running the join for every mDNS answer was the dominant mDNS cost.
+	if recordType != "SRV" && recordType != "A" && recordType != "AAAA" {
+		return result, "", nil
+	}
 	rows, err := db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at),srv.event_id
 FROM passive_discovery_mdns_records srv
 JOIN passive_discovery_mdns_records addr ON addr.sensor_id=srv.sensor_id AND addr.interface_name=srv.interface_name AND addr.record_name=srv.record_value AND addr.record_type IN ('A','AAAA') AND addr.valid_until>$3

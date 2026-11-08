@@ -146,7 +146,8 @@ func TestPassiveMDNSRetainsSupportedServiceAnnouncement(t *testing.T) {
 		"service_target": "printer._ipp._tcp.local", "ttl": 120,
 	})
 	mock.ExpectExec("INSERT INTO passive_discovery_mdns_records").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT srv.record_name").WillReturnRows(sqlmock.NewRows([]string{"record_name", "record_value", "address", "valid_until", "record_text", "observed_at", "event_id"}))
+	// PTR answers create their observation directly; the SRV/A join only runs
+	// for SRV and address answers.
 	observations, reason, err := (&DBStore{}).materializeMDNS(context.Background(), db, event, scope)
 	if err != nil || reason != "" || len(observations) != 1 || observations[0].Origin != "dns_sd" || observations[0].DeviceType != "printer" {
 		t.Fatalf("supported printer service changed: observations=%v reason=%q err=%v", observations, reason, err)
