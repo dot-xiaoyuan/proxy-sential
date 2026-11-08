@@ -581,13 +581,24 @@ var mdnsInstanceAddress = regexp.MustCompile(`\(([0-9]{1,3}(?:\.[0-9]{1,3}){3})\
 // observation when the service instance embeds its own IPv4 address.
 func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, text string, at, validUntil time.Time, scope passiveDiscoveryScope) (discovery.Observation, bool) {
 	model := discovery.DNSSDModelFromTXT(text)
-	match := mdnsInstanceAddress.FindStringSubmatch(recordName)
-	if len(match) != 2 || !scope.allows(match[1]) {
+	address := ""
+	if match := mdnsInstanceAddress.FindStringSubmatch(recordName); len(match) == 2 {
+		address = match[1]
+	}
+	// Apple _device-info instances usually carry only the device name, so the
+	// responder address from the mDNS packet is the fallback attribution.
+	if address == "" {
+		address = passiveString(event.Subject, "ip")
+	}
+	if address == "" || !scope.allows(address) {
 		return discovery.Observation{}, false
 	}
 	service := passiveServiceType(recordName)
 	capabilities := passiveCapabilities(service)
 	deviceType := passiveModelDeviceType(model, text)
+	if deviceType == "" {
+		deviceType = passiveNameDeviceType(recordName)
+	}
 	if deviceType == "" {
 		deviceType = passivePrinterType(capabilities, recordName, text)
 	}
@@ -602,8 +613,8 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	evidence := event
 	evidence.EventID = "dns-sd-txt-" + hex.EncodeToString(hash[:16])
 	evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
-	evidence.Subject = map[string]any{"ip": match[1], "campus_id": passiveString(event.Subject, "campus_id")}
-	o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: match[1], Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD TXT 型号自述", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
+	evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
+	o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD TXT 型号自述", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
 	if o.Site == "" {
 		o.Site = sensor
 	}
@@ -611,6 +622,25 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 		o.Domain = iface
 	}
 	return o, true
+}
+
+// passiveNameDeviceType derives a class from the service instance name when
+// the model code is not one of the known families (Apple _device-info often
+// advertises a board code such as J181AP next to the local name "ipad").
+func passiveNameDeviceType(instance string) string {
+	lower := strings.ToLower(instance)
+	switch {
+	case strings.Contains(lower, "ipad"):
+		return "tablet"
+	case strings.Contains(lower, "iphone"):
+		return "mobile"
+	case strings.Contains(lower, "macbook"), strings.Contains(lower, "imac"), strings.Contains(lower, "mac-mini"),
+		strings.Contains(lower, "macmini"), strings.Contains(lower, "macstudio"), strings.Contains(lower, "mac-pro"):
+		return "desktop"
+	case strings.Contains(lower, "appletv"):
+		return "media_device"
+	}
+	return ""
 }
 
 func passiveHostToken(name string) string {
@@ -788,6 +818,9 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		deviceType := passivePrinterType(capabilities, instance, textValue)
 		if deviceType == "" {
 			deviceType = passiveModelDeviceType(model, textValue)
+		}
+		if deviceType == "" {
+			deviceType = passiveNameDeviceType(instance)
 		}
 		// A model-only advertisement (Apple _device-info, TV TXT) is still a
 		// useful observation even when it carries no service capability.

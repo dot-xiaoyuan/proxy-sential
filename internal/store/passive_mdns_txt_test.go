@@ -36,3 +36,14 @@ func parseParseScopeForTest(t *testing.T) (passiveDiscoveryScope, error) {
 	t.Helper()
 	return parsePassiveDiscoveryScope("10.0.0.0/8")
 }
+
+func TestPassiveTXTObservationFallsBackToResponderAddress(t *testing.T) {
+	scope, _ := parseParseScopeForTest(t)
+	at := time.Now().UTC()
+	text := "model=J181AP"
+	event := passiveTestEvent("mdns", "10.152.11.9", "", map[string]any{"is_response": true, "record_type": "TXT", "record_name": "ipad._device-info._tcp.local", "record_text": text, "ttl": 4500})
+	observation, ok := passiveTXTObservation(event, "campus-204", "enp3s0f0", "ipad._device-info._tcp.local", text, at, at.Add(time.Hour), scope)
+	if !ok || observation.IP != "10.152.11.9" || observation.DeviceType != "tablet" || observation.ModelName != "J181AP" {
+		t.Fatalf("device-info observation: ok=%v %+v", ok, observation)
+	}
+}
