@@ -914,10 +914,39 @@ func (s *DBStore) flushPassiveObservations(ctx context.Context, db passiveDiscov
 		return nil, nil
 	}
 	ids := make([]string, 0, len(pending))
+	macs := make([]string, 0, len(pending))
+	seenMAC := map[string]bool{}
 	for id := range pending {
 		ids = append(ids, id)
+		// A multicast service responder's own frame MAC is a low-confidence
+		// identity. Ensure the endpoint exists before the link insert joins it;
+		// otherwise the link is silently dropped for mDNS-only devices.
+		if mac := validPassiveMAC(pending[id].MAC); mac != "" && !seenMAC[mac] && !passiveRandomMAC(mac) {
+			seenMAC[mac] = true
+			macs = append(macs, mac)
+		}
 	}
 	sort.Strings(ids)
+	sort.Strings(macs)
+	if len(macs) > 0 {
+		rawMACs, err := json.Marshal(macs)
+		if err != nil {
+			return nil, err
+		}
+		// Commit on the pool, not the batch transaction: holding the endpoint
+		// row locks for the whole observation/link batch is the contention shape
+		// the ARP candidate registration already avoids.
+		if _, err = s.pg.db.ExecContext(ctx, `WITH incoming AS (
+ SELECT mac FROM jsonb_to_recordset($1::jsonb) AS r(mac text)
+)
+INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,identity_confidence,attributes)
+SELECT 'mac:'||incoming.mac,incoming.mac,'endpoint',now(),now(),0.55,'{"identity_source":"passive_mdns_l2_responder"}'::jsonb
+FROM incoming
+ORDER BY incoming.mac
+ON CONFLICT(endpoint_id) DO NOTHING`, string(rawMACs)); err != nil {
+			return nil, err
+		}
+	}
 	rows := make([]map[string]any, 0, len(ids))
 	links := make([]passiveLinkRow, 0, len(ids))
 	for _, id := range ids {
