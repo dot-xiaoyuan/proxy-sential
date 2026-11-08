@@ -47,3 +47,13 @@ func TestPassiveTXTObservationFallsBackToResponderAddress(t *testing.T) {
 		t.Fatalf("device-info observation: ok=%v %+v", ok, observation)
 	}
 }
+
+func TestPassiveTXTObservationSkipsLinkLocalResponder(t *testing.T) {
+	scope, _ := parseParseScopeForTest(t)
+	at := time.Now().UTC()
+	text := "model=J181AP"
+	event := passiveTestEvent("mdns", "fe80::1813:991:cb61:4405", "", map[string]any{"is_response": true, "record_type": "TXT", "record_name": "ipad._device-info._tcp.local", "record_text": text, "ttl": 4500})
+	if _, ok := passiveTXTObservation(event, "campus-204", "enp3s0f0", "ipad._device-info._tcp.local", text, at, at.Add(time.Hour), scope); ok {
+		t.Fatal("link-local responder must not create a TXT observation")
+	}
+}

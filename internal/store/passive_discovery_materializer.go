@@ -590,7 +590,12 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	if address == "" {
 		address = passiveString(event.Subject, "ip")
 	}
+	// A link-local IPv6 responder address cannot identify the device across
+	// the page, so the TXT observation waits for the IPv4 responder event.
 	if address == "" || !scope.allows(address) {
+		return discovery.Observation{}, false
+	}
+	if parsed, err := netip.ParseAddr(address); err != nil || (parsed.Is6() && parsed.IsLinkLocalUnicast()) {
 		return discovery.Observation{}, false
 	}
 	service := passiveServiceType(recordName)
@@ -607,7 +612,7 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	if deviceType == "" && len(capabilities) == 0 {
 		return discovery.Observation{}, false
 	}
-	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, recordName, text}, "\x00")))
+	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, recordName, address, text}, "\x00")))
 	name := strings.TrimSpace(strings.Split(recordName, "._")[0])
 	payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": recordName, "txt": text, "model": model, "ttl": int(validUntil.Sub(at).Seconds())}
 	evidence := event
