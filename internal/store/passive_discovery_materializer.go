@@ -929,21 +929,14 @@ func (s *DBStore) flushPassiveObservations(ctx context.Context, db passiveDiscov
 	sort.Strings(ids)
 	sort.Strings(macs)
 	if len(macs) > 0 {
-		rawMACs, err := json.Marshal(macs)
-		if err != nil {
-			return nil, err
-		}
 		// Commit on the pool, not the batch transaction: holding the endpoint
 		// row locks for the whole observation/link batch is the contention shape
 		// the ARP candidate registration already avoids.
-		if _, err = s.pg.db.ExecContext(ctx, `WITH incoming AS (
- SELECT mac FROM jsonb_to_recordset($1::jsonb) AS r(mac text)
-)
-INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,identity_confidence,attributes)
-SELECT 'mac:'||incoming.mac,incoming.mac,'endpoint',now(),now(),0.55,'{"identity_source":"passive_mdns_l2_responder"}'::jsonb
-FROM incoming
-ORDER BY incoming.mac
-ON CONFLICT(endpoint_id) DO NOTHING`, string(rawMACs)); err != nil {
+		if _, err := s.pg.db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,identity_confidence,attributes)
+SELECT 'mac:'||m,m,'endpoint',now(),now(),0.55,'{"identity_source":"passive_mdns_l2_responder"}'::jsonb
+FROM unnest($1::text[]) AS m
+ORDER BY m
+ON CONFLICT(endpoint_id) DO NOTHING`, macs); err != nil {
 			return nil, err
 		}
 	}
