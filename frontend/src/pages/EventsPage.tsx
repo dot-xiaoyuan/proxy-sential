@@ -89,7 +89,6 @@ export function EventsPage() {
       />
 
       {events.isError && <AppErrorAlert title="标准事件列表读取失败" />}
-      <details className="surface filter-disclosure"><summary>新流事件检索</summary><StreamEventsPanel /></details>
 
       <AppTableBar
         filterOptions={filterOptions}
@@ -110,7 +109,9 @@ export function EventsPage() {
         searchValue={searchParams.get('q') || ''}
       />
 
-      <details className="surface filter-disclosure">
+      <div className="list-secondary-tools">
+        <details className="surface filter-disclosure"><summary>新流事件检索</summary><StreamEventsPanel /></details>
+        <details className="surface filter-disclosure">
         <summary>高校维度与技术字段筛选</summary>
         <div className="filter-disclosure-content"><UniversityDimensionFilters value={query} onChange={(next) => updateQuery(setSearchParams, { ...query, ...next, cursor: undefined })} /></div>
         <div className="event-filter-panel filter-disclosure-content">
@@ -188,6 +189,7 @@ export function EventsPage() {
         </div>
         </div>
       </details>
+      </div>
 
       <section className="surface">
         <AppListHeader title="标准事件" count={`${events.data?.page.total ?? 0} 条`} />

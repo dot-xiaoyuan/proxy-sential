@@ -10,6 +10,10 @@ test('audited source gap stays readable at the three required viewports', async 
       await page.goto(route)
       const notice = page.getByLabel('新存查链历史缺口')
       await expect(notice).toBeVisible()
+      // 审计结论默认收起，首屏先露出列表；收起高度不超过视口的四分之一。
+      const collapsed = await notice.boundingBox()
+      expect(collapsed?.height ?? 999, `${route} collapsed notice is too tall at ${viewport.width}px`).toBeLessThan(viewport.height * 0.25)
+      await notice.locator('summary').click()
       await expect(notice).toContainText('567,763,339 字节')
       await expect(notice).toContainText('44,764 条')
       await expect(notice).toContainText('此前审计取消 40,504 个主体')

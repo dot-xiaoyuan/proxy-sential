@@ -16,12 +16,12 @@ test('redirects the legacy risk list to cases and opens a case', async ({ page }
 
 test('batch assigns selected cases from the queue', async ({ page }) => {
   await page.goto('/cases')
-  await page.locator('.ant-table-tbody .ant-checkbox-input').first().check()
+  await page.getByLabel('Select row 1').check({ force: true })
   await expect(page.getByText('已选 1 项')).toBeVisible()
   await page.getByLabel('批量负责人').fill('operator-campus-east')
   await page.getByRole('button', { name: '批量分派' }).click()
   await expect(page.getByText('案件已批量分派')).toBeVisible()
-  await expect(page.getByText('已选 0 项')).toBeVisible()
+  await expect(page.locator('.case-batch-inline')).toHaveCount(0)
 })
 
 test('submits a review label on IP detail', async ({ page }) => {
