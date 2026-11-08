@@ -684,7 +684,9 @@ func passivePTRObservation(event normalized.Event, sensor, iface, recordName, in
 		return discovery.Observation{}, false
 	}
 	name := strings.TrimSpace(strings.Split(instance, "._")[0])
-	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, "ptr", instance, address, event.EventID}, "\x00")))
+	// The observation ID is stable per service instance and address so repeated
+	// advertisements update one row instead of adding a new one per packet.
+	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, "ptr", instance, address}, "\x00")))
 	payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": instance, "service_source": "ptr_responder", "ttl": int(validUntil.Sub(at).Seconds())}
 	evidence := event
 	evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])
@@ -851,7 +853,9 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		if len(capabilities) == 0 && deviceType == "" && model == "" {
 			continue
 		}
-		hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, instance, target, address, srvEventID}, "\x00")))
+		// Stable per (instance, target, address): repeated SRV answers must not
+		// create a new observation row each time.
+		hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, "srv", instance, target, address}, "\x00")))
 		name := strings.TrimSpace(strings.Split(instance, "._")[0])
 		payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": instance, "service_target": target, "txt": textValue, "model": model, "ttl": int(until.Sub(observed).Seconds())}
 		evidence := event

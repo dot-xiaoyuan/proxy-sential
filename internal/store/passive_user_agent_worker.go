@@ -126,9 +126,11 @@ func (s *DBStore) attributePassiveUserAgents(ctx context.Context) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
+	// Order by endpoint_id; concurrent endpoint writers lock rows in the same
+	// order, which removes the dominant deadlock cycle on endpoint_entities.
 	result, err := s.pg.db.ExecContext(ctx, `UPDATE endpoint_entities e
  SET attributes=coalesce(e.attributes,'{}'::jsonb)||jsonb_build_object('user_agent',v.ua),updated_at=now()
- FROM (SELECT * FROM unnest($1::text[],$2::text[]) AS t(endpoint_id,ua)) v
+ FROM (SELECT * FROM unnest($1::text[],$2::text[]) AS t(endpoint_id,ua) ORDER BY endpoint_id) v
  WHERE e.endpoint_id=v.endpoint_id`, ids, agents)
 	if err != nil {
 		return 0, err
