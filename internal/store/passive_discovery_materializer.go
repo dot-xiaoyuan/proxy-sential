@@ -581,9 +581,6 @@ var mdnsInstanceAddress = regexp.MustCompile(`\(([0-9]{1,3}(?:\.[0-9]{1,3}){3})\
 // observation when the service instance embeds its own IPv4 address.
 func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, text string, at, validUntil time.Time, scope passiveDiscoveryScope) (discovery.Observation, bool) {
 	model := discovery.DNSSDModelFromTXT(text)
-	if model == "" {
-		return discovery.Observation{}, false
-	}
 	match := mdnsInstanceAddress.FindStringSubmatch(recordName)
 	if len(match) != 2 || !scope.allows(match[1]) {
 		return discovery.Observation{}, false
@@ -594,7 +591,9 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	if deviceType == "" {
 		deviceType = passivePrinterType(capabilities, recordName, text)
 	}
-	if len(capabilities) == 0 && deviceType == "" {
+	// A TXT advertisement without a classifiable model or package still needs a
+	// capability (casting/printing) to be worth an observation.
+	if deviceType == "" && len(capabilities) == 0 {
 		return discovery.Observation{}, false
 	}
 	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, recordName, text}, "\x00")))

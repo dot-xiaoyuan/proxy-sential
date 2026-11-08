@@ -20,3 +20,19 @@ func TestPassiveTXTObservationUsesModelAndInstanceAddress(t *testing.T) {
 		t.Fatalf("unexpected observation: %+v", observation)
 	}
 }
+
+func TestPassiveTXTObservationTypesAndroidTVPackage(t *testing.T) {
+	scope, _ := parseParseScopeForTest(t)
+	at := time.Now().UTC()
+	text := "port=35037 version=3.2 packagename=com.tcl.MultiScreenInteraction_TV htv=1 etv=1"
+	event := passiveTestEvent("mdns", "", "", map[string]any{"is_response": true, "record_type": "TXT", "record_name": "ff 43f265c-dab9(10.152.42.82)._leboremote._tcp.local", "record_text": text, "ttl": 4500})
+	observation, ok := passiveTXTObservation(event, "campus-204", "enp3s0f0", "ff 43f265c-dab9(10.152.42.82)._leboremote._tcp.local", text, at, at.Add(time.Hour), scope)
+	if !ok || observation.DeviceType != "media_device" || observation.IP != "10.152.42.82" || observation.ModelName != "" {
+		t.Fatalf("android tv txt observation: ok=%v %+v", ok, observation)
+	}
+}
+
+func parseParseScopeForTest(t *testing.T) (passiveDiscoveryScope, error) {
+	t.Helper()
+	return parsePassiveDiscoveryScope("10.0.0.0/8")
+}
