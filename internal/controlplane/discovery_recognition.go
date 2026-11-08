@@ -16,12 +16,14 @@ import (
 // fingerprint label and a protocol observation are different classes of
 // evidence and the UI must be able to tell them apart.
 type discoveryRecognition struct {
-	OSFamily    string  `json:"os_family,omitempty"`
-	DeviceType  string  `json:"device_type,omitempty"`
-	Brand       string  `json:"brand,omitempty"`
-	Model       string  `json:"model,omitempty"`
-	Confidence  float64 `json:"confidence,omitempty"`
-	RuleVersion string  `json:"rule_version,omitempty"`
+	OSFamily    string   `json:"os_family,omitempty"`
+	DeviceType  string   `json:"device_type,omitempty"`
+	Brand       string   `json:"brand,omitempty"`
+	Model       string   `json:"model,omitempty"`
+	Confidence  float64  `json:"confidence,omitempty"`
+	RuleVersion string   `json:"rule_version,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	Evidence    []string `json:"evidence,omitempty"`
 }
 
 // enrichDiscoveryRecognition joins the terminal recognition summary onto the
@@ -41,7 +43,8 @@ func enrichDiscoveryRecognition(ctx context.Context, db *sql.DB, page map[string
 	array := "{" + strings.Join(macs, ",") + "}"
 	rows, err := db.QueryContext(ctx, `SELECT lower(primary_mac),os_family,
 CASE WHEN CASE WHEN jsonb_array_length(coalesce(summary->'conflict_dimensions','[]'::jsonb))>0 THEN summary->'conflict_dimensions' ? 'device_type' ELSE conflict END THEN '' ELSE role END,
-brand,model,coalesce(NULLIF(summary->>'device_type_confidence','')::double precision,confidence,0),rule_version
+brand,model,coalesce(NULLIF(summary->>'device_type_confidence','')::double precision,confidence,0),rule_version,
+coalesce(summary->>'recognition_source',''),coalesce(summary->'recognition_evidence','[]'::jsonb)
 FROM endpoint_recognition_summary
 WHERE lower(primary_mac)=ANY($1::text[])
   AND (os_family<>'' OR role<>'' OR brand<>'' OR model<>'')`, array)
@@ -54,9 +57,16 @@ WHERE lower(primary_mac)=ANY($1::text[])
 	for rows.Next() {
 		var mac string
 		var item discoveryRecognition
-		if err = rows.Scan(&mac, &item.OSFamily, &item.DeviceType, &item.Brand, &item.Model, &item.Confidence, &item.RuleVersion); err != nil {
+		var evidence []byte
+		if err = rows.Scan(&mac, &item.OSFamily, &item.DeviceType, &item.Brand, &item.Model, &item.Confidence, &item.RuleVersion, &item.Source, &evidence); err != nil {
 			fmt.Fprintf(os.Stderr, "discovery recognition row failed: %v\n", err)
 			return
+		}
+		if len(evidence) > 0 {
+			_ = json.Unmarshal(evidence, &item.Evidence)
+		}
+		if len(item.Evidence) > 8 {
+			item.Evidence = item.Evidence[:8]
 		}
 		found[normalizeDiscoveryMAC(mac)] = item
 	}
