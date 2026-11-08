@@ -19,7 +19,6 @@ import type {
   Page,
   ProxyReviewQuery,
   RiskQuery,
-  UpdateEndpointRegistrationRequest,
   OrganizationKind,
 } from "./types";
 
@@ -402,27 +401,6 @@ export function useInventoryDetail(endpointId:string) {
 
 export function useEndpointObservations(endpointId:string,query:import('./types').EndpointObservationQuery, enabled = true) {
  return useQuery({queryKey:['endpoint-observations',endpointId,query],queryFn:({signal})=>api.endpointObservations(endpointId,query,signal),enabled:enabled&&!!endpointId,staleTime:30_000,placeholderData:(previous,previousQuery)=>{const old=previousQuery?.queryKey[2] as import('./types').EndpointObservationQuery|undefined;return previousQuery?.queryKey[1]===endpointId&&old&&['kind','value','source','start','end'].every(key=>old[key as keyof typeof old]===query[key as keyof typeof query])?previous:undefined},refetchOnWindowFocus:false,refetchOnReconnect:false})
-}
-
-export function useUpdateEndpointRegistration() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      endpointId,
-      payload,
-    }: {
-      endpointId: string;
-      payload: UpdateEndpointRegistrationRequest;
-    }) => api.updateEndpointRegistration(endpointId, payload),
-    onSuccess: (_, variables) => {
-      void client.invalidateQueries({queryKey:['inventory-detail',variables.endpointId]})
-      void client.invalidateQueries({
-        queryKey: ["endpoint-identity", variables.endpointId],
-      });
-      void client.invalidateQueries({ queryKey: ["devices"] });
-      void client.invalidateQueries({ queryKey: ["audit-logs"] });
-    },
-  });
 }
 
 export function useIpDevices(

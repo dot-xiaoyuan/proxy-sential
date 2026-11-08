@@ -103,14 +103,13 @@ it('keeps names and MACs together while retaining IPv4 and IPv6 in the address c
  expect(rows[2].querySelector('td[data-label="地址 / 接入"]')).toHaveTextContent('2001:db8::12')
 })
 
-it('retains independent identity counts, ownership and access conflicts with the unified visual layout',()=>{
+it('retains independent identity counts and access conflicts with the unified visual layout',()=>{
  fixture.total=123
  fixture.items=[{endpoint_id:'printer',primary_mac:'00:11:22:33:44:10',current_ip:'192.0.2.10',device_type:'printer',device_type_confidence:.95,brand:'HP',brand_confidence:.95,os_family:'Linux',os_family_confidence:.95,current_account:'user-a',owner_name:'图书馆',current_access_id:'slot=1;subslot=0;port=8;vlanid=204',current_access_conflict:true,ip_match:{ip:'192.0.2.9',matched_at:'2026-11-05T12:00:00Z',source:'ip_observation',is_recent_ip:false}}]
  setup('/devices?view=history&search_type=ip&q=192.0.2.9')
  expect(screen.getByText('123 个终端身份')).toBeVisible()
  expect(screen.getByRole('img',{name:'打印机'})).toBeVisible()
  expect(screen.getByText('Linux')).toBeVisible()
- expect(screen.getByText('图书馆')).toBeVisible()
  expect(screen.getByText('user-a')).toBeVisible()
  expect(screen.getByText('端口 1/0/8 · VLAN 204')).toBeVisible()
  expect(screen.getByText('接入位置冲突')).toBeVisible()

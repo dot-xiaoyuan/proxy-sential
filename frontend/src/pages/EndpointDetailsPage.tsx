@@ -6,19 +6,15 @@ import { DiscoveryEvidence } from "../entities/device/DiscoveryEvidence"
 import { DeviceBrandSummary, deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { DeviceNamePanel, DeviceNameView } from '../entities/device/DeviceNameView'
 import { BrandInferenceDetails } from '../entities/device/BrandInferenceView';
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AssociationOverview,
   EndpointTracePanel } from '../entities/device/EndpointTracePanel'
 import { Link,
   useParams,
   useSearchParams } from "react-router-dom";
-import {App as AntApp,
-  Button,
+import { Button,
   Descriptions,
-  Form,
-  Input,
   Progress,
-  Select,
   Skeleton,
   Space,
   Tabs,
@@ -32,13 +28,11 @@ import {
   useDeviceSignals,
   useEndpointIdentity,
   useSession,
-  useUpdateEndpointRegistration,
 } from "../shared/api/queries";
 import type {
   DeviceSignal,
   EndpointDomainEvidence,
   EndpointIdentityProfile,
-  UpdateEndpointRegistrationRequest,
 } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
 import { AppErrorAlert, AppFactBar, AppServerPagination, AppTable, formatDateTime } from '../shared/ui'
@@ -130,8 +124,6 @@ export function EndpointDetailsPage() {
   const back=safeReturnTo(returnTo,'/devices')
   const rawEndpointId = useParams().endpointId ?? "";
   const endpointId = decodeURIComponent(rawEndpointId);
-  const { message } = AntApp.useApp();
-  const [registrationForm] = Form.useForm<UpdateEndpointRegistrationRequest>();
   const activeTab = params.get("tab") || "overview";
   const [signalPage,setSignalPage]=useState(1);const [signalPageSize,setSignalPageSize]=useState(20)
   const [ecosystemPage,setEcosystemPage]=useState(1);const [ecosystemPageSize,setEcosystemPageSize]=useState(20)
@@ -140,12 +132,9 @@ export function EndpointDetailsPage() {
   const identity = {...detail,data:detail.data?.profile};
   const recognitionEvidence=useEndpointIdentity(endpointId,{limit:20},activeTab==='recognition');
   const session = useSession();
-  const updateRegistration = useUpdateEndpointRegistration();
 
   const profile = identity.data ?? fallbackEndpointProfile(endpointId);
-  const registeredDevice = manualRegistrationDetails(profile.endpoint.attributes)
   const canUpdateRegistration = can(session.data, "endpoints:write");
-  const mergeStatus = Form.useWatch("merge_status", registrationForm);
   const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? "";
   const latestAccess = profile?.recognition?.current_access_id ?? "";
   // 旧终端信号只按 IP 有界匹配。MAC 证据由上方流量观测独立查询。
@@ -174,25 +163,6 @@ export function EndpointDetailsPage() {
   const hasRecognition = Boolean(recognitionType || knownRecognition(recognition?.brand) || knownRecognition(recognition?.model) || knownRecognition(recognition?.os_family) || recognition?.brand_inference?.brand || recognition?.brand_reference?.brand || recognition?.discovery?.capabilities?.length || recognition?.recognition_conflict)
   const associationCounts=detail.data?.state.complete?detail.data.association_counts:undefined;
 
-  useEffect(() => {
-    if (!identity.data) {
-      return;
-    }
-    const endpoint = identity.data.endpoint;
-    registrationForm.setFieldsValue({
-      registration_status: endpoint.registration_status,
-      owner_account: endpoint.owner_account ?? "",
-      owner_name: endpoint.owner_name ?? "",
-      owner_department: endpoint.owner_department ?? "",
-      asset_tag: endpoint.asset_tag ?? "",
-      ownership_class: endpoint.ownership_class ?? "unknown",
-      registration_note: endpoint.registration_note ?? "",
-      merge_status: endpoint.merge_status ?? "active",
-      merged_into_endpoint_id: endpoint.merged_into_endpoint_id ?? "",
-      split_from_endpoint_id: endpoint.split_from_endpoint_id ?? "",
-      registration_details: manualRegistrationDetails(endpoint.attributes),
-    });
-  }, [identity.data, registrationForm]);
 
   if (identity.isLoading) {
     return <Skeleton active />;
@@ -207,18 +177,11 @@ export function EndpointDetailsPage() {
             {[profile.device_names_disabled ? '' : profile.device_name?.value,latestIP].filter(Boolean).join(' · ') || profile.endpoint.primary_mac || '终端详情'}
           </Typography.Title>
           <Typography.Text type="secondary">
-            终端登记、账号历史、IP 历史、接入位置和终端信号。
+            账号历史、IP 历史、接入位置和终端信号。
           </Typography.Text>
         </div>
         <Space wrap>
           <Link to={back}>返回终端列表</Link>
-          <Tag
-            color={registrationStatusColor(
-              profile.endpoint.registration_status,
-            )}
-          >
-            {registrationStatusText(profile.endpoint.registration_status)}
-          </Tag>
           {profile.recognition?.current_account_conflict&&<Tag color="orange">最新关联账号冲突</Tag>}
         </Space>
       </div>
@@ -253,7 +216,6 @@ export function EndpointDetailsPage() {
             { key: "recognition", label: "终端识别" },
             { key: "signals", label: "技术信号" },
             { key: "identity", label: "身份溯源" },
-            { key: "registration", label: "登记管理" },
           ]}
         />
       </section>
@@ -300,28 +262,6 @@ export function EndpointDetailsPage() {
                 {latestAccess && <Descriptions.Item label="最近观测接入">{latestAccess}</Descriptions.Item>}
                 {formatTime(profile.first_seen) && <Descriptions.Item label="首次发现">{formatTime(profile.first_seen)}</Descriptions.Item>}
                 {formatTime(profile.last_seen) && <Descriptions.Item label="最近观测">{formatTime(profile.last_seen)}</Descriptions.Item>}
-              </Descriptions>
-            </section>
-            <section className="surface endpoint-overview-card endpoint-registration-summary">
-              <div className="endpoint-overview-card-head"><Typography.Title level={4}>登记信息</Typography.Title>{profile.endpoint.registration_status !== 'registered' && <Button type="link" className="endpoint-registration-link" onClick={()=>setActiveTab('registration')}>补充登记</Button>}</div>
-              <Descriptions column={1} size="small">
-                <Descriptions.Item label="登记状态">
-                  {registrationStatusText(profile.endpoint.registration_status)}
-                </Descriptions.Item>
-                {profile.endpoint.owner_account && <Descriptions.Item label="责任账号">{profile.endpoint.owner_account}</Descriptions.Item>}
-                {profile.endpoint.owner_name && <Descriptions.Item label="责任人">{profile.endpoint.owner_name}</Descriptions.Item>}
-                {profile.endpoint.owner_department && <Descriptions.Item label="部门">{profile.endpoint.owner_department}</Descriptions.Item>}
-                {profile.endpoint.asset_tag && <Descriptions.Item label="资产编号">{profile.endpoint.asset_tag}</Descriptions.Item>}
-                {registeredDevice.name && <Descriptions.Item label="登记名称">{registeredDevice.name}</Descriptions.Item>}
-                {registeredDevice.device_type && <Descriptions.Item label="登记类型">{deviceTypeLabel(registeredDevice.device_type)}</Descriptions.Item>}
-                {registeredDevice.manufacturer && <Descriptions.Item label="登记厂商">{registeredDevice.manufacturer}</Descriptions.Item>}
-                {registeredDevice.model && <Descriptions.Item label="登记型号">{registeredDevice.model}</Descriptions.Item>}
-                {registeredDevice.serial_number && <Descriptions.Item label="序列号">{registeredDevice.serial_number}</Descriptions.Item>}
-                {registeredDevice.registered_ip && <Descriptions.Item label="登记 IP">{registeredDevice.registered_ip}（不代表当前地址）</Descriptions.Item>}
-                {registeredDevice.location && <Descriptions.Item label="登记位置">{registeredDevice.location}</Descriptions.Item>}
-                {ownershipClassText(profile.endpoint.ownership_class) && <Descriptions.Item label="终端归属">{ownershipClassText(profile.endpoint.ownership_class)}</Descriptions.Item>}
-                <Descriptions.Item label="合并状态">{mergeStatusText(profile.endpoint.merge_status)}</Descriptions.Item>
-                {profile.endpoint.registration_note && <Descriptions.Item label="备注">{profile.endpoint.registration_note}</Descriptions.Item>}
               </Descriptions>
             </section>
           </section>
@@ -403,171 +343,6 @@ export function EndpointDetailsPage() {
         </>
       )}
 
-      {activeTab === "registration" && (
-        <section className="surface endpoint-registration-editor">
-          <div className="surface-title-row">
-            <Typography.Title className="surface-title" level={4}>
-              更新终端登记
-            </Typography.Title>
-            <Typography.Text className="surface-subtitle" type="secondary">
-              保存后记录操作者、时间和审计日志
-            </Typography.Text>
-          </div>
-          {!canUpdateRegistration && (
-            <Alert
-              showIcon
-              title="当前会话没有 endpoints:write 权限，登记表单只读"
-              type="warning"
-            />
-          )}
-          <Form<UpdateEndpointRegistrationRequest>
-            className="endpoint-registration-form"
-            disabled={!canUpdateRegistration}
-            form={registrationForm}
-            layout="vertical"
-            onFinish={(payload) => {
-              updateRegistration.mutate(
-                { endpointId, payload },
-                {
-                  onError: (error) => message.error(error.message),
-                  onSuccess: () => message.success("终端登记已更新"),
-                },
-              );
-            }}
-          >
-            <div className="endpoint-registration-grid">
-              <Form.Item
-                label="登记状态"
-                name="registration_status"
-                rules={[{ required: true }]}
-              >
-                <Select
-                  options={[
-                    { label: "未登记", value: "unregistered" },
-                    { label: "已登记", value: "registered" },
-                    { label: "已忽略", value: "ignored" },
-                    { label: "已退役", value: "retired" },
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item label="责任账号" name="owner_account">
-                <Input placeholder="账号或工号" />
-              </Form.Item>
-              <Form.Item
-                dependencies={[
-                  "registration_status",
-                  "owner_account",
-                  "asset_tag",
-                ]}
-                label="责任人"
-                name="owner_name"
-                rules={[
-                  ({ getFieldValue }) => ({
-                    validator: (_, value) => {
-                      if (
-                        getFieldValue("registration_status") !== "registered" ||
-                        value ||
-                        getFieldValue("owner_account") ||
-                        getFieldValue("asset_tag")
-                      ) {
-                        return Promise.resolve();
-                      }
-                      return Promise.reject(
-                        new Error(
-                          "已登记终端至少填写责任账号、责任人或资产编号之一",
-                        ),
-                      );
-                    },
-                  }),
-                ]}
-              >
-                <Input placeholder="人工确认的责任人" />
-              </Form.Item>
-              <Form.Item label="部门" name="owner_department">
-                <Input placeholder="部门或管理单位" />
-              </Form.Item>
-              <Form.Item label="资产编号" name="asset_tag">
-                <Input placeholder="资产编号" />
-              </Form.Item>
-              <Form.Item label="登记设备名" name={['registration_details','name']}><Input maxLength={200} /></Form.Item>
-              <Form.Item label="登记设备类型" name={['registration_details','device_type']}><Select allowClear options={[
-                {label:'打印机',value:'printer'},{label:'摄像头',value:'camera'},{label:'无线接入点',value:'access_point'},{label:'路由器',value:'router'},{label:'交换机',value:'switch'},{label:'移动终端',value:'mobile'},{label:'平板',value:'tablet'},{label:'其他哑终端',value:'iot'}
-              ]}/></Form.Item>
-              <Form.Item label="登记厂商" name={['registration_details','manufacturer']}><Input maxLength={200} /></Form.Item>
-              <Form.Item label="登记型号" name={['registration_details','model']}><Input maxLength={200} /></Form.Item>
-              <Form.Item label="序列号" name={['registration_details','serial_number']}><Input maxLength={200} /></Form.Item>
-              <Form.Item label="登记 IP" name={['registration_details','registered_ip']} extra="登记资料，不代表当前在线地址"><Input /></Form.Item>
-              <Form.Item label="登记位置" name={['registration_details','location']}><Input maxLength={200} /></Form.Item>
-              <Form.Item
-                label="终端归属"
-                name="ownership_class"
-                rules={[{ required: true }]}
-              >
-                <Select
-                  options={[
-                    { label: "空值", value: "unknown" },
-                    { label: "个人终端（BYOD）", value: "byod" },
-                    { label: "学校资产", value: "school_asset" },
-                    { label: "公共终端", value: "public_terminal" },
-                    { label: "基础设施", value: "infrastructure" },
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item
-                label="合并状态"
-                name="merge_status"
-                rules={[{ required: true }]}
-              >
-                <Select
-                  options={[
-                    { label: "正常", value: "active" },
-                    { label: "已合并", value: "merged" },
-                    { label: "拆分来源", value: "split" },
-                  ]}
-                />
-              </Form.Item>
-              {mergeStatus === "merged" && (
-                <Form.Item
-                  label="合并到 Endpoint"
-                  name="merged_into_endpoint_id"
-                  rules={[
-                    { required: true, message: "请填写合并目标 Endpoint" },
-                  ]}
-                >
-                  <Input className="mono" placeholder="mac:xx:xx:xx:xx:xx:xx" />
-                </Form.Item>
-              )}
-              {mergeStatus === "split" && (
-                <Form.Item
-                  label="拆分自 Endpoint"
-                  name="split_from_endpoint_id"
-                >
-                  <Input className="mono" placeholder="原 Endpoint ID" />
-                </Form.Item>
-              )}
-              <Form.Item
-                className="endpoint-registration-note"
-                label="登记备注"
-                name="registration_note"
-              >
-                <Input.TextArea
-                  placeholder="记录人工确认依据、终端类型或例外原因"
-                  rows={3}
-                />
-              </Form.Item>
-            </div>
-            <div className="endpoint-registration-actions">
-              <Button
-                htmlType="submit"
-                loading={updateRegistration.isPending}
-                type="primary"
-              >
-                保存登记
-              </Button>
-            </div>
-          </Form>
-        </section>
-      )}
 
       {activeTab === "identity" && <EndpointTracePanel endpointId={endpointId}/>}
 
@@ -639,63 +414,11 @@ const signalColumns: ColumnsType<DeviceSignal> = [
   { title: "最近出现", dataIndex: "last_seen", width: 180, render: formatTime },
 ];
 
-function manualRegistrationDetails(attributes?: Record<string,unknown>) {
-  const raw=attributes?.manual_registration
-  if(!raw||typeof raw!=='object'||Array.isArray(raw)) return {}
-  const details=raw as Record<string,unknown>
-  const result: Record<string,string>={}
-  for(const key of ['name','device_type','manufacturer','model','serial_number','registered_ip','location']) {
-    if(typeof details[key]==='string') result[key]=details[key]
-  }
-  return result
-}
 
-function registrationStatusText(status?: string) {
-  switch (status) {
-    case "registered":
-      return "已登记";
-    case "ignored":
-      return "已忽略";
-    case "retired":
-      return "已退役";
-    default:
-      return "未登记";
-  }
-}
 
-function registrationStatusColor(status?: string) {
-  switch (status) {
-    case "registered":
-      return "green";
-    case "ignored":
-      return "default";
-    case "retired":
-      return "red";
-    default:
-      return "orange";
-  }
-}
 
 function recognitionSourceText(value: string) {
   return ({ dhcp_hostname_hint: 'DHCP 主机名线索', passive_discovery: '被动发现', ieee_oui: 'MAC 厂商库', fingerprint: '指纹库', fixture: '测试数据' } as Record<string, string>)[value] ?? value
-}
-
-function mergeStatusText(value?: string) {
-  return ({ active: '正常', merged: '已合并', split: '已拆分' } as Record<string, string>)[value ?? 'active'] ?? ''
-}
-
-function ownershipClassText(value?: string) {
-  return (
-    (
-      {
-        byod: "个人终端（BYOD）",
-        school_asset: "学校资产",
-        public_terminal: "公共终端",
-        infrastructure: "基础设施",
-        unknown: "",
-      } as Record<string, string>
-    )[value ?? "unknown"] ?? ""
-  );
 }
 
 function confidenceText(value?: number) {

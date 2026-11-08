@@ -29,7 +29,7 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const osFamily = params.get('os_family') || undefined
   const dimensionKeys = ['campus_id','department','person_type','ssid','vlan','ap','nas_ip'] as const
   const dimensions = Object.fromEntries(dimensionKeys.map(key=>[key,params.get(key)||undefined])) as UniversityDimensions
-  const columnOptions=[{label:'类型 / 品牌',value:'recognition'},{label:'操作系统',value:'os'},{label:'账号 / 登记 / 接入',value:'context'},{label:'最近观测',value:'observed'}]
+  const columnOptions=[{label:'类型 / 品牌',value:'recognition'},{label:'操作系统',value:'os'},{label:'账号 / 接入',value:'context'},{label:'最近观测',value:'observed'}]
   const [visibleColumns, setVisibleColumns] = useState<string[]>(()=>{try {const value=JSON.parse(localStorage.getItem('device-ledger-columns') || 'null');return Array.isArray(value)?value.filter(v=>['recognition','os','context','observed'].includes(v)):['recognition','os','context','observed']}catch{return ['recognition','os','context','observed']}})
   const [filtersOpen,setFiltersOpen]=useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
@@ -83,7 +83,7 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {showContext && row.current_access_id && <Typography.Text type="secondary" title={row.current_access_id}>{accessLocationLabel(row.current_access_id)}</Typography.Text>}
     </div> },
     ...(showProfile ? [{ title: '类型 / 品牌 / 系统', key: 'profile', width: 205, render: (_: unknown, row: DeviceInventoryListItem) => <div className="terminal-inventory-profile">{visibleColumns.includes('recognition') && <DeviceLedgerRecognition device={row} showBrandLogo />}{visibleColumns.includes('os') && <DeviceLedgerOS device={row} />}</div> }] : []),
-    ...(showContext ? [{ title: '账号 / 登记', key: 'access', width: 215, render: (_: unknown, row: DeviceInventoryListItem) => <OwnershipAccess device={row} /> }] : []),
+    ...(showContext ? [{ title: '账号 / 接入', key: 'access', width: 215, render: (_: unknown, row: DeviceInventoryListItem) => <OwnershipAccess device={row} /> }] : []),
     ...(visibleColumns.includes('observed') ? [{ title: '最近观测', key: 'observed', width: 105, render: (_: unknown, row: DeviceInventoryListItem) => <ObservedTime value={row.last_seen} /> }] : []),
     { title: '操作', key: 'action', width: 95, fixed: 'right', render: (_, row) => <div className="terminal-inventory-actions"><Link to={detailURL(row)}>查看详情</Link></div> },
   ]
@@ -173,7 +173,6 @@ function OwnershipAccess({ device }: { device: DeviceInventoryListItem }) {
   return <div className="device-context-cell">
     {device.current_account_conflict&&<div><Tag color="orange">关联账号冲突</Tag><Typography.Text className="brand-evidence-wrap">{(device.current_account_candidates??[]).join(' / ')}</Typography.Text></div>}
     {device.current_account?<div><Typography.Text type="secondary">关联账号</Typography.Text><Typography.Text className="brand-evidence-wrap">{device.current_account}</Typography.Text></div>:!device.current_account_conflict&&<div><Typography.Text type="secondary">关联账号</Typography.Text><span className="account-placeholder">无认证账号</span></div>}
-    {(device.owner_name||device.owner_account)&&<div><Typography.Text type="secondary">登记归属</Typography.Text><Typography.Text className="brand-evidence-wrap">{[device.owner_name,device.owner_account].filter(Boolean).join(' · ')}</Typography.Text></div>}
   </div>
 }
 

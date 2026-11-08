@@ -24,7 +24,6 @@ import type {
   DeviceListResponse,
   DeviceQuery,
   DeviceSignal,
-  EndpointEntity,
   Evidence,
   EventListResponse,
   StreamBodyRef,
@@ -60,7 +59,6 @@ import type {
   RuleReloadResult,
   Session,
   ShadowRunListResponse,
-  UpdateEndpointRegistrationRequest,
   ListQuery,
   DeviceFingerprintLibraryStatus,
   DeviceFingerprintBundleManifest,
@@ -214,11 +212,6 @@ export const api = {
     request<EndpointIdentityProfile>(
       `/endpoints/${encodeURIComponent(endpointId)}/identity${search(query)}`,
     ),
-  updateEndpointRegistration: (endpointId: string, payload: UpdateEndpointRegistrationRequest) =>
-    request<EndpointEntity>(`/endpoints/${encodeURIComponent(endpointId)}/registration`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
   aiRelayUsages: (query: AIRelayUsageQuery) => request<AIRelayUsagePage>(`/ai-relay/usages${search(query)}`),
   events: (query: EventQuery) => request<EventListResponse>(`/events${search(query)}`),
   streamEventIndex: (query: StreamEventIndexQuery) => request<StreamEventIndexPage>(`/events/stream-index${search(query)}`),

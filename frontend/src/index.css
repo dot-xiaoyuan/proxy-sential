@@ -2941,42 +2941,6 @@ pre.wrap-code {
   grid-column: 1 / -1;
 }
 
-.endpoint-registration-editor {
-  min-width: 0;
-}
-
-.endpoint-registration-form {
-  margin-top: 16px;
-}
-
-.endpoint-registration-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 16px;
-  min-width: 0;
-}
-
-.endpoint-registration-note {
-  grid-column: 1 / -1;
-}
-
-.endpoint-registration-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-@media (max-width: 560px) {
-  .endpoint-registration-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .endpoint-registration-note {
-    grid-column: auto;
-  }
-}
-
 .ingest-status-alert {
   margin-bottom: 16px;
 }
@@ -5850,15 +5814,6 @@ pre.wrap-code {
 .fresh-recognition-absent { margin-top: 20px; }
 @media (max-width: 767px) { .fresh-recognition-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 559px) { .fresh-recognition-card { padding: 14px; } }
-
-.terminal-registration-modal { top: 24px; }
-.terminal-registration-modal .ant-modal-container { display: flex; flex-direction: column; max-height: calc(100dvh - 48px); }
-.terminal-registration-modal .ant-modal-header,
-.terminal-registration-modal .ant-modal-footer { flex-shrink: 0; }
-.terminal-registration-modal .ant-modal-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.terminal-registration-modal .ant-modal-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.terminal-registration-modal .ant-modal-footer button { white-space: nowrap; flex-shrink: 0; }
-@media (max-width: 559px) { .terminal-registration-modal { top: 8px; } .terminal-registration-modal .ant-modal-container { max-height: calc(100dvh - 16px); padding: 14px; } }
 
 /* Summarize repeated discovery facts without dropping evidence references. */
 .discovery-evidence-summary { display: flex; flex-direction: column; gap: 10px; }

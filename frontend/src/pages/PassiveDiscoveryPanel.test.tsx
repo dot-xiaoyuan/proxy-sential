@@ -137,33 +137,6 @@ it('keeps type filters visible and collection diagnostics behind a disclosure', 
   mockReads();renderPanel()
   expect(screen.getByRole('combobox',{name:'设备类型'})).toBeVisible()
   expect(screen.getByText('采集与识别状态').closest('details')).not.toHaveAttribute('open')
-  expect(screen.getByRole('button',{name:'新增登记'})).toBeVisible()
-})
-
-it('starts an independent registration without requiring a mirrored device', async()=>{
-  mockReads();renderPanel()
-  fireEvent.click(screen.getByRole('button',{name:'新增登记'}))
-  fireEvent.change(screen.getByRole('textbox',{name:'MAC 地址'}),{target:{value:'00:11:22:33:44:55'}})
-  fireEvent.change(screen.getByRole('textbox',{name:'资产编号'}),{target:{value:'ASSET-204'}})
-  fireEvent.click(screen.getByRole('button',{name:'保存登记'}))
-  await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).includes('/endpoints/mac%3A00%3A11%3A22%3A33%3A44%3A55/registration'))).toBe(true))
-})
-
-it('registers a MAC discovery as a local fact without treating its observed IP as registered', async () => {
-  mockReads({items:{}}, {...device, mac:'02:00:00:20:40:01', name:'镜像名称'})
-  renderPanel()
-  await screen.findAllByText('192.0.2.10')
-  fireEvent.click(screen.getByRole('button',{name:'查看详情'}))
-  fireEvent.click(await screen.findByRole('button',{name:'登记此设备'}))
-  expect(await screen.findByText(/登记 IP 是资料字段/)).toBeInTheDocument()
-  fireEvent.change(screen.getByRole('textbox',{name:'资产编号'}),{target:{value:'204-ASSET-1'}})
-  fireEvent.click(screen.getByRole('button',{name:'保存登记'}))
-  await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).includes('/endpoints/mac%3A02%3A00%3A00%3A20%3A40%3A01/registration'))).toBe(true))
-  const [,options]=request.mock.calls.find(([path])=>String(path).includes('/endpoints/mac%3A02%3A00%3A00%3A20%3A40%3A01/registration'))!
-  const body=JSON.parse(options.body)
-  expect(body.registration_details.name).toBe('镜像名称')
-  expect(body.registration_details.registered_ip).toBeUndefined()
-  expect(body.asset_tag).toBe('204-ASSET-1')
 })
 
 it('loads one current IP port clue only when its evidence detail opens', async () => {
@@ -225,24 +198,6 @@ it('does not count expired or conflicting recognition as an explicit current typ
   renderPanel()
   await screen.findAllByText('192.0.2.10')
   expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
-})
-
-it('preserves owner account and identity merge relations when editing the registration ledger',async()=>{
-  mockReads()
-  const read=request.getMockImplementation()!
-  const row={endpoint_id:'mac:00:11:22:33:44:55',primary_mac:'00:11:22:33:44:55',registration_status:'registered',owner_account:'asset-owner',owner_name:'',owner_department:'实验室',asset_tag:'',ownership_class:'school_asset',registration_note:'核验记录',registration_details:{name:'实验室打印机',device_type:'printer',registered_ip:'192.0.2.20'},merge_status:'merged',merged_into_endpoint_id:'mac:00:11:22:33:44:66',split_from_endpoint_id:'',registration_updated_at:'2026-11-05T12:00:00Z'}
-  request.mockImplementation((path:string,options?:unknown)=>path.startsWith('/endpoints/registrations/metadata')?Promise.resolve({total:1}):path.startsWith('/endpoints/registrations?')?Promise.resolve({items:[row],has_more:false}):read(path,options))
-  renderPanel(['/?discovery_view=registrations'])
-  fireEvent.click(await screen.findByRole('button',{name:'编辑登记'}))
-  expect(screen.getByRole('textbox',{name:'责任人账号'})).toHaveValue('asset-owner')
-  fireEvent.change(screen.getByRole('textbox',{name:'部门'}),{target:{value:'信息中心'}})
-  fireEvent.click(screen.getByRole('button',{name:'保存登记'}))
-  await waitFor(()=>{
-    const call=request.mock.calls.find(([path,options])=>String(path).includes('/registration')&&(options as {method?:string})?.method==='POST')
-    expect(call).toBeDefined()
-    const payload=JSON.parse((call![1] as {body:string}).body)
-    expect(payload).toMatchObject({owner_account:'asset-owner',owner_department:'信息中心',merge_status:'merged',merged_into_endpoint_id:row.merged_into_endpoint_id,registration_details:row.registration_details})
-  })
 })
 
 it('removes previous rows when a filter changes after one discovery key was split into evidence groups',async()=>{

@@ -6,7 +6,6 @@ import { ipTrafficObservationHandlers } from './ipTrafficObservations'
 import { inventoryTraceHandlers } from './inventoryTrace'
 import { sharedAccessHandlers } from './sharedAccess'
 import { discoveryHandlers } from './discovery'
-import { terminalRegistrationHandlers } from './terminalRegistrations'
 import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './deviceRecognition'
 import { proxyProof } from './proxyProtocol'
 import { domainOnlyDevice, domainOnlyProfile } from './brandInference'
@@ -141,7 +140,6 @@ export const handlers = [
  ...behaviorReportHandlers,
  ...sharedAccessHandlers,
  ...discoveryHandlers,
- ...terminalRegistrationHandlers,
  ...routerObservationHandlers,
  http.get("/api/v1/events/proxy-fixture",()=>HttpResponse.json({event_id:"proxy-fixture",type:"proxy_transaction",source:"zeek",timestamp:proxyProof.response_at,proxy_protocol:proxyProof})),
   ...applicationHandlers,
