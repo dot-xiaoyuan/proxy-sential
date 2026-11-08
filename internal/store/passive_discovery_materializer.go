@@ -892,6 +892,69 @@ type passiveLinkRow struct {
 	Basis         json.RawMessage `json:"basis"`
 }
 
+// flushPassiveObservations resolves service-advertisement MACs, writes the
+// batch's observations in one statement and returns their identity links. The
+// per-observation upsert made the observe stage the batch hotspot; the
+// statement keeps the same conflict rule (30s throttle) and id order.
+func (s *DBStore) flushPassiveObservations(ctx context.Context, db passiveDiscoveryDB, pending map[string]discovery.Observation) ([]passiveLinkRow, error) {
+	if len(pending) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(pending))
+	for id := range pending {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	rows := make([]map[string]any, 0, len(ids))
+	links := make([]passiveLinkRow, 0, len(ids))
+	for _, id := range ids {
+		o := pending[id]
+		if o.ValidUntil.IsZero() {
+			o.ValidUntil = o.ObservedAt.Add(24 * time.Hour)
+		}
+		// Service advertisements usually carry an IP but no MAC. Reuse only an
+		// event-time DHCP/ARP/NDP binding; never manufacture a terminal identity.
+		if o.MAC == "" && o.IP != "" {
+			var mac string
+			err := db.QueryRowContext(ctx, `SELECT lower(data->>'mac')
+FROM discovery_observations
+WHERE data->>'node'=$1 AND data->>'ip'=$2 AND coalesce(data->>'mac','')<>''
+  AND origin IN ('dhcp','arp','ndp') AND observed_at<=$3 AND valid_until>$3
+ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&mac)
+			if err == nil {
+				o.MAC = validPassiveMAC(mac)
+			} else if err != sql.ErrNoRows {
+				return nil, err
+			}
+		}
+		link, err := s.passiveObservationLink(ctx, db, o)
+		if err != nil {
+			return nil, err
+		}
+		if link != nil {
+			links = append(links, *link)
+		}
+		raw, _ := json.Marshal(o)
+		rows = append(rows, map[string]any{
+			"id": o.ID, "device_key": o.Key(), "source_id": o.SourceID, "origin": o.Origin,
+			"observed_at": o.ObservedAt, "valid_until": o.ValidUntil, "withdrawn": o.Withdrawn,
+			"data": json.RawMessage(raw), "service_instance": passiveString(o.Evidence.Payload, "service_instance"),
+		})
+	}
+	payload, err := json.Marshal(rows)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data,service_instance)
+SELECT r.id,r.device_key,r.source_id,r.origin,r.observed_at,r.valid_until,r.withdrawn,r.data,r.service_instance
+FROM jsonb_to_recordset($1::jsonb) AS r(id text,device_key text,source_id text,origin text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,data jsonb,service_instance text)
+ORDER BY r.id
+ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data,service_instance=EXCLUDED.service_instance WHERE EXCLUDED.observed_at>=discovery_observations.observed_at+interval '30 seconds'`, string(payload)); err != nil {
+		return nil, err
+	}
+	return links, nil
+}
+
 func (s *DBStore) insertPassiveObservation(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) (*passiveLinkRow, error) {
 	if o.ID == "" || o.ObservedAt.IsZero() {
 		return nil, nil
@@ -1041,6 +1104,7 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	pendingARP := make([]discovery.Observation, 0, len(events))
 	pendingLinks := make([]passiveLinkRow, 0, len(events))
 	pendingIDs := make(map[string]int)
+	pendingObs := make(map[string]discovery.Observation, len(events))
 	flushARP := func() error {
 		if len(pendingARP) == 0 {
 			return nil
@@ -1113,22 +1177,28 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 			continue
 		}
 		for _, observation := range observations {
-			stage := time.Now()
-			link, linkErr := s.insertPassiveObservation(ctx, tx, observation)
-			sections["observe"] += time.Since(stage)
-			discovery.ObserveStage(ctx, "observe", stage, linkErr)
-			if linkErr != nil {
-				return stats, linkErr
+			if observation.ID == "" || observation.ObservedAt.IsZero() {
+				continue
 			}
-			if link != nil {
-				pendingLinks = append(pendingLinks, *link)
+			if existing, ok := pendingObs[observation.ID]; ok && !observation.ObservedAt.After(existing.ObservedAt) {
+				stats.Emitted++
+				continue
 			}
+			pendingObs[observation.ID] = observation
 			stats.Emitted++
 		}
 	}
 	if err := flushARP(); err != nil {
 		return stats, err
 	}
+	stage := time.Now()
+	links, observeErr := s.flushPassiveObservations(ctx, tx, pendingObs)
+	sections["observe"] += time.Since(stage)
+	discovery.ObserveStage(ctx, "observe", stage, observeErr)
+	if observeErr != nil {
+		return stats, observeErr
+	}
+	pendingLinks = append(pendingLinks, links...)
 	if err := measure("link_batch", func() error { return s.insertPassiveLinksBatch(ctx, tx, pendingLinks) }); err != nil {
 		return stats, err
 	}

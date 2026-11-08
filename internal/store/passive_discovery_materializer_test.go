@@ -76,7 +76,7 @@ func TestPassiveDiscoveryBatchUsesSingleTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(source)
-	for _, fragment := range []string{"processPassiveDiscoveryBatch", "BeginTx(ctx, nil)", "materializeMDNS(ctx, tx", "insertPassiveObservation(ctx, tx", "tx.Commit()"} {
+	for _, fragment := range []string{"processPassiveDiscoveryBatch", "BeginTx(ctx, nil)", "materializeMDNS(ctx, tx", "flushPassiveObservations(ctx, tx", "tx.Commit()"} {
 		if !strings.Contains(code, fragment) {
 			t.Fatalf("passive discovery batch transaction omitted %q", fragment)
 		}
