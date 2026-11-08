@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net"
 	"net/netip"
@@ -1265,6 +1266,47 @@ func (s *DBStore) RunPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 		defer close(liveDone)
 		s.runPassiveLivePTRMaterializer(ctx, sensorID)
 	}()
+	go s.runPassiveObservationRetention(ctx, sensorID)
 	s.runPassiveDiscoveryMaterializer(ctx, sensorID)
 	<-liveDone
+}
+
+// runPassiveObservationRetention applies the observation hot-window and folds
+// repeated DNS-SD advertisements into one row. The passive materializer owns
+// discovery_observations, so its process carries the retention; the legacy
+// discovery pipeline that also has a cleanup is not deployed on this sensor.
+func (s *DBStore) runPassiveObservationRetention(ctx context.Context, sensorID string) {
+	if err := s.cleanupPassiveObservations(ctx); err != nil && ctx.Err() == nil {
+		log.Printf("passive observation retention failed: %v", err)
+	}
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.cleanupPassiveObservations(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("passive observation retention failed: %v", err)
+			}
+		}
+	}
+}
+
+func (s *DBStore) cleanupPassiveObservations(ctx context.Context) error {
+	for _, q := range []string{
+		`DELETE FROM discovery_observations WHERE id IN(SELECT id FROM discovery_observations WHERE observed_at<now()-interval '30 days' LIMIT 5000)`,
+		`DELETE FROM discovery_observations WHERE id IN(
+			SELECT o.id FROM discovery_observations o
+			JOIN discovery_observations n ON n.origin='dns_sd' AND n.source_id=o.source_id
+			 AND n.data->>'ip'=o.data->>'ip'
+			 AND n.data->'evidence'->'payload'->>'service_instance'=o.data->'evidence'->'payload'->>'service_instance'
+			 AND (n.observed_at>o.observed_at OR (n.observed_at=o.observed_at AND n.id>o.id))
+			WHERE o.origin='dns_sd' AND o.observed_at<now()-interval '2 days' LIMIT 5000)`,
+	} {
+		if _, err := s.pg.db.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
