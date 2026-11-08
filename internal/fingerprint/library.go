@@ -411,6 +411,18 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 	}
 	result.Diagnostics.CandidateRules += catalogEvaluated
 	applySourceMatches(&result, sourceMatches)
+	// A hypervisor NIC is a virtual endpoint regardless of what the guest
+	// reports: the OUI belongs to the virtualization platform, not to guest
+	// hardware, so a Windows hostname must not turn it into a desktop.
+	if isHypervisorVendor(result.Vendor) && result.DeviceType != "virtual_machine" {
+		result.DeviceType = "virtual_machine"
+		result.DeviceTypeConfidence = .75
+		if result.Source == "" || result.Source == "ieee_oui" {
+			result.Source = "hypervisor_oui"
+		}
+		result.Evidence = append(result.Evidence, "虚拟化平台厂商: "+result.Vendor)
+		recordDimensionEvidence(&result, "hypervisor_oui", "vendor", result.Vendor, ruleValues{deviceType: "virtual_machine"}, .75)
+	}
 	return result
 }
 
