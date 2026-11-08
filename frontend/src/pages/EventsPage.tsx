@@ -201,7 +201,7 @@ export function EventsPage() {
           size="small"
         />
 
-		<AppServerPagination page={Math.floor(Number(query.cursor ?? 0) / (query.limit ?? 20)) + 1} pageSize={query.limit ?? 20} total={events.data?.page.total ?? 0} onChange={(page, pageSize) => updateQuery(setSearchParams, { ...query, limit: pageSize, cursor: String((page - 1) * pageSize) })} />
+		<AppServerPagination page={Math.floor(Number(query.cursor ?? 0) / (query.limit ?? 20)) + 1} pageSize={query.limit ?? 20} total={events.data?.page.total} onChange={(page, pageSize) => updateQuery(setSearchParams, { ...query, limit: pageSize, cursor: String((page - 1) * pageSize) })} />
       </section>
 
     </main>

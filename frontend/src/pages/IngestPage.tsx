@@ -333,7 +333,7 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
                   <AppServerPagination
                     page={diagnosticPage.page}
                     pageSize={diagnosticPage.pageSize}
-                    total={diagnostics.data?.page.total ?? 0}
+                    total={diagnostics.data?.page.total}
                     onChange={diagnosticPage.update}
                   />
                 </div>
@@ -356,7 +356,7 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
                   <AppServerPagination
                     page={errorPage.page}
                     pageSize={errorPage.pageSize}
-                    total={errors.data?.page.total ?? 0}
+                    total={errors.data?.page.total}
                     onChange={errorPage.update}
                   />
                 </div>
@@ -379,7 +379,7 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
                   <AppServerPagination
                     page={eventPage.page}
                     pageSize={eventPage.pageSize}
-                    total={events.data?.page.total ?? 0}
+                    total={events.data?.page.total}
                     onChange={eventPage.update}
                   />
                 </div>

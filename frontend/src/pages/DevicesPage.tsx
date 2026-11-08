@@ -9,20 +9,16 @@ import { can } from '../shared/auth/permissions'
 import { IpTrafficObservations } from '../widgets/IpTrafficObservations'
 import { InfoCircleOutlined, SettingOutlined } from '@ant-design/icons'
 
-import { DeviceMAC, DeviceLedgerRecognition, DeviceLedgerOS, deviceDetailsURL } from '../entities/device/DeviceInventoryCells'
+import { TerminalInventoryIdentity, DeviceLedgerRecognition, DeviceLedgerOS, deviceDetailsURL } from '../entities/device/DeviceInventoryCells'
 import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices, useSession } from '../shared/api/queries'
 import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
-import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useMediaQuery, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useServerPagination, useCursorPagePosition } from '../shared/ui'
 
 export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const [params, setParams] = useSearchParams()
   const session = useSession()
   const canReadTraffic = can(session.data, 'events:read')
   const pagination = useServerPagination()
-  const showProfile = useMediaQuery('(min-width: 1440px)') || useMediaQuery('(max-width: 559px)')
-  const showContext = useMediaQuery('(min-width: 1200px)') || useMediaQuery('(max-width: 559px)')
-  const showMac = useMediaQuery('(min-width: 1000px)') || useMediaQuery('(max-width: 559px)')
-  const cursorByPage = useRef<Record<number, string>>({ 1: '' })
   const view = params.get('view') === 'history' ? 'history' : 'recent'
   const quickWindow = (['10m','1h','24h','7d','30d'].includes(params.get('window') || '') ? params.get('window') : '24h') as ReportWindow
   const query = params.get('q') || ''
@@ -33,32 +29,25 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const osFamily = params.get('os_family') || undefined
   const dimensionKeys = ['campus_id','department','person_type','ssid','vlan','ap','nas_ip'] as const
   const dimensions = Object.fromEntries(dimensionKeys.map(key=>[key,params.get(key)||undefined])) as UniversityDimensions
-  const columnOptions=[{label:'类型 / 品牌',value:'recognition'},{label:'操作系统',value:'os'},{label:'关联账号 / 接入',value:'context'},{label:'最近观测',value:'observed'}]
+  const columnOptions=[{label:'类型 / 品牌',value:'recognition'},{label:'操作系统',value:'os'},{label:'账号 / 登记 / 接入',value:'context'},{label:'最近观测',value:'observed'}]
   const [visibleColumns, setVisibleColumns] = useState<string[]>(()=>{try {const value=JSON.parse(localStorage.getItem('device-ledger-columns') || 'null');return Array.isArray(value)?value.filter(v=>['recognition','os','context','observed'].includes(v)):['recognition','os','context','observed']}catch{return ['recognition','os','context','observed']}})
   const [filtersOpen,setFiltersOpen]=useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const change = useCallback((values: Record<string,string|undefined>)=>setParams(current=>{
     const next=new URLSearchParams(current)
     for(const [key,value] of Object.entries(values)){if(value)next.set(key,value);else next.delete(key)}
-    cursorByPage.current={1:''}
     next.set('page','1');next.delete('cursor');return next
   },{replace:true}),[setParams])
   useEffect(()=>{setSearchInput(query)},[query])
   useEffect(()=>{if(!params.has('view')||!params.has('window'))setParams(current=>{const next=new URLSearchParams(current);if(!next.has('view'))next.set('view','recent');if(!next.has('window'))next.set('window','24h');return next},{replace:true})},[params,setParams])
   const recognitionSummary = useDeviceRecognitionSummary(diagnosticsOpen)
-  const listQuery: DeviceQuery={ search_type:searchType, view, window: quickWindow, q: query, ecosystem, brand, os_family: osFamily, sensor_id:params.get('sensor_id')||undefined, ...dimensions, limit: pagination.pageSize, cursor: cursorByPage.current[pagination.page] || undefined }
-  const devices = useDevices(listQuery)
-  const metadata=useDeviceInventoryMetadata(listQuery,Boolean(devices.data)&&!devices.isPlaceholderData)
+  const listQuery: DeviceQuery={ search_type:searchType, view, window: quickWindow, q: query, ecosystem, brand, os_family: osFamily, sensor_id:params.get('sensor_id')||undefined, ...dimensions, limit: pagination.pageSize }
+  const position=useCursorPagePosition({path:'/device-inventory/position',query:new URLSearchParams(Object.entries(listQuery).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)])),page:pagination.page,pageSize:pagination.pageSize})
+  listQuery.cursor=position.cursor
+  const devices = useDevices(listQuery,position.ready)
+  const metadata=useDeviceInventoryMetadata(listQuery,true)
   const total=metadata.data?.total
-  useEffect(()=>{
-    const next=devices.data?.page?.next_cursor
-    if(next) cursorByPage.current[pagination.page+1]=next
-  },[devices.data,pagination.page])
-  const updatePagination=(nextPage:number,nextSize:number)=>{
-    if(nextPage===1||nextSize!==pagination.pageSize)cursorByPage.current={1:''}
-    pagination.update(nextPage,nextSize)
-  }
-  useEffect(()=>{if(total===undefined||metadata.isFetching||devices.isFetching||devices.isPlaceholderData||(devices.data?.items?.length??0)>0)return;const last=Math.max(1,Math.ceil(total/pagination.pageSize));if(pagination.page>last)pagination.update(last,pagination.pageSize)},[total,metadata.isFetching,devices.isFetching,devices.isPlaceholderData,devices.data,pagination])
+  const updatePagination=pagination.update
   const entered=useRef(performance.getEntriesByName('device-inventory-enter').at(-1)?.startTime??performance.now())
   const measured=useRef(false)
   useEffect(()=>{
@@ -68,7 +57,7 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   },[devices.data])
   const returnTo='/devices?'+params.toString()
   const detailURL=(row:DeviceInventoryListItem)=>deviceDetailsURL(row)+'?return_to='+encodeURIComponent(returnTo)
-  const items = devices.data?.items ?? []
+  const items = position.ready ? devices.data?.items ?? [] : []
   const matchSearch=items.some(row=>row.ip_match)
 
   const scopeControls = <>
@@ -83,15 +72,20 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const dimensionControl = <UniversityDimensionFilters value={dimensions} onChange={next=>change(Object.fromEntries(dimensionKeys.map(key=>[key,next[key]])))}/>
   const moreFilterCount = [osFamily,brand,ecosystem,...Object.values(dimensions)].filter(Boolean).length
   const moreFilters = <div className="filter-disclosure-content device-more-filters">{osControl}{brandControl}{ecosystemControl}{dimensionControl}</div>
-  const deviceName = (row: DeviceInventoryListItem) => devices.data?.device_names_disabled ? '' : row.device_name?.value || ''
+  const showProfile = visibleColumns.includes('recognition') || visibleColumns.includes('os')
+  const showContext = visibleColumns.includes('context')
   const deviceColumns: ColumnsType<DeviceInventoryListItem> = [
-    { title: 'IPv4', key: 'ip', width: 145, render: (_, row) => { const ipv4 = ipv4Address(row.current_ip); return <div className="device-row-ip-value">{ipv4 && <><Link className="mono device-row-ip-link" to={detailURL(row)}>{ipv4}</Link><Typography.Text className="device-copy-control" copyable={{ text: ipv4 }} /></>}{row.ip_match && <span className="device-match-caption">{row.ip_match.is_recent_ip ? '最近 IP 命中' : '历史 IP 命中'}</span>}</div> } },
-    { title: '终端名', key: 'name', width: 175, onCell: (row: DeviceInventoryListItem) => ({ className: deviceName(row) ? '' : 'mobile-empty-cell' }), render: (_, row) => { const name = deviceName(row); return name ? <><Link to={detailURL(row)} title={row.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>{row.device_name?.status === 'historical' && <span className="device-name-caption">历史名称</span>}</> : null } },
-    ...(showMac ? [{ title: 'MAC / IPv6', key: 'mac', width: 175, render: (_: unknown, row: DeviceInventoryListItem) => <>{row.primary_mac && <DeviceMAC device={row} href={detailURL(row)} />}{row.current_ip && !ipv4Address(row.current_ip) && <div className="device-row-ipv6"><span className="mono">{row.current_ip}</span></div>}</> }] : []),
-    ...(showProfile && (visibleColumns.includes('recognition') || visibleColumns.includes('os')) ? [{ title: '类型与系统', key: 'profile', width: 205, render: (_: unknown, row: DeviceInventoryListItem) => <>{visibleColumns.includes('recognition') && <DeviceLedgerRecognition device={row} />}{visibleColumns.includes('os') && <DeviceLedgerOS device={row} />}</> }] : []),
-    ...(showContext && visibleColumns.includes('context') ? [{ title: '账号与接入', key: 'access', width: 225, render: (_: unknown, row: DeviceInventoryListItem) => <OwnershipAccess device={row} /> }] : []),
+    { title: '终端 / MAC', key: 'identity', width: 260, render: (_, row) => <TerminalInventoryIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled} /> },
+    { title: '地址 / 接入', key: 'address', width: 225, render: (_, row) => <div className="terminal-inventory-network">
+      {row.current_ip && <div className="terminal-inventory-address"><Link className="mono" to={detailURL(row)}>{row.current_ip}</Link><Typography.Text className="device-copy-control" copyable={{ text: row.current_ip }} /></div>}
+      {row.ip_match && <span className="device-match-caption" title={`${row.ip_match.ip} · ${row.ip_match.matched_at}`}>{row.ip_match.is_recent_ip ? '最近 IP 命中' : '历史 IP 命中'}</span>}
+      {showContext && row.current_access_conflict && <Tag color="orange">接入位置冲突</Tag>}
+      {showContext && row.current_access_id && <Typography.Text type="secondary" title={row.current_access_id}>{accessLocationLabel(row.current_access_id)}</Typography.Text>}
+    </div> },
+    ...(showProfile ? [{ title: '类型 / 品牌 / 系统', key: 'profile', width: 205, render: (_: unknown, row: DeviceInventoryListItem) => <div className="terminal-inventory-profile">{visibleColumns.includes('recognition') && <DeviceLedgerRecognition device={row} showBrandLogo />}{visibleColumns.includes('os') && <DeviceLedgerOS device={row} />}</div> }] : []),
+    ...(showContext ? [{ title: '账号 / 登记', key: 'access', width: 215, render: (_: unknown, row: DeviceInventoryListItem) => <OwnershipAccess device={row} /> }] : []),
     ...(visibleColumns.includes('observed') ? [{ title: '最近观测', key: 'observed', width: 105, render: (_: unknown, row: DeviceInventoryListItem) => <ObservedTime value={row.last_seen} /> }] : []),
-    { title: '操作', key: 'action', width: 85, render: (_, row) => <Link to={detailURL(row)}>查看详情</Link> },
+    { title: '操作', key: 'action', width: 95, fixed: 'right', render: (_, row) => <div className="terminal-inventory-actions"><Link to={detailURL(row)}>查看详情</Link></div> },
   ]
   const inlineBar = (
     <AppTableBar
@@ -108,7 +102,7 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       extra={timeControl}
     />
   )
-  return <section className={embedded ? "device-inventory-page" : "page device-inventory-page"}>
+  return <section className={embedded ? "device-inventory-page terminal-inventory-page" : "page device-inventory-page terminal-inventory-page"}>
     {!embedded&&<header className="device-page-header"><Typography.Title level={3}>终端列表</Typography.Title><div className="device-header-actions"><Link to="/devices?tab=network">网络设备</Link>{scopeControls}</div></header>}
     {inlineBar}
     {searchType==='account'&&<Typography.Text className="device-list-note" type="secondary">账号精确匹配最新观测候选，不代表在线或登记责任人；历史账号请进入详情溯源。</Typography.Text>}
@@ -135,8 +129,9 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       {matchSearch&&<Typography.Paragraph className="device-list-note" type="secondary">精确 IP 匹配 · {view==='recent'?'所选时间内的观测与会话':'全部历史关联'}</Typography.Paragraph>}
       {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && <Alert type="info" showIcon title="当前检索条件下没有终端身份结果" description={canReadTraffic ? '下方按 IP 展示流量观测；握手 MAC 是终端候选线索，需结合身份与接入证据核实归属。' : '当前身份与地址索引中没有该 IP 的关联记录。'} />}
       {devices.isLoading ? <AppLoadingState rows={8} /> : devices.isError && !devices.data ? <AppErrorAlert title="终端列表读取失败" message={devices.error.message} /> : <>
-        <AppTable rowKey="endpoint_id" columns={deviceColumns} dataSource={items} scroll={{ x: 145 + 175 + (showMac ? 175 : 0) + (showProfile ? 205 : 0) + (showContext ? 225 : 0) + 105 + 85 }} locale={{ emptyText: '没有匹配的终端' }} />
-        {(()=>{const derivedTotal=devices.data?.page.next_cursor?pagination.page*pagination.pageSize+1:(pagination.page-1)*pagination.pageSize+items.length;return <AppServerPagination cursorMode disabled={devices.isPlaceholderData} page={pagination.page} pageSize={pagination.pageSize} total={total??derivedTotal} totalText={total===undefined?`第 ${pagination.page} 页 · 已加载 ${(pagination.page-1)*pagination.pageSize+items.length} 条`:`共 ${total} 条`} onChange={updatePagination}/>})()}
+        <AppTable className="terminal-inventory-table" rowKey="endpoint_id" columns={deviceColumns} dataSource={items} tableLayout="fixed" scroll={{ x: deviceColumns.reduce((width, column) => width + Number(column.width ?? 0), 0) }} locale={{ emptyText: '没有匹配的终端' }} />
+        {position.isError&&<AppErrorAlert title="页码定位失败" message={`${position.error.message}（请求第 ${pagination.page} 页）`} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
+        <AppServerPagination disabled={devices.isFetching||devices.isPlaceholderData||position.isLocating} page={pagination.page} pageSize={pagination.pageSize} total={total} totalText={total===undefined?(metadata.isError?'数量读取失败':'正在读取总数'):`共 ${total} 条`} onChange={updatePagination}/>
       </>}
     </section>
     {isIPAddress(query) && pagination.page === 1 && !devices.isFetching && !devices.isError && items.length === 0 && canReadTraffic && <IpTrafficObservations key={query.trim()} ip={query.trim()} />}
@@ -177,10 +172,8 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
 function OwnershipAccess({ device }: { device: DeviceInventoryListItem }) {
   return <div className="device-context-cell">
     {device.current_account_conflict&&<div><Tag color="orange">关联账号冲突</Tag><Typography.Text className="brand-evidence-wrap">{(device.current_account_candidates??[]).join(' / ')}</Typography.Text></div>}
-    {device.current_access_conflict&&<Tag color="orange">接入位置冲突</Tag>}
     {device.current_account?<div><Typography.Text type="secondary">关联账号</Typography.Text><Typography.Text className="brand-evidence-wrap">{device.current_account}</Typography.Text></div>:!device.current_account_conflict&&<div><Typography.Text type="secondary">关联账号</Typography.Text><span className="account-placeholder">无认证账号</span></div>}
     {(device.owner_name||device.owner_account)&&<div><Typography.Text type="secondary">登记归属</Typography.Text><Typography.Text className="brand-evidence-wrap">{[device.owner_name,device.owner_account].filter(Boolean).join(' · ')}</Typography.Text></div>}
-    {device.current_access_id&&<div><Typography.Text type="secondary">接入位置</Typography.Text><Typography.Text className="brand-evidence-wrap" title={device.current_access_id}>{accessLocationLabel(device.current_access_id)}</Typography.Text></div>}
   </div>
 }
 
@@ -188,12 +181,6 @@ function accessLocationLabel(value: string) {
   const fields = Object.fromEntries([...value.matchAll(/(?:^|;)(slot|subslot|port|vlanid)=([^;]+)/g)].map(([,key,item])=>[key,item]))
   if (fields.slot && fields.subslot && fields.port && fields.vlanid) return `端口 ${fields.slot}/${fields.subslot}/${fields.port} · VLAN ${fields.vlanid}`
   return value
-}
-
-function ipv4Address(value?: string) {
-  if (!value) return ''
-  const octets=value.split('.')
-  return octets.length===4&&octets.every(part=>/^\d{1,3}$/.test(part)&&Number(part)<=255) ? value : ''
 }
 
 function ObservedTime({ value }: { value?: string }) {

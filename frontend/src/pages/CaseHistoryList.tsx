@@ -1,4 +1,4 @@
-import { AppErrorAlert, formatDateTime } from '../shared/ui'
+import { AppErrorAlert, AppServerPagination, formatDateTime } from '../shared/ui'
 import { useState } from 'react';
 import { Button, Typography } from 'antd';
 import { useCaseHistory } from '../shared/api/queries';
@@ -10,13 +10,14 @@ function recordKey(row: CaseHistoryRow) {
 }
 export function CaseHistoryList({ caseId, kind, total }: { caseId: string; kind: CaseHistoryKind; total?: number }) {
   const [expanded, setExpanded] = useState(false);
-  const query = useCaseHistory(caseId, kind, expanded);
+  const [page,setPage]=useState(1),[pageSize,setPageSize]=useState(20);
+  const query = useCaseHistory(caseId, kind, expanded, String((page-1)*pageSize), pageSize);
   return <section className="case-history-section">
     <Button onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '查看'}{names[kind]}{total !== undefined ? `（${total}）` : ''}</Button>
     {expanded && <>
       {query.isError && <AppErrorAlert title="历史读取失败" action={<Button onClick={() => query.refetch()}>重试</Button>} />}
       <div className="case-history-list">
-        {query.data?.pages.flatMap(page => page.items).map(row => <article className="case-history-record" key={recordKey(row)}>
+        {query.data?.items.map(row => <article className="case-history-record" key={recordKey(row)}>
           <div className="case-history-meta"><Typography.Text className="case-history-id">{recordKey(row)}</Typography.Text><Typography.Text type="secondary" className="case-history-time">{formatDateTime(row.created_at)}</Typography.Text></div>
           {'snapshot_id' in row ? <>
             {row.evidence.shared_access ? <>
@@ -38,8 +39,8 @@ export function CaseHistoryList({ caseId, kind, total }: { caseId: string; kind:
           </> : 'comment_id' in row ? <Typography.Paragraph>{row.author_id} · {row.body}</Typography.Paragraph> : <Typography.Paragraph>{row.actor_id} · {row.type}</Typography.Paragraph>}
         </article>)}
       </div>
-      {query.isPending ? <Typography.Text type="secondary">正在加载历史…</Typography.Text> : query.data?.pages.every(page => page.items.length === 0) ? <Typography.Text type="secondary">暂无记录</Typography.Text> : null}
-      {query.hasNextPage && <Button loading={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>加载更早记录</Button>}
+      {query.isPending ? <Typography.Text type="secondary">正在加载历史…</Typography.Text> : query.data?.items.length === 0 ? <Typography.Text type="secondary">暂无记录</Typography.Text> : null}
+      <AppServerPagination disabled={query.isFetching} page={page} pageSize={pageSize} total={query.data?.page.total} totalText={query.isError?'数量读取失败':undefined} onChange={(next,size)=>{setPage(next);setPageSize(size)}}/>
     </>}
   </section>;
 }

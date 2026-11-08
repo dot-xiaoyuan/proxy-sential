@@ -4,7 +4,7 @@ import { Button, Input } from 'antd'
 
 import { api } from '../shared/api/client'
 import type { StreamEventIndexItem, StreamEventIndexQuery } from '../shared/api/types'
-import { AppErrorAlert, formatDateTime } from '../shared/ui'
+import { AppErrorAlert, AppServerPagination, useCursorPagePosition, usePaginationMetadata, formatDateTime } from '../shared/ui'
 
 function localMinute(value: Date) {
   const pad = (part: number) => String(part).padStart(2, '0')
@@ -25,14 +25,16 @@ export function StreamEventsPanel() {
   const [to, setTo] = useState(range.to)
   const [validation, setValidation] = useState('')
   const [submitted, setSubmitted] = useState<Omit<StreamEventIndexQuery, 'cursor'> | null>(null)
-  const [cursor, setCursor] = useState('')
-  const [previous, setPrevious] = useState<string[]>([])
+  const [pageNumber,setPageNumber]=useState(1)
+  const [pageSize,setPageSize]=useState(20)
   const [selected, setSelected] = useState<StreamEventIndexItem | null>(null)
-  const query: StreamEventIndexQuery | null = submitted ? { ...submitted, cursor: cursor || undefined } : null
+  const position=useCursorPagePosition({path:'/events/stream-index/position',query:submitted??{},page:pageNumber,pageSize,enabled:submitted!==null})
+  const metadata=usePaginationMetadata('/events/stream-index/metadata',submitted??{},submitted!==null)
+  const query: StreamEventIndexQuery | null = submitted ? { ...submitted, limit:pageSize, cursor:position.cursor } : null
   const index = useQuery({
     queryKey: ['stream-events', query],
     queryFn: () => api.streamEventIndex(query!),
-    enabled: query !== null,
+    enabled: query !== null && position.ready,
   })
   const body = useQuery({
     queryKey: ['stream-event-body', selected?.body_ref],
@@ -50,8 +52,7 @@ export function StreamEventsPanel() {
       return
     }
     setValidation('')
-    setCursor('')
-    setPrevious([])
+    setPageNumber(1)
     setSelected(null)
     setSubmitted({ scope_id: scope.trim(), protocol: protocol.trim() || undefined,
       from: new Date(start).toISOString(), to: new Date(end).toISOString(), limit: 50 })
@@ -68,8 +69,8 @@ export function StreamEventsPanel() {
     </form>
     {validation && <p className="stream-events-validation" role="alert">{validation}</p>}
     {index.isError && <AppErrorAlert title="新流事件检索失败" message={index.error.message} />}
-    {index.isFetching && <p>正在查询事件…</p>}
-    {!index.isFetching && !index.isError && index.data && <>
+    {(index.isFetching||position.isLocating) && <p>正在查询事件…</p>}
+    {position.ready && !index.isFetching && !index.isError && index.data && <>
       {index.data.events.length === 0 && <p>该范围内没有事件。</p>}
       <div className="stream-event-list">
         {index.data.events.map(item => <article className="stream-event-card" key={item.event_key + item.body_ref.sha256}>
@@ -88,10 +89,11 @@ export function StreamEventsPanel() {
           </div>}
         </article>)}
       </div>
-      <div className="stream-events-pagination">
-        <Button disabled={previous.length === 0} onClick={() => { setCursor(previous[previous.length - 1]); setPrevious(previous.slice(0, -1)); setSelected(null) }}>上一页</Button>
-        <Button disabled={!index.data.next_cursor} onClick={() => { setPrevious([...previous, cursor]); setCursor(index.data!.next_cursor!); setSelected(null) }}>下一页</Button>
-      </div>
+
+    </>}
+    {submitted&&<>
+      {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message}/>}
+      <AppServerPagination disabled={index.isFetching||position.isLocating} page={pageNumber} pageSize={pageSize} total={metadata.data?.total} totalText={metadata.isError?'数量读取失败':undefined} onChange={(next,size)=>{setPageNumber(next);setPageSize(size);setSelected(null)}}/>
     </>}
   </section>
 }

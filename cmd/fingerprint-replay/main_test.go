@@ -43,3 +43,30 @@ func TestLoadLibraryIncludesInstalledMultisourceCatalog(t *testing.T) {
 		})
 	}
 }
+
+func TestCompareReportsNewRecognitionWithoutLeakingInputs(t *testing.T) {
+	oui := []byte("Assignment,Organization Name\nABCDEF,Example\n")
+	base, err := fingerprint.LoadWithData("base", oui, []byte("[]"), []byte("[]"), []byte("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := fingerprint.LoadWithData("updated", oui, []byte("[]"), []byte(`[{"requested_options":"1,3,6","vendor_classes":["MSFT"],"vendor_required":true,"device_type":"desktop","os_family":"Windows","confidence":0.88}]`), []byte("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := []replayInput{
+		{weight: 4, signals: fingerprint.Signals{DHCPRequestedOptions: "1,3,6", DHCPVendorClass: "MSFT", Hostnames: []string{"private-hostname"}}},
+		{weight: 2, signals: fingerprint.Signals{DHCPRequestedOptions: "1,3,6", DHCPVendorClass: "OTHER"}},
+	}
+	comparison := compare(base, updated, inputs)
+	if comparison["new_device_type"] != 4 || comparison["new_os_family"] != 4 || comparison["new_conflicts"] != 0 {
+		t.Fatalf("comparison=%v", comparison)
+	}
+	residual := comparison["still_untyped_by_signal"].(map[string]int)
+	if residual["dhcp_options"] != 2 {
+		t.Fatalf("residual signal counts=%v", residual)
+	}
+	if _, ok := comparison["private-hostname"]; ok {
+		t.Fatal("comparison must not contain endpoint attributes")
+	}
+}

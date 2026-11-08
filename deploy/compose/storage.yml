@@ -6,7 +6,9 @@ services:
     container_name: proxy-sentinel-postgres
     restart: unless-stopped
     cpus: "2.0"
-    mem_limit: 3g
+    # 128 MB shared_buffers thrashed the discovery write path on the 204 HDD;
+    # the live cluster runs 3 GB shared_buffers inside this 6 GB limit.
+    mem_limit: 6g
     logging:
       driver: json-file
       options:
@@ -17,6 +19,28 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-proxy_sentinel}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       PGDATA: /var/lib/postgresql/data/pgdata
+    # The shipped 128 MB shared_buffers thrashed the discovery write path on the
+    # 204 HDD. Keep the live cluster's tuning reproducible on a fresh install.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=3GB
+      - -c
+      - effective_cache_size=12GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - wal_compression=lz4
+      # JIT compilation added ~130 ms per discovery page query on the 204
+      # dataset without helping any sub-second statement.
+      - -c
+      - jit=off
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-25432}:5432"
     volumes:

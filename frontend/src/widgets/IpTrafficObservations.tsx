@@ -4,7 +4,7 @@ import { Button, Input, Typography } from 'antd'
 import { Link, useLocation } from 'react-router-dom'
 import { api } from '../shared/api/client'
 import type { IpTrafficObservationQuery, NormalizedEventSummary, StreamEventIndexItem } from '../shared/api/types'
-import { AppErrorAlert, formatDateTime } from '../shared/ui'
+import { AppErrorAlert, AppServerPagination, useCursorPagePosition, usePaginationMetadata, formatDateTime } from '../shared/ui'
 
 const protocolLabels: Record<string, string> = { handshake: '握手观测', ttl: 'TTL 观测', hop_limit: 'IPv6 Hop Limit 观测' }
 const sourceLabels = { 'handshake-sidecar': '握手采集', 'packet-sidecar': '数据包采集' }
@@ -28,13 +28,17 @@ export function IpTrafficObservations({ ip, sensorId, identityLastSeen, contextM
   const [owner, setOwner] = useState(initial.source_owner)
   const [protocol, setProtocol] = useState<NonNullable<IpTrafficObservationQuery['protocol']> | ''>('')
   const [validation, setValidation] = useState('')
-  const [previous, setPrevious] = useState<string[]>([])
+  const [pageNumber,setPageNumber]=useState(1)
+  const [pageSize,setPageSize]=useState(20)
   const [selected, setSelected] = useState<StreamEventIndexItem | null>(null)
-  const index = useQuery({ queryKey: ['ip-traffic-observations', ip, sensorId, query],
-    queryFn: () => api.ipTrafficObservations(ip, { ...query, sensor_id: sensorId }), retry: false, staleTime: 0, gcTime: 30_000, refetchOnWindowFocus: false })
+  const position=useCursorPagePosition({path:`/ips/${encodeURIComponent(ip)}/traffic-observations/position`,query:{...query,sensor_id:sensorId},page:pageNumber,pageSize})
+  const metadata=usePaginationMetadata(`/ips/${encodeURIComponent(ip)}/traffic-observations/metadata`,{...query,sensor_id:sensorId})
+  const listQuery={...query,limit:pageSize,sensor_id:sensorId,cursor:position.cursor}
+  const index = useQuery({ queryKey: ['ip-traffic-observations', ip, listQuery],
+    queryFn: () => api.ipTrafficObservations(ip, listQuery), enabled:position.ready, retry: false, staleTime: 0, gcTime: 30_000, refetchOnWindowFocus: false })
   const body = useQuery({ queryKey: ['ip-traffic-observation-body', selected?.body_ref],
     queryFn: () => api.streamEventBody(selected!.body_ref), enabled: selected !== null, retry: false, refetchOnWindowFocus: false })
-  const page = !index.isFetching && !index.isError ? index.data : undefined
+  const page = position.ready && !index.isFetching && !index.isError ? index.data : undefined
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -42,12 +46,12 @@ export function IpTrafficObservations({ ip, sensorId, identityLastSeen, contextM
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 15 * 60_000) {
       setValidation('请选择不超过 15 分钟的有效时间范围。'); return
     }
-    setValidation(''); setPrevious([]); setSelected(null)
+    setValidation(''); setPageNumber(1); setSelected(null)
     setQuery({ source_owner: owner, protocol: protocol || undefined, from: new Date(start).toISOString(), to: new Date(end).toISOString(), limit: 20 })
   }
   function refresh() {
     const latest = { ...recentQuery(), source_owner: owner, protocol: protocol || undefined }
-    setFrom(localTime(latest.from)); setTo(localTime(latest.to)); setValidation(''); setPrevious([]); setSelected(null); setQuery(latest)
+    setFrom(localTime(latest.from)); setTo(localTime(latest.to)); setValidation(''); setPageNumber(1); setSelected(null); setQuery(latest)
   }
   return <section className="surface ip-traffic-observations" aria-label="IP 流量观察">
     <Typography.Title level={4}>IP 流量观察</Typography.Title>
@@ -98,12 +102,11 @@ export function IpTrafficObservations({ ip, sensorId, identityLastSeen, contextM
             </article>
           })}
         </div>
-        <div className="ip-traffic-actions ip-traffic-pagination">
-          <Button disabled={previous.length === 0} onClick={() => { setQuery({ ...query, cursor: previous[previous.length - 1] || undefined }); setPrevious(previous.slice(0, -1)); setSelected(null) }}>上一页</Button>
-          <Button disabled={!page.next_cursor} onClick={() => { setPrevious([...previous, query.cursor ?? '']); setQuery({ ...query, cursor: page.next_cursor }); setSelected(null) }}>下一页</Button>
-        </div>
+
       </>}
     </>}
+        {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message}/>}
+        <AppServerPagination disabled={index.isFetching||position.isLocating} page={pageNumber} pageSize={pageSize} total={metadata.data?.total} totalText={metadata.isError?'数量读取失败':undefined} onChange={(next,size)=>{setPageNumber(next);setPageSize(size);setSelected(null)}}/>
   </section>
 }
 

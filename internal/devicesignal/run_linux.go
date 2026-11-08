@@ -92,6 +92,11 @@ func Run(ctx context.Context, opts Options) error {
 	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0003), Ifindex: iface.Index}); err != nil {
 		return fmt.Errorf("bind %s: %w", opts.Interface, err)
 	}
+	// Mirror ports can deliver short bursts much faster than a 30-second bucket
+	// flush. Linux clamps this request to net.core.rmem_max on each host.
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 32<<20); err != nil {
+		return fmt.Errorf("set capture receive buffer: %w", err)
+	}
 	if opts.HandshakeOnly {
 		if err := attachHandshakeFilter(fd); err != nil {
 			return fmt.Errorf("attach handshake BPF: %w", err)
@@ -124,8 +129,8 @@ func Run(ctx context.Context, opts Options) error {
 	flushControls := func(at time.Time, controls map[string]controlSignal) error {
 		if opts.HandshakeOnly {
 			end := time.Now().UTC()
-			stats, known := packetDropStats(fd)
-			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Dropped: uint64(stats), KeyDrops: state.droppedPacketKeys, ParseUnknown: state.handshakeParseFailures, Stopped: ctx.Err() != nil}
+			received, drops, known := packetCaptureStats(fd)
+			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(drops), KeyDrops: state.droppedPacketKeys, ParseUnknown: state.handshakeParseFailures, Stopped: ctx.Err() != nil}
 			for _, summary := range state.handshakes {
 				summary.coverage = coverage
 				coverage.Truncated += summary.truncated
@@ -148,8 +153,8 @@ func Run(ctx context.Context, opts Options) error {
 		selected := selectControls(controlTracker, at, controls)
 		if !opts.HandshakeOnly && !opts.SharedSignalsOnly {
 			end := time.Now().UTC()
-			stats, known := packetDropStats(fd)
-			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Dropped: uint64(stats), ParseUnknown: state.controlParseFailures, KeyDrops: state.controlKeyDrops, Stopped: ctx.Err() != nil}
+			received, drops, known := packetCaptureStats(fd)
+			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(drops), ParseUnknown: state.controlParseFailures, KeyDrops: state.controlKeyDrops, Stopped: ctx.Err() != nil}
 			for key, signal := range selected {
 				if signal.Kind == "ieee1905_client_snapshot" || signal.Kind == "ieee1905_client_association" {
 					// Copy: the liveness tracker must compare only protocol content.
@@ -273,12 +278,6 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func htons(value uint16) uint16 { return value<<8 | value>>8 }
-
-// PACKET_STATISTICS resets the socket counters on every successful read.
-func packetDropStats(fd int) (uint32, bool) {
-	_, drops, known := packetCaptureStats(fd)
-	return drops, known
-}
 
 // PACKET_STATISTICS reports packets and drops for the same interval, then
 // resets both counters. Keep one read per bucket so the denominator matches

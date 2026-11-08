@@ -101,7 +101,7 @@ func (s *Server) handleInventoryObservations(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	p := r.URL.Query()
-	q := store.EndpointObservationQuery{Kind: p.Get("kind"), Value: p.Get("value"), Source: p.Get("source"), Start: p.Get("start"), End: p.Get("end"), Cursor: p.Get("cursor")}
+	q := store.EndpointObservationQuery{AsOf: p.Get("as_of"), Kind: p.Get("kind"), Value: p.Get("value"), Source: p.Get("source"), Start: p.Get("start"), End: p.Get("end"), Cursor: p.Get("cursor")}
 	if v := p.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n == 0 {

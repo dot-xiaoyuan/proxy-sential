@@ -249,8 +249,42 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Scoped device discovery data; requires identity:read. */
+        /** @description Scoped device discovery change history; requires identity:read. A supplied snapshot fixes the ingestion-time upper bound. Cursor remains bound to device and stream generation. Evidence receipts are verified on the requested page. */
         get: operations["getDiscoveryHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/history/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Independent count of the selected device change index at the ingestion-time snapshot; requires identity:read. Counts records in the active stream generation when present, otherwise the legacy change index. No evidence bodies are loaded or verified by this count. */
+        get: operations["getDiscoveryHistoryMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/history/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Locate the preceding and first target change keys without loading earlier evidence bodies; requires identity:read. Use the returned cursor and same snapshot with the history list. Page one returns an empty cursor, including for an empty index. */
+        get: operations["getDiscoveryHistoryPosition"];
         put?: never;
         post?: never;
         delete?: never;
@@ -388,6 +422,23 @@ export interface paths {
         };
         /** @description Versioned device state with optional last-observation window; requires identity:read. Does not claim online state or create terminal identities. */
         get: operations["getDiscoveryDevices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/devices/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Exact filtered count of discovered devices grouped by source scope and trusted endpoint or MAC identity, falling back to the discovery key. Uses the same current-index grouping and filters as the indexed discovery list. Does not claim a physical terminal census. Cursor, offset and limit are ignored. Requires identity:read. */
+        get: operations["getDiscoveryDeviceMetadata"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2919,6 +2970,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/endpoints/registrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Local registration ledger of operator-maintained current facts. Passive-only candidates are excluded. Registered IP is never an observed online address. Requires identity:read. */
+        get: operations["listEndpointRegistrations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/registrations/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Exact current registration count, independent from list pagination. Requires identity:read. */
+        get: operations["getEndpointRegistrationMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/endpoints/{endpoint_id}/identity": {
         parameters: {
             query?: never;
@@ -4188,10 +4273,1266 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/devices/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /discovery/devices. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    type?: string;
+                    protocol?: string;
+                    state?: "identified" | "expired" | "conflict" | "candidate";
+                    domain?: string;
+                    vlan?: string;
+                    /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
+                    view?: "iot";
+                    mode?: "passive" | "infrastructure" | "active" | "all";
+                    /** @description Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range. */
+                    window?: string;
+                    /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
+                    search?: string;
+                    category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
+                    capability?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/device-inventory/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /device-inventory. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Account searches match exact latest observed candidates only; complete IP searches retain historical evidence matching. */
+                    search_type?: "all" | "account" | "ip" | "mac" | "name";
+                    view?: "recent" | "history";
+                    sensor_id?: string;
+                    window?: "10m" | "1h" | "24h" | "7d" | "30d";
+                    ip?: string;
+                    q?: string;
+                    brand?: string;
+                    os_family?: string;
+                    ecosystem?: string;
+                    campus_id?: components["parameters"]["CampusIdQuery"];
+                    department?: components["parameters"]["DepartmentQuery"];
+                    person_type?: components["parameters"]["PersonTypeQuery"];
+                    ssid?: components["parameters"]["SSIDQuery"];
+                    vlan?: components["parameters"]["VLANQuery"];
+                    ap?: components["parameters"]["APQuery"];
+                    nas_ip?: components["parameters"]["NASIPQuery"];
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/registrations/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /endpoints/registrations. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Exact device MAC lookup; accepted MAC formats normalize to lower-case colon notation. */
+                    mac?: string;
+                    search?: string;
+                    status?: "registered" | "unregistered" | "ignored" | "retired";
+                    type?: string;
+                    ownership_class?: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai-relay/usages/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /ai-relay/usages. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    from?: string;
+                    to?: string;
+                    ip?: string;
+                    domain?: string;
+                    campus_id?: string;
+                    sensor_id?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/{endpoint_id}/observations/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /endpoints/{endpoint_id}/observations. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query: {
+                    kind: "account" | "ip" | "access";
+                    value?: string;
+                    source?: string;
+                    start?: string;
+                    end?: string;
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    as_of?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    endpoint_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/endpoints/{endpoint_id}/observations/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the filtered index independently of list pagination
+         * @description Uses the same authorization, scope, filters and ordering as /endpoints/{endpoint_id}/observations. Reads existing indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+         */
+        get: {
+            parameters: {
+                query: {
+                    kind: "account" | "ip" | "access";
+                    value?: string;
+                    source?: string;
+                    start?: string;
+                    end?: string;
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    as_of?: string;
+                };
+                header?: never;
+                path: {
+                    endpoint_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered record count and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IndexedPageMetadata"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/risks/stream-current/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /risks/stream-current. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    subject_type?: "ip" | "account";
+                    level?: "normal" | "suspicious" | "high" | "confirmed";
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/risks/stream-current/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the filtered index independently of list pagination
+         * @description Uses the same authorization, scope, filters and ordering as /risks/stream-current. Reads existing indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    subject_type?: "ip" | "account";
+                    level?: "normal" | "suspicious" | "high" | "confirmed";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered record count and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IndexedPageMetadata"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/stream-index/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /events/stream-index. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query: {
+                    scope_id: string;
+                    from: string;
+                    to: string;
+                    protocol?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/stream-index/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the filtered index independently of list pagination
+         * @description Uses the same authorization, scope, filters and ordering as /events/stream-index. Reads existing indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+         */
+        get: {
+            parameters: {
+                query: {
+                    scope_id: string;
+                    from: string;
+                    to: string;
+                    protocol?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered record count and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IndexedPageMetadata"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ips/{ip}/traffic-observations/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /ips/{ip}/traffic-observations. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query: {
+                    from: string;
+                    to: string;
+                    source_owner?: "handshake-sidecar" | "packet-sidecar";
+                    protocol?: "handshake" | "ttl" | "hop_limit";
+                    /** @description If present must equal the configured site sensor. */
+                    sensor_id?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    ip: components["parameters"]["IpPath"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ips/{ip}/traffic-observations/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the filtered index independently of list pagination
+         * @description Uses the same authorization, scope, filters and ordering as /ips/{ip}/traffic-observations. Reads existing indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+         */
+        get: {
+            parameters: {
+                query: {
+                    from: string;
+                    to: string;
+                    source_owner?: "handshake-sidecar" | "packet-sidecar";
+                    protocol?: "handshake" | "ttl" | "hop_limit";
+                    /** @description If present must equal the configured site sensor. */
+                    sensor_id?: string;
+                };
+                header?: never;
+                path: {
+                    ip: components["parameters"]["IpPath"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered record count and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IndexedPageMetadata"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-decisions/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /policy-decisions. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    account_id?: string;
+                    policy_id?: string;
+                    observation_id?: string;
+                    trigger?: "shared_access";
+                    ip?: string;
+                    result?: "matched" | "insufficient" | "expired";
+                    from?: string;
+                    to?: string;
+                    include_processing?: boolean;
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    snapshot?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-decisions/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the filtered index independently of list pagination
+         * @description Uses the same authorization, scope, filters and ordering as /policy-decisions. Reads existing indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    account_id?: string;
+                    policy_id?: string;
+                    observation_id?: string;
+                    trigger?: "shared_access";
+                    ip?: string;
+                    result?: "matched" | "insufficient" | "expired";
+                    from?: string;
+                    to?: string;
+                    include_processing?: boolean;
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    snapshot?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered record count and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IndexedPageMetadata"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /shared-access/reviews. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    snapshot?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the filtered index independently of list pagination
+         * @description Uses the same authorization, scope, filters and ordering as /shared-access/reviews. Reads existing indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    snapshot?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered record count and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IndexedPageMetadata"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/evidence/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /shared-access/reviews/{id}/evidence. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    snapshot?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/evidence/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the filtered index independently of list pagination
+         * @description Uses the same authorization, scope, filters and ordering as /shared-access/reviews/{id}/evidence. Reads existing indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    snapshot?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered record count and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IndexedPageMetadata"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/executions/position": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Locate the keyset boundary for a numbered page
+         * @description Uses the same authorization, scope, filters and ordering as /shared-access/reviews/{id}/executions. Reads existing indexed keys only; does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the first page.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    snapshot?: string;
+                    page?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Page boundary cursor and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NumberedPagePosition"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/reviews/{id}/executions/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the filtered index independently of list pagination
+         * @description Uses the same authorization, scope, filters and ordering as /shared-access/reviews/{id}/executions. Reads existing indexed keys only; does not load preceding record payloads. Count errors are not represented as an empty result.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                    snapshot?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filtered record count and observation time. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IndexedPageMetadata"];
+                    };
+                };
+                /** @description Invalid filters, page parameters or a page outside the current filtered result. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Required indexed storage or page positioning is unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        NumberedPagePosition: {
+            page: number;
+            limit: number;
+            /** @description Opaque list cursor; empty only for page one. */
+            cursor: string;
+            /** Format: date-time */
+            as_of: string;
+            /**
+             * Format: date-time
+             * @description Fixed append boundary for shared review and policy history.
+             */
+            snapshot?: string;
+        };
+        IndexedPageMetadata: {
+            /** Format: int64 */
+            total: number;
+            /** Format: date-time */
+            as_of: string;
+            /** Format: date-time */
+            snapshot?: string;
+        };
         /** @description Filesystem containing / in the control-plane process namespace; separately mounted data volumes are outside this measurement. */
         RootFilesystemStatus: {
             /** @enum {string} */
@@ -4454,6 +5795,8 @@ export interface components {
                 [key: string]: unknown;
             }[];
             next_cursor: string;
+            /** Format: date-time */
+            snapshot?: string;
         };
         ManagedIdentityConfiguration: {
             /** @enum {string} */
@@ -6730,6 +8073,8 @@ export interface components {
             };
         };
         DiscoveryHistoryPage: {
+            /** Format: date-time */
+            snapshot?: string;
             has_more: boolean;
             next_cursor: string;
             items: {
@@ -6763,6 +8108,36 @@ export interface components {
             valid_until: string;
             withdrawn?: boolean;
             explanation: string;
+            vlan?: string;
+            vrf?: string;
+            interface?: string;
+            port?: string;
+            manufacturer?: string;
+            model_name?: string;
+            confidence?: string;
+            rule_version?: string;
+            config_version?: number;
+            evidence?: {
+                event_id?: string;
+                type?: string;
+                schema_version?: string;
+                source?: string;
+                source_event_type?: string;
+                payload?: {
+                    [key: string]: unknown;
+                };
+                subject?: {
+                    [key: string]: unknown;
+                };
+                observer?: {
+                    [key: string]: unknown;
+                };
+                flow?: {
+                    [key: string]: unknown;
+                };
+            } & {
+                [key: string]: unknown;
+            };
         };
         DiscoveryDevice: {
             last_device_type?: string;
@@ -6805,12 +8180,42 @@ export interface components {
             endpoint_id?: string;
             observations: components["schemas"]["DiscoveryObservation"][];
         };
+        DiscoveryDeviceMetadata: {
+            /** Format: int64 */
+            total: number;
+            /**
+             * Format: int64
+             * @description Current non-conflicting identities with one explicit device type.
+             */
+            identified: number;
+            /** Format: int64 */
+            candidate: number;
+            /** Format: int64 */
+            conflict: number;
+            /** Format: int64 */
+            expired: number;
+            types: {
+                device_type: string;
+                /** Format: int64 */
+                count: number;
+            }[];
+            /** Format: date-time */
+            as_of: string;
+            /**
+             * @description A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key.
+             * @enum {string}
+             */
+            count_unit: "trusted_discovery_identity";
+            window: string;
+        };
         DiscoveryDevicePage: {
             freshness?: components["schemas"]["DiscoveryFreshness"];
             items: components["schemas"]["DiscoveryDevice"][];
             next_cursor: string;
             has_more: boolean;
             total?: number;
+            /** @enum {string} */
+            count_unit?: "trusted_discovery_identity";
             facets?: {
                 [key: string]: unknown;
             }[];
@@ -6963,6 +8368,50 @@ export interface components {
             registration_updated_at?: string;
             registration_update_by_id?: string;
         };
+        EndpointRegistrationRecord: {
+            endpoint_id: string;
+            primary_mac: string;
+            /** @enum {string} */
+            registration_status: "unregistered" | "registered" | "ignored" | "retired";
+            owner_account: string;
+            owner_name: string;
+            owner_department: string;
+            asset_tag: string;
+            /** @enum {string} */
+            ownership_class: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
+            registration_note: string;
+            registration_updated_at: string;
+            registration_updated_by: string;
+            registered_at: string;
+            /** @description Last passive observation if present; blank for registration-only devices. */
+            last_seen: string;
+            /** @enum {string} */
+            merge_status: "active" | "merged" | "split";
+            merged_into_endpoint_id: string;
+            split_from_endpoint_id: string;
+            /** @enum {string} */
+            source: "local";
+            registration_details: components["schemas"]["EndpointRegistrationDetails"];
+        };
+        EndpointRegistrationPage: {
+            items: components["schemas"]["EndpointRegistrationRecord"][];
+            next_cursor: string;
+            has_more: boolean;
+            limit: number;
+            /** Format: date-time */
+            as_of: string;
+        };
+        /** @description Operator-confirmed local registration facts; registered_ip is not an observed current address. */
+        EndpointRegistrationDetails: {
+            name?: string;
+            device_type?: string;
+            manufacturer?: string;
+            model?: string;
+            serial_number?: string;
+            /** Format: ip */
+            registered_ip?: string;
+            location?: string;
+        };
         UpdateEndpointRegistrationRequest: {
             /** @enum {string} */
             registration_status: "unregistered" | "registered" | "ignored" | "retired";
@@ -6980,6 +8429,7 @@ export interface components {
             merge_status: "active" | "merged" | "split";
             merged_into_endpoint_id?: string;
             split_from_endpoint_id?: string;
+            registration_details?: components["schemas"]["EndpointRegistrationDetails"];
         };
         SharedAccessEvaluation: {
             id?: string;
@@ -8179,14 +9629,21 @@ export interface operations {
     };
     getDiscoveryHistory: {
         parameters: {
-            query?: never;
+            query: {
+                device_id: string;
+                limit?: number;
+                /** @description Opaque device and generation bound history cursor. */
+                cursor?: string;
+                /** @description Reuse metadata snapshot for numbered navigation. */
+                snapshot?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Discovery result */
+            /** @description Discovery history page */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8195,7 +9652,90 @@ export interface operations {
                     "application/json": components["schemas"]["DiscoveryHistoryPage"];
                 };
             };
+            /** @description Invalid device */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Read failed; never replaced by an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryHistoryMetadata: {
+        parameters: {
+            query: {
+                device_id: string;
+                snapshot?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Change-record total with snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexedPageMetadata"];
+                };
+            };
+            /** @description Invalid device or snapshot */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Read failed; never replaced by a zero count */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryHistoryPosition: {
+        parameters: {
+            query: {
+                device_id: string;
+                page?: number;
+                limit?: number;
+                snapshot?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description History page position with snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NumberedPagePosition"];
+                };
+            };
+            /** @description Invalid parameters or target page does not exist */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Index read failed */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8325,6 +9865,7 @@ export interface operations {
                 /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
                 view?: "iot";
                 mode?: "passive" | "infrastructure" | "active" | "all";
+                /** @description Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range. */
                 window?: string;
                 /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
                 search?: string;
@@ -8351,6 +9892,62 @@ export interface operations {
             };
             /** @description Invalid cursor */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryDeviceMetadata: {
+        parameters: {
+            query?: {
+                type?: string;
+                protocol?: string;
+                state?: "identified" | "expired" | "conflict" | "candidate";
+                domain?: string;
+                vlan?: string;
+                /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
+                view?: "iot";
+                mode?: "passive" | "infrastructure" | "active" | "all";
+                /** @description Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range. */
+                window?: string;
+                /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
+                search?: string;
+                category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
+                capability?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Independent filtered discovery count and its database snapshot time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryDeviceMetadata"];
+                };
+            };
+            /** @description Invalid filter or time window */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Current discovery read path does not support this indexed metadata contract */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Count could not be read; never reported as an empty result */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8524,6 +10121,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string;
+                /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                snapshot?: string;
             };
             header?: never;
             path?: never;
@@ -8540,6 +10139,8 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["SharedAccessReview"][];
                         next_cursor: string;
+                        /** Format: date-time */
+                        snapshot?: string;
                     };
                 };
             };
@@ -8580,6 +10181,8 @@ export interface operations {
                 limit?: number;
                 /** @description Previous page last version */
                 cursor?: string;
+                /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                snapshot?: string;
             };
             header?: never;
             path: {
@@ -8605,6 +10208,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string;
+                /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                snapshot?: string;
             };
             header?: never;
             path: {
@@ -12247,6 +13852,8 @@ export interface operations {
                 cursor?: string;
                 include_processing?: boolean;
                 limit?: number;
+                /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                snapshot?: string;
             };
             header?: never;
             path?: never;
@@ -12286,6 +13893,8 @@ export interface operations {
                                 [key: string]: unknown;
                             };
                         }[];
+                        /** Format: date-time */
+                        snapshot?: string;
                     };
                 };
             };
@@ -13088,6 +14697,84 @@ export interface operations {
             };
         };
     };
+    listEndpointRegistrations: {
+        parameters: {
+            query?: {
+                /** @description Exact device MAC lookup; accepted MAC formats normalize to lower-case colon notation. */
+                mac?: string;
+                search?: string;
+                status?: "registered" | "unregistered" | "ignored" | "retired";
+                type?: string;
+                ownership_class?: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded registration page ordered by stable endpoint identity; exact totals are read separately. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointRegistrationPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            /** @description Registration storage unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getEndpointRegistrationMetadata: {
+        parameters: {
+            query?: {
+                /** @description Exact device MAC lookup. */
+                mac?: string;
+                search?: string;
+                status?: "registered" | "unregistered" | "ignored" | "retired";
+                type?: string;
+                ownership_class?: "unknown" | "byod" | "school_asset" | "public_terminal" | "infrastructure";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Count of current operator-maintained registration records matching filters. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        total: number;
+                        /** Format: date-time */
+                        as_of: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            /** @description Registration storage unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getEndpointIdentity: {
         parameters: {
             query?: {
@@ -13282,6 +14969,8 @@ export interface operations {
                 end?: string;
                 limit?: number;
                 cursor?: string;
+                /** @description Fixed append boundary shared by metadata, numbered-page positioning and the cursor list. */
+                as_of?: string;
             };
             header?: never;
             path: {

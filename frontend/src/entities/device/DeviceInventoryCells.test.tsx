@@ -3,9 +3,40 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { domainOnlyDevice, domainOnlyInference } from '../../mocks/brandInference'
 import type { EndpointDeviceInventory } from '../../shared/api/types'
-import { DeviceBrandSummary, DeviceIdentityCell, DeviceLedgerIdentity, DeviceLedgerRecognition, DeviceLedgerOS, DeviceSemanticIcon, DeviceMAC, virtualPlatform } from './DeviceInventoryCells'
+import { DeviceBrandSummary, DeviceIdentityCell, DeviceLedgerIdentity, DeviceLedgerRecognition, DeviceLedgerOS, DeviceSemanticIcon, DeviceMAC, TerminalInventoryIdentity, virtualPlatform } from './DeviceInventoryCells'
 
 afterEach(cleanup)
+
+it('groups a historical name and MAC with a supported semantic icon while keeping the detail return link', () => {
+ const device={...domainOnlyDevice,device_type:'printer',device_type_confidence:.95,device_name:{value:'服务台打印机',source:'dhcp_hostname',manual:false,multiple_names:false,status:'historical' as const}}
+ render(<MemoryRouter><TerminalInventoryIdentity device={device} href="/devices/printer?return_to=inventory"/></MemoryRouter>)
+ expect(screen.getByRole('img',{name:'打印机'})).toBeVisible()
+ expect(screen.getByRole('link',{name:'服务台打印机'})).toHaveAttribute('href','/devices/printer?return_to=inventory')
+ expect(screen.getByRole('link',{name:device.primary_mac})).toBeVisible()
+ expect(screen.getByText('历史名称')).toBeVisible()
+})
+
+it('keeps uncertain types neutral and honors disabled names in the inventory identity', () => {
+ const device={...domainOnlyDevice,device_type:'camera',device_type_confidence:.5,device_name:{value:'名称不应显示',source:'dhcp_hostname',manual:false,multiple_names:false,status:'current' as const}}
+ const {rerender}=render(<MemoryRouter><TerminalInventoryIdentity device={device} href="/devices/camera" showName={false}/></MemoryRouter>)
+ expect(screen.getByRole('img',{name:'设备地址'})).toBeVisible()
+ expect(screen.queryByText('名称不应显示')).not.toBeInTheDocument()
+ rerender(<MemoryRouter><TerminalInventoryIdentity device={{...device,device_type_confidence:.99,recognition_conflict:true,conflict_dimensions:['device_type']}} href="/devices/camera" showName={false}/></MemoryRouter>)
+ expect(screen.getByRole('img',{name:'设备地址'})).toBeVisible()
+})
+
+it('uses a supported hardware brand logo without promoting inferred brands or virtual platforms', () => {
+ const {rerender}=render(<DeviceLedgerRecognition device={{...domainOnlyDevice,brand:'HP',brand_confidence:.95,brand_inference:undefined}} showBrandLogo/>)
+ expect(document.querySelector('.brand-logo-hp')).not.toBeNull()
+ rerender(<DeviceLedgerRecognition device={domainOnlyDevice} showBrandLogo/>)
+ expect(document.querySelector('.brand-logo-apple')).toBeNull()
+ rerender(<DeviceLedgerRecognition device={{...domainOnlyDevice,brand:'VMware',brand_confidence:.95}} showBrandLogo/>)
+ expect(document.querySelector('.brand-logo-vmware')).toBeNull()
+ expect(screen.getByText('VMware 虚拟平台线索')).toBeVisible()
+ rerender(<DeviceLedgerRecognition device={{...domainOnlyDevice,brand:'演示厂商',brand_confidence:.95,brand_inference:undefined}} showBrandLogo/>)
+ expect(screen.getByText('演示厂商')).toBeVisible()
+ expect(document.querySelector('.brand-logo-ant-icon')).toBeNull()
+})
 
 it('keeps independent brand and OS visible when model and type conflict', () => {
  const device: EndpointDeviceInventory = {...domainOnlyDevice, brand:'Dell', brand_confidence:.95, model:'Latitude', model_confidence:.95, device_type:'laptop', device_type_confidence:.95, os_family:'Windows', os_family_confidence:.95, recognition_conflict:true, conflict_dimensions:['model','device_type'], brand_inference:undefined}

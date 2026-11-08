@@ -1,67 +1,542 @@
 {
-  "version": "device-type-prior-2026-10-27.1",
+  "version": "device-type-prior-2026-11-07.1",
   "source": "vendor product-line curation",
   "source_url": "internal://proxy-sentinel/device-type-prior",
   "license": "internal-rule",
   "entries": [
-    {"vendor": "Hangzhou Hikvision", "match": "contains", "device_type": "camera", "confidence": 0.70},
-    {"vendor": "Hikvision", "match": "contains", "device_type": "camera", "confidence": 0.70},
-    {"vendor": "Dahua Technology", "match": "contains", "device_type": "camera", "confidence": 0.70},
-    {"vendor": "Zhejiang Dahua", "match": "contains", "device_type": "camera", "confidence": 0.70},
-    {"vendor": "Uniview", "match": "contains", "device_type": "camera", "confidence": 0.65},
-    {"vendor": "EZVIZ", "match": "contains", "device_type": "camera", "confidence": 0.65},
-    {"vendor": "Axis Communications", "match": "contains", "device_type": "camera", "confidence": 0.65},
-    {"vendor": "Hanwha Techwin", "match": "contains", "device_type": "camera", "confidence": 0.65},
-    {"vendor": "Brother Industries", "match": "contains", "device_type": "printer", "confidence": 0.75},
-    {"vendor": "Seiko Epson", "match": "contains", "device_type": "printer", "confidence": 0.75},
-    {"vendor": "Canon Inc", "match": "contains", "device_type": "printer", "confidence": 0.65},
-    {"vendor": "Hewlett-Packard", "match": "contains", "device_type": "printer", "confidence": 0.60},
-    {"vendor": "HP Inc", "match": "contains", "device_type": "printer", "confidence": 0.60},
-    {"vendor": "Kyocera", "match": "contains", "device_type": "printer", "confidence": 0.70},
-    {"vendor": "Ricoh", "match": "contains", "device_type": "printer", "confidence": 0.70},
-    {"vendor": "Xerox", "match": "contains", "device_type": "printer", "confidence": 0.70},
-    {"vendor": "Lexmark", "match": "contains", "device_type": "printer", "confidence": 0.70},
-    {"vendor": "Zebra Technologies", "match": "contains", "device_type": "printer", "confidence": 0.65},
-    {"vendor": "Synology", "match": "contains", "device_type": "iot", "confidence": 0.60},
-    {"vendor": "QNAP", "match": "contains", "device_type": "iot", "confidence": 0.60},
-    {"vendor": "Espressif", "match": "contains", "device_type": "iot", "confidence": 0.75},
-    {"vendor": "Tuya", "match": "contains", "device_type": "iot", "confidence": 0.70},
-    {"vendor": "Shelly", "match": "contains", "device_type": "iot", "confidence": 0.70},
-    {"vendor": "ITEAD", "match": "contains", "device_type": "iot", "confidence": 0.65},
-    {"vendor": "Lumi United", "match": "contains", "device_type": "iot", "confidence": 0.65},
-    {"vendor": "Aqara", "match": "contains", "device_type": "iot", "confidence": 0.65},
-    {"vendor": "Signify", "match": "contains", "device_type": "iot", "confidence": 0.60},
-    {"vendor": "eWeLink", "match": "contains", "device_type": "iot", "confidence": 0.65},
-    {"vendor": "Shenzhen Neo Electronics", "match": "contains", "device_type": "iot", "confidence": 0.60},
-    {"vendor": "Sonos", "match": "contains", "device_type": "media_device", "confidence": 0.65},
-    {"vendor": "Roku", "match": "contains", "device_type": "media_device", "confidence": 0.70},
-    {"vendor": "Amazon Technologies", "match": "contains", "device_type": "media_device", "confidence": 0.55},
-    {"vendor": "Google", "match": "contains", "device_type": "media_device", "confidence": 0.50},
-    {"vendor": "Shenzhen Skyworth", "match": "contains", "device_type": "media_device", "confidence": 0.55},
-    {"vendor": "Hisense", "match": "contains", "device_type": "media_device", "confidence": 0.55},
-    {"vendor": "TCL", "match": "contains", "device_type": "media_device", "confidence": 0.55},
-    {"vendor": "ZKTeco", "match": "contains", "device_type": "iot", "confidence": 0.65},
-    {"vendor": "Dell", "match": "contains", "device_type": "desktop", "confidence": 0.50},
-    {"vendor": "Lenovo", "match": "contains", "device_type": "desktop", "confidence": 0.50},
-    {"vendor": "ASUSTek", "match": "contains", "device_type": "desktop", "confidence": 0.45},
-    {"vendor": "Micro-Star", "match": "contains", "device_type": "desktop", "confidence": 0.55},
-    {"vendor": "Giga-Byte", "match": "contains", "device_type": "desktop", "confidence": 0.55},
-    {"vendor": "Intel Corporate", "match": "contains", "device_type": "desktop", "confidence": 0.40},
-    {"vendor": "Raspberry Pi", "match": "contains", "device_type": "desktop", "confidence": 0.65},
-    {"vendor": "Aruba", "match": "contains", "device_type": "access_point", "confidence": 0.50},
-    {"vendor": "Ruckus", "match": "contains", "device_type": "access_point", "confidence": 0.55},
-    {"vendor": "Ubiquiti", "match": "contains", "device_type": "access_point", "confidence": 0.45},
-    {"vendor": "TP-Link", "match": "contains", "device_type": "router", "confidence": 0.40},
-    {"vendor": "MikroTik", "match": "contains", "device_type": "router", "confidence": 0.55},
-    {"vendor": "DrayTek", "match": "contains", "device_type": "router", "confidence": 0.55},
-    {"vendor": "iKuai", "match": "contains", "device_type": "router", "confidence": 0.55},
-
-    {"vendor": "Yealink", "match": "contains", "device_type": "iot", "confidence": 0.70},
-    {"vendor": "Fanvil", "match": "contains", "device_type": "iot", "confidence": 0.70},
-    {"vendor": "Grandstream", "match": "contains", "device_type": "iot", "confidence": 0.70},
-    {"vendor": "Polycom", "match": "contains", "device_type": "iot", "confidence": 0.70},
-    {"vendor": "Snom", "match": "contains", "device_type": "iot", "confidence": 0.70},
-    {"vendor": "dormakaba", "match": "contains", "device_type": "iot", "confidence": 0.55},
-    {"vendor": "HID Global", "match": "contains", "device_type": "iot", "confidence": 0.55}
+    {
+      "vendor": "Hangzhou Hikvision",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Hikvision",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Dahua Technology",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Zhejiang Dahua",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Uniview",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "EZVIZ",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Axis Communications",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Hanwha Techwin",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Brother Industries",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.75
+    },
+    {
+      "vendor": "Seiko Epson",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.75
+    },
+    {
+      "vendor": "Canon Inc",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Hewlett-Packard",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "HP Inc",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Kyocera",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Ricoh",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Xerox",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Lexmark",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Zebra Technologies",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Synology",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "QNAP",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Espressif",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.75
+    },
+    {
+      "vendor": "Tuya",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Shelly",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "ITEAD",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Lumi United",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Aqara",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Signify",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "eWeLink",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Shenzhen Neo Electronics",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Sonos",
+      "match": "contains",
+      "device_type": "media_device",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Roku",
+      "match": "contains",
+      "device_type": "media_device",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Amazon Technologies",
+      "match": "contains",
+      "device_type": "media_device",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "Google",
+      "match": "contains",
+      "device_type": "media_device",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "Shenzhen Skyworth",
+      "match": "contains",
+      "device_type": "media_device",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "Hisense",
+      "match": "contains",
+      "device_type": "media_device",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "TCL",
+      "match": "contains",
+      "device_type": "media_device",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "ZKTeco",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Dell",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "Lenovo",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "ASUSTek",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.45
+    },
+    {
+      "vendor": "Micro-Star",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "Giga-Byte",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "Intel Corporate",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.4
+    },
+    {
+      "vendor": "Raspberry Pi",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Aruba",
+      "match": "contains",
+      "device_type": "access_point",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "Ruckus",
+      "match": "contains",
+      "device_type": "access_point",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "Ubiquiti",
+      "match": "contains",
+      "device_type": "access_point",
+      "confidence": 0.45
+    },
+    {
+      "vendor": "TP-Link",
+      "match": "contains",
+      "device_type": "router",
+      "confidence": 0.4
+    },
+    {
+      "vendor": "MikroTik",
+      "match": "contains",
+      "device_type": "router",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "DrayTek",
+      "match": "contains",
+      "device_type": "router",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "iKuai",
+      "match": "contains",
+      "device_type": "router",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "Yealink",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Fanvil",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Grandstream",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Polycom",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Snom",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "dormakaba",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "HID Global",
+      "match": "contains",
+      "device_type": "iot",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "Ruijie Networks",
+      "match": "contains",
+      "device_type": "access_point",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "New H3C Technologies",
+      "match": "contains",
+      "device_type": "access_point",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "Hangzhou H3C",
+      "match": "contains",
+      "device_type": "access_point",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "H3C Intelligence Terminal",
+      "match": "contains",
+      "device_type": "access_point",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "Sundray",
+      "match": "contains",
+      "device_type": "access_point",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Proxmox",
+      "match": "contains",
+      "device_type": "virtual_machine",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Hewlett Packard",
+      "match": "contains",
+      "device_type": "printer",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "EliteGroup",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "LCFC",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "IEIT",
+      "match": "contains",
+      "device_type": "server",
+      "confidence": 0.5
+    },
+    {
+      "vendor": "DPtech",
+      "match": "contains",
+      "device_type": "firewall",
+      "confidence": 0.55
+    },
+    {
+      "vendor": "CLOUD NETWORK",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.4
+    },
+    {
+      "vendor": "Hon Hai",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.4
+    },
+    {
+      "vendor": "REALTEK",
+      "match": "contains",
+      "device_type": "desktop",
+      "confidence": 0.4
+    },
+    {
+      "vendor": "Reolink",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "VIVOTEK",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Vivotek",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.7
+    },
+    {
+      "vendor": "Foscam",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Amcrest",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Annke",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.65
+    },
+    {
+      "vendor": "Swann",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Lorex",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "ZOSI",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "YI Technology",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Bosch Security",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Pelco",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "GeoVision",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Mobotix",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "IDIS",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Arecont",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    },
+    {
+      "vendor": "Digital Watchdog",
+      "match": "contains",
+      "device_type": "camera",
+      "confidence": 0.6
+    }
   ]
 }

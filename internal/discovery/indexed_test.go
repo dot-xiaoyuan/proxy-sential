@@ -8,7 +8,7 @@ import (
 )
 
 func TestIndexedDiscoverySearchUsesStructuredColumns(t *testing.T) {
-	raw, err := os.ReadFile("indexed.go")
+	raw, err := os.ReadFile("indexed_query.go")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -193,6 +193,14 @@ func (s *Server) handleSharedReviews(w http.ResponseWriter, r *http.Request, pat
 		writeError(w, 405, "method_not_allowed", "不支持该请求方法")
 		return
 	}
+	if s.sharedReviewPagination(w, r, parts) {
+		return
+	}
+	snapshot, err := readPaginationSnapshot(r)
+	if err != nil {
+		writeError(w, 400, "bad_snapshot", err.Error())
+		return
+	}
 	limit := 20
 	if value := r.URL.Query().Get("limit"); value != "" {
 		var e error
@@ -208,12 +216,12 @@ func (s *Server) handleSharedReviews(w http.ResponseWriter, r *http.Request, pat
 			writeError(w, 400, "bad_cursor", "分页游标无效")
 			return
 		}
-		rows, err := s.operations.db.QueryContext(ctx, `SELECT review_id,account_id,campus_id,access_domain,session_generation,episode,state,latest_version,latest_result,coverage_state,created_at,updated_at FROM shared_access_reviews WHERE ($1::timestamptz IS NULL OR (created_at,review_id)<($1,$2)) ORDER BY created_at DESC,review_id DESC LIMIT $3`, func() any {
+		rows, err := s.operations.db.QueryContext(ctx, `SELECT review_id,account_id,campus_id,access_domain,session_generation,episode,state,latest_version,latest_result,coverage_state,created_at,updated_at FROM shared_access_reviews WHERE created_at <= $4 AND ($1::timestamptz IS NULL OR (created_at,review_id)<($1,$2)) ORDER BY created_at DESC,review_id DESC LIMIT $3`, func() any {
 			if cursor.At.IsZero() {
 				return nil
 			}
 			return cursor.At
-		}(), cursor.ID, limit+1)
+		}(), cursor.ID, limit+1, snapshot)
 		if err != nil {
 			writeError(w, 503, "reviews_unavailable", "复核列表读取失败")
 			return
@@ -238,7 +246,7 @@ func (s *Server) handleSharedReviews(w http.ResponseWriter, r *http.Request, pat
 			writeError(w, 503, "reviews_unavailable", "复核列表不完整")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"items": items, "next_cursor": next})
+		writeJSON(w, 200, map[string]any{"items": items, "next_cursor": next, "snapshot": snapshot})
 		return
 	}
 	if len(parts) == 1 {
@@ -288,7 +296,7 @@ func (s *Server) handleSharedReviews(w http.ResponseWriter, r *http.Request, pat
 				return
 			}
 		}
-		rows, err := s.operations.db.QueryContext(ctx, `SELECT version,evidence,created_at FROM shared_access_review_evidence WHERE review_id=$1 AND ($2::bigint=0 OR version<$2) ORDER BY version DESC LIMIT $3`, parts[0], cursor, limit+1)
+		rows, err := s.operations.db.QueryContext(ctx, `SELECT version,evidence,created_at FROM shared_access_review_evidence WHERE review_id=$1 AND created_at <= $4 AND ($2::bigint=0 OR version<$2) ORDER BY version DESC LIMIT $3`, parts[0], cursor, limit+1, snapshot)
 		if err != nil {
 			writeError(w, 503, "evidence_unavailable", "证据历史读取失败")
 			return
@@ -314,7 +322,7 @@ func (s *Server) handleSharedReviews(w http.ResponseWriter, r *http.Request, pat
 			writeError(w, 503, "evidence_unavailable", "证据历史不完整")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"items": items, "next_cursor": next})
+		writeJSON(w, 200, map[string]any{"items": items, "next_cursor": next, "snapshot": snapshot})
 		return
 	}
 	writeError(w, 404, "review_endpoint_not_found", "复核接口不存在")
@@ -376,6 +384,11 @@ func (s *Server) saveSharedConclusion(w http.ResponseWriter, r *http.Request, ct
 }
 
 func (s *Server) sharedReviewExecutions(w http.ResponseWriter, r *http.Request, ctx context.Context, id string, limit int) {
+	snapshot, err := readPaginationSnapshot(r)
+	if err != nil {
+		writeError(w, 400, "bad_snapshot", err.Error())
+		return
+	}
 	cursor, err := decodeReviewCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
 		writeError(w, 400, "bad_cursor", "执行游标无效")
@@ -390,12 +403,12 @@ func (s *Server) sharedReviewExecutions(w http.ResponseWriter, r *http.Request, 
 		writeError(w, 404, "review_not_found", "复核记录不存在")
 		return
 	}
-	rows, err := s.operations.db.QueryContext(ctx, `SELECT x.action_id,x.evidence_version,x.created_at,a.status,a.mode FROM shared_access_review_executions x JOIN enforcement_actions a USING(action_id) WHERE x.review_id=$1 AND ($2::timestamptz IS NULL OR (x.created_at,x.action_id)<($2,$3)) ORDER BY x.created_at DESC,x.action_id DESC LIMIT $4`, id, func() any {
+	rows, err := s.operations.db.QueryContext(ctx, `SELECT x.action_id,x.evidence_version,x.created_at,a.status,a.mode FROM shared_access_review_executions x JOIN enforcement_actions a USING(action_id) WHERE x.review_id=$1 AND x.created_at <= $5 AND ($2::timestamptz IS NULL OR (x.created_at,x.action_id)<($2,$3)) ORDER BY x.created_at DESC,x.action_id DESC LIMIT $4`, id, func() any {
 		if cursor.At.IsZero() {
 			return nil
 		}
 		return cursor.At
-	}(), cursor.ID, limit+1)
+	}(), cursor.ID, limit+1, snapshot)
 	if err != nil {
 		writeError(w, 503, "executions_unavailable", "执行记录读取失败")
 		return
@@ -422,5 +435,5 @@ func (s *Server) sharedReviewExecutions(w http.ResponseWriter, r *http.Request, 
 		writeError(w, 503, "executions_unavailable", "执行记录不完整")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "next_cursor": next})
+	writeJSON(w, 200, map[string]any{"items": items, "next_cursor": next, "snapshot": snapshot})
 }

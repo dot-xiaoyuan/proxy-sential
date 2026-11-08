@@ -71,13 +71,14 @@ const (
 )
 
 type fingerbankCandidate struct {
-	options     string
-	devicePath  string
-	description string
-	deviceType  string
-	osFamily    string
-	score       float64
-	vendors     map[string]struct{}
+	options        string
+	devicePath     string
+	description    string
+	deviceType     string
+	osFamily       string
+	score          float64
+	vendors        map[string]struct{}
+	vendorRequired bool
 }
 
 // CompileFingerbankSnapshot turns raw SQLite rows into the fingerbank-dhcp.json
@@ -113,7 +114,10 @@ func CompileFingerbankSnapshot(raw []byte, options FingerbankCompileOptions) ([]
 	}
 	stats.RawRecords = len(records)
 
+	// A DHCP options sequence is shared by many vendor classes. The API result
+	// is for the exact pair, so keep competing devices separate by vendor.
 	candidates := map[string]*fingerbankCandidate{}
+	distinctOptions := map[string]struct{}{}
 	for _, record := range records {
 		// Provenance-only rows: a low interrogate score must not become a rule.
 		if record.Score > 0 && record.Score < options.MinScore {
@@ -127,45 +131,60 @@ func CompileFingerbankSnapshot(raw []byte, options FingerbankCompileOptions) ([]
 				stats.MalformedRows++
 				continue
 			}
-			// One rule per option list: the library keys by options and a
-			// competing second candidate would make bestDHCPFingerprint refuse
-			// to match. Keep the highest-scoring device path; vendor classes are
-			// only kept from rows that agree with it.
-			candidate, ok := candidates[normalized]
-			if !ok {
-				candidate = &fingerbankCandidate{options: normalized, vendors: map[string]struct{}{}}
-				candidates[normalized] = candidate
+			distinctOptions[normalized] = struct{}{}
+			vendors := record.VendorClasses
+			if len(vendors) == 0 {
+				vendors = []string{""}
 			}
-			sameDevice := candidate.devicePath != "" && strings.EqualFold(strings.TrimSpace(candidate.devicePath), strings.TrimSpace(record.DevicePath))
-			switch {
-			case record.Score > candidate.score || (record.Score == candidate.score && len(record.DevicePath) > len(candidate.devicePath)):
-				candidate.devicePath = record.DevicePath
-				candidate.description = record.Description
-				candidate.deviceType = deviceType
-				candidate.osFamily = osFamily
-				candidate.score = record.Score
-				candidate.vendors = map[string]struct{}{}
-			case !sameDevice:
-				// A different device for the same options must not inherit this
-				// row's vendor class, or the matcher would boost a wrong label.
-				continue
-			}
-			for _, vendor := range record.VendorClasses {
+			for _, vendor := range vendors {
 				vendor = strings.TrimSpace(vendor)
+				key := normalized + "\x00" + strings.ToLower(vendor)
+				candidate, ok := candidates[key]
+				if !ok {
+					candidate = &fingerbankCandidate{options: normalized, vendors: map[string]struct{}{}, vendorRequired: vendor != ""}
+					candidates[key] = candidate
+				}
+				sameDevice := candidate.devicePath != "" && strings.EqualFold(strings.TrimSpace(candidate.devicePath), strings.TrimSpace(record.DevicePath))
+				switch {
+				case record.Score > candidate.score || (record.Score == candidate.score && len(record.DevicePath) > len(candidate.devicePath)):
+					candidate.devicePath = record.DevicePath
+					candidate.description = record.Description
+					candidate.deviceType = deviceType
+					candidate.osFamily = osFamily
+					candidate.score = record.Score
+				case !sameDevice:
+					continue
+				}
 				if vendor != "" {
 					candidate.vendors[vendor] = struct{}{}
 				}
 			}
 		}
 	}
-	stats.Distinct = len(candidates)
+	stats.Distinct = len(distinctOptions)
 
-	items := make([]DHCPFingerprint, 0, len(candidates))
+	// Merge agreeing vendors back into one rule while retaining every distinct
+	// vendor-specific device result and its original score.
+	grouped := map[string]*fingerbankCandidate{}
 	for _, candidate := range candidates {
 		if candidate.deviceType == "" && candidate.osFamily == "" {
 			stats.UnmappedRules++
 			continue
 		}
+		groupKey := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%g\x00%t", candidate.options, strings.ToLower(strings.TrimSpace(candidate.devicePath)), strings.ToLower(strings.TrimSpace(candidate.description)), candidate.deviceType, candidate.osFamily, candidate.score, candidate.vendorRequired)
+		group, ok := grouped[groupKey]
+		if !ok {
+			copy := *candidate
+			copy.vendors = map[string]struct{}{}
+			group = &copy
+			grouped[groupKey] = group
+		}
+		for vendor := range candidate.vendors {
+			group.vendors[vendor] = struct{}{}
+		}
+	}
+	items := make([]DHCPFingerprint, 0, len(grouped))
+	for _, candidate := range grouped {
 		vendors := make([]string, 0, len(candidate.vendors))
 		for vendor := range candidate.vendors {
 			vendors = append(vendors, vendor)
@@ -174,6 +193,7 @@ func CompileFingerbankSnapshot(raw []byte, options FingerbankCompileOptions) ([]
 		items = append(items, DHCPFingerprint{
 			RequestedOptions: candidate.options,
 			VendorClasses:    vendors,
+			VendorRequired:   candidate.vendorRequired,
 			DeviceType:       candidate.deviceType,
 			OSFamily:         candidate.osFamily,
 			Description:      fingerbankDescription(candidate.devicePath, candidate.description),
@@ -184,11 +204,14 @@ func CompileFingerbankSnapshot(raw []byte, options FingerbankCompileOptions) ([]
 		if items[i].RequestedOptions != items[j].RequestedOptions {
 			return items[i].RequestedOptions < items[j].RequestedOptions
 		}
-		return items[i].Description < items[j].Description
+		if items[i].Description != items[j].Description {
+			return items[i].Description < items[j].Description
+		}
+		return strings.Join(items[i].VendorClasses, "\x00") < strings.Join(items[j].VendorClasses, "\x00")
 	})
 	stats.EmittedRules = len(items)
-	if stats.Distinct > 0 {
-		stats.UnmappedRate = float64(stats.UnmappedRules) / float64(stats.Distinct)
+	if len(candidates) > 0 {
+		stats.UnmappedRate = float64(stats.UnmappedRules) / float64(len(candidates))
 	}
 	for _, item := range items {
 		if item.DeviceType != "" {
@@ -245,25 +268,46 @@ func normalizeFingerbankDevicePath(path, description string) (string, string) {
 		if strings.Contains(detail, "tablet") {
 			return "tablet", osFamily
 		}
-		if osFamily == "" && strings.Contains(text, "apple") {
-			osFamily = "iOS"
+		if strings.Contains(detail, "smartphone") || strings.Contains(detail, "iphone") || strings.HasPrefix(detail, "phone") || strings.Contains(detail, "/phone") || strings.Contains(detail, " phone") {
+			return "mobile", osFamily
 		}
-		return "mobile", osFamily
-	case strings.HasPrefix(category, "router, access point"), strings.HasPrefix(category, "router"):
-		if strings.Contains(text, "access point") || strings.Contains(text, "wireless ap") {
+		// The broad family includes phones, tablets and watches. Only a
+		// model-specific Fingerbank leaf from a known product line narrows it.
+		// A generic "Huawei Android" result must remain OS-only.
+		if len(segments) >= 4 && strings.TrimSpace(segments[1]) == "generic android" && strings.TrimSpace(segments[2]) == "huawei android" {
+			model := strings.TrimSpace(segments[len(segments)-1])
+			switch {
+			case strings.HasPrefix(model, "huawei matepad "), strings.HasPrefix(model, "huawei mediapad "):
+				return "tablet", osFamily
+			case strings.HasPrefix(model, "huawei mate "), strings.HasPrefix(model, "huawei nova "),
+				strings.HasPrefix(model, "huawei pura "), strings.HasPrefix(model, "huawei pocket "),
+				strings.HasPrefix(model, "huawei enjoy "):
+				return "mobile", osFamily
+			}
+		}
+		return "", osFamily
+	case strings.HasPrefix(category, "router, access point"):
+		if strings.Contains(detail, "access point") || strings.Contains(detail, "wireless ap") {
 			return "access_point", ""
 		}
+		if strings.Contains(detail, "router") {
+			return "router", ""
+		}
+		return "", ""
+	case strings.HasPrefix(category, "router"):
 		return "router", ""
 	case strings.HasPrefix(category, "switch"):
 		return "switch", ""
+	case strings.HasPrefix(category, "firewall and security appliance"), strings.HasPrefix(category, "firewall"):
+		return "firewall", ""
+	case strings.HasPrefix(category, "voip device"):
+		return "phone", osFamily
 	case strings.HasPrefix(category, "internet of things"):
 		return "iot", osFamily
 	case strings.HasPrefix(category, "operating system"):
-		// Windows and ChromeOS OS-only paths are desktop-class in the existing
-		// rule vocabulary; other OS-only paths stay without a device type.
-		if osFamily == "Windows" || osFamily == "ChromeOS" {
-			return "desktop", osFamily
-		}
+		// An OS fingerprint does not establish the hardware form factor.
+		// Keep Windows and ChromeOS as OS evidence until a device-specific
+		// source independently identifies a desktop or laptop.
 		return "", osFamily
 	case strings.Contains(text, "printer"):
 		return "printer", osFamily
@@ -295,6 +339,8 @@ func fingerbankOSFamily(text string) string {
 		return "HarmonyOS"
 	case strings.Contains(text, "chrome os") || strings.Contains(text, "chromebook"):
 		return "ChromeOS"
+	case strings.Contains(text, "tizen"):
+		return "Tizen"
 	case strings.Contains(text, "apple os"):
 		return "Apple OS"
 	case strings.Contains(text, "embedded linux"):

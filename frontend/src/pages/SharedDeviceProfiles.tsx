@@ -31,10 +31,11 @@ export function SharedDeviceProfiles() {
   const routerStatus = params.get('device_router_status') || ''
   const currentShared = params.get('device_current_shared') || ''
   const accountConflict = params.get('device_account_conflict') || ''
-  const query = { hasAccount: true, keyword, role, identityState, routerStatus, currentShared, accountConflict, limit: pagination.pageSize, cursor: pagination.cursor }
+  const accountGroup = ['linked', 'empty'].includes(params.get('device_accounts') || '') ? params.get('device_accounts')! : 'all'
+  const query = { accountGroup, keyword, role, identityState, routerStatus, currentShared, accountConflict, limit: pagination.pageSize, cursor: pagination.cursor }
   const profiles = useQuery({
     queryKey: ['shared-device-profiles', query],
-    queryFn: () => request<ProfilePage>(`/shared-access/devices?has_account=true&limit=${query.limit}&cursor=${query.cursor}&keyword=${encodeURIComponent(keyword)}&role=${encodeURIComponent(role)}&identity_state=${encodeURIComponent(identityState)}&router_status=${encodeURIComponent(routerStatus)}&current_shared=${encodeURIComponent(currentShared)}&account_conflict=${encodeURIComponent(accountConflict)}`),
+    queryFn: () => request<ProfilePage>(`/shared-access/devices?${accountGroup === 'all' ? '' : `has_account=${accountGroup === 'linked'}&`}limit=${query.limit}&cursor=${query.cursor}&keyword=${encodeURIComponent(keyword)}&role=${encodeURIComponent(role)}&identity_state=${encodeURIComponent(identityState)}&router_status=${encodeURIComponent(routerStatus)}&current_shared=${encodeURIComponent(currentShared)}&account_conflict=${encodeURIComponent(accountConflict)}`),
     placeholderData: () => undefined,
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -48,14 +49,10 @@ export function SharedDeviceProfiles() {
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   })
-  const [knownTotal, setKnownTotal] = useState(0)
   const [moreOpen, setMoreOpen] = useState(false)
   useEffect(() => {
     if (profiles.data && profiles.data.items.length === 0 && pagination.page > 1) pagination.reset()
   }, [pagination, profiles.data])
-  useEffect(() => {
-    if (profiles.data) setKnownTotal(profiles.data.page.total)
-  }, [profiles.data])
   const [searchInput, setSearchInput] = useState(keyword)
   useEffect(() => {
     const timer = globalThis.setTimeout(() => {
@@ -81,7 +78,7 @@ export function SharedDeviceProfiles() {
     return next
   }, { replace: true })
   const items = profiles.data?.items || []
-  const total = profiles.data?.page.total ?? knownTotal
+  const total = profiles.data?.page.total
   const columns: ColumnsType<Profile> = [
     { title: '设备身份', key: 'device', width: 260, render: (_, item) => <><DeviceIdentity item={item} /><ProfileState item={item} /></> },
     { title: '网络身份', key: 'network', width: 220, render: (_, item) => <NetworkIdentity item={item} /> },
@@ -103,6 +100,7 @@ export function SharedDeviceProfiles() {
       searchValue={searchInput}
       onSearchChange={setSearchInput}
       filters={<>
+        <Select aria-label="账号关联范围" className="shared-profile-filter" value={accountGroup} onChange={value => filter('device_accounts', value === 'all' ? undefined : value)} options={[{ value: 'all', label: '全部账号范围' }, { value: 'linked', label: '有关联账号' }, { value: 'empty', label: '无关联账号' }]} />
         <Select className="shared-profile-filter" value={role || undefined} allowClear placeholder="设备角色" onChange={value => filter('device_role', value)} options={[{ value: 'router', label: '路由器' }, { value: 'ap', label: '接入点' }, { value: 'gateway', label: '网关' }, { value: 'switch', label: '交换机' }, { value: 'firewall', label: '防火墙' }, { value: 'shared_gateway', label: '共享网关' }]} />
         <Button size="small" type="text" onClick={() => setMoreOpen(value => !value)}>{moreOpen ? '收起筛选' : '更多筛选'}{[identityState, routerStatus, currentShared, accountConflict].filter(Boolean).length ? `（${[identityState, routerStatus, currentShared, accountConflict].filter(Boolean).length}）` : ''}</Button>
       </>}
@@ -117,7 +115,7 @@ export function SharedDeviceProfiles() {
 
   const sharedTail = (
     <>
-    <details className="shared-profile-help"><summary>数据口径</summary><p className="shared-access-muted">仅展示有关联认证账号的终端档案；历史认证关联不代表账号当前在线。最后观测来自身份、地址、认证、发现或共享证据，不代表设备当前在线。</p></details>
+    <details className="shared-profile-help"><summary>数据口径</summary><p className="shared-access-muted">展示各账号范围的身份档案及辅助线索；同一设备在不同来源范围可有多条档案，数量不等于资产数或共享设备数。档案存在不代表已确认共享，历史认证关联不代表账号当前在线。最后观测来自身份、地址、认证、发现或共享证据，不代表设备当前在线。</p></details>
     <Drawer title="终端档案历史" rootClassName="shared-profile-history-drawer" open={Boolean(selectedProfile)} onClose={() => setSelectedProfile(null)}>
       {detail.isError ? <AppErrorAlert title="档案历史读取失败" /> : detail.isPending ? <AppLoadingState rows={5} /> : <div className="shared-profile-history">
         {(detail.data?.history || []).map((entry, index) => <article key={`${entry.observed_at}-${index}`} className="shared-profile-history-item">
@@ -134,11 +132,11 @@ export function SharedDeviceProfiles() {
     {alerts}
     {searchBar}
     <section className="surface">
-      <AppListHeader title="终端档案" count={`${total} 条`} actions={<span className="shared-access-muted">仅显示有认证账号的档案</span>} />
-      <AppListSection isError={profiles.isError} errorTitle="终端档案读取失败" isLoading={profiles.isFetching} loadingRows={6} isEmpty={!items.length} emptyText="当前筛选下暂无有认证账号的终端档案">
+      <AppListHeader title="终端档案" count={total===undefined?undefined:`${total} 条`} actions={<span className="shared-access-muted">身份档案与共享结论分别核验</span>} />
+      <AppListSection isError={profiles.isError} errorTitle="终端档案读取失败" isLoading={profiles.isFetching} loadingRows={6} isEmpty={!items.length} emptyText="当前筛选下暂无终端档案">
         <AppTable rowKey="profile_id" columns={columns} dataSource={items} scroll={{ x: 960 }} />
       </AppListSection>
-      {total > 0 && <AppServerPagination disabled={profiles.isFetching} page={pagination.page} pageSize={pagination.pageSize} total={total} onChange={pagination.update} />}
+      {<AppServerPagination disabled={profiles.isFetching} page={pagination.page} pageSize={pagination.pageSize} total={total} totalText={profiles.isError?'数量读取失败':undefined} onChange={pagination.update} />}
     </section>
     {sharedTail}
   </>

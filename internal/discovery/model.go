@@ -45,6 +45,7 @@ type Observation struct {
 	Interface     string           `json:"interface,omitempty"`
 	LocationKind  string           `json:"location_kind,omitempty"`
 	DeviceType    string           `json:"device_type,omitempty"`
+	OSHint        string           `json:"os_hint,omitempty"`
 	Capabilities  []string         `json:"capabilities,omitempty"`
 	Confidence    string           `json:"confidence"`
 	Explanation   string           `json:"explanation"`

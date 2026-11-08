@@ -30,6 +30,14 @@ class FrontendUpgradeReplay(unittest.TestCase):
     def test_first_identical_graph_needs_no_retained_pointer(self):
         (self.root/'previous').unlink();(self.root/'previous').symlink_to(self.c)
         m.prepare(self.root,self.c,self.state);self.assertFalse((self.root/'frontend-previous').exists())
+    def test_upgrade_after_single_version_retirement(self):
+        (self.root/'previous').unlink()
+        m.prepare(self.root,self.d,self.state)
+        self.assertEqual((self.root/'frontend-previous').resolve(),self.b)
+        m.restore(self.root,self.state)
+        self.assertFalse((self.root/'frontend-previous').exists())
+        m.prepare(self.root,self.c,self.state)
+        self.assertFalse((self.root/'frontend-previous').exists())
     def test_outside_release_and_unsafe_graph_rejected(self):
         outside=self.root/'outside';outside.mkdir()
         with self.assertRaises(ValueError):m.prepare(self.root,outside,self.state)

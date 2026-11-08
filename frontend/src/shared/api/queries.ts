@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import {
   keepPreviousData,
-  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
@@ -401,8 +400,8 @@ export function useInventoryDetail(endpointId:string) {
  return useQuery({queryKey:['inventory-detail',endpointId],queryFn:({signal})=>api.inventoryDetail(endpointId,signal),enabled:!!endpointId,staleTime:30_000,refetchOnWindowFocus:false,refetchOnReconnect:false})
 }
 
-export function useEndpointObservations(endpointId:string,query:import('./types').EndpointObservationQuery) {
- return useQuery({queryKey:['endpoint-observations',endpointId,query],queryFn:({signal})=>api.endpointObservations(endpointId,query,signal),enabled:!!endpointId,staleTime:30_000,placeholderData:(previous,previousQuery)=>{const old=previousQuery?.queryKey[2] as import('./types').EndpointObservationQuery|undefined;return previousQuery?.queryKey[1]===endpointId&&old&&['kind','value','source','start','end'].every(key=>old[key as keyof typeof old]===query[key as keyof typeof query])?previous:undefined},refetchOnWindowFocus:false,refetchOnReconnect:false})
+export function useEndpointObservations(endpointId:string,query:import('./types').EndpointObservationQuery, enabled = true) {
+ return useQuery({queryKey:['endpoint-observations',endpointId,query],queryFn:({signal})=>api.endpointObservations(endpointId,query,signal),enabled:enabled&&!!endpointId,staleTime:30_000,placeholderData:(previous,previousQuery)=>{const old=previousQuery?.queryKey[2] as import('./types').EndpointObservationQuery|undefined;return previousQuery?.queryKey[1]===endpointId&&old&&['kind','value','source','start','end'].every(key=>old[key as keyof typeof old]===query[key as keyof typeof query])?previous:undefined},refetchOnWindowFocus:false,refetchOnReconnect:false})
 }
 
 export function useUpdateEndpointRegistration() {
@@ -775,8 +774,8 @@ export function useCampusExceptionMutation() {
   });
 }
 
-export function useCaseHistory(caseId: string, kind: CaseHistoryKind, enabled: boolean) {
-  return useInfiniteQuery({queryKey: ['case-history',caseId,kind], initialPageParam: '0', queryFn: ({pageParam}) => api.caseHistory(caseId,kind,pageParam), getNextPageParam: (page) => page.page.next_cursor ?? undefined, enabled: enabled && !!caseId})
+export function useCaseHistory(caseId: string, kind: CaseHistoryKind, enabled: boolean, cursor='0', limit=20) {
+  return useQuery({queryKey: ['case-history',caseId,kind,cursor,limit], queryFn: () => api.caseHistory(caseId,kind,cursor,limit), enabled: enabled && !!caseId})
 }
 
-export function useAIRelayUsages(query: AIRelayUsageQuery) { return usePagedQuery(query, value => ["ai-relay-usages", value], api.aiRelayUsages) }
+export function useAIRelayUsages(query: AIRelayUsageQuery, enabled = true) { return usePagedQuery(query, value => ["ai-relay-usages", value], api.aiRelayUsages, enabled) }

@@ -65,6 +65,7 @@ type Signals struct {
 	Hostnames            []string
 	Software             []string
 	Hints                []string
+	OSHint               string
 }
 
 type Rule struct {
@@ -246,18 +247,6 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 			}
 		}
 	}
-	if candidates := l.dhcp[normalizeDHCPOptions(signals.DHCPRequestedOptions)]; len(candidates) > 0 {
-		if candidate, ok := bestDHCPFingerprint(candidates, signals.DHCPVendorClass); ok {
-			addProductCandidate(&result, ProductCandidate{DeviceType: candidate.DeviceType, Source: "fingerbank_dhcp", Field: "dhcp_requested_options", Confidence: candidate.Confidence})
-			mergeDimension(&result, "device_type", candidate.DeviceType, candidate.Confidence, .85)
-			mergeDimension(&result, "os_family", candidate.OSFamily, candidate.Confidence, .85)
-			if result.Source == "" || result.Source == "ieee_oui" {
-				result.Source, result.Confidence = "fingerbank_dhcp", candidate.Confidence
-			}
-			result.Evidence = append(result.Evidence, "Fingerbank DHCP: "+candidate.Description)
-			recordDimensionEvidence(&result, "fingerbank_dhcp", "dhcp_requested_options", candidate.Description, ruleValues{deviceType: candidate.DeviceType, osFamily: candidate.OSFamily}, candidate.Confidence)
-		}
-	}
 	if observe != nil {
 		observe("lookup", time.Since(lookupStarted))
 	}
@@ -316,6 +305,18 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 		}
 		result.Evidence = append(result.Evidence, "设备规则: "+match.rule.Pattern)
 	}
+	if candidates := l.dhcp[normalizeDHCPOptions(signals.DHCPRequestedOptions)]; len(candidates) > 0 {
+		if candidate, ok := bestDHCPFingerprint(candidates, signals.DHCPVendorClass); ok {
+			addProductCandidate(&result, ProductCandidate{DeviceType: candidate.DeviceType, Source: "fingerbank_dhcp", Field: "dhcp_requested_options", Confidence: candidate.Confidence})
+			mergeFingerbankDimension(&result, "device_type", candidate.DeviceType, candidate.Confidence)
+			mergeFingerbankDimension(&result, "os_family", candidate.OSFamily, candidate.Confidence)
+			if result.Source == "" || result.Source == "ieee_oui" {
+				result.Source, result.Confidence = "fingerbank_dhcp", candidate.Confidence
+			}
+			result.Evidence = append(result.Evidence, "Fingerbank DHCP: "+candidate.Description)
+			recordDimensionEvidence(&result, "fingerbank_dhcp", "dhcp_requested_options", candidate.Description, ruleValues{deviceType: candidate.DeviceType, osFamily: candidate.OSFamily}, candidate.Confidence)
+		}
+	}
 	// A device-reported Android DHCP class still identifies its OS when a more
 	// specific hostname rule wins brand and model selection.
 	if result.OSFamily == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(signals.DHCPVendorClass)), "android-dhcp-") {
@@ -342,6 +343,56 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 			break
 		}
 	}
+	// Device-reported hostnames are the remaining self-identifying evidence for
+	// endpoints whose DHCP option sequence only resolves an OS. Microsoft uses
+	// DESKTOP-/LAPTOP- for default installations, Lenovo PCs report LENOVO-PC and
+	// iQOO phones/pads use their model name. Keep them at clue confidence so the
+	// page shows a candidate rather than a confirmed type.
+	if result.DeviceType == "" {
+		for _, hostname := range signals.Hostnames {
+			lower := strings.ToLower(strings.TrimSpace(hostname))
+			for _, hint := range hostnameDeviceHints {
+				if !strings.HasPrefix(lower, hint.prefix) {
+					continue
+				}
+				result.DeviceType = hint.deviceType
+				result.DeviceTypeConfidence = hint.confidence
+				if result.Source == "" || result.Source == "ieee_oui" {
+					result.Source = "dhcp_hostname_hint"
+				}
+				result.Evidence = append(result.Evidence, "DHCP 主机名: "+hostname+" → "+hint.description)
+				recordDimensionEvidence(&result, "hostname_hint", "hostname", hostname, ruleValues{deviceType: hint.deviceType}, hint.confidence)
+				break
+			}
+			if result.DeviceType != "" {
+				break
+			}
+		}
+	}
+	// The client's own browser user agent is a self-reported device class. It is
+	// weaker than a device protocol but stronger than an OUI product-line guess,
+	// so it fills an empty type before the vendor prior runs.
+	if result.DeviceType == "" {
+		for _, ua := range signals.UserAgents {
+			lower := strings.ToLower(strings.TrimSpace(ua))
+			for _, hint := range userAgentDeviceHints {
+				if !strings.Contains(lower, hint.marker) {
+					continue
+				}
+				result.DeviceType = hint.deviceType
+				result.DeviceTypeConfidence = hint.confidence
+				if result.Source == "" || result.Source == "ieee_oui" {
+					result.Source = "user_agent_hint"
+				}
+				result.Evidence = append(result.Evidence, "Client UA: "+hint.description)
+				recordDimensionEvidence(&result, "user_agent_hint", "user_agent", hint.marker, ruleValues{deviceType: hint.deviceType}, hint.confidence)
+				break
+			}
+			if result.DeviceType != "" {
+				break
+			}
+		}
+	}
 	if result.DeviceType == "" && result.Vendor != "" {
 		if deviceType, confidence, ok := LookupVendorPrior(result.Vendor); ok {
 			result.DeviceType = deviceType
@@ -361,21 +412,92 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 	}
 	result.Diagnostics.CandidateRules += catalogEvaluated
 	applySourceMatches(&result, sourceMatches)
+	// Initial-TTL hints only fill an empty OS: they are a coarse clue, not a
+	// substitute for a fingerprint match.
+	if result.OSFamily == "" && strings.TrimSpace(signals.OSHint) != "" {
+		result.OSFamily = signals.OSHint
+		result.OSFamilyConfidence = .55
+		if result.Source == "" || result.Source == "ieee_oui" {
+			result.Source = "ttl_hint"
+		}
+		result.Evidence = append(result.Evidence, "初始 TTL 线索: "+signals.OSHint)
+		recordDimensionEvidence(&result, "ttl_hint", "ttl", signals.OSHint, ruleValues{osFamily: signals.OSHint}, .55)
+	}
+	// A self-reported product family (Apple model codes, Android TV) fills an
+	// empty device class at clue level. It never establishes brand, model or OS.
+	if result.DeviceType == "" {
+		for _, field := range modelFamilyHintFields {
+			matched := false
+			for _, model := range signals.ProtocolFields[field] {
+				deviceType, description, confidence := modelFamilyDeviceType(model)
+				if deviceType == "" {
+					continue
+				}
+				result.DeviceType = deviceType
+				result.DeviceTypeConfidence = confidence
+				if result.Source == "" || result.Source == "ieee_oui" {
+					result.Source = "model_family_hint"
+				}
+				result.Evidence = append(result.Evidence, "自报型号: "+model+" → "+description)
+				recordDimensionEvidence(&result, "model_family_hint", field, model, ruleValues{deviceType: deviceType}, confidence)
+				matched = true
+				break
+			}
+			if matched {
+				break
+			}
+		}
+	}
+	// A hypervisor NIC is a virtual endpoint regardless of what the guest
+	// reports: the OUI belongs to the virtualization platform, not to guest
+	// hardware, so a Windows hostname must not turn it into a desktop.
+	if isHypervisorVendor(result.Vendor) && result.DeviceType != "virtual_machine" {
+		result.DeviceType = "virtual_machine"
+		result.DeviceTypeConfidence = .75
+		if result.Source == "" || result.Source == "ieee_oui" {
+			result.Source = "hypervisor_oui"
+		}
+		result.Evidence = append(result.Evidence, "虚拟化平台厂商: "+result.Vendor)
+		recordDimensionEvidence(&result, "hypervisor_oui", "vendor", result.Vendor, ruleValues{deviceType: "virtual_machine"}, .75)
+	}
 	return result
 }
 
 func bestDHCPFingerprint(items []DHCPFingerprint, vendorClass string) (DHCPFingerprint, bool) {
 	vendorClass = strings.ToLower(strings.TrimSpace(vendorClass))
+	var matched *DHCPFingerprint
 	for _, item := range items {
 		for _, vendor := range item.VendorClasses {
 			if vendorClass != "" && strings.EqualFold(strings.TrimSpace(vendor), vendorClass) {
-				item.Confidence = 0.9
-				return item, true
+				if !item.VendorRequired {
+					item.Confidence = max(item.Confidence, 0.9)
+				}
+				if matched == nil || item.Confidence > matched.Confidence {
+					copy := item
+					matched = &copy
+				}
 			}
 		}
 	}
-	if len(items) == 1 {
+	if matched != nil {
+		return *matched, true
+	}
+	if len(items) == 1 && !items[0].VendorRequired {
 		return items[0], true
+	}
+	var generic *DHCPFingerprint
+	for _, item := range items {
+		if item.VendorRequired || len(item.VendorClasses) != 0 {
+			continue
+		}
+		if generic != nil {
+			return DHCPFingerprint{}, false
+		}
+		copy := item
+		generic = &copy
+	}
+	if generic != nil {
+		return *generic, true
 	}
 	return DHCPFingerprint{}, false
 }

@@ -1252,6 +1252,10 @@ func (s *PostgresStore) UpdateEndpointRegistration(ctx context.Context, update E
 		update.OwnershipClass = "unknown"
 	}
 	updatedAt := nullableTime(update.RegistrationUpdatedAt)
+	var detailsJSON any
+	if raw := registrationDetailsDocument(update); raw != nil {
+		detailsJSON = string(raw)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return EndpointEntity{}, err
@@ -1259,13 +1263,15 @@ func (s *PostgresStore) UpdateEndpointRegistration(ctx context.Context, update E
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO endpoint_entities(
-  endpoint_id, entity_role, identity_confidence, attributes,
+  endpoint_id, primary_mac, entity_role, identity_confidence, attributes,
   registration_status, owner_account, owner_name, owner_department, asset_tag, ownership_class,
   registered_by, registered_at, registration_note, merge_status,
   merged_into_endpoint_id, split_from_endpoint_id, registration_updated_by, registration_updated_at, updated_at
 )
-VALUES($1, 'endpoint', 0, '{}'::jsonb, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
+VALUES($1, NULLIF($16,''), 'endpoint', 0, CASE WHEN $17::jsonb IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('manual_registration',$17::jsonb) END, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now())
 ON CONFLICT(endpoint_id) DO UPDATE SET
+  primary_mac = COALESCE(endpoint_entities.primary_mac, EXCLUDED.primary_mac),
+  attributes = CASE WHEN $17::jsonb IS NULL THEN endpoint_entities.attributes ELSE jsonb_set(endpoint_entities.attributes,'{manual_registration}',$17::jsonb,true) END,
   registration_status = EXCLUDED.registration_status,
   owner_account = EXCLUDED.owner_account,
   owner_name = EXCLUDED.owner_name,
@@ -1296,6 +1302,8 @@ ON CONFLICT(endpoint_id) DO UPDATE SET
 		nullEmptyString(update.SplitFromEndpointID),
 		update.RegistrationUpdatedBy,
 		nullTimeValue(updatedAt),
+		registrationMAC(update.EndpointID),
+		detailsJSON,
 	); err != nil {
 		return EndpointEntity{}, err
 	}
@@ -1491,12 +1499,29 @@ ON CONFLICT(sensor_id) DO UPDATE SET
 // already-normalized events. It is intentionally idempotent so deployments can
 // backfill a retained ClickHouse window after identity schema migrations.
 func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normalized.Event) error {
+	// Endpoint and profile rows commit in their own short transaction. Holding
+	// their row locks across the IP/MAC, access and session statements blocked
+	// the device lane's endpoint upserts (the same shape the authentication
+	// lane already uses).
+	endpointTx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err = writeIdentityEndpointsTx(ctx, endpointTx, events); err != nil {
+		endpointTx.Rollback()
+		return err
+	}
+	if err = endpointTx.Commit(); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = writeIdentityEventsTx(ctx, tx, events); err != nil {
+	// Endpoint rows are already durable; this transaction owns history and the
+	// serialised authority/session writes.
+	if _, err = writeIdentityEventsShapedTx(ctx, tx, events, true, false); err != nil {
 		return err
 	}
 	return tx.Commit()

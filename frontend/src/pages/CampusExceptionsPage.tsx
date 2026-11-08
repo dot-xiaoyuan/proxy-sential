@@ -106,7 +106,7 @@ return <main className="page"><Card><AppListHeader title="校园例外" count={`
                   <AppServerPagination
                     page={exceptionPage.page}
                     pageSize={exceptionPage.pageSize}
-                    total={exceptions.data?.page.total ?? 0}
+                    total={exceptions.data?.page.total}
                     onChange={exceptionPage.update}
                   />
 </Card>      <AppFormModal

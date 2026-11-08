@@ -84,6 +84,9 @@ func TestPassiveDiscoveryRecognitionHintsPostgres(t *testing.T) {
 			t.Fatalf("%s hint missing or wrong: %+v", field, hints)
 		}
 	}
+	if _, err = (&DBStore{pg: s}).flushRecognitionDirtyLog(ctx); err != nil {
+		t.Fatal(err)
+	}
 	var generation int64
 	if err = s.db.QueryRowContext(ctx, `SELECT dirty_generation FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, endpointID).Scan(&generation); err != nil || generation < 2 {
 		t.Fatalf("discovery link did not enqueue recognition: generation=%d err=%v", generation, err)

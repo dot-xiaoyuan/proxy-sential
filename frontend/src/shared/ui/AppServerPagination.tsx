@@ -6,25 +6,25 @@ type AppServerPaginationProps = {
 	disabled?: boolean
 	page: number
 	pageSize: number
-	total: number
+	total?: number
 	onChange: (page: number, pageSize: number) => void
-	cursorMode?: boolean
-	/** 可选的总量文案；游标分页没有准确总数时可传“已加载 N 条” */
+	/** 统计尚未就绪时显示明确的读取状态，不使用已加载条数替代总数。 */
 	totalText?: string
 	showSizeChanger?: boolean
 }
 
-export function AppServerPagination({ disabled = false, page, pageSize, total, onChange, cursorMode = false, totalText, showSizeChanger = true }: AppServerPaginationProps) {
+export function AppServerPagination({ disabled = false, page, pageSize, total, onChange, totalText, showSizeChanger = true }: AppServerPaginationProps) {
+	const hasTotal = typeof total === 'number' && Number.isFinite(total) && total >= 0
 	return <Pagination
 		className="list-pagination app-server-pagination"
 		current={page}
-		disabled={disabled}
+		disabled={disabled || !hasTotal}
 		pageSize={pageSize}
 		pageSizeOptions={[20, 50]}
-		showQuickJumper={!cursorMode}
+		showQuickJumper
 		showSizeChanger={showSizeChanger}
-		showTotal={() => totalText ?? `共 ${total} 条`}
-		total={total}
+		showTotal={() => totalText ?? (hasTotal ? `共 ${total} 条` : '正在读取总数')}
+		total={hasTotal ? total : 0}
 		onChange={(nextPage, nextSize) => onChange(nextSize !== pageSize ? 1 : nextPage, nextSize)}
 	/>
 }

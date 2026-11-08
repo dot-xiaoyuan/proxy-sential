@@ -32,7 +32,7 @@ import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
 import { statusText } from '../shared/ui/status'
-import { AppCursorPagination, AppEmptyState, AppErrorAlert, AppFactBar, AppListHeader, AppListSection, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, AppTableBar, formatDateTime, useServerPagination } from '../shared/ui'
+import { AppEmptyState, AppErrorAlert, AppFactBar, AppListHeader, AppListSection, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, AppTableBar, formatDateTime, useServerPagination, useCursorPagePosition, usePaginationMetadata } from '../shared/ui'
 
 type SharedResult = { state: string; reasons: string[]; signal_groups: string[]; quantity_known: boolean; device_lower_bound: number; confidence: number; from: string; to: string }
 type SharedBehavior = {
@@ -64,11 +64,15 @@ function EventReferences({ ids }: { ids: string[] }) {
  if (!ids.length) return null
  return <details className="router-evidence-events"><summary>关联 {ids.length} 个原始事件</summary><div>{ids.join('、')}</div></details>
 }
-function CursorButtons({ next, previous, onNext, onPrevious }: { next?: string; previous: boolean; onNext: () => void; onPrevious: () => void }) { return <AppCursorPagination previous={previous} next={Boolean(next)} onPrevious={onPrevious} onNext={onNext} /> }
-function useCursor(prefix='detail') {
- const [params,setParams]=useSearchParams();let stack:string[]=[''];try{const value=JSON.parse(params.get(`${prefix}_cursors`)||'[]');if(Array.isArray(value)&&value.length<100&&value.every(v=>typeof v==='string'))stack=['',...value]}catch{/* invalid URL cursor history resets */}
- const save=(values:string[])=>setParams(current=>{const next=new URLSearchParams(current);next.set(`${prefix}_cursors`,JSON.stringify(values.slice(1)));return next})
- return {cursor:stack[stack.length-1],previous:stack.length>1,next:(value:string)=>{if(value)save([...stack,value])},back:()=>save(stack.slice(0,-1))}
+function useReviewPagination(path:string,prefix:string,enabled=true) {
+ const pagination=useServerPagination(`${prefix}_`)
+ const metadata=usePaginationMetadata(`${path}/metadata`,'',enabled)
+ const snapshot=metadata.data?.snapshot
+ const position=useCursorPagePosition({path:`${path}/position`,query:{snapshot},page:pagination.page,pageSize:pagination.pageSize,enabled:enabled&&Boolean(metadata.data)})
+ return {...pagination,cursor:position.cursor??'',snapshot:snapshot??'',ready:position.ready,position,metadata}
+}
+function ReviewPagination({value,loading=false}:{value:ReturnType<typeof useReviewPagination>;loading?:boolean}) {
+ return <>{value.position.isError&&<AppErrorAlert title="页码定位失败" message={value.position.error.message}/>}<AppServerPagination disabled={loading||value.position.isLocating} page={value.page} pageSize={value.pageSize} total={value.metadata.data?.total} totalText={value.metadata.isError?'数量读取失败':undefined} onChange={value.update}/></>
 }
 
 function SharedBehaviorEvidence({item,historical,locationPath}:{item:SharedBehavior;historical:boolean;locationPath:string}) {
@@ -88,8 +92,7 @@ function SharedBehaviorEvidence({item,historical,locationPath}:{item:SharedBehav
 export function SharedAccessPage() {
   const [tab,setTab]=useUrlState('tab','routers',['devices','routers','associations','history','reviews'],['status','history_basis','observations_cursors','observations_page','observations_limit']);
   const location=useLocation();const session=useSession();const [healthOpen,setHealthOpen]=useState(false);
-  const cursor = useCursor('reviews')
-  const [reviewPage,setReviewPage]=useState(1)
+  const cursor = useReviewPagination('/shared-access/reviews','reviews',tab==='reviews')
   const behaviorPagination = useServerPagination('observations_')
   const [behaviorStatus, setBehaviorStatus] = useUrlState('status','',undefined,['observations_cursors','observations_page'])
   const [historyBasis,setHistoryBasis] = useUrlState('history_basis','shared',['shared','clues'],['status','observations_cursors','observations_page'])
@@ -98,7 +101,7 @@ export function SharedAccessPage() {
   const [behaviorSearchInput,setBehaviorSearchInput]=useState(behaviorKeyword)
   useEffect(()=>{const timer=globalThis.setTimeout(()=>{const next=behaviorSearchInput.trim();if(next!==behaviorKeyword){setBehaviorKeyword(next);behaviorPagination.reset()}},300);return()=>globalThis.clearTimeout(timer)},[behaviorSearchInput])
   const status = useQuery({ queryKey: ['shared-access-status'], queryFn: () => request<Status>('/shared-access/status'), refetchInterval: 5000, enabled:healthOpen&&can(session.data,'identity:read') })
-  const reviews = useQuery({ queryKey: ['shared-access-reviews', cursor.cursor], queryFn: () => request<Page<Review>>(`/shared-access/reviews?limit=20&cursor=${encodeURIComponent(cursor.cursor)}`),enabled:tab==='reviews' })
+  const reviews = useQuery({ queryKey: ['shared-access-reviews', cursor.cursor, cursor.pageSize, cursor.snapshot], queryFn: () => request<Page<Review>>(`/shared-access/reviews?limit=${cursor.pageSize}&cursor=${encodeURIComponent(cursor.cursor)}&snapshot=${encodeURIComponent(cursor.snapshot)}`),enabled:tab==='reviews'&&cursor.ready })
   const behavior = useQuery({ queryKey: ['shared-access-observations', behaviorPagination.cursor, behaviorPagination.pageSize, behaviorStatus, behaviorKeyword,tab,historyBasis], queryFn: () => request<OffsetPage<SharedBehavior>>(`/shared-access/observations?limit=${behaviorPagination.pageSize}&cursor=${encodeURIComponent(behaviorPagination.cursor)}&view=${tab==='history'?'history':'current'}${tab==='history'?`&history_basis=${encodeURIComponent(historyBasis)}`:''}&status=${encodeURIComponent(behaviorStatus)}&keyword=${encodeURIComponent(behaviorKeyword)}`), refetchInterval: 30000,enabled:tab==='associations'||tab==='history' })
   useEffect(()=>{if(behavior.data&&!behavior.isFetching&&behavior.data!.items.length===0&&behaviorPagination.page>1)behaviorPagination.reset()},[behavior.data,behavior.isFetching,behaviorPagination])
   const toggleBehaviorEvidence=(id:string)=>setExpandedBehaviorRows(current=>current.includes(id)?current.filter(value=>value!==id):[...current,id])
@@ -139,16 +142,16 @@ export function SharedAccessPage() {
       <AppListSection isError={behavior.isError} errorTitle="共享网关观察读取失败" isLoading={behavior.isLoading} loadingRows={4} isEmpty={!behavior.data?.items.length} emptyText={tab==='history'?(historyBasis==='clues'?'暂无旧规则复核线索':'暂无有明确多终端证据的历史记录'):'暂无多终端接入关联证据；仅有协议线索的 IP 不列入共享核验，不表示已证明不存在共享'}>
         <AppTable rowKey="observation_id" columns={behaviorColumns} dataSource={behavior.data?.items ?? []} scroll={{x:960}} expandable={{expandedRowKeys:expandedBehaviorRows,showExpandColumn:false,expandedRowRender:item=><SharedBehaviorEvidence item={item} historical={tab==='history'} locationPath={location.pathname+location.search}/>}} />
       </AppListSection>
-      <AppServerPagination page={behaviorPagination.page} pageSize={behaviorPagination.pageSize} total={behavior.data?.page.total||0} onChange={behaviorPagination.update}/>
+      <AppServerPagination page={behaviorPagination.page} pageSize={behaviorPagination.pageSize} total={behavior.data?.page.total} onChange={behaviorPagination.update}/>
       </section>
     </>}
     {tab==='reviews'&&<section className="surface">
-      <AppListHeader title="账号归属核验" count={`${reviews.data?.items.length ?? 0} 条`} />
+      <AppListHeader title="账号归属核验" count={cursor.metadata.data?`${cursor.metadata.data.total} 条`:undefined} />
       <p className="shared-access-muted">这里核对共享证据发生时的认证账号、会话代次与身份来源是否一致。人工结论只记录复核结果，不会发送提醒或执行处罚；设备是否为路由器请查看路由器核验。</p>
-      <AppListSection isError={reviews.isError} errorTitle="复核队列读取失败" isLoading={reviews.isLoading} loadingRows={3} isEmpty={!reviews.data?.items.length} emptyText="暂无人工账号归属复核记录。只读观察模式不生成此队列；认证关联可在共享终端档案查看，策略命中与处置记录可在风险运营查看。">
+      <AppListSection isError={reviews.isError||cursor.metadata.isError||cursor.position.isError} errorTitle="复核队列读取失败" isLoading={reviews.isLoading||cursor.metadata.isPending||cursor.position.isLocating} loadingRows={3} isEmpty={!reviews.data?.items.length} emptyText="暂无人工账号归属复核记录。只读观察模式不生成此队列；认证关联可在共享终端档案查看，策略命中与处置记录可在风险运营查看。">
         <AppTable rowKey="review_id" columns={reviewColumns} dataSource={reviews.data?.items ?? []} scroll={{ x: 980 }} />
       </AppListSection>
-      {(()=>{const items=reviews.data?.items.length??0;const total=reviews.data?.next_cursor?reviewPage*20+1:(reviewPage-1)*20+items;return <AppServerPagination cursorMode page={reviewPage} pageSize={20} total={total} totalText={`第 ${reviewPage} 页 · 已加载 ${(reviewPage-1)*20+items} 条`} onChange={(next)=>{if(next>reviewPage){const value=reviews.data?.next_cursor;if(value){cursor.next(value);setReviewPage(next)}}else{cursor.back();setReviewPage(next)}}}/>})()} 
+      <ReviewPagination value={cursor} loading={reviews.isFetching}/>
     </section>}
     <details onToggle={e=>setHealthOpen(e.currentTarget.open)} className="surface filter-disclosure shared-health-disclosure"><summary>链路与处置说明</summary><div className="filter-disclosure-content"><AppFactBar items={['共享确认记录策略只记录，不执行下线','账号按事件窗口归责，覆盖不足和身份冲突会说明原因','执行功能关闭为预期配置']} />
     {status.isError ? <AppErrorAlert title="链路状态读取失败" /> : status.isLoading ? <AppLoadingState rows={2} /> : status.data && <Card className="shared-health-card" title="链路状态" extra={<span className="shared-access-muted">检查时间：{time(status.data.checked_at)}</span>}>
@@ -197,15 +200,15 @@ export function SharedReviewDetailsPage() {
  const [params]=useSearchParams();
   const session = useSession()
   const { id } = useParams(); const cache = useQueryClient()
-  const evidenceCursor = useCursor('evidence'); const executionCursor = useCursor('executions')
   const [confirmVersion, setConfirmVersion] = useState<number>()
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
   const [form] = Form.useForm<{ conclusion: string; reason: string }>()
   const root = `/shared-access/reviews/${encodeURIComponent(id ?? '')}`
+  const evidenceCursor=useReviewPagination(`${root}/evidence`,'evidence');const executionCursor=useReviewPagination(`${root}/executions`,'executions')
   const identityStatus = useQuery({queryKey: ['shared-access-status'], queryFn: () => request<Status>('/shared-access/status'), refetchInterval: 5000})
   const detail = useQuery({ queryKey: ['shared-review', id], queryFn: () => request<Review>(root) })
-  const evidence = useQuery({ queryKey: ['shared-review-evidence', id, evidenceCursor.cursor], queryFn: () => request<Page<{ version: number; evidence: { result: SharedResult; window: { feature_samples?: Record<string, Record<string, { count: number; buckets: number[] }>>; records?: { event_id: string; source: string }[] } }; created_at: string }>>(`${root}/evidence?limit=20&cursor=${encodeURIComponent(evidenceCursor.cursor)}`) })
-  const executions = useQuery({ queryKey: ['shared-review-executions', id, executionCursor.cursor], queryFn: () => request<Page<{ action_id: string; status: string; mode: string }>>(`${root}/executions?limit=20&cursor=${encodeURIComponent(executionCursor.cursor)}`), refetchInterval: 5000 })
+  const evidence = useQuery({ queryKey: ['shared-review-evidence', id, evidenceCursor.cursor, evidenceCursor.pageSize, evidenceCursor.snapshot], queryFn: () => request<Page<{ version: number; evidence: { result: SharedResult; window: { feature_samples?: Record<string, Record<string, { count: number; buckets: number[] }>>; records?: { event_id: string; source: string }[] } }; created_at: string }>>(`${root}/evidence?limit=${evidenceCursor.pageSize}&cursor=${encodeURIComponent(evidenceCursor.cursor)}&snapshot=${encodeURIComponent(evidenceCursor.snapshot)}`), enabled:evidenceCursor.ready })
+  const executions = useQuery({ queryKey: ['shared-review-executions', id, executionCursor.cursor, executionCursor.pageSize, executionCursor.snapshot], queryFn: () => request<Page<{ action_id: string; status: string; mode: string }>>(`${root}/executions?limit=${executionCursor.pageSize}&cursor=${encodeURIComponent(executionCursor.cursor)}&snapshot=${encodeURIComponent(executionCursor.snapshot)}`), enabled:executionCursor.ready, refetchInterval: 5000 })
   if (detail.isLoading) return <AppLoadingState rows={4} />
   if (detail.isError || !detail.data) return <AppErrorAlert title="共享复核详情读取失败" />
   const review = detail.data
@@ -220,9 +223,9 @@ export function SharedReviewDetailsPage() {
     {error && <AppErrorAlert title={error} />}
     <Card title="身份来源">{identityStatus.isError ? <AppErrorAlert title="当前身份状态不可用，不能处置" /> : identityStatus.data?.identity.filter(source=>source.scope.campus_id===review.campus_id && source.scope.access_domain===review.access_domain).map(source=><article className="shared-access-item" key={source.connector_id || `${source.scope.campus_id}/${source.scope.access_domain}`}>{states[source.state] && <Tag color={source.fresh?'green':'orange'}>{states[source.state]}</Tag>}<p>当前源观测：{time(source.observed_at)}</p>{blockers[source.blocker] && <p>{blockers[source.blocker]}</p>}</article>)}</Card>
     <Card title="当前依据"><Space wrap>{states[review.latest_result.state] && <Tag>{states[review.latest_result.state]}</Tag>}<Tag>版本 {review.latest_version}</Tag><Tag>独立轮次 {review.episode}</Tag></Space>{timeRange(review.latest_result.from, review.latest_result.to) && <p>时间范围：{timeRange(review.latest_result.from, review.latest_result.to)}</p>}{review.latest_result.quantity_known && <p>已确认设备下界：{review.latest_result.device_lower_bound}</p>}{!!review.latest_result.signal_groups?.length && <p>独立信号：{review.latest_result.signal_groups.join('、')}</p>}<p className="shared-access-id">会话代次：{review.session_generation}</p>{review.last_conclusion && <article className="shared-access-item"><strong>最近人工结论：{({shared:'共享依据成立',normal:'正常',insufficient:'证据不足'} as Record<string,string>)[review.last_conclusion.conclusion]??''}</strong><p>{review.last_conclusion.reason}</p><p>操作者：{review.last_conclusion.operator_id} · 依据版本 {review.last_conclusion.evidence_version}</p>{review.last_conclusion.evidence_version!==review.latest_version && <Tag color="orange">依据已更新，需重新复核</Tag>}</article>}</Card>
-    <Card title="证据版本与时间共现">{evidence.isError ? <AppErrorAlert title="证据历史读取失败" /> : evidence.isLoading ? <AppLoadingState rows={2} /> : evidence.data?.items.map(item => <article className="shared-access-item" key={item.version}><strong>依据版本 {item.version}</strong><p>{time(item.created_at)}</p>{Object.entries(item.evidence.window.feature_samples ?? {}).map(([family, features]) => <div key={family}><strong>{family}</strong>{Object.entries(features).map(([value, sample]) => <p className="shared-access-id" key={value}>{value}：{sample.count} 个去重观测，{sample.buckets.length} 个五秒桶；桶：{sample.buckets.join('、')}</p>)}</div>)}<details><summary>原始证据引用（有界摘要）</summary>{item.evidence.window.records?.map((record, index) => <p className="shared-access-id" key={index}>{record.source} / {record.event_id}</p>)}</details></article>)}<CursorButtons next={evidence.data?.next_cursor} previous={evidenceCursor.previous} onNext={() => evidenceCursor.next(evidence.data?.next_cursor ?? '')} onPrevious={evidenceCursor.back} /></Card>
+    <Card title="证据版本与时间共现">{(evidence.isError||evidenceCursor.metadata.isError||evidenceCursor.position.isError) ? <AppErrorAlert title="证据历史读取失败" /> : (evidence.isLoading||evidenceCursor.metadata.isPending||evidenceCursor.position.isLocating) ? <AppLoadingState rows={2} /> : evidence.data?.items.map(item => <article className="shared-access-item" key={item.version}><strong>依据版本 {item.version}</strong><p>{time(item.created_at)}</p>{Object.entries(item.evidence.window.feature_samples ?? {}).map(([family, features]) => <div key={family}><strong>{family}</strong>{Object.entries(features).map(([value, sample]) => <p className="shared-access-id" key={value}>{value}：{sample.count} 个去重观测，{sample.buckets.length} 个五秒桶；桶：{sample.buckets.join('、')}</p>)}</div>)}<details><summary>原始证据引用（有界摘要）</summary>{item.evidence.window.records?.map((record, index) => <p className="shared-access-id" key={index}>{record.source} / {record.event_id}</p>)}</details></article>)}<ReviewPagination value={evidenceCursor} loading={evidence.isFetching}/></Card>
     <SharedDisconnectPanel id={review.review_id} />
-    <Card title="关联执行记录">{<AppListSection isError={executions.isError} errorTitle="执行记录读取失败" isLoading={executions.isLoading} loadingRows={2} isEmpty={!executions.data?.items.length} emptyText="暂无执行记录；复核结论不会自动下线">{(executions.data?.items ?? []).map(item => <article className="shared-access-item" key={item.action_id}><p className="shared-access-id">{item.action_id}</p><Tag>{statusText(item.mode)}</Tag><p>{statusText(item.status)}</p>{can(session.data, 'actions:revoke') && ['pending','running','blocked'].includes(item.status) && <Button onClick={() => void request(`/actions/${encodeURIComponent(item.action_id)}/revoke`, { method: 'POST' }).then(() => cache.invalidateQueries({ queryKey: ['shared-review-executions', id] })).catch(reason => setError(reason instanceof Error ? reason.message : '撤销失败'))}>停止后续发送</Button>}</article>)}</AppListSection>}<CursorButtons next={executions.data?.next_cursor} previous={executionCursor.previous} onNext={() => executionCursor.next(executions.data?.next_cursor ?? '')} onPrevious={executionCursor.back} /></Card>
+    <Card title="关联执行记录">{<AppListSection isError={executions.isError||executionCursor.metadata.isError||executionCursor.position.isError} errorTitle="执行记录读取失败" isLoading={executions.isLoading||executionCursor.metadata.isPending||executionCursor.position.isLocating} loadingRows={2} isEmpty={!executions.data?.items.length} emptyText="暂无执行记录；复核结论不会自动下线">{(executions.data?.items ?? []).map(item => <article className="shared-access-item" key={item.action_id}><p className="shared-access-id">{item.action_id}</p><Tag>{statusText(item.mode)}</Tag><p>{statusText(item.status)}</p>{can(session.data, 'actions:revoke') && ['pending','running','blocked'].includes(item.status) && <Button onClick={() => void request(`/actions/${encodeURIComponent(item.action_id)}/revoke`, { method: 'POST' }).then(() => cache.invalidateQueries({ queryKey: ['shared-review-executions', id] })).catch(reason => setError(reason instanceof Error ? reason.message : '撤销失败'))}>停止后续发送</Button>}</article>)}</AppListSection>}<ReviewPagination value={executionCursor} loading={executions.isFetching}/></Card>
     <Modal title={`人工复核 · 依据版本 ${confirmVersion ?? ''}`} open={confirmVersion !== undefined} onCancel={() => setConfirmVersion(undefined)} onOk={() => void save()} confirmLoading={busy} okText="保存结论" cancelText="取消">
       {error && <AppErrorAlert title={error} />}<Form form={form} layout="vertical"><Form.Item name="conclusion" label="复核结论" rules={[{ required: true }]}><Select options={[{ value: 'shared', label: '共享依据成立' }, { value: 'normal', label: '正常' }, { value: 'insufficient', label: '证据不足' }]} /></Form.Item><Form.Item name="reason" label="复核理由" rules={[{ required: true }]}><Input.TextArea rows={3} maxLength={4096} /></Form.Item></Form>
     </Modal>

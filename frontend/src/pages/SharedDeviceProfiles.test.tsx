@@ -32,7 +32,7 @@ describe('共享设备持久化档案', () => {
     request.mockResolvedValue({ items: [], page: { limit: 20, total: 0 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'initializing', pending_jobs: 0 })
     setup()
     expect(await screen.findByText('正在建立新的终端档案')).toBeInTheDocument()
-    expect(screen.getByText('当前筛选下暂无有认证账号的终端档案')).toBeInTheDocument()
+    expect(screen.getByText('当前筛选下暂无终端档案')).toBeInTheDocument()
     expect(screen.getByText(/本次上线不回填旧记录/)).toBeInTheDocument()
   })
 
@@ -79,6 +79,23 @@ describe('共享设备持久化档案', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/shared-access?tab=devices&device_router_status=likely']}><SharedDeviceProfiles /></MemoryRouter></QueryClientProvider>)
     await waitFor(() => expect(request.mock.calls.some(([url]) => String(url).includes('router_status=likely'))).toBe(true))
-    expect(new URL(request.mock.calls[0][0], 'http://localhost').searchParams.get('has_account')).toBe('true')
+    expect(new URL(request.mock.calls[0][0], 'http://localhost').searchParams.get('has_account')).toBeNull()
   })
+})
+
+it('默认展示无账号身份档案而不将其认定为共享', async () => {
+  request.mockImplementation((url: string) => {
+    const hidden = new URL(url, 'http://localhost').searchParams.get('has_account') === 'true'
+    return Promise.resolve({ items: hidden ? [] : [{ ...profile, auth_bindings: [], latest_account_id: '', current_shared: false }], page: { total: hidden ? 0 : 1 } })
+  })
+  setup()
+  expect(await screen.findByText('TP-Link AX3000')).toBeInTheDocument()
+  expect(screen.queryByText('已确认当前共享')).not.toBeInTheDocument()
+})
+
+it.each([['linked', 'true'], ['empty', 'false']])('保留显式账号筛选 %s', async (range, expected) => {
+  request.mockResolvedValue({ items: [], page: { total: 0 } })
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[`/shared-access?tab=devices&device_accounts=${range}`]}><SharedDeviceProfiles /></MemoryRouter></QueryClientProvider>)
+  await waitFor(() => expect(request).toHaveBeenCalled())
+  expect(new URL(request.mock.calls[0][0], 'http://localhost').searchParams.get('has_account')).toBe(expected)
 })

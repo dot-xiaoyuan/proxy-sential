@@ -4,8 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Button, Tag, Typography } from 'antd'
 import { request } from '../../shared/api/client'
 export function DiscoveryEvidence({endpointId}:{endpointId:string}){
- const [page,setPage]=useState(1),[open,setOpen]=useState(false)
- const q=useQuery({queryKey:['discovery','endpoint',endpointId,page],queryFn:()=>request<{total:number;items:{id:string;origin:string;ip?:string;mac?:string;port?:string;vlan?:string;explanation:string;observed_at:string}[]}>(`/discovery/endpoint-evidence?endpoint_id=${encodeURIComponent(endpointId)}&limit=20&offset=${(page-1)*20}`),enabled:open})
+ const [page,setPage]=useState(1),[open,setOpen]=useState(false),[pageSize,setPageSize]=useState(20)
+ const q=useQuery({queryKey:['discovery','endpoint',endpointId,page,pageSize],queryFn:()=>request<{total:number;items:{id:string;origin:string;ip?:string;mac?:string;port?:string;vlan?:string;explanation:string;observed_at:string}[]}>(`/discovery/endpoint-evidence?endpoint_id=${encodeURIComponent(endpointId)}&limit=${pageSize}&offset=${(page-1)*pageSize}`),enabled:open})
  return <div>
   <Button onClick={()=>setOpen(!open)}>{open?'收起发现证据':'查看网络发现证据'}</Button>
   {open&&<>
@@ -13,7 +13,7 @@ export function DiscoveryEvidence({endpointId}:{endpointId:string}){
    <div className="endpoint-scroll-list">
     {q.data?.items.map(o=><div className="discovery-card" key={o.id}><Tag>{o.origin}</Tag><Typography.Text>{o.ip} {o.mac}</Typography.Text>{o.port&&<div>路径线索 {o.port} {o.vlan&&`VLAN ${o.vlan}`}</div>}<div>{o.explanation}</div><div>{formatDateTime(o.observed_at)}</div></div>)}
    </div>
-   <AppServerPagination disabled={q.isFetching} page={page} pageSize={20} total={q.data?.total||0} onChange={setPage} showSizeChanger={false} />
+   <AppServerPagination disabled={q.isFetching} page={page} pageSize={pageSize} total={q.data?.total} totalText={q.isError?'数量读取失败':undefined} onChange={(next,size)=>{setPage(next);setPageSize(size)}} />
   </>}
  </div>
 }

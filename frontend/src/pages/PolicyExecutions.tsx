@@ -46,7 +46,7 @@ export function PolicyExecutions(){
         {execution.stages.map(stage=><p key={stage.index}>阶段 {stage.index+1}：{statusText(stage.status)} · {stage.action_ids.length} 个子动作</p>)}
       </div>}}
     />:<AppEmptyState description="暂无执行记录"/>}
-    <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={items.length} onChange={pagination.update}/>
+    <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={executions.data?.items.length} totalText={executions.isError?'数量读取失败':undefined} onChange={pagination.update}/>
   </section>
  </>
 }

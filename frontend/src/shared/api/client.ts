@@ -208,7 +208,7 @@ export const api = {
     request<AccountIdentityProfile>(
       `/accounts/${encodeURIComponent(accountId)}/identity${search(query)}`,
     ),
-  deviceNameEvidence: (endpointId: string, offset = 0) => request<{items: {value: string;source: string;kind: string;event_id?: string;sensor_id: string;address?: string;observed_at: string;valid_until: string;attribution: string}[];total: number}>(`/endpoints/${encodeURIComponent(endpointId)}/name-evidence?limit=20&offset=${offset}`),
+  deviceNameEvidence: (endpointId: string, offset = 0, limit = 20) => request<{items: {value: string;source: string;kind: string;event_id?: string;sensor_id: string;address?: string;observed_at: string;valid_until: string;attribution: string}[];total: number}>(`/endpoints/${encodeURIComponent(endpointId)}/name-evidence?limit=${limit}&offset=${offset}`),
   updateDeviceName: (endpointId: string, value: string) => request(`/endpoints/${encodeURIComponent(endpointId)}/name-note`, {method: 'POST', body: JSON.stringify({value})}),
   endpointIdentity: (endpointId: string, query: IdentityQuery = {}) =>
     request<EndpointIdentityProfile>(
@@ -244,7 +244,7 @@ export const api = {
   importDeviceFingerprintBundle: (file: File) => { const body=new FormData();body.append('bundle',file);return request<DeviceFingerprintLibraryStatus>('/device-fingerprint-library/import',{method:'POST',body}) },
   reloadRules: () => request<RuleReloadResult>('/rules/reload', { method: 'POST' }),
   cases: (query: ListQuery & {status?:string;assignee_id?:string;campus_id?:string;department?:string;person_type?:string;ssid?:string;vlan?:string;ap?:string;nas_ip?:string;window?:string;include_router_observations?:boolean} = {}) => request<RiskCaseListResponse>(`/cases${search(query)}`),
-  caseHistory: (caseId:string,kind:CaseHistoryKind,cursor="0") => request<CaseHistoryResponse>(`/cases/${encodeURIComponent(caseId)}/history/${kind}${search({limit:20,cursor})}`),
+  caseHistory: (caseId:string,kind:CaseHistoryKind,cursor="0",limit=20) => request<CaseHistoryResponse>(`/cases/${encodeURIComponent(caseId)}/history/${kind}${search({limit,cursor})}`),
   caseDetail: (caseId:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}`),
   assignCase: (caseId:string,assignee_id:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/assign`,{method:'POST',body:JSON.stringify({assignee_id})}),
   updateCaseStatus: (caseId:string,status:string) => request<RiskCase>(`/cases/${encodeURIComponent(caseId)}/status`,{method:'POST',body:JSON.stringify({status})}),

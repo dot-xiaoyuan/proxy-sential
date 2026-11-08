@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/netip"
 	"proxy-sentinel/internal/normalized"
 	"sort"
@@ -257,25 +258,34 @@ type HistoricalAddress struct {
 }
 
 type DeviceView struct {
-	ID                  string              `json:"id"`
-	PrimaryIP           string              `json:"primary_ip,omitempty"`
-	Addresses           []string            `json:"addresses"`
-	AddressDetails      []AddressDetail     `json:"address_details"`
-	HistoricalAddresses []HistoricalAddress `json:"historical_addresses"`
-	MAC                 string              `json:"mac,omitempty"`
-	Name                string              `json:"name,omitempty"`
-	DeviceType          string              `json:"device_type,omitempty"`
-	Category            string              `json:"category"`
-	IdentityKind        string              `json:"identity_kind"`
-	Capabilities        []string            `json:"capabilities"`
-	Protocols           []string            `json:"protocols"`
-	Confidence          string              `json:"confidence"`
-	FirstSeen           time.Time           `json:"first_seen"`
-	LastSeen            time.Time           `json:"last_seen"`
-	Current             bool                `json:"current"`
-	EvidenceCount       int                 `json:"evidence_count"`
-	EndpointID          string              `json:"endpoint_id,omitempty"`
-	Observations        []Observation       `json:"observations"`
+	indexedIdentityKey   string
+	SensorID             string              `json:"sensor_id,omitempty"`
+	Site                 string              `json:"site,omitempty"`
+	Domain               string              `json:"domain,omitempty"`
+	VLAN                 string              `json:"vlan,omitempty"`
+	Manufacturer         string              `json:"manufacturer,omitempty"`
+	ModelName            string              `json:"model_name,omitempty"`
+	ClassificationStatus string              `json:"classification_status,omitempty"`
+	LastDeviceType       string              `json:"last_device_type,omitempty"`
+	ID                   string              `json:"id"`
+	PrimaryIP            string              `json:"primary_ip,omitempty"`
+	Addresses            []string            `json:"addresses"`
+	AddressDetails       []AddressDetail     `json:"address_details"`
+	HistoricalAddresses  []HistoricalAddress `json:"historical_addresses"`
+	MAC                  string              `json:"mac,omitempty"`
+	Name                 string              `json:"name,omitempty"`
+	DeviceType           string              `json:"device_type,omitempty"`
+	Category             string              `json:"category"`
+	IdentityKind         string              `json:"identity_kind"`
+	Capabilities         []string            `json:"capabilities"`
+	Protocols            []string            `json:"protocols"`
+	Confidence           string              `json:"confidence"`
+	FirstSeen            time.Time           `json:"first_seen"`
+	LastSeen             time.Time           `json:"last_seen"`
+	Current              bool                `json:"current"`
+	EvidenceCount        int                 `json:"evidence_count"`
+	EndpointID           string              `json:"endpoint_id,omitempty"`
+	Observations         []Observation       `json:"observations"`
 }
 
 func newDeviceView(id string, observedAt time.Time) DeviceView {
@@ -286,6 +296,7 @@ func newDeviceView(id string, observedAt time.Time) DeviceView {
 }
 
 type deviceObservationRow struct {
+	IndexedIdentityKey    string
 	DeviceKey             string
 	EndpointID            string
 	ProfileDeviceType     string
@@ -355,6 +366,8 @@ func deviceAliases(row deviceObservationRow) []string {
 	}
 	if o.MAC != "" {
 		aliases = append(aliases, scope+"mac:"+strings.ToLower(o.MAC))
+	} else if mac := canonicalEndpointMAC(row.EndpointID); mac != "" {
+		aliases = append(aliases, scope+"mac:"+mac)
 	}
 	if o.IP != "" {
 		ipScope := scope
@@ -376,13 +389,37 @@ func deviceAliases(row deviceObservationRow) []string {
 
 func deviceAnchor(row deviceObservationRow) string {
 	scope := discoveryScope(row.Observation) + "\x00"
+	mac := strings.ToLower(row.Observation.MAC)
+	endpoint := strings.ToLower(row.EndpointID)
+	// A canonical MAC endpoint and an unlinked observation of that same MAC
+	// are the same anchor. Preserve distinct endpoint identities (including a
+	// canonical endpoint that disagrees with the observed MAC) as conflicts.
+	if canonical := canonicalEndpointMAC(endpoint); canonical != "" && (mac == "" || mac == canonical) {
+		return scope + "mac:" + canonical
+	}
 	if row.EndpointID != "" {
-		return scope + "endpoint:" + strings.ToLower(row.EndpointID)
+		return scope + "endpoint:" + endpoint
 	}
 	if row.Observation.MAC != "" {
-		return scope + "mac:" + strings.ToLower(row.Observation.MAC)
+		return scope + "mac:" + mac
 	}
 	return ""
+}
+
+// A canonical MAC endpoint is already an identity assertion, even when a
+// service observation omits its MAC. Match the discovery ingress constraints;
+// malformed, multicast and zero addresses cannot create a trusted MAC alias.
+func canonicalEndpointMAC(endpoint string) string {
+	endpoint = strings.ToLower(endpoint)
+	if !strings.HasPrefix(endpoint, "mac:") {
+		return ""
+	}
+	value := strings.TrimPrefix(endpoint, "mac:")
+	parsed, err := net.ParseMAC(value)
+	if err != nil || len(parsed) != 6 || parsed[0]&1 != 0 || parsed.String() == "00:00:00:00:00:00" || parsed.String() != value {
+		return ""
+	}
+	return value
 }
 
 func betterDeviceName(candidate, current string) bool {
@@ -426,13 +463,18 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		}
 	}
 	type collected struct {
-		view         DeviceView
-		deviceKeys   map[string]bool
-		addresses    map[string]bool
-		caps         map[string]bool
-		protocols    map[string]bool
-		endpoints    map[string]bool
-		profileTypes map[string]bool
+		view            DeviceView
+		deviceKeys      map[string]bool
+		addresses       map[string]bool
+		caps            map[string]bool
+		protocols       map[string]bool
+		endpoints       map[string]bool
+		profileTypes    map[string]bool
+		candidateTypes  map[string]bool
+		currentTypes    map[string]bool
+		historicalType  string
+		historicalAt    time.Time
+		profileConflict bool
 	}
 	groups := map[int]*collected{}
 	for index, row := range rows {
@@ -442,7 +484,7 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		root := sets.find(index)
 		group := groups[root]
 		if group == nil {
-			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}, profileTypes: map[string]bool{}}
+			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}, profileTypes: map[string]bool{}, candidateTypes: map[string]bool{}, currentTypes: map[string]bool{}}
 			groups[root] = group
 		}
 		group.deviceKeys[row.DeviceKey] = true
@@ -466,8 +508,29 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		if betterDeviceName(o.Name, group.view.Name) {
 			group.view.Name = o.Name
 		}
-		if group.view.DeviceType == "" && o.DeviceType != "" {
-			group.view.DeviceType = o.DeviceType
+		if o.DeviceType != "" {
+			if o.Current(now) {
+				group.currentTypes[o.DeviceType] = true
+			}
+			if group.historicalType == "" || o.ObservedAt.After(group.historicalAt) {
+				group.historicalType = o.DeviceType
+				group.historicalAt = o.ObservedAt
+			}
+		}
+		if group.view.SensorID == "" {
+			group.view.SensorID = o.Node
+			group.view.Site = o.Site
+			group.view.Domain = o.Domain
+			group.view.VLAN = o.VLAN
+		}
+		if group.view.Manufacturer == "" {
+			group.view.Manufacturer = o.Manufacturer
+		}
+		if group.view.ModelName == "" {
+			group.view.ModelName = o.ModelName
+		}
+		if o.Current(now) && row.ProfileConflict && row.ProfileDeviceType != "" {
+			group.profileConflict = true
 		}
 		for _, capability := range o.Capabilities {
 			group.caps[capability] = true
@@ -476,8 +539,13 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		if row.EndpointID != "" {
 			group.endpoints[row.EndpointID] = true
 		}
-		if !row.ProfileConflict && row.ProfileTypeConfidence >= .8 && row.ProfileDeviceType != "" {
+		if o.Current(now) && !row.ProfileConflict && row.ProfileTypeConfidence >= .8 && row.ProfileDeviceType != "" {
 			group.profileTypes[row.ProfileDeviceType] = true
+		}
+		// A vendor or hostname prior below the identified threshold still names a
+		// likely class. Keep it as a candidate label instead of hiding it.
+		if o.Current(now) && !row.ProfileConflict && row.ProfileTypeConfidence >= .4 && row.ProfileTypeConfidence < .8 && row.ProfileDeviceType != "" {
+			group.candidateTypes[row.ProfileDeviceType] = true
 		}
 		if confidenceRank(o.Confidence) > confidenceRank(group.view.Confidence) {
 			group.view.Confidence = o.Confidence
@@ -520,16 +588,45 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 				group.view.EndpointID = value
 			}
 		}
-		if group.view.DeviceType == "" && len(group.profileTypes) == 1 {
-			for value := range group.profileTypes {
+		allTypes := map[string]bool{}
+		for value := range group.currentTypes {
+			allTypes[value] = true
+		}
+		for value := range group.profileTypes {
+			allTypes[value] = true
+		}
+		refineDeviceTypes(allTypes)
+		switch {
+		case !group.view.Current:
+			group.view.ClassificationStatus = "expired"
+			group.view.LastDeviceType = group.historicalType
+		case group.profileConflict || len(allTypes) > 1:
+			group.view.ClassificationStatus = "conflict"
+		case len(allTypes) == 1:
+			group.view.ClassificationStatus = "identified"
+			for value := range allTypes {
 				group.view.DeviceType = value
 			}
+		case len(group.candidateTypes) == 1:
+			refineDeviceTypes(group.candidateTypes)
+			group.view.ClassificationStatus = "candidate"
+			for value := range group.candidateTypes {
+				group.view.DeviceType = value
+			}
+		default:
+			group.view.ClassificationStatus = "candidate"
 		}
 		group.view.Category = deviceCategory(group.view.DeviceType)
 		group.view.IdentityKind = deviceIdentityKind(group.view)
 		items = append(items, group.view)
 	}
 	return items
+}
+
+func refineDeviceTypes(types map[string]bool) {
+	if types["tablet"] || types["phone"] || types["smartphone"] {
+		delete(types, "mobile")
+	}
 }
 
 func addressDetail(value string, primary bool) AddressDetail {
@@ -568,6 +665,11 @@ func deviceCategory(deviceType string) string {
 	case "media_device":
 		return "media"
 	default:
+		for _, kind := range DeviceTypes {
+			if kind.ID == strings.ToLower(strings.TrimSpace(deviceType)) {
+				return kind.Category
+			}
+		}
 		return "identity_only"
 	}
 }
@@ -659,7 +761,7 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 		if query.DeviceType != "" && item.DeviceType != query.DeviceType {
 			continue
 		}
-		if query.Capability != "" && !containsString(item.Capabilities, query.Capability) {
+		if query.Capability != "" && !matchesDeviceCapability(item.Capabilities, query.Capability) {
 			continue
 		}
 		history := make([]string, 0, len(item.HistoricalAddresses))
@@ -849,6 +951,18 @@ func deviceFacets(items []DeviceView) []DeviceFacet {
 func containsString(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesDeviceCapability(values []string, wanted string) bool {
+	if wanted != "dumb" {
+		return containsString(values, wanted)
+	}
+	for _, capability := range []string{"printing", "scanning", "casting", "media_rendering", "network_video", "routing"} {
+		if containsString(values, capability) {
 			return true
 		}
 	}

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -96,7 +95,7 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 	}
 	if q.Capability != "" {
 		if q.Capability == "dumb" {
-			addBoth("s.document->'capabilities' ?| array['printing','scanning','casting','media_rendering','network_video']")
+			addBoth("s.document->'capabilities' ?| array['printing','scanning','casting','media_rendering','network_video','routing']")
 		} else {
 			addBoth("s.document->'capabilities' ? " + add(q.Capability))
 		}
@@ -287,15 +286,27 @@ func (r Repository) DiscoveryFreshness(ctx context.Context) (map[string]any, err
 	return result, nil
 }
 func (r Repository) DiscoveryHistory(ctx context.Context, key string, cursor string, limit int) (map[string]any, error) {
-	var freshEpoch string
-	err := r.DB.QueryRowContext(ctx, `SELECT s.epoch FROM stream_discovery_device_state s
- WHERE s.device_key=$1 AND EXISTS(SELECT 1 FROM stream_source_cutovers c WHERE c.epoch=s.epoch AND c.state='active')
- ORDER BY s.last_seen DESC LIMIT 1`, key).Scan(&freshEpoch)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	return r.DiscoveryHistoryAt(ctx, key, cursor, limit, time.Time{})
+}
+
+func (r Repository) DiscoveryHistoryAt(ctx context.Context, key string, cursor string, limit int, snapshot time.Time) (map[string]any, error) {
+	if err := validHistoryDevice(key); err != nil {
+		return nil, err
+	}
+	freshEpoch, err := r.discoveryHistoryEpoch(ctx, key)
+	if err != nil {
 		return nil, err
 	}
 	if freshEpoch != "" {
-		return r.streamDiscoveryHistory(ctx, freshEpoch, key, cursor, limit)
+		return r.streamDiscoveryHistoryAt(ctx, freshEpoch, key, cursor, limit, snapshot)
+	}
+	if observations, obsErr := r.historyUsesObservations(ctx, key); obsErr != nil {
+		return nil, obsErr
+	} else if observations {
+		if snapshot.IsZero() {
+			snapshot = time.Now().UTC()
+		}
+		return r.ObservationHistoryAt(ctx, key, cursor, limit, snapshot)
 	}
 	var after int64
 	if cursor != "" {
@@ -313,7 +324,13 @@ func (r Repository) DiscoveryHistory(ctx context.Context, key string, cursor str
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	rows, err := r.DB.QueryContext(ctx, `SELECT change_id,event_id,ingested_at,observed_at,change_kind,document FROM discovery_device_changes_v2 WHERE device_key=$1 AND ($2::bigint=0 OR change_id<$2) ORDER BY change_id DESC LIMIT $3`, key, after, limit+1)
+	query := `SELECT change_id,event_id,ingested_at,observed_at,change_kind,document FROM discovery_device_changes_v2 WHERE device_key=$1 AND ($2::bigint=0 OR change_id<$2)`
+	args := []any{key, after, limit + 1}
+	if !snapshot.IsZero() {
+		query += ` AND ingested_at<=$4`
+		args = append(args, snapshot)
+	}
+	rows, err := r.DB.QueryContext(ctx, query+` ORDER BY change_id DESC LIMIT $3`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -341,5 +358,9 @@ func (r Repository) DiscoveryHistory(ctx context.Context, key string, cursor str
 		b, _ := json.Marshal(map[string]any{"k": key, "a": ids[limit-1], "v": 2})
 		next = base64.RawURLEncoding.EncodeToString(b)
 	}
-	return map[string]any{"items": items, "has_more": more, "next_cursor": next}, nil
+	result := map[string]any{"items": items, "has_more": more, "next_cursor": next}
+	if !snapshot.IsZero() {
+		result["snapshot"] = snapshot
+	}
+	return result, nil
 }

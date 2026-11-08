@@ -2,18 +2,18 @@
 
 `upgrade-application.sh` 用于已有完整数据库与配置的现场，仅切换已验证的应用发布包。它不会创建、执行或跳过数据库迁移。候选包中的全部 PostgreSQL、ClickHouse 迁移，必须已在现场迁移账本中执行且校验值完全一致；缺失或修改迁移时立即拒绝。需要数据库升级时使用完整安装器；184 测试联调环境按当前约定传 `--skip-backup`，不执行例行数据库备份。
 
-发布前在独立隔离的测试库回放候选版本，完成相关 Go 与前端验收；没有独立测试库时如实记录真实 SQL 集成验证缺口。用 `build-release.sh` 构建 Linux amd64 发布包；发布清单记录 Git 版本和工作区是否含未提交改动，包外和包内均有 SHA256 校验。
+发布前在独立隔离的测试库回放候选版本，完成相关 Go 与前端验收；没有独立测试库时如实记录真实 SQL 集成验证缺口。修复和现场预检完成后只构建一个 Linux amd64 包，本地与现场只保留 `proxy-sentinel-current.tar.gz` 及其校验文件；内部不可变 `VERSION` 使用日期与源码提交短哈希，不使用 `rNN` 轮次。发布清单记录 Git 版本和工作区是否含未提交改动，包外和包内均有 SHA256 校验。
 
 ```bash
-scripts/deploy/build-release.sh --version VERSION --output proxy-sentinel-VERSION.tar.gz
+scripts/deploy/build-release.sh --version VERSION --output dist/proxy-sentinel-current.tar.gz
 ```
 
 将发布包、`.sha256`、`upgrade-application.sh`、`verify-applied-migrations.py`、`verify-application-cli.py`、`verify-application-runtime.py`、`validate-release-archive.py` 与 `manage-frontend-previous.py` 放入现场同一暂存目录，执行：
 
 ```bash
 bash upgrade-application.sh --version VERSION \
-  --archive proxy-sentinel-VERSION.tar.gz \
-  --checksum proxy-sentinel-VERSION.tar.gz.sha256
+  --archive proxy-sentinel-current.tar.gz \
+  --checksum proxy-sentinel-current.tar.gz.sha256
 ```
 
 发现采集进程的内存队列已积压、且服务设置为 `Restart=on-failure` 时，可在上述命令末尾加 `--defer-discovery-restart`。脚本先核对旧进程、验证候选包并切换发布目录，重启其他活动服务；发现进程继续运行并写完队列，待其自行退出并由 systemd 启动候选版本后，脚本才做完整验收并更新 `previous`。等待上限为 45 分钟；若新发现进程已启动但验收失败，脚本报告未完成状态并保留候选进程及原发布目录，避免自动回退时中断新的内存队列。此时是**尚未完成的临时混版切换**，必须跟踪至采集进程也运行候选版本，不能只切指针后结束任务。

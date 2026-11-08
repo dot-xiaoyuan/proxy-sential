@@ -161,6 +161,7 @@ preflight() {
   append_ingest_source PROXY_SENTINEL_ZEEK_CONN_PATH --zeek-conn
   append_ingest_source PROXY_SENTINEL_ZEEK_DNS_PATH --zeek-dns
   append_ingest_source PROXY_SENTINEL_ZEEK_HTTP_PATH --zeek-http
+  append_ingest_source PROXY_SENTINEL_ZEEK_HTTP_DEVICE_PATH --zeek-http-device
   append_ingest_source PROXY_SENTINEL_ZEEK_SSL_PATH --zeek-ssl
   append_ingest_source PROXY_SENTINEL_ZEEK_X509_PATH --zeek-x509
   append_ingest_source PROXY_SENTINEL_ZEEK_LLDP_PATH --zeek-lldp
@@ -176,6 +177,7 @@ preflight() {
   if [[ -n "${PROXY_SENTINEL_ZEEK_CONN_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-conn $PROXY_SENTINEL_ZEEK_CONN_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_DNS_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-dns $PROXY_SENTINEL_ZEEK_DNS_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_HTTP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-http $PROXY_SENTINEL_ZEEK_HTTP_PATH"; fi
+  if [[ -n "${PROXY_SENTINEL_ZEEK_HTTP_DEVICE_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-http-device $PROXY_SENTINEL_ZEEK_HTTP_DEVICE_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_SSL_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-ssl $PROXY_SENTINEL_ZEEK_SSL_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_X509_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-x509 $PROXY_SENTINEL_ZEEK_X509_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_LLDP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-lldp $PROXY_SENTINEL_ZEEK_LLDP_PATH"; fi
@@ -503,6 +505,10 @@ Type=simple
 WorkingDirectory=$root/current
 EnvironmentFile=$runtime_env
 EnvironmentFile=-$root/config/proxy-source.env
+# Per-event id lookups scanned the whole normalized_events table (no time-ordered
+# sort key) and capped ingest throughput. The table already keeps a ClickHouse
+# block deduplication window, so replayed blocks are dropped without the scan.
+Environment=PROXY_SENTINEL_EVENT_ID_IDEMPOTENCY=clickhouse
 ExecStart=$root/current/bin/proxy-sentinel ingest run --sensor-id $sensor_id $ingest_source_args --poll-interval ${PROXY_SENTINEL_INGEST_POLL_INTERVAL:-2s} --max-batch-bytes ${PROXY_SENTINEL_INGEST_MAX_BATCH_BYTES:-8388608} --store-timeout ${PROXY_SENTINEL_INGEST_STORE_TIMEOUT:-2m} --heartbeat-interval ${PROXY_SENTINEL_INGEST_HEARTBEAT_INTERVAL:-30s}
 Restart=on-failure
 RestartSec=5
@@ -581,7 +587,9 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
-ExecStart=$(command -v suricata) -c /etc/suricata/suricata.yaml -i $interface -l /var/log/suricata --pidfile /run/proxy-sentinel-suricata.pid
+# systemd tracks the foreground process; a separate pid file can survive an
+# unclean stop and block every subsequent restart.
+ExecStart=$(command -v suricata) -c /etc/suricata/suricata.yaml -i $interface -l /var/log/suricata
 Restart=always
 RestartSec=5
 [Install]

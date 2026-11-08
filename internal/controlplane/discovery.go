@@ -9,6 +9,7 @@ import (
 	"os"
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/fingerprint"
+	"proxy-sentinel/internal/pagination"
 	"proxy-sentinel/internal/store"
 	"sort"
 	"strconv"
@@ -72,7 +73,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	defer cancel()
 	repo := discovery.Repository{DB: s.operations.db, DeviceCache: s.discoveryDevices, PipelineV2: os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true", ActiveStreamOnly: discoveryStreamCurrentReadEnabled()}
 	limit, offset := 50, 0
-	if v := r.URL.Query().Get("limit"); v != "" {
+	if v := r.URL.Query().Get("limit"); v != "" && path != "/discovery/devices/metadata" {
 		n, e := strconv.Atoi(v)
 		if e != nil || n < 1 || n > 200 {
 			writeError(w, 400, "bad_page", "分页参数无效")
@@ -80,7 +81,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		}
 		limit = n
 	}
-	if v := r.URL.Query().Get("offset"); v != "" {
+	if v := r.URL.Query().Get("offset"); v != "" && path != "/discovery/devices/metadata" {
 		if path == "/discovery/devices" {
 			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")
 			return
@@ -94,10 +95,13 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	}
 	switch {
 	case path == "/discovery/types" && r.Method == "GET":
-		writeJSON(w, 200, map[string]any{"version": discovery.IoTRuleVersion, "items": discovery.IoTTypes})
+		writeJSON(w, 200, map[string]any{"version": discovery.IoTRuleVersion, "items": discovery.DeviceTypes})
 	case path == "/discovery/statistics" && r.Method == "GET":
 		if !repo.PipelineV2 {
-			writeError(w, 409, "pipeline_disabled", "发现统计路径未启用")
+			// The indexed read path has no legacy statistics summary. Return an
+			// empty result instead of an error so the diagnostics section does
+			// not show a permanent failure on deployments that read the index.
+			writeJSON(w, 200, map[string]any{"items": []any{}, "pending_updates": 0})
 			return
 		}
 		result, e := repo.DiscoveryStatistics(ctx)
@@ -108,15 +112,46 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		writeJSON(w, 200, result)
 	case path == "/discovery/coverage" && r.Method == "GET":
 		s.handleDiscoveryCoverage(w, r, repo)
-	case path == "/discovery/history" && r.Method == "GET":
+	case (path == "/discovery/history" || path == "/discovery/history/metadata" || path == "/discovery/history/position") && r.Method == "GET":
 		key := r.URL.Query().Get("device_id")
-		after := r.URL.Query().Get("cursor")
-		if key == "" {
+		if strings.TrimSpace(key) == "" || len(key) > 1024 {
 			writeError(w, 400, "bad_cursor", "设备和历史游标无效")
 			return
 		}
-		page, e := repo.DiscoveryHistory(ctx, key, after, limit)
+		snapshot, e := readPaginationSnapshot(r)
 		if e != nil {
+			writeError(w, 400, "bad_snapshot", e.Error())
+			return
+		}
+		var result any
+		switch path {
+		case "/discovery/history/metadata":
+			result, e = repo.DiscoveryHistoryMetadata(ctx, key, snapshot)
+		case "/discovery/history/position":
+			var number int
+			number, e = boundedInt(r.URL.Query().Get("page"), 1, 1, 1_000_000_000)
+			if e != nil {
+				writeError(w, 400, "bad_page", e.Error())
+				return
+			}
+			limit, e = boundedInt(r.URL.Query().Get("limit"), 20, 1, 100)
+			if e != nil {
+				writeError(w, 400, "bad_page", e.Error())
+				return
+			}
+			result, e = repo.DiscoveryHistoryPosition(ctx, key, snapshot, number, limit)
+		default:
+			if limit > 100 {
+				writeError(w, 400, "bad_page", "历史页大小必须为 1 至 100")
+				return
+			}
+			result, e = repo.DiscoveryHistoryAt(ctx, key, r.URL.Query().Get("cursor"), limit, snapshot)
+		}
+		if e != nil {
+			if errors.Is(e, pagination.ErrPageOutOfRange) {
+				writeError(w, 400, "page_out_of_range", e.Error())
+				return
+			}
 			if strings.Contains(e.Error(), "cursor") {
 				writeError(w, 400, "bad_cursor", e.Error())
 				return
@@ -124,7 +159,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			writeError(w, 500, "history_read", "读取设备历史失败")
 			return
 		}
-		writeJSON(w, 200, page)
+		writeJSON(w, 200, result)
 	case path == "/discovery/nodes" && r.Method == "GET":
 		rows, err := repo.DB.QueryContext(ctx, `SELECT node,last_seen,last_seen>now()-interval '30 seconds' FROM discovery_nodes ORDER BY node`)
 		if err != nil {
@@ -407,8 +442,8 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		// A missing exact key remains an explicit gap. The check time lets an
 		// external audit pair it with the immutable journal acceptance time.
 		writeJSON(w, 200, map[string]any{"items": items, "missing_keys": missing, "checked_at": time.Now().UTC()})
-	case path == "/discovery/devices" && r.Method == "GET":
-		if r.URL.Query().Get("offset") != "" {
+	case (path == "/discovery/devices" || path == "/discovery/devices/metadata" || path == "/discovery/devices/position") && r.Method == "GET":
+		if r.URL.Query().Get("offset") != "" && path == "/discovery/devices" {
 			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")
 			return
 		}
@@ -429,6 +464,51 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			}
 		}
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
+
+		if path == "/discovery/devices/position" {
+			if repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+				writeError(w, 409, "position_read_path", "当前发现读取路径不支持页码定位")
+				return
+			}
+			page, size, parseErr := pagePositionParameters(r)
+			if parseErr != nil {
+				writeError(w, 400, "bad_page", "页码或页长无效")
+				return
+			}
+			query.Limit = size
+			result, err := repo.DevicesIndexedPosition(ctx, query, page)
+			if errors.Is(err, pagination.ErrPageOutOfRange) {
+				writeError(w, 400, "page_out_of_range", "目标页已不存在，请刷新列表")
+				return
+			}
+			if err != nil {
+				if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") {
+					writeError(w, 400, "bad_filter", err.Error())
+					return
+				}
+				writeError(w, 500, "discovery_position_failed", "读取发现页码位置失败")
+				return
+			}
+			writeJSON(w, 200, result)
+			return
+		}
+		if path == "/discovery/devices/metadata" {
+			if repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+				writeError(w, 409, "metadata_read_path", "当前发现读取路径不支持此统计接口")
+				return
+			}
+			result, err := repo.DevicesIndexedMetadata(ctx, query)
+			if err != nil {
+				if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") {
+					writeError(w, 400, "bad_filter", err.Error())
+				} else {
+					writeError(w, 500, "discovery_metadata_read", "读取发现设备总数失败")
+				}
+				return
+			}
+			writeJSON(w, 200, result)
+			return
+		}
 		var page map[string]any
 		var err error
 		if repo.ActiveStreamOnly {
@@ -443,7 +523,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		if err != nil {
 			if strings.Contains(err.Error(), "cursor") {
 				writeError(w, 400, "bad_cursor", err.Error())
-			} else if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") {
+			} else if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") {
 				writeError(w, 400, "bad_filter", err.Error())
 			} else {
 				writeError(w, 500, "discovery_read", "读取发现结果失败")

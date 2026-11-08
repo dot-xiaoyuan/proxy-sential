@@ -29,6 +29,11 @@ func (s *PostgresStore) PassiveDiscoveryRecognitionHints(ctx context.Context, en
    AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
    AND o.origin IN ('dns_sd','dhcp') AND coalesce(o.data->>'name','')<>''
  UNION ALL
+ SELECT p.endpoint_id,p.event_id,'dns_sd',p.observed_at,''::text,p.name
+ FROM passive_live_ptr_current p
+ WHERE p.endpoint_id=ANY($1::text[]) AND p.observed_at<=$2
+   AND p.valid_until>$2 AND NOT p.withdrawn AND p.name<>''
+ UNION ALL
  SELECT l.endpoint_id,o.id,o.origin,o.observed_at,f.field,coalesce(o.data->>f.key,'')
  FROM discovery_identity_links l
  JOIN discovery_observations o ON o.id=l.observation_id
@@ -55,6 +60,41 @@ func (s *PostgresStore) PassiveDiscoveryRecognitionHints(ctx context.Context, en
  WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
    AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
    AND o.origin='snmp' AND coalesce(o.data->'evidence'->'payload'->>'system_description','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,o.origin,o.observed_at,'os_hint',coalesce(o.data->>'os_hint','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='ttl' AND coalesce(o.data->>'os_hint','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,'http_device',o.observed_at,'http_server',coalesce(o.data->'evidence'->'payload'->>'server','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='http_device' AND coalesce(o.data->'evidence'->'payload'->>'server','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,'http_device',o.observed_at,'http_title',coalesce(o.data->'evidence'->'payload'->>'title','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='http_device' AND coalesce(o.data->'evidence'->'payload'->>'title','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,'tls_device',o.observed_at,'tls_subject',coalesce(o.data->'evidence'->'payload'->>'certificate_subject','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='tls_device' AND coalesce(o.data->'evidence'->'payload'->>'certificate_subject','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,'tls_device',o.observed_at,'tls_issuer',coalesce(o.data->'evidence'->'payload'->>'certificate_issuer','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='tls_device' AND coalesce(o.data->'evidence'->'payload'->>'certificate_issuer','')<>''
 ), deduped AS (
  SELECT DISTINCT ON (endpoint_id,origin,field,lower(value))
    endpoint_id,observation_id,origin,observed_at,field,value

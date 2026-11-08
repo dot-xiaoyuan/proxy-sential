@@ -210,7 +210,7 @@ export function BehaviorReportRecords({ writable = false, recordOnly = false }: 
         {!recordOnly && <Select aria-label="上报状态筛选" allowClear placeholder="全部状态" value={status || undefined} onChange={(value) => setStatus(value ?? '')} options={statusFilters.map((value) => ({ value, label: statusText(value) }))} />}
       </div>
       {<AppListSection isError={outbox.isError} errorTitle="上报队列读取失败" errorMessage={String(outbox.error)} isLoading={outbox.isLoading} loadingRows={4} isEmpty={!outbox.data?.items.length} emptyText="暂无上报记录">{<AppTable rowKey="report_id" className="compact-list-table" columns={columns} dataSource={outbox.data?.items ?? []} pagination={false} scroll={{ x: 1200 }} />}</AppListSection>}
-      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={outbox.data?.page.total ?? 0} onChange={pagination.update} />
+      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={outbox.data?.page.total} onChange={pagination.update} />
       <Modal width={720} footer={null} title="上报详情" open={!!detail} onCancel={() => setDetail(undefined)}>
         {detailQuery.isLoading ? <AppLoadingState rows={3} /> : detailQuery.data ? (
           <>

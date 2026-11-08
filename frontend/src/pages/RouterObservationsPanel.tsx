@@ -9,10 +9,10 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button,
   Checkbox,
+  Collapse,
   Form,
   Input,
   InputNumber,
-  Segmented,
   Select,
   Switch,
   Tag,
@@ -28,6 +28,7 @@ import { BrandLogo } from '../entities/device/BrandLogo'
 import { routerLibraryLabels } from '../entities/device/libraryLabels'
 import { routerConflictLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
 import { routerVerdictExplanation } from './routerVerdictExplanation'
+import { RouterAssetsPanel } from './RouterAssetsPanel'
 
 const statusLabels = routerStatusLabels
 const roleLabels = routerRoleLabels
@@ -48,6 +49,13 @@ export function routerObservationQueryFromParams(params: URLSearchParams): Route
 }
 
 export function RouterObservationsPanel() {
+  return <div className="router-detail-page">
+    <RouterAssetsPanel />
+    <Collapse items={[{ key: 'role-evidence', label: '路由角色证据核查', children: <RouterRoleObservationsPanel /> }]} />
+  </div>
+}
+
+function RouterRoleObservationsPanel() {
   const [form] = Form.useForm()
   const location=useLocation();const [params,setParams]=useSearchParams();const pagination=useServerPagination('routers_');const page=pagination.page;const setPage=(value:number)=>pagination.update(value,pagination.pageSize)
   const query=routerObservationQueryFromParams(params)
@@ -55,7 +63,6 @@ export function RouterObservationsPanel() {
   const desktopAuth = useMediaQuery('(min-width: 1100px)')
   const mobileAuth = useMediaQuery('(max-width: 559px)')
   const showAuth = desktopAuth || mobileAuth
-  const switchView = (value: string | number) => { const nextView = String(value); if (nextView === view) return; setParams(current => { const next = new URLSearchParams(current); next.set('routers_view', nextView); next.delete('routers_page'); return next }) }
   const [searchDraft,setSearchDraft]=useState(String(params.get('router_keyword')||''))
   const [moreOpen,setMoreOpen]=useState(false)
   useEffect(()=>{setSearchDraft(String(params.get('router_keyword')||''))},[params])
@@ -80,11 +87,8 @@ export function RouterObservationsPanel() {
     { title:'最近观测',dataIndex:'last_seen',width:100,render:(value?:string)=><ObservedTime value={value}/> },
     { title:'操作',key:'action',width:75,render:(_,item)=><Link to={detailPath(`/devices/network/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link> },
   ]
-  const total = observations.data?.page?.total ?? 0
+  const total = observations.data?.page?.total
   return <div className="router-observations-panel">
-    <div className="router-view-switch">
-      <Segmented aria-label="网络设备类型" value={view} onChange={switchView} options={[{label:'路由器',value:'router'},{label:'接入点',value:'ap'}]} />
-    </div>
     {/* Filters and the list identity share one card so the table is not pushed down. */}
     <Form form={form} className="router-filter-form" layout="vertical" onFinish={submit}>
       <AppTableBar
@@ -122,7 +126,7 @@ export function RouterObservationsPanel() {
     <section className="surface center-list-surface">
       <AppListHeader
         title={view === 'ap' ? '接入点观察' : '路由器观察'}
-        count={`${total} 台${view === 'ap' ? '接入点' : '设备'}`}
+        count={total===undefined?undefined:`${total} 台${view === 'ap' ? '接入点' : '设备'}`}
         actions={<Tooltip title={view === 'ap' ? '本页识别接入点。接入点记录不参与路由器确认；分类基于 DHCP、LLDP、管理面等证据，仍可能受弱信号影响。' : '本页识别路由器，不代表下游共享已确认。分数表示证据匹配强度；路由器确认还要求明确路由角色、独立来源、强证据和可靠设备关联，基础设施及排除证据会阻断确认。'}><InfoCircleOutlined aria-label="网络设备说明" /></Tooltip>}
       />
       {observations.isLoading ? <AppLoadingState rows={6} /> : observations.isError ? <AppErrorAlert title="路由观察读取失败" message={observations.error.message} /> : <>

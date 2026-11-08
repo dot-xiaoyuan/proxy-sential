@@ -230,6 +230,7 @@ INSERT INTO endpoint_entities(endpoint_id, primary_mac, entity_role, first_seen,
 SELECT t.endpoint_id, t.primary_mac, t.entity_role, t.first_seen, t.last_seen, t.confidence, NULLIF(t.attributes,'')::jsonb
 FROM unnest($1::text[], $2::text[], $3::text[], $4::timestamptz[], $5::timestamptz[], $6::float8[], $7::text[])
   AS t(endpoint_id, primary_mac, entity_role, first_seen, last_seen, confidence, attributes)
+ORDER BY t.endpoint_id
 ON CONFLICT(endpoint_id) DO UPDATE SET
   primary_mac = COALESCE(endpoint_entities.primary_mac, EXCLUDED.primary_mac),
   entity_role = EXCLUDED.entity_role,

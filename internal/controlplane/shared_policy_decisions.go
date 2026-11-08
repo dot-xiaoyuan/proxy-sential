@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"proxy-sentinel/internal/pagination"
 	"proxy-sentinel/internal/policy"
 	"strings"
 	"time"
@@ -19,16 +20,33 @@ type policyDecisionCursor struct {
 }
 
 func (s *Server) queryPolicyDecisions(w http.ResponseWriter, r *http.Request) {
+	s.queryPolicyDecisionPage(w, r, "")
+}
+func (s *Server) queryPolicyDecisionMetadata(w http.ResponseWriter, r *http.Request) {
+	s.queryPolicyDecisionPage(w, r, "metadata")
+}
+func (s *Server) queryPolicyDecisionPosition(w http.ResponseWriter, r *http.Request) {
+	s.queryPolicyDecisionPage(w, r, "position")
+}
+func (s *Server) queryPolicyDecisionPage(w http.ResponseWriter, r *http.Request, operation string) {
 	if s.productPolicies == nil || s.productPolicies.db == nil {
 		if r.URL.Query().Get("trigger") == "shared_access" {
 			writeError(w, 503, "policy_decisions_unavailable", "共享记录存储不可用")
+			return
+		}
+		if operation != "" {
+			writeError(w, 503, "policy_decisions_unavailable", "策略记录存储不可用")
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": []any{}, "next_cursor": ""})
 		return
 	}
 	q := r.URL.Query()
-	limit, err := boundedInt(q.Get("limit"), 50, 1, 200)
+	defaultLimit := 50
+	if operation != "" {
+		defaultLimit = 20
+	}
+	limit, err := boundedInt(q.Get("limit"), defaultLimit, 1, 200)
 	if err != nil {
 		writeError(w, 400, "bad_limit", err.Error())
 		return
@@ -68,13 +86,22 @@ func (s *Server) queryPolicyDecisions(w http.ResponseWriter, r *http.Request) {
 		add("result=$%d", v)
 	}
 	key := policy.StableID(q.Get("account_id"), q.Get("policy_id"), q.Get("observation_id"), trigger, q.Get("ip"), q.Get("result"), q.Get("from"), q.Get("to"))
-	cursor := policyDecisionCursor{Snapshot: time.Now().UTC(), Key: key}
+	snapshot, err := readPaginationSnapshot(r)
+	if err != nil {
+		writeError(w, 400, "bad_snapshot", err.Error())
+		return
+	}
+	cursor := policyDecisionCursor{Snapshot: snapshot, Key: key}
 	if v := q.Get("cursor"); v != "" {
 		raw, e := base64.RawURLEncoding.DecodeString(v)
 		if e != nil || len(raw) > 2048 || json.Unmarshal(raw, &cursor) != nil || cursor.Key != key || cursor.ID == "" || cursor.At.IsZero() || cursor.Snapshot.IsZero() {
 			writeError(w, 400, "bad_cursor", "分页游标与当前筛选不匹配")
 			return
 		}
+	}
+	if q.Get("snapshot") != "" && !cursor.Snapshot.Equal(snapshot) {
+		writeError(w, 400, "bad_snapshot", "分页快照与游标不一致")
+		return
 	}
 	// Legacy quota queries keep their existing history range. Shared queries
 	// use a bounded hot window anchored to the first page or explicit end time.
@@ -106,13 +133,68 @@ func (s *Server) queryPolicyDecisions(w http.ResponseWriter, r *http.Request) {
 		add("evaluated_at <= $%d", to)
 	}
 	add("evaluated_at <= $%d", cursor.Snapshot)
-	if cursor.ID != "" {
+	if cursor.ID != "" && operation == "" {
 		args = append(args, cursor.At, cursor.ID)
 		where = append(where, fmt.Sprintf("(evaluated_at,decision_id)<($%d,$%d)", len(args)-1, len(args)))
 	}
-	args = append(args, limit+1)
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
+	if operation == "metadata" {
+		var total int64
+		if err = s.productPolicies.db.QueryRowContext(ctx, `SELECT count(*) FROM policy_decision_records WHERE `+strings.Join(where, " AND "), args...).Scan(&total); err != nil {
+			writeError(w, 503, "policy_decisions_failed", "策略统计读取失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"total": total, "as_of": cursor.Snapshot, "snapshot": cursor.Snapshot})
+		return
+	}
+	if operation == "position" {
+		page, e := boundedInt(q.Get("page"), 1, 1, 1_000_000_000)
+		if e != nil {
+			writeError(w, 400, "bad_pagination", e.Error())
+			return
+		}
+		offset, e := pagination.BoundaryOffset(page, limit)
+		if e != nil {
+			writeError(w, 400, "bad_pagination", e.Error())
+			return
+		}
+		position := pagination.Position{Page: page, Limit: limit, AsOf: cursor.Snapshot}
+		if page > 1 {
+			args = append(args, offset)
+			rows, e := s.productPolicies.db.QueryContext(ctx, `SELECT evaluated_at,decision_id FROM policy_decision_records WHERE `+strings.Join(where, " AND ")+fmt.Sprintf(" ORDER BY evaluated_at DESC,decision_id DESC LIMIT 2 OFFSET $%d", len(args)), args...)
+			if e != nil {
+				writeError(w, 503, "policy_decisions_failed", "策略页码定位失败")
+				return
+			}
+			defer rows.Close()
+			count := 0
+			for rows.Next() {
+				var at time.Time
+				var id string
+				if e = rows.Scan(&at, &id); e != nil {
+					writeError(w, 503, "policy_decisions_failed", "策略页码定位失败")
+					return
+				}
+				if count == 0 {
+					raw, _ := json.Marshal(policyDecisionCursor{At: at, ID: id, Snapshot: cursor.Snapshot, Key: key})
+					position.Cursor = base64.RawURLEncoding.EncodeToString(raw)
+				}
+				count++
+			}
+			if rows.Err() != nil {
+				writeError(w, 503, "policy_decisions_failed", "策略页码定位失败")
+				return
+			}
+			if count != 2 {
+				writeError(w, 400, "page_out_of_range", pagination.ErrPageOutOfRange.Error())
+				return
+			}
+		}
+		writeJSON(w, 200, map[string]any{"page": position.Page, "limit": position.Limit, "cursor": position.Cursor, "as_of": position.AsOf, "snapshot": cursor.Snapshot})
+		return
+	}
+	args = append(args, limit+1)
 	rows, err := s.productPolicies.db.QueryContext(ctx, `SELECT document,evaluated_at,decision_id FROM policy_decision_records WHERE `+strings.Join(where, " AND ")+fmt.Sprintf(" ORDER BY evaluated_at DESC,decision_id DESC LIMIT $%d", len(args)), args...)
 	if err != nil {
 		writeError(w, 503, "policy_decisions_failed", "策略记录读取失败")
@@ -146,7 +228,7 @@ func (s *Server) queryPolicyDecisions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "policy_decisions_failed", "策略记录读取失败")
 		return
 	}
-	response := map[string]any{"items": items, "next_cursor": next}
+	response := map[string]any{"items": items, "next_cursor": next, "snapshot": cursor.Snapshot}
 	if trigger == "shared_access" && q.Get("include_processing") == "true" {
 		rows.Close()
 		pending, e := s.productPolicies.db.QueryContext(ctx, `SELECT host(ip),dirty_since,last_error FROM shared_observation_jobs j WHERE revision>completed_revision AND NOT expired AND canceled_epoch=''

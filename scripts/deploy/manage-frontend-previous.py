@@ -70,7 +70,7 @@ def publish(root, target):
 def prepare(root, candidate, state_path):
     root = root.resolve(strict=True)
     old = pointer(root, 'current')
-    previous = pointer(root, 'previous')
+    previous = pointer(root, 'previous', True)
     retained = pointer(root, 'frontend-previous', True)
     candidate = controlled(root, candidate)
     old_graph = graph(old)
@@ -78,7 +78,7 @@ def prepare(root, candidate, state_path):
         target = old
     elif retained is not None:
         target = retained
-    elif graph(previous) != old_graph:
+    elif previous is not None and graph(previous) != old_graph:
         target = previous
     else:
         target = None

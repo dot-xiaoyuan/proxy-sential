@@ -133,7 +133,7 @@ return <main className="page"><Card><AppListHeader title="用户权限" count={`
                   <AppServerPagination
                     page={userPage.page}
                     pageSize={userPage.pageSize}
-                    total={users.data?.page.total ?? 0}
+                    total={users.data?.page.total}
                     onChange={userPage.update}
                   />
 </Card>      <Modal

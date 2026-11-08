@@ -141,7 +141,11 @@ func (l *Library) IdentifyEvidenceMeasured(mac string, evidence []EvidenceSignal
 			}
 		case "user_agent":
 			signals.UserAgents = append(signals.UserAgents, value)
-		case "device_hint", "model_hint", "os_hint":
+		case "os_hint":
+			if signals.OSHint == "" {
+				signals.OSHint = value
+			}
+		case "device_hint", "model_hint":
 			signals.Hints = append(signals.Hints, value)
 		case "software_name":
 			signals.Software = append(signals.Software, value)
@@ -212,9 +216,9 @@ func evidenceProtocolAllowsField(protocol, field string) bool {
 		return field == "coap_device_type" || field == "service_type"
 	case "bacnet":
 		return field == "bacnet_model" || field == "service_type"
-	case "http":
+	case "http", "http_device":
 		return strings.HasPrefix(field, "http_") || field == "favicon_md5" || field == "user_agent"
-	case "tls":
+	case "tls", "tls_device":
 		return strings.HasPrefix(field, "tls_") || field == "ja3" || field == "ja4"
 	case "ssh":
 		return field == "ssh_banner"

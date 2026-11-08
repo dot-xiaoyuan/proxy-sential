@@ -70,18 +70,30 @@ func parseProductRules(data []byte) ([]productRule, error) {
 	return rules, nil
 }
 
+// dnsdModelKeys are the TXT keys that name a product or model. A firmware or
+// capability announcement must never become a model.
+var dnsdModelKeys = regexp.MustCompile(`(?i)\s+(model|md|product|ty|usb_mdl)\s*=`)
+
+// nextTXTKey marks where a value ends and the following key begins. A value may
+// contain spaces (printer models do), so only a token that looks like
+// " key=" terminates it.
+var nextTXTKey = regexp.MustCompile(`\s+[a-z][a-z0-9_]*\s*=`)
+
 // DNSSDModelFromTXT returns the first product/model value advertised in a
-// DNS-SD TXT record. Entries are key=value pairs separated by ';' or newlines;
-// only keys that name a product or model are accepted so a firmware or
-// capability announcement cannot become a model.
+// DNS-SD TXT record. Entries are key=value pairs separated by ';', newlines or
+// whitespace; only product/model keys are accepted.
 func DNSSDModelFromTXT(text string) string {
-	for _, entry := range strings.FieldsFunc(text, func(r rune) bool { return r == ';' || r == '\n' }) {
+	normalized := dnsdModelKeys.ReplaceAllString(text, ";$1=")
+	for _, entry := range strings.FieldsFunc(normalized, func(r rune) bool { return r == ';' || r == '\n' }) {
 		key, value, ok := strings.Cut(entry, "=")
 		if !ok {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(key)) {
 		case "model", "md", "product", "ty", "usb_mdl":
+			if cut := nextTXTKey.FindStringIndex(value); cut != nil {
+				value = value[:cut[0]]
+			}
 			model := cleanDescriptionText(strings.TrimSpace(strings.Trim(strings.TrimSpace(value), "()")))
 			if model != "" {
 				return model

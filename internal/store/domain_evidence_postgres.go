@@ -162,6 +162,11 @@ ON CONFLICT(endpoint_id,domain,ecosystem,event_source,rule_version) DO UPDATE SE
 	if err != nil {
 		return err
 	}
+	// A new ecosystem observation can change the brand inference; mark the
+	// endpoint so the recognition lane recomputes its summary.
+	if _, err := tx.ExecContext(ctx, `SELECT mark_endpoint_recognition_dirty($1)`, observation.EndpointID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

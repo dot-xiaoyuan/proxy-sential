@@ -75,6 +75,9 @@ func TestFingerprintCoverageAndRebuildLanesPostgres(t *testing.T) {
 	if _, err = s.pg.db.Exec(`SELECT mark_endpoint_recognition_dirty('endpoint')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.flushRecognitionDirtyLog(ctx); err != nil {
+		t.Fatal(err)
+	}
 	var lane int
 	if err = s.pg.db.QueryRow(`SELECT lane FROM endpoint_recognition_jobs`).Scan(&lane); err != nil || lane != 0 {
 		t.Fatal("live update did not promote task", err)

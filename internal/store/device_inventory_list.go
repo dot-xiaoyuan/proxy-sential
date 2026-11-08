@@ -18,6 +18,11 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 	if err := normalizeInventorySearch(&query); err != nil {
 		return DeviceInventoryListPage{}, err
 	}
+	if query.InventoryPositionPage > 0 {
+		query.InventoryCursor = ""
+		query.Cursor = 0
+		query.InventorySkipMetadata = true
+	}
 	now := time.Now().UTC()
 	limit := query.Limit
 	if limit == 0 {
@@ -181,6 +186,10 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 			return DeviceInventoryListPage{}, err
 		}
 		inventoryTiming(ctx, "count", started)
+	}
+	if query.InventoryPositionPage > 0 {
+		query.Limit = limit
+		return inventoryPosition(ctx, conn, query, whereSQL, args, now, state)
 	}
 	if query.InventoryMetadataOnly {
 		return DeviceInventoryListPage{ReadModelState: &state, Items: []DeviceInventoryListItem{}, Page: Page{Total: total}, Facets: facets, AsOf: now.Format(time.RFC3339Nano)}, nil

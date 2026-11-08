@@ -77,21 +77,21 @@ func streamIndexFilter(query StreamEventIndexQuery) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *ClickHouseStore) ListStreamEventIndex(ctx context.Context, query StreamEventIndexQuery) (StreamEventIndexPage, error) {
+func streamEventIndexWhere(query StreamEventIndexQuery) (string, error) {
 	if query.SubjectIP != "" {
 		ip, err := netip.ParseAddr(query.SubjectIP)
 		if err != nil || ip.Zone() != "" {
-			return StreamEventIndexPage{}, ErrInvalidStreamEventIndexQuery
+			return "", ErrInvalidStreamEventIndexQuery
 		}
 	}
 	if len(query.SensorID) > 256 || len(query.Epoch) > 256 || strings.ContainsAny(query.Epoch, "\x00:") ||
 		(query.ObservationOnly && (query.SubjectIP == "" || query.SensorID == "" || query.Epoch == "" || (query.Protocol != "" && !trafficObservationProtocol(query.Protocol)))) {
-		return StreamEventIndexPage{}, ErrInvalidStreamEventIndexQuery
+		return "", ErrInvalidStreamEventIndexQuery
 	}
-	if s == nil || query.ScopeID == "" || len(query.ScopeID) > 256 || len(query.Protocol) > 128 ||
+	if query.ScopeID == "" || len(query.ScopeID) > 256 || len(query.Protocol) > 128 ||
 		query.From.IsZero() || !query.To.After(query.From) || query.To.Sub(query.From) > 15*time.Minute ||
 		query.Limit < 1 || query.Limit > 100 {
-		return StreamEventIndexPage{}, fmt.Errorf("%w: scope, at most fifteen minutes and limit 1..100 required", ErrInvalidStreamEventIndexQuery)
+		return "", fmt.Errorf("%w: scope, at most fifteen minutes and limit 1..100 required", ErrInvalidStreamEventIndexQuery)
 	}
 	where := "scope_id=" + chQuote(query.ScopeID) +
 		" AND observed_at>=parseDateTime64BestEffort(" + chQuote(query.From.UTC().Format(time.RFC3339Nano)) + ",6)" +
@@ -110,6 +110,14 @@ func (s *ClickHouseStore) ListStreamEventIndex(ctx context.Context, query Stream
 	}
 	if query.ObservationOnly {
 		where += " AND protocol IN ('handshake','ttl','hop_limit')"
+	}
+	return where, nil
+}
+
+func (s *ClickHouseStore) ListStreamEventIndex(ctx context.Context, query StreamEventIndexQuery) (StreamEventIndexPage, error) {
+	where, err := streamEventIndexWhere(query)
+	if err != nil {
+		return StreamEventIndexPage{}, err
 	}
 	if query.Cursor != "" {
 		if len(query.Cursor) > 1024 {

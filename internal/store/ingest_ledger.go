@@ -14,18 +14,30 @@ import (
 // of one source reader. It prevents two ingest processes from racing between
 // the idempotency lookup and the ClickHouse insert for the same file.
 func (s *PostgresStore) AcquireIngestSourceLease(ctx context.Context, sourceKind, sourcePath string) (func(), error) {
-	conn, err := s.db.Conn(ctx)
+	// Each source holds its advisory lock for the lifetime of the ingest
+	// process. Keep those idle sessions out of the bounded query pool, which
+	// still needs connections to read checkpoints and commit batches.
+	leaseDB, err := sql.Open("pgx", s.dsn)
 	if err != nil {
+		return nil, err
+	}
+	leaseDB.SetMaxOpenConns(1)
+	leaseDB.SetMaxIdleConns(0)
+	conn, err := leaseDB.Conn(ctx)
+	if err != nil {
+		leaseDB.Close()
 		return nil, err
 	}
 	key := ingestSourceLeaseKey(s.sensorID, sourceKind, sourcePath)
 	var locked bool
 	if err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1,0))`, key).Scan(&locked); err != nil {
 		conn.Close()
+		leaseDB.Close()
 		return nil, err
 	}
 	if !locked {
 		conn.Close()
+		leaseDB.Close()
 		return nil, fmt.Errorf("ingest source is already leased: %s", sourceKind)
 	}
 	return func() {
@@ -33,6 +45,7 @@ func (s *PostgresStore) AcquireIngestSourceLease(ctx context.Context, sourceKind
 		defer cancel()
 		_, _ = conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock(hashtextextended($1,0))`, key)
 		_ = conn.Close()
+		_ = leaseDB.Close()
 	}, nil
 }
 

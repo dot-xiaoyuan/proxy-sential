@@ -388,6 +388,55 @@ func TestRefreshOfflineBundleRestoresVerifiedOUIAndKeepsOtherSources(t *testing.
 	}
 }
 
+func TestRefreshOfficialIEEEBundlePreservesOtherSources(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "base.tar.gz")
+	if _, err := BuildEmbeddedBundle(basePath, "base", time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	baseData, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := VerifyBundleBytes(baseData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := make([][]byte, 3)
+	for i := range parts {
+		var raw strings.Builder
+		raw.WriteString("Registry,Assignment,Organization Name\n")
+		for j := 0; j < 8; j++ {
+			fmt.Fprintf(&raw, "MA-L,%06X,Official Test Vendor %d\n", (i*8+j)*4, i*8+j)
+		}
+		parts[i] = []byte(raw.String())
+	}
+	output := filepath.Join(t.TempDir(), "official.tar.gz")
+	if _, err := RefreshOfficialIEEEBundle(baseData, parts, output, "official", time.Unix(2, 0)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := VerifyBundleFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oui, err := parseOUI(got.Files["oui.csv"]); err != nil || len(oui) != 24 {
+		t.Fatalf("official OUI count=%d err=%v", len(oui), err)
+	}
+	for _, name := range []string{"fingerbank-dhcp.json", "domain-signatures.json", "multisource-catalog.json"} {
+		if !bytes.Equal(got.Files[name], base.Files[name]) {
+			t.Fatalf("unrelated payload changed: %s", name)
+		}
+	}
+	if got.Manifest.Sources[0].Version == base.Manifest.Sources[0].Version || !strings.Contains(got.Manifest.Sources[0].Version, "sha256:") {
+		t.Fatalf("IEEE provenance not updated: %+v", got.Manifest.Sources[0])
+	}
+	if _, err := RefreshOfficialIEEEBundle(baseData, parts[:2], filepath.Join(t.TempDir(), "missing.tar.gz"), "missing", time.Unix(2, 0)); err == nil {
+		t.Fatal("missing registry accepted")
+	}
+	if _, err := RefreshOfficialIEEEBundle(baseData, [][]byte{parts[0], parts[1], []byte("bad")}, filepath.Join(t.TempDir(), "invalid.tar.gz"), "invalid", time.Unix(2, 0)); err == nil {
+		t.Fatal("invalid registry accepted")
+	}
+}
+
 func TestImportRejectsAccidentalLargeOUIShrink(t *testing.T) {
 	previous := Default()
 	defer SetDefault(previous)

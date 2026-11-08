@@ -739,6 +739,57 @@ func RefreshOfflineBundle(baseData, ieeeData []byte, output, version string, now
 	return manifest, nil
 }
 
+// RefreshOfficialIEEEBundle imports the three official IEEE registry CSV files
+// into a verified current bundle. All non-OUI source payloads are retained.
+func RefreshOfficialIEEEBundle(baseData []byte, csvParts [][]byte, output, version string, now time.Time) (BundleManifest, error) {
+	if len(csvParts) != 3 {
+		return BundleManifest{}, fmt.Errorf("IEEE refresh requires MA-L, MA-M and MA-S CSV files")
+	}
+	base, err := VerifyBundleBytes(baseData)
+	if err != nil {
+		return BundleManifest{}, fmt.Errorf("current fingerprint bundle: %w", err)
+	}
+	if base.Manifest.SchemaVersion != BundleSchemaVersionV6 {
+		return BundleManifest{}, fmt.Errorf("IEEE refresh requires a verified v6 bundle")
+	}
+	ouiData, err := mergeOUICSV(csvParts)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	oui, err := parseOUI(ouiData)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	current, err := parseOUI(base.Files["oui.csv"])
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	if len(oui) < len(current) {
+		return BundleManifest{}, fmt.Errorf("IEEE source has fewer OUI assignments than current bundle: %d < %d", len(oui), len(current))
+	}
+	delete(base.Files, "manifest.json")
+	base.Files["oui.csv"] = ouiData
+	base.Manifest.Files["oui.csv"] = bundleFile(ouiData)
+	hash := sha256.Sum256(ouiData)
+	found := false
+	for i := range base.Manifest.Sources {
+		if base.Manifest.Sources[i].Name == "IEEE MA-L/MA-M/MA-S" {
+			base.Manifest.Sources[i].Version = now.UTC().Format("2006-01-02") + "+sha256:" + hex.EncodeToString(hash[:])
+			base.Manifest.Sources[i].URL = "https://standards-oui.ieee.org/"
+			found = true
+			break
+		}
+	}
+	if !found {
+		return BundleManifest{}, fmt.Errorf("current bundle lacks IEEE source provenance")
+	}
+	ieeeData, err := encodeBundle(base.Manifest, base.Files)
+	if err != nil {
+		return BundleManifest{}, err
+	}
+	return RefreshOfflineBundle(baseData, ieeeData, output, version, now)
+}
+
 // ExtendOfflineBundle adds the audited catalog to a verified existing offline
 // pack. Existing OUI, UA, DHCP and domain data is preserved byte-for-byte.
 func ExtendOfflineBundle(base []byte, output, version string, now time.Time) (BundleManifest, error) {

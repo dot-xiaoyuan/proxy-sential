@@ -22,7 +22,7 @@ import { request } from '../shared/api/client'
 import { RouterObservationsPanel } from './RouterObservationsPanel'
 import { routerRoleLabels } from './routerLabels'
 import type { ColumnsType } from 'antd/es/table'
-import { AppErrorAlert, AppFactBar, AppListHeader, AppServerPagination, AppTable, formatDateTime } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppListHeader, AppServerPagination, AppTable, formatDateTime, useCursorPagePosition } from '../shared/ui'
 
 type Source = {id:string;name:string;node:string;site:string;domain:string;address:string;snmp_version:string;username?:string;interval_seconds:number;enabled:boolean;config_version:number}
 type SnmpCandidate = {ip:string;name:string;mac:string;manufacturer:string;vlan:string;domain:string;sensor_id:string;site:string;reason:string;observations:number}
@@ -36,14 +36,15 @@ const statuses:Record<string,string>={pending:'等待采集',running:'采集中'
 const origins:Record<string,string>={fdb:'交换机 MAC 表',neighbor:'网关邻居表',lldp:'LLDP 邻居',dns_sd:'DNS-SD 服务',ssdp:'SSDP 公告',active:'探测响应'}
 export function DiscoveryPage({configuration=false,embedded=false}:{configuration?:boolean;embedded?:boolean}){
  const [tab,setTab]=useUrlState('tab',configuration?'sources':'routers',configuration?['sources','scan','tasks']:['routers','devices']);
- const [devicePage,setDevicePage]=useState(1);const [deviceCursors,setDeviceCursors]=useState<string[]>(['']);
+ const [devicePage,setDevicePage]=useState(1);const [devicePageSize,setDevicePageSize]=useState(20);
  const session=useSession();const manage=can(session.data,'integrations:write')
  const client=useQueryClient();const [form]=Form.useForm();const [editing,setEditing]=useState<Source|null>();const [detail,setDetail]=useState<Device>();const [saving,setSaving]=useState(false)
  const options={refetchInterval:()=>document.visibilityState==='visible'?15000:false,refetchIntervalInBackground:false}
  const sources=useQuery({queryKey:['discovery','sources'],queryFn:()=>request<{items:Source[]}>('/discovery/sources'),enabled:configuration&&tab==='sources',...options})
  const snmpCandidates=useQuery({queryKey:['discovery','snmp-candidates'],queryFn:()=>request<{items:SnmpCandidate[]}>('/discovery/snmp-candidates'),enabled:configuration&&tab==='sources'&&editing!==undefined,...options})
- const deviceCursor=deviceCursors[devicePage-1]??'';
- const devices=useQuery({queryKey:['discovery','devices',devicePage,deviceCursor],queryFn:()=>request<{items:Device[];next_cursor?:string;has_more:boolean}>(`/discovery/devices?limit=20${deviceCursor?`&cursor=${encodeURIComponent(deviceCursor)}`:''}`),enabled:!configuration&&tab==='devices',...options})
+ const devicePosition=useCursorPagePosition({path:'/discovery/devices/position',query:'',page:devicePage,pageSize:devicePageSize,enabled:!configuration&&tab==='devices'})
+ const devices=useQuery({queryKey:['discovery','devices',devicePageSize,devicePosition.cursor],queryFn:()=>request<{items:Device[];next_cursor?:string;has_more:boolean}>(`/discovery/devices?limit=${devicePageSize}${devicePosition.cursor?`&cursor=${encodeURIComponent(devicePosition.cursor)}`:''}`),enabled:devicePosition.ready,...options})
+ const deviceMetadata=useQuery({queryKey:['discovery','devices-metadata'],queryFn:()=>request<{total:number}>('/discovery/devices/metadata'),enabled:!configuration&&tab==='devices',...options})
  const tasks=useQuery({queryKey:['discovery','tasks'],queryFn:()=>request<{items:Task[]}>('/discovery/tasks'),enabled:configuration&&tab==='tasks',...options})
  const [scanForm]=Form.useForm();const [scanOpen,setScanOpen]=useState(false);const[scanEditing,setScanEditing]=useState<ScanProfile>();const [preview,setPreview]=useState<number>();
  const profiles=useQuery({queryKey:['discovery','profiles'],queryFn:()=>request<{items:ScanProfile[]}>('/discovery/scan-profiles'),enabled:configuration&&tab==='scan',...options})
@@ -96,7 +97,8 @@ export function DiscoveryPage({configuration=false,embedded=false}:{configuratio
  {key:'devices',label:'发现记录',children:<>
         <AppListHeader title="发现记录" count={`${devices.data?.items.length ?? 0} 条`} />
         <AppTable rowKey="id" columns={cols} dataSource={devices.data?.items??[]} pagination={false} locale={{emptyText:'暂无发现记录'}} scroll={{x:1150}}/>
-        {(()=>{const items=devices.data?.items.length??0;const total=devices.data?.has_more?devicePage*20+1:(devicePage-1)*20+items;return <AppServerPagination cursorMode page={devicePage} pageSize={20} total={total} totalText={`第 ${devicePage} 页 · 已加载 ${(devicePage-1)*20+items} 条`} onChange={(next)=>{if(next>devicePage){const value=devices.data?.next_cursor;if(value){setDeviceCursors([...deviceCursors,value]);setDevicePage(next)}}else setDevicePage(next)}}/>})()} 
+        {devicePosition.isError&&<AppErrorAlert title="页码定位失败" message={devicePosition.error.message}/>}
+        <AppServerPagination disabled={devices.isFetching||devicePosition.isLocating} page={devicePage} pageSize={devicePageSize} total={deviceMetadata.data?.total} totalText={deviceMetadata.isError?'数量读取失败':undefined} onChange={(next,size)=>{setDevicePage(next);setDevicePageSize(size)}}/>
       </>},
  {key:'sources',label:'基础设施接入',children:<>
         <AppListHeader title="基础设施接入" count={`${sources.data?.items.length ?? 0} 条`} actions={<Button disabled={!manage} onClick={()=>edit(null)}>新增接入源</Button>} />

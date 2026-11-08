@@ -117,7 +117,7 @@ export function OrganizationPage() {
               {writable && <Button size="small" onClick={() => open('network-zones', undefined, {campus_id:item.campus_id,building_id:item.building_id})}>配置网段</Button>}
             </div>)}</div>}} />
           </AppListSection>
-          <AppServerPagination page={campusPage.page} pageSize={campusPage.pageSize} total={campusList.data?.page.total ?? 0} onChange={campusPage.update} />
+          <AppServerPagination page={campusPage.page} pageSize={campusPage.pageSize} total={campusList.data?.page.total} onChange={campusPage.update} />
         </> },
         { key: 'zones', label: '网段与位置映射', children: <>
           <p className="organization-guidance">用 IP 网段关联楼宇或区域，例如 222.204.88.0/23 对应行政楼。VLAN、SSID 与接入点均为可选信息。</p>
@@ -125,7 +125,7 @@ export function OrganizationPage() {
           <AppListSection isError={zoneList.isError} errorTitle="网络区域列表读取失败" isLoading={zoneList.isLoading} loadingRows={3} isEmpty={!zoneList.data?.items.length} emptyText="尚未配置网络区域">
             <AppTable rowKey="network_zone_id" columns={zoneColumns} dataSource={zoneList.data?.items ?? []} scroll={{x:900}} />
           </AppListSection>
-          <AppServerPagination page={zonePage.page} pageSize={zonePage.pageSize} total={zoneList.data?.page.total ?? 0} onChange={zonePage.update} />
+          <AppServerPagination page={zonePage.page} pageSize={zonePage.pageSize} total={zoneList.data?.page.total} onChange={zonePage.update} />
           {data.access_points.length > 0 && <details className="organization-buildings"><summary>接入点 / NAS（{data.access_points.length}）</summary><div className="organization-list">{data.access_points.map(item => <div key={item.access_point_id} className="organization-row organization-item"><span>{[item.name, item.management_ip].filter(Boolean).join(' · ')}</span>{editButton('access-points', item, '编辑接入点')}</div>)}</div></details>}
         </> },
       ]} />

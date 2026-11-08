@@ -13,7 +13,7 @@ import (
 	"proxy-sentinel/internal/fingerprint"
 )
 
-func TestStreamRouterFreshCutoverRejectsUnsettledNewIndexRows(t *testing.T) {
+func TestStreamRouterFreshCutoverKeepsIndexedNewRows(t *testing.T) {
 	query := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -34,10 +34,12 @@ func TestStreamRouterFreshCutoverRejectsUnsettledNewIndexRows(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`pg_advisory_xact_lock`).WithArgs("sensor-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT fresh_cutoff_at,lease_until>now\(\),processed_events,cursor_indexed_at,cursor_event_key FROM stream_router_recognition_state`).WithArgs("sensor-a").WillReturnRows(sqlmock.NewRows([]string{"fresh_cutoff_at", "leased", "processed_events", "cursor_indexed_at", "cursor_event_key"}))
-	mock.ExpectRollback()
+	mock.ExpectExec(`INSERT INTO stream_router_fresh_cutovers`).WithArgs("sensor-a", "cancel-1", cutoff, uint64(5), int64(0)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO stream_router_recognition_state`).WithArgs("sensor-a", cutoff, "cancel-1", fingerprint.DefaultRouterRuleSet().Version).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	store := &DBStore{pg: &PostgresStore{db: db}, ch: ch}
-	if _, err := store.StartStreamRouterFreshCutover(context.Background(), "sensor-a", "cancel-1", cutoff); err == nil {
-		t.Fatal("cutover skipped already indexed new input")
+	if canceled, err := store.StartStreamRouterFreshCutover(context.Background(), "sensor-a", "cancel-1", cutoff); err != nil || canceled != 5 {
+		t.Fatalf("cutover did not retain new input: canceled=%d err=%v", canceled, err)
 	}
 	if !strings.Contains(query, "stream_router_signal_index") || !strings.Contains(query, "countIf(indexed_at>=") {
 		t.Fatalf("router index cutover count omitted boundary: %s", query)

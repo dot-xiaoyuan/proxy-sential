@@ -103,6 +103,63 @@ func TestRetryProvenUnsentV2SourceBackedArchiveRequiresRawAndBodyProof(t *testin
 	}
 }
 
+func TestReconcileSettledStreamBodyRequiresQuietQueueAndWritesOnlyMissingBody(t *testing.T) {
+	segment := testStreamSegment()
+	segment.AcceptedAt = time.Now().UTC().Add(-2 * time.Hour)
+	segment.SourceBackedRaw = true
+	segment.Raw = []byte("archived source\n")
+	sum := sha256.Sum256(segment.Raw)
+	segment.RawSHA256 = hex.EncodeToString(sum[:])
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, bodyPresent, bodyInserts := true, false, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		q := string(data)
+		switch {
+		case strings.Contains(q, "FROM system.asynchronous_inserts"):
+			if queued {
+				_, _ = io.WriteString(w, "1\n")
+			} else {
+				_, _ = io.WriteString(w, "0\n")
+			}
+		case strings.HasPrefix(q, "SELECT raw_sha256,raw_base64"):
+			row, _ := json.Marshal(map[string]string{"raw_sha256": segment.RawSHA256, "raw_base64": base64.StdEncoding.EncodeToString(segment.Raw)})
+			_, _ = w.Write(append(row, '\n'))
+		case strings.HasPrefix(q, "SELECT scope_id,event_key,content_sha256"):
+			if bodyPresent {
+				row, _ := json.Marshal(map[string]string{"scope_id": prepared[0].scope, "event_key": prepared[0].key, "content_sha256": prepared[0].hash})
+				_, _ = w.Write(append(row, '\n'))
+			}
+		case strings.HasPrefix(q, "INSERT INTO stream_event_body_"):
+			bodyInserts++
+			bodyPresent = true
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-one", segment); err == nil || bodyInserts != 0 {
+		t.Fatalf("queued archive was replayed: inserts=%d err=%v", bodyInserts, err)
+	}
+	queued = false
+	segment.AcceptedAt = time.Now().UTC().Add(-30 * time.Minute)
+	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-one", segment); err == nil || bodyInserts != 0 {
+		t.Fatalf("recent archive was replayed: inserts=%d err=%v", bodyInserts, err)
+	}
+	segment.AcceptedAt = time.Now().UTC().Add(-2 * time.Hour)
+	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-one", segment); err != nil || bodyInserts != 1 {
+		t.Fatalf("settled archive repair: inserts=%d err=%v", bodyInserts, err)
+	}
+	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-one", segment); err != nil || bodyInserts != 1 {
+		t.Fatalf("present body was duplicated: inserts=%d err=%v", bodyInserts, err)
+	}
+}
+
 func TestRetryProvenUnsentSearchRequiresTerminalEvidence(t *testing.T) {
 	segment := testStreamSegment()
 	segment.AcceptedAt = time.Now().UTC().Add(-3 * time.Minute)

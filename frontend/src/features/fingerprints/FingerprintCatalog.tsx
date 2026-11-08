@@ -295,7 +295,7 @@ export function FingerprintCatalog({canViewRules=false}:{canViewRules?:boolean})
                   <>
                     <AppListHeader title="规则检索" count={`${formatCount(rules.data?.total ?? 0)} 条`} />
                     <div className="list-table-scroll"><AppTable rowKey="id" columns={ruleColumns} dataSource={rules.data?.items ?? []} tableLayout="fixed" scroll={{ x: 1000 }} locale={{ emptyText: "暂无匹配条目" }} /></div>
-                    <AppServerPagination page={page} pageSize={pageSize} total={rules.data?.total ?? 0} onChange={(next, size) => { setPage(next); setPageSize(size); }} />
+                    <AppServerPagination page={page} pageSize={pageSize} total={rules.data?.total} onChange={(next, size) => { setPage(next); setPageSize(size); }} />
                   </>
                 )}
               </>

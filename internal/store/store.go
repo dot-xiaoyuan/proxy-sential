@@ -53,7 +53,9 @@ type Query struct {
 	Cursor          int
 	// InventoryCursor is the opaque, filter-bound cursor used by the device
 	// inventory read model. Cursor remains for the other legacy list readers.
-	InventoryCursor       string
+	InventoryCursor string
+	// InventoryPositionPage locates a numbered page boundary without reading payloads.
+	InventoryPositionPage int
 	IncludeWeak           bool
 	InventorySkipMetadata bool
 	InventoryMetadataOnly bool
@@ -282,19 +284,32 @@ type Label struct {
 }
 
 type EndpointRegistrationUpdate struct {
-	EndpointID            string `json:"endpoint_id"`
-	RegistrationStatus    string `json:"registration_status"`
-	OwnerAccount          string `json:"owner_account,omitempty"`
-	OwnerName             string `json:"owner_name,omitempty"`
-	OwnerDepartment       string `json:"owner_department,omitempty"`
-	AssetTag              string `json:"asset_tag,omitempty"`
-	OwnershipClass        string `json:"ownership_class"`
-	RegistrationNote      string `json:"registration_note,omitempty"`
-	MergeStatus           string `json:"merge_status"`
-	MergedIntoEndpointID  string `json:"merged_into_endpoint_id,omitempty"`
-	SplitFromEndpointID   string `json:"split_from_endpoint_id,omitempty"`
-	RegistrationUpdatedBy string `json:"registration_updated_by"`
-	RegistrationUpdatedAt string `json:"registration_updated_at"`
+	EndpointID            string                       `json:"endpoint_id"`
+	RegistrationStatus    string                       `json:"registration_status"`
+	OwnerAccount          string                       `json:"owner_account,omitempty"`
+	OwnerName             string                       `json:"owner_name,omitempty"`
+	OwnerDepartment       string                       `json:"owner_department,omitempty"`
+	AssetTag              string                       `json:"asset_tag,omitempty"`
+	OwnershipClass        string                       `json:"ownership_class"`
+	RegistrationNote      string                       `json:"registration_note,omitempty"`
+	MergeStatus           string                       `json:"merge_status"`
+	MergedIntoEndpointID  string                       `json:"merged_into_endpoint_id,omitempty"`
+	SplitFromEndpointID   string                       `json:"split_from_endpoint_id,omitempty"`
+	RegistrationUpdatedBy string                       `json:"registration_updated_by"`
+	RegistrationUpdatedAt string                       `json:"registration_updated_at"`
+	RegistrationDetails   *EndpointRegistrationDetails `json:"registration_details,omitempty"`
+}
+
+// EndpointRegistrationDetails are operator-confirmed registration facts. The
+// registered IP is never treated as a currently observed address.
+type EndpointRegistrationDetails struct {
+	Name         string `json:"name,omitempty"`
+	DeviceType   string `json:"device_type,omitempty"`
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Model        string `json:"model,omitempty"`
+	SerialNumber string `json:"serial_number,omitempty"`
+	RegisteredIP string `json:"registered_ip,omitempty"`
+	Location     string `json:"location,omitempty"`
 }
 
 type DiscoveryServiceClue struct {

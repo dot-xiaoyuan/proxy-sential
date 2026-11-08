@@ -16,9 +16,9 @@ export function DeviceNameView({name,compact=false}: {name?: EndpointDeviceInven
  return <div className="device-name-view"><Typography.Text strong>{name?.value || ''}</Typography.Text>{name && <div className="device-name-meta"><Typography.Text type="secondary">{sources[name.source] || name.source}</Typography.Text>{name.status==='historical'&&<Tag>历史名称</Tag>}{name.multiple_names&&<Tag>多个名称</Tag>}</div>}</div>
 }
 export function DeviceNamePanel({endpointId,name,canEdit=false}: {endpointId:string;name?:EndpointDeviceInventory['device_name'];canEdit?:boolean}) {
- const [editing,setEditing]=useState(false),[value,setValue]=useState(''),[page,setPage]=useState(1)
+ const [editing,setEditing]=useState(false),[value,setValue]=useState(''),[page,setPage]=useState(1),[pageSize,setPageSize]=useState(20)
  const client=useQueryClient()
- const evidence=useQuery({queryKey:['device-name-evidence',endpointId,page],queryFn:()=>api.deviceNameEvidence(endpointId,(page-1)*20),refetchInterval:15000,refetchIntervalInBackground:false})
+ const evidence=useQuery({queryKey:['device-name-evidence',endpointId,page,pageSize],queryFn:()=>api.deviceNameEvidence(endpointId,(page-1)*pageSize,pageSize),refetchInterval:15000,refetchIntervalInBackground:false})
  const update=useMutation({mutationFn:(next:string)=>api.updateDeviceName(endpointId,next),onSuccess:()=>{setEditing(false);void client.invalidateQueries({queryKey:['endpoint-identity',endpointId]});void client.invalidateQueries({queryKey:['inventory-detail',endpointId]});void client.invalidateQueries({queryKey:['devices']});void client.invalidateQueries({queryKey:['device-inventory-metadata']})}})
  return <section className="surface device-name-panel">
   <div className="device-name-heading"><Typography.Title level={4}>终端名称</Typography.Title>{canEdit&&<div className="device-name-actions"><Button onClick={()=>{setValue(name?.manual?name.value:'');setEditing(true)}}>编辑备注</Button>{name?.manual&&<Button loading={update.isPending} onClick={()=>update.mutate('')}>清除备注</Button>}</div>}</div>
@@ -32,7 +32,7 @@ export function DeviceNamePanel({endpointId,name,canEdit=false}: {endpointId:str
     {evidence.data?.items.map((item,i)=><article className="device-name-evidence" key={`${item.event_id}-${item.source}-${i}`}><Typography.Text strong>{item.value}</Typography.Text><span>{sources[item.source]||item.source} · {item.kind==='service'?'服务名称':'主机名'} · {formatDateTime(item.observed_at)}</span><span>地址：{item.address||''} · 归属：{item.attribution}</span><span>传感器：{item.sensor_id||'历史属性'} · 事件：{item.event_id?<Link to={`/events/${encodeURIComponent(item.event_id)}`}>{item.event_id}</Link>:'无原始事件引用'}</span></article>)}
     {evidence.data?.total===0&&<Typography.Text type="secondary">暂无名称证据</Typography.Text>}
    </div>
-   <AppServerPagination disabled={evidence.isFetching} page={page} pageSize={20} total={evidence.data?.total||0} onChange={setPage} showSizeChanger={false} />
+   <AppServerPagination disabled={evidence.isFetching} page={page} pageSize={pageSize} total={evidence.data?.total} totalText={evidence.isError?'数量读取失败':undefined} onChange={(next,size)=>{setPage(next);setPageSize(size)}} />
   </details>
   <Modal title="编辑终端备注" open={editing} onCancel={()=>setEditing(false)} onOk={()=>update.mutate(value.trim())} confirmLoading={update.isPending}><Input aria-label="终端备注" value={value} maxLength={255} onChange={e=>setValue(e.target.value)}/></Modal>
  </section>

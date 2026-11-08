@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,6 +24,7 @@ import (
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/pagination"
 	"proxy-sentinel/internal/proxyprotocol"
 	"proxy-sentinel/internal/risk"
 	"proxy-sentinel/internal/sharedaccess"
@@ -260,16 +263,17 @@ type CreateLabelRequest struct {
 }
 
 type UpdateEndpointRegistrationRequest struct {
-	RegistrationStatus   string `json:"registration_status"`
-	OwnerAccount         string `json:"owner_account"`
-	OwnerName            string `json:"owner_name"`
-	OwnerDepartment      string `json:"owner_department"`
-	AssetTag             string `json:"asset_tag"`
-	OwnershipClass       string `json:"ownership_class"`
-	RegistrationNote     string `json:"registration_note"`
-	MergeStatus          string `json:"merge_status"`
-	MergedIntoEndpointID string `json:"merged_into_endpoint_id"`
-	SplitFromEndpointID  string `json:"split_from_endpoint_id"`
+	RegistrationStatus   string                             `json:"registration_status"`
+	OwnerAccount         string                             `json:"owner_account"`
+	OwnerName            string                             `json:"owner_name"`
+	OwnerDepartment      string                             `json:"owner_department"`
+	AssetTag             string                             `json:"asset_tag"`
+	OwnershipClass       string                             `json:"ownership_class"`
+	RegistrationNote     string                             `json:"registration_note"`
+	MergeStatus          string                             `json:"merge_status"`
+	MergedIntoEndpointID string                             `json:"merged_into_endpoint_id"`
+	SplitFromEndpointID  string                             `json:"split_from_endpoint_id"`
+	RegistrationDetails  *store.EndpointRegistrationDetails `json:"registration_details,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -791,6 +795,10 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handle4KDirectory(w, r)
 	case strings.HasPrefix(path, "/policy-imports"):
 		s.handlePolicyImports(w, r, path)
+	case r.Method == http.MethodGet && path == "/policy-decisions/metadata":
+		s.queryPolicyDecisionMetadata(w, r)
+	case r.Method == http.MethodGet && path == "/policy-decisions/position":
+		s.queryPolicyDecisionPosition(w, r)
 	case r.Method == http.MethodGet && path == "/policy-decisions":
 		s.handlePolicyDecisionRecords(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/integrations/identity/batches/") && strings.HasSuffix(path, "/replay"):
@@ -839,6 +847,10 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDPIIP(w, r, strings.TrimPrefix(path, "/dpi/ips/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/accounts/"):
 		s.handleAccount(w, r, strings.TrimPrefix(path, "/accounts/"))
+	case r.Method == http.MethodGet && path == "/endpoints/registrations/position":
+		s.handleEndpointRegistrationCatalogMode(w, r, false, true)
+	case r.Method == http.MethodGet && (path == "/endpoints/registrations" || path == "/endpoints/registrations/metadata"):
+		s.handleEndpointRegistrationCatalog(w, r, path == "/endpoints/registrations/metadata")
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/endpoints/"):
 		s.handleEndpoint(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case r.Method == http.MethodPost && strings.HasPrefix(path, "/endpoints/"):
@@ -851,6 +863,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDevices(w, r)
 	case r.Method == http.MethodGet && path == "/device-inventory":
 		s.handleDeviceInventory(w, r)
+	case r.Method == http.MethodGet && path == "/device-inventory/position":
+		s.handleDeviceInventoryMode(w, r, false, true)
 	case r.Method == http.MethodGet && path == "/device-inventory/metadata":
 		s.handleDeviceInventoryRequest(w, r, true)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/device-inventory/"):
@@ -887,6 +901,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleRisks(w, r)
 	case r.Method == http.MethodGet && path == "/risks/stream-cutover":
 		s.handleStreamRiskCutover(w, r)
+	case r.Method == http.MethodGet && (path == "/risks/stream-current/metadata" || path == "/risks/stream-current/position"):
+		s.handleStreamRiskCurrentPagination(w, r)
 	case r.Method == http.MethodGet && path == "/risks/stream-current":
 		s.handleStreamRiskCurrent(w, r)
 	case r.Method == http.MethodGet && path == "/risks/stream-subject":
@@ -897,10 +913,14 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleIP(w, r, strings.TrimPrefix(path, "/ips/"))
 	case r.Method == http.MethodGet && path == "/events":
 		s.handleEvents(w, r)
+	case r.Method == http.MethodGet && (path == "/events/stream-index/metadata" || path == "/events/stream-index/position"):
+		s.handleStreamEventIndexPagination(w, r)
 	case r.Method == http.MethodGet && path == "/events/stream-index":
 		s.handleStreamEventIndex(w, r)
 	case r.Method == http.MethodGet && path == "/events/stream-body":
 		s.handleStreamEventBody(w, r)
+	case r.Method == http.MethodGet && (path == "/ai-relay/usages/position"):
+		s.handleAIRelayUsagePosition(w, r)
 	case r.Method == http.MethodGet && path == "/ai-relay/usages":
 		s.handleAIRelayUsages(w, r)
 	case r.Method == http.MethodGet && path == "/ai-relay/indicators":
@@ -1294,7 +1314,7 @@ func requiredPermission(method, path string) string {
 		}
 		return "policies:manage"
 	}
-	if path == "/policy-decisions" || path == "/integrations/4k-directory" || strings.HasPrefix(path, "/integrations/product-policy/") {
+	if path == "/policy-decisions" || strings.HasPrefix(path, "/policy-decisions/") || path == "/integrations/4k-directory" || strings.HasPrefix(path, "/integrations/product-policy/") {
 		return "policies:read"
 	}
 	if strings.HasPrefix(path, "/application-library") || strings.HasPrefix(path, "/application-activity") {
@@ -1359,7 +1379,7 @@ func requiredPermission(method, path string) string {
 		return "audit:read"
 	case strings.HasPrefix(path, "/events"):
 		return "events:read"
-	case strings.HasPrefix(path, "/ips/") && strings.HasSuffix(path, "/traffic-observations"):
+	case strings.HasPrefix(path, "/ips/") && (strings.HasSuffix(path, "/traffic-observations") || strings.Contains(path, "/traffic-observations/")):
 		return "events:read"
 	case path == "/ai-relay/indicators":
 		return "risks:read"
@@ -1680,6 +1700,12 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request, rest stri
 }
 
 func (s *Server) handleEndpoint(w http.ResponseWriter, r *http.Request, rest string) {
+	for _, suffix := range []string{"/observations/metadata", "/observations/position"} {
+		if strings.HasSuffix(rest, suffix) {
+			s.handleEndpointObservationPagination(w, r, strings.TrimSuffix(rest, suffix))
+			return
+		}
+	}
 	if strings.Contains(rest, "/observations/") && strings.HasSuffix(rest, "/evidence") {
 		s.handleInventorySnapshotEvidence(w, r, rest)
 		return
@@ -1804,6 +1830,7 @@ func (s *Server) handleEndpointRegistration(w http.ResponseWriter, r *http.Reque
 		SplitFromEndpointID:   strings.TrimSpace(request.SplitFromEndpointID),
 		RegistrationUpdatedBy: sessionFromContext(r.Context()).User.ID,
 		RegistrationUpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		RegistrationDetails:   request.RegistrationDetails,
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
@@ -1845,6 +1872,12 @@ func validateEndpointRegistrationRequest(endpointID string, request UpdateEndpoi
 	if strings.TrimSpace(endpointID) == "" {
 		return fmt.Errorf("endpoint_id is required")
 	}
+	if strings.HasPrefix(endpointID, "mac:") {
+		mac, err := net.ParseMAC(strings.TrimPrefix(endpointID, "mac:"))
+		if err != nil || len(mac) != 6 || mac[0]&1 != 0 || endpointID != "mac:"+mac.String() || mac.String() == "00:00:00:00:00:00" {
+			return fmt.Errorf("endpoint_id contains an invalid device MAC")
+		}
+	}
 	switch request.RegistrationStatus {
 	case "unregistered", "registered", "ignored", "retired":
 	default:
@@ -1868,6 +1901,22 @@ func validateEndpointRegistrationRequest(endpointID string, request UpdateEndpoi
 	}
 	if strings.TrimSpace(request.MergedIntoEndpointID) == strings.TrimSpace(endpointID) {
 		return fmt.Errorf("merged_into_endpoint_id cannot equal endpoint_id")
+	}
+	if details := request.RegistrationDetails; details != nil {
+		for field, value := range map[string]string{
+			"name": details.Name, "device_type": details.DeviceType,
+			"manufacturer": details.Manufacturer, "model": details.Model,
+			"serial_number": details.SerialNumber, "location": details.Location,
+		} {
+			if len([]rune(strings.TrimSpace(value))) > 200 {
+				return fmt.Errorf("registration_details.%s exceeds 200 characters", field)
+			}
+		}
+		if ip := strings.TrimSpace(details.RegisteredIP); ip != "" {
+			if _, err := netip.ParseAddr(ip); err != nil {
+				return fmt.Errorf("registration_details.registered_ip is invalid")
+			}
+		}
 	}
 	return nil
 }
@@ -2009,6 +2058,17 @@ func (s *Server) handleRisks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIP(w http.ResponseWriter, r *http.Request, rest string) {
+	for _, suffix := range []string{"/traffic-observations/metadata", "/traffic-observations/position"} {
+		if strings.HasSuffix(rest, suffix) {
+			ip, err := pathIP(strings.TrimSuffix(rest, suffix))
+			if err != nil {
+				writeError(w, 400, "bad_ip", err.Error())
+				return
+			}
+			s.handleIPTrafficObservationPagination(w, r, ip)
+			return
+		}
+	}
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(rest, "/traffic-observations"):
 		ip, err := pathIP(strings.TrimSuffix(rest, "/traffic-observations"))
@@ -2187,6 +2247,10 @@ func (s *Server) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Request, metadataOnly bool) {
+	s.handleDeviceInventoryMode(w, r, metadataOnly, false)
+}
+
+func (s *Server) handleDeviceInventoryMode(w http.ResponseWriter, r *http.Request, metadataOnly, positionOnly bool) {
 	started := time.Now()
 	view := r.URL.Query().Get("view")
 	if view != "" && view != "recent" && view != "history" {
@@ -2208,7 +2272,7 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 		return
 	}
 	query.View = view
-	if !metadataOnly {
+	if !metadataOnly && !positionOnly {
 		query.InventoryCursor = rawInventoryCursor
 	}
 	query.InventorySearchType = r.URL.Query().Get("search_type")
@@ -2234,7 +2298,17 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 	query.Ecosystem = strings.ToLower(strings.TrimSpace(query.Ecosystem))
 	query.InventorySkipMetadata = r.URL.Query().Get("include_metadata") == "false" && !metadataOnly
 	query.InventoryMetadataOnly = metadataOnly
-	if rawInventoryCursor != "" && !metadataOnly {
+	if positionOnly {
+		page, size, parseErr := pagePositionParameters(r)
+		if parseErr != nil {
+			writeError(w, 400, "bad_page", "页码或页长无效")
+			return
+		}
+		query.InventoryPositionPage = page
+		query.Limit = size
+		query.InventorySkipMetadata = true
+	}
+	if rawInventoryCursor != "" && !metadataOnly && !positionOnly {
 		if _, decodeErr := store.DecodeInventoryCursorForRequest(query, rawInventoryCursor); decodeErr != nil {
 			writeError(w, http.StatusBadRequest, "bad_cursor", decodeErr.Error())
 			return
@@ -2265,7 +2339,7 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 		var loadErr error
 		if reader, ok := s.reader.(store.DeviceInventoryReader); ok {
 			result, loadErr = reader.ListDeviceInventory(loadCtx, query)
-		} else if query.Q != "" || query.SrcIP != "" || query.InventorySearchType != "all" {
+		} else if positionOnly || query.Q != "" || query.SrcIP != "" || query.InventorySearchType != "all" {
 			// Legacy offline readers cannot promise current-only search semantics.
 			loadErr = store.ErrInventoryNotReady
 		} else {
@@ -2279,7 +2353,7 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 				}
 			}
 		}
-		if loadErr == nil && !metadataOnly {
+		if loadErr == nil && !metadataOnly && !positionOnly {
 			enrichmentStarted := time.Now()
 			s.enrichDeviceInventory(loadCtx, &result)
 			w.Header().Add("Server-Timing", fmt.Sprintf("enrichment;dur=%.2f", float64(time.Since(enrichmentStarted).Microseconds())/1000))
@@ -2299,6 +2373,10 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 		page, err = load(ctx)
 	}
 	if err != nil {
+		if errors.Is(err, pagination.ErrPageOutOfRange) {
+			writeError(w, 400, "page_out_of_range", "目标页已不存在，请刷新列表")
+			return
+		}
 		if errors.Is(err, store.ErrInventoryNotReady) {
 			writeError(w, 503, "inventory_projection_not_ready", err.Error())
 			return
@@ -2321,7 +2399,17 @@ func (s *Server) handleDeviceInventoryRequest(w http.ResponseWriter, r *http.Req
 		page.Facets.OSFamilies = []string{}
 	}
 	var response any
-	if metadataOnly {
+	if positionOnly {
+		if page.Page.NextCursor == nil {
+			writeError(w, 503, "inventory_position_unavailable", "终端页码定位尚不可用")
+			return
+		}
+		at, parseErr := time.Parse(time.RFC3339Nano, page.AsOf)
+		if parseErr != nil {
+			at = time.Now().UTC()
+		}
+		response = pagination.Position{Page: query.InventoryPositionPage, Limit: query.Limit, Cursor: *page.Page.NextCursor, AsOf: at}
+	} else if metadataOnly {
 		response = DeviceInventoryMetadataResponse{ReadModelState: page.ReadModelState, Total: page.Page.Total, Facets: page.Facets, AsOf: page.AsOf}
 	} else {
 		full := DeviceInventoryListResponse{

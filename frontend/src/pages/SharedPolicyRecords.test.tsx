@@ -39,7 +39,7 @@ describe('共享策略仅记录', () => {
  it('关联观察和不足原因可查询，空结果不表示没有共享', async () => {
   vi.mocked(request).mockResolvedValue({items:[],next_cursor:''});setup('/shared-access?tab=decisions&decision_result=insufficient&observation_id=raw-proof')
   expect(await screen.findByText(/当前筛选下暂无评估记录/)).toBeInTheDocument()
-  expect(request).toHaveBeenCalledWith(expect.stringContaining('observation_id=raw-proof'))
+  await waitFor(()=>expect(vi.mocked(request).mock.calls.some(([path])=>String(path).startsWith('/policy-decisions?')&&String(path).includes('observation_id=raw-proof'))).toBe(true))
   expect(sharedReason('capture_interval_incomplete:handshake-sidecar')).toContain('采集时间段覆盖不足')
  })
 })
