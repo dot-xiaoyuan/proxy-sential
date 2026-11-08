@@ -66,11 +66,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	exactSearch := false
 	if ip := net.ParseIP(needle); ip != nil {
 		args = append(args, ip.String())
-		having = append(having, "bool_or(lower(coalesce(data->>'ip',''))=$"+fmt.Sprint(len(args))+")")
+		having = append(having, "bool_or(coalesce(search_ip,'')=$"+fmt.Sprint(len(args))+")")
 		exactSearch = true
 	} else if mac, e := net.ParseMAC(needle); e == nil {
 		args = append(args, strings.ToLower(mac.String()))
-		having = append(having, "bool_or(lower(coalesce(data->>'mac',''))=$"+fmt.Sprint(len(args))+")")
+		having = append(having, "bool_or(coalesce(search_mac,'')=$"+fmt.Sprint(len(args))+")")
 		exactSearch = true
 	}
 	if needle != "" && !exactSearch {
@@ -81,7 +81,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		}
 		args = append(args, pattern)
 		searchArg := "$" + fmt.Sprint(len(args))
-		having = append(having, "bool_or(lower(profile_type) LIKE "+searchArg+" ESCAPE '\\' OR lower(coalesce(data->>'ip','')) LIKE "+searchArg+" ESCAPE '\\' OR lower(coalesce(data->>'mac','')) LIKE "+searchArg+" ESCAPE '\\' OR lower(coalesce(data->>'name','')) LIKE "+searchArg+" ESCAPE '\\' OR lower(coalesce(data->>'device_type','')) LIKE "+searchArg+" ESCAPE '\\' OR lower(coalesce(data->>'manufacturer','')) LIKE "+searchArg+" ESCAPE '\\' OR lower(coalesce(data->>'model_name','')) LIKE "+searchArg+" ESCAPE '\\')")
+		having = append(having, "bool_or(lower(profile_type) LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_ip,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_mac,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_name,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_device_type,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_manufacturer,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_model,'') LIKE "+searchArg+" ESCAPE '\\')")
 	}
 	classifiedWhere := []string{}
 	if query.DeviceType != "" {
@@ -131,7 +131,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
    ELSE coalesce(conflict,false) END profile_conflict
  FROM endpoint_recognition_summary
 ), candidate_rows AS (
- SELECT l.*,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
+ SELECT l.id,l.device_key,l.observed_at,l.valid_until,lower(coalesce(l.data->>'ip','')) search_ip,lower(coalesce(l.data->>'mac','')) search_mac,lower(coalesce(l.data->>'name','')) search_name,lower(coalesce(l.data->>'device_type','')) search_device_type,lower(coalesce(l.data->>'manufacturer','')) search_manufacturer,lower(coalesce(l.data->>'model_name','')) search_model,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
  coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'') linked_endpoint,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
  CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT (coalesce(rec.profile_conflict,false)) THEN coalesce(rec.role,'') ELSE '' END profile_type,
