@@ -385,7 +385,7 @@
     {
       "vendor": "Proxmox",
       "match": "contains",
-      "device_type": "desktop",
+      "device_type": "virtual_machine",
       "confidence": 0.6
     },
     {
@@ -409,7 +409,7 @@
     {
       "vendor": "IEIT",
       "match": "contains",
-      "device_type": "desktop",
+      "device_type": "server",
       "confidence": 0.5
     },
     {
