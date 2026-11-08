@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -574,6 +575,45 @@ func passiveModelDeviceType(model, text string) string {
 	return ""
 }
 
+var mdnsInstanceAddress = regexp.MustCompile(`\(([0-9]{1,3}(?:\.[0-9]{1,3}){3})\)`)
+
+// passiveTXTObservation turns a TXT record with a self-reported model into an
+// observation when the service instance embeds its own IPv4 address.
+func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, text string, at, validUntil time.Time, scope passiveDiscoveryScope) (discovery.Observation, bool) {
+	model := discovery.DNSSDModelFromTXT(text)
+	if model == "" {
+		return discovery.Observation{}, false
+	}
+	match := mdnsInstanceAddress.FindStringSubmatch(recordName)
+	if len(match) != 2 || !scope.allows(match[1]) {
+		return discovery.Observation{}, false
+	}
+	service := passiveServiceType(recordName)
+	capabilities := passiveCapabilities(service)
+	deviceType := passiveModelDeviceType(model, text)
+	if deviceType == "" {
+		deviceType = passivePrinterType(capabilities, recordName, text)
+	}
+	if len(capabilities) == 0 && deviceType == "" {
+		return discovery.Observation{}, false
+	}
+	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, recordName, text}, "\x00")))
+	name := strings.TrimSpace(strings.Split(recordName, "._")[0])
+	payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": recordName, "txt": text, "model": model, "ttl": int(validUntil.Sub(at).Seconds())}
+	evidence := event
+	evidence.EventID = "dns-sd-txt-" + hex.EncodeToString(hash[:16])
+	evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
+	evidence.Subject = map[string]any{"ip": match[1], "campus_id": passiveString(event.Subject, "campus_id")}
+	o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: match[1], Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD TXT 型号自述", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
+	if o.Site == "" {
+		o.Site = sensor
+	}
+	if o.Domain == "" {
+		o.Domain = iface
+	}
+	return o, true
+}
+
 func passiveHostToken(name string) string {
 	label := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".local")
 	end := len(label)
@@ -708,6 +748,14 @@ func (s *DBStore) materializeMDNS(ctx context.Context, db passiveDiscoveryDB, ev
 	}
 
 	result := []discovery.Observation{}
+	// A TXT answer whose instance carries its own address (many AirPlay/TV
+	// responders embed "(a.b.c.d)" in the instance) is usable even when the
+	// SRV/A pair was not captured, so the self-reported model is not lost.
+	if recordType == "TXT" && passiveServiceType(recordName) != "" {
+		if observation, ok := passiveTXTObservation(event, sensor, iface, recordName, value, at, validUntil, scope); ok {
+			result = append(result, observation)
+		}
+	}
 	if recordType == "PTR" {
 		if observation, ok := passivePTRObservation(event, sensor, iface, recordName, value, at, validUntil, scope); ok {
 			result = append(result, observation)
