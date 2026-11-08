@@ -1374,6 +1374,10 @@ func (s *DBStore) runPassiveObservationRetention(ctx context.Context, sensorID s
 func (s *DBStore) cleanupPassiveObservations(ctx context.Context) error {
 	for _, q := range []string{
 		`DELETE FROM discovery_observations WHERE id IN(SELECT id FROM discovery_observations WHERE observed_at<now()-interval '30 days' LIMIT 5000)`,
+		// Continuously re-observed DNS-SD advertisements keep a shorter hot
+		// window: seven days covers the brand window and the page's service
+		// evidence, while the duplicated history otherwise dominates the table.
+		`DELETE FROM discovery_observations WHERE id IN(SELECT id FROM discovery_observations WHERE origin='dns_sd' AND observed_at<now()-interval '7 days' LIMIT 5000)`,
 		`DELETE FROM discovery_observations WHERE id IN(
 			SELECT o.id FROM discovery_observations o
 			JOIN discovery_observations n ON n.origin='dns_sd' AND n.source_id=o.source_id
