@@ -423,6 +423,31 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 		result.Evidence = append(result.Evidence, "初始 TTL 线索: "+signals.OSHint)
 		recordDimensionEvidence(&result, "ttl_hint", "ttl", signals.OSHint, ruleValues{osFamily: signals.OSHint}, .55)
 	}
+	// A self-reported product family (Apple model codes, Android TV) fills an
+	// empty device class at clue level. It never establishes brand, model or OS.
+	if result.DeviceType == "" {
+		for _, field := range modelFamilyHintFields {
+			matched := false
+			for _, model := range signals.ProtocolFields[field] {
+				deviceType, description, confidence := modelFamilyDeviceType(model)
+				if deviceType == "" {
+					continue
+				}
+				result.DeviceType = deviceType
+				result.DeviceTypeConfidence = confidence
+				if result.Source == "" || result.Source == "ieee_oui" {
+					result.Source = "model_family_hint"
+				}
+				result.Evidence = append(result.Evidence, "自报型号: "+model+" → "+description)
+				recordDimensionEvidence(&result, "model_family_hint", field, model, ruleValues{deviceType: deviceType}, confidence)
+				matched = true
+				break
+			}
+			if matched {
+				break
+			}
+		}
+	}
 	// A hypervisor NIC is a virtual endpoint regardless of what the guest
 	// reports: the OUI belongs to the virtualization platform, not to guest
 	// hardware, so a Windows hostname must not turn it into a desktop.

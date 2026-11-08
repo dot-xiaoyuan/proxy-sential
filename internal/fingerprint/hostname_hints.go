@@ -14,4 +14,10 @@ var hostnameDeviceHints = []struct {
 	{"lenovo-pc", "desktop", "Lenovo PC 主机名", .75},
 	{"iqoo-pad", "tablet", "iQOO 平板型号主机名", .78},
 	{"iqoo-", "mobile", "iQOO 手机型号主机名", .78},
+	{"iphone", "mobile", "iPhone 默认主机名", .74},
+	{"ipad", "tablet", "iPad 默认主机名", .74},
+	{"ipod", "mobile", "iPod 默认主机名", .7},
+	{"macbook", "desktop", "MacBook 默认主机名", .72},
+	{"imac", "desktop", "iMac 默认主机名", .72},
+	{"appletv", "media_device", "Apple TV 默认主机名", .7},
 }
