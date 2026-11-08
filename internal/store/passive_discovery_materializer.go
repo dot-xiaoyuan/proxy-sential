@@ -484,6 +484,18 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		} else if strings.Contains(service, "mediarenderer") {
 			o.DeviceType, o.Capabilities = "media_device", []string{"media_rendering"}
 		}
+		// The UPnP server header names the stack product ("Linux/.. UPnP/1.0
+		// Roku/.."), a self-reported clue for devices that answer only to
+		// ssdp:all or upnp:rootdevice.
+		if server := discovery.CleanReportedText(passiveString(event.Payload, "server")); server != "" {
+			o.Explanation = "SSDP 响应携带 UPnP 服务端标识"
+			if o.ModelName == "" {
+				o.ModelName = server
+			}
+			if o.DeviceType == "" {
+				o.DeviceType = ssdpServerDeviceType(server)
+			}
+		}
 	case "ws_discovery":
 		if !scope.allows(ip) {
 			return discovery.Observation{}, "ws_discovery_out_of_scope"
@@ -660,6 +672,29 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 		o.Domain = iface
 	}
 	return o, true
+}
+
+// ssdpServerDeviceType maps well-known UPnP server product families to a
+// device class. The UPnP server header is self-reported, so it stays a clue.
+func ssdpServerDeviceType(server string) string {
+	lower := strings.ToLower(server)
+	switch {
+	case strings.Contains(lower, "linksys"), strings.Contains(lower, "netgear"), strings.Contains(lower, "tp-link"),
+		strings.Contains(lower, "d-link"), strings.Contains(lower, "dlink"), strings.Contains(lower, "zyxel"),
+		strings.Contains(lower, "routeros"), strings.Contains(lower, "asus"):
+		return "router"
+	case strings.Contains(lower, "synology"), strings.Contains(lower, "qnap"), strings.Contains(lower, "terastation"),
+		strings.Contains(lower, "buffalo"):
+		return "server"
+	case strings.Contains(lower, "roku"), strings.Contains(lower, "sonos"), strings.Contains(lower, "chromecast"),
+		strings.Contains(lower, "googlecast"), strings.Contains(lower, "spotify"):
+		return "media_device"
+	case strings.Contains(lower, "hikvision"), strings.Contains(lower, "dahua"), strings.Contains(lower, "axis"):
+		return "camera"
+	case strings.Contains(lower, "unifi"), strings.Contains(lower, "ubiquiti"), strings.Contains(lower, "aruba"):
+		return "access_point"
+	}
+	return ""
 }
 
 // snmpDeviceType maps well-known system-description families to a device class.
