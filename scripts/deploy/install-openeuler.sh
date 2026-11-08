@@ -161,6 +161,7 @@ preflight() {
   append_ingest_source PROXY_SENTINEL_ZEEK_CONN_PATH --zeek-conn
   append_ingest_source PROXY_SENTINEL_ZEEK_DNS_PATH --zeek-dns
   append_ingest_source PROXY_SENTINEL_ZEEK_HTTP_PATH --zeek-http
+  append_ingest_source PROXY_SENTINEL_ZEEK_HTTP_DEVICE_PATH --zeek-http-device
   append_ingest_source PROXY_SENTINEL_ZEEK_SSL_PATH --zeek-ssl
   append_ingest_source PROXY_SENTINEL_ZEEK_X509_PATH --zeek-x509
   append_ingest_source PROXY_SENTINEL_ZEEK_LLDP_PATH --zeek-lldp
@@ -176,6 +177,7 @@ preflight() {
   if [[ -n "${PROXY_SENTINEL_ZEEK_CONN_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-conn $PROXY_SENTINEL_ZEEK_CONN_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_DNS_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-dns $PROXY_SENTINEL_ZEEK_DNS_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_HTTP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-http $PROXY_SENTINEL_ZEEK_HTTP_PATH"; fi
+  if [[ -n "${PROXY_SENTINEL_ZEEK_HTTP_DEVICE_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-http-device $PROXY_SENTINEL_ZEEK_HTTP_DEVICE_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_SSL_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-ssl $PROXY_SENTINEL_ZEEK_SSL_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_X509_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-x509 $PROXY_SENTINEL_ZEEK_X509_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_LLDP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-lldp $PROXY_SENTINEL_ZEEK_LLDP_PATH"; fi

@@ -67,6 +67,20 @@ func (s *PostgresStore) PassiveDiscoveryRecognitionHints(ctx context.Context, en
  WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
    AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
    AND o.origin='ttl' AND coalesce(o.data->>'os_hint','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,'http_device',o.observed_at,'http_server',coalesce(o.data->'evidence'->'payload'->>'server','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='http_device' AND coalesce(o.data->'evidence'->'payload'->>'server','')<>''
+ UNION ALL
+ SELECT l.endpoint_id,o.id,'http_device',o.observed_at,'http_title',coalesce(o.data->'evidence'->'payload'->>'title','')
+ FROM discovery_identity_links l
+ JOIN discovery_observations o ON o.id=l.observation_id
+ WHERE l.endpoint_id=ANY($1::text[]) AND l.valid_until>$2
+   AND o.observed_at<=$2 AND o.valid_until>$2 AND NOT o.withdrawn
+   AND o.origin='http_device' AND coalesce(o.data->'evidence'->'payload'->>'title','')<>''
 ), deduped AS (
  SELECT DISTINCT ON (endpoint_id,origin,field,lower(value))
    endpoint_id,observation_id,origin,observed_at,field,value

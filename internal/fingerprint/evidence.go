@@ -216,7 +216,7 @@ func evidenceProtocolAllowsField(protocol, field string) bool {
 		return field == "coap_device_type" || field == "service_type"
 	case "bacnet":
 		return field == "bacnet_model" || field == "service_type"
-	case "http":
+	case "http", "http_device":
 		return strings.HasPrefix(field, "http_") || field == "favicon_md5" || field == "user_agent"
 	case "tls":
 		return strings.HasPrefix(field, "tls_") || field == "ja3" || field == "ja4"

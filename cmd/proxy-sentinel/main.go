@@ -449,6 +449,7 @@ func runIngest(args []string) error {
 	zeekConn := fs.String("zeek-conn", "", "Zeek conn.log path")
 	zeekDNS := fs.String("zeek-dns", "", "Zeek dns.log path")
 	zeekHTTP := fs.String("zeek-http", "", "Zeek http.log path")
+	zeekHTTPDevice := fs.String("zeek-http-device", "", "Zeek http-device.log path (response Server/title from LAN devices)")
 	zeekSSL := fs.String("zeek-ssl", "", "Zeek ssl.log path")
 	zeekX509 := fs.String("zeek-x509", "", "Zeek x509.log path")
 	zeekLLDP := fs.String("zeek-lldp", "", "Zeek lldp.log path")
@@ -501,6 +502,7 @@ func runIngest(args []string) error {
 		{Kind: "zeek-conn", Path: *zeekConn},
 		{Kind: "zeek-dns", Path: *zeekDNS},
 		{Kind: "zeek-http", Path: *zeekHTTP},
+		{Kind: "zeek-http-device", Path: *zeekHTTPDevice},
 		{Kind: "zeek-ssl", Path: *zeekSSL},
 		{Kind: "zeek-x509", Path: *zeekX509},
 		{Kind: "zeek-lldp", Path: *zeekLLDP},

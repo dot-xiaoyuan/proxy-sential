@@ -164,7 +164,7 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 		return iotMetadataEvent(raw, fields, lineOffset, opts)
 	case "conn":
 		return connectionEventFromFields(raw, fields, lineOffset, opts)
-	case "dns", "http", "ssl", "tls", "x509":
+	case "dns", "http", "ssl", "tls", "x509", "http-device":
 		return protocolEventFromFields(raw, fields, lineOffset, opts)
 	case "lldp", "ssdp":
 		return infrastructureDiscoveryEventFromFields(raw, fields, lineOffset, opts)
@@ -245,12 +245,17 @@ func connectionEventFromFields(raw []byte, fields map[string]string, lineOffset 
 
 func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
 	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
-	srcIP, dstIP := first(fields, "id.orig_h", "src_ip", "host"), first(fields, "id.resp_h", "dst_ip")
+	srcIP, dstIP := first(fields, "id.orig_h", "src_ip", "host", "orig_h"), first(fields, "id.resp_h", "dst_ip", "resp_h")
 	if timestamp == "" || srcIP == "" {
 		return normalized.Event{}, fmt.Errorf("missing Zeek %s fields", opts.LogKind)
 	}
 	if dstIP == "" {
 		dstIP = srcIP
+	}
+	// The http-device log describes the response served by a LAN device, so the
+	// server address is the subject of the evidence.
+	if opts.LogKind == "http-device" {
+		srcIP, dstIP = dstIP, srcIP
 	}
 	kind := opts.LogKind
 	eventType := kind
@@ -264,8 +269,8 @@ func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset in
 		copyPayload(payload, fields, "answers", "answers")
 		copyPayload(payload, fields, "qtype_name", "qtype")
 		copyPayload(payload, fields, "rcode_name", "rcode")
-	case "http":
-		for _, pair := range [][2]string{{"host", "host"}, {"method", "method"}, {"uri", "url"}, {"user_agent", "user_agent"}, {"server", "server"}, {"title", "title"}, {"status_code", "status"}} {
+	case "http", "http-device":
+		for _, pair := range [][2]string{{"host", "host"}, {"method", "method"}, {"uri", "url"}, {"user_agent", "user_agent"}, {"server", "server"}, {"title", "title"}, {"status_code", "status"}, {"status", "status"}} {
 			copyPayload(payload, fields, pair[0], pair[1])
 		}
 	case "ssl", "tls", "x509":

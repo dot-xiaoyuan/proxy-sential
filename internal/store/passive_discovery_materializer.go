@@ -400,6 +400,19 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		}
 		o.Origin, o.Explanation, o.ValidUntil = "ndp", "IPv6 邻居发现地址声明", at.Add(10*time.Minute)
 		o.Confidence = "confirmed"
+	case "http-device":
+		// The response served by a LAN device: the server and HTML title are
+		// self-reported product evidence, not verified hardware.
+		if ip == "" || !scope.allows(ip) {
+			return discovery.Observation{}, "http_device_out_of_scope"
+		}
+		server := passiveString(event.Payload, "server")
+		title := discovery.CleanReportedText(passiveString(event.Payload, "title"))
+		o.Origin, o.Explanation, o.ValidUntil = "http_device", "HTTP 响应 Server/标题", at.Add(30*time.Minute)
+		o.Confidence = "clue"
+		o.Name = title
+		o.ModelName = title
+		o.DeviceType = httpDeviceType(server, title)
 	case "ieee1905_client_association":
 		client := validPassiveMAC(passiveString(event.Payload, "client_mac"))
 		if client == "" {
@@ -635,6 +648,25 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 		o.Domain = iface
 	}
 	return o, true
+}
+
+// httpDeviceType maps well-known web UI server/title markers to a device class.
+// Generic web servers (nginx, Apache, cloudflare) deliberately do not classify.
+func httpDeviceType(server, title string) string {
+	lower := strings.ToLower(server + " " + title)
+	switch {
+	case strings.Contains(lower, "hikvision"), strings.Contains(lower, "dahua"), strings.Contains(lower, "axis"),
+		strings.Contains(lower, "network camera"), strings.Contains(lower, "ip camera"), strings.Contains(lower, "onvif"):
+		return "camera"
+	case strings.Contains(lower, "routeros"), strings.Contains(lower, "mikrotik"):
+		return "router"
+	case strings.Contains(lower, "laserjet"), strings.Contains(lower, "officejet"), strings.Contains(lower, "deskjet"),
+		strings.Contains(lower, "printer"):
+		return "printer"
+	case strings.Contains(lower, "unifi"), strings.Contains(lower, "ubiquiti"):
+		return "access_point"
+	}
+	return ""
 }
 
 // passiveUsableAddress reports whether an address can identify a device on the
