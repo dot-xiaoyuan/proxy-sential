@@ -83,6 +83,7 @@ func (r Repository) RunProjectionWorkersConfigured(ctx context.Context, spool, s
 	start(250*time.Millisecond, time.Second, r.ExpireDiscoveryStates)
 	start(time.Second, time.Second, background.UpdateDiscoveryStatistics)
 	start(time.Hour, 2*time.Second, background.CleanupDiscoveryHotHistory)
+	start(time.Hour, 2*time.Second, background.CleanupDiscoveryObservations)
 	if options.Capture() {
 		start(time.Second, time.Second, func(c context.Context) error { return background.UpdateCaptureRuntime(c, spool, sensor) })
 		start(5*time.Second, 2*time.Second, func(c context.Context) error {
