@@ -681,7 +681,11 @@ func ssdpServerDeviceType(server string) string {
 	switch {
 	case strings.Contains(lower, "linksys"), strings.Contains(lower, "netgear"), strings.Contains(lower, "tp-link"),
 		strings.Contains(lower, "d-link"), strings.Contains(lower, "dlink"), strings.Contains(lower, "zyxel"),
-		strings.Contains(lower, "routeros"), strings.Contains(lower, "asus"):
+		strings.Contains(lower, "routeros"), strings.Contains(lower, "asus"),
+		// TP-Link UPnP servers advertise model codes rather than the vendor name.
+		strings.Contains(lower, "tl-wdr"), strings.Contains(lower, "tl-wr"), strings.Contains(lower, "tl-wa"),
+		strings.Contains(lower, "wireless n router"), strings.Contains(lower, "wireless router"),
+		strings.Contains(lower, "miwifi"), strings.Contains(lower, "xiaomi router"):
 		return "router"
 	case strings.Contains(lower, "synology"), strings.Contains(lower, "qnap"), strings.Contains(lower, "terastation"),
 		strings.Contains(lower, "buffalo"):
