@@ -1499,12 +1499,29 @@ ON CONFLICT(sensor_id) DO UPDATE SET
 // already-normalized events. It is intentionally idempotent so deployments can
 // backfill a retained ClickHouse window after identity schema migrations.
 func (s *PostgresStore) WriteIdentityEvents(ctx context.Context, events []normalized.Event) error {
+	// Endpoint and profile rows commit in their own short transaction. Holding
+	// their row locks across the IP/MAC, access and session statements blocked
+	// the device lane's endpoint upserts (the same shape the authentication
+	// lane already uses).
+	endpointTx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err = writeIdentityEndpointsTx(ctx, endpointTx, events); err != nil {
+		endpointTx.Rollback()
+		return err
+	}
+	if err = endpointTx.Commit(); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = writeIdentityEventsTx(ctx, tx, events); err != nil {
+	// Endpoint rows are already durable; this transaction owns history and the
+	// serialised authority/session writes.
+	if _, err = writeIdentityEventsShapedTx(ctx, tx, events, true, false); err != nil {
 		return err
 	}
 	return tx.Commit()
