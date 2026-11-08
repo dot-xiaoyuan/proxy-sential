@@ -569,7 +569,7 @@ a:hover {
 
 .page {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   max-width: 1560px;
   width: 100%;
   margin: 0 auto;
@@ -583,17 +583,7 @@ a:hover {
 }
 
 .surface-card > .ant-card-head {
-  min-height: 40px;
-  padding: 0 14px;
   border-bottom-color: #e2e8f0;
-}
-
-.surface-card > .ant-card-body {
-  padding: 14px;
-}
-
-.ant-descriptions-item {
-  padding-bottom: 8px !important;
 }
 
 .page-header {
@@ -640,20 +630,16 @@ a:hover {
   margin: 0 !important;
   color: var(--ps-text-primary) !important;
   font-weight: 600 !important;
-  font-size: 18px !important;
-  line-height: 1.35 !important;
+  font-size: 20px !important;
   letter-spacing: 0;
 }
 
 .page-subtitle {
-  display: block;
+  display: inline;
   margin-top: 0;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 13px;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .sensor-select {
@@ -689,12 +675,12 @@ a:hover {
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
   min-width: 0;
 }
 
 .metric-card {
-  padding: 12px 14px !important;
+  padding: 16px 18px !important;
   border: 1px solid var(--ps-border-color) !important;
   border-radius: 8px !important;
   background: var(--ps-bg-surface) !important;
@@ -5102,16 +5088,16 @@ pre.wrap-code {
 .terminal-total strong { font-size: 24px; color: #0f172a; font-variant-numeric: tabular-nums; }
 .terminal-type-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; }
 .terminal-type-shortcuts .ant-btn { border-radius: 6px; }
-.terminal-page-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; color: #64748b; font-size: 12px; }
+.terminal-page-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; color: #64748b; font-size: 13px; }
 .terminal-page-summary strong { color: #334155; margin-left: 4px; }
-.discovery-overview { padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: var(--surface, #fff); }
-.discovery-overview-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; }
-.discovery-overview-heading strong { color: #0f172a; font-size: 14px; font-weight: 650; }
+.discovery-overview { padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: var(--surface, #fff); }
+.discovery-overview-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 16px; }
+.discovery-overview-heading strong { color: #0f172a; font-size: 16px; font-weight: 650; }
 .discovery-overview-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-.discovery-overview-metrics > div { display: flex; flex-direction: row; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0; padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.discovery-overview-metrics > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
 .discovery-overview-metrics span { color: #64748b; font-size: 12px; white-space: nowrap; }
-.discovery-overview-metrics strong { color: #0f172a; font-size: 18px; line-height: 1.25; font-variant-numeric: tabular-nums; }
-.discovery-overview-types { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; padding-top: 8px; overflow-x: auto; scrollbar-width: thin; }
+.discovery-overview-metrics strong { color: #0f172a; font-size: 23px; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.discovery-overview-types { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 14px; }
 .discovery-overview-type { display: inline-flex; gap: 6px; flex-shrink: 0; white-space: nowrap; padding: 5px 9px; border: 1px solid #e2e8f0; border-radius: 8px; color: #334155; background: #fff; }
 .discovery-overview-type strong { color: #0f172a; font-variant-numeric: tabular-nums; }
 @media (max-width: 900px) { .discovery-overview-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
