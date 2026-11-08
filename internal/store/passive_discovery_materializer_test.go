@@ -418,3 +418,22 @@ func TestPassiveLinkBatchDeduplicatesObservationIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPassiveDiscoveryTTLOSHint(t *testing.T) {
+	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
+	for _, tc := range []struct {
+		ttl  int
+		want string
+	}{
+		{126, "Windows"},
+		{128, "Windows"},
+		{63, "Unix"},
+		{64, "Unix"},
+		{254, ""},
+	} {
+		observation, reason := passiveObservation(passiveTestEvent("ttl", "", "", map[string]any{"ttl": tc.ttl, "neighbor_mac": "00:11:22:33:44:66"}), scope)
+		if reason != "" || observation.Origin != "ttl" || observation.OSHint != tc.want || observation.MAC != "00:11:22:33:44:66" {
+			t.Fatalf("ttl=%d: reason=%q observation=%+v", tc.ttl, reason, observation)
+		}
+	}
+}

@@ -141,7 +141,11 @@ func (l *Library) IdentifyEvidenceMeasured(mac string, evidence []EvidenceSignal
 			}
 		case "user_agent":
 			signals.UserAgents = append(signals.UserAgents, value)
-		case "device_hint", "model_hint", "os_hint":
+		case "os_hint":
+			if signals.OSHint == "" {
+				signals.OSHint = value
+			}
+		case "device_hint", "model_hint":
 			signals.Hints = append(signals.Hints, value)
 		case "software_name":
 			signals.Software = append(signals.Software, value)

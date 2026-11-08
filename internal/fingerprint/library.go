@@ -65,6 +65,7 @@ type Signals struct {
 	Hostnames            []string
 	Software             []string
 	Hints                []string
+	OSHint               string
 }
 
 type Rule struct {
@@ -411,6 +412,17 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 	}
 	result.Diagnostics.CandidateRules += catalogEvaluated
 	applySourceMatches(&result, sourceMatches)
+	// Initial-TTL hints only fill an empty OS: they are a coarse clue, not a
+	// substitute for a fingerprint match.
+	if result.OSFamily == "" && strings.TrimSpace(signals.OSHint) != "" {
+		result.OSFamily = signals.OSHint
+		result.OSFamilyConfidence = .55
+		if result.Source == "" || result.Source == "ieee_oui" {
+			result.Source = "ttl_hint"
+		}
+		result.Evidence = append(result.Evidence, "初始 TTL 线索: "+signals.OSHint)
+		recordDimensionEvidence(&result, "ttl_hint", "ttl", signals.OSHint, ruleValues{osFamily: signals.OSHint}, .55)
+	}
 	// A hypervisor NIC is a virtual endpoint regardless of what the guest
 	// reports: the OUI belongs to the virtualization platform, not to guest
 	// hardware, so a Windows hostname must not turn it into a desktop.

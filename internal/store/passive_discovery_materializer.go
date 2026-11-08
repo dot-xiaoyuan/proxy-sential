@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/netip"
 	"os"
@@ -202,7 +203,7 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
 		where += " AND source_event_type='dhcp'"
 	} else {
-		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','lldp','cdp','ieee1905_client_association','ieee1905_topology')"
+		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','lldp','cdp','ieee1905_client_association','ieee1905_topology','ttl')"
 	}
 	query := fmt.Sprintf(`SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,source,source_event_type,type,sensor_id,campus_id,subject_ip,subject_mac,observer_json,payload_json,flow_json,confidence FROM passive_discovery_events_v2 PREWHERE %s ORDER BY timestamp,event_id LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, limit)
 	raw, err := s.ch.query(ctx, query)
@@ -275,6 +276,27 @@ func passiveString(m map[string]any, key string) string {
 		return strings.TrimSpace(text)
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+// passiveInt reads a bounded integer payload field (TTL and similar counters).
+func passiveInt(m map[string]any, key string) (int, bool) {
+	if m == nil {
+		return 0, false
+	}
+	switch value := m[key].(type) {
+	case float64:
+		if value != math.Trunc(value) || value < 0 || value > 1<<20 {
+			return 0, false
+		}
+		return int(value), true
+	case int:
+		return value, true
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 // passiveSelfReport extracts the manufacturer and product model a device
@@ -385,6 +407,27 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		o.Confidence = "confirmed"
 		if passiveString(event.Payload, "association_state") != "joined" {
 			o.Withdrawn, o.ValidUntil = true, at
+		}
+	case "ttl":
+		// Initial-TTL OS clue (p0f-style). The value is the observed TTL after
+		// routing hops, so ranges rather than exact initial values are used.
+		// The TTL event carries the neighbour MAC in the payload, not the
+		// subjects table column.
+		if mac == "" {
+			mac = validPassiveMAC(passiveString(event.Payload, "neighbor_mac"))
+		}
+		ttl, ok := passiveInt(event.Payload, "ttl")
+		if mac == "" || !ok || ttl <= 0 {
+			return discovery.Observation{}, "invalid_ttl"
+		}
+		o.MAC = mac
+		o.Origin, o.Explanation, o.ValidUntil = "ttl", "IP 初始 TTL 被动指纹", at.Add(30*time.Minute)
+		o.Confidence = "clue"
+		switch {
+		case ttl >= 100 && ttl < 200:
+			o.OSHint = "Windows"
+		case ttl >= 50 && ttl < 100:
+			o.OSHint = "Unix"
 		}
 	case "ieee1905_topology":
 		// Only the mesh node itself originates 1905 topology messages; the
