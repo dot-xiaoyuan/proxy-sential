@@ -93,9 +93,18 @@ function typeLabel(item:Device, types:Record<string,string>) {
   return ''
 }
 
+function dhcpHintLabel(hint:string) {
+  const lower=hint.toLowerCase()
+  if(lower.includes('android'))return 'Android 设备'
+  if(lower.includes('windows'))return 'Windows 设备'
+  if(lower.includes('apple')||lower.includes('ios')||lower.includes('mac'))return 'Apple 设备'
+  if(lower.includes('linux'))return 'Linux 设备'
+  return hint
+}
+
 function secondaryTypeClue(item:Device, types:Record<string,string>, signal?:PassiveSignal) {
   if(dumbTerminal(item))return `服务能力线索 · ${dumbTerminal(item)}`
-  if(signal?.device_hint)return `${signal.device_hint} · DHCP ${signal.dhcp_historical?'历史线索':'线索'}`
+  if(signal?.device_hint)return `${dhcpHintLabel(signal.device_hint)} · DHCP ${signal.dhcp_historical?'历史线索':'线索'}`
   const recognized=item.recognition?.device_type
   return recognized&&(item.recognition?.confidence??0)<.8?`${types[recognized]??deviceTypeLabel(recognized)} · 低置信度线索`:''
 }
