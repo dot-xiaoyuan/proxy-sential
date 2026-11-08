@@ -518,7 +518,7 @@ func passiveRepeatableFactID(o discovery.Observation) string {
 
 func passiveServiceType(name string) string {
 	lower := strings.ToLower(strings.TrimSuffix(name, "."))
-	for _, marker := range []string{"_ipps._tcp", "_ipp._tcp", "_printer._tcp", "_uscan._tcp", "_scanner._tcp", "_airplay._tcp", "_raop._tcp", "_googlecast._tcp"} {
+	for _, marker := range []string{"_ipps._tcp", "_ipp._tcp", "_printer._tcp", "_uscan._tcp", "_scanner._tcp", "_airplay._tcp", "_raop._tcp", "_googlecast._tcp", "_device-info._tcp"} {
 		if strings.Contains(lower, marker) {
 			return marker
 		}
@@ -545,6 +545,31 @@ func passivePrinterType(capabilities []string, values ...string) string {
 	combined := strings.ToLower(strings.Join(values, " "))
 	if strings.Contains(combined, "laserjet") || strings.Contains(combined, "printer") || strings.Contains(combined, "ty=") || strings.Contains(combined, "product=") {
 		return "printer"
+	}
+	return ""
+}
+
+// passiveModelDeviceType derives a device class from a self-reported model
+// string (Apple product families and Android TV packages). It is observation
+// evidence, not a recognition conclusion.
+func passiveModelDeviceType(model, text string) string {
+	lower := strings.ToLower(strings.TrimSpace(model))
+	if lower != "" {
+		switch {
+		case strings.HasPrefix(lower, "iphone"), strings.HasPrefix(lower, "ipod"):
+			return "mobile"
+		case strings.HasPrefix(lower, "ipad"):
+			return "tablet"
+		case strings.HasPrefix(lower, "macbook"), strings.HasPrefix(lower, "imac"), strings.HasPrefix(lower, "macmini"),
+			strings.HasPrefix(lower, "macpro"), strings.HasPrefix(lower, "mac studio"), strings.HasPrefix(lower, "macbookair"):
+			return "desktop"
+		case strings.HasPrefix(lower, "appletv"), strings.HasPrefix(lower, "audioaccessory"), strings.HasPrefix(lower, "homepod"):
+			return "media_device"
+		}
+	}
+	lowerText := strings.ToLower(text)
+	if strings.Contains(lowerText, "com.tcl.") || strings.Contains(lowerText, "android tv") || strings.Contains(lowerText, "htv=1") {
+		return "media_device"
 	}
 	return ""
 }
@@ -712,18 +737,24 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		}
 		service := passiveServiceType(instance)
 		capabilities := passiveCapabilities(service)
-		if len(capabilities) == 0 {
+		model := discovery.DNSSDModelFromTXT(textValue)
+		deviceType := passivePrinterType(capabilities, instance, textValue)
+		if deviceType == "" {
+			deviceType = passiveModelDeviceType(model, textValue)
+		}
+		// A model-only advertisement (Apple _device-info, TV TXT) is still a
+		// useful observation even when it carries no service capability.
+		if len(capabilities) == 0 && deviceType == "" && model == "" {
 			continue
 		}
 		hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, instance, target, address, srvEventID}, "\x00")))
 		name := strings.TrimSpace(strings.Split(instance, "._")[0])
-		deviceType := passivePrinterType(capabilities, instance, textValue)
-		payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": instance, "service_target": target, "txt": textValue, "ttl": int(until.Sub(observed).Seconds())}
+		payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": instance, "service_target": target, "txt": textValue, "model": model, "ttl": int(until.Sub(observed).Seconds())}
 		evidence := event
 		evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])
 		evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
 		evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-		o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: discovery.DNSSDModelFromTXT(textValue), Confidence: "strong", Explanation: "DNS-SD 服务响应与地址记录自动关联", RuleVersion: discovery.RuleVersion, ObservedAt: observed, ValidUntil: until, Interface: iface, Evidence: evidence}
+		o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD 服务响应与地址记录自动关联", RuleVersion: discovery.RuleVersion, ObservedAt: observed, ValidUntil: until, Interface: iface, Evidence: evidence}
 		if o.Site == "" {
 			o.Site = sensor
 		}
