@@ -519,7 +519,7 @@ func passiveRepeatableFactID(o discovery.Observation) string {
 
 func passiveServiceType(name string) string {
 	lower := strings.ToLower(strings.TrimSuffix(name, "."))
-	for _, marker := range []string{"_ipps._tcp", "_ipp._tcp", "_printer._tcp", "_uscan._tcp", "_scanner._tcp", "_airplay._tcp", "_raop._tcp", "_googlecast._tcp", "_device-info._tcp"} {
+	for _, marker := range []string{"_ipps._tcp", "_ipp._tcp", "_printer._tcp", "_uscan._tcp", "_scanner._tcp", "_airplay._tcp", "_raop._tcp", "_googlecast._tcp", "_device-info._tcp", "_leboremote._tcp"} {
 		if strings.Contains(lower, marker) {
 			return marker
 		}
@@ -533,7 +533,7 @@ func passiveCapabilities(service string) []string {
 		return []string{"printing"}
 	case "_uscan._tcp", "_scanner._tcp":
 		return []string{"scanning"}
-	case "_airplay._tcp", "_raop._tcp", "_googlecast._tcp":
+	case "_airplay._tcp", "_raop._tcp", "_googlecast._tcp", "_leboremote._tcp":
 		return []string{"casting"}
 	}
 	return nil
