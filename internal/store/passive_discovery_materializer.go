@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -1381,7 +1382,16 @@ func (s *DBStore) cleanupPassiveObservations(ctx context.Context) error {
 			 AND (n.observed_at>o.observed_at OR (n.observed_at=o.observed_at AND n.id>o.id))
 			WHERE o.origin='dns_sd' AND o.observed_at<now()-interval '2 days' LIMIT 5000)`,
 	} {
-		if _, err := s.pg.db.ExecContext(ctx, q); err != nil {
+		// Bound each retention statement: a plan change can turn the dedup join
+		// into a multi-minute scan on this table, and a runaway delete holds the
+		// row locks the materializer's next batch needs.
+		jobCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		_, err := s.pg.db.ExecContext(jobCtx, q)
+		cancel()
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				continue
+			}
 			return err
 		}
 	}
