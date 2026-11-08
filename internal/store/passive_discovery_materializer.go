@@ -1029,7 +1029,11 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 		return stats, err
 	}
 	defer tx.Rollback()
-	if err := measure("arp_candidates", func() error { return ensurePassiveARPCandidateEndpoints(ctx, tx, events, scope) }); err != nil {
+	// Register ARP sender candidates on the pool instead of the batch
+	// transaction: the statement commits immediately, so the batch's long
+	// observation/link loop does not hold endpoint_entities row locks that the
+	// identity and recognition writers need.
+	if err := measure("arp_candidates", func() error { return ensurePassiveARPCandidateEndpoints(ctx, s.pg.db, events, scope) }); err != nil {
 		return stats, err
 	}
 	coalescedMDNS := passiveCoalescedMDNSIndexes(events)
