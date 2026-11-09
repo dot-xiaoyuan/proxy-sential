@@ -71,6 +71,22 @@ it('shows the filtered discovery metadata total when the cursor page has no tota
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
 })
 
+it('shows a loading status while the first page loads and a search status as soon as a term is typed', async () => {
+  mockReads()
+  let resolveDevices: (value: unknown) => void = () => {}
+  const normalRead = request.getMockImplementation()!
+  request.mockImplementation((path: string) => path.startsWith('/discovery/devices?')
+    ? new Promise(resolve => { resolveDevices = resolve })
+    : normalRead(path))
+  renderPanel()
+  expect(await screen.findByRole('status')).toHaveTextContent('正在加载')
+  resolveDevices({ items: [device], has_more: false })
+  await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+
+  fireEvent.change(screen.getByLabelText('搜索 IP、MAC、名称或型号'), { target: { value: 'router' } })
+  expect(screen.getByRole('status')).toHaveTextContent('正在搜索')
+})
+
 it('shows complete discovery and confirmed type counts using the same metadata scope', async () => {
   mockReads()
   renderPanel()

@@ -16,7 +16,7 @@ import { Button,
   Typography,
 } from 'antd'
 import { useSearchParams } from 'react-router-dom'
-import { ReloadOutlined } from '@ant-design/icons'
+import { LoadingOutlined, ReloadOutlined } from '@ant-design/icons'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { DiscoveryDeviceIcon } from '../entities/device/DiscoveryDeviceIcon'
@@ -135,6 +135,11 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const metadataQuery=new URLSearchParams(query);metadataQuery.delete('cursor');metadataQuery.delete('limit')
   const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal})})
   const metadataValue=(value?:number)=>value??(discoveryMetadata.isError?'统计读取失败':'统计中')
+  // keepPreviousData 会保留上一次结果，只看 isPending 会让搜索看起来没有反应。
+  // 输入尚未落到 URL、列表或统计仍在请求时都算“更新中”，给用户持续反馈。
+  const pendingSearch = draft.trim() !== search
+  const listUpdating = devices.isFetching || position.isLocating
+  const searching = pendingSearch || listUpdating || discoveryMetadata.isFetching
   const historyEnabled=Boolean(selected)&&coverage.data?.enabled===true
   const historyMetadata=usePaginationMetadata('/discovery/history/metadata',{device_id:selected?.id},historyEnabled)
   const historyScope=new URLSearchParams({device_id:selected?.id??''})
@@ -194,10 +199,11 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     </div>
     {discoveryMetadata.isError&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}
     {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
-    {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section className="surface center-list-surface">
+    {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section aria-busy={searching} className={searching?'surface center-list-surface is-updating':'surface center-list-surface'}>
       <div className="list-surface-head">
       <AppTableBar
         searchPlaceholder="搜索 IP、MAC、名称或型号"
+        searching={searching}
         searchValue={draft}
         onSearchChange={setDraft}
         onSearch={value=>change('search', value.trim())}
@@ -206,7 +212,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
           <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length?`（${['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
         </>}
-        extra={<div className="discovery-list-actions"><span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
+        extra={<div className="discovery-list-actions">{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
       panel={moreOpen?<div className="app-filter-panel">
           <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
           <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
@@ -223,11 +229,11 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <span>待核实 {metadataValue(discoveryMetadata.data?.candidate)}</span>
           <span>类型冲突 {metadataValue(discoveryMetadata.data?.conflict)}</span>
           <span>证据过期 {metadataValue(discoveryMetadata.data?.expired)}</span>
-          <Typography.Text className="discovery-overview-caption" type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}</Typography.Text>
+          <Typography.Text className="discovery-overview-caption" type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.isFetching?' · 统计更新中':''}</Typography.Text>
         </div>
         <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><span className="discovery-overview-type" key={item.device_type}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></span>):<Typography.Text type="secondary">{discoveryMetadata.data?'当前筛选下暂无明确类型':discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
       </div>
-      <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={devices.isPending||position.isLocating} scroll={{x:1125}} locale={{emptyText:'当前筛选下暂无符合条件的设备'}}/>
+      <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={{spinning:listUpdating,delay:150}} scroll={{x:1125}} locale={{emptyText:listUpdating?'正在加载设备…':'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,page:0});return}
         setPaging({key:filterKey,page:nextPage-1})

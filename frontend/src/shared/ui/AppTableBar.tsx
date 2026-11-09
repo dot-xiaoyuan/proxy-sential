@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ClearOutlined, SearchOutlined } from '@ant-design/icons'
+import { ClearOutlined, LoadingOutlined, SearchOutlined } from '@ant-design/icons'
 import { Button, Input, Space, Tag, Typography } from 'antd'
 
 interface FilterOption {
@@ -14,6 +14,8 @@ interface AppTableBarProps {
   onSearch?: (value: string) => void
   searchPlaceholder?: string
   searchAriaLabel?: string
+  /** 搜索请求进行中：在输入框内显示加载指示，避免结果返回前没有任何反馈 */
+  searching?: boolean
   filters?: ReactNode
   filterOptions?: FilterOption[]
   onFilterToggle?: (key: string) => void
@@ -30,6 +32,7 @@ export function AppTableBar({
   onSearch,
   searchPlaceholder = '关键字快速检索 (IP / 域名 / ID / 摘要)...',
   searchAriaLabel,
+  searching = false,
   filters,
   filterOptions = [],
   onFilterToggle,
@@ -50,7 +53,9 @@ export function AppTableBar({
           onPressEnter={() => onSearch?.(searchValue)}
           placeholder={searchPlaceholder}
           prefix={<SearchOutlined className="search-prefix-icon" />}
-          className="app-table-search"
+          suffix={searching ? <LoadingOutlined aria-label="正在加载" className="app-table-search-spinner" spin /> : undefined}
+          aria-busy={searching}
+          className={searching ? 'app-table-search is-searching' : 'app-table-search'}
           value={searchValue}
         />
 
