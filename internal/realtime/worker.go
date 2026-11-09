@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -34,6 +35,10 @@ type Source struct {
 	Kind                string
 	Path                string
 	CollectorInstanceID string
+	// Optional sources may legitimately have no log file yet (for example a
+	// protocol that only appears intermittently). A missing file is not a
+	// source failure; the source starts as soon as the file appears.
+	Optional bool
 }
 
 type Options struct {
@@ -122,6 +127,9 @@ func Run(ctx context.Context, backend Backend, opts Options) error {
 				return nil
 			}
 			if err != nil {
+				if source.Optional && errors.Is(err, os.ErrNotExist) {
+					continue
+				}
 				// A failed source must not stop healthy sources. Record failures even
 				// without a webhook; a source error is never a healthy heartbeat.
 				if time.Since(lastAlert[key]) >= 5*time.Minute {

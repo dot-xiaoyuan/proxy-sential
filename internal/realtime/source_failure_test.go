@@ -79,3 +79,20 @@ func TestSourceFailureReportingHasIndependentBoundedDeadline(t *testing.T) {
 		}
 	}
 }
+
+func TestRunSkipsMissingOptionalSourceSilently(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "optional.log")
+	backend := &fakeBackend{}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if err := Run(ctx, backend, Options{SensorID: "optional", Sources: []Source{{Kind: "zeek-rtsp-device", Path: missing, Optional: true}}, PollInterval: time.Millisecond, StoreTimeout: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.diagnostics) != 0 {
+		t.Fatalf("optional missing source recorded diagnostics: %+v", backend.diagnostics)
+	}
+	if len(backend.events) != 0 {
+		t.Fatalf("optional missing source produced events: %+v", backend.events)
+	}
+}
+
