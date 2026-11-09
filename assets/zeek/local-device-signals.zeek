@@ -1,4 +1,5 @@
 @load ./device-dhcp
+@load ./device-sip-signals
 @load ./http-device-signals
 @load ./snmp-device-signals
 @load base/protocols/dns

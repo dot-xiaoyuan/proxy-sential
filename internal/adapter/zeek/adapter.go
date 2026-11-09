@@ -172,6 +172,8 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 		return snmpDiscoveryEventFromFields(fields, lineOffset, opts)
 	case "sip":
 		return sipDiscoveryEventFromFields(fields, lineOffset, opts)
+	case "sip-server":
+		return sipServerEventFromFields(raw, fields, lineOffset, opts)
 	}
 	if isSoftwareFields(fields) {
 		return softwareEventFromFields(raw, fields, lineOffset, opts)
@@ -225,6 +227,29 @@ func snmpDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts
 	return event, nil
 }
 
+func sipServerEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	origIP, respIP := first(fields, "orig_h", "id.orig_h", "src_ip"), first(fields, "resp_h", "id.resp_h", "dst_ip")
+	server := strings.TrimSpace(first(fields, "server"))
+	if timestamp == "" || origIP == "" || respIP == "" || server == "" {
+		return normalized.Event{}, fmt.Errorf("missing Zeek SIP server fields")
+	}
+	payload := map[string]any{"origin": "sip", "server": server}
+	flow := map[string]any{"src_ip": origIP, "dst_ip": respIP, "proto": "udp", "direction": "server"}
+	if port := zeekPort(first(fields, "orig_p")); port > 0 {
+		flow["src_port"] = port
+	}
+	if port := zeekPort(first(fields, "resp_p")); port > 0 {
+		flow["dst_port"] = port
+	}
+	if uid := first(fields, "uid"); uid != "" {
+		flow["connection_id"] = uid
+	}
+	event := zeekNetworkEvent(raw, fields, lineOffset, opts, "device", "sip", timestamp, respIP, origIP, flow, payload)
+	event.Subject = map[string]any{"ip": respIP, "entity_role": "endpoint"}
+	event.Confidence = 0.85
+	return event, nil
+}
 func sipDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
 	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
 	origIP, respIP := first(fields, "id.orig_h", "src_ip"), first(fields, "id.resp_h", "dst_ip")
