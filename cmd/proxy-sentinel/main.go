@@ -459,6 +459,7 @@ func runIngest(args []string) error {
 	zeekSNMP := fs.String("zeek-snmp", "", "Zeek sanitized snmp.log path")
 	zeekSIP := fs.String("zeek-sip", os.Getenv("PROXY_SENTINEL_ZEEK_SIP_PATH"), "Zeek sip.log path (device User-Agent evidence)")
 	zeekSIPServer := fs.String("zeek-sip-server", os.Getenv("PROXY_SENTINEL_ZEEK_SIP_SERVER_PATH"), "Zeek sip_server.log path (response Server header evidence)")
+	zeekRTSPDevice := fs.String("zeek-rtsp-device", os.Getenv("PROXY_SENTINEL_ZEEK_RTSP_DEVICE_PATH"), "Zeek rtsp_device.log path (RTSP client/responder identity)")
 	deviceSignals := fs.String("device-signals", "", "normalized TTL/device signal JSONL path")
 	handshakeSignals := fs.String("handshake-signals", "", "TLS ClientHello and HTTP request handshake summary JSONL path")
 	routerProbeSignals := fs.String("router-probe-signals", "", "active router HTTP management probe normalized event JSONL path")
@@ -514,6 +515,7 @@ func runIngest(args []string) error {
 		{Kind: "zeek-snmp", Path: *zeekSNMP},
 		{Kind: "zeek-sip", Path: *zeekSIP},
 		{Kind: "zeek-sip-server", Path: *zeekSIPServer},
+		{Kind: "zeek-rtsp-device", Path: *zeekRTSPDevice},
 		{Kind: "device-signals", Path: *deviceSignals},
 		{Kind: "device-signals", Path: *handshakeSignals},
 		{Kind: "device-signals", Path: *routerProbeSignals},

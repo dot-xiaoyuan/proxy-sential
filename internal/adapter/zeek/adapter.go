@@ -174,6 +174,8 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 		return sipDiscoveryEventFromFields(fields, lineOffset, opts)
 	case "sip-server":
 		return sipServerEventFromFields(raw, fields, lineOffset, opts)
+	case "rtsp-device":
+		return rtspDeviceEventFromFields(raw, fields, lineOffset, opts)
 	}
 	if isSoftwareFields(fields) {
 		return softwareEventFromFields(raw, fields, lineOffset, opts)
@@ -227,6 +229,41 @@ func snmpDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts
 	return event, nil
 }
 
+func rtspDeviceEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	srcIP, dstIP := first(fields, "src_h", "id.orig_h"), first(fields, "dst_h", "id.resp_h")
+	direction := strings.ToLower(strings.TrimSpace(first(fields, "direction")))
+	value := strings.TrimSpace(first(fields, "value"))
+	if timestamp == "" || srcIP == "" || dstIP == "" || value == "" || (direction != "client" && direction != "server") {
+		return normalized.Event{}, fmt.Errorf("missing Zeek RTSP device fields")
+	}
+	payload := map[string]any{"origin": "rtsp"}
+	if direction == "client" {
+		payload["user_agent"] = value
+	} else {
+		payload["server"] = value
+	}
+	copyPayload(payload, fields, "method", "method")
+	copyPayload(payload, fields, "url", "url")
+	flow := map[string]any{"src_ip": srcIP, "dst_ip": dstIP, "proto": "tcp", "direction": direction}
+	if port := zeekPort(first(fields, "src_p")); port > 0 {
+		flow["src_port"] = port
+	}
+	if port := zeekPort(first(fields, "dst_p")); port > 0 {
+		flow["dst_port"] = port
+	}
+	if uid := first(fields, "uid"); uid != "" {
+		flow["connection_id"] = uid
+	}
+	subjectIP := dstIP
+	if direction == "client" {
+		subjectIP = srcIP
+	}
+	event := zeekNetworkEvent(raw, fields, lineOffset, opts, "device", "rtsp", timestamp, subjectIP, dstIP, flow, payload)
+	event.Subject = map[string]any{"ip": subjectIP, "entity_role": "endpoint"}
+	event.Confidence = 0.85
+	return event, nil
+}
 func sipServerEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
 	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
 	origIP, respIP := first(fields, "orig_h", "id.orig_h", "src_ip"), first(fields, "resp_h", "id.resp_h", "dst_ip")
