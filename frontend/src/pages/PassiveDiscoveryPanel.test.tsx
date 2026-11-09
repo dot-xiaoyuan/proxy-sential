@@ -255,3 +255,18 @@ it('shows identification quality when the status section opens', async () => {
   expect(screen.getByText('华为 3')).toBeInTheDocument()
 })
 
+
+it('filters the list from the triage counts', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: /待核实/ }))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('state=candidate'))).toBe(true))
+})
+
+it('filters VoIP phones from the quick types', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: 'VoIP 话机' }))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('type=voip_phone'))).toBe(true))
+})
+

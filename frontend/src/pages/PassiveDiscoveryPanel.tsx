@@ -130,6 +130,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     setParams(current=>{const next=new URLSearchParams(current);if(value)next.set(`discovery_${key}`,value);else next.delete(`discovery_${key}`);if(key==='type')next.delete('discovery_category');return next},{replace:true})
   }
   const shortcut=(type:string,capability='')=>setParams(current=>{const next=new URLSearchParams(current);for(const key of ['type','category','capability'])next.delete(`discovery_${key}`);if(type)next.set('discovery_type',type);if(capability)next.set('discovery_capability',capability);return next},{replace:true})
+  const toggleState=(value:string)=>change('state',params.get('discovery_state')===value?'':value)
   const query = new URLSearchParams({mode:'passive',limit:String(pageSize)})
   if(view==='iot')query.set('view','iot')
   if(search)query.set('search',search)
@@ -228,15 +229,15 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
         </div>:undefined}
       />
-        <nav className="terminal-type-shortcuts" aria-label="快捷设备类型">{[{value:'',label:'全部设备'},{value:'printer',label:'打印机'},{value:'camera',label:'摄像机'},{value:'access_point',label:'无线 AP'},{value:'router',label:'路由器'},{value:'switch',label:'交换机'},{value:'desktop',label:'电脑'},{value:'mobile',label:'手机'}].map(t=><Button key={t.value} type={(params.get('discovery_type')||'')===t.value&&!dumbFilter?'primary':'default'} onClick={()=>shortcut(t.value)}>{t.label}</Button>)}<Button type={dumbFilter?'primary':'default'} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button></nav>
+        <nav className="terminal-type-shortcuts" aria-label="快捷设备类型">{[{value:'',label:'全部设备'},{value:'printer',label:'打印机'},{value:'camera',label:'摄像机'},{value:'access_point',label:'无线 AP'},{value:'router',label:'路由器'},{value:'switch',label:'交换机'},{value:'desktop',label:'电脑'},{value:'mobile',label:'手机'},{value:'voip_phone',label:'VoIP 话机'}].map(t=><Button key={t.value} type={(params.get('discovery_type')||'')===t.value&&!dumbFilter?'primary':'default'} onClick={()=>shortcut(t.value)}>{t.label}</Button>)}<Button type={dumbFilter?'primary':'default'} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button></nav>
       </div>
       <div className="discovery-overview-strip" aria-label="发现设备总览" title={`${params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
         <div className="discovery-overview-line">
           <strong>共 {metadataValue(discoveryMetadata.data?.total)} 个设备</strong>
-          <span>已识别类型 {metadataValue(discoveryMetadata.data?.identified)}</span>
-          <span>待核实 {metadataValue(discoveryMetadata.data?.candidate)}</span>
-          <span>类型冲突 {metadataValue(discoveryMetadata.data?.conflict)}</span>
-          <span>证据过期 {metadataValue(discoveryMetadata.data?.expired)}</span>
+          <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='identified'?' is-active':''}`} onClick={()=>toggleState('identified')}>已识别类型 <strong>{metadataValue(discoveryMetadata.data?.identified)}</strong></Button>
+          <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='candidate'?' is-active':''}`} onClick={()=>toggleState('candidate')}>待核实 <strong>{metadataValue(discoveryMetadata.data?.candidate)}</strong></Button>
+          <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='conflict'?' is-active':''}`} onClick={()=>toggleState('conflict')}>类型冲突 <strong>{metadataValue(discoveryMetadata.data?.conflict)}</strong></Button>
+          <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='expired'?' is-active':''}`} onClick={()=>toggleState('expired')}>证据过期 <strong>{metadataValue(discoveryMetadata.data?.expired)}</strong></Button>
           <Typography.Text className="discovery-overview-caption" type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.isFetching?' · 统计更新中':''}</Typography.Text>
         </div>
         <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><span className="discovery-overview-type" key={item.device_type}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></span>):<Typography.Text type="secondary">{discoveryMetadata.data?'当前筛选下暂无明确类型':discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
