@@ -138,6 +138,13 @@ func main() {
 	collection.ReceiptManifestShadow = *manifestShadow
 	collection.ReceiptManifestWrites = *manifestWrites
 	collection.PassiveSegmentMaxEvents = *passiveSegmentMaxEvents
+	if raw := os.Getenv("PROXY_SENTINEL_PASSIVE_ARP_DEDUP"); raw != "" {
+		window, parseErr := time.ParseDuration(raw)
+		if parseErr != nil || window < 0 || window > 10*time.Minute {
+			log.Fatalf("invalid PROXY_SENTINEL_PASSIVE_ARP_DEDUP %q", raw)
+		}
+		collection.PassiveARPDedupWindow = window
+	}
 	if *allowCIDRs == "" {
 		*allowCIDRs = collection.AllowedCIDRs
 	}

@@ -45,7 +45,11 @@ type CollectionConfig struct {
 	ReceiptManifestWrites bool `json:"-"`
 	// Default capture stays at 1000 until a 2000-capable release is the
 	// rollback target. This runtime-only option never comes from the shared file.
-	PassiveSegmentMaxEvents int              `json:"-"`
+	PassiveSegmentMaxEvents int `json:"-"`
+	// Suppress repeated ARP observations of an unchanged MAC/IP mapping for
+	// this window. Runtime-only so the durable capture volume changes only
+	// when the site explicitly opts in.
+	PassiveARPDedupWindow time.Duration `json:"-"`
 	EventBindings           []EventBinding   `json:"event_bindings"`
 	EnrichmentPaths         []EnrichmentPath `json:"enrichment_paths"`
 	Version                 int              `json:"version"`
