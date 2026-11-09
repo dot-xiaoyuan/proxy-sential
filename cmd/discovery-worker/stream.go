@@ -36,7 +36,19 @@ type passiveStreamOptions struct {
 func passiveStreamProcessor(journal streamlog.ProcessorJournal, writer streamlog.Writer) streamlog.Processor {
 	// Start each RPC budget after local decode and durable attempt fsync. A
 	// shared-disk stall must not strand an unsent request as an ambiguous write.
-	return streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 30 * time.Second, ProjectionRetryTimeout: 120 * time.Second, FinalizeTimeout: 30 * time.Second}
+	// The projection transaction also holds per-device advisory locks and loads
+	// prior fact versions; on a slow disk it can exceed the default 30s budget,
+	// and every timeout forces a full retry. Allow the site to widen only this
+	// budget without rebuilding the worker.
+	sinkTimeout := 30 * time.Second
+	if raw := os.Getenv("PROXY_SENTINEL_PASSIVE_SINK_TIMEOUT"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed >= 10*time.Second && parsed <= 5*time.Minute {
+			sinkTimeout = parsed
+		} else {
+			log.Printf("invalid PROXY_SENTINEL_PASSIVE_SINK_TIMEOUT %q; using %s", raw, sinkTimeout)
+		}
+	}
+	return streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: sinkTimeout, ProjectionRetryTimeout: 120 * time.Second, FinalizeTimeout: 30 * time.Second}
 }
 
 // Capture and projection consume the same runtime-only switch. Recovery with
