@@ -115,6 +115,23 @@ func NormalizeObservationClassification(o *Observation) {
 				o.Capabilities = append(o.Capabilities, "routing")
 			}
 		}
+	case "ssdp":
+		// Office gateways often answer with a UUID search target instead of the
+		// InternetGatewayDevice one, so the explicit IGD rule cannot fire. The
+		// HTTP server banner still names the router OS (iKuaiOS), and the same
+		// vendor hint already classifies LLDP neighbors as routers.
+		identity := strings.ToLower(strings.Join([]string{
+			str(o.Evidence.Payload, "server"),
+			str(o.Evidence.Payload, "location"),
+			str(o.Evidence.Payload, "nt"),
+			str(o.Evidence.Payload, "st"),
+		}, " "))
+		if o.DeviceType == "" && strings.Contains(identity, "ikuai") {
+			o.DeviceType = "router"
+			if !containsString(o.Capabilities, "routing") {
+				o.Capabilities = append(o.Capabilities, "routing")
+			}
+		}
 	}
 }
 func str(m map[string]any, k string) string { v, _ := m[k].(string); return strings.TrimSpace(v) }
