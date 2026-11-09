@@ -180,7 +180,11 @@ func indexedWindowLabel(window time.Duration) string {
 func indexedOrigins(mode string) ([]string, error) {
 	switch mode {
 	case "passive":
-		return []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "ieee1905_client"}, nil
+		// LLDP/CDP are passive neighbor announcements and the primary router,
+		// access-point and switch evidence on office segments. Keep the switch
+		// forwarding tables (fdb/neighbor) in the infrastructure mode; routers
+		// otherwise only surface when a fingerprint rule happens to match.
+		return []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "ieee1905_client", "lldp", "cdp"}, nil
 	case "infrastructure":
 		return []string{"fdb", "neighbor", "lldp", "cdp"}, nil
 	case "active":
