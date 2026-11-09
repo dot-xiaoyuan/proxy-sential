@@ -318,3 +318,13 @@ it('filters randomized MAC devices from the advanced filters', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('random_mac=true'))).toBe(true))
 })
 
+
+it('filters by device category from advanced filters', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '设备分类' }))
+  fireEvent.click(screen.getByText('网络设备'))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('category=network'))).toBe(true))
+})
+
