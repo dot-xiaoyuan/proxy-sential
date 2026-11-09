@@ -605,12 +605,24 @@ func passiveCapabilities(service string) []string {
 }
 
 func passivePrinterType(capabilities []string, values ...string) string {
-	if len(capabilities) == 0 || capabilities[0] != "printing" {
+	if len(capabilities) == 0 {
 		return ""
 	}
 	combined := strings.ToLower(strings.Join(values, " "))
-	if strings.Contains(combined, "laserjet") || strings.Contains(combined, "printer") || strings.Contains(combined, "ty=") || strings.Contains(combined, "product=") {
-		return "printer"
+	switch capabilities[0] {
+	case "printing":
+		if strings.Contains(combined, "laserjet") || strings.Contains(combined, "printer") || strings.Contains(combined, "ty=") || strings.Contains(combined, "product=") {
+			return "printer"
+		}
+	case "scanning":
+		// A scan service on an MFP usually reports the printer model family, so
+		// keep the device class consistent with its printing observation.
+		if strings.Contains(combined, "laserjet") || strings.Contains(combined, "mfp") || strings.Contains(combined, "printer") {
+			return "printer"
+		}
+		if strings.Contains(combined, "scanner") || strings.Contains(combined, "ty=") || strings.Contains(combined, "product=") || strings.Contains(combined, "mdl=") {
+			return "scanner"
+		}
 	}
 	return ""
 }

@@ -54,7 +54,7 @@ event http_header(c: connection, is_orig: bool, name: string, value: string)
 
 event http_entity_data(c: connection, is_orig: bool, length: count, data: string)
     {
-    if ( is_orig || c$ps_http_title_seen || ! c?$http || c$http$status_code != 200 )
+    if ( is_orig || c$ps_http_title_seen || ! c?$http || ! c$http?$status_code || c$http$status_code != 200 )
         return;
     if ( ! c$ps_http_html )
         return;
