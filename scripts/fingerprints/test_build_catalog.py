@@ -40,15 +40,20 @@ end
         self.assertEqual(rules[1]["conditions"][0]["field"], "http_server")
         self.assertEqual(b.rules[-1]["status"], "unsupported_syntax")
 
-    def test_dhcp_message_type_is_not_dropped(self):
+    def test_dhcp_message_type_is_kept_as_a_condition(self):
         self.put(
             "satori/fingerprints/dhcp.xml",
             '<DHCP><fingerprints><fingerprint name="fixture"><tests><test matchtype="exact" dhcptype="Discover" dhcpvendorcode="x"/><test matchtype="exact" dhcptype="Any" dhcpvendorcode="x"/></tests></fingerprint></fingerprints></DHCP>',
         )
         b = Builder(self.root)
         satori(b)
+        self.assertEqual([r["status"] for r in b.rules], ["converted", "converted"])
         self.assertEqual(
-            [r["status"] for r in b.rules], ["unsupported_input", "converted"]
+            [(c["field"], c["value"]) for c in b.rules[0]["conditions"]],
+            [("dhcp_vendor_class", "x"), ("dhcp_message_type", "discover")],
+        )
+        self.assertEqual(
+            [c["field"] for c in b.rules[1]["conditions"]], ["dhcp_vendor_class"]
         )
 
     def test_snmp_invalid_values_are_accounted(self):

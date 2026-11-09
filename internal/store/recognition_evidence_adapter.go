@@ -72,6 +72,8 @@ func recognitionProtocolDirection(field string) (string, string) {
 	switch {
 	case field == "user_agent" || field == "sip_user_agent" || field == "ja3" || field == "ja4" || field == "tcp_signature":
 		return "client", "client"
+	case field == "dhcp_message_type" || field == "dhcp_vendor_class" || field == "dhcp_requested_options":
+		return "dhcp", "device"
 	case strings.HasPrefix(field, "http_") || field == "favicon_md5":
 		return "http", "server"
 	case strings.HasPrefix(field, "tls_"):

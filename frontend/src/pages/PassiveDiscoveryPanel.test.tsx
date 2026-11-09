@@ -229,7 +229,7 @@ it('removes previous rows when a filter changes after one discovery key was spli
   const duplicateKeys=errorLog.mock.calls.filter(args=>args.map(String).join(' ').includes('same key'))
   errorLog.mockRestore()
   expect(duplicateKeys).toEqual([])
-})
+}, 15000) // 两次完整列表重渲染，满载并跑时超过默认 5 秒
 
 it('keeps the loaded list and offers retry when filtered statistics fail',async()=>{
   mockReads()

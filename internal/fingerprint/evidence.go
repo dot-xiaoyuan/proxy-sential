@@ -39,7 +39,7 @@ type Diagnostics struct {
 // A client fingerprint can describe a software stack, never the server or a
 // physical endpoint. Server banners and certificates require server ownership.
 var physicalEvidenceFields = map[string]string{
-	"hostname": "device", "dhcp_vendor_class": "device", "dhcp_requested_options": "device",
+	"hostname": "device", "dhcp_vendor_class": "device", "dhcp_requested_options": "device", "dhcp_message_type": "device",
 	"device_hint": "device", "model_hint": "device", "os_hint": "device", "software_name": "device",
 	"ssdp_model": "device", "ssdp_manufacturer": "device", "dns_sd_model": "device", "mdns_model": "device",
 	"snmp_model": "device", "snmp_sysoid": "device", "snmp_sysdescr": "device",
@@ -193,7 +193,7 @@ func evidenceProtocolAllowsField(protocol, field string) bool {
 	case "device":
 		return field == "device_hint" || field == "model_hint" || field == "os_hint" || field == "software_name" || field == "service_type"
 	case "dhcp", "dhcpv6":
-		return field == "hostname" || field == "dhcp_vendor_class" || field == "dhcp_requested_options" || field == "device_hint"
+		return field == "hostname" || field == "dhcp_vendor_class" || field == "dhcp_requested_options" || field == "dhcp_message_type" || field == "device_hint"
 	case "lldp":
 		return strings.HasPrefix(field, "lldp_")
 	case "cdp":

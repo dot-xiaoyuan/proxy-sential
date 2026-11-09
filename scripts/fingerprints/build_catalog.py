@@ -340,10 +340,18 @@ def satori(b):
                         )
                     )
                     ok = ok and k in mapping
-                # A message-type constraint cannot be dropped without broadening a match.
+                # The DHCP message type is part of the fingerprint. Keep it as
+                # its own condition instead of dropping it and broadening the match.
+                message_type = a.get("dhcptype", "Any")
+                if message_type and message_type != "Any":
+                    if f.stem != "dhcp":
+                        ok = False
+                    else:
+                        cs.append(
+                            cond("dhcp_message_type", message_type.lower(), "contains")
+                        )
                 ok = (
                     ok
-                    and a.get("dhcptype", "Any") == "Any"
                     and a.get("matchtype") in ["exact", "regex", "partial"]
                     and bool(cs)
                 )

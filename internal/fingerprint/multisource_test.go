@@ -27,6 +27,31 @@ func TestCatalogClassifiesAndMatchesDirectionalFields(t *testing.T) {
 		t.Fatalf("match: %+v", got)
 	}
 }
+func TestCatalogMatchesDHCPMessageTypeCondition(t *testing.T) {
+	if !supportedCatalogFields["dhcp_message_type"] {
+		t.Fatal("dhcp_message_type is not a supported catalog field")
+	}
+	c := Catalog{Sources: []FingerprintSource{{ID: "s", URL: "https://example.test", License: "MIT"}}, Rules: []SourceRule{
+		{ID: "phone", SourceID: "s", Version: "1", Status: "converted", Direction: "client", Brand: "3Com", Role: "voip_phone", Strength: "auxiliary", Conditions: []FingerprintCondition{
+			{Field: "dhcp_requested_options", Operator: "exact", Value: "1,3,6"},
+			{Field: "dhcp_message_type", Operator: "contains", Value: "discover"},
+		}},
+	}}
+	PrepareCatalog(&c)
+	data, _ := json.Marshal(&c)
+	loaded, err := LoadCatalog(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Match(map[string][]string{"dhcp_requested_options": {"1,3,6"}, "dhcp_message_type": {"request,ack"}}); len(got) != 0 {
+		t.Fatalf("matched without the required DHCP message type: %+v", got)
+	}
+	got := loaded.Match(map[string][]string{"dhcp_requested_options": {"1,3,6"}, "dhcp_message_type": {"discover,offer,request,ack"}})
+	if len(got) != 1 || got[0].Role != "voip_phone" || got[0].Brand != "3Com" {
+		t.Fatalf("message-type rule did not match: %+v", got)
+	}
+}
+
 func TestCatalogRejectsEnabledUnsupportedExpression(t *testing.T) {
 	_, err := LoadCatalog([]byte(`{"sources":[{"id":"s","url":"https://example.test","license":"MIT"}],"rules":[{"id":"a","source_id":"s","version":"1","status":"converted","conditions":[{"field":"http_server","operator":"regex","value":"(?=x)"}]}]}`))
 	if err == nil {
