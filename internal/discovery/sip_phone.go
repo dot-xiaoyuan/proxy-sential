@@ -41,6 +41,35 @@ func SIPPhoneIdentity(userAgent string) (deviceType, brand, model string) {
 	return "", "", ""
 }
 
+// SIPServerIdentity maps a self-reported SIP Server header from a PBX or voice
+// gateway. Phone Server headers stay with SIPPhoneIdentity.
+func SIPServerIdentity(server string) (deviceType, brand, model string) {
+	server = strings.TrimSpace(server)
+	if server == "" {
+		return "", "", ""
+	}
+	fields := strings.Fields(server)
+	lower := strings.ToLower(server)
+	switch {
+	case strings.HasPrefix(lower, "espace u") && len(fields) >= 2:
+		return "voice_gateway", "Huawei", "eSpace " + strings.SplitN(fields[1], "/", 2)[0]
+	case strings.HasPrefix(lower, "huawei espace u") && len(fields) >= 3:
+		return "voice_gateway", "Huawei", "eSpace " + strings.SplitN(fields[2], "/", 2)[0]
+	case strings.Contains(lower, "asterisk"):
+		return "voice_gateway", "Asterisk", ""
+	case strings.Contains(lower, "freeswitch"):
+		return "voice_gateway", "FreeSWITCH", ""
+	case strings.Contains(lower, "opensips"):
+		return "voice_gateway", "OpenSIPS", ""
+	case strings.Contains(lower, "kamailio"):
+		return "voice_gateway", "Kamailio", ""
+	case strings.HasPrefix(lower, "cisco-sipgateway"):
+		return "voice_gateway", "Cisco", "SIPGateway"
+	case strings.HasPrefix(lower, "grandstream ucm") && len(fields) >= 2:
+		return "voice_gateway", "Grandstream", fields[1]
+	}
+	return "", "", ""
+}
 func polycomModel(ua string) string {
 	// PolycomSoundPointIP-SPIP_550-UA/3.2.2.1138, Polycom VVX 411, Trio 8800.
 	rest := strings.TrimSpace(strings.TrimPrefix(ua, "Polycom"))

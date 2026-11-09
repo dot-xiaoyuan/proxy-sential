@@ -19,7 +19,7 @@ type IoTType struct {
 var IoTTypes = []IoTType{
 	{"printer", "打印机", "printer"}, {"scanner", "扫描仪", "printer"}, {"camera", "摄像机", "camera"}, {"recorder", "录像设备", "camera"},
 	{"media_player", "媒体播放设备", "media"}, {"display", "显示设备", "media"}, {"access_control", "门禁设备", "access_control"},
-	{"attendance", "考勤设备", "attendance"}, {"building_controller", "楼宇控制器", "building_controller"}, {"building_device", "楼宇设备", "building_controller"}, {"sensor", "传感设备", "sensor"}, {"iot_gateway", "智能网关", "iot_gateway"}, {"voip_phone", "VoIP 话机", "voice"},
+	{"attendance", "考勤设备", "attendance"}, {"building_controller", "楼宇控制器", "building_controller"}, {"building_device", "楼宇设备", "building_controller"}, {"sensor", "传感设备", "sensor"}, {"iot_gateway", "智能网关", "iot_gateway"}, {"voip_phone", "VoIP 话机", "voice"}, {"voice_gateway", "语音网关", "voice"},
 }
 
 type IoTClassification struct {

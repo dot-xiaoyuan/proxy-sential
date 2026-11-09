@@ -19,3 +19,23 @@ func TestSIPPhoneIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestSIPServerIdentityClassifiesVoiceGateways(t *testing.T) {
+	for _, tc := range []struct {
+		server, kind, brand, model string
+	}{
+		{"eSpace U1960/V200R003C20SPC300B015", "voice_gateway", "Huawei", "eSpace U1960"},
+		{"Huawei eSpace U1981/V200R003C00", "voice_gateway", "Huawei", "eSpace U1981"},
+		{"Asterisk PBX 1.8.26.0", "voice_gateway", "Asterisk", ""},
+		{"FreeSWITCH 1.10.7", "voice_gateway", "FreeSWITCH", ""},
+		{"Cisco-SIPGateway/IOS-15.6.3.x", "voice_gateway", "Cisco", "SIPGateway"},
+		{"Grandstream UCM6202 1.0.20.16", "voice_gateway", "Grandstream", "UCM6202"},
+		{"Cisco-CP-8841/9.4.1.1", "", "", ""},
+	} {
+		kind, brand, model := SIPServerIdentity(tc.server)
+		if kind != tc.kind || brand != tc.brand || model != tc.model {
+			t.Fatalf("%q => %q %q %q", tc.server, kind, brand, model)
+		}
+	}
+}
+

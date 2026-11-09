@@ -182,6 +182,7 @@ export function deviceTypeLabel(value: string) {
   if (/camera/.test(normalized)) return '摄像头'
   if (/media_device/.test(normalized)) return '电视/媒体设备'
   if (/^iot$/.test(normalized)) return '物联网设备'
+  if (/voice_gateway/.test(normalized)) return '语音网关'
   if (/voip_phone/.test(normalized)) return 'VoIP 话机'
   if (/wireless_controller/.test(normalized)) return '无线控制器'
   if (/^tv$/.test(normalized)) return '电视/媒体设备'

@@ -489,10 +489,13 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		}
 		o.Origin, o.Explanation, o.ValidUntil = "sip", "SIP 话机或网关自报标识", at.Add(30*time.Minute)
 		o.Confidence = "strong"
-		if kind, brand, model := discovery.SIPPhoneIdentity(passiveString(event.Payload, "user_agent")); kind != "" {
+		server := passiveString(event.Payload, "server")
+		if kind, brand, model := discovery.SIPServerIdentity(server); kind != "" {
+			o.DeviceType, o.Manufacturer, o.ModelName = kind, brand, model
+		} else if kind, brand, model := discovery.SIPPhoneIdentity(passiveString(event.Payload, "user_agent")); kind != "" {
 			o.DeviceType, o.Manufacturer, o.ModelName = kind, brand, model
 			o.Capabilities = []string{"voice"}
-		} else if kind, brand, model := discovery.SIPPhoneIdentity(passiveString(event.Payload, "server")); kind != "" {
+		} else if kind, brand, model := discovery.SIPPhoneIdentity(server); kind != "" {
 			o.DeviceType, o.Manufacturer, o.ModelName = kind, brand, model
 			o.Capabilities = []string{"voice"}
 		}
