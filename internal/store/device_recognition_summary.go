@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,11 @@ type RecognitionTypeBrandCount struct {
 	Count      int    `json:"count"`
 }
 
+type RecognitionUntypedReason struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
 type DeviceRecognitionSummary struct {
 	BrandInferenceConflicts int                            `json:"brand_inference_conflicts"`
 	BrandInferenceEnabled   bool                           `json:"brand_inference_enabled"`
@@ -48,6 +54,7 @@ type DeviceRecognitionSummary struct {
 	Observability           []SourceObservability          `json:"observability"`
 	TopBrands               []RecognitionBrandCount        `json:"top_brands,omitempty"`
 	TopTypeBrands           []RecognitionTypeBrandCount    `json:"top_type_brands,omitempty"`
+	UntypedReasons          []RecognitionUntypedReason     `json:"untyped_reasons,omitempty"`
 	EcosystemMatched        int                            `json:"ecosystem_matched"`
 	EcosystemAttributed     int                            `json:"ecosystem_attributed"`
 	EcosystemUnattributed   int                            `json:"ecosystem_unattributed"`
@@ -124,6 +131,32 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 	for _, key := range []string{"vendor", "brand", "model", "device_type", "os_family", "ecosystem", "brand_inferred"} {
 		result.Coverage[key] = coverage(counts[key], result.TotalEndpoints)
 	}
+	untypedReasons := map[string]int{}
+	for _, item := range items {
+		typed := item.DeviceType != "" && item.DeviceType != "unknown" && item.DeviceTypeConfidence >= .8 && !deviceDimensionConflict(item, "device_type")
+		if typed {
+			continue
+		}
+		switch {
+		case strings.EqualFold(item.OSFamily, "Apple OS") || strings.EqualFold(item.OSFamily, "iOS") || strings.EqualFold(item.OSFamily, "iPadOS") || strings.EqualFold(item.OSFamily, "macOS"):
+			untypedReasons["Apple 系统线索"]++
+		case item.OSFamily != "" && item.OSFamily != "unknown":
+			untypedReasons["其他系统线索"]++
+		case item.Brand != "" || item.Vendor != "":
+			untypedReasons["仅品牌线索"]++
+		default:
+			untypedReasons["缺少系统与品牌线索"]++
+		}
+	}
+	for reason, count := range untypedReasons {
+		result.UntypedReasons = append(result.UntypedReasons, RecognitionUntypedReason{Reason: reason, Count: count})
+	}
+	sort.Slice(result.UntypedReasons, func(i, j int) bool {
+		if result.UntypedReasons[i].Count == result.UntypedReasons[j].Count {
+			return result.UntypedReasons[i].Reason < result.UntypedReasons[j].Reason
+		}
+		return result.UntypedReasons[i].Count > result.UntypedReasons[j].Count
+	})
 	typeBrandCounts := map[[2]string]int{}
 	typeTotals := map[string]int{}
 	for _, item := range items {

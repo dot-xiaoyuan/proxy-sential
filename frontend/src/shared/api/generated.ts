@@ -6949,6 +6949,10 @@ export interface components {
                 brand: string;
                 count: number;
             }[];
+            untyped_reasons?: {
+                reason: string;
+                count: number;
+            }[];
             observability?: components["schemas"]["SourceObservability"][];
             ecosystem_matched: number;
             ecosystem_attributed: number;

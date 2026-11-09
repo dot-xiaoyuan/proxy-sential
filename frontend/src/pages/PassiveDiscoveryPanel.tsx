@@ -292,6 +292,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <span className="recognition-quality-item"><Typography.Text type="secondary">链路层归属</Typography.Text><Typography.Text strong>{Math.round((quality.data.mac_attribution_rate??0)*100)}%</Typography.Text></span>
           {quality.data.top_brands?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">厂商 Top</Typography.Text>{quality.data.top_brands.map(item=><Tag key={item.brand}>{item.brand} {item.count}</Tag>)}</span>:null}
           {quality.data.top_type_brands?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">类型厂商</Typography.Text>{quality.data.top_type_brands.map(item=><Tag key={`${item.device_type}:${item.brand}`}>{types[item.device_type]??deviceTypeLabel(item.device_type)} · {item.brand} {item.count}</Tag>)}</span>:null}
+          {quality.data.untyped_reasons?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">未识别原因</Typography.Text>{quality.data.untyped_reasons.map(item=><Tag key={item.reason}>{item.reason} {item.count}</Tag>)}</span>:null}
         </>}
         {quality.isLoading&&<Typography.Text type="secondary">识别质量读取中</Typography.Text>}
       </div>}

@@ -7129,6 +7129,14 @@ components:
               device_type: { type: string }
               brand: { type: string }
               count: { type: integer }
+        untyped_reasons:
+          type: array
+          items:
+            type: object
+            required: [reason, count]
+            properties:
+              reason: { type: string }
+              count: { type: integer }
         observability:
           type: array
           items: { $ref: "#/components/schemas/SourceObservability" }
