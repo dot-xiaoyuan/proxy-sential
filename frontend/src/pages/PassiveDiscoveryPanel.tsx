@@ -59,7 +59,7 @@ function dhcpFieldEvidenceFor(signal?: PassiveSignal) {
     .map(([field, ref]) => ({ field, label: dhcpEvidenceLabels[field] ?? field, value: values[field], ref }))
 }
 type HandshakeClue = components['schemas']['DiscoveryHandshakeClue']
-const protocols: Record<string,string> = { dhcp:'DHCP', dhcpv6:'DHCPv6', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
+const protocols: Record<string,string> = { dhcp:'DHCP', dhcpv6:'DHCPv6', sip:'SIP', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
 const capabilities: Record<string,string> = { printing:'打印', scanning:'扫描', casting:'投屏', network_video:'网络视频', media_rendering:'媒体播放', voice:'语音通话' }
 const states: Record<string,string> = { identified:'证据有效', expired:'证据已过期', conflict:'类型证据冲突', candidate:'发现线索' }
 function qualityItem(label:string,value:{known:number;rate:number}|undefined,total:number) {
