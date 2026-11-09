@@ -6944,6 +6944,11 @@ export interface components {
                 brand: string;
                 count: number;
             }[];
+            top_type_brands?: {
+                device_type: string;
+                brand: string;
+                count: number;
+            }[];
             observability?: components["schemas"]["SourceObservability"][];
             ecosystem_matched: number;
             ecosystem_attributed: number;

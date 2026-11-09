@@ -27,6 +27,12 @@ type RecognitionBrandCount struct {
 	Count int    `json:"count"`
 }
 
+type RecognitionTypeBrandCount struct {
+	DeviceType string `json:"device_type"`
+	Brand      string `json:"brand"`
+	Count      int    `json:"count"`
+}
+
 type DeviceRecognitionSummary struct {
 	BrandInferenceConflicts int                            `json:"brand_inference_conflicts"`
 	BrandInferenceEnabled   bool                           `json:"brand_inference_enabled"`
@@ -41,6 +47,7 @@ type DeviceRecognitionSummary struct {
 	MACAttributionRate      float64                        `json:"mac_attribution_rate"`
 	Observability           []SourceObservability          `json:"observability"`
 	TopBrands               []RecognitionBrandCount        `json:"top_brands,omitempty"`
+	TopTypeBrands           []RecognitionTypeBrandCount    `json:"top_type_brands,omitempty"`
 	EcosystemMatched        int                            `json:"ecosystem_matched"`
 	EcosystemAttributed     int                            `json:"ecosystem_attributed"`
 	EcosystemUnattributed   int                            `json:"ecosystem_unattributed"`
@@ -116,6 +123,46 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 	result.TotalEndpoints = len(items)
 	for _, key := range []string{"vendor", "brand", "model", "device_type", "os_family", "ecosystem", "brand_inferred"} {
 		result.Coverage[key] = coverage(counts[key], result.TotalEndpoints)
+	}
+	typeBrandCounts := map[[2]string]int{}
+	typeTotals := map[string]int{}
+	for _, item := range items {
+		if item.DeviceType == "" || item.DeviceType == "unknown" || deviceDimensionConflict(item, "device_type") || item.DeviceTypeConfidence < .8 {
+			continue
+		}
+		if item.Brand == "" || item.Brand == "unknown" || deviceDimensionConflict(item, "brand") || item.BrandConfidence < .8 {
+			continue
+		}
+		typeBrandCounts[[2]string{item.DeviceType, item.Brand}]++
+		typeTotals[item.DeviceType]++
+	}
+	typeBrandPairs := make([][3]any, 0, len(typeBrandCounts))
+	for key, count := range typeBrandCounts {
+		typeBrandPairs = append(typeBrandPairs, [3]any{key[0], key[1], count})
+	}
+	sort.Slice(typeBrandPairs, func(i, j int) bool {
+		left, right := typeBrandPairs[i], typeBrandPairs[j]
+		lt, lb, lc := left[0].(string), left[1].(string), left[2].(int)
+		rt, rb, rc := right[0].(string), right[1].(string), right[2].(int)
+		if typeTotals[lt] != typeTotals[rt] {
+			return typeTotals[lt] > typeTotals[rt]
+		}
+		if lt != rt {
+			return lt < rt
+		}
+		if lc != rc {
+			return lc > rc
+		}
+		return lb < rb
+	})
+	perType := map[string]int{}
+	for _, pair := range typeBrandPairs {
+		deviceType, brand, count := pair[0].(string), pair[1].(string), pair[2].(int)
+		if len(result.TopTypeBrands) >= 12 || perType[deviceType] >= 3 {
+			continue
+		}
+		perType[deviceType]++
+		result.TopTypeBrands = append(result.TopTypeBrands, RecognitionTypeBrandCount{DeviceType: deviceType, Brand: brand, Count: count})
 	}
 	brandCounts := map[string]int{}
 	for _, item := range items {
