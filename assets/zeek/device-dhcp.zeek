@@ -233,10 +233,10 @@ event DHCP::aggregate_msgs(ts: time, id: conn_id, uid: string, is_orig: bool, ms
     # would replace it with a different option list.
     if ( is_client && options?$options && ! log_info?$option_order )
         {
-        local order = "";
+        local wire_order = "";
         for ( i in options$options )
-            order = fmt("%s%s%d", order, order == "" ? "" : ",", options$options[i]);
-        log_info$option_order = order;
+            wire_order = fmt("%s%s%d", wire_order, wire_order == "" ? "" : ",", options$options[i]);
+        log_info$option_order = wire_order;
         }
     if ( is_client && options?$vendor_class )
         log_info$vendor_class = options$vendor_class;
