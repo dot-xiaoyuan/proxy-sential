@@ -19,11 +19,12 @@ const row = {
   first_seen: '2026-11-05T12:00:00Z', last_seen: '2026-11-05T16:00:00Z', current: true,
 }
 
-function setup(entry = '/devices?tab=network&routers_view=router') {
+function setup(entry = '/devices?tab=network&routers_view=router', candidates: Array<Record<string, unknown>> = []) {
   observations.mockResolvedValue({ items: [], page: { total: 0 } })
   request.mockImplementation((path: string) => {
     if(path.startsWith('/discovery/devices/position')){const q=new URL(path,'http://localhost').searchParams;return Promise.resolve({page:Number(q.get('page')),limit:Number(q.get('limit')),cursor:'opaque-router-cursor'})}
     if (path.startsWith('/discovery/devices/metadata')) return Promise.resolve({ total: 63, as_of: '2026-11-05T16:00:00Z', count_unit: 'discovery_records' })
+    if (path.startsWith('/discovery/chassis-candidates')) return Promise.resolve({ items: candidates })
     return Promise.resolve({ items: [row], limit: 20, has_more: false, next_cursor: '' })
   })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[entry]}><RouterObservationsPanel /></MemoryRouter></QueryClientProvider>)
@@ -46,10 +47,19 @@ it('shows discovered routers without requiring a risk or router-assessment recor
   expect(screen.queryByText('确认违规')).not.toBeInTheDocument()
 })
 
+it('annotates an LLDP-only router with a same-chassis candidate', async () => {
+  setup('/devices?tab=network&routers_view=router', [{
+    neighbor_mac: row.mac, neighbor_name: 'iKuai-X86', partner_mac: '00:e0:67:2a:4f:4c',
+    partner_ip: '192.168.0.1', confidence: 0.9, evidence: ['同厂商前缀 00:e0:67:2a:4f', 'MAC 相邻（末字节差 3）'],
+  }])
+  expect(await screen.findByText('疑似同一机箱：192.168.0.1 · 90%')).toBeVisible()
+})
+
 it('maps the access-point view to the discovery access_point type', async () => {
   setup('/devices?tab=network&routers_view=ap')
   await waitFor(() => expect(request).toHaveBeenCalled())
-  const calls = request.mock.calls.map(([path]) => new URL(String(path), 'http://localhost'))
+  const calls = request.mock.calls.map(([path]) => new URL(String(path), 'http://localhost')).filter(url => url.pathname === '/discovery/devices')
+  expect(calls.length).toBeGreaterThan(0)
   expect(calls.every(url => url.searchParams.get('type') === 'access_point')).toBe(true)
 })
 

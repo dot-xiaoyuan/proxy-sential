@@ -140,6 +140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/chassis-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Candidate same-chassis links between an LLDP/CDP neighbor without a management address and a discovered network endpoint sharing its vendor prefix; requires identity:read. A candidate never merges identities without operator confirmation. */
+        get: operations["getDiscoveryChassisCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/coverage": {
         parameters: {
             query?: never;
@@ -8139,6 +8156,18 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        DiscoveryChassisCandidate: {
+            neighbor_mac: string;
+            neighbor_name?: string;
+            partner_mac: string;
+            partner_ip: string;
+            partner_name?: string;
+            confidence: number;
+            evidence: string[];
+        };
+        DiscoveryChassisCandidateList: {
+            items: components["schemas"]["DiscoveryChassisCandidate"][];
+        };
         DiscoveryDevice: {
             last_device_type?: string;
             last_category?: string;
@@ -9441,6 +9470,43 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["DiscoveryTypeCatalogue"];
                 };
+            };
+            /** @description Read failed; never replaced by an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryChassisCandidates: {
+        parameters: {
+            query?: {
+                /** @description Last-observation window, at most 720h. */
+                window?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Same-chassis candidates with confidence and evidence. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryChassisCandidateList"];
+                };
+            };
+            /** @description Invalid time window */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Read failed; never replaced by an empty result */
             500: {

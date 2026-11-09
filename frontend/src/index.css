@@ -4148,6 +4148,7 @@ pre.wrap-code {
 .router-identity strong { font-size: 14px; color: #0f172a; }
 .router-identity .ant-typography { font-size: 12px; }
 .router-device-cell { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.router-chassis-candidate { display: block; margin-top: 2px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; cursor: help; }
 .router-device-icon { width: 34px; height: 34px; border-radius: 9px; background: #eff6ff; color: #2563eb; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 34px; font-size: 17px; }
 .router-merged-hint { color: #2563eb !important; }
 .router-monospace { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #64748b; }

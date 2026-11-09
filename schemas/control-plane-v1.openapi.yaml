@@ -76,6 +76,20 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DiscoveryTypeCatalogue' }
         '500': { description: Read failed; never replaced by an empty result }
+  /discovery/chassis-candidates:
+    get:
+      operationId: getDiscoveryChassisCandidates
+      description: Candidate same-chassis links between an LLDP/CDP neighbor without a management address and a discovered network endpoint sharing its vendor prefix; requires identity:read. A candidate never merges identities without operator confirmation.
+      parameters:
+        - { name: window, in: query, description: "Last-observation window, at most 720h.", schema: { type: string, default: 24h } }
+      responses:
+        '200':
+          description: Same-chassis candidates with confidence and evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryChassisCandidateList' }
+        '400': { description: Invalid time window }
+        '500': { description: Read failed; never replaced by an empty result }
   /discovery/coverage:
     get:
       operationId: getDiscoveryCoverage
@@ -8556,6 +8570,24 @@ components:
             subject: { type: object, additionalProperties: true }
             observer: { type: object, additionalProperties: true }
             flow: { type: object, additionalProperties: true }
+    DiscoveryChassisCandidate:
+      type: object
+      required: [neighbor_mac, partner_mac, partner_ip, confidence, evidence]
+      properties:
+        neighbor_mac: { type: string }
+        neighbor_name: { type: string }
+        partner_mac: { type: string }
+        partner_ip: { type: string }
+        partner_name: { type: string }
+        confidence: { type: number }
+        evidence: { type: array, items: { type: string } }
+    DiscoveryChassisCandidateList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DiscoveryChassisCandidate' }
     DiscoveryDevice:
       type: object
       required: [id, observations, category, identity_kind, capabilities, protocols, first_seen, last_seen, current, evidence_count]

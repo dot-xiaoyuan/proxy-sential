@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Empty, Modal, Segmented, Select, Space, Tag, Typography } from 'antd'
+import { Button, Empty, Modal, Segmented, Select, Space, Tag, Tooltip, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Link, useSearchParams } from 'react-router-dom'
 import { request } from '../shared/api/client'
@@ -15,6 +15,7 @@ import { DiscoveryEvidenceSummary } from './DiscoveryEvidenceSummary'
 type Device = components['schemas']['DiscoveryDevice']
 type DevicePage = components['schemas']['DiscoveryDevicePage']
 type Metadata = components['schemas']['DiscoveryDeviceMetadata']
+type ChassisCandidate = components['schemas']['DiscoveryChassisCandidate']
 
 function rowKey(item: Device) {
   return JSON.stringify([item.id, item.sensor_id, item.site, item.domain, item.vlan, item.mac, item.observations.map(row => row.id).sort()])
@@ -62,6 +63,11 @@ export function RouterAssetsPanel() {
     queryKey: ['router-assets-metadata', scopeKey],
     queryFn: ({ signal }) => request<Metadata>(`/discovery/devices/metadata?${scope}`, { signal }),
   })
+  const chassisCandidates = useQuery({
+    queryKey: ['router-chassis-candidates', window],
+    queryFn: ({ signal }) => request<{ items: ChassisCandidate[] }>(`/discovery/chassis-candidates?window=${window}`, { signal }),
+  })
+  const candidateByNeighbor = new Map((chassisCandidates.data?.items ?? []).map(candidate => [(candidate.neighbor_mac ?? '').toLowerCase(), candidate]))
   const change = (key: string, value: string) => setParams(current => {
     const next = new URLSearchParams(current)
     if (value) next.set(`routers_${key}`, value)
@@ -83,10 +89,16 @@ export function RouterAssetsPanel() {
   const columns = [
     {
       title: '设备', key: 'identity', width: 250,
-      render: (_: unknown, item: Device) => <div className="router-device-cell">
-        <DiscoveryDeviceIcon type={type} />
-        <DeviceAddress name={item.name} ip={currentAddresses(item)[0]} addresses={currentAddresses(item)} mac={item.mac} historicalIP={item.last_observed_ip} />
-      </div>,
+      render: (_: unknown, item: Device) => {
+        const candidate = candidateByNeighbor.get((item.mac ?? '').toLowerCase())
+        return <div className="router-device-cell">
+          <DiscoveryDeviceIcon type={type} />
+          <DeviceAddress name={item.name} ip={currentAddresses(item)[0]} addresses={currentAddresses(item)} mac={item.mac} historicalIP={item.last_observed_ip} />
+          {candidate && <Tooltip title={(candidate.evidence ?? []).join('；')}>
+            <Typography.Text type="secondary" className="router-chassis-candidate">疑似同一机箱：{candidate.partner_ip} · {Math.round(candidate.confidence * 100)}%</Typography.Text>
+          </Tooltip>}
+        </div>
+      },
     },
     {
       title: '类型 / 厂商型号', key: 'type', width: 175,

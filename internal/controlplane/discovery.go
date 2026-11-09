@@ -94,6 +94,22 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		offset = n
 	}
 	switch {
+	case path == "/discovery/chassis-candidates" && r.Method == "GET":
+		window := 24 * time.Hour
+		if value := r.URL.Query().Get("window"); value != "" {
+			_, duration, e := store.NormalizeActivityWindow(value)
+			if e != nil {
+				writeError(w, 400, "bad_window", "时间窗口无效")
+				return
+			}
+			window = duration
+		}
+		items, e := repo.ChassisCandidates(ctx, window)
+		if e != nil {
+			writeError(w, 500, "chassis_candidates", "读取同机箱候选失败")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items})
 	case path == "/discovery/types" && r.Method == "GET":
 		writeJSON(w, 200, map[string]any{"version": discovery.IoTRuleVersion, "items": discovery.DeviceTypes})
 	case path == "/discovery/statistics" && r.Method == "GET":
