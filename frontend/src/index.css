@@ -5103,6 +5103,8 @@ pre.wrap-code {
 .discovery-overview-line .discovery-overview-count:hover { color: #1d4ed8; }
 .discovery-overview-line .discovery-overview-count.is-active { color: #1d4ed8; font-weight: 600; }
 .discovery-detail-profile-link { margin-left: 10px; padding-inline: 0; }
+.discovery-detail-nav { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.discovery-detail-nav .ant-typography { margin-right: 4px; }
 .discovery-overview-caption { font-size: 12px; }
 .discovery-overview-strip .discovery-overview-types { flex: 0 0 auto; padding-top: 0; }
 .discovery-overview-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 24px; min-width: 0; }

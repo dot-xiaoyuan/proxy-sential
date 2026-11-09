@@ -328,3 +328,13 @@ it('filters by device category from advanced filters', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('category=network'))).toBe(true))
 })
 
+
+it('shows detail navigation across the current page', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(await screen.findByRole('button', { name: '192.0.2.10' }))
+  await waitFor(() => expect(screen.getByText('1 / 1')).toBeInTheDocument())
+  expect(screen.getByRole('button', { name: '上一台' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '下一台' })).toBeDisabled()
+})
+
