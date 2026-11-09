@@ -375,6 +375,12 @@ export const handlers = [
       },
     )
   }),
+  http.get('/api/v1/device-inventory/:endpointId', () => HttpResponse.json({
+    profile: { recognition: { source_matches: [
+      { source_id: 'satori', rule_id: 'fixture-dhcp-options', version: 'fixture', name: 'Hikvision DHCP options', strength: 'self_report', fields: ['dhcp_options'], observed: { dhcp_options: '53,61,12,81' }, direction: 'client' },
+    ] } },
+    associations: [],
+  })),
   http.get(/\/api\/v1\/(?:devices|device-inventory(?:\/(?:metadata|position))?)$/, ({ request }) => {
     const url = new URL(request.url)
     const qRaw=url.searchParams.get('q')?.trim()||''

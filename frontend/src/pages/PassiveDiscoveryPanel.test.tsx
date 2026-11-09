@@ -31,7 +31,7 @@ function mockReads(observedPortResult: unknown = {
       connection_outcome: 'syn_ack_observed', last_seen: '2026-11-01T12:00:00Z', evidence_id: 'flow-443',
     }],
   },
-}, deviceRow: typeof device & {mac?:string;name?:string;device_type?:string;recognition?:{device_type:string;confidence:number}} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }, includeListTotal = true) {
+}, deviceRow: typeof device & {mac?:string;name?:string;device_type?:string;endpoint_id?:string;recognition?:{device_type:string;confidence:number}} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }, includeListTotal = true) {
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/observed-ports?')) {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
@@ -39,6 +39,7 @@ function mockReads(observedPortResult: unknown = {
     if (path.startsWith('/discovery/devices?')) return Promise.resolve({ items: [deviceRow], ...(includeListTotal?{total:1}:{}), has_more: false })
     if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve(path.includes('type=access_point')?{total:1,identified:1,candidate:0,conflict:0,expired:0,types:[{device_type:'access_point',count:1}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'}:{total:84,identified:42,candidate:35,conflict:4,expired:3,types:[{device_type:'router',count:30},{device_type:'access_point',count:12}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'})
     if (path === '/device-recognition/summary') return Promise.resolve({ total_endpoints: 121, coverage: { device_type: { known: 15, rate: 15 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, os_family: { known: 15, rate: 15 / 121 } }, mac_attribution_rate: 0.5, event_attribution_rate: 0, top_brands: [{ brand: '华为', count: 3 }], top_type_brands: [{ device_type: 'camera', brand: 'Hikvision', count: 2 }], untyped_reasons: [{ reason: 'Apple 系统线索', count: 2 }] })
+    if (path.startsWith('/device-inventory/')) return Promise.resolve({ profile: { recognition: { source_matches: [{ source_id: 'satori', rule_id: 'fixture-dhcp-options', version: 'fixture', name: 'Hikvision DHCP options', strength: 'self_report', fields: ['dhcp_options'], observed: { dhcp_options: '53,61,12,81' } }] } } })
     if (path === '/discovery/coverage') return Promise.resolve(coverage)
     if (path === '/discovery/statistics') return Promise.resolve({ items: [], pending_updates: 0 })
     if (path === '/discovery/types') return Promise.resolve({ items: [] })
@@ -296,5 +297,14 @@ it('exports the filtered discovery rows as CSV', async () => {
     URL.createObjectURL = create
     URL.revokeObjectURL = revoke
   }
+})
+
+
+it('shows fingerprint matches for linked discovery devices', async () => {
+  mockReads(undefined, { ...device, endpoint_id: 'mac:00:11:22:33:44:55' })
+  renderPanel()
+  fireEvent.click(await screen.findByRole('button', { name: '192.0.2.10' }))
+  await waitFor(() => expect(screen.getByText('指纹库命中（端点识别）')).toBeInTheDocument())
+  expect(screen.getByText('Hikvision DHCP options')).toBeInTheDocument()
 })
 
