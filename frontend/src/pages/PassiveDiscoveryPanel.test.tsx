@@ -272,3 +272,27 @@ it('filters VoIP phones from the quick types', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('type=voip_phone'))).toBe(true))
 })
 
+
+it('exports the filtered discovery rows as CSV', async () => {
+  mockReads()
+  const blobs: Blob[] = []
+  const create = URL.createObjectURL
+  const revoke = URL.revokeObjectURL
+  URL.createObjectURL = (blob: Blob | MediaSource) => { blobs.push(blob as Blob); return "blob:test" }
+  URL.revokeObjectURL = () => {}
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
+  try {
+    renderPanel()
+    fireEvent.click(screen.getByRole("button", { name: /导出/ }))
+    await waitFor(() => expect(blobs.length).toBe(1))
+    const csv = await blobs[0].text()
+    expect(csv).toContain("标识,名称,MAC")
+    expect(csv).toContain("device-1")
+    expect(csv).toContain("192.0.2.10")
+  } finally {
+    click.mockRestore()
+    URL.createObjectURL = create
+    URL.revokeObjectURL = revoke
+  }
+})
+

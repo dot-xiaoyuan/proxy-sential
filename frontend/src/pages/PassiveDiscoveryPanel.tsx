@@ -14,15 +14,17 @@ import { Button,
   Space,
   Tag,
   Typography,
+  message,
 } from 'antd'
 import { useSearchParams } from 'react-router-dom'
-import { LoadingOutlined, ReloadOutlined } from '@ant-design/icons'
+import { DownloadOutlined, LoadingOutlined, ReloadOutlined } from '@ant-design/icons'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { DiscoveryDeviceIcon } from '../entities/device/DiscoveryDeviceIcon'
 import { BrandLogo } from '../entities/device/BrandLogo'
 import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import { DiscoveryEvidenceSummary } from './DiscoveryEvidenceSummary'
+import { discoveryCSV } from './discoveryExport'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
 import { flowBelongsToDevice, serviceBelongsToDevice, signalAddressMatchesDevice } from './discoveryServiceAttribution'
@@ -191,6 +193,37 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const state=(item:Device)=><Typography.Text type={item.classification_status==='conflict'?'warning':'secondary'}>{item.classification_status==='candidate'&&!typeLabel(item,types)?((item.protocols??[]).every(p=>p==='arp'||p==='ndp')&&item.protocols?.length?(item.protocols.includes('arp')?'ARP 地址候选':'NDP 地址线索'):'缺少类型证据'):states[item.classification_status??'']??(item.current?'证据有效':'证据已过期')}</Typography.Text>
   const refreshDiscovery=()=>{const first=new URLSearchParams(query);first.delete('cursor');setPaging({key:filterKey,page:0});void position.invalidate();void discoveryMetadata.refetch();void coverage.refetch();void statistics.refetch();void queryClient.invalidateQueries({queryKey:['discovery-center'],refetchType:'none'});void queryClient.refetchQueries({queryKey:['discovery-center',first.toString()],exact:true})}
   const refreshWorkspace=()=>refreshDiscovery()
+  const [exporting,setExporting]=useState(false)
+  const exportDevices=async()=>{
+    setExporting(true)
+    try{
+      const exportQuery=new URLSearchParams(query)
+      exportQuery.delete('cursor')
+      exportQuery.set('limit','200')
+      const rows:Device[]=[]
+      let cursor=''
+      while(rows.length<2000){
+        if(cursor)exportQuery.set('cursor',cursor);else exportQuery.delete('cursor')
+        const page=await request<Page>(`/discovery/devices?${exportQuery.toString()}`)
+        rows.push(...(page.items??[]))
+        if(!page.has_more||!page.next_cursor)break
+        cursor=page.next_cursor
+      }
+      const devices=rows.slice(0,2000)
+      const blob=new Blob(['\ufeff'+discoveryCSV(devices,types)],{type:'text/csv;charset=utf-8'})
+      const url=URL.createObjectURL(blob)
+      const anchor=document.createElement('a')
+      anchor.href=url
+      anchor.download=`discovery-${new Date().toISOString().slice(0,10)}.csv`
+      anchor.click()
+      URL.revokeObjectURL(url)
+      message.success(devices.length>=2000?'已导出前 2000 台设备，请缩小筛选范围':`已导出 ${devices.length} 台设备`)
+    }catch(error){
+      message.error(`导出失败：${String(error)}`)
+    }finally{
+      setExporting(false)
+    }
+  }
   const show=(item:Device)=>{setHistoryPage(1);setSelected(item)}
   const columns=[
     {title:'设备',key:'identity',width:250,render:(_:unknown,item:Device)=>identity(item)},
@@ -221,7 +254,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
           <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length?`（${['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
         </>}
-        extra={<div className="discovery-list-actions">{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
+        extra={<div className="discovery-list-actions">{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} loading={exporting} onClick={()=>void exportDevices()}>导出</Button><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
       panel={moreOpen?<div className="app-filter-panel">
           <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
           <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
