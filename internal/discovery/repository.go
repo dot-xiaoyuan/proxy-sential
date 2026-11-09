@@ -961,7 +961,7 @@ func matchesDeviceCapability(values []string, wanted string) bool {
 	if wanted != "dumb" {
 		return containsString(values, wanted)
 	}
-	for _, capability := range []string{"printing", "scanning", "casting", "media_rendering", "network_video", "routing"} {
+	for _, capability := range []string{"printing", "scanning", "casting", "media_rendering", "network_video", "routing", "voice"} {
 		if containsString(values, capability) {
 			return true
 		}

@@ -491,6 +491,7 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		o.Confidence = "strong"
 		if kind, brand, model := discovery.SIPPhoneIdentity(passiveString(event.Payload, "user_agent")); kind != "" {
 			o.DeviceType, o.Manufacturer, o.ModelName = kind, brand, model
+			o.Capabilities = []string{"voice"}
 		}
 	case "ssdp":
 		if !scope.allows(ip) {

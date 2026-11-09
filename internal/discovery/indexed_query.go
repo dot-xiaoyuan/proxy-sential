@@ -103,7 +103,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	}
 	if query.Capability != "" {
 		if query.Capability == "dumb" {
-			having = append(having, "bool_or(observation_capabilities ?| ARRAY['printing','scanning','casting','media_rendering','network_video','routing'])")
+			having = append(having, "bool_or(observation_capabilities ?| ARRAY['printing','scanning','casting','media_rendering','network_video','routing','voice'])")
 		} else {
 			args = append(args, query.Capability)
 			having = append(having, fmt.Sprintf("bool_or(observation_capabilities ? $%d)", len(args)))

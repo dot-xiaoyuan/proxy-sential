@@ -89,7 +89,7 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 	}
 	if q.Capability != "" {
 		if q.Capability == "dumb" {
-			where = append(where, "c.document->'capabilities' ?| array['printing','scanning','casting','media_rendering','network_video']")
+			where = append(where, "c.document->'capabilities' ?| array['printing','scanning','casting','media_rendering','network_video','voice']")
 		} else {
 			where = append(where, "c.document->'capabilities' ? "+add(q.Capability))
 		}

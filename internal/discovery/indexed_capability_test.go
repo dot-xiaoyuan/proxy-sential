@@ -15,6 +15,7 @@ func TestDumbCapabilityFilterMatchesServiceAndRoutingEvidence(t *testing.T) {
 		{[]string{"printing"}, true},
 		{[]string{"network_video"}, true},
 		{[]string{"routing"}, true},
+		{[]string{"voice"}, true},
 		{[]string{"arp"}, false},
 		{nil, false},
 	} {
